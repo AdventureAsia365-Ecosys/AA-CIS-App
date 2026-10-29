@@ -13,7 +13,8 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useId, useMemo, useState } from "react";
-import { Button, K, apiGet } from "../../_kit";
+import { Button, K, apiGet, useT } from "../../_kit";
+import { M } from "./components.messages";
 import {
   TENANTS_API, TENANTS_QUERY_KEY, TENANT_SEARCH_MIN, filterTenants, tenantLabel, tenantOptionText,
   type TenantRef,
@@ -55,8 +56,8 @@ const srOnly: React.CSSProperties = {
 };
 
 export function TenantSelect({
-  value, onChange, label = "Tenant", required = false, includeInactive = false,
-  placeholder = "Pick a tenant…", disabled = false, inline = false, hideLabel = false, offer,
+  value, onChange, label: labelProp, required = false, includeInactive = false,
+  placeholder: placeholderProp, disabled = false, inline = false, hideLabel = false, offer,
   optionText = tenantOptionText, extraOptions, hint, testId = "tenant-select",
 }: {
   value: string;
@@ -83,11 +84,14 @@ export function TenantSelect({
   hint?: React.ReactNode;
   testId?: string;
 }) {
+  const t = useT(M);
+  const label = labelProp ?? t("tenant");
+  const placeholder = placeholderProp ?? t("pickTenant");
   const id = useId();
   const { tenants, byId, isLoading, error, refetch } = useTenants();
   const [query, setQuery] = useState("");
   const offered = useMemo(
-    () => tenants.filter((t) => (includeInactive || !t.status || t.status === "active") && (!offer || offer(t))),
+    () => tenants.filter((tn) => (includeInactive || !tn.status || tn.status === "active") && (!offer || offer(tn))),
     [tenants, includeInactive, offer],
   );
   const searchable = offered.length > TENANT_SEARCH_MIN;
@@ -95,7 +99,7 @@ export function TenantSelect({
     const list = filterTenants(offered, searchable ? query : "");
     // Keep the picked tenant listed while the search hides it, so the select never drops its value.
     const picked = value ? byId.get(value) : undefined;
-    return picked && !list.some((t) => t.tenant_id === value) ? [picked, ...list] : list;
+    return picked && !list.some((tn) => tn.tenant_id === value) ? [picked, ...list] : list;
   }, [offered, searchable, query, value, byId]);
 
   const labelEl = (
@@ -106,22 +110,22 @@ export function TenantSelect({
   );
   const search = searchable && (
     <input type="search" value={query} onChange={(e) => setQuery(e.target.value)}
-      style={inline ? inlineSearchStyle : fieldStyle} placeholder="Search by name, slug or id"
-      aria-label={`Search ${label.toLowerCase()}`} disabled={disabled} />
+      style={inline ? inlineSearchStyle : fieldStyle} placeholder={t("searchTenants")}
+      aria-label={t("searchLabel", label)} disabled={disabled} />
   );
   const select = (
     <select id={id} value={value} onChange={(e) => onChange(e.target.value, byId.get(e.target.value))} style={inline ? inlineFieldStyle : fieldStyle}
       required={required} aria-required={required} aria-invalid={required && !value ? true : undefined}
       disabled={disabled || isLoading} data-testid={testId}>
-      <option value="">{isLoading ? "Loading tenants…" : placeholder}</option>
-      {shown.map((t) => <option key={t.tenant_id} value={t.tenant_id}>{optionText(t)}</option>)}
+      <option value="">{isLoading ? t("loadingTenants") : placeholder}</option>
+      {shown.map((tn) => <option key={tn.tenant_id} value={tn.tenant_id}>{optionText(tn)}</option>)}
       {extraOptions?.map((o) => <option key={`extra:${o.value}`} value={o.value}>{o.label}</option>)}
     </select>
   );
   const loadError = error ? (
     <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", fontSize: 12, color: K.danger }}>
-      The tenant list did not load ({error}).
-      <Button size="sm" variant="ghost" onClick={() => refetch()}>Retry</Button>
+      {t("tenantListFailed", String(error))}
+      <Button size="sm" variant="ghost" onClick={() => refetch()}>{t("retry")}</Button>
     </div>
   ) : null;
 
@@ -136,9 +140,9 @@ export function TenantSelect({
     <div style={{ display: "grid", gap: 4, minWidth: 0 }}>
       {labelEl}{search}{select}
       {loadError ?? (!isLoading && offered.length === 0 ? (
-        <div style={{ fontSize: 12, color: K.muted }}>No {includeInactive || offer ? "" : "active "}tenant yet.</div>
+        <div style={{ fontSize: 12, color: K.muted }}>{includeInactive || offer ? t("noTenantYet") : t("noActiveTenantYet")}</div>
       ) : searchable && query.trim() && shown.length === 0 ? (
-        <div style={{ fontSize: 12, color: K.muted }}>No tenant matches “{query.trim()}”.</div>
+        <div style={{ fontSize: 12, color: K.muted }}>{t("noTenantMatches", query.trim())}</div>
       ) : null)}
       {hint && <div style={{ fontSize: 12, color: K.muted }}>{hint}</div>}
     </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useCallback, useEffect } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
   Upload, CheckCircle, XCircle, AlertCircle, ArrowRight, Loader2,
   ChevronDown, ChevronUp, FileText, Copy, RefreshCw, Search,
@@ -11,7 +11,8 @@ import {
   Card, SLabel, Btn, TH, TD, Badge,
 } from "../_components/adminUi";
 import { Pagination } from "../_components/Pagination";
-import { ScrollX, AdminMain, PageHeader, formatDate } from "../../_kit";
+import { ScrollX, AdminMain, PageHeader, useFormat, useT } from "../../_kit";
+import { UP } from "./messages";
 
 const TENANT_ID = "00000000-0000-0000-0000-000000000001";
 
@@ -21,13 +22,18 @@ function stripUuidPrefix(filename: string): string {
   return filename.replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_/i, "");
 }
 
-function relativeTime(isoStr: string | null | undefined): string {
-  if (!isoStr) return "—";
-  const diff = Math.floor((Date.now() - new Date(isoStr).getTime()) / 1000);
-  if (diff < 60) return "Just now";
-  if (diff < 3600) return `${Math.floor(diff / 60)} minutes ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)} hours ago`;
-  return formatDate(isoStr);
+/** "5 minutes ago" … a date, in the UI language (AA-994). */
+function useRelativeTime(): (isoStr: string | null | undefined) => string {
+  const t = useT(UP);
+  const { formatDate } = useFormat();
+  return (isoStr) => {
+    if (!isoStr) return "—";
+    const diff = Math.floor((Date.now() - new Date(isoStr).getTime()) / 1000);
+    if (diff < 60) return t("justNow");
+    if (diff < 3600) return t("minutesAgo", Math.floor(diff / 60));
+    if (diff < 86400) return t("hoursAgo", Math.floor(diff / 3600));
+    return formatDate(isoStr);
+  };
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -152,12 +158,13 @@ interface TourReadyItem {
 // ─── StepIndicator ────────────────────────────────────────────────────────────
 
 function StepIndicator({ step }: { step: 1 | 2 | 3 | 4 | 5 }) {
+  const t = useT(UP);
   const STEPS = [
-    { n: 1 as const, label: "Select Files" },
-    { n: 2 as const, label: "Upload to S3" },
-    { n: 3 as const, label: "Parse & Review" },
-    { n: 4 as const, label: "Commit" },
-    { n: 5 as const, label: "Dup Review" },
+    { n: 1 as const, label: t("stepSelect") },
+    { n: 2 as const, label: t("stepUpload") },
+    { n: 3 as const, label: t("stepParse") },
+    { n: 4 as const, label: t("stepCommit") },
+    { n: 5 as const, label: t("stepDup") },
   ];
   return (
     <div style={{ display: "flex", alignItems: "center", marginBottom: 28 }}>
@@ -217,6 +224,7 @@ function DetailField({ label, value }: { label: string; value: string | null | u
 function TourRow({ tour, idx, isExpanded, onToggle }: {
   tour: TourPreview; idx: number; isExpanded: boolean; onToggle: () => void;
 }) {
+  const t = useT(UP);
   const itinPreview = tour.src_itineraries
     ? (tour.src_itineraries.length > 200
         ? tour.src_itineraries.slice(0, 200) + "..."
@@ -245,7 +253,7 @@ function TourRow({ tour, idx, isExpanded, onToggle }: {
         <td style={TD}>{tour.sku || "—"}</td>
         <td style={TD}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <Badge color="green">Ready</Badge>
+            <Badge color="green">{t("ready")}</Badge>
             {isExpanded
               ? <ChevronUp size={13} style={{ color: A.muted2 }} />
               : <ChevronDown size={13} style={{ color: A.muted2 }} />}
@@ -258,19 +266,19 @@ function TourRow({ tour, idx, isExpanded, onToggle }: {
             <div style={{ padding: "16px 20px 18px", borderBottom: `1px solid ${A.line}` }}>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: "0 32px" }}>
                 <div>
-                  <DetailField label="Subtitle"        value={tour.src_subtitle} />
-                  <DetailField label="Summary"         value={tour.src_summary} />
-                  <DetailField label="Description"     value={tour.src_description} />
-                  <DetailField label="Best Time to Go" value={tour.best_time_to_go} />
-                  <DetailField label="Feature"         value={tour.feature} />
+                  <DetailField label={t("fSubtitle")}    value={tour.src_subtitle} />
+                  <DetailField label={t("fSummary")}     value={tour.src_summary} />
+                  <DetailField label={t("fDescription")} value={tour.src_description} />
+                  <DetailField label={t("fBestTime")}    value={tour.best_time_to_go} />
+                  <DetailField label={t("fFeature")}     value={tour.feature} />
                 </div>
                 <div>
-                  <DetailField label="Highlights"  value={tour.src_highlights} />
-                  <DetailField label="Activities"  value={tour.activities} />
-                  <DetailField label="Includes"    value={tour.inclusions} />
-                  <DetailField label="Excludes"    value={tour.exclusions} />
-                  <DetailField label="Itinerary"   value={itinPreview} />
-                  <DetailField label="Links"       value={tour.links} />
+                  <DetailField label={t("fHighlights")} value={tour.src_highlights} />
+                  <DetailField label={t("fActivities")} value={tour.activities} />
+                  <DetailField label={t("fIncludes")}   value={tour.inclusions} />
+                  <DetailField label={t("fExcludes")}   value={tour.exclusions} />
+                  <DetailField label={t("fItinerary")}  value={itinPreview} />
+                  <DetailField label={t("fLinks")}      value={tour.links} />
                 </div>
               </div>
             </div>
@@ -305,6 +313,8 @@ const READY_PAGE_SIZE = 10;
 function ToursReadySection({ tours, loading, onRefresh }: {
   tours: TourReadyItem[]; loading: boolean; onRefresh: () => void;
 }) {
+  const t = useT(UP);
+  const relativeTime = useRelativeTime();
   const [page, setPage]               = useState(1);
   const [filterCountry, setFilterCountry] = useState("");
   const [filterFile, setFilterFile]   = useState("");
@@ -318,15 +328,15 @@ function ToursReadySection({ tours, loading, onRefresh }: {
   useEffect(() => { setLocalTours(tours); }, [tours]);
 
   const uniqueCountries = Array.from(new Set(
-    localTours.map(t => t.country).filter((c): c is string => Boolean(c))
+    localTours.map(x => x.country).filter((c): c is string => Boolean(c))
   )).sort();
   const uniqueFiles = Array.from(new Set(
-    localTours.map(t => t.filename).filter((f): f is string => Boolean(f))
+    localTours.map(x => x.filename).filter((f): f is string => Boolean(f))
   )).sort();
 
-  const filtered = localTours.filter(t => {
-    if (filterCountry && t.country !== filterCountry) return false;
-    if (filterFile && t.filename !== filterFile) return false;
+  const filtered = localTours.filter(x => {
+    if (filterCountry && x.country !== filterCountry) return false;
+    if (filterFile && x.filename !== filterFile) return false;
     return true;
   });
   const paginated = filtered.slice((page - 1) * READY_PAGE_SIZE, page * READY_PAGE_SIZE);
@@ -352,18 +362,18 @@ function ToursReadySection({ tours, loading, onRefresh }: {
   }
 
   async function trashTour(tourId: string, tourName: string) {
-    if (!confirm(`Trash "${tourName}"? It will be hidden from the rewrite queue.`)) return;
+    if (!confirm(t("confirmTrash", tourName))) return;
     setTrashing(tourId);
     try {
       const r = await fetch(`/api/admin/tours/${tourId}/trash`, { method: "PATCH" });
       if (!r.ok) {
         const err = await r.json().catch(() => ({}));
-        alert(err.detail || "Failed to trash tour");
+        alert(err.detail || t("trashFailed"));
         return;
       }
-      setLocalTours(prev => prev.filter(t => t.tour_id !== tourId));
+      setLocalTours(prev => prev.filter(x => x.tour_id !== tourId));
       if (showTrashed) {
-        const trashed = localTours.find(t => t.tour_id === tourId);
+        const trashed = localTours.find(x => x.tour_id === tourId);
         if (trashed) setTrashedTours(prev => [{ ...trashed, source_status: "trashed" }, ...prev]);
       }
     } finally { setTrashing(null); }
@@ -375,10 +385,10 @@ function ToursReadySection({ tours, loading, onRefresh }: {
       const r = await fetch(`/api/admin/tours/${tourId}/restore`, { method: "PATCH" });
       if (!r.ok) {
         const err = await r.json().catch(() => ({}));
-        alert(err.detail || "Failed to restore tour");
+        alert(err.detail || t("restoreFailed"));
         return;
       }
-      setTrashedTours(prev => prev.filter(t => t.tour_id !== tourId));
+      setTrashedTours(prev => prev.filter(x => x.tour_id !== tourId));
       onRefresh();
     } finally { setRestoring(null); }
   }
@@ -391,7 +401,7 @@ function ToursReadySection({ tours, loading, onRefresh }: {
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ fontFamily: serif, fontSize: 16, fontWeight: 500, color: A.ink }}>
-            Tours Ready for Rewrite
+            {t("toursReady")}
           </span>
           {!loading && (
             <span style={{
@@ -403,9 +413,9 @@ function ToursReadySection({ tours, loading, onRefresh }: {
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <button onClick={toggleShowTrashed}
             style={{ fontSize: 11, fontWeight: 600, background: "none", border: `1px solid ${A.line}`, borderRadius: 5, padding: "3px 8px", cursor: "pointer", color: showTrashed ? A.red : A.muted }}>
-            {showTrashed ? "Hide Trashed" : "Show Trashed"}
+            {showTrashed ? t("hideTrashed") : t("showTrashed")}
           </button>
-          <button onClick={onRefresh} title="Refresh"
+          <button onClick={onRefresh} title={t("refresh")}
             style={{ background: "none", border: "none", cursor: "pointer", color: A.muted2, padding: 4 }}>
             <RefreshCw size={14} />
           </button>
@@ -413,7 +423,7 @@ function ToursReadySection({ tours, loading, onRefresh }: {
             fontSize: 12, fontWeight: 600, color: A.gold,
             textDecoration: "none", display: "flex", alignItems: "center", gap: 4,
           }}>
-            Go to S1 Rewrite <ArrowRight size={12} />
+            {t("goToS1")} <ArrowRight size={12} />
           </a>
         </div>
       </div>
@@ -423,12 +433,12 @@ function ToursReadySection({ tours, loading, onRefresh }: {
         <div style={{ padding: "10px 16px", borderBottom: `1px solid ${A.line}`, display: "flex", gap: 10 }}>
           <select value={filterCountry} onChange={e => handleCountry(e.target.value)}
             style={{ padding: "5px 8px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 12, fontFamily: sans, background: A.card }}>
-            <option value="">All Countries</option>
+            <option value="">{t("allCountries")}</option>
             {uniqueCountries.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
           <select value={filterFile} onChange={e => handleFile(e.target.value)}
             style={{ padding: "5px 8px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 12, fontFamily: sans, background: A.card, maxWidth: 220 }}>
-            <option value="">All Files</option>
+            <option value="">{t("allFiles")}</option>
             {uniqueFiles.map(f => <option key={f} value={f}>{stripUuidPrefix(f)}</option>)}
           </select>
         </div>
@@ -437,15 +447,15 @@ function ToursReadySection({ tours, loading, onRefresh }: {
       {loading ? (
         <div style={{ padding: 28, textAlign: "center", color: A.muted, fontSize: 13 }}>
           <Loader2 size={16} style={{ animation: "spin 1s linear infinite", marginRight: 8 }} />
-          Loading…
+          {t("loading")}
         </div>
       ) : localTours.length === 0 ? (
         <div style={{ padding: 28, textAlign: "center", color: A.muted, fontSize: 13 }}>
-          No tours ready. Upload an Excel file above to get started.
+          {t("noToursReady")}
         </div>
       ) : filtered.length === 0 ? (
         <div style={{ padding: 28, textAlign: "center", color: A.muted, fontSize: 13 }}>
-          No tours match selected filters.
+          {t("noToursMatch")}
         </div>
       ) : (
         <>
@@ -453,37 +463,37 @@ function ToursReadySection({ tours, loading, onRefresh }: {
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
-                  {["Tour Name", "Country", "Source File", "Ingested At", "Action", ""].map(h => (
+                  {[t("colTourName"), t("colCountry"), t("colSourceFile"), t("colIngestedAt"), t("colAction"), ""].map(h => (
                     <th key={h} style={{ ...TH, textAlign: "left" }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {paginated.map((t, i) => (
-                  <tr key={t.tour_id} style={{ background: i % 2 === 1 ? A.bg : "transparent" }}>
-                    <td style={{ ...TD, fontWeight: 600, color: A.ink }}>{t.src_name || "—"}</td>
-                    <td style={TD}>{t.country || "—"}</td>
+                {paginated.map((tr, i) => (
+                  <tr key={tr.tour_id} style={{ background: i % 2 === 1 ? A.bg : "transparent" }}>
+                    <td style={{ ...TD, fontWeight: 600, color: A.ink }}>{tr.src_name || "—"}</td>
+                    <td style={TD}>{tr.country || "—"}</td>
                     <td style={{ ...TD, color: A.muted, fontSize: 12 }}>
-                      {t.filename ? stripUuidPrefix(t.filename) : "—"}
+                      {tr.filename ? stripUuidPrefix(tr.filename) : "—"}
                     </td>
-                    <td style={{ ...TD, color: A.muted, fontSize: 12 }}>{relativeTime(t.ingest_at)}</td>
+                    <td style={{ ...TD, color: A.muted, fontSize: 12 }}>{relativeTime(tr.ingest_at)}</td>
                     <td style={TD}>
-                      <a href={`/admin/s1-rewrite?tour_id=${t.tour_id}`} style={{
+                      <a href={`/admin/s1-rewrite?tour_id=${tr.tour_id}`} style={{
                         fontSize: 12, fontWeight: 600, color: A.gold,
                         textDecoration: "none", display: "flex", alignItems: "center", gap: 4,
                       }}>
-                        Rewrite <ArrowRight size={11} />
+                        {t("rewrite")} <ArrowRight size={11} />
                       </a>
                     </td>
                     <td style={TD}>
                       <button
-                        onClick={() => trashTour(t.tour_id, t.src_name || "this tour")}
-                        disabled={trashing === t.tour_id}
-                        title="Trash this source tour"
+                        onClick={() => trashTour(tr.tour_id, tr.src_name || t("thisTour"))}
+                        disabled={trashing === tr.tour_id}
+                        title={t("trashTitle")}
                         style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 7px", fontSize: 11, border: `1px solid ${A.redBorder}`, borderRadius: 5, background: A.redTint, cursor: "pointer", color: A.red }}
                       >
                         <Trash2 size={11} />
-                        {trashing === t.tour_id ? "…" : "Trash"}
+                        {trashing === tr.tour_id ? "…" : t("trash")}
                       </button>
                     </td>
                   </tr>
@@ -505,42 +515,42 @@ function ToursReadySection({ tours, loading, onRefresh }: {
           <div style={{ padding: "10px 20px", background: A.redTint, display: "flex", alignItems: "center", gap: 8 }}>
             <Trash2 size={13} style={{ color: A.red }} />
             <span style={{ fontSize: 12, fontWeight: 600, color: A.red }}>
-              Trashed Source Tours {!trashedLoading && `(${trashedTours.length})`}
+              {t("trashedTours")} {!trashedLoading && `(${trashedTours.length})`}
             </span>
           </div>
           {trashedLoading ? (
             <div style={{ padding: 20, textAlign: "center", color: A.muted, fontSize: 13 }}>
-              <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Loading…
+              <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> {t("loading")}
             </div>
           ) : trashedTours.length === 0 ? (
-            <div style={{ padding: 20, textAlign: "center", color: A.muted, fontSize: 13 }}>No trashed source tours.</div>
+            <div style={{ padding: 20, textAlign: "center", color: A.muted, fontSize: 13 }}>{t("noTrashed")}</div>
           ) : (
             <ScrollX>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
                 <tr>
-                  {["Tour Name", "Country", "Trashed At", ""].map(h => (
+                  {[t("colTourName"), t("colCountry"), t("colTrashedAt"), ""].map(h => (
                     <th key={h} style={{ ...TH, textAlign: "left", background: A.redTint }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {trashedTours.map((t, i) => (
-                  <tr key={t.tour_id} style={{ background: i % 2 === 1 ? A.redTint : "var(--aa-red-tint2)", opacity: 0.85 }}>
-                    <td style={{ ...TD, color: A.red, fontWeight: 500 }}>{t.src_name || "—"}</td>
-                    <td style={TD}>{t.country || "—"}</td>
+                {trashedTours.map((tr, i) => (
+                  <tr key={tr.tour_id} style={{ background: i % 2 === 1 ? A.redTint : "var(--aa-red-tint2)", opacity: 0.85 }}>
+                    <td style={{ ...TD, color: A.red, fontWeight: 500 }}>{tr.src_name || "—"}</td>
+                    <td style={TD}>{tr.country || "—"}</td>
                     <td style={{ ...TD, color: A.muted }}>
-                      {t.deleted_at ? relativeTime(t.deleted_at) : "—"}
+                      {tr.deleted_at ? relativeTime(tr.deleted_at) : "—"}
                     </td>
                     <td style={TD}>
                       <button
-                        onClick={() => restoreTour(t.tour_id, t.src_name || "this tour")}
-                        disabled={restoring === t.tour_id}
-                        title="Restore source tour"
+                        onClick={() => restoreTour(tr.tour_id, tr.src_name || t("thisTour"))}
+                        disabled={restoring === tr.tour_id}
+                        title={t("restoreTitle")}
                         style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 7px", fontSize: 11, border: "1px solid var(--aa-green-border2)", borderRadius: 5, background: "var(--aa-green-bg2)", cursor: "pointer", color: A.green }}
                       >
                         <RotateCcw size={11} />
-                        {restoring === t.tour_id ? "…" : "Restore"}
+                        {restoring === tr.tour_id ? "…" : t("restore")}
                       </button>
                     </td>
                   </tr>
@@ -562,6 +572,8 @@ const HISTORY_PAGE_SIZE = 10;
 function UploadHistorySection({ history, loading, onRefresh }: {
   history: UploadHistoryItem[]; loading: boolean; onRefresh: () => void;
 }) {
+  const t = useT(UP);
+  const relativeTime = useRelativeTime();
   const [copied, setCopied]       = useState<string | null>(null);
   const [page, setPage]           = useState(1);
   const [dateFilter, setDateFilter] = useState("all");
@@ -592,9 +604,9 @@ function UploadHistorySection({ history, loading, onRefresh }: {
         display: "flex", alignItems: "center", justifyContent: "space-between",
       }}>
         <span style={{ fontFamily: serif, fontSize: 16, fontWeight: 500, color: A.ink }}>
-          Upload History
+          {t("uploadHistory")}
         </span>
-        <button onClick={onRefresh} title="Refresh"
+        <button onClick={onRefresh} title={t("refresh")}
           style={{ background: "none", border: "none", cursor: "pointer", color: A.muted2, padding: 4 }}>
           <RefreshCw size={14} />
         </button>
@@ -605,14 +617,14 @@ function UploadHistorySection({ history, loading, onRefresh }: {
         <div style={{ padding: "10px 16px", borderBottom: `1px solid ${A.line}`, display: "flex", gap: 10, alignItems: "center" }}>
           <select value={dateFilter} onChange={e => handleDate(e.target.value)}
             style={{ padding: "5px 8px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 12, fontFamily: sans, background: A.card }}>
-            <option value="all">All Time</option>
-            <option value="today">Today</option>
-            <option value="week">Last 7 Days</option>
+            <option value="all">{t("allTime")}</option>
+            <option value="today">{t("today")}</option>
+            <option value="week">{t("last7")}</option>
           </select>
           <div style={{ display: "flex", alignItems: "center", gap: 6, border: `1px solid ${A.line}`, borderRadius: 6, padding: "5px 8px", background: A.card, flex: 1, maxWidth: 260 }}>
             <Search size={12} style={{ color: A.muted2, flexShrink: 0 }} />
             <input
-              placeholder="Search filename…"
+              placeholder={t("searchFilename")}
               value={search}
               onChange={e => handleSearch(e.target.value)}
               style={{ border: "none", outline: "none", fontSize: 12, fontFamily: sans, width: "100%", background: "transparent" }}
@@ -624,15 +636,15 @@ function UploadHistorySection({ history, loading, onRefresh }: {
       {loading ? (
         <div style={{ padding: 28, textAlign: "center", color: A.muted, fontSize: 13 }}>
           <Loader2 size={16} style={{ animation: "spin 1s linear infinite", marginRight: 8 }} />
-          Loading…
+          {t("loading")}
         </div>
       ) : history.length === 0 ? (
         <div style={{ padding: 28, textAlign: "center", color: A.muted, fontSize: 13 }}>
-          No uploads yet.
+          {t("noUploads")}
         </div>
       ) : filtered.length === 0 ? (
         <div style={{ padding: 28, textAlign: "center", color: A.muted, fontSize: 13 }}>
-          No uploads match your filters.
+          {t("noUploadsMatch")}
         </div>
       ) : (
         <>
@@ -640,7 +652,8 @@ function UploadHistorySection({ history, loading, onRefresh }: {
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
-                  {["File Name", "File Size", "Parsed / Landed", "Dropped", "Parse Errors", "Uploaded At", "Batch ID"].map((h, i) => (
+                  {[t("colFileName"), t("colFileSize"), t("colParsedLanded"), t("colDropped"), t("colParseErrors"),
+                    t("colUploadedAt"), t("colBatchId")].map((h, i) => (
                     <th key={h} style={{ ...TH, textAlign: i > 0 ? "right" : "left" }}>{h}</th>
                   ))}
                 </tr>
@@ -665,14 +678,14 @@ function UploadHistorySection({ history, loading, onRefresh }: {
                     </td>
                     <td style={{ ...TD, textAlign: "right" }}>
                       {h.rows_dropped !== null && h.rows_dropped > 0
-                        ? <Badge color="red">{h.rows_dropped} dropped</Badge>
+                        ? <Badge color="red">{t("droppedN", h.rows_dropped)}</Badge>
                         : <span style={{ color: A.muted2, fontSize: 12 }}>
                             {h.rows_dropped === 0 ? "0" : "—"}
                           </span>}
                     </td>
                     <td style={{ ...TD, textAlign: "right" }}>
                       {h.parse_error_count > 0
-                        ? <Badge color="red">{h.parse_error_count} errors</Badge>
+                        ? <Badge color="red">{t("errorsN", h.parse_error_count)}</Badge>
                         : <span style={{ color: A.muted2, fontSize: 12 }}>0</span>}
                     </td>
                     <td style={{ ...TD, textAlign: "right", color: A.muted, fontSize: 12 }}>
@@ -682,7 +695,7 @@ function UploadHistorySection({ history, loading, onRefresh }: {
                       {h.batch_id ? (
                         <button
                           onClick={() => copyBatchId(h.batch_id!)}
-                          title="Copy batch ID"
+                          title={t("copyBatch")}
                           style={{
                             display: "inline-flex", alignItems: "center", gap: 4,
                             fontFamily: mono, fontSize: 11, color: copied === h.batch_id ? A.green : A.muted2,
@@ -714,21 +727,24 @@ function UploadHistorySection({ history, loading, onRefresh }: {
 
 type Decision = "bypass" | "replace" | "keep_both" | "restore" | "create_new";
 
-const DECISION_LABELS: Record<"bypass" | "replace" | "keep_both", string> = {
-  bypass:    "Bypass — discard incoming",
-  replace:   "Replace — incoming overwrites existing",
-  keep_both: "Keep both — add as extra version",
+// Message keys (messages.ts).
+const DECISION_LABELS: Record<"bypass" | "replace" | "keep_both", "decBypass" | "decReplace" | "decKeepBoth"> = {
+  bypass:    "decBypass",
+  replace:   "decReplace",
+  keep_both: "decKeepBoth",
 };
 
 // AA-986 L2 (Q6, ADR 0015) — a re-upload of a tour deleted at S0/A0 never revives it silently: staff choose to
 // restore the deleted tour (tenants that were warned are told it is back) or to start a new tour from the row.
-const DELETED_DECISION_LABELS: Record<"bypass" | "restore" | "create_new", string> = {
-  bypass:     "Bypass — discard incoming",
-  restore:    "Restore — bring the deleted tour back (incoming discarded)",
-  create_new: "Create a new tour — add incoming as a separate tour",
+const DELETED_DECISION_LABELS: Record<"bypass" | "restore" | "create_new", "decBypass" | "decRestore" | "decCreateNew"> = {
+  bypass:     "decBypass",
+  restore:    "decRestore",
+  create_new: "decCreateNew",
 };
 
-function decisionLabels(item: StagingItem): Record<string, string> {
+function decisionLabels(
+  item: StagingItem,
+): Record<string, "decBypass" | "decReplace" | "decKeepBoth" | "decRestore" | "decCreateNew"> {
   return item.matched_deleted ? DELETED_DECISION_LABELS : DECISION_LABELS;
 }
 
@@ -739,6 +755,8 @@ function DuplicateReviewStep({
   batchIds: string[];
   onDone: () => void;
 }) {
+  const t = useT(UP);
+  const relativeTime = useRelativeTime();
   const [items, setItems]         = useState<StagingItem[]>([]);
   const [loading, setLoading]     = useState(true);
   const [decisions, setDecisions] = useState<Record<string, Decision>>({});
@@ -793,7 +811,7 @@ function DuplicateReviewStep({
     }
     setSubmitted(prev => ({ ...prev, ...results }));
     const allOk = Object.values(results).every(Boolean);
-    if (!allOk) setError(failures.length ? `Some decisions failed — ${failures.join("; ")}` : "Some decisions failed. Retry.");
+    if (!allOk) setError(failures.length ? t("someFailedList", failures.join("; ")) : t("someFailed"));
     setSubmitting(false);
     if (allOk) onDone();
   }
@@ -803,7 +821,7 @@ function DuplicateReviewStep({
       <Card>
         <div style={{ display: "flex", alignItems: "center", gap: 10, color: A.muted, fontSize: 13 }}>
           <Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} />
-          Loading duplicate tours…
+          {t("loadingDups")}
         </div>
       </Card>
     );
@@ -813,9 +831,9 @@ function DuplicateReviewStep({
     return (
       <Card>
         <div style={{ color: A.green, fontSize: 14, fontWeight: 600, marginBottom: 16 }}>
-          No pending duplicates — all resolved!
+          {t("noDups")}
         </div>
-        <Btn variant="secondary" onClick={onDone}>Back to Upload</Btn>
+        <Btn variant="secondary" onClick={onDone}>{t("backToUpload")}</Btn>
       </Card>
     );
   }
@@ -825,9 +843,9 @@ function DuplicateReviewStep({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <Card>
-        <SLabel>Duplicate Review — {items.length} tour{items.length !== 1 ? "s" : ""} need a decision</SLabel>
+        <SLabel>{t("dupTitle", items.length)}</SLabel>
         <p style={{ fontSize: 12, color: A.muted, margin: "0 0 16px" }}>
-          These tours already exist in the catalog. Choose how to handle each one.
+          {t("dupIntro")}
         </p>
 
         {error && (
@@ -850,7 +868,7 @@ function DuplicateReviewStep({
                   {item.incoming.src_name || "—"}
                 </span>
                 {submitted[item.staging_id] && (
-                  <Badge color="green">Done</Badge>
+                  <Badge color="green">{t("done")}</Badge>
                 )}
               </div>
 
@@ -859,8 +877,7 @@ function DuplicateReviewStep({
                   padding: "8px 16px", background: A.redTint, borderBottom: `1px solid ${A.line}`,
                   fontSize: 12, color: A.red, fontWeight: 600,
                 }}>
-                  This tour was deleted on {item.matched_deleted_at ? item.matched_deleted_at.slice(0, 10) : "an earlier date"}.
-                  Choose Restore to bring it back, or Create a new tour.
+                  {t("deletedOn", item.matched_deleted_at ? item.matched_deleted_at.slice(0, 10) : t("earlierDate"))}
                 </div>
               )}
 
@@ -872,14 +889,14 @@ function DuplicateReviewStep({
                     fontSize: 10, fontWeight: 700, textTransform: "uppercase",
                     letterSpacing: "0.12em", color: A.gold, marginBottom: 8,
                   }}>
-                    Incoming (new)
+                    {t("incoming")}
                   </div>
                   {[
-                    ["Name",     item.incoming.src_name],
-                    ["Country",  item.incoming.country],
-                    ["Price",    item.incoming.price_raw],
-                    ["Provider", item.incoming.provider],
-                    ["Summary",  item.incoming.src_summary
+                    [t("lName"),     item.incoming.src_name],
+                    [t("lCountry"),  item.incoming.country],
+                    [t("lPrice"),    item.incoming.price_raw],
+                    [t("lProvider"), item.incoming.provider],
+                    [t("lSummary"),  item.incoming.src_summary
                       ? (item.incoming.src_summary.length > 200
                           ? item.incoming.src_summary.slice(0, 200) + "…"
                           : item.incoming.src_summary)
@@ -901,16 +918,16 @@ function DuplicateReviewStep({
                     fontSize: 10, fontWeight: 700, textTransform: "uppercase",
                     letterSpacing: "0.12em", color: A.muted, marginBottom: 8,
                   }}>
-                    Existing (in catalog)
+                    {t("existing")}
                   </div>
                   {[
-                    ["Name",       item.existing.src_name],
-                    ["Country",    item.existing.country],
-                    ["Price",      item.existing.price_raw],
-                    ["Provider",   item.existing.provider],
-                    ["Ingested",   item.existing.ingest_at
+                    [t("lName"),       item.existing.src_name],
+                    [t("lCountry"),    item.existing.country],
+                    [t("lPrice"),      item.existing.price_raw],
+                    [t("lProvider"),   item.existing.provider],
+                    [t("lIngested"),   item.existing.ingest_at
                       ? relativeTime(item.existing.ingest_at) : null],
-                    ["Summary",    item.existing.src_summary
+                    [t("lSummary"),    item.existing.src_summary
                       ? (item.existing.src_summary.length > 200
                           ? item.existing.src_summary.slice(0, 200) + "…"
                           : item.existing.src_summary)
@@ -934,7 +951,7 @@ function DuplicateReviewStep({
                   display: "flex", alignItems: "center", gap: 12,
                 }}>
                   <span style={{ fontSize: 12, fontWeight: 600, color: A.muted, flexShrink: 0 }}>
-                    Decision:
+                    {t("decision")}
                   </span>
                   <select
                     value={decisions[item.staging_id] || "bypass"}
@@ -947,8 +964,8 @@ function DuplicateReviewStep({
                       fontFamily: sans, background: A.card, flex: 1,
                     }}
                   >
-                    {(Object.entries(decisionLabels(item)) as [Decision, string][]).map(([val, label]) => (
-                      <option key={val} value={val}>{label}</option>
+                    {(Object.entries(decisionLabels(item)) as [Decision, ReturnType<typeof decisionLabels>[string]][]).map(([val, label]) => (
+                      <option key={val} value={val}>{t(label)}</option>
                     ))}
                   </select>
                 </div>
@@ -960,7 +977,7 @@ function DuplicateReviewStep({
 
       {!allDecided && (
         <div style={{ display: "flex", gap: 12 }}>
-          <Btn variant="secondary" onClick={onDone}>Skip — decide later</Btn>
+          <Btn variant="secondary" onClick={onDone}>{t("skipLater")}</Btn>
           <Btn
             variant="primary"
             disabled={submitting}
@@ -972,8 +989,8 @@ function DuplicateReviewStep({
             }}
           >
             {submitting
-              ? <><Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> Saving…</>
-              : <>Confirm decisions ({items.length}) <ArrowRight size={14} /></>}
+              ? <><Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> {t("saving")}</>
+              : <>{t("confirmDecisions", items.length)} <ArrowRight size={14} /></>}
           </Btn>
         </div>
       )}
@@ -982,17 +999,17 @@ function DuplicateReviewStep({
         <Card>
           <div style={{ color: A.green, fontSize: 14, fontWeight: 600, marginBottom: 16,
             display: "flex", alignItems: "center", gap: 8 }}>
-            <CheckCircle size={16} /> All decisions applied.
+            <CheckCircle size={16} /> {t("allApplied")}
           </div>
           <div style={{ display: "flex", gap: 12 }}>
-            <Btn variant="secondary" onClick={onDone}>Back to Upload</Btn>
+            <Btn variant="secondary" onClick={onDone}>{t("backToUpload")}</Btn>
             <a href="/admin/s1-rewrite" style={{
               display: "inline-flex", alignItems: "center", gap: 8,
               padding: "9px 18px", borderRadius: 8,
               background: A.gold, border: `1px solid ${A.gold}`,
               fontSize: 13, fontWeight: 600, color: "var(--aa-on-solid)", textDecoration: "none",
             }}>
-              Go to S1 Rewrite <ArrowRight size={14} />
+              {t("goToS1")} <ArrowRight size={14} />
             </a>
           </div>
         </Card>
@@ -1006,6 +1023,7 @@ function DuplicateReviewStep({
 type Step = 1 | 2 | 3 | 4 | 5;
 
 function TourContentTab() {
+  const t = useT(UP);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [step, setStep]         = useState<Step>(1);
@@ -1056,7 +1074,7 @@ function TourContentTab() {
       return true;
     });
     if (valid.length === 0) {
-      setFileError("Only .xlsx files up to 50 MB are supported");
+      setFileError(t("onlyXlsx"));
       return;
     }
     setFileError("");
@@ -1071,10 +1089,10 @@ function TourContentTab() {
     ]);
   }
 
-  const onDrop = useCallback((e: React.DragEvent) => {
+  function onDrop(e: React.DragEvent) {
     e.preventDefault(); setDragging(false);
     addFiles(Array.from(e.dataTransfer.files));
-  }, []);
+  }
 
   function removeFile(id: string) {
     setFileStates(prev => prev.filter(f => f.id !== id));
@@ -1100,7 +1118,7 @@ function TourContentTab() {
         });
         if (!urlRes.ok) {
           const e = await urlRes.json().catch(() => ({}));
-          throw new Error(e.detail || `Failed to get upload URL (${urlRes.status})`);
+          throw new Error(e.detail || t("uploadUrlFailed", urlRes.status));
         }
         const urlData: { upload_url: string; s3_key: string } = await urlRes.json();
 
@@ -1108,7 +1126,7 @@ function TourContentTab() {
           method: "PUT", body: fs.file,
           headers: { "Content-Type": fs.file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
         });
-        if (!putRes.ok) throw new Error(`S3 upload failed (${putRes.status})`);
+        if (!putRes.ok) throw new Error(t("s3Failed", putRes.status));
 
         updateFile(fs.id, { status: "parsing", s3Key: urlData.s3_key });
 
@@ -1119,7 +1137,7 @@ function TourContentTab() {
         });
         if (!parseRes.ok) {
           const e = await parseRes.json().catch(() => ({}));
-          throw new Error(e.detail || `Parse failed (${parseRes.status})`);
+          throw new Error(e.detail || t("parseFailed", parseRes.status));
         }
         const parseData: DryRunResponse = await parseRes.json();
 
@@ -1130,7 +1148,7 @@ function TourContentTab() {
       } catch (err) {
         updateFile(fs.id, {
           status: "error",
-          parseError: err instanceof Error ? err.message : "Upload failed",
+          parseError: err instanceof Error ? err.message : t("uploadFailed"),
         });
       }
     }));
@@ -1167,7 +1185,7 @@ function TourContentTab() {
         });
         if (!res.ok) {
           const e = await res.json().catch(() => ({}));
-          throw new Error(e.detail || `Commit failed (${res.status})`);
+          throw new Error(e.detail || t("commitFailed", res.status));
         }
         const data: CommitResponse = await res.json();
         updateFile(fs.id, { status: "done", commitResult: data });
@@ -1181,7 +1199,7 @@ function TourContentTab() {
       } catch (err) {
         updateFile(fs.id, {
           status: "error",
-          commitError: err instanceof Error ? err.message : "Commit failed",
+          commitError: err instanceof Error ? err.message : t("commitFailedShort"),
         });
       }
     }));
@@ -1191,11 +1209,11 @@ function TourContentTab() {
     if (batchIdsWithStaged.length > 0) {
       setDupBatchIds(batchIdsWithStaged);
       setStep(5);
-      showToast("Tours saved. Duplicate tours need review.", "success");
+      showToast(t("toastDups"), "success");
     } else if (anySuccess && !anyNewTours) {
-      showToast("No new tours — every row already exists in the catalog.", "success");
+      showToast(t("toastNoNew"), "success");
     } else {
-      showToast(`Tours saved to database successfully`, "success");
+      showToast(t("toastSaved"), "success");
     }
   }
 
@@ -1222,8 +1240,8 @@ function TourContentTab() {
     parsed: A.green, "blocked-file": A.red, committing: A.gold, done: A.green, error: A.red,
   };
   const fileStatusLabel: Record<FileState["status"], string> = {
-    pending: "Pending", uploading: "Uploading…", parsing: "Parsing…",
-    parsed: "Ready", "blocked-file": "Blocked", committing: "Saving…", done: "Saved", error: "Error",
+    pending: t("stPending"), uploading: t("stUploading"), parsing: t("stParsing"),
+    parsed: t("stReady"), "blocked-file": t("stBlocked"), committing: t("stSaving"), done: t("stSaved"), error: t("stError"),
   };
 
   return (
@@ -1234,7 +1252,7 @@ function TourContentTab() {
       {step === 1 && (
         <div style={{ maxWidth: 620 }}>
           <Card>
-            <SLabel>Source Files</SLabel>
+            <SLabel>{t("sourceFiles")}</SLabel>
             <div
               onDragOver={e => { e.preventDefault(); setDragging(true); }}
               onDragLeave={() => setDragging(false)}
@@ -1251,10 +1269,10 @@ function TourContentTab() {
                 onChange={e => { if (e.target.files) addFiles(Array.from(e.target.files)); }} />
               <Upload size={26} style={{ color: A.muted2, marginBottom: 10 }} />
               <div style={{ fontSize: 14, fontWeight: 600, color: A.ink }}>
-                Drop Excel files here or click to browse
+                {t("dropHere")}
               </div>
               <div style={{ fontSize: 12, color: A.muted2, marginTop: 4 }}>
-                Supported: .xlsx · max 50 MB per file · multiple files allowed
+                {t("supported")}
               </div>
             </div>
 
@@ -1294,7 +1312,7 @@ function TourContentTab() {
             <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
               <div>
                 <label style={{ fontSize: 12, fontWeight: 600, color: A.muted, display: "block", marginBottom: 5 }}>
-                  Max tours per file
+                  {t("maxTours")}
                 </label>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <input type="number" min={1} max={500} value={maxTours}
@@ -1302,7 +1320,7 @@ function TourContentTab() {
                     style={{ width: 90, padding: "7px 10px", borderRadius: 7,
                       border: `1px solid ${A.line}`, background: A.card,
                       fontSize: 13, color: A.ink, fontFamily: sans }} />
-                  <span style={{ fontSize: 11, color: A.muted2 }}>min 1 · max 500</span>
+                  <span style={{ fontSize: 11, color: A.muted2 }}>{t("minMax")}</span>
                 </div>
               </div>
             </div>
@@ -1313,7 +1331,7 @@ function TourContentTab() {
                 border: `1px solid ${fileStates.length > 0 ? A.gold : A.muted}`,
                 display: "flex", alignItems: "center", gap: 8,
               }}>
-              Upload Files <ArrowRight size={14} />
+              {t("uploadFiles")} <ArrowRight size={14} />
             </Btn>
           </Card>
         </div>
@@ -1323,7 +1341,7 @@ function TourContentTab() {
       {step === 2 && (
         <div style={{ maxWidth: 560 }}>
           <Card>
-            <SLabel>Upload to S3</SLabel>
+            <SLabel>{t("stepUpload")}</SLabel>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {fileStates.map(fs => (
                 <div key={fs.id} style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -1352,7 +1370,7 @@ function TourContentTab() {
             </div>
             {allUploading && (
               <div style={{ marginTop: 16, color: A.muted, fontSize: 12 }}>
-                Uploading and parsing files in parallel…
+                {t("uploadingParallel")}
               </div>
             )}
           </Card>
@@ -1365,9 +1383,9 @@ function TourContentTab() {
           {/* Summary cards */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 200px), 1fr))", gap: 14 }}>
             {[
-              { label: "Tours Ready",   value: totalReady,   color: A.green },
-              { label: "Tours Blocked", value: totalBlocked, color: totalBlocked > 0 ? A.red : A.muted2 },
-              { label: "Files",         value: fileStates.length, color: A.gold },
+              { label: t("toursReadyCard"),   value: totalReady,   color: A.green },
+              { label: t("toursBlockedCard"), value: totalBlocked, color: totalBlocked > 0 ? A.red : A.muted2 },
+              { label: t("filesCard"),         value: fileStates.length, color: A.gold },
             ].map(c => (
               <Card key={c.label}>
                 <SLabel>{c.label}</SLabel>
@@ -1398,17 +1416,17 @@ function TourContentTab() {
                 </span>
                 {fs.status === "parsed" && (
                   <>
-                    <Badge color="green">{fs.parseResult?.ready_count ?? 0} ready</Badge>
+                    <Badge color="green">{t("readyN", fs.parseResult?.ready_count ?? 0)}</Badge>
                     {(fs.parseResult?.blocked_count ?? 0) > 0 && (
-                      <Badge color="red">{fs.parseResult?.blocked_count} blocked</Badge>
+                      <Badge color="red">{t("blockedN", fs.parseResult?.blocked_count ?? 0)}</Badge>
                     )}
                   </>
                 )}
                 {fs.status === "blocked-file" && (
-                  <Badge color="red">File blocked</Badge>
+                  <Badge color="red">{t("fileBlocked")}</Badge>
                 )}
                 {fs.status === "error" && (
-                  <Badge color="red">Error</Badge>
+                  <Badge color="red">{t("error")}</Badge>
                 )}
                 {fs.expanded ? <ChevronUp size={14} style={{ color: A.muted2 }} /> : <ChevronDown size={14} style={{ color: A.muted2 }} />}
               </div>
@@ -1418,7 +1436,7 @@ function TourContentTab() {
                   {/* Error state */}
                   {(fs.status === "error" || fs.status === "blocked-file") && (
                     <div style={{ padding: "16px 20px", color: A.red, fontSize: 13 }}>
-                      {fs.parseError || fs.parseResult?.message || "Upload failed"}
+                      {fs.parseError || fs.parseResult?.message || t("uploadFailed")}
                     </div>
                   )}
 
@@ -1427,12 +1445,13 @@ function TourContentTab() {
                     <div style={{ overflowX: "auto" }}>
                       <div style={{ padding: "10px 20px 4px", fontSize: 11, fontWeight: 700,
                         textTransform: "uppercase", letterSpacing: "0.12em", color: A.muted }}>
-                        Ready Tours
+                        {t("readyTours")}
                       </div>
                       <table style={{ width: "100%", borderCollapse: "collapse" }}>
                         <thead>
                           <tr>
-                            {["#", "Tour Name", "Country", "Duration", "Price", "Group Size", "Period", "Provider", "SKU", "Status"].map((h, i) => (
+                            {["#", t("colTourName"), t("colCountry"), t("colDuration"), t("colPrice"), t("colGroupSize"),
+                              t("colPeriod"), t("colProvider"), t("colSku"), t("colStatus")].map((h, i) => (
                               <th key={h} style={{ ...TH, textAlign: i === 0 ? "center" : "left" }}>{h}</th>
                             ))}
                           </tr>
@@ -1457,21 +1476,21 @@ function TourContentTab() {
                     <div style={{ overflowX: "auto" }}>
                       <div style={{ padding: "10px 20px 4px", fontSize: 11, fontWeight: 700,
                         textTransform: "uppercase", letterSpacing: "0.12em", color: A.red }}>
-                        Blocked Tours
+                        {t("blockedTours")}
                       </div>
                       <table style={{ width: "100%", borderCollapse: "collapse" }}>
                         <thead>
                           <tr>
-                            {["Tour Name", "Country", "Reason", "Details"].map(h => (
+                            {[t("colTourName"), t("colCountry"), t("colReason"), t("colDetails")].map(h => (
                               <th key={h} style={{ ...TH, textAlign: "left" }}>{h}</th>
                             ))}
                           </tr>
                         </thead>
                         <tbody>
-                          {(fs.parseResult?.blocked_tours ?? []).map((t, i) => (
+                          {(fs.parseResult?.blocked_tours ?? []).map((bt, i) => (
                             <tr key={i} style={{ background: i % 2 === 1 ? A.bg : "transparent" }}>
-                              <td style={{ ...TD, fontWeight: 600 }}>{t.src_name}</td>
-                              <td style={TD}>{t.country || "—"}</td>
+                              <td style={{ ...TD, fontWeight: 600 }}>{bt.src_name}</td>
+                              <td style={TD}>{bt.country || "—"}</td>
                               <td style={TD}>
                                 {/* AA-490: duplicate_in_file (two rows in THIS upload sharing
                                     name+provider, mirrors the real Commit-time drop from
@@ -1479,26 +1498,26 @@ function TourContentTab() {
                                     (already in the DB catalog) — was silently absent from
                                     preview before this fix. */}
                                 <Badge color={
-                                  t.reason === "duplicate_tour"    ? "blue"  :
-                                  t.reason === "duplicate_of_existing" ? "blue" :
-                                  t.reason === "empty_itinerary"   ? "red"   :
-                                  t.reason === "duplicate_in_file" ? "amber" : "amber"
+                                  bt.reason === "duplicate_tour"    ? "blue"  :
+                                  bt.reason === "duplicate_of_existing" ? "blue" :
+                                  bt.reason === "empty_itinerary"   ? "red"   :
+                                  bt.reason === "duplicate_in_file" ? "amber" : "amber"
                                 }>
-                                  {t.reason === "duplicate_tour"    ? "Duplicate" :
-                                   t.reason === "duplicate_in_file" ? "Duplicate in File" :
+                                  {bt.reason === "duplicate_tour"    ? t("rDuplicate") :
+                                   bt.reason === "duplicate_in_file" ? t("rDuplicateInFile") :
                                    /* AA-604: no itinerary body → cannot be rewritten (POI/activity
                                       or source file lacking itinerary content) */
-                                   t.reason === "empty_itinerary"   ? "No Itinerary" :
-                                   t.reason === "duplicate_of_existing" ? "Near Duplicate" :
-                                   t.reason === "not_a_tour"        ? "Not a Tour" :
-                                   t.reason === "thin_itinerary"    ? "Thin Itinerary" :
-                                                                       "Missing Fields"}
+                                   bt.reason === "empty_itinerary"   ? t("rNoItinerary") :
+                                   bt.reason === "duplicate_of_existing" ? t("rNearDuplicate") :
+                                   bt.reason === "not_a_tour"        ? t("rNotATour") :
+                                   bt.reason === "thin_itinerary"    ? t("rThinItinerary") :
+                                                                       t("rMissingFields")}
                                 </Badge>
                               </td>
                               <td style={{ ...TD, fontSize: 12, color: A.muted }}>
-                                {t.reason === "missing_fields"
-                                  ? (t.missing_fields ?? []).join(", ")
-                                  : t.message || "Already in catalog"}
+                                {bt.reason === "missing_fields"
+                                  ? (bt.missing_fields ?? []).join(", ")
+                                  : bt.message || t("alreadyInCatalog")}
                               </td>
                             </tr>
                           ))}
@@ -1513,7 +1532,7 @@ function TourContentTab() {
 
           {/* Action buttons */}
           <div style={{ display: "flex", gap: 12 }}>
-            <Btn variant="secondary" onClick={reset}>← Upload Another</Btn>
+            <Btn variant="secondary" onClick={reset}>{t("uploadAnother")}</Btn>
             <Btn
               variant="primary"
               disabled={!hasFilesToCommit}
@@ -1526,7 +1545,7 @@ function TourContentTab() {
                 cursor: hasFilesToCommit ? "pointer" : "not-allowed",
               }}
             >
-              Confirm & Save to DB ({commitFileCount} file{commitFileCount === 1 ? "" : "s"}) <ArrowRight size={14} />
+              {t("confirmSave", commitFileCount)} <ArrowRight size={14} />
             </Btn>
           </div>
         </div>
@@ -1536,7 +1555,7 @@ function TourContentTab() {
       {step === 4 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
           <Card>
-            <SLabel>Saving to Database</SLabel>
+            <SLabel>{t("savingDb")}</SLabel>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {fileStates.filter(f => f.status !== "blocked-file").map(fs => {
                 const noNewTours = fs.status === "done" && fileHasNoNewTours(fs);
@@ -1563,9 +1582,9 @@ function TourContentTab() {
                       ? (() => {
                           const written = fs.commitResult?.tours_written ?? fs.commitResult?.tour_count ?? 0;
                           const staged  = fs.commitResult?.tours_staged ?? 0;
-                          if (staged > 0) return `${written} saved · ${staged} need review`;
-                          if (written === 0) return "No new tours (all duplicates)";
-                          return `${written} tours saved`;
+                          if (staged > 0) return t("savedNeedReview", written, staged);
+                          if (written === 0) return t("noNewAllDups");
+                          return t("toursSaved", written);
                         })()
                       : fileStatusLabel[fs.status]}
                   </span>
@@ -1582,10 +1601,10 @@ function TourContentTab() {
                 <div style={{ display: "flex", alignItems: "center", gap: 8,
                   color: A.gold, fontSize: 14, fontWeight: 600, marginBottom: 16 }}>
                   <AlertCircle size={16} />
-                  No new tours — every row already exists in the catalog.
+                  {t("toastNoNew")}
                 </div>
                 <div style={{ display: "flex", gap: 12 }}>
-                  <Btn variant="secondary" onClick={reset}>Upload More Files</Btn>
+                  <Btn variant="secondary" onClick={reset}>{t("uploadMore")}</Btn>
                 </div>
               </div>
             )}
@@ -1595,17 +1614,17 @@ function TourContentTab() {
                 <div style={{ display: "flex", alignItems: "center", gap: 8,
                   color: A.green, fontSize: 14, fontWeight: 600, marginBottom: 16 }}>
                   <CheckCircle size={16} />
-                  Done! Tours are ready for rewrite in S1.
+                  {t("doneReady")}
                 </div>
                 <div style={{ display: "flex", gap: 12 }}>
-                  <Btn variant="secondary" onClick={reset}>Upload More Files</Btn>
+                  <Btn variant="secondary" onClick={reset}>{t("uploadMore")}</Btn>
                   <a href="/admin/s1-rewrite" style={{
                     display: "inline-flex", alignItems: "center", gap: 8,
                     padding: "9px 18px", borderRadius: 8,
                     background: A.gold, border: `1px solid ${A.gold}`,
                     fontSize: 13, fontWeight: 600, color: "var(--aa-on-solid)", textDecoration: "none",
                   }}>
-                    Go to S1 Rewrite <ArrowRight size={14} />
+                    {t("goToS1")} <ArrowRight size={14} />
                   </a>
                 </div>
               </div>
@@ -1642,17 +1661,18 @@ function TourContentTab() {
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function UploadPage() {
+  const t = useT(UP);
   return (
         <AdminMain>
           <PageHeader
-            title="Upload (S0)"
+            title={t("title")}
             description={
               <>
-                <span style={{ display: "block", marginBottom: 4 }}>Tour Content ingestion</span>
+                <span style={{ display: "block", marginBottom: 4 }}>{t("subtitle")}</span>
                 <span style={{ display: "block", fontSize: 12, color: A.muted2 }}>
-                  Manage brand identity settings →{" "}
+                  {t("brandLead")}{" "}
                   <a href="/admin/settings?tab=brand" style={{ color: A.gold, textDecoration: "none", fontWeight: 500 }}>
-                    Brand Identity page
+                    {t("brandLink")}
                   </a>
                 </span>
               </>

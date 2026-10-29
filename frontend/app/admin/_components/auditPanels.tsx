@@ -11,6 +11,8 @@
 import { useState } from "react";
 import { AlertTriangle, ClipboardList, RotateCw } from "lucide-react";
 import { A, sans, Card, Btn, TH, TD } from "./adminUi";
+import { useT } from "../../_kit/core/useI18n";
+import { M } from "./components.messages";
 
 export async function fetchJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
@@ -31,13 +33,14 @@ export function EmptyState({ title, body }: { title: string; body: string }) {
 }
 
 export function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
+  const t = useT(M);
   return (
     <Card style={{ borderColor: A.redBorder }}>
       <div style={{ textAlign: "center", padding: "32px 20px" }}>
         <AlertTriangle size={26} color={A.red} style={{ marginBottom: 10 }} />
-        <div style={{ fontSize: 14, fontWeight: 600, color: A.ink, marginBottom: 6 }}>Could not load this panel</div>
+        <div style={{ fontSize: 14, fontWeight: 600, color: A.ink, marginBottom: 6 }}>{t("panelFailed")}</div>
         <div style={{ fontSize: 12.5, color: A.muted, marginBottom: 14 }}>{message}</div>
-        <Btn variant="secondary" size="sm" onClick={onRetry}><RotateCw size={13} /> Retry</Btn>
+        <Btn variant="secondary" size="sm" onClick={onRetry}><RotateCw size={13} /> {t("retry")}</Btn>
       </div>
     </Card>
   );
@@ -62,6 +65,7 @@ export interface Col<T> {
 export function AuditTable<T>({ rows, columns, rowKey, sortable = false }: {
   rows: T[]; columns: Col<T>[]; rowKey: (row: T) => string; sortable?: boolean;
 }) {
+  const t = useT(M);
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [colFilters, setColFilters] = useState<Record<string, string>>({});
@@ -125,7 +129,7 @@ export function AuditTable<T>({ rows, columns, rowKey, sortable = false }: {
                     <input
                       value={colFilters[c.key] ?? ""}
                       onChange={e => setColFilters(prev => ({ ...prev, [c.key]: e.target.value }))}
-                      placeholder="Filter…"
+                      placeholder={t("filter")}
                       style={{
                         width: "100%", fontSize: 11.5, padding: "4px 7px", boxSizing: "border-box",
                         border: `1px solid ${A.line}`, borderRadius: 5, background: A.card, color: A.body,
@@ -147,7 +151,7 @@ export function AuditTable<T>({ rows, columns, rowKey, sortable = false }: {
       </table>
       {sortable && displayRows.length === 0 && rows.length > 0 && (
         <div style={{ padding: "16px", textAlign: "center", fontSize: 12.5, color: A.muted2 }}>
-          No rows match the current column filter(s).
+          {t("noRowsMatch")}
         </div>
       )}
     </div>

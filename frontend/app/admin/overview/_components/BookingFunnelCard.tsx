@@ -7,48 +7,43 @@
 // 8 cases after 5 inquiries read as "160%". The weekly table keeps every column and scrolls on a phone (kit ScrollX).
 // Data: booking.v_ops_funnel_daily + booking.v_ops_case_status (Booking's own aggregate views, no customer data);
 // the on-screen source texts (plain words) are in ./sources.ts.
-import { K, useIsPhone } from "../../../_kit";
+import { K, useIsPhone, useLang, useT } from "../../../_kit";
 import { BOOKING_ADMIN_URL } from "../../../../lib/apps";
 import { SourceHint } from "./SourceHint";
-import { BOOKING_SRC } from "./sources";
+import { CASE_STATUS, OPS } from "./ops.messages";
+import { useSources } from "./sources";
 import { fmtDay, fmtInt, OpsCard, PHONE_CELL, TableWrap, TD, TH, UnavailableNote } from "./opsUi";
 import type { BkMetric, BookingData, Section } from "./opsTypes";
 
 /** The four counted steps (Cancelled is a table column only). */
 type StepKey = Exclude<BkMetric, "cancelled">;
 
-const STEPS: { key: StepKey; label: string; short: string }[] = [
-  { key: "inquiry_received", label: "Inquiries received", short: "Inquiries" },
-  { key: "trip_case_created", label: "Trip cases opened", short: "Cases" },
-  { key: "proposal_sent", label: "Proposals sent", short: "Proposals" },
-  { key: "confirmed", label: "Confirmed", short: "Confirmed" },
+type StepWord = "stepInquiries" | "stepCases" | "stepProposals" | "stepConfirmed";
+type StepShort = "stepInquiriesShort" | "stepCasesShort" | "stepProposalsShort" | "stepConfirmed";
+
+const STEPS: { key: StepKey; label: StepWord; short: StepShort }[] = [
+  { key: "inquiry_received", label: "stepInquiries", short: "stepInquiriesShort" },
+  { key: "trip_case_created", label: "stepCases", short: "stepCasesShort" },
+  { key: "proposal_sent", label: "stepProposals", short: "stepProposalsShort" },
+  { key: "confirmed", label: "stepConfirmed", short: "stepConfirmed" },
 ];
 
-/** Plain labels for booking.trip_cases statuses (Booking trip_cases_status_chk). */
-const STATUS_LABEL: Record<string, string> = {
-  new_inquiry: "New inquiry",
-  discovery: "Discovery",
-  building: "Building the trip",
-  proposal_sent: "Proposal sent",
-  confirmed: "Confirmed",
-  supplier_confirming: "Confirming suppliers",
-  invoice_sent: "Invoice sent",
-  payment_pending: "Waiting for payment",
-  paid: "Paid",
-  pre_departure: "Before departure",
-  on_trip: "On the trip",
-  completed: "Completed",
-  cancelled: "Cancelled",
-};
+/** Plain label of a booking.trip_cases status (Booking trip_cases_status_chk) in the UI language; unknown as sent. */
+function useStatusLabel(): (status: string) => string {
+  const t = useT(CASE_STATUS) as unknown as (key: string) => string;
+  return (status) => (Object.hasOwn(CASE_STATUS.en, status) ? t(status) : status);
+}
 
 export function BookingFunnelCard({ section }: { section: Section<BookingData> | undefined }) {
+  const t = useT(OPS);
+  const { BOOKING_SRC } = useSources();
   return (
     <OpsCard
       testId="ops-booking"
-      title="Booking activity — last 8 weeks"
-      subtitle="Inquiries, trip cases, proposals and confirmations (weeks start on Monday, UTC)"
+      title={t("bookingTitle")}
+      subtitle={t("bookingSubtitle")}
       source={BOOKING_SRC.card}
-      link={{ href: BOOKING_ADMIN_URL, label: "Open Booking admin", external: true, hint: "AA-Booking staff admin" }}
+      link={{ href: BOOKING_ADMIN_URL, label: t("openBooking"), external: true, hint: t("bookingAdminHint") }}
     >
       {!section ? null : section.status !== "ok" ? (
         <UnavailableNote section={section} />
@@ -60,6 +55,10 @@ export function BookingFunnelCard({ section }: { section: Section<BookingData> |
 }
 
 function BookingBody({ data }: { data: BookingData }) {
+  const t = useT(OPS);
+  const lang = useLang();
+  const statusLabel = useStatusLabel();
+  const { BOOKING_SRC } = useSources();
   const phone = useIsPhone();
   const th: React.CSSProperties = phone ? { ...TH, ...PHONE_CELL, fontSize: 11 } : TH;
   const td: React.CSSProperties = phone ? { ...TD, ...PHONE_CELL } : TD;
@@ -81,8 +80,7 @@ function BookingBody({ data }: { data: BookingData }) {
             fontWeight: 500,
           }}
         >
-          {stuck > 1 ? `${stuck} inquiries are stuck in the Booking inbox and need a look` : "1 inquiry is stuck in the Booking inbox and needs a look"}
-          ({data.inbox_attention.parked} waiting, {data.inbox_attention.failed} failed).
+          {t("stuck", stuck)} {t("stuckParts", data.inbox_attention.parked, data.inbox_attention.failed)}
           <SourceHint source={BOOKING_SRC.attention} />
         </div>
       )}
@@ -110,35 +108,34 @@ function BookingBody({ data }: { data: BookingData }) {
               }}
             >
               <div style={{ fontSize: 11, fontWeight: 600, color: K.muted }}>
-                {i + 1}. {s.label}
+                {i + 1}. {t(s.label)}
                 <SourceHint source={BOOKING_SRC.steps[s.key]} />
               </div>
               <div style={{ fontSize: 22, fontWeight: 600, color: K.ink, fontVariantNumeric: "tabular-nums" }}>
                 {fmtInt(data.totals[s.key])}
               </div>
-              <div style={{ fontSize: 11, color: K.muted }}>in the 8 weeks</div>
+              <div style={{ fontSize: 11, color: K.muted }}>{t("in8Weeks")}</div>
             </div>
           );
         })}
       </div>
       <div data-testid="ops-booking-count-note" style={{ fontSize: 11, color: K.muted, margin: "-6px 0 12px", lineHeight: 1.5 }}>
-        Each step is counted on its own, so they are not percentages of each other: staff can open a trip case without
-        an inquiry, and a case opened before these 8 weeks can get its proposal inside them.
+        {t("countNote")}
       </div>
 
       <TableWrap testId="ops-booking-weeks">
         <table style={{ width: "100%", minWidth: 440, borderCollapse: "collapse" }}>
           <thead>
             <tr>
-              <th style={th}>{phone ? "Week" : "Week of"}</th>
+              <th style={th}>{phone ? t("week") : t("weekOf")}</th>
               {STEPS.map((s) => (
                 <th key={s.key} data-num-col="" style={{ ...th, textAlign: "right" }}>
-                  {s.short}
+                  {t(s.short)}
                   <SourceHint source={BOOKING_SRC.weeks[s.key]} size={11} />
                 </th>
               ))}
               <th data-num-col="" style={{ ...th, textAlign: "right" }}>
-                Cancelled
+                {t("cancelled")}
                 <SourceHint source={BOOKING_SRC.cancelled} size={11} />
               </th>
             </tr>
@@ -146,7 +143,7 @@ function BookingBody({ data }: { data: BookingData }) {
           <tbody>
             {[...data.weeks].reverse().map((w) => (
               <tr key={w.week_start}>
-                <td style={{ ...td, color: K.ink, fontWeight: 500, whiteSpace: "nowrap" }}>{fmtDay(w.week_start)}</td>
+                <td style={{ ...td, color: K.ink, fontWeight: 500, whiteSpace: "nowrap" }}>{fmtDay(w.week_start, lang)}</td>
                 {STEPS.map((s) => (
                   <td key={s.key} style={{ ...td, textAlign: "right", color: w[s.key] ? K.ink : K.muted2 }}>
                     {fmtInt(w[s.key])}
@@ -161,16 +158,16 @@ function BookingBody({ data }: { data: BookingData }) {
 
       <div style={{ marginTop: 14 }}>
         <div style={{ fontSize: 12, color: K.muted, marginBottom: 6, display: "flex", alignItems: "center" }}>
-          Open trip cases right now: <b style={{ color: K.ink, marginLeft: 4 }}>{fmtInt(data.open_cases)}</b>
+          {t("openCasesNow")} <b style={{ color: K.ink, marginLeft: 4 }}>{fmtInt(data.open_cases)}</b>
           <SourceHint source={BOOKING_SRC.openCases} />
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }} data-testid="ops-booking-status">
-          {openStatuses.length === 0 && <span style={{ fontSize: 12, color: K.muted }}>No open cases.</span>}
+          {openStatuses.length === 0 && <span style={{ fontSize: 12, color: K.muted }}>{t("noOpenCases")}</span>}
           {openStatuses.map((s) => (
-            <StatusChip key={s.status} label={STATUS_LABEL[s.status] ?? s.status} n={s.n} />
+            <StatusChip key={s.status} label={statusLabel(s.status)} n={s.n} />
           ))}
           {closedStatuses.map((s) => (
-            <StatusChip key={s.status} label={STATUS_LABEL[s.status] ?? s.status} n={s.n} muted />
+            <StatusChip key={s.status} label={statusLabel(s.status)} n={s.n} muted />
           ))}
         </div>
       </div>

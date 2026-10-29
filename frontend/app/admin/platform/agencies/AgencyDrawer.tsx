@@ -28,30 +28,22 @@ import {
   SkeletonBar,
   SkeletonStyle,
   apiGet,
-  formatDateTime,
   mono,
   sans,
+  useFormat,
+  useT,
   useToast,
   type ColumnDef,
 } from "../../../_kit";
 import {
   CRM_API,
-  DATA_REQUEST_KINDS,
-  FEATURES,
   LOCK_REASONS,
   RECOVERY_REASONS,
-  crmErrorText,
-  crmWrite,
-  dataRequestStatus,
   formatBytes,
   formatUsd,
-  kindLabel,
-  lockSourceText,
-  membershipFeed,
   pct,
   recoveryDue,
   shortId,
-  stateLabel,
   usdPct,
   type AgencyEntitlements,
   type AgencyMember,
@@ -75,6 +67,8 @@ import {
   type WriteResult,
 } from "@/lib/crmConsole";
 import { Field, InlineError, Section, WriteModal, fieldStyle, noteStyle } from "./consoleUi";
+import { DRAWER } from "./messages";
+import { useCrmText } from "./useCrmText";
 
 type Props = {
   agency: TenantSummary;
@@ -86,12 +80,19 @@ type Props = {
 
 const key = (tid: string, part: string) => ["crm-agency", tid, part] as const;
 
-function errText(e: unknown): string {
-  if (e instanceof ApiError) return crmErrorText(e.status, e.message);
-  return (e as Error)?.message || "Could not load this part.";
+function useErrText(): (e: unknown) => string {
+  const t = useT(DRAWER);
+  const crm = useCrmText();
+  return (e: unknown) => {
+    if (e instanceof ApiError) return crm.errorText(e.status, e.message);
+    return (e as Error)?.message || t("loadError");
+  };
 }
 
 export default function AgencyDrawer({ agency, canWrite, onClose, onChanged }: Props) {
+  const t = useT(DRAWER);
+  const crm = useCrmText();
+  const errText = useErrText();
   const qc = useQueryClient();
   const toast = useToast();
   const tid = agency.tenant_id;
@@ -134,7 +135,7 @@ export default function AgencyDrawer({ agency, canWrite, onClose, onChanged }: P
     onChanged(next?.tenant_id ? next : undefined);
   };
 
-  const st = stateLabel(a.state);
+  const st = crm.state(a.state);
   const active = a.state === "active";
   const lockable = a.state === "active" || a.state === "locked";
 
@@ -143,26 +144,23 @@ export default function AgencyDrawer({ agency, canWrite, onClose, onChanged }: P
       title={
         <span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           {a.agency_name} <Badge tone={st.tone}>{st.label}</Badge>
-          {a.is_synthetic && <Badge tone="purple" dot={false}>Synthetic</Badge>}
+          {a.is_synthetic && <Badge tone="purple" dot={false}>{t("synthetic")}</Badge>}
         </span>
       }
       footer={
         <Button variant="secondary" size="sm" onClick={() => void refreshAll()} disabled={fetching}>
-          <RefreshCw size={13} /> {fetching ? "Loading…" : "Refresh"}
+          <RefreshCw size={13} /> {fetching ? t("loading") : t("refresh")}
         </Button>
       }>
       <SkeletonStyle />
       <div data-testid="crm-agency-drawer" style={{ display: "flex", flexDirection: "column", gap: 14, fontFamily: sans }}>
-        <div style={{ ...noteStyle, fontFamily: mono }}>Agency id {tid}</div>
+        <div style={{ ...noteStyle, fontFamily: mono }}>{t("agencyId", tid)}</div>
         {summary.isError && <InlineError message={errText(summary.error)} />}
         {a.state === "locked" && (
-          <div style={{ ...noteStyle, color: K.amber }}>
-            Locked: members cannot sign in to the CRM, new inquiries are refused, and owner recovery, first-owner invites
-            and data requests wait until the agency is unlocked. A pending owner recovery&apos;s 14 days keep running.
-          </div>
+          <div style={{ ...noteStyle, color: K.amber }}>{t("lockedNote")}</div>
         )}
         {!canWrite && (
-          <div style={noteStyle}>Read only: your staff account is not in the crm-platform-admin group.</div>
+          <div style={noteStyle}>{t("readOnly")}</div>
         )}
 
         <UsageSection q={usage} />
@@ -207,24 +205,27 @@ function Bar({ value, warn }: { value: number; warn: boolean }) {
 }
 
 function UsageSection({ q }: { q: Q<AgencyUsage> }) {
+  const t = useT(DRAWER);
+  const { formatDateTime } = useFormat();
+  const errText = useErrText();
   const u = q.data;
   return (
-    <Section title="Usage" testId="crm-usage"
-      aside={u ? <span style={noteStyle}>{u.period_start?.slice(0, 10)} to {u.period_end?.slice(0, 10)} (UTC)</span> : undefined}>
+    <Section title={t("usage")} testId="crm-usage"
+      aside={u ? <span style={noteStyle}>{t("period", u.period_start?.slice(0, 10) ?? "", u.period_end?.slice(0, 10) ?? "")}</span> : undefined}>
       {q.isLoading ? <Loading /> : q.isError ? <InlineError message={errText(q.error)} /> : u ? (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 140px), 1fr))", gap: 8 }}>
-          <Tile label="Seats" value={`${u.seats_used} / ${u.seats_allowed}`}>
+          <Tile label={t("seats")} value={`${u.seats_used} / ${u.seats_allowed}`}>
             <Bar value={pct(u.seats_used, u.seats_allowed)} warn={u.seats_used >= u.seats_allowed} />
           </Tile>
-          <Tile label="Active members (30 days)" value={u.active_members_30d} />
-          <Tile label="Storage" value={formatBytes(u.storage_bytes)} />
-          <Tile label="AI spend this month" value={formatUsd(u.ai_cost_usd_month)} sub={`of ${formatUsd(u.ai_budget_usd_month)} budget`}>
+          <Tile label={t("activeMembers")} value={u.active_members_30d} />
+          <Tile label={t("storage")} value={formatBytes(u.storage_bytes)} />
+          <Tile label={t("aiSpend")} value={formatUsd(u.ai_cost_usd_month)} sub={t("ofBudget", formatUsd(u.ai_budget_usd_month))}>
             <Bar value={usdPct(u.ai_cost_usd_month, u.ai_budget_usd_month)} warn={usdPct(u.ai_cost_usd_month, u.ai_budget_usd_month) >= 80} />
           </Tile>
-          <Tile label="Failed jobs (24 h)" value={<span style={{ color: u.failed_jobs_24h ? K.danger : K.ink }}>{u.failed_jobs_24h}</span>} />
-          <Tile label="Inbound mail (30 days)" value={u.inbound_mail_30d || "—"}
-            sub={u.inbound_mail_30d ? undefined : "Not tracked yet"} />
-          <Tile label="Last activity" value={<span style={{ fontSize: 13 }}>{u.last_activity_at ? formatDateTime(u.last_activity_at) : "None"}</span>} />
+          <Tile label={t("failedJobs24")} value={<span style={{ color: u.failed_jobs_24h ? K.danger : K.ink }}>{u.failed_jobs_24h}</span>} />
+          <Tile label={t("inboundMail")} value={u.inbound_mail_30d || "—"}
+            sub={u.inbound_mail_30d ? undefined : t("notTracked")} />
+          <Tile label={t("lastActivity")} value={<span style={{ fontSize: 13 }}>{u.last_activity_at ? formatDateTime(u.last_activity_at) : t("none")}</span>} />
         </div>
       ) : null}
     </Section>
@@ -234,18 +235,19 @@ function UsageSection({ q }: { q: Q<AgencyUsage> }) {
 // ── 2. Access: lock / unlock ──────────────────────────────────────────────────────────────────────
 
 function AccessSection({ agency, canWrite, base, onDone }: { agency: TenantSummary; canWrite: boolean; base: string; onDone: Done }) {
+  const t = useT(DRAWER);
+  const crm = useCrmText();
   const [open, setOpen] = useState<"lock" | "unlock" | null>(null);
   const [reason, setReason] = useState<string>(LOCK_REASONS[0].code);
   const locked = agency.state === "locked";
-  const lockedBy = lockSourceText(agency);
-  const feed = membershipFeed(agency);
+  const lockedBy = crm.lockSource(agency);
+  const feed = crm.feed(agency);
   const path = base.slice(CRM_API.length);
   return (
-    <Section title="Access" testId="crm-access">
+    <Section title={t("access")} testId="crm-access">
       <div style={noteStyle}>
-        {agency.state === "active" && "The agency is active."}
-        {(agency.state === "offboarding" || agency.state === "offboarded") &&
-          "The agency is being or has been offboarded; it cannot be locked or unlocked."}
+        {agency.state === "active" && t("isActive")}
+        {(agency.state === "offboarding" || agency.state === "offboarded") && t("isOffboarded")}
       </div>
       {lockedBy && (
         <div data-testid="crm-lock-source" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -259,42 +261,39 @@ function AccessSection({ agency, canWrite, base, onDone }: { agency: TenantSumma
       {locked && (
         <div data-testid="crm-membership-feed" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           <span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 12.5, color: K.ink }}>
-            CIS membership feed (all agencies) <Badge tone={feed.tone}>{feed.label}</Badge>
-            <span style={noteStyle}>last successful pull: {feed.lastPull}</span>
+            {t("feedTitle")} <Badge tone={feed.tone}>{feed.label}</Badge>
+            <span style={noteStyle}>{t("lastPull", feed.lastPull)}</span>
           </span>
           <div style={noteStyle}>
-            {feed.detail} A CIS lock, unlock or owner removal reaches the CRM within this lag at most.
+            {feed.detail} {t("feedLag")}
           </div>
         </div>
       )}
       {canWrite && (
         <div>
           {locked ? (
-            <Button size="sm" variant="secondary" onClick={() => setOpen("unlock")}><Unlock size={13} /> Unlock</Button>
+            <Button size="sm" variant="secondary" onClick={() => setOpen("unlock")}><Unlock size={13} /> {t("unlock")}</Button>
           ) : (
-            <Button size="sm" variant="danger" onClick={() => setOpen("lock")}><Lock size={13} /> Lock</Button>
+            <Button size="sm" variant="danger" onClick={() => setOpen("lock")}><Lock size={13} /> {t("lock")}</Button>
           )}
         </div>
       )}
       <WriteModal<TenantSummary> open={open === "lock"} onClose={() => setOpen(null)} destructive
-        title={`Lock ${agency.agency_name}?`} confirmLabel="Lock agency"
-        submit={(ticket) => crmWrite<TenantSummary>("POST", `${path}/lock`, { ticket_ref: ticket, reason_code: reason })}
-        onDone={(r) => { setOpen(null); onDone("Agency locked.", r.body); }}>
-        <div style={noteStyle}>
-          Members can no longer use the CRM and new inquiries are refused until AA unlocks the agency. Queued jobs of the
-          agency fail and can be retried after the unlock.
-        </div>
-        <Field label="Reason" htmlFor="crm-lock-reason">
+        title={t("lockTitle", agency.agency_name)} confirmLabel={t("lockConfirm")}
+        submit={(ticket) => crm.write<TenantSummary>("POST", `${path}/lock`, { ticket_ref: ticket, reason_code: reason })}
+        onDone={(r) => { setOpen(null); onDone(t("locked"), r.body); }}>
+        <div style={noteStyle}>{t("lockNote")}</div>
+        <Field label={t("reason")} htmlFor="crm-lock-reason">
           <select id="crm-lock-reason" value={reason} onChange={(e) => setReason(e.target.value)} style={fieldStyle}>
-            {LOCK_REASONS.map((r) => <option key={r.code} value={r.code}>{r.label}</option>)}
+            {crm.lockReasons.map((r) => <option key={r.code} value={r.code}>{r.label}</option>)}
           </select>
         </Field>
       </WriteModal>
       <WriteModal<TenantSummary> open={open === "unlock"} onClose={() => setOpen(null)}
-        title={`Unlock ${agency.agency_name}?`} confirmLabel="Unlock agency"
-        submit={(ticket) => crmWrite<TenantSummary>("POST", `${path}/unlock`, { ticket_ref: ticket } satisfies TicketBody)}
-        onDone={(r) => { setOpen(null); onDone("Agency unlocked.", r.body); }}>
-        <div style={noteStyle}>Members can use the CRM again. Failed jobs can then be retried below.</div>
+        title={t("unlockTitle", agency.agency_name)} confirmLabel={t("unlockConfirm")}
+        submit={(ticket) => crm.write<TenantSummary>("POST", `${path}/unlock`, { ticket_ref: ticket } satisfies TicketBody)}
+        onDone={(r) => { setOpen(null); onDone(t("unlocked"), r.body); }}>
+        <div style={noteStyle}>{t("unlockNote")}</div>
       </WriteModal>
     </Section>
   );
@@ -303,41 +302,41 @@ function AccessSection({ agency, canWrite, base, onDone }: { agency: TenantSumma
 // ── 3. First owner ────────────────────────────────────────────────────────────────────────────────
 
 function FirstOwnerSection({ agency, canWrite, base, onDone }: { agency: TenantSummary; canWrite: boolean; base: string; onDone: Done }) {
+  const t = useT(DRAWER);
+  const crm = useCrmText();
+  const { formatDateTime } = useFormat();
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState("");
   const path = base.slice(CRM_API.length);
   const blocked = agency.has_owner
-    ? "The agency already has an owner (owner_exists)."
+    ? t("ownerExists")
     : agency.holds_travellers
-      ? "The agency already holds travellers or inquiries, so AA cannot invite a first owner (has_travellers)."
+      ? t("hasTravellers")
       : agency.state !== "active"
-        ? "Only an active agency can get a first-owner invitation."
+        ? t("onlyActive")
         : null;
   const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
   const close = () => { setEmail(""); setOpen(false); };
   return (
-    <Section title="First owner" testId="crm-first-owner">
-      <div style={noteStyle}>
-        AA invites the first owner of an empty agency only. Later owners are invited by the agency itself. The address
-        is sent to the CRM once and is not shown or kept here.
-      </div>
+    <Section title={t("firstOwner")} testId="crm-first-owner">
+      <div style={noteStyle}>{t("firstOwnerNote")}</div>
       {blocked && <div style={{ ...noteStyle, color: K.ink3 }}>{blocked}</div>}
       {canWrite && (
         <div>
           <Button size="sm" variant="secondary" disabled={!!blocked} onClick={() => setOpen(true)}
-            title={blocked ?? undefined}>Invite first owner</Button>
+            title={blocked ?? undefined}>{t("inviteFirst")}</Button>
         </div>
       )}
-      <WriteModal open={open} onClose={close} title="Invite the first owner" confirmLabel="Send invitation"
+      <WriteModal open={open} onClose={close} title={t("inviteTitle")} confirmLabel={t("sendInvite")}
         canSubmit={emailOk}
-        submit={(ticket) => crmWrite<OwnerInviteAccepted>("POST", `${path}/owner-invite`, { owner_email: email.trim(), ticket_ref: ticket })}
+        submit={(ticket) => crm.write<OwnerInviteAccepted>("POST", `${path}/owner-invite`, { owner_email: email.trim(), ticket_ref: ticket })}
         onDone={(r) => {
-          const expires = typeof r.body?.expires_at === "string" ? ` It expires ${formatDateTime(r.body.expires_at)}.` : "";
+          const expires = typeof r.body?.expires_at === "string" ? t("expires", formatDateTime(r.body.expires_at)) : "";
           close();
-          onDone(`Invitation sent.${expires}`);
+          onDone(t("inviteSent", expires));
         }}>
-        <Field label="Owner's email" htmlFor="crm-owner-email"
-          hint={email && !emailOk ? "Enter a full email address." : "The CRM mails the invitation link to this address."}>
+        <Field label={t("ownerEmail")} htmlFor="crm-owner-email"
+          hint={email && !emailOk ? t("emailBad") : t("emailHint")}>
           <input id="crm-owner-email" type="email" autoComplete="off" value={email} maxLength={254}
             onChange={(e) => setEmail(e.target.value)} style={fieldStyle} />
         </Field>
@@ -349,6 +348,9 @@ function FirstOwnerSection({ agency, canWrite, base, onDone }: { agency: TenantS
 // ── 4. Features allowed ───────────────────────────────────────────────────────────────────────────
 
 function FeaturesSection({ q, canWrite, base, onDone }: { q: Q<AgencyEntitlements>; canWrite: boolean; base: string; onDone: Done }) {
+  const t = useT(DRAWER);
+  const crm = useCrmText();
+  const errText = useErrText();
   const [draft, setDraft] = useState<string[] | null>(null);
   const [open, setOpen] = useState(false);
   const current = q.data?.features_allowed ?? [];
@@ -361,13 +363,13 @@ function FeaturesSection({ q, canWrite, base, onDone }: { q: Q<AgencyEntitlement
       return list.includes(code) ? list.filter((c) => c !== code) : [...list, code];
     });
   return (
-    <Section title="Features allowed" testId="crm-features"
-      aside={q.data ? <span style={noteStyle}>Plan {q.data.plan} · {q.data.seats_allowed} seats</span> : undefined}>
-      <div style={noteStyle}>AA allows; the owner switches on. Allowing a feature does not turn it on for the agency.</div>
+    <Section title={t("features")} testId="crm-features"
+      aside={q.data ? <span style={noteStyle}>{t("planSeats", q.data.plan, q.data.seats_allowed)}</span> : undefined}>
+      <div style={noteStyle}>{t("featuresNote")}</div>
       {q.isLoading ? <Loading /> : q.isError ? <InlineError message={errText(q.error)} /> : (
         <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 200px), 1fr))", gap: 6 }}>
-            {FEATURES.map((f) => (
+            {crm.features.map((f) => (
               <label key={f.code} style={{ display: "inline-flex", gap: 8, alignItems: "center", fontSize: 13 }}>
                 <input type="checkbox" checked={chosen.includes(f.code)} disabled={!canWrite}
                   onChange={() => toggle(f.code)} />
@@ -377,17 +379,17 @@ function FeaturesSection({ q, canWrite, base, onDone }: { q: Q<AgencyEntitlement
           </div>
           {canWrite && (
             <div style={{ display: "flex", gap: 8 }}>
-              <Button size="sm" variant="secondary" disabled={!dirty} onClick={() => setOpen(true)}>Save allowed features</Button>
-              {dirty && <Button size="sm" variant="ghost" onClick={() => setDraft(null)}>Undo</Button>}
+              <Button size="sm" variant="secondary" disabled={!dirty} onClick={() => setOpen(true)}>{t("saveFeatures")}</Button>
+              {dirty && <Button size="sm" variant="ghost" onClick={() => setDraft(null)}>{t("undo")}</Button>}
             </div>
           )}
         </>
       )}
-      <WriteModal open={open} onClose={() => setOpen(false)} title="Change the allowed features" confirmLabel="Save"
-        submit={(ticket) => crmWrite("PUT", `${path}/entitlements-allowed`, { features_allowed: chosen, ticket_ref: ticket })}
-        onDone={() => { setOpen(false); setDraft(null); onDone("Allowed features saved."); }}>
+      <WriteModal open={open} onClose={() => setOpen(false)} title={t("featuresTitle")} confirmLabel={t("save")}
+        submit={(ticket) => crm.write("PUT", `${path}/entitlements-allowed`, { features_allowed: chosen, ticket_ref: ticket })}
+        onDone={() => { setOpen(false); setDraft(null); onDone(t("featuresSaved")); }}>
         <div style={noteStyle}>
-          Allowed after saving: {chosen.length ? chosen.map((c) => FEATURES.find((f) => f.code === c)?.label ?? c).join(", ") : "none"}.
+          {t("allowedAfter", chosen.length ? chosen.map((c) => crm.featureLabel(c)).join(", ") : t("noneLower"))}
         </div>
       </WriteModal>
     </Section>
@@ -397,30 +399,30 @@ function FeaturesSection({ q, canWrite, base, onDone }: { q: Q<AgencyEntitlement
 // ── 5. AA insights opt-out ────────────────────────────────────────────────────────────────────────
 
 function InsightsSection({ q, canWrite, base, onDone }: { q: Q<AgencyEntitlements>; canWrite: boolean; base: string; onDone: Done }) {
+  const t = useT(DRAWER);
+  const crm = useCrmText();
+  const errText = useErrText();
   const [open, setOpen] = useState(false);
   const optedOut = !!q.data?.insights_opt_out;
   const path = base.slice(CRM_API.length);
   return (
-    <Section title="AA insights" testId="crm-insights"
-      aside={q.data ? <Badge tone={optedOut ? "neutral" : "success"}>{optedOut ? "Opted out" : "Included"}</Badge> : undefined}>
-      <div style={noteStyle}>
-        Whether the agency&apos;s anonymous figures count in AA&apos;s cross-agency insights. Change it only when the owner
-        asked in writing; the request reference goes into the agency&apos;s access log.
-      </div>
+    <Section title={t("insights")} testId="crm-insights"
+      aside={q.data ? <Badge tone={optedOut ? "neutral" : "success"}>{optedOut ? t("optedOut") : t("included")}</Badge> : undefined}>
+      <div style={noteStyle}>{t("insightsNote")}</div>
       {q.isError && <InlineError message={errText(q.error)} />}
       {canWrite && q.data && (
         <div>
           <Button size="sm" variant="secondary" onClick={() => setOpen(true)}>
-            {optedOut ? "Include again" : "Opt out"}
+            {optedOut ? t("includeAgain") : t("optOut")}
           </Button>
         </div>
       )}
       <WriteModal<{ opt_out?: boolean }> open={open} onClose={() => setOpen(false)}
-        title={optedOut ? "Include the agency in AA insights again?" : "Opt the agency out of AA insights?"}
-        confirmLabel={optedOut ? "Include" : "Opt out"} ticketLabel="Owner's request reference"
-        ticketHint="The ticket holding the owner's written request, for example SUP-1024."
-        submit={(ref) => crmWrite<InsightsOptOut>("PUT", `${path}/insights-opt-out`, { opt_out: !optedOut, owner_request_ref: ref } satisfies InsightsOptOutBody)}
-        onDone={(r) => { setOpen(false); onDone(r.body?.opt_out ? "The agency is opted out of AA insights." : "The agency is included in AA insights."); }} />
+        title={optedOut ? t("includeTitle") : t("optOutTitle")}
+        confirmLabel={optedOut ? t("include") : t("optOut")} ticketLabel={t("ownerRef")}
+        ticketHint={t("ownerRefHint")}
+        submit={(ref) => crm.write<InsightsOptOut>("PUT", `${path}/insights-opt-out`, { opt_out: !optedOut, owner_request_ref: ref } satisfies InsightsOptOutBody)}
+        onDone={(r) => { setOpen(false); onDone(r.body?.opt_out ? t("nowOptedOut") : t("nowIncluded")); }} />
     </Section>
   );
 }
@@ -430,26 +432,27 @@ function InsightsSection({ q, canWrite, base, onDone }: { q: Q<AgencyEntitlement
 function DataRequestsSection({ q, canWrite, active, base, onDone }: {
   q: Q<DataRequest[]>; canWrite: boolean; active: boolean; base: string; onDone: Done;
 }) {
+  const t = useT(DRAWER);
+  const crm = useCrmText();
+  const { formatDateTime } = useFormat();
+  const errText = useErrText();
   const [open, setOpen] = useState(false);
   const [kind, setKind] = useState<DataRequestKind>("agency_export");
   const path = base.slice(CRM_API.length);
   const rows = q.data ?? [];
   const openOne = rows.find((r) => r.status === "awaiting_owner_confirmation" || r.status === "confirmed");
   return (
-    <Section title="Data requests" testId="crm-data-requests">
-      <div style={noteStyle}>
-        AA can raise an export or a deletion request; the agency&apos;s owner confirms or declines it in the CRM (Settings ›
-        Data and privacy). AA never confirms or runs it.
-      </div>
+    <Section title={t("dataRequests")} testId="crm-data-requests">
+      <div style={noteStyle}>{t("dataNote")}</div>
       {q.isLoading ? <Loading /> : q.isError ? <InlineError message={errText(q.error)} /> : rows.length === 0 ? (
-        <div style={noteStyle}>No requests.</div>
+        <div style={noteStyle}>{t("noRequests")}</div>
       ) : (
         <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 6 }}>
           {rows.map((r) => {
-            const s = dataRequestStatus(r.status);
+            const s = crm.dataStatus(r.status);
             return (
               <li key={r.request_id} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 13 }}>
-                <span style={{ color: K.ink }}>{kindLabel(r.kind)}</span>
+                <span style={{ color: K.ink }}>{crm.kindLabel(r.kind)}</span>
                 <Badge tone={s.tone}>{s.label}</Badge>
                 <span style={noteStyle}>{r.raised_at ? formatDateTime(r.raised_at) : ""}</span>
               </li>
@@ -460,24 +463,21 @@ function DataRequestsSection({ q, canWrite, active, base, onDone }: {
       {canWrite && (
         <div>
           <Button size="sm" variant="secondary" disabled={!active || !!openOne} onClick={() => setOpen(true)}
-            title={!active ? "Only an active agency (the owner must be able to confirm)" : openOne ? "A request is already open" : undefined}>
-            Raise a request
+            title={!active ? t("onlyActiveRequest") : openOne ? t("requestOpen") : undefined}>
+            {t("raiseRequest")}
           </Button>
         </div>
       )}
-      <WriteModal open={open} onClose={() => setOpen(false)} title="Raise a data request" confirmLabel="Raise request"
+      <WriteModal open={open} onClose={() => setOpen(false)} title={t("raiseTitle")} confirmLabel={t("raiseConfirm")}
         destructive={kind === "agency_deletion"}
-        submit={(ticket) => crmWrite<DataRequestRaised>("POST", `${path}/data-requests`, { kind, ticket_ref: ticket })}
-        onDone={() => { setOpen(false); onDone("Request raised. It waits for the owner's confirmation."); }}>
-        <Field label="Request" htmlFor="crm-dr-kind">
+        submit={(ticket) => crm.write<DataRequestRaised>("POST", `${path}/data-requests`, { kind, ticket_ref: ticket })}
+        onDone={() => { setOpen(false); onDone(t("raised")); }}>
+        <Field label={t("request")} htmlFor="crm-dr-kind">
           <select id="crm-dr-kind" value={kind} onChange={(e) => setKind(e.target.value as DataRequestKind)} style={fieldStyle}>
-            {DATA_REQUEST_KINDS.map((k) => <option key={k.code} value={k.code}>{k.label}</option>)}
+            {crm.dataKinds.map((k) => <option key={k.code} value={k.code}>{k.label}</option>)}
           </select>
         </Field>
-        <div style={noteStyle}>
-          The owners get an e-mail. Nothing happens until an owner confirms in the CRM; a deletion then starts with an
-          export the owner can download.
-        </div>
+        <div style={noteStyle}>{t("raiseNote")}</div>
       </WriteModal>
     </Section>
   );
@@ -488,6 +488,10 @@ function DataRequestsSection({ q, canWrite, active, base, onDone }: {
 function RecoverySection({ q, canWrite, active, base, onDone }: {
   q: Q<AgencyMembers>; canWrite: boolean; active: boolean; base: string; onDone: Done;
 }) {
+  const t = useT(DRAWER);
+  const crm = useCrmText();
+  const { formatDateTime } = useFormat();
+  const errText = useErrText();
   const [openStart, setOpenStart] = useState(false);
   const [openComplete, setOpenComplete] = useState(false);
   const [disable, setDisable] = useState<string | null>(null);
@@ -500,29 +504,26 @@ function RecoverySection({ q, canWrite, active, base, onDone }: {
   const due = recoveryDue(pending?.eligible_at);
   const memberColumns = useMemo<ColumnDef<AgencyMember, unknown>[]>(() => [
     {
-      accessorKey: "member_id", header: "Member",
+      accessorKey: "member_id", header: t("colMember"),
       cell: (c) => <span style={{ fontFamily: mono }} title={c.row.original.member_id}>{shortId(c.row.original.member_id)}</span>,
     },
-    { accessorKey: "role", header: "Role" },
-    { accessorKey: "status", header: "Status" },
+    { accessorKey: "role", header: t("colRole") },
+    { accessorKey: "status", header: t("colStatus") },
     {
-      accessorKey: "joined_at", header: "Joined",
+      accessorKey: "joined_at", header: t("colJoined"),
       cell: (c) => (c.row.original.joined_at ? formatDateTime(c.row.original.joined_at) : "—"),
     },
     ...(canWrite ? [{
       id: "actions", header: "", enableSorting: false,
       cell: (c: { row: { original: AgencyMember } }) => (c.row.original.status === "active" ? (
-        <Button size="sm" variant="ghost" disabled={!active} onClick={() => setDisable(c.row.original.member_id)}>Disable</Button>
+        <Button size="sm" variant="ghost" disabled={!active} onClick={() => setDisable(c.row.original.member_id)}>{t("disable")}</Button>
       ) : null),
     } as ColumnDef<AgencyMember, unknown>] : []),
-  ], [canWrite, active]);
+  ], [canWrite, active, t, formatDateTime]);
   return (
-    <Section title="Owner recovery" testId="crm-recovery"
-      aside={data ? <span style={noteStyle}>{data.active_owners} active owner{data.active_owners === 1 ? "" : "s"}</span> : undefined}>
-      <div style={noteStyle}>
-        When the agency has lost its owner, AA can promote an active member. Every member is told and can cancel within
-        14 days; only then can AA complete it.
-      </div>
+    <Section title={t("recovery")} testId="crm-recovery"
+      aside={data ? <span style={noteStyle}>{t("activeOwners", data.active_owners)}</span> : undefined}>
+      <div style={noteStyle}>{t("recoveryNote")}</div>
       {q.isLoading ? <Loading /> : q.isError ? <InlineError message={errText(q.error)} /> : data ? (
         <>
           <DataTable<AgencyMember>
@@ -532,63 +533,61 @@ function RecoverySection({ q, canWrite, active, base, onDone }: {
             getRowId={(m) => m.member_id}
             searchable={false}
             paginate={false}
-            emptyTitle="No members"
+            emptyTitle={t("noMembers")}
             tableMinWidth={420}
           />
           {pending ? (
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 13 }}>
-              <Badge tone="warning">Recovery pending</Badge>
-              <span style={noteStyle}>can complete from {formatDateTime(pending.eligible_at)}</span>
+              <Badge tone="warning">{t("recoveryPending")}</Badge>
+              <span style={noteStyle}>{t("completeFrom", formatDateTime(pending.eligible_at))}</span>
               {canWrite && (
                 <Button size="sm" variant="primary" disabled={!due || !active} onClick={() => setOpenComplete(true)}
-                  title={!due ? "Members can still cancel until then" : undefined}>Complete</Button>
+                  title={!due ? t("stillCancel") : undefined}>{t("complete")}</Button>
               )}
             </div>
           ) : canWrite && (
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
               <Button size="sm" variant="secondary" disabled={!active || candidates.length === 0}
-                title={candidates.length === 0 ? "No active member who is not an owner" : undefined}
+                title={candidates.length === 0 ? t("noCandidate") : undefined}
                 onClick={() => { setCandidate(candidates[0]?.member_id ?? ""); setOpenStart(true); }}>
-                Start owner recovery
+                {t("startRecovery")}
               </Button>
             </div>
           )}
         </>
       ) : null}
-      <WriteModal open={openStart} onClose={() => setOpenStart(false)} title="Start an owner recovery"
-        confirmLabel="Start recovery" canSubmit={!!candidate}
-        submit={(ticket) => crmWrite<RecoveryOpened>("POST", `${path}/owner-recovery`, { candidate_member_id: candidate, reason, ticket_ref: ticket })}
+      <WriteModal open={openStart} onClose={() => setOpenStart(false)} title={t("startTitle")}
+        confirmLabel={t("startConfirm")} canSubmit={!!candidate}
+        submit={(ticket) => crm.write<RecoveryOpened>("POST", `${path}/owner-recovery`, { candidate_member_id: candidate, reason, ticket_ref: ticket })}
         onDone={(r) => {
           setOpenStart(false);
-          const when = typeof r.body?.eligible_at === "string" ? formatDateTime(r.body.eligible_at) : "in 14 days";
-          onDone(`Recovery started. It can be completed from ${when} unless a member cancels it.`);
+          const when = typeof r.body?.eligible_at === "string" ? formatDateTime(r.body.eligible_at) : t("in14Days");
+          onDone(t("recoveryStarted", when));
         }}>
-        <Field label="Member to promote to owner" htmlFor="crm-rec-candidate">
+        <Field label={t("promote")} htmlFor="crm-rec-candidate">
           <select id="crm-rec-candidate" value={candidate} onChange={(e) => setCandidate(e.target.value)} style={fieldStyle}>
             {candidates.map((m) => <option key={m.member_id} value={m.member_id}>{shortId(m.member_id)} ({m.role})</option>)}
           </select>
         </Field>
-        <Field label="Reason" htmlFor="crm-rec-reason">
+        <Field label={t("reason")} htmlFor="crm-rec-reason">
           <select id="crm-rec-reason" value={reason} onChange={(e) => setReason(e.target.value)} style={fieldStyle}>
-            {RECOVERY_REASONS.map((r) => <option key={r.code} value={r.code}>{r.label}</option>)}
+            {crm.recoveryReasons.map((r) => <option key={r.code} value={r.code}>{r.label}</option>)}
           </select>
         </Field>
       </WriteModal>
-      <WriteModal open={openComplete} onClose={() => setOpenComplete(false)} title="Complete the owner recovery"
-        confirmLabel="Promote to owner"
+      <WriteModal open={openComplete} onClose={() => setOpenComplete(false)} title={t("completeTitle")}
+        confirmLabel={t("promoteConfirm")}
         submit={(ticket) => pending
-          ? crmWrite<RecoveryCompleted>("POST", `${path}/owner-recovery/${encodeURIComponent(pending.request_id)}/complete`, { ticket_ref: ticket } satisfies TicketBody)
-          : Promise.resolve<WriteResult<RecoveryCompleted>>({ ok: false, status: 0, message: "No pending recovery.", code: null })}
-        onDone={() => { setOpenComplete(false); onDone("The candidate is now an owner."); }}>
-        <div style={noteStyle}>The 14 days have passed and no member cancelled. The candidate becomes an owner.</div>
+          ? crm.write<RecoveryCompleted>("POST", `${path}/owner-recovery/${encodeURIComponent(pending.request_id)}/complete`, { ticket_ref: ticket } satisfies TicketBody)
+          : Promise.resolve<WriteResult<RecoveryCompleted>>({ ok: false, status: 0, message: t("noPending"), code: null })}
+        onDone={() => { setOpenComplete(false); onDone(t("promoted")); }}>
+        <div style={noteStyle}>{t("completeNote")}</div>
       </WriteModal>
       <WriteModal open={disable !== null} onClose={() => setDisable(null)} destructive
-        title={`Disable member ${shortId(disable)}?`} confirmLabel="Disable member"
-        submit={(ticket) => crmWrite<MemberDeactivated>("POST", `${path}/members/${encodeURIComponent(disable ?? "")}/deactivate`, { ticket_ref: ticket } satisfies TicketBody)}
-        onDone={() => { setDisable(null); onDone("Member disabled and signed out."); }}>
-        <div style={noteStyle}>
-          The member can no longer sign in. The last active owner cannot be disabled here: use an owner recovery.
-        </div>
+        title={t("disableTitle", shortId(disable))} confirmLabel={t("disableConfirm")}
+        submit={(ticket) => crm.write<MemberDeactivated>("POST", `${path}/members/${encodeURIComponent(disable ?? "")}/deactivate`, { ticket_ref: ticket } satisfies TicketBody)}
+        onDone={() => { setDisable(null); onDone(t("disabled")); }}>
+        <div style={noteStyle}>{t("disableNote")}</div>
       </WriteModal>
     </Section>
   );
@@ -599,13 +598,17 @@ function RecoverySection({ q, canWrite, active, base, onDone }: {
 function JobsSection({ q, canWrite, locked, base, onDone }: {
   q: Q<FailedJob[]>; canWrite: boolean; locked: boolean; base: string; onDone: Done;
 }) {
+  const t = useT(DRAWER);
+  const crm = useCrmText();
+  const { formatDateTime } = useFormat();
+  const errText = useErrText();
   const [retry, setRetry] = useState<FailedJob | null>(null);
   const path = base.slice(CRM_API.length);
   const rows = q.data ?? [];
   return (
-    <Section title="Failed jobs (7 days)" testId="crm-jobs">
+    <Section title={t("failedJobs7")} testId="crm-jobs">
       {q.isLoading ? <Loading /> : q.isError ? <InlineError message={errText(q.error)} /> : rows.length === 0 ? (
-        <div style={noteStyle}>No failed jobs.</div>
+        <div style={noteStyle}>{t("noFailedJobs")}</div>
       ) : (
         <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 6 }}>
           {rows.map((j) => (
@@ -613,28 +616,28 @@ function JobsSection({ q, canWrite, locked, base, onDone }: {
               <span style={{ fontFamily: mono }} title={j.job_id}>{shortId(j.job_id)}</span>
               <span style={{ color: K.ink }}>{j.kind}</span>
               <span style={noteStyle}>
-                attempt {j.attempt}/{j.max_attempts}{j.error_class ? ` · ${j.error_class}` : ""}
+                {t("attempt", j.attempt, j.max_attempts)}{j.error_class ? ` · ${j.error_class}` : ""}
                 {j.finished_at ? ` · ${formatDateTime(j.finished_at)}` : ""}
               </span>
               {canWrite && (
                 <Button size="sm" variant="ghost" disabled={locked} onClick={() => setRetry(j)}
-                  title={locked ? "Unlock the agency first: the job would fail again" : undefined}>Retry</Button>
+                  title={locked ? t("unlockFirst") : undefined}>{t("retry")}</Button>
               )}
             </li>
           ))}
         </ul>
       )}
-      <WriteModal open={retry !== null} onClose={() => setRetry(null)} title={`Retry job ${shortId(retry?.job_id)}?`}
-        confirmLabel="Retry job" destructive={retry?.kind === "crm_offboard"}
-        submit={(ticket) => crmWrite<JobRetried>("POST", `${path}/jobs/${encodeURIComponent(retry?.job_id ?? "")}/retry`, { ticket_ref: ticket } satisfies TicketBody)}
-        onDone={() => { setRetry(null); onDone("Job queued again."); }}>
+      <WriteModal open={retry !== null} onClose={() => setRetry(null)} title={t("retryTitle", shortId(retry?.job_id))}
+        confirmLabel={t("retryConfirm")} destructive={retry?.kind === "crm_offboard"}
+        submit={(ticket) => crm.write<JobRetried>("POST", `${path}/jobs/${encodeURIComponent(retry?.job_id ?? "")}/retry`, { ticket_ref: ticket } satisfies TicketBody)}
+        onDone={() => { setRetry(null); onDone(t("requeued")); }}>
         {retry?.kind === "crm_offboard" ? (
           <div style={{ ...noteStyle, color: K.danger, display: "flex", gap: 6 }}>
             <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 2 }} />
-            This continues an export or erase the owner confirmed. An erase cannot be undone.
+            {t("offboardWarn")}
           </div>
         ) : (
-          <div style={noteStyle}>The job runs again from its first attempt.</div>
+          <div style={noteStyle}>{t("retryNote")}</div>
         )}
       </WriteModal>
     </Section>

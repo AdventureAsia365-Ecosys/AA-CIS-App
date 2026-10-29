@@ -7,25 +7,18 @@
 import { Ban, X } from "lucide-react";
 import { useState } from "react";
 import { A, Btn } from "../_components/adminUi";
-import { Modal } from "../../_kit";
+import { Modal, useT } from "../../_kit";
+import { M } from "./messages";
 import { WritingReasonChips } from "../_components/WritingReasonChips";
 import { reviewReason, type ReasonCode } from "@/lib/writingReasons";
 import type { ReviewItem } from "./reviewModel";
 
 export type ReasonAction = "reject" | "dismiss";
 
-const COPY: Record<ReasonAction, { title: string; body: string; confirm: string }> = {
-  reject: {
-    title: "Reject this version?",
-    body: "The tour is marked rejected and this version is not published.",
-    confirm: "Reject",
-  },
-  dismiss: {
-    title: "Dismiss this version?",
-    body: "Drops this stale failed version from the queue: no edit, no publish. A later failing rerun can still add a new row.",
-    confirm: "Dismiss",
-  },
-};
+const COPY = {
+  reject: { title: "rejectTitle", body: "rejectBody", confirm: "reject" },
+  dismiss: { title: "dismissModalTitle", body: "dismissBody", confirm: "dismiss" },
+} as const satisfies Record<ReasonAction, { title: keyof typeof M.en; body: keyof typeof M.en; confirm: keyof typeof M.en }>;
 
 export function ReasonActionModal({ action, item, busy, onClose, onConfirm }: {
   action: ReasonAction;
@@ -36,7 +29,9 @@ export function ReasonActionModal({ action, item, busy, onClose, onConfirm }: {
 }) {
   const suggested = reviewReason(item.codes);
   const [reason, setReason] = useState<ReasonCode>(suggested);
-  const copy = COPY[action];
+  const t = useT(M);
+  const keys = COPY[action];
+  const copy = { title: t(keys.title), body: t(keys.body), confirm: t(keys.confirm) };
   return (
     <Modal
       open
@@ -45,7 +40,7 @@ export function ReasonActionModal({ action, item, busy, onClose, onConfirm }: {
       width={520}
       footer={
         <>
-          <Btn variant="ghost" size="sm" onClick={onClose} disabled={busy}>Cancel</Btn>
+          <Btn variant="ghost" size="sm" onClick={onClose} disabled={busy}>{t("cancel")}</Btn>
           <span data-testid={`review-${action}-confirm`}>
             <Btn variant={action === "reject" ? "danger" : "primary"} size="sm" disabled={busy} onClick={() => onConfirm(reason)}>
               {action === "reject" ? <X size={12} /> : <Ban size={12} />} {copy.confirm}

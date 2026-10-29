@@ -77,20 +77,24 @@ export const mono = FONT_MONO;
 // One date format across the whole admin: en-GB, numeric day, short month, numeric year.
 //   formatDate("2026-10-09T14:05:00Z")     -> "9 Oct 2026"
 //   formatDateTime("2026-10-09T14:05:00Z") -> "9 Oct 2026, 14:05"
-// null / undefined / unparseable input -> "—". Fixed `en-GB` locale (not the runtime locale) so a
-// stored row reads the same for every admin, server-render and client-render alike.
-export function formatDate(input: string | number | Date | null | undefined): string {
+// null / undefined / unparseable input -> "—". A fixed locale per UI language (not the runtime locale) so a
+// stored row reads the same for every admin, server-render and client-render alike: `en-GB` by default, `vi-VN`
+// when the second argument is "vi" (AA-994: "9 thg 10, 2026"). In a component, `useFormat()` (core/useI18n.ts)
+// binds the current UI language.
+const DATE_LOCALE = { en: "en-GB", vi: "vi-VN" } as const;
+
+export function formatDate(input: string | number | Date | null | undefined, lang: "en" | "vi" = "en"): string {
   if (input == null || input === "") return "—";
   const d = input instanceof Date ? input : new Date(input);
   if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  return d.toLocaleDateString(DATE_LOCALE[lang] ?? "en-GB", { day: "numeric", month: "short", year: "numeric" });
 }
 
-export function formatDateTime(input: string | number | Date | null | undefined): string {
+export function formatDateTime(input: string | number | Date | null | undefined, lang: "en" | "vi" = "en"): string {
   if (input == null || input === "") return "—";
   const d = input instanceof Date ? input : new Date(input);
   if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString("en-GB", {
+  return d.toLocaleString(DATE_LOCALE[lang] ?? "en-GB", {
     day: "numeric",
     month: "short",
     year: "numeric",

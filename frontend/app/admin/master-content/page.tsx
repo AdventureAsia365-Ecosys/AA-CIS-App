@@ -9,8 +9,14 @@ import {
   A, alpha, serif, sans, mono,
   SLabel, Badge, Btn, LoadingScreen, StatCard, Card, TH, TD,
 } from "../_components/adminUi";
-import { AdminMain, AdminPaneHeader, PageHeader, formatDate, useIsPhone, useAdminIdentity } from "../../_kit";
+import {
+  AdminMain, AdminPaneHeader, PageHeader, useFormat, useIsPhone, useAdminIdentity, useT, type Translator,
+} from "../../_kit";
 import { can, staffErrorMessage } from "@/lib/rbac";
+import { RBAC_MESSAGES } from "@/lib/rbac.messages";
+import { M } from "./messages";
+
+type T = Translator<typeof M.en>;
 import { BarChart2, Star, DollarSign } from "lucide-react";
 import { TourDetailPanelV2 } from "../_components/TourDetailPanelV2";
 import { CompareModal } from "../_components/CompareModal";
@@ -162,42 +168,40 @@ function scoreColor(s: number | null | undefined): string {
   return A.red;
 }
 
-function relDate(iso: string): string {
-  return formatDate(iso);
-}
-
-function statusBadge(status: string) {
+function statusBadge(status: string, t: T) {
   const color = status === "published" ? "green" : status === "active" ? "blue" : "gray";
-  return <Badge color={color}>{status}</Badge>;
+  const text = status === "published" ? t("statusPublished") : status === "active" ? t("statusActive") : status;
+  return <Badge color={color}>{text}</Badge>;
 }
 
-function masterStatusBadge(ms: string) {
+function masterStatusBadge(ms: string, t: T) {
   if (ms === "trashed") return (
     <span style={{ padding: "2px 7px", borderRadius: 10, background: A.redSoft, color: A.red, fontSize: 11, fontWeight: 700 }}>
-      TRASHED
+      {t("trashedBadge")}
     </span>
   );
   if (ms === "inactive") return (
     <span style={{ padding: "2px 7px", borderRadius: 10, background: "var(--aa-neutral-bg)", color: "var(--aa-neutral-fg2)", fontSize: 11, fontWeight: 600 }}>
-      INACTIVE
+      {t("inactiveBadge")}
     </span>
   );
   return null;
 }
 
 function BrandAuditBadge({ status, fixPassApplied, codes }: { status: string | null; fixPassApplied: boolean; codes?: string[] }) {
+  const t = useT(M);
   if (!status) return <span style={{ color: A.muted2, fontSize: 11 }}>—</span>;
   if (status === "pass") return (
-    <span style={{ padding: "2px 7px", borderRadius: 10, background: A.greenSoft, color: A.green, fontSize: 11, fontWeight: 600 }}>✓ Pass</span>
+    <span style={{ padding: "2px 7px", borderRadius: 10, background: A.greenSoft, color: A.green, fontSize: 11, fontWeight: 600 }}>{t("auditPass")}</span>
   );
   if (status === "flagged" && fixPassApplied) return (
-    <span title={codes?.join(", ")} style={{ padding: "2px 7px", borderRadius: 10, background: "var(--aa-amber-bg2)", color: "var(--aa-amber-strong)", fontSize: 11, fontWeight: 600, cursor: codes?.length ? "help" : "default" }}>⚡ Fixed</span>
+    <span title={codes?.join(", ")} style={{ padding: "2px 7px", borderRadius: 10, background: "var(--aa-amber-bg2)", color: "var(--aa-amber-strong)", fontSize: 11, fontWeight: 600, cursor: codes?.length ? "help" : "default" }}>{t("auditFixed")}</span>
   );
   if (status === "flagged") return (
-    <span title={codes?.join(", ")} style={{ padding: "2px 7px", borderRadius: 10, background: A.redSoft, color: A.red, fontSize: 11, fontWeight: 600, cursor: codes?.length ? "help" : "default" }}>⚠ Flagged</span>
+    <span title={codes?.join(", ")} style={{ padding: "2px 7px", borderRadius: 10, background: A.redSoft, color: A.red, fontSize: 11, fontWeight: 600, cursor: codes?.length ? "help" : "default" }}>{t("auditFlagged")}</span>
   );
   if (status === "manual_check") return (
-    <span style={{ padding: "2px 7px", borderRadius: 10, background: "var(--aa-amber-bg3)", color: "var(--aa-amber-orange)", fontSize: 11, fontWeight: 600 }}>Manual check</span>
+    <span style={{ padding: "2px 7px", borderRadius: 10, background: "var(--aa-amber-bg3)", color: "var(--aa-amber-orange)", fontSize: 11, fontWeight: 600 }}>{t("auditManual")}</span>
   );
   return <span style={{ color: A.muted2, fontSize: 11 }}>—</span>;
 }
@@ -245,6 +249,7 @@ function DfsCompareSection({ seed, ideas: ideasRaw, paa: paaRaw, related: relate
   const ideas   = Array.isArray(ideasRaw)   ? ideasRaw   : [];
   const paa     = Array.isArray(paaRaw)     ? paaRaw     : [];
   const related = Array.isArray(relatedRaw) ? relatedRaw : [];
+  const t = useT(M);
   const [sortKey, setSortKey] = useState<DfsSortKey>("volume");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   function onSort(k: DfsSortKey) {
@@ -280,18 +285,18 @@ function DfsCompareSection({ seed, ideas: ideasRaw, paa: paaRaw, related: relate
   return (
     <div style={{ borderBottom: `1px solid ${A.line}` }}>
       <div style={{ padding: "5px 20px", background: A.line2, fontSize: 10, fontWeight: 700, textTransform: "uppercase" as const, letterSpacing: "0.12em", color: A.muted }}>
-        DataForSEO <span style={{ textTransform: "none" as const, fontWeight: 400, color: A.muted2 }}>· shared per tour seed</span>
+        DataForSEO <span style={{ textTransform: "none" as const, fontWeight: 400, color: A.muted2 }}>{t("sharedPerSeed")}</span>
       </div>
       <div style={{ padding: "8px 20px", fontSize: 12 }}>
-        <div style={{ marginBottom: 6, color: A.muted }}>Seed: <strong style={{ color: A.ink }}>{seed || "—"}</strong></div>
+        <div style={{ marginBottom: 6, color: A.muted }}>{t("seed")} <strong style={{ color: A.ink }}>{seed || "—"}</strong></div>
         {ideas.length > 0 && (
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, marginBottom: 8 }}>
             <thead>
               <tr style={{ background: A.line2 }}>
-                <th style={th("keyword", "left")} onClick={() => onSort("keyword")}>Keyword{arrow("keyword")}</th>
-                <th style={th("volume", "right")} onClick={() => onSort("volume")}>Vol{arrow("volume")}</th>
-                <th style={th("competition", "right")} onClick={() => onSort("competition")}>Comp{arrow("competition")}</th>
-                <th style={th("cpc", "right")} onClick={() => onSort("cpc")}>CPC{arrow("cpc")}</th>
+                <th style={th("keyword", "left")} onClick={() => onSort("keyword")}>{t("colKeyword")}{arrow("keyword")}</th>
+                <th style={th("volume", "right")} onClick={() => onSort("volume")}>{t("colVol")}{arrow("volume")}</th>
+                <th style={th("competition", "right")} onClick={() => onSort("competition")}>{t("colComp")}{arrow("competition")}</th>
+                <th style={th("cpc", "right")} onClick={() => onSort("cpc")}>{t("colCpc")}{arrow("cpc")}</th>
               </tr>
             </thead>
             <tbody>
@@ -310,13 +315,13 @@ function DfsCompareSection({ seed, ideas: ideasRaw, paa: paaRaw, related: relate
         )}
         {paa.length > 0 && (
           <div style={{ marginBottom: 6 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase" as const, letterSpacing: "0.08em", color: A.muted, marginBottom: 2 }}>People Also Ask</div>
+            <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase" as const, letterSpacing: "0.08em", color: A.muted, marginBottom: 2 }}>{t("peopleAlsoAsk")}</div>
             {paa.map((q, i) => <div key={i} style={{ color: A.body, lineHeight: 1.5 }}>• {q}</div>)}
           </div>
         )}
         {related.length > 0 && (
           <div>
-            <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase" as const, letterSpacing: "0.08em", color: A.muted, marginBottom: 2 }}>Related Keywords</div>
+            <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase" as const, letterSpacing: "0.08em", color: A.muted, marginBottom: 2 }}>{t("relatedKeywords")}</div>
             <div style={{ color: A.body, lineHeight: 1.6 }}>{related.join(", ")}</div>
           </div>
         )}
@@ -336,24 +341,25 @@ interface PanelState {
 const PANEL_COLORS = [A.gold, "var(--aa-blue)", "var(--aa-green-strong)", "var(--aa-purple-strong)"];
 const PANEL_BG     = ["var(--aa-panel-bg0)", "var(--aa-panel-bg1)", "var(--aa-panel-bg2)", "var(--aa-panel-bg3)"];
 
-const CONTENT_FIELDS: [keyof VersionDetail, string][] = [
-  ["aa_name",        "Tour Name"],
-  ["aa_subtitle",    "Subtitle"],
-  ["aa_summary",     "Summary"],
-  ["aa_highlights",  "Highlights"],
-  ["aa_itineraries", "Itineraries"],
-  ["seo_title",      "SEO Title"],
-  ["seo_meta",       "SEO Meta"],
-  ["aa_description", "Description"],
-  ["top_keywords",   "Keywords"],
-  ["country",        "Country"],
-  ["duration",       "Duration"],
-  ["group_size",     "Group Size"],
-  ["price_raw",      "Price"],
-  ["period",         "Period"],
-  ["provider",       "Provider"],
-  ["inclusions",     "Inclusions"],
-  ["exclusions",     "Exclusions"],
+// [field, its label key in messages.ts]
+const CONTENT_FIELDS: [keyof VersionDetail, keyof typeof M.en][] = [
+  ["aa_name",        "fTourName"],
+  ["aa_subtitle",    "fSubtitle"],
+  ["aa_summary",     "fSummary"],
+  ["aa_highlights",  "fHighlights"],
+  ["aa_itineraries", "fItineraries"],
+  ["seo_title",      "fSeoTitle"],
+  ["seo_meta",       "fSeoMeta"],
+  ["aa_description", "fDescription"],
+  ["top_keywords",   "fKeywords"],
+  ["country",        "fCountry"],
+  ["duration",       "fDuration"],
+  ["group_size",     "fGroupSize"],
+  ["price_raw",      "fPrice"],
+  ["period",         "fPeriod"],
+  ["provider",       "fProvider"],
+  ["inclusions",     "fInclusions"],
+  ["exclusions",     "fExclusions"],
 ];
 
 // AA-220 (C): page-scope blob-download helper (pure) — shared by the compare modal and the
@@ -385,6 +391,8 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
   versionNums: [number, number];
   onClose: () => void;
 }) {
+  const t = useT(M);
+  const { formatDate } = useFormat();
   const [panels, setPanels] = useState<PanelState[]>(
     versionNums.map(n => ({ versionNum: n, data: null, loading: true }))
   );
@@ -471,7 +479,7 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
   }
 
   function cellVal(panel: PanelState, key: keyof VersionDetail): React.ReactNode {
-    if (panel.loading) return <div style={{ padding: "10px 20px", fontSize: 12, color: A.muted2 }}>Loading…</div>;
+    if (panel.loading) return <div style={{ padding: "10px 20px", fontSize: 12, color: A.muted2 }}>{t("loading")}</div>;
     const v = panel.data;
     if (!v) return <div style={{ padding: "10px 20px", fontSize: 12, color: A.muted2 }}>—</div>;
     const raw: unknown = v[key];
@@ -485,11 +493,11 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
       );
     } else if (key === "seo_title") {
       const len = typeof raw === "string" ? raw.length : 0;
-      display = <><span>{(raw as string) || "—"}</span>{typeof raw === "string" && <span style={{ marginLeft: 6, fontSize: 10, color: A.muted2 }}>{len} chars</span>}</>;
+      display = <><span>{(raw as string) || "—"}</span>{typeof raw === "string" && <span style={{ marginLeft: 6, fontSize: 10, color: A.muted2 }}>{t("chars", len)}</span>}</>;
     } else if (key === "seo_meta") {
       const len = typeof raw === "string" ? raw.length : 0;
       const over = len > 170;
-      display = <><span style={{ color: over ? A.red : "inherit" }}>{(raw as string) || "—"}</span>{typeof raw === "string" && <span style={{ marginLeft: 6, fontSize: 10, color: over ? A.red : A.muted2 }}>{len} chars{over ? " (>170)" : ""}</span>}</>;
+      display = <><span style={{ color: over ? A.red : "inherit" }}>{(raw as string) || "—"}</span>{typeof raw === "string" && <span style={{ marginLeft: 6, fontSize: 10, color: over ? A.red : A.muted2 }}>{t("chars", len)}{over ? " (>170)" : ""}</span>}</>;
     } else {
       display = <span>{typeof raw === "string" ? raw : raw == null ? "—" : String(raw)}</span>;
     }
@@ -517,10 +525,10 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
       }}>
         <div>
           <div style={{ fontFamily: serif, fontSize: 16, fontWeight: 500, color: A.ink }}>
-            Version Compare — {tourName}
+            {t("compareTitle", tourName)}
           </div>
           <div style={{ fontSize: 12, color: A.muted, marginTop: 2 }}>
-            {n} panel{n > 1 ? "s" : ""} · Use version dropdowns to switch · Highlighted cells differ from panel 1
+            {t("compareHint", n)}
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -534,7 +542,7 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
               opacity: exporting ? 0.5 : 1,
             }}
           >
-            {exporting ? "…" : "Export Comparison XLSX"}
+            {exporting ? "…" : t("exportComparisonXlsx")}
           </button>
           <button
             onClick={() => exportComparison("csv")}
@@ -560,10 +568,10 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
                 opacity: allVersions.length === 0 ? 0.5 : 1,
               }}
             >
-              + Add Panel
+              {t("addPanel")}
             </button>
           )}
-          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: A.muted2, padding: 6 }}>
+          <button onClick={onClose} aria-label={t("close")} style={{ background: "none", border: "none", cursor: "pointer", color: A.muted2, padding: 6 }}>
             <X size={20} />
           </button>
         </div>
@@ -599,7 +607,7 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
                         border: "none", borderRadius: 10, cursor: "pointer",
                       }}
                     >
-                      {idx === 0 && <option value={-1}>Original (source)</option>}
+                      {idx === 0 && <option value={-1}>{t("original")}</option>}
                       {allVersions.map(av => (
                         <option key={av.version_num} value={av.version_num}>v{av.version_num}</option>
                       ))}
@@ -611,7 +619,7 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
                       <button
                         onClick={() => exportVersionDocx(tourId, Number(panel.versionNum))}
                         disabled={exporting}
-                        title="Export this version as DOCX"
+                        title={t("exportDocx")}
                         style={{
                           padding: "2px 8px", fontSize: 11, fontWeight: 600,
                           border: `1px solid ${A.line}`, borderRadius: 6,
@@ -621,12 +629,13 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
                       >DOCX</button>
                     )}
                     {v?.created_at && (
-                      <span style={{ fontSize: 11, color: A.muted2, marginLeft: "auto" }}>{relDate(v.created_at)}</span>
+                      <span style={{ fontSize: 11, color: A.muted2, marginLeft: "auto" }}>{formatDate(v.created_at)}</span>
                     )}
                     {n > 2 && (
                       <button
                         onClick={() => removePanel(idx)}
-                        title="Remove panel"
+                        title={t("removePanel")}
+                        aria-label={t("removePanel")}
                         style={{
                           marginLeft: v?.created_at ? 0 : "auto",
                           background: "none", border: "none", cursor: "pointer",
@@ -639,36 +648,36 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
                   {/* Score bars */}
                   {v ? (
                     <div style={{ padding: "8px 0", borderTop: `1px solid ${A.line}`, marginTop: 4 }}>
-                      <ScoreBar label="Overall (gate)"    value={v.quality_score}   tooltip="Gate score = min(validate, judge). This is the score that decides publish." />
-                      <ScoreBar label="Brand"             value={v.score_brand} />
-                      <ScoreBar label="SEO"               value={v.score_seo} />
-                      <ScoreBar label="Structure"         value={v.score_structure} />
-                      <ScoreBar label="Quality (validate)" value={v.score_quality} tooltip="Validate sub-score (rule-based, not yet capped by judge)." />
+                      <ScoreBar label={t("overallGate")} value={v.quality_score} tooltip={t("overallGateTip")} />
+                      <ScoreBar label={t("brand")} value={v.score_brand} />
+                      <ScoreBar label={t("seo")} value={v.score_seo} />
+                      <ScoreBar label={t("structure")} value={v.score_structure} />
+                      <ScoreBar label={t("qualityValidate")} value={v.score_quality} tooltip={t("qualityValidateTip")} />
                       {/* AA-220 (G2): clarify gate vs sub-score so they're not read as the same metric */}
                       <div style={{ fontSize: 10, color: A.muted2, lineHeight: 1.5, marginTop: 4 }}>
-                        Overall = min(validate, judge) is the gate score. Quality = validate sub-score.
+                        {t("gateNote")}
                       </div>
                     </div>
                   ) : (
                     <div style={{ fontSize: 12, color: A.muted2, padding: "8px 0" }}>
-                      {panel.loading ? "Loading…" : "No data"}
+                      {panel.loading ? t("loading") : t("noData")}
                     </div>
                   )}
 
                   {/* Rewrite config */}
                   {v && (
                     <div style={{ padding: "8px 0", borderTop: `1px solid ${A.line}`, marginTop: 4, fontSize: 11 }}>
-                      <div style={{ fontWeight: 600, color: A.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>Rewrite Config</div>
+                      <div style={{ fontWeight: 600, color: A.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{t("rewriteConfig")}</div>
                       <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "3px 8px", color: A.body }}>
-                        <span style={{ color: A.muted }}>Model</span>
+                        <span style={{ color: A.muted }}>{t("model")}</span>
                         <span style={{ fontFamily: mono }}>{modelLabel(v.model_id)}</span>
-                        <span style={{ color: A.muted }}>Brand</span>
-                        <span>{v.brand_name || "default"}</span>
-                        <span style={{ color: A.muted }}>SEO Mode</span>
-                        <span>{v.seo_mode || "standard"}</span>
+                        <span style={{ color: A.muted }}>{t("brand")}</span>
+                        <span>{v.brand_name || t("brandDefault")}</span>
+                        <span style={{ color: A.muted }}>{t("seoMode")}</span>
+                        <span>{v.seo_mode || t("seoStandard")}</span>
                         <span style={{ color: A.muted }}>DataForSEO</span>
-                        <span style={{ color: v.dataforseo_used ? A.green : A.muted2 }}>{v.dataforseo_used ? "Live" : "Mock"}</span>
-                        <span style={{ color: A.muted }}>Cost</span>
+                        <span style={{ color: v.dataforseo_used ? A.green : A.muted2 }}>{v.dataforseo_used ? t("live") : t("mock")}</span>
+                        <span style={{ color: A.muted }}>{t("cost")}</span>
                         <span style={{ fontFamily: mono }}>{v.llm_cost_usd != null ? `$${v.llm_cost_usd.toFixed(4)}` : "—"}</span>
                       </div>
                     </div>
@@ -677,7 +686,7 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
                   {/* Brand Audit */}
                   {v && v.brand_audit_status && (
                     <div style={{ padding: "8px 0", borderTop: `1px solid ${A.line}`, marginTop: 4, fontSize: 11 }}>
-                      <div style={{ fontWeight: 600, color: A.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>Brand Audit</div>
+                      <div style={{ fontWeight: 600, color: A.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{t("brandAudit")}</div>
                       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
                         <BrandAuditBadge
                           status={v.brand_audit_status}
@@ -694,7 +703,7 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
                       )}
                       {v.fix_pass_applied && v.fix_pass_fields && v.fix_pass_fields.length > 0 && (
                         <div style={{ color: "var(--aa-blue)", marginTop: 4 }}>
-                          Fixed: {v.fix_pass_fields.join(", ")}
+                          {t("fixed", v.fix_pass_fields.join(", "))}
                         </div>
                       )}
                     </div>
@@ -703,16 +712,16 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
                   {/* AA-219: Judge (metadata.judge) */}
                   {v && v.judge && (
                     <div style={{ padding: "8px 0", borderTop: `1px solid ${A.line}`, marginTop: 4, fontSize: 11 }}>
-                      <div style={{ fontWeight: 600, color: A.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>Judge</div>
+                      <div style={{ fontWeight: 600, color: A.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{t("judge")}</div>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 4 }}>
-                        {v.judge.brand_fit != null && <Badge color="gold">fit {v.judge.brand_fit.toFixed(1)}</Badge>}
-                        {v.judge.distinct != null && <Badge color="gold">distinct {v.judge.distinct.toFixed(1)}</Badge>}
+                        {v.judge.brand_fit != null && <Badge color="gold">{t("judgeFit", v.judge.brand_fit.toFixed(1))}</Badge>}
+                        {v.judge.distinct != null && <Badge color="gold">{t("judgeDistinct", v.judge.distinct.toFixed(1))}</Badge>}
                         {v.judge.mission_present != null && (
                           <Badge color={v.judge.mission_present ? "green" : "red"}>
-                            {v.judge.mission_present ? "mission ✓" : "mission ✗"}
+                            {v.judge.mission_present ? t("missionYes") : t("missionNo")}
                           </Badge>
                         )}
-                        {v.judge.judge_score != null && <Badge color="blue">score {v.judge.judge_score.toFixed(1)}</Badge>}
+                        {v.judge.judge_score != null && <Badge color="blue">{t("judgeScore", v.judge.judge_score.toFixed(1))}</Badge>}
                       </div>
                       {v.judge.feedback && <div style={{ color: A.body, lineHeight: 1.5 }}>{v.judge.feedback}</div>}
                     </div>
@@ -721,7 +730,7 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
                   {/* AA-219: failure codes + revalidate */}
                   {v && (v.failure_codes.length > 0 || v.revalidate_ran) && (
                     <div style={{ padding: "8px 0", borderTop: `1px solid ${A.line}`, marginTop: 4, fontSize: 11 }}>
-                      <div style={{ fontWeight: 600, color: A.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>Validation</div>
+                      <div style={{ fontWeight: 600, color: A.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{t("validation")}</div>
                       {v.failure_codes.length > 0 && (
                         <div style={{ color: A.red, lineHeight: 1.6, marginBottom: 4 }}>
                           {v.failure_codes.map(c => <div key={c} style={{ fontFamily: mono }}>• {c}</div>)}
@@ -729,7 +738,7 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
                       )}
                       {v.revalidate_ran ? (
                         <Badge color={v.revalidate_passed ? "green" : "red"}>
-                          {v.revalidate_passed ? "revalidated ✓" : "reval failed"}
+                          {v.revalidate_passed ? t("revalidated") : t("revalFailed")}
                         </Badge>
                       ) : (
                         <span style={{ color: A.muted2 }}>—</span>
@@ -742,7 +751,7 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
                 {v && v.top_keywords.length > 0 && (
                   <div style={{ borderBottom: `1px solid ${A.line}` }}>
                     <div style={{ padding: "5px 20px", background: A.line2, fontSize: 10, fontWeight: 700, textTransform: "uppercase" as const, letterSpacing: "0.12em", color: A.muted }}>
-                      Keywords
+                      {t("keywords")}
                     </div>
                     <div style={{ padding: "8px 20px", fontSize: 12, color: A.body }}>
                       {v.top_keywords.slice(0, 15).join(", ")}
@@ -772,8 +781,8 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
                         textTransform: "uppercase" as const, letterSpacing: "0.12em", color: A.muted,
                         display: "flex", alignItems: "center", gap: 6,
                       }}>
-                        {label}
-                        {diff && <span style={{ color: "var(--aa-amber-orange)", fontSize: 9 }}>↕ diff</span>}
+                        {t(label)}
+                        {diff && <span style={{ color: "var(--aa-amber-orange)", fontSize: 9 }}>{t("diff")}</span>}
                       </div>
                       {cellVal(panel, key)}
                     </div>
@@ -803,6 +812,10 @@ function MasterContentPageInner() {
   // AA-882 — the master lifecycle (activate / deactivate / trash / restore) is master.admin on the
   // backend; other roles see the catalog without those buttons.
   const role = useAdminIdentity().role;
+  const t = useT(M);
+  const tr = t; // the row loops below name the tour `t`
+  const rbacT = useT(RBAC_MESSAGES);
+  const { formatDate } = useFormat();
   const canLifecycle = can(role, "master.admin");
   // AA-878 — promoting a version is content.write: the read-only viewer sees the versions without the button.
   const canPromote = can(role, "content.write");
@@ -869,7 +882,7 @@ function MasterContentPageInner() {
   });
   const loading = isLoading;
   const refreshing = isFetching && !isLoading;
-  const error = qError ? (qError instanceof Error ? qError.message : "Failed to load") : "";
+  const error = qError ? (qError instanceof Error ? qError.message : t("loadFailed")) : "";
 
   // AA-722: the retired Dashboard's "Content Library" tab showed the master pool's score
   // distribution (GET /admin/metrics/library → score_distribution). It now lives here, replacing
@@ -960,10 +973,10 @@ function MasterContentPageInner() {
     { label: "9.5+", value: "9.5+" },
     { label: "9.0+", value: "9.0+" },
     { label: "8.0+", value: "8.0+" },
-    { label: "Below 8.0", value: "below8" },
+    { label: t("lessThan8"), value: "below8" },
   ];
   const versionOptions = [
-    { label: "v1 only", value: "v1" },
+    { label: t("v1Only"), value: "v1" },
     { label: "v2+",     value: "v2+" },
     { label: "v3+",     value: "v3+" },
   ];
@@ -989,7 +1002,7 @@ function MasterContentPageInner() {
   }, [tourVersions]);
 
   async function promoteVersion(tourId: string, tourName: string, versionNum: number) {
-    if (!confirm(`Make v${versionNum} the current published version for "${tourName}"?`)) return;
+    if (!confirm(t("promoteConfirm", versionNum, tourName))) return;
     setPromoting(`${tourId}-${versionNum}`);
     try {
       const r = await fetch(`/api/admin/tours/${tourId}/versions/${versionNum}/promote`, { method: "POST" });
@@ -999,10 +1012,10 @@ function MasterContentPageInner() {
           [tourId]: (prev[tourId] ?? []).map(v => ({ ...v, is_current: v.version_num === versionNum })),
         }));
         // AA-645: the promote republishes the version and queues its atomize (tour detail / atoms follow).
-        showToast(`v${versionNum} is now current — atoms are being rebuilt`);
+        showToast(t("promoted", versionNum));
       } else {
         const err = await r.json().catch(() => ({}));
-        alert(staffErrorMessage(r.status, err.detail, "Promote failed"));
+        alert(staffErrorMessage(r.status, err.detail, t("promoteFailed"), rbacT("adminOnly")));
       }
     } finally { setPromoting(null); }
   }
@@ -1032,14 +1045,15 @@ function MasterContentPageInner() {
     setToggling(tourId);
     try {
       const endpoint = newStatus === "active" ? "activate" : "deactivate";
+      const statusName = (newStatus === "active" ? t("tabActive") : t("tabInactive")).toLowerCase();
       const r = await fetch(`/api/admin/master/${tourId}/${endpoint}`, { method: "PATCH" });
       if (!r.ok) {
         const err = await r.json().catch(() => ({}));
-        alert(staffErrorMessage(r.status, err.detail, `Failed to set ${newStatus}`));
+        alert(staffErrorMessage(r.status, err.detail, t("setStatusFailed", statusName), rbacT("adminOnly")));
         return;
       }
       refetch();
-      showToast(`"${tourName}" set to ${newStatus}`);
+      showToast(t("statusSet", tourName, statusName));
     } finally {
       setToggling(null);
     }
@@ -1062,11 +1076,11 @@ function MasterContentPageInner() {
       const r = await fetch(`/api/admin/master/${tourId}/restore`, { method: "PATCH" });
       if (!r.ok) {
         const err = await r.json().catch(() => ({}));
-        alert(staffErrorMessage(r.status, err.detail, "Failed to restore tour"));
+        alert(staffErrorMessage(r.status, err.detail, t("restoreFailed"), rbacT("adminOnly")));
         return;
       }
       refetch();
-      showToast(`"${tourName}" restored (now inactive — activate manually)`);
+      showToast(t("restored", tourName));
     } finally {
       setRestoring(null);
     }
@@ -1075,7 +1089,7 @@ function MasterContentPageInner() {
   if (loading) {
     return (
         <AdminMain>
-          <LoadingScreen msg="Loading master content…" />
+          <LoadingScreen msg={t("loadingPage")} />
         </AdminMain>
     );
   }
@@ -1102,12 +1116,12 @@ function MasterContentPageInner() {
         {/* ── Section 1: Page header + Stats (fixed) ──────────────────────── */}
         <AdminPaneHeader>
           <PageHeader
-            title="Master Content"
-            description={`aa_internal tenant · ${AA_INTERNAL_ID.slice(0, 8)}…`}
+            title={t("title")}
+            description={t("tenantLine", AA_INTERNAL_ID.slice(0, 8))}
             actions={
               <Btn variant="secondary" size="sm" onClick={refresh} disabled={refreshing}>
                 <RefreshCw size={13} style={{ animation: refreshing ? "spin 1s linear infinite" : "none" }} />
-                {refreshing ? "Refreshing…" : "Refresh"}
+                {refreshing ? t("refreshing") : t("refresh")}
               </Btn>
             }
           />
@@ -1122,15 +1136,15 @@ function MasterContentPageInner() {
               labelled 30-day window reconciled with Cost Operations, with the all-time figure as
               context. */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 160px), 1fr))", gap: 12 }}>
-            <StatCard icon={<BarChart2 size={16} />}    label="Tours (filtered)"
+            <StatCard icon={<BarChart2 size={16} />}    label={t("toursFiltered")}
               value={String(summary?.catalog_total ?? serverTotal)}
-              sub={anyFilterActive ? "↳ matching current filters" : "↳ whole catalog"} />
-            <StatCard icon={<Star size={16} />}          label="Avg Quality"
+              sub={anyFilterActive ? t("matchingFilters") : t("wholeCatalog")} />
+            <StatCard icon={<Star size={16} />}          label={t("avgQuality")}
               value={summary?.avg_quality != null ? summary.avg_quality.toFixed(1) : "—"}
-              sub="↳ avg over filtered set" accent={scoreColor(summary?.avg_quality ?? null)} />
-            <StatCard icon={<DollarSign size={16} />}   label="LLM Cost (30d)"
+              sub={t("avgFiltered")} accent={scoreColor(summary?.avg_quality ?? null)} />
+            <StatCard icon={<DollarSign size={16} />}   label={t("llmCost")}
               value={`$${(summary?.llm_cost_window_usd ?? summary?.total_llm_cost_usd ?? 0).toFixed(2)}`}
-              sub={`↳ ${summary?.llm_cost_window_label ?? "last 30 days"} · all-time $${(summary?.total_llm_cost_usd ?? 0).toFixed(2)}`} />
+              sub={t("costSub", summary?.llm_cost_window_label ?? t("last30"), (summary?.total_llm_cost_usd ?? 0).toFixed(2))} />
             {/* AA-722: Score distribution of the master pool (was the stale "Pipeline Runs" card,
                 fed by shared.pipeline_runs). Compact bar list — same data the retired Dashboard's
                 Content Library tab showed (GET /admin/metrics/library · score_distribution). */}
@@ -1139,10 +1153,10 @@ function MasterContentPageInner() {
                 <div style={{ padding: 8, borderRadius: 8, background: alpha(A.gold, 8), color: A.gold }}>
                   <BarChart2 size={16} />
                 </div>
-                <span style={{ fontSize: 12, color: A.muted }}>Score distribution</span>
+                <span style={{ fontSize: 12, color: A.muted }}>{t("scoreDistribution")}</span>
               </div>
               {scoreDistribution.length === 0 ? (
-                <div style={{ fontSize: 12, color: A.muted2 }}>No distribution data yet</div>
+                <div style={{ fontSize: 12, color: A.muted2 }}>{t("noDistribution")}</div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
                   {scoreDistribution.map(b => (
@@ -1168,10 +1182,10 @@ function MasterContentPageInner() {
           {/* Master status tabs */}
           <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${A.line}`, background: A.card, flexShrink: 0 }}>
             {[
-              { label: "Active", value: "active" },
-              { label: "Inactive", value: "inactive" },
-              { label: "Trashed", value: "trashed" },
-              { label: "All", value: "" },
+              { label: t("tabActive"), value: "active" },
+              { label: t("tabInactive"), value: "inactive" },
+              { label: t("tabTrashed"), value: "trashed" },
+              { label: t("tabAll"), value: "" },
             ].map(tab => (
               <button
                 key={tab.value}
@@ -1204,10 +1218,10 @@ function MasterContentPageInner() {
             display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexShrink: 0,
           }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <SLabel style={{ margin: 0 }}>Rewritten Tours</SLabel>
+              <SLabel style={{ margin: 0 }}>{t("rewrittenTours")}</SLabel>
               <span style={{ fontSize: 12, color: A.muted2 }}>
                 {/* AA-718: true server total, not the length of a capped page. */}
-                {serverTotal} tours{anyFilterActive ? " (filtered)" : ""}
+                {t("toursCount", serverTotal, anyFilterActive)}
               </span>
             </div>
 
@@ -1216,39 +1230,40 @@ function MasterContentPageInner() {
               <input
                 value={search}
                 onChange={e => handleSearch(e.target.value)}
-                placeholder="Search name or country…"
+                placeholder={t("searchPlaceholder")}
+                aria-label={t("searchPlaceholder")}
                 style={{ padding: "5px 10px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, width: 180, background: A.card, color: A.ink, outline: "none" }}
               />
               <select value={countryFilter} onChange={e => { setCountryFilter(e.target.value); setPage(1); }}
                 style={{ padding: "5px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: A.card, color: A.ink }}>
-                <option value="">All Countries</option>
+                <option value="">{t("allCountries")}</option>
                 {countryOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
               <select value={scoreFilter} onChange={e => { setScoreFilter(e.target.value); setPage(1); }}
                 style={{ padding: "5px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: A.card, color: A.ink }}>
-                <option value="">All Scores</option>
+                <option value="">{t("allScores")}</option>
                 {scoreOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
               <select value={versionFilter} onChange={e => { setVersionFilter(e.target.value); setPage(1); }}
                 style={{ padding: "5px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: A.card, color: A.ink }}>
-                <option value="">All Versions</option>
+                <option value="">{t("allVersions")}</option>
                 {versionOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
 
               {/* Compare + export */}
               {selectedIds.size >= 2 && selectedIds.size <= 4 && (
                 <Btn variant="secondary" size="sm" onClick={() => setCompareOpen(true)}>
-                  Compare ({selectedIds.size})
+                  {t("compareN", selectedIds.size)}
                 </Btn>
               )}
               {selectedIds.size > 0 && (
                 <button onClick={() => setSelectedIds(new Set())}
                   style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, color: A.muted, padding: "4px 8px" }}>
-                  Clear ({selectedIds.size})
+                  {t("clearN", selectedIds.size)}
                 </button>
               )}
               <Btn variant="secondary" size="sm" disabled={exporting} onClick={exportAuditCsv}>
-                <Download size={12} /> {exporting ? "…" : "Export Audit CSV"}
+                <Download size={12} /> {exporting ? "…" : t("exportAudit")}
               </Btn>
               <div style={{ display: "inline-flex" }}>
                 <Btn variant="secondary" size="sm" disabled={exporting} onClick={() => exportTours("csv")}
@@ -1268,8 +1283,8 @@ function MasterContentPageInner() {
             {filtered.length === 0 ? (
               <div style={{ padding: 40, textAlign: "center" as const, color: A.muted, fontSize: 13 }}>
                 {search || countryFilter || scoreFilter || versionFilter
-                  ? "No tours match your filters"
-                  : "No rewritten tours found"}
+                  ? t("noMatch")
+                  : t("noTours")}
               </div>
             ) : isPhone ? (
               // AA-752 — phone card list (< 768px). Each tour becomes a card (name as title, the
@@ -1310,54 +1325,54 @@ function MasterContentPageInner() {
                           : <span style={{ color: A.muted2, fontSize: 12 }}>—</span>}
                         {(t.pending_review_count ?? 0) > 0 && t.tour_id && (
                           <a href={`/admin/review?tour_id=${t.tour_id}`}
-                            title={`${t.pending_review_count} failed version(s) pending in Review Queue`}
+                            title={tr("failedPending", t.pending_review_count ?? 0)}
                             style={{ fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 20, background: "var(--aa-amber-bg)", color: "var(--aa-amber-deep)", border: "1px solid var(--aa-amber-border)", textDecoration: "none", whiteSpace: "nowrap" }}>
-                            ⚠ {t.pending_review_count} failed
+                            {tr("failedBadge", t.pending_review_count ?? 0)}
                           </a>
                         )}
-                        {statusBadge(t.status)}
-                        {masterStatusBadge(t.master_status)}
+                        {statusBadge(t.status, tr)}
+                        {masterStatusBadge(t.master_status, tr)}
                       </div>
 
                       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 12 }}>
                         <button
                           onClick={() => { if (t.tour_id) { setDetailTourId(t.tour_id); setDetailTourName(t.tour_name); } }}
                           style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 5, background: A.card, cursor: "pointer", color: A.body }}
-                        >View</button>
+                        >{tr("view")}</button>
                         {t.tour_id && t.master_status !== "trashed" && (
                           <button onClick={() => toggleExpand(t.tour_id!)}
                             style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 5, background: isExpanded ? alpha(A.gold, 13) : A.card, cursor: "pointer", color: A.gold, display: "flex", alignItems: "center", gap: 3 }}>
-                            {isExpanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />} Versions
+                            {isExpanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />} {tr("versions")}
                           </button>
                         )}
                         {canLifecycle && t.tour_id && t.master_status === "active" && (
-                          <button onClick={() => toggleMasterStatus(t.tour_id!, t.tour_name, "inactive")} disabled={toggling === t.tour_id} title="Set to inactive"
+                          <button onClick={() => toggleMasterStatus(t.tour_id!, t.tour_name, "inactive")} disabled={toggling === t.tour_id} title={tr("setInactiveTip")}
                             style={{ padding: "3px 8px", fontSize: 11, border: "1px solid var(--aa-amber-border)", borderRadius: 5, background: "var(--aa-amber-bg5)", cursor: "pointer", color: "var(--aa-amber-orange2)", fontWeight: 600 }}>
-                            {toggling === t.tour_id ? "…" : "Set Inactive"}
+                            {toggling === t.tour_id ? "…" : tr("setInactive")}
                           </button>
                         )}
                         {canLifecycle && t.tour_id && t.master_status === "inactive" && (
-                          <button onClick={() => toggleMasterStatus(t.tour_id!, t.tour_name, "active")} disabled={toggling === t.tour_id} title="Set to active"
+                          <button onClick={() => toggleMasterStatus(t.tour_id!, t.tour_name, "active")} disabled={toggling === t.tour_id} title={tr("setActiveTip")}
                             style={{ padding: "3px 8px", fontSize: 11, border: "1px solid var(--aa-green-border2)", borderRadius: 5, background: "var(--aa-green-bg2)", cursor: "pointer", color: A.green, fontWeight: 600 }}>
-                            {toggling === t.tour_id ? "…" : "Set Active"}
+                            {toggling === t.tour_id ? "…" : tr("setActive")}
                           </button>
                         )}
                         {canLifecycle && t.tour_id && t.master_status !== "trashed" && (
-                          <button onClick={() => retireTour(t.tour_id!, t.tour_name)} title="Retire the tour at the source (S0/A0): stops serving it everywhere"
+                          <button onClick={() => retireTour(t.tour_id!, t.tour_name)} title={tr("retireTip")}
                             style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${A.redBorder}`, borderRadius: 5, background: A.card, cursor: "pointer", color: A.red, fontWeight: 600 }}>
-                            Retire
+                            {tr("retire")}
                           </button>
                         )}
                         {canLifecycle && t.tour_id && t.master_status !== "trashed" && (
-                          <button onClick={() => trashMaster(t.tour_id!, t.tour_name)} disabled={trashing === t.tour_id} title="Move to trash"
+                          <button onClick={() => trashMaster(t.tour_id!, t.tour_name)} disabled={trashing === t.tour_id} title={tr("trashTip")}
                             style={{ padding: "3px 6px", fontSize: 11, border: `1px solid ${A.redBorder}`, borderRadius: 5, background: A.redTint, cursor: "pointer", color: A.red, display: "flex", alignItems: "center", gap: 3 }}>
-                            <Trash2 size={11} />{trashing === t.tour_id ? "…" : "Trash"}
+                            <Trash2 size={11} />{trashing === t.tour_id ? "…" : tr("trash")}
                           </button>
                         )}
                         {canLifecycle && t.tour_id && t.master_status === "trashed" && (
-                          <button onClick={() => restoreMaster(t.tour_id!, t.tour_name)} disabled={restoring === t.tour_id} title="Restore from trash (→ inactive)"
+                          <button onClick={() => restoreMaster(t.tour_id!, t.tour_name)} disabled={restoring === t.tour_id} title={tr("restoreTip")}
                             style={{ padding: "3px 6px", fontSize: 11, border: `1px solid var(--aa-green-border2)`, borderRadius: 5, background: "var(--aa-green-bg2)", cursor: "pointer", color: A.green, display: "flex", alignItems: "center", gap: 3 }}>
-                            <RotateCcw size={11} />{restoring === t.tour_id ? "…" : "Restore"}
+                            <RotateCcw size={11} />{restoring === t.tour_id ? "…" : tr("restore")}
                           </button>
                         )}
                       </div>
@@ -1365,7 +1380,7 @@ function MasterContentPageInner() {
                       {isExpanded && t.tour_id && (
                         <div style={{ marginTop: 10, fontSize: 12 }}>
                           <a href={`/admin/jobs?tour_id=${t.tour_id}`} style={{ color: A.accent }}>
-                            Jobs for this tour (atomize, tenant rewrites) →
+                            {tr("jobsLink")}
                           </a>
                         </div>
                       )}
@@ -1393,17 +1408,17 @@ function MasterContentPageInner() {
                     </th>
                     <th style={TH}>#</th>
                     <th style={{ ...TH, cursor: "pointer" }} onClick={() => toggleSort("tour_name")}>
-                      Tour Name{sortKey === "tour_name" ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
+                      {t("colTourName")}{sortKey === "tour_name" ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
                     </th>
                     <th style={{ ...TH, cursor: "pointer" }} onClick={() => toggleSort("country")}>
-                      Country{sortKey === "country" ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
+                      {t("colCountry")}{sortKey === "country" ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
                     </th>
                     <th style={{ ...TH, cursor: "pointer" }} onClick={() => toggleSort("quality_score")}>
-                      Score{sortKey === "quality_score" ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
+                      {t("colScore")}{sortKey === "quality_score" ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
                     </th>
-                    <th style={TH}>Versions</th>
-                    <th style={TH}>Status</th>
-                    <th style={TH}>Actions</th>
+                    <th style={TH}>{t("colVersions")}</th>
+                    <th style={TH}>{t("colStatus")}</th>
+                    <th style={TH}>{t("colActions")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1447,85 +1462,85 @@ function MasterContentPageInner() {
                                 <a
                                   href={`/admin/review?tour_id=${t.tour_id}`}
                                   onClick={e => e.stopPropagation()}
-                                  title={`${t.pending_review_count} failed version(s) pending in Review Queue — click to review/dismiss`}
+                                  title={tr("failedPendingClick", t.pending_review_count ?? 0)}
                                   style={{
                                     fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 20,
                                     background: "var(--aa-amber-bg)", color: "var(--aa-amber-deep)", border: "1px solid var(--aa-amber-border)",
                                     textDecoration: "none", whiteSpace: "nowrap",
                                   }}
                                 >
-                                  ⚠ {t.pending_review_count} failed
+                                  {tr("failedBadge", t.pending_review_count ?? 0)}
                                 </a>
                               )}
                             </div>
                           </td>
                           <td style={TD}>
-                            {statusBadge(t.status)}
-                            {masterStatusBadge(t.master_status)}
+                            {statusBadge(t.status, tr)}
+                            {masterStatusBadge(t.master_status, tr)}
                           </td>
                           <td style={TD}>
                             <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                               <button
                                 onClick={() => { if (t.tour_id) { setDetailTourId(t.tour_id); setDetailTourName(t.tour_name); } }}
                                 style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 5, background: A.card, cursor: "pointer", color: A.body }}
-                              >View</button>
+                              >{tr("view")}</button>
                               {t.tour_id && t.master_status !== "trashed" && (
                                 <button
                                   onClick={() => toggleExpand(t.tour_id!)}
                                   style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 5, background: isExpanded ? alpha(A.gold, 13) : A.card, cursor: "pointer", color: A.gold, display: "flex", alignItems: "center", gap: 3 }}
                                 >
-                                  {isExpanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />} Versions
+                                  {isExpanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />} {tr("versions")}
                                 </button>
                               )}
                               {canLifecycle && t.tour_id && t.master_status === "active" && (
                                 <button
                                   onClick={() => toggleMasterStatus(t.tour_id!, t.tour_name, "inactive")}
                                   disabled={toggling === t.tour_id}
-                                  title="Set to inactive"
+                                  title={tr("setInactiveTip")}
                                   style={{ padding: "3px 8px", fontSize: 11, border: "1px solid var(--aa-amber-border)", borderRadius: 5, background: "var(--aa-amber-bg5)", cursor: "pointer", color: "var(--aa-amber-orange2)", fontWeight: 600 }}
                                 >
-                                  {toggling === t.tour_id ? "…" : "Set Inactive"}
+                                  {toggling === t.tour_id ? "…" : tr("setInactive")}
                                 </button>
                               )}
                               {canLifecycle && t.tour_id && t.master_status === "inactive" && (
                                 <button
                                   onClick={() => toggleMasterStatus(t.tour_id!, t.tour_name, "active")}
                                   disabled={toggling === t.tour_id}
-                                  title="Set to active"
+                                  title={tr("setActiveTip")}
                                   style={{ padding: "3px 8px", fontSize: 11, border: "1px solid var(--aa-green-border2)", borderRadius: 5, background: "var(--aa-green-bg2)", cursor: "pointer", color: A.green, fontWeight: 600 }}
                                 >
-                                  {toggling === t.tour_id ? "…" : "Set Active"}
+                                  {toggling === t.tour_id ? "…" : tr("setActive")}
                                 </button>
                               )}
                               {canLifecycle && t.tour_id && t.master_status !== "trashed" && (
                                 <button
                                   onClick={() => retireTour(t.tour_id!, t.tour_name)}
-                                  title="Retire the tour at the source (S0/A0): stops serving it everywhere"
+                                  title={tr("retireTip")}
                                   style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${A.redBorder}`, borderRadius: 5, background: A.card, cursor: "pointer", color: A.red, fontWeight: 600 }}
                                 >
-                                  Retire
+                                  {tr("retire")}
                                 </button>
                               )}
                               {canLifecycle && t.tour_id && t.master_status !== "trashed" && (
                                 <button
                                   onClick={() => trashMaster(t.tour_id!, t.tour_name)}
                                   disabled={trashing === t.tour_id}
-                                  title="Move to trash"
+                                  title={tr("trashTip")}
                                   style={{ padding: "3px 6px", fontSize: 11, border: `1px solid ${A.redBorder}`, borderRadius: 5, background: A.redTint, cursor: "pointer", color: A.red, display: "flex", alignItems: "center", gap: 3 }}
                                 >
                                   <Trash2 size={11} />
-                                  {trashing === t.tour_id ? "…" : "Trash"}
+                                  {trashing === t.tour_id ? "…" : tr("trash")}
                                 </button>
                               )}
                               {canLifecycle && t.tour_id && t.master_status === "trashed" && (
                                 <button
                                   onClick={() => restoreMaster(t.tour_id!, t.tour_name)}
                                   disabled={restoring === t.tour_id}
-                                  title="Restore from trash (→ inactive)"
+                                  title={tr("restoreTip")}
                                   style={{ padding: "3px 6px", fontSize: 11, border: `1px solid var(--aa-green-border2)`, borderRadius: 5, background: "var(--aa-green-bg2)", cursor: "pointer", color: A.green, display: "flex", alignItems: "center", gap: 3 }}
                                 >
                                   <RotateCcw size={11} />
-                                  {restoring === t.tour_id ? "…" : "Restore"}
+                                  {restoring === t.tour_id ? "…" : tr("restore")}
                                 </button>
                               )}
                             </div>
@@ -1538,20 +1553,21 @@ function MasterContentPageInner() {
                               {t.tour_id && (
                                 <div style={{ padding: "8px 16px 0", fontSize: 12 }}>
                                   <a href={`/admin/jobs?tour_id=${t.tour_id}`} style={{ color: A.accent }}>
-                                    Jobs for this tour (atomize, tenant rewrites) →
+                                    {tr("jobsLink")}
                                   </a>
                                 </div>
                               )}
                               {vLoading ? (
-                                <div style={{ padding: "12px 16px", fontSize: 12, color: A.muted }}>Loading versions…</div>
+                                <div style={{ padding: "12px 16px", fontSize: 12, color: A.muted }}>{tr("loadingVersions")}</div>
                               ) : versions.length === 0 ? (
-                                <div style={{ padding: "12px 16px", fontSize: 12, color: A.muted }}>No versions found</div>
+                                <div style={{ padding: "12px 16px", fontSize: 12, color: A.muted }}>{tr("noVersions")}</div>
                               ) : (
                                 <>
                                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                                     <thead>
                                       <tr style={{ background: A.line2 }}>
-                                        {["", "Version", "Model", "Overall", "Brand", "SEO", "Struct", "Quality", "Judge", "Audit", "Date", ""].map((h, hi) => (
+                                        {["", tr("vVersion"), tr("vModel"), tr("vOverall"), tr("vBrand"), tr("vSeo"), tr("vStruct"), tr("vQuality"),
+                                          tr("vJudge"), tr("vAudit"), tr("vDate"), ""].map((h, hi) => (
                                           <th key={hi} style={{ padding: "6px 10px", textAlign: "left" as const, fontSize: 10, fontWeight: 600, color: A.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>{h}</th>
                                         ))}
                                       </tr>
@@ -1572,7 +1588,7 @@ function MasterContentPageInner() {
                                             <span style={{ padding: "2px 7px", borderRadius: 10, background: v.is_current ? A.gold : A.goldTint, color: v.is_current ? "var(--aa-on-solid)" : A.gold, fontSize: 11, fontWeight: 600 }}>
                                               v{v.version_num}
                                             </span>
-                                            {v.is_current && <span style={{ marginLeft: 6, fontSize: 10, color: A.gold }}>current</span>}
+                                            {v.is_current && <span style={{ marginLeft: 6, fontSize: 10, color: A.gold }}>{tr("current")}</span>}
                                           </td>
                                           <td style={{ padding: "6px 10px", fontFamily: mono, fontSize: 11, color: A.muted2 }}>
                                             {modelLabel(v.model_id)}
@@ -1604,19 +1620,19 @@ function MasterContentPageInner() {
                                             />
                                           </td>
                                           <td style={{ padding: "6px 10px", color: A.muted2 }}>
-                                            {v.created_at ? relDate(v.created_at) : "—"}
+                                            {v.created_at ? formatDate(v.created_at) : "—"}
                                           </td>
                                           <td style={{ padding: "6px 10px" }}>
                                             <div style={{ display: "flex", gap: 5 }}>
                                               <button
                                                 onClick={() => { if (t.tour_id) { setDetailTourId(t.tour_id); setDetailTourName(t.tour_name); } }}
                                                 style={{ padding: "2px 7px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 4, background: A.card, cursor: "pointer", color: A.body }}
-                                              >View</button>
+                                              >{tr("view")}</button>
                                               {/* AA-220 (H3): per-version DOCX export (shared page-scope helper) */}
                                               {v.version_num > 0 && (
                                                 <button
                                                   onClick={() => t.tour_id && exportVersionDocx(t.tour_id, Number(v.version_num))}
-                                                  title="Export this version as DOCX"
+                                                  title={tr("exportDocx")}
                                                   style={{ padding: "2px 7px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 4, background: A.card, cursor: "pointer", color: A.body }}
                                                 >DOCX</button>
                                               )}
@@ -1626,7 +1642,7 @@ function MasterContentPageInner() {
                                                   disabled={promoting === `${t.tour_id}-${v.version_num}`}
                                                   style={{ padding: "2px 7px", fontSize: 11, border: `1px solid ${A.gold}`, borderRadius: 4, background: A.goldTint, cursor: "pointer", color: A.gold, fontWeight: 600 }}
                                                 >
-                                                  {promoting === `${t.tour_id}-${v.version_num}` ? "…" : "Promote"}
+                                                  {promoting === `${t.tour_id}-${v.version_num}` ? "…" : tr("promote")}
                                                 </button>
                                               )}
                                             </div>
@@ -1638,7 +1654,7 @@ function MasterContentPageInner() {
                                   {vSel.size === 2 && t.tour_id && (
                                     <div style={{ padding: "8px 12px", borderTop: `1px solid ${A.line}`, display: "flex", alignItems: "center", gap: 10 }}>
                                       <span style={{ fontSize: 12, color: A.muted }}>
-                                        v{[...vSel].sort((a,b)=>a-b).join(" vs v")} selected
+                                        {tr("selectedPair", `v${[...vSel].sort((a, b) => a - b).join(" vs v")}`)}
                                       </span>
                                       <button
                                         onClick={() => {
@@ -1647,12 +1663,12 @@ function MasterContentPageInner() {
                                         }}
                                         style={{ padding: "4px 12px", fontSize: 12, fontWeight: 600, border: `1px solid ${A.gold}`, borderRadius: 6, background: A.goldTint, cursor: "pointer", color: A.gold }}
                                       >
-                                        Compare Versions
+                                        {tr("compareVersions")}
                                       </button>
                                       <button
                                         onClick={() => t.tour_id && setCompareVersionSel(p => ({ ...p, [t.tour_id!]: new Set() }))}
                                         style={{ fontSize: 11, color: A.muted2, background: "none", border: "none", cursor: "pointer" }}
-                                      >Clear</button>
+                                      >{tr("clear")}</button>
                                     </div>
                                   )}
                                 </>
@@ -1670,13 +1686,13 @@ function MasterContentPageInner() {
               <div style={{ padding: "12px 20px", borderTop: `1px solid ${A.line}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                 {/* AA-739: choose rows per page; AA-718: paginate against the real server total. */}
                 <label style={{ fontSize: 12, color: A.muted, display: "inline-flex", alignItems: "center", gap: 8 }}>
-                  {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, serverTotal)} of {serverTotal}
+                  {t("range", (page - 1) * pageSize + 1, Math.min(page * pageSize, serverTotal), serverTotal)}
                   <select
                     value={pageSize}
                     onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }}
                     style={{ padding: "4px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: A.card, color: A.ink }}
                   >
-                    {[20, 50, 100, 200].map(n => <option key={n} value={n}>{n} / page</option>)}
+                    {[20, 50, 100, 200].map(n => <option key={n} value={n}>{t("perPage", n)}</option>)}
                   </select>
                 </label>
                 {serverTotal > pageSize && (

@@ -7,11 +7,11 @@
 import { AlertTriangle, Edit3, Loader2, Save, ShieldCheck, XCircle } from "lucide-react";
 import { useState } from "react";
 import { A, mono, sans, Btn } from "../_components/adminUi";
-import { formatDateTime } from "../../_kit";
+import { useFormat, useT } from "../../_kit";
+import { FIELD, M } from "./messages";
 import { ClaimChecks } from "./ClaimChecks";
 import {
   AREA_FIELDS,
-  FIELD_LABEL,
   LIST_FIELDS,
   SEO_META_MAX,
   SEO_META_MIN,
@@ -29,12 +29,13 @@ import {
 } from "./reviewApi";
 
 function RevalidatePill({ state }: { state: boolean | null }) {
+  const t = useT(M);
   const cfg =
     state === true
-      ? { bg: A.greenSoft, color: A.green, label: "Re-validation passed", Icon: ShieldCheck }
+      ? { bg: A.greenSoft, color: A.green, label: t("revalPassed"), Icon: ShieldCheck }
       : state === false
-        ? { bg: A.redSoft, color: A.red, label: "Re-validation failed", Icon: XCircle }
-        : { bg: "var(--aa-amber-bg)", color: "var(--aa-amber-deep)", label: "Needs re-validation", Icon: AlertTriangle };
+        ? { bg: A.redSoft, color: A.red, label: t("revalFailed"), Icon: XCircle }
+        : { bg: "var(--aa-amber-bg)", color: "var(--aa-amber-deep)", label: t("needsReval"), Icon: AlertTriangle };
   const { Icon } = cfg;
   return (
     <span
@@ -57,6 +58,7 @@ function RevalidatePill({ state }: { state: boolean | null }) {
 
 function FieldLabel({ field, fails }: { field: string; fails?: { code: string; reason: string }[] }) {
   const failed = !!fails?.length;
+  const fieldName = useT(FIELD);
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
       <span
@@ -68,7 +70,7 @@ function FieldLabel({ field, fails }: { field: string; fails?: { code: string; r
           color: failed ? A.red : "var(--aa-neutral-fg2)",
         }}
       >
-        {FIELD_LABEL[field] || field}
+        {field in FIELD.en ? fieldName(field as keyof typeof FIELD.en) : field}
       </span>
       {failed &&
         fails!.map((f, i) => (
@@ -154,6 +156,8 @@ export function ReviewEditor({
   /** AA-845 — may mark sentences unsupported in the Source check (review.act). */
   canLabel?: boolean;
 }) {
+  const t = useT(M);
+  const { formatDateTime } = useFormat();
   const [draft, setDraft] = useState<Record<string, string>>(() => toDraft(item.raw));
   const [dirty, setDirty] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
@@ -173,7 +177,7 @@ export function ReviewEditor({
 
   async function save() {
     if (dirty.size === 0) {
-      setMsg({ kind: "err", text: "No changes to save." });
+      setMsg({ kind: "err", text: t("noChanges") });
       return;
     }
     setSaving(true);
@@ -184,9 +188,9 @@ export function ReviewEditor({
       await patchGenerated(item.raw.tour_id, item.raw.generated_content_id, body);
       setDirty(new Set());
       onSaved(item.id);
-      setMsg({ kind: "ok", text: "Saved. Re-validate before approving." });
+      setMsg({ kind: "ok", text: t("savedReval") });
     } catch (err) {
-      setMsg({ kind: "err", text: err instanceof Error ? err.message : "Save failed." });
+      setMsg({ kind: "err", text: err instanceof Error ? err.message : t("saveFailed") });
     } finally {
       setSaving(false);
     }
@@ -194,21 +198,23 @@ export function ReviewEditor({
 
   async function revalidate() {
     if (dirty.size > 0) {
-      setMsg({ kind: "err", text: "Save your edits first." });
+      setMsg({ kind: "err", text: t("saveFirst") });
       return;
     }
     setRevalidating(true);
     setMsg(null);
     try {
-      const { job_id } = await startRevalidate(item.raw.tour_id, item.raw.generated_content_id);
+      const { job_id } = await startRevalidate(
+        item.raw.tour_id, item.raw.generated_content_id, (s) => t("revalStartFailed", s),
+      );
       const outcome = await pollJob(job_id);
       if (outcome === "succeeded") {
         const passed = await fetchRevalidateState(item.id);
         onRevalidated(item.id, passed);
         setMsg(
           passed === true
-            ? { kind: "ok", text: "Re-validation passed. You can approve now." }
-            : { kind: "err", text: "Re-validation failed. Fix the flagged fields and try again." },
+            ? { kind: "ok", text: t("revalOk") }
+            : { kind: "err", text: t("revalFix") },
         );
       } else {
         onRevalidated(item.id, null);
@@ -216,14 +222,14 @@ export function ReviewEditor({
           kind: "err",
           text:
             outcome === "timeout"
-              ? "Re-validation is taking too long — refresh to check."
+              ? t("revalSlow")
               : outcome === "interrupted"
-                ? "Re-validation was interrupted. Try again."
-                : "Re-validation job failed. Try again.",
+                ? t("revalInterrupted")
+                : t("revalJobFailed"),
         });
       }
     } catch (err) {
-      setMsg({ kind: "err", text: err instanceof Error ? err.message : "Re-validation error." });
+      setMsg({ kind: "err", text: err instanceof Error ? err.message : t("revalError") });
     } finally {
       setRevalidating(false);
     }
@@ -235,22 +241,22 @@ export function ReviewEditor({
         <RevalidatePill state={item.revalidate_passed} />
         {item.human_edited && (
           <span style={{ fontSize: 11, color: A.muted, display: "inline-flex", alignItems: "center", gap: 4 }}>
-            <Edit3 size={11} /> Edited
+            <Edit3 size={11} /> {t("editedLabel")}
             {item.edited_at ? ` · ${formatDateTime(item.edited_at)}` : ""}
             {item.reviewed_by ? ` · ${item.reviewed_by}` : ""}
           </span>
         )}
         <div style={{ flex: 1 }} />
         {readOnly ? (
-          <span style={{ fontSize: 11.5, color: A.muted }}>View only</span>
+          <span style={{ fontSize: 11.5, color: A.muted }}>{t("viewOnly")}</span>
         ) : (
           <>
             <Btn variant="ghost" size="sm" disabled={saving || dirty.size === 0} onClick={save}>
-              {saving ? <Loader2 size={12} className="spin" /> : <Save size={12} />} Save edits
+              {saving ? <Loader2 size={12} className="spin" /> : <Save size={12} />} {t("saveEdits")}
               {dirty.size ? ` (${dirty.size})` : ""}
             </Btn>
             <Btn variant="primary" size="sm" disabled={revalidating || dirty.size > 0} onClick={revalidate}>
-              {revalidating ? <Loader2 size={12} className="spin" /> : <ShieldCheck size={12} />} Re-validate
+              {revalidating ? <Loader2 size={12} className="spin" /> : <ShieldCheck size={12} />} {t("revalidate")}
             </Btn>
           </>
         )}
@@ -297,7 +303,7 @@ export function ReviewEditor({
                 const inBand = n >= SEO_META_MIN && n <= SEO_META_MAX;
                 return (
                   <div style={{ fontSize: 11, marginTop: 3, color: inBand ? A.green : A.red, fontFamily: mono }}>
-                    {n} chars · band {SEO_META_MIN}–{SEO_META_MAX}
+                    {t("metaBand", n, SEO_META_MIN, SEO_META_MAX)}
                   </div>
                 );
               })()}
@@ -312,10 +318,10 @@ export function ReviewEditor({
               readOnly={readOnly}
               onChange={(e) => set(f, e.target.value)}
               rows={5}
-              placeholder="One item per line"
+              placeholder={t("onePerLine")}
               style={{ ...fieldBoxStyle(!!fails[f]), fontFamily: mono, fontSize: 12 }}
             />
-            <div style={{ fontSize: 10, color: A.muted, marginTop: 3 }}>One item per line</div>
+            <div style={{ fontSize: 10, color: A.muted, marginTop: 3 }}>{t("onePerLine")}</div>
           </div>
         ))}
 
@@ -351,7 +357,7 @@ export function ReviewEditor({
             {JSON.stringify(item.raw.og_tags ?? {}, null, 2)}
           </pre>
           <div style={{ fontSize: 10, color: A.muted, marginTop: 3 }}>
-            Read-only — OG tags are generated, not hand-edited yet.
+            {t("ogReadOnly")}
           </div>
         </div>
       </div>

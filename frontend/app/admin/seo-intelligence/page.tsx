@@ -3,10 +3,11 @@
 // AA-705 — SEO Intelligence: 5 tabs (Overview / Keywords / Questions / Gaps / Spend) merging
 // search_demand + seo_context + published_tours + dfs_call_log. UI kit + react-query (AA-662).
 // Data: GET /api/admin/seo-intelligence (BFF -> /admin/seo-intelligence).
+// AA-994: text in the UI language (messages.ts); keywords, questions and markets from the API stay as sent.
 
 import type { ColumnDef } from "@tanstack/react-table";
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { BarChart3, HelpCircle, Search, TriangleAlert, Wallet } from "lucide-react";
 import {
   apiGet,
@@ -20,7 +21,12 @@ import {
   PageHeader,
   SkeletonStyle,
   Tabs, AdminMain, ScrollX,
+  useT,
+  type Translator,
 } from "../../_kit";
+import { SEO } from "./messages";
+
+type T = Translator<typeof SEO.en>;
 
 interface DemandRow {
   market: string;
@@ -84,12 +90,12 @@ interface SeoData {
 }
 
 const TABS = [
-  { key: "overview", label: "Overview" },
-  { key: "keywords", label: "Keywords" },
-  { key: "questions", label: "Questions (PAA)" },
-  { key: "gaps", label: "Gaps" },
-  { key: "spend", label: "Spend & cache" },
-];
+  { key: "overview", label: "tabOverview" },
+  { key: "keywords", label: "tabKeywords" },
+  { key: "questions", label: "tabQuestions" },
+  { key: "gaps", label: "tabGaps" },
+  { key: "spend", label: "tabSpend" },
+] as const;
 
 function Stat({ label, value, sub, color = K.ink }: {
   label: string; value: React.ReactNode; sub?: string; color?: string;
@@ -118,28 +124,29 @@ const usd = (n: number | undefined | null) =>
 const pct = (n: number | null | undefined) => (n == null ? "—" : `${Math.round(n * 100)}%`);
 
 function OverviewTab({ d }: { d: SeoData["overview"] }) {
+  const t = useT(SEO);
   const maxVol = Math.max(1, ...d.demand_by_market.map((m) => m.total_volume));
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
-        <Stat label="SEO coverage" value={`${d.coverage_pct}%`} sub={`${d.seo_covered}/${d.total_tours} masters`} color={K.accentDeep} />
-        <Stat label="With real volume" value={`${d.with_volume_pct}%`} sub={`${d.tours_with_volume} masters`} color={K.success} />
-        <Stat label="PAA questions" value={d.paa_total.toLocaleString()} />
-        <Stat label="Places researched" value={d.freshness.places_researched.toLocaleString()}
-          sub={d.freshness.places_expired > 0 ? `${d.freshness.places_expired} expired (>${d.freshness.fresh_days}d)` : "all fresh"}
+        <Stat label={t("seoCoverage")} value={`${d.coverage_pct}%`} sub={t("masters", d.seo_covered, d.total_tours)} color={K.accentDeep} />
+        <Stat label={t("withVolume")} value={`${d.with_volume_pct}%`} sub={t("mastersCount", d.tours_with_volume)} color={K.success} />
+        <Stat label={t("paaQuestions")} value={d.paa_total.toLocaleString()} />
+        <Stat label={t("placesResearched")} value={d.freshness.places_researched.toLocaleString()}
+          sub={d.freshness.places_expired > 0 ? t("expired", d.freshness.places_expired, d.freshness.fresh_days) : t("allFresh")}
           color={d.freshness.places_expired > 0 ? K.amber : K.ink} />
-        <Stat label="Median data age" value={d.freshness.median_age_days != null ? `${d.freshness.median_age_days}d` : "—"} />
+        <Stat label={t("medianAge")} value={d.freshness.median_age_days != null ? t("days", d.freshness.median_age_days) : "—"} />
       </div>
       <div style={{ background: K.card, border: `1px solid ${K.line}`, borderRadius: 12, padding: "16px 18px" }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: K.ink, marginBottom: 12 }}>Demand by market</div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: K.ink, marginBottom: 12 }}>{t("demandByMarket")}</div>
         <ScrollX>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
-              <th style={TH}>Market</th>
-              <th style={{ ...TH, textAlign: "right" }}>Keywords</th>
-              <th style={{ ...TH, textAlign: "right" }}>With volume</th>
-              <th style={{ ...TH, textAlign: "right" }}>Total monthly volume</th>
+              <th style={TH}>{t("market")}</th>
+              <th style={{ ...TH, textAlign: "right" }}>{t("keywords")}</th>
+              <th style={{ ...TH, textAlign: "right" }}>{t("withVolumeCol")}</th>
+              <th style={{ ...TH, textAlign: "right" }}>{t("totalVolume")}</th>
               <th style={TH}></th>
             </tr>
           </thead>
@@ -160,7 +167,7 @@ function OverviewTab({ d }: { d: SeoData["overview"] }) {
               </tr>
             ))}
             {d.demand_by_market.length === 0 && (
-              <tr><td colSpan={5} style={{ ...TD, color: K.muted }}>No research demand data yet.</td></tr>
+              <tr><td colSpan={5} style={{ ...TD, color: K.muted }}>{t("noDemand")}</td></tr>
             )}
           </tbody>
         </table>
@@ -170,30 +177,31 @@ function OverviewTab({ d }: { d: SeoData["overview"] }) {
   );
 }
 
-const KW_COLUMNS: ColumnDef<KeywordRow, unknown>[] = [
-  { accessorKey: "keyword", header: "Keyword" },
-  { accessorKey: "market", header: "Market", cell: (c) => <Badge tone="neutral" dot={false}>{String(c.getValue())}</Badge> },
+const kwColumns = (t: T): ColumnDef<KeywordRow, unknown>[] => [
+  { accessorKey: "keyword", header: t("keyword") },
+  { accessorKey: "market", header: t("market"), cell: (c) => <Badge tone="neutral" dot={false}>{String(c.getValue())}</Badge> },
   {
-    accessorKey: "search_volume", header: "Volume / mo",
+    accessorKey: "search_volume", header: t("volumeMo"),
     cell: (c) => <span style={{ fontVariantNumeric: "tabular-nums" }}>{Number(c.getValue()).toLocaleString()}</span>,
   },
-  { accessorKey: "tours_using", header: "Tours using" },
+  { accessorKey: "tours_using", header: t("toursUsing") },
   {
-    accessorKey: "used_in_content", header: "In content",
-    cell: (c) => (c.getValue() ? <Badge tone="success" dot={false}>yes</Badge> : <span style={{ color: K.muted2 }}>no</span>),
+    accessorKey: "used_in_content", header: t("inContent"),
+    cell: (c) => (c.getValue() ? <Badge tone="success" dot={false}>{t("yes")}</Badge> : <span style={{ color: K.muted2 }}>{t("no")}</span>),
   },
 ];
 
 function GapsTab({ gaps }: { gaps: GapRow[] }) {
+  const t = useT(SEO);
   if (gaps.length === 0) {
-    return <EmptyState title="No gaps" description="Every published master has at least one keyword with measured search volume." />;
+    return <EmptyState title={t("noGapsTitle")} description={t("noGapsBody")} />;
   }
   const byCountry: Record<string, GapRow[]> = {};
-  for (const g of gaps) (byCountry[g.country || "Unknown"] ??= []).push(g);
+  for (const g of gaps) (byCountry[g.country || t("unknownCountry")] ??= []).push(g);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ fontSize: 12, color: K.muted }}>
-        {gaps.length} published masters have no keyword with measured volume. Each links to its tour for research.
+        {t("gapsIntro", gaps.length)}
       </div>
       {Object.entries(byCountry).map(([country, rows]) => (
         <div key={country} style={{ background: K.card, border: `1px solid ${K.line}`, borderRadius: 12, padding: "14px 16px" }}>
@@ -202,7 +210,7 @@ function GapsTab({ gaps }: { gaps: GapRow[] }) {
           </div>
           <ScrollX>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead><tr><th style={TH}>Tour</th><th style={{ ...TH, textAlign: "right" }}>Research state</th></tr></thead>
+            <thead><tr><th style={TH}>{t("tour")}</th><th style={{ ...TH, textAlign: "right" }}>{t("researchState")}</th></tr></thead>
             <tbody>
               {rows.map((g) => (
                 <tr key={g.tour_id}>
@@ -213,8 +221,8 @@ function GapsTab({ gaps }: { gaps: GapRow[] }) {
                   </td>
                   <td style={{ ...TD, textAlign: "right" }}>
                     {g.has_research
-                      ? <Badge tone="warning" dot={false}>researched, no volume</Badge>
-                      : <Badge tone="danger" dot={false}>never researched</Badge>}
+                      ? <Badge tone="warning" dot={false}>{t("researchedNoVolume")}</Badge>
+                      : <Badge tone="danger" dot={false}>{t("neverResearched")}</Badge>}
                   </td>
                 </tr>
               ))}
@@ -228,26 +236,27 @@ function GapsTab({ gaps }: { gaps: GapRow[] }) {
 }
 
 function SpendTab({ spend }: { spend: SeoData["spend"] }) {
+  const t = useT(SEO);
   const s = spend.summary;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
-        <Stat label="DFS cost (window)" value={usd(s.total_cost_usd)} color={K.accentDeep} />
-        <Stat label="Calls" value={(s.total_calls ?? 0).toLocaleString()} />
-        <Stat label="Live calls" value={(s.live_calls ?? 0).toLocaleString()} />
-        <Stat label="Cache hit rate" value={pct(s.cache_hit_rate)} color={K.success} />
+        <Stat label={t("dfsCost")} value={usd(s.total_cost_usd)} color={K.accentDeep} />
+        <Stat label={t("calls")} value={(s.total_calls ?? 0).toLocaleString()} />
+        <Stat label={t("liveCalls")} value={(s.live_calls ?? 0).toLocaleString()} />
+        <Stat label={t("cacheHitRate")} value={pct(s.cache_hit_rate)} color={K.success} />
       </div>
       <div style={{ background: K.card, border: `1px solid ${K.line}`, borderRadius: 12, padding: "16px 18px" }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: K.ink, marginBottom: 10 }}>DataForSEO spend by endpoint</div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: K.ink, marginBottom: 10 }}>{t("spendByEndpoint")}</div>
         <ScrollX>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
-              <th style={TH}>Endpoint</th><th style={TH}>Tenant</th>
-              <th style={{ ...TH, textAlign: "right" }}>Calls</th>
-              <th style={{ ...TH, textAlign: "right" }}>Cache hit</th>
-              <th style={{ ...TH, textAlign: "right" }}>Keywords</th>
-              <th style={{ ...TH, textAlign: "right" }}>Cost</th>
+              <th style={TH}>{t("endpoint")}</th><th style={TH}>{t("tenant")}</th>
+              <th style={{ ...TH, textAlign: "right" }}>{t("calls")}</th>
+              <th style={{ ...TH, textAlign: "right" }}>{t("cacheHit")}</th>
+              <th style={{ ...TH, textAlign: "right" }}>{t("keywords")}</th>
+              <th style={{ ...TH, textAlign: "right" }}>{t("cost")}</th>
             </tr>
           </thead>
           <tbody>
@@ -262,7 +271,7 @@ function SpendTab({ spend }: { spend: SeoData["spend"] }) {
               </tr>
             ))}
             {spend.branches.length === 0 && (
-              <tr><td colSpan={6} style={{ ...TD, color: K.muted }}>No DataForSEO spend in this window.</td></tr>
+              <tr><td colSpan={6} style={{ ...TD, color: K.muted }}>{t("noSpend")}</td></tr>
             )}
           </tbody>
         </table>
@@ -273,6 +282,8 @@ function SpendTab({ spend }: { spend: SeoData["spend"] }) {
 }
 
 export default function SeoIntelligencePage() {
+  const t = useT(SEO);
+  const kwCols = useMemo(() => kwColumns(t), [t]);
   const [tab, setTab] = useState("overview");
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["admin-seo-intelligence"],
@@ -289,17 +300,17 @@ export default function SeoIntelligencePage() {
       <SkeletonStyle />
       <AdminMain>
           <PageHeader
-            title="SEO Intelligence"
-            description="Search demand, keywords, PAA questions, coverage gaps and research spend — merged from Segment research, S1 SEO context and DataForSEO."
+            title={t("title")}
+            description={t("description")}
           />
           <div style={{ marginBottom: 20 }}>
-            <Tabs tabs={TABS.map((t) => ({ key: t.key, label: t.label }))} active={tab} onChange={setTab} />
+            <Tabs tabs={TABS.map((x) => ({ key: x.key, label: t(x.label) }))} active={tab} onChange={setTab} />
           </div>
 
           {isLoading ? (
-            <LoadingScreen message="Loading SEO intelligence…" />
+            <LoadingScreen message={t("loading")} />
           ) : isError ? (
-            <ErrorState message={(error as Error)?.message || "Failed to load."} onRetry={() => refetch()} />
+            <ErrorState message={(error as Error)?.message || t("loadFailed")} onRetry={() => refetch()} />
           ) : !data ? null : (
             <>
               {tab === "overview" && <OverviewTab d={data.overview} />}
@@ -307,16 +318,16 @@ export default function SeoIntelligencePage() {
                 <DataTable<KeywordRow>
                   tableId="seo-keywords"
                   data={data.keywords}
-                  columns={KW_COLUMNS}
+                  columns={kwCols}
                   getRowId={(r) => `${r.keyword}:${r.market}`}
                   searchable
-                  searchPlaceholder="Search keywords…"
+                  searchPlaceholder={t("searchKeywords")}
                   pageSize={25}
                 />
               )}
               {tab === "questions" && (
                 data.questions.length === 0 ? (
-                  <EmptyState title="No PAA questions" description="No People-Also-Ask questions have been researched yet." />
+                  <EmptyState title={t("noPaaTitle")} description={t("noPaaBody")} />
                 ) : (
                   <div style={{ background: K.card, border: `1px solid ${K.line}`, borderRadius: 12, padding: "8px 4px" }}>
                     {data.questions.map((q, i) => (

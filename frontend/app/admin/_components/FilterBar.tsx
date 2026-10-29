@@ -3,6 +3,8 @@
 import React from "react";
 import { A, sans } from "./adminUi";
 import { Search, X } from "lucide-react";
+import { useT } from "../../_kit/core/useI18n";
+import { M } from "./components.messages";
 
 interface FilterBarProps {
   search: string;
@@ -23,6 +25,7 @@ interface FilterOption {
 }
 
 export function FilterBar({ search, onSearch, placeholder, filters, extra }: FilterBarProps) {
+  const t = useT(M);
   return (
     <div style={{
       display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap",
@@ -36,7 +39,7 @@ export function FilterBar({ search, onSearch, placeholder, filters, extra }: Fil
         <input
           value={search}
           onChange={e => onSearch(e.target.value)}
-          placeholder={placeholder || "Search…"}
+          placeholder={placeholder || t("search")}
           style={{
             width: "100%", padding: "7px 32px 7px 30px",
             border: `1px solid ${A.line}`, borderRadius: 7,
@@ -47,6 +50,7 @@ export function FilterBar({ search, onSearch, placeholder, filters, extra }: Fil
         {search && (
           <button
             onClick={() => onSearch("")}
+            aria-label={t("clearSearch")}
             style={{
               position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
               background: "none", border: "none", cursor: "pointer", color: A.muted2, padding: 0,
@@ -68,7 +72,7 @@ export function FilterBar({ search, onSearch, placeholder, filters, extra }: Fil
             outline: "none", cursor: "pointer",
           }}
         >
-          <option value="">{f.label}: {f.allLabel ?? "All"}</option>
+          <option value="">{f.label}: {f.allLabel ?? t("all")}</option>
           {f.options.map(o => (
             <option key={o.value} value={o.value}>{o.label}</option>
           ))}

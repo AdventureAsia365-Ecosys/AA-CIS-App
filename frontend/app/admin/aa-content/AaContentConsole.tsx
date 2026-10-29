@@ -11,8 +11,7 @@
 // A row opens the editor drawer (AaContentEditor.tsx) on the row's group: the EN and VI copies side by side.
 //
 // Who sees what: every staff role reads the list (the viewer included); "New content" needs content.write. No
-// polling (S240): load on open + Refresh. English only (pages default to English); strings are plain so they can
-// move to an i18n file.
+// polling (S240): load on open + Refresh. AA-994: text in the UI language (messages.ts, useAaText.ts).
 
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, RefreshCw } from "lucide-react";
@@ -25,8 +24,9 @@ import {
   Modal,
   PageHeader,
   apiGet,
-  formatDateTime,
   useAdminIdentity,
+  useFormat,
+  useT,
   useToast,
   type ColumnDef, AdminMain,
 } from "../../_kit";
@@ -34,11 +34,8 @@ import { can } from "@/lib/rbac";
 import {
   EMPTY_FILTERS,
   KINDS,
-  KIND_LABEL,
   LOCALES,
-  LOCALE_LABEL,
   STATUSES,
-  STATUS_FILTER_LABEL,
   aaCall,
   countryLabel,
   countryOptions,
@@ -56,11 +53,16 @@ import {
   type AaState,
 } from "@/lib/aaContent";
 import AaContentEditor, { Field, InlineError, fieldStyle, noteStyle } from "./AaContentEditor";
+import { AC } from "./messages";
+import { useAaText } from "./useAaText";
 
 export const LIST_KEY = ["aa-content-list"] as const;
 const PAGE_SIZES = [25, 50, 100];
 
 export default function AaContentConsole() {
+  const t = useT(AC);
+  const tx = useAaText();
+  const { formatDateTime } = useFormat();
   const qc = useQueryClient();
   const role = useAdminIdentity().role;
   const canWrite = can(role, "content.write");
@@ -85,26 +87,26 @@ export default function AaContentConsole() {
 
   const columns = useMemo<ColumnDef<AaListRow, unknown>[]>(() => [
     {
-      accessorKey: "title", header: "Title",
+      accessorKey: "title", header: t("colTitle"),
       cell: (c) => (
         <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
           <span style={{ fontWeight: 600, color: K.ink, overflowWrap: "anywhere" }}>
-            {c.row.original.title || <span style={{ color: K.muted }}>(no title)</span>}
+            {c.row.original.title || <span style={{ color: K.muted }}>{t("noTitle")}</span>}
           </span>
           <span style={{ fontSize: 11.5, color: K.muted, overflowWrap: "anywhere" }}>{c.row.original.group_key}</span>
         </span>
       ),
     },
-    { accessorKey: "kind", header: "Kind", cell: (c) => KIND_LABEL[c.row.original.kind] ?? c.row.original.kind },
+    { accessorKey: "kind", header: t("colKind"), cell: (c) => tx.kind[c.row.original.kind] ?? c.row.original.kind },
     {
-      accessorKey: "locale", header: "Language",
+      accessorKey: "locale", header: t("colLanguage"),
       cell: (c) => <Badge tone="info" dot={false}>{c.row.original.locale.toUpperCase()}</Badge>,
     },
     {
-      accessorKey: "state", header: "Status",
+      accessorKey: "state", header: t("colStatus"),
       cell: (c) => {
-        const s = stateBadge(c.row.original);
-        const pending = pendingDraftLabel(c.row.original);
+        const s = stateBadge(c.row.original, tx.words);
+        const pending = pendingDraftLabel(c.row.original, tx.words);
         return (
           <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
             <Badge tone={s.tone}>{s.label}</Badge>
@@ -114,47 +116,47 @@ export default function AaContentConsole() {
       },
     },
     {
-      accessorKey: "country_codes", header: "Countries",
+      accessorKey: "country_codes", header: t("colCountries"),
       cell: (c) => {
         const codes = c.row.original.country_codes;
-        if (!codes.length) return <span style={{ color: K.muted }}>All</span>;
-        return <span title={codes.map(countryLabel).join(", ")}>{codes.join(", ")}</span>;
+        if (!codes.length) return <span style={{ color: K.muted }}>{t("all")}</span>;
+        return <span title={codes.map((code) => countryLabel(code, tx.lang)).join(", ")}>{codes.join(", ")}</span>;
       },
     },
-    { accessorKey: "updated_at", header: "Updated", cell: (c) => formatDateTime(c.row.original.updated_at) },
-  ], []);
+    { accessorKey: "updated_at", header: t("colUpdated"), cell: (c) => formatDateTime(c.row.original.updated_at) },
+  ], [t, tx, formatDateTime]);
 
   const refresh = () => { void qc.invalidateQueries({ queryKey: LIST_KEY }); };
-  const listError = list.error ? (list.error as Error).message || "Could not load the AA content." : null;
+  const listError = list.error ? (list.error as Error).message || t("listError") : null;
   const filtered = filters.kind || filters.locale || filters.status || filters.country;
 
   const filterBar = (
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", minWidth: 0 }}>
-      <FilterSelect label="Kind" value={filters.kind} onChange={(v) => setFilter("kind", v as AaKind | "")}
-        options={KINDS.map((k) => ({ value: k, label: KIND_LABEL[k] }))} allLabel="All kinds" />
-      <FilterSelect label="Language" value={filters.locale} onChange={(v) => setFilter("locale", v as AaLocale | "")}
-        options={LOCALES.map((l) => ({ value: l, label: LOCALE_LABEL[l] }))} allLabel="All languages" />
-      <FilterSelect label="Status" value={filters.status} onChange={(v) => setFilter("status", v as AaState | "")}
-        options={STATUSES.map((s) => ({ value: s, label: STATUS_FILTER_LABEL[s] }))} allLabel="Any status" />
-      <FilterSelect label="Country" value={filters.country} onChange={(v) => setFilter("country", v)}
-        options={countryOptions().map((c) => ({ value: c.code, label: c.name }))} allLabel="Any country" />
+      <FilterSelect label={t("colKind")} value={filters.kind} onChange={(v) => setFilter("kind", v as AaKind | "")}
+        options={KINDS.map((k) => ({ value: k, label: tx.kind[k] }))} allLabel={t("allKinds")} />
+      <FilterSelect label={t("colLanguage")} value={filters.locale} onChange={(v) => setFilter("locale", v as AaLocale | "")}
+        options={LOCALES.map((l) => ({ value: l, label: tx.locale[l] }))} allLabel={t("allLanguages")} />
+      <FilterSelect label={t("colStatus")} value={filters.status} onChange={(v) => setFilter("status", v as AaState | "")}
+        options={STATUSES.map((s) => ({ value: s, label: tx.status[s] }))} allLabel={t("anyStatus")} />
+      <FilterSelect label={t("country")} value={filters.country} onChange={(v) => setFilter("country", v)}
+        options={countryOptions([], tx.lang).map((c) => ({ value: c.code, label: c.name }))} allLabel={t("anyCountry")} />
     </div>
   );
 
   return (
     <AdminMain>
       <PageHeader
-        title="AA content (CRM)"
-        breadcrumbs={[{ label: "CIS Content" }, { label: "Assets" }, { label: "AA content (CRM)" }]}
-        description="Content Adventure Asia writes for the partner CRM: Before you go packs, starter templates and campaign blocks, each in English and Vietnamese. Agencies only receive published versions; a newer version never changes the one they already use."
+        title={t("title")}
+        breadcrumbs={[{ label: t("cisContent") }, { label: t("assets") }, { label: t("title") }]}
+        description={t("description")}
         actions={
           <>
             <Button variant="secondary" size="sm" onClick={refresh} disabled={list.isFetching}>
-              <RefreshCw size={13} /> {list.isFetching ? "Loading…" : "Refresh"}
+              <RefreshCw size={13} /> {list.isFetching ? t("loading") : t("refresh")}
             </Button>
             {canWrite && (
               <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
-                <Plus size={13} /> New content
+                <Plus size={13} /> {t("newContent")}
               </Button>
             )}
           </>
@@ -176,10 +178,8 @@ export default function AaContentConsole() {
           pageIndex, pageSize, total: list.data?.total ?? 0,
           onChange: (i, size) => { setPageIndex(size === pageSize ? i : 0); setPageSize(size); },
         }}
-        emptyTitle={filtered ? "Nothing matches these filters" : "No AA content yet"}
-        emptyDescription={filtered ? "Clear a filter to see more." : canWrite
-          ? "Create the first Before you go pack, template or campaign block."
-          : "Content the AA team writes for the partner CRM shows here."}
+        emptyTitle={filtered ? t("emptyFiltered") : t("emptyNone")}
+        emptyDescription={filtered ? t("emptyFilteredDesc") : canWrite ? t("emptyWriter") : t("emptyReader")}
         onRowClick={(r) => setOpenGroup(r.group_key)}
         tableMinWidth={760}
       />
@@ -214,6 +214,8 @@ function FilterSelect({ label, value, onChange, options, allLabel }: {
 function CreateModal({ open, onClose, onCreated }: {
   open: boolean; onClose: () => void; onCreated: (item: AaItem) => void;
 }) {
+  const t = useT(AC);
+  const tx = useAaText();
   const toast = useToast();
   const [kind, setKind] = useState<AaKind>("prep_pack");
   const [locale, setLocale] = useState<AaLocale>("en");
@@ -234,53 +236,50 @@ function CreateModal({ open, onClose, onCreated }: {
     if (!canSubmit) return;
     setBusy(true);
     setError(null);
-    const r = await aaCall<AaItem>("POST", "", { kind, locale, group_key: groupKey, title: title.trim() });
+    const r = await aaCall<AaItem>("POST", "", { kind, locale, group_key: groupKey, title: title.trim() }, tx.words);
     setBusy(false);
     if (!r.ok) {
-      setError({ message: r.code === "duplicate" ? `${r.message}. Open that group from the list to edit it.` : r.message, field: r.field });
+      setError({ message: r.code === "duplicate" ? t("duplicate", r.message) : r.message, field: r.field });
       return;
     }
-    toast.success(`Draft v1 created: ${r.body.group_key} (${r.body.locale.toUpperCase()}).`);
+    toast.success(t("created", r.body.group_key, r.body.locale.toUpperCase()));
     reset();
     onCreated(r.body);
   };
 
   return (
-    <Modal open={open} onClose={close} title="New AA content" width={520}
+    <Modal open={open} onClose={close} title={t("newTitle")} width={520}
       footer={
         <>
-          <Button variant="ghost" onClick={close} disabled={busy}>Cancel</Button>
+          <Button variant="ghost" onClick={close} disabled={busy}>{t("cancel")}</Button>
           <Button variant="primary" onClick={() => void submit()} disabled={!canSubmit}>
-            {busy ? "Creating…" : "Create draft"}
+            {busy ? t("creating") : t("createDraft")}
           </Button>
         </>
       }>
       <form data-testid="aa-content-create" onSubmit={(e) => { e.preventDefault(); void submit(); }}
         style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <Field label="Kind" htmlFor="aa-create-kind">
+        <Field label={t("kind")} htmlFor="aa-create-kind">
           <select id="aa-create-kind" value={kind} onChange={(e) => setKind(e.target.value as AaKind)} style={fieldStyle}>
-            {KINDS.map((k) => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}
+            {KINDS.map((k) => <option key={k} value={k}>{tx.kind[k]}</option>)}
           </select>
         </Field>
-        <Field label="Language" htmlFor="aa-create-locale"
-          hint="Write one language first; the other copy is added from the editor and shares the group key.">
+        <Field label={t("language")} htmlFor="aa-create-locale" hint={t("languageHint")}>
           <select id="aa-create-locale" value={locale} onChange={(e) => setLocale(e.target.value as AaLocale)} style={fieldStyle}>
-            {LOCALES.map((l) => <option key={l} value={l}>{LOCALE_LABEL[l]}</option>)}
+            {LOCALES.map((l) => <option key={l} value={l}>{tx.locale[l]}</option>)}
           </select>
         </Field>
-        <Field label="Title" htmlFor="aa-create-title">
+        <Field label={t("fieldTitle")} htmlFor="aa-create-title">
           <input id="aa-create-title" type="text" autoComplete="off" maxLength={300} value={title}
             onChange={(e) => setTitle(e.target.value)} style={fieldStyle} />
         </Field>
-        <Field label="Group key" htmlFor="aa-create-key"
-          hint={groupKey && !keyOk
-            ? "2-80 characters: lower-case letters, digits and '-', not starting with '-'."
-            : "Joins the English and Vietnamese copies. It cannot change later, and the CRM sees it."}>
+        <Field label={t("groupKey")} htmlFor="aa-create-key"
+          hint={groupKey && !keyOk ? t("groupKeyBad") : t("groupKeyHint")}>
           <input id="aa-create-key" type="text" autoComplete="off" maxLength={80} value={groupKey}
             onChange={(e) => setManualKey(e.target.value.toLowerCase())} style={fieldStyle}
             aria-invalid={!!groupKey && !keyOk} placeholder="prep-pack-vietnam" />
         </Field>
-        <div style={noteStyle}>The item starts as draft v1. Agencies see nothing until an admin publishes it.</div>
+        <div style={noteStyle}>{t("startsDraft")}</div>
         {error && <InlineError message={error.field ? `${error.field}: ${error.message}` : error.message} />}
       </form>
     </Modal>

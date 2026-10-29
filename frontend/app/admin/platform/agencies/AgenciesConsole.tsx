@@ -15,7 +15,7 @@
 // (TenantSummary.lock_source: "by AA staff", "by CIS tenant lifecycle", …; an unknown source is shown raw), and one
 // line above the table shows the CIS membership feed's health as the CRM reports it (platform-wide, the same value on
 // every agency). Read-only display: no new route or write.
-// English only (CIS admin has no language switch here); strings are plain so they can move to an i18n file.
+// AA-994: text in the UI language (./messages.ts; CRM codes and labels through ./useCrmText.ts).
 
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, RefreshCw } from "lucide-react";
@@ -30,19 +30,15 @@ import {
   Modal,
   PageHeader,
   apiGet,
-  formatDate,
+  useFormat,
+  useT,
   useToast,
   type ColumnDef, AdminMain,
 } from "../../../_kit";
 import {
   CRM_API,
   LOCALES,
-  crmErrorText,
-  crmWrite,
   isTicket,
-  lockSourceText,
-  platformMembershipFeed,
-  stateLabel,
   type CrmConsole,
   type TenantPage,
   type TenantSummary,
@@ -51,17 +47,27 @@ import type { TenantRef } from "@/lib/tenants";
 import { TenantSelect } from "../../_components/TenantSelect";
 import AgencyDrawer from "./AgencyDrawer";
 import { Field, InlineError, fieldStyle, noteStyle } from "./consoleUi";
+import { AGENCIES } from "./messages";
+import { useCrmText } from "./useCrmText";
 
 export const CONSOLE_KEY = ["crm-console"] as const;
 export const AGENCIES_KEY = ["crm-agencies"] as const;
 const PAGE_SIZE = 50;
 
-function errorText(e: unknown): string {
-  if (e instanceof ApiError) return crmErrorText(e.status, e.message);
-  return (e as Error)?.message || "Could not reach the CRM console.";
+function useErrorText(): (e: unknown) => string {
+  const t = useT(AGENCIES);
+  const crm = useCrmText();
+  return (e: unknown) => {
+    if (e instanceof ApiError) return crm.errorText(e.status, e.message);
+    return (e as Error)?.message || t("reachError");
+  };
 }
 
 export default function AgenciesConsole() {
+  const t = useT(AGENCIES);
+  const crm = useCrmText();
+  const { formatDate } = useFormat();
+  const errorText = useErrorText();
   const qc = useQueryClient();
   const [selected, setSelected] = useState<TenantSummary | null>(null);
   const [creating, setCreating] = useState(false);
@@ -84,11 +90,11 @@ export default function AgenciesConsole() {
   const rows = useMemo(() => agencies.data?.pages.flatMap((p) => p.items ?? []) ?? [], [agencies.data]);
   const canWrite = !!consoleQ.data?.can_write;
   const isProd = consoleQ.data?.environment === "prod";
-  const feed = platformMembershipFeed(rows);
+  const feed = crm.platformFeed(rows);
 
   const columns = useMemo<ColumnDef<TenantSummary, unknown>[]>(() => [
     {
-      accessorKey: "agency_name", header: "Agency",
+      accessorKey: "agency_name", header: t("colAgency"),
       cell: (c) => (
         <span style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <span style={{ fontWeight: 600, color: K.ink }}>{c.row.original.agency_name}</span>
@@ -96,11 +102,11 @@ export default function AgenciesConsole() {
       ),
     },
     {
-      accessorKey: "state", header: "State",
+      accessorKey: "state", header: t("colState"),
       cell: (c) => {
-        const s = stateLabel(c.row.original.state);
+        const s = crm.state(c.row.original.state);
         // AA-978 follow-up: a locked row names who locked it (the drawer shows the details and what lifts it).
-        const by = lockSourceText(c.row.original);
+        const by = crm.lockSource(c.row.original);
         return (
           <span title={by?.label} style={{ display: "inline-flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
             <Badge tone={s.tone}>{s.label}</Badge>
@@ -110,14 +116,14 @@ export default function AgenciesConsole() {
       },
     },
     {
-      accessorKey: "is_synthetic", header: "Synthetic",
-      cell: (c) => (c.row.original.is_synthetic ? <Badge tone="purple" dot={false}>Synthetic</Badge>
-        : <span style={{ color: K.muted }}>No</span>),
+      accessorKey: "is_synthetic", header: t("colSynthetic"),
+      cell: (c) => (c.row.original.is_synthetic ? <Badge tone="purple" dot={false}>{t("synthetic")}</Badge>
+        : <span style={{ color: K.muted }}>{t("no")}</span>),
     },
-    { accessorKey: "has_owner", header: "Owner", cell: (c) => yesNo(c.row.original.has_owner) },
-    { accessorKey: "holds_travellers", header: "Has travellers", cell: (c) => yesNo(c.row.original.holds_travellers) },
-    { accessorKey: "created_at", header: "Created", cell: (c) => formatDate(c.row.original.created_at) },
-  ], []);
+    { accessorKey: "has_owner", header: t("colOwner"), cell: (c) => yesNo(c.row.original.has_owner, t) },
+    { accessorKey: "holds_travellers", header: t("colTravellers"), cell: (c) => yesNo(c.row.original.holds_travellers, t) },
+    { accessorKey: "created_at", header: t("colCreated"), cell: (c) => formatDate(c.row.original.created_at) },
+  ], [t, crm, formatDate]);
 
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: CONSOLE_KEY });
@@ -130,17 +136,17 @@ export default function AgenciesConsole() {
   return (
     <AdminMain>
       <PageHeader
-        title="Agencies (CRM)"
-        breadcrumbs={[{ label: "Platform" }, { label: "Tenants" }, { label: "Agencies (CRM)" }]}
-        description="The partner CRM's agencies, as AA support sees them (L1): state, owner, usage meters and the support actions. No trips, pipeline or revenue are shown here. Loaded when you open the page; nothing refreshes in the background."
+        title={t("title")}
+        breadcrumbs={[{ label: t("crumbPlatform") }, { label: t("crumbTenants") }, { label: t("title") }]}
+        description={t("description")}
         actions={
           <>
             <Button variant="secondary" size="sm" onClick={refresh} disabled={agencies.isFetching}>
-              <RefreshCw size={13} /> {agencies.isFetching ? "Loading…" : "Refresh"}
+              <RefreshCw size={13} /> {agencies.isFetching ? t("loading") : t("refresh")}
             </Button>
             {canWrite && (
               <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
-                <Plus size={13} /> Create agency
+                <Plus size={13} /> {t("createAgency")}
               </Button>
             )}
           </>
@@ -153,15 +159,15 @@ export default function AgenciesConsole() {
         <>
           {consoleQ.data && !canWrite && (
             <div data-testid="crm-console-readonly" style={{ ...noteStyle, marginBottom: 12 }}>
-              Read only: your staff account is not in the crm-platform-admin group, so the actions are hidden.
+              {t("readOnly")}
             </div>
           )}
           {feed && (
             <div data-testid="crm-console-membership-feed" title={feed.detail}
               style={{ ...noteStyle, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-              <span style={{ color: K.ink }}>CIS membership feed, as the CRM reports it (all agencies):</span>
+              <span style={{ color: K.ink }}>{t("feedLine")}</span>
               <Badge tone={feed.tone}>{feed.label}</Badge>
-              <span>last successful pull: {feed.lastPull}</span>
+              <span>{t("lastPull", feed.lastPull)}</span>
             </div>
           )}
           <DataTable<TenantSummary>
@@ -173,10 +179,10 @@ export default function AgenciesConsole() {
             error={listError}
             onRetry={refresh}
             searchable
-            searchPlaceholder="Filter the loaded agencies"
+            searchPlaceholder={t("filterPlaceholder")}
             paginate={false}
-            emptyTitle="No agencies yet"
-            emptyDescription={canWrite ? "Create the first agency for a CIS tenant." : "The CRM has no agencies yet."}
+            emptyTitle={t("emptyTitle")}
+            emptyDescription={canWrite ? t("emptyWrite") : t("emptyRead")}
             onRowClick={(r) => setSelected(r)}
             tableMinWidth={720}
           />
@@ -184,7 +190,7 @@ export default function AgenciesConsole() {
             <div style={{ marginTop: 12 }}>
               <Button variant="ghost" size="sm" onClick={() => void agencies.fetchNextPage()}
                 disabled={agencies.isFetchingNextPage}>
-                {agencies.isFetchingNextPage ? "Loading…" : "Load more"}
+                {agencies.isFetchingNextPage ? t("loading") : t("loadMore")}
               </Button>
             </div>
           )}
@@ -209,8 +215,8 @@ export default function AgenciesConsole() {
   );
 }
 
-function yesNo(v: boolean) {
-  return v ? <span style={{ color: K.ink }}>Yes</span> : <span style={{ color: K.muted }}>No</span>;
+function yesNo(v: boolean, t: (k: "yes" | "no") => string) {
+  return v ? <span style={{ color: K.ink }}>{t("yes")}</span> : <span style={{ color: K.muted }}>{t("no")}</span>;
 }
 
 // ── Create agency ────────────────────────────────────────────────────────────────────────────────
@@ -223,6 +229,8 @@ function newUuid(): string {
 function CreateAgencyModal({ open, forceSynthetic, onClose, onCreated }: {
   open: boolean; forceSynthetic: boolean; onClose: () => void; onCreated: (agency: TenantSummary) => void;
 }) {
+  const t = useT(AGENCIES);
+  const crm = useCrmText();
   const toast = useToast();
   const [source, setSource] = useState<"cis" | "synthetic">("cis");
   const [tenantId, setTenantId] = useState("");
@@ -251,7 +259,7 @@ function CreateAgencyModal({ open, forceSynthetic, onClose, onCreated }: {
     if (!canSubmit) return;
     setBusy(true);
     setError(null);
-    const r = await crmWrite<TenantSummary>("POST", "/agencies", {
+    const r = await crm.write<TenantSummary>("POST", "/agencies", {
       tenant_id: tenantId, agency_name: name.trim(), is_synthetic: isSynthetic, default_locale: locale,
       ticket_ref: ticket.trim(),
     });
@@ -261,51 +269,51 @@ function CreateAgencyModal({ open, forceSynthetic, onClose, onCreated }: {
       return;
     }
     // The CRM creates only (201); an id that already exists is refused with 409 tenant_exists above.
-    toast.success(`Created ${r.body.agency_name}.`);
+    toast.success(t("created", r.body.agency_name));
     reset();
     onCreated(r.body);
   };
 
   return (
-    <Modal open={open} onClose={close} title="Create agency" width={520}
+    <Modal open={open} onClose={close} title={t("createAgency")} width={520}
       footer={
         <>
-          <Button variant="ghost" onClick={close} disabled={busy}>Cancel</Button>
+          <Button variant="ghost" onClick={close} disabled={busy}>{t("cancel")}</Button>
           <Button variant="primary" onClick={() => void submit()} disabled={!canSubmit}>
-            {busy ? "Creating…" : "Create agency"}
+            {busy ? t("creating") : t("createAgency")}
           </Button>
         </>
       }>
       <form data-testid="crm-create-agency" onSubmit={(e) => { e.preventDefault(); void submit(); }}
         style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <div role="radiogroup" aria-label="Agency source" style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 13 }}>
+        <div role="radiogroup" aria-label={t("sourceGroup")} style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 13 }}>
           <label style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
             <input type="radio" name="crm-source" checked={source === "cis"}
               onChange={() => { setSource("cis"); setTenantId(""); setName(""); }} />
-            For a CIS tenant
+            {t("forCisTenant")}
           </label>
           {forceSynthetic && (
             <label style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
               <input type="radio" name="crm-source" checked={source === "synthetic"}
                 onChange={() => { setSource("synthetic"); setTenantId(newUuid()); setName(""); }} />
-              New synthetic agency (test)
+              {t("newSynthetic")}
             </label>
           )}
         </div>
         {source === "cis" ? (
           // AA-919 S254: the shared admin tenant picker (active CIS tenants by name; it shows its own load error).
-          <TenantSelect label="CIS tenant" value={tenantId} onChange={pickTenant} required
-            hint="The agency uses the CIS tenant's id." />
+          <TenantSelect label={t("cisTenant")} value={tenantId} onChange={pickTenant} required
+            hint={t("cisTenantHint")} />
         ) : (
-          <Field label="New agency id" htmlFor="crm-create-id" hint="A random id; this agency belongs to no CIS tenant.">
+          <Field label={t("newId")} htmlFor="crm-create-id" hint={t("newIdHint")}>
             <input id="crm-create-id" type="text" readOnly value={tenantId} style={{ ...fieldStyle, color: K.muted }} />
           </Field>
         )}
-        <Field label="Agency name" htmlFor="crm-create-name">
+        <Field label={t("agencyName")} htmlFor="crm-create-name">
           <input id="crm-create-name" type="text" autoComplete="off" maxLength={120} value={name}
             onChange={(e) => setName(e.target.value)} style={fieldStyle} />
         </Field>
-        <Field label="Default language and region" htmlFor="crm-create-locale">
+        <Field label={t("locale")} htmlFor="crm-create-locale">
           <select id="crm-create-locale" value={locale} onChange={(e) => setLocale(e.target.value)} style={fieldStyle}>
             {LOCALES.map((l) => <option key={l} value={l}>{l}</option>)}
           </select>
@@ -313,20 +321,16 @@ function CreateAgencyModal({ open, forceSynthetic, onClose, onCreated }: {
         <label style={{ display: "inline-flex", gap: 8, alignItems: "center", fontSize: 13 }}>
           <input type="checkbox" checked={isSynthetic} disabled={forceSynthetic}
             onChange={(e) => setSynthetic(e.target.checked)} />
-          Synthetic (test) agency
+          {t("syntheticBox")}
         </label>
-        <Field label="Ticket reference" htmlFor="crm-create-ticket"
-          hint={ticket && !ticketOk ? "Use a project key, a dash and a number, for example SUP-1024."
-            : "The support or Jira ticket this agency belongs to. It goes into the agency's access log."}>
+        <Field label={t("ticketLabel")} htmlFor="crm-create-ticket"
+          hint={ticket && !ticketOk ? t("ticketBad") : t("createTicketHint")}>
           <input id="crm-create-ticket" data-testid="crm-create-ticket" type="text" autoComplete="off" value={ticket}
             maxLength={27} placeholder="SUP-1024" onChange={(e) => setTicket(e.target.value)} style={fieldStyle}
             aria-invalid={!!ticket && !ticketOk} />
         </Field>
         <div style={noteStyle}>
-          {forceSynthetic
-            ? "This environment only accepts synthetic agencies, so the box stays ticked."
-            : "Production refuses synthetic agencies."}{" "}
-          No member is created: invite the first owner from the agency&apos;s panel afterwards.
+          {forceSynthetic ? t("forceSynthetic") : t("prodRefuses")} {t("noMember")}
         </div>
         {error && <InlineError message={error} />}
       </form>

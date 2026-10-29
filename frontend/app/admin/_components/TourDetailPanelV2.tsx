@@ -3,7 +3,8 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { X, ChevronRight } from "lucide-react";
 import { A, alpha, serif, sans, mono, Badge } from "./adminUi";
-import { formatDate } from "../../_kit";
+import { useFormat, useT } from "../../_kit";
+import { M } from "./tour.messages";
 import { SCORE_BANDS } from "@/lib/quality-registry.generated";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -109,13 +110,18 @@ export function scoreColor(s: number | null | undefined): string {
   return A.red;
 }
 
-function relTime(iso: string | null): string {
-  if (!iso) return "—";
-  const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (diff < 60) return "just now";
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return formatDate(iso);
+/** "just now" / "5m ago" / "3h ago", then the date — in the UI language. */
+function useRelTime(): (iso: string | null) => string {
+  const t = useT(M);
+  const { formatDate } = useFormat();
+  return (iso) => {
+    if (!iso) return "—";
+    const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+    if (diff < 60) return t("justNow");
+    if (diff < 3600) return t("minutesAgo", Math.floor(diff / 60));
+    if (diff < 86400) return t("hoursAgo", Math.floor(diff / 3600));
+    return formatDate(iso);
+  };
 }
 
 function modelShort(m: string | null | undefined): string {
@@ -163,6 +169,7 @@ function EditableField({ label, initialValue, onSave, onChange, rows, charLimit,
   charLimit?: number;
   placeholder?: string;
 }) {
+  const t = useT(M);
   const [value, setValue] = useState(initialValue);
   const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const lastSavedRef = useRef(initialValue);
@@ -201,7 +208,7 @@ function EditableField({ label, initialValue, onSave, onChange, rows, charLimit,
     lineHeight: 1.5,
   };
 
-  const statusText = state === "saving" ? "Saving…" : state === "saved" ? "✓ Saved" : state === "error" ? "Save failed" : "";
+  const statusText = state === "saving" ? t("saving") : state === "saved" ? t("saved") : state === "error" ? t("saveFailed") : "";
   const statusColor = state === "saving" ? A.amber : state === "saved" ? A.green : state === "error" ? A.red : "transparent";
 
   return (
@@ -288,6 +295,8 @@ function fmtCpc(v: number | null): string {
 }
 
 function SeoKeywordsPanel({ tourId }: { tourId: string }) {
+  const t = useT(M);
+  const rel = useRelTime();
   const [data, setData] = useState<SeoContextResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -334,15 +343,15 @@ function SeoKeywordsPanel({ tourId }: { tourId: string }) {
   }, [data, sortKey, sortDir]);
 
   if (loading) {
-    return <div style={{ textAlign: "center", padding: 40, color: A.muted }}>Loading SEO keywords…</div>;
+    return <div style={{ textAlign: "center", padding: 40, color: A.muted }}>{t("loadingSeo")}</div>;
   }
   if (error) {
-    return <div style={{ textAlign: "center", padding: 40, color: A.red }}>Failed to load SEO data</div>;
+    return <div style={{ textAlign: "center", padding: 40, color: A.red }}>{t("seoFailed")}</div>;
   }
   if (!data || !data.has_data) {
     return (
       <div style={{ textAlign: "center", padding: 48, color: A.muted, fontSize: 13 }}>
-        No DataForSEO data for this tour yet — run S1 with SEO mode enabled.
+        {t("noSeoData")}
       </div>
     );
   }
@@ -361,29 +370,29 @@ function SeoKeywordsPanel({ tourId }: { tourId: string }) {
         display: "flex", gap: 16, flexWrap: "wrap", padding: "10px 14px",
         background: A.bg, borderRadius: 8, marginBottom: 18, fontSize: 12, color: A.muted,
       }}>
-        <span>Seed: <strong style={{ color: A.ink }}>{data.seed || "—"}</strong></span>
+        <span>{t("seed")}: <strong style={{ color: A.ink }}>{data.seed || "—"}</strong></span>
         <span>
-          Buyer market: <strong style={{ color: A.ink }}>{data.buyer_market || "—"}</strong>
+          {t("buyerMarket")}: <strong style={{ color: A.ink }}>{data.buyer_market || "—"}</strong>
           {data.buyer_market_location_code != null && (
             <span style={{ color: A.muted2 }}> ({data.buyer_market_location_code})</span>
           )}
         </span>
-        <span>Fetched: <strong style={{ color: A.ink }}>{relTime(data.fetched_at)}</strong></span>
-        <span>Ideas: <strong style={{ color: A.ink }}>{data.keyword_ideas.length}</strong></span>
+        <span>{t("fetched")}: <strong style={{ color: A.ink }}>{rel(data.fetched_at)}</strong></span>
+        <span>{t("ideas")}: <strong style={{ color: A.ink }}>{data.keyword_ideas.length}</strong></span>
       </div>
 
       {sorted.length === 0 ? (
         <div style={{ textAlign: "center", padding: 40, color: A.muted, fontSize: 13 }}>
-          Row found but no keyword ideas stored.
+          {t("noIdeas")}
         </div>
       ) : (
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
             <tr style={{ background: A.line2 }}>
-              <th style={th("keyword", "Keyword", "left")} onClick={() => onSort("keyword")}>Keyword{arrow("keyword")}</th>
-              <th style={th("volume", "Volume", "right")} onClick={() => onSort("volume")}>Volume{arrow("volume")}</th>
-              <th style={th("competition", "Competition", "right")} onClick={() => onSort("competition")}>Competition{arrow("competition")}</th>
-              <th style={th("cpc", "CPC", "right")} onClick={() => onSort("cpc")}>CPC{arrow("cpc")}</th>
+              <th style={th("keyword", "Keyword", "left")} onClick={() => onSort("keyword")}>{t("colKeyword")}{arrow("keyword")}</th>
+              <th style={th("volume", "Volume", "right")} onClick={() => onSort("volume")}>{t("colVolume")}{arrow("volume")}</th>
+              <th style={th("competition", "Competition", "right")} onClick={() => onSort("competition")}>{t("colCompetition")}{arrow("competition")}</th>
+              <th style={th("cpc", "CPC", "right")} onClick={() => onSort("cpc")}>{t("colCpc")}{arrow("cpc")}</th>
             </tr>
           </thead>
           <tbody>
@@ -408,6 +417,8 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
   rewriteCount?: number;
   onClose: () => void;
 }) {
+  const t = useT(M);
+  const rel = useRelTime();
   const [detail, setDetail] = useState<TourDetailFull | null>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<"original" | "rewrite" | "history" | "seo" | "published">("original");
@@ -473,17 +484,17 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
   }
 
   async function promoteVersion(versionNum: number) {
-    if (!confirm(`Make v${versionNum} the current published version for this tour?`)) return;
+    if (!confirm(t("promoteConfirm", versionNum))) return;
     setPromoting(true);
     try {
       const r = await fetch(`/api/admin/tours/${tourId}/versions/${versionNum}/promote`, { method: "POST" });
       if (r.ok) {
-        showToast(`v${versionNum} is now the published version`, "success");
+        showToast(t("promoted", versionNum), "success");
         setHistory(prev => prev.map(h => ({ ...h })));
       } else {
         // AA-645: 409 = version not approved / source not live; the API says which.
         const err = await r.json().catch(() => ({}));
-        showToast(typeof err.detail === "string" && err.detail ? err.detail : "Promote failed", "error");
+        showToast(typeof err.detail === "string" && err.detail ? err.detail : t("promoteFailed"), "error");
       }
     } finally { setPromoting(false); }
   }
@@ -494,8 +505,8 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ [field]: value }),
     });
-    if (!res.ok) { showToast("Save failed", "error"); throw new Error("Save failed"); }
-    showToast("Saved", "success");
+    if (!res.ok) { showToast(t("saveFailed"), "error"); throw new Error("Save failed"); }
+    showToast(t("savedToast"), "success");
   }
 
   async function saveAllRaw() {
@@ -508,21 +519,21 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (!res.ok) { showToast("Save failed", "error"); return; }
-      showToast("All changes saved", "success");
+      if (!res.ok) { showToast(t("saveFailed"), "error"); return; }
+      showToast(t("allSaved"), "success");
     } finally { setSavingAll(false); }
   }
 
   async function saveGenerated(field: string, value: string | string[]) {
     const genId = detail?.generated?.id;
-    if (!genId) { showToast("No generated content to save", "error"); throw new Error("No generated content"); }
+    if (!genId) { showToast(t("noGenerated"), "error"); throw new Error("No generated content"); }
     const res = await fetch(`/api/admin/tours/${tourId}/generated/${genId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ [field]: value }),
     });
-    if (!res.ok) { showToast("Save failed", "error"); throw new Error("Save failed"); }
-    showToast("Saved", "success");
+    if (!res.ok) { showToast(t("saveFailed"), "error"); throw new Error("Save failed"); }
+    showToast(t("savedToast"), "success");
   }
 
   const tabBtn = (active: boolean, disabled = false): React.CSSProperties => ({
@@ -580,55 +591,55 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
               </div>
               {/* Meta */}
               <div style={{ fontSize: 11, color: A.muted, display: "flex", gap: 12, flexWrap: "wrap" }}>
-                <span>ID: {tourId.slice(0, 8)}…</span>
-                {rewriteCount > 0 && <span>Rewritten: {rewriteCount}×</span>}
-                {pub?.published_at && <span>Published: {relTime(pub.published_at)}</span>}
+                <span>{t("idShort", tourId.slice(0, 8))}</span>
+                {rewriteCount > 0 && <span>{t("rewritten", rewriteCount)}</span>}
+                {pub?.published_at && <span>{t("publishedWhen", rel(pub.published_at))}</span>}
               </div>
             </div>
-            <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: A.muted, padding: 4 }}>
+            <button onClick={onClose} aria-label={t("close")} style={{ background: "none", border: "none", cursor: "pointer", color: A.muted, padding: 4 }}>
               <X size={18} />
             </button>
           </div>
           {/* Tabs */}
           <div style={{ display: "flex" }}>
-            <button style={tabBtn(tab === "original")} onClick={() => setTab("original")}>Original Content</button>
-            <button style={tabBtn(tab === "rewrite", !gen)} onClick={() => gen && setTab("rewrite")}>Latest Rewrite</button>
-            <button style={tabBtn(tab === "history")} onClick={() => setTab("history")}>Rewrite History</button>
-            <button style={tabBtn(tab === "seo")} onClick={() => setTab("seo")}>SEO Keywords</button>
-            <button style={tabBtn(tab === "published", !pub)} onClick={() => pub && setTab("published")}>Published</button>
+            <button style={tabBtn(tab === "original")} onClick={() => setTab("original")}>{t("tabOriginal")}</button>
+            <button style={tabBtn(tab === "rewrite", !gen)} onClick={() => gen && setTab("rewrite")}>{t("tabRewrite")}</button>
+            <button style={tabBtn(tab === "history")} onClick={() => setTab("history")}>{t("tabHistory")}</button>
+            <button style={tabBtn(tab === "seo")} onClick={() => setTab("seo")}>{t("tabSeo")}</button>
+            <button style={tabBtn(tab === "published", !pub)} onClick={() => pub && setTab("published")}>{t("tabPublished")}</button>
           </div>
         </div>
 
         {/* Body */}
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "20px 24px" }}>
           {loading ? (
-            <div style={{ textAlign: "center", padding: 40, color: A.muted }}>Loading…</div>
+            <div style={{ textAlign: "center", padding: 40, color: A.muted }}>{t("loading")}</div>
           ) : !detail ? (
-            <div style={{ textAlign: "center", padding: 40, color: A.red }}>Failed to load detail</div>
+            <div style={{ textAlign: "center", padding: 40, color: A.red }}>{t("detailFailed")}</div>
           ) : tab === "original" ? (
             <div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 24px" }}>
-                <EditableField label="Tour Name" initialValue={raw?.src_name || ""} onSave={v => saveRaw("src_name", v)} onChange={v => setRawDraft(d => ({ ...d, src_name: v }))} />
-                <EditableField label="Country" initialValue={raw?.country || ""} onSave={v => saveRaw("country", v)} onChange={v => setRawDraft(d => ({ ...d, country: v }))} />
-                <EditableField label="Duration" initialValue={raw?.duration || ""} onSave={v => saveRaw("duration", v)} onChange={v => setRawDraft(d => ({ ...d, duration: v }))} />
-                <EditableField label="Group Size" initialValue={raw?.group_size || ""} onSave={v => saveRaw("group_size", v)} onChange={v => setRawDraft(d => ({ ...d, group_size: v }))} />
-                <EditableField label="Price" initialValue={raw?.price_raw || ""} onSave={v => saveRaw("price_raw", v)} onChange={v => setRawDraft(d => ({ ...d, price_raw: v }))} />
-                <EditableField label="Period" initialValue={raw?.period || ""} onSave={v => saveRaw("period", v)} onChange={v => setRawDraft(d => ({ ...d, period: v }))} />
-                <EditableField label="Provider" initialValue={raw?.provider || ""} onSave={v => saveRaw("provider", v)} onChange={v => setRawDraft(d => ({ ...d, provider: v }))} />
+                <EditableField label={t("fTourName")} initialValue={raw?.src_name || ""} onSave={v => saveRaw("src_name", v)} onChange={v => setRawDraft(d => ({ ...d, src_name: v }))} />
+                <EditableField label={t("fCountry")} initialValue={raw?.country || ""} onSave={v => saveRaw("country", v)} onChange={v => setRawDraft(d => ({ ...d, country: v }))} />
+                <EditableField label={t("fDuration")} initialValue={raw?.duration || ""} onSave={v => saveRaw("duration", v)} onChange={v => setRawDraft(d => ({ ...d, duration: v }))} />
+                <EditableField label={t("fGroupSize")} initialValue={raw?.group_size || ""} onSave={v => saveRaw("group_size", v)} onChange={v => setRawDraft(d => ({ ...d, group_size: v }))} />
+                <EditableField label={t("fPrice")} initialValue={raw?.price_raw || ""} onSave={v => saveRaw("price_raw", v)} onChange={v => setRawDraft(d => ({ ...d, price_raw: v }))} />
+                <EditableField label={t("fPeriod")} initialValue={raw?.period || ""} onSave={v => saveRaw("period", v)} onChange={v => setRawDraft(d => ({ ...d, period: v }))} />
+                <EditableField label={t("fProvider")} initialValue={raw?.provider || ""} onSave={v => saveRaw("provider", v)} onChange={v => setRawDraft(d => ({ ...d, provider: v }))} />
               </div>
-              <EditableField label="Summary" initialValue={raw?.src_summary || ""} onSave={v => saveRaw("src_summary", v)} onChange={v => setRawDraft(d => ({ ...d, src_summary: v }))} rows={6} />
+              <EditableField label={t("fSummary")} initialValue={raw?.src_summary || ""} onSave={v => saveRaw("src_summary", v)} onChange={v => setRawDraft(d => ({ ...d, src_summary: v }))} rows={6} />
               <EditableField
-                label="Highlights (one per line)"
+                label={t("fHighlightsLines")}
                 initialValue={arrayToText(raw?.src_highlights)}
                 onSave={v => saveRaw("src_highlights", textToArray(v))}
                 onChange={v => setRawDraft(d => ({ ...d, src_highlights: v }))}
                 rows={4}
-                placeholder="One highlight per line"
+                placeholder={t("fHighlightPlaceholder")}
               />
-              <EditableField label="Itineraries" initialValue={raw?.src_itineraries || ""} onSave={v => saveRaw("src_itineraries", v)} onChange={v => setRawDraft(d => ({ ...d, src_itineraries: v }))} rows={10} />
-              <EditableField label="Description" initialValue={raw?.src_description || ""} onSave={v => saveRaw("src_description", v)} onChange={v => setRawDraft(d => ({ ...d, src_description: v }))} rows={6} />
-              <EditableField label="Inclusions" initialValue={raw?.inclusions || ""} onSave={v => saveRaw("inclusions", v)} onChange={v => setRawDraft(d => ({ ...d, inclusions: v }))} rows={4} />
-              <EditableField label="Exclusions" initialValue={raw?.exclusions || ""} onSave={v => saveRaw("exclusions", v)} onChange={v => setRawDraft(d => ({ ...d, exclusions: v }))} rows={4} />
+              <EditableField label={t("fItineraries")} initialValue={raw?.src_itineraries || ""} onSave={v => saveRaw("src_itineraries", v)} onChange={v => setRawDraft(d => ({ ...d, src_itineraries: v }))} rows={10} />
+              <EditableField label={t("fDescription")} initialValue={raw?.src_description || ""} onSave={v => saveRaw("src_description", v)} onChange={v => setRawDraft(d => ({ ...d, src_description: v }))} rows={6} />
+              <EditableField label={t("fInclusions")} initialValue={raw?.inclusions || ""} onSave={v => saveRaw("inclusions", v)} onChange={v => setRawDraft(d => ({ ...d, inclusions: v }))} rows={4} />
+              <EditableField label={t("fExclusions")} initialValue={raw?.exclusions || ""} onSave={v => saveRaw("exclusions", v)} onChange={v => setRawDraft(d => ({ ...d, exclusions: v }))} rows={4} />
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
                 <button
                   onClick={saveAllRaw}
@@ -640,7 +651,7 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                     background: "var(--aa-blue-deep)", color: "var(--aa-card)", fontSize: 13, fontWeight: 600, opacity: savingAll ? 0.6 : 1,
                   }}
                 >
-                  {savingAll ? "Saving…" : "Save All"}
+                  {savingAll ? t("saving") : t("saveAll")}
                 </button>
               </div>
             </div>
@@ -652,10 +663,10 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                   display: "flex", gap: 16, flexWrap: "wrap", padding: "10px 14px",
                   background: A.bg, borderRadius: 8, marginBottom: 20, fontSize: 12, color: A.muted,
                 }}>
-                  <span>Model: <strong>{modelShort(gen.model_editorial)}</strong></span>
-                  <span>Score: <strong style={{ color: scoreColor(gen.score_overall) }}>{gen.score_overall?.toFixed(1) ?? "—"}</strong></span>
-                  <span>Generated: <strong>{relTime(gen.created_at)}</strong></span>
-                  <span>Version: <strong>v{gen.version_num}</strong></span>
+                  <span>{t("model")}: <strong>{modelShort(gen.model_editorial)}</strong></span>
+                  <span>{t("score")}: <strong style={{ color: scoreColor(gen.score_overall) }}>{gen.score_overall?.toFixed(1) ?? "—"}</strong></span>
+                  <span>{t("generatedWhen")}: <strong>{rel(gen.created_at)}</strong></span>
+                  <span>{t("version")}: <strong>v{gen.version_num}</strong></span>
                 </div>
                 {/* AA-209: full sub-score breakdown (incl. Quality) + judge-capped flag + brand judge */}
                 {(() => {
@@ -665,8 +676,8 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                   const capped = gen.score_overall != null && vAvg != null && gen.score_overall < vAvg - 0.01;
                   const fmt = (s: number | null) => (s != null ? s.toFixed(1) : "—");
                   const rows: [string, number | null][] = [
-                    ["Overall", gen.score_overall], ["Brand", gen.score_brand], ["SEO", gen.score_seo],
-                    ["Structure", gen.score_structure], ["Quality", gen.score_quality],
+                    [t("sOverall"), gen.score_overall], [t("sBrand"), gen.score_brand], [t("sSeo"), gen.score_seo],
+                    [t("sStructure"), gen.score_structure], [t("sQuality"), gen.score_quality],
                   ];
                   return (
                     <div style={{ marginBottom: 20 }}>
@@ -677,22 +688,22 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                           </span>
                         ))}
                       </div>
-                      {capped && <Badge color="amber">⚠ judge-capped (avg {fmt(vAvg)})</Badge>}
+                      {capped && <Badge color="amber">{t("judgeCapped", fmt(vAvg))}</Badge>}
                       <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${A.line}` }}>
                         <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: A.muted2, marginBottom: 6 }}>
-                          Brand Judge
+                          {t("brandJudge")}
                         </div>
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                           {gen.judge ? (
                             <>
-                              <Badge color="gold">fit {fmt(gen.judge.brand_fit)}</Badge>
-                              <Badge color="gold">distinct {fmt(gen.judge.distinct)}</Badge>
+                              <Badge color="gold">{t("fit", fmt(gen.judge.brand_fit))}</Badge>
+                              <Badge color="gold">{t("distinct", fmt(gen.judge.distinct))}</Badge>
                               <Badge color={gen.judge.mission_present ? "green" : "red"}>
-                                mission {gen.judge.mission_present ? "✓" : "✗"}
+                                {t("mission", !!gen.judge.mission_present)}
                               </Badge>
                             </>
                           ) : (
-                            <span style={{ fontSize: 12, color: A.muted2 }}>not run</span>
+                            <span style={{ fontSize: 12, color: A.muted2 }}>{t("notRun")}</span>
                           )}
                           {gen.brand_audit_status && (
                             <Badge color={gen.brand_audit_status === "pass" ? "green" : "amber"}>
@@ -709,40 +720,40 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                     </div>
                   );
                 })()}
-                <EditableField label="AA Name" initialValue={gen.aa_name || ""} onSave={v => saveGenerated("aa_name", v)} />
-                <EditableField label="Subtitle" initialValue={gen.aa_subtitle || ""} onSave={v => saveGenerated("aa_subtitle", v)} />
-                <EditableField label="Summary" initialValue={gen.aa_summary || ""} onSave={v => saveGenerated("aa_summary", v)} rows={6} />
+                <EditableField label={t("fAaName")} initialValue={gen.aa_name || ""} onSave={v => saveGenerated("aa_name", v)} />
+                <EditableField label={t("fSubtitle")} initialValue={gen.aa_subtitle || ""} onSave={v => saveGenerated("aa_subtitle", v)} />
+                <EditableField label={t("fSummary")} initialValue={gen.aa_summary || ""} onSave={v => saveGenerated("aa_summary", v)} rows={6} />
                 <EditableField
-                  label="Highlights (one per line)"
+                  label={t("fHighlightsLines")}
                   initialValue={arrayToText(gen.aa_highlights)}
                   onSave={v => saveGenerated("aa_highlights", textToArray(v))}
                   rows={4}
                 />
-                <EditableField label="Itineraries" initialValue={gen.aa_itineraries || ""} onSave={v => saveGenerated("aa_itineraries", v)} rows={10} />
-                <EditableField label="SEO Title" initialValue={gen.seo_title || ""} onSave={v => saveGenerated("seo_title", v)} charLimit={70} />
-                <EditableField label="SEO Meta" initialValue={gen.seo_meta || ""} onSave={v => saveGenerated("seo_meta", v)} rows={3} charLimit={170} />
+                <EditableField label={t("fItineraries")} initialValue={gen.aa_itineraries || ""} onSave={v => saveGenerated("aa_itineraries", v)} rows={10} />
+                <EditableField label={t("fSeoTitle")} initialValue={gen.seo_title || ""} onSave={v => saveGenerated("seo_title", v)} charLimit={70} />
+                <EditableField label={t("fSeoMeta")} initialValue={gen.seo_meta || ""} onSave={v => saveGenerated("seo_meta", v)} rows={3} charLimit={170} />
                 <EditableField
-                  label="Keywords (comma-separated)"
+                  label={t("fKeywords")}
                   initialValue={arrayToComma(gen.seo_keywords_used)}
                   onSave={v => saveGenerated("seo_keywords_used", commaToArray(v))}
-                  placeholder="keyword1, keyword2, …"
+                  placeholder={t("keywordsPlaceholder")}
                 />
               </div>
             ) : (
-              <div style={{ textAlign: "center", padding: 40, color: A.muted }}>No rewrite data yet</div>
+              <div style={{ textAlign: "center", padding: 40, color: A.muted }}>{t("noRewrite")}</div>
             )
           ) : tab === "history" ? (
             loadingHistory ? (
-              <div style={{ textAlign: "center", padding: 40, color: A.muted }}>Loading history…</div>
+              <div style={{ textAlign: "center", padding: 40, color: A.muted }}>{t("loadingHistory")}</div>
             ) : history.length === 0 ? (
-              <div style={{ textAlign: "center", padding: 40, color: A.muted, fontSize: 13 }}>No rewrites yet</div>
+              <div style={{ textAlign: "center", padding: 40, color: A.muted, fontSize: 13 }}>{t("noRewrites")}</div>
             ) : (
               <div>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                   <thead>
                     <tr style={{ background: A.line2 }}>
-                      {["Version", "Model", "Prompt", "Brand v", "Overall", "Brand", "SEO", "Cost", "Date", ""].map(h => (
-                        <th key={h} style={{
+                      {[t("hVersion"), t("hModel"), t("hPrompt"), t("hBrandV"), t("hOverall"), t("hBrand"), t("hSeo"), t("hCost"), t("hDate"), ""].map((h, hi) => (
+                        <th key={hi} style={{
                           padding: "8px 12px", textAlign: "left" as const,
                           fontSize: 11, fontWeight: 600, color: A.muted,
                           textTransform: "uppercase" as const, letterSpacing: "0.1em",
@@ -788,7 +799,7 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                           <td style={{ padding: "8px 12px", color: scoreColor(h.score_brand) }}>{h.score_brand != null ? h.score_brand.toFixed(1) : "—"}</td>
                           <td style={{ padding: "8px 12px", color: scoreColor(h.score_seo) }}>{h.score_seo != null ? h.score_seo.toFixed(1) : "—"}</td>
                           <td style={{ padding: "8px 12px", color: A.gold }}>{h.cost_usd != null ? `$${h.cost_usd.toFixed(4)}` : "—"}</td>
-                          <td style={{ padding: "8px 12px", color: A.muted2, fontSize: 12 }}>{relTime(h.created_at)}</td>
+                          <td style={{ padding: "8px 12px", color: A.muted2, fontSize: 12 }}>{rel(h.created_at)}</td>
                           <td style={{ padding: "8px 12px" }}>
                             <div style={{ display: "flex", gap: 6 }}>
                               <button
@@ -796,14 +807,14 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                                 disabled={loadingVersion}
                                 style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 4, background: A.card, cursor: "pointer", color: A.muted, fontWeight: 600 }}
                               >
-                                {loadingVersion && isActive ? "…" : "View content"}
+                                {loadingVersion && isActive ? "…" : t("viewContent")}
                               </button>
                               <button
                                 onClick={e => { e.stopPropagation(); promoteVersion(h.version_num); }}
                                 disabled={promoting}
                                 style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${A.gold}`, borderRadius: 4, background: A.goldTint, cursor: "pointer", color: A.gold, fontWeight: 600 }}
                               >
-                                {promoting ? "…" : "Make Current"}
+                                {promoting ? "…" : t("makeCurrent")}
                               </button>
                             </div>
                           </td>
@@ -815,7 +826,7 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
 
                 {/* Version content preview */}
                 {loadingVersion && (
-                  <div style={{ marginTop: 16, padding: 20, textAlign: "center", color: A.muted, fontSize: 13 }}>Loading version content…</div>
+                  <div style={{ marginTop: 16, padding: 20, textAlign: "center", color: A.muted, fontSize: 13 }}>{t("loadingVersion")}</div>
                 )}
                 {selectedVersion && !loadingVersion && (
                   <div style={{ marginTop: 20, padding: "16px 20px", background: A.bg, borderRadius: 8, border: `1px solid ${A.line}` }}>
@@ -833,16 +844,16 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                         disabled={promoting}
                         style={{ padding: "5px 12px", fontSize: 12, border: `1px solid ${A.gold}`, borderRadius: 6, background: A.gold, cursor: "pointer", color: "var(--aa-on-solid)", fontWeight: 600 }}
                       >
-                        {promoting ? "Promoting…" : "Make Current"}
+                        {promoting ? t("promoting") : t("makeCurrent")}
                       </button>
                     </div>
                     {[
-                      { label: "Name",        val: selectedVersion.aa_name },
-                      { label: "Subtitle",    val: selectedVersion.aa_subtitle },
-                      { label: "Summary",     val: selectedVersion.aa_summary },
-                      { label: "Itineraries", val: selectedVersion.aa_itineraries },
-                      { label: "SEO Title",   val: selectedVersion.seo_title },
-                      { label: "SEO Meta",    val: selectedVersion.seo_meta },
+                      { label: t("vName"),        val: selectedVersion.aa_name },
+                      { label: t("fSubtitle"),    val: selectedVersion.aa_subtitle },
+                      { label: t("fSummary"),     val: selectedVersion.aa_summary },
+                      { label: t("fItineraries"), val: selectedVersion.aa_itineraries },
+                      { label: t("fSeoTitle"),   val: selectedVersion.seo_title },
+                      { label: t("fSeoMeta"),    val: selectedVersion.seo_meta },
                     ].map(({ label, val }) => val ? (
                       <div key={label} style={{ marginBottom: 12 }}>
                         <div style={{ fontSize: 10, fontWeight: 600, color: A.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{label}</div>
@@ -851,7 +862,7 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                     ) : null)}
                     {selectedVersion.aa_highlights.length > 0 && (
                       <div style={{ marginBottom: 12 }}>
-                        <div style={{ fontSize: 10, fontWeight: 600, color: A.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>Highlights</div>
+                        <div style={{ fontSize: 10, fontWeight: 600, color: A.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{t("highlights")}</div>
                         <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: A.body }}>
                           {selectedVersion.aa_highlights.map((h, i) => <li key={i}>{h}</li>)}
                         </ul>
@@ -868,24 +879,24 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
             pub ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
                 <div>
-                  <div style={{ fontSize: 11, color: A.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 6 }}>Published Name</div>
+                  <div style={{ fontSize: 11, color: A.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 6 }}>{t("publishedName")}</div>
                   <div style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: A.ink }}>{pub.aa_name}</div>
                 </div>
                 {pub.aa_subtitle && (
                   <div>
-                    <div style={{ fontSize: 11, color: A.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 4 }}>Subtitle</div>
+                    <div style={{ fontSize: 11, color: A.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 4 }}>{t("fSubtitle")}</div>
                     <div style={{ fontSize: 14, fontStyle: "italic", color: A.body }}>{pub.aa_subtitle}</div>
                   </div>
                 )}
                 <div>
-                  <div style={{ fontSize: 11, color: A.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 4 }}>Quality Score</div>
+                  <div style={{ fontSize: 11, color: A.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 4 }}>{t("qualityScore")}</div>
                   <div style={{ fontFamily: mono, fontSize: 26, fontWeight: 700, color: scoreColor(pub.quality_score) }}>
                     {pub.quality_score?.toFixed(1) ?? "—"}
                   </div>
                 </div>
                 <div>
-                  <div style={{ fontSize: 11, color: A.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 4 }}>Published At</div>
-                  <div style={{ fontSize: 13, color: A.body }}>{relTime(pub.published_at)}</div>
+                  <div style={{ fontSize: 11, color: A.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 4 }}>{t("publishedAt")}</div>
+                  <div style={{ fontSize: 13, color: A.body }}>{rel(pub.published_at)}</div>
                 </div>
                 <div style={{ borderTop: `1px solid ${A.line}`, paddingTop: 16 }}>
                   <a
@@ -897,12 +908,12 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                       fontSize: 13, fontWeight: 600, color: "var(--aa-on-solid)", textDecoration: "none",
                     }}
                   >
-                    Re-run Rewrite <ChevronRight size={13} />
+                    {t("rerun")} <ChevronRight size={13} />
                   </a>
                 </div>
               </div>
             ) : (
-              <div style={{ textAlign: "center", padding: 40, color: A.muted }}>Not yet published</div>
+              <div style={{ textAlign: "center", padding: 40, color: A.muted }}>{t("notPublished")}</div>
             )
           )}
         </div>

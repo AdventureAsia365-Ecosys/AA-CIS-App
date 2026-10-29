@@ -22,6 +22,8 @@
 import React from "react";
 import { K, RADIUS, mono, sans } from "./core/tokens";
 import { useResolvedTheme } from "./useTheme";
+import { useT } from "./core/useI18n";
+import { SHELL_MESSAGES } from "./shell.messages";
 import { MERMAID_SECURE_KEYS, svgIsSelfContained } from "@/lib/mermaidSafety";
 import { fontIsReady, waitForFont } from "@/lib/fontReady";
 import { LABEL_FONT_PX, estimateWidth, wrappingWidthFor } from "@/lib/mermaidWrap";
@@ -113,6 +115,7 @@ function render(source: string, theme: "light" | "dark"): Promise<string> {
 type Drawn = { key: string; base: string; svg: string | null };
 
 export function MermaidDiagram({ source }: { source: string }) {
+  const t = useT(SHELL_MESSAGES);
   const theme = useResolvedTheme();
   const fontReady = React.useSyncExternalStore(subscribeFonts, brandFontReady, serverFontReady);
   const tooBig = source.length > MAX_SOURCE;
@@ -143,7 +146,7 @@ export function MermaidDiagram({ source }: { source: string }) {
   if (tooBig || state.kind === "error") {
     return (
       <pre data-testid="mermaid-fallback">
-        <span className="aa-md-label">Diagram source (Mermaid){tooBig ? ", too large to draw" : ", could not be drawn"}</span>
+        <span className="aa-md-label">{t("diagramSource", tooBig ? "tooBig" : "failed")}</span>
         <code>{source}</code>
       </pre>
     );
@@ -162,7 +165,7 @@ export function MermaidDiagram({ source }: { source: string }) {
           fontFamily: mono,
         }}
       >
-        Drawing diagram…
+        {t("drawingDiagram")}
       </div>
     );
   }
@@ -170,7 +173,7 @@ export function MermaidDiagram({ source }: { source: string }) {
     <div
       data-testid="mermaid-diagram"
       role="img"
-      aria-label="Diagram"
+      aria-label={t("diagram")}
       style={{
         margin: "0.8em 0",
         padding: 12,

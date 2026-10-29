@@ -9,11 +9,12 @@
 // API: GET /admin/places/dedupe, POST /admin/places/dedupe/countries | /dedupe/run, GET /admin/places/merges,
 // POST /admin/places/merges/{id}/undo.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { GitMerge, Play, Undo2 } from "lucide-react";
 import { A, mono, Card, SLabel, Badge, Btn, LoadingScreen, StatCard } from "../_components/adminUi";
-import { DataTable, formatDateTime } from "../../_kit";
+import { DataTable, useFormat, useT } from "../../_kit";
+import { PL } from "./messages";
 
 type CountryRun = {
   status: string | null; listed: string | null; usable: number; merges: number; llm_needed: number; possible: number;
@@ -61,6 +62,11 @@ async function post(path: string, body: unknown) {
 }
 
 export default function MergesTab({ onError }: { onError: (msg: string) => void }) {
+  const t = useT(PL);
+  const { formatDateTime } = useFormat();
+  // The loaders read the translator through a ref, so a language switch does not refetch.
+  const tRef = useRef(t);
+  useEffect(() => { tRef.current = t; }, [t]);
   const [status, setStatus] = useState<DedupeStatus | null>(null);
   const [log, setLog] = useState<MergePage | null>(null);
   const [country, setCountry] = useState("");
@@ -72,7 +78,7 @@ export default function MergesTab({ onError }: { onError: (msg: string) => void 
 
   const loadStatus = useCallback(async () => {
     const r = await fetch("/api/admin/places/dedupe");
-    if (!r.ok) { onError(`Dedupe status failed (${r.status})`); return; }
+    if (!r.ok) { onError(tRef.current("dedupeFailed", r.status)); return; }
     setStatus(await r.json());
   }, [onError]);
 
@@ -81,7 +87,7 @@ export default function MergesTab({ onError }: { onError: (msg: string) => void 
     if (country) qs.set("country", country);
     if (active) qs.set("active", active);
     const r = await fetch(`/api/admin/places/merges?${qs}`);
-    if (!r.ok) { onError(`Merge log failed (${r.status})`); return; }
+    if (!r.ok) { onError(tRef.current("mergeLogFailed", r.status)); return; }
     setLog(await r.json());
   }, [country, active, page, pageSize, onError]);
 
@@ -92,7 +98,7 @@ export default function MergesTab({ onError }: { onError: (msg: string) => void 
 
   async function act(key: string, fn: () => Promise<unknown>) {
     setBusy(key);
-    try { await fn(); } catch (e) { onError(`${key} failed: ${(e as Error).message}`); } finally { setBusy(null); }
+    try { await fn(); } catch (e) { onError(t("actionFailed", key, (e as Error).message)); } finally { setBusy(null); }
   }
 
   const setMode = (c: string, mode: string, diffHash?: string) => act(`${c}:${mode}`, async () => {
@@ -110,57 +116,56 @@ export default function MergesTab({ onError }: { onError: (msg: string) => void 
   });
 
   const columns = useMemo<ColumnDef<Merge, unknown>[]>(() => [
-    { id: "pair", header: "Merged → keeper", accessorFn: m => `${m.merged_name} → ${m.keeper_name}`,
+    { id: "pair", header: t("mergedKeeper"), accessorFn: m => `${m.merged_name} → ${m.keeper_name}`,
       cell: ({ row }) => <>{row.original.merged_name} <span style={{ color: A.muted }}>→</span> {row.original.keeper_name}
         <div style={{ fontSize: 11, color: A.muted, fontFamily: mono }}>{row.original.merged_id.slice(0, 8)} → {row.original.keeper_id.slice(0, 8)}</div></> },
-    { accessorKey: "country", header: "Country" },
-    { accessorKey: "decided_by", header: "Decided by", cell: ({ row }) => <Badge color={row.original.decided_by === "admin" ? "purple" : row.original.decided_by === "llm" ? "blue" : "gray"}>{row.original.decided_by}</Badge> },
-    { id: "why", header: "Why", accessorFn: m => m.reason ?? "",
+    { accessorKey: "country", header: t("country") },
+    { accessorKey: "decided_by", header: t("decidedBy"), cell: ({ row }) => <Badge color={row.original.decided_by === "admin" ? "purple" : row.original.decided_by === "llm" ? "blue" : "gray"}>{row.original.decided_by}</Badge> },
+    { id: "why", header: t("why"), accessorFn: m => m.reason ?? "",
       cell: ({ row }) => <span style={{ fontSize: 12, fontFamily: mono }}>{row.original.reason ?? "—"}
         {row.original.km != null && <span style={{ color: A.muted }}> · {row.original.km} km</span>}
         {row.original.score != null && <span style={{ color: A.muted }}> · {row.original.score}</span>}</span> },
-    { id: "moved", header: "Rows moved", accessorFn: m => Object.values(m.repointed_counts).reduce((a, b) => a + b, 0),
+    { id: "moved", header: t("rowsMoved"), accessorFn: m => Object.values(m.repointed_counts).reduce((a, b) => a + b, 0),
       meta: { align: "right" } },
-    { accessorKey: "created_at", header: "When", cell: ({ row }) => <span style={{ fontSize: 12 }}>{formatDateTime(row.original.created_at)}</span> },
+    { accessorKey: "created_at", header: t("when"), cell: ({ row }) => <span style={{ fontSize: 12 }}>{formatDateTime(row.original.created_at)}</span> },
     { id: "undo", header: "", accessorFn: m => m.undone_at ?? "",
       cell: ({ row }) => {
         const m = row.original;
-        if (m.undone_at) return <span style={{ fontSize: 12, color: A.muted }}>undone {formatDateTime(m.undone_at)} · {m.undo_reason}</span>;
-        if (m.decided_by === "admin") return <span style={{ fontSize: 12, color: A.muted }}>undo in Content validity</span>;
-        return <button disabled={!!busy} style={linkBtn} onClick={() => runUndo(m, true)}><Undo2 size={12} /> undo…</button>;
+        if (m.undone_at) return <span style={{ fontSize: 12, color: A.muted }}>{t("undone", formatDateTime(m.undone_at), m.undo_reason ?? "")}</span>;
+        if (m.decided_by === "admin") return <span style={{ fontSize: 12, color: A.muted }}>{t("undoInValidity")}</span>;
+        return <button disabled={!!busy} style={linkBtn} onClick={() => runUndo(m, true)}><Undo2 size={12} /> {t("undoLink")}</button>;
       } },
   // eslint-disable-next-line react-hooks/exhaustive-deps -- runUndo only reads state setters and the loaders
-  ], [busy]);
+  ], [busy, t, formatDateTime]);
 
-  if (!status) return <LoadingScreen msg="Loading the duplicate merge..." />;
+  if (!status) return <LoadingScreen msg={t("loadingMerge")} />;
   const run = status.last_run;
   const countries = Array.from(new Set([...Object.keys(status.allow_list), ...Object.keys(run?.countries ?? {})])).sort();
 
   return (
     <>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 18 }}>
-        <StatCard label="Rule version" value={status.rule_version} icon={<GitMerge size={16} />}
-                  sub={run ? `last run ${formatDateTime(run.finished_at)} (${run.mode})` : "no run yet"} />
-        <StatCard label="Countries on apply" value={String(Object.values(status.allow_list).filter(a => a.mode === "apply").length)}
-                  sub={`${Object.keys(status.allow_list).length} on the allow-list`} />
-        <StatCard label="Model check, last run" value={run?.model_calls != null ? String(run.model_calls) : "—"}
-                  sub={run?.model_cost_usd != null ? `$${run.model_cost_usd.toFixed(4)}` : "calls"} />
-        <StatCard label="Merges in the log" value={log ? String(log.total) : "—"} sub={active === "true" ? "active" : "all"} />
+        <StatCard label={t("ruleVersion")} value={status.rule_version} icon={<GitMerge size={16} />}
+                  sub={run ? t("lastRun", formatDateTime(run.finished_at), run.mode) : t("noRunYet")} />
+        <StatCard label={t("countriesOnApply")} value={String(Object.values(status.allow_list).filter(a => a.mode === "apply").length)}
+                  sub={t("onAllowList", Object.keys(status.allow_list).length)} />
+        <StatCard label={t("modelCheck")} value={run?.model_calls != null ? String(run.model_calls) : "—"}
+                  sub={run?.model_cost_usd != null ? `$${run.model_cost_usd.toFixed(4)}` : t("calls")} />
+        <StatCard label={t("mergesInLog")} value={log ? String(log.total) : "—"} sub={active === "true" ? t("active") : t("all")} />
       </div>
 
       <Card style={{ marginBottom: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <SLabel>Countries</SLabel>
+          <SLabel>{t("countries")}</SLabel>
           <div style={{ display: "flex", gap: 8 }}>
-            <Btn size="sm" disabled={!!busy} onClick={() => runNow("dry_run")}><Play size={12} /> Dry run now</Btn>
-            <Btn size="sm" disabled={!!busy} onClick={() => runNow("apply")}><Play size={12} /> Run (apply where approved)</Btn>
+            <Btn size="sm" disabled={!!busy} onClick={() => runNow("dry_run")}><Play size={12} /> {t("dryRunNow")}</Btn>
+            <Btn size="sm" disabled={!!busy} onClick={() => runNow("apply")}><Play size={12} /> {t("runApply")}</Btn>
           </div>
         </div>
         <div style={{ fontSize: 12, color: A.muted, margin: "4px 0 10px" }}>
-          A country on the list gets the paid two-model check (GPT-6 Luna both ways, then Claude Haiku). Apply writes the
-          approved dry-run diff; more than max(5, 1%) changes outside it hold the country and alert.
+          {t("mergeHelp")}
         </div>
-        {countries.length === 0 && <div style={{ fontSize: 13, color: A.body }}>No run yet.</div>}
+        {countries.length === 0 && <div style={{ fontSize: 13, color: A.body }}>{t("noRun")}</div>}
         {countries.map(c => {
           const r = run?.countries[c];
           const al = status.allow_list[c];
@@ -171,27 +176,27 @@ export default function MergesTab({ onError }: { onError: (msg: string) => void 
                 <Badge color={al ? (al.mode === "apply" ? "green" : "blue") : "gray"}>{al ? al.mode : "off"}</Badge>
                 {r?.status && <Badge color={STATUS_COLOR[r.status] ?? "gray"}>{r.status}</Badge>}
                 {r && <span style={{ fontFamily: mono, fontSize: 12 }}>
-                  {r.merges} merges · {r.band_pairs ?? 0} model-band pairs ({r.band_asked ?? 0} asked, {r.band_cached ?? 0} cached,
-                  {" "}{r.band_unasked ?? 0} not asked) · {count(r.possible)} possible · {count(r.conflicts)} conflicts · {count(r.defects)} geocode defects
-                  {r.outside != null && ` · ${r.outside} outside the approval (limit ${r.breaker_limit})`}
+                  {t("runLine", r.merges, r.band_pairs ?? 0, r.band_asked ?? 0, r.band_cached ?? 0, r.band_unasked ?? 0,
+                    count(r.possible), count(r.conflicts), count(r.defects))}
+                  {r.outside != null && t("outside", r.outside, String(r.breaker_limit))}
                 </span>}
                 <span style={{ flex: 1 }} />
-                {!al && <Btn size="sm" disabled={!!busy} onClick={() => setMode(c, "dry_run")}>Add (dry run)</Btn>}
+                {!al && <Btn size="sm" disabled={!!busy} onClick={() => setMode(c, "dry_run")}>{t("addDryRun")}</Btn>}
                 {al && r?.diff_hash && r.status !== "applied" && (
                   <Btn variant="primary" size="sm" disabled={!!busy}
-                       onClick={() => { if (window.confirm(`Approve ${r.diff_size} changes for ${c} and switch it to apply?`)) setMode(c, "apply", r.diff_hash); }}>
-                    Approve diff ({r.diff_size})
+                       onClick={() => { if (window.confirm(t("confirmApprove", r.diff_size, c))) setMode(c, "apply", r.diff_hash); }}>
+                    {t("approveDiff", r.diff_size)}
                   </Btn>
                 )}
                 {al && <Btn size="sm" disabled={!!busy} onClick={() => setMode(c, al.mode === "apply" ? "dry_run" : "off")}>
-                  {al.mode === "apply" ? "Back to dry run" : "Remove"}</Btn>}
+                  {al.mode === "apply" ? t("backToDryRun") : t("remove")}</Btn>}
               </div>
               {r && (r.conflicts_detail?.length ?? 0) > 0 && (
                 <details style={{ marginTop: 6 }}>
-                  <summary style={{ cursor: "pointer", fontSize: 12, color: A.muted }}>conflicts ({r.conflicts_detail!.length}): members cut from a cluster</summary>
+                  <summary style={{ cursor: "pointer", fontSize: 12, color: A.muted }}>{t("conflictsSummary", r.conflicts_detail!.length)}</summary>
                   {r.conflicts_detail!.map(k => (
                     <div key={`${k.keeper_id}-${k.destination_id}`} style={{ fontSize: 12, fontFamily: mono }}>
-                      {k.destination_id.slice(0, 8)} kept apart from {k.keeper_id.slice(0, 8)}
+                      {t("keptApart", k.destination_id.slice(0, 8), k.keeper_id.slice(0, 8))}
                       {k.clash && ` · ${k.clash.a.slice(0, 8)} vs ${k.clash.b.slice(0, 8)}: ${k.clash.reason}`}
                     </div>
                   ))}
@@ -199,7 +204,7 @@ export default function MergesTab({ onError }: { onError: (msg: string) => void 
               )}
               {r && (r.merges_planned?.length ?? 0) > 0 && (
                 <details style={{ marginTop: 6 }}>
-                  <summary style={{ cursor: "pointer", fontSize: 12, color: A.muted }}>planned merges (first {r.merges_planned.length}) · diff {(r.diff_hash ?? "").slice(0, 10)}</summary>
+                  <summary style={{ cursor: "pointer", fontSize: 12, color: A.muted }}>{t("plannedSummary", r.merges_planned.length, (r.diff_hash ?? "").slice(0, 10))}</summary>
                   {r.merges_planned.map(m => (
                     <div key={m.merged_id} style={{ fontSize: 12, fontFamily: mono }}>
                       {m.merged_id.slice(0, 8)} → {m.keeper_id.slice(0, 8)} · {m.decided_by} · {m.reason}
@@ -214,30 +219,29 @@ export default function MergesTab({ onError }: { onError: (msg: string) => void 
 
       {undo && (
         <Card style={{ marginBottom: 16 }}>
-          <SLabel>Undo — dry run</SLabel>
+          <SLabel>{t("undoDryRun")}</SLabel>
           <div style={{ fontSize: 13, color: A.body, marginBottom: 8 }}>
-            {undo.merge.merged_name} → {undo.merge.keeper_name}: rows to restore{" "}
-            <span style={{ fontFamily: mono }}>{JSON.stringify(undo.result.would_restore ?? {})}</span>. The pair is then pinned
-            &quot;different&quot; and the job never merges it again.
+            {t("undoBody", `${undo.merge.merged_name} → ${undo.merge.keeper_name}`)}{" "}
+            <span style={{ fontFamily: mono }}>{JSON.stringify(undo.result.would_restore ?? {})}</span>{t("undoTail")}
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <Btn variant="danger" size="sm" disabled={!!busy}
-                 onClick={() => { if (window.confirm("Undo this merge?")) runUndo(undo.merge, false); }}>Undo the merge</Btn>
-            <Btn size="sm" onClick={() => setUndo(null)}>Close</Btn>
+                 onClick={() => { if (window.confirm(t("confirmUndo"))) runUndo(undo.merge, false); }}>{t("undoMerge")}</Btn>
+            <Btn size="sm" onClick={() => setUndo(null)}>{t("close")}</Btn>
           </div>
         </Card>
       )}
 
       <Card style={{ marginBottom: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-        <SLabel>Merge log</SLabel>
-        <select aria-label="Country" value={country} onChange={e => { setCountry(e.target.value); setPage(1); }} style={selectStyle}>
-          <option value="">All countries</option>
+        <SLabel>{t("mergeLog")}</SLabel>
+        <select aria-label={t("country")} value={country} onChange={e => { setCountry(e.target.value); setPage(1); }} style={selectStyle}>
+          <option value="">{t("allCountries")}</option>
           {countries.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
-        <select aria-label="State" value={active} onChange={e => { setActive(e.target.value); setPage(1); }} style={selectStyle}>
-          <option value="true">Active</option>
-          <option value="false">Undone</option>
-          <option value="">All</option>
+        <select aria-label={t("state")} value={active} onChange={e => { setActive(e.target.value); setPage(1); }} style={selectStyle}>
+          <option value="true">{t("stateActive")}</option>
+          <option value="false">{t("stateUndone")}</option>
+          <option value="">{t("stateAll")}</option>
         </select>
       </Card>
       {log && (
@@ -245,7 +249,7 @@ export default function MergesTab({ onError }: { onError: (msg: string) => void 
                           serverPagination={{ pageIndex: log.page - 1, pageSize: log.page_size, total: log.total,
                                               onChange: (pi, ps) => { setPage(ps !== pageSize ? 1 : pi + 1); setPageSize(ps); } }}
                           enableCsv csvFilename="places-merges.csv"
-                          emptyTitle="No merges" emptyDescription="The job has not merged anything for these filters." />
+                          emptyTitle={t("noMerges")} emptyDescription={t("noMergesDesc")} />
       )}
     </>
   );

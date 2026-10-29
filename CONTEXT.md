@@ -209,6 +209,19 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     root layout's restore script is `themeStore.restoreScript`). Pages import the barrel `app/_kit` (which re-exports
     core), never `core/` directly; only the root layout, the login form and the legacy `adminUi.tsx` import core
     files directly (server layout, light login bundle, and no import cycle through the barrel's `Sidebar`).
+  - **UI language (AA-994, S255 decision)**: one language at a time — English by default, Vietnamese only when the
+    user picks it in the one switch (`core/LangSwitch.tsx`, EN | VI, in the admin `Topbar`). Kit core
+    `i18n.ts` (no React: `defineMessages(en, vi)` typed catalogues where a message is a string or a function of typed
+    arguments, `translator`, `localized`, `createLangStore({ cookieName })` + restore script, `langFromCookie` for a
+    server component) and `useI18n.ts` (`I18nProvider`, `useT(M)`, `useLang`, `useSetLang`, `useLocalized`); no i18n
+    package. CIS binds the store to the cookie `cis_lang` (`app/_kit/i18n.ts`; absent === English, mirrored in
+    localStorage for other tabs); the root layout runs `langStore.restoreScript` (`<html lang>` before paint) and
+    `AdminShell` renders the one `I18nProvider`. Server render and hydration are English, the stored choice applies
+    right after hydration. Each area keeps its dictionary next to its code in `messages.ts` / `<name>.messages.ts`
+    (the shell: `app/_kit/shell.messages.ts`); tsc refuses a missing, extra or differently typed Vietnamese key.
+    Guard `tests/unit/test_aa994_admin_i18n.py`: no Vietnamese text in frontend `.ts` / `.tsx` outside dictionary
+    files (comments ignored); the files still carrying some are in `tests/unit/aa994_vietnamese_allowlist.txt`, which
+    only shrinks.
   - **Kit lint (AA-994 S1c, root ADR 0016 decision 7)**: `core/eslint-kit.mjs` is a dependency-free ESLint 9 plugin
     shipped with the core (byte-identical in every app; presets `inline` for CIS / portal / CRM web and `tailwind` for
     Booking / TripPlanner). `frontend/eslint.config.mjs` applies `kitConfig({ preset: "inline" })` at `error` to

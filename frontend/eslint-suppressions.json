@@ -140,9 +140,6 @@
     },
     "react-hooks/set-state-in-effect": {
       "count": 9
-    },
-    "react/no-unescaped-entities": {
-      "count": 7
     }
   },
   "app/admin/content-quality/PieceDrawer.tsx": {
@@ -384,9 +381,6 @@
       "count": 2
     },
     "react-hooks/set-state-in-effect": {
-      "count": 3
-    },
-    "react/no-unescaped-entities": {
       "count": 3
     }
   },

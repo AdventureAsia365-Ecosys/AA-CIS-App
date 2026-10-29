@@ -29,25 +29,25 @@ import {
   PageHeader,
   RADIUS,
   apiGet,
-  formatDate,
-  formatDateTime,
   mono,
   sans,
+  useFormat,
+  useT,
   type ColumnDef,
   type Tone, AdminMain,
 } from "../../../_kit";
-import { ROLE_LABEL, canWriteStaff, isStaffRole, type StaffViewer } from "@/lib/rbac";
+import { canWriteStaff, type StaffViewer } from "@/lib/rbac";
 import { BOOKING_ADMIN_URL, bookingStaffUrl } from "@/lib/apps";
 import {
   CreateStaffModal,
   OutcomeBanner,
   StaffManagePanel,
-  bookingRoleLabel,
-  inviteLabel,
+  useStaffWords,
   type Outcome,
   type StaffAccount,
 } from "./StaffManage";
 import DirectoryHealth from "./DirectoryHealth";
+import { STAFF } from "./messages";
 
 export type { StaffAccount } from "./StaffManage";
 
@@ -64,32 +64,31 @@ const BASE_PATH = "/admin/platform/staff";
 
 const ROLE_TONE: Record<string, Tone> = { admin: "accent", reviewer: "info", content: "purple" };
 
-function roleLabel(role: string): string {
-  return isStaffRole(role) ? ROLE_LABEL[role] : role;
-}
-
 function RoleBadge({ role }: { role: string }) {
+  const { roleLabel } = useStaffWords();
   return <Badge tone={ROLE_TONE[role] ?? "neutral"} dot={false}>{roleLabel(role)}</Badge>;
 }
 
 function ActiveBadge({ active }: { active: boolean }) {
-  return <Badge tone={active ? "success" : "neutral"}>{active ? "Active" : "Disabled"}</Badge>;
+  const t = useT(STAFF);
+  return <Badge tone={active ? "success" : "neutral"}>{active ? t("active") : t("disabled")}</Badge>;
 }
 
-function BookingLink({ id, label = "Open in Booking" }: { id: string; label?: string }) {
+function BookingLink({ id, label }: { id: string; label?: string }) {
+  const t = useT(STAFF);
   return (
     <a
       href={bookingStaffUrl(id)}
       target="_blank"
       rel="noopener noreferrer"
       onClick={(e) => e.stopPropagation()}
-      title="This account's profile in AA-Booking admin (new tab; sign in there with your CIS account)"
+      title={t("bookingLinkTitle")}
       style={{
         display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12.5, fontWeight: 600,
         color: K.accentDeep, textDecoration: "none", whiteSpace: "nowrap", fontFamily: sans,
       }}
     >
-      {label} <ExternalLink size={12} />
+      {label ?? t("openInBooking")} <ExternalLink size={12} />
     </a>
   );
 }
@@ -100,6 +99,9 @@ function setUrl(id: string | null): void {
 }
 
 export default function StaffDirectory({ initialId = null }: { initialId?: string | null }) {
+  const t = useT(STAFF);
+  const { formatDate, formatDateTime } = useFormat();
+  const { roleLabel, bookingRoleLabel } = useStaffWords();
   const [openId, setOpenId] = useState<string | null>(initialId);
   const [creating, setCreating] = useState(false);
   const [pageOutcome, setPageOutcome] = useState<Outcome | null>(null);
@@ -124,76 +126,76 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
     {
       id: "name",
       accessorFn: (r) => `${r.display_name ?? ""} ${r.username} ${r.email ?? ""}`,
-      header: "Name",
+      header: t("colName"),
       cell: (c) => <NameCell s={c.row.original} />,
     },
-    { accessorKey: "role", header: "CIS role", cell: (c) => <RoleBadge role={c.row.original.role} /> },
+    { accessorKey: "role", header: t("colCisRole"), cell: (c) => <RoleBadge role={c.row.original.role} /> },
     {
       id: "booking_role",
       accessorFn: (r) => r.booking_role ?? "",
-      header: "Booking role",
+      header: t("colBookingRole"),
       cell: (c) => <span style={{ color: c.row.original.booking_role ? K.ink : K.muted }}>{bookingRoleLabel(c.row.original.booking_role)}</span>,
     },
     {
       id: "status",
       accessorFn: (r) => (r.is_active ? "active" : "inactive"),
-      header: "Status",
+      header: t("colStatus"),
       cell: (c) => <ActiveBadge active={c.row.original.is_active} />,
     },
     {
       accessorKey: "last_login_at",
-      header: "Last sign-in",
-      cell: (c) => (c.row.original.last_login_at ? formatDateTime(c.row.original.last_login_at) : <span style={{ color: K.muted }}>Never</span>),
+      header: t("colLastSignIn"),
+      cell: (c) => (c.row.original.last_login_at ? formatDateTime(c.row.original.last_login_at) : <span style={{ color: K.muted }}>{t("never")}</span>),
     },
     {
       id: "invited",
       accessorFn: (r) => r.last_invited_at ?? r.last_invite_requested_at ?? "",
-      header: "Last invited",
+      header: t("colLastInvited"),
       cell: (c) => {
         const s = c.row.original;
-        if (!s.invite_status) return <span style={{ color: K.muted }}>Never</span>;
-        if (s.invite_status === "queued") return <Badge tone="info" dot={false}>Sending</Badge>;
-        if (s.invite_status === "not_sent") return <Badge tone="warning" dot={false}>Not sent</Badge>;
-        return s.last_invited_at ? formatDate(s.last_invited_at) : "Sent";
+        if (!s.invite_status) return <span style={{ color: K.muted }}>{t("never")}</span>;
+        if (s.invite_status === "queued") return <Badge tone="info" dot={false}>{t("sending")}</Badge>;
+        if (s.invite_status === "not_sent") return <Badge tone="warning" dot={false}>{t("notSent")}</Badge>;
+        return s.last_invited_at ? formatDate(s.last_invited_at) : t("sent");
       },
     },
-    { accessorKey: "created_at", header: "Created", cell: (c) => formatDate(c.row.original.created_at) },
+    { accessorKey: "created_at", header: t("colCreated"), cell: (c) => formatDate(c.row.original.created_at) },
     {
       id: "booking",
-      header: "Booking",
+      header: t("colBooking"),
       enableSorting: false,
       cell: (c) => <BookingLink id={c.row.original.id} />,
     },
-  ], []);
+  ], [t, formatDate, formatDateTime, bookingRoleLabel]);
 
   const counts = list.data;
 
   return (
     <AdminMain>
       <PageHeader
-        title="Staff"
+        title={t("title")}
         description={
           <>
-            Every CIS staff account and its role. The same account signs in to{" "}
+            {t("signsInTo")}{" "}
             <a href={BOOKING_ADMIN_URL} target="_blank" rel="noopener noreferrer" style={{ color: K.accentDeep, fontWeight: 600 }}>
-              Booking admin
+              {t("bookingAdmin")}
             </a>
             . {canWrite
-              ? "As a platform owner you can add accounts and change roles and access here; each change is saved in CIS, then in the company sign-in, and recorded in the audit log."
+              ? t("canWrite")
               : viewer?.auth === "legacy"
-                ? "Read-only on a password session: platform owners sign in with their company email to change accounts."
-                : "Read-only: only a platform owner can change accounts."}
+                ? t("readOnlyLegacy")
+                : t("readOnly")}
           </>
         }
         actions={
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {canWrite && (
               <Button variant="primary" size="sm" onClick={() => { setPageOutcome(null); setCreating(true); }}>
-                <UserPlus size={13} /> Add staff
+                <UserPlus size={13} /> {t("addStaff")}
               </Button>
             )}
             <Button variant="secondary" size="sm" onClick={() => list.refetch()} disabled={list.isFetching}>
-              <RefreshCw size={13} /> Refresh
+              <RefreshCw size={13} /> {t("refresh")}
             </Button>
           </div>
         }
@@ -213,11 +215,11 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
           two rows at 390px (S241 UI verify: five separate chips wrapped to three rows). */}
       {counts && (
         <div data-testid="staff-counts" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
-          <CountChip label="Accounts" value={counts.total} />
-          <CountChip label="Active" value={counts.active} />
+          <CountChip label={t("accounts")} value={counts.total} />
+          <CountChip label={t("active")} value={counts.active} />
           {Object.keys(counts.active_by_role).length > 0 && (
             <div data-testid="staff-counts-by-role" style={{ ...chipStyle, flexWrap: "wrap", rowGap: 2 }}>
-              <span style={{ fontSize: 12, color: K.muted }}>Active by role</span>
+              <span style={{ fontSize: 12, color: K.muted }}>{t("activeByRole")}</span>
               {Object.entries(counts.active_by_role).map(([role, n]) => (
                 <span key={role} style={{ display: "inline-flex", alignItems: "baseline", gap: 5, whiteSpace: "nowrap" }}>
                   <span style={{ fontSize: 15, fontWeight: 600, color: K.ink }}>{n}</span>
@@ -235,12 +237,12 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
         <label data-testid="staff-show-disabled"
           style={{ display: "inline-flex", alignItems: "center", gap: 8, margin: "4px 0 10px", fontSize: 13, color: K.ink, cursor: "pointer", fontFamily: sans }}>
           <input type="checkbox" checked={showDisabled} onChange={(e) => setShowDisabled(e.target.checked)} />
-          Show disabled accounts ({disabledCount})
+          {t("showDisabled", disabledCount)}
         </label>
       )}
 
       {list.isError ? (
-        <ErrorState message={(list.error as Error)?.message || "Could not load staff accounts"} onRetry={() => list.refetch()} />
+        <ErrorState message={(list.error as Error)?.message || t("loadError")} onRetry={() => list.refetch()} />
       ) : (
         <DataTable<StaffAccount>
           tableId="platform-staff"
@@ -249,11 +251,11 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
           getRowId={(r) => r.id}
           loading={list.isLoading}
           searchable
-          searchPlaceholder="Search name, email or role…"
+          searchPlaceholder={t("searchPlaceholder")}
           enableCsv
           csvFilename="cis-staff.csv"
-          emptyTitle="No staff accounts"
-          emptyDescription="No account in shared.admin_users yet."
+          emptyTitle={t("emptyTitle")}
+          emptyDescription={t("emptyDescription")}
           onRowClick={(r) => open(r.id)}
           tableMinWidth={960}
         />
@@ -280,14 +282,15 @@ function CountChip({ label, value }: { label: string; value: number }) {
 }
 
 function NameCell({ s }: { s: StaffAccount }) {
+  const t = useT(STAFF);
   return (
     <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
       <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
         <span style={{ fontWeight: 600, color: K.ink }}>{s.display_name || s.username}</span>
-        {s.is_owner && <Badge tone="accent" dot={false}>Owner</Badge>}
-        {s.breakglass && <Badge tone="warning" dot={false}>Break-glass</Badge>}
+        {s.is_owner && <Badge tone="accent" dot={false}>{t("owner")}</Badge>}
+        {s.breakglass && <Badge tone="warning" dot={false}>{t("breakGlass")}</Badge>}
       </span>
-      <span style={{ fontSize: 12, color: K.muted }}>{s.email ?? `${s.username} · no work email`}</span>
+      <span style={{ fontSize: 12, color: K.muted }}>{s.email ?? t("noWorkEmail", s.username)}</span>
     </span>
   );
 }
@@ -299,6 +302,9 @@ function StaffDrawer({ id, fallback, onClose, canWrite, selfId }: {
   canWrite: boolean;
   selfId: string | null;
 }) {
+  const t = useT(STAFF);
+  const { formatDateTime } = useFormat();
+  const { roleLabel, bookingRoleLabel, inviteLabel } = useStaffWords();
   // The last write's outcome, kept per account id so it survives the panel remounting after a refresh.
   const [outcome, setOutcome] = useState<{ id: string; outcome: Outcome } | null>(null);
   const detail = useQuery({
@@ -315,38 +321,38 @@ function StaffDrawer({ id, fallback, onClose, canWrite, selfId }: {
     <Drawer
       open={!!id}
       onClose={onClose}
-      title={s ? (s.display_name || s.username) : notFound ? "Staff account" : "Loading…"}
-      footer={id && s ? <BookingLink id={s.id} label="Open this account in Booking admin" /> : undefined}
+      title={s ? (s.display_name || s.username) : notFound ? t("staffAccount") : t("loading")}
+      footer={id && s ? <BookingLink id={s.id} label={t("openThisInBooking")} /> : undefined}
     >
       {notFound && (
-        <ErrorState message={(detail.error as Error)?.message || "Staff account not found"} />
+        <ErrorState message={(detail.error as Error)?.message || t("notFound")} />
       )}
       {s && (
         <div data-testid="staff-detail-ready" style={{ display: "flex", flexDirection: "column", gap: 18, fontFamily: sans }}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <RoleBadge role={s.role} />
             <ActiveBadge active={s.is_active} />
-            {s.is_owner && <Badge tone="accent" dot={false}>Owner</Badge>}
-            {s.breakglass && <Badge tone="warning" dot={false}>Break-glass</Badge>}
+            {s.is_owner && <Badge tone="accent" dot={false}>{t("owner")}</Badge>}
+            {s.breakglass && <Badge tone="warning" dot={false}>{t("breakGlass")}</Badge>}
           </div>
           <dl style={{ display: "grid", gridTemplateColumns: "max-content 1fr", gap: "10px 18px", margin: 0, fontSize: 13 }}>
-            <Field label="Name" value={s.display_name || "—"} />
-            <Field label="Work email" value={s.email || "— (no company sign-in yet)"} />
-            <Field label="Username" value={s.username} />
-            <Field label="CIS role" value={roleLabel(s.role)} />
+            <Field label={t("fName")} value={s.display_name || "—"} />
+            <Field label={t("fWorkEmail")} value={s.email || t("noCompanySignIn")} />
+            <Field label={t("fUsername")} value={s.username} />
+            <Field label={t("colCisRole")} value={roleLabel(s.role)} />
             {/* AA-816 C6: the Booking role is the shared.staff_app_grant row, written here together with the
                 booking-<role> Cognito group. */}
-            <Field label="Booking role" value={bookingRoleLabel(s.booking_role)} />
-            <Field label="Status" value={s.is_active ? "Active" : "Disabled (cannot sign in)"} />
-            <Field label="Company sign-in" value={s.linked ? "Linked" : "Not linked yet (links on the first sign-in)"} />
-            <Field label="Last sign-in" value={s.last_login_at ? formatDateTime(s.last_login_at) : "Never"} />
+            <Field label={t("colBookingRole")} value={bookingRoleLabel(s.booking_role)} />
+            <Field label={t("fStatus")} value={s.is_active ? t("active") : t("disabledLong")} />
+            <Field label={t("fCompanySignIn")} value={s.linked ? t("linked") : t("notLinked")} />
+            <Field label={t("colLastSignIn")} value={s.last_login_at ? formatDateTime(s.last_login_at) : t("never")} />
             {/* S242: the invitation e-mail (SES), read from the audit log; "Resend invite" is in Manage access. */}
-            <Field label="Last invited" value={inviteLabel(s, formatDateTime)} />
-            <Field label="Created" value={formatDateTime(s.created_at)} />
-            <Field label="Updated" value={formatDateTime(s.updated_at)} />
+            <Field label={t("colLastInvited")} value={inviteLabel(s, formatDateTime)} />
+            <Field label={t("colCreated")} value={formatDateTime(s.created_at)} />
+            <Field label={t("fUpdated")} value={formatDateTime(s.updated_at)} />
             {/* Full width, one line, with a copy button: in the label/value grid the UUID wrapped at
                 390px and left one character alone on the second line (S241 UI verify). */}
-            <Field wide label="Account id" value={<AccountId id={s.id} />} />
+            <Field wide label={t("fAccountId")} value={<AccountId id={s.id} />} />
           </dl>
           {outcome && outcome.id === s.id && (
             <OutcomeBanner outcome={outcome.outcome} onRetried={(o) => setOutcome({ id: s.id, outcome: o })} />
@@ -356,7 +362,7 @@ function StaffDrawer({ id, fallback, onClose, canWrite, selfId }: {
               onOutcome={(o) => setOutcome({ id: s.id, outcome: o })} />
           ) : (
             <div style={{ fontSize: 12.5, color: K.muted, lineHeight: 1.5 }}>
-              Only a platform owner, signed in with their company email, can change roles or access.
+              {t("ownerOnly")}
             </div>
           )}
         </div>
@@ -368,6 +374,7 @@ function StaffDrawer({ id, fallback, onClose, canWrite, selfId }: {
 type CopyState = "idle" | "copied" | "failed";
 
 function AccountId({ id }: { id: string }) {
+  const t = useT(STAFF);
   const [state, setState] = useState<CopyState>("idle");
   const idRef = useRef<HTMLSpanElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -411,14 +418,14 @@ function AccountId({ id }: { id: string }) {
         {id}
       </span>
       {/* 28×28 minimum hit area (the icon alone was ~22px tall). */}
-      <Button variant="ghost" size="sm" onClick={copy} ariaLabel="Copy account id"
-        title="Copy the account id" style={{ flexShrink: 0, minWidth: 28, minHeight: 28, padding: "4px 8px" }}>
+      <Button variant="ghost" size="sm" onClick={copy} ariaLabel={t("copyAria")}
+        title={t("copyTitle")} style={{ flexShrink: 0, minWidth: 28, minHeight: 28, padding: "4px 8px" }}>
         {state === "copied" ? <Check size={12} /> : <Copy size={12} />}
       </Button>
       <span role="status" aria-live="polite" data-testid="staff-account-id-copy-status"
         style={{ fontSize: 12, fontWeight: 500, color: state === "failed" ? K.danger : K.success }}>
-        {state === "copied" && "Copied"}
-        {state === "failed" && "Copy not available here: the id is selected, press Ctrl+C (⌘C)."}
+        {state === "copied" && t("copied")}
+        {state === "failed" && t("copyFailed")}
       </span>
     </span>
   );

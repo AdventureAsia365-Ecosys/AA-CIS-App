@@ -12,6 +12,7 @@
 // This repo is public: the page is a renderer only, no table name is written here.
 // One fetch on open (react-query, staleTime 5 min, the server caches for 5 min too); Reload asks the server to
 // re-read storage (?refresh=1, at most every 30 s server side). No polling.
+// AA-994: text in the UI language (messages.ts); names from the model stay as they are.
 
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Network, RefreshCw, Search, X } from "lucide-react";
@@ -30,10 +31,11 @@ import {
   Spinner,
   TableSkeleton,
   apiGet,
-  formatDateTime,
   mono,
   sans,
+  useFormat,
   useIsPhone,
+  useT,
   AdminMain,
   type Tone,
 } from "../../_kit";
@@ -54,6 +56,7 @@ import {
   type ErdModel,
   type TableRef,
 } from "./erd";
+import { DM } from "./messages";
 
 const DATA_PATH = "/api/admin/data-model";
 const DATA_KEY = ["admin", "data-model"] as const;
@@ -61,7 +64,7 @@ const ALL = "__all__";
 const LIST_LIMIT = 400; // rows rendered at once; the search narrows the rest
 
 const CHANGE_TONE: Record<ChangeKind, Tone> = { added: "success", changed: "warning" };
-const CHANGE_LABEL: Record<ChangeKind, string> = { added: "new", changed: "changed" };
+const CHANGE_KEY = { added: "changeAdded", changed: "changeChanged" } as const satisfies Record<ChangeKind, string>;
 
 function tagTone(tag: string): Tone {
   if (tag.startsWith("pii:")) return "danger";
@@ -149,42 +152,41 @@ function DiffSummary({
   changedOnly: boolean;
   onToggleChangedOnly: () => void;
 }) {
+  const t = useT(DM);
+  const { formatDateTime } = useFormat();
   if (!diff) {
     return (
       <Card style={{ padding: "12px 16px", marginBottom: 14 }}>
-        <Muted>
-          No previous model to compare with yet: the dump keeps the model before each structural change, and none has
-          happened since it started uploading.
-        </Muted>
+        <Muted>{t("noPrevious")}</Muted>
       </Card>
     );
   }
   const n = countChanges(diff);
   const parts = [
-    diff.tables_added.length && `${diff.tables_added.length} table(s) added`,
-    diff.tables_removed.length && `${diff.tables_removed.length} removed`,
-    Object.keys(diff.tables_changed).length && `${Object.keys(diff.tables_changed).length} changed`,
-    diff.edges_added.length && `${diff.edges_added.length} FK(s) added`,
-    diff.edges_removed.length && `${diff.edges_removed.length} FK(s) removed`,
+    diff.tables_added.length && t("tablesAdded", diff.tables_added.length),
+    diff.tables_removed.length && t("removed", diff.tables_removed.length),
+    Object.keys(diff.tables_changed).length && t("changed", Object.keys(diff.tables_changed).length),
+    diff.edges_added.length && t("fksAdded", diff.edges_added.length),
+    diff.edges_removed.length && t("fksRemoved", diff.edges_removed.length),
   ].filter(Boolean);
   return (
     <Card style={{ padding: "12px 16px", marginBottom: 14 }}>
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 12px" }}>
-        <span style={{ fontSize: 13, fontWeight: 700, color: K.ink }}>Changed since the previous dump</span>
-        <Muted>{previousAt ? `previous model: ${formatDateTime(previousAt)}` : "previous model"}</Muted>
+        <span style={{ fontSize: 13, fontWeight: 700, color: K.ink }}>{t("changedSince")}</span>
+        <Muted>{previousAt ? t("previousModelAt", formatDateTime(previousAt)) : t("previousModel")}</Muted>
         <span style={{ flex: "1 1 auto" }} />
         {n > 0 && (
           <Button variant={changedOnly ? "primary" : "ghost"} size="sm" onClick={onToggleChangedOnly}>
-            {changedOnly ? "Showing changed only" : "Show changed only"}
+            {changedOnly ? t("showingChangedOnly") : t("showChangedOnly")}
           </Button>
         )}
       </div>
       <div style={{ fontSize: 13, color: K.body, marginTop: 6 }}>
-        {n === 0 ? "No structural change." : parts.join(" · ")}
+        {n === 0 ? t("noStructuralChange") : parts.join(" · ")}
       </div>
       {diff.tables_removed.length > 0 && (
         <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-          <Muted>Removed:</Muted>
+          <Muted>{t("removedLabel")}</Muted>
           {diff.tables_removed.map((id) => (
             <span key={id} style={{ textDecoration: "line-through" }}>
               <Code>{id}</Code>
@@ -194,7 +196,7 @@ function DiffSummary({
       )}
       {diff.edges_removed.length > 0 && (
         <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-          <Muted>FKs removed:</Muted>
+          <Muted>{t("fksRemovedLabel")}</Muted>
           {diff.edges_removed.map((k) => (
             <Code key={k}>{k}</Code>
           ))}
@@ -219,6 +221,7 @@ function TableRow({
   hits: string[];
   onSelect: () => void;
 }) {
+  const tr = useT(DM);
   const t = ref_.table;
   const pii = piiColumns(t).length;
   return (
@@ -247,16 +250,16 @@ function TableRow({
         <span style={{ fontFamily: mono, fontSize: 13, fontWeight: 600, color: K.ink, overflowWrap: "anywhere" }}>
           {t.name}
         </span>
-        {change && <SmallBadge tone={CHANGE_TONE[change]}>{CHANGE_LABEL[change]}</SmallBadge>}
+        {change && <SmallBadge tone={CHANGE_TONE[change]}>{tr(CHANGE_KEY[change])}</SmallBadge>}
         {t.kind && t.kind !== "table" && <SmallBadge tone="info">{t.kind}</SmallBadge>}
       </span>
       <span style={{ display: "flex", flexWrap: "wrap", gap: "4px 10px", fontSize: 11, color: K.muted }}>
-        <span>{t.columns.length} col</span>
+        <span>{tr("colCount", t.columns.length)}</span>
         {t.foreign_keys.length > 0 && <span>{t.foreign_keys.length} FK</span>}
-        {t.rls && <span>RLS{t.rls_forced ? " (forced)" : ""}</span>}
+        {t.rls && <span>RLS{t.rls_forced ? tr("forced") : ""}</span>}
         {pii > 0 && <span style={{ color: K.danger }}>{pii} PII</span>}
         {hits.length > 0 && (
-          <span style={{ fontFamily: mono, overflowWrap: "anywhere" }}>match: {hits.slice(0, 3).join(", ")}</span>
+          <span style={{ fontFamily: mono, overflowWrap: "anywhere" }}>{tr("match", hits.slice(0, 3).join(", "))}</span>
         )}
       </span>
     </button>
@@ -276,6 +279,7 @@ function EdgeChip({
   onOpen: (id: string) => void;
   known: boolean;
 }) {
+  const t = useT(DM);
   const target = direction === "out" ? edge.to : edge.from;
   // Always child columns → parent columns, whichever side this table is on.
   const cols = `${colList(edge.from_columns)} → ${colList(edge.to_columns)}`;
@@ -305,9 +309,9 @@ function EdgeChip({
         <span style={{ fontFamily: mono, fontSize: 12, fontWeight: 600, color: K.ink, overflowWrap: "anywhere" }}>
           {target}
         </span>
-        {edge.cross_owner && <SmallBadge tone="purple">other app</SmallBadge>}
-        {!edge.cross_owner && edge.cross_schema && <SmallBadge tone="info">other schema</SmallBadge>}
-        {!edge.validated && <SmallBadge tone="warning">not valid</SmallBadge>}
+        {edge.cross_owner && <SmallBadge tone="purple">{t("otherApp")}</SmallBadge>}
+        {!edge.cross_owner && edge.cross_schema && <SmallBadge tone="info">{t("otherSchema")}</SmallBadge>}
+        {!edge.validated && <SmallBadge tone="warning">{t("notValid")}</SmallBadge>}
       </span>
       <span style={{ fontFamily: mono, fontSize: 11, color: K.muted, overflowWrap: "anywhere" }}>{cols}</span>
     </button>
@@ -325,6 +329,7 @@ function NeighbourMap({
   known: Set<string>;
   onOpen: (id: string) => void;
 }) {
+  const t = useT(DM);
   const isPhone = useIsPhone();
   const n = useMemo(() => neighbours(model, id), [model, id]);
   const column = (title: string, icon: React.ReactNode, edges: ErdEdge[], direction: "out" | "in") => (
@@ -343,7 +348,7 @@ function NeighbourMap({
           />
         ))
       ) : (
-        <Muted>None</Muted>
+        <Muted>{t("none")}</Muted>
       )}
     </div>
   );
@@ -356,7 +361,7 @@ function NeighbourMap({
         alignItems: "start",
       }}
     >
-      {column("Referenced by", <ArrowRight size={13} />, n.incoming, "in")}
+      {column(t("referencedBy"), <ArrowRight size={13} />, n.incoming, "in")}
       {!isPhone && (
         <div
           style={{
@@ -376,7 +381,7 @@ function NeighbourMap({
           {id}
         </div>
       )}
-      {column("References", <ArrowRight size={13} />, n.outgoing, "out")}
+      {column(t("references"), <ArrowRight size={13} />, n.outgoing, "out")}
     </div>
   );
 }
@@ -396,6 +401,7 @@ function TableDetail({
   known: Set<string>;
   onOpen: (id: string) => void;
 }) {
+  const tr = useT(DM);
   const t = ref_.table;
   const change = changeOf(diff, ref_.id);
   const td = diff?.tables_changed[ref_.id];
@@ -405,18 +411,18 @@ function TableDetail({
         <span style={{ fontFamily: mono, fontSize: 15, fontWeight: 700, color: K.ink, overflowWrap: "anywhere" }}>
           {ref_.id}
         </span>
-        {change && <SmallBadge tone={CHANGE_TONE[change]}>{CHANGE_LABEL[change]} since previous dump</SmallBadge>}
+        {change && <SmallBadge tone={CHANGE_TONE[change]}>{tr("sinceDump", tr(CHANGE_KEY[change]))}</SmallBadge>}
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px", marginTop: 6 }}>
-        <Muted>app {ref_.ownerApp}</Muted>
-        {t.owner_role && <Muted>owner {t.owner_role}</Muted>}
+        <Muted>{tr("app", ref_.ownerApp)}</Muted>
+        {t.owner_role && <Muted>{tr("owner", t.owner_role)}</Muted>}
         {t.kind && <Muted>{t.kind}</Muted>}
-        <Muted>{t.rls ? `RLS on${t.rls_forced ? " (forced)" : ""}` : "no RLS"}</Muted>
-        {t.is_partition && <Muted>partition</Muted>}
+        <Muted>{t.rls ? tr("rlsOn", t.rls_forced) : tr("noRls")}</Muted>
+        {t.is_partition && <Muted>{tr("partition")}</Muted>}
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", marginTop: 8 }}>
         <Muted>PK</Muted>
-        {t.primary_key.length ? <Code>{colList(t.primary_key)}</Code> : <Muted>none</Muted>}
+        {t.primary_key.length ? <Code>{colList(t.primary_key)}</Code> : <Muted>{tr("noneLower")}</Muted>}
         {t.unique_keys.map((u) => (
           <span key={u.join(",")} style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
             <Muted>UK</Muted>
@@ -439,22 +445,22 @@ function TableDetail({
             gap: 4,
           }}
         >
-          {td.columns_removed?.length ? <span>Columns removed: {td.columns_removed.join(", ")}</span> : null}
+          {td.columns_removed?.length ? <span>{tr("columnsRemoved", td.columns_removed.join(", "))}</span> : null}
           {td.primary_key ? (
             <span>
-              PK {colList(td.primary_key.from) || "none"} → {colList(td.primary_key.to) || "none"}
+              PK {colList(td.primary_key.from) || tr("noneLower")} → {colList(td.primary_key.to) || tr("noneLower")}
             </span>
           ) : null}
-          {td.fks_added?.length ? <span>FKs added: {td.fks_added.join(", ")}</span> : null}
-          {td.fks_removed?.length ? <span>FKs removed: {td.fks_removed.join(", ")}</span> : null}
-          {td.rls ? <span>RLS changed</span> : null}
+          {td.fks_added?.length ? <span>{tr("fksAddedList", td.fks_added.join(", "))}</span> : null}
+          {td.fks_removed?.length ? <span>{tr("fksRemovedList", td.fks_removed.join(", "))}</span> : null}
+          {td.rls ? <span>{tr("rlsChanged")}</span> : null}
         </div>
       )}
 
-      <SectionLabel>Neighbours (+1)</SectionLabel>
+      <SectionLabel>{tr("neighbours")}</SectionLabel>
       <NeighbourMap id={ref_.id} model={model} known={known} onOpen={onOpen} />
 
-      <SectionLabel>Columns ({t.columns.length})</SectionLabel>
+      <SectionLabel>{tr("columns", t.columns.length)}</SectionLabel>
       <div style={{ border: `1px solid ${K.line}`, borderRadius: RADIUS.md, overflow: "hidden" }}>
         {t.columns.map((c, i) => {
           const ch = columnChange(diff, ref_.id, c.name);
@@ -484,19 +490,19 @@ function TableDetail({
                 {c.name}
               </span>
               <span style={{ fontFamily: mono, fontSize: 11, color: K.muted, overflowWrap: "anywhere" }}>{c.type}</span>
-              {c.not_null && <SmallBadge tone="neutral">not null</SmallBadge>}
+              {c.not_null && <SmallBadge tone="neutral">{tr("notNull")}</SmallBadge>}
               {c.pk && <SmallBadge tone="accent">PK</SmallBadge>}
               {c.fk && <SmallBadge tone="info">FK</SmallBadge>}
               {c.uk && <SmallBadge tone="purple">UK</SmallBadge>}
               {c.tag && (
-                <SmallBadge tone={tagTone(c.tag)} title="DM-6.1 data tag">
+                <SmallBadge tone={tagTone(c.tag)} title={tr("dataTag")}>
                   {c.tag}
                 </SmallBadge>
               )}
-              {ch === "added" && <SmallBadge tone="success">new</SmallBadge>}
+              {ch === "added" && <SmallBadge tone="success">{tr("changeAdded")}</SmallBadge>}
               {Array.isArray(ch) && (
                 <SmallBadge tone="warning" title={ch.join("; ")}>
-                  changed
+                  {tr("changeChanged")}
                 </SmallBadge>
               )}
               {Array.isArray(ch) && (
@@ -515,6 +521,8 @@ function TableDetail({
 // ── page ────────────────────────────────────────────────────────────────────────────────────────
 
 export default function DataModelPage() {
+  const t = useT(DM);
+  const { formatDateTime } = useFormat();
   const isPhone = useIsPhone();
   const qc = useQueryClient();
   const { data, error, isLoading, isFetching, refetch } = useQuery({
@@ -567,10 +575,9 @@ export default function DataModelPage() {
   const tableCount = all.length;
   const edgeCount = model?.edges.length ?? 0;
   const description = model
-    ? `Generated from the live database catalog by the nightly DB Schema Dump (no row data). Dump ${formatDateTime(
-        model.generated_at,
-      )} · model ${model.fingerprint.slice(0, 12)} · ${model.schemas.length} schemas, ${tableCount} tables and views, ${edgeCount} foreign keys.`
-    : "The live data model from the nightly DB Schema Dump: tables, columns, keys, foreign keys and data tags. No row data.";
+    ? t("descriptionLoaded", formatDateTime(model.generated_at), model.fingerprint.slice(0, 12), model.schemas.length,
+        tableCount, edgeCount)
+    : t("descriptionEmpty");
   const busy = isFetching || reload.isPending;
   const loadError = (reload.error as Error | null) ?? (error as Error | null);
   const notPublished = error instanceof ApiError && error.status === 404;
@@ -583,11 +590,11 @@ export default function DataModelPage() {
     <AdminMain style={{ fontFamily: sans }}>
       <SkeletonStyle />
       <PageHeader
-        title="Data model"
+        title={t("title")}
         description={description}
         actions={
-          <Button variant="ghost" size="sm" onClick={() => reload.mutate()} disabled={busy} ariaLabel="Reload the data model">
-            {busy ? <Spinner size={13} /> : <RefreshCw size={13} />} Reload
+          <Button variant="ghost" size="sm" onClick={() => reload.mutate()} disabled={busy} ariaLabel={t("reloadAria")}>
+            {busy ? <Spinner size={13} /> : <RefreshCw size={13} />} {t("reload")}
           </Button>
         }
       />
@@ -600,17 +607,17 @@ export default function DataModelPage() {
         <Card>
           <EmptyState
             icon={<Network size={30} />}
-            title="No data model published yet"
-            description="The nightly DB Schema Dump uploads the model after its next run. Nothing to show until then."
+            title={t("notPublishedTitle")}
+            description={t("notPublishedBody")}
           />
         </Card>
       ) : loadError && !model ? (
         <Card>
-          <ErrorState message={`Could not load the data model: ${loadError.message}`} onRetry={() => refetch()} />
+          <ErrorState message={t("loadError", loadError.message)} onRetry={() => refetch()} />
         </Card>
       ) : !model || !tableCount ? (
         <Card>
-          <EmptyState icon={<Network size={30} />} title="The model has no tables" />
+          <EmptyState icon={<Network size={30} />} title={t("noTables")} />
         </Card>
       ) : (
         <>
@@ -643,8 +650,8 @@ export default function DataModelPage() {
                 onKeyDown={(e) => {
                   if (e.key === "Escape") setQuery("");
                 }}
-                placeholder="Search tables and columns…"
-                aria-label="Search tables and columns"
+                placeholder={t("searchPlaceholder")}
+                aria-label={t("searchAria")}
                 style={{
                   flex: 1,
                   minWidth: 0,
@@ -660,7 +667,7 @@ export default function DataModelPage() {
                 <button
                   type="button"
                   onClick={() => setQuery("")}
-                  aria-label="Clear search"
+                  aria-label={t("clearSearch")}
                   style={{ display: "inline-flex", background: "none", border: "none", padding: 0, cursor: "pointer", color: K.muted }}
                 >
                   <X size={14} />
@@ -670,7 +677,7 @@ export default function DataModelPage() {
             <select
               value={schema}
               onChange={(e) => setSchema(e.target.value)}
-              aria-label="Schema"
+              aria-label={t("schema")}
               style={{
                 padding: "8px 10px",
                 background: K.card,
@@ -683,7 +690,7 @@ export default function DataModelPage() {
                 minWidth: 0,
               }}
             >
-              <option value={ALL}>All schemas</option>
+              <option value={ALL}>{t("allSchemas")}</option>
               {model.schemas
                 .filter((s) => s.tables.length > 0)
                 .map((s) => (
@@ -697,9 +704,9 @@ export default function DataModelPage() {
               size="sm"
               onClick={() => setNeighboursOnly((v) => !v)}
               disabled={!selected}
-              title={selected ? `Only ${selected.id} and the tables one FK away` : "Select a table first"}
+              title={selected ? t("onlyNeighbours", selected.id) : t("selectFirst")}
             >
-              <Network size={13} /> {neighboursOnly ? "Neighbours only" : "Table +1"}
+              <Network size={13} /> {neighboursOnly ? t("neighboursOnly") : t("tablePlusOne")}
             </Button>
           </div>
 
@@ -723,16 +730,14 @@ export default function DataModelPage() {
                   color: K.muted,
                 }}
               >
-                <span>
-                  {shown.length} of {tableCount} tables
-                </span>
+                <span>{t("shownOf", shown.length, tableCount)}</span>
                 {neighboursOnly && selected && (
                   <button
                     type="button"
                     onClick={() => setNeighboursOnly(false)}
                     style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", color: K.accentDeep, fontSize: 12, fontFamily: sans }}
                   >
-                    <ArrowLeft size={12} /> all tables
+                    <ArrowLeft size={12} /> {t("allTables")}
                   </button>
                 )}
               </div>
@@ -749,11 +754,11 @@ export default function DataModelPage() {
                     />
                   ))
                 ) : (
-                  <EmptyState title="No table matches" description="Change the search, the schema or the filters." />
+                  <EmptyState title={t("noMatchTitle")} description={t("noMatchBody")} />
                 )}
                 {shown.length > LIST_LIMIT && (
                   <div style={{ padding: "10px 14px", fontSize: 12, color: K.muted }}>
-                    {shown.length - LIST_LIMIT} more: narrow the search.
+                    {t("more", shown.length - LIST_LIMIT)}
                   </div>
                 )}
               </div>
@@ -764,8 +769,8 @@ export default function DataModelPage() {
                 {detail || (
                   <EmptyState
                     icon={<Network size={30} />}
-                    title="Select a table"
-                    description="Click a table to see its columns, keys, data tags and the tables one foreign key away."
+                    title={t("selectTitle")}
+                    description={t("selectBody")}
                   />
                 )}
               </Card>
@@ -773,7 +778,7 @@ export default function DataModelPage() {
           </div>
 
           {isPhone && (
-            <Drawer open={drawerOpen && !!selected} onClose={() => setDrawerOpen(false)} title="Table">
+            <Drawer open={drawerOpen && !!selected} onClose={() => setDrawerOpen(false)} title={t("drawerTitle")}>
               {detail}
             </Drawer>
           )}

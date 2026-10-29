@@ -25,7 +25,10 @@ import {
   ToastProvider,
   useAdminIdentity,
   useToast, AdminMain,
+  useLang,
+  useT,
 } from "../../_kit";
+import { M } from "./messages";
 import { can } from "@/lib/rbac";
 import { ReviewEditor } from "./ReviewEditor";
 import { RegenerateModal } from "./RegenerateModal";
@@ -48,11 +51,11 @@ import { PASS_LINE, SCORE_BANDS } from "@/lib/quality-registry.generated";
 
 // Reviewer identity prompt (temporary until AA-232). Called once on mount so the x-reviewer-id
 // header the BFF forwards is populated for the audit trail.
-function ensureReviewerId() {
+function ensureReviewerId(prompt: string) {
   if (typeof window === "undefined") return;
   const id = window.localStorage.getItem("cis_reviewer_id") || "";
   if (!id) {
-    const entered = window.prompt("Reviewer name (for the edit audit trail):", "");
+    const entered = window.prompt(prompt, "");
     const v = (entered || "").trim();
     if (v) window.localStorage.setItem("cis_reviewer_id", v);
   }
@@ -109,6 +112,8 @@ const selectStyle: React.CSSProperties = {
 
 function ReviewQueueInner() {
   const toast = useToast();
+  const t = useT(M);
+  const lang = useLang();
   const qc = useQueryClient();
   // AA-878 — the read-only viewer sees the queue and the editor, without the actions (the BFF and the
   // backend refuse its writes anyway).
@@ -143,8 +148,8 @@ function ReviewQueueInner() {
     if (initRef.current) return;
     initRef.current = true;
     // Prompt for a reviewer name once (writes localStorage; no React state involved).
-    ensureReviewerId();
-  }, []);
+    ensureReviewerId(t("reviewerPrompt"));
+  }, [t]);
 
   // ── Query: the review queue for the selected status ──
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
@@ -170,7 +175,11 @@ function ReviewQueueInner() {
     },
   });
 
-  const baseItems: ReviewItem[] = useMemo(() => (data?.data || []).map(mapRow), [data]);
+  const baseItems: ReviewItem[] = useMemo(
+    () => (data?.data || []).map((r) =>
+      mapRow(r, { untitledTour: t("untitledTour"), unknownCountry: t("unknownCountry"), lang })),
+    [data, t, lang],
+  );
 
   // A regenerate flag is only "active" while its row is still in the loaded list. When the row
   // leaves (published on success, or superseded), it drops out of this derived set on its own —
@@ -202,28 +211,28 @@ function ReviewQueueInner() {
   const approveM = useMutation({
     mutationFn: approveReview,
     onSuccess: () => {
-      toast.success("Approved");
+      toast.success(t("approved"));
       invalidate();
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Approve failed"),
+    onError: (e) => toast.error(e instanceof Error ? e.message : t("approveFailed")),
   });
   const rejectM = useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: ReasonCode }) => rejectReview(id, reason),
     onSuccess: () => {
-      toast.success("Rejected");
+      toast.success(t("rejected"));
       setReasonAction(null);
       invalidate();
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Reject failed"),
+    onError: (e) => toast.error(e instanceof Error ? e.message : t("rejectFailed")),
   });
   const dismissM = useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: ReasonCode }) => dismissReview(id, reason),
     onSuccess: () => {
-      toast.success("Dismissed");
+      toast.success(t("dismissed"));
       setReasonAction(null);
       invalidate();
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Dismiss failed"),
+    onError: (e) => toast.error(e instanceof Error ? e.message : t("dismissFailed")),
   });
 
   // ── Filters run on the server (AA-739); the country list comes from the server facets, so it
@@ -241,7 +250,7 @@ function ReviewQueueInner() {
     () => [
       {
         accessorKey: "name",
-        header: "Tour",
+        header: t("colTour"),
         cell: (c) => (
           <div style={{ display: "flex", alignItems: "center", gap: 8, maxWidth: 180 }}>
             <span
@@ -256,14 +265,14 @@ function ReviewQueueInner() {
             >
               {c.row.original.name}
             </span>
-            {c.row.original.human_edited && <Badge tone="neutral">edited</Badge>}
+            {c.row.original.human_edited && <Badge tone="neutral">{t("edited")}</Badge>}
           </div>
         ),
       },
-      { accessorKey: "country", header: "Country", cell: (c) => <span style={{ color: A.muted }}>{c.row.original.country}</span> },
+      { accessorKey: "country", header: t("colCountry"), cell: (c) => <span style={{ color: A.muted }}>{c.row.original.country}</span> },
       {
         accessorKey: "version_num",
-        header: "Version",
+        header: t("colVersion"),
         cell: (c) =>
           c.row.original.version_num != null ? (
             <Badge tone="info">v{c.row.original.version_num}</Badge>
@@ -273,12 +282,12 @@ function ReviewQueueInner() {
       },
       {
         accessorKey: "created_at_ms",
-        header: "Written",
+        header: t("colWritten"),
         cell: (c) => <span style={{ color: A.muted, fontSize: 12 }}>{c.row.original.date || "—"}</span>,
       },
       {
         accessorKey: "score",
-        header: "Score",
+        header: t("colScore"),
         cell: (c) => {
           const s = c.row.original.score;
           const kind = c.row.original.block?.kind;
@@ -286,7 +295,7 @@ function ReviewQueueInner() {
           // block reason in the next column reads as the headline.
           if (kind === "hard" || kind === "needs_human") {
             return (
-              <span style={{ fontFamily: mono, fontSize: 12, color: A.muted2 }} title="Score is not why this tour is held — see Reasons">
+              <span style={{ fontFamily: mono, fontSize: 12, color: A.muted2 }} title={t("scoreNotWhy")}>
                 {s.toFixed(1)}
               </span>
             );
@@ -301,7 +310,7 @@ function ReviewQueueInner() {
       },
       {
         id: "reasons",
-        header: "Reasons",
+        header: t("colReasons"),
         enableSorting: false,
         cell: (c) => {
           if (c.row.original.regenerating) return <StatusBadge status="regenerating" />;
@@ -337,7 +346,7 @@ function ReviewQueueInner() {
       },
       {
         id: "actions",
-        header: "Actions",
+        header: t("colActions"),
         enableSorting: false,
         enableHiding: false,
         cell: (c) => {
@@ -345,7 +354,7 @@ function ReviewQueueInner() {
           const ok = canApprove(item);
           const busy = item.regenerating;
           if (!canAct) {
-            return <span style={{ fontSize: 11.5, color: A.muted }}>View only</span>;
+            return <span style={{ fontSize: 11.5, color: A.muted }}>{t("viewOnly")}</span>;
           }
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }} onClick={(e) => e.stopPropagation()}>
@@ -355,15 +364,16 @@ function ReviewQueueInner() {
                   always-present Dismiss · Reject · Approve. */}
               {item.retryable && (
                 <Btn variant="primary" size="sm" disabled={busy} onClick={() => setRegenItems([item])}
-                  title="Regenerate — rewrite this tour again">
-                  <RotateCcw size={12} /> Regenerate
+                  title={t("regenerateTitle")}>
+                  <RotateCcw size={12} /> {t("regenerate")}
                 </Btn>
               )}
               <div style={{ display: "flex", gap: 6, alignItems: "center", whiteSpace: "nowrap", flexWrap: "nowrap" }}>
                 <button
                   onClick={() => setReasonAction({ action: "dismiss", item })}
                   disabled={busy}
-                  title="Dismiss — drop this stale failed version from the queue (no edit, no publish)"
+                  title={t("dismissTitle")}
+                  aria-label={t("dismiss")}
                   style={{
                     padding: 7,
                     border: `1px solid ${A.line}`,
@@ -378,10 +388,10 @@ function ReviewQueueInner() {
                   <Ban size={13} />
                 </button>
                 <Btn variant="danger" size="sm" disabled={busy} onClick={() => setReasonAction({ action: "reject", item })}>
-                  Reject
+                  {t("reject")}
                 </Btn>
                 <Btn variant={ok ? "primary" : "ghost"} size="sm" disabled={!ok || busy} onClick={() => approveM.mutate(item.id)}>
-                  Approve
+                  {t("approve")}
                 </Btn>
               </div>
             </div>
@@ -389,7 +399,7 @@ function ReviewQueueInner() {
         },
       },
     ],
-    [approveM, canAct],
+    [approveM, canAct, t],
   );
 
   // ── Non-blocking regenerate: mark rows regenerating, close modal, let the poll refresh ──
@@ -401,8 +411,8 @@ function ReviewQueueInner() {
     });
     toast.success(
       reviewIds.length > 1
-        ? `Queued ${reviewIds.length} regenerate jobs — the queue updates as they finish`
-        : "Regenerate queued — the queue updates when it finishes",
+        ? t("queuedMany", reviewIds.length)
+        : t("queuedOne"),
     );
     setRegenItems([]);
   }
@@ -412,8 +422,8 @@ function ReviewQueueInner() {
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}.spin{animation:spin .8s linear infinite}`}</style>
 
       <PageHeader
-        title="Review Queue"
-        description="Edit, re-validate, then approve. Select rows to regenerate in bulk; regenerate runs in the background without freezing the screen."
+        title={t("title")}
+        description={t("description")}
         actions={
           <div style={{ textAlign: "center" }}>
             <div
@@ -429,7 +439,8 @@ function ReviewQueueInner() {
               {total}
             </div>
             <div style={{ fontSize: 11, color: A.muted }}>
-              {filterStatus === "all" ? "Total" : filterStatus[0].toUpperCase() + filterStatus.slice(1)}
+              {filterStatus === "approved" ? t("statusApproved") : filterStatus === "rejected" ? t("statusRejected")
+                : filterStatus === "pending" ? t("statusPending") : t("total")}
             </div>
           </div>
         }
@@ -453,7 +464,7 @@ function ReviewQueueInner() {
         >
           <Filter size={13} style={{ color: A.gold }} />
           <span>
-            Showing failed versions for <strong>{tourFilterName || "one selected tour"}</strong> only.
+            {t("showingFor")}<strong>{tourFilterName || t("oneSelectedTour")}</strong>{t("only")}
           </span>
           <button
             onClick={() => { setTourFilter(null); setPageIndex(0); }}
@@ -471,7 +482,7 @@ function ReviewQueueInner() {
               gap: 5,
             }}
           >
-            <X size={12} /> Clear filter
+            <X size={12} /> {t("clearFilter")}
           </button>
         </div>
       )}
@@ -479,7 +490,7 @@ function ReviewQueueInner() {
       {/* Legend */}
       {!isLoading && filtered.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", columnGap: 16, rowGap: 6, alignItems: "center", marginBottom: 12, fontSize: 11, color: A.muted }}>
-          <span style={{ fontWeight: 600 }}>Reason colors:</span>
+          <span style={{ fontWeight: 600 }}>{t("reasonColors")}</span>
           {(["red", "amber", "gray"] as const).map((sev) => (
             <span key={sev} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
               <span
@@ -492,7 +503,7 @@ function ReviewQueueInner() {
                   display: "inline-block",
                 }}
               />
-              {sev === "red" ? "Product-truth / structural" : sev === "amber" ? "Brand / style / SEO" : "Other"}
+              {sev === "red" ? t("sevRed") : sev === "amber" ? t("sevAmber") : t("sevGray")}
             </span>
           ))}
         </div>
@@ -505,10 +516,10 @@ function ReviewQueueInner() {
         getRowId={(r) => r.id}
         userId={(typeof window !== "undefined" && window.localStorage.getItem("cis_reviewer_id")) || "admin"}
         loading={isLoading}
-        error={isError ? (error instanceof Error ? error.message : "Could not load the review queue") : null}
+        error={isError ? (error instanceof Error ? error.message : t("loadFailed")) : null}
         onRetry={() => refetch()}
         searchable
-        searchPlaceholder="Search tours…"
+        searchPlaceholder={t("searchTours")}
         enableSelection
         enableSavedViews
         enableCsv
@@ -524,8 +535,8 @@ function ReviewQueueInner() {
             setPageSize(ps);
           },
         }}
-        emptyTitle="Review queue is empty"
-        emptyDescription="Every tour has been reviewed."
+        emptyTitle={t("emptyTitle")}
+        emptyDescription={t("emptyBody")}
         // AA-601 — the Tour column is capped (names ellipsize) so the 4-button Actions cell fits a
         // 1440px screen; narrower screens scroll the table inside its wrapper.
         // S248 AA-760 — the filter group wraps: at 400 px the three selects + Refresh (~480 px) ran past
@@ -534,13 +545,13 @@ function ReviewQueueInner() {
         toolbarExtra={
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", minWidth: 0, maxWidth: "100%" }}>
             <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} style={selectStyle}>
-              <option value="pending">Pending</option>
-              <option value="approved">Approved</option>
-              <option value="rejected">Rejected</option>
-              <option value="all">All</option>
+              <option value="pending">{t("statusPending")}</option>
+              <option value="approved">{t("statusApproved")}</option>
+              <option value="rejected">{t("statusRejected")}</option>
+              <option value="all">{t("statusAll")}</option>
             </select>
             <select value={filterCountry} onChange={(e) => setCountry(e.target.value)} style={selectStyle}>
-              <option value="all">All countries</option>
+              <option value="all">{t("allCountries")}</option>
               {countries.map((c) => (
                 <option key={c.country} value={c.country}>
                   {c.country} ({c.n})
@@ -548,13 +559,13 @@ function ReviewQueueInner() {
               ))}
             </select>
             <select value={filterScore} onChange={(e) => setScore(e.target.value)} style={selectStyle}>
-              <option value="all">All scores</option>
-              <option value="critical">Critical (&lt;{SCORE_BANDS.low.toFixed(1)})</option>
-              <option value="low">Low ({SCORE_BANDS.low.toFixed(1)}–{(PASS_LINE - 0.1).toFixed(1)})</option>
-              <option value="ok">{PASS_LINE.toFixed(1)}+ (held for another reason)</option>
+              <option value="all">{t("allScores")}</option>
+              <option value="critical">{t("critical", SCORE_BANDS.low.toFixed(1))}</option>
+              <option value="low">{t("low", SCORE_BANDS.low.toFixed(1), (PASS_LINE - 0.1).toFixed(1))}</option>
+              <option value="ok">{t("ok", PASS_LINE.toFixed(1))}</option>
             </select>
             <Btn variant="ghost" size="sm" onClick={() => refetch()}>
-              <RotateCcw size={12} className={isFetching ? "spin" : undefined} /> Refresh
+              <RotateCcw size={12} className={isFetching ? "spin" : undefined} /> {t("refresh")}
             </Btn>
           </div>
         }
@@ -573,20 +584,20 @@ function ReviewQueueInner() {
               disabled={noneRetryable}
               title={
                 noneRetryable
-                  ? "None of the selected rows can be regenerated (raw too thin, needs a person, or a stronger model already failed)"
+                  ? t("noneRetryable")
                   : skipped > 0
-                    ? `Regenerate ${retryable.length} · skip ${skipped} not retryable`
-                    : "Regenerate the selected rows"
+                    ? t("regenSkip", retryable.length, skipped)
+                    : t("regenSelectedTitle")
               }
               onClick={() => {
                 setRegenItems(retryable);
                 if (skipped > 0) {
-                  toast.info(`Regenerating ${retryable.length} · skipped ${skipped} (not retryable)`);
+                  toast.info(t("regenSkipped", retryable.length, skipped));
                 }
                 clearSelection();
               }}
             >
-              <RotateCcw size={12} /> Regenerate selected
+              <RotateCcw size={12} /> {t("regenSelected")}
               {skipped > 0 ? ` (${retryable.length})` : ""}
             </Btn>
           );

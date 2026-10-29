@@ -2,6 +2,21 @@
 // AA-766 — shared types, formatters and validation for the Tenant 360 tabs (Settings, Cost,
 // Quality, Markets). All data comes from admin-only routes (/admin/tenants/{id}/...): cost, gate
 // verdicts and research coverage are never part of a tenant API response (AA-613).
+// AA-994: the validation and limit texts are T360_WORDS (English); a component passes the UI language's words
+// (tenant360.messages.ts T360_WORDS_MESSAGES) as the last argument.
+
+/** The words the helpers below return (English; Vietnamese in tenant360.messages.ts). */
+export const T360_WORDS = {
+  marketsRequired: "At least one market is required.",
+  marketsCodes: (bad: string) => `Use 2-letter country codes: ${bad}`,
+  channelsRequired: "Pick at least one channel.",
+  ppwRange: "Posts/week must be an integer from 1 to 14.",
+  rpmRange: (max: number) => `Rate limit must be an integer from 1 to ${max}.`,
+  dplRange: (max: number) => `Daily publish limit must be an integer from 1 to ${max}, or empty for the default.`,
+  perDayDefault: (n: number) => `${n}/day (default)`,
+  perDay: (n: number) => `${n}/day`,
+};
+export type T360Words = { [K in keyof typeof T360_WORDS]: (typeof T360_WORDS)[K] };
 
 export const usd = (v: number | null | undefined, digits = 2) =>
   v == null ? "—" : `$${v.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
@@ -40,22 +55,24 @@ export function parseMarkets(input: string): string[] {
 }
 
 /** Field errors for the planning-config form; an empty object means valid. */
-export function validateConfig(markets: string[], channels: string[], postsPerWeek: string): Record<string, string> {
+export function validateConfig(
+  markets: string[], channels: string[], postsPerWeek: string, w: T360Words = T360_WORDS,
+): Record<string, string> {
   const errors: Record<string, string> = {};
-  if (markets.length === 0) errors.markets = "At least one market is required.";
+  if (markets.length === 0) errors.markets = w.marketsRequired;
   else {
     const bad = markets.filter(m => !/^[A-Z]{2}$/.test(m));
-    if (bad.length) errors.markets = `Use 2-letter country codes: ${bad.join(", ")}`;
+    if (bad.length) errors.markets = w.marketsCodes(bad.join(", "));
   }
-  if (channels.length === 0) errors.channels = "Pick at least one channel.";
+  if (channels.length === 0) errors.channels = w.channelsRequired;
   const n = Number(postsPerWeek);
-  if (!Number.isInteger(n) || n < 1 || n > 14) errors.posts_per_week = "Posts/week must be an integer from 1 to 14.";
+  if (!Number.isInteger(n) || n < 1 || n > 14) errors.posts_per_week = w.ppwRange;
   return errors;
 }
 
-export function validateRpm(rpm: string): string | null {
+export function validateRpm(rpm: string, w: T360Words = T360_WORDS): string | null {
   const n = Number(rpm);
-  if (!Number.isInteger(n) || n < 1 || n > RATE_LIMIT_RPM_MAX) return `Rate limit must be an integer from 1 to ${RATE_LIMIT_RPM_MAX}.`;
+  if (!Number.isInteger(n) || n < 1 || n > RATE_LIMIT_RPM_MAX) return w.rpmRange(RATE_LIMIT_RPM_MAX);
   return null;
 }
 
@@ -66,11 +83,11 @@ export const DAILY_PUBLISH_LIMIT_DEFAULT = 20;
 export const DAILY_PUBLISH_LIMIT_MAX = 1000;
 
 /** "" means "no override" (send null → the code default applies). */
-export function validateDailyPublishLimit(value: string): string | null {
+export function validateDailyPublishLimit(value: string, w: T360Words = T360_WORDS): string | null {
   if (value.trim() === "") return null;
   const n = Number(value);
   if (!Number.isInteger(n) || n < 1 || n > DAILY_PUBLISH_LIMIT_MAX) {
-    return `Daily publish limit must be an integer from 1 to ${DAILY_PUBLISH_LIMIT_MAX}, or empty for the default.`;
+    return w.dplRange(DAILY_PUBLISH_LIMIT_MAX);
   }
   return null;
 }
@@ -83,9 +100,9 @@ export function parseDailyPublishLimit(value: string): number | null {
 /** "20/day (default)" when there is no override (null), "5/day" when there is, and "—" when the
  *  server does not report the field at all (undefined: the AA-819 backend is not deployed yet, so
  *  no limit is enforced and claiming "20/day" would be false). */
-export function fmtDailyPublishLimit(limit: number | null | undefined): string {
+export function fmtDailyPublishLimit(limit: number | null | undefined, w: T360Words = T360_WORDS): string {
   if (limit === undefined) return "—";
-  return limit === null ? `${DAILY_PUBLISH_LIMIT_DEFAULT}/day (default)` : `${limit}/day`;
+  return limit === null ? w.perDayDefault(DAILY_PUBLISH_LIMIT_DEFAULT) : w.perDay(limit);
 }
 
 // ── Cost ──────────────────────────────────────────────────────────────────────

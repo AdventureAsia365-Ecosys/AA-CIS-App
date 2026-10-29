@@ -9,9 +9,10 @@
 import { useMemo } from "react";
 import type { SortingState } from "@tanstack/react-table";
 import { A, mono, Btn } from "../_components/adminUi";
-import { Badge, type ColumnDef, DataTable, StatusBadge } from "../../_kit";
+import { Badge, type ColumnDef, DataTable, StatusBadge, useFormat, useT } from "../../_kit";
+import { JOBS } from "./messages";
 import {
-  STATUSES, fmtSeconds, fmtTime, releases, runSeconds, stepProgress, usd,
+  STATUSES, fmtSeconds, releases, runSeconds, stepProgress, usd,
   type Job, type Kind,
 } from "./jobsShared";
 
@@ -68,6 +69,8 @@ export default function JobsTable(props: JobsTableProps) {
     onKindChange, onStatusChange, onCreatedByChange, onSinceChange, onUntilChange, onQChange,
     onRowClick, onAct, loading, error, onRetry,
   } = props;
+  const t = useT(JOBS);
+  const { formatDateTime: fmtTime } = useFormat();
 
   const inputStyle: React.CSSProperties = {
     fontSize: 12, padding: "6px 8px", border: `1px solid ${A.line}`, borderRadius: 6,
@@ -79,7 +82,7 @@ export default function JobsTable(props: JobsTableProps) {
     return [
     {
       accessorKey: "kind",
-      header: "Kind",
+      header: t("colKind"),
       cell: (c) => {
         const j = c.row.original;
         const secs = runSeconds(j, now);
@@ -89,10 +92,10 @@ export default function JobsTable(props: JobsTableProps) {
         return (
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span style={{ fontFamily: mono, fontWeight: 600, color: A.ink }}>{j.kind}</span>
-            {slow && <span title={`Expected under ${fmtSeconds(exp!)}`}><Badge tone="warning" dot={false}>slow</Badge></span>}
+            {slow && <span title={t("expectedUnder", fmtSeconds(exp!))}><Badge tone="warning" dot={false}>{t("slow")}</Badge></span>}
             {rel > 0 && (j.status === "running" || j.status === "queued") && (
-              <span title="Handed back to the queue by a deploy/restart">
-                <Badge tone={rel >= maxReleases - 1 ? "danger" : "neutral"} dot={false}>released {rel}/{maxReleases}</Badge>
+              <span title={t("releasedTitle")}>
+                <Badge tone={rel >= maxReleases - 1 ? "danger" : "neutral"} dot={false}>{t("released", rel, maxReleases)}</Badge>
               </span>
             )}
           </div>
@@ -101,25 +104,25 @@ export default function JobsTable(props: JobsTableProps) {
     },
     {
       accessorKey: "status",
-      header: "Status",
+      header: t("colStatus"),
       cell: (c) => {
         const j = c.row.original;
         return (
           <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
             <StatusBadge status={j.status} />
-            {j.cancel_requested && j.status === "running" && <span style={{ fontSize: 11, color: A.muted }}>cancelling…</span>}
+            {j.cancel_requested && j.status === "running" && <span style={{ fontSize: 11, color: A.muted }}>{t("cancelling")}</span>}
           </span>
         );
       },
     },
     {
       accessorKey: "attempt",
-      header: "Attempt",
+      header: t("colAttempt"),
       cell: (c) => <span style={{ fontFamily: mono }}>{c.row.original.attempt}/{c.row.original.max_attempts}</span>,
     },
     {
       id: "progress",
-      header: "Progress",
+      header: t("colProgress"),
       enableSorting: false,
       cell: (c) => {
         const j = c.row.original;
@@ -133,7 +136,7 @@ export default function JobsTable(props: JobsTableProps) {
           <div style={{ minWidth: 150 }}>
             <div style={{ fontSize: 11.5, color: A.body }}>
               {p.step || phase} · <span style={{ fontFamily: mono }}>{p.done}/{p.total}</span>
-              {j.status === "running" && eta && <span style={{ color: A.muted }}> · ETA {eta}</span>}
+              {j.status === "running" && eta && <span style={{ color: A.muted }}>{t("eta", eta)}</span>}
             </div>
             <div style={{ height: 4, background: A.line2, borderRadius: 2, overflow: "hidden", marginTop: 3 }}>
               <div style={{ width: `${pct}%`, height: "100%", background: A.accent }} />
@@ -144,7 +147,7 @@ export default function JobsTable(props: JobsTableProps) {
     },
     {
       id: "duration",
-      header: "Duration",
+      header: t("colDuration"),
       cell: (c) => {
         const j = c.row.original;
         const secs = runSeconds(j, now);
@@ -155,18 +158,18 @@ export default function JobsTable(props: JobsTableProps) {
     },
     {
       accessorKey: "cost_usd",
-      header: "Cost",
+      header: t("colCost"),
       cell: (c) => <span style={{ fontFamily: mono }}>{usd(c.row.original.cost_usd)}</span>,
     },
     {
       id: "created_at",
       accessorKey: "created_at",
-      header: "Created",
+      header: t("colCreated"),
       cell: (c) => <span style={{ color: A.muted, whiteSpace: "nowrap" }}>{fmtTime(c.row.original.created_at)}</span>,
     },
     {
       accessorKey: "created_by",
-      header: "By",
+      header: t("colBy"),
       cell: (c) => <span style={{ color: A.muted }}>{c.row.original.created_by ?? "—"}</span>,
     },
     {
@@ -181,14 +184,14 @@ export default function JobsTable(props: JobsTableProps) {
         if (!canCancel && !canRetry) return null;
         return (
           <div style={{ display: "flex", gap: 8, whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
-            {canCancel && <Btn size="sm" variant="danger" disabled={busyId === j.id} onClick={() => onAct(j, "cancel")}>Cancel</Btn>}
-            {canRetry && <Btn size="sm" disabled={busyId === j.id} onClick={() => onAct(j, "retry")}>Retry</Btn>}
+            {canCancel && <Btn size="sm" variant="danger" disabled={busyId === j.id} onClick={() => onAct(j, "cancel")}>{t("cancel")}</Btn>}
+            {canRetry && <Btn size="sm" disabled={busyId === j.id} onClick={() => onAct(j, "retry")}>{t("retry")}</Btn>}
           </div>
         );
       },
     },
   ];
-  }, [now, etas, maxReleases, busyId, kinds, onAct]);
+  }, [now, etas, maxReleases, busyId, kinds, onAct, t, fmtTime]);
 
   // Reflect the server sort to the DataTable so the sorted-arrow shows on the active column, and
   // translate a header click back into a (sort, dir) the page sends to the API. Column ids outside
@@ -217,7 +220,7 @@ export default function JobsTable(props: JobsTableProps) {
       error={error}
       onRetry={onRetry}
       searchable={!supportsServer}
-      searchPlaceholder="Search this page…"
+      searchPlaceholder={t("searchPage")}
       enableSavedViews
       enableCsv
       csvFilename="jobs"
@@ -230,40 +233,40 @@ export default function JobsTable(props: JobsTableProps) {
       stickyHeader
       maxBodyHeight="calc(100vh - 360px)"
       tableMinWidth={980}
-      emptyTitle="No jobs match these filters yet"
-      emptyDescription="Background work shows here as it is enqueued."
+      emptyTitle={t("emptyTitle")}
+      emptyDescription={t("emptyDesc")}
       onRowClick={(j) => onRowClick(j.id)}
       toolbarExtra={
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           {/* Server-side search (id prefix / kind / created_by). In the fallback (no server total)
               the DataTable's own client search box is used instead (searchable above). */}
           {supportsServer && (
-            <input value={q} onChange={e => onQChange(e.target.value)} aria-label="Search jobs"
-                   placeholder="Search id / kind / by…" style={{ ...inputStyle, minWidth: 180 }} />
+            <input value={q} onChange={e => onQChange(e.target.value)} aria-label={t("searchJobs")}
+                   placeholder={t("searchPlaceholder")} style={{ ...inputStyle, minWidth: 180 }} />
           )}
-          <select value={kind} onChange={e => onKindChange(e.target.value)} aria-label="Kind"
+          <select value={kind} onChange={e => onKindChange(e.target.value)} aria-label={t("colKind")}
                   style={{ ...inputStyle, maxWidth: 220 }}>
-            <option value="">All kinds</option>
+            <option value="">{t("allKinds")}</option>
             {kinds.map(k => <option key={k.kind} value={k.kind}>{k.kind}</option>)}
           </select>
-          <select value={status} onChange={e => onStatusChange(e.target.value)} aria-label="Status"
+          <select value={status} onChange={e => onStatusChange(e.target.value)} aria-label={t("colStatus")}
                   style={inputStyle}>
-            <option value="">All statuses</option>
+            <option value="">{t("allStatuses")}</option>
             {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
           {/* Created by: free text with a datalist of the distinct values on the current page. */}
-          <input value={createdBy} onChange={e => onCreatedByChange(e.target.value)} aria-label="Created by"
-                 list="jobs-created-by" placeholder="Created by…" style={{ ...inputStyle, maxWidth: 180 }} />
+          <input value={createdBy} onChange={e => onCreatedByChange(e.target.value)} aria-label={t("createdBy")}
+                 list="jobs-created-by" placeholder={t("createdByPlaceholder")} style={{ ...inputStyle, maxWidth: 180 }} />
           <datalist id="jobs-created-by">
             {createdByOptions.map(o => <option key={o} value={o} />)}
           </datalist>
           <label style={{ fontSize: 11, color: A.muted, display: "inline-flex", alignItems: "center", gap: 4 }}>
-            Since
-            <input type="date" value={since} onChange={e => onSinceChange(e.target.value)} aria-label="Created since" style={inputStyle} />
+            {t("since")}
+            <input type="date" value={since} onChange={e => onSinceChange(e.target.value)} aria-label={t("createdSince")} style={inputStyle} />
           </label>
           <label style={{ fontSize: 11, color: A.muted, display: "inline-flex", alignItems: "center", gap: 4 }}>
-            Until
-            <input type="date" value={until} onChange={e => onUntilChange(e.target.value)} aria-label="Created until" style={inputStyle} />
+            {t("until")}
+            <input type="date" value={until} onChange={e => onUntilChange(e.target.value)} aria-label={t("createdUntil")} style={inputStyle} />
           </label>
         </div>
       }

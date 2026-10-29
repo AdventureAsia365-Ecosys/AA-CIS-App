@@ -5,12 +5,14 @@
 // vs shadow, latency p50/p95, repeat-scoring variance, and n / unparsed / errors. Every rate shows
 // its sample size next to it so a rate from 3 rows does not read like one from 3,000. A days
 // selector (7/30/90) drives the query. Dead stages (HIDDEN_STAGES) are not shown.
+// AA-994: text in the UI language (models.messages.ts).
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { A, mono } from "../_components/adminUi";
-import { type ColumnDef, DataTable, apiGet } from "../../_kit";
+import { type ColumnDef, DataTable, apiGet, useT } from "../../_kit";
 import { HIDDEN_STAGES, type ShadowGroup } from "./llmShared";
+import { MODELS } from "./models.messages";
 
 interface ShadowReportResp {
   days: number;
@@ -35,6 +37,7 @@ function RateWithSample({ value, sample }: { value: React.ReactNode; sample: num
 }
 
 export function ShadowReportTab() {
+  const t = useT(MODELS);
   const [days, setDays] = useState(30);
 
   const { data, isLoading, isError, error, refetch } = useQuery({
@@ -51,12 +54,12 @@ export function ShadowReportTab() {
   const columns = useMemo<ColumnDef<ShadowGroup, unknown>[]>(() => [
     {
       accessorKey: "stage",
-      header: "Stage",
+      header: t("colStage"),
       cell: (c) => <span style={{ fontFamily: mono, fontWeight: 600, color: A.ink }}>{c.row.original.stage}</span>,
     },
     {
       id: "pair",
-      header: "Primary → Shadow",
+      header: t("colPair"),
       enableSorting: false,
       cell: (c) => {
         const r = c.row.original;
@@ -75,17 +78,17 @@ export function ShadowReportTab() {
     },
     {
       accessorKey: "agreement_rate",
-      header: "Agreement",
+      header: t("colAgreement"),
       cell: (c) => <RateWithSample value={pct(c.row.original.agreement_rate)} sample={c.row.original.agreement_sample} />,
     },
     {
       accessorKey: "mean_abs_score_delta",
-      header: "Mean |Δscore|",
+      header: t("colDelta"),
       cell: (c) => <RateWithSample value={dev(c.row.original.mean_abs_score_delta)} sample={c.row.original.score_delta_sample} />,
     },
     {
       id: "cost",
-      header: "Cost / call (P vs S)",
+      header: t("colCost"),
       enableSorting: false,
       cell: (c) => {
         const r = c.row.original;
@@ -99,7 +102,7 @@ export function ShadowReportTab() {
     },
     {
       id: "latency",
-      header: "Shadow latency p50 / p95",
+      header: t("colLatency"),
       enableSorting: false,
       cell: (c) => {
         const r = c.row.original;
@@ -112,7 +115,7 @@ export function ShadowReportTab() {
     },
     {
       id: "variance",
-      header: "Repeat σ (P / S)",
+      header: t("colRepeat"),
       enableSorting: false,
       cell: (c) => {
         const r = c.row.original;
@@ -125,7 +128,7 @@ export function ShadowReportTab() {
     },
     {
       id: "health",
-      header: "Unparsed / errors",
+      header: t("colHealth"),
       enableSorting: false,
       cell: (c) => {
         const r = c.row.original;
@@ -136,19 +139,16 @@ export function ShadowReportTab() {
         );
       },
     },
-  ], []);
+  ], [t]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <p style={{ fontSize: 12, color: A.muted2, margin: 0 }}>
-        Each row compares a stage&apos;s primary model against its shadow over the window. Agreement is
-        the share of calls where both reach the same pass/fail; mean |Δscore| is the average absolute
-        score gap. Sample sizes are shown next to each rate — a rate over a handful of calls is not
-        the same as one over thousands.
+        {t("shadowIntro")}
       </p>
 
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ fontSize: 12, color: A.muted }}>Window</span>
+        <span style={{ fontSize: 12, color: A.muted }}>{t("window")}</span>
         {DAYS_OPTIONS.map((d) => (
           <button
             key={d}
@@ -161,7 +161,7 @@ export function ShadowReportTab() {
               color: days === d ? A.accentDeep : A.muted,
             }}
           >
-            {d}d
+            {t("daysShort", d)}
           </button>
         ))}
       </div>
@@ -172,17 +172,17 @@ export function ShadowReportTab() {
         tableId="admin-llm-shadow"
         getRowId={(r) => `${r.stage}:${r.primary_model}:${r.shadow_model}`}
         loading={isLoading}
-        error={isError ? (error instanceof Error ? error.message : "Could not load the shadow report") : null}
+        error={isError ? (error instanceof Error ? error.message : t("loadShadowError")) : null}
         onRetry={() => refetch()}
         searchable
-        searchPlaceholder="Search stages…"
+        searchPlaceholder={t("searchStages")}
         enableCsv
         csvFilename="llm-shadow-report"
         pageSize={25}
         pageSizeOptions={[25, 50, 100]}
         tableMinWidth={1080}
-        emptyTitle="No shadow comparisons in this window"
-        emptyDescription="Turn on a stage's shadow in the Stages sub-tab, then come back after it has run on some calls."
+        emptyTitle={t("noShadowTitle")}
+        emptyDescription={t("noShadowBody")}
       />
     </div>
   );

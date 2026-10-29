@@ -29,18 +29,12 @@ import { CostByAppCard } from "./_components/CostByAppCard";
 import { TripPlannerCard } from "./_components/TripPlannerCard";
 import type { OpsOverview } from "./_components/opsTypes";
 import { SourceHint } from "./_components/SourceHint";
-import {
-  INTEL_SRC,
-  JOBS_SRC,
-  PIPELINE_SRC,
-  PROVIDER_COST_SRC,
-  TENANT_SRC,
-} from "./_components/sources";
+import { useSources, type Sources } from "./_components/sources";
+import { OVERVIEW } from "./messages";
 import {
   apiGet,
   Badge,
   ErrorState,
-  formatDateTime,
   K,
   LoadingScreen,
   PageHeader,
@@ -49,6 +43,8 @@ import {
   Spinner,
   StatusBadge,
   type Tone, AdminMain,
+  useFormat,
+  useT,
 } from "../../_kit";
 
 // ── types ───────────────────────────────────────────────────────────────────
@@ -139,6 +135,7 @@ function Section({
   source?: string;
   children: React.ReactNode;
 }) {
+  const t = useT(OVERVIEW);
   return (
     <section
       style={{
@@ -177,7 +174,7 @@ function Section({
             href={href}
             style={{ fontSize: 12, color: K.accentDeep, textDecoration: "none", fontWeight: 500 }}
           >
-            View detail →
+            {t("viewDetail")}
           </a>
         )}
       </div>
@@ -268,25 +265,30 @@ function delta(n: number) {
 
 const JOB_FAIL = new Set(["failed", "stopped_budget"]);
 
-// Number columns of the per-country pipeline table, with where each comes from.
-const PIPELINE_COLS: { label: string; source: string }[] = [
-  { label: "Raw (active)", source: PIPELINE_SRC.raw },
-  { label: "S1 generated", source: PIPELINE_SRC.generated },
-  { label: "In review", source: PIPELINE_SRC.review },
-  { label: "Published", source: PIPELINE_SRC.published },
-  { label: "Atomized", source: PIPELINE_SRC.atomized },
+// Number columns of the per-country pipeline table, with where each comes from (message key, source key).
+type PipelineWord = "raw" | "generated" | "inReview" | "published" | "atomized";
+const PIPELINE_COLS: { label: PipelineWord; source: keyof Sources["PIPELINE_SRC"] }[] = [
+  { label: "raw", source: "raw" },
+  { label: "generated", source: "generated" },
+  { label: "inReview", source: "review" },
+  { label: "published", source: "published" },
+  { label: "atomized", source: "atomized" },
 ];
 
-// Rows of the provider cost table: the spend_budget providers, in plain words. "other" shows only when it has spend.
-const COST_PROVIDERS: { key: string; label: string; ai: boolean }[] = [
-  { key: "bedrock", label: "AWS Bedrock (all accounts)", ai: true },
-  { key: "openai", label: "OpenAI", ai: true },
-  { key: "jev", label: "Jev", ai: true },
-  { key: "other", label: "Other AI providers", ai: true },
-  { key: "dfs", label: "DataForSEO", ai: false },
+// Rows of the provider cost table: the spend_budget providers, in plain words (a message key, or a product name
+// that stays as it is). "other" shows only when it has spend.
+const COST_PROVIDERS: { key: string; label: "bedrock" | "otherAi" | null; name?: string; ai: boolean }[] = [
+  { key: "bedrock", label: "bedrock", ai: true },
+  { key: "openai", label: null, name: "OpenAI", ai: true },
+  { key: "jev", label: null, name: "Jev", ai: true },
+  { key: "other", label: "otherAi", ai: true },
+  { key: "dfs", label: null, name: "DataForSEO", ai: false },
 ];
 
 export default function OverviewPage() {
+  const t = useT(OVERVIEW);
+  const { formatDateTime } = useFormat();
+  const { INTEL_SRC, JOBS_SRC, PIPELINE_SRC, PROVIDER_COST_SRC, TENANT_SRC } = useSources();
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ["admin-overview"],
     queryFn: () => apiGet<Overview>("/api/admin/overview", { admin: true }),
@@ -300,7 +302,7 @@ export default function OverviewPage() {
     refetchOnWindowFocus: false,
   });
   const opsDown = ops.isError
-    ? { status: "unavailable" as const, reason: "error", message: "This section could not be loaded. Try Refresh in a minute." }
+    ? { status: "unavailable" as const, reason: "error", message: t("sectionError") }
     : undefined;
 
   const money = (n: number | undefined) =>
@@ -311,8 +313,8 @@ export default function OverviewPage() {
       <SkeletonStyle />
       <AdminMain>
           <PageHeader
-            title="Overview"
-            description="How the business is doing: apps health, TripPlanner customers, the Booking funnel and cost, then the content pipeline in detail."
+            title={t("title")}
+            description={t("description")}
             actions={
               <button
                 onClick={() => {
@@ -331,7 +333,7 @@ export default function OverviewPage() {
                   fontFamily: sans,
                 }}
               >
-                {isFetching || ops.isFetching ? "Refreshing…" : "Refresh"}
+                {isFetching || ops.isFetching ? t("refreshing") : t("refresh")}
               </button>
             }
           />
@@ -340,7 +342,7 @@ export default function OverviewPage() {
           <div data-testid="ops-overview" style={{ display: "flex", flexDirection: "column", gap: 18, marginBottom: 28 }}>
             {ops.isLoading ? (
               <div style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 120, color: K.muted, fontSize: 13 }}>
-                <Spinner size={18} /> Loading apps, customers and cost…
+                <Spinner size={18} /> {t("loadingOps")}
               </div>
             ) : (
               <>
@@ -365,14 +367,14 @@ export default function OverviewPage() {
             data-testid="overview-cis-heading"
             style={{ margin: "0 0 12px", fontSize: 17, fontWeight: 600, color: K.ink, fontFamily: sans }}
           >
-            CIS content &amp; operations
+            {t("cisHeading")}
           </h2>
 
           {isLoading ? (
-            <LoadingScreen message="Loading overview…" />
+            <LoadingScreen message={t("loading")} />
           ) : isError ? (
             <ErrorState
-              message={(error as Error)?.message || "Failed to load overview."}
+              message={(error as Error)?.message || t("loadFailed")}
               onRetry={() => refetch()}
             />
           ) : !data ? null : (
@@ -380,7 +382,7 @@ export default function OverviewPage() {
               {/* ── Section 1: Pipeline funnel ── */}
               <Section
                 icon={<Activity size={16} />}
-                title="Pipeline funnel — per country"
+                title={t("pipelineTitle")}
                 href="/admin/master-content"
                 source={PIPELINE_SRC.card}
               >
@@ -388,11 +390,11 @@ export default function OverviewPage() {
                   <table style={{ width: "100%", minWidth: 560, borderCollapse: "collapse" }}>
                     <thead>
                       <tr>
-                        <th style={TH}>Country</th>
+                        <th style={TH}>{t("country")}</th>
                         {PIPELINE_COLS.map((c) => (
                           <th key={c.label} data-num-col="" style={{ ...TH, textAlign: "right", whiteSpace: "nowrap" }}>
-                            {c.label}
-                            <SourceHint source={c.source} size={11} />
+                            {t(c.label)}
+                            <SourceHint source={PIPELINE_SRC[c.source]} size={11} />
                           </th>
                         ))}
                       </tr>
@@ -401,7 +403,7 @@ export default function OverviewPage() {
                       {data.pipeline_funnel.map((r) => (
                         <tr key={r.country}>
                           <td style={{ ...TD, fontWeight: 600, color: K.ink }}>
-                            {r.country || "Unknown"}
+                            {r.country || t("unknown")}
                           </td>
                           <td style={{ ...TD, textAlign: "right" }}>
                             {r.raw_active}
@@ -433,7 +435,7 @@ export default function OverviewPage() {
               {/* ── Section 2: Intelligence ── */}
               <Section
                 icon={<Boxes size={16} />}
-                title="Intelligence"
+                title={t("intelligence")}
                 href="/admin/atom-curation"
               >
                 <div
@@ -444,23 +446,23 @@ export default function OverviewPage() {
                   }}
                 >
                   <Stat
-                    label="Atoms"
+                    label={t("atoms")}
                     value={data.intelligence.atom_count.toLocaleString()}
                     source={INTEL_SRC.atoms}
                     color={K.accentDeep}
                   />
-                  <Stat label="Segments" value={data.intelligence.segment_count.toLocaleString()} source={INTEL_SRC.segments} />
-                  <Stat label="Routes" value={data.intelligence.route_count.toLocaleString()} source={INTEL_SRC.routes} />
-                  <Stat label="Hubs" value={data.intelligence.hub_count.toLocaleString()} source={INTEL_SRC.hubs} />
-                  <Stat label="Score rows" value={data.intelligence.score_count.toLocaleString()} source={INTEL_SRC.scores} />
+                  <Stat label={t("segments")} value={data.intelligence.segment_count.toLocaleString()} source={INTEL_SRC.segments} />
+                  <Stat label={t("routes")} value={data.intelligence.route_count.toLocaleString()} source={INTEL_SRC.routes} />
+                  <Stat label={t("hubs")} value={data.intelligence.hub_count.toLocaleString()} source={INTEL_SRC.hubs} />
+                  <Stat label={t("scoreRows")} value={data.intelligence.score_count.toLocaleString()} source={INTEL_SRC.scores} />
                   <Stat
-                    label="Research places"
+                    label={t("researchPlaces")}
                     source={INTEL_SRC.research}
                     value={data.intelligence.research.places_researched.toLocaleString()}
                     sub={
                       data.intelligence.research.places_stale > 0
-                        ? `${data.intelligence.research.places_stale} stale (>30d)`
-                        : "all fresh"
+                        ? t("stale", data.intelligence.research.places_stale)
+                        : t("allFresh")
                     }
                     color={data.intelligence.research.places_stale > 0 ? K.amber : K.ink}
                   />
@@ -468,7 +470,7 @@ export default function OverviewPage() {
               </Section>
 
               {/* ── Section 3: Tenants ── */}
-              <Section icon={<Users size={16} />} title="Tenants" href="/admin/tenants">
+              <Section icon={<Users size={16} />} title={t("tenants")} href="/admin/tenants">
                 <div
                   style={{
                     display: "grid",
@@ -477,38 +479,38 @@ export default function OverviewPage() {
                     marginBottom: data.tenants.quota_outliers.length > 0 ? 14 : 0,
                   }}
                 >
-                  <Stat label="Active tenants" value={data.tenants.active_tenants} source={TENANT_SRC.active} />
-                  <Stat label="Rewrites (7d)" value={data.tenants.rewrites_7d} source={TENANT_SRC.rewrites} />
-                  <Stat label="Pieces (7d)" value={data.tenants.pieces_7d} source={TENANT_SRC.pieces} />
-                  <Stat label="Published (7d)" value={data.tenants.published_pieces_7d} source={TENANT_SRC.published} />
+                  <Stat label={t("activeTenants")} value={data.tenants.active_tenants} source={TENANT_SRC.active} />
+                  <Stat label={t("rewrites7d")} value={data.tenants.rewrites_7d} source={TENANT_SRC.rewrites} />
+                  <Stat label={t("pieces7d")} value={data.tenants.pieces_7d} source={TENANT_SRC.pieces} />
+                  <Stat label={t("published7d")} value={data.tenants.published_pieces_7d} source={TENANT_SRC.published} />
                 </div>
                 {data.tenants.quota_outliers.length > 0 && (
                   <ScrollX>
                   <table style={{ width: "100%", borderCollapse: "collapse" }}>
                     <thead>
                       <tr>
-                        <th style={TH}>Quota outlier</th>
-                        <th style={TH}>Plan</th>
+                        <th style={TH}>{t("quotaOutlier")}</th>
+                        <th style={TH}>{t("plan")}</th>
                         <th data-num-col="" style={{ ...TH, textAlign: "right" }}>
-                          Tours %
+                          {t("toursPct")}
                           <SourceHint source={TENANT_SRC.quotaTours} size={11} />
                         </th>
                         <th data-num-col="" style={{ ...TH, textAlign: "right" }}>
-                          API %
+                          {t("apiPct")}
                           <SourceHint source={TENANT_SRC.quotaCalls} size={11} />
                         </th>
                       </tr>
                     </thead>
                     <tbody>
-                      {data.tenants.quota_outliers.map((t) => (
-                        <tr key={t.tenant_name}>
-                          <td style={{ ...TD, fontWeight: 600, color: K.ink }}>{t.tenant_name}</td>
-                          <td style={TD}>{t.plan_tier}</td>
-                          <td style={{ ...TD, textAlign: "right", color: t.quota_tours_pct >= 100 ? K.danger : K.amber }}>
-                            {t.quota_tours_pct}%
+                      {data.tenants.quota_outliers.map((q) => (
+                        <tr key={q.tenant_name}>
+                          <td style={{ ...TD, fontWeight: 600, color: K.ink }}>{q.tenant_name}</td>
+                          <td style={TD}>{q.plan_tier}</td>
+                          <td style={{ ...TD, textAlign: "right", color: q.quota_tours_pct >= 100 ? K.danger : K.amber }}>
+                            {q.quota_tours_pct}%
                           </td>
-                          <td style={{ ...TD, textAlign: "right", color: t.quota_calls_pct >= 100 ? K.danger : K.amber }}>
-                            {t.quota_calls_pct}%
+                          <td style={{ ...TD, textAlign: "right", color: q.quota_calls_pct >= 100 ? K.danger : K.amber }}>
+                            {q.quota_calls_pct}%
                           </td>
                         </tr>
                       ))}
@@ -519,7 +521,7 @@ export default function OverviewPage() {
               </Section>
 
               {/* ── Section 4: Jobs ── */}
-              <Section icon={<ListChecks size={16} />} title="Jobs (30d)" href="/admin/jobs" source={JOBS_SRC.counts}>
+              <Section icon={<ListChecks size={16} />} title={t("jobs30d")} href="/admin/jobs" source={JOBS_SRC.counts}>
                 <div data-testid="overview-job-counts" style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
                   {Object.entries(data.jobs.counts).map(([status, n]) => (
                     <div
@@ -533,23 +535,23 @@ export default function OverviewPage() {
                     </div>
                   ))}
                   {Object.keys(data.jobs.counts).length === 0 && (
-                    <span style={{ fontSize: 13, color: K.muted }}>No jobs in the last 30 days.</span>
+                    <span style={{ fontSize: 13, color: K.muted }}>{t("noJobs")}</span>
                   )}
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 18px", marginTop: 12, fontSize: 12, color: K.muted }}>
                   <span data-testid="overview-workers-alive" data-kpi="">
-                    Workers alive now:{" "}
+                    {t("workersAlive")}{" "}
                     <b style={{ color: data.jobs.workers_alive ? K.success : K.danger }}>
                       {data.jobs.workers_alive ?? "—"}
                     </b>
                     <SourceHint source={JOBS_SRC.workers} size={11} />
                   </span>
                   <span data-kpi="">
-                    Jobs waiting: <b style={{ color: K.ink }}>{data.jobs.queue_depth ?? "—"}</b>
+                    {t("jobsWaiting")} <b style={{ color: K.ink }}>{data.jobs.queue_depth ?? "—"}</b>
                     <SourceHint source={JOBS_SRC.waiting} size={11} />
                   </span>
                   <span data-kpi="">
-                    Jobs running now: <b style={{ color: K.ink }}>{data.jobs.running_now ?? "—"}</b>
+                    {t("jobsRunning")} <b style={{ color: K.ink }}>{data.jobs.running_now ?? "—"}</b>
                     <SourceHint source={JOBS_SRC.running} size={11} />
                   </span>
                 </div>
@@ -558,24 +560,24 @@ export default function OverviewPage() {
               {/* ── Section 5: Cost ── */}
               <Section
                 icon={<CircleDollarSign size={16} />}
-                title="AI and data providers — today and this month vs daily budget"
+                title={t("providersTitle")}
                 href="/admin/cost-ops"
               >
                 <ScrollX testId="overview-provider-cost-table">
                   <table style={{ width: "100%", minWidth: 480, borderCollapse: "collapse" }}>
                     <thead>
                       <tr>
-                        <th style={TH}>Provider</th>
+                        <th style={TH}>{t("provider")}</th>
                         <th data-num-col="" style={{ ...TH, textAlign: "right" }}>
-                          Today
+                          {t("today")}
                           <SourceHint source={PROVIDER_COST_SRC.today} size={11} />
                         </th>
                         <th data-num-col="" style={{ ...TH, textAlign: "right" }}>
-                          Month-to-date
+                          {t("monthToDate")}
                           <SourceHint source={PROVIDER_COST_SRC.month} size={11} />
                         </th>
                         <th data-num-col="" style={{ ...TH, textAlign: "right" }}>
-                          Daily budget
+                          {t("dailyBudget")}
                           <SourceHint source={PROVIDER_COST_SRC.budget} size={11} />
                         </th>
                       </tr>
@@ -583,7 +585,7 @@ export default function OverviewPage() {
                     <tbody>
                       {COST_PROVIDERS.filter(
                         (c) => c.key !== "other" || (data.cost.month_to_date_usd.other ?? 0) > 0,
-                      ).map(({ key: p, label }) => {
+                      ).map(({ key: p, label, name }) => {
                         const budget = data.cost.budgets.find(
                           (b) => b.provider === p && b.scope === "global",
                         );
@@ -594,7 +596,7 @@ export default function OverviewPage() {
                           today >= budget.per_day_usd * (budget.alert_pct / 100);
                         return (
                           <tr key={p}>
-                            <td style={TD}>{label}</td>
+                            <td style={TD}>{label ? t(label) : name}</td>
                             <td
                               style={{
                                 ...TD,
@@ -619,11 +621,11 @@ export default function OverviewPage() {
                 </ScrollX>
                 {data.cost.ai_month_to_date_usd != null && (
                   <div data-testid="overview-ai-mtd-note" style={{ marginTop: 10, fontSize: 12, color: K.muted, lineHeight: 1.5 }}>
-                    AI this month, all providers: <b style={{ color: K.ink }}>{money(data.cost.ai_month_to_date_usd)}</b>
+                    {t("aiThisMonth")} <b style={{ color: K.ink }}>{money(data.cost.ai_month_to_date_usd)}</b>
                     <SourceHint source={PROVIDER_COST_SRC.aiMonth} size={11} />{" "}
-                    — the same as the AI estimate on{" "}
-                    <Link href="/admin/platform/cost" style={{ color: K.accentDeep, fontWeight: 600 }}>Cost per app</Link>.
-                    Today&apos;s numbers start at midnight UTC.
+                    {t("sameAsEstimate")}{" "}
+                    <Link href="/admin/platform/cost" style={{ color: K.accentDeep, fontWeight: 600 }}>{t("costPerApp")}</Link>.{" "}
+                    {t("todayFromMidnight")}
                   </div>
                 )}
                 {data.cost.dfs_balance?.has_data && (
@@ -632,7 +634,7 @@ export default function OverviewPage() {
                     style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}
                   >
                     <span style={{ fontSize: 12, color: K.muted, display: "inline-flex", alignItems: "center" }}>
-                      DataForSEO balance
+                      {t("dfsBalance")}
                       <SourceHint source={PROVIDER_COST_SRC.dfsBalance} size={11} />
                     </span>
                     <Badge tone={data.cost.dfs_balance.below_threshold ? "danger" : "success"}>
@@ -640,7 +642,7 @@ export default function OverviewPage() {
                     </Badge>
                     {data.cost.dfs_balance.below_threshold && (
                       <span style={{ fontSize: 11, color: K.danger }}>
-                        below ${data.cost.dfs_balance.threshold_usd} threshold
+                        {t("belowThreshold", String(data.cost.dfs_balance.threshold_usd))}
                       </span>
                     )}
                   </div>
@@ -648,9 +650,9 @@ export default function OverviewPage() {
               </Section>
 
               {/* ── Section 6: Alerts ── */}
-              <Section icon={<TriangleAlert size={16} />} title="Alerts" href="/admin/jobs">
+              <Section icon={<TriangleAlert size={16} />} title={t("alerts")} href="/admin/jobs">
                 {data.alerts.length === 0 ? (
-                  <div style={{ fontSize: 13, color: K.muted }}>No open admin alerts.</div>
+                  <div style={{ fontSize: 13, color: K.muted }}>{t("noAlerts")}</div>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     {data.alerts.map((a, i) => {
@@ -690,7 +692,7 @@ export default function OverviewPage() {
               </Section>
 
               <div style={{ fontSize: 11, color: K.muted2, textAlign: "right" }}>
-                {data._cached ? "Served from 60s cache" : "Freshly computed"} · auto-refresh 60s
+                {data._cached ? t("fromCache") : t("fresh")} · {t("autoRefresh")}
               </div>
             </div>
           )}

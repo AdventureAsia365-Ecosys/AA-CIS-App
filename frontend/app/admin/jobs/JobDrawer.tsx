@@ -10,11 +10,12 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { A, serif, mono, SLabel, Btn, TH, TD } from "../_components/adminUi";
-import { Drawer, StatusBadge, apiGet } from "../../_kit";
+import { Drawer, StatusBadge, apiGet, useFormat, useT } from "../../_kit";
 import { TenantName } from "../_components/TenantSelect";
-import { useAwsAccounts } from "../_components/useAwsAccounts";
+import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import { accountName, withAccountNames } from "@/lib/awsAccounts";
-import { fmtTime, fmtSeconds, releases, runSeconds, stepProgress, usd, type Job } from "./jobsShared";
+import { fmtSeconds, releases, runSeconds, stepProgress, usd, type Job } from "./jobsShared";
+import { JOBS } from "./messages";
 
 interface LlmCall {
   created_at: string; stage: string; role: string; model: string; account: string | null;
@@ -62,7 +63,10 @@ export default function JobDrawer({ jobId, refetchMs, expectedSeconds, maxReleas
   onAct: (job: Job, action: "cancel" | "retry") => void;
   busy: boolean;
 }) {
+  const t = useT(JOBS);
+  const { formatDateTime: fmtTime } = useFormat();
   const awsAccounts = useAwsAccounts();
+  const accountText = useAccountText();
   const { data: job, isError, error } = useQuery({
     queryKey: ["job", jobId],
     queryFn: () => apiGet<Job>(`/api/admin/job-runner/jobs/${jobId}`, { admin: true }),
@@ -95,7 +99,7 @@ export default function JobDrawer({ jobId, refetchMs, expectedSeconds, maxReleas
     // S241 UI verify — one row that fits the Drawer's title box: the kind ends in an ellipsis and the
     // status badge keeps its size (it used to push the close X off-screen at 390).
     <span style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, maxWidth: "100%" }}>
-      <span title={job?.kind ?? "Job"} style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: A.ink, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{job?.kind ?? "Job"}</span>
+      <span title={job?.kind ?? t("job")} style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: A.ink, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{job?.kind ?? t("job")}</span>
       {job && <span style={{ flexShrink: 0, display: "inline-flex" }}><StatusBadge status={job.status} /></span>}
     </span>
   );
@@ -103,18 +107,18 @@ export default function JobDrawer({ jobId, refetchMs, expectedSeconds, maxReleas
   const footer = job && (
     <>
       {(job.status === "queued" || (job.status === "running" && !job.cancel_requested)) && (
-        <Btn size="sm" variant="danger" disabled={busy} onClick={() => onAct(job, "cancel")}>Cancel</Btn>
+        <Btn size="sm" variant="danger" disabled={busy} onClick={() => onAct(job, "cancel")}>{t("cancel")}</Btn>
       )}
       {(job.status === "failed" || job.status === "stopped_budget" || job.status === "cancelled") && (
-        <Btn size="sm" disabled={busy} onClick={() => onAct(job, "retry")}>Retry</Btn>
+        <Btn size="sm" disabled={busy} onClick={() => onAct(job, "retry")}>{t("retry")}</Btn>
       )}
     </>
   );
 
   return (
     <Drawer open onClose={onClose} title={header} footer={footer || undefined} width={760}>
-      {isError && <div style={{ fontSize: 12.5, color: A.red, marginBottom: 10 }}>Could not load job ({error instanceof Error ? error.message : String(error)})</div>}
-      {!job ? <div style={{ fontSize: 12.5, color: A.muted }}>Loading…</div> : (
+      {isError && <div style={{ fontSize: 12.5, color: A.red, marginBottom: 10 }}>{t("loadJobError", error instanceof Error ? error.message : String(error))}</div>}
+      {!job ? <div style={{ fontSize: 12.5, color: A.muted }}>{t("loadingShort")}</div> : (
         <>
           {job.error && job.status !== "succeeded" && (
             <div style={{ fontSize: 12.5, color: A.red, background: A.redSoft, border: `1px solid ${A.redBorder}`, borderRadius: 8, padding: "8px 10px", marginBottom: 12, whiteSpace: "pre-wrap" }}>{job.error}</div>
@@ -122,10 +126,10 @@ export default function JobDrawer({ jobId, refetchMs, expectedSeconds, maxReleas
 
           {prog && (
             <div style={{ marginBottom: 14 }}>
-              <SLabel>Progress</SLabel>
+              <SLabel>{t("progress")}</SLabel>
               <div style={{ fontSize: 12.5, color: A.body, marginBottom: 4 }}>
-                {prog.step || "working"} · <span style={{ fontFamily: mono }}>{prog.done}/{prog.total}</span>
-                {job.status === "running" && eta && <span style={{ color: A.muted }}> · ETA {eta}</span>}
+                {prog.step || t("working")} · <span style={{ fontFamily: mono }}>{prog.done}/{prog.total}</span>
+                {job.status === "running" && eta && <span style={{ color: A.muted }}>{t("eta", eta)}</span>}
               </div>
               <div style={{ height: 6, background: A.line2, borderRadius: 3, overflow: "hidden" }}>
                 <div style={{ width: `${Math.min(100, (prog.done / prog.total) * 100)}%`, height: "100%", background: A.accent }} />
@@ -133,38 +137,38 @@ export default function JobDrawer({ jobId, refetchMs, expectedSeconds, maxReleas
             </div>
           )}
 
-          <SLabel>Lifecycle</SLabel>
-          <Row label="Job id"><span style={{ fontFamily: mono }}>{job.id}</span></Row>
-          <Row label="Attempt">{job.attempt}/{job.max_attempts}</Row>
-          <Row label="Released on shutdown">
+          <SLabel>{t("lifecycle")}</SLabel>
+          <Row label={t("jobId")}><span style={{ fontFamily: mono }}>{job.id}</span></Row>
+          <Row label={t("attempt")}>{job.attempt}/{job.max_attempts}</Row>
+          <Row label={t("releasedOnShutdown")}>
             <span style={{ color: rel >= maxReleases - 1 && rel > 0 ? A.red : A.body }}>{rel}/{maxReleases}</span>
-            {rel > 0 && <span style={{ color: A.muted }}> — a deploy/restart handed it back to the queue; at {maxReleases} it fails</span>}
+            {rel > 0 && <span style={{ color: A.muted }}>{t("releasedNote", maxReleases)}</span>}
           </Row>
-          <Row label="Created">{fmtTime(job.created_at)}{job.created_by ? ` by ${job.created_by}` : ""}</Row>
-          <Row label="Started / finished">{fmtTime(job.started_at)} → {fmtTime(job.finished_at)}</Row>
-          <Row label="Duration">
+          <Row label={t("created")}>{fmtTime(job.created_at)}{job.created_by ? t("byWho", job.created_by) : ""}</Row>
+          <Row label={t("startedFinished")}>{fmtTime(job.started_at)} → {fmtTime(job.finished_at)}</Row>
+          <Row label={t("duration")}>
             {secs == null ? "—" : fmtSeconds(secs)}
             {expectedSeconds && secs != null && secs > expectedSeconds && job.status === "running" && (
-              <span style={{ color: A.amber }}> — longer than expected for this kind ({fmtSeconds(expectedSeconds)})</span>
+              <span style={{ color: A.amber }}>{t("longer", fmtSeconds(expectedSeconds))}</span>
             )}
           </Row>
-          {job.status === "running" && <Row label="Lease">{job.locked_by ?? "—"} · until {fmtTime(job.locked_until)}</Row>}
-          {job.status === "queued" && job.run_after && <Row label="Runs after">{fmtTime(job.run_after)}</Row>}
+          {job.status === "running" && <Row label={t("lease")}>{t("leaseUntil", job.locked_by ?? "—", fmtTime(job.locked_until))}</Row>}
+          {job.status === "queued" && job.run_after && <Row label={t("runsAfter")}>{fmtTime(job.run_after)}</Row>}
 
           <div style={{ marginTop: 16 }}>
-            <SLabel>Cost</SLabel>
+            <SLabel>{t("cost")}</SLabel>
             <div style={{ display: "flex", gap: 20, fontSize: 12.5, flexWrap: "wrap" }}>
-              <div>Total <span style={{ fontFamily: mono, color: A.ink }}>{usd(total)}</span></div>
-              <div>LLM <span style={{ fontFamily: mono, color: A.ink }}>{usd(llmCost)}</span> <span style={{ color: A.muted }}>({llm?.totals.calls ?? 0} calls)</span></div>
-              <div>Other (DataForSEO…) <span style={{ fontFamily: mono, color: A.ink }}>{usd(Math.max(0, total - llmCost))}</span></div>
+              <div>{t("total")} <span style={{ fontFamily: mono, color: A.ink }}>{usd(total)}</span></div>
+              <div>{t("llm")} <span style={{ fontFamily: mono, color: A.ink }}>{usd(llmCost)}</span> <span style={{ color: A.muted }}>{t("calls", llm?.totals.calls ?? 0)}</span></div>
+              <div>{t("other")} <span style={{ fontFamily: mono, color: A.ink }}>{usd(Math.max(0, total - llmCost))}</span></div>
             </div>
           </div>
 
           {llm && llm.totals.calls > 0 && (
             <div style={{ marginTop: 16 }}>
-              <SLabel>LLM calls by stage</SLabel>
+              <SLabel>{t("llmByStage")}</SLabel>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                <thead><tr><th style={TH}>Stage</th><th style={TH}>Model</th><th style={{ ...TH, textAlign: "right" }}>Calls</th><th style={{ ...TH, textAlign: "right" }}>Cost</th></tr></thead>
+                <thead><tr><th style={TH}>{t("stage")}</th><th style={TH}>{t("model")}</th><th style={{ ...TH, textAlign: "right" }}>{t("callsCol")}</th><th style={{ ...TH, textAlign: "right" }}>{t("cost")}</th></tr></thead>
                 <tbody>
                   {llm.by_stage.map(s => (
                     <tr key={`${s.stage}:${s.model}`}>
@@ -178,16 +182,16 @@ export default function JobDrawer({ jobId, refetchMs, expectedSeconds, maxReleas
               </table>
 
               <div style={{ marginTop: 12 }}>
-                <SLabel>Recent calls{llm.truncated ? ` (latest ${llm.calls.length} of ${llm.totals.calls})` : ""}</SLabel>
+                <SLabel>{t("recentCalls")}{llm.truncated ? t("latestOf", llm.calls.length, llm.totals.calls) : ""}</SLabel>
                 <div style={{ maxHeight: 260, overflowY: "auto", border: `1px solid ${A.line2}`, borderRadius: 6 }}>
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11.5 }}>
-                    <thead><tr><th style={TH}>Time</th><th style={TH}>Stage</th><th style={TH}>Model / account</th><th style={{ ...TH, textAlign: "right" }}>Tokens in/out</th><th style={{ ...TH, textAlign: "right" }}>Cost</th></tr></thead>
+                    <thead><tr><th style={TH}>{t("time")}</th><th style={TH}>{t("stage")}</th><th style={TH}>{t("modelAccount")}</th><th style={{ ...TH, textAlign: "right" }}>{t("tokens")}</th><th style={{ ...TH, textAlign: "right" }}>{t("cost")}</th></tr></thead>
                     <tbody>
                       {llm.calls.map((c, i) => (
                         <tr key={i}>
                           <td style={{ ...TD, whiteSpace: "nowrap" }}>{fmtTime(c.created_at)}</td>
                           <td style={{ ...TD, fontFamily: mono }}>{c.stage}{c.texts && c.texts > 1 ? ` ×${c.texts}` : ""}</td>
-                          <td style={{ ...TD, fontFamily: mono }}>{c.model}{c.account ? ` · ${accountName(c.account, awsAccounts)}` : ""}{c.fallback_used ? " · fallback" : ""}</td>
+                          <td style={{ ...TD, fontFamily: mono }}>{c.model}{c.account ? ` · ${accountName(c.account, awsAccounts, accountText)}` : ""}{c.fallback_used ? t("fallback") : ""}</td>
                           <td style={{ ...TD, fontFamily: mono, textAlign: "right" }}>{c.tokens_in ?? 0}/{c.tokens_out ?? 0}</td>
                           <td style={{ ...TD, fontFamily: mono, textAlign: "right" }}>{usd(c.cost_usd, 6)}</td>
                         </tr>
@@ -201,32 +205,32 @@ export default function JobDrawer({ jobId, refetchMs, expectedSeconds, maxReleas
 
           {links && (links.tour_versions.length > 0 || links.content_pieces.length > 0 || links.tour_id) && (
             <div style={{ marginTop: 16 }}>
-              <SLabel>What this job wrote</SLabel>
+              <SLabel>{t("wrote")}</SLabel>
               {links.tour_id && (
-                <Row label="Tour">
+                <Row label={t("tour")}>
                   <span style={{ fontFamily: mono }}>{links.tour_id}</span>
-                  {" · "}<a href={`/admin/jobs?tour_id=${links.tour_id}`} style={{ color: A.accent }}>all jobs for this tour</a>
-                  {links.version_id && <span style={{ color: A.muted }}> · version <span style={{ fontFamily: mono }}>{links.version_id.slice(0, 8)}</span></span>}
+                  {" · "}<a href={`/admin/jobs?tour_id=${links.tour_id}`} style={{ color: A.accent }}>{t("allJobsTour")}</a>
+                  {links.version_id && <span style={{ color: A.muted }}> · {t("version")} <span style={{ fontFamily: mono }}>{links.version_id.slice(0, 8)}</span></span>}
                 </Row>
               )}
               {links.tour_versions.map(v => (
-                <Row key={v.version_id} label="Tenant version">
+                <Row key={v.version_id} label={t("tenantVersion")}>
                   <span style={{ fontFamily: mono }}>v{v.version_number} · {v.version_id.slice(0, 8)}</span> · {v.status}
-                  <span style={{ color: A.muted }}> · tenant <a href={tenantHref(v.tenant_id)} style={{ color: A.accent }}><TenantName id={v.tenant_id} /></a></span>
+                  <span style={{ color: A.muted }}> · {t("tenant")} <a href={tenantHref(v.tenant_id)} style={{ color: A.accent }}><TenantName id={v.tenant_id} /></a></span>
                 </Row>
               ))}
               {links.content_pieces.map(p => (
-                <Row key={p.piece_id} label="Content piece">
+                <Row key={p.piece_id} label={t("contentPiece")}>
                   <span style={{ fontFamily: mono }}>{p.piece_id.slice(0, 8)}</span> · {p.status}
-                  <span style={{ color: A.muted }}> · tenant <a href={tenantHref(p.tenant_id)} style={{ color: A.accent }}><TenantName id={p.tenant_id} /></a></span>
+                  <span style={{ color: A.muted }}> · {t("tenant")} <a href={tenantHref(p.tenant_id)} style={{ color: A.accent }}><TenantName id={p.tenant_id} /></a></span>
                 </Row>
               ))}
             </div>
           )}
 
-          <Json label="Payload" value={withAccountNames(job.payload, awsAccounts)} />
-          <Json label="Progress" value={job.progress} />
-          <Json label="Result" value={withAccountNames(job.result, awsAccounts)} />
+          <Json label={t("payload")} value={withAccountNames(job.payload, awsAccounts, accountText)} />
+          <Json label={t("progress")} value={job.progress} />
+          <Json label={t("result")} value={withAccountNames(job.result, awsAccounts, accountText)} />
         </>
       )}
     </Drawer>

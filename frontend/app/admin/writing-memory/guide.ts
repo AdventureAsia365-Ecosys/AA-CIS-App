@@ -1,10 +1,10 @@
 // app/admin/writing-memory/guide.ts — AA-919: the Guide tab of Tenant output › Writing memory (/admin/writing-memory).
 //
-// A plain-words guide for Nghiệp and admin staff (not engineers): what the page is for, the loop, each tab and button
-// (what it does, what it costs, when to use it and when not), how to read the labels, a weekly routine, what has no UI
-// yet, and a glossary. A kit GuideContent (app/_kit/guideContent.ts), rendered by the kit GuidePanel like every other
-// admin guide; English only (admin UI default; a Vietnamese version would come as an admin-wide language switch, not
-// as a second copy here).
+// A plain-words guide for the program owner and admin staff (not engineers): what the page is for, the loop, each tab
+// and button (what it does, what it costs, when to use it and when not), how to read the labels, a weekly routine,
+// what has no UI yet, and a glossary. A kit GuideContent (app/_kit/guideContent.ts), rendered by the kit GuidePanel
+// like every other admin guide. AA-994: this is the English original; guide.vi.ts is its Vietnamese twin (same section
+// ids), picked by the page with useLocalized. Change this file first, then the twin in the same PR.
 //
 // Facts come from the code at the time of writing: WritingMemory.tsx, services/writing_memory/* (config, mining,
 // drafter, lint, l0, replay, releases, release0, drill, insertion), api/migrations/280_writing_rule.sql and app ADR
@@ -134,7 +134,7 @@ export const WRITING_MEMORY_GUIDE: GuideContent = {
           "Activate (L0): only for a lexicon rule of t9_blog or t9_social. It stays greyed out, with 'Not "
             + "activatable yet: …', until every activation condition holds (listed under 'Reading the statuses and "
             + "badges'). After the click, the next T9 write gets the rule. A rule with Scope Platform reaches every "
-            + "tenant's T9 writes, so it needs the program owner's (Nghiệp's) OK before you click. The page does not "
+            + "tenant's T9 writes, so it needs the program owner's OK before you click. The page does not "
             + "check this.",
           "Roll back (active rules only): type a reason (at least 3 characters), then click. The rule becomes "
             + "rejected, and the next write no longer gets it.",

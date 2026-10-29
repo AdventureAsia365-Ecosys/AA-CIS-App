@@ -5,6 +5,7 @@
 // enabled, blocked_reason). Each row's price + source + enabled are editable inline via
 // PATCH /admin/llm-catalog/{model_key}. Enabling a model with no price is disabled in the UI; the
 // 422 the API returns on that condition is still surfaced inline if it ever comes back.
+// AA-994: text in the UI language (models.messages.ts); catalog values stay as stored.
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -17,11 +18,13 @@ import {
   DataTable,
   apiGet,
   apiSend,
-  formatDateTime,
+  useFormat,
+  useT,
   useToast,
 } from "../../_kit";
 import { type CatalogRow } from "./llmShared";
-import { useAwsAccounts } from "../_components/useAwsAccounts";
+import { MODELS } from "./models.messages";
+import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import { accountName } from "@/lib/awsAccounts";
 
 interface CatalogResp {
@@ -38,6 +41,7 @@ const num = (v: number | null | undefined) => (v == null ? "—" : `$${v.toFixed
 const accountsOf = (r: CatalogRow) => Object.keys(r.bedrock_profile_ids || {});
 
 function EditRow({ row, onDone }: { row: CatalogRow; onDone: () => void }) {
+  const t = useT(MODELS);
   const toast = useToast();
   const qc = useQueryClient();
   const [priceIn, setPriceIn] = useState(row.price_in_per_mtok ?? "");
@@ -53,11 +57,11 @@ function EditRow({ row, onDone }: { row: CatalogRow; onDone: () => void }) {
         admin: true,
       }),
     onSuccess: () => {
-      toast.success(`Saved ${row.model_key}`);
+      toast.success(t("saved", row.model_key));
       qc.invalidateQueries({ queryKey: ["llm-catalog"] });
       onDone();
     },
-    onError: (e) => setError(e instanceof Error ? e.message : "Save failed"),
+    onError: (e) => setError(e instanceof Error ? e.message : t("saveFailed")),
   });
 
   function save() {
@@ -80,22 +84,22 @@ function EditRow({ row, onDone }: { row: CatalogRow; onDone: () => void }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <label style={{ fontSize: 11, color: A.muted }}>In/MTok
+        <label style={{ fontSize: 11, color: A.muted }}>{t("inMtok")}
           <input type="number" min={0} step="0.01" value={priceIn}
                  onChange={(e) => setPriceIn(e.target.value)} disabled={mut.isPending} style={{ ...inp, marginLeft: 4 }} />
         </label>
-        <label style={{ fontSize: 11, color: A.muted }}>Out/MTok
+        <label style={{ fontSize: 11, color: A.muted }}>{t("outMtok")}
           <input type="number" min={0} step="0.01" value={priceOut}
                  onChange={(e) => setPriceOut(e.target.value)} disabled={mut.isPending} style={{ ...inp, marginLeft: 4 }} />
         </label>
-        <input placeholder="price source" value={source} onChange={(e) => setSource(e.target.value)}
+        <input placeholder={t("priceSource")} value={source} onChange={(e) => setSource(e.target.value)}
                disabled={mut.isPending}
                style={{ width: 160, padding: "5px 8px", borderRadius: 7, border: `1px solid ${A.line}`,
                  fontSize: 12.5, fontFamily: sans, color: A.body, background: A.card }} />
         <Button size="sm" variant="primary" disabled={mut.isPending} onClick={save}>
-          {mut.isPending ? "Saving…" : "Save"}
+          {mut.isPending ? t("saving") : t("save")}
         </Button>
-        <Button size="sm" variant="ghost" disabled={mut.isPending} onClick={onDone}>Cancel</Button>
+        <Button size="sm" variant="ghost" disabled={mut.isPending} onClick={onDone}>{t("cancel")}</Button>
       </div>
       {error && <span data-testid={`catalog-error-${row.model_key}`} style={{ fontSize: 11.5, color: A.red }}>{error}</span>}
     </div>
@@ -103,10 +107,13 @@ function EditRow({ row, onDone }: { row: CatalogRow; onDone: () => void }) {
 }
 
 export function CatalogTab() {
+  const t = useT(MODELS);
+  const { formatDateTime } = useFormat();
   const toast = useToast();
   const qc = useQueryClient();
   const [editing, setEditing] = useState<string | null>(null);
   const awsAccounts = useAwsAccounts();
+  const accountText = useAccountText();
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["llm-catalog"],
@@ -121,11 +128,11 @@ export function CatalogTab() {
         admin: true,
       }),
     onSuccess: (_r, v) => {
-      toast.success(`${v.model_key} ${v.enabled ? "enabled" : "disabled"}`);
+      toast.success(t("toggled", v.model_key, v.enabled));
       qc.invalidateQueries({ queryKey: ["llm-catalog"] });
     },
     // The 422 (enabling without a price) is still shown even though the UI disables the control.
-    onError: (e, v) => toast.error(`${v.model_key}: ${e instanceof Error ? e.message : "update failed"}`),
+    onError: (e, v) => toast.error(`${v.model_key}: ${e instanceof Error ? e.message : t("updateFailed")}`),
   });
 
   const models = useMemo(() => data?.models ?? [], [data]);
@@ -133,7 +140,7 @@ export function CatalogTab() {
   const columns = useMemo<ColumnDef<CatalogRow, unknown>[]>(() => [
     {
       accessorKey: "label",
-      header: "Model",
+      header: t("colModel"),
       cell: (c) => {
         const r = c.row.original;
         return (
@@ -144,39 +151,39 @@ export function CatalogTab() {
         );
       },
     },
-    { accessorKey: "vendor", header: "Vendor", cell: (c) => <span style={{ color: A.body }}>{c.row.original.vendor}</span> },
-    { accessorKey: "provider", header: "Provider", cell: (c) => <span style={{ color: A.body }}>{c.row.original.provider}</span> },
+    { accessorKey: "vendor", header: t("colVendor"), cell: (c) => <span style={{ color: A.body }}>{c.row.original.vendor}</span> },
+    { accessorKey: "provider", header: t("colProvider"), cell: (c) => <span style={{ color: A.body }}>{c.row.original.provider}</span> },
     {
       id: "accounts",
-      header: "Accounts",
+      header: t("colAccounts"),
       enableSorting: false,
       cell: (c) => {
         const accts = accountsOf(c.row.original);
         return (
           <span style={{ fontFamily: mono, fontSize: 12, color: A.muted }}>
-            {accts.length ? accts.map((a) => accountName(a, awsAccounts)).join(", ") : "—"}
+            {accts.length ? accts.map((a) => accountName(a, awsAccounts, accountText)).join(", ") : "—"}
           </span>
         );
       },
     },
     {
       accessorKey: "price_in_per_mtok",
-      header: "In / MTok",
+      header: t("colIn"),
       cell: (c) => <span style={{ fontFamily: mono }}>{num(c.row.original.price_in_per_mtok)}</span>,
     },
     {
       accessorKey: "price_out_per_mtok",
-      header: "Out / MTok",
+      header: t("colOut"),
       cell: (c) => <span style={{ fontFamily: mono }}>{num(c.row.original.price_out_per_mtok)}</span>,
     },
     {
       accessorKey: "price_source",
-      header: "Source",
+      header: t("colSource"),
       cell: (c) => <span style={{ color: A.muted, fontSize: 12 }}>{c.row.original.price_source ?? "—"}</span>,
     },
     {
       accessorKey: "enabled",
-      header: "Enabled",
+      header: t("colEnabled"),
       cell: (c) => {
         const r = c.row.original;
         const hasPrice = r.price_in_per_mtok != null && r.price_out_per_mtok != null;
@@ -187,7 +194,7 @@ export function CatalogTab() {
             <button
               role="switch"
               aria-checked={r.enabled}
-              aria-label={`Toggle ${r.model_key}`}
+              aria-label={t("toggle", r.model_key)}
               data-testid={`catalog-enabled-${r.model_key}`}
               disabled={!canToggle || toggleMut.isPending}
               onClick={() => toggleMut.mutate({ model_key: r.model_key, enabled: !r.enabled })}
@@ -200,11 +207,11 @@ export function CatalogTab() {
               }}
             >
               {r.enabled ? <Check size={11} /> : <X size={11} />}
-              {r.enabled ? "On" : "Off"}
+              {r.enabled ? t("onTitle") : t("offTitle")}
             </button>
             {!r.enabled && !hasPrice && (
-              <span title="Set an input and output price before enabling" style={{ fontSize: 10.5, color: A.muted2 }}>
-                needs price
+              <span title={t("needsPriceTitle")} style={{ fontSize: 10.5, color: A.muted2 }}>
+                {t("needsPrice")}
               </span>
             )}
           </div>
@@ -213,7 +220,7 @@ export function CatalogTab() {
     },
     {
       id: "blocked_reason",
-      header: "Blocked",
+      header: t("colBlocked"),
       enableSorting: false,
       cell: (c) => {
         const r = c.row.original;
@@ -224,7 +231,7 @@ export function CatalogTab() {
     },
     {
       id: "updated",
-      header: "Updated",
+      header: t("colUpdated"),
       cell: (c) => (
         <span style={{ fontSize: 11.5, color: A.muted2, whiteSpace: "nowrap" }}>
           {formatDateTime(c.row.original.updated_at)}
@@ -239,21 +246,19 @@ export function CatalogTab() {
       cell: (c) => (
         <div onClick={(e) => e.stopPropagation()}>
           <Button size="sm" variant="secondary" onClick={() => setEditing(c.row.original.model_key)}>
-            Edit price
+            {t("editPrice")}
           </Button>
         </div>
       ),
     },
-  ], [toggleMut, awsAccounts]);
+  ], [toggleMut, awsAccounts, accountText, t, formatDateTime]);
 
   const editingRow = models.find((m) => m.model_key === editing) ?? null;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <p style={{ fontSize: 12, color: A.muted2, margin: 0 }}>
-        Every model the platform can call. The admin dropdowns and all cost figures read these rows.
-        Edit the per-MTok prices and provenance, and enable/disable a model — a model cannot be
-        enabled without both an input and an output price.
+        {t("catalogIntro")}
       </p>
 
       {editingRow && (
@@ -262,7 +267,7 @@ export function CatalogTab() {
           background: A.accentTint,
         }}>
           <div style={{ fontSize: 12.5, fontWeight: 600, color: A.ink, marginBottom: 8 }}>
-            Edit price — <span style={{ fontFamily: mono }}>{editingRow.model_key}</span>
+            {t("editPriceFor")} <span style={{ fontFamily: mono }}>{editingRow.model_key}</span>
           </div>
           <EditRow row={editingRow} onDone={() => setEditing(null)} />
         </div>
@@ -274,16 +279,16 @@ export function CatalogTab() {
         tableId="admin-llm-catalog"
         getRowId={(r) => r.model_key}
         loading={isLoading}
-        error={isError ? (error instanceof Error ? error.message : "Could not load catalog") : null}
+        error={isError ? (error instanceof Error ? error.message : t("loadCatalogError")) : null}
         onRetry={() => refetch()}
         searchable
-        searchPlaceholder="Search models…"
+        searchPlaceholder={t("searchModels")}
         enableCsv
         csvFilename="llm-catalog"
         pageSize={25}
         pageSizeOptions={[25, 50, 100]}
         tableMinWidth={1040}
-        emptyTitle="No models in the catalog"
+        emptyTitle={t("noModels")}
       />
     </div>
   );

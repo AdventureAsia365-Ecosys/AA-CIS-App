@@ -18,13 +18,24 @@ export const AI_OUTSIDE_SRC =
 export const AI_ON_BILL_SRC =
   "Bedrock calls on the main AWS account: part of the AI estimate, but already inside the AWS bill, so subtracted once";
 
-/** "AI estimate $144.35 in all; $0.42 of it … already in the AWS bill, so it is counted once." */
-export function aiOnBillNote(aiUsd: number, aiOnBillUsd: number, fmt: (n: number) => string): string {
-  if (!aiOnBillUsd) return `${AI_ESTIMATE_LABEL} ${fmt(aiUsd)} in all; none of it is on the AWS bill.`;
-  return (
-    `${AI_ESTIMATE_LABEL} ${fmt(aiUsd)} in all; ${fmt(aiOnBillUsd)} of it is Bedrock on the main AWS account, ` +
-    "already in the AWS bill, so it is counted once."
-  );
+/** The aiOnBillNote() sentences (English; the Vietnamese side is lib/costWording.messages.ts COST_WORDING). */
+export const AI_NOTE_WORDS = {
+  aiNoneOnBill: (ai: string) => `${AI_ESTIMATE_LABEL} ${ai} in all; none of it is on the AWS bill.`,
+  aiSomeOnBill: (ai: string, onBill: string) =>
+    `${AI_ESTIMATE_LABEL} ${ai} in all; ${onBill} of it is Bedrock on the main AWS account, ` +
+    "already in the AWS bill, so it is counted once.",
+};
+
+/** "AI estimate $144.35 in all; $0.42 of it … already in the AWS bill, so it is counted once." `words`: the UI
+ * language's sentences (AA-994), English when left out. */
+export function aiOnBillNote(
+  aiUsd: number,
+  aiOnBillUsd: number,
+  fmt: (n: number) => string,
+  words: typeof AI_NOTE_WORDS = AI_NOTE_WORDS,
+): string {
+  if (!aiOnBillUsd) return words.aiNoneOnBill(fmt(aiUsd));
+  return words.aiSomeOnBill(fmt(aiUsd), fmt(aiOnBillUsd));
 }
 
 /**

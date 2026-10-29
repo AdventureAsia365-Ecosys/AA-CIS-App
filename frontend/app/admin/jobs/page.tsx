@@ -39,8 +39,9 @@ import {
   ToastProvider,
   apiGet,
   apiSend,
-  useToast, AdminMain,
+  useToast, AdminMain, useT,
 } from "../../_kit";
+import { JOBS } from "./messages";
 import JobDrawer from "./JobDrawer";
 import JobsTable from "./JobsTable";
 import QueuePanel from "./QueuePanel";
@@ -153,6 +154,7 @@ function writeView(v: View) {
 const FILTER_KEYS: (keyof View)[] = ["kind", "status", "createdBy", "since", "until", "q", "tourId"];
 
 function JobsPageInner() {
+  const t = useT(JOBS);
   const toast = useToast();
   const qc = useQueryClient();
 
@@ -257,17 +259,16 @@ function JobsPageInner() {
     mutationFn: ({ job, action }: { job: Job; action: "cancel" | "retry" }) =>
       apiSend(`/api/admin/job-runner/jobs/${job.id}/${action}`, { method: "POST", admin: true }),
     onSuccess: (_r, { action }) => {
-      toast.success(action === "cancel" ? "Cancel requested" : "Re-queued");
+      toast.success(action === "cancel" ? t("cancelRequested") : t("requeued"));
       qc.invalidateQueries({ queryKey: ["jobs"] });
       qc.invalidateQueries({ queryKey: ["job", open] });
     },
     onError: (e, { action }) =>
-      toast.error(`${action === "cancel" ? "Cancel" : "Retry"} failed: ${e instanceof Error ? e.message : e}`),
+      toast.error(t(action === "cancel" ? "cancelFailed" : "retryFailed", e instanceof Error ? e.message : String(e))),
   });
 
   const act = (jb: Job, action: "cancel" | "retry") => {
-    const verb = action === "cancel" ? "Cancel" : "Retry";
-    if (!window.confirm(`${verb} ${jb.kind} job ${jb.id.slice(0, 8)}?`)) return;
+    if (!window.confirm(t(action === "cancel" ? "confirmCancel" : "confirmRetry", jb.kind, jb.id.slice(0, 8)))) return;
     actM.mutate({ job: jb, action });
   };
   const busyId = actM.isPending ? (actM.variables?.job.id ?? null) : null;
@@ -288,29 +289,29 @@ function JobsPageInner() {
   const openJob = jobs.find(j => j.id === open);
 
   // First load only: show the full-page spinner. Later refetches keep the UI visible.
-  if (isLoading && !data) return <AdminMain><LoadingScreen msg="Loading jobs..." /></AdminMain>;
+  if (isLoading && !data) return <AdminMain><LoadingScreen msg={t("loading")} /></AdminMain>;
 
   return (
     <AdminMain>
       <PageHeader
-        title="Jobs"
-        description={`Background work that survives deploys — queued, running, finished. ${
+        title={t("title")}
+        description={t("description",
           !data
-            ? "Retrying every 30 s until the queue loads."
+            ? t("pollRetrying")
             : polling
-              ? "Refreshes every 30 s while jobs are queued or running."
-              : "Queue idle — auto-refresh paused; use Refresh."
-        }`}
+              ? t("pollActive")
+              : t("pollIdle"),
+        )}
         actions={
           <>
             {tourId && (
-              <button onClick={() => update({ tourId: "" })} title="Clear the tour filter"
+              <button onClick={() => update({ tourId: "" })} title={t("clearTour")}
                       style={{ fontSize: 12, padding: "6px 8px", border: `1px solid ${A.accent}`, borderRadius: 6, background: A.card, color: A.ink3, cursor: "pointer", fontFamily: mono }}>
-                tour {tourId.slice(0, 8)} ×
+                {t("tourChip", tourId.slice(0, 8))}
               </button>
             )}
             <Btn size="sm" onClick={() => refetch()}>
-              <RefreshCw size={12} className={isFetching ? "spin" : undefined} style={{ marginRight: 4 }} />Refresh
+              <RefreshCw size={12} className={isFetching ? "spin" : undefined} style={{ marginRight: 4 }} />{t("refresh")}
             </Btn>
           </>
         }
@@ -319,22 +320,22 @@ function JobsPageInner() {
 
       {isError && (
         <div style={{ marginBottom: 14, padding: "10px 12px", borderRadius: 8, background: A.redSoft, color: A.red, border: `1px solid ${A.redBorder}`, fontSize: 12.5 }}>
-          Could not load jobs ({error instanceof Error ? error.message : String(error)})
+          {t("loadError", error instanceof Error ? error.message : String(error))}
         </div>
       )}
 
       <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 16 }}>
         <Tabs
           tabs={[
-            { key: "jobs", label: "Jobs" },
-            { key: "queue", label: "Queue & workers" },
-            { key: "kinds", label: "Job kinds" },
+            { key: "jobs", label: t("tabJobs") },
+            { key: "queue", label: t("tabQueue") },
+            { key: "kinds", label: t("tabKinds") },
           ]}
           active={tab}
           onChange={(k) => update({ tab: k as TabKey })}
         />
         <div style={{ marginLeft: "auto", fontSize: 12, color: A.muted, alignSelf: "center" }}>
-          Cost, last 30 days: <span style={{ fontFamily: mono, color: A.ink }}>${cost30d.toFixed(4)}</span>
+          {t("cost30d")} <span style={{ fontFamily: mono, color: A.ink }}>${cost30d.toFixed(4)}</span>
         </div>
       </div>
 
@@ -383,7 +384,7 @@ function JobsPageInner() {
             onRowClick={(id) => update({ job: id })}
             onAct={act}
             loading={isLoading && !data}
-            error={isError ? (error instanceof Error ? error.message : "Could not load jobs") : null}
+            error={isError ? (error instanceof Error ? error.message : t("loadErrorShort")) : null}
             onRetry={() => refetch()}
           />
         </>

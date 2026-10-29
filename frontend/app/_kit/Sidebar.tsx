@@ -37,6 +37,9 @@ import { useHydrated } from "./core/useHydrated";
 import { canSeePage } from "@/lib/rbac";
 import { useAdminIdentity } from "./useAdminIdentity";
 import { useReviewPendingCount } from "./useReviewPendingCount";
+import { useNavLabel } from "./adminNav";
+import { useT } from "./core/useI18n";
+import { SHELL_MESSAGES } from "./shell.messages";
 
 export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () => void; drawerOpen?: boolean }) {
   const router = useRouter();
@@ -45,6 +48,8 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
   const [collapsed, setCollapsed] = useSidebarCollapsed();
   // AA-834 — e2e hook: `data-hydrated="true"` appears only once the toggle handlers are live.
   const hydrated = useHydrated();
+  const t = useT(SHELL_MESSAGES);
+  const navLabel = useNavLabel();
 
   // `[` toggles collapse, ignored while typing in an input/textarea/select or contenteditable.
   useEffect(() => {
@@ -96,8 +101,8 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
         <button
           onClick={() => go("/admin/overview")}
           data-testid="sidebar-logo"
-          title="Adventure Asia — Overview"
-          aria-label="Adventure Asia CIS Admin — go to Overview"
+          title={t("logoTitle")}
+          aria-label={t("logoAria")}
           style={{
             display: "flex", alignItems: "center", gap: 10, width: "100%",
             background: "none", border: "none", cursor: "pointer", padding: 0,
@@ -111,7 +116,7 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
               Adventure Asia
             </span>
             <span style={{ display: "block", fontSize: 9.5, textTransform: "uppercase" as const, letterSpacing: "0.18em", color: A.accent, fontWeight: 600, marginTop: 1 }}>
-              CIS Admin
+              {t("adminSubtitle")}
             </span>
           </span>
         </button>
@@ -130,7 +135,7 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
             <div key={section.id} data-testid={`nav-section-${section.id}`}
               style={{ display: "flex", flexDirection: "column" }}>
               {showHeaders && (rail ? (
-                <div role="separator" aria-label={section.label}
+                <div role="separator" aria-label={navLabel(section.label)}
                   data-testid={`nav-section-divider-${section.id}`}
                   style={{ borderTop: "1px solid rgba(255,255,255,0.07)", margin: "0 6px" }} />
               ) : (
@@ -148,7 +153,7 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
 
       {/* AA-883 — the other apps of the ecosystem (lib/apps.ts), each in a new tab. */}
       <div data-testid="sidebar-apps" style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-        <div className="aa-sidebar-group-title" style={groupTitleStyle}>Apps</div>
+        <div className="aa-sidebar-group-title" style={groupTitleStyle}>{t("appsTitle")}</div>
         {APP_LINKS.map((a) => <AppLinkItem key={a.id} app={a} />)}
       </div>
 
@@ -162,8 +167,8 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
         <button
           onClick={() => setCollapsed(!collapsed)}
           data-testid="sidebar-collapse"
-          title={collapsed ? "Expand sidebar ([)" : "Collapse sidebar ([)"}
-          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          title={collapsed ? t("expandSidebarKey") : t("collapseSidebarKey")}
+          aria-label={collapsed ? t("expandSidebar") : t("collapseSidebar")}
           style={{
             display: "flex", alignItems: "center", gap: 10, width: "100%",
             padding: "8px 10px", borderRadius: 7, border: "none",
@@ -172,7 +177,7 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
           }}
         >
           {collapsed ? <ChevronsRight size={16} /> : <ChevronsLeft size={16} />}
-          <span className="aa-sidebar-label">Collapse</span>
+          <span className="aa-sidebar-label">{t("collapse")}</span>
         </button>
       </div>
     </aside>
@@ -206,9 +211,10 @@ function NavGroupBlock({ group, pathname, pending, go, spaceAbove }: {
   spaceAbove: number;
 }) {
   const showTitle = groupHasTitle(group);
+  const navLabel = useNavLabel();
   return (
     <div style={{ marginTop: spaceAbove }}>
-      {showTitle && <div className="aa-sidebar-group-title" style={groupTitleStyle}>{group.label}</div>}
+      {showTitle && <div className="aa-sidebar-group-title" style={groupTitleStyle}>{navLabel(group.label)}</div>}
       <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
         {group.items.map((n) => (
           <NavItem
@@ -227,13 +233,16 @@ function NavGroupBlock({ group, pathname, pending, go, spaceAbove }: {
 function SectionHeader({ section, closed, hasActive, onToggle }: {
   section: NavSection; closed: boolean; hasActive: boolean; onToggle: () => void;
 }) {
+  const t = useT(SHELL_MESSAGES);
+  const navLabel = useNavLabel();
+  const label = navLabel(section.label);
   const color = closed && hasActive ? A.gold : "var(--aa-side-title)";
   return (
     <button
       onClick={onToggle}
       aria-expanded={!closed}
       data-testid={`nav-section-toggle-${section.id}`}
-      title={closed ? `Show ${section.label}` : `Hide ${section.label}`}
+      title={closed ? t("showSection", label) : t("hideSection", label)}
       style={{
         display: "flex", alignItems: "center", gap: 8, width: "100%",
         padding: "6px 10px 6px", border: "none", borderTop: "1px solid rgba(255,255,255,0.07)",
@@ -245,7 +254,7 @@ function SectionHeader({ section, closed, hasActive, onToggle }: {
         flex: 1, minWidth: 0, fontSize: 10.5, fontWeight: 700, letterSpacing: "0.14em",
         textTransform: "uppercase" as const, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
       }}>
-        {section.label}
+        {label}
       </span>
       <span className="aa-sidebar-label" style={{ display: "flex", flexShrink: 0, opacity: 0.8 }}>
         {closed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
@@ -259,14 +268,22 @@ const APP_ICON: Record<AppId, React.ReactNode> = {
   tripplanner: <MapIcon size={15} />,
 };
 
+const APP_TEXT: Record<AppId, { label: "appBookingLabel" | "appTripplannerLabel"; hint: "appBookingHint" | "appTripplannerHint" }> = {
+  booking: { label: "appBookingLabel", hint: "appBookingHint" },
+  tripplanner: { label: "appTripplannerLabel", hint: "appTripplannerHint" },
+};
+
 function AppLinkItem({ app }: { app: AppLink }) {
+  const t = useT(SHELL_MESSAGES);
+  const text = APP_TEXT[app.id];
+  const label = text ? t(text.label) : app.label;
   return (
     <a
       href={app.href}
       target={app.external ? "_blank" : undefined}
       rel={app.external ? "noopener noreferrer" : undefined}
-      title={app.hint}
-      aria-label={`${app.label} (opens in a new tab)`}
+      title={text ? t(text.hint) : app.hint}
+      aria-label={t("opensNewTab", label)}
       data-testid={`sidebar-app-${app.id}`}
       style={{
         display: "flex", alignItems: "center", gap: 10, width: "100%",
@@ -276,7 +293,7 @@ function AppLinkItem({ app }: { app: AppLink }) {
     >
       <span style={{ flexShrink: 0, opacity: 0.75, display: "flex" }}>{APP_ICON[app.id]}</span>
       <span className="aa-sidebar-label" style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-        {app.label}
+        {label}
       </span>
       {app.external && (
         <span className="aa-sidebar-label" aria-hidden="true" style={{ flexShrink: 0, opacity: 0.6 }}>
@@ -291,12 +308,13 @@ function NavItem({ entry, active, badge, onClick }: {
   entry: NavEntry; active: boolean; badge?: number; onClick: () => void;
 }) {
   const accent = A.gold;
+  const label = useNavLabel()(entry.label);
   return (
     <button
       onClick={onClick}
       aria-current={active ? "page" : undefined}
-      title={entry.label}
-      aria-label={entry.label}
+      title={label}
+      aria-label={label}
       style={{
         display: "flex", alignItems: "center", gap: 10, width: "100%",
         padding: "8px 10px", borderRadius: 7, border: "none",
@@ -323,7 +341,7 @@ function NavItem({ entry, active, badge, onClick }: {
         )}
       </span>
       <span className="aa-sidebar-label" style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-        {entry.label}
+        {label}
       </span>
       {badge != null && (
         <span className="aa-sidebar-badge-pill" style={{

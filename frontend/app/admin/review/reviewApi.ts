@@ -78,6 +78,8 @@ export type RevalidateStart = { job_id: string };
 export async function startRevalidate(
   tourId: string,
   generatedContentId: string,
+  // AA-994: the caller's UI-language message when the API sends no detail.
+  failMessage: (status: number) => string = (s) => `Could not start re-validation (${s})`,
 ): Promise<RevalidateStart> {
   const res = await fetch(
     `/api/admin/tours/${tourId}/generated/${generatedContentId}/revalidate`,
@@ -85,7 +87,7 @@ export async function startRevalidate(
   );
   if (res.status !== 202) {
     const e = await res.json().catch(() => ({}));
-    throw new Error(e.detail || `Could not start re-validation (${res.status})`);
+    throw new Error(e.detail || failMessage(res.status));
   }
   return res.json();
 }
@@ -101,6 +103,8 @@ export async function startRegenerate(args: {
   // (a dedup double click writes none); neither goes into the job payload.
   reviewId?: string;
   reasonCode?: ReasonCode;
+  // AA-994: the caller's UI-language message when the API sends no detail.
+  failMessage?: (status: number) => string;
 }): Promise<{ job_id: string }> {
   const res = await fetch(`/api/admin/run-tour-async`, {
     method: "POST",
@@ -116,7 +120,7 @@ export async function startRegenerate(args: {
   });
   if (res.status !== 202) {
     const e = await res.json().catch(() => ({}));
-    throw new Error(e.detail || `Could not start regeneration (${res.status})`);
+    throw new Error(e.detail || (args.failMessage ?? ((s) => `Could not start regeneration (${s})`))(res.status));
   }
   return res.json();
 }

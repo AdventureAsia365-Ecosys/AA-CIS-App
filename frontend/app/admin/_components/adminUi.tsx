@@ -9,6 +9,8 @@ import { Loader2 } from "lucide-react";
 import { FONT_DISPLAY, FONT_MONO, FONT_SANS } from "../../_kit/core/brand";
 import { alpha } from "../../_kit/core/tokens";
 import { Button } from "../../_kit/core/primitives";
+import { KIT_MESSAGES } from "../../_kit/core/kit.messages";
+import { useT } from "../../_kit/core/useI18n";
 
 export { alpha };
 
@@ -169,10 +171,11 @@ export function Spinner({ size = 16 }: { size?: number }) {
   return <Loader2 size={size} style={{ animation: "spin 1s linear infinite", color: A.accent }} />;
 }
 
-export function LoadingScreen({ msg = "Loading..." }: { msg?: string }) {
+export function LoadingScreen({ msg }: { msg?: string }) {
+  const t = useT(KIT_MESSAGES);
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 300, gap: 10 }}>
-      <Spinner size={22} /><span style={{ fontSize: 13, color: A.muted }}>{msg}</span>
+      <Spinner size={22} /><span style={{ fontSize: 13, color: A.muted }}>{msg ?? t("loadingScreen")}</span>
     </div>
   );
 }

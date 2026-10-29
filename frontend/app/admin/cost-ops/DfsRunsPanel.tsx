@@ -5,14 +5,16 @@
 // row) are one "No job" row. "Match calls without a job" asks the backend for a best-effort match by the jobs' run
 // windows (windows of at most 31 days); calls inside a recorded cost incident with no job running are matched to the
 // incident. A recorded incident overlapping the window is shown above the runs (IncidentCard).
+// AA-994: text in the UI language (panels.messages.ts); job kinds, statuses, scopes and endpoints stay as sent.
 
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import {
-  Badge, Button, DataTable, ErrorState, K, SkeletonBar, apiGet, formatDateTime, mono, type ColumnDef, type Tone,
+  Badge, Button, DataTable, ErrorState, K, SkeletonBar, apiGet, mono, useFormat, useT, type ColumnDef, type Tone,
 } from "../../_kit";
 import { PanelTitle, Stat, int, noteStyle, numStyle, panelStyle, statGrid, usd } from "./costOpsUi";
+import { PANELS } from "./panels.messages";
 import IncidentCard, { type IncidentView } from "./IncidentCard";
 
 interface JobView {
@@ -65,18 +67,21 @@ const STATUS_TONE: Record<string, Tone> = {
   succeeded: "success", failed: "danger", stopped_budget: "warning", cancelled: "neutral", running: "info",
   queued: "neutral",
 };
-const ATTRIBUTION: Record<Inferred["attribution"], { tone: Tone; label: string }> = {
-  window: { tone: "info", label: "One job running" },
-  ambiguous: { tone: "warning", label: "Several jobs running" },
-  incident: { tone: "danger", label: "Recorded incident" },
-  none: { tone: "neutral", label: "No job running" },
+const ATTRIBUTION: Record<
+  Inferred["attribution"], { tone: Tone; label: "attrWindow" | "attrAmbiguous" | "attrIncident" | "attrNone" }
+> = {
+  window: { tone: "info", label: "attrWindow" },
+  ambiguous: { tone: "warning", label: "attrAmbiguous" },
+  incident: { tone: "danger", label: "attrIncident" },
+  none: { tone: "neutral", label: "attrNone" },
 };
 
 function JobCell({ jobId, job, fallback }: { jobId: string | null; job: JobView | null; fallback: string }) {
+  const t = useT(PANELS);
   if (!jobId) return <span style={{ color: K.muted }}>{fallback}</span>;
   return (
     <div style={{ minWidth: 0 }}>
-      <div style={{ fontWeight: 600 }}>{job?.kind ?? "Job no longer kept"}</div>
+      <div style={{ fontWeight: 600 }}>{job?.kind ?? t("jobGone")}</div>
       <Link href={`/admin/jobs?job=${jobId}`} style={{ fontFamily: mono, fontSize: 11.5, color: K.accentDeep }}>
         {jobId.slice(0, 8)}
       </Link>
@@ -90,7 +95,7 @@ function scopeText(job: JobView | null): string {
   return parts.length ? parts.join(" · ") : "—";
 }
 
-function when(first: string | null, last: string | null): string {
+function when(first: string | null, last: string | null, formatDateTime: (d: string | null) => string): string {
   if (!first) return "—";
   return first === last ? formatDateTime(first) : `${formatDateTime(first)} → ${formatDateTime(last)}`;
 }
@@ -101,6 +106,8 @@ const INFER_MAX_DAYS = 31;
 export default function DfsRunsPanel({ rangeQs, rangeLabel, windowDays }: {
   rangeQs: string; rangeLabel: string; windowDays: number;
 }) {
+  const t = useT(PANELS);
+  const { formatDateTime } = useFormat();
   const [infer, setInfer] = useState(false);
   const canInfer = windowDays <= INFER_MAX_DAYS;
   const inferOn = infer && canInfer;
@@ -112,17 +119,16 @@ export default function DfsRunsPanel({ rangeQs, rangeLabel, windowDays }: {
 
   const columns = useMemo<ColumnDef<Run, unknown>[]>(() => [
     {
-      id: "job", header: "Job",
-      cell: (c) => <JobCell jobId={c.row.original.job_id} job={c.row.original.job}
-                            fallback="No job (request handler, script, or logged before job tracking)" />,
+      id: "job", header: t("colJob"),
+      cell: (c) => <JobCell jobId={c.row.original.job_id} job={c.row.original.job} fallback={t("noJob")} />,
     },
-    { id: "by", header: "Started by", cell: (c) => c.row.original.job?.created_by ?? "—" },
+    { id: "by", header: t("colStartedBy"), cell: (c) => c.row.original.job?.created_by ?? "—" },
     {
-      id: "scope", header: "Scope",
+      id: "scope", header: t("colScope"),
       cell: (c) => <span style={{ fontSize: 12, color: K.ink3 }}>{scopeText(c.row.original.job)}</span>,
     },
     {
-      id: "status", header: "Status",
+      id: "status", header: t("colStatus"),
       cell: (c) => {
         const j = c.row.original.job;
         if (!j?.status) return "—";
@@ -138,33 +144,36 @@ export default function DfsRunsPanel({ rangeQs, rangeLabel, windowDays }: {
       cell: (c) => <span style={{ ...numStyle, fontWeight: 600 }}>{usd(c.row.original.dfs_cost_usd, 4)}</span>,
     },
     {
-      accessorKey: "llm_cost_usd", header: "LLM (same job)", meta: { align: "right" },
+      accessorKey: "llm_cost_usd", header: t("colLlmSameJob"), meta: { align: "right" },
       cell: (c) => <span style={numStyle}>{c.row.original.job_id ? usd(c.row.original.llm_cost_usd, 4) : "—"}</span>,
     },
     {
-      accessorKey: "calls", header: "Calls (live / cache)", meta: { align: "right" },
+      accessorKey: "calls", header: t("colCallsLiveCache"), meta: { align: "right" },
       cell: (c) => {
         const r = c.row.original;
         return <span style={numStyle}>{int(r.calls)} ({int(r.live_calls)} / {int(r.cache_hits)})</span>;
       },
     },
     {
-      id: "endpoints", header: "Endpoints",
+      id: "endpoints", header: t("colEndpoints"),
       cell: (c) => <span style={{ fontFamily: mono, fontSize: 11.5 }}>{c.row.original.endpoints.join(", ")}</span>,
     },
-    { id: "when", header: "Calls made", cell: (c) => when(c.row.original.first_call_at, c.row.original.last_call_at) },
-  ], []);
+    {
+      id: "when", header: t("colCallsMade"),
+      cell: (c) => when(c.row.original.first_call_at, c.row.original.last_call_at, formatDateTime),
+    },
+  ], [t, formatDateTime]);
 
   const inferredColumns = useMemo<ColumnDef<Inferred, unknown>[]>(() => [
     {
-      id: "attribution", header: "Match",
+      id: "attribution", header: t("colMatch"),
       cell: (c) => {
         const m = ATTRIBUTION[c.row.original.attribution];
-        return <Badge tone={m.tone}>{m.label}</Badge>;
+        return <Badge tone={m.tone}>{t(m.label)}</Badge>;
       },
     },
     {
-      id: "job", header: "Job",
+      id: "job", header: t("colJob"),
       cell: (c) => {
         const r = c.row.original;
         if (r.attribution === "ambiguous") {
@@ -177,7 +186,7 @@ export default function DfsRunsPanel({ rangeQs, rangeLabel, windowDays }: {
       },
     },
     {
-      id: "scope", header: "Scope",
+      id: "scope", header: t("colScope"),
       cell: (c) => <span style={{ fontSize: 12, color: K.ink3 }}>{scopeText(c.row.original.job)}</span>,
     },
     {
@@ -185,33 +194,36 @@ export default function DfsRunsPanel({ rangeQs, rangeLabel, windowDays }: {
       cell: (c) => <span style={{ ...numStyle, fontWeight: 600 }}>{usd(c.row.original.dfs_cost_usd, 4)}</span>,
     },
     {
-      accessorKey: "calls", header: "Calls (live)", meta: { align: "right" },
+      accessorKey: "calls", header: t("colCallsLive"), meta: { align: "right" },
       cell: (c) => <span style={numStyle}>{int(c.row.original.calls)} ({int(c.row.original.live_calls)})</span>,
     },
-    { id: "when", header: "Calls made", cell: (c) => when(c.row.original.first_call_at, c.row.original.last_call_at) },
-  ], []);
+    {
+      id: "when", header: t("colCallsMade"),
+      cell: (c) => when(c.row.original.first_call_at, c.row.original.last_call_at, formatDateTime),
+    },
+  ], [t, formatDateTime]);
 
   return (
     <div style={panelStyle} data-testid="cost-ops-dfs-runs">
       <PanelTitle aside={
         <Button size="sm" variant={inferOn ? "primary" : "secondary"} onClick={() => setInfer((v) => !v)}
                 disabled={!canInfer}
-                title={canInfer ? undefined : `Pick a window of at most ${INFER_MAX_DAYS} days to match calls by time`}>
-          {inferOn ? "Hide matched calls" : "Match calls without a job"}
+                title={canInfer ? undefined : t("inferWindowTitle", INFER_MAX_DAYS)}>
+          {inferOn ? t("hideMatched") : t("matchCalls")}
         </Button>
       }>
-        Runs · what triggered the spend
+        {t("runsTitle")}
       </PanelTitle>
       {isLoading && <div style={{ display: "flex", flexDirection: "column", gap: 8 }}><SkeletonBar /><SkeletonBar w="80%" /></div>}
-      {isError && <ErrorState message={`Could not load the runs. ${(error as Error)?.message ?? ""}`} onRetry={() => refetch()} />}
+      {isError && <ErrorState message={t("runsLoadError", (error as Error)?.message ?? "")} onRetry={() => refetch()} />}
       {data && (
         <>
           {(data.incidents ?? []).map((inc) => <IncidentCard key={inc.id} incident={inc} />)}
           <div style={statGrid}>
-            <Stat label="DataForSEO spend" value={usd(data.summary.dfs_cost_usd)} sub={rangeLabel} />
-            <Stat label="Linked to a job" value={usd(data.summary.linked_cost_usd)}
-                  sub={`${int(data.summary.linked_calls)} of ${int(data.summary.calls)} calls`} />
-            <Stat label="Jobs" value={int(data.summary.jobs)} />
+            <Stat label={t("dfsSpend")} value={usd(data.summary.dfs_cost_usd)} sub={rangeLabel} />
+            <Stat label={t("linkedToJob")} value={usd(data.summary.linked_cost_usd)}
+                  sub={t("linkedOf", int(data.summary.linked_calls), int(data.summary.calls))} />
+            <Stat label={t("jobs")} value={int(data.summary.jobs)} />
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)" }}>
             <DataTable<Run>
@@ -224,19 +236,15 @@ export default function DfsRunsPanel({ rangeQs, rangeLabel, windowDays }: {
               csvFilename="dfs-runs.csv"
               tableMinWidth={1100}
               compact
-              emptyTitle="No DataForSEO calls"
-              emptyDescription={`Nothing logged in ${rangeLabel}.`}
+              emptyTitle={t("noDfsCalls")}
+              emptyDescription={t("nothingLogged", rangeLabel)}
             />
           </div>
-          {data.truncated && <div style={{ ...noteStyle, marginTop: 6 }}>Showing the 200 costliest runs.</div>}
+          {data.truncated && <div style={{ ...noteStyle, marginTop: 6 }}>{t("top200")}</div>}
           {inferOn && data.inferred && (
             <div style={{ marginTop: 16 }}>
-              <PanelTitle>Calls without a job, matched by time (best effort)</PanelTitle>
-              <div style={{ ...noteStyle, marginBottom: 8 }}>
-                A call is matched to the job(s) running when it was made, or to a recorded incident when no job ran.
-                A job&apos;s start is its last attempt&apos;s, and finished jobs are deleted after 30 days (failed ones
-                after 90), so a job match is a hint, not a fact.
-              </div>
+              <PanelTitle>{t("matchedTitle")}</PanelTitle>
+              <div style={{ ...noteStyle, marginBottom: 8 }}>{t("matchedNote")}</div>
               <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)" }}>
                 <DataTable<Inferred>
                   tableId="cost-ops-dfs-inferred"
@@ -246,7 +254,7 @@ export default function DfsRunsPanel({ rangeQs, rangeLabel, windowDays }: {
                   pageSize={20}
                   tableMinWidth={820}
                   compact
-                  emptyTitle="Every call has a job"
+                  emptyTitle={t("everyCallHasJob")}
                 />
               </div>
             </div>

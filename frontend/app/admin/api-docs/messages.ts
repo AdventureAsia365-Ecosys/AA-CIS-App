@@ -1,0 +1,65 @@
+// app/admin/api-docs/messages.ts — AA-994: the API Docs reader, English and Vietnamese. The schema itself (paths,
+// summaries, descriptions, tags) is the API's own text and stays as sent.
+
+import { defineMessages } from "../../_kit/core/i18n";
+
+export const M = defineMessages(
+  {
+    title: "API Docs",
+    descriptionLoaded: (title: string, version: string, openapi: string, n: number) =>
+      `${title}${version ? ` v${version}` : ""} · OpenAPI ${openapi} · ${n} endpoints. Read-only — nothing here calls the API.`,
+    descriptionEmpty: "Read-only view of the backend OpenAPI schema. Nothing here calls the API.",
+    reloadSchema: "Reload the schema",
+    reload: "Reload",
+    loadFailed: (detail: string) => `Could not load the API schema: ${detail}`,
+    noEndpointsTitle: "No endpoints in the schema",
+    noEndpointsBody: "The backend returned an OpenAPI schema with no paths.",
+    searchPlaceholder: "Search path, summary, tag…",
+    searchEndpoints: "Search endpoints",
+    clearSearch: "Clear search",
+    shownOf: (shown: number, total: number) => `${shown} of ${total} endpoints`,
+    groups: (n: number) => `${n} groups`,
+    expandAll: "Expand all",
+    collapseAll: "Collapse all",
+    noMatchTitle: "No endpoint matches",
+    noMatchBody: (q: string) =>
+      `Nothing matches “${q}”. Search looks at the method, path, summary, operationId and tag.`,
+    paramIn: (where: string) => `in ${where}`,
+    required: "required",
+    deprecated: "deprecated",
+    parameters: "Parameters",
+    requestBody: "Request body",
+    responses: "Responses",
+    none: "None",
+    noneDeclared: "None declared",
+  },
+  {
+    title: "Tài liệu API",
+    descriptionLoaded: (title: string, version: string, openapi: string, n: number) =>
+      `${title}${version ? ` v${version}` : ""} · OpenAPI ${openapi} · ${n} endpoint. Chỉ đọc — trang này không gọi API.`,
+    descriptionEmpty: "Xem lược đồ OpenAPI của backend ở chế độ chỉ đọc. Trang này không gọi API.",
+    reloadSchema: "Tải lại lược đồ",
+    reload: "Tải lại",
+    loadFailed: (detail: string) => `Không tải được lược đồ API: ${detail}`,
+    noEndpointsTitle: "Lược đồ không có endpoint nào",
+    noEndpointsBody: "Backend trả về một lược đồ OpenAPI không có đường dẫn nào.",
+    searchPlaceholder: "Tìm đường dẫn, tóm tắt, tag…",
+    searchEndpoints: "Tìm endpoint",
+    clearSearch: "Xoá tìm kiếm",
+    shownOf: (shown: number, total: number) => `${shown} trên ${total} endpoint`,
+    groups: (n: number) => `${n} nhóm`,
+    expandAll: "Mở tất cả",
+    collapseAll: "Thu gọn tất cả",
+    noMatchTitle: "Không có endpoint nào khớp",
+    noMatchBody: (q: string) =>
+      `Không có kết quả cho “${q}”. Tìm kiếm xét phương thức, đường dẫn, tóm tắt, operationId và tag.`,
+    paramIn: (where: string) => `trong ${where}`,
+    required: "bắt buộc",
+    deprecated: "ngừng dùng",
+    parameters: "Tham số",
+    requestBody: "Thân yêu cầu",
+    responses: "Phản hồi",
+    none: "Không có",
+    noneDeclared: "Không khai báo",
+  },
+);

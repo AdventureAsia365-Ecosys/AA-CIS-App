@@ -356,52 +356,54 @@ classes:
 #       telemetry (a log or quality_signal name, never shown as a gate).
 # label: plain-language admin name (frontend GATE_LABELS keeps this order; a labelled name is listed in
 #       the Content Quality gate filter). channels: where the gate runs (T10 channel names, or t2_version).
+# label_vi: the Vietnamese admin name (AA-994; frontend GATE_LABELS_VI in quality-registry.generated.vi.ts),
+#       required with every label.
 # lint_exact: the literal lint also matches this exact name (names outside the F<n>_ pattern).
 gates:
-  F0_complete: {kind: gate, label: "Text cut off", classes: [struct.truncated], channels: all}
-  F1_grounding: {kind: gate, label: "Number not in source", classes: [fact.number], channels: all}
+  F0_complete: {kind: gate, label: "Text cut off", label_vi: "Văn bản bị cắt", classes: [struct.truncated], channels: all}
+  F1_grounding: {kind: gate, label: "Number not in source", label_vi: "Con số không có trong nguồn", classes: [fact.number], channels: all}
   # AA-924: folded into F2_lexicon (a finding's `source` keeps the name); older pieces still carry these entries.
-  F2_banned_patterns: {kind: gate, label: "Cliché / banned phrase", classes: [other.v1], retired: true}
-  F2_brand_forbidden: {kind: gate, label: "Brand-forbidden word", classes: [other.lexicon], retired: true}
-  F11_brand_name: {kind: gate, label: "Wrong brand name", classes: [safety.tenant_isolation], channels: all}
-  F10_cannibalization_cross_tenant: {kind: gate, label: "Too close to another tenant", classes: [safety.tenant_isolation], channels: all}
-  promises_an_option: {kind: gate, label: "Optional item stated as included", classes: [other.f6], retired: true, lint_exact: true}
-  F4_extreme_length: {kind: gate, label: "Length out of range", classes: [other.length_shape], channels: all}
-  F4_seo_surface: {kind: gate, label: "SEO title / meta", classes: [other.length_shape, scope.framing], channels: [blog]}
-  F5_atom_density: {kind: gate, label: "Few source citations", classes: [other.c5], retired: true}
-  F3_structural_variance: {kind: gate, label: "Flat structure", classes: [other.v1], retired: true}
-  F7_faq_dedup: {kind: gate, label: "FAQ restates body", classes: [other.s5], retired: true}
-  F7_faq_autofix: {kind: flag, label: "FAQ pairs removed", class: none, reason: "fixer log: FAQ pairs the restate/unanswerable droppers removed"}
-  F6_cta_present: {kind: gate, label: "No CTA", classes: [other.c5], channels: all}
-  F8_framework: {kind: gate, label: "Goal framework", classes: [other.c5], retired: true}
-  F9_cta_fact: {kind: gate, label: "Unsupported claim / CTA", classes: [fact.inclusion, fact.number, fact.misbinding, fact.name, fact.embellish], channels: all}
-  F9_brand_style: {kind: gate, label: "Off-brand / AI wording", classes: [other.v1], channels: all}
-  F12_scope: {kind: gate, label: "Place outside the piece's scope", classes: [scope.framing], channels: all}
-  F13_hygiene: {kind: gate, label: "Leak / social proof / repeat / hashtag", classes: [struct.leaked_instruction, other.s3, other.s7], channels: all}
-  F13_leak: {kind: gate, label: "Instruction / audience leak, broken opener", classes: [struct.leaked_instruction, scope.persona_promise, other.s4], channels: all}
-  F13_autofix: {kind: flag, label: "Auto-fixed sentences", class: none, reason: "fixer log: sentences hygiene.autofix changed before the gates"}
-  F13_final_pass: {kind: flag, label: "Final pass edits (duplicate, CTA, whitespace)", class: none, reason: "fixer log: text_integrity.final_pass edits"}
-  F13_repeat: {kind: gate, label: "Repeat / second CTA / broken sentence", classes: [other.s3], channels: all}
-  F17_trip_fact: {kind: gate, label: "Trip fact not in source (optional, time, caveat, date, thin moment, hazard, base)", classes: [other.f6, other.f7, fact.misbinding, other.c3], channels: all}
-  F18_rarity: {kind: gate, label: "Rarity / quantifier overclaim", classes: [fact.embellish], channels: all}
-  F14_social_shape: {kind: gate, label: "LinkedIn length / hashtags", classes: [other.length_shape], channels: all}
-  F14_first_line: {kind: gate, label: "LinkedIn first line too long", classes: [other.length_shape], channels: [linkedin]}
-  F16_faq: {kind: gate, label: "Blog FAQ under 3 pairs", classes: [other.s5, other.c5], channels: [blog]}
+  F2_banned_patterns: {kind: gate, label: "Cliché / banned phrase", label_vi: "Sáo ngữ / cụm từ bị cấm", classes: [other.v1], retired: true}
+  F2_brand_forbidden: {kind: gate, label: "Brand-forbidden word", label_vi: "Từ thương hiệu cấm", classes: [other.lexicon], retired: true}
+  F11_brand_name: {kind: gate, label: "Wrong brand name", label_vi: "Sai tên thương hiệu", classes: [safety.tenant_isolation], channels: all}
+  F10_cannibalization_cross_tenant: {kind: gate, label: "Too close to another tenant", label_vi: "Quá giống tenant khác", classes: [safety.tenant_isolation], channels: all}
+  promises_an_option: {kind: gate, label: "Optional item stated as included", label_vi: "Mục tuỳ chọn ghi là đã bao gồm", classes: [other.f6], retired: true, lint_exact: true}
+  F4_extreme_length: {kind: gate, label: "Length out of range", label_vi: "Độ dài ngoài khoảng cho phép", classes: [other.length_shape], channels: all}
+  F4_seo_surface: {kind: gate, label: "SEO title / meta", label_vi: "Tiêu đề / meta SEO", classes: [other.length_shape, scope.framing], channels: [blog]}
+  F5_atom_density: {kind: gate, label: "Few source citations", label_vi: "Ít trích dẫn nguồn", classes: [other.c5], retired: true}
+  F3_structural_variance: {kind: gate, label: "Flat structure", label_vi: "Cấu trúc đơn điệu", classes: [other.v1], retired: true}
+  F7_faq_dedup: {kind: gate, label: "FAQ restates body", label_vi: "FAQ lặp lại thân bài", classes: [other.s5], retired: true}
+  F7_faq_autofix: {kind: flag, label: "FAQ pairs removed", label_vi: "Đã bỏ cặp FAQ", class: none, reason: "fixer log: FAQ pairs the restate/unanswerable droppers removed"}
+  F6_cta_present: {kind: gate, label: "No CTA", label_vi: "Không có CTA", classes: [other.c5], channels: all}
+  F8_framework: {kind: gate, label: "Goal framework", label_vi: "Khung mục tiêu", classes: [other.c5], retired: true}
+  F9_cta_fact: {kind: gate, label: "Unsupported claim / CTA", label_vi: "Khẳng định / CTA không có căn cứ", classes: [fact.inclusion, fact.number, fact.misbinding, fact.name, fact.embellish], channels: all}
+  F9_brand_style: {kind: gate, label: "Off-brand / AI wording", label_vi: "Lệch giọng thương hiệu / văn phong AI", classes: [other.v1], channels: all}
+  F12_scope: {kind: gate, label: "Place outside the piece's scope", label_vi: "Địa điểm ngoài phạm vi bài", classes: [scope.framing], channels: all}
+  F13_hygiene: {kind: gate, label: "Leak / social proof / repeat / hashtag", label_vi: "Rò rỉ / bằng chứng xã hội / lặp / hashtag", classes: [struct.leaked_instruction, other.s3, other.s7], channels: all}
+  F13_leak: {kind: gate, label: "Instruction / audience leak, broken opener", label_vi: "Rò rỉ chỉ dẫn / đối tượng, câu mở đầu hỏng", classes: [struct.leaked_instruction, scope.persona_promise, other.s4], channels: all}
+  F13_autofix: {kind: flag, label: "Auto-fixed sentences", label_vi: "Câu đã tự sửa", class: none, reason: "fixer log: sentences hygiene.autofix changed before the gates"}
+  F13_final_pass: {kind: flag, label: "Final pass edits (duplicate, CTA, whitespace)", label_vi: "Chỉnh sửa lượt cuối (trùng lặp, CTA, khoảng trắng)", class: none, reason: "fixer log: text_integrity.final_pass edits"}
+  F13_repeat: {kind: gate, label: "Repeat / second CTA / broken sentence", label_vi: "Lặp / CTA thứ hai / câu hỏng", classes: [other.s3], channels: all}
+  F17_trip_fact: {kind: gate, label: "Trip fact not in source (optional, time, caveat, date, thin moment, hazard, base)", label_vi: "Dữ kiện chuyến đi không có trong nguồn (tuỳ chọn, giờ, lưu ý, ngày, khoảnh khắc mỏng, rủi ro, điểm xuất phát)", classes: [other.f6, other.f7, fact.misbinding, other.c3], channels: all}
+  F18_rarity: {kind: gate, label: "Rarity / quantifier overclaim", label_vi: "Phóng đại độ hiếm / số lượng", classes: [fact.embellish], channels: all}
+  F14_social_shape: {kind: gate, label: "LinkedIn length / hashtags", label_vi: "Độ dài / hashtag LinkedIn", classes: [other.length_shape], channels: all}
+  F14_first_line: {kind: gate, label: "LinkedIn first line too long", label_vi: "Dòng đầu LinkedIn quá dài", classes: [other.length_shape], channels: [linkedin]}
+  F16_faq: {kind: gate, label: "Blog FAQ under 3 pairs", label_vi: "FAQ blog dưới 3 cặp", classes: [other.s5, other.c5], channels: [blog]}
   # AA-924: F15_voice also holds F15_voice_warn's findings (as warn); its stock-list findings moved to F2_lexicon.
-  F15_voice: {kind: gate, label: "Voice: stock frames, templates, register", classes: [other.v1, scope.persona_promise], channels: all}
-  F15_voice_warn: {kind: gate, label: "Trade register / audience leak / opener", classes: [other.v1, scope.persona_promise], retired: true}
-  within_tenant_reuse: {kind: flag, label: "Repeats this tenant", class: none, reason: "same-tenant near-duplicate signal (AA-499), not a writing error", lint_exact: true}
-  T3_grounding: {kind: gate, label: "Number not in the source tour", classes: [fact.number, fact.inclusion], channels: [t2_version], lint_exact: true}
-  FORBIDDEN_WORD: {kind: gate, label: "Forbidden word", classes: [other.lexicon], channels: [t2_version], note: "also an A1 validate code (a1_codes), so not lint_exact"}
+  F15_voice: {kind: gate, label: "Voice: stock frames, templates, register", label_vi: "Giọng văn: khung sáo, mẫu câu, văn phong", classes: [other.v1, scope.persona_promise], channels: all}
+  F15_voice_warn: {kind: gate, label: "Trade register / audience leak / opener", label_vi: "Văn phong ngành / rò rỉ đối tượng / câu mở đầu", classes: [other.v1, scope.persona_promise], retired: true}
+  within_tenant_reuse: {kind: flag, label: "Repeats this tenant", label_vi: "Lặp lại nội dung của chính tenant", class: none, reason: "same-tenant near-duplicate signal (AA-499), not a writing error", lint_exact: true}
+  T3_grounding: {kind: gate, label: "Number not in the source tour", label_vi: "Con số không có trong tour nguồn", classes: [fact.number, fact.inclusion], channels: [t2_version], lint_exact: true}
+  FORBIDDEN_WORD: {kind: gate, label: "Forbidden word", label_vi: "Từ bị cấm", classes: [other.lexicon], channels: [t2_version], note: "also an A1 validate code (a1_codes), so not lint_exact"}
   # AA-926: four active gates that had no admin label (they showed as raw codes and were missing from the filter).
-  F2_platform_truth: {kind: gate, label: "Platform-truth word (service the trip does not offer)", classes: [fact.inclusion], channels: all}
-  F2_superlatives: {kind: gate, label: "More than one stock superlative", classes: [fact.embellish], channels: all}
-  F2_style_warn: {kind: gate, label: "Positioning word the brand did not declare", classes: [other.lexicon], channels: all}
-  F19_authenticity: {kind: gate, label: "Review / testimonial / customer voice", classes: [fact.embellish], channels: all}
+  F2_platform_truth: {kind: gate, label: "Platform-truth word (service the trip does not offer)", label_vi: "Từ sai sự thật nền tảng (dịch vụ chuyến đi không có)", classes: [fact.inclusion], channels: all}
+  F2_superlatives: {kind: gate, label: "More than one stock superlative", label_vi: "Nhiều hơn một từ so sánh nhất sáo rỗng", classes: [fact.embellish], channels: all}
+  F2_style_warn: {kind: gate, label: "Positioning word the brand did not declare", label_vi: "Từ định vị thương hiệu chưa khai báo", classes: [other.lexicon], channels: all}
+  F19_authenticity: {kind: gate, label: "Review / testimonial / customer voice", label_vi: "Đánh giá / lời chứng thực / giọng khách hàng", classes: [fact.embellish], channels: all}
   # AA-926 (S250): the AA-780 stock-line cut (#916) — a fixer log like F7_faq_autofix, listed after the four above.
-  F15_stock_cut: {kind: flag, label: "Stock lines cut", class: none, reason: "fixer log: stock-phrase sentences service._cut_stock_lines removed after the gates"}
+  F15_stock_cut: {kind: flag, label: "Stock lines cut", label_vi: "Đã cắt câu sáo", class: none, reason: "fixer log: stock-phrase sentences service._cut_stock_lines removed after the gates"}
   # AA-924: the lexicon gate (F2_banned_patterns + F2_brand_forbidden + the F15 stock list, one finding per word).
-  F2_lexicon: {kind: gate, label: "Banned / forbidden / stock wording", classes: [other.lexicon, other.v1], channels: all}
+  F2_lexicon: {kind: gate, label: "Banned / forbidden / stock wording", label_vi: "Từ ngữ bị cấm / sáo rỗng", classes: [other.lexicon, other.v1], channels: all}
   # Telemetry names (never a ledger gate).
   F9_brand_voice: {kind: telemetry, class: none, reason: "llm_call_log.quality_signal.gate of the F9 judge call (admin LLM ops reads it)"}
   F9_sticky_pass: {kind: telemetry, class: none, reason: "structlog event: sentences an earlier F9 verdict passed were dropped from the re-judge"}

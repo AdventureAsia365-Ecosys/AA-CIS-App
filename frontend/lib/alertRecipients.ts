@@ -44,17 +44,34 @@ export interface AlertRecipientsPage {
 
 export type StatusTone = "success" | "warning" | "neutral" | "danger";
 
+/** AA-994: the words of the helpers below (English). The page passes the UI language's words
+ * (lib/alertRecipients.messages.ts ALERT_WORDS_MESSAGES[lang]); a call without them stays English. */
+export const ALERT_WORDS = {
+  confirmed: "Confirmed",
+  pending: "Waiting for confirmation",
+  unsubscribed: "Unsubscribed",
+  expired: "Expired (not confirmed)",
+  removed: "Removed",
+  notSubscribed: "Not subscribed",
+  unknown: "Unknown",
+  waitNow: "now",
+  waitS: (s: number) => `${s}s`,
+  waitMin: (m: number) => `${m} min`,
+  waitHMin: (h: number, m: number) => `${h} h ${m} min`,
+};
+export type AlertWords = typeof ALERT_WORDS;
+
 /** The status badge text. */
-export function statusLabel(r: Pick<AlertRecipient, "status" | "removed_reason">): string {
-  if (r.status === "confirmed") return "Confirmed";
-  if (r.status === "pending") return "Waiting for confirmation";
+export function statusLabel(r: Pick<AlertRecipient, "status" | "removed_reason">, w: AlertWords = ALERT_WORDS): string {
+  if (r.status === "confirmed") return w.confirmed;
+  if (r.status === "pending") return w.pending;
   switch (r.removed_reason) {
     case "unsubscribed":
-      return "Unsubscribed";
+      return w.unsubscribed;
     case "expired":
-      return "Expired (not confirmed)";
+      return w.expired;
     default:
-      return "Removed";
+      return w.removed;
   }
 }
 
@@ -65,11 +82,11 @@ export function statusTone(r: Pick<AlertRecipient, "status" | "removed_reason">)
 }
 
 /** What SNS says about a subscription the page does not manage (bootstrap, console-added). */
-export function snsStateLabel(state: SnsState | null | undefined): string {
-  if (state === "confirmed") return "Confirmed";
-  if (state === "pending") return "Waiting for confirmation";
-  if (state === "missing") return "Not subscribed";
-  return "Unknown";
+export function snsStateLabel(state: SnsState | null | undefined, w: AlertWords = ALERT_WORDS): string {
+  if (state === "confirmed") return w.confirmed;
+  if (state === "pending") return w.pending;
+  if (state === "missing") return w.notSubscribed;
+  return w.unknown;
 }
 
 // Same rule as the backend (shared/alert_recipients.normalize_email) and the table CHECK (migration 251).
@@ -134,9 +151,9 @@ export function secondsUntil(iso: string | null | undefined, now: number = Date.
   return Math.max(0, Math.ceil((t - now) / 1000));
 }
 
-export function formatWait(seconds: number): string {
-  if (seconds <= 0) return "now";
-  if (seconds < 60) return `${seconds}s`;
+export function formatWait(seconds: number, w: AlertWords = ALERT_WORDS): string {
+  if (seconds <= 0) return w.waitNow;
+  if (seconds < 60) return w.waitS(seconds);
   const m = Math.ceil(seconds / 60);
-  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
+  return m < 60 ? w.waitMin(m) : w.waitHMin(Math.floor(m / 60), m % 60);
 }

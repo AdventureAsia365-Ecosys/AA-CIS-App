@@ -12,16 +12,34 @@ import { useState } from "react";
 import { useThemeChoice } from "../_kit/useTheme";
 import { BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_SANS, LOGO_SRC } from "../_kit/core/brand";
 import { User, Lock, Mail } from "lucide-react";
+import { I18nProvider, useT } from "../_kit/core/useI18n";
+import type { Lang } from "../_kit/core/i18n";
+import { langStore } from "../_kit/i18n";
+import { M, LOGIN_ERRORS } from "./messages";
 
 interface LoginFormProps {
   legacyEnabled: boolean;
   cognitoAvailable: boolean;
   /** Host of the Adventure Asia managed-login page (lib/cognito.ts), shown under the button. */
   signInHost: string;
-  initialError: string;
+  /** The message key of the `?error=` code the page was opened with, or null. */
+  initialError: (typeof LOGIN_ERRORS)[keyof typeof LOGIN_ERRORS] | null;
+  /** AA-994: the UI language from the `cis_lang` cookie (read by the server page). */
+  initialLang: Lang;
 }
 
-export default function LoginForm({ legacyEnabled, cognitoAvailable, signInHost, initialError }: LoginFormProps) {
+// The sign-in page is outside the admin shell, so it renders its own provider on the same store (the language the
+// admin chose; no switch here).
+export default function LoginForm({ initialLang, ...props }: LoginFormProps) {
+  return (
+    <I18nProvider store={langStore} initialLang={initialLang}>
+      <LoginFormBody {...props} />
+    </I18nProvider>
+  );
+}
+
+function LoginFormBody({ legacyEnabled, cognitoAvailable, signInHost, initialError }: Omit<LoginFormProps, "initialLang">) {
+  const t = useT(M);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError]       = useState("");
@@ -37,7 +55,7 @@ export default function LoginForm({ legacyEnabled, cognitoAvailable, signInHost,
     // bug report's Network tab captured (2x /login, a stray 307). Mirrors
     // the guard tenant-login/page.tsx already had.
     if (loading) return;
-    if (!username || !password) { setError("Enter username and password"); return; }
+    if (!username || !password) { setError(t("enterCredentials")); return; }
     setLoading(true);
     setError("");
 
@@ -51,7 +69,7 @@ export default function LoginForm({ legacyEnabled, cognitoAvailable, signInHost,
       const data = await res.json();
 
       if (!res.ok) {
-        setError(data.detail || "Invalid username or password");
+        setError(data.detail || t("invalidCredentials"));
         setLoading(false);
         return;
       }
@@ -80,7 +98,7 @@ export default function LoginForm({ legacyEnabled, cognitoAvailable, signInHost,
       // whatever role the session has, middleware picks the right landing page on the next request.
       window.location.href = "/admin/dashboard";
     } catch {
-      setError("Network error — check connection");
+      setError(t("networkError"));
       setLoading(false);
     }
   };
@@ -93,8 +111,8 @@ export default function LoginForm({ legacyEnabled, cognitoAvailable, signInHost,
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={LOGO_SRC} alt="Adventure Asia" width={52} height={33} style={{ width:52, height:"auto", display:"block" }} />
           <div>
-            <div style={{ fontFamily: FONT_DISPLAY, fontWeight:600, color:"var(--text-primary)", fontSize:18 }}>CIS Internal</div>
-            <div style={{ fontSize:11, color:"var(--text-muted)" }}>Staff sign-in</div>
+            <div style={{ fontFamily: FONT_DISPLAY, fontWeight:600, color:"var(--text-primary)", fontSize:18 }}>{t("title")}</div>
+            <div style={{ fontSize:11, color:"var(--text-muted)" }}>{t("subtitle")}</div>
           </div>
         </div>
 
@@ -102,47 +120,47 @@ export default function LoginForm({ legacyEnabled, cognitoAvailable, signInHost,
         {cognitoAvailable ? (
           <a href="/api/auth/signin/cognito"
             style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, width:"100%", padding:12, background:"var(--brand-gold)", border:"none", borderRadius:BTN_RADIUS, color:"white", fontSize:13, fontWeight:600, fontFamily: FONT_SANS, ...BTN_PRIMARY_TEXT, textDecoration:"none", cursor:"pointer" }}>
-            <Mail size={14} /> Sign in with company email
+            <Mail size={14} /> {t("companySignIn")}
           </a>
         ) : (
           <div>
             <button type="button" disabled
               style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, width:"100%", padding:12, background:"var(--bg-primary)", border:"1px solid var(--border)", borderRadius:BTN_RADIUS, color:"var(--text-muted)", fontSize:13, fontWeight:600, fontFamily: FONT_SANS, cursor:"not-allowed" }}>
-              <Mail size={14} /> Sign in with company email
+              <Mail size={14} /> {t("companySignIn")}
             </button>
             <div style={{ fontSize:11, color:"var(--text-muted)", marginTop:6, textAlign:"center" as const }}>
-              Company sign-in works on aa-cis.lumiguides.it.com only.
+              {t("companyOnlyHere")}
             </div>
           </div>
         )}
         {/* AA-816 (S242): say up front what happens next, so the hand-off to the sign-in page is expected. */}
         {cognitoAvailable && (
           <div style={{ fontSize:11, color:"var(--text-muted)", marginTop:8, textAlign:"center" as const, lineHeight:1.5 }}>
-            No password needed: a one-time sign-in code arrives by email. Sign-in opens on {signInHost}.
+            {t("codeByEmail", signInHost)}
           </div>
         )}
-        {initialError && !error && <div role="alert" style={{ fontSize:12, color:"var(--aa-red)", marginTop:10 }}>{initialError}</div>}
+        {initialError && !error && <div role="alert" style={{ fontSize:12, color:"var(--aa-red)", marginTop:10 }}>{t(initialError)}</div>}
 
         {legacyEnabled && (
           <>
             <div style={{ display:"flex", alignItems:"center", gap:10, margin:"22px 0 16px" }}>
               <div style={{ flex:1, height:1, background:"var(--border)" }} />
-              <div style={{ fontSize:11, color:"var(--text-muted)", textTransform:"uppercase" as const, letterSpacing:1 }}>or username</div>
+              <div style={{ fontSize:11, color:"var(--text-muted)", textTransform:"uppercase" as const, letterSpacing:1 }}>{t("orUsername")}</div>
               <div style={{ flex:1, height:1, background:"var(--border)" }} />
             </div>
             <div style={{ marginBottom:14 }}>
-              <label style={{ fontSize:11, fontWeight:600, color:"var(--text-muted)", textTransform:"uppercase" as const, letterSpacing:1, display:"block", marginBottom:8 }}>Username</label>
+              <label style={{ fontSize:11, fontWeight:600, color:"var(--text-muted)", textTransform:"uppercase" as const, letterSpacing:1, display:"block", marginBottom:8 }}>{t("username")}</label>
               <div style={{ position:"relative" }}>
                 <User size={13} style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:"var(--text-muted)" }} />
                 <input type="text" value={username} onChange={e => { setUsername(e.target.value); setError(""); }}
-                  placeholder="Username"
+                  placeholder={t("username")}
                   onKeyDown={e => e.key === "Enter" && !loading && login()}
                   style={{ width:"100%", padding:"10px 12px 10px 34px", background:"var(--bg-primary)", border:`1px solid ${error ? "var(--aa-red)" : "var(--border)"}`, borderRadius:8, color:"var(--text-primary)", fontSize:13, outline:"none" }} />
               </div>
             </div>
 
             <div style={{ marginBottom:20 }}>
-              <label style={{ fontSize:11, fontWeight:600, color:"var(--text-muted)", textTransform:"uppercase" as const, letterSpacing:1, display:"block", marginBottom:8 }}>Password</label>
+              <label style={{ fontSize:11, fontWeight:600, color:"var(--text-muted)", textTransform:"uppercase" as const, letterSpacing:1, display:"block", marginBottom:8 }}>{t("password")}</label>
               <div style={{ position:"relative" }}>
                 <Lock size={13} style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:"var(--text-muted)" }} />
                 <input type="password" value={password} onChange={e => { setPassword(e.target.value); setError(""); }}
@@ -155,7 +173,7 @@ export default function LoginForm({ legacyEnabled, cognitoAvailable, signInHost,
 
             <button onClick={login} disabled={loading}
               style={{ width:"100%", padding:12, background:"var(--brand-gold)", border:"none", borderRadius:BTN_RADIUS, color:"white", fontSize:13, fontWeight:600, fontFamily: FONT_SANS, ...BTN_PRIMARY_TEXT, cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.7 : 1 }}>
-              {loading ? "Connecting..." : "Login"}
+              {loading ? t("connecting") : t("login")}
             </button>
           </>
         )}

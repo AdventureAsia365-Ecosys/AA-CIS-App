@@ -235,15 +235,19 @@ export function canWriteStaff(viewer: StaffViewer | null | undefined): boolean {
   return !!viewer && viewer.auth === "cognito" && viewer.is_owner && viewer.can_write;
 }
 
-/** A readable message for a failed staff call: the backend's policy 403 reads "Role 'x' lacks …". */
-export function staffErrorMessage(status: number, detail: unknown, fallback: string): string {
+/** A readable message for a failed staff call: the backend's policy 403 reads "Role 'x' lacks …". `adminOnly` is
+ *  the refusal text in the UI language (AA-994: lib/rbac.messages.ts RBAC_MESSAGES "adminOnly"). */
+export function staffErrorMessage(
+  status: number, detail: unknown, fallback: string, adminOnly = "Admin only: your role cannot make this change.",
+): string {
   // The backend's capability and read-only refusals both start with "Role '" (api/core/staff_authz.py).
   if (status === 403 && typeof detail === "string" && detail.startsWith("Role '")) {
-    return "Admin only: your role cannot make this change.";
+    return adminOnly;
   }
   return typeof detail === "string" && detail ? detail : fallback;
 }
 
+/** English role names; the UI language's names are RBAC_MESSAGES in lib/rbac.messages.ts (same keys). */
 export const ROLE_LABEL: Record<StaffRole, string> = {
   admin: "Administrator",
   reviewer: "Reviewer",

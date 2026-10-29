@@ -1,0 +1,7 @@
+# AA-994 — frontend files that still carry Vietnamese text outside a dictionary file, with their line count.
+# Guarded by tests/unit/test_aa994_admin_i18n.py: this list ONLY SHRINKS. A file not listed here must have no
+# Vietnamese outside comments; a listed file must have exactly the count below (lower it, or drop the line, when you
+# move text into a `messages.ts` dictionary). Never add a line: put the text in the area's messages.ts instead.
+#
+# path (from the repo root)                         lines   why it is still here
+frontend/lib/aaContent.ts                           2       content matching, not UI text (Vietnamese visa words, đ folding)

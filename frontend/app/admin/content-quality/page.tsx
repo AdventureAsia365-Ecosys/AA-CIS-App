@@ -16,6 +16,7 @@
 //   applied; the drawer's "Label" section saves one. Before 231 both are hidden.
 // UI kit + react-query; view state in the URL (tab, filters, page) like the Jobs page.
 // API: /admin/content-quality/* via the BFF.
+// AA-994: every string comes from messages.ts / drawer.messages.ts (English default, Vietnamese when picked).
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
@@ -26,27 +27,24 @@ import type { TenantRef } from "@/lib/tenants";
 import SocialContentSubNav from "../_components/SocialContentSubNav";
 import { A, mono, Btn } from "../_components/adminUi";
 import {
-  Badge, ConfirmModal, DataTable, PageHeader, StatusBadge, Tabs, ToastProvider, apiGet, apiSend, useToast,
+  Badge, ConfirmModal, DataTable, PageHeader, StatusBadge, Tabs, ToastProvider, apiGet, apiSend, useT, useToast,
   type ColumnDef,
   AdminMain,
 } from "../../_kit";
+import { GATE_LABEL_MESSAGES } from "@/lib/gateLabels.messages";
 import PieceDrawer from "./PieceDrawer";
 import { LabelBadge } from "./PieceLabel";
 import PlaceCardFactsDrawer from "./PlaceCardFactsDrawer";
 import TourVersionDrawer from "./TourVersionDrawer";
 import {
-  DUPLICATE_REASON_LABELS, GATE_FILTER, LABEL_NAMES, bindingLabel, fmtTime, gateLabel, usd,
+  LABEL_NAMES, fmtTime, usd,
   type DuplicateCluster, type GateStat, type Paged, type PieceLabelValue, type PieceRow, type PiecesPage, type PlaceCard, type TenantStat,
   type VersionRow,
 } from "./shared";
+import { DUPLICATE_REASON, LABEL_NAME, M, STATUS } from "./messages";
+import { useCqText, useLookup } from "./useCqText";
 
 type TabKey = "pieces" | "versions" | "stats" | "cards";
-const TABS: { key: TabKey; label: string }[] = [
-  { key: "pieces", label: "Pieces (T9)" },
-  { key: "versions", label: "Tour versions (T2)" },
-  { key: "stats", label: "Gate stats" },
-  { key: "cards", label: "Place cards" },
-];
 const PAGE_SIZE = 50;
 
 interface View {
@@ -90,6 +88,7 @@ const inputStyle: React.CSSProperties = {
 };
 
 function GateChips({ gates, tone }: { gates: string[]; tone: "danger" | "warning" }) {
+  const { gateLabel } = useCqText();
   if (!gates.length) return <span style={{ color: A.muted }}>—</span>;
   return (
     <span style={{ display: "inline-flex", gap: 4, flexWrap: "wrap" }}>
@@ -98,13 +97,19 @@ function GateChips({ gates, tone }: { gates: string[]; tone: "danger" | "warning
   );
 }
 
-function statusBadge(s: string) {
+function PieceStatus({ s }: { s: string }) {
+  const status = useLookup(STATUS);
   const map: Record<string, string> = { approved: "succeeded", held: "failed", failed: "failed", processing: "running" };
-  return <StatusBadge status={map[s] ?? s} label={s} />;
+  return <StatusBadge status={map[s] ?? s} label={status(s)} />;
 }
 
 // ── Pieces ──────────────────────────────────────────────────────────────────────────────────────
 function PiecesTab({ view, update, tenants }: { view: View; update: (p: Partial<View>) => void; tenants: TenantStat[] }) {
+  const t = useT(M);
+  const g = useT(GATE_LABEL_MESSAGES);
+  const labelName = useT(LABEL_NAME);
+  const status = useT(STATUS);
+  const { gateFilter } = useCqText();
   const qs = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(view.page * PAGE_SIZE),
                                    sort: view.sort, sort_dir: view.dir });
   if (view.tenant) qs.set("tenant_id", view.tenant);
@@ -119,24 +124,24 @@ function PiecesTab({ view, update, tenants }: { view: View; update: (p: Partial<
   });
   const labelsEnabled = !!data?.labels_enabled;
   const columns = useMemo<ColumnDef<PieceRow, unknown>[]>(() => [
-    { id: "created_at", accessorKey: "created_at", header: "Written",
+    { id: "created_at", accessorKey: "created_at", header: t("colWritten"),
       cell: (c) => <span style={{ whiteSpace: "nowrap", color: A.muted }}>{fmtTime(c.row.original.created_at)}</span> },
-    { id: "tenant", accessorKey: "tenant_name", header: "Tenant" },
-    { id: "channel", accessorKey: "channel", header: "Channel" },
+    { id: "tenant", accessorKey: "tenant_name", header: t("colTenant") },
+    { id: "channel", accessorKey: "channel", header: t("colChannel") },
     // AA-863 — under the title: the Segment the piece was written for and its seed place · country,
     // with a warning badge when the seed does not fit the Subject (SeedLine).
-    { id: "title", accessorKey: "title", header: "Title / angle · seed", enableSorting: false,
+    { id: "title", accessorKey: "title", header: t("colTitleSeed"), enableSorting: false,
       cell: (c) => (
         <span style={{ display: "block", maxWidth: 320, minWidth: 0 }}>
           <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.row.original.title ?? ""}>{c.row.original.title ?? "—"}</span>
           <SeedLine seed={c.row.original.seed} showSegment />
         </span>
       ) },
-    { id: "status", accessorKey: "status", header: "Status", cell: (c) => statusBadge(c.row.original.status) },
+    { id: "status", accessorKey: "status", header: t("colStatus"), cell: (c) => <PieceStatus s={c.row.original.status} /> },
     // AA-791 — the latest human label (and how many people labelled), once migration 231 is applied.
     // Sits right after Status (S239) so it is on screen at 1440 px; the gate-chip columns after it
     // can be wide and used to push it into the horizontal scroll.
-    ...(labelsEnabled ? [{ id: "label", header: "Label", enableSorting: false,
+    ...(labelsEnabled ? [{ id: "label", header: t("colLabel"), enableSorting: false,
       cell: (c) => {
         const r = c.row.original;
         if (!r.label) return <span style={{ color: A.muted }}>—</span>;
@@ -147,15 +152,15 @@ function PiecesTab({ view, update, tenants }: { view: View; update: (p: Partial<
           </span>
         );
       } } as ColumnDef<PieceRow, unknown>] : []),
-    { id: "failed_gates", header: "Blocking fails", enableSorting: false,
+    { id: "failed_gates", header: t("colBlockingFails"), enableSorting: false,
       cell: (c) => <GateChips gates={c.row.original.failed_gates} tone="danger" /> },
-    { id: "flag_gates", header: "Warnings", enableSorting: false,
+    { id: "flag_gates", header: t("colWarnings"), enableSorting: false,
       cell: (c) => <GateChips gates={c.row.original.flag_gates} tone="warning" /> },
-    { id: "attempt", accessorKey: "attempt_number", header: "Att.",
+    { id: "attempt", accessorKey: "attempt_number", header: t("colAttempt"),
       cell: (c) => <span style={{ fontFamily: mono }}>{c.row.original.attempt_number}</span> },
-    { id: "cost_usd", accessorKey: "cost_usd", header: "Cost",
+    { id: "cost_usd", accessorKey: "cost_usd", header: t("colCost"),
       cell: (c) => <span style={{ fontFamily: mono }}>{usd(c.row.original.cost_usd)}</span> },
-  ], [labelsEnabled]);
+  ], [labelsEnabled, t]);
   const sorting: SortingState = [{ id: view.sort, desc: view.dir === "desc" }];
   return (
     <DataTable<PieceRow>
@@ -167,34 +172,34 @@ function PiecesTab({ view, update, tenants }: { view: View; update: (p: Partial<
       pageSize={PAGE_SIZE} manualSorting sorting={sorting}
       onSortingChange={(next) => { const s = next[0]; update(s ? { sort: s.id, dir: s.desc ? "desc" : "asc", page: 0 } : { sort: "created_at", dir: "desc", page: 0 }); }}
       enableCsv csvFilename="content-quality-pieces" stickyHeader maxBodyHeight="calc(100vh - 380px)" tableMinWidth={1100}
-      emptyTitle="No pieces match these filters" emptyDescription="T9 pieces from every tenant show here."
+      emptyTitle={t("piecesEmpty")} emptyDescription={t("piecesEmptyDesc")}
       onRowClick={(r) => update({ piece: r.piece_id })}
       toolbarExtra={
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <input value={view.q} onChange={(e) => update({ q: e.target.value, page: 0 })} placeholder="Search title / text…"
-                 aria-label="Search pieces" style={{ ...inputStyle, minWidth: 180 }} />
+          <input value={view.q} onChange={(e) => update({ q: e.target.value, page: 0 })} placeholder={t("searchPieces")}
+                 aria-label={t("searchPiecesAria")} style={{ ...inputStyle, minWidth: 180 }} />
           <TenantFilter value={view.tenant} onChange={(tenant) => update({ tenant, page: 0 })} tenants={tenants} />
-          <select value={view.channel} onChange={(e) => update({ channel: e.target.value, page: 0 })} aria-label="Channel" style={inputStyle}>
-            <option value="">All channels</option>
+          <select value={view.channel} onChange={(e) => update({ channel: e.target.value, page: 0 })} aria-label={t("channelAria")} style={inputStyle}>
+            <option value="">{t("allChannels")}</option>
             {["blog", "linkedin", "facebook", "instagram", "tiktok", "email", "landing_page", "ads"].map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
-          <select value={view.status} onChange={(e) => update({ status: e.target.value, page: 0 })} aria-label="Status" style={inputStyle}>
-            <option value="">All statuses</option>
-            {["approved", "held", "failed", "processing"].map((s) => <option key={s} value={s}>{s}</option>)}
+          <select value={view.status} onChange={(e) => update({ status: e.target.value, page: 0 })} aria-label={t("statusAria")} style={inputStyle}>
+            <option value="">{t("allStatuses")}</option>
+            {(["approved", "held", "failed", "processing"] as const).map((s) => <option key={s} value={s}>{status(s)}</option>)}
           </select>
-          <select value={view.gate} onChange={(e) => update({ gate: e.target.value, page: 0 })} aria-label="Gate" style={{ ...inputStyle, maxWidth: 220 }}>
-            <option value="">Any gate</option>
-            {GATE_FILTER.active.map((o) => <option key={o.value} value={o.value}>{o.text}</option>)}
-            <optgroup label="Retired (older pieces only)">
-              {GATE_FILTER.retired.map((o) => <option key={o.value} value={o.value}>{o.text}</option>)}
+          <select value={view.gate} onChange={(e) => update({ gate: e.target.value, page: 0 })} aria-label={t("gateAria")} style={{ ...inputStyle, maxWidth: 220 }}>
+            <option value="">{g("anyGate")}</option>
+            {gateFilter.active.map((o) => <option key={o.value} value={o.value}>{o.text}</option>)}
+            <optgroup label={g("retiredGroup")}>
+              {gateFilter.retired.map((o) => <option key={o.value} value={o.value}>{o.text}</option>)}
             </optgroup>
           </select>
           {labelsEnabled && (
-            <select value={view.label} onChange={(e) => update({ label: e.target.value, page: 0 })} aria-label="Label" style={inputStyle}>
-              <option value="">Any label</option>
-              <option value="labelled">Labelled</option>
-              <option value="unlabelled">Not labelled</option>
-              {(Object.keys(LABEL_NAMES) as PieceLabelValue[]).map((l) => <option key={l} value={l}>{LABEL_NAMES[l]}</option>)}
+            <select value={view.label} onChange={(e) => update({ label: e.target.value, page: 0 })} aria-label={t("labelAria")} style={inputStyle}>
+              <option value="">{t("anyLabel")}</option>
+              <option value="labelled">{t("labelled")}</option>
+              <option value="unlabelled">{t("notLabelled")}</option>
+              {(Object.keys(LABEL_NAMES) as PieceLabelValue[]).map((l) => <option key={l} value={l}>{labelName(l)}</option>)}
             </select>
           )}
         </div>
@@ -206,13 +211,16 @@ function PiecesTab({ view, update, tenants }: { view: View; update: (p: Partial<
 // AA-919 S254: the shared admin tenant picker (by name, searchable when there are many). It still offers only the
 // tenants of the 30-day stats, as the hand-rolled select did; the tenant in the URL stays picked either way.
 function TenantFilter({ value, onChange, tenants }: { value: string; onChange: (id: string) => void; tenants: TenantStat[] }) {
+  const t = useT(M);
   const ids = useMemo(() => new Set(tenants.map((t) => t.tenant_id)), [tenants]);
   const offer = useCallback((t: TenantRef) => ids.has(t.tenant_id), [ids]);
-  return <TenantSelect inline hideLabel includeInactive offer={offer} value={value} onChange={onChange} placeholder="All tenants" />;
+  return <TenantSelect inline hideLabel includeInactive offer={offer} value={value} onChange={onChange} placeholder={t("allTenants")} />;
 }
 
 // ── T2 tour versions ── (drawer: TourVersionDrawer.tsx, AA-802 silent correction)
 function VersionsTab({ view, update, tenants }: { view: View; update: (p: Partial<View>) => void; tenants: TenantStat[] }) {
+  const t = useT(M);
+  const { bindingLabel } = useCqText();
   const qs = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(view.page * PAGE_SIZE) });
   if (view.tenant) qs.set("tenant_id", view.tenant);
   if (view.q) qs.set("q", view.q);
@@ -221,34 +229,34 @@ function VersionsTab({ view, update, tenants }: { view: View; update: (p: Partia
     queryFn: () => apiGet<Paged<VersionRow>>(`/api/admin/content-quality/tour-versions?${qs}`, { admin: true }),
   });
   const columns = useMemo<ColumnDef<VersionRow, unknown>[]>(() => [
-    { accessorKey: "created_at", header: "Written", cell: (c) => <span style={{ color: A.muted, whiteSpace: "nowrap" }}>{fmtTime(c.row.original.created_at)}</span> },
-    { accessorKey: "tenant_name", header: "Tenant" },
-    { accessorKey: "tour_name", header: "Tour" },
-    { accessorKey: "version_number", header: "v" },
-    { accessorKey: "status", header: "Status" },
-    { accessorKey: "quality_score", header: "Score", cell: (c) => <span style={{ fontFamily: mono }}>{c.row.original.quality_score ?? "—"}</span> },
-    { accessorKey: "qa_status", header: "QA", cell: (c) => <span>{c.row.original.qa_status ?? "—"}{c.row.original.qa_auto_passed ? " · auto" : ""}</span> },
-    { id: "judge_binding", accessorKey: "judge_binding", header: "Set by", enableSorting: false,
+    { accessorKey: "created_at", header: t("colWritten"), cell: (c) => <span style={{ color: A.muted, whiteSpace: "nowrap" }}>{fmtTime(c.row.original.created_at)}</span> },
+    { accessorKey: "tenant_name", header: t("colTenant") },
+    { accessorKey: "tour_name", header: t("colTour") },
+    { accessorKey: "version_number", header: t("colVersion") },
+    { accessorKey: "status", header: t("colStatus") },
+    { accessorKey: "quality_score", header: t("colScore"), cell: (c) => <span style={{ fontFamily: mono }}>{c.row.original.quality_score ?? "—"}</span> },
+    { accessorKey: "qa_status", header: t("colQa"), cell: (c) => <span>{c.row.original.qa_status ?? "—"}{c.row.original.qa_auto_passed ? t("qaAuto") : ""}</span> },
+    { id: "judge_binding", accessorKey: "judge_binding", header: t("colSetBy"), enableSorting: false,
       cell: (c) => <span style={{ whiteSpace: "nowrap" }}>{bindingLabel(c.row.original.judge_binding)}</span> },
-    { id: "brand_claims_flagged", accessorKey: "brand_claims_flagged", header: "Brand claims", enableSorting: false,
+    { id: "brand_claims_flagged", accessorKey: "brand_claims_flagged", header: t("colBrandClaims"), enableSorting: false,
       cell: (c) => {
         const n = c.row.original.brand_claims_flagged;
         return n == null ? <span style={{ color: A.muted }}>—</span> : n === 0 ? <span style={{ color: A.muted }}>0</span>
-          : <Badge tone="warning" dot={false}>{n} not in source</Badge>;
+          : <Badge tone="warning" dot={false}>{t("notInSource", n)}</Badge>;
       } },
-    { accessorKey: "escalations", header: "Escalations" },
-    { accessorKey: "cost_usd", header: "Cost", cell: (c) => <span style={{ fontFamily: mono }}>{usd(c.row.original.cost_usd)}</span> },
-  ], []);
+    { accessorKey: "escalations", header: t("colEscalations") },
+    { accessorKey: "cost_usd", header: t("colCost"), cell: (c) => <span style={{ fontFamily: mono }}>{usd(c.row.original.cost_usd)}</span> },
+  ], [t, bindingLabel]);
   return (
     <DataTable<VersionRow>
       data={data?.data ?? []} columns={columns} tableId="admin-content-quality-versions" getRowId={(r) => r.id}
       loading={isLoading} error={error ? String(error) : null} onRetry={() => refetch()}
       serverPagination={{ pageIndex: view.page, pageSize: PAGE_SIZE, total: data?.total ?? 0, onChange: (i) => update({ page: i }) }}
       pageSize={PAGE_SIZE} enableCsv csvFilename="content-quality-t2" stickyHeader tableMinWidth={980}
-      emptyTitle="No tour versions yet" onRowClick={(r) => update({ version: r.id })}
+      emptyTitle={t("versionsEmpty")} onRowClick={(r) => update({ version: r.id })}
       toolbarExtra={
         <div style={{ display: "flex", gap: 8 }}>
-          <input value={view.q} onChange={(e) => update({ q: e.target.value, page: 0 })} placeholder="Search tour…" aria-label="Search tours" style={inputStyle} />
+          <input value={view.q} onChange={(e) => update({ q: e.target.value, page: 0 })} placeholder={t("searchTour")} aria-label={t("searchToursAria")} style={inputStyle} />
           <TenantFilter value={view.tenant} onChange={(tenant) => update({ tenant, page: 0 })} tenants={tenants} />
         </div>
       }
@@ -258,30 +266,32 @@ function VersionsTab({ view, update, tenants }: { view: View; update: (p: Partia
 
 // ── Gate stats ──────────────────────────────────────────────────────────────────────────────────
 function StatsTab({ gates, tenants, loading }: { gates: GateStat[]; tenants: TenantStat[]; loading: boolean }) {
+  const t = useT(M);
+  const { gateLabel } = useCqText();
   const gateCols = useMemo<ColumnDef<GateStat, unknown>[]>(() => [
-    { accessorKey: "gate", header: "Gate", cell: (c) => <span><b>{gateLabel(c.row.original.gate)}</b> <span style={{ fontFamily: mono, fontSize: 11, color: A.muted }}>{c.row.original.gate}</span></span> },
-    { accessorKey: "channel", header: "Channel" },
-    { accessorKey: "runs", header: "Runs" },
-    { accessorKey: "failed", header: "Failed" },
-    { accessorKey: "blocking_failed", header: "Blocking fails" },
-    { id: "rate", header: "Fail rate", accessorFn: (r) => (r.runs ? r.failed / r.runs : 0),
+    { accessorKey: "gate", header: t("colGate"), cell: (c) => <span><b>{gateLabel(c.row.original.gate)}</b> <span style={{ fontFamily: mono, fontSize: 11, color: A.muted }}>{c.row.original.gate}</span></span> },
+    { accessorKey: "channel", header: t("colChannel") },
+    { accessorKey: "runs", header: t("colRuns") },
+    { accessorKey: "failed", header: t("colFailed") },
+    { accessorKey: "blocking_failed", header: t("colBlockingFails") },
+    { id: "rate", header: t("colFailRate"), accessorFn: (r) => (r.runs ? r.failed / r.runs : 0),
       cell: (c) => <span style={{ fontFamily: mono }}>{Math.round((c.getValue() as number) * 100)}%</span> },
-  ], []);
+  ], [t, gateLabel]);
   const tenantCols = useMemo<ColumnDef<TenantStat, unknown>[]>(() => [
-    { accessorKey: "tenant_name", header: "Tenant" },
-    { accessorKey: "pieces", header: "Pieces" },
-    { accessorKey: "approved", header: "Approved" },
-    { accessorKey: "held", header: "Held" },
-    { accessorKey: "failed", header: "Failed" },
-    { accessorKey: "cost_usd", header: "LLM cost", cell: (c) => <span style={{ fontFamily: mono }}>{usd(c.row.original.cost_usd)}</span> },
-  ], []);
+    { accessorKey: "tenant_name", header: t("colTenant") },
+    { accessorKey: "pieces", header: t("colPieces") },
+    { accessorKey: "approved", header: t("colApproved") },
+    { accessorKey: "held", header: t("colHeld") },
+    { accessorKey: "failed", header: t("colFailed") },
+    { accessorKey: "cost_usd", header: t("colLlmCost"), cell: (c) => <span style={{ fontFamily: mono }}>{usd(c.row.original.cost_usd)}</span> },
+  ], [t]);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-      <div style={{ fontSize: 12, color: A.muted }}>Last 30 days, final attempt of each piece. Counted from the gate ledger — every gate, not only the one named in held_reason.</div>
+      <div style={{ fontSize: 12, color: A.muted }}>{t("statsNote")}</div>
       <DataTable<GateStat> data={gates} columns={gateCols} tableId="admin-cq-gate-stats" getRowId={(r) => `${r.gate}-${r.channel}`}
-                           loading={loading} enableCsv csvFilename="gate-stats" pageSize={50} emptyTitle="No pieces in this window" />
+                           loading={loading} enableCsv csvFilename="gate-stats" pageSize={50} emptyTitle={t("statsEmpty")} />
       <DataTable<TenantStat> data={tenants} columns={tenantCols} tableId="admin-cq-tenant-stats" getRowId={(r) => r.tenant_id}
-                             loading={loading} pageSize={25} emptyTitle="No pieces in this window" />
+                             loading={loading} pageSize={25} emptyTitle={t("statsEmpty")} />
     </div>
   );
 }
@@ -294,6 +304,9 @@ function DuplicateClusterRow({ cluster, onMerge, busy }: {
   cluster: DuplicateCluster; busy: boolean;
   onMerge: (keepId: string, fromIds: string[], names: string) => void;
 }) {
+  const t = useT(M);
+  const reason = useLookup(DUPLICATE_REASON);
+  const status = useLookup(STATUS);
   const byAtoms = [...cluster.cards].sort((a, b) => b.atoms - a.atoms || b.facts - a.facts);
   const [keep, setKeep] = useState(byAtoms[0].card_id);
   const [merge, setMerge] = useState<Set<string>>(() => new Set());
@@ -304,29 +317,29 @@ function DuplicateClusterRow({ cluster, onMerge, busy }: {
     <div style={{ border: `1px solid ${A.line}`, borderRadius: 8, padding: "10px 12px", background: A.card }}>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
         <b style={{ fontSize: 13 }}>{cluster.country}</b>
-        {cluster.reasons.map((r) => <Badge key={r} tone="warning" dot={false}>{DUPLICATE_REASON_LABELS[r] ?? r}</Badge>)}
+        {cluster.reasons.map((r) => <Badge key={r} tone="warning" dot={false}>{reason(r)}</Badge>)}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         {cluster.cards.map((c) => (
           <div key={c.card_id} style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", fontSize: 12.5 }}>
             <label style={{ display: "inline-flex", gap: 4, alignItems: "center", minWidth: 64 }}>
-              <input type="radio" name={`keep-${cluster.cards[0].card_id}`} checked={keep === c.card_id} onChange={() => setKeep(c.card_id)} aria-label={`Keep ${c.display_name}`} />
-              keep
+              <input type="radio" name={`keep-${cluster.cards[0].card_id}`} checked={keep === c.card_id} onChange={() => setKeep(c.card_id)} aria-label={t("keepAria", c.display_name)} />
+              {t("keep")}
             </label>
             <label style={{ display: "inline-flex", gap: 4, alignItems: "center", minWidth: 70, color: keep === c.card_id ? A.muted2 : A.ink3 }}>
-              <input type="checkbox" disabled={keep === c.card_id} checked={keep !== c.card_id && merge.has(c.card_id)} onChange={() => toggle(c.card_id)} aria-label={`Merge ${c.display_name}`} />
-              merge
+              <input type="checkbox" disabled={keep === c.card_id} checked={keep !== c.card_id && merge.has(c.card_id)} onChange={() => toggle(c.card_id)} aria-label={t("mergeAria", c.display_name)} />
+              {t("merge")}
             </label>
             <span style={{ minWidth: 0 }}>
               <b>{c.display_name}</b>
-              <span style={{ color: A.muted }}> — {[c.locality, c.region].filter(Boolean).join(", ") || "no locality"} · {c.atoms} atoms · {c.facts} facts · {c.status}</span>
+              <span style={{ color: A.muted }}> — {[c.locality, c.region].filter(Boolean).join(", ") || t("noLocality")} · {t("cardCounts", c.atoms, c.facts)} · {status(c.status)}</span>
             </span>
           </div>
         ))}
       </div>
       <div style={{ marginTop: 8 }}>
         <Btn size="sm" disabled={busy || fromIds.length === 0} onClick={() => onMerge(keep, fromIds, keepName)}>
-          Merge {fromIds.length || ""} into “{keepName}”
+          {t("mergeInto", fromIds.length ? String(fromIds.length) : "", keepName)}
         </Btn>
       </div>
     </div>
@@ -334,6 +347,7 @@ function DuplicateClusterRow({ cluster, onMerge, busy }: {
 }
 
 function DuplicatesPanel() {
+  const t = useT(M);
   const toast = useToast();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -347,24 +361,24 @@ function DuplicatesPanel() {
     mutationFn: (p: { keepId: string; fromIds: string[] }) =>
       apiSend<{ atoms_moved: number }>(`/api/admin/content-quality/place-cards/${p.keepId}/merge`, { body: { from_ids: p.fromIds }, admin: true }),
     onSuccess: (r) => {
-      toast.success(`Merged — ${r.atoms_moved} atom link(s) moved`);
+      toast.success(t("merged", r.atoms_moved));
       setPending(null);
       qc.invalidateQueries({ queryKey: ["cq-card-duplicates"] });
       qc.invalidateQueries({ queryKey: ["cq-cards"] });
     },
-    onError: (e) => { toast.error(`Could not merge: ${String(e)}`); setPending(null); },
+    onError: (e) => { toast.error(t("couldNotMerge", String(e))); setPending(null); },
   });
   const clusters = data?.data ?? [];
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <Btn size="sm" variant="secondary" onClick={() => setOpen((o) => !o)}>
-          {open ? "Hide duplicates" : "Find duplicate cards"}
+          {open ? t("hideDuplicates") : t("findDuplicates")}
         </Btn>
-        {open && !isLoading && !error && <span style={{ fontSize: 12, color: A.muted }}>{clusters.length} candidate group(s) — never merged automatically</span>}
+        {open && !isLoading && !error && <span style={{ fontSize: 12, color: A.muted }}>{t("candidateGroups", clusters.length)}</span>}
       </div>
-      {open && isLoading && <span style={{ fontSize: 12, color: A.muted }}>Loading…</span>}
-      {open && error && <span style={{ fontSize: 12, color: A.red }}>Could not load duplicates: {String(error)}</span>}
+      {open && isLoading && <span style={{ fontSize: 12, color: A.muted }}>{t("loading")}</span>}
+      {open && error && <span style={{ fontSize: 12, color: A.red }}>{t("couldNotLoadDuplicates", String(error))}</span>}
       {open && clusters.map((c) => (
         <DuplicateClusterRow key={c.cards.map((x) => x.card_id).join(",")} cluster={c} busy={merge.isPending}
           onMerge={(keepId, fromIds, name) => setPending({ keepId, fromIds, name })} />
@@ -373,9 +387,9 @@ function DuplicatesPanel() {
         open={pending !== null}
         onClose={() => setPending(null)}
         onConfirm={() => pending && merge.mutate({ keepId: pending.keepId, fromIds: pending.fromIds })}
-        title="Merge place cards"
-        body={`Merge ${pending?.fromIds.length ?? 0} card(s) into “${pending?.name ?? ""}”? Their atoms move to this card, their names become aliases, and the merged cards are deleted.`}
-        confirmLabel="Merge"
+        title={t("mergeTitle")}
+        body={t("mergeBody", pending?.fromIds.length ?? 0, pending?.name ?? "")}
+        confirmLabel={t("mergeConfirm")}
         destructive
         busy={merge.isPending}
       />
@@ -384,6 +398,9 @@ function DuplicatesPanel() {
 }
 
 function PlaceCardsTab({ view, update }: { view: View; update: (p: Partial<View>) => void }) {
+  const t = useT(M);
+  const status = useT(STATUS);
+  const statusOf = useLookup(STATUS);
   const toast = useToast();
   const qc = useQueryClient();
   const [tourId, setTourId] = useState("");
@@ -400,30 +417,30 @@ function PlaceCardsTab({ view, update }: { view: View; update: (p: Partial<View>
     mutationFn: ({ id, status }: { id: string; status: string }) =>
       apiSend(`/api/admin/content-quality/place-cards/${id}`, { method: "PATCH", body: { status }, admin: true }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["cq-cards"] }); },
-    onError: (e) => toast.error(`Could not save: ${String(e)}`),
+    onError: (e) => toast.error(t("couldNotSave", String(e))),
   });
   const build = useMutation({
     mutationFn: () => apiSend<{ job_id: string }>(`/api/admin/content-quality/place-cards/build`, { body: { tour_id: tourId.trim(), force }, admin: true }),
-    onSuccess: (r) => { toast.success(`Place-card job queued (${r.job_id})`); setTourId(""); setForce(false); },
-    onError: (e) => toast.error(`Could not queue: ${String(e)}`),
+    onSuccess: (r) => { toast.success(t("jobQueued", r.job_id)); setTourId(""); setForce(false); },
+    onError: (e) => toast.error(t("couldNotQueue", String(e))),
   });
   const columns = useMemo<ColumnDef<PlaceCard, unknown>[]>(() => [
-    { accessorKey: "display_name", header: "Place",
+    { accessorKey: "display_name", header: t("colPlace"),
       cell: (c) => { const p = c.row.original; return <div><b>{p.display_name}</b><div style={{ fontSize: 11.5, color: A.muted }}>{[p.locality, p.region, p.country].filter(Boolean).join(", ")}</div></div>; } },
-    { id: "facts", header: "Checked facts", enableSorting: false,
+    { id: "facts", header: t("colCheckedFacts"), enableSorting: false,
       cell: (c) => <div style={{ fontSize: 12, maxWidth: 460 }}>{c.row.original.naming_note && <div style={{ color: A.muted, marginBottom: 2 }}>{c.row.original.naming_note}</div>}{c.row.original.facts.map((f, i) => <div key={i}>• {f.text} <span style={{ color: A.muted, fontSize: 11 }}>({f.kind || "what_it_is"})</span></div>)}</div> },
-    { accessorKey: "atoms", header: "Atoms" },
-    { accessorKey: "status", header: "Status",
-      cell: (c) => <Badge tone={c.row.original.status === "verified" ? "success" : c.row.original.status === "rejected" ? "danger" : "neutral"} dot={false}>{c.row.original.status}</Badge> },
+    { accessorKey: "atoms", header: t("colAtoms") },
+    { accessorKey: "status", header: t("colStatus"),
+      cell: (c) => <Badge tone={c.row.original.status === "verified" ? "success" : c.row.original.status === "rejected" ? "danger" : "neutral"} dot={false}>{statusOf(c.row.original.status)}</Badge> },
     { id: "actions", header: "", enableSorting: false,
       cell: (c) => (
         <div style={{ display: "flex", gap: 6 }} onClick={(e) => e.stopPropagation()}>
-          <Btn size="sm" disabled={verdict.isPending || c.row.original.status === "verified"} onClick={() => verdict.mutate({ id: c.row.original.card_id, status: "verified" })}>Verify</Btn>
-          <Btn size="sm" variant="danger" disabled={verdict.isPending || c.row.original.status === "rejected"} onClick={() => verdict.mutate({ id: c.row.original.card_id, status: "rejected" })}>Reject</Btn>
-          <Btn size="sm" variant="secondary" onClick={() => setEditing(c.row.original.card_id)}>Facts</Btn>
+          <Btn size="sm" disabled={verdict.isPending || c.row.original.status === "verified"} onClick={() => verdict.mutate({ id: c.row.original.card_id, status: "verified" })}>{t("verify")}</Btn>
+          <Btn size="sm" variant="danger" disabled={verdict.isPending || c.row.original.status === "rejected"} onClick={() => verdict.mutate({ id: c.row.original.card_id, status: "rejected" })}>{t("reject")}</Btn>
+          <Btn size="sm" variant="secondary" onClick={() => setEditing(c.row.original.card_id)}>{t("facts")}</Btn>
         </div>
       ) },
-  ], [verdict]);
+  ], [verdict, t, statusOf]);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
     <DuplicatesPanel />
@@ -432,19 +449,19 @@ function PlaceCardsTab({ view, update }: { view: View; update: (p: Partial<View>
       loading={isLoading} error={error ? String(error) : null} onRetry={() => refetch()}
       serverPagination={{ pageIndex: view.page, pageSize: PAGE_SIZE, total: data?.total ?? 0, onChange: (i) => update({ page: i }) }}
       pageSize={PAGE_SIZE} tableMinWidth={900}
-      emptyTitle="No place cards yet" emptyDescription="Cards are built when T8 writes angles for an atom, or for a whole tour below."
+      emptyTitle={t("cardsEmpty")} emptyDescription={t("cardsEmptyDesc")}
       toolbarExtra={
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <input value={view.q} onChange={(e) => update({ q: e.target.value, page: 0 })} placeholder="Search place / country…" aria-label="Search places" style={inputStyle} />
-          <select value={view.status} onChange={(e) => update({ status: e.target.value, page: 0 })} aria-label="Card status" style={inputStyle}>
-            <option value="">All statuses</option>
-            {["auto_checked", "verified", "rejected"].map((s) => <option key={s} value={s}>{s}</option>)}
+          <input value={view.q} onChange={(e) => update({ q: e.target.value, page: 0 })} placeholder={t("searchPlaces")} aria-label={t("searchPlacesAria")} style={inputStyle} />
+          <select value={view.status} onChange={(e) => update({ status: e.target.value, page: 0 })} aria-label={t("cardStatusAria")} style={inputStyle}>
+            <option value="">{t("allStatuses")}</option>
+            {(["auto_checked", "verified", "rejected"] as const).map((s) => <option key={s} value={s}>{status(s)}</option>)}
           </select>
-          <input value={tourId} onChange={(e) => setTourId(e.target.value)} placeholder="tour_id (uuid)" aria-label="Tour id" style={{ ...inputStyle, fontFamily: mono, minWidth: 260 }} />
-          <Btn size="sm" disabled={!/^[0-9a-f-]{36}$/i.test(tourId.trim()) || build.isPending} onClick={() => build.mutate()}>Build cards for tour</Btn>
-          <label style={{ display: "inline-flex", gap: 4, alignItems: "center", fontSize: 12, color: A.ink3 }} title="Retry places whose last draft found no place or was rejected">
-            <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} aria-label="Retry cached misses" />
-            retry misses
+          <input value={tourId} onChange={(e) => setTourId(e.target.value)} placeholder="tour_id (uuid)" aria-label={t("tourIdAria")} style={{ ...inputStyle, fontFamily: mono, minWidth: 260 }} />
+          <Btn size="sm" disabled={!/^[0-9a-f-]{36}$/i.test(tourId.trim()) || build.isPending} onClick={() => build.mutate()}>{t("buildCards")}</Btn>
+          <label style={{ display: "inline-flex", gap: 4, alignItems: "center", fontSize: 12, color: A.ink3 }} title={t("retryMissesTitle")}>
+            <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} aria-label={t("retryMissesAria")} />
+            {t("retryMisses")}
           </label>
         </div>
       }
@@ -455,6 +472,13 @@ function PlaceCardsTab({ view, update }: { view: View; update: (p: Partial<View>
 }
 
 function Page() {
+  const t = useT(M);
+  const tabs: { key: TabKey; label: string }[] = [
+    { key: "pieces", label: t("tabPieces") },
+    { key: "versions", label: t("tabVersions") },
+    { key: "stats", label: t("tabStats") },
+    { key: "cards", label: t("tabCards") },
+  ];
   // The server renders EMPTY; the URL is read only once hydrated (server snapshot false). Reading
   // window.location in the first render made deep links (?piece=, ?tab=) a hydration mismatch
   // (React #418) and the root re-render reset the dark theme.
@@ -469,14 +493,13 @@ function Page() {
   const tenants = stats.data?.tenants ?? [];
   return (
     <AdminMain>
-      <PageHeader title="Content Quality"
-        description="Every tenant's written content with the quality signals tenants never see: gate results, flagged sentences, what the writer was given, cost. Tenants always receive their content." />
+      <PageHeader title={t("title")} description={t("description")} />
       <div className="a527-dash-body" style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
         <SocialContentSubNav active="content_quality" />
         {/* width/maxWidth 100%: in the phone column layout (.a527-dash-body) a flex-start child would
             shrink-wrap to its widest row and overflow the page (UI smoke, 390px). */}
         <div data-testid="content-quality-ready" style={{ flex: 1, minWidth: 0, width: "100%", maxWidth: "100%", display: "flex", flexDirection: "column", gap: 12 }}>
-          <Tabs tabs={TABS} active={view.tab} onChange={(k) => update({ ...EMPTY, tab: k as TabKey })} />
+          <Tabs tabs={tabs} active={view.tab} onChange={(k) => update({ ...EMPTY, tab: k as TabKey })} />
           {view.tab === "pieces" && <PiecesTab view={view} update={update} tenants={tenants} />}
           {view.tab === "versions" && <VersionsTab view={view} update={update} tenants={tenants} />}
           {view.tab === "stats" && <StatsTab gates={stats.data?.gates ?? []} tenants={tenants} loading={stats.isLoading} />}

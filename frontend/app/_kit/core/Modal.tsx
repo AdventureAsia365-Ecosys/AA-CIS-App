@@ -9,6 +9,8 @@
 import { useEffect } from "react";
 import { AlertTriangle, X } from "lucide-react";
 import { K, RADIUS, sans, serif } from "./tokens";
+import { KIT_MESSAGES } from "./kit.messages";
+import { useT } from "./useI18n";
 
 export function Modal({
   open,
@@ -25,6 +27,7 @@ export function Modal({
   footer?: React.ReactNode;
   width?: number;
 }) {
+  const t = useT(KIT_MESSAGES);
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -82,7 +85,7 @@ export function Modal({
             </div>
             <button
               onClick={onClose}
-              aria-label="Close"
+              aria-label={t("close")}
               style={{
                 border: "none",
                 background: "transparent",
@@ -123,8 +126,8 @@ export function ConfirmModal({
   onConfirm,
   title,
   body,
-  confirmLabel = "Confirm",
-  cancelLabel = "Cancel",
+  confirmLabel,
+  cancelLabel,
   destructive = false,
   busy = false,
 }: {
@@ -138,6 +141,7 @@ export function ConfirmModal({
   destructive?: boolean;
   busy?: boolean;
 }) {
+  const t = useT(KIT_MESSAGES);
   const confirmColor = destructive ? K.danger : K.accent;
   return (
     <Modal
@@ -169,7 +173,7 @@ export function ConfirmModal({
               fontFamily: sans,
             }}
           >
-            {cancelLabel}
+            {cancelLabel ?? t("cancel")}
           </button>
           <button
             onClick={onConfirm}
@@ -187,7 +191,7 @@ export function ConfirmModal({
               fontFamily: sans,
             }}
           >
-            {confirmLabel}
+            {confirmLabel ?? t("confirm")}
           </button>
         </>
       }

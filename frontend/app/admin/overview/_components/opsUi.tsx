@@ -1,9 +1,12 @@
 // app/admin/overview/_components/opsUi.tsx
 // AA-858 — small building blocks shared by the four ops-overview cards (kit tokens only, inline styles).
 import { CloudOff, ExternalLink } from "lucide-react";
-import { Badge, K, ScrollX, sans, useIsPhone } from "../../../_kit";
+import { Badge, K, ScrollX, sans, useIsPhone, useT } from "../../../_kit";
+import type { Lang } from "../../../_kit/core/i18n";
 import { SourceHint } from "./SourceHint";
 import { APP_STATUS_LABEL, type AppStatus } from "../../../../lib/platform";
+import { APP_STATUS_MESSAGES } from "../../../../lib/platform.messages";
+import { OPS } from "./ops.messages";
 import type { HealthState, Unavailable } from "./opsTypes";
 
 export const fmtInt = (n: number | null | undefined) => (n == null ? "—" : Number(n).toLocaleString("en-US"));
@@ -18,10 +21,10 @@ export function fmtMs(ms: number | null | undefined): string {
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms)} ms`;
 }
 
-/** "2026-10-19" → "Oct 19" (UTC date, no time zone shift). */
-export function fmtDay(iso: string): string {
+/** "2026-10-19" → "Oct 19" ("19 thg 10" in Vietnamese; UTC date, no time zone shift). */
+export function fmtDay(iso: string, lang: Lang = "en"): string {
   const d = new Date(`${iso.slice(0, 10)}T00:00:00Z`);
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+  return d.toLocaleDateString(lang === "vi" ? "vi-VN" : "en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
 /** Traffic state -> app status, the backend's app_health.TRAFFIC_TO_STATUS (only used when `overall` is missing). */
@@ -29,10 +32,12 @@ const TRAFFIC_TO_STATUS: Record<HealthState, AppStatus> = { ok: "ok", warn: "deg
 
 /** S243 — an app's status pill, with the same words as /admin/platform/apps (lib/platform APP_STATUS_LABEL). */
 export function AppStatusPill({ status, state }: { status?: AppStatus; state: HealthState }) {
-  const s = APP_STATUS_LABEL[status ?? TRAFFIC_TO_STATUS[state] ?? "unknown"] ?? APP_STATUS_LABEL.unknown;
+  const t = useT(APP_STATUS_MESSAGES);
+  const code = status && Object.hasOwn(APP_STATUS_LABEL, status) ? status : TRAFFIC_TO_STATUS[state] ?? "unknown";
+  const s = APP_STATUS_LABEL[code] ?? APP_STATUS_LABEL.unknown;
   return (
     <Badge tone={s.tone} dot>
-      {s.label}
+      {Object.hasOwn(APP_STATUS_LABEL, code) ? t(code) : s.label}
     </Badge>
   );
 }
@@ -119,6 +124,7 @@ export function OpsCard({
 
 /** A section the backend could not fill: a calm note with its plain-English reason, never raw JSON. */
 export function UnavailableNote({ section }: { section: Unavailable }) {
+  const t = useT(OPS);
   return (
     <div
       data-testid="ops-unavailable"
@@ -135,7 +141,7 @@ export function UnavailableNote({ section }: { section: Unavailable }) {
       }}
     >
       <CloudOff size={18} style={{ color: K.muted2, flexShrink: 0 }} aria-hidden />
-      <span>{section.message || "Not available right now."}</span>
+      <span>{section.message || t("unavailable")}</span>
     </div>
   );
 }
@@ -206,15 +212,11 @@ export function Kpi({
 
 /** "+12% vs previous 7 days" / "−5% …" / "new" — growth is good for traffic metrics. */
 export function ChangeLine({ pct, prev }: { pct: number | null | undefined; prev: number | null | undefined }) {
+  const t = useT(OPS);
   if (prev == null) return null;
-  if (pct == null) return <span>{prev === 0 ? "none the 7 days before" : "—"}</span>;
+  if (pct == null) return <span>{prev === 0 ? t("noneBefore") : "—"}</span>;
   const sign = pct > 0 ? "+" : pct < 0 ? "−" : "±";
-  return (
-    <span>
-      {sign}
-      {Math.abs(pct)}% vs the 7 days before
-    </span>
-  );
+  return <span>{t("vsBefore", sign, Math.abs(pct))}</span>;
 }
 
 export const TH: React.CSSProperties = {

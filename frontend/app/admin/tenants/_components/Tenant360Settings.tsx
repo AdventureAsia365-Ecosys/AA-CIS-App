@@ -8,20 +8,21 @@
 // Both writes are admin-only (lib/rbac.ts API_WRITE_RULES "tenants" + backend
 // _require_tenant_admin) and each writes an acp_shared.audit_log row with before/after (AA-797),
 // which the Audit tab shows. Optimistic: the saved values switch immediately and roll back with
-// an error toast if the server refuses.
+// an error toast if the server refuses. AA-994: text in the UI language (tenant360.messages.ts).
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle } from "lucide-react";
 import { A, mono, sans } from "../../_components/adminUi";
 import {
-  Badge, Button, ErrorState, Spinner, ToastProvider, apiGet, apiSend, useToast,
+  Badge, Button, ErrorState, Spinner, ToastProvider, apiGet, apiSend, useLang, useT, useToast,
 } from "../../../_kit";
 import {
   DAILY_PUBLISH_LIMIT_DEFAULT, DAILY_PUBLISH_LIMIT_MAX, PLANNING_CHANNELS, RATE_LIMIT_RPM_MAX,
   SEO_SUPPORTED_MARKETS, type TenantConfig, fmtDailyPublishLimit, parseDailyPublishLimit,
   parseMarkets, validateConfig, validateDailyPublishLimit, validateRpm,
 } from "./tenant360";
+import { T360, T360_WORDS_MESSAGES } from "./tenant360.messages";
 
 const PLAN_CHOICES = ["starter", "growth", "business"];
 
@@ -61,11 +62,13 @@ interface PatchResult { changed: string[]; plan_tier: string; rate_limit_rpm: nu
 function PlanForm({ tenantId, planTier, rateLimitRpm, locked, onChanged }: {
   tenantId: string; planTier: string; rateLimitRpm: number; locked: boolean; onChanged: () => void;
 }) {
+  const t = useT(T360);
+  const words = T360_WORDS_MESSAGES[useLang()];
   const toast = useToast();
   const [saved, setSaved] = useState({ plan: planTier, rpm: rateLimitRpm });
   const [plan, setPlan] = useState(planTier);
   const [rpm, setRpm] = useState(String(rateLimitRpm));
-  const rpmError = validateRpm(rpm);
+  const rpmError = validateRpm(rpm, words);
   const planDirty = plan !== saved.plan;
   const rpmDirty = Number(rpm) !== saved.rpm;
   const choices = PLAN_CHOICES.includes(saved.plan) ? PLAN_CHOICES : [saved.plan, ...PLAN_CHOICES];
@@ -80,13 +83,13 @@ function PlanForm({ tenantId, planTier, rateLimitRpm, locked, onChanged }: {
     },
     onError: (err, _body, ctx) => {
       if (ctx) { setSaved(ctx.prev); setPlan(ctx.prev.plan); setRpm(String(ctx.prev.rpm)); }
-      toast.error(`Plan / rate limit not saved: ${(err as Error).message}`);
+      toast.error(t("planNotSaved", (err as Error).message));
     },
     onSuccess: (res) => {
       // A plan change without an explicit RPM applies that plan's default — show what was stored.
       setSaved({ plan: res.plan_tier, rpm: res.rate_limit_rpm });
       setPlan(res.plan_tier); setRpm(String(res.rate_limit_rpm));
-      toast.success(res.changed.length ? `Saved: ${res.changed.join(", ")}` : "Nothing changed");
+      toast.success(res.changed.length ? t("savedFields", res.changed.join(", ")) : t("nothingChanged"));
       onChanged();
     },
   });
@@ -100,18 +103,17 @@ function PlanForm({ tenantId, planTier, rateLimitRpm, locked, onChanged }: {
   }
 
   return (
-    <Section title="Plan & rate limit"
-      hint="Changing the plan resets the rate limit to that plan's default unless you also change the rate limit.">
+    <Section title={t("planTitle")} hint={t("planHint")}>
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
         <div>
-          <label style={labelStyle} htmlFor={`plan-${tenantId}`}>Plan</label>
+          <label style={labelStyle} htmlFor={`plan-${tenantId}`}>{t("plan")}</label>
           <select id={`plan-${tenantId}`} value={plan} disabled={locked || m.isPending}
             onChange={e => setPlan(e.target.value)} style={{ ...inputStyle, minWidth: 140 }}>
             {choices.map(p => <option key={p} value={p}>{p}</option>)}
           </select>
         </div>
         <div>
-          <label style={labelStyle} htmlFor={`rpm-${tenantId}`}>Rate limit (requests/min)</label>
+          <label style={labelStyle} htmlFor={`rpm-${tenantId}`}>{t("rateLimit")}</label>
           <input id={`rpm-${tenantId}`} type="number" min={1} max={RATE_LIMIT_RPM_MAX} value={rpm}
             disabled={locked || m.isPending} onChange={e => setRpm(e.target.value)}
             aria-invalid={!!rpmError} style={{ ...inputStyle, width: 130 }} />
@@ -121,13 +123,13 @@ function PlanForm({ tenantId, planTier, rateLimitRpm, locked, onChanged }: {
       <div style={{ display: "flex", gap: 8, marginTop: 14, alignItems: "center", flexWrap: "wrap" }}>
         <Button variant="primary" size="sm" onClick={save}
           disabled={locked || m.isPending || !!rpmError || (!planDirty && !rpmDirty)}>
-          {m.isPending ? <><Spinner size={12} /> Saving…</> : "Save plan"}
+          {m.isPending ? <><Spinner size={12} /> {t("saving")}</> : t("savePlan")}
         </Button>
         {(planDirty || rpmDirty) && !m.isPending && (
-          <Button variant="ghost" size="sm" onClick={() => { setPlan(saved.plan); setRpm(String(saved.rpm)); }}>Reset</Button>
+          <Button variant="ghost" size="sm" onClick={() => { setPlan(saved.plan); setRpm(String(saved.rpm)); }}>{t("reset")}</Button>
         )}
         <span style={{ fontSize: 11.5, color: A.muted2 }}>
-          Current: <span style={{ fontFamily: mono }}>{saved.plan} · {saved.rpm}/min</span>
+          {t("current")} <span style={{ fontFamily: mono }}>{saved.plan} · {t("perMin", saved.rpm)}</span>
         </span>
       </div>
     </Section>
@@ -143,13 +145,15 @@ interface PublishLimitPatchResult { changed: string[]; daily_publish_limit?: num
 function PublishLimitForm({ tenantId, dailyPublishLimit, locked, onChanged }: {
   tenantId: string; dailyPublishLimit: number | null | undefined; locked: boolean; onChanged: () => void;
 }) {
+  const t = useT(T360);
+  const words = T360_WORDS_MESSAGES[useLang()];
   const toast = useToast();
   // undefined = GET /admin/tenants does not return the key: the AA-819 backend is not deployed, so
   // there is no limit to show or set yet. Keep the field read-only rather than let a save 422.
   const supported = dailyPublishLimit !== undefined;
   const [saved, setSaved] = useState<number | null>(dailyPublishLimit ?? null);
   const [value, setValue] = useState(dailyPublishLimit == null ? "" : String(dailyPublishLimit));
-  const error = validateDailyPublishLimit(value);
+  const error = validateDailyPublishLimit(value, words);
   const dirty = !error && parseDailyPublishLimit(value) !== saved;
 
   const m = useMutation({
@@ -164,26 +168,24 @@ function PublishLimitForm({ tenantId, dailyPublishLimit, locked, onChanged }: {
     },
     onError: (err, _limit, ctx) => {
       if (ctx) { setSaved(ctx.prev); setValue(ctx.prev == null ? "" : String(ctx.prev)); }
-      toast.error(`Daily publish limit not saved: ${(err as Error).message}`);
+      toast.error(t("dplNotSaved", (err as Error).message));
     },
     onSuccess: (res, limit) => {
       const stored = res.daily_publish_limit === undefined ? limit : res.daily_publish_limit;
       setSaved(stored);
       setValue(stored == null ? "" : String(stored));
-      toast.success(res.changed.length ? `Saved: ${res.changed.join(", ")}` : "Nothing changed");
+      toast.success(res.changed.length ? t("savedFields", res.changed.join(", ")) : t("nothingChanged"));
       onChanged();
     },
   });
 
   return (
-    <Section title="Daily publish limit"
-      hint={supported
-        ? `Publishes this tenant can make per UTC day. Leave empty to use the default (${DAILY_PUBLISH_LIMIT_DEFAULT}/day).`
-        : "Not available yet: the server does not report a daily publish limit for this tenant."}>
+    <Section title={t("dplTitle")}
+      hint={supported ? t("dplHint", DAILY_PUBLISH_LIMIT_DEFAULT) : t("dplUnsupported")}>
       <div>
-        <label style={labelStyle} htmlFor={`dpl-${tenantId}`}>Publishes per day (override)</label>
+        <label style={labelStyle} htmlFor={`dpl-${tenantId}`}>{t("dplLabel")}</label>
         <input id={`dpl-${tenantId}`} type="number" min={1} max={DAILY_PUBLISH_LIMIT_MAX} value={value}
-          placeholder={`default ${DAILY_PUBLISH_LIMIT_DEFAULT}`}
+          placeholder={t("dplPlaceholder", DAILY_PUBLISH_LIMIT_DEFAULT)}
           disabled={!supported || locked || m.isPending} onChange={e => setValue(e.target.value)}
           aria-invalid={!!error} style={{ ...inputStyle, width: 160 }} />
         <FieldError msg={error} />
@@ -191,13 +193,13 @@ function PublishLimitForm({ tenantId, dailyPublishLimit, locked, onChanged }: {
       <div style={{ display: "flex", gap: 8, marginTop: 14, alignItems: "center", flexWrap: "wrap" }}>
         <Button variant="primary" size="sm" onClick={() => m.mutate(parseDailyPublishLimit(value))}
           disabled={!supported || locked || m.isPending || !!error || !dirty}>
-          {m.isPending ? <><Spinner size={12} /> Saving…</> : "Save limit"}
+          {m.isPending ? <><Spinner size={12} /> {t("saving")}</> : t("saveLimit")}
         </Button>
         {supported && saved != null && !m.isPending && (
-          <Button variant="ghost" size="sm" disabled={locked} onClick={() => m.mutate(null)}>Use default</Button>
+          <Button variant="ghost" size="sm" disabled={locked} onClick={() => m.mutate(null)}>{t("useDefault")}</Button>
         )}
         <span style={{ fontSize: 11.5, color: A.muted2 }}>
-          Current: <span style={{ fontFamily: mono }}>{fmtDailyPublishLimit(supported ? saved : undefined)}</span>
+          {t("current")} <span style={{ fontFamily: mono }}>{fmtDailyPublishLimit(supported ? saved : undefined, words)}</span>
         </span>
       </div>
     </Section>
@@ -209,6 +211,8 @@ function PublishLimitForm({ tenantId, dailyPublishLimit, locked, onChanged }: {
 // `server` is the react-query cache value (the parent's useQuery re-renders on every optimistic
 // write / rollback); the form's own state is seeded from it once, at mount.
 function ConfigForm({ tenantId, server, locked }: { tenantId: string; server: TenantConfig; locked: boolean }) {
+  const t = useT(T360);
+  const words = T360_WORDS_MESSAGES[useLang()];
   const toast = useToast();
   const qc = useQueryClient();
   const key = ["tenant360", tenantId, "config"];
@@ -217,7 +221,7 @@ function ConfigForm({ tenantId, server, locked }: { tenantId: string; server: Te
   const [ppw, setPpw] = useState(String(server.posts_per_week));
 
   const markets = parseMarkets(marketsText);
-  const errors = validateConfig(markets, channels, ppw);
+  const errors = validateConfig(markets, channels, ppw, words);
   const valid = Object.keys(errors).length === 0;
   const dirty = markets.join(",") !== server.markets.join(",")
     || [...channels].sort().join(",") !== [...server.channels].sort().join(",")
@@ -236,11 +240,11 @@ function ConfigForm({ tenantId, server, locked }: { tenantId: string; server: Te
     onError: (err, _body, ctx) => {
       // Roll the saved values back; the form keeps the admin's edits so they can retry.
       if (ctx?.prev) qc.setQueryData(key, ctx.prev);
-      toast.error(`Planning config not saved: ${(err as Error).message}`);
+      toast.error(t("configNotSaved", (err as Error).message));
     },
     onSuccess: (res) => {
       qc.setQueryData(key, res);
-      toast.success("Planning config saved");
+      toast.success(t("configSaved"));
     },
   });
 
@@ -249,23 +253,22 @@ function ConfigForm({ tenantId, server, locked }: { tenantId: string; server: Te
   }
 
   return (
-    <Section title="Planning config"
-      hint="Markets, channels and capacity the T7 planner uses for this tenant (acp_shared.tenant_config + posts/week).">
+    <Section title={t("configTitle")} hint={t("configHint")}>
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         <div>
-          <label style={labelStyle} htmlFor={`markets-${tenantId}`}>Markets (2-letter codes, comma-separated)</label>
+          <label style={labelStyle} htmlFor={`markets-${tenantId}`}>{t("marketsLabel")}</label>
           <input id={`markets-${tenantId}`} value={marketsText} disabled={locked || m.isPending}
             onChange={e => setMarketsText(e.target.value)} placeholder="US, UK, DE"
             aria-invalid={!!errors.markets} style={{ ...inputStyle, width: 320 }} />
           <FieldError msg={errors.markets} />
           {!errors.markets && notResearched.length > 0 && (
             <div style={{ marginTop: 5, fontSize: 11.5, color: A.amber }}>
-              Not covered by SEO research today: {notResearched.join(", ")} (supported: {SEO_SUPPORTED_MARKETS.join(", ")}).
+              {t("notResearched", notResearched.join(", "), SEO_SUPPORTED_MARKETS.join(", "))}
             </div>
           )}
         </div>
         <div>
-          <span style={labelStyle}>Channels</span>
+          <span style={labelStyle}>{t("channels")}</span>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {PLANNING_CHANNELS.map(c => {
               const on = channels.includes(c);
@@ -284,7 +287,7 @@ function ConfigForm({ tenantId, server, locked }: { tenantId: string; server: Te
           <FieldError msg={errors.channels} />
         </div>
         <div>
-          <label style={labelStyle} htmlFor={`ppw-${tenantId}`}>Posts per week</label>
+          <label style={labelStyle} htmlFor={`ppw-${tenantId}`}>{t("postsPerWeek")}</label>
           <input id={`ppw-${tenantId}`} type="number" min={1} max={14} value={ppw}
             disabled={locked || m.isPending} onChange={e => setPpw(e.target.value)}
             aria-invalid={!!errors.posts_per_week} style={{ ...inputStyle, width: 100 }} />
@@ -294,16 +297,16 @@ function ConfigForm({ tenantId, server, locked }: { tenantId: string; server: Te
       <div style={{ display: "flex", gap: 8, marginTop: 14, alignItems: "center", flexWrap: "wrap" }}>
         <Button variant="primary" size="sm" disabled={locked || m.isPending || !valid || !dirty}
           onClick={() => m.mutate({ markets, channels, posts_per_week: Number(ppw) })}>
-          {m.isPending ? <><Spinner size={12} /> Saving…</> : "Save planning config"}
+          {m.isPending ? <><Spinner size={12} /> {t("saving")}</> : t("saveConfig")}
         </Button>
         {dirty && !m.isPending && (
           <Button variant="ghost" size="sm" onClick={() => {
             setMarketsText(server.markets.join(", ")); setChannels(server.channels); setPpw(String(server.posts_per_week));
-          }}>Reset</Button>
+          }}>{t("reset")}</Button>
         )}
         <span style={{ fontSize: 11.5, color: A.muted2, display: "inline-flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
-          Saved: {server.markets.map(mk => <Badge key={mk} tone="neutral" dot={false}>{mk}</Badge>)}
-          <span style={{ fontFamily: mono }}>· {server.channels.join(", ")} · {server.posts_per_week}/wk</span>
+          {t("savedLabel")} {server.markets.map(mk => <Badge key={mk} tone="neutral" dot={false}>{mk}</Badge>)}
+          <span style={{ fontFamily: mono }}>· {server.channels.join(", ")} · {t("perWeek", server.posts_per_week)}</span>
         </span>
       </div>
     </Section>
@@ -311,6 +314,7 @@ function ConfigForm({ tenantId, server, locked }: { tenantId: string; server: Te
 }
 
 function SettingsInner({ tenantId, planTier, rateLimitRpm, dailyPublishLimit, status, onChanged }: Tenant360SettingsProps) {
+  const t = useT(T360);
   const locked = status === "offboarded";
   const cfg = useQuery({
     queryKey: ["tenant360", tenantId, "config"],
@@ -320,20 +324,20 @@ function SettingsInner({ tenantId, planTier, rateLimitRpm, dailyPublishLimit, st
     <div style={{ display: "flex", flexDirection: "column", gap: 14, maxWidth: 640 }}>
       {locked && (
         <div style={{ padding: "9px 12px", background: A.amberSoft, border: `1px solid ${A.amber}`, borderRadius: 8, fontSize: 12, color: A.ink }}>
-          This tenant is offboarded — restore it before changing its settings.
+          {t("offboardedLock")}
         </div>
       )}
       <PlanForm tenantId={tenantId} planTier={planTier} rateLimitRpm={rateLimitRpm} locked={locked} onChanged={onChanged} />
       <PublishLimitForm tenantId={tenantId} dailyPublishLimit={dailyPublishLimit} locked={locked} onChanged={onChanged} />
       {cfg.isLoading ? (
-        <div style={{ fontSize: 12, color: A.muted, display: "flex", gap: 6, alignItems: "center" }}><Spinner size={12} /> Loading planning config…</div>
+        <div style={{ fontSize: 12, color: A.muted, display: "flex", gap: 6, alignItems: "center" }}><Spinner size={12} /> {t("loadingConfig")}</div>
       ) : cfg.isError || !cfg.data ? (
-        <ErrorState message={`Failed to load planning config: ${(cfg.error as Error)?.message ?? "unknown error"}`} onRetry={() => cfg.refetch()} />
+        <ErrorState message={t("configLoadError", (cfg.error as Error)?.message ?? t("unknownError"))} onRetry={() => cfg.refetch()} />
       ) : (
         <ConfigForm tenantId={tenantId} server={cfg.data} locked={locked} />
       )}
       <div style={{ fontSize: 11, color: A.muted2 }}>
-        Status (suspend / resume), offboard / restore and key rotation stay on the tenant row. Every save here is audited (Audit tab).
+        {t("settingsFootnote")}
       </div>
     </div>
   );

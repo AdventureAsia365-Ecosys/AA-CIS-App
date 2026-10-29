@@ -19,16 +19,19 @@
   },
   "files": {
     "DataTable.tsx": {
-      "sha256": "6fe21f2554960f84fac16851df779283718d3d4daae5638d7a9f4b64a3cda9d4"
+      "sha256": "f91e8ea62e3f0e211378813d6708e8fab682870d2120038721b09c6d30be81c7"
     },
     "Drawer.tsx": {
-      "sha256": "0ddf4e0fe403251d3122e15ecbce4b4e1e1dca5f35283ff4ff69ec3526d2a8b4"
+      "sha256": "ad34ed672b053b423004c1fdb04387d60d417fc4f6abb2e19e92696e5778c2d6"
     },
     "GuidePanel.tsx": {
-      "sha256": "c17bb6f391efb1c652a6f286e05b3b02d31cb38b20ecf49fccbf9d7bcc8104f7"
+      "sha256": "8dd928920b5dc760b7b80433011f8b482ae6592c91456557542cb45df59142a5"
+    },
+    "LangSwitch.tsx": {
+      "sha256": "0d7eaafd876984ba42766e124bf26145688b3f13031e753e771f183067687bba"
     },
     "Modal.tsx": {
-      "sha256": "7a6d6e58b2c4ffd0cc57300bb267154c0faf0f8fb0d64d438c58e0e168863614"
+      "sha256": "fbae4c09d64076e15fb415957393ddc6b9565bdc90d500c17cd58246f5f8cbd4"
     },
     "PageFrame.tsx": {
       "sha256": "ef558753dd05254cefa43c03b0e42260529e5cb3ea91c3bfed4efc701465be48"
@@ -37,7 +40,7 @@
       "sha256": "bbcd0aea4a7b76cad7098c1f6329fd8f137a25281767e75fc8c3d3c39887cfb2"
     },
     "Toast.tsx": {
-      "sha256": "8e5f11d80b39adfaabd706afa6b72f176b640676f6489d363555262f69f17d2e"
+      "sha256": "0a8813902842ac63feba66873ad7d47e3a9162f27f5a43da33ba2b149eaaf4c5"
     },
     "brand.ts": {
       "sha256": "bc6773a9a5a69ae55496752779c9c2fc8ac49eb07ed832cc91edff70c21dda00"
@@ -54,8 +57,14 @@
     "guide.ts": {
       "sha256": "2f98d7ba5a97579d96ab4b77f7e502167714177171ce8392c488c311cfdd2660"
     },
+    "i18n.ts": {
+      "sha256": "44abb6d5201474cbbd8a7eb449d535829bc3c77af044362385156ea88310d583"
+    },
+    "kit.messages.ts": {
+      "sha256": "81d1fdd7d4abce4e764b3f9d1db76d1143fdeed243017298e464788393a0d6e6"
+    },
     "primitives.tsx": {
-      "sha256": "a96f3d52092facc793e428a52b9f7ae48462a6dba6e87790334249f8bbb13ed6"
+      "sha256": "0dc2c0d34b2286df42d638abcff0d9530842800eff01fa11022528889e423ea7"
     },
     "savedViews.ts": {
       "sha256": "902e4502baa8e95134d6ef20773bf624fbc07ac044063824e3a424de33c5eb24"
@@ -70,10 +79,13 @@
       "sha256": "17f8bc6cf10dd0e6586510fc5b4c75476d76e047c9b0d1fc7bc08dc9bcf52899"
     },
     "tokens.ts": {
-      "sha256": "7a7754c9bee02b06cb58b606e51ec4bd3568762fdd06baa68c6ed1659794d0d1"
+      "sha256": "ae4f35f49a4fcba5a21aec3f61bac70fe7a472e328984a57e653510749f32fd9"
     },
     "useHydrated.ts": {
       "sha256": "ff03882575b53db53178d782e184fc9844ab02f03e5c89d09ff981f2422180a4"
+    },
+    "useI18n.ts": {
+      "sha256": "f8c823d48d113320d63f2b24751217e408f2e0e0fc6f27ddca3dc8cdb695267c"
     },
     "useMediaQuery.ts": {
       "sha256": "df0174679a66288ff2343bc45b797b08dea342cbff09d940f60287e45f66d96f"

@@ -63,7 +63,8 @@ import SocialContentSubNav from "../_components/SocialContentSubNav";
 import { A, mono, sans, Card, Badge, LoadingScreen } from "../_components/adminUi";
 import { fetchJson, EmptyState, ErrorState } from "../_components/auditPanels";
 import { TenantSelect } from "../_components/TenantSelect";
-import { AdminMain, AdminPaneBody, AdminPaneHeader, PageHeader, formatDateTime } from "../../_kit";
+import { AdminMain, AdminPaneBody, AdminPaneHeader, PageHeader, useFormat, useT } from "../../_kit";
+import { CHANNEL, TRACE } from "./messages";
 
 // ── Types — match GET /api/admin/a4/content-log's response (AA-568 extension) ──────────────────
 
@@ -102,12 +103,12 @@ const STATUS_COLOR: Record<string, "green" | "amber" | "red" | "gray"> = {
 };
 
 const STATUS_OPTIONS = [
-  { value: "", label: "All statuses" },
-  { value: "processing", label: "Processing" },
-  { value: "approved", label: "Approved" },
-  { value: "held", label: "Held" },
-  { value: "failed", label: "Failed" },
-];
+  { value: "", label: "allStatuses" },
+  { value: "processing", label: "processing" },
+  { value: "approved", label: "approved" },
+  { value: "held", label: "held" },
+  { value: "failed", label: "failed" },
+] as const;
 
 // Real channel values only (SlateTab.tsx's own CHANNEL_TABS — the one place this codebase
 // enumerates every channel a piece can actually be written for), never a fabricated list.
@@ -124,10 +125,10 @@ const CHANNEL_OPTIONS = [
 ];
 
 const PUBLISHED_OPTIONS = [
-  { value: "", label: "Any" },
-  { value: "yes", label: "Published" },
-  { value: "no", label: "Not published" },
-];
+  { value: "", label: "any" },
+  { value: "yes", label: "published" },
+  { value: "no", label: "notPublished" },
+] as const;
 
 const selectStyle: React.CSSProperties = {
   padding: "8px 12px", background: A.card, border: `1px solid ${A.line}`, borderRadius: 8,
@@ -171,7 +172,15 @@ function sortValue(r: ContentLogRow, key: SortKey): string | number {
   }
 }
 
+/** The channel filter label in the UI language ("" = all channels); an unknown code as it is. */
+function useChannelLabel(): (code: string) => string {
+  const t = useT(CHANNEL) as unknown as (key: string) => string;
+  return (code) => (!code ? t("all") : Object.hasOwn(CHANNEL.en, code) ? t(code) : code);
+}
+
 export default function ContentTracePage() {
+  const t = useT(TRACE);
+  const channelLabel = useChannelLabel();
   const [tenantId, setTenantId] = useState("");
   const [channel, setChannel] = useState("");
   const [status, setStatus] = useState("");
@@ -217,11 +226,7 @@ export default function ContentTracePage() {
   // refused (409 tenant_removes_post): the tenant removes it from the portal. The label, the confirm text and the
   // error line say exactly that.
   const handleForceUnpublish = useCallback(async (publishId: string) => {
-    if (!window.confirm(
-      "Mark this post unpublished in AA's record? This does NOT remove it from the tenant's WordPress site or "
-      + "Facebook Page, and afterwards the tenant can no longer remove it from the portal: they must delete it "
-      + "on the channel directly.",
-    )) return;
+    if (!window.confirm(t("confirmUnpublish"))) return;
     setUnpublishingId(publishId);
     setUnpublishError(null);
     try {
@@ -238,7 +243,7 @@ export default function ContentTracePage() {
     } finally {
       setUnpublishingId(null);
     }
-  }, [load]);
+  }, [load, t]);
 
   // AA-572 point 2 — tenant stat header: total pieces + per-channel breakdown, computed
   // client-side from the already-loaded (already tenant/channel/status/date-filtered) `rows` —
@@ -280,40 +285,34 @@ export default function ContentTracePage() {
     <AdminMain variant="split">
         <AdminPaneHeader>
           <PageHeader
-            title="06 · Content Trace"
-            description={
-              <>
-                Every content piece written across ALL tenants, one row per write attempt — full
-                lineage, all 3 generated angles, gate detail, and retry reasoning on click. Admin-only
-                lesson log, not the tenant&apos;s own view of their content.
-              </>
-            }
+            title={t("title")}
+            description={t("description")}
           />
 
           {/* Filter bar — Tenant is the primary lens ("All" is a real, always-valid choice, never
               a placeholder that must be replaced before the table shows anything). */}
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 16 }}>
             {/* AA-919 S254: the shared admin tenant picker (active tenants, by name; "" = All tenants). */}
-            <TenantSelect inline value={tenantId} onChange={setTenantId} placeholder="All tenants" />
-            <FilterField label="Channel">
+            <TenantSelect inline value={tenantId} onChange={setTenantId} placeholder={t("allTenants")} />
+            <FilterField label={t("channel")}>
               <select value={channel} onChange={e => setChannel(e.target.value)} style={{ ...selectStyle, minWidth: 140 }}>
-                {CHANNEL_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                {CHANNEL_OPTIONS.map(o => <option key={o.value} value={o.value}>{channelLabel(o.value)}</option>)}
               </select>
             </FilterField>
-            <FilterField label="Status">
+            <FilterField label={t("status")}>
               <select value={status} onChange={e => setStatus(e.target.value)} style={{ ...selectStyle, minWidth: 140 }}>
-                {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{t(o.label)}</option>)}
               </select>
             </FilterField>
-            <FilterField label="Published">
+            <FilterField label={t("published")}>
               <select value={published} onChange={e => setPublished(e.target.value)} style={{ ...selectStyle, minWidth: 130 }}>
-                {PUBLISHED_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                {PUBLISHED_OPTIONS.map(o => <option key={o.value} value={o.value}>{t(o.label)}</option>)}
               </select>
             </FilterField>
-            <FilterField label="From">
+            <FilterField label={t("from")}>
               <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ ...selectStyle, cursor: "text" }} />
             </FilterField>
-            <FilterField label="To">
+            <FilterField label={t("to")}>
               <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ ...selectStyle, cursor: "text" }} />
             </FilterField>
           </div>
@@ -323,9 +322,9 @@ export default function ContentTracePage() {
               rather than inventing a differently-shaped one). */}
           {!loading && !error && rows && (
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 14 }}>
-              <StatTile label="Total pieces" value={stats.total} />
+              <StatTile label={t("totalPieces")} value={stats.total} />
               {stats.byChannel.map(([ch, count]) => (
-                <StatTile key={ch} label={CHANNEL_LABEL[ch] ?? ch} value={count} />
+                <StatTile key={ch} label={channelLabel(ch)} value={count} />
               ))}
             </div>
           )}
@@ -354,7 +353,7 @@ export default function ContentTracePage() {
                 </div>
               )}
               {loading ? (
-                <LoadingScreen msg="Loading Content Trace…" />
+                <LoadingScreen msg={t("loading")} />
               ) : error ? (
                 <ErrorState message={error} onRetry={load} />
               ) : !rows || rows.length === 0 ? (
@@ -362,8 +361,8 @@ export default function ContentTracePage() {
                 // load resolves (never on the LoadingScreen), so a blank/broken page still fails.
                 <div data-testid="admin-content-ready">
                   <EmptyState
-                    title="No content pieces match these filters"
-                    body="Nothing has been written yet for this combination of tenant/channel/status/date — try widening a filter, or 'All tenants' to check whether the data exists elsewhere."
+                    title={t("emptyTitle")}
+                    body={t("emptyBody")}
                   />
                 </div>
               ) : (
@@ -390,9 +389,10 @@ function StatTile({ label, value }: { label: string; value: number }) {
 }
 
 function FilterField({ label, children }: { label: string; children: React.ReactNode }) {
+  const t = useT(TRACE);
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-      <span style={{ fontSize: 11.5, color: A.muted }}>{label}:</span>
+      <span style={{ fontSize: 11.5, color: A.muted }}>{t("filterLabel", label)}</span>
       {children}
     </div>
   );
@@ -408,18 +408,20 @@ const COLS = 10;
 // AA-572 shipped only 3 sortable columns (Gate/Retry/Created at); AA-575 extends every remaining
 // column (Topic/Tenant/Tour/Channel/Angle chosen/Status/Published) to the same mechanism, per
 // Nghiệp's explicit follow-up — only the leading expand-chevron column has no `sortKey`.
-const HEADERS: { label: string; sortKey?: SortKey }[] = [
-  { label: "" },
-  { label: "Topic", sortKey: "topic" },
-  { label: "Tenant", sortKey: "tenant" },
-  { label: "Tour", sortKey: "tour" },
-  { label: "Channel", sortKey: "channel" },
-  { label: "Angle chosen", sortKey: "angle" },
-  { label: "Status", sortKey: "status" },
-  { label: "Gate count", sortKey: "gate" },
-  { label: "Retry count", sortKey: "retry" },
-  { label: "Published", sortKey: "published" },
-  { label: "Created at", sortKey: "created_at" },
+type HeaderWord = "colTopic" | "colTenant" | "colTour" | "channel" | "colAngle" | "status" | "colGate" | "colRetry"
+  | "published" | "colCreated";
+const HEADERS: { label: HeaderWord | null; sortKey?: SortKey }[] = [
+  { label: null },
+  { label: "colTopic", sortKey: "topic" },
+  { label: "colTenant", sortKey: "tenant" },
+  { label: "colTour", sortKey: "tour" },
+  { label: "channel", sortKey: "channel" },
+  { label: "colAngle", sortKey: "angle" },
+  { label: "status", sortKey: "status" },
+  { label: "colGate", sortKey: "gate" },
+  { label: "colRetry", sortKey: "retry" },
+  { label: "published", sortKey: "published" },
+  { label: "colCreated", sortKey: "created_at" },
 ];
 
 function ContentTraceTable({ rows, expandedId, sort, onSort, onToggle, onForceUnpublish, unpublishingId }: {
@@ -427,6 +429,8 @@ function ContentTraceTable({ rows, expandedId, sort, onSort, onToggle, onForceUn
   onToggle: (id: string) => void;
   onForceUnpublish: (publishId: string) => void; unpublishingId: string | null;
 }) {
+  const t = useT(TRACE);
+  const { formatDateTime } = useFormat();
   return (
     // AA-572 point 6 — deliberately NO `overflowX` here (default `visible`): the outer page
     // scroll container now owns horizontal scroll too, so this div isn't its own overflow
@@ -446,7 +450,7 @@ function ContentTraceTable({ rows, expandedId, sort, onSort, onToggle, onForceUn
                   userSelect: "none",
                 }}>
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-                    {h.label}
+                    {h.label ? t(h.label) : ""}
                     {h.sortKey && (
                       active ? (
                         sort!.dir === "asc" ? <ChevronUp size={12} /> : <ChevronDown size={12} />
@@ -476,17 +480,17 @@ function ContentTraceTable({ rows, expandedId, sort, onSort, onToggle, onForceUn
                   <td style={rowTd}><Badge color={STATUS_COLOR[r.status] ?? "gray"}>{r.status}</Badge></td>
                   <td style={{ ...rowTd, fontFamily: mono }}>{r.gate_pass_count}/{r.gate_total_count}</td>
                   <td style={{ ...rowTd, fontFamily: mono }}>
-                    {r.retry_count}{r.is_buffer_retry && <span title="Also a buffer-retry of an earlier held piece"> +buffer</span>}
+                    {r.retry_count}{r.is_buffer_retry && <span title={t("bufferTitle")}>{t("buffer")}</span>}
                   </td>
                   <td style={rowTd}>
                     {r.publish_status === "published" ? (
                       r.publish_external_url ? (
                         <a href={r.publish_external_url} target="_blank" rel="noreferrer"
-                          onClick={e => e.stopPropagation()} style={{ color: A.gold }}>Yes ↗</a>
-                      ) : <Badge color="green">Yes</Badge>
+                          onClick={e => e.stopPropagation()} style={{ color: A.gold }}>{t("yesLink")}</a>
+                      ) : <Badge color="green">{t("yes")}</Badge>
                     ) : r.publish_status === "pending_publish" ? (
-                      <Badge color="amber">Not yet</Badge>
-                    ) : <Badge color="gray">No</Badge>}
+                      <Badge color="amber">{t("notYet")}</Badge>
+                    ) : <Badge color="gray">{t("no")}</Badge>}
                   </td>
                   <td style={rowTd}>{formatDateTime(r.created_at)}</td>
                 </tr>
@@ -519,6 +523,8 @@ const rowTd: React.CSSProperties = {
 function ContentTraceAccordion({ row: p, onForceUnpublish, unpublishingId }: {
   row: ContentLogRow; onForceUnpublish: (publishId: string) => void; unpublishingId: string | null;
 }) {
+  const t = useT(TRACE);
+  const { formatDateTime } = useFormat();
   return (
     <Card style={{ padding: "16px 18px", marginTop: 4 }}>
       {/* AA-572 point 5 — Lineage: was 1 concatenated line ("Tour: X → Atom: Y → Slate: Segment —
@@ -527,41 +533,41 @@ function ContentTraceAccordion({ row: p, onForceUnpublish, unpublishingId }: {
           explicitly-labeled state, not an omission). Route/Hub were previously merged into one
           `sourceLabel()` string ("Route/Hub — {hub} (Day X-Y)") — now genuinely 2 lines, matching
           the issue's own entity list. */}
-      <SectionLabel>Lineage</SectionLabel>
+      <SectionLabel>{t("lineage")}</SectionLabel>
       <div style={{ marginBottom: 4 }}>
-        <LineageLine label="Tour">
+        <LineageLine label={t("tour")}>
           {p.tour?.name ?? "—"}{p.tour?.destination ? ` (${p.tour.destination})` : ""}
         </LineageLine>
-        {p.atom && <LineageLine label="Atom">{p.atom.text}</LineageLine>}
+        {p.atom && <LineageLine label={t("atom")}>{p.atom.text}</LineageLine>}
         {p.source.kind === "segment" && (
-          <LineageLine label="Segment">
+          <LineageLine label={t("segment")}>
             {p.source.place ?? "?"}{p.source.action ? ` (${p.source.action})` : ""}
           </LineageLine>
         )}
         {p.source.kind === "route" && (
           <>
-            <LineageLine label="Route">Day {p.source.first_day}–{p.source.last_day}</LineageLine>
-            <LineageLine label="Hub">{p.source.hub_name ?? "?"}</LineageLine>
+            <LineageLine label={t("route")}>{t("days", String(p.source.first_day), String(p.source.last_day))}</LineageLine>
+            <LineageLine label={t("hub")}>{p.source.hub_name ?? "?"}</LineageLine>
           </>
         )}
-        <LineageLine label="Slate">
-          {p.source.kind === "direct_atom" ? "Not used — atom chosen directly" : "Picked from the Slate"}
+        <LineageLine label={t("slate")}>
+          {p.source.kind === "direct_atom" ? t("slateDirect") : t("slatePicked")}
         </LineageLine>
         {p.job_id && (
-          <LineageLine label="Job">
+          <LineageLine label={t("job")}>
             <a href={`/admin/jobs?job=${p.job_id}`} style={{ color: A.accent, fontFamily: mono }}>
-              {p.job_id.slice(0, 8)} — attempts, LLM calls and cost
+              {t("jobLink", p.job_id.slice(0, 8))}
             </a>
           </LineageLine>
         )}
       </div>
-      {p.goal && <div style={{ fontSize: 12.5, color: A.body, marginBottom: 12 }}><strong>Goal:</strong> {p.goal}</div>}
-      {p.cta && <div style={{ fontSize: 12.5, color: A.body, marginBottom: 12 }}><strong>CTA:</strong> {p.cta}</div>}
+      {p.goal && <div style={{ fontSize: 12.5, color: A.body, marginBottom: 12 }}><strong>{t("goal")}</strong> {p.goal}</div>}
+      {p.cta && <div style={{ fontSize: 12.5, color: A.body, marginBottom: 12 }}><strong>{t("cta")}</strong> {p.cta}</div>}
 
       {/* All 3 angles, chosen one marked — never just the pick. */}
-      <SectionLabel>Angles generated ({p.angles.length}) — chosen one marked</SectionLabel>
+      <SectionLabel>{t("anglesTitle", p.angles.length)}</SectionLabel>
       {p.angles.length === 0 ? (
-        <div style={{ fontSize: 12, color: A.muted2, marginBottom: 14 }}>No angle options on record for this request.</div>
+        <div style={{ fontSize: 12, color: A.muted2, marginBottom: 14 }}>{t("noAngles")}</div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
           {p.angles.map(a => (
@@ -571,8 +577,8 @@ function ContentTraceAccordion({ row: p, onForceUnpublish, unpublishingId }: {
             }}>
               <div style={{ fontSize: 12.5, fontWeight: 600, color: A.body, marginBottom: 2, display: "flex", alignItems: "center", gap: 6 }}>
                 {a.name}
-                {a.chosen && <Badge color="gold">chosen</Badge>}
-                {a.recommended && !a.chosen && <Badge color="gray">recommended</Badge>}
+                {a.chosen && <Badge color="gold">{t("chosen")}</Badge>}
+                {a.recommended && !a.chosen && <Badge color="gray">{t("recommended")}</Badge>}
               </div>
               <div style={{ fontSize: 11.5, color: A.muted }}>{a.why_it_works}</div>
             </div>
@@ -583,22 +589,22 @@ function ContentTraceAccordion({ row: p, onForceUnpublish, unpublishingId }: {
       {/* Full content. AA-572 point 4 — no `maxHeight`/`overflowY` scrollbox anymore: the whole
           piece renders inline so it can be read/scanned without cramming into a small nested
           scroll area (the accordion itself already scrolls within the page). */}
-      <SectionLabel>Content</SectionLabel>
+      <SectionLabel>{t("content")}</SectionLabel>
       <div style={{
         fontSize: 12.5, color: A.body, lineHeight: 1.6, marginBottom: 14, whiteSpace: "pre-wrap",
         border: `1px solid ${A.line}`, borderRadius: 8, padding: "10px 12px",
         background: A.card,
       }}>
-        {p.content_text || "(no content text on record)"}
+        {p.content_text || t("noContent")}
       </div>
       {p.held_reason && (
-        <div style={{ fontSize: 12, color: A.red, marginBottom: 14 }}><strong>Held reason:</strong> {p.held_reason}</div>
+        <div style={{ fontSize: 12, color: A.red, marginBottom: 14 }}><strong>{t("heldReason")}</strong> {p.held_reason}</div>
       )}
 
       {/* Gate ledger — specific violation text, not just counts. */}
-      <SectionLabel>Gate ledger ({p.gate_pass_count}/{p.gate_total_count} passed)</SectionLabel>
+      <SectionLabel>{t("gateLedger", p.gate_pass_count, p.gate_total_count)}</SectionLabel>
       {p.gate_ledger.length === 0 ? (
-        <div style={{ fontSize: 12, color: A.muted2, marginBottom: 14 }}>No gate results on record.</div>
+        <div style={{ fontSize: 12, color: A.muted2, marginBottom: 14 }}>{t("noGates")}</div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
           {p.gate_ledger.map((g, i) => (
@@ -616,24 +622,24 @@ function ContentTraceAccordion({ row: p, onForceUnpublish, unpublishingId }: {
 
       {/* Retry — real reason, labeled honestly. Never "content changed" — that data was never
           persisted (STEP0, confirmed structural, AA-570 is the separate follow-up). */}
-      <SectionLabel>Retry history ({p.retry_count})</SectionLabel>
+      <SectionLabel>{t("retryHistory", p.retry_count)}</SectionLabel>
       {p.repair_log.length === 0 ? (
         <div style={{ fontSize: 12, color: A.muted2, marginBottom: 4 }}>
-          {p.status === "approved" || p.status === "held" ? "No retries — this attempt reached its final state on the first pass." : "No retries recorded."}
+          {p.status === "approved" || p.status === "held" ? t("noRetriesFinal") : t("noRetries")}
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 4 }}>
           {p.repair_log.map((round, i) => (
             <div key={i} style={{ fontSize: 12, color: A.body, border: `1px solid ${A.line}`, borderRadius: 8, padding: "8px 10px" }}>
               <div style={{ fontWeight: 600, marginBottom: 3 }}>
-                Round {round.attempt ?? i + 1} — Retry reason{round.gate_targeted ? ` (${round.gate_targeted})` : ""}
+                {t("round", round.attempt ?? i + 1, round.gate_targeted ?? "")}
               </div>
               {round.violations && round.violations.length > 0 ? (
                 <ul style={{ margin: 0, paddingLeft: 18, color: A.muted }}>
                   {round.violations.map((v, j) => <li key={j} style={{ fontSize: 11.5 }}>{v}</li>)}
                 </ul>
               ) : (
-                <div style={{ fontSize: 11.5, color: A.muted2 }}>No violation text on record for this round.</div>
+                <div style={{ fontSize: 11.5, color: A.muted2 }}>{t("noViolation")}</div>
               )}
             </div>
           ))}
@@ -641,22 +647,21 @@ function ContentTraceAccordion({ row: p, onForceUnpublish, unpublishingId }: {
       )}
       {p.is_buffer_retry && (
         <div style={{ fontSize: 11.5, color: A.muted, marginTop: 6 }}>
-          This attempt is also a buffer-retry of an earlier held piece for the same request
-          ({p.sibling_piece_count} write attempts total for this request).
+          {t("bufferNote", p.sibling_piece_count)}
         </div>
       )}
 
       {/* Publish status. */}
-      <SectionLabel style={{ marginTop: 14 }}>Publish</SectionLabel>
+      <SectionLabel style={{ marginTop: 14 }}>{t("publish")}</SectionLabel>
       <div style={{ fontSize: 12.5, color: A.body, display: "flex", alignItems: "center", gap: 8 }}>
         <Badge color={p.publish_status === "published" ? "green" : p.publish_status === "pending_publish" ? "amber" : "gray"}>
           {p.publish_status}
         </Badge>
         {p.publish_external_url && (
-          <a href={p.publish_external_url} target="_blank" rel="noreferrer" style={{ color: A.gold }}>View published post ↗</a>
+          <a href={p.publish_external_url} target="_blank" rel="noreferrer" style={{ color: A.gold }}>{t("viewPost")}</a>
         )}
         {p.publish_published_at && (
-          <span style={{ fontSize: 11.5, color: A.muted2 }}>published {formatDateTime(p.publish_published_at)}</span>
+          <span style={{ fontSize: 11.5, color: A.muted2 }}>{t("publishedAt", formatDateTime(p.publish_published_at))}</span>
         )}
         {/* AA-560 — moved here from the deleted a4-oversight page's own Publish Log section, same
             confirm-then-call shape. Only a published row with a real publish_id can be
@@ -672,7 +677,7 @@ function ContentTraceAccordion({ row: p, onForceUnpublish, unpublishingId }: {
               opacity: unpublishingId === p.publish_id ? 0.5 : 1,
             }}
           >
-            {unpublishingId === p.publish_id ? "Marking…" : "Mark unpublished in AA"}
+            {unpublishingId === p.publish_id ? t("marking") : t("markUnpublished")}
           </button>
         )}
       </div>

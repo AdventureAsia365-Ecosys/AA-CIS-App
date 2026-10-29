@@ -11,6 +11,9 @@
 //
 // Type-level TS only (no enums, no parameter properties), so lib/supplyContent.test.mjs runs it with node --test
 // --experimental-strip-types.
+//
+// AA-994: the labels and sentences here are English; the Vietnamese twins are in lib/supplyContent.messages.ts and
+// the page passes them (`SUPPLY_WORDS_MESSAGES[lang]`) as the optional last argument of the helpers.
 
 export const SUPPLY_API = "/api/admin/supply-content";
 
@@ -46,6 +49,26 @@ export const STATUS_TONE: Record<ContentStatus, Tone> = {
 };
 
 export const TYPE_LABEL: Record<EntityType, string> = { hotel: "Hotel", service: "Service" };
+
+/** The words the helpers below return (English); the Vietnamese twin is lib/supplyContent.messages.ts. */
+export const SUPPLY_WORDS = {
+  versionIs: (status: string) => `This version is ${status}.`,
+  inactive: "The entity is inactive in Booking.",
+  outdated: (written: number, at: number) =>
+    `Written for facts v${written}; Booking is at v${at}. Review the newer draft or write an edit.`,
+  photosNotCleared: (n: number) => `${n} photo${n === 1 ? " is" : "s are"} not cleared for use (rights or copy).`,
+  descEmpty: "The description is empty.",
+  descLong: (max: number) => `The description is over ${max} characters.`,
+  maxHighlights: (n: number) => `At most ${n} highlights (one per line).`,
+  maxGoodToKnow: (n: number) => `At most ${n} "good to know" lines.`,
+  itemLong: (max: number) => `A highlight or "good to know" line is over ${max} characters.`,
+  requestFailed: (status: number) => `Request failed (${status})`,
+  photoCount: (n: number) => ` (${n} photo${n === 1 ? "" : "s"})`,
+  invalidValue: "invalid value",
+  forbidden: "Your role cannot do this.",
+  network: "Network error — try again.",
+};
+export type SupplyWords = typeof SUPPLY_WORDS;
 
 export const VERSION_TONE: Record<VersionStatus, Tone> = {
   draft: "warning", approved: "success", rejected: "danger", superseded: "neutral",
@@ -139,18 +162,18 @@ export function photoState(m: Media | undefined | null): PhotoState {
 }
 
 /** Why publishing `v` would be refused now (empty = it can be published). Mirrors review.publish. */
-export function publishBlockers(entity: Entity, v: Version, media: Media[]): string[] {
+export function publishBlockers(entity: Entity, v: Version, media: Media[], w: SupplyWords = SUPPLY_WORDS): string[] {
   const out: string[] = [];
   const republish = v.status === "approved" && v.id === entity.published_version_id
     && (entity.content_status === "unpublished" || entity.content_status === "stale");
-  if (v.status !== "draft" && !republish) out.push(`This version is ${v.status}.`);
-  if (!entity.active) out.push("The entity is inactive in Booking.");
+  if (v.status !== "draft" && !republish) out.push(w.versionIs(v.status));
+  if (!entity.active) out.push(w.inactive);
   if (v.supply_version !== entity.applied_supply_version) {
-    out.push(`Written for facts v${v.supply_version}; Booking is at v${entity.applied_supply_version}. Review the newer draft or write an edit.`);
+    out.push(w.outdated(v.supply_version, entity.applied_supply_version));
   }
   const byId = new Map(media.map((m) => [m.media_id, m]));
   const bad = v.photos.filter((p) => photoState(byId.get(p.media_id)) !== "ready").length;
-  if (bad) out.push(`${bad} photo${bad === 1 ? " is" : "s are"} not cleared for use (rights or copy).`);
+  if (bad) out.push(w.photosNotCleared(bad));
   return out;
 }
 
@@ -202,15 +225,15 @@ export function formFrom(base: Version | null): EditForm {
 const lines = (s: string) => s.split("\n").map((x) => x.split(/\s+/).filter(Boolean).join(" ")).filter(Boolean);
 
 /** The problems the API would answer 422 for (shown before Save; the backend re-checks). */
-export function formProblems(f: EditForm): string[] {
+export function formProblems(f: EditForm, w: SupplyWords = SUPPLY_WORDS): string[] {
   const out: string[] = [];
   const d = f.description.trim();
-  if (!d) out.push("The description is empty.");
-  if (d.length > MAX_DESCRIPTION_CHARS) out.push(`The description is over ${MAX_DESCRIPTION_CHARS} characters.`);
+  if (!d) out.push(w.descEmpty);
+  if (d.length > MAX_DESCRIPTION_CHARS) out.push(w.descLong(MAX_DESCRIPTION_CHARS));
   const h = lines(f.highlights), g = lines(f.goodToKnow);
-  if (h.length > MAX_HIGHLIGHTS) out.push(`At most ${MAX_HIGHLIGHTS} highlights (one per line).`);
-  if (g.length > MAX_GOOD_TO_KNOW) out.push(`At most ${MAX_GOOD_TO_KNOW} "good to know" lines.`);
-  if ([...h, ...g].some((x) => x.length > MAX_ITEM_CHARS)) out.push(`A highlight or "good to know" line is over ${MAX_ITEM_CHARS} characters.`);
+  if (h.length > MAX_HIGHLIGHTS) out.push(w.maxHighlights(MAX_HIGHLIGHTS));
+  if (g.length > MAX_GOOD_TO_KNOW) out.push(w.maxGoodToKnow(MAX_GOOD_TO_KNOW));
+  if ([...h, ...g].some((x) => x.length > MAX_ITEM_CHARS)) out.push(w.itemLong(MAX_ITEM_CHARS));
   return out;
 }
 
@@ -227,31 +250,35 @@ export function versionBody(f: EditForm, base: Version | null) {
 }
 
 /** A readable message from an API error body (`{detail: {error, message, …}}`, a FastAPI 422 list, or text). */
-export function supplyErrorText(status: number, body: unknown): { code: string | null; message: string } {
+export function supplyErrorText(
+  status: number, body: unknown, w: SupplyWords = SUPPLY_WORDS,
+): { code: string | null; message: string } {
   const detail = (body as { detail?: unknown } | null)?.detail;
   if (detail && typeof detail === "object" && !Array.isArray(detail)) {
     const d = detail as { error?: unknown; message?: unknown; media_ids?: unknown };
     const code = typeof d.error === "string" ? d.error : null;
-    let message = typeof d.message === "string" && d.message ? d.message : `Request failed (${status})`;
+    let message = typeof d.message === "string" && d.message ? d.message : w.requestFailed(status);
     if (code === "photo_rights" && Array.isArray(d.media_ids) && d.media_ids.length) {
-      message += ` (${d.media_ids.length} photo${d.media_ids.length === 1 ? "" : "s"})`;
+      message += w.photoCount(d.media_ids.length);
     }
     return { code, message };
   }
   if (Array.isArray(detail) && detail.length) {
     const first = detail[0] as { loc?: unknown[]; msg?: unknown };
     const where = Array.isArray(first.loc) ? first.loc.filter((x) => x !== "body").join(".") : "";
-    return { code: "invalid", message: `${where ? `${where}: ` : ""}${String(first.msg ?? "invalid value")}` };
+    return { code: "invalid", message: `${where ? `${where}: ` : ""}${String(first.msg ?? w.invalidValue)}` };
   }
   if (typeof detail === "string" && detail) return { code: null, message: detail };
-  if (status === 403) return { code: "forbidden", message: "Your role cannot do this." };
-  return { code: null, message: `Request failed (${status})` };
+  if (status === 403) return { code: "forbidden", message: w.forbidden };
+  return { code: null, message: w.requestFailed(status) };
 }
 
 export type CallResult<T> = { ok: true; body: T } | { ok: false; status: number; code: string | null; message: string };
 
 /** fetch through the BFF (`/api/admin/supply-content…`), never throwing on an API refusal. */
-export async function supplyCall<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<CallResult<T>> {
+export async function supplyCall<T>(
+  method: string, path: string, body?: unknown, headers: Record<string, string> = {}, w: SupplyWords = SUPPLY_WORDS,
+): Promise<CallResult<T>> {
   let res: Response;
   try {
     res = await fetch(`${SUPPLY_API}${path}`, {
@@ -260,10 +287,10 @@ export async function supplyCall<T>(method: string, path: string, body?: unknown
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch {
-    return { ok: false, status: 0, code: "network", message: "Network error — try again." };
+    return { ok: false, status: 0, code: "network", message: w.network };
   }
   let parsed: unknown = null;
   try { parsed = await res.json(); } catch { /* empty / non-JSON body */ }
-  if (!res.ok) return { ok: false, status: res.status, ...supplyErrorText(res.status, parsed) };
+  if (!res.ok) return { ok: false, status: res.status, ...supplyErrorText(res.status, parsed, w) };
   return { ok: true, body: parsed as T };
 }

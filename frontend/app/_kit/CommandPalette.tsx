@@ -20,7 +20,9 @@ import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Search, FileText, Users, ListChecks, CornerDownLeft } from "lucide-react";
 import { K, RADIUS, sans, serif, alpha } from "./core/tokens";
-import { allEntries, type NavEntry } from "./adminNav";
+import { allEntries, useNavLabel, type NavEntry } from "./adminNav";
+import { useT } from "./core/useI18n";
+import { SHELL_MESSAGES } from "./shell.messages";
 import { useAdminIdentity } from "./useAdminIdentity";
 import { apiGet } from "./api";
 
@@ -45,6 +47,8 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
 function PaletteDialog({ onClose }: { onClose: () => void }) {
   const router = useRouter();
   const { role } = useAdminIdentity();
+  const t = useT(SHELL_MESSAGES);
+  const navLabel = useNavLabel();
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
   const [selected, setSelected] = useState(0);
@@ -75,22 +79,22 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
   const groups = useMemo(() => {
     const q = debounced.toLowerCase();
     const pageEntries: NavEntry[] = q
-      ? allEntries(role).filter((e) => e.label.toLowerCase().includes(q))
+      ? allEntries(role).filter((e) => e.label.toLowerCase().includes(q) || navLabel(e.label).toLowerCase().includes(q))
       : [];
     const pages: Row[] = pageEntries.map((e) => ({
-      kind: "page" as const, label: e.label, href: e.href, icon: e.icon,
+      kind: "page" as const, label: navLabel(e.label), href: e.href, icon: e.icon,
     }));
-    const tours: Row[] = (data?.tours ?? []).map((t) => ({
+    const tours: Row[] = (data?.tours ?? []).map((tr) => ({
       kind: "tour" as const,
-      label: t.name || t.src_name,
-      sub: [t.country, t.trashed ? "trashed" : t.master ? "master" : "raw"].filter(Boolean).join(" · "),
-      href: `/admin/master-content?tour=${encodeURIComponent(t.tour_id)}`,
+      label: tr.name || tr.src_name,
+      sub: [tr.country, tr.trashed ? t("tourTrashed") : tr.master ? t("tourMaster") : t("tourRaw")].filter(Boolean).join(" · "),
+      href: `/admin/master-content?tour=${encodeURIComponent(tr.tour_id)}`,
     }));
-    const tenants: Row[] = (data?.tenants ?? []).map((t) => ({
+    const tenants: Row[] = (data?.tenants ?? []).map((tn) => ({
       kind: "tenant" as const,
-      label: t.name,
-      sub: [t.slug, t.is_active ? "active" : "inactive"].filter(Boolean).join(" · "),
-      href: `/admin/tenants?tenant=${encodeURIComponent(t.tenant_id)}`,
+      label: tn.name,
+      sub: [tn.slug, tn.is_active ? t("tenantActive") : t("tenantInactive")].filter(Boolean).join(" · "),
+      href: `/admin/tenants?tenant=${encodeURIComponent(tn.tenant_id)}`,
     }));
     const jobs: Row[] = (data?.jobs ?? []).map((j) => ({
       kind: "job" as const,
@@ -99,12 +103,12 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
       href: `/admin/jobs?job=${encodeURIComponent(j.id)}`,
     }));
     return [
-      { title: "Pages", rows: pages },
-      { title: "Tours", rows: tours },
-      { title: "Tenants", rows: tenants },
-      { title: "Jobs", rows: jobs },
+      { title: t("groupPages"), rows: pages },
+      { title: t("groupTours"), rows: tours },
+      { title: t("groupTenants"), rows: tenants },
+      { title: t("groupJobs"), rows: jobs },
     ].filter((g) => g.rows.length > 0);
-  }, [data, debounced, role]);
+  }, [data, debounced, role, t, navLabel]);
 
   const flat = useMemo(() => groups.flatMap((g) => g.rows), [groups]);
 
@@ -146,7 +150,7 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label="Global search"
+        aria-label={t("globalSearch")}
         style={{
           width: 560, maxWidth: "100%", maxHeight: "70vh", display: "flex", flexDirection: "column",
           background: K.card, borderRadius: RADIUS.lg, border: `1px solid ${K.line}`,
@@ -159,8 +163,8 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
             ref={inputRef}
             value={query}
             onChange={(e) => { setQuery(e.target.value); setSelected(0); }}
-            placeholder="Search tours, tenants, jobs…"
-            aria-label="Search tours, tenants, jobs"
+            placeholder={t("searchPlaceholder")}
+            aria-label={t("searchAria")}
             style={{
               flex: 1, border: "none", outline: "none", background: "transparent",
               fontSize: 15, color: K.ink, fontFamily: sans,
@@ -175,11 +179,11 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
         <div style={{ overflowY: "auto", padding: 6 }}>
           {debounced.length < 2 ? (
             <div style={{ padding: "22px 14px", fontSize: 13, color: K.muted, textAlign: "center" }}>
-              Type at least 2 characters to search.
+              {t("typeTwoChars")}
             </div>
           ) : flat.length === 0 ? (
             <div style={{ padding: "22px 14px", fontSize: 13, color: K.muted, textAlign: "center" }}>
-              No results for “{debounced}”.
+              {t("noResults", debounced)}
             </div>
           ) : (
             groups.map((g) => (
@@ -229,9 +233,9 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
         </div>
 
         <div style={{ display: "flex", gap: 14, padding: "8px 14px", borderTop: `1px solid ${K.line}`, fontSize: 11, color: K.muted2 }}>
-          <span style={{ fontFamily: serif }}>↑ ↓ navigate</span>
-          <span>↵ open</span>
-          <span>esc close</span>
+          <span style={{ fontFamily: serif }}>{t("hintNavigate")}</span>
+          <span>{t("hintOpen")}</span>
+          <span>{t("hintClose")}</span>
         </div>
       </div>
     </div>

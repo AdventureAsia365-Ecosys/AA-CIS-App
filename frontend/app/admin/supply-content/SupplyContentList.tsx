@@ -11,7 +11,7 @@
 // A row opens /admin/supply-content/<id> (SupplyContentDetail.tsx), the page Booking's "Edit in CIS" link opens.
 //
 // Every staff role reads (lib/rbac.ts PAGE_RULES: ALL_STAFF; backend reads are open to every staff role). No polling
-// (S240): load on open + Refresh. English only (pages default to English).
+// (S240): load on open + Refresh. AA-994: text in the UI language (messages.ts, useSupplyText.ts).
 
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
@@ -24,15 +24,14 @@ import {
   K,
   PageHeader,
   adminHeaders,
-  formatDateTime,
+  useFormat,
+  useT,
   type ColumnDef, AdminMain,
 } from "../../_kit";
 import {
   CONTENT_STATUSES,
   ENTITY_TYPES,
-  STATUS_LABEL,
   STATUS_TONE,
-  TYPE_LABEL,
   detailHref,
   listUrl,
   supplyErrorText,
@@ -42,20 +41,26 @@ import {
   type ListFilters,
   type ListPage,
   type ListRow,
+  type SupplyWords,
 } from "@/lib/supplyContent";
+import { SC } from "./messages";
+import { useSupplyText } from "./useSupplyText";
 
 export const LIST_KEY = ["supply-content-list"] as const;
 const PAGE_SIZES = [25, 50, 100];
 
-async function getJson<T>(url: string): Promise<T> {
+async function getJson<T>(url: string, w: SupplyWords): Promise<T> {
   const res = await fetch(url, { headers: adminHeaders() });
   let body: unknown = null;
   try { body = await res.json(); } catch { /* non-JSON */ }
-  if (!res.ok) throw new Error(supplyErrorText(res.status, body).message);
+  if (!res.ok) throw new Error(supplyErrorText(res.status, body, w).message);
   return body as T;
 }
 
 export default function SupplyContentList() {
+  const t = useT(SC);
+  const st = useSupplyText();
+  const { formatDateTime } = useFormat();
   const qc = useQueryClient();
   const router = useRouter();
   const [filters, setFilters] = useState<ListFilters>({ status: "", type: "" });
@@ -64,13 +69,13 @@ export default function SupplyContentList() {
 
   const list = useQuery({
     queryKey: [...LIST_KEY, filters, pageIndex, pageSize],
-    queryFn: () => getJson<ListPage>(listUrl(filters, pageIndex, pageSize)),
+    queryFn: () => getJson<ListPage>(listUrl(filters, pageIndex, pageSize), st.words),
     placeholderData: keepPreviousData,
     retry: false,
   });
   const feed = useQuery({
     queryKey: [...LIST_KEY, "status"],
-    queryFn: () => getJson<FeedStatus>("/api/admin/supply-content/status"),
+    queryFn: () => getJson<FeedStatus>("/api/admin/supply-content/status", st.words),
     retry: false,
   });
 
@@ -81,34 +86,34 @@ export default function SupplyContentList() {
 
   const columns = useMemo<ColumnDef<ListRow, unknown>[]>(() => [
     {
-      accessorKey: "title", header: "Hotel / service",
+      accessorKey: "title", header: t("colHotel"),
       cell: (c) => (
         <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
           <span style={{ fontWeight: 600, color: K.ink, overflowWrap: "anywhere" }}>
-            {c.row.original.title || <span style={{ color: K.muted }}>(no name)</span>}
+            {c.row.original.title || <span style={{ color: K.muted }}>{t("noName")}</span>}
           </span>
           <span style={{ fontSize: 11.5, color: K.muted, overflowWrap: "anywhere" }}>
-            {TYPE_LABEL[c.row.original.entity_type]}{c.row.original.service_type ? ` · ${c.row.original.service_type}` : ""}
+            {st.type[c.row.original.entity_type]}{c.row.original.service_type ? ` · ${c.row.original.service_type}` : ""}
           </span>
         </span>
       ),
     },
     {
-      accessorKey: "content_status", header: "Content",
+      accessorKey: "content_status", header: t("colContent"),
       cell: (c) => (
         <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-          <Badge tone={STATUS_TONE[c.row.original.content_status]}>{STATUS_LABEL[c.row.original.content_status]}</Badge>
+          <Badge tone={STATUS_TONE[c.row.original.content_status]}>{st.status[c.row.original.content_status]}</Badge>
           {c.row.original.open_drafts > 0 && (
-            <Badge tone="warning" dot={false}>{c.row.original.open_drafts} draft{c.row.original.open_drafts === 1 ? "" : "s"}</Badge>
+            <Badge tone="warning" dot={false}>{t("drafts", c.row.original.open_drafts)}</Badge>
           )}
-          {!c.row.original.active && <Badge tone="neutral" dot={false}>inactive</Badge>}
+          {!c.row.original.active && <Badge tone="neutral" dot={false}>{t("inactive")}</Badge>}
         </span>
       ),
     },
-    { accessorKey: "country_code", header: "Country", cell: (c) => c.row.original.country_code || "—" },
-    { accessorKey: "applied_supply_version", header: "Facts", cell: (c) => `v${c.row.original.applied_supply_version}` },
-    { accessorKey: "updated_at", header: "Updated", cell: (c) => formatDateTime(c.row.original.updated_at) },
-  ], []);
+    { accessorKey: "country_code", header: t("colCountry"), cell: (c) => c.row.original.country_code || "—" },
+    { accessorKey: "applied_supply_version", header: t("colFacts"), cell: (c) => `v${c.row.original.applied_supply_version}` },
+    { accessorKey: "updated_at", header: t("colUpdated"), cell: (c) => formatDateTime(c.row.original.updated_at) },
+  ], [t, st, formatDateTime]);
 
   const refresh = () => { void qc.invalidateQueries({ queryKey: LIST_KEY }); };
   const counts = list.data?.by_status ?? {};
@@ -116,15 +121,15 @@ export default function SupplyContentList() {
 
   const filterBar = (
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", minWidth: 0 }}>
-      <select aria-label="Content status" value={filters.status}
+      <select aria-label={t("contentStatus")} value={filters.status}
         onChange={(e) => setFilter("status", e.target.value as ContentStatus | "")} style={selectStyle}>
-        <option value="">Any status</option>
-        {CONTENT_STATUSES.map((s) => <option key={s} value={s}>{STATUS_LABEL[s]} ({counts[s] ?? 0})</option>)}
+        <option value="">{t("anyStatus")}</option>
+        {CONTENT_STATUSES.map((s) => <option key={s} value={s}>{st.status[s]} ({counts[s] ?? 0})</option>)}
       </select>
-      <select aria-label="Type" value={filters.type}
+      <select aria-label={t("type")} value={filters.type}
         onChange={(e) => setFilter("type", e.target.value as EntityType | "")} style={selectStyle}>
-        <option value="">Hotels and services</option>
-        {ENTITY_TYPES.map((t) => <option key={t} value={t}>{TYPE_LABEL[t]}s</option>)}
+        <option value="">{t("hotelsAndServices")}</option>
+        {ENTITY_TYPES.map((et) => <option key={et} value={et}>{t("typePlural", st.type[et])}</option>)}
       </select>
     </div>
   );
@@ -132,12 +137,12 @@ export default function SupplyContentList() {
   return (
     <AdminMain>
       <PageHeader
-        title="Supply content"
-        breadcrumbs={[{ label: "CIS Content" }, { label: "Assets" }, { label: "Supply content" }]}
-        description="Customer-facing text and photos CIS writes for AA-Booking hotels and services. Booking shows only a published version; a facts change in Booking makes it stale until a new version is published."
+        title={t("title")}
+        breadcrumbs={[{ label: t("cisContent") }, { label: t("assets") }, { label: t("title") }]}
+        description={t("listDescription")}
         actions={
           <Button variant="secondary" size="sm" onClick={refresh} disabled={list.isFetching}>
-            <RefreshCw size={13} /> {list.isFetching ? "Loading…" : "Refresh"}
+            <RefreshCw size={13} /> {list.isFetching ? t("loading") : t("refresh")}
           </Button>
         }
       />
@@ -150,7 +155,7 @@ export default function SupplyContentList() {
         columns={columns}
         getRowId={(r) => r.id}
         loading={list.isLoading}
-        error={list.error ? (list.error as Error).message || "Could not load the supply content." : null}
+        error={list.error ? (list.error as Error).message || t("listError") : null}
         onRetry={refresh}
         toolbarExtra={filterBar}
         pageSize={pageSize}
@@ -159,9 +164,8 @@ export default function SupplyContentList() {
           pageIndex, pageSize, total: list.data?.total ?? 0,
           onChange: (i, size) => { setPageIndex(size === pageSize ? i : 0); setPageSize(size); },
         }}
-        emptyTitle={filtered ? "Nothing matches these filters" : "No hotels or services yet"}
-        emptyDescription={filtered ? "Clear a filter to see more."
-          : "A hotel or service shows here once Booking emits it on the supply feed (a change in Booking starts it)."}
+        emptyTitle={filtered ? t("emptyFiltered") : t("emptyNone")}
+        emptyDescription={filtered ? t("emptyFilteredDesc") : t("emptyNoneDesc")}
         onRowClick={(r) => router.push(detailHref(r.id))}
         tableMinWidth={640}
       />
@@ -176,26 +180,28 @@ const selectStyle: React.CSSProperties = {
 
 /** The Booking feed at a glance (observability rule): lag, last error, draft jobs and today's LLM cost. */
 function FeedBoard({ feed, error }: { feed?: FeedStatus; error: string | null }) {
+  const t = useT(SC);
+  const { formatDateTime } = useFormat();
   if (error) {
-    return <div data-testid="supply-feed" style={{ ...boardStyle, color: K.danger }}>Feed status unavailable: {error}</div>;
+    return <div data-testid="supply-feed" style={{ ...boardStyle, color: K.danger }}>{t("feedUnavailable", error)}</div>;
   }
-  if (!feed) return <div data-testid="supply-feed" style={{ ...boardStyle, color: K.muted }}>Loading the feed status…</div>;
-  const jobs = Object.entries(feed.draft_jobs_7d || {}).map(([s, n]) => `${n} ${s}`).join(" · ") || "none";
+  if (!feed) return <div data-testid="supply-feed" style={{ ...boardStyle, color: K.muted }}>{t("feedLoading")}</div>;
+  const jobs = Object.entries(feed.draft_jobs_7d || {}).map(([s, n]) => `${n} ${s}`).join(" · ") || t("none");
   const purges = Object.entries(feed.photo_purge_jobs_7d || {}).map(([s, n]) => `${n} ${s}`).join(" · ");
   return (
     <div data-testid="supply-feed" style={boardStyle}>
-      <Item label="Booking feed">
+      <Item label={t("bookingFeed")}>
         {feed.feed_available
-          ? <>{feed.pending ?? 0} pending · cursor {feed.cursor}{feed.head != null ? ` / ${feed.head}` : ""}</>
-          : <span style={{ color: K.danger }}>not readable ({feed.feed_error ?? "unknown"})</span>}
+          ? <>{t("pendingCursor", feed.pending ?? 0, feed.cursor, feed.head != null ? ` / ${feed.head}` : "")}</>
+          : <span style={{ color: K.danger }}>{t("notReadable", feed.feed_error ?? t("unknown"))}</span>}
       </Item>
-      <Item label="Last pull">{feed.last_success_at ? formatDateTime(feed.last_success_at) : "never"}</Item>
-      <Item label="Draft jobs (7 days)">{jobs}</Item>
-      {purges && <Item label="Photo removals (7 days)">{purges}</Item>}
-      <Item label="LLM cost today">${(feed.llm_cost_today_usd ?? 0).toFixed(3)}</Item>
+      <Item label={t("lastPull")}>{feed.last_success_at ? formatDateTime(feed.last_success_at) : t("never")}</Item>
+      <Item label={t("draftJobs")}>{jobs}</Item>
+      {purges && <Item label={t("photoRemovals")}>{purges}</Item>}
+      <Item label={t("llmCostToday")}>${(feed.llm_cost_today_usd ?? 0).toFixed(3)}</Item>
       {feed.last_error && (
         <div style={{ flexBasis: "100%", color: K.danger, overflowWrap: "anywhere" }}>
-          Last error {feed.last_error_at ? `(${formatDateTime(feed.last_error_at)})` : ""}: {feed.last_error}
+          {t("lastError", feed.last_error_at ? `(${formatDateTime(feed.last_error_at)})` : "", feed.last_error)}
         </div>
       )}
     </div>

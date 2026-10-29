@@ -8,6 +8,7 @@
 // The Dev preview calls the Dev backend, which may not have the GET endpoint or the
 // shared.jev_credit_topup table until Claude deploys + applies migration 209. A 404 must render a
 // clean empty state (no crash, no console error), not an error screen.
+// AA-994: text in the UI language (messages.ts); notes and API errors stay as sent.
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -23,9 +24,11 @@ import {
   apiGet,
   apiSend,
   ApiError,
-  formatDateTime,
+  useFormat,
+  useT,
   useToast,
 } from "../../_kit";
+import { SETTINGS } from "./messages";
 
 interface Topup {
   id: number;
@@ -56,6 +59,7 @@ const usd = (v: number | null | undefined) =>
 function Stat({ label, value, hint, tone }: {
   label: string; value: string; hint?: string; tone?: "estimate";
 }) {
+  const t = useT(SETTINGS);
   return (
     <div style={{ minWidth: 0 }}>
       <div style={{
@@ -68,7 +72,7 @@ function Stat({ label, value, hint, tone }: {
             fontSize: 9.5, fontWeight: 600, letterSpacing: "0.04em", padding: "1px 6px",
             borderRadius: 999, background: alpha(A.accent, 10), color: A.accentDeep,
           }}>
-            estimate
+            {t("estimate")}
           </span>
         )}
       </div>
@@ -95,6 +99,7 @@ interface CheckResp {
 }
 
 function TestAlertsButton() {
+  const t = useT(SETTINGS);
   const toast = useToast();
   const qc = useQueryClient();
   const mut = useMutation({
@@ -103,22 +108,20 @@ function TestAlertsButton() {
     }),
     onSuccess: (r) => {
       // email_job_id is the low-credit test e-mail only; the exhausted test e-mail is queued by the same path.
-      const mail = r.email_job_id ? "low-credit e-mail queued"
-        : "low-credit e-mail already sent today or not configured";
-      toast.success(`Test alerts sent (bell: low ${r.alerted ? "yes" : "no"}, exhausted ${
-        r.exhausted_test_alerted ? "yes" : "no"}; ${mail})`);
+      const mail = r.email_job_id ? t("lowMailQueued") : t("lowMailSkipped");
+      toast.success(t("testSent", r.alerted, r.exhausted_test_alerted, mail));
       qc.invalidateQueries({ queryKey: ["jev-credit"] });
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Test alert failed"),
+    onError: (e) => toast.error(e instanceof Error ? e.message : t("testFailed")),
   });
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
       <Button size="sm" variant="ghost" disabled={mut.isPending} onClick={() => mut.mutate()}>
         {mut.isPending ? <Spinner size={12} /> : <BellRing size={13} />}
-        Send test alerts
+        {t("sendTest")}
       </Button>
       <span style={{ fontSize: 11, color: A.muted2 }}>
-        Sends a [TEST] low-credit and a [TEST] exhausted alert (admin bell + e-mail to the alert recipients).
+        {t("sendTestHint")}
       </span>
     </div>
   );
@@ -126,6 +129,7 @@ function TestAlertsButton() {
 
 // ── Add-top-up form ──────────────────────────────────────────────────────────────
 function AddTopupForm() {
+  const t = useT(SETTINGS);
   const toast = useToast();
   const qc = useQueryClient();
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -137,19 +141,19 @@ function AddTopupForm() {
     mutationFn: (body: { topped_up_on: string; amount_usd: number; note?: string }) =>
       apiSend<Topup>("/api/admin/decisions/jev-credit/topups", { method: "POST", body, admin: true }),
     onSuccess: () => {
-      toast.success("Top-up recorded");
+      toast.success(t("topupRecorded"));
       setAmount("");
       setNote("");
       setError("");
       qc.invalidateQueries({ queryKey: ["jev-credit"] });
     },
-    onError: (e) => setError(e instanceof Error ? e.message : "Save failed"),
+    onError: (e) => setError(e instanceof Error ? e.message : t("saveFailed")),
   });
 
   function submit() {
     const amt = Number(amount);
     if (!amount || !Number.isFinite(amt) || amt <= 0) {
-      setError("Amount must be a positive number");
+      setError(t("amountPositive"));
       return;
     }
     setError("");
@@ -165,12 +169,12 @@ function AddTopupForm() {
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
         <label style={{ fontSize: 11, color: A.muted, display: "flex", flexDirection: "column", gap: 4 }}>
-          Date
+          {t("date")}
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
                  disabled={mut.isPending} style={{ ...inp, width: 150 }} />
         </label>
         <label style={{ fontSize: 11, color: A.muted, display: "flex", flexDirection: "column", gap: 4 }}>
-          Amount (USD)
+          {t("amountUsd")}
           <input type="number" min={0} step="0.01" value={amount} placeholder="10.00"
                  onChange={(e) => setAmount(e.target.value)} disabled={mut.isPending}
                  style={{ ...inp, width: 120, fontFamily: mono }} />
@@ -179,13 +183,13 @@ function AddTopupForm() {
           fontSize: 11, color: A.muted, display: "flex", flexDirection: "column", gap: 4,
           flex: 1, minWidth: 160,
         }}>
-          Note (optional)
+          {t("noteOptional")}
           <input value={note} onChange={(e) => setNote(e.target.value)} disabled={mut.isPending}
-                 placeholder="e.g. topped up via Ms. Thư" style={inp} />
+                 placeholder={t("notePlaceholder")} style={inp} />
         </label>
         <Button variant="primary" size="sm" disabled={mut.isPending} onClick={submit}>
           {mut.isPending ? <Spinner size={12} /> : <Plus size={13} />}
-          {mut.isPending ? "Saving…" : "Add top-up"}
+          {mut.isPending ? t("saving") : t("addTopup")}
         </Button>
       </div>
       {error && <span style={{ fontSize: 11.5, color: A.red }}>{error}</span>}
@@ -195,6 +199,8 @@ function AddTopupForm() {
 
 // ── Top-ups table ──────────────────────────────────────────────────────────────
 function TopupsTable({ topups }: { topups: Topup[] }) {
+  const t = useT(SETTINGS);
+  const { formatDateTime } = useFormat();
   const toast = useToast();
   const qc = useQueryClient();
   const [confirming, setConfirming] = useState<Topup | null>(null);
@@ -204,12 +210,12 @@ function TopupsTable({ topups }: { topups: Topup[] }) {
       apiSend<{ deleted: boolean }>(`/api/admin/decisions/jev-credit/topups/${id}`,
         { method: "DELETE", admin: true }),
     onSuccess: () => {
-      toast.success("Top-up deleted");
+      toast.success(t("topupDeleted"));
       setConfirming(null);
       qc.invalidateQueries({ queryKey: ["jev-credit"] });
     },
     onError: (e) => {
-      toast.error(e instanceof Error ? e.message : "Delete failed");
+      toast.error(e instanceof Error ? e.message : t("deleteFailed"));
       setConfirming(null);
     },
   });
@@ -218,8 +224,8 @@ function TopupsTable({ topups }: { topups: Topup[] }) {
     return (
       <EmptyState
         icon={<Wallet size={30} />}
-        title="No top-ups recorded yet"
-        description="Add a top-up above to track Jev (TypeSafe) credit and see an estimated balance."
+        title={t("noTopupsTitle")}
+        description={t("noTopupsBody")}
       />
     );
   }
@@ -230,30 +236,30 @@ function TopupsTable({ topups }: { topups: Topup[] }) {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, minWidth: 520 }}>
           <thead>
             <tr style={{ textAlign: "left", color: A.muted, borderBottom: `1px solid ${A.line}` }}>
-              <th style={{ padding: "6px 8px", fontWeight: 600 }}>Date</th>
-              <th style={{ padding: "6px 8px", fontWeight: 600, textAlign: "right" }}>Amount</th>
-              <th style={{ padding: "6px 8px", fontWeight: 600 }}>Note</th>
-              <th style={{ padding: "6px 8px", fontWeight: 600 }}>Added by</th>
-              <th style={{ padding: "6px 8px", fontWeight: 600 }} aria-label="actions" />
+              <th style={{ padding: "6px 8px", fontWeight: 600 }}>{t("date")}</th>
+              <th style={{ padding: "6px 8px", fontWeight: 600, textAlign: "right" }}>{t("colAmount")}</th>
+              <th style={{ padding: "6px 8px", fontWeight: 600 }}>{t("colNote")}</th>
+              <th style={{ padding: "6px 8px", fontWeight: 600 }}>{t("colAddedBy")}</th>
+              <th style={{ padding: "6px 8px", fontWeight: 600 }} aria-label={t("colActions")} />
             </tr>
           </thead>
           <tbody>
-            {topups.map((t) => (
-              <tr key={t.id} style={{ borderBottom: `1px solid ${A.line2}` }}>
-                <td style={{ padding: "7px 8px", fontFamily: mono, color: A.body }}>{t.topped_up_on}</td>
+            {topups.map((row) => (
+              <tr key={row.id} style={{ borderBottom: `1px solid ${A.line2}` }}>
+                <td style={{ padding: "7px 8px", fontFamily: mono, color: A.body }}>{row.topped_up_on}</td>
                 <td style={{ padding: "7px 8px", fontFamily: mono, textAlign: "right", color: A.ink }}>
-                  {usd(t.amount_usd)}
+                  {usd(row.amount_usd)}
                 </td>
-                <td style={{ padding: "7px 8px", color: A.muted }}>{t.note || "—"}</td>
+                <td style={{ padding: "7px 8px", color: A.muted }}>{row.note || "—"}</td>
                 <td style={{ padding: "7px 8px", color: A.muted2, fontSize: 11.5 }}>
-                  <div>{t.created_by || "—"}</div>
-                  {t.created_at && (
-                    <div style={{ fontSize: 10.5 }}>{formatDateTime(t.created_at)}</div>
+                  <div>{row.created_by || "—"}</div>
+                  {row.created_at && (
+                    <div style={{ fontSize: 10.5 }}>{formatDateTime(row.created_at)}</div>
                   )}
                 </td>
                 <td style={{ padding: "7px 8px", textAlign: "right" }}>
                   <Button size="sm" variant="ghost" disabled={del.isPending}
-                          onClick={() => setConfirming(t)}>
+                          onClick={() => setConfirming(row)}>
                     <Trash2 size={13} />
                   </Button>
                 </td>
@@ -267,15 +273,14 @@ function TopupsTable({ topups }: { topups: Topup[] }) {
         open={confirming !== null}
         onClose={() => setConfirming(null)}
         onConfirm={() => confirming && del.mutate(confirming.id)}
-        title="Delete this top-up?"
-        confirmLabel="Delete"
+        title={t("deleteTitle")}
+        confirmLabel={t("delete")}
         destructive
         busy={del.isPending}
         body={
           confirming ? (
             <p style={{ fontSize: 12.5, color: A.muted, margin: 0 }}>
-              Remove the {usd(confirming.amount_usd)} top-up from {confirming.topped_up_on}? This only
-              changes the recorded balance estimate; it does not touch the TypeSafe account.
+              {t("deleteBody", usd(confirming.amount_usd), confirming.topped_up_on)}
             </p>
           ) : null
         }
@@ -286,6 +291,8 @@ function TopupsTable({ topups }: { topups: Topup[] }) {
 
 // ── Tab body ───────────────────────────────────────────────────────────────────
 function JevCreditTabInner() {
+  const t = useT(SETTINGS);
+  const { formatDateTime } = useFormat();
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["jev-credit"],
     queryFn: () => apiGet<JevCreditResp>("/api/admin/decisions/jev-credit", { admin: true }),
@@ -310,7 +317,7 @@ function JevCreditTabInner() {
     return (
       <Card>
         <ErrorState
-          message={error instanceof Error ? error.message : "Failed to load Jev credit"}
+          message={error instanceof Error ? error.message : t("loadJevError")}
           onRetry={() => refetch()}
         />
       </Card>
@@ -321,38 +328,34 @@ function JevCreditTabInner() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <p style={{ fontSize: 12, color: A.muted2, margin: 0 }}>
-        Jev (TypeSafe) has no balance API, so top-ups are recorded here by hand. The balance below is
-        an <b>estimate</b>: total topped up minus Jev spend since the first top-up. Admins get a bell and an
-        e-mail when the estimate drops below the low-credit threshold
-        {view.low_threshold_usd != null ? ` (${usd(view.low_threshold_usd)})` : ""}, and again if Jev
-        reports the credit exhausted (HTTP 402).
+        {t("introA")} <b>{t("introB")}</b>
+        {t("introC", view.low_threshold_usd != null ? ` (${usd(view.low_threshold_usd)})` : "")}
       </p>
 
       <Card>
         <div style={{
           display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 16,
         }}>
-          <Stat label="Total topped up" value={usd(view.total_topped_up_usd)}
-                hint={view.first_topup_on ? `since ${view.first_topup_on}` : undefined} />
-          <Stat label="Spent (Jev)" value={usd(view.spent_since_first_topup_usd)}
+          <Stat label={t("totalToppedUp")} value={usd(view.total_topped_up_usd)}
+                hint={view.first_topup_on ? t("since", view.first_topup_on) : undefined} />
+          <Stat label={t("spentJev")} value={usd(view.spent_since_first_topup_usd)}
                 hint="shared.llm_call_log · provider typesafe" />
-          <Stat label="Estimated left" value={usd(view.estimated_left_usd)} tone="estimate" />
+          <Stat label={t("estimatedLeft")} value={usd(view.estimated_left_usd)} tone="estimate" />
         </div>
         {view.below_low_threshold && (
           <div style={{ fontSize: 11.5, color: A.amber, marginTop: 12 }}>
-            Estimated credit is below the {usd(view.low_threshold_usd)} alert threshold. Top up TypeSafe and
-            record it below.
-            {view.last_low_alert_at ? ` Last low-credit alert: ${formatDateTime(view.last_low_alert_at)}.` : ""}
+            {t("belowThreshold", usd(view.low_threshold_usd))}
+            {view.last_low_alert_at ? t("lastLowAlert", formatDateTime(view.last_low_alert_at)) : ""}
           </div>
         )}
         {view.last_exhausted_alert_at && (
           <div style={{ fontSize: 11.5, color: A.amber, marginTop: 12 }}>
-            Last exhausted alert: {formatDateTime(view.last_exhausted_alert_at)}
+            {t("lastExhausted", formatDateTime(view.last_exhausted_alert_at))}
           </div>
         )}
         {notDeployed && (
           <div style={{ fontSize: 11.5, color: A.muted2, marginTop: 12 }}>
-            The Jev credit endpoint is not deployed on this environment yet.
+            {t("notDeployed")}
           </div>
         )}
         {!notDeployed && view.low_threshold_usd != null && <TestAlertsButton />}

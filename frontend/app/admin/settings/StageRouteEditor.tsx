@@ -3,14 +3,16 @@
 // AA-686 — per-stage editor for the fallback chain + shadow A/B, inside the LLM Models › Stages
 // sub-tab. The primary model is still set by the existing ModelRow (PATCH /llm-config/{stage});
 // this component owns the route: the ordered fallbacks and the optional shadow model
-// (PATCH /llm-config/{stage}/route). A shadow doubles the judge cost, so Nghiệp wants the ON/OFF
+// (PATCH /llm-config/{stage}/route). A shadow doubles the judge cost, so the tech lead wants the ON/OFF
 // switch + sample % directly controllable here, with the current state readable at a glance.
+// AA-994: text in the UI language (models.messages.ts).
 
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, Plus, X } from "lucide-react";
 import { A, mono, sans } from "../_components/adminUi";
-import { Badge, Button, ConfirmModal, apiSend, useToast, alpha } from "../../_kit";
+import { Badge, Button, ConfirmModal, apiSend, useT, useToast, alpha } from "../../_kit";
+import { MODELS } from "./models.messages";
 import {
   type ModelOption,
   type StageConfigRow,
@@ -39,6 +41,7 @@ function shadowOptions(row: StageConfigRow): ModelOption[] {
 }
 
 export function StageRouteEditor({ row }: { row: StageConfigRow }) {
+  const t = useT(MODELS);
   const toast = useToast();
   const qc = useQueryClient();
 
@@ -74,13 +77,13 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
         admin: true,
       }),
     onSuccess: () => {
-      toast.success(`Route saved for ${row.stage}`);
+      toast.success(t("routeSaved", row.stage));
       setError("");
       qc.invalidateQueries({ queryKey: ["llm-config"] });
     },
     onError: (e) => {
       // Show the 422 detail inline, don't swallow it.
-      setError(e instanceof Error ? e.message : "Save failed");
+      setError(e instanceof Error ? e.message : t("saveFailed"));
     },
   });
 
@@ -146,14 +149,14 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
     >
       {/* At-a-glance state line */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
-        <span style={{ fontSize: 11.5, fontWeight: 600, color: A.ink2 }}>Route editor</span>
+        <span style={{ fontSize: 11.5, fontWeight: 600, color: A.ink2 }}>{t("routeEditor")}</span>
         <span data-testid={`llm-shadow-state-${row.stage}`} style={{ fontSize: 11.5, color: A.muted }}>
           {effShadow ? (
             <>
-              Shadow: <b style={{ color: A.ink2 }}>{shadowLabel}</b> · {effSample}%
+              {t("shadowLabel")} <b style={{ color: A.ink2 }}>{shadowLabel}</b> · {effSample}%
             </>
           ) : (
-            <>Shadow: <b style={{ color: A.ink2 }}>off</b></>
+            <>{t("shadowLabel")} <b style={{ color: A.ink2 }}>{t("off")}</b></>
           )}
         </span>
       </div>
@@ -161,7 +164,7 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
       {/* Fallback chain */}
       <div>
         <div style={{ fontSize: 11, fontWeight: 600, color: A.muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>
-          Fallback chain (tried in order after the primary)
+          {t("fallbackChain")}
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
           <span style={{
@@ -169,7 +172,7 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
             fontSize: 11.5, border: `1px solid ${A.line}`, background: A.line2, color: A.ink2,
           }}>
             <b>{label(row.model_id)}</b>
-            <span style={{ color: A.muted2 }}>primary</span>
+            <span style={{ color: A.muted2 }}>{t("primary")}</span>
           </span>
           {fallbacks.map((id, i) => (
             <span
@@ -183,7 +186,7 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
               <span aria-hidden style={{ color: A.muted2 }}>→</span>
               {label(id)}
               <button
-                aria-label={`Move ${id} up`}
+                aria-label={t("moveUp", id)}
                 onClick={() => moveFallback(i, -1)}
                 disabled={i === 0 || mut.isPending}
                 style={iconBtn(i === 0 || mut.isPending)}
@@ -191,7 +194,7 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
                 <ArrowUp size={12} />
               </button>
               <button
-                aria-label={`Move ${id} down`}
+                aria-label={t("moveDown", id)}
                 onClick={() => moveFallback(i, 1)}
                 disabled={i === fallbacks.length - 1 || mut.isPending}
                 style={iconBtn(i === fallbacks.length - 1 || mut.isPending)}
@@ -199,7 +202,7 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
                 <ArrowDown size={12} />
               </button>
               <button
-                aria-label={`Remove ${id}`}
+                aria-label={t("remove", id)}
                 onClick={() => removeFallback(id)}
                 disabled={mut.isPending}
                 style={{ ...iconBtn(mut.isPending), color: A.red }}
@@ -209,7 +212,7 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
             </span>
           ))}
           {fallbacks.length === 0 && (
-            <span style={{ fontSize: 11.5, color: A.muted2 }}>No fallbacks — primary only.</span>
+            <span style={{ fontSize: 11.5, color: A.muted2 }}>{t("noFallbacks")}</span>
           )}
         </div>
         {(addable.length > 0 || disabledOpts.length > 0) && (
@@ -225,13 +228,13 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
               }}
               style={selectStyle}
             >
-              <option value="" disabled>Add fallback…</option>
+              <option value="" disabled>{t("addFallback")}</option>
               {addable.map((o) => (
                 <option key={o.model_id} value={o.model_id}>{withVia(o.label, o.via)}</option>
               ))}
               {disabledOpts.map((o) => (
                 <option key={o.model_id} value={o.model_id} disabled>
-                  {withVia(o.label, o.via)} — {o.reason ?? "not available"}
+                  {withVia(o.label, o.via)} — {o.reason ?? t("notAvailableLower")}
                 </option>
               ))}
             </select>
@@ -243,12 +246,12 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
       <div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
           <span style={{ fontSize: 11, fontWeight: 600, color: A.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>
-            Shadow A/B
+            {t("shadowAb")}
           </span>
           <button
             role="switch"
             aria-checked={shadowOn}
-            aria-label={`Shadow A/B for ${row.stage}`}
+            aria-label={t("shadowFor", row.stage)}
             data-testid={`llm-shadow-switch-${row.stage}`}
             onClick={() => toggleShadow(!shadowOn)}
             disabled={mut.isPending || shadowOpts.length === 0}
@@ -263,10 +266,10 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
             <span style={{
               width: 8, height: 8, borderRadius: "50%", background: shadowOn ? A.accentDeep : A.muted2, display: "block",
             }} />
-            {shadowOn ? "ON" : "OFF"}
+            {shadowOn ? t("on") : t("offUpper")}
           </button>
           <span style={{ fontSize: 11, color: A.muted2 }}>
-            a shadow runs a second judge call on that % of calls (doubles the cost on them)
+            {t("shadowHint")}
           </span>
         </div>
 
@@ -279,13 +282,13 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
               onChange={(e) => setShadowModel(e.target.value)}
               style={selectStyle}
             >
-              <option value="" disabled>Pick a shadow model…</option>
+              <option value="" disabled>{t("pickShadow")}</option>
               {shadowOpts.map((o) => (
                 <option key={o.model_id} value={o.model_id}>{withVia(o.label, o.via)}</option>
               ))}
             </select>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <label style={{ fontSize: 11.5, color: A.muted }} htmlFor={`sample-${row.stage}`}>Sample %</label>
+              <label style={{ fontSize: 11.5, color: A.muted }} htmlFor={`sample-${row.stage}`}>{t("samplePct")}</label>
               <input
                 id={`sample-${row.stage}`}
                 data-testid={`llm-shadow-pct-${row.stage}`}
@@ -328,14 +331,14 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
       {/* Footer: save / cancel / error */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <Button size="sm" variant="primary" disabled={!dirty || mut.isPending} onClick={() => setConfirming(true)}>
-          {mut.isPending ? "Saving…" : "Save route"}
+          {mut.isPending ? t("saving") : t("saveRoute")}
         </Button>
         <Button size="sm" variant="ghost" disabled={!dirty || mut.isPending} onClick={cancel}>
-          Cancel
+          {t("cancel")}
         </Button>
         {disabledOpts.length > 0 && (
           <span style={{ fontSize: 11, color: A.muted2 }}>
-            {disabledOpts.length} model(s) unavailable (shown disabled in the dropdowns with a reason).
+            {t("unavailable", disabledOpts.length)}
           </span>
         )}
         {error && (
@@ -352,20 +355,19 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
         open={confirming}
         onClose={() => setConfirming(false)}
         onConfirm={confirmSave}
-        title={`Change the route for ${row.stage}?`}
-        confirmLabel="Confirm change"
+        title={t("changeRouteTitle", row.stage)}
+        confirmLabel={t("confirmChange")}
         body={
           <div style={{ fontSize: 13, color: A.body }}>
             <p style={{ marginTop: 0 }}>
-              This changes the gateway route for <b style={{ fontFamily: mono }}>{row.stage}</b> system-wide
-              (every call at this stage) — it takes effect on the next call, no redeploy.
+              {t("changeRouteA")} <b style={{ fontFamily: mono }}>{row.stage}</b> {t("changeRouteB")}
             </p>
             <div style={{ fontSize: 12.5, color: A.ink2 }}>
-              <div>Fallbacks: {fallbacks.length ? fallbacks.map(label).join(" → ") : "none (primary only)"}</div>
+              <div>{t("fallbacksLine", fallbacks.length ? fallbacks.map(label).join(" → ") : t("nonePrimaryOnly"))}</div>
               <div style={{ marginTop: 4 }}>
-                Shadow: {effShadow ? <>{shadowLabel} · {effSample}%</> : "off"}
+                {t("shadowLabel")} {effShadow ? <>{shadowLabel} · {effSample}%</> : t("off")}
                 {effShadow && (
-                  <span style={{ color: A.amber }}> — this runs a second judge call on {effSample}% of calls.</span>
+                  <span style={{ color: A.amber }}>{t("secondCall", effSample)}</span>
                 )}
               </div>
             </div>
