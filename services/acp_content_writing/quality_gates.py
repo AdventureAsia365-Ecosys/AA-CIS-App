@@ -2185,11 +2185,24 @@ def _has_num(text: str, key: str) -> bool:
 # S234 round 2 — contrast frames are fixed only down to the allowed density, worst first: a stock
 # 'This is not a metaphor', then a two-sentence "It's not X. It's Y.", then "is not X, it is Y",
 # then the milder "not just X but Y" / "less X than Y" (index into hygiene.CONTRAST_FRAME_RES).
-_CONTRAST_RANK = (5, 2, 0, 1, 6, 3, 7, 4)
+# AA-789 — the two shapes added for recall rank with their nearest kin: the 'Not X. Y X.' pair with the two-sentence
+# frame, the reversed 'Y, not X' with 'is not X, it is Y'.
+_CONTRAST_RANK = (5, 2, 9, 0, 1, 8, 6, 3, 7, 4)
 
 
-def _contrast_violations(text: str, spans: list[dict]) -> list[str]:
+def _in_stock_sentence(spans: list[dict], start: int, end: int, stock_quotes: tuple) -> bool:
+    """Every sentence the frame [start, end) touches is part of a quote a stock finding already made."""
+    touched = [sp["clean"] for sp in spans if sp["end"] > start and sp["start"] < end]
+    return bool(touched) and all(any(t in q for q in stock_quotes) for t in touched)
+
+
+def _contrast_violations(text: str, spans: list[dict], stock_quotes: tuple = ()) -> list[str]:
     n, allowed, frames = contrast_excess(text)
+    # AA-789 — a frame inside a sentence a stock finding already quotes ('Not as filler. Not as an afterthought.')
+    # is repaired with it: it neither counts toward the density nor gets a second, overlapping finding
+    if stock_quotes:
+        frames = [f for f in frames if not _in_stock_sentence(spans, f[0], f[1], stock_quotes)]
+        n = len(frames)
     if n <= allowed:
         return []
     words = len(strip_citation_tags(text).split())
@@ -2252,7 +2265,7 @@ def gate_voice(content_text: str, *, spec: Optional[ChannelSpec], stock_blocking
                     stock.append(f"stock phrase '{' '.join(m.group(0).split())}' — say it plainly or cut it: '{q}'")
     # S234 round 2 — every channel: contrast-frame density and lines shared with earlier pieces of
     # the same brief (S234 panel §5 fix 6). Same quoted shape, same one-repair-then-flag rule.
-    stock += _contrast_violations(text, spans)
+    stock += _contrast_violations(text, spans, tuple(v.rsplit(": '", 1)[-1].rstrip("'") for v in stock))
     stock += _template_violations(text, sibling_texts, exclude_texts, brand_name, spans, keyword)
     # S234 round 3 (r2 §4 fix 4) — stock lines that recur across rounds and brands, and phrases pasted
     # from the brand pack / angle brief, on every channel. Same one-repair-then-flag rule.

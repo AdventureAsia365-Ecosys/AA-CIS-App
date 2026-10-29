@@ -348,6 +348,20 @@ def _norm(text: str) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", fold(text or "")))
 
 
+# AA-789 (S234 r4 #11 'worn out by midday', a false F17 time claim) — figures of speech that carry a time word but
+# give no schedule. A time phrase inside one is never a timing claim (this only removes findings).
+_TIME_IDIOM_RE = re.compile(
+    r"\b(?:worn\s+out|tired(?:\s+out)?|exhausted|spent|flagging|done\s+in|bored|restless|hungry|flat)\s+"
+    r"(?:by|before)\s+(?:noon|midday|lunch(?:time)?|the\s+afternoon|mid-?afternoon|the\s+evening|nightfall)\b"
+    r"|\bat\s+the\s+end\s+of\s+the\s+day\b|\bday\s+in,?\s+day\s+out\b|\ball\s+day\s+long\b"
+    r"|\bcall(?:s|ed|ing)?\s+it\s+a\s+day\b|\b(?:night\s+and\s+day|day\s+and\s+night)\b|\baround\s+the\s+clock\b"
+    r"|\bthe\s+morning\s+after\b|\bmake\s+(?:a|your|their)\s+day\s+of\s+it\b", re.I)
+
+
+def _in_idiom(sentence: str, m: re.Match) -> bool:
+    return any(i.start() <= m.start() and m.end() <= i.end() for i in _TIME_IDIOM_RE.finditer(sentence))
+
+
 _ORDINAL_NUM = {"first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5}
 # a source time word and the words a piece may use for it ('Overnight in a ger camp' → 'the evening')
 _TIME_EQUIV = {"night": {"night", "overnight", "evening"}, "evening": {"evening", "overnight", "night"},
@@ -403,7 +417,7 @@ def timing_claims(text: str, moments: list[Moment], cta: Optional[str] = None) -
     out = []
     for s in _body_spans(text, cta):
         for m in _TIME_RE.finditer(s["clean"]):
-            if not _supported_time(m.group(0), s["clean"], moments):
+            if not _in_idiom(s["clean"], m) and not _supported_time(m.group(0), s["clean"], moments):
                 out.append(_quoted(f"gives a time the source does not ('{m.group(0)}') — cut it or use the source's "
                                    "own timing", s["clean"]))
                 break
@@ -426,7 +440,7 @@ def unsupported_time_keys(text: str, moments: list[Moment], cta: Optional[str] =
     out: set[str] = set()
     for s in _body_spans(text, cta):
         for m in _TIME_RE.finditer(s["clean"]):
-            if not _supported_time(m.group(0), s["clean"], moments):
+            if not _in_idiom(s["clean"], m) and not _supported_time(m.group(0), s["clean"], moments):
                 key = _TIME_KEY_RE.search(m.group(0))
                 out.add(key.group(0).lower() if key else _norm(re.sub(r"^the\s+", "", m.group(0), flags=re.I)))
         for m in _POSITION_RE.finditer(s["clean"]):
@@ -610,12 +624,22 @@ def _sections(text: str) -> list[list[dict]]:
 
 # ---------------------------------------------------------------- rarity / quantifier guard
 
+# AA-789 — three literal overclaims the panel quoted (r4 #16 'unlike almost anything else on earth', r4 #17 'a
+# landscape most of the world has never considered', r3 #17 '… that most of the world has never seen'). Only these
+# words: 'anything' needs 'else on earth', 'the world' needs 'most of' / 'the rest of' and 'has never / rarely' plus a
+# verb ('the world has yet to settle on one' and 'Travellers from most of the world can get a visa' are copy), and
+# 'unlike' takes only 'almost' ('Unlike most ger camps on the route, …' is copy). Kept apart so the tests can run
+# them alone on every clean sentence of the S257 verifier rounds.
+AA789_RARITY = (r"\banything\s+else\s+on\s+(?:earth|the planet)\b"
+                r"|\b(?:most|the\s+rest)\s+of\s+the\s+world\s+(?:has|have)\s+(?:never|rarely)\s+[a-z]+"
+                r"|\bunlike\s+almost\s+(?:anything|anywhere|any other)\b")
 RARITY_CLAIM_RE = re.compile(
     r"\b(?:no|very few|few|almost no|hardly any)\s+(?:real\s+|true\s+|direct\s+)?(?:equivalents?|parallels?"
     r"|counterparts?)\b"
     r"|\bunlike\s+(?:anything|anywhere|any other)\b"
     r"|\b(?:almost\s+|nearly\s+|practically\s+)?(?:anywhere|nowhere|any\s?place)\s+(?:else\s+)?on\s+(?:earth"
     r"|the planet)\b"
+    rf"|{AA789_RARITY}"
     r"|\b(?:almost\s+|nearly\s+|practically\s+)?nowhere\s+else\b"
     r"|\bcategorically\s+different\b"
     r"|\bno\s+other\s+(?:place|lake|culture|people|community|region|destination|landscape)\b"

@@ -28,7 +28,7 @@ from typing import Iterator, Optional
 
 from services.acp_shared.citation_tags import TAG as _TAG
 from services.acp_shared.citation_tags import strip_citation_tags
-from services.acp_shared.channel_spec import STOCK_PATTERNS
+from services.acp_shared.channel_spec import CROSS_CHANNEL_STOCK_PATTERNS, STOCK_PATTERNS
 
 
 def fold(text: Optional[str]) -> str:
@@ -2215,6 +2215,19 @@ CONTRAST_FRAME_RES = tuple(re.compile(p, re.I) for p in (
     r"\b(?:this|that|it)\s+is\s+not\s+(?:a\s+)?metaphor\b",
     r"\bnot\s+(?:a\s+|an\s+|the\s+)?\w+(?:\s+\w+){0,3}\s+but\s+(?!also\b)\w+",
     r"[—–,;]\s*not\s+(?:just|only|merely|simply)\s+\w+",
+    # AA-789 (Report 12 §1.3: the panel saw frames on 16-19 of 20 pieces, the check flagged 3) — two literal shapes.
+    # F15 only: it blocks on attempt 1 for one sentence repair and never holds (quality_gates.never_holds), and a
+    # finding needs more than 1 frame per 150 words.
+    # 8: the clause-final reversed frame, ONLY with the abstractions the panel quoted ('institutional, not ceremonial
+    # sentiment' r4 #8, 'a founding argument, not a scenic preference' r4 class 4) and the cliché 'frozen in time'.
+    # A shape rule (an '-al / -ic' adjective on an abstract noun, a stock noun like 'museum' / 'formality') fired on
+    # clean facts ('paid to the government, not a personal commission', 'the check is strict, not a formality').
+    r"(?:,|\s[—–])\s*not\s+(?:a\s+|an\s+)?(?:ceremonial\s+sentiment|scenic\s+preference"
+    r"|(?:(?-i:[a-z])[\w'’-]*\s+)?frozen\s+in\s+time)\s*(?=[.!?]|$)",
+    # 9: the broetry pair, a 'Not …' fragment answered by a two-word fragment ending on the same word ('Not squeezed
+    # in. Planned in.' r3 #15). A lone 'Not …' fragment is left alone: 'Not suitable for children under seven.' is
+    # standard itinerary copy.
+    r"(?:^|(?<=[.!?]\s)|(?<=\n))(?-i:N)ot\s+(?:[\w'’-]+\s+){0,2}([\w'’-]+)[.!?]\s+(?-i:[A-Z])[\w'’-]*\s+\1[.!?]",
 ))
 CONTRAST_WORDS_PER_FRAME = 150
 
@@ -2356,7 +2369,7 @@ TEMPLATE_LINE_RES = tuple(re.compile(p, re.I) for p in (
     # only as the sentence's opener with a plural pronoun (r2 #2 'Knowing them in advance —' had no
     # antecedent); 'and knowing that in advance changes how you plan' (r1 #13, clean) is fine
     r"^knowing\s+(?:them|these|those)\s+in\s+advance\b",
-))
+)) + CROSS_CHANNEL_STOCK_PATTERNS  # AA-789 — literal blog copies of 'does not perform for visitors', 'tolerates them'
 
 
 # AA-790 (S251 T9 pilot, AI-tells 4.08) — the AI tells the writer-side pass (ai_tells.rewrite) cannot fix in code:

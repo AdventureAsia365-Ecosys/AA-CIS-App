@@ -175,6 +175,25 @@ STOCK_PATTERNS = tuple(re.compile(p, re.I) for p in (
     # "isn't an inconvenience", "These aren't inconveniences", "not a bureaucratic inconvenience"
     r"\b(?:not|isn['’]?t|wasn['’]?t|aren['’]?t)\s+(?:an?\s+)?(?:\w+\s+)?inconveniences?\b",
 ))
+# AA-789 (Report 12 §1.3; S234 r4 #15 'does not perform for visitors.', #17 'tolerates them', both in BLOGS) — the
+# blog-side copies of two AA-780 lines, read by hygiene.TEMPLATE_LINE_RES on every channel (F15 stock line: one
+# sentence repair on attempt 1, never a hold). Literal, because a blog states operating facts:
+# - 'does not perform for visitors / tourists / the camera' only at the clause end and only in a sentence with no
+#   time or season word ('The troupe does not perform for visitors outside the festival.', 'In winter the troupe does
+#   not perform for visitors.' are schedules). A bare 'does not perform.' is left alone: 'Unlike at the old trekking
+#   camps, the herd at this sanctuary does not perform.' is an animal-welfare fact.
+# - 'tolerates them' only at the sentence end ('an adult animal tolerates you only when you approach slowly' and 'The
+#   dzong tolerates visitors in the outer courtyard' are advice and access facts).
+# The LinkedIn-only lines ('not a backdrop', 'isn't an inconvenience': r4 #7, #10, #11, all posts) are not copied.
+_SCHEDULE_WORDS = (r"winter|summer|spring|autumn|monsoon|rainy|seasons?|seasonal|off-season|festivals?|holidays?"
+                   r"|weekdays?|weekends?|mondays?|tuesdays?|wednesdays?|thursdays?|fridays?|saturdays?|sundays?"
+                   r"|mornings?|afternoons?|evenings?|nights?|tonight|today|daily|days?|weeks?|months?|years?"
+                   r"|outside|until|except|during|before|after|anymore")
+CROSS_CHANNEL_STOCK_PATTERNS = tuple(re.compile(p, re.I) for p in (
+    rf"^(?!.*\b(?:{_SCHEDULE_WORDS})\b).*?\b(?P<p>(?:does not|doesn['’]?t|did not|didn['’]?t)\s+perform\s+for\s+"
+    r"(?:visitors|tourists|the\s+camera))(?=\s*[.!?;—–]|\s*$)",
+    r"\btolerates\s+them(?=\s*[.!?]|\s*$)",
+))
 # A first sentence that starts "There is a …" / "There's a …" (S232: 20/29 openers; S233: 6/12).
 GENERIC_OPENER_RE = re.compile(r"^\s*There(?:\s+is|'s|’s|\s+was)\s+(?:a|an|one)\b", re.I)
 # Writing to the trade instead of travellers (S233: Trail Pulse 3/3 'active travel brands', Terra 'a
