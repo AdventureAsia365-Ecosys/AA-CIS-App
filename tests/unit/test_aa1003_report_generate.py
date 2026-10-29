@@ -90,6 +90,15 @@ def test_register_lists_every_report_and_flags_failures():
     assert "## Generated here" in out.markdown and "| P0 |" in out.markdown
 
 
+def test_register_names_its_own_run_instead_of_running():
+    reg = _reg()
+    rows = generate.register_rows(reg, {"EX-06": _last(DAY, status="running")}, NOW)
+    out = generate.render_register(reg, reg.report("EX-06"), DAY, rows, NOW)
+    entry = next(e for e in out.output["reports"] if e["id"] == "EX-06")
+    assert entry["last_status"] == "this_run"
+    assert "| this run |" in out.markdown and "| running |" not in out.markdown
+
+
 def test_render_refuses_a_report_without_renderer():
     import asyncio
 

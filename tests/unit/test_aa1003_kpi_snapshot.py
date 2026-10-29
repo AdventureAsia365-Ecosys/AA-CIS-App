@@ -122,6 +122,8 @@ def test_tours_live_is_point_in_time_only():
     v = asyncio.run(kpis.tours_live(conn, _ctx(latest=True)))[0]
     assert (v.kpi_id, v.value, v.data_as_of is not None) == ("K-CAT-LIVE", Decimal(812), True)
     assert "v_tour_liveness" in conn.fetchval.call_args.args[0]
+    # the view's states are served / paused / retired (CIS 272); there is no 'live' state
+    assert "state = 'served'" in conn.fetchval.call_args.args[0]
 
 
 def test_reports_failed_covers_seven_days():
@@ -253,6 +255,61 @@ def test_report_generate_renders_into_its_run(monkeypatch):
         return_value=report_jobs.generate.Rendered("s", {"x": 1}, "# md")))
     out = asyncio.run(report_jobs.run_report(_job_ctx({"run_id": _run_row()["id"]}, FakePool())))
     assert calls == ["running", "ok"] and out["report_id"] == "EX-04"
+
+
+class TxConn:
+    """Records the transaction outcome around enqueue_report_run."""
+
+    def __init__(self):
+        self.tx = []
+
+    def transaction(self):
+        conn = self
+
+        @asynccontextmanager
+        async def tx():
+            try:
+                yield
+            except BaseException:
+                conn.tx.append("rollback")
+                raise
+            conn.tx.append("commit")
+        return tx()
+
+
+def _tx_pool(conn):
+    pool = MagicMock()
+
+    @asynccontextmanager
+    async def ctx():
+        yield conn
+    pool.acquire = MagicMock(side_effect=lambda: ctx())
+    return pool
+
+
+def test_enqueue_report_run_commits_row_and_job_together(monkeypatch):
+    conn = TxConn()
+    monkeypatch.setattr(report_jobs.store, "create_run", AsyncMock(return_value="run-1"))
+    monkeypatch.setattr(report_jobs.store, "set_job", AsyncMock())
+    monkeypatch.setattr(report_jobs, "enqueue", AsyncMock(return_value=("job-1", True)))
+    ex04 = report_jobs.load().report("EX-04")
+    out = asyncio.run(report_jobs.enqueue_report_run(_tx_pool(conn), ex04, date(2026, 10, 28), date(2026, 10, 28),
+                                                     trigger="schedule", triggered_by=report_jobs.SCHEDULER))
+    assert out["run_id"] == "run-1" and out["job_id"] == "job-1" and conn.tx == ["commit"]
+
+
+def test_enqueue_failure_rolls_back_the_scheduled_row(monkeypatch):
+    """A failed enqueue must not leave a scheduled row: the unique index would stop the retry from chaining again."""
+    conn = TxConn()
+    finished = AsyncMock()
+    monkeypatch.setattr(report_jobs.store, "create_run", AsyncMock(return_value="run-1"))
+    monkeypatch.setattr(report_jobs.store, "finish_failed", finished)
+    monkeypatch.setattr(report_jobs, "enqueue", AsyncMock(side_effect=RuntimeError("db gone")))
+    ex04 = report_jobs.load().report("EX-04")
+    with pytest.raises(RuntimeError):
+        asyncio.run(report_jobs.enqueue_report_run(_tx_pool(conn), ex04, date(2026, 10, 28), date(2026, 10, 28),
+                                                   trigger="schedule", triggered_by=report_jobs.SCHEDULER))
+    assert conn.tx == ["rollback"] and finished.await_count == 0
 
 
 def test_report_generate_marks_the_run_failed_and_raises(monkeypatch):

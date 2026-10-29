@@ -77,7 +77,7 @@ LLM_DAY_SQL = """
      GROUP BY 1, 2
 """
 
-TOURS_LIVE_SQL = "SELECT count(*) FROM gold_aa_internal.v_tour_liveness WHERE state = 'live'"
+TOURS_LIVE_SQL = "SELECT count(*) FROM gold_aa_internal.v_tour_liveness WHERE state = 'served'"
 
 REPORT_FAILED_7D_SQL = """
     SELECT count(*) FROM shared.report_run

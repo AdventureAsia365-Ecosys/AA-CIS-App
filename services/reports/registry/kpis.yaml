@@ -103,7 +103,7 @@ kpis:
   version: 1
   name: Average quality score
   definition: avg silver_aa_internal.quality_scores.score_overall with evaluated_at in the week
-  unit: hours
+  unit: score
   threshold: No drop > 3 points week over week
   sources:
   - silver_aa_internal.quality_scores
@@ -267,7 +267,7 @@ kpis:
   version: 1
   name: Overage share
   definition: overage_usd / amount billable
-  unit: hours
+  unit: ratio
   threshold: '> 30 % two months running = suggest upgrade'
   sources: []
   defined_in: FI-09
@@ -512,7 +512,7 @@ kpis:
   version: 1
   name: Storage growth
   definition: GB/day over 30 and 7 days
-  unit: hours
+  unit: count
   threshold: Trigger > 1 GB/day for a week
   sources: []
   defined_in: OPS-08
@@ -532,7 +532,7 @@ kpis:
   version: 1
   name: Cover coverage
   definition: catalog.v_tour rows with cover_photo_path not null / all catalog.v_tour rows
-  unit: hours
+  unit: ratio
   threshold: '>= 95 %; red < 90 %'
   sources:
   - catalog.v_tour
@@ -554,8 +554,8 @@ kpis:
 - id: K-CAT-LIVE
   version: 1
   name: Tours live
-  definition: Rows of gold_aa_internal.v_tour_liveness with state 'live' at the snapshot; paused and retired counted the
-    same way
+  definition: 'Rows of gold_aa_internal.v_tour_liveness with state ''served'' at the snapshot (the view''s states: served,
+    paused, retired); paused and retired counted the same way'
   unit: count
   threshold: No unexplained drop > 2 % week over week (EX-04 uses day over day)
   sources:
@@ -572,8 +572,8 @@ kpis:
     job: kpi_snapshot_daily
     scopes:
     - all
-    computes: 'rows of gold_aa_internal.v_tour_liveness with state ''live'' when the job runs (a point-in-time count: written
-      for the latest day only, never back-filled)'
+    computes: 'rows of gold_aa_internal.v_tour_liveness with state ''served'' when the job runs (a point-in-time count:
+      written for the latest day only, never back-filled)'
 - id: K-CAT-PHOTO
   version: 1
   name: Photo depth
@@ -590,7 +590,7 @@ kpis:
   name: S1 rewrite coverage
   definition: Live gold_aa_internal.published_tours (deleted_at null) rewritten by the current S1 writer / all live published
     tours, same count as /admin/s1-rewrite
-  unit: hours
+  unit: ratio
   threshold: 100 %; countries < 90 % listed
   sources:
   - gold_aa_internal.published_tours
@@ -1409,7 +1409,7 @@ kpis:
   version: 1
   name: Tour-place coverage
   definition: Live tours (K-CAT-LIVE) with at least one geo.tour_place row / live tours
-  unit: hours
+  unit: ratio
   threshold: '>= 98 %'
   sources:
   - geo.tour_place
@@ -1908,7 +1908,7 @@ kpis:
   version: 1
   name: Consent coverage
   definition: Result of docs/legal/consent-capture-query.md (booking.customers.contact_consent, crm.consent)
-  unit: hours
+  unit: ratio
   threshold: 100 % of records with consent where required
   sources:
   - booking.customers
@@ -2173,7 +2173,7 @@ kpis:
   version: 1
   name: Keyword coverage
   definition: Live tours with a silver_aa_internal.seo_context row with expires_at in the future / live tours
-  unit: hours
+  unit: ratio
   threshold: '>= 95 %'
   sources:
   - silver_aa_internal.seo_context
@@ -2225,7 +2225,7 @@ kpis:
   version: 1
   name: Snapshot coverage
   definition: Checks captured / checks in the script list
-  unit: hours
+  unit: ratio
   threshold: 100 %
   sources: []
   defined_in: OPS-15
@@ -2462,7 +2462,7 @@ kpis:
   version: 1
   name: Video coverage
   definition: Scenarios with a recorded video / scenarios
-  unit: hours
+  unit: ratio
   threshold: 100 % (memory uat-videos-after-tech)
   sources: []
   defined_in: DEV-04
@@ -2562,7 +2562,7 @@ kpis:
   name: DPA coverage
   definition: Personal-data vendors with signed DPA / all such vendors (docs/legal/register.md vendor table; none signed
     today, line 245)
-  unit: hours
+  unit: ratio
   threshold: 100 % before prod go-live
   sources: []
   defined_in: FI-04

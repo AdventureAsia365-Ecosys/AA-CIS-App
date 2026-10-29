@@ -74,3 +74,10 @@ def test_parse_refuses_a_report_with_an_unknown_kpi():
         "sections": []}]}
     with pytest.raises(ValueError):
         registry.parse(cat, {"version": 1, "kpis": []})
+
+
+def test_parse_refuses_an_alert_bound_the_engine_does_not_read():
+    kp = {"version": 1, "kpis": [{"id": "K-CAT-LIVE", "name": "n", "definition": "d", "unit": "count",
+                                  "threshold": "t", "defined_in": "EX-04", "alert": {"red_lte": 100}}]}
+    with pytest.raises(ValueError, match="alert"):
+        registry.parse({"version": 1, "reports": []}, kp)

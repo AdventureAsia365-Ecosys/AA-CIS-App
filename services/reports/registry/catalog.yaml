@@ -264,7 +264,7 @@ reports:
   - K-LLM-RECON
   sections:
   - Summary for the business owner (Vietnamese, 5 lines)
-  - Totals by account (acc2, acc3 gross and credits; retired acc1 = 0 check)
+  - Totals by account (acc2, acc3 gross and credits; the retired account stays at 0)
   - 'By App tag: cis, tripplanner, booking, crm, identity, shared, untagged'
   - Top 5 services and every change > 20 % with reasons
   - LLM spend (FI-03 summary, incl. cost per tenant)

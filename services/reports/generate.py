@@ -200,9 +200,10 @@ _REGISTER_KEYS = ("id", "name_en", "priority", "schedule", "automation", "status
                   "failed_7d")
 
 
-def _register_entry(row: dict) -> dict:
-    return {**{k: row[k] for k in _REGISTER_KEYS}, "due": row["due"]["state"],
-            "last_status": (row["last_run"] or {}).get("status")}
+def _register_entry(row: dict, self_id: str) -> dict:
+    # the register's own last run is the one rendering it (status running): name it instead of showing "running"
+    status = "this_run" if row["id"] == self_id else (row["last_run"] or {}).get("status")
+    return {**{k: row[k] for k in _REGISTER_KEYS}, "due": row["due"]["state"], "last_status": status}
 
 
 def render_register(reg: Registry, report: Report, day: date, rows: list[dict], generated_at: datetime) -> Rendered:
@@ -216,7 +217,7 @@ def render_register(reg: Registry, report: Report, day: date, rows: list[dict], 
         "generated_at": generated_at.isoformat(), "generated_by": GENERATED_BY,
         "registry": {"reports": len(rows), "automated": len(automated), "imported_from": reg.imported_from},
         "states": by_state, "attention": [r["id"] for r in attention],
-        "reports": [_register_entry(r) for r in rows],
+        "reports": [_register_entry(r, report.id) for r in rows],
     }
     summary = (f"{report.id} {day.isoformat()}: {len(rows)} reports, {len(automated)} generated here, "
                f"{by_state.get('overdue', 0)} overdue, {sum(r['failed_7d'] for r in rows)} failed runs in 7 days")
@@ -227,7 +228,8 @@ def render_register(reg: Registry, report: Report, day: date, rows: list[dict], 
           "| Report | Schedule | Last run | Covered to | Due | Failed 7 days |", "|---|---|---|---|---|---|"]
     for r in automated:
         last = r["last_run"] or {}
-        md.append(f"| {r['id']} {r['name_en']} | {r['schedule']} | {last.get('status') or 'never'} | "
+        status = "this run" if r["id"] == report.id else (last.get("status") or "never")
+        md.append(f"| {r['id']} {r['name_en']} | {r['schedule']} | {status} | "
                   f"{r['covered_to'] or '—'} | {r['due']['state']} | {r['failed_7d']} |")
     md += ["", "## Needs attention", ""]
     md += [f"- {r['id']} {r['name_en']}: {r['due']['state']}, {r['failed_7d']} failed in 7 days" for r in attention] \

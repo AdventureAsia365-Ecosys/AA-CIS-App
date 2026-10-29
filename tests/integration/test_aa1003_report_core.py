@@ -4,11 +4,13 @@ conftest applies every migration, 305 included. These tests check the replayed s
 index, the CHECKs, cis_app's grants, the registration), then run the store and KPI SQL as written in
 services/reports/: the upsert overwrites a day, a scheduled run of the same report and period is created once, a
 manual one any number of times, last_runs reports what is covered, and the KPI computers read shared.job and
-shared.llm_call_log for one ICT day (fixture day 2023-05-17, which no other test writes; rows deleted at the end).
+shared.llm_call_log for one ICT day (fixture day 2023-05-17, which no other test writes; rows deleted at the end),
+and K-CAT-LIVE counts the 'served' keys of the replayed gold_aa_internal.v_tour_liveness (CIS 272).
 """
 import json
 import os
 import sys
+import uuid
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
@@ -125,3 +127,44 @@ async def test_kpi_computers_read_one_ict_day(pool):
     assert llm[("K-LLM-COST-DAY", "all")] == Decimal("1.75")
     assert llm[("K-LLM-FALLBACK-24H", "all")] == Decimal("0.5000")
     assert age and age[0].value >= 0
+
+
+MASTER_TENANT = "00000000-0000-0000-0000-000000000001"
+BATCH_ID = "00000000-0000-0000-0000-000000000002"
+
+
+async def _liveness_tour(c, label, master_status):
+    tour_id = uuid.uuid4()
+    await c.execute(
+        "INSERT INTO silver_aa_internal.raw_tours (tour_id, tenant_id, batch_id, src_name, country, duration, "
+        "source_status, source_group_id, source_version) "
+        "VALUES ($1, $2, $3, $4, 'Vietnam', '3 days', 'active'::silver_aa_internal.source_status_enum, $5, 1)",
+        tour_id, MASTER_TENANT, BATCH_ID, f"aa1003 {label}", uuid.uuid4())
+    await c.execute(
+        "INSERT INTO gold_aa_internal.published_tours (tour_id, generated_content_id, tenant_id, aa_name, "
+        "aa_summary, aa_highlights, master_status) VALUES ($1, $2, $3, $4, 'S', '[]'::jsonb, $5)",
+        tour_id, uuid.uuid4(), MASTER_TENANT, f"aa1003 {label}", master_status)
+
+
+async def test_tours_live_counts_served_keys_of_the_replayed_view(pool):
+    """K-CAT-LIVE against the real v_tour_liveness (CIS 272): its states are served / paused / retired, and the KPI
+    counts the served ones. A served, a paused and a retired key are added in a rolled-back transaction."""
+    ctx = kpis.DayContext(day=DAY, start=_ict(0), end=_ict(23, 59), latest=True)
+    async with pool.acquire() as c:
+        tr = c.transaction()
+        await tr.start()
+        try:
+            states = {r["state"] for r in await c.fetch("SELECT DISTINCT state FROM gold_aa_internal.v_tour_liveness")}
+            assert states <= {"served", "paused", "retired"}
+            before = (await kpis.tours_live(c, ctx))[0].value
+            await _liveness_tour(c, "served", "active")
+            await _liveness_tour(c, "paused", "inactive")
+            await _liveness_tour(c, "retired", "trashed")
+            after = await kpis.tours_live(c, ctx)
+            direct = await c.fetchval(
+                "SELECT count(*) FROM gold_aa_internal.v_tour_liveness WHERE state = 'served'")
+        finally:
+            await tr.rollback()
+    assert after[0].kpi_id == "K-CAT-LIVE" and after[0].scope == "all"
+    assert after[0].value == before + 1
+    assert after[0].value == direct and direct >= 1

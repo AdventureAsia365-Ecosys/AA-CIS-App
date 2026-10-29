@@ -79,21 +79,21 @@ async def compute_day(conn, ctx: DayContext, allowed: set[str]) -> tuple[list[Kp
 async def enqueue_report_run(pool, report: Report, first: date, last: date, *, trigger: str, triggered_by: str,
                              parent_job_id: Optional[str] = None) -> Optional[dict]:
     """A queued shared.report_run row + its report_generate job. None when a scheduled run of the same report and
-    period exists already. The run row comes first, so the job always finds it."""
+    period exists already. Row and job commit together: the job always finds its row, and a failed enqueue leaves no
+    scheduled row behind, so the snapshot job's retry chains the report again (report_run_schedule_uq would refuse a
+    second scheduled row for the period)."""
     async with pool.acquire() as conn:
-        run_id = await store.create_run(conn, report.id, first, last, trigger=trigger, triggered_by=triggered_by)
-        if run_id is None:
-            return None
-        try:
+        async with conn.transaction():
+            run_id = await store.create_run(conn, report.id, first, last, trigger=trigger,
+                                            triggered_by=triggered_by)
+            if run_id is None:
+                return None
             job_id, _ = await enqueue(
                 conn, REPORT_KIND,
                 {"run_id": run_id, "report_id": report.id, "period_start": first.isoformat(),
                  "period_end": last.isoformat()},
                 idempotency_key=f"{REPORT_KIND}:{run_id}", created_by=triggered_by, parent_job_id=parent_job_id)
-        except Exception as e:
-            await store.finish_failed(conn, run_id, f"could not queue the job: {type(e).__name__}: {str(e)[:300]}")
-            raise
-        await store.set_job(conn, run_id, job_id)
+            await store.set_job(conn, run_id, job_id)
     return {"run_id": run_id, "job_id": job_id, "report_id": report.id, "period_start": first.isoformat(),
             "period_end": last.isoformat(), "status": "queued", "trigger": trigger}
 

@@ -108,6 +108,9 @@ class Registry:
         return [r for r in self.reports if r.runnable]
 
 
+ALERT_KEYS = frozenset({"amber_gte", "red_gte"})
+
+
 def _tuple(v: Any) -> tuple:
     return tuple(v or ())
 
@@ -119,6 +122,9 @@ def parse(catalog: dict, kpis: dict) -> Registry:
         raise ValueError("report registry: both files must be YAML mappings")
     kpi_map: dict[str, Kpi] = {}
     for k in kpis.get("kpis") or []:
+        unknown = set(k.get("alert") or {}) - ALERT_KEYS
+        if unknown:      # generate.alert_status reads only these: another bound would silently show "ok"
+            raise ValueError(f"report registry: {k['id']} has unknown alert bounds {sorted(unknown)}")
         kpi_map[k["id"]] = Kpi(
             id=k["id"], name=k["name"], definition=k["definition"], unit=k["unit"], threshold=str(k["threshold"]),
             sources=_tuple(k.get("sources")), defined_in=k["defined_in"], used_by=_tuple(k.get("used_by")),
