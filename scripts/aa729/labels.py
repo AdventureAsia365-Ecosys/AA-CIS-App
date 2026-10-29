@@ -6,6 +6,8 @@ Local, $0 (the panel is Claude Code agents reading the pack, not a gateway call)
   python3 -m scripts.aa729.labels apply fixture-1.0.0.json panel.json --approved-by nghiep --out fixture-1.1.0.json
   python3 -m scripts.aa729.labels relabel fixture-1.1.0.json review.json --approved-by <who> --review-ref <doc> \
       --out fixture-1.2.0.json      # a calibration review of panel labels (S256, AA-919)
+  python3 -m scripts.aa729.labels merge fixture-1.2.0.json addendum-labelled.json --approved-by <who> \
+      --out fixture-1.3.0.json      # add a labelled addendum (select_samples --ids) as the next version (S258)
 
 The pack holds, per needs_panel sample, the frozen output, the FULL writer source and the rubric — never the
 pipeline's own verdict (passed / held / score / failure codes), T9's gate_ledger / flags, nor the selection
@@ -23,6 +25,7 @@ import argparse
 import copy
 import json
 import sys
+from collections import Counter
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -69,12 +72,17 @@ def panel_output(output):
 
 
 def _source_text(sample: dict) -> str:
+    """S1 / T2: the whole source tour. T9: every section of the stored writer input in the R2 judge's layout, never cut
+    (`eval_judge.panel_source_text`, S258): the scope, angle brief and brand pack the rubric rules count as source are
+    in it, so a panel label and the judge read the same fields. Packs exported before S258 showed only the seed,
+    facts, CTA and brand name for T9."""
     inp = sample.get("input") or {}
     src = inp.get("tour") or {}
     if not src and inp.get("context"):
-        ctx = inp["context"]
-        src = {"seed": ctx.get("atom_text"), "facts": ctx.get("facts_text"), "cta": ctx.get("cta"),
-               "brand": (ctx.get("brand_audience") or {}).get("brand_name")}
+        from services.writing_memory.eval_judge import panel_source_text
+
+        channel = sample.get("channel") or inp["context"].get("channel")
+        return panel_source_text("t9_blog" if channel == "blog" else "t9_social", inp)
     return flatten_text(src)
 
 
@@ -188,6 +196,124 @@ def relabel(fixture: dict, review: dict, *, approved_by: str, review_ref: str) -
     return out, {"relabelled": changed, "reviewed": len(review), "fixture_version": out["fixture_version"]}
 
 
+# Label sources an addendum sample may carry into a merged fixture: what the WM-17 importer accepts
+# (services/golden_set/derive.LABEL_SOURCES, minus synthetic: an addendum holds real outputs only).
+MERGE_SOURCES = frozenset({"agent_panel", "admin_edit", "tenant_edit", "human_label"})
+# refs keys that identify the output an item freezes; the same output twice would count one text twice in kappa.
+_OUTPUT_REFS = ("piece_id", "version_id")
+
+
+def _ref_keys(sample: dict) -> set[str]:
+    refs = sample.get("refs") or {}
+    keys = {f"{k}:{refs[k]}" for k in _OUTPUT_REFS if refs.get(k)}
+    if sample.get("kind") == "s1" and refs.get("tour_id"):
+        keys.add(f"tour_id:{refs['tour_id']}")   # a1 freezes one Master text per tour
+    return keys
+
+
+def _prefix(sample_id: str) -> str:
+    return sample_id.rsplit("-", 1)[0]
+
+
+def _pack_digest(pack) -> str:
+    import hashlib
+
+    return hashlib.sha256(json.dumps(pack, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
+
+
+def merge(base: dict, addendum: dict, *, approved_by: str, drop_unlabelled: bool = False) -> tuple[dict, dict]:
+    """The next fixture version (minor bump of `base`): base + the labelled samples of an addendum made by
+    `select_samples --ids` against that base version. Nothing is half-applied: a problem refuses the merge.
+
+    - the addendum must name this base (`addendum_of`) and share its schema;
+    - every addendum sample needs an importable label (MERGE_SOURCES, verdict pass / fail); with `drop_unlabelled`
+      a needs_panel / disputed one is left out and reported instead of refusing;
+    - an output the base already holds (piece / version id; an S1 tour) is refused;
+    - sample ids are renumbered after the base's highest number per prefix (`t9f-001` stays `t9f-001` when the base
+      has no Facebook item, `t9l-001` becomes `t9l-016` after `t9l-015`);
+    - brand packs: a new key is added; an equal one is shared; a CHANGED S1 pack is stored under
+      `<key>@<sha8>` and the new samples point at it (base items keep the pack they were frozen with); a changed
+      tenant (t2:) pack is inlined on the new samples themselves (`input.brand_rules`, no ref), because the importer
+      inlines a `t2:<slug>` ref on every item of that tenant.
+    Labels are immutable per version: the result is a new version to import, never an edit of the imported one."""
+    if not approved_by.strip():
+        raise ValueError("approved_by is required (the business decision owner approves new labels)")
+    problems = []
+    if addendum.get("schema") != base.get("schema"):
+        problems.append(f"schema {addendum.get('schema')!r} is not the base's {base.get('schema')!r}")
+    if addendum.get("addendum_of") != base.get("fixture_version"):
+        problems.append(f"the addendum extends {addendum.get('addendum_of')!r}, the base is "
+                        f"{base.get('fixture_version')!r}")
+    taken = {k for s in base["samples"] for k in _ref_keys(s)}
+    keep, dropped = [], []
+    for s in addendum.get("samples") or []:
+        sid, lab = s.get("sample_id"), s.get("label") or {}
+        if s.get("stratum") == "injection" or str(s.get("kind", "")).startswith("injection"):
+            problems.append(f"{sid}: an addendum holds real outputs only")
+        elif s.get("label_source") not in MERGE_SOURCES or lab.get("verdict") not in ("pass", "fail"):
+            if drop_unlabelled:
+                dropped.append(sid)
+                continue
+            problems.append(f"{sid}: label source {s.get('label_source')!r} / verdict {lab.get('verdict')!r} "
+                            f"is not importable")
+        elif _ref_keys(s) & taken:
+            problems.append(f"{sid}: the base already holds {sorted(_ref_keys(s) & taken)}")
+        else:
+            taken |= _ref_keys(s)
+            keep.append(s)
+    if problems:
+        raise ValueError("; ".join(problems))
+
+    out = copy.deepcopy(base)
+    packs = out.setdefault("shared_inputs", {}).setdefault("brand_rules", {})
+    add_packs = (addendum.get("shared_inputs") or {}).get("brand_rules") or {}
+    renamed, inlined = {}, []
+    for key, pack in add_packs.items():
+        if key not in packs:
+            packs[key] = copy.deepcopy(pack)
+        elif _pack_digest(packs[key]) != _pack_digest(pack) and key.startswith("s1:"):
+            renamed[key] = f"{key}@{_pack_digest(pack)[:8]}"
+            packs[renamed[key]] = copy.deepcopy(pack)
+        elif _pack_digest(packs[key]) != _pack_digest(pack):
+            renamed[key] = None
+    top: dict[str, int] = {}
+    for s in out["samples"]:
+        head, _, num = s["sample_id"].rpartition("-")
+        if num.isdigit():
+            top[head] = max(top.get(head, 0), int(num))
+    added = []
+    for s in keep:
+        s = copy.deepcopy(s)
+        p = _prefix(s["sample_id"])
+        top[p] = top.get(p, 0) + 1
+        s["sample_id"] = f"{p}-{top[p]:03d}"
+        inp = s.get("input") or {}
+        ref = inp.get("brand_rules_ref")
+        if ref in renamed and renamed[ref]:
+            inp["brand_rules_ref"] = renamed[ref]
+        elif ref in renamed:
+            inp.pop("brand_rules_ref")
+            inp["brand_rules"] = copy.deepcopy(add_packs[ref])
+            inlined.append(s["sample_id"])
+        out["samples"].append(s)
+        added.append(s["sample_id"])
+    old_version = out["fixture_version"]
+    out["fixture_version"] = bump_minor(old_version)
+    out.setdefault("selection", {}).setdefault("addenda", []).append({
+        "addendum_created_at": addendum.get("created_at"), "selection": addendum.get("selection"),
+        "added": added, "dropped_unlabelled": dropped})
+    out.setdefault("label_history", []).append({
+        "from_version": old_version, "to_version": out["fixture_version"], "source": "addendum",
+        "approved_by": approved_by, "applied": len(added), "added": added,
+        "addendum_label_history": addendum.get("label_history") or [],
+        "packs_renamed": {k: v for k, v in renamed.items() if v}, "packs_inlined_on": inlined,
+        "at": datetime.now(timezone.utc).isoformat()})
+    return out, {"added": added, "dropped_unlabelled": dropped, "fixture_version": out["fixture_version"],
+                 "by_stratum_label": dict(sorted(Counter(
+                     f"{s['stratum']}:{(s.get('label') or {}).get('verdict')}"
+                     for s in out["samples"] if s["sample_id"] in set(added)).items()))}
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -207,9 +333,27 @@ def main(argv: Optional[list[str]] = None) -> int:
     r.add_argument("--approved-by", required=True)
     r.add_argument("--review-ref", required=True)
     r.add_argument("--out", required=True)
+    m = sub.add_parser("merge")
+    m.add_argument("fixture")
+    m.add_argument("addendum")
+    m.add_argument("--approved-by", required=True)
+    m.add_argument("--out", required=True)
+    m.add_argument("--drop-unlabelled", action="store_true")
     a = ap.parse_args(argv)
     with open(a.fixture, encoding="utf-8") as f:
         fixture = json.load(f)
+    if a.cmd == "merge":
+        with open(a.addendum, encoding="utf-8") as f:
+            addendum = json.load(f)
+        new, info = merge(fixture, addendum, approved_by=a.approved_by, drop_unlabelled=a.drop_unlabelled)
+        leaks = find_pii(new)
+        if leaks:
+            print(f"PII check failed: {leaks[:10]}")
+            return 2
+        with open(a.out, "w", encoding="utf-8") as f:
+            f.write(dumps(new))
+        print(json.dumps(info, indent=1))
+        return 0
     if a.cmd == "relabel":
         with open(a.review, encoding="utf-8") as f:
             review = json.load(f)

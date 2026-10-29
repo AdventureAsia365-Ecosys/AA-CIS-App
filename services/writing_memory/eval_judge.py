@@ -267,6 +267,18 @@ def judge_source_text(writer: str, inp: dict, shared_inputs: Optional[dict] = No
     return "\n\n".join(parts)
 
 
+def panel_source_text(writer: str, inp: dict) -> str:
+    """The SOURCE a labelling panel reads for a T9 item (AA-919 S258): the judge's sections in the judge's order, never
+    cut (a panel agent reads files, so size is no limit; S245: an excerpt made judges fail claims later in the text).
+    Labels and judge then rest on the same fields (rubric rule 5: brief and brand pack are part of the source). Pure,
+    no model call; '' for a writer that is not T9."""
+    from services.writing_memory import eval_writers as ew
+    if writer not in ew.T9_WRITERS:
+        return ""
+    sections = _t9_sections(ew._t9_context(inp), writer)
+    return "\n\n".join(f"{name}:\n{sections[name]}" for name, _cap in T9_SOURCE_SECTIONS if sections.get(name))
+
+
 def build_user_prompt(*, writer: str, source_text: str, output_text: str) -> str:
     return (f"WRITER: {writer}\n\n<SOURCE>\n{(source_text or '')[:SOURCE_CHARS]}\n</SOURCE>\n\n"
             f"<OUTPUT>\n{(output_text or '')[:OUTPUT_CHARS]}\n</OUTPUT>")

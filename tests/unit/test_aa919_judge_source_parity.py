@@ -173,15 +173,16 @@ _IMPORT = re.compile(r"^\s*(from\s+services\.writing_memory\.eval_judge\s+import
 def test_only_the_r2_runner_imports_the_eval_judge():
     """Live pipelines never call the eval judge: the only non-test module that imports it is the R2 runner (the
     writing_memory_r2 job / CLI), plus the AA-919 operator scripts (S257: the $0 kappa diag and the judge-model
-    comparison, both exec'd by hand, never imported by a pipeline). A new importer must be a deliberate change of
-    this test."""
+    comparison, both exec'd by hand, never imported by a pipeline; S258: the AA-729 label pack, which reads only
+    `panel_source_text`, the judge's source layout uncut, and never calls the judge). A new importer must be a
+    deliberate change of this test."""
     importers = set()
     for top in ("api", "services", "shared", "worker", "scripts"):
         for f in (REPO / top).rglob("*.py"):
             if _IMPORT.search(f.read_text(encoding="utf-8", errors="ignore")):
                 importers.add(f.relative_to(REPO).as_posix())
     assert importers == {"services/writing_memory/r2.py", "scripts/aa919/kappa_diag.py",
-                         "scripts/aa919/judge_compare.py"}
+                         "scripts/aa919/judge_compare.py", "scripts/aa729/labels.py"}
 
 
 def test_r2_judges_with_the_parity_source_and_stores_the_claims(monkeypatch):
@@ -205,3 +206,35 @@ def test_r2_judges_with_the_parity_source_and_stores_the_claims(monkeypatch):
     failed = [r for r in _rows(store, arm="control") if r["failure_codes"]]
     assert failed and all(r["details"]["judge_claims"][0]["claim"] == "BADFACT" for r in failed)
     assert all("judge_claims" not in r["details"] for r in _rows(store, arm="control") if not r["failure_codes"])
+
+
+# ── S258: the label pack reads the judge's sections, uncut ───────────────────────────────────────────────────────────
+
+
+def test_panel_source_is_the_judge_layout_never_cut():
+    long_seed = "Zz ride on. " * 3000 + "Zz the last line of the seed."
+    inp = {"context": _ctx(atom_text=long_seed)}
+    panel = ej.panel_source_text("t9_social", inp)
+    judge = ej.judge_source_text("t9_social", inp)
+    assert panel.rstrip().endswith("Zz fact block.") and "Zz the last line of the seed." in panel
+    assert ej.CUT_MARK.strip() not in panel and len(panel) > ej.SOURCE_CHARS
+    assert ej.CUT_MARK.strip() in judge          # the judge's own source is still bounded
+    heads = [ln[:-1] for ln in panel.splitlines() if ln.endswith(":") and ln[:-1] in dict(ej.T9_SOURCE_SECTIONS)]
+    assert heads == ["SEED", "SCOPE", "TRIP", "ANGLE BRIEF", "GOAL", "BRAND PACK", "CHANNEL", "WRITER ASKS", "FACTS"]
+    assert "ZZ SIBLING OPENER" not in panel and "Zz invented question?" not in panel
+    short = {"context": _ctx()}
+    assert ej.panel_source_text("t9_social", short) == ej.judge_source_text("t9_social", short)
+    assert ej.panel_source_text("a1", {"tour": {"name": "Zz"}}) == ""
+
+
+def test_label_pack_gives_the_panel_the_t9_brief_and_brand_pack():
+    from scripts.aa729 import labels
+
+    fx = {"fixture_version": "1.2.0", "samples": [
+        {"sample_id": "t9f-001", "stratum": "t9_social", "channel": "facebook", "label_source": "needs_panel",
+         "label": {"verdict": None}, "output": {"content_text": "Zz post."},
+         "input": {"context": _ctx(channel="facebook")}}]}
+    src = labels.export_pack(fx)["items"][0]["source"]
+    assert src == ej.panel_source_text("t9_social", fx["samples"][0]["input"])
+    for needle in ("day 4 only.", "Zz the angle reasoning.", "Zz private journeys with expert guiding."):
+        assert needle in src, needle
