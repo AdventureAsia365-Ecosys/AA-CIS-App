@@ -2,11 +2,15 @@
 
 - match.resolve_destination: rules in order (exact, core, name in label, label in name), the first rule that names a
   place decides, a tie is `ambiguous` (never the first one listed), generic labels never match by core / containment,
-  order-independent.
+  order-independent; a label found only inside one place name is `weak` (a suggestion, never a destination): a town
+  label is not its landmark (review S257).
 - photo_destination_match job: DRY RUN by default (writes nothing), counts every outcome per country with samples,
-  one guarded UPDATE on apply, stops while a photo_sync runs, bad payloads are non-retryable.
+  one guarded UPDATE on apply (marked 'auto'), weak answers never written, covers filled only on request and
+  previewed on every run, stops while a photo_sync runs, bad payloads are non-retryable.
 - POST /admin/photos/destination-match: a PHOTOS_WRITE policy route declared before /{photo_id}/assign, DRY RUN by
-  default, one job at a time.
+  default, one job at a time (check + insert under one advisory lock).
+- POST /admin/photos/{id}/assign: a folder-wide tour change empties the automatic destinations of the rows whose tour
+  changes; a destination given by hand is marked 'manual'.
 The SQL runs on real Postgres in tests/integration/test_aa671_photo_destination_match.py.
 """
 from __future__ import annotations
@@ -39,11 +43,29 @@ def _r(label, cands):
     ("Quellin Lake", [("d3", "Lake Quellin")], "d3", M.RULE_CORE),
     ("Zorvan Island sunset", [("d1", "Zorvan Island"), ("d2", "Zorvan")], "d1", M.RULE_NAME_IN_LABEL),  # longest
     ("Morning at Brass Gate", [("d1", "Brass Gate"), ("d2", "Zorvan")], "d1", M.RULE_NAME_IN_LABEL),
-    ("Taktsor", [("p", "Paro Taktsor"), ("q", "Paro")], "p", M.RULE_LABEL_IN_NAME),
 ])
 def test_matched_by_the_first_rule_that_names_a_place(label, cands, dest, rule):
     got = _r(label, cands)
     assert (got.outcome, got.destination_id, got.rule) == (M.MATCHED, dest, rule)
+
+
+@pytest.mark.parametrize("label,cands,suggested", [
+    # a town label against the landmarks named after the town: the landmark is a different place
+    ("Paro", [("tn", "Paro Taktsang"), ("pd", "Punakha Dzong")], "tn"),
+    ("Thimphu", [("td", "Thimphu Dzong"), ("bb", "Buddha Dordenma")], "td"),
+    ("Bangkok", [("wa", "Wat Arun Bangkok"), ("gp", "Grand Palace")], "wa"),
+    ("Taktsor", [("p", "Paro Taktsor"), ("q", "Paro")], "p"),
+])
+def test_a_label_found_only_inside_a_place_name_is_weak_never_a_destination(label, cands, suggested):
+    got = _r(label, cands)
+    assert (got.outcome, got.destination_id, got.rule, got.suggestion) == (M.WEAK, None, M.RULE_LABEL_IN_NAME,
+                                                                         suggested)
+    assert M.match_destination(label, cands) is None
+
+
+def test_a_town_label_matches_the_town_itself_when_the_tour_has_it():
+    got = _r("Paro", [("tn", "Paro Taktsang"), ("town", "Paro"), ("pd", "Punakha Dzong")])
+    assert (got.outcome, got.destination_id, got.rule) == (M.MATCHED, "town", M.RULE_EXACT)
 
 
 def test_the_itinerary_spelling_counts_as_a_name_of_the_destination():
@@ -112,14 +134,20 @@ CANDS = {T1: [("d-gate", "Brass Gate"), ("d-isle", "Zorvan Island"), ("d-m1", "N
 
 def test_plan_counts_every_outcome_per_country_with_samples():
     rows = [_photo(1, "Brass Gate (2)"), _photo(2, "Zorvan Island sunset", source="manual"), _photo(3, "Night Bazaar"),
-            _photo(4, "Quellin"), _photo(5, "Brass Gate", tour=T2, country="Zz Taiwan"), _photo(6, "x")]
+            _photo(4, "Quellin"), _photo(5, "Brass Gate", tour=T2, country="Zz Taiwan"), _photo(6, "x"),
+            _photo(7, "Zorvan")]
     out = J.plan(rows, CANDS)
-    assert out["outcomes"] == {"matched": 2, "ambiguous": 1, "no_match": 1, "no_candidate": 1, "no_label": 1}
+    assert out["outcomes"] == {"matched": 2, "ambiguous": 1, "weak": 1, "no_match": 1, "no_candidate": 1,
+                               "no_label": 1}
     assert out["rules"] == {M.RULE_EXACT: 1, M.RULE_NAME_IN_LABEL: 1}
     assert out["writes"] == [(rows[0]["id"], "d-gate", T1, M.RULE_EXACT),
                              (rows[1]["id"], "d-isle", T1, M.RULE_NAME_IN_LABEL)]
-    assert out["by_country"]["Zz Taiwan"] == {"matched": 0, "ambiguous": 0, "no_match": 0, "no_candidate": 1,
-                                              "no_label": 0}
+    assert out["by_country"]["Zz Taiwan"] == {"matched": 0, "ambiguous": 0, "weak": 0, "no_match": 0,
+                                              "no_candidate": 1, "no_label": 0}
+    weak, = out["samples"]["weak"]                               # "Zorvan" inside "Zorvan Island": never written
+    assert weak["photo_id"] == rows[6]["id"] and weak["suggestion"] == {"destination_id": "d-isle",
+                                                                        "name": "Zorvan Island"}
+    assert rows[6]["id"] not in {w[0] for w in out["writes"]}
     amb, = out["ambiguous"]
     assert [c["destination_id"] for c in amb["candidates"]] == ["d-m1", "d-m2"]
     assert out["samples"]["matched"][1]["destination"] == "Zorvan Island"
@@ -136,9 +164,10 @@ def test_plan_samples_are_capped():
 class _JobPool:
     """Plays the job's queries over in-memory place_photo rows."""
 
-    def __init__(self, rows, cands, sync_running=False, apply_result=None):
+    def __init__(self, rows, cands, sync_running=False, apply_result=None, covers=None):
         self.rows, self.cands, self.sync_running, self.apply_result = rows, cands, sync_running, apply_result
-        self.applied = []
+        self.applied, self.cover_fills, self.preview_args = [], 0, None
+        self.covers = covers or {}         # destination id -> cover url (absent = no destination row)
 
     def _open(self, country):
         return [r for r in self.rows if r["destination_id"] is None and (country is None or r["country"] == country)]
@@ -150,6 +179,13 @@ class _JobPool:
         return len(self._open(args[0]))
 
     async def fetchrow(self, sql, *args):
+        if sql == J.COVERS_PREVIEW_SQL:
+            self.preview_args = args
+            base, prefix, planned = args
+            served = {r["destination_id"] for r in self.rows if r["destination_id"]}
+            new = [d for d in planned if d in self.covers and d not in served]
+            return {"pending_now": 0, "new_empty": sum(self.covers[d] is None for d in new),
+                    "new_job_owned": sum(bool(self.covers[d]) and self.covers[d].startswith(prefix) for d in new)}
         assert sql == J.SERVED_SQL
         with_dest = [r for r in self.rows if r["destination_id"]]
         return {"photos": len(with_dest), "destinations": len({r["destination_id"] for r in with_dest})}
@@ -175,6 +211,7 @@ class _JobPool:
             self.pinned = args
             return "SELECT 1"
         if "shared.destinations d SET cover_image_url" in sql:
+            self.cover_fills += 1
             return "UPDATE 1"
         raise AssertionError(sql)
 
@@ -235,6 +272,7 @@ def test_dry_run_is_the_default_and_writes_nothing():
     pool = _JobPool(_rows(), CANDS)
     res, ctx = _run(pool)
     assert res["dry_run"] is True and pool.applied == [] and res["written"] == 0 and res["covers_set"] == 0
+    assert res["fill_covers"] is False and pool.cover_fills == 0
     assert pool.pinned == ("00000000-0000-0000-0000-000000000001",)          # raw_tours read as the AA master
     assert res["outcomes"]["matched"] == 2 and res["outcomes"]["ambiguous"] == 1 and res["outcomes"]["no_match"] == 1
     assert res["open_before"] == res["open_after"] == 4 and res["served_before"] == res["served_after"]
@@ -247,7 +285,8 @@ def test_apply_writes_only_unambiguous_matches_and_is_idempotent():
     pool = _JobPool(_rows(), CANDS)
     with capture_logs() as logs:
         res, _ = _run(pool, {"dry_run": False})
-    assert res["written"] == 2 and res["covers_set"] == 1 and res["changed_meanwhile"] == 0
+    assert res["written"] == 2 and res["changed_meanwhile"] == 0
+    assert res["covers_set"] == 0 and pool.cover_fills == 0              # covers only on request (TripPlanner reads)
     assert res["served_before"] == {"photos": 0, "destinations": 0}
     assert res["served_after"] == {"photos": 2, "destinations": 2} and res["open_after"] == 2
     assert [r["destination_id"] for r in pool.rows] == ["d-gate", "d-isle", None, None]
@@ -256,6 +295,28 @@ def test_apply_writes_only_unambiguous_matches_and_is_idempotent():
     assert [e for e in logs if e["event"] == "photo_destination_ambiguous"][0]["photo_id"] == pool.rows[2]["id"]
     again, _ = _run(pool, {"dry_run": False})
     assert again["planned"] == 2 and again["written"] == 0 and len(pool.applied) == 1     # nothing left to write
+
+
+def test_apply_marks_its_writes_auto_and_counts_manual_rows():
+    rows = _rows()
+    rows[1]["match_source"] = "manual"                    # tour set by hand, destination empty
+    pool = _JobPool(rows, CANDS)
+    res, _ = _run(pool, {"dry_run": False})
+    assert res["written"] == 2 and res["written_manual_rows"] == 1
+    assert "destination_match_source = 'auto'" in J.APPLY_SQL     # provenance: never mistaken for a person's choice
+
+
+def test_covers_are_previewed_on_a_dry_run_and_filled_only_on_request():
+    covers = {"d-gate": None, "d-isle": "https://cdn.example/content/photos/old?size=large"}
+    pool = _JobPool(_rows(), CANDS, covers=covers)
+    res, _ = _run(pool)
+    assert res["covers_preview"]["new_empty"] == 1 and pool.cover_fills == 0
+    assert pool.preview_args[2] == ["d-gate", "d-isle"] and pool.preview_args[1].endswith("/content/photos/")
+    res, _ = _run(_JobPool(_rows(), CANDS), {"dry_run": False, "fill_covers": True})
+    assert res["covers_set"] == 1
+    pool = _JobPool(_rows(), CANDS)
+    res, _ = _run(pool, {"dry_run": True, "fill_covers": True})
+    assert res["covers_set"] == 0 and pool.cover_fills == 0           # a dry run never writes covers
 
 
 def test_a_row_changed_meanwhile_is_counted_not_written():
@@ -284,7 +345,8 @@ def test_country_and_limit_narrow_the_run():
 
 
 @pytest.mark.parametrize("payload", [{"limit": 0}, {"limit": J.MAX_LIMIT + 1}, {"limit": "50"}, {"limit": True},
-                                     {"country": 5}, {"dry_run": "false"}, {"dry_run": 0}])
+                                     {"country": 5}, {"dry_run": "false"}, {"dry_run": 0},
+                                     {"fill_covers": "yes"}])
 def test_bad_payload_is_non_retryable(payload):
     with pytest.raises(NonRetryable):
         _run(_JobPool([], {}), payload)
@@ -299,11 +361,32 @@ def test_enqueue_route_is_a_policy_write_declared_before_the_catch_all():
 
 
 class _EnqPool:
+    """Pool and connection at once: the route takes a connection and holds an advisory lock in a transaction."""
+
     def __init__(self, active):
-        self.active = active
+        self.active, self.locked, self.in_tx = active, [], False
+
+    def acquire(self):
+        return _Acquired(self)
+
+    def transaction(self):
+        pool = self
+
+        class _Tx:
+            async def __aenter__(self):
+                pool.in_tx = True
+
+            async def __aexit__(self, *exc):
+                pool.in_tx = False
+                return False
+        return _Tx()
+
+    async def execute(self, sql, *args):
+        assert "pg_advisory_xact_lock" in sql and self.in_tx
+        self.locked.append(args)
 
     async def fetchrow(self, sql, *args):
-        assert args == (J.KIND,)
+        assert args == (J.KIND,) and self.locked and self.in_tx
         return self.active
 
 
@@ -311,6 +394,7 @@ def _enqueue(monkeypatch, body, active=None):
     seen = {}
 
     async def fake_enqueue(pool, kind, payload, **kw):
+        assert pool.in_tx and pool.locked == [(J.KIND,)]                # inserted under the same lock
         seen.update(kind=kind, payload=payload, **kw)
         return "job-1", True
     monkeypatch.setattr(admin_photos, "verify_admin_secret", lambda s: None)
@@ -323,12 +407,13 @@ def test_enqueue_is_a_dry_run_by_default(monkeypatch):
     out, seen = _enqueue(monkeypatch, admin_photos.DestinationMatchRequest())
     assert out == {"job_id": "job-1", "created": True, "status": "queued", "dry_run": True}
     assert seen["kind"] == J.KIND and seen["created_by"] == "admin:staff-1"
-    assert seen["payload"] == {"dry_run": True, "country": None}
+    assert seen["payload"] == {"dry_run": True, "country": None, "fill_covers": False}
 
 
 def test_enqueue_apply_with_country_and_limit(monkeypatch):
     out, seen = _enqueue(monkeypatch, admin_photos.DestinationMatchRequest(dry_run=False, country="Bhutan", limit=50))
-    assert out["dry_run"] is False and seen["payload"] == {"dry_run": False, "country": "Bhutan", "limit": 50}
+    assert out["dry_run"] is False
+    assert seen["payload"] == {"dry_run": False, "country": "Bhutan", "fill_covers": False, "limit": 50}
 
 
 def test_enqueue_returns_the_active_job(monkeypatch):
@@ -341,3 +426,14 @@ def test_enqueue_refuses_a_bad_limit(monkeypatch):
     with pytest.raises(HTTPException) as e:
         _enqueue(monkeypatch, admin_photos.DestinationMatchRequest(limit=J.MAX_LIMIT + 1))
     assert e.value.status_code == 422
+
+
+# ── the assign route: folder-wide tour change ────────────────────────────────────────────────────────────────────────
+
+def test_folder_tour_change_empties_automatic_destinations_only_where_the_tour_changes():
+    sql = " ".join(admin_photos.FOLDER_ASSIGN_SQL.split())
+    rule = ("CASE WHEN tour_id IS DISTINCT FROM $3::uuid AND destination_match_source IS DISTINCT FROM 'manual' "
+            "THEN NULL ELSE")
+    assert f"destination_id = {rule} destination_id END" in sql
+    assert f"destination_match_source = {rule} destination_match_source END" in sql
+    assert "status <> 'rejected'" in sql

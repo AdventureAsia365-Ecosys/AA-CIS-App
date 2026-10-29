@@ -6,7 +6,11 @@ test). Everything is seeded inside one transaction that is rolled back.
   unresolved place; read as a plain NOSUPERUSER, NOBYPASSRLS role without any tripplanner privilege (replaces the
   AA-860 itinerary_places test: no CIS read of tripplanner.*; raw_tours is FORCE-RLS, the read pins the AA master).
 - photo_destination_match job SQL: the open set (matched, a tour, no destination), the guarded UPDATE (never a set
-  destination, a rejected photo or a row whose tour changed), and what the photo view by place then serves.
+  destination, a rejected photo or a row whose tour changed; marked 'auto'), and what the photo view by place serves.
+- the photo sync upsert (services.photos.sync.UPSERT_SQL) on seeded rows, one case per destination rule (review S257):
+  rejected and hand-set destinations never change, an automatic destination follows its tour, a re-match takes the
+  run's answer, an empty destination is filled; and the assign route's folder-wide tour change (FOLDER_ASSIGN_SQL).
+Needs CIS 303 (shared.place_photo.destination_match_source).
 """
 import os
 import sys
@@ -155,6 +159,8 @@ async def test_job_sql_open_set_guarded_update_and_served_view(conn):
         "SELECT id::text AS id, destination_id::text AS destination_id FROM shared.place_photo "
         "WHERE id = ANY($1::uuid[])", [open_a, open_b, moved])}
     assert got == {open_a: gate, open_b: isle, moved: None}
+    assert await conn.fetchval("SELECT destination_match_source FROM shared.place_photo WHERE id = $1::uuid",
+                               open_a) == "auto"
     again = await conn.fetch(J.APPLY_SQL, [open_a], [isle], [tour])
     assert again == []                                             # idempotent: a set destination is never changed
 
@@ -164,3 +170,115 @@ async def test_job_sql_open_set_guarded_update_and_served_view(conn):
     assert served == {gate, isle}
     totals = await conn.fetchrow(J.SERVED_SQL)
     assert totals["photos"] >= 3 and totals["destinations"] >= 2
+
+
+# ── the sync upsert, one case per destination rule ───────────────────────────────────────────────────────────────────
+
+async def _seed(c, *, tour, destination=None, source=None, match_source="auto", status="matched"):
+    drive_id = f"zz671-{uuid.uuid4()}"
+    await c.execute(
+        """INSERT INTO shared.place_photo (drive_file_id, drive_root_id, folder_path, country, file_name, place_label,
+               tour_id, destination_id, destination_match_source, match_source, status, s3_key_large)
+           VALUES ($1, 'root', 'f', $2, 'p.jpg', 'p', $3::uuid, $4::uuid, $5, $6, $7, 'photos/zz/p-1600.webp')""",
+        drive_id, COUNTRY, tour, destination, source, match_source, status)
+    return drive_id
+
+
+async def _sync(c, drive_id, *, tour, answer, keep=False, rematch=False):
+    """One upsert as sync_folder sends it for an unchanged file (no download): $8 the folder's tour, $9 this run's
+    destination answer, $10 the status from them, $19 keep the tour (manual / rejected row), $20 re-match."""
+    from services.photos.sync import UPSERT_SQL
+    status = "matched" if (tour or answer) else "unmatched"
+    await c.execute(UPSERT_SQL, drive_id, "root", "f", COUNTRY, "f", "p.jpg", "p", tour, answer, status,
+                    None, None, None, None, None, None, None, None, keep, rematch, None, None)
+    return await c.fetchrow("SELECT tour_id::text AS tour, destination_id::text AS dest, "
+                            "destination_match_source AS source, status FROM shared.place_photo "
+                            "WHERE drive_file_id = $1", drive_id)
+
+
+@pytest.mark.asyncio
+async def test_sync_upsert_destination_rules(conn):
+    x = await _destination(conn, "Place X")
+    y = await _destination(conn, "Place Y")
+    t1, t2 = await _tour(conn), await _tour(conn)
+
+    # a new photo: the answer is written and marked automatic
+    fresh = f"zz671-{uuid.uuid4()}"
+    got = await _sync(conn, fresh, tour=t1, answer=x)
+    assert (got["dest"], got["source"], got["status"]) == (x, "auto", "matched")
+
+    # a rejected photo: never changed, even on a re-match
+    d = await _seed(conn, tour=t1, destination=x, source="auto", match_source="manual", status="rejected")
+    got = await _sync(conn, d, tour=t2, answer=y, keep=True, rematch=True)
+    assert (got["tour"], got["dest"], got["source"], got["status"]) == (t1, x, "auto", "rejected")
+
+    # a destination set by hand: never changed, even on a re-match
+    d = await _seed(conn, tour=t1, destination=x, source="manual", match_source="manual")
+    got = await _sync(conn, d, tour=None, answer=y, keep=True, rematch=True)
+    assert (got["tour"], got["dest"], got["source"], got["status"]) == (t1, x, "manual", "matched")
+
+    # a hand-set tour with an automatic destination: kept by default, re-matched on request (not frozen)
+    d = await _seed(conn, tour=t1, destination=x, source="auto", match_source="manual")
+    got = await _sync(conn, d, tour=None, answer=y, keep=True)
+    assert (got["tour"], got["dest"], got["source"]) == (t1, x, "auto")
+    got = await _sync(conn, d, tour=None, answer=y, keep=True, rematch=True)
+    assert (got["tour"], got["dest"], got["source"]) == (t1, y, "auto")
+
+    # an automatic destination, same tour: kept when this run has no answer or another one; a re-match takes it
+    d = await _seed(conn, tour=t1, destination=x, source="auto")
+    got = await _sync(conn, d, tour=t1, answer=None)
+    assert (got["dest"], got["source"]) == (x, "auto")
+    got = await _sync(conn, d, tour=t1, answer=y)
+    assert (got["dest"], got["source"]) == (x, "auto")
+    got = await _sync(conn, d, tour=t1, answer=None, rematch=True)
+    assert (got["dest"], got["source"], got["status"]) == (None, None, "matched")
+
+    # the automatic tour changes in the same statement: the old tour's place is dropped, the new answer taken
+    d = await _seed(conn, tour=t1, destination=x, source="auto")
+    got = await _sync(conn, d, tour=t2, answer=y)
+    assert (got["tour"], got["dest"], got["source"]) == (t2, y, "auto")
+    d = await _seed(conn, tour=t1, destination=x, source="auto")
+    got = await _sync(conn, d, tour=t2, answer=None)
+    assert (got["tour"], got["dest"], got["source"], got["status"]) == (t2, None, None, "matched")
+    d = await _seed(conn, tour=t1, destination=x, source="auto")
+    got = await _sync(conn, d, tour=None, answer=None)                 # folder no longer names a tour
+    assert (got["tour"], got["dest"], got["source"], got["status"]) == (None, None, None, "unmatched")
+
+    # a 'manual' source left on an empty destination (the place was deleted: FK ON DELETE SET NULL) protects nothing
+    d = await _seed(conn, tour=t1, source="manual", match_source="manual")
+    got = await _sync(conn, d, tour=None, answer=y, keep=True)
+    assert (got["tour"], got["dest"], got["source"]) == (t1, y, "auto")
+
+    # an empty destination is filled
+    d = await _seed(conn, tour=t1)
+    got = await _sync(conn, d, tour=t1, answer=y)
+    assert (got["dest"], got["source"]) == (y, "auto")
+
+
+@pytest.mark.asyncio
+async def test_folder_tour_change_empties_only_automatic_destinations_of_rows_that_change_tour(conn):
+    from api.routers.admin_photos import FOLDER_ASSIGN_SQL
+
+    x = await _destination(conn, "Place X")
+    old, new = await _tour(conn), await _tour(conn)
+
+    async def row(**kw):
+        drive_id = await _seed(conn, **kw)
+        return str(await conn.fetchval("SELECT id FROM shared.place_photo WHERE drive_file_id = $1", drive_id))
+
+    clicked = await row(tour=new)
+    auto_old = await row(tour=old, destination=x, source="auto")
+    manual_old = await row(tour=old, destination=x, source="manual", match_source="manual")
+    auto_same = await row(tour=new, destination=x, source="auto")
+    rejected = await row(tour=old, destination=x, source="auto", status="rejected")
+
+    res = await conn.execute(FOLDER_ASSIGN_SQL, COUNTRY, "f", new, clicked)
+    assert res == "UPDATE 3"
+    got = {r["id"]: (r["tour"], r["dest"], r["source"], r["match_source"]) for r in await conn.fetch(
+        "SELECT id::text AS id, tour_id::text AS tour, destination_id::text AS dest, "
+        "destination_match_source AS source, match_source FROM shared.place_photo WHERE id = ANY($1::uuid[])",
+        [auto_old, manual_old, auto_same, rejected])}
+    assert got[auto_old] == (new, None, None, "manual")                # matched against the old tour: emptied
+    assert got[manual_old] == (new, x, "manual", "manual")             # a person's choice: kept
+    assert got[auto_same] == (new, x, "auto", "manual")                # tour unchanged: kept
+    assert got[rejected] == (old, x, "auto", "auto")                   # rejected: untouched

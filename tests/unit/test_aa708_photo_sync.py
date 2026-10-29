@@ -169,6 +169,7 @@ async def test_sync_matches_destination_when_asked_and_skips_unchanged_download(
                               match_destinations=True)
     assert res["unchanged"] == 1 and res["downloaded"] == 0 and s3.keys == []
     assert conn.writes[0][8] == "22222222-2222-2222-2222-222222222222"
+    assert conn.writes[0][19] is True                        # re-match: the tour's places were read
 
 
 @pytest.mark.asyncio
@@ -397,10 +398,70 @@ async def test_candidate_read_failure_fails_open_and_logs_an_error():
     assert errors and errors[0]["log_level"] == "error" and "permission denied" in errors[0]["error"]
 
 
-def test_upsert_never_overwrites_a_set_destination_unless_rematch():
+@pytest.mark.asyncio
+async def test_rematch_is_off_when_the_candidate_read_fails():
+    """review S257: match_destinations=True and a failed place read must not clear the existing destinations (the
+    re-match branch takes this run's answer, here "none" for every row)."""
+    class _Broken(_Conn):
+        async def fetch(self, sql, *a):
+            if "geo.tour_place" in sql:
+                raise RuntimeError("canceling statement due to statement timeout")
+            return await super().fetch(sql, *a)
+
+    tree = {"root": [DriveFile("f1", "THE DRUK PATH", FOLDER_MIME, None, None)],
+            "f1": [_img("i1", "Tango Monastery1.jpg")]}
+    conn = _Broken()
+    res = await S.sync_folder(conn, _FakeDrive(tree, {"i1": _jpeg()}), _S3(), country="Bhutan", root_id="root",
+                              match_destinations=True)
+    assert res["destination_candidates_unavailable"] is True and res["matched_destination"] == 0
+    a = conn.writes[0]
+    assert a[8] is None and a[19] is False                   # no answer, and no re-match: the SQL keeps the old one
+
+
+@pytest.mark.asyncio
+async def test_rematch_is_off_for_a_tour_without_places():
+    """A tour whose places are being re-extracted (no geo rows right now) keeps its photos' destinations."""
+    class _NoPlaces(_Conn):
+        async def fetch(self, sql, *a):
+            if "geo.tour_place" in sql:
+                return []
+            return await super().fetch(sql, *a)
+
+    tree = {"root": [DriveFile("f1", "THE DRUK PATH", FOLDER_MIME, None, None)],
+            "f1": [_img("i1", "Tango Monastery1.jpg")]}
+    conn = _NoPlaces()
+    res = await S.sync_folder(conn, _FakeDrive(tree, {"i1": _jpeg()}), _S3(), country="Bhutan", root_id="root",
+                              match_destinations=True)
+    assert res["destination_candidates_unavailable"] is False and res["matched_tour"] == 1
+    assert conn.writes[0][19] is False
+
+
+@pytest.mark.asyncio
+async def test_weak_label_is_counted_never_written():
+    class _Landmark(_Conn):
+        async def fetch(self, sql, *a):
+            if "geo.tour_place" in sql:
+                return [{"tour_id": "11111111-1111-1111-1111-111111111111", "destination_id": "d-tk",
+                         "destination_name": "Paro Taktsang", "place_name": None}]
+            return await super().fetch(sql, *a)
+
+    tree = {"root": [DriveFile("f1", "THE DRUK PATH", FOLDER_MIME, None, None)],
+            "f1": [_img("i1", "Paro (3).jpg")]}
+    conn = _Landmark()
+    res = await S.sync_folder(conn, _FakeDrive(tree, {"i1": _jpeg()}), _S3(), country="Bhutan", root_id="root")
+    assert res["destination_weak"] == 1 and res["matched_destination"] == 0
+    assert conn.writes[0][8] is None
+
+
+def test_upsert_destination_rules_in_order():
+    """The rules themselves run on real Postgres in tests/integration/test_aa671_photo_destination_match.py."""
     import inspect
-    flat = " ".join(inspect.getsource(S.sync_folder).split())
-    assert ("destination_id = CASE WHEN place_photo.status = 'rejected' OR (place_photo.match_source = 'manual' "
-            "AND place_photo.destination_id IS NOT NULL) THEN place_photo.destination_id "
+    assert "UPSERT_SQL" in inspect.getsource(S.sync_folder)
+    flat = " ".join(S.UPSERT_SQL.split())
+    assert ("destination_id = CASE WHEN place_photo.status = 'rejected' "
+            "OR (place_photo.destination_match_source = 'manual' AND place_photo.destination_id IS NOT NULL) "
+            "THEN place_photo.destination_id "
+            "WHEN NOT $19 AND place_photo.tour_id IS DISTINCT FROM EXCLUDED.tour_id THEN EXCLUDED.destination_id "
             "WHEN $20 THEN EXCLUDED.destination_id "
             "ELSE coalesce(place_photo.destination_id, EXCLUDED.destination_id) END") in flat
+    assert "CASE WHEN $9::uuid IS NULL THEN NULL ELSE 'auto' END" in flat

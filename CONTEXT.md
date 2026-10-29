@@ -704,15 +704,19 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   `last_scheduled`. (Before AA-993 G5 those serial jobs held the deploy gate around 04:00 ICT; they no longer do.)
   AA-671 S257 — **photo → destination**: a photo is compared only with the places of ITS OWN tour (the `geo.tour_place`
   rows of the tour's source key + the current graph build's stops, non-duplicate destinations;
-  `services/photos/destinations.py`), and only an unambiguous answer is written (`match.resolve_destination`: exact
-  name, core name, a place name inside the label, a distinctive label inside one place name; a tie = ambiguous). Every
-  sync now fills an empty `destination_id` (a manual or rejected row's set destination is never changed);
-  `match_destinations` additionally re-matches the automatic rows that have one, and fills empty
+  `services/photos/destinations.py`), and only an unambiguous answer of a strong rule is written
+  (`match.resolve_destination`: exact name, core name, a place name inside the label; a tie = ambiguous; a label found
+  only inside one place name — a town label vs its landmark — is `weak`: counted, never written).
+  `place_photo.destination_match_source` (migration 303) says who set the destination: `manual` (the assign route) is
+  never changed by the sync, the job or a folder-wide tour correction; `auto` follows its tour (emptied or re-answered
+  when the tour changes). Every sync fills an empty `destination_id`; `match_destinations` additionally re-matches the
+  automatic destinations of the tours whose places it read (never after a failed read), and fills empty
   `shared.destinations.cover_image_url` (read by the TripPlanner). The photos synced before get theirs from the
   `photo_destination_match` job (`POST /admin/photos/destination-match`, DRY RUN by default, background, $0: counts
-  matched / ambiguous / no_match / no_candidate / no_label per country with samples; an apply writes in one guarded
-  UPDATE and fills empty covers). `destination_id` feeds `shared.v_destination_photos` / `catalog.v_destination_photo`
-  and so the pool cover fallback (`_POOL_COVER_SQL`) and the TripPlanner destination pages.
+  matched / ambiguous / weak / no_match / no_candidate / no_label per country with samples and previews the covers;
+  an apply writes in one guarded UPDATE; covers only with `fill_covers`). `destination_id` feeds
+  `shared.v_destination_photos` / `catalog.v_destination_photo` and so the pool cover fallback (`_POOL_COVER_SQL`)
+  and the TripPlanner destination pages.
   AA-995 (migration 301): `size=medium` is the 960 w file (`s3_key_medium`, phone heroes of the TripPlanner); a row
   without it answers the 1600 w file (never the original). The sync writes it for every file it downloads; files stored
   before 301 get it from the `photo_medium_backfill` job (`POST /admin/photos/medium-backfill`, background, $0: S3 +

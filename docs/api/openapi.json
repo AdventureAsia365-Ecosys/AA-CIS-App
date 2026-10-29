@@ -2379,6 +2379,11 @@
             "title": "Dry Run",
             "type": "boolean"
           },
+          "fill_covers": {
+            "default": false,
+            "title": "Fill Covers",
+            "type": "boolean"
+          },
           "limit": {
             "anyOf": [
               {

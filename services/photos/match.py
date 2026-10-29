@@ -87,14 +87,17 @@ def match_tour(folder: Optional[str], tours: Iterable[tuple[str, ...]]) -> Optio
 
 
 # ── AA-671 S257: photo -> destination of ITS tour ───────────────────────────────────────────────
-# Outcomes of resolve_destination (the backfill job counts them; the sync counts matched / ambiguous).
+# Outcomes of resolve_destination (the backfill job counts them; the sync counts matched / ambiguous / weak).
 MATCHED, AMBIGUOUS, NO_MATCH, NO_CANDIDATE, NO_LABEL = "matched", "ambiguous", "no_match", "no_candidate", "no_label"
+# A label found only INSIDE one place name ("Paro" in "Paro Taktsang"): reported with its suggestion, never written.
+# Labels that are a town name are common on the CON board, and the town's landmark is not the town (review S257).
+WEAK = "weak"
 # Rules, strongest first. The first rule that names any destination decides: one destination -> matched, more than
-# one -> ambiguous (never a guess, never a fall-through to a weaker rule).
+# one -> ambiguous (never a guess, never a fall-through to a weaker rule). label_in_name only ever gives WEAK.
 RULE_EXACT = "exact"                  # a whole-name form of the label == a whole-name form of a place name
 RULE_CORE = "core"                    # same, kind words at the edges dropped ("Lake Khövsgöl" == "Khövsgöl Lake")
 RULE_NAME_IN_LABEL = "name_in_label"  # a place name inside the label ("Olkhon Island sunset"); nested names: longest
-RULE_LABEL_IN_NAME = "label_in_name"  # a distinctive label inside one place name ("Taktsang" in "Paro Taktsang")
+RULE_LABEL_IN_NAME = "label_in_name"  # a distinctive label inside one place name: WEAK, a suggestion only
 MIN_KEY = 4                           # shorter keys ("hue" aside) are too weak to match inside another name
 
 
@@ -104,6 +107,7 @@ class DestinationMatch:
     destination_id: Optional[str] = None
     rule: Optional[str] = None
     candidates: tuple[str, ...] = ()   # the tied destination ids when ambiguous (sorted)
+    suggestion: Optional[str] = None   # WEAK only: the one place whose name holds the label (not written)
 
 
 def _full_forms(name: str) -> set[str]:
@@ -183,14 +187,16 @@ def resolve_destination(label: Optional[str], candidates: Iterable[tuple[str, Op
 
     if not is_generic_name(label):
         keys_in = [k for k in label_full if len(k) >= MIN_KEY]
-        found = _decide({d: 1 for d, keys in full.items()
-                         if any(f" {k} " in f" {n} " for k in keys_in for n in keys)}, RULE_LABEL_IN_NAME)
-        if found:
-            return found
+        hits = sorted(d for d, keys in full.items() if any(f" {k} " in f" {n} " for k in keys_in for n in keys))
+        if len(hits) == 1:
+            # Never written: "Paro" (the town) inside "Paro Taktsang" (a monastery above it) is a different place.
+            return DestinationMatch(WEAK, None, RULE_LABEL_IN_NAME, suggestion=hits[0])
+        if hits:
+            return DestinationMatch(AMBIGUOUS, None, RULE_LABEL_IN_NAME, tuple(hits))
     return DestinationMatch(NO_MATCH)
 
 
 def match_destination(label: str, destinations: Iterable[tuple[str, Optional[str]]]) -> Optional[str]:
-    """destination id named by the label, or None (no match, or more than one place matches equally:
+    """destination id named by the label, or None (no match, a weak match, or more than one place matches equally:
     resolve_destination)."""
     return resolve_destination(label, destinations).destination_id

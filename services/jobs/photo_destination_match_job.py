@@ -3,13 +3,16 @@ destination their label names (shared.place_photo.destination_id), so the photo 
 (shared.v_destination_photos, catalog.v_destination_photo) and the pool cover fallback find them.
 
 Payload: {"dry_run": bool (DEFAULT TRUE — pass false to write), "country": str | None, "limit": int (1..5000,
-          default 5000)}.
+          default 5000), "fill_covers": bool (default false; apply only — see below)}.
 
 Rule (services.photos.destinations + services.photos.match.resolve_destination): a photo is compared only with the
 places of its own tour (geo.tour_place of the tour's source key + the current graph build's stops, non-duplicate
-destinations); only an unambiguous answer is written. Rows: status 'matched', tour_id set, destination_id NULL
+destinations); only an unambiguous answer of a strong rule is written (a WEAK label-inside-a-name answer, "Paro" in
+"Paro Taktsang", is counted and sampled, never written). Rows: status 'matched', tour_id set, destination_id NULL
 (automatic and manual rows alike: a manual tour assignment left the destination empty; a destination set by anyone is
-never changed, a rejected photo never touched).
+never changed, a rejected photo never touched). Every write is marked destination_match_source = 'auto' (CIS 303), so
+it stays distinguishable from a person's choice: the sync re-matches it when its tour changes or on request, and a
+folder-wide tour correction empties it.
 
 ``limit`` bounds one run (rows in (country, id) order). A row that does not match stays open, so with fewer rows
 than are open a second run reads the same first rows again: use the default (it covers the whole table today, ~3,200
@@ -17,9 +20,13 @@ photos) or narrow by ``country``.
 
 Safe to repeat: a written row leaves the set, so a second run plans only what is still open, and the UPDATE lands
 only while the row still has no destination, is matched and has the same tour as when it was planned. One UPDATE
-statement (atomic). Not run while a photo_sync job is running (``stopped: photo_sync_running``, success). After an
-apply, empty destination covers are filled from the new photos (sync.fill_destination_covers, the photo sync's own
-step: only empty covers or covers it set earlier).
+statement (atomic). Not run while a photo_sync job is running (``stopped: photo_sync_running``, success).
+
+Covers: shared.destinations.cover_image_url is read by the TripPlanner, so filling it is opt-in, like in the photo
+sync (``fill_covers``: after an apply, sync.fill_destination_covers — only empty covers or covers it set earlier).
+Every run (dry run included) previews it in ``covers_preview``: covers that would change now, and the planned
+destinations whose cover is empty / job-set and that have no served photo yet (an upper bound: a planned photo
+without a stored rendition is not served).
 
 Audit: the result counts every outcome (matched / ambiguous / no_match / no_candidate / no_label), the rule that
 matched, per country, with samples; an apply logs one `photo_destination_matched` line per photo it wrote and one
@@ -41,7 +48,7 @@ KIND = "photo_destination_match"
 MAX_LIMIT = 5000
 DEFAULT_LIMIT = MAX_LIMIT
 MAX_SAMPLES = 30
-OUTCOMES = ("matched", "ambiguous", "no_match", "no_candidate", "no_label")
+OUTCOMES = ("matched", "ambiguous", "weak", "no_match", "no_candidate", "no_label")
 
 _OPEN = """
       FROM shared.place_photo
@@ -58,12 +65,27 @@ SERVED_SQL = """
      WHERE status = 'matched' AND destination_id IS NOT NULL AND s3_key_large IS NOT NULL
 """
 APPLY_SQL = """
-    UPDATE shared.place_photo p SET destination_id = x.destination_id, updated_at = now()
+    UPDATE shared.place_photo p SET destination_id = x.destination_id, destination_match_source = 'auto',
+           updated_at = now()
       FROM unnest($1::uuid[], $2::uuid[], $3::uuid[]) AS x(id, destination_id, tour_id)
      WHERE p.id = x.id AND p.destination_id IS NULL AND p.status = 'matched' AND p.tour_id = x.tour_id
     RETURNING p.id::text AS id
 """
 SYNC_RUNNING_SQL = "SELECT 1 FROM shared.job WHERE kind = 'photo_sync' AND status = 'running' LIMIT 1"
+# $1 public base, $2 the job-owned cover prefix (base + /content/photos/), $3 the planned destination ids.
+# pending_now: the covers sync.fill_destination_covers would change right now (same WHERE);
+# new_empty / new_job_owned: planned destinations with an empty / job-set cover and no served photo yet.
+COVERS_PREVIEW_SQL = """
+    SELECT (SELECT count(*) FROM shared.destinations d
+              JOIN shared.v_destination_photos p ON p.destination_id = d.id AND p.position = 1
+             WHERE (d.cover_image_url IS NULL OR d.cover_image_url LIKE $2 || '%')
+               AND d.cover_image_url IS DISTINCT FROM $1 || p.path || '?size=large') AS pending_now,
+           count(*) FILTER (WHERE d.cover_image_url IS NULL) AS new_empty,
+           count(*) FILTER (WHERE d.cover_image_url LIKE $2 || '%') AS new_job_owned
+      FROM shared.destinations d
+     WHERE d.id = ANY($3::uuid[])
+       AND NOT EXISTS (SELECT 1 FROM shared.v_destination_photos p WHERE p.destination_id = d.id)
+"""
 
 
 def _limit(payload: dict) -> int:
@@ -72,6 +94,15 @@ def _limit(payload: dict) -> int:
         return DEFAULT_LIMIT
     if isinstance(raw, bool) or not isinstance(raw, int) or not 1 <= raw <= MAX_LIMIT:
         raise NonRetryable(f"limit must be an integer from 1 to {MAX_LIMIT}")
+    return raw
+
+
+def _flag(payload: dict, name: str, default: bool) -> bool:
+    raw = payload.get(name, default)
+    if raw is None:
+        return default
+    if not isinstance(raw, bool):
+        raise NonRetryable(f"{name} must be true or false")
     return raw
 
 
@@ -90,7 +121,7 @@ def plan(rows: list[dict], candidates: dict[str, list[tuple[str, str]]]) -> dict
     outcomes: Counter = Counter({o: 0 for o in OUTCOMES})
     rules: Counter = Counter()
     by_country: dict[str, Counter] = {}
-    samples: dict[str, list] = {"matched": [], "ambiguous": [], "no_match": []}
+    samples: dict[str, list] = {"matched": [], "ambiguous": [], "weak": [], "no_match": []}
     writes: list[tuple[str, str, str, str]] = []
     ambiguous: list[dict] = []
     for r in rows:
@@ -111,6 +142,10 @@ def plan(rows: list[dict], candidates: dict[str, list[tuple[str, str]]]) -> dict
             item = {"photo_id": r["id"], "label": r["place_label"], "rule": found.rule,
                     "candidates": [{"destination_id": d, "name": names.get(d)} for d in found.candidates]}
             ambiguous.append(item)
+        elif found.outcome == "weak":    # never written: the label is only found inside this place's name
+            item = {"photo_id": r["id"], "label": r["place_label"], "rule": found.rule,
+                    "suggestion": {"destination_id": found.suggestion, "name": names.get(found.suggestion)},
+                    "match_source": r["match_source"]}
         elif found.outcome == "no_match":
             item = {"photo_id": r["id"], "label": r["place_label"], "tour_places": sorted(set(names.values()))[:8]}
         else:
@@ -124,16 +159,18 @@ def plan(rows: list[dict], candidates: dict[str, list[tuple[str, str]]]) -> dict
 @job_kind(KIND, concurrency=1, max_attempts=2, expected_seconds=300, background=True)
 async def run(ctx: JobContext) -> dict:
     from services.photos.destinations import tour_candidates
-    from services.photos.sync import fill_destination_covers
+    from services.photos.sync import fill_destination_covers, public_base
 
     payload = ctx.payload or {}
     dry_run = _dry_run(payload)
+    fill_covers = _flag(payload, "fill_covers", False)
     limit = _limit(payload)
     country: Optional[str] = payload.get("country") or None
     if country is not None and not isinstance(country, str):
         raise NonRetryable("country must be a string")
     pool = ctx.pool
-    res: dict[str, Any] = {"dry_run": dry_run, "country": country, "limit": limit, "stopped": None}
+    res: dict[str, Any] = {"dry_run": dry_run, "country": country, "limit": limit, "fill_covers": fill_covers,
+                           "stopped": None}
     if not dry_run and await pool.fetchval(SYNC_RUNNING_SQL):
         res["stopped"] = "photo_sync_running"
         ctx.set_result(res)
@@ -154,19 +191,29 @@ async def run(ctx: JobContext) -> dict:
     res["tours"] = len({r["tour_id"] for r in rows})
     res["tours_without_places"] = len({r["tour_id"] for r in rows} - set(candidates))
     res["written"] = 0
+    res["written_manual_rows"] = 0
     res["covers_set"] = 0
+    base = public_base()
+    preview = await pool.fetchrow(COVERS_PREVIEW_SQL, base, f"{base}/content/photos/",
+                                  sorted({w[1] for w in writes}))
+    res["covers_preview"] = {"pending_now": int(preview["pending_now"]), "new_empty": int(preview["new_empty"]),
+                             "new_job_owned": int(preview["new_job_owned"])}
 
     if not dry_run and writes:
         async with pool.acquire() as conn:
             done = {r["id"] for r in await conn.fetch(APPLY_SQL, [w[0] for w in writes], [w[1] for w in writes],
                                                       [w[2] for w in writes])}
             res["written"] = len(done)
-            res["covers_set"] = await fill_destination_covers(conn)
+        manual = {r["id"] for r in rows if r["match_source"] == "manual"}
+        res["written_manual_rows"] = len(done & manual)
         for photo_id, dest_id, tour_id, rule in writes:
             if photo_id not in done:      # set or re-assigned by someone else since the plan: not ours
                 continue
             logger.info("photo_destination_matched", job_id=ctx.job_id, photo_id=photo_id, destination_id=dest_id,
                         tour_id=tour_id, rule=rule)
+    if not dry_run and fill_covers:
+        async with pool.acquire() as conn:
+            res["covers_set"] = await fill_destination_covers(conn)
     if not dry_run:
         for s in ambiguous:
             logger.info("photo_destination_ambiguous", job_id=ctx.job_id, photo_id=s["photo_id"], label=s["label"],
