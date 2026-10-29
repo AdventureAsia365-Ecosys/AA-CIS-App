@@ -374,7 +374,7 @@ def test_deploy_dev_keeps_its_trigger_guard_and_override():
     assert on["push"]["branches"] == ["main"]
     assert "override_running_jobs" in on["workflow_dispatch"]["inputs"]
     assert DEPLOY_WF["concurrency"] == {"group": "deploy-dev-cis", "cancel-in-progress": False}
-    assert set(DEPLOY_WF["jobs"]["deploy"]["needs"]) == {"build-and-push", "preflight"}
+    assert set(DEPLOY_WF["jobs"]["deploy"]["needs"]) == {"build-and-push", "preflight", "schema-gate"}  # AA-993 M4b
     guard = DEPLOY_WF["jobs"]["preflight"]["steps"][-1]
     assert guard["run"] == "bash .github/scripts/deploy_job_guard.sh"
     assert guard["env"]["OVERRIDE"] == "${{ inputs.override_running_jobs }}"
@@ -392,7 +392,7 @@ def _result_step(needs):
 
 
 def _needs(**over):
-    base = {j: {"result": "success", "outputs": {}} for j in ("preflight", "build-and-push", "deploy", "verify")}
+    base = {j: {"result": "success", "outputs": {}} for j in ("schema-gate", "preflight", "build-and-push", "deploy", "verify")}
     for job, res in over.items():
         base[job.replace("_", "-")]["result"] = res
     return base
@@ -410,6 +410,7 @@ def test_result_is_green_only_when_every_job_succeeded():
     {"verify": "cancelled"},
     {"deploy": "failure", "verify": "skipped"},
     {"preflight": "failure", "deploy": "skipped", "verify": "skipped"},
+    {"schema_gate": "failure", "preflight": "skipped", "deploy": "skipped", "verify": "skipped"},  # AA-993 M4b
     {"build_and_push": "skipped", "deploy": "skipped", "verify": "skipped"},
 ])
 def test_result_is_red_when_verify_did_not_pass(over):

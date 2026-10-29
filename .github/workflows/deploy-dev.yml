@@ -13,6 +13,9 @@ on:
       # api/version.py. The first two are not listed above; this negation (it must stay after 'api/**') drops the
       # third, so merging a release PR does not restart api/worker. The next code merge ships the new version.
       - '!api/version.py'
+      # AA-993 M4b (root ADR 0017 d7): a merged migration file alone does not restart api/worker (the runtime never
+      # reads api/migrations/; the schema is applied by AA-CIS-Infra). Code that needs it waits at `schema-gate`.
+      - '!api/migrations/**'
       # AA-879: no 'frontend/**' — the image holds no frontend file (see the Dockerfile COPY lines), so a
       # frontend-only merge must not restart api/worker. The admin app deploys from vercel-deploy.yml.
   workflow_dispatch:
@@ -36,6 +39,37 @@ env:
   ECS_CLUSTER: ${{ secrets.ECS_CLUSTER }}
   ECS_SERVICE: ${{ secrets.ECS_SERVICE }}
 jobs:
+  # AA-993 M4b (root ADR 0017 d7, design D2.7) — schema gate, before the job guard (so the guard's answer is fresh
+  # when the roll starts) and in parallel with the build. Every CIS key this commit needs (LEGACY_CIS_BASELINE + 1 up to
+  # REQUIRED_CIS_SCHEMA of api/core/readiness.py, plus every api/migrations/ file in that range) must be in
+  # /health/ready `registered_keys` on Dev, and the AA-CIS-Infra Migration Apply run that applied files last must be
+  # green (its blocking Isolation Probe included). Polls up to 20 min (an expand file merged in the same PR is copied
+  # by the migration-sync bot and applied by Migration Apply meanwhile), then fails BEFORE the roll. No AWS, no secret:
+  # /health/ready and the Infra Actions API are public. With DB_AUTO_APPLY off it only checks that the keys are
+  # registered, which the manual DB Migrate flow already guarantees. Logic: .github/scripts/schema_gate.py
+  # (tests/unit/test_schema_gate_script.py).
+  schema-gate:
+    name: Schema gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: |
+            .github/scripts
+            api/core/readiness.py
+            api/migrations
+          sparse-checkout-cone-mode: false
+      - name: Wait until Dev has every key this commit needs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 .github/scripts/schema_gate.py --app cis --readiness-file api/core/readiness.py \
+            --migrations-dir api/migrations --ready-url https://api-cis.lumiguides.it.com/health/ready
+
   # AA-725 part 1 — pre-deploy guard; meaning changed by AA-993 G5 (design D1.4). CI has no RDS
   # access (private subnet), so it asks the LIVE api. The guard blocks the roll only while a rerun
   # wave is open (shared.rerun_wave) or a job of a `deploy_blocking` kind is running (or queued, due
@@ -46,6 +80,7 @@ jobs:
   # reports queued/running counts (`active`, `by_status`) and why it blocks (`blocked_by`).
   preflight:
     name: Pre-deploy job guard
+    needs: schema-gate
     runs-on: ubuntu-latest
     environment: dev
     steps:
@@ -106,7 +141,7 @@ jobs:
     name: Deploy to ECS Dev
     runs-on: ubuntu-latest
     environment: dev
-    needs: [build-and-push, preflight]
+    needs: [build-and-push, preflight, schema-gate]
     steps:
       - uses: actions/checkout@v5
       - name: Configure AWS credentials (OIDC)
@@ -211,7 +246,7 @@ jobs:
     name: Deploy Dev result
     runs-on: ubuntu-latest
     if: always()
-    needs: [preflight, build-and-push, deploy, verify]
+    needs: [schema-gate, preflight, build-and-push, deploy, verify]
     steps:
       - name: Every job succeeded
         env:
@@ -221,7 +256,7 @@ jobs:
           set -uo pipefail
           echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
           BAD=$(echo "$NEEDS" | jq -r '[to_entries[] | select(.value.result != "success") | "\(.key)=\(.value.result)"] | join(", ")')
-          if [ -n "$BAD" ] || [ "$(echo "$NEEDS" | jq 'length')" -lt 4 ]; then
+          if [ -n "$BAD" ] || [ "$(echo "$NEEDS" | jq 'length')" -lt 5 ]; then
             echo "::error::Deploy Dev ($EVENT) is not verified: ${BAD:-a job result is missing}"
             exit 1
           fi
