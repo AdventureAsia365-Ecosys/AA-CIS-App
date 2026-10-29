@@ -33,7 +33,7 @@ RATE_LIMIT = "RateLimitError: Error code: 429 - {'error': {'code': 'rate_limit_e
     (ERROR_002, E.ACCESS_DENIED),
     ("Error 002: Access to Bedrock models is not allowed for this account", E.ACCESS_DENIED),
     (NOT_AVAILABLE, E.ACCESS_DENIED),
-    ("User: arn:aws:sts::000000000000:assumed-role/x is not authorized to perform: bedrock:InvokeModel",
+    ("User: arn:aws:sts::<account>:assumed-role/x is not authorized to perform: bedrock:InvokeModel",
      E.ACCESS_DENIED),
     ("An error occurred (AccessDenied) when calling the AssumeRole operation", E.ACCESS_DENIED),
     ("PermissionDeniedError: Error code: 403 - unsupported_country_region_territory", E.ACCESS_DENIED),
