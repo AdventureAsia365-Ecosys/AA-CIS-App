@@ -7,8 +7,9 @@ source; trip_case_created per case source_system). Both count per UTC day (their
 here is per UTC day too. No PII: aggregates only.
 
 What the views cannot say (they have no inquiry key): which inquiry is missing, its age, and "received but no trip
-case after 24 h". That needs a key-level contract view in each owner's schema (a tp-NNN and a bk-NNN migration that
-grant cis_app SELECT on idempotency keys and timestamps only); until then the gap is a count. The request is recorded
+case after 24 h". That needs the key-level contract views tripplanner.v_ops_inquiry_keys (tp-022) and
+booking.v_ops_inquiry_inbox (bk-035), keys, states and timestamps only; until the follow-up slice reads them, the gap
+is a count. The request is recorded
 in docs/implementation-notes/AA-1003.md ("R2 follow-up requests"); CIS never reads tripplanner.v_inquiry_outbox or
 booking.inbox_events with another login.
 
