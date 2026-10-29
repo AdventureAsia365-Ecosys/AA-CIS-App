@@ -48,6 +48,7 @@ from services.acp_angle_gate.channel_style import ChannelStyle
 from services.acp_angle_gate.goals import Goal
 from services.acp_shared.channel_spec import apply_spec, channel_spec, sanitize_best_final_style
 from services.acp_content_writing.brief_grounding import ground_angle
+from services.acp_content_writing.reader_checklist import checklist_block
 
 _BLOG_FORMAT_INSTRUCTIONS = """
 
@@ -281,6 +282,7 @@ def build_user_prompt(
     lead_focus: str | None = None,
     memory_lines: list[str] | None = None,
     brief_grounding: str | None = None,
+    reader_checklist: str | None = None,
 ) -> str:
     """`angle` is the chosen `angle_gate_option` row (name/why_it_works/formula_fit/
     best_final_style). `revision_feedback` (AA-450 Phase 1's confirmed retry shape — specific,
@@ -331,7 +333,12 @@ def build_user_prompt(
     `brief_grounding` (AA-790 round 9): the mode of brief_grounding.ground_angle; None reads the env switch
     `T9_BRIEF_GROUNDING_MODE` (the live path), the A/B harness passes it. In mode 'r9' the ANGLE'S BEST FINAL STYLE
     line carries only the brief clauses the CONTENT SEED (+ FACTS) supports; 'off' (default) is the round-6 prompt
-    byte for byte."""
+    byte for byte.
+
+    `reader_checklist` (AA-790 round 10): the mode of reader_checklist.checklist_block; None reads the env switch
+    `T9_READER_CHECKLIST_MODE` (the live path), the A/B harness passes it. In mode 'r10' a READER CHECKLIST block (the
+    traveller's practical questions with the CONTENT SEED's / FACTS' own answers quoted) follows the CONTENT SEED (and
+    the SEARCH QUESTIONS of a blog); 'off' (default) adds nothing, so the prompt is byte for byte what it was."""
     # AA-771 (S233) — the full brand pack (render_brand_block) replaces the AUDIENCE / MINDSET /
     # BRAND NAME lines; the invented "discerning travellers" fallback audience is gone.
 
@@ -434,6 +441,12 @@ def build_user_prompt(
         lines.append("\nSEARCH QUESTIONS (what readers search for about these places; for the FAQ only, "
                      "and only when a CONTENT SEED or FACTS fact answers one):\n"
                      + "\n".join(f"- {q}" for q in search_questions))
+    # AA-790 round 10 — the traveller's practical questions with the seed's own answers; '' when the mode is off.
+    checklist = checklist_block(reader_checklist, content_seed=content_seed, channel=channel_style["channel"],
+                                route_segments=route_segments if is_route_aware else None, facts_text=facts_text,
+                                search_questions=search_questions if channel_style["channel"] == "blog" else None)
+    if checklist:
+        lines.append("\n" + checklist)
     if revision_feedback:
         lines.append(
             "\nPREVIOUS ATTEMPT FAILED QUALITY REVIEW. Fix EXACTLY these issues, preserve "
