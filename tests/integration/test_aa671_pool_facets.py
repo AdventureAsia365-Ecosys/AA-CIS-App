@@ -4,7 +4,8 @@ The Marketplace in the portal filters the Adventure Asia catalog by activity, in
 cards show a cover photo. The pool rows read them from CIS data the catalog already serves:
   - activities / intensity: the tour's graph components (catalog.v_tour_component on the tenant pool, its source
     geo.tour_place + usable shared.destinations on the admin pool), intensity = the highest component level;
-  - cover: the tour's position-1 photo (catalog.v_tour_photo / shared.v_tour_photos).
+  - cover: the tour's position-1 photo (catalog.v_tour_photo / shared.v_tour_photos), else (S257) a photo of the
+    tour's primary place (catalog.v_destination_photo / shared.v_destination_photos).
 
 Checked here: both pools give the same answer (the flag can flip either way), a component on a suspect destination
 does not count (v_tour_component's rule), the filters narrow the rows and the count, and the premise of the per-pool
@@ -61,13 +62,13 @@ async def _component(conn, tour_id, destination_id, activity, intensity, day=1):
         str(tour_id))   # source_id = raw_tours.source_key (258: COALESCE(source_group_id, tour_id)::text)
 
 
-async def _photo(conn, tour_id, file_name, match_source):
+async def _photo(conn, tour_id, file_name, match_source, *, destination_id=None, served=True):
     photo = uuid.uuid4()
     await conn.execute(
         """INSERT INTO shared.place_photo (id, drive_file_id, drive_root_id, folder_path, country, file_name, tour_id,
-                                           match_source, status, s3_key_large, s3_key_small)
-           VALUES ($1, $2, 'root', 'Vietnam/x', 'Vietnam', $3, $4, $5, 'matched', 'k/l.jpg', 'k/s.jpg')""",
-        photo, f"drive-{photo.hex}", file_name, tour_id, match_source)
+                                           destination_id, match_source, status, s3_key_large, s3_key_small)
+           VALUES ($1, $2, 'root', 'Vietnam/x', 'Vietnam', $3, $4, $5, $6, 'matched', $7, 'k/s.jpg')""",
+        photo, f"drive-{photo.hex}", file_name, tour_id, destination_id, match_source, "k/l.jpg" if served else None)
     return photo
 
 
@@ -151,3 +152,65 @@ async def test_admin_pool_sql_is_refused_on_the_tenant_pool(ctx, monkeypatch):
     monkeypatch.setitem(v1_tours._POOL_FACET_JOIN, True, v1_tours._POOL_FACET_JOIN[False])
     with pytest.raises(asyncpg.InsufficientPrivilegeError):
         await _browse(ctx, True)
+
+
+@pytest_asyncio.fixture
+async def fallback(ctx):
+    """Tours without a photo of their own, whose places have destination photos (S257 cover fallback)."""
+    conn, tag = ctx.conn, ctx.tag
+    hue = await _destination(conn, f"AA671 Hue {tag}")                 # 2 days: the primary place
+    hoian = await _destination(conn, f"AA671 Hoi An {tag}")            # 1 day, first: not primary
+    unserved = await _destination(conn, f"AA671 Dalat {tag}")          # 3 days, photo without a rendition
+    bad = await _destination(conn, f"AA671 Bogus {tag}", suspect=True)  # 4 days, suspect: not a usable place
+    hue_photos = {await _photo(conn, None, f"hue-{i}.jpg", "auto", destination_id=hue) for i in range(3)}
+    hoian_photo = await _photo(conn, None, "hoian.jpg", "manual", destination_id=hoian)
+    await _photo(conn, None, "dalat.jpg", "manual", destination_id=unserved, served=False)
+    await _photo(conn, None, "bogus.jpg", "manual", destination_id=bad)
+
+    t3, pt3 = await _tour(conn, f"AA671 {tag} fallback")
+    await _component(conn, t3, hoian, "culinary", "leisurely", day=1)
+    await _component(conn, t3, hue, "cultural_heritage", "leisurely", day=2)
+    await _component(conn, t3, hue, "cultural_heritage", "moderate", day=3)
+    for day in (4, 5, 6):
+        await _component(conn, t3, unserved, "trekking", "active", day=day)
+    for day in (1, 2, 3, 4):
+        await _component(conn, t3, bad, "wildlife_nature", "leisurely", day=day)
+    # second tour on the same primary place: also a Hue photo, chosen per tour
+    t4, pt4 = await _tour(conn, f"AA671 {tag} fallback two")
+    await _component(conn, t4, hue, "cultural_heritage", "leisurely", day=1)
+    # a tour whose only place has no photo keeps no cover
+    t5, pt5 = await _tour(conn, f"AA671 {tag} fallback none")
+    await _component(conn, t5, unserved, "trekking", "active", day=1)
+    return SimpleNamespace(pt3=pt3, pt4=pt4, pt5=pt5, hue_photos=hue_photos, hoian_photo=hoian_photo)
+
+
+def _photo_id(url):
+    """The photo id of a cover URL ({base}/content/photos/<id>?size=small)."""
+    return uuid.UUID(url.split("/content/photos/")[1].split("?")[0])
+
+
+@pytest.mark.asyncio
+async def test_cover_falls_back_to_the_primary_place_photo_on_both_pools(ctx, fallback):
+    on, off = await _browse(ctx, True), await _browse(ctx, False)
+    assert on == off
+    rows = _by_id(on)
+    # a tour with its own photo keeps it (the fallback never replaces a tour photo)
+    assert _photo_id(rows[ctx.pt1]["cover_image_url"]) == ctx.cover
+    # primary place = most days among usable places with a served photo: Hue (2 days), not Hoi An (day 1), not
+    # Dalat (photo without a rendition), not the suspect place
+    three = rows[fallback.pt3]
+    assert _photo_id(three["cover_image_url"]) in fallback.hue_photos
+    assert three["cover_image_url"].endswith("?size=small")
+    assert three["cover_image_large_url"] == three["cover_image_url"].replace("?size=small", "?size=large")
+    assert _photo_id(rows[fallback.pt4]["cover_image_url"]) in fallback.hue_photos
+    # no usable place photo, no tour photo: no cover
+    assert (rows[fallback.pt5]["cover_image_url"], rows[fallback.pt5]["cover_image_large_url"]) == (None, None)
+    assert (rows[ctx.pt2]["cover_image_url"], rows[ctx.pt2]["cover_image_large_url"]) == (None, None)
+
+
+@pytest.mark.asyncio
+async def test_cover_fallback_is_deterministic(ctx, fallback):
+    first = _by_id(await _browse(ctx, True))
+    again = _by_id(await _browse(ctx, True))
+    for pt in (fallback.pt3, fallback.pt4):
+        assert first[pt]["cover_image_url"] == again[pt]["cover_image_url"]
