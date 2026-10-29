@@ -5,7 +5,8 @@ cards show a cover photo. The pool rows read them from CIS data the catalog alre
   - activities / intensity: the tour's graph components (catalog.v_tour_component on the tenant pool, its source
     geo.tour_place + usable shared.destinations on the admin pool), intensity = the highest component level;
   - cover: the tour's position-1 photo (catalog.v_tour_photo / shared.v_tour_photos), else (S257) a photo of the
-    tour's primary place (catalog.v_destination_photo / shared.v_destination_photos).
+    tour's primary place (catalog.v_destination_photo / shared.v_destination_photos), else (S258) a photo place near
+    the primary place, else one of its country (catalog.v_destination / shared.destinations; services/photos/covers.py).
 
 Checked here: both pools give the same answer (the flag can flip either way), a component on a suspect destination
 does not count (v_tour_component's rule), the filters narrow the rows and the count, and the premise of the per-pool
@@ -32,9 +33,9 @@ from test_aa859_t2_version_reads_pool import (  # noqa: E402
 from api.routers import v1_tours  # noqa: E402
 
 
-async def _destination(conn, name, *, suspect=False):
-    dest = await conn.fetchval("INSERT INTO shared.destinations (name, country, lat, lng) VALUES ($1, 'Vietnam', 10, "
-                               "106) RETURNING id", name)
+async def _destination(conn, name, *, suspect=False, country="Vietnam", lat=10.0, lng=106.0):
+    dest = await conn.fetchval("INSERT INTO shared.destinations (name, country, lat, lng) VALUES ($1, $2, $3, $4) "
+                               "RETURNING id", name, country, lat, lng)
     if suspect:
         await conn.execute("UPDATE shared.destinations SET geo_status = 'suspect' WHERE id = $1", dest)
     return dest
@@ -160,7 +161,9 @@ async def fallback(ctx):
     conn, tag = ctx.conn, ctx.tag
     hue = await _destination(conn, f"AA671 Hue {tag}")                 # 2 days: the primary place
     hoian = await _destination(conn, f"AA671 Hoi An {tag}")            # 1 day, first: not primary
-    unserved = await _destination(conn, f"AA671 Dalat {tag}")          # 3 days, photo without a rendition
+    # 3 days, photo without a rendition; in another country, far from every photo place (S258: no nearby / country
+    # cover either, so the tour that has only this place keeps no cover)
+    unserved = await _destination(conn, f"AA671 Dalat {tag}", country="Laos", lat=19.9, lng=102.1)
     bad = await _destination(conn, f"AA671 Bogus {tag}", suspect=True)  # 4 days, suspect: not a usable place
     hue_photos = {await _photo(conn, None, f"hue-{i}.jpg", "auto", destination_id=hue) for i in range(3)}
     hoian_photo = await _photo(conn, None, "hoian.jpg", "manual", destination_id=hoian)
@@ -214,3 +217,51 @@ async def test_cover_fallback_is_deterministic(ctx, fallback):
     again = _by_id(await _browse(ctx, True))
     for pt in (fallback.pt3, fallback.pt4):
         assert first[pt]["cover_image_url"] == again[pt]["cover_image_url"]
+
+
+@pytest_asyncio.fixture
+async def chain(ctx):
+    """S258: tours whose places have no photo at all — the nearby and country levels of the cover chain."""
+    conn, tag = ctx.conn, ctx.tag
+    town = await _destination(conn, f"AA671 Old Town {tag}", lat=15.877, lng=108.326)        # primary, no photo
+    near = await _destination(conn, f"AA671 Hoi An {tag}", lat=15.880, lng=108.335)          # ~1 km, photos
+    flagged = await _destination(conn, f"AA671 Flagged {tag}", suspect=True, lat=15.8771, lng=108.3261)
+    hue = await _destination(conn, f"AA671 Hue {tag}", lat=16.46, lng=107.59)                # ~110 km, photo
+    lake = await _destination(conn, f"AA671 Lake {tag}", lat=21.0, lng=105.0)                # far from both
+    near_photos = {await _photo(conn, None, f"hoian-{i}.jpg", "auto", destination_id=near) for i in range(2)}
+    hue_photo = await _photo(conn, None, "hue.jpg", "auto", destination_id=hue)
+    await _photo(conn, None, "flagged.jpg", "auto", destination_id=flagged)
+    t6, pt6 = await _tour(conn, f"AA671 {tag} chain nearby")
+    await _component(conn, t6, town, "cultural_heritage", "leisurely", day=1)
+    t7, pt7 = await _tour(conn, f"AA671 {tag} chain country")
+    await _component(conn, t7, lake, "wildlife_nature", "moderate", day=1)
+    return SimpleNamespace(t6=t6, pt6=pt6, t7=t7, pt7=pt7, near_photos=near_photos, hue_photo=hue_photo)
+
+
+@pytest.mark.asyncio
+async def test_cover_chain_nearby_then_country_on_both_pools(ctx, chain):
+    on, off = await _browse(ctx, True), await _browse(ctx, False)
+    assert on == off
+    rows = _by_id(on)
+    # nearest photo place within 25 km of the primary place, never a suspect one (nearer, but flagged)
+    assert _photo_id(rows[chain.pt6]["cover_image_url"]) in chain.near_photos
+    # nothing near: a photo place of the primary place's country
+    assert _photo_id(rows[chain.pt7]["cover_image_url"]) in chain.near_photos | {chain.hue_photo}
+    assert _photo_id(rows[ctx.pt1]["cover_image_url"]) == ctx.cover          # a tour photo is never replaced
+    assert rows[ctx.pt2]["cover_image_url"] is None                          # no place at all: no cover
+
+
+@pytest.mark.asyncio
+async def test_job_coverage_statement_counts_what_the_pool_serves(ctx, chain):
+    from services.jobs import photo_destination_match_job as J
+    from services.photos import covers as C
+    await ctx.conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(MASTER))
+    rows = {r["tour_id"]: r for r in await ctx.conn.fetch(J.coverage_sql())}
+    pool = _by_id(await _browse(ctx, False))
+    t1 = await ctx.conn.fetchval("SELECT tour_id::text FROM gold_aa_internal.published_tours WHERE id = $1", ctx.pt1)
+    t2 = await ctx.conn.fetchval("SELECT tour_id::text FROM gold_aa_internal.published_tours WHERE id = $1", ctx.pt2)
+    assert C.level_of(rows[t1]) == "tour" and C.level_of(rows[str(chain.t6)]) == "nearby"
+    assert C.level_of(rows[str(chain.t7)]) == "country" and C.level_of(rows[t2]) is None
+    assert rows[str(chain.t6)]["near_km"] < 2 and rows[str(chain.t7)]["near_km"] > C.NEARBY_COVER_KM
+    # the path the report counts is the one the pool serves
+    assert _photo_id(pool[chain.pt6]["cover_image_url"]) == _photo_id("x" + rows[str(chain.t6)]["near_path"])

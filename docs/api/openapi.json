@@ -2394,6 +2394,15 @@
               }
             ],
             "title": "Limit"
+          },
+          "version": {
+            "default": 1,
+            "enum": [
+              1,
+              2
+            ],
+            "title": "Version",
+            "type": "integer"
           }
         },
         "title": "DestinationMatchRequest",

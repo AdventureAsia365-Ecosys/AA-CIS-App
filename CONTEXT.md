@@ -715,8 +715,12 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   `photo_destination_match` job (`POST /admin/photos/destination-match`, DRY RUN by default, background, $0: counts
   matched / ambiguous / weak / no_match / no_candidate / no_label per country with samples and previews the covers;
   an apply writes in one guarded UPDATE; covers only with `fill_covers`). `destination_id` feeds
-  `shared.v_destination_photos` / `catalog.v_destination_photo` and so the pool cover fallback (`_POOL_COVER_SQL`)
-  and the TripPlanner destination pages.
+  `shared.v_destination_photos` / `catalog.v_destination_photo` and so the pool cover chain and the TripPlanner
+  destination pages. S258: the job's matcher version 2 (`{"version": 2}`; the sync stays on 1) breaks a tie between
+  places on one spot (every pair ≤ 2 km: most tour days wins) and matches a label that IS the name of a place ≤ 20 km
+  from a place of the tour (`nearby_exact`: the town Paro, not the monastery above it). The pool cover chain
+  (`services/photos/covers.py`, both pools, also run by the job's `covers_coverage` report): tour photo → a photo of
+  the primary place (most days) → of the photo place nearest to it (≤ 25 km) → of a photo place of its country.
   AA-995 (migration 301): `size=medium` is the 960 w file (`s3_key_medium`, phone heroes of the TripPlanner); a row
   without it answers the 1600 w file (never the original). The sync writes it for every file it downloads; files stored
   before 301 get it from the `photo_medium_backfill` job (`POST /admin/photos/medium-backfill`, background, $0: S3 +

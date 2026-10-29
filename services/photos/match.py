@@ -6,13 +6,16 @@ admin Photos page assigns them by hand.
 
 AA-671 S257: resolve_destination() also reports WHY a label did not match (ambiguous / no candidate / no match),
 for the photo_destination_match backfill (services/photos/destinations.py) and the sync.
+AA-671 S258: version 2 of resolve_destination() (the job's {"version": 2}) breaks a tie between places on one spot and
+matches a label that names a place near the tour (nearby_exact); see resolve_destination.
 """
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from typing import Iterable, Optional
+from typing import Iterable, Mapping, Optional
 
 _EXT = re.compile(r"\.[a-z0-9]{2,5}$", re.IGNORECASE)
 # A trailing run of copy markers (" (2)", "copy", "_3", "-12"), matched REVERSED at the start of the reversed
@@ -101,6 +104,14 @@ RULE_LABEL_IN_NAME = "label_in_name"  # a distinctive label inside one place nam
 MIN_KEY = 4                           # shorter keys ("hue" aside) are too weak to match inside another name
 
 
+# AA-671 S258 — matcher version 2 (the photo_destination_match job with {"version": 2}; the sync stays on version 1).
+# Two $0 rules on top of version 1, both geographic, both decided before anything is written:
+RULE_NEARBY_EXACT = "nearby_exact"    # the label IS the name of a place near the tour (not one of its own places)
+TIE_SAME_SPOT = "same_spot"           # a tie between places that stand on one spot: any of them is the photo's place
+SAME_SPOT_KM = 2.0                    # tied places at most this far apart are one spot (unmerged twins, two gates)
+NEAR_ROUTE_KM = 20.0                  # a nearby_exact place lies at most this far from one of the tour's own places
+
+
 @dataclass(frozen=True)
 class DestinationMatch:
     outcome: str
@@ -108,6 +119,17 @@ class DestinationMatch:
     rule: Optional[str] = None
     candidates: tuple[str, ...] = ()   # the tied destination ids when ambiguous (sorted)
     suggestion: Optional[str] = None   # WEAK only: the one place whose name holds the label (not written)
+    tie_break: Optional[str] = None    # version 2: TIE_SAME_SPOT when a tie was broken (candidates = the tied ids)
+    km: Optional[float] = None         # version 2, nearby_exact: distance to the nearest place of the tour
+
+
+@dataclass(frozen=True)
+class Place:
+    """What version 2 knows about a place of the tour (or a place near it): where it is and how long the tour stays."""
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    days: int = 0                      # distinct itinerary days of the tour at this place (0 = a graph stop only)
+    first_day: Optional[int] = None
 
 
 def _full_forms(name: str) -> set[str]:
@@ -138,10 +160,103 @@ def _decide(hits: dict[str, int], rule: str) -> Optional[DestinationMatch]:
     return DestinationMatch(AMBIGUOUS, None, rule, tuple(best))
 
 
-def resolve_destination(label: Optional[str], candidates: Iterable[tuple[str, Optional[str]]]) -> DestinationMatch:
+def resolve_destination(label: Optional[str], candidates: Iterable[tuple[str, Optional[str]]],
+                        places: Optional[Mapping[str, Place]] = None,
+                        nearby: Optional[Iterable[tuple[str, Optional[str], Place]]] = None) -> DestinationMatch:
     """Which of the tour's places a photo label names. `candidates` are (destination id, name) pairs: the places
     of the photo's own tour, several names per destination allowed (the itinerary spelling and the destination
-    name). Pure, order-independent (ties are reported, not broken by input order)."""
+    name). Pure, order-independent (ties are reported, not broken by input order).
+
+    Version 2 (`places` given: destination id -> Place of the tour's places):
+    - a tie at exact / core / name_in_label between places that stand on one spot (every pair at most SAME_SPOT_KM
+      apart, all located) is broken: the place with the most tour days, then the earliest day, then the id
+      (tie_break = same_spot). Places further apart stay ambiguous (two Night Markets in two towns).
+    - when nothing of the tour matched (no_match), only a place name holds the label (weak, "Paro" in "Paro
+      Taktsang") or several place names hold it (ambiguous at label_in_name): a place from `nearby` — (id, name,
+      Place) of destinations outside the tour — whose whole name IS the label and that lies at most NEAR_ROUTE_KM
+      from a located place of the tour is the answer (rule nearby_exact): the town Paro, not the monastery above it.
+      Several such places: the same-spot tie-break, else ambiguous. A generic label ("Night Market") never matches
+      this way.
+    """
+    cands = list(candidates)
+    found = _resolve_v1(label, cands)
+    if places is None:
+        return found
+    if found.outcome == AMBIGUOUS and found.rule in (RULE_EXACT, RULE_CORE, RULE_NAME_IN_LABEL):
+        win = _same_spot(found.candidates, places)
+        return DestinationMatch(MATCHED, win, found.rule, found.candidates, tie_break=TIE_SAME_SPOT) if win else found
+    if nearby is not None and (found.outcome in (NO_MATCH, WEAK)
+                               or (found.outcome == AMBIGUOUS and found.rule == RULE_LABEL_IN_NAME)):
+        near = _nearby_exact(label, {str(d) for d, _ in cands if d}, places, nearby)
+        if near is not None:
+            return near
+    return found
+
+
+def km_between(a: Place, b: Place) -> Optional[float]:
+    """Great-circle distance in km (haversine), None when either place has no coordinates."""
+    if None in (a.lat, a.lng, b.lat, b.lng):
+        return None
+    la1, la2 = math.radians(a.lat), math.radians(b.lat)
+    dla, dlo = la2 - la1, math.radians(b.lng - a.lng)
+    h = math.sin(dla / 2) ** 2 + math.cos(la1) * math.cos(la2) * math.sin(dlo / 2) ** 2
+    return 2 * 6371.0 * math.asin(min(1.0, math.sqrt(h)))
+
+
+def _same_spot(tied: Iterable[str], places: Mapping[str, Place]) -> Optional[str]:
+    """The winner of a tie between places on one spot, or None (a place without coordinates, or two too far apart)."""
+    ids = sorted(set(tied))
+    if len(ids) < 2 or any(d not in places for d in ids):
+        return None
+    for i, a in enumerate(ids):
+        for b in ids[i + 1:]:
+            km = km_between(places[a], places[b])
+            if km is None or km > SAME_SPOT_KM:
+                return None
+    big = 1 << 30
+    return min(ids, key=lambda d: (-places[d].days, places[d].first_day if places[d].first_day is not None else big,
+                                   d))
+
+
+def _nearby_exact(label: Optional[str], own: set[str], places: Mapping[str, Place],
+                  nearby: Iterable[tuple[str, Optional[str], Place]]) -> Optional[DestinationMatch]:
+    from services.acp_shared.place_cards import is_generic_name
+
+    if is_generic_name(label):
+        return None
+    label_full = _full_forms(label or "")
+    anchors = [p for d, p in places.items() if d in own and p.lat is not None and p.lng is not None]
+    if not label_full or not anchors:
+        return None
+    hits: dict[str, float] = {}
+    spots: dict[str, Place] = {}
+    for did, name, where in nearby:
+        did = str(did) if did else None
+        if not did or did in own or not name or not (_full_forms(name) & label_full):
+            continue
+        dists = [k for k in (km_between(where, a) for a in anchors) if k is not None]
+        if dists and min(dists) <= NEAR_ROUTE_KM:
+            hits[did] = min(min(dists), hits.get(did, math.inf))
+            spots[did] = where
+    if not hits:
+        return None
+    if len(hits) == 1:
+        (did, km), = hits.items()
+        return DestinationMatch(MATCHED, did, RULE_NEARBY_EXACT, km=round(km, 1))
+    tied = tuple(sorted(hits))
+    win = _same_spot(tied, spots)
+    if win:
+        return DestinationMatch(MATCHED, win, RULE_NEARBY_EXACT, tied, tie_break=TIE_SAME_SPOT, km=round(hits[win], 1))
+    return DestinationMatch(AMBIGUOUS, None, RULE_NEARBY_EXACT, tied)
+
+
+def label_keys(label: Optional[str]) -> set[str]:
+    """The whole-name keys of a label, to look up places by shared.destinations.name_norm (version 2 prefilter; the
+    resolver compares the full forms of both names again)."""
+    return {k for k in _full_forms(label or "") if len(k) >= 3}
+
+
+def _resolve_v1(label: Optional[str], candidates: Iterable[tuple[str, Optional[str]]]) -> DestinationMatch:
     from services.acp_shared.place_cards import is_generic_name
     from services.places.names import name_norm
 

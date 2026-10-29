@@ -164,10 +164,15 @@ def test_plan_samples_are_capped():
 class _JobPool:
     """Plays the job's queries over in-memory place_photo rows."""
 
-    def __init__(self, rows, cands, sync_running=False, apply_result=None, covers=None):
+    def __init__(self, rows, cands, sync_running=False, apply_result=None, covers=None, places=None, nearby=None,
+                 coverage=None):
         self.rows, self.cands, self.sync_running, self.apply_result = rows, cands, sync_running, apply_result
         self.applied, self.cover_fills, self.preview_args = [], 0, None
         self.covers = covers or {}         # destination id -> cover url (absent = no destination row)
+        self.places = places or {}         # tour id -> [(destination id, lat, lng, days, first_day)] (version 2)
+        self.nearby = nearby or []         # [(destination id, name, name_norm, lat, lng)] (version 2)
+        self.coverage = coverage           # rows of the coverage statement; an Exception instance = the read fails
+        self.reads = []
 
     def _open(self, country):
         return [r for r in self.rows if r["destination_id"] is None and (country is None or r["country"] == country)]
@@ -191,12 +196,26 @@ class _JobPool:
         return {"photos": len(with_dest), "destinations": len({r["destination_id"] for r in with_dest})}
 
     async def fetch(self, sql, *args):
+        from services.photos import destinations as D
         if sql == J.APPLY_SQL:
             return self._apply(*args)
         if sql == J.OPEN_ROWS_SQL:
             country, limit = args
             return sorted(self._open(country), key=lambda r: (r["country"], r["id"]))[:limit]
-        assert "geo.tour_place" in sql
+        if sql == J.coverage_sql():
+            self.reads.append("coverage")
+            if isinstance(self.coverage, Exception):
+                raise self.coverage
+            return self.coverage or []
+        if sql == D.PLACES_SQL:
+            self.reads.append("places")
+            return [{"tour_id": t, "destination_id": d, "lat": la, "lng": lo, "days": n, "first_day": f}
+                    for t, items in self.places.items() if t in args[0] for d, la, lo, n, f in items]
+        if sql == D.NEARBY_SQL:
+            self.reads.append(("nearby", tuple(args[0])))
+            return [{"id": d, "name": n, "name_norm": k, "lat": la, "lng": lo}
+                    for d, n, k, la, lo in self.nearby if k in args[0]]
+        assert sql == D.CANDIDATES_SQL
         return [{"tour_id": t, "destination_id": d, "destination_name": n, "place_name": None}
                 for t, pairs in self.cands.items() if t in args[0] for d, n in pairs]
 
@@ -346,7 +365,7 @@ def test_country_and_limit_narrow_the_run():
 
 @pytest.mark.parametrize("payload", [{"limit": 0}, {"limit": J.MAX_LIMIT + 1}, {"limit": "50"}, {"limit": True},
                                      {"country": 5}, {"dry_run": "false"}, {"dry_run": 0},
-                                     {"fill_covers": "yes"}])
+                                     {"fill_covers": "yes"}, {"version": 3}, {"version": "2"}, {"version": True}])
 def test_bad_payload_is_non_retryable(payload):
     with pytest.raises(NonRetryable):
         _run(_JobPool([], {}), payload)

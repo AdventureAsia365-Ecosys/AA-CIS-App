@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import Optional
+from typing import Literal, Optional
 
 import boto3
 import structlog
@@ -309,6 +309,7 @@ class DestinationMatchRequest(BaseModel):
     country: Optional[str] = None   # one country; None = all
     limit: Optional[int] = None     # rows this run (default and max 5000)
     fill_covers: bool = False       # apply only: also fill empty / job-set shared.destinations covers (TripPlanner)
+    version: Literal[1, 2] = 1      # matcher version; 2 adds the same-spot tie-break and nearby_exact (S258)
 
 
 @router.post("/destination-match", summary="Enqueue a photo_destination_match job (photo -> place of its tour)")
@@ -325,6 +326,8 @@ async def destination_match(body: DestinationMatchRequest, request: Request, x_a
     payload: dict = {"dry_run": body.dry_run, "country": body.country, "fill_covers": body.fill_covers}
     if body.limit is not None:
         payload["limit"] = body.limit
+    if body.version != 1:
+        payload["version"] = body.version
     # The check and the insert hold one transaction-scoped advisory lock, so two calls at once queue one job.
     async with request.app.state.pool.acquire() as conn:
         async with conn.transaction():
