@@ -1127,6 +1127,13 @@ and `llm_call_log` (TripPlanner), the durable job runner `shared.job` (CIS only 
 enqueuing repo is AA-751), the cost guard `shared.spend_budget`, the Jev decision layer, and rerun
 waves (`/admin/waves`, AA-727).
 
+LLM operations (AA-900): `docs/llm/prompt-register.md` maps every gateway prompt to its stage, file and symbol, version
+rule and eval baseline (guard `tests/unit/test_aa900_prompt_register.py`); `docs/llm/eval-runbook.md` is the by-hand
+eval of a prompt, model or route change: an R2 run on the AA-729 golden set (`services/writing_memory/r2.py --stage
+adhoc_aa900`, label `adhoc_aa900`, per-run cap <= 10 USD, the 25 USD writing-memory month cap) whose run ID and cost go
+in the PR (template section "LLM change"). The route and model table is generated in the root repo
+(`docs/generated/llm-routes.md`).
+
 ### AA-authored content (AA-977, CRM-B5)
 
 AA staff write "Before you go" prep packs (R38), starter templates (R9) and campaign content blocks (R14) in CIS;
