@@ -420,7 +420,7 @@ def _usage_key_from_secret(raw: str) -> str:
 
 def resolve_usage_key(connection_key: str, usage_secret_name: Optional[str]) -> str:
     """The read-only usage / admin key a reconcile source reads the provider's cost with
-    (``shared.llm_connection_cost_policy.usage_secret_name``, migration 316). Fails closed
+    (``shared.llm_connection_cost_policy.usage_secret_name``, migration 317). Fails closed
     (ConnectionCredentialError): no name, a name outside ``aa-llm/<env>/<name>`` (checked BEFORE anything is read), the
     secret unreadable or empty. Never cached, never logged: it runs once per connection per nightly run, and the key is
     a high-privilege secret (it can read the whole organisation's usage)."""

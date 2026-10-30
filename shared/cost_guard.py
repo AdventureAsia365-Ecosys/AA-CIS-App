@@ -310,7 +310,7 @@ async def _queue_alert_email(conn, budget: RunBudget, message: str, pct: Optiona
 
 # ── AA-1002 (gateway slice S10): a monthly budget per LLM connection ────────────────────────────────────────────
 #
-# shared.llm_provider_connection.monthly_budget_usd (304) is the cap; shared.llm_connection_cost_policy (316) says how
+# shared.llm_provider_connection.monthly_budget_usd (304) is the cap; shared.llm_connection_cost_policy (317) says how
 # it acts: alert_pct (soft warning, one bell + e-mail per 24 h) and hard_stop (at 100 % the gateway leaves the
 # connection out of every route; false = alert only). No policy row = DEFAULT_CONNECTION_ALERT_PCT / hard stop. The
 # month-to-date spend is the connection's own llm_call_log rows (account = connection_key, UTC calendar month).
@@ -339,7 +339,7 @@ _COST_POLICY_SQL = """
 
 @dataclass(frozen=True)
 class ConnectionCostPolicy:
-    """The 316 policy row of a connection (or the defaults when it has none)."""
+    """The 317 policy row of a connection (or the defaults when it has none)."""
     connection_key: str
     alert_pct: int = DEFAULT_CONNECTION_ALERT_PCT
     hard_stop: bool = True
@@ -403,11 +403,11 @@ def _iso(v) -> Optional[str]:
 
 
 async def read_cost_policies(conn, *, missing=None) -> Optional[dict[str, ConnectionCostPolicy]]:
-    """Every stored policy row by connection_key. Before migration 316 (the table is missing): ``missing`` when given,
+    """Every stored policy row by connection_key. Before migration 317 (the table is missing): ``missing`` when given,
     else {} (the defaults apply to every connection)."""
     try:
         rows = await conn.fetch(_COST_POLICY_SQL)
-    except Exception as exc:  # noqa: BLE001 — UndefinedTableError before 316: defaults for every connection
+    except Exception as exc:  # noqa: BLE001 — UndefinedTableError before 317: defaults for every connection
         if type(exc).__name__ != "UndefinedTableError":
             raise
         return {} if missing is None else missing

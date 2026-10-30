@@ -14,9 +14,9 @@ module only caches them for the sync gateway:
   kept ``CACHE_TTL_SECONDS``; a spend that crosses the cap is seen within that window (calls already running finish).
 - Loading also raises the soft warning: ``cost_guard.maybe_alert_connection`` (one admin bell + ops e-mail per
   connection per 24 h) for each connection at or above its ``alert_pct``.
-- Never raises. When the state cannot be read (DB down, migration 316 not applied and the spend query failing too) the
+- Never raises. When the state cannot be read (DB down, migration 317 not applied and the spend query failing too) the
   budget is NOT enforced (logged once per failure window): the same DB outage also stops the cost log, and failing
-  closed would take every budgeted connection out of service on a database blip. A missing 316 table alone is not a
+  closed would take every budgeted connection out of service on a database blip. A missing 317 table alone is not a
   failure (the policy defaults apply: alert 80 %, hard stop).
 - ``LLM_CONNECTION_BUDGETS=off`` (ECS env, read per call) switches enforcement and alerts off.
 """
