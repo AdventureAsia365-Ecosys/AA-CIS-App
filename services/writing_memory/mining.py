@@ -344,6 +344,7 @@ _RUNS_SQL = """
            max(created_at) AS last_run_at
       FROM shared.job
      WHERE kind = 'writing_memory_mine' AND ($1::uuid IS NULL OR id <> $1::uuid)
+       AND coalesce(payload ->> 'mode', '') <> 'preference_summary'
        AND (status IN ('queued', 'running')
             OR (status = 'succeeded' AND (result ->> 'ran')::boolean IS TRUE)
             OR (status IN ('failed', 'stopped_budget', 'cancelled')

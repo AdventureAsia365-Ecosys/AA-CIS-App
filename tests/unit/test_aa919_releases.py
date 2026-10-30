@@ -494,7 +494,13 @@ def test_list_route_adds_evidence_and_detail_route_adds_run_summary(client, monk
 
     monkeypatch.setattr(rel, "get_release", get)
     monkeypatch.setattr(rel, "runs_of", runs)
+    from services.writing_memory import exemplars as ex_mod
+
+    async def no_exemplars(conn, rid):      # AA-921: this release pins no example
+        return []
+    monkeypatch.setattr(ex_mod, "release_exemplars", no_exemplars)
     d = client.get(f"/admin/writing-memory/releases/{RID}", headers=_h()).json()
     assert d["runs"]["r0"]["summary"] == {"inputs": 25, "byte_diffs": 0}
     assert "details" not in d["runs"]["r0"] and d["runs"]["eval"] is None and d["activation"] is None
+    assert d["exemplars"] == []
     assert client.get("/admin/writing-memory/releases", headers=_h(role="viewer")).status_code == 403

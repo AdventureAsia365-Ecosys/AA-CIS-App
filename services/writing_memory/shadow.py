@@ -59,6 +59,7 @@ import structlog
 
 from services.writing_memory import config as cfg
 from services.writing_memory import eval_checks as ec
+from services.writing_memory import insertion
 
 logger = structlog.get_logger()
 
@@ -394,7 +395,8 @@ async def run_shadow(pool, conf: ShadowConfig, *, writer_fn=None, flush=None, se
                 try:
                     output = await writer_fn(writer, inp["input"], view=view, shared_inputs=None)
                     text = ew.output_text(writer, output)
-                    artefacts = ec.qa_artefacts(text, rule_texts=rule_texts)
+                    artefacts = ec.qa_artefacts(text, rule_texts=rule_texts,
+                                                exemplars=insertion.exemplar_texts(view))   # AA-921
                     foreign = {t: ec.tenant_fingerprint(p) for t, p in packs.items() if t != owner}
                     iso = ec.isolation_probe(text, foreign=foreign, allowed_text=ew.allowed_text(writer, inp["input"]))
                     verdict = "fail" if (artefacts or iso["leak"]) else "pass"

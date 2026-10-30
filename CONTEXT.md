@@ -2633,7 +2633,7 @@ What the writers (A1/S1, T2, T9 blog, T9 social) learn from, under release contr
 never change. See ADR 0010. The signal store `shared.writing_signal` exists since CIS 277 (AA-916, WM-03) and the
 rule store `shared.writing_rule` since CIS 280 (AA-917, WM-09), the golden set and the eval run ledger since CIS 284
 (AA-919, WM-17), the releases, the shadow outputs and the per-writer memory switch since CIS 287 (AA-919, WM-18 /
-WM-20); the exemplar tables are planned for later WM tasks.
+WM-20), and the pinned exemplars since CIS 313 (AA-921, WM-27).
 
 **Writing Signal**:
 One recorded piece of evidence about a writer's output: an admin sentence edit (before / after,
@@ -2657,7 +2657,11 @@ _Avoid_: lesson, feedback (alone), training data.
 **Writing Rule**:
 One learned constraint for a writer, of one type: `lexicon` (ban or replace a word or phrase),
 `writer_instruction` (a line in the writer prompt), `repair_hint` (guidance for the repair pass)
-or `preference_summary` (a tenant's ≤ 5-sentence voice summary). A rule may only cut, ban,
+or `preference_summary` (a tenant's ≤ 5-sentence voice summary; AA-921 WM-28, `services/writing_memory/preference.py`:
+drafted on the judge route from that tenant's pass signals only, linted like a rule plus `unsourced_claim` — a promise
+word, a specific or an add-verb quarantines it, stored `rejected` with `quarantine: true` — and released like any tenant
+rule; the drafting is the `writing_memory_mine` job with `mode: preference_summary`, off unless the worker sets
+`WRITING_MEMORY_PREF_SUMMARY`, else `needs_llm_path` and no call). A rule may only cut, ban,
 rephrase or format; it never adds content, and fact gates (F1, F17, F9_cta_fact, Jev) outrank it.
 Stored in `shared.writing_rule` (CIS 280): `scope` platform / tenant with the same CHECK and RLS shape as the signal
 store (FORCE, `tenant_isolation` for `aa_app_user` but no tenant-pool privilege: tenants never see rules); status
@@ -2704,9 +2708,21 @@ rollback = one click (`active` → `rejected`, `rollback: …`). No active rule:
 _Avoid_: lesson (the frozen AA-132 rows), output rule (the retired N8 table), guideline.
 
 **Pinned Exemplar**:
-One fixed, entity-masked example output (`[PLACE]`, `[N]`…) pinned in a Release and labelled
-"voice only, reuse no fact". T2 and T9 get two per Release; S1 gets none. No nearest-neighbour
-retrieval.
+One fixed, entity-masked example output (`[NAME]`, `[N]`, `[PRICE]`, `[TIME]`, `[URL]`) pinned in a Release and labelled
+"voice only, reuse no fact". T2 and T9 get at most two per channel per Release; S1 gets none. No nearest-neighbour
+retrieval. Stored since CIS 313 (AA-921, `services/writing_memory/exemplars.py`): the pool `shared.writing_exemplar`
+(scope platform / tenant like the rule store, RLS ENABLE + FORCE, no tenant-pool privilege; status candidate / pinned /
+never, each change with the admin's reason and an audit row) filled at $0 by the refresh from the "use as example"
+signals (WM-07) whose fact filter passed (an approved T9 piece's text, or the edited T2 field, masked, whole sentences up
+to 120 words; a "never use" signal excludes its source); `shared.writing_memory_release_exemplar` the links a `rules`
+draft of T2 / T9 writes in its own transaction (pinned first, then the newest candidates; trigger
+`writing_memory_release_exemplar_guard`: same owner, writer and channel, never a `never` one, never updated). The
+examples are part of the release's `items_sha256` (`exemplars.release_sha256`; a release without examples keeps the
+rules-only hash), loaded and checked by `insertion.attach_items`, rendered after the tenant rules (T9 user prompt, T2
+block; never in the cached T9 `SYSTEM_PROMPT`), tenant first with the platform release's examples as fill, never
+another tenant's. A copied 6-word run of an example is a QA trace `exemplar:<id>` (`eval_checks.exemplar_copies`) in R2,
+the shadow and the post-activation check. Admin: the Exemplars tab of `/admin/writing-memory` and the Tenant 360 "Voice
+memory" card (quality tab).
 _Avoid_: few-shot (implies retrieval or unpinned examples), sample, golden item (an AA-729 eval item).
 
 **Release**:
@@ -3235,7 +3251,7 @@ this is the table that resolves Open Question 1 below.
 | 7 | Slate (Subject) | **Tenant** | Per tenant | **No.** `acp_shared.subject.tenant_id UUID NOT NULL` (migration 133:19). The similarly-named but unrelated `acp_contract.route_pick` (the Route-pick snapshot, renamed from `acp_contract.subject` at migration 132 — "a different, unrelated concept," migration 133:8) was also `tenant_id UUID NOT NULL` (migration 131:74, pre-rename); it was dropped by CIS 296 (AA-850). |
 | 8 | Goal / Angle / Write / Gate / Review / Publish | **Tenant** | Per tenant, per request/Piece | **Mostly no, one deliberate exception.** `acp_shared.angle_gate_request.tenant_id` (migration 113:36), `content_piece.tenant_id` (migration 115:36), `publish_log.tenant_id` (migration 116:27) all `NOT NULL`. Exception: the T10 cannibalization Gate (F10) deliberately reads EVERY other tenant's approved Pieces — `find_similar_pieces(cross_tenant=True, ...)`, `_CROSS_TENANT_QUERY` has no `tenant_id` filter at all (`services/acp_shared/piece_similarity.py:46-56, 67-95`), consumed by `gate_cannibalization()` at the 0.92 cosine-similarity threshold. This is a cross-tenant **read/compare**, not a cache — the embedding itself is never shared: `compute_embedding()` (`services/acp_shared/content_embedding.py`) makes one fresh Bedrock call per Piece, every time, for every tenant, with no caching layer at all. |
 | 9 | Facts Entry | **Both** (one table, two scopes) | Platform scope: once, by admin. Tenant scope: per tenant | **Yes for `scope='platform'` rows, by design.** `acp_shared.facts` (migration 145:33-46), `scope` column (`'platform'`\|`'tenant'`), `tenant_id IS NULL iff scope='platform'` (CHECK, migration 145:44-46). RLS (migration 229, AA-817, for the tenant pool role `aa_app_user`; the owner/main pool is exempt): `facts_platform_read` FOR SELECT `USING (scope = 'platform')` — platform rows are readable by every tenant — and `tenant_isolation` FOR ALL `USING`/`WITH CHECK (scope = 'tenant' AND tenant_id = NULLIF(app.tenant_id, '')::uuid)` — a tenant reads and writes only its own rows and can never write, delete or re-scope a platform fact (145's FOR ALL policy allowed that). |
-| 10 | Writing memory (Writing Rules, Pinned Exemplars, Releases; ADR 0010) | **Both** (one model, two scopes) | Platform scope: per monthly Release, approved by Nghiệp. Tenant scope: per tenant Release, one human click | **Tenant scope: no** — every `cis_app` read filters `tenant_id = $1` explicitly and the tables carry the `tenant_isolation` RLS policy (FORCE RLS), following the `acp_shared.facts` pattern; a CI test proves tenant A's rules never resolve for tenant B. **Platform scope: yes, by design** — a platform rule may be drawn from ≥ 3 distinct tenants' evidence (D9) and then applies to every tenant's writer, but platform rows never hold tenant text. Tables are CIS-owned in `shared`: `writing_signal` exists (CIS 277, AA-916; isolation tests `tests/integration/test_aa916_migration_277.py`, `test_aa817_rls_tenant_isolation.py`) and `writing_rule` (CIS 280, AA-917; `tests/integration/test_aa917_migration_280.py`: no tenant-pool privilege, a `tenant_id = $1` read never resolves another tenant's rule), and the golden set's tenant items and results `eval_golden_item` / `eval_item_result` (CIS 284, AA-919; `tests/integration/test_aa919_migration_284.py`), the releases and shadow outputs `writing_memory_release` / `writing_memory_shadow` (CIS 287, AA-919 WM-18; `tests/integration/test_aa919_migration_287.py`: tenant A's release never resolves for tenant B); the exemplar tables come with later WM tasks. |
+| 10 | Writing memory (Writing Rules, Pinned Exemplars, Releases; ADR 0010) | **Both** (one model, two scopes) | Platform scope: per monthly Release, approved by Nghiệp. Tenant scope: per tenant Release, one human click | **Tenant scope: no** — every `cis_app` read filters `tenant_id = $1` explicitly and the tables carry the `tenant_isolation` RLS policy (FORCE RLS), following the `acp_shared.facts` pattern; a CI test proves tenant A's rules never resolve for tenant B. **Platform scope: yes, by design** — a platform rule may be drawn from ≥ 3 distinct tenants' evidence (D9) and then applies to every tenant's writer, but platform rows never hold tenant text. Tables are CIS-owned in `shared`: `writing_signal` exists (CIS 277, AA-916; isolation tests `tests/integration/test_aa916_migration_277.py`, `test_aa817_rls_tenant_isolation.py`) and `writing_rule` (CIS 280, AA-917; `tests/integration/test_aa917_migration_280.py`: no tenant-pool privilege, a `tenant_id = $1` read never resolves another tenant's rule), and the golden set's tenant items and results `eval_golden_item` / `eval_item_result` (CIS 284, AA-919; `tests/integration/test_aa919_migration_284.py`), the releases and shadow outputs `writing_memory_release` / `writing_memory_shadow` (CIS 287, AA-919 WM-18; `tests/integration/test_aa919_migration_287.py`: tenant A's release never resolves for tenant B), and the pinned exemplars `writing_exemplar` / `writing_memory_release_exemplar` (CIS 313, AA-921 WM-27; `tests/integration/test_aa921_exemplars.py`: as cis_app, tenant A's draft pins only A's examples and resolving for tenant B returns none of them; the link trigger refuses a cross-tenant link). |
 
 **Frozen predecessor (AA-915).** The AA-132 lessons loop (`shared.pipeline_lessons`) is frozen
 behind `PIPELINE_LESSONS_ENABLED` (env, default off, no per-tenant override): with the flag off

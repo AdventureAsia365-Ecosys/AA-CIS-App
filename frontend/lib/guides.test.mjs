@@ -26,8 +26,9 @@ const GUIDES = [
     page: "app/admin/writing-memory/WritingMemory.tsx",
     // AA-994: the page prints its words through these dictionaries (English side = the labels the guide quotes).
     messages: ["app/admin/writing-memory/messages.ts", "app/admin/writing-memory/releases.messages.ts",
-      "lib/writingMemory.messages.ts"],
-    sources: ["lib/writingMemory.ts", "app/admin/writing-memory/ReleasesTab.tsx"],
+      "app/admin/writing-memory/exemplars.messages.ts", "lib/writingMemory.messages.ts"],
+    sources: ["lib/writingMemory.ts", "app/admin/writing-memory/ReleasesTab.tsx",
+      "app/admin/writing-memory/ExemplarsTab.tsx"],
     vi: { module: "app/admin/writing-memory/guide.vi.ts", exportName: "WRITING_MEMORY_GUIDE_VI" } },
 ];
 

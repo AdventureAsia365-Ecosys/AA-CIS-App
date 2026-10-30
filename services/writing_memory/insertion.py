@@ -102,14 +102,17 @@ def part_of(row: Optional[dict]) -> Optional[dict]:
             part[k] = row[k]
     if row.get("items") is not None:
         part["items"] = [dict(i) for i in row["items"]]
+    if row.get("exemplars"):
+        part["exemplars"] = [dict(e) for e in row["exemplars"]]
     return part
 
 
-async def load_items(db, row: dict, writer: str) -> Optional[list[dict]]:
+async def load_items(db, row: dict, writer: str, exemplars: Optional[list[dict]] = None) -> Optional[list[dict]]:
     """The rule items of one release row, checked: every rule exists, belongs to `writer` and to the row's owner (scope
-    + tenant), and the items hash equals the row's `items_sha256`. None when any check fails (logged; the part then
-    renders nothing). [] for a release without rules. `db` is a pool or a connection."""
-    from services.writing_memory.releases import items_sha256
+    + tenant), and the items hash equals the row's `items_sha256` (AA-921: over the rules and the release's pinned
+    `exemplars`, exemplars.release_sha256). None when any check fails (logged; the part then renders nothing). [] for
+    a release without rules. `db` is a pool or a connection."""
+    from services.writing_memory.exemplars import release_sha256
 
     ids = [str(i) for i in (row.get("rule_ids") or [])]
     if not ids:
@@ -122,7 +125,7 @@ async def load_items(db, row: dict, writer: str) -> Optional[list[dict]]:
     elif any(r["writer"] != writer or r["scope"] != row.get("scope")
              or (r.get("tenant_id") or None) != (row.get("tenant_id") or None) for r in rows):
         problem = "rule_isolation"
-    elif not row.get("items_sha256") or items_sha256(rows) != row["items_sha256"]:   # no hash, no render
+    elif not row.get("items_sha256") or release_sha256(rows, exemplars) != row["items_sha256"]:   # no hash, no render
         problem = "items_changed"
     if problem:
         logger.warning("wm_release_items_refused", writer=writer, release_id=row.get("release_id"), problem=problem)
@@ -134,16 +137,21 @@ async def load_items(db, row: dict, writer: str) -> Optional[list[dict]]:
 
 
 async def attach_items(db, row: Optional[dict], writer: str) -> Optional[dict]:
-    """`row` with its checked `items` (when it has rules and they pass `load_items`). Fails open: any error leaves the
+    """`row` with its checked `items` (when it has rules and they pass `load_items`) and, AA-921, its checked pinned
+    `exemplars` (exemplars.load_release_exemplars; they are part of the items hash). Fails open: any error leaves the
     row without items (it renders nothing, the stamp says ignored)."""
     if not row or not row.get("rule_ids") or row.get("items") is not None:
         return row
+    from services.writing_memory.exemplars import load_release_exemplars
     try:
-        items = await load_items(db, row, writer)
+        exemplars = await load_release_exemplars(db, row, writer)
+        items = await load_items(db, row, writer, exemplars) if exemplars is not None else None
     except Exception as e:  # noqa: BLE001 — memory never blocks a write (fail open)
         logger.warning("wm_release_items_unavailable", writer=writer, error=f"{type(e).__name__}: {str(e)[:200]}")
-        items = None
-    return {**row, "items": items} if items is not None else row
+        items = exemplars = None
+    if items is None:
+        return row
+    return {**row, "items": items, "exemplars": exemplars or []}
 
 
 async def resolve(db, writer: str, tenant_id: Optional[str] = None) -> Optional[dict]:
@@ -238,6 +246,41 @@ def _block(view: Optional[dict], scope: str, channel: Optional[str]) -> list[str
     return [PLATFORM_HEADING if scope == "platform" else TENANT_HEADING, *lines]
 
 
+EXAMPLES_HEADING = ("VOICE EXAMPLES (voice only, reuse no fact): they show this brand's tone, rhythm and sentence "
+                    "shape. Every place, name, number, price, time and service in them belongs to another text and is "
+                    "masked as [NAME], [N], [PRICE], [TIME] or [URL]; never copy a fact, a phrase or a masked token "
+                    "from them:")
+
+
+def voice_examples(view: Optional[dict], channel: Optional[str]) -> list[tuple[str, str]]:
+    """AA-921 WM-27: (exemplar_id, masked_text) of the examples a write of `channel` shows: the tenant part's examples
+    of the channel (by position), filled up to exemplars.PER_CHANNEL from the platform part's (never another
+    tenant's). Only from a part that renders (its items and examples passed the hash check)."""
+    from services.writing_memory.exemplars import PER_CHANNEL
+    out: list[tuple[str, str]] = []
+    for scope in ("tenant", "platform"):
+        part = (view or {}).get(scope)
+        if not _renders(part):
+            continue
+        for e in sorted(part.get("exemplars") or [], key=lambda x: int(x.get("position") or 0)):
+            if len(out) >= PER_CHANNEL:
+                break
+            if channel is not None and e.get("channel") != channel:
+                continue
+            text = _one_line(e.get("masked_text"))
+            if text and all(text != t for _, t in out):
+                out.append((str(e["exemplar_id"]), text))
+    return out
+
+
+def example_lines(view: Optional[dict], channel: Optional[str]) -> list[str]:
+    """The heading + one line per example ([] without one)."""
+    ex = voice_examples(view, channel)
+    if not ex:
+        return []
+    return [EXAMPLES_HEADING, *[f"Example {i}: {text}" for i, (_, text) in enumerate(ex, 1)]]
+
+
 def a1_house_rules(view: Optional[dict]) -> str:
     """A1: the platform HOUSE RULES lines (one string, joined by the writer's own "\\n" join); "" without content."""
     return "\n".join(_block(view, "platform", None))
@@ -245,7 +288,8 @@ def a1_house_rules(view: Optional[dict]) -> str:
 
 def t2_block(view: Optional[dict]) -> str:
     """T2: platform then tenant blocks, appended to the system prompt ("" without content)."""
-    blocks = [b for b in (_block(view, "platform", None), _block(view, "tenant", None)) if b]
+    blocks = [b for b in (_block(view, "platform", None), _block(view, "tenant", None),
+                          example_lines(view, "tour_page")) if b]
     return "".join("\n\n" + "\n".join(b) for b in blocks)
 
 
@@ -256,8 +300,9 @@ def t9_platform_block(view: Optional[dict], channel: Optional[str] = None) -> st
 
 
 def t9_tenant_lines(view: Optional[dict], channel: Optional[str] = None) -> list[str]:
-    """T9: the tenant block of the channel as user-prompt lines ([] without content)."""
-    return _block(view, "tenant", channel)
+    """T9: the tenant block of the channel as user-prompt lines, then (AA-921) the channel's pinned voice examples
+    (tenant first, platform fill; never in the cached SYSTEM_PROMPT: they are tenant text). [] without content."""
+    return [*_block(view, "tenant", channel), *example_lines(view, channel)]
 
 
 def _gate_class(code: str) -> Optional[str]:
@@ -295,6 +340,12 @@ def with_repair_hints(view: Optional[dict], feedback: list, failed: Iterable[str
     """T9 rewrite: the revision feedback plus the matching hints (the same list object when there is none)."""
     lines = repair_hints(view, failed, channel=channel)
     return [*feedback, *lines] if lines else feedback
+
+
+def exemplar_texts(view: Optional[dict]) -> list[tuple[str, str]]:
+    """(exemplar_id, masked_text) of every example the view's rendering parts pin (the carry-over check's input)."""
+    return [(str(e["exemplar_id"]), e.get("masked_text") or "") for p in _parts(view) if _renders(p)
+            for e in p.get("exemplars") or []]
 
 
 def rule_texts(view: Optional[dict]) -> list[tuple[str, str]]:
@@ -345,7 +396,8 @@ def generation_meta(view: Optional[dict], *, prompt_version: Optional[str] = Non
     return out or None
 
 
-__all__ = ["PLATFORM_HEADING", "REPAIR_HEADING", "SLOTS", "TENANT_HEADING", "WRITERS", "WRITING_KINDS",
-           "a1_house_rules", "attach_items", "generation_meta", "has_content", "ignored", "load_items", "part_of",
+__all__ = ["EXAMPLES_HEADING", "PLATFORM_HEADING", "REPAIR_HEADING", "SLOTS", "TENANT_HEADING", "WRITERS",
+           "WRITING_KINDS", "a1_house_rules", "attach_items", "example_lines", "exemplar_texts", "generation_meta",
+           "has_content", "ignored", "load_items", "part_of", "voice_examples",
            "render_rules", "repair_hint_block", "repair_hints", "resolve", "rule_line", "rule_texts", "stamp",
            "t2_block", "t9_platform_block", "t9_tenant_lines", "with_repair_hints", "writer_for_channel"]

@@ -57,6 +57,8 @@ class _FakeDB:
         if "FROM shared.writing_rule" in sql:
             ids = set(args[0])
             return [r for r in self.rule_rows if r["rule_id"] in ids]
+        if "writing_memory_release_exemplar" in sql:      # AA-921: no pinned examples in these releases
+            return []
         return self.release_rows
 
 
@@ -373,6 +375,10 @@ def _wire(monkeypatch, release, writes, *, rollback=None, calls=None):
     monkeypatch.setattr(rel, "set_memory_enabled", memory)
     monkeypatch.setattr(pa, "writes_since", writes_since)
     monkeypatch.setattr(pa, "release_rule_texts", rule_texts)
+
+    async def no_exemplars(conn, release):       # AA-921: these releases pin no example
+        return []
+    monkeypatch.setattr(pa, "release_exemplar_texts", no_exemplars)
     monkeypatch.setattr(pa, "tenant_fingerprints", fingerprints)
     monkeypatch.setattr(pa, "_alert", alert)
     import services.acp_shared.audit_log as al

@@ -326,3 +326,59 @@ export function checkSentence(r: Pick<PostActivationReport, "verdict" | "n" | "c
 export const CHECK_CODE_LABELS: Record<string, string> = {
   qa_trace: "QA trace in the text", tenant_leak: "another tenant's text", fingerprint_mismatch: "rules hash mismatch",
 };
+
+// ── AA-921 WM-27 / WM-29 — Exemplars tab and the Tenant 360 voice card (services/writing_memory/exemplars.py, CIS 313)
+
+export const EXEMPLAR_WRITERS = ["t2", "t9_blog", "t9_social"] as const;
+export type ExemplarWriter = (typeof EXEMPLAR_WRITERS)[number];
+export const EXEMPLAR_STATUSES = ["candidate", "pinned", "never"] as const;
+export type ExemplarStatus = (typeof EXEMPLAR_STATUSES)[number];
+export type ExemplarAction = "pin" | "unpin" | "never";
+/** A release pins at most this many examples per channel (exemplars.PER_CHANNEL). */
+export const EXEMPLARS_PER_CHANNEL = 2;
+
+export interface Exemplar {
+  exemplar_id: string; scope: Scope; tenant_id: string | null; writer: ExemplarWriter; channel: string;
+  masked_text: string; word_count: number; source_table: string; source_id: string;
+  source_signal_id: string | null; status: ExemplarStatus; status_reason: string | null; status_by: string | null;
+  status_at: string | null; created_at: string; in_next_draft?: boolean; position?: number;
+}
+export interface ExemplarsPage { items: Exemplar[]; total: number; limit: number; offset: number }
+export interface ExemplarSelection {
+  writer: ExemplarWriter; scope: Scope; tenant_id: string | null; per_channel: number; items: Exemplar[];
+}
+export interface RefreshResult {
+  dry_run: boolean; signals: number; added: number; existing: number; marked_never: number;
+  skipped: Record<string, number>;
+}
+
+/** The status moves the backend allows (exemplars._TRANSITIONS): pin a candidate, unpin a pinned or never one,
+ *  never anything not already never. */
+export function exemplarActions(s: ExemplarStatus): ExemplarAction[] {
+  if (s === "candidate") return ["pin", "never"];
+  if (s === "pinned") return ["unpin", "never"];
+  return ["unpin"];
+}
+
+export function exemplarTone(s: ExemplarStatus): "success" | "danger" | "neutral" {
+  return s === "pinned" ? "success" : s === "never" ? "danger" : "neutral";
+}
+
+/** Group examples per channel, in the order a draft would pin them (position, then pinned first). */
+export function byChannel<T extends Pick<Exemplar, "channel">>(items: T[]): [string, T[]][] {
+  const out = new Map<string, T[]>();
+  for (const e of items) out.set(e.channel, [...(out.get(e.channel) ?? []), e]);
+  return [...out.entries()].sort(([a], [b]) => a.localeCompare(b));
+}
+
+export interface VoiceMemory {
+  tenant_id: string;
+  rules: { rule_id: string; kind: string; writer: Writer; status: RuleStatus; rule_text: string;
+    token_estimate: number; expires_at: string | null }[];
+  exemplars: { writer: ExemplarWriter; channel: string; status: ExemplarStatus; n: number }[];
+  releases: { release_id: string; writer: Writer; release_no: number; status: ReleaseStatus;
+    content_class: ContentClass; rules: number; activated_at: string | null }[];
+  preference: { enabled: boolean; state: "ready" | "needs_llm_path"; env: string };
+  totals: { active_rules: number; candidate_rules: number; summaries: number; exemplars: number;
+    active_releases: number };
+}

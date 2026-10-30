@@ -426,10 +426,19 @@ async def _closed_month(conn, writer: str) -> Optional[date]:
 
 
 async def check(conn, release: dict, *, first_activation: bool = True) -> Optional[tuple[str, str]]:
-    """The API mirror on a release row (read its runs, rules and the writer's closed month)."""
-    return evidence_problem(release, await runs_of(conn, release), await _rules(conn, release.get("rule_ids") or []),
-                            first_activation=first_activation,
-                            closed_month=await _closed_month(conn, release["writer"]))
+    """The API mirror on a release row (read its runs, rules and the writer's closed month). AA-921: a first
+    activation is also refused while an example the release pins was marked `never` after the draft."""
+    p = evidence_problem(release, await runs_of(conn, release), await _rules(conn, release.get("rule_ids") or []),
+                         first_activation=first_activation,
+                         closed_month=await _closed_month(conn, release["writer"]))
+    if p or not first_activation:
+        return p
+    from services.writing_memory.exemplars import never_in_release
+    never = await never_in_release(conn, release["release_id"])
+    if never:
+        return "exemplar_never", (f"{len(never)} pinned example(s) were marked never use after the draft; draft a new "
+                                  "release")
+    return None
 
 
 # ── fingerprint and reverify ───────────────────────────────────────────────────────────────────────────────────────
@@ -531,9 +540,13 @@ async def _open_hard_stop(conn, writer: str, scope: str, tenant_id: Optional[str
 async def create_draft(conn, *, writer: str, scope: str = "platform", tenant_id: Optional[str] = None,
                        rule_ids: Optional[list[str]] = None, train_kind: Optional[str] = None,
                        emergency_reason: Optional[str] = None, emergency_ref: Optional[str] = None,
-                       notes: Optional[str] = None, created_by: str, prompt_sha256: Optional[str] = None) -> dict:
+                       notes: Optional[str] = None, created_by: str, prompt_sha256: Optional[str] = None,
+                       exemplars: bool = True) -> dict:
     """A new draft: its content class from its rules' kinds, its items hash, the next number for the writer and
-    owner (0 for the first, which must be empty), the current fingerprint. Rules are read with the owner filter."""
+    owner (0 for the first, which must be empty), the current fingerprint. Rules are read with the owner filter.
+    AA-921 (WM-27): a `rules` draft of T2 / T9 also pins the owner's examples now selected
+    (exemplars.select_for_release, <= 2 per channel), in this transaction, hashed with the rules; `exemplars=False`
+    drafts without them."""
     if writer not in WRITERS:
         raise ReleaseError(422, "invalid", f"writer must be one of {list(WRITERS)}")
     if (scope == "platform") != (tenant_id is None) or scope not in ("platform", "tenant"):
@@ -562,6 +575,16 @@ async def create_draft(conn, *, writer: str, scope: str = "platform", tenant_id:
     if nxt == 0 and cls != "empty":
         raise ReleaseError(409, "release0_first", "release 0 of a writer and owner is the empty baseline (WM-20)")
     fp = await current_fingerprint(conn, writer, prompt_sha256=prompt_sha256)
+    from services.writing_memory import exemplars as ex_mod
+    picked: list[dict] = []
+    if exemplars and cls == "rules" and writer in ex_mod.EXEMPLAR_WRITERS:
+        try:
+            async with conn.transaction():            # a savepoint: before CIS 313 there is no pool
+                picked = await ex_mod.select_for_release(conn, writer, scope, tenant_id)
+        except Exception as e:  # noqa: BLE001 — asyncpg UndefinedTableError: draft without examples
+            if type(e).__name__ != "UndefinedTableError":
+                raise
+            picked = []
     try:
         row = await conn.fetchrow(
             f"""INSERT INTO shared.writing_memory_release (writer, scope, tenant_id, release_no, train_kind,
@@ -569,15 +592,17 @@ async def create_draft(conn, *, writer: str, scope: str = "platform", tenant_id:
                        created_by)
                 VALUES ($1, $2, $3::uuid, $4, $5, $6, $7::uuid[], $8, $9, $10::uuid, $11::jsonb, $12, $13)
                 RETURNING {_COLUMNS}""",
-            writer, scope, tenant_id, int(nxt), kind, cls, ids, items_sha256(rules), emergency_reason, emergency_ref,
-            json.dumps(fp), notes, created_by[:128])
+            writer, scope, tenant_id, int(nxt), kind, cls, ids, ex_mod.release_sha256(rules, picked), emergency_reason,
+            emergency_ref, json.dumps(fp), notes, created_by[:128])
+        if picked:
+            await ex_mod.pin_into_release(conn, dict(row), picked)
     except Exception as e:  # noqa: BLE001 — asyncpg integrity errors: the DB layer refused
         if type(e).__name__ in ("CheckViolationError", "RaiseError", "RestrictViolationError", "UniqueViolationError",
                                 "ForeignKeyViolationError"):
             raise _db_refused(e)
         raise
     rel = dict(row)
-    await _audit(conn, rel, created_by, "created", {"rules": len(ids), "train_kind": kind})
+    await _audit(conn, rel, created_by, "created", {"rules": len(ids), "train_kind": kind, "exemplars": len(picked)})
     return rel
 
 

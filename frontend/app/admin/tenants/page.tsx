@@ -23,6 +23,7 @@ import { Tenant360Settings } from "./_components/Tenant360Settings";
 import { Tenant360Cost } from "./_components/Tenant360Cost";
 import { Tenant360Quality } from "./_components/Tenant360Quality";
 import { Tenant360Markets } from "./_components/Tenant360Markets";
+import { Tenant360VoiceMemory } from "./_components/Tenant360VoiceMemory";
 import { fmtDailyPublishLimit } from "./_components/tenant360";
 import { T360_WORDS_MESSAGES } from "./_components/tenant360.messages";
 import { SCORE_BANDS } from "@/lib/quality-registry.generated";
@@ -816,6 +817,7 @@ function TenantDetail({ tenant, onChanged }: {
       {tab === "billing"  && <BillingTabContent  tenantId={tenantId} />}
       {tab === "cost"     && <Tenant360Cost      tenantId={tenantId} />}
       {tab === "quality"  && <Tenant360Quality   tenantId={tenantId} byChannel={<ChannelGateTelemetry tenantId={tenantId} />} />}
+      {tab === "quality"  && <Tenant360VoiceMemory tenantId={tenantId} />}
       {tab === "markets"  && <Tenant360Markets   tenantId={tenantId} />}
       {tab === "audit"    && <AuditTabContent    tenantId={tenantId} />}
       {tab === "settings" && (

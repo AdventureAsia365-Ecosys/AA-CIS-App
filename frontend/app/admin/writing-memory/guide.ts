@@ -226,6 +226,21 @@ export const WRITING_MEMORY_GUIDE: GuideContent = {
           text: "Release 0 is an empty release: while it is the active release, the writers' output is exactly the "
             + "same as with no memory." },
 
+        { kind: "subheading", text: "Exemplars tab" },
+        { kind: "paragraph", text: "Voice examples for T2 and T9 (A1 never gets one). An example is an excerpt of a "
+          + "piece an admin marked \"use as example\" in Content quality, with places, names, numbers, prices and "
+          + "times masked. A rules release pins at most two per writer and channel when it is drafted: pinned ones "
+          + "first, then the newest candidates. The writer reads them as voice only and must not reuse any fact." },
+        { kind: "list", items: [
+          "Find candidates (dry run) counts what Add candidates would add. Add candidates adds one masked example per "
+            + "\"use as example\" signal that passed the fact filter. Both cost nothing (no model call).",
+          "Next draft: pick a writer and an owner to see what a rules draft would pin now, per channel.",
+          "Click a row to open the example. Pin keeps it in the next draft, Unpin puts it back to candidate, Never use "
+            + "excludes it for good. Each needs a reason.",
+          "A tenant release pins only that tenant's examples. When a tenant has fewer than two for a channel, the "
+            + "platform release's examples fill the gap, never another tenant's.",
+        ] },
+
         { kind: "subheading", text: "Header buttons" },
         { kind: "paragraph", text: "Refresh only reloads the page data. Every other button queues one background job, "
           + "and a message says 'Queued (job …); see Platform › Jobs'. The result numbers are on Platform › Jobs, not "
@@ -474,7 +489,7 @@ export const WRITING_MEMORY_GUIDE: GuideContent = {
           "Approving a candidate (candidate → approved). So rules other than T9 lexicon rules cannot move forward "
             + "yet.",
           "Writers reading rules from a release. Today only empty releases can be active.",
-          "Exemplars and Metrics tabs.",
+          "The Metrics tab.",
           "Tenant names, the numbers of a dry run or baseline (Platform › Jobs only), and more than 200 signals in "
             + "the list.",
         ] },
