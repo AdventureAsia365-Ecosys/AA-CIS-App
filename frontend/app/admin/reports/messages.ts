@@ -10,7 +10,7 @@ export const RM = defineMessages(
     platform: "Platform",
     overview: "Overview",
     description:
-      "Every recurring report of the platform: who reads it, how often, and whether it ran. Reports generated here read the daily KPI snapshots (taken each morning at 07:30 Vietnam time for the day before); the others are written from their template.",
+      "Every recurring report of the platform: who reads it, how often, and whether it ran. Reports generated here read stored data only: the daily KPI snapshots (taken each morning at 07:30 Vietnam time for the day before), the cost ledgers and the platform tables. Daily, weekly and monthly reports run on their own; event reports run when you press Generate now. The others are written from their template.",
     refresh: "Refresh",
     loading: "Loading…",
     listError: "Could not load the reports.",
@@ -45,6 +45,7 @@ export const RM = defineMessages(
     due_due: "Due",
     due_overdue: "Overdue",
     due_manual: "On request",
+    due_pending_first: "First run pending",
     due_not_automated: "Not generated here",
     // run statuses
     run_queued: "Queued",
@@ -90,7 +91,7 @@ export const RM = defineMessages(
     platform: "Nền tảng",
     overview: "Tổng quan",
     description:
-      "Mọi báo cáo định kỳ của nền tảng: ai đọc, bao lâu một lần và đã chạy chưa. Báo cáo sinh tại đây đọc ảnh chụp chỉ số hằng ngày (chụp mỗi sáng lúc 07:30 giờ Việt Nam cho ngày hôm trước); các báo cáo khác viết theo mẫu của chúng.",
+      "Mọi báo cáo định kỳ của nền tảng: ai đọc, bao lâu một lần và đã chạy chưa. Báo cáo sinh tại đây chỉ đọc dữ liệu đã lưu: ảnh chụp chỉ số hằng ngày (chụp mỗi sáng lúc 07:30 giờ Việt Nam cho ngày hôm trước), sổ chi phí và các bảng của nền tảng. Báo cáo ngày, tuần và tháng tự chạy; báo cáo theo sự kiện chạy khi bấm Sinh ngay. Các báo cáo khác viết theo mẫu của chúng.",
     refresh: "Làm mới",
     loading: "Đang tải…",
     listError: "Không tải được danh sách báo cáo.",
@@ -121,6 +122,7 @@ export const RM = defineMessages(
     due_due: "Đến hạn",
     due_overdue: "Quá hạn",
     due_manual: "Theo yêu cầu",
+    due_pending_first: "Chờ lần chạy đầu",
     due_not_automated: "Chưa sinh tại đây",
     run_queued: "Đang chờ",
     run_running: "Đang chạy",

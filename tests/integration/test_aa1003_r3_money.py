@@ -109,7 +109,8 @@ async def test_ledger_readers_run_as_written(env):
     assert {"day": RAW, "account": "acc2"}.items() <= next(r for r in aws if r["day"] == RAW).items()
     assert all("account_id" not in r for r in aws)
     assert alerts and alerts[0]["stopped"] is True and alerts[0]["hard_stop"] == "true"
-    assert isinstance(budgets, list) and isinstance(published, int)
+    assert isinstance(budgets, list) and set(published) == {"total", "first_published", "republished"}
+    assert published["total"] == published["first_published"] + published["republished"]
     assert "error" in demand["tripplanner"] and "error" in demand["booking"]      # no contract views in this DB
     assert runs[0]["day"] == RAW and runs[0]["apps"] == [{"id": "cis", "status": "ok"}]
     assert db["database_bytes"] > 0 and db["max_connections"] > 0 and db["top_relations"]
@@ -137,3 +138,5 @@ async def test_collectors_and_renderers_on_the_replayed_schema(env, monkeypatch)
     assert lm["shadow_ratio"] is not None and lm["cost_usd"] >= 4.0
     out = money.render_ex01(reg, reg.report("EX-01"), RAW - timedelta(days=4), RAW + timedelta(days=2), week, now)
     assert out.output["platform"]["digests"] == 1
+    # no K-CAT-LIVE snapshot in 2023: the live count of v_tour_liveness stands in (S259 fix), never "—"
+    assert out.output["tours_live"]["source"] == "live" and out.output["tours_live"]["value"] is not None

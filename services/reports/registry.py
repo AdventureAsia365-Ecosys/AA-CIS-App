@@ -9,6 +9,7 @@ Loaded once per process (lru_cache) with yaml.safe_load. Lookups are total: an u
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional
@@ -71,6 +72,10 @@ class Report:
     generator: Optional[str]
     kpis: tuple[str, ...]
     sections: tuple[str, ...]
+    # catalog.yaml `automated_from` (optional): the first snapshot day whose daily chain can create this report's
+    # scheduled period (the deploy day of its generator). A scheduled period the chain made before it is not
+    # expected, so a report switched to `generator: cis` is not overdue for periods that ended before it existed.
+    automated_from: Optional[date] = None
 
     @property
     def runnable(self) -> bool:
@@ -82,7 +87,8 @@ class Report:
                 "audience": self.audience, "owner_role": self.owner_role, "cadence": self.cadence,
                 "schedule": self.schedule, "channel": self.channel, "automation": self.automation,
                 "status": self.status, "priority": self.priority, "template": self.template,
-                "generator": self.generator, "runnable": self.runnable, "kpis": list(self.kpis)}
+                "generator": self.generator, "runnable": self.runnable, "kpis": list(self.kpis),
+                "automated_from": self.automated_from.isoformat() if self.automated_from else None}
 
     def detail(self) -> dict:
         return {**self.summary(), "decision": self.decision, "sections": list(self.sections)}
@@ -115,6 +121,18 @@ def _tuple(v: Any) -> tuple:
     return tuple(v or ())
 
 
+def _date(rid: str, v: Any) -> Optional[date]:
+    """yaml.safe_load reads an unquoted YYYY-MM-DD as a date; a quoted one is a string."""
+    if v is None:
+        return None
+    if isinstance(v, date):
+        return v
+    try:
+        return date.fromisoformat(str(v))
+    except ValueError:
+        raise ValueError(f"report registry: {rid} automated_from {v!r} is not a YYYY-MM-DD date") from None
+
+
 def parse(catalog: dict, kpis: dict) -> Registry:
     """Builds the registry from the two parsed YAML documents. Raises ValueError on a broken copy (the root lint
     keeps the source valid; this only guards a bad vendoring)."""
@@ -140,7 +158,7 @@ def parse(catalog: dict, kpis: dict) -> Registry:
             owner_role=r["owner_role"], decision=r["decision"], cadence=r["cadence"], schedule=r["schedule"],
             channel=r["channel"], automation=r["automation"], status=r["status"], priority=r["priority"],
             template=r.get("template"), generator=r.get("generator"), kpis=_tuple(r.get("kpis")),
-            sections=_tuple(r.get("sections"))))
+            sections=_tuple(r.get("sections")), automated_from=_date(r["id"], r.get("automated_from"))))
     if not reports:
         raise ValueError("report registry: no reports")
     return Registry(version=int(catalog.get("version") or 0), imported_from=str(catalog.get("imported_from") or ""),

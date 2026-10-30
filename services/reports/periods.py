@@ -71,6 +71,7 @@ def snapshot_day(now: Optional[datetime] = None) -> date:
 # Business day N = the Nth Monday-Friday of the month (no holiday calendar until prod, automation-plan.md §2).
 MONTHLY_BUSINESS_DAY = 2
 _SCHEDULE_LOOKBACK_DAYS = 70        # far enough back to find the last monthly chain day from any day
+EVENT_DEFAULT_DAYS = 7              # R4: a manual run of an event report covers the last 7 closed days
 
 
 def iso_week(day: date) -> tuple[date, date]:
@@ -130,8 +131,11 @@ def latest_scheduled(schedule: str, now: Optional[datetime] = None) -> Optional[
 
 def default_period(schedule: str, now: Optional[datetime] = None) -> tuple[date, date]:
     """The period of a manual run without dates: the newest closed period of the report's cadence (the last full ISO
-    week / calendar month that has ended); a single day for daily and other reports."""
+    week / calendar month that has ended); the last EVENT_DEFAULT_DAYS closed days for an event report (R4: CIS-06,
+    CIS-07, DATA-03 cover what happened in a window); a single day for daily and other reports."""
     closed = latest_closed_day(now)
+    if schedule == "event":
+        return closed - timedelta(days=EVENT_DEFAULT_DAYS - 1), closed
     if schedule == "weekly":
         monday, sunday = iso_week(closed)
         return (monday, sunday) if sunday == closed else (monday - timedelta(days=7), monday - timedelta(days=1))

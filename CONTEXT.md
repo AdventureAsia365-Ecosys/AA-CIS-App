@@ -570,7 +570,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `inquiry_handoff` (K-TP-HANDOFFGAP, K-BK-PARKED, K-BK-INQ2CASE, UTC day D) and `nightly_probes` (DATA-01:
     K-DATA-PROBES, K-DATA-LIVENESS, K-DATA-STALE from the `SCRIPT verdict` lines of the ECS run-script probes in
     CloudWatch Logs, `services/reports/probes.py`; needs `logs:FilterLogEvents` on the log group; the ops overview
-    client's short timeouts and a 20 s budget for the paged search, an unfinished search counts nothing). A computer
+    client's short timeouts; each probe is searched only in slices around its nightly cron time, all searches of a day
+    share a 12 s budget, an unfinished search counts nothing). A computer
     whose outside source is unreadable (probe log, or a contract view revoked / dropped / reshaped) raises
     `kpis.Unavailable`: no value, reason under `unavailable` in the job result, the snapshot still succeeds and chains. $0 (view reads, two cheap AWS reads, SES).
   - **Money reports (AA-1003 R3)**: `report_generate` also renders the weekly **EX-01** (business pack draft) and
@@ -588,7 +589,21 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     granted; unreadable = named, not failed). Per-App budgets mirror Terraform in `cost_ops.APP_MONTHLY_BUDGET_USD`
     (env `COST_OPS_APP_BUDGETS_USD`); the LLM account credit is set by hand in env `COST_OPS_CREDITS_USD`
     (`acc3=<usd>@<expiry>`). A source that cannot be read is a line in the report ("not wired" / "not readable"),
-    never a failed run. No migration.
+    never a failed run. No migration. K-UNIT-TOUR counts tours published or republished (published_at or updated_at
+    in the month, CIS 273); EX-01 falls back to the live v_tour_liveness count when the week has no K-CAT-LIVE snapshot.
+  - **Quality, reliability and data reports (AA-1003 R4)**: `report_generate` also renders the weekly **CIS-01**
+    (catalog health: liveness, lifecycle events, S1 writer / cover / photo coverage per country from the data coverage
+    live rule and `shared.v_tour_photos`, DATA-01 snapshots, action list), **OPS-13** (C1.2 objectives CIS can measure,
+    `pg_stat_statements` per role, CloudWatch DatabaseConnections, two-week misses vs the previous run; draft),
+    **OPS-14** (`shared.job` per kind vs the registry's `expected_seconds`, overdue, dead scheduled kinds, cost per run)
+    and **DATA-02** (handoff roll-up, `booking.v_ops_inquiry_inbox` age, `tripplanner.v_ops_inquiry_keys` unmatched
+    after 24 h, LLM ledger vs the stored acc3 bill), the monthly **DATA-04** (rows past each retention window counted
+    like the retention job, retention runs, growth, largest relations vs the previous run) and the event reports
+    **CIS-06** (eval runs, writing-memory releases, worst items), **CIS-07** (rerun waves through
+    `services/waves/report.py`, cost per stage, retry waste, projection) and **DATA-03** (`shared.schema_versions`
+    per owner); event reports run on "Generate now" over the last 7 closed days (`periods.default_period`).
+    `services/reports/quality.py`, `services/reports/reliability.py`. Booking / TripPlanner / CRM job tables, the
+    CRM feed, GitHub checks and Vercel are named "not wired" / "not readable from CIS". No migration.
   - **Ops metrics sampler (AA-832, AA-751)**: `api/core/ops_metrics_sampler.py`, a background task of
     the **api** (not the worker) started in `api/main.py`'s lifespan after the main pool, cancelled
     before it closes, off when `ENVIRONMENT=test`, never raises. Every 300 s (first tick 30 s after

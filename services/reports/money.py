@@ -501,15 +501,44 @@ def llm_week(llm: Any, first: date, last: date) -> dict:
             "avg_4w_usd": avg4, "prior_weeks_usd": prior, "flag": flag}
 
 
-def tours_live_change(rows: Any, first: date, last: date) -> dict:
-    """K-CAT-LIVE at the end of the week vs the end of the week before (snapshots, ICT days)."""
-    if failed(rows) or rows is None:
-        return {"error": failed(rows) or "not read"}
-    by_day = {_d(r["day"]): float(r["value"]) for r in rows if r["scope"] == "all"}
-    now_v = by_day.get(last) or (by_day[max(by_day)] if by_day else None)
-    prev_v = by_day.get(first - timedelta(days=1))
-    ch = change(now_v, prev_v)
-    return {"value": now_v, "previous": prev_v, "change": ch, "flag": ch is not None and ch < -0.02}
+def _latest_in(by_day: dict[date, float], first: date, last: date) -> tuple[Optional[date], Optional[float]]:
+    days = [d for d in by_day if first <= d <= last]
+    return (max(days), by_day[max(days)]) if days else (None, None)
+
+
+def tours_live_change(rows: Any, first: date, last: date, live_now: Any = None) -> dict:
+    """K-CAT-LIVE at the end of the week vs the end of the week before (the newest snapshot inside each week, ICT
+    days). A week with no snapshot (before the snapshots started, or the snapshot job failed every day) falls back to
+    the live count at generation (`live_now`, money_sources.liveness_now), labelled so, with no week-over-week change:
+    the two numbers are not the same point in time."""
+    snap_err = failed(rows) if rows is not None else "not read"
+    by_day = {} if snap_err else {_d(r["day"]): float(r["value"]) for r in rows if r["scope"] == "all"}
+    day, now_v = _latest_in(by_day, first, last)
+    _pday, prev_v = _latest_in(by_day, first - timedelta(days=7), first - timedelta(days=1))
+    if now_v is not None:
+        ch = change(now_v, prev_v)
+        return {"value": now_v, "previous": prev_v, "change": ch, "flag": ch is not None and ch < -0.02,
+                "source": "snapshot", "as_of": day.isoformat()}
+    if isinstance(live_now, dict) and not failed(live_now):
+        return {"value": float(live_now.get("served", 0)), "previous": prev_v, "change": None, "flag": False,
+                "source": "live", "as_of": live_now.get("as_of"),
+                "states": {k: live_now.get(k, 0) for k in ("served", "paused", "retired")}}
+    return {"error": snap_err or failed(live_now) or "no snapshot in the week and no live count"}
+
+
+def published_line(pub: Any) -> dict:
+    n, new = published_count(pub)
+    if n is None:
+        return {"error": failed(pub) or "not read"}
+    return {"total": n, "first_published": new, "republished": None if new is None else n - new}
+
+
+def _tours_live_note(tl: dict) -> str:
+    if "error" in tl:
+        return ""
+    if tl.get("source") == "live":
+        return f"live count at generation ({str(tl.get('as_of') or '')[:16]} UTC): no snapshot in this week"
+    return f"week over week {signed(tl['change'])} (snapshot {tl.get('as_of')})"
 
 
 def demand_line(d: Any) -> dict:
@@ -539,7 +568,8 @@ def render_ex01(reg: Registry, report: Report, first: date, last: date, facts: d
                 generated_at: datetime) -> Rendered:
     w = week_compute(facts, first, last)
     lw = llm_week(facts.get("llm"), first, last)
-    tl = tours_live_change(facts.get("tours_live"), first, last)
+    tl = tours_live_change(facts.get("tours_live"), first, last, facts.get("liveness_now"))
+    pb, pb_prev = published_line(facts.get("published")), published_line(facts.get("published_prev"))
     dm, dm_prev = demand_line(facts.get("demand")), demand_line(facts.get("demand_prev"))
     ops = digest_rollup(facts.get("digests"), first, last)
     mtd = w["mtd"]
@@ -550,7 +580,7 @@ def render_ex01(reg: Registry, report: Report, first: date, last: date, facts: d
         _kpi_line("K-LLM-COST-WEEK", lw.get("usd"), "no_data" if "error" in lw else ("amber" if lw["flag"] else "ok"),
                   "" if "error" in lw else f"shadow {usd(lw['shadow_usd'])}; 4-week average {usd(lw['avg_4w_usd'])}"),
         _kpi_line("K-CAT-LIVE", tl.get("value"), "no_data" if tl.get("value") is None else
-                  ("amber" if tl["flag"] else "ok"), "" if "error" in tl else f"week over week {signed(tl['change'])}"),
+                  ("amber" if tl["flag"] else "ok"), _tours_live_note(tl)),
         _kpi_line("K-DEM-INQ", None if "error" in dm else dm.get("inquiry_sent"), "info",
                   "" if "error" in dm else (f"trips started {fmt(dm.get('trip_started'), 'count')}, inquiries sent "
                                             f"{fmt(dm.get('inquiry_sent'), 'count')}, received "
@@ -569,8 +599,9 @@ def render_ex01(reg: Registry, report: Report, first: date, last: date, facts: d
     if mtd.get("value") is not None:
         facts_for_narrative.append(f"Month to date at {pct(mtd['value'])} of the prorated budget.")
     if tl.get("value") is not None:
-        facts_for_narrative.append(f"Tours live {fmt(tl['value'], 'count')} ({signed(tl.get('change'))} week over "
-                                   "week).")
+        facts_for_narrative.append(f"Tours live {fmt(tl['value'], 'count')} ({_tours_live_note(tl)}).")
+    if "error" not in pb:
+        facts_for_narrative.append(f"Tours published or republished this week: {pb['total']:,}.")
     if "error" not in ops:
         facts_for_narrative.append(f"Platform digest: {ops['green_days']} of {ops['digests']} digests all green "
                                    f"({ops['expected']} days in the period).")
@@ -601,10 +632,16 @@ def render_ex01(reg: Registry, report: Report, first: date, last: date, facts: d
         for side in ("tripplanner_error", "booking_error"):
             if dm.get(side):
                 md.append(f"- {side.split('_')[0]} contract view not readable: {dm[side]}")
-    tours_line = (f"- Tours live: {fmt(tl.get('value'), 'count')} (end of the week before: "
-                  f"{fmt(tl.get('previous'), 'count')})." if "error" not in tl
+    tours_line = (f"- Tours live: {fmt(tl.get('value'), 'count')} ({_tours_live_note(tl)}; end of the week "
+                  f"before: {fmt(tl.get('previous'), 'count')})." if "error" not in tl
                   else f"- Tours live not readable: {tl['error']}")
-    md += ["", tours_line, ""]
+    if "error" in pb:
+        pub_line = f"- Tours published or republished: not readable ({pb['error']})."
+    else:
+        prev = "—" if "error" in pb_prev else f"{pb_prev['total']:,}"
+        pub_line = (f"- Tours published or republished: {pb['total']:,} ({pb['first_published']:,} new, "
+                    f"{pb['republished']:,} republished; week before: {prev}).")
+    md += ["", tours_line, pub_line, ""]
     md += ["## 7. Incidents and risks", ""]
     if "error" in ops:
         md += [f"- Platform digest runs not readable: {ops['error']}"]
@@ -616,7 +653,8 @@ def render_ex01(reg: Registry, report: Report, first: date, last: date, facts: d
     md += ["## 8. Next week", "", f"NARRATIVE ({TO_WRITE}): top 3-5 items from the live backlog.", ""]
     md += ["## 9. Decisions needed", "", f"NARRATIVE ({TO_WRITE}): options and a recommendation for each.", ""]
     out = _output(report, first, last, generated_at, headline, kpis=kpis, draft=True, week=w, llm_week=lw,
-                  tours_live=tl, demand={"this": dm, "previous": dm_prev}, platform=ops,
+                  tours_live=tl, published={"this": pb, "previous": pb_prev},
+                  demand={"this": dm, "previous": dm_prev}, platform=ops,
                   sources_unreadable={k: failed(v) for k, v in facts.items() if failed(v)})
     return Rendered(headline[:1000], out, "\n".join(md))
 
@@ -928,6 +966,15 @@ def vendors_md(v: dict) -> list[str]:
     return md + credits_md(v["balances"])
 
 
+def published_count(pub: Any) -> tuple[Optional[int], Optional[int]]:
+    """(published or republished, first published) from money_sources.published_tours; None when not read."""
+    if pub is None or failed(pub):
+        return None, None
+    if isinstance(pub, dict):
+        return int(pub.get("total") or 0), int(pub.get("first_published") or 0)
+    return int(pub), None            # an older stored shape: a single count
+
+
 def units(facts: dict) -> dict:
     """FI-05 per month: USD per published tour / trip plan / confirmed booking / Jev 1,000 decisions; vendor units."""
     out = []
@@ -947,9 +994,10 @@ def units(facts: dict) -> dict:
         dfs_kw = daily_sum(facts.get("dfs"), first, last, "keywords")
         geo_cost = daily_sum(facts.get("geo"), first, last)
         geo_req = daily_sum(facts.get("geo"), first, last, "requests")
-        pub_n = None if pub is None or failed(pub) else int(pub)
+        pub_n, pub_new = published_count(pub)
         out.append({
-            "month": key, "published_tours": pub_n, "trip_started": trips, "confirmed": confirmed,
+            "month": key, "published_tours": pub_n, "first_published": pub_new, "trip_started": trips,
+            "confirmed": confirmed,
             "tour": ratio((lines.get("cis") or {}).get("total_usd"), pub_n),
             "trip": ratio((lines.get("tripplanner") or {}).get("total_usd"), trips),
             "booking": ratio((lines.get("booking") or {}).get("total_usd"), confirmed),
@@ -991,11 +1039,21 @@ def units_md(u: dict) -> list[str]:
                [[label] + [usd(m[key]) for m in ms] + [usd(avg(m[key] for m in ms))]
                 for key, label, _ in UNIT_LINES])
     md += ["", "Numerators (cost per app incl. its AI outside the AWS bill) and denominators:", ""]
-    md += table(["Month", "CIS", "TripPlanner", "Booking", "Published tours", "Trips started", "Confirmed"],
+    md += table(["Month", "CIS", "TripPlanner", "Booking", "Tours published or republished", "Trips started",
+                 "Confirmed"],
                 [[m["month"], usd(m["numerators"]["cis"]), usd(m["numerators"]["tripplanner"]),
-                  usd(m["numerators"]["booking"]), m["published_tours"], m["trip_started"], m["confirmed"]]
+                  usd(m["numerators"]["booking"]), _published_cell(m), m["trip_started"], m["confirmed"]]
                  for m in ms])
-    return md + [""]
+    return md + ["", "Tours published or republished: gold_aa_internal.published_tours rows whose first publish "
+                     "(published_at) or last republish (updated_at) falls in the month; a rewrite counts as a "
+                     "republish.", ""]
+
+
+def _published_cell(m: dict) -> Optional[str]:
+    n, new = m.get("published_tours"), m.get("first_published")
+    if n is None:
+        return None
+    return f"{n:,}" if new is None else f"{n:,} ({new:,} new)"
 
 
 # ── monthly: budgets (FI-06) ────────────────────────────────────────────────────────────────────────────────────
@@ -1336,7 +1394,9 @@ def render_fi05(reg, report, first, last, facts, generated_at) -> Rendered:
     un = units(facts)
     lm = llm_month(facts)
     this = un["months"][-1]
-    headline = f"Unit costs {key}: {usd(this['tour'])} per published tour ({this['published_tours']} tours)"
+    pub = this["published_tours"]
+    headline = (f"Unit costs {key}: {usd(this['tour'])} per published tour "
+                f"({'tour count not readable' if pub is None else f'{pub:,} tours published or republished'})")
     body = ["## Unit cost table", ""] + units_md(un)
     if "error" not in lm:
         body += ["## LLM units per model", ""] + table(

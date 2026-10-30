@@ -76,6 +76,41 @@ def test_due_state_of_a_daily_report(now, covered, state):
     assert generate.due_state(ex04, _last(covered) if covered else None, now)["state"] == state
 
 
+@pytest.mark.parametrize("now,covered,state,expected", [
+    # Deploy day: the newest weekly period (19-25/10) was chained on 25/10, before automated_from: nothing expected.
+    (datetime(2026, 10, 30, 6, 0, tzinfo=UTC), None, "pending_first", None),
+    (datetime(2026, 11, 1, 23, 0, tzinfo=UTC), None, "pending_first", None),
+    # The 01/11 chain (00:30 UTC on 02/11) creates 26/10-01/11: due within the grace, overdue after it.
+    (datetime(2026, 11, 2, 1, 0, tzinfo=UTC), None, "due", "2026-11-01"),
+    (datetime(2026, 11, 2, 3, 31, tzinfo=UTC), None, "overdue", "2026-11-01"),
+    (datetime(2026, 11, 2, 3, 31, tzinfo=UTC), date(2026, 11, 1), "ok", "2026-11-01"),
+])
+def test_due_state_waits_for_the_first_chain_after_automated_from(now, covered, state, expected):
+    weekly = _reg().report("CIS-01")
+    assert weekly.schedule == "weekly" and weekly.automated_from == date(2026, 10, 30)
+    out = generate.due_state(weekly, _last(covered) if covered else None, now)
+    assert out == {"state": state, "expected_period_end": expected}
+
+
+def test_monthly_report_automated_late_is_not_overdue_for_the_month_before():
+    data04 = _reg().report("DATA-04")
+    assert data04.schedule == "monthly" and data04.automated_from == date(2026, 10, 30)
+    # September was chained on 01/10 (business day 2 = 02/10), before the report existed.
+    assert generate.due_state(data04, None, datetime(2026, 10, 30, 6, 0, tzinfo=UTC))["state"] == "pending_first"
+    # October is chained on 02/11 (business day 2 = Tue 03/11) and is expected from then.
+    late = generate.due_state(data04, None, datetime(2026, 11, 3, 4, 0, tzinfo=UTC))
+    assert late == {"state": "overdue", "expected_period_end": "2026-10-31"}
+
+
+def test_automated_from_parses_and_refuses_a_bad_date():
+    reg = _reg()
+    assert reg.report("EX-04").automated_from is None
+    assert reg.report("OPS-13").summary()["automated_from"] == "2026-10-30"
+    assert registry._date("X", "2026-10-30") == date(2026, 10, 30)
+    with pytest.raises(ValueError):
+        registry._date("X", "30/10/2026")
+
+
 def test_due_state_of_reports_not_generated_here():
     assert generate.due_state(_reg().report("FI-07"), None, NOW)["state"] == "not_automated"   # R3 generates FI-01
 
@@ -86,7 +121,7 @@ def test_register_lists_every_report_and_flags_failures():
     assert len(rows) == len(reg.reports)
     out = generate.render_register(reg, reg.report("EX-06"), DAY, rows, NOW)
     assert "EX-04" in out.output["attention"]
-    assert out.output["registry"]["automated"] == 12         # EX-04, EX-06; R2: OPS-12, TP-03; R3: 8 money reports
+    assert out.output["registry"]["automated"] == 20         # EX-04, EX-06; R2: OPS-12, TP-03; R3: 8 money; R4: 8
     assert "## Generated here" in out.markdown and "| P0 |" in out.markdown
 
 

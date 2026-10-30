@@ -75,11 +75,12 @@ def test_chain_adds_weekly_on_sunday_and_monthly_before_business_day_two(monkeyp
     monkeypatch.setattr(report_jobs, "enqueue_report_run", fake_enqueue)
     asyncio.run(report_jobs.chain_reports(MagicMock(), SUN, "job"))
     weekly = {s[0]: s[1:] for s in seen if s[1] != s[2]}
-    assert weekly == {"EX-01": (MON, SUN), "FI-02": (MON, SUN)}
+    # R4 adds the weekly CIS-01, OPS-13, OPS-14, DATA-02
+    assert weekly == {rid: (MON, SUN) for rid in ("EX-01", "FI-02", "CIS-01", "OPS-13", "OPS-14", "DATA-02")}
     seen.clear()
     asyncio.run(report_jobs.chain_reports(MagicMock(), date(2026, 11, 2), "job"))
     monthly = sorted(s[0] for s in seen if s[1] != s[2])
-    assert monthly == ["FI-01", "FI-03", "FI-04", "FI-05", "FI-06", "OPS-08"]
+    assert monthly == ["DATA-04", "FI-01", "FI-03", "FI-04", "FI-05", "FI-06", "OPS-08"]      # R4: DATA-04
     assert all(s[1:] == (date(2026, 10, 1), date(2026, 10, 31)) for s in seen if s[1] != s[2])
 
 
@@ -423,6 +424,57 @@ def test_llm_month_attribution():
     assert model["usd_per_1k_calls"] == pytest.approx(36.5 / 330 * 1000, abs=1e-3)   # 30 x 10 + 3 x 10 calls
     k = {x["id"]: x for x in money.llm_kpis(lm)}
     assert k["K-LLM-RECON"]["status"] == "ok" and k["K-LLM-SHADOW"]["status"] == "ok"
+
+
+def test_fi05_counts_republished_tours_not_only_first_publishes():
+    """S259 live gap: October 2026 showed '0 tours' because published_at is the first publish (CIS 273) and the
+    catalogue rewrite only moved updated_at. The reader counts both; the renderer shows the split."""
+    facts = _month_facts()
+    facts["published:2026-10"] = {"total": 880, "first_published": 2, "republished": 878}
+    u = money.units(facts)
+    oct_ = u["months"][-1]
+    assert oct_["published_tours"] == 880 and oct_["first_published"] == 2
+    assert oct_["tour"] == pytest.approx(96 / 880, abs=1e-4)
+    reg = _reg()
+    out = money.render_fi05(reg, reg.report("FI-05"), date(2026, 10, 1), date(2026, 10, 31), facts, NOW)
+    assert "880 tours published or republished" in out.summary and "(0 tours)" not in out.summary
+    assert "880 (2 new)" in out.markdown
+
+
+def test_published_tours_reader_counts_first_publishes_and_republishes():
+    conn = MagicMock()
+    conn.fetchrow = AsyncMock(return_value={"total": 5, "first_published": 1, "republished": 4})
+    got = asyncio.run(src.published_tours(conn, date(2026, 10, 1), date(2026, 11, 1)))
+    assert got == {"total": 5, "first_published": 1, "republished": 4}
+    sql, start, end = conn.fetchrow.call_args.args
+    assert "updated_at >= $1" in sql and "published_at >= $1" in sql
+    assert start == datetime(2026, 10, 1, tzinfo=UTC) and end == datetime(2026, 11, 1, tzinfo=UTC)
+
+
+def test_ex01_tours_live_falls_back_to_the_live_count_when_the_week_has_no_snapshot():
+    """S259 live gap: EX-01 for the week before the snapshots started printed 'tours live —'."""
+    reg = _reg()
+    facts = _week_facts()
+    facts["tours_live"] = []                                         # snapshots began after this week
+    facts["liveness_now"] = {"served": 871, "paused": 3, "retired": 18, "as_of": "2026-11-03T01:00:00+00:00"}
+    facts["published"] = {"total": 120, "first_published": 0, "republished": 120}
+    facts["published_prev"] = {"total": 300, "first_published": 1, "republished": 299}
+    out = money.render_ex01(reg, reg.report("EX-01"), MON, SUN, facts, NOW)
+    kp = {k["id"]: k for k in out.output["kpis"]}
+    assert kp["K-CAT-LIVE"]["value"] == 871 and kp["K-CAT-LIVE"]["status"] == "ok"
+    assert "live count at generation" in kp["K-CAT-LIVE"]["note"]
+    assert "tours live 871" in out.summary and "tours live —" not in out.summary
+    assert out.output["tours_live"]["source"] == "live" and out.output["tours_live"]["change"] is None
+    assert "120 (0 new, 120 republished; week before: 300)" in out.markdown
+
+
+def test_tours_live_uses_only_snapshots_inside_each_week():
+    rows = [{"kpi_id": "K-CAT-LIVE", "day": MON - timedelta(days=2), "scope": "all", "value": 900}]
+    tl = money.tours_live_change(rows, MON, SUN, None)               # the week itself has no snapshot
+    assert "error" in tl                                             # never the week before's number as this week's
+    tl = money.tours_live_change(rows + [{"kpi_id": "K-CAT-LIVE", "day": SUN - timedelta(days=1), "scope": "all",
+                                          "value": 891}], MON, SUN, None)
+    assert tl["value"] == 891 and tl["previous"] == 900 and tl["source"] == "snapshot"
 
 
 def test_units_per_month():

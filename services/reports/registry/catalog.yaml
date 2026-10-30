@@ -485,7 +485,8 @@ reports:
   status: partial
   priority: P1
   template: docs/audits/2026-10-29-S258-report-catalog/templates/app-ops-report.md
-  generator: null
+  generator: cis
+  automated_from: 2026-10-30
   kpis:
   - K-CAT-LIVE
   - K-CAT-COVER
@@ -624,7 +625,8 @@ reports:
   status: partial
   priority: P2
   template: docs/audits/2026-10-29-S258-report-catalog/templates/ai-content-quality.md
-  generator: null
+  generator: cis
+  automated_from: 2026-10-30
   kpis:
   - K-EVAL-DELTA
   - K-EVAL-GATEPASS
@@ -650,7 +652,8 @@ reports:
   status: partial
   priority: P1
   template: docs/audits/2026-10-29-S258-report-catalog/templates/ai-content-quality.md
-  generator: null
+  generator: cis
+  automated_from: 2026-10-30
   kpis:
   - K-WAVE-DONE
   - K-WAVE-UNIT
@@ -1187,7 +1190,8 @@ reports:
   status: partial
   priority: P1
   template: docs/audits/2026-10-29-S258-report-catalog/templates/slo-db-performance.md
-  generator: null
+  generator: cis
+  automated_from: 2026-10-30
   kpis:
   - K-SLI-MET
   - K-SLI-2WEEK
@@ -1242,7 +1246,8 @@ reports:
   status: partial
   priority: P1
   template: docs/audits/2026-10-29-S258-report-catalog/templates/app-ops-report.md
-  generator: null
+  generator: cis
+  automated_from: 2026-10-30
   kpis:
   - K-JOB-FAILRATE
   - K-JOB-P95
@@ -1562,10 +1567,11 @@ reports:
   schedule: weekly
   channel: Section of OPS-13 weekly; /admin/reports
   automation: auto
-  status: missing
+  status: partial
   priority: P2
   template: docs/audits/2026-10-29-S258-report-catalog/templates/data-quality-report.md
-  generator: null
+  generator: cis
+  automated_from: 2026-10-30
   kpis:
   - K-REC-INBOX
   - K-REC-UNMATCHED
@@ -1593,7 +1599,8 @@ reports:
   status: partial
   priority: P3
   template: docs/audits/2026-10-29-S258-report-catalog/templates/data-quality-report.md
-  generator: null
+  generator: cis
+  automated_from: 2026-10-30
   kpis:
   - K-SCH-APPLIED
   - K-SCH-BREAKING
@@ -1617,7 +1624,8 @@ reports:
   status: partial
   priority: P2
   template: docs/audits/2026-10-29-S258-report-catalog/templates/data-quality-report.md
-  generator: null
+  generator: cis
+  automated_from: 2026-10-30
   kpis:
   - K-RET-OVERDUE
   - K-RET-RUNS
