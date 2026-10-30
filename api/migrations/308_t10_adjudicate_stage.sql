@@ -1,4 +1,4 @@
--- Migration 309: AA-1000 — the Model Gateway stage t10_adjudicate: the T10 tier-2 adjudicator
+-- Migration 308: AA-1000 — the Model Gateway stage t10_adjudicate: the T10 tier-2 adjudicator
 -- (services/acp_content_writing/seed_align/adjudicate.py).
 --
 -- Why. Tier 1 of AA-789 (seed alignment, deterministic, CIS #1152) cannot reach some forms of four classes: a
@@ -31,7 +31,7 @@
 --
 -- Rollback (the code keeps working on SAFE_DEFAULTS; or set T10_ADJ_MODE=off: no call at all):
 --   DELETE FROM shared.llm_role_config WHERE stage = 't10_adjudicate';
---   DELETE FROM shared.schema_versions WHERE version = '309';
+--   DELETE FROM shared.schema_versions WHERE version = '308';
 
 BEGIN;
 
@@ -40,10 +40,10 @@ SET LOCAL lock_timeout = '5s';
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM shared.schema_versions WHERE version = '306') THEN
-        RAISE NOTICE 'migration 309: 306 is not registered (Dev applies in version order)';
+        RAISE NOTICE 'migration 308: 306 is not registered (Dev applies in version order)';
     END IF;
     IF NOT EXISTS (SELECT 1 FROM shared.llm_model_catalog WHERE model_key = 'gpt-6-luna') THEN
-        RAISE EXCEPTION 'migration 309: shared.llm_model_catalog has no gpt-6-luna row (migration 170)';
+        RAISE EXCEPTION 'migration 308: shared.llm_model_catalog has no gpt-6-luna row (migration 170)';
     END IF;
 END $$;
 
@@ -52,7 +52,7 @@ INSERT INTO shared.llm_role_config
      shadow_model_id, shadow_sample_pct, updated_by)
 VALUES
     ('t10_adjudicate', 'judge', 'openai', 'gpt-6-luna', 'acc3', true,
-     ARRAY['gpt-5.6-luna', 'gpt-6-luna-openai']::text[], NULL, 0, 'migration-309-aa1000')
+     ARRAY['gpt-5.6-luna', 'gpt-6-luna-openai']::text[], NULL, 0, 'migration-308-aa1000')
 ON CONFLICT (stage) DO NOTHING;
 
 DO $$
@@ -62,16 +62,16 @@ BEGIN
     SELECT role, shadow_model_id, shadow_sample_pct INTO r
       FROM shared.llm_role_config WHERE stage = 't10_adjudicate';
     IF NOT FOUND OR r.role <> 'judge' THEN
-        RAISE EXCEPTION 'migration 309: stage row t10_adjudicate missing or not judge';
+        RAISE EXCEPTION 'migration 308: stage row t10_adjudicate missing or not judge';
     END IF;
     IF r.shadow_model_id IS NOT NULL OR coalesce(r.shadow_sample_pct, 0) <> 0 THEN
-        RAISE EXCEPTION 'migration 309: t10_adjudicate must have no shadow (model %, pct %)',
+        RAISE EXCEPTION 'migration 308: t10_adjudicate must have no shadow (model %, pct %)',
             r.shadow_model_id, r.shadow_sample_pct;
     END IF;
 END $$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('309', now(), 'AA-1000: Model Gateway stage t10_adjudicate (T10 tier 2, judge, gpt-6-luna acc3, no shadow)')
+VALUES ('308', now(), 'AA-1000: Model Gateway stage t10_adjudicate (T10 tier 2, judge, gpt-6-luna acc3, no shadow)')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

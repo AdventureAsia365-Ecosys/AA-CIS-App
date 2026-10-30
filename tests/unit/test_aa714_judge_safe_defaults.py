@@ -16,7 +16,7 @@ from shared.llm_client.role_config import SAFE_DEFAULTS
 
 # Judge stages that start on GPT-6 Luna on purpose, with the reason (the stage's migration carries the same route).
 CHEAP_JUDGES = {
-    # AA-1000 (migration 309): the T10 tier-2 adjudicator — up to 3 calls a piece, a short span check that never holds
+    # AA-1000 (migration 308): the T10 tier-2 adjudicator — up to 3 calls a piece, a short span check that never holds
     # a piece; cost: GPT-6 Luna first ($0.10 / $0.50 per Mtok) instead of GPT-5.6 Luna ($0.20 / $1.20).
     "t10_adjudicate": "cost: GPT-6 Luna first",
 }

@@ -187,7 +187,7 @@ def test_stage_route_is_a_non_anthropic_judge_with_no_shadow():
     cfg = SAFE_DEFAULTS[adj.STAGE]
     assert (cfg.role, cfg.provider, cfg.model_id, cfg.account_route) == ("judge", "openai", "gpt-6-luna", "acc3")
     assert cfg.fallback_model_ids[-1] == "gpt-6-luna-openai" and cfg.shadow_model_id is None
-    sql = (ROOT / "api" / "migrations" / "309_t10_adjudicate_stage.sql").read_text(encoding="utf-8")
+    sql = (ROOT / "api" / "migrations" / "308_t10_adjudicate_stage.sql").read_text(encoding="utf-8")
     assert "('t10_adjudicate', 'judge', 'openai', 'gpt-6-luna', 'acc3', true" in sql
     assert "ARRAY['gpt-5.6-luna', 'gpt-6-luna-openai']" in sql
     # an INSERT into an existing table is not lint-expand: no directive, a person applies it through DB Migrate
