@@ -31,8 +31,8 @@ BRAND = "Example Trails Co"
 CTA = "Ask Example Trails Co to plan this trip for your family."
 OUT_OF_SCOPE = "The dunes of the Varra are far from this quiet hill."
 CLEAN = "The trek climbs into the caldera of Kessa Rock, a dormant volcano above open grassland."
-STYLE_SENTENCE = "Kessa Rock is the quiet showpiece of the route, a dormant volcano ringed by pines."
-F9_STYLE_VIOLATION = 'audit flagged: GENERIC_AI_WORDING — exact flagged phrase(s): "quiet showpiece"'
+STYLE_SENTENCE = "Kessa Rock is the plinth marvel of the route, a dormant volcano ringed by pines."
+F9_STYLE_VIOLATION = 'audit flagged: GENERIC_AI_WORDING — exact flagged phrase(s): "plinth marvel"'
 
 
 def _ctx() -> h.HygieneContext:
@@ -152,7 +152,7 @@ class TestF9BrandStyleRepair:
         assert out["first_failure"]["gate"] == qr.F9_BRAND_STYLE
         items = sr.plan(text, out["gate_ledger"])
         assert [i["sentence"] for i in items] == [STYLE_SENTENCE]
-        assert "'quiet showpiece'" in items[0]["problem"] and items[0]["gate"] == qr.F9_BRAND_STYLE
+        assert "'plinth marvel'" in items[0]["problem"] and items[0]["gate"] == qr.F9_BRAND_STYLE
         assert writing_service._style_only_repair(out["gate_ledger"])  # the t9_repair stage
 
     def test_never_holds_and_ships_with_the_flag(self, modes):
@@ -173,11 +173,11 @@ class TestF9BrandStyleRepair:
 
     def test_a_phrase_in_no_body_sentence_stays_a_warning(self, modes):
         modes(T10_F9_BRAND_STYLE_MODE="repair")
-        v = 'audit flagged: SUMMARY_OFF_BRAND — exact flagged phrase(s): "unforgettable odyssey"'
+        v = 'audit flagged: GENERIC_AI_WORDING — exact flagged phrase(s): "zorbly moonwalk"'
         out = _gates(f"{CLEAN} {CTA}", style=[v])
         assert _entry(out, qr.F9_BRAND_STYLE)["blocking"] is False and out["passed"]
         # a code with no quoted phrase at all
-        assert not qg.brand_style_sentences(CLEAN, "audit flagged: SUMMARY_OFF_BRAND")
+        assert not qg.brand_style_sentences(CLEAN, "audit flagged: GENERIC_AI_WORDING")
 
     def test_a_passing_piece_is_unaffected(self, modes):
         modes(T10_F9_BRAND_STYLE_MODE="repair")
@@ -195,10 +195,10 @@ class TestF9BrandStyleRepair:
                                                             (False, "not attempt 1")]
 
     def test_brand_style_sentences_case_insensitive_one_per_sentence(self):
-        text = f"{CLEAN} Hidden gem after hidden gem waits on this hidden gem of a route. {CTA}"
-        v = 'audit flagged: GENERIC_AI_WORDING — exact flagged phrase(s): "hidden gem"; "of a route"'
+        text = f"{CLEAN} Glimmer nook after glimmer nook waits on this glimmer nook of a trail. {CTA}"
+        v = 'audit flagged: GENERIC_AI_WORDING — exact flagged phrase(s): "glimmer nook"; "of a trail"'
         got = qg.brand_style_sentences(text, v)
-        assert got == [("Hidden gem after hidden gem waits on this hidden gem of a route.", "hidden gem")]
+        assert got == [("Glimmer nook after glimmer nook waits on this glimmer nook of a trail.", "glimmer nook")]
 
 
 # ---------------------------------------------------------------- the T9 loop: one repair, never a hold
@@ -208,7 +208,7 @@ def _loop_gates():
     the real promotion; everything else passes."""
     def fake(*, content_text, stock_blocking=True, **_):
         style = qg.promote_brand_style(_f9([F9_STYLE_VIOLATION])[1], content_text, attempt_one=stock_blocking) \
-            if "quiet showpiece" in content_text else qg._result(qr.F9_BRAND_STYLE, [], blocking=False)
+            if "plinth marvel" in content_text else qg._result(qr.F9_BRAND_STYLE, [], blocking=False)
         ledger = [qg._result(qr.F9_CTA_FACT, []), style]
         first = next((g for g in ledger if not g["passed"] and g.get("blocking", True)), None)
         return {"passed": first is None, "gate_ledger": ledger, "first_failure": first,
@@ -237,14 +237,14 @@ async def test_loop_repairs_the_style_sentence_once_and_ships(modes):
     rw, repair, kw = await _run_loop(text, "Kessa Rock is a dormant volcano ringed by pines.")
     assert rw.call_count == 0 and repair.call_count == 1
     assert repair.call_args.kwargs["sentences"][0]["sentence"] == STYLE_SENTENCE
-    assert kw["status"] == "approved" and "quiet showpiece" not in kw["content_text"]
+    assert kw["status"] == "approved" and "plinth marvel" not in kw["content_text"]
 
 
 @pytest.mark.asyncio
 async def test_loop_never_holds_when_the_repair_keeps_the_phrase(modes):
     modes(T10_F9_BRAND_STYLE_MODE="repair")
     text = f"{CLEAN} {STYLE_SENTENCE} {CTA}"
-    rw, repair, kw = await _run_loop(text, "Kessa Rock is a real quiet showpiece, a dormant volcano ringed by pines.")
+    rw, repair, kw = await _run_loop(text, "Kessa Rock is a real plinth marvel, a dormant volcano ringed by pines.")
     assert rw.call_count == 0 and repair.call_count == 1  # one repair only: attempt 2 warns
     assert kw["status"] == "approved" and kw["held_reason"] is None
     assert any(f["gate"] == qr.F9_BRAND_STYLE for f in qg.expand_ledger(kw["flags"]))

@@ -1359,7 +1359,7 @@ def _gate_brand_voice(
     ]
 
 
-# AA-788 — the phrases of an F9_brand_style violation ("audit flagged: SUMMARY_OFF_BRAND — exact flagged phrase(s):
+# AA-788 — the phrases of an F9_brand_style violation ("audit flagged: <CODE> — exact flagged phrase(s):
 # "a"; "b""), the same reading the admin highlight uses (admin_content_quality._F9_PHRASE_RE / _QUOTED_RE).
 _F9_STYLE_PHRASES_RE = re.compile(r"exact flagged phrase\(s\): (.+)$", re.DOTALL)
 _F9_STYLE_QUOTED_RE = re.compile(r'"([^"]{3,})"')
