@@ -1,4 +1,4 @@
-"""Tests for flag_fix_node — AA-134, and write_lessons_log — AA-132."""
+"""Tests for flag_fix_node — AA-134 (the AA-132 write_lessons_log was retired by AA-923 WM-34)."""
 
 import json
 import pytest
@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from services.content_generation.flag_fix_node import (
     flag_fix_node,
     STAGE2_FIX_MAPPING,
-    write_lessons_log,
 )
 
 
@@ -104,62 +103,3 @@ def test_flag_fix_graceful_fallback_on_llm_error():
 
     assert result["fix_pass_applied"] is False
     assert result["generated"] == state["generated"]
-
-
-# ── write_lessons_log ─────────────────────────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_write_lessons_log_deduplicates_by_stage_field_pattern(monkeypatch):
-    """Lessons with the same (stage, field, pattern) should only be inserted once."""
-    monkeypatch.setenv("PIPELINE_LESSONS_ENABLED", "true")  # AA-915: the loop is frozen by default
-    lessons = [
-        {"failure_code": "META_OPENER_ROBOTIC", "field": "seo_meta",
-         "pattern": "opens with Discover", "example_before": "Discover Bhutan.",
-         "severity": "high"},
-        # Duplicate
-        {"failure_code": "META_OPENER_ROBOTIC", "field": "seo_meta",
-         "pattern": "opens with Discover", "example_before": "Discover Bhutan again.",
-         "severity": "high"},
-    ]
-
-    mock_conn = AsyncMock()
-    mock_conn.fetchval.return_value = None  # no existing record
-    mock_conn.execute = AsyncMock()
-
-    with patch("asyncpg.connect", AsyncMock(return_value=mock_conn)), \
-         patch("services.content_generation.flag_fix_node.get_database_url", return_value="postgres://test"):
-        count = await write_lessons_log(lessons, min_frequency=2)
-
-    # Only 1 unique lesson should be inserted
-    assert count == 1
-    assert mock_conn.execute.call_count == 1
-
-
-@pytest.mark.asyncio
-async def test_write_lessons_log_respects_min_frequency(monkeypatch):
-    """Lessons appearing fewer than min_frequency times should be skipped."""
-    monkeypatch.setenv("PIPELINE_LESSONS_ENABLED", "true")  # AA-915: the loop is frozen by default
-    lessons = [
-        {"failure_code": "NAME_ALL_CAPS", "field": "name",
-         "pattern": "all caps name", "example_before": "BHUTAN TOUR",
-         "severity": "medium"},
-        # This one appears only once — should be skipped with min_frequency=2
-    ]
-
-    mock_conn = AsyncMock()
-    mock_conn.fetchval.return_value = None
-    mock_conn.execute = AsyncMock()
-
-    with patch("asyncpg.connect", AsyncMock(return_value=mock_conn)), \
-         patch("services.content_generation.flag_fix_node.get_database_url", return_value="postgres://test"):
-        count = await write_lessons_log(lessons, min_frequency=2)
-
-    assert count == 0
-    mock_conn.execute.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_write_lessons_log_empty_input():
-    """Empty lessons list should return 0 immediately without DB calls."""
-    count = await write_lessons_log([], min_frequency=1)
-    assert count == 0

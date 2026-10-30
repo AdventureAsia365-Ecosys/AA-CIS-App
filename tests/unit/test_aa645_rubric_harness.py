@@ -520,7 +520,6 @@ def test_shadow_run_offline_end_to_end(monkeypatch, tmp_path):
 
     from api.routers import admin_pipeline, v1_pipeline
     from scripts.aa729 import common, evalpatch
-    from services.content_generation import pipeline_lessons
     from services.content_generation import s1_writer_v2_live as live
 
     for k in ("AA729_STAGE", "S1_WRITER_V2"):
@@ -537,10 +536,7 @@ def test_shadow_run_offline_end_to_end(monkeypatch, tmp_path):
     async def _brand(conn, *a):
         return {"forbidden_words": "[]", "voice_examples": "[]", "core_idea": "c"}
 
-    async def _lessons(conn):
-        return ""
     monkeypatch.setattr(admin_pipeline, "_resolve_brand_rule", _brand)
-    monkeypatch.setattr(pipeline_lessons, "load_s1_lessons_block", _lessons)
     seen = {}
 
     async def _rewrite(tour, idx, total, **kw):

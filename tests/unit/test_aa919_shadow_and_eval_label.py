@@ -90,12 +90,11 @@ def test_gateway_starts_no_ab_shadow_inside_an_eval_run():
 
 
 def test_flag_fix_lessons_are_never_written_inside_an_eval_run():
+    # AA-923 WM-34: the write-back is retired; inside an eval run (and outside) it writes nothing
     from services.content_generation import flag_fix_node
-    with patch.object(flag_fix_node, "pipeline_lessons_enabled", return_value=True), \
-            patch.object(flag_fix_node, "write_lessons_log") as w, \
-            call_log.bind_eval_stage(cfg.EVAL_STAGE, "run-4"):
-        flag_fix_node._write_lessons_safe([{"lesson": "x"}], {"tour": {}})
-    w.assert_not_called()
+    assert not hasattr(flag_fix_node, "write_lessons_log")
+    with call_log.bind_eval_stage(cfg.EVAL_STAGE, "run-4"):
+        assert flag_fix_node._write_lessons_safe([{"lesson": "x"}], {"tour": {}}) is None
 
 
 # ── WM-21: sizes of a run ──────────────────────────────────────────────────────────────────────────────────────────

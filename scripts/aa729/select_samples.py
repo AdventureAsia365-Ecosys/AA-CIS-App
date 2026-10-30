@@ -53,7 +53,6 @@ from scripts.aa729.common import (  # noqa: E402
     first_label,
     make_label, needs_panel_label, percentile, pick_stratified, save_output, scrub, tour_type,
 )
-from services.content_generation.pipeline_lessons import load_s1_lessons_block  # noqa: E402
 
 
 def _j(v: Any, default: Any = None) -> Any:
@@ -167,8 +166,8 @@ def seo_from_row(row) -> dict:
 
 
 async def _s1_brand_rules(conn, brand_name: Optional[str], lessons_text: str) -> dict:
-    """The Master brand rules exactly as _execute_run_tour builds them (+ the frozen AA-132 S1 lessons,
-    which load_s1_lessons_block returns only when PIPELINE_LESSONS_ENABLED is on — AA-915)."""
+    """The Master brand rules exactly as _execute_run_tour builds them (`lessons_text` is "" since the AA-132
+    lessons append was retired, AA-923 WM-34; kept so frozen samples stay reproducible)."""
     from api.routers.admin_pipeline import _resolve_brand_rule
 
     br = await _resolve_brand_rule(conn, MASTER_TENANT_ID, None, brand_name)
@@ -632,7 +631,7 @@ async def build(seed: int, version: str, audit: dict) -> dict:
     shared: dict = {}
     try:
         async with pool.acquire() as conn:
-            lessons_text = await load_s1_lessons_block(conn)  # AA-915: "" while the loop is frozen
+            lessons_text = ""  # AA-923 WM-34: the AA-132 lessons append is retired
             actions: dict[str, dict[str, int]] = {}
             for x in await conn.fetch(_AUDIT_SQL):
                 actions.setdefault(x["resource_id"], {})[x["action"]] = int(x["n"])
@@ -737,7 +736,7 @@ async def build_addendum(ids: dict[str, str], *, base_version: str, seed: int, k
     counters: Counter = Counter()
     try:
         async with pool.acquire() as conn:
-            lessons_text = await load_s1_lessons_block(conn)
+            lessons_text = ""  # AA-923 WM-34: the AA-132 lessons append is retired
             actions: dict[str, dict[str, int]] = {}
             for x in await conn.fetch(_AUDIT_SQL):
                 actions.setdefault(x["resource_id"], {})[x["action"]] = int(x["n"])

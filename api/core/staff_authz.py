@@ -362,7 +362,6 @@ POLICY: dict[tuple[str, str], str] = {
     # branch). Their own guard keeps tenant JWTs out; POLICY narrows the staff roles.
     ("POST", "/v1/pipeline/review-queue/{review_id}/approve"): REVIEW_ACT,
     ("POST", "/v1/pipeline/review-queue/{review_id}/reject"): REVIEW_ACT,
-    ("PATCH", "/v1/rules/{rule_id}"): CONTENT_SETTINGS_WRITE,      # global output rules, every tenant
 
     # ── admin_platform (AA-816 C7) — staff directory health: the reconcile report (WORKFORCE vs the
     # directory) and an on-demand run. Report only, so staff.read (not the owner-only staff.write).
@@ -494,8 +493,9 @@ POLICY: dict[tuple[str, str], str] = {
 AWAITING_ROUTE: dict[tuple[str, str], str] = {}
 
 # Path prefixes where the staff secret is accepted and POLICY applies (route-policy test scope). /v1/social has no
-# route since AA-850 (its router read acp_silver_s4, dropped by CIS 299); the prefix stays staff-only (fail closed,
-# and the BFF list in frontend/lib/auth-server.ts mirrors this tuple).
+# route since AA-850 (its router read acp_silver_s4, dropped by CIS 299) and /v1/rules none since AA-923 (WM-34: the
+# N8 output rules are retired); both prefixes stay staff-only (fail closed, and the BFF list in
+# frontend/lib/auth-server.ts mirrors this tuple).
 STAFF_PATH_PREFIXES: tuple[str, ...] = ("/admin", "/v1/pipeline", "/v1/rules", "/v1/social")
 
 # Machine callers send the secret and no x-admin-role. (method, route) -> who calls it. Of the GETs only
@@ -705,7 +705,7 @@ def staff_policy_if_staff(
 
     For routers whose own guard decides who else gets in and how it refuses: admin_pipeline (the
     brand-identity routes also take a tenant JWT, AA-424), admin_atoms (logs a refused tenant Bearer,
-    AA-859), /v1/pipeline, /v1/rules, /v1/social (401 without credentials, 403 for any JWT, secret read
+    AA-859), /v1/pipeline (401 without credentials, 403 for any JWT, secret read
     from the environment per call). A missing or wrong secret is left to that guard, so its status,
     detail and logging stay exactly as they were. This is NOT an auth check by itself: every route of
     such a router keeps its own (the S241 route-auth test proves it), and every staff call — the only

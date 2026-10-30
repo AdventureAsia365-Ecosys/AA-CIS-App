@@ -465,7 +465,6 @@ async def run(args) -> dict:
     from api.routers.admin_pipeline import _resolve_brand_rule
     from services.content_generation import s1_writer_v2 as w
     from services.content_generation import s1_writer_v2_live as live
-    from services.content_generation.pipeline_lessons import load_s1_lessons_block
     from services.quality.s1_facts import build_fact_table
     from scripts.aa645.shadow_report import summarize
     from scripts.aa729 import evalpatch
@@ -502,9 +501,6 @@ async def run(args) -> dict:
             by_id = {c["tour_id"]: c for c in cands}
             br = await _resolve_brand_rule(conn, MASTER_TENANT_ID, None, None)
             brand_rules = brand_rules_from_row(dict(br) if br else None)
-            lessons = await load_s1_lessons_block(conn)
-            if lessons:
-                brand_rules["system_prompt"] = (brand_rules.get("system_prompt") or "") + lessons
         if not chosen_ids:
             raise SystemExit("no tour selected (check --pilot-country / exclusions)")
 
