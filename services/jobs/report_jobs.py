@@ -7,7 +7,10 @@
                       that fails does not stop the others: their values are written, then the job raises so the
                       runner retries (a failed KPI is never a silent success). A scheduled run that wrote every KPI
                       queues report_generate for each CIS-generated daily/live report (EX-04, EX-06; R2: OPS-12,
-                      TP-03) for the same day (one scheduled run per report and day, shared.report_run_schedule_uq).
+                      TP-03) for the same day (one scheduled run per report and period, shared.report_run_schedule_uq).
+                      R3: on a Sunday it also queues the weekly reports for that ISO week (EX-01, FI-02), and on the
+                      day before business day 2 the monthly reports for the previous month (FI-01, FI-03..FI-06,
+                      OPS-08); periods.scheduled_period.
                       R2: a computer whose outside source cannot be read now (kpis.Unavailable: the probe log) writes
                       no value and is listed under `unavailable` in the result; that alone never fails the job.
                       Scheduled once a day by the api's ops metrics sampler (api/core/ops_metrics_sampler.py,
@@ -41,7 +44,7 @@ logger = structlog.get_logger()
 SNAPSHOT_KIND = "kpi_snapshot_daily"
 REPORT_KIND = "report_generate"
 SCHEDULER = "scheduler:aa-1003"
-CHAIN_SCHEDULES = ("daily", "live")
+CHAIN_SCHEDULES = ("daily", "live", "weekly", "monthly")   # R3 adds weekly and monthly
 
 
 def snapshot_key(day: date) -> str:
@@ -111,14 +114,22 @@ async def enqueue_report_run(pool, report: Report, first: date, last: date, *, t
 
 
 async def chain_reports(pool, day: date, parent_job_id: Optional[str]) -> list[dict]:
+    """The scheduled runs due after the snapshot of `day`: every daily/live CIS report for the day; R3: the weekly
+    reports for the ISO week when `day` is its Sunday, the monthly reports for the previous month when the next day
+    is business day 2 (periods.scheduled_period)."""
     reg = load()
     out = []
     for report in reg.runnable():
         if report.schedule not in CHAIN_SCHEDULES:
             continue
-        run = await enqueue_report_run(pool, report, day, day, trigger="schedule", triggered_by=SCHEDULER,
+        period = periods.scheduled_period(report.schedule, day)
+        if period is None:
+            continue
+        first, last = period
+        run = await enqueue_report_run(pool, report, first, last, trigger="schedule", triggered_by=SCHEDULER,
                                        parent_job_id=parent_job_id)
-        out.append({"report_id": report.id, "run_id": run and run["run_id"], "created": run is not None})
+        out.append({"report_id": report.id, "run_id": run and run["run_id"], "created": run is not None,
+                    "period_start": first.isoformat(), "period_end": last.isoformat()})
     return out
 
 

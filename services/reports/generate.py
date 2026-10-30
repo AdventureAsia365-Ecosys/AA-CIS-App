@@ -7,6 +7,9 @@ Generators (catalog.yaml `generator: cis`):
   EX-06  Report register: every catalog report with its schedule, priority, last run and due state.
   OPS-12 Daily platform health digest (R2, services/reports/digest.py; e-mailed to its opt-in list).
   TP-03  Inquiry handoff reconciliation, TripPlanner to Booking (R2, services/reports/handoff.py).
+  R3 money reports (services/reports/money.py): EX-01 weekly business pack (draft), FI-02 weekly spend digest
+         (e-mailed), FI-01 monthly cost review with FI-03 LLM attribution, FI-04 vendors, FI-05 unit costs, FI-06
+         budgets, and OPS-08 monthly capacity review.
 
 Each renderer is pure (data in, (summary, output JSON, Markdown) out); the loaders read the DB. Reports read stored
 rows only: no LLM, no paid API, no recomputation of history (automation-plan.md §5).
@@ -151,12 +154,22 @@ def render_scorecard(reg: Registry, report: Report, day: date, rows: list[dict],
 # ── EX-06 register and due state ────────────────────────────────────────────────────────────────────────────────
 
 
-def expected_period_end(report: Report, now: datetime) -> Optional[date]:
-    """The last day a daily/live CIS-generated report should cover by now (the day the daily chain snapshots);
-    None when nothing is scheduled here."""
-    if not report.runnable or report.schedule not in ("daily", "live"):
+def scheduled_expectation(report: Report, now: datetime) -> Optional[tuple[date, date]]:
+    """(the last day the newest scheduled period covers, the snapshot day whose chain creates it) for a CIS-generated
+    report the daily chain schedules (daily, live, weekly, monthly; R3 adds weekly and monthly); None otherwise."""
+    if not report.runnable:
         return None
-    return periods.snapshot_day(now)
+    found = periods.latest_scheduled(report.schedule, now)
+    if found is None:
+        return None
+    (_first, last), chain_day = found
+    return last, chain_day
+
+
+def expected_period_end(report: Report, now: datetime) -> Optional[date]:
+    """The last day a scheduled CIS-generated report should cover by now; None when nothing is scheduled here."""
+    exp = scheduled_expectation(report, now)
+    return exp[0] if exp else None
 
 
 def due_state(report: Report, last: Optional[dict], now: datetime) -> dict:
@@ -165,13 +178,14 @@ def due_state(report: Report, last: Optional[dict], now: datetime) -> dict:
     start), overdue (past the grace)."""
     if not report.runnable:
         return {"state": "not_automated", "expected_period_end": None}
-    expected = expected_period_end(report, now)
-    if expected is None:
+    exp = scheduled_expectation(report, now)
+    if exp is None:
         return {"state": "manual", "expected_period_end": None}
+    expected, chain_day = exp
     covered = (last or {}).get("covered_to")
     if covered is not None and covered >= expected:
         return {"state": "ok", "expected_period_end": expected.isoformat()}
-    deadline = periods.day_bounds(expected)[1] + periods.SETTLE + periods.OVERDUE_GRACE
+    deadline = periods.day_bounds(chain_day)[1] + periods.SETTLE + periods.OVERDUE_GRACE
     return {"state": "overdue" if now >= deadline else "due", "expected_period_end": expected.isoformat()}
 
 
@@ -271,13 +285,29 @@ async def _handoff(conn, reg: Registry, report: Report, first: date, last: date,
     return await handoff.render(conn, reg, report, first, last, now)
 
 
+async def _money_week(conn, reg: Registry, report: Report, first: date, last: date, now: datetime) -> Rendered:
+    from services.reports import money
+
+    return await money.render_week(conn, reg, report, first, last, now)
+
+
+async def _money_month(conn, reg: Registry, report: Report, first: date, last: date, now: datetime) -> Rendered:
+    from services.reports import money
+
+    return await money.render_month(conn, reg, report, first, last, now)
+
+
 # AA-1003 R2: OPS-12 daily digest (services/reports/digest.py), TP-03 inquiry handoff (services/reports/handoff.py).
-RENDERERS: dict[str, Renderer] = {"EX-04": _scorecard, "EX-06": _register, "OPS-12": _digest, "TP-03": _handoff}
+# R3 (services/reports/money.py): weekly EX-01, FI-02; monthly FI-01, FI-03, FI-04, FI-05, FI-06, OPS-08.
+RENDERERS: dict[str, Renderer] = {"EX-04": _scorecard, "EX-06": _register, "OPS-12": _digest, "TP-03": _handoff,
+                                  "EX-01": _money_week, "FI-02": _money_week,
+                                  **{rid: _money_month for rid in ("FI-01", "FI-03", "FI-04", "FI-05", "FI-06",
+                                                                   "OPS-08")}}
 
 
 def default_period(report: Report, now: Optional[datetime] = None) -> tuple[date, date]:
-    day = periods.snapshot_day(now)
-    return day, day
+    """The period of a manual run without dates (R3: the last closed ISO week / month of a weekly / monthly report)."""
+    return periods.default_period(report.schedule, now)
 
 
 async def render(conn, reg: Registry, report: Report, first: date, last: date,

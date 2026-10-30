@@ -334,14 +334,50 @@ BUDGETS_SQL = """
 
 def aws_budgets() -> dict[str, float]:
     """AWS_MONTHLY_BUDGET_USD, overridden per account by env COST_OPS_AWS_BUDGETS_USD (``acc2=300,acc3=250``)."""
-    out = dict(AWS_MONTHLY_BUDGET_USD)
-    raw = os.environ.get(AWS_BUDGET_ENV, "").strip()
+    return _env_amounts(AWS_BUDGET_ENV, AWS_MONTHLY_BUDGET_USD)
+
+
+# AA-1003 R3: the per-App AWS Budgets (AA-CIS-Infra accounts/aa365/variables.tf per_app_monthly_budgets; budgets on
+# the App cost-allocation tag). Presentation only, like AWS_MONTHLY_BUDGET_USD; env COST_OPS_APP_BUDGETS_USD
+# (``cis=90,shared=120``) overrides per App.
+APP_MONTHLY_BUDGET_USD: dict[str, float] = {"cis": 90.0, "tripplanner": 10.0, "booking": 25.0, "crm": 35.0,
+                                            "identity": 10.0, "shared": 120.0}
+APP_BUDGET_ENV = "COST_OPS_APP_BUDGETS_USD"
+# AA-1003 R3: credits that pay a bill before the card does (the acc3 AWS Lift credit). No API reads them, so the
+# remaining amount is set by hand on the worker: ``acc3=249.94@2026-12-31`` (amount USD, optional @expiry date).
+CREDITS_ENV = "COST_OPS_CREDITS_USD"
+
+
+def _env_amounts(var: str, defaults: dict[str, float]) -> dict[str, float]:
+    out = dict(defaults)
+    raw = os.environ.get(var, "").strip()
     for part in filter(None, (p.strip() for p in raw.split(","))):
         key, _, value = part.partition("=")
         try:
             out[key.strip()] = float(value)
         except ValueError:
-            logger.warning("cost_ops_aws_budget_env_ignored", part=part[:40])
+            logger.warning("cost_ops_budget_env_ignored", var=var, part=part[:40])
+    return out
+
+
+def app_budgets() -> dict[str, float]:
+    """APP_MONTHLY_BUDGET_USD, overridden per App by env COST_OPS_APP_BUDGETS_USD."""
+    return _env_amounts(APP_BUDGET_ENV, APP_MONTHLY_BUDGET_USD)
+
+
+def credits() -> dict[str, dict[str, Any]]:
+    """{key: {"remaining_usd", "expires_on" (date | None), "as_of": "env"}} from env COST_OPS_CREDITS_USD; {} unset.
+    A malformed entry is skipped with a warning."""
+    out: dict[str, dict[str, Any]] = {}
+    raw = os.environ.get(CREDITS_ENV, "").strip()
+    for part in filter(None, (p.strip() for p in raw.split(","))):
+        key, _, rest = part.partition("=")
+        amount, _, expiry = rest.partition("@")
+        try:
+            out[key.strip()] = {"remaining_usd": float(amount),
+                                "expires_on": date.fromisoformat(expiry.strip()) if expiry.strip() else None}
+        except ValueError:
+            logger.warning("cost_ops_credit_env_ignored", part=part[:40])
     return out
 
 
