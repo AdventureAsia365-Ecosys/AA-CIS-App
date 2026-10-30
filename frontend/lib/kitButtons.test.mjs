@@ -58,7 +58,15 @@ after(() => {
 
 const h = (...a) => React.createElement(...a);
 /** The markup without the hoisted <style> (React may or may not inline it in a static render). */
-const html = (el) => render(el).replace(/<style[^>]*>[\s\S]*?<\/style>/g, "");
+const html = (el) => {
+  // Strip until stable, so a nested or split tag cannot survive one pass (CodeQL js/incomplete-multi-character-sanitization).
+  let out = render(el);
+  for (let prev = ""; prev !== out;) {
+    prev = out;
+    out = out.replace(/<style[^>]*>[\s\S]*?<\/style>/g, "");
+  }
+  return out;
+};
 
 test("primitives re-exports every button component, so the consumer barrels need no change", () => {
   for (const name of ["Button", "LinkButton", "IconButton", "SegmentedControl", "ButtonGroup", "ListButton",
