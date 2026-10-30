@@ -10,9 +10,7 @@
 
 version: 1
 imported_from: docs/audits/2026-10-29-S258-report-catalog/catalog.json
-planned_sources:
-- name: shared.report_run
-  reason: named by K-RPT-FAILED; not in docs/architecture/db-schema-reference.md at import (proposed in the catalog)
+planned_sources: []
 kpis:
 - id: K-ACC-CARRYOVER
   version: 1
@@ -2458,12 +2456,14 @@ kpis:
 - id: K-TP-LLMCAP
   version: 1
   name: LLM spend vs cap
-  definition: tripplanner.llm_spend_daily.cost_usd per UTC day (online stages) vs TP_DAILY_SPEND_CAP_USD (placeholder default
-    5.0, apps/AA-TripPlanner-Web/backend/config.py lines 117-122; business cap still open)
+  definition: Worst UTC day of the week of TripPlanner's customer-facing LLM spend (shared.llm_call_log rows of its online
+    stages, quality_signal app tripplanner; the same calls as tripplanner.llm_spend_daily, which is not granted to cis_app)
+    vs TP_DAILY_SPEND_CAP_USD (placeholder default 5.0, apps/AA-TripPlanner-Web/backend/config.py lines 117-122; business
+    cap still open)
   unit: usd
   threshold: < 80 % of cap any day
   sources:
-  - tripplanner.llm_spend_daily
+  - shared.llm_call_log
   defined_in: TP-01
   used_by:
   - TP-01

@@ -604,9 +604,11 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     only (`OPS_DIGEST_EMAIL_TO`, comma-separated; empty = skipped), never to the alert recipients. KPI computers
     `inquiry_handoff` (K-TP-HANDOFFGAP, K-BK-PARKED, K-BK-INQ2CASE, UTC day D) and `nightly_probes` (DATA-01:
     K-DATA-PROBES, K-DATA-LIVENESS, K-DATA-STALE from the `SCRIPT verdict` lines of the ECS run-script probes in
-    CloudWatch Logs, `services/reports/probes.py`; needs `logs:FilterLogEvents` on the log group; the ops overview
-    client's short timeouts; each probe is searched only in slices around its nightly cron time, all searches of a day
-    share a 12 s budget, an unfinished search counts nothing). A computer
+    CloudWatch Logs, `services/reports/probes.py`; needs `logs:FilterLogEvents` + `logs:DescribeLogStreams` on the
+    log group; the ops overview client's short timeouts; the day's migrator streams are listed (DescribeLogStreams
+    newest first, back to the day's start) and searched by name over the whole ICT day, because GitHub runs the
+    nightly crons hours late; slices around each cron time are the fallback when listing is refused or the day is too
+    far back; all searches of a day share a 12 s budget, an unfinished search counts nothing). A computer
     whose outside source is unreadable (probe log, or a contract view revoked / dropped / reshaped) raises
     `kpis.Unavailable`: no value, reason under `unavailable` in the job result, the snapshot still succeeds and chains. $0 (view reads, two cheap AWS reads, SES).
   - **Money reports (AA-1003 R3)**: `report_generate` also renders the weekly **EX-01** (business pack draft) and
@@ -639,6 +641,17 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     per owner); event reports run on "Generate now" over the last 7 closed days (`periods.default_period`).
     `services/reports/quality.py`, `services/reports/reliability.py`. Booking / TripPlanner / CRM job tables, the
     CRM feed, GitHub checks and Vercel are named "not wired" / "not readable from CIS". No migration.
+  - **R4 part 2 reports (AA-1003)**: the weekly **TP-01** (TripPlanner funnel from `tripplanner.v_ops_traffic_daily`,
+    AI searches and the TripPlanner online-stage LLM spend vs the mirrored default cap from `shared.llm_call_log`;
+    `services/reports/planner.py`) and **DEV-03** (CIS deploys = worker starts on a new commit in `shared.job_worker`,
+    rollbacks, migrations per owner; kept in the output so the monthly **DEV-01** can count a month after the worker
+    rows are pruned), the monthly **SEC-08** (audit hash chain re-verified with `platform_audit.verify_chain`, staff
+    directory changes, calls by type, refused calls, off-hours bulk) and **SEC-03** (draft: staff account hygiene,
+    audit chain, DATA-01 snapshots) (`services/reports/security.py`), and the event **OPS-15** (state at generation:
+    ECS services via DescribeServices / DescribeTaskDefinition, already granted, image tags without the registry host,
+    health, worker parity, newest migration per owner, active CIS jobs, open waves; the output is the session-close
+    state-snapshot.json) (`services/reports/delivery.py`). Linear, GitHub (Dependabot, secret scanning, PRs, CI runs,
+    releases), Vercel, Lambda and other owners' job and audit tables are listed as "Source not available". No migration.
   - **Ops metrics sampler (AA-832, AA-751)**: `api/core/ops_metrics_sampler.py`, a background task of
     the **api** (not the worker) started in `api/main.py`'s lifespan after the main pool, cancelled
     before it closes, off when `ENVIRONMENT=test`, never raises. Every 300 s (first tick 30 s after

@@ -9,7 +9,9 @@
 # (words), schedule (one of hourly/daily/weekly/monthly/quarterly/live/event/on_demand), channel, automation
 # (auto/semi/manual/on_demand), status (state of the report today: exists/partial/planned/missing), priority (P0-P3),
 # template (path of its Markdown template, or null for a product page), generator (cis = the CIS engine renders it
-# with job kind report_generate; null = not automated yet), kpis (IDs in kpis.yaml), sections (what it contains).
+# with job kind report_generate; null = not automated yet), automated_from (optional, generator cis only: the first
+# snapshot day YYYY-MM-DD whose daily chain can create the report's scheduled period, the deploy day of its generator,
+# so the register does not call earlier periods overdue), kpis (IDs in kpis.yaml), sections (what it contains).
 
 version: 1
 imported_from: docs/audits/2026-10-29-S258-report-catalog/catalog.json
@@ -681,7 +683,8 @@ reports:
   status: partial
   priority: P1
   template: docs/audits/2026-10-29-S258-report-catalog/templates/app-ops-report.md
-  generator: null
+  generator: cis
+  automated_from: 2026-10-31
   kpis:
   - K-TP-SESSIONS
   - K-TP-S2T
@@ -1304,7 +1307,8 @@ reports:
   status: partial
   priority: P1
   template: docs/audits/2026-10-29-S258-report-catalog/templates/app-ops-report.md
-  generator: null
+  generator: cis
+  automated_from: 2026-10-31
   kpis:
   - K-SNAP-COVERAGE
   - K-SNAP-DRIFT
@@ -1354,7 +1358,7 @@ reports:
   channel: docs/audits/<date>-S<nnn>-go-live-readiness/README.md via root PR + a clickable decision page for the business
     owner
   automation: semi
-  status: missing
+  status: partial
   priority: P1
   template: docs/audits/2026-10-29-S258-report-catalog/templates/readiness-signoff.md
   generator: null
@@ -1407,7 +1411,8 @@ reports:
   status: partial
   priority: P1
   template: docs/audits/2026-10-29-S258-report-catalog/templates/security-review.md
-  generator: null
+  generator: cis
+  automated_from: 2026-10-31
   kpis:
   - K-SEC-VULNSLA
   - K-SEC-SECRETFIND
@@ -1463,7 +1468,8 @@ reports:
   status: partial
   priority: P2
   template: docs/audits/2026-10-29-S258-report-catalog/templates/security-review.md
-  generator: null
+  generator: cis
+  automated_from: 2026-10-31
   kpis:
   - K-AUD-CHAIN
   - K-AUD-BREAKGLASS
@@ -1671,10 +1677,11 @@ reports:
   schedule: monthly
   channel: S3 + /admin/reports; Markdown in docs/audits/<date>-S<nnn>-delivery/; headline in EX-02
   automation: auto
-  status: missing
+  status: partial
   priority: P1
   template: docs/audits/2026-10-29-S258-report-catalog/templates/delivery-dora-report.md
-  generator: null
+  generator: cis
+  automated_from: 2026-10-31
   kpis:
   - K-DORA-DF
   - K-DORA-LT
@@ -1724,7 +1731,8 @@ reports:
   status: partial
   priority: P1
   template: docs/audits/2026-10-29-S258-report-catalog/templates/delivery-dora-report.md
-  generator: null
+  generator: cis
+  automated_from: 2026-10-31
   kpis:
   - K-DEL-SHIPPED
   - K-FLOW-WIPAGE

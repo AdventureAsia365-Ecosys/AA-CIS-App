@@ -99,10 +99,19 @@ class FakeLogs:
     """FilterLogEvents over a fixed event list: honours startTime / endTime, pages `per_page` events at a time and
     advances a fake clock by `seconds_per_call` on every call."""
 
-    def __init__(self, events, per_page=100, seconds_per_call=0.0):
+    def __init__(self, events, per_page=100, seconds_per_call=0.0, can_list=False):
         self.events, self.per_page, self.seconds_per_call = events, per_page, seconds_per_call
         self.calls: list[dict] = []
+        self.list_calls: list[dict] = []
+        self.can_list = can_list
         self.now = 0.0
+
+    def describe_log_streams(self, **kw):
+        # S260: the stream-targeted read lists streams first; these slice tests run without that permission
+        self.list_calls.append(kw)
+        if not self.can_list:
+            raise _Denied("no")
+        return {"logStreams": []}
 
     def clock(self) -> float:
         return self.now
@@ -135,8 +144,8 @@ def test_probe_slices_follow_the_cron_and_stay_inside_the_ict_day():
     liveness = probes.PROBES[0]
     slices = probes.probe_slices(liveness, date(2026, 10, 29))
     assert slices[0] == (datetime(2026, 10, 29, 4, 33, tzinfo=UTC), datetime(2026, 10, 29, 5, 33, tzinfo=UTC))
-    assert slices[-1][1] == datetime(2026, 10, 29, 10, 43, tzinfo=UTC)
-    assert all(b - a <= timedelta(hours=4) for a, b in slices)      # never the whole day
+    assert slices[-1][1] == datetime(2026, 10, 29, 16, 43, tzinfo=UTC)  # S260: + 12 h (GitHub runs crons late)
+    assert all(b - a <= timedelta(hours=6) for a, b in slices)      # never the whole day
     # a day still running: slices after `now` are dropped, the current one is cut at now
     cut = probes.probe_slices(liveness, date(2026, 10, 29), now=datetime(2026, 10, 29, 6, 0, tzinfo=UTC))
     assert cut[-1][1] == datetime(2026, 10, 29, 6, 0, tzinfo=UTC) and len(cut) == 2
@@ -176,7 +185,7 @@ def test_a_probe_that_did_not_run_is_missing_after_its_last_slice():
     assert results["liveness"].status == "missing" and results["freshness"].status == "passed"
     covered = sorted(logs.spans())
     assert covered[0][0] == datetime(2026, 10, 29, 4, 33, tzinfo=UTC)
-    assert covered[-1][1] == datetime(2026, 10, 29, 10, 43, tzinfo=UTC)     # liveness's last slice, then stop
+    assert covered[-1][1] == datetime(2026, 10, 29, 16, 43, tzinfo=UTC)     # liveness's last slice, then stop
 
 
 def test_the_day_search_finishes_within_its_budget_even_when_calls_are_slow():
@@ -192,6 +201,7 @@ def test_read_events_reports_the_slices_it_searched():
     logs = FakeLogs(NIGHT)
     events, window = probes.read_events(date(2026, 10, 29), logs, datetime(2026, 10, 30, 2, tzinfo=UTC))
     assert len(events) == 4 and window["calls"] == 1 and len(window["slices"]) == 1
+    assert window["mode"] == "slices" and "DescribeLogStreams" in window["why"]
     assert window["log_group"].startswith("/ecs/aa-cis-")
     start, end = periods.day_bounds(date(2026, 10, 29))
     assert window["start"] == start.isoformat() and window["end"] == end.isoformat()
@@ -493,3 +503,132 @@ def test_an_unavailable_source_does_not_fail_the_snapshot(monkeypatch):
     result = asyncio.run(report_jobs.run_snapshot(ctx))
     assert result["errors"] == {} and result["unavailable"] == {"nightly_probes": "not_permitted: pending"}
     assert chain.await_count == 1 and [r[0] for r in conn.written] == ["K-JOB-FAIL"]
+
+
+# ── S260: stream-targeted read (DescribeLogStreams, then FilterLogEvents by stream name) ──────────────────────────
+
+class StreamLogs(FakeLogs):
+    """FakeLogs that can list its streams: one stream per distinct logStreamName, plus `noise` api / worker streams,
+    newest last event first, `page` streams a page. FilterLogEvents honours logStreamNames."""
+
+    def __init__(self, events, noise=(), page=50, **kw):
+        super().__init__(events, can_list=True, **kw)
+        self.page = page
+        streams: dict[str, list[int]] = {}
+        for e in list(events) + list(noise):
+            streams.setdefault(e["logStreamName"], []).append(e["timestamp"])
+        self.streams = sorted(({"logStreamName": n, "firstEventTimestamp": min(t), "lastEventTimestamp": max(t)}
+                               for n, t in streams.items()), key=lambda s: -s["lastEventTimestamp"])
+
+    def describe_log_streams(self, **kw):
+        self.list_calls.append(kw)
+        self.now += self.seconds_per_call
+        assert kw["orderBy"] == "LastEventTime" and kw["descending"] is True and "logStreamNamePrefix" not in kw
+        offset = int(kw.get("nextToken") or 0)
+        out = {"logStreams": self.streams[offset:offset + self.page]}
+        if offset + self.page < len(self.streams):
+            out["nextToken"] = str(offset + self.page)
+        return out
+
+    def filter_log_events(self, **kw):
+        names = kw.get("logStreamNames")
+        if names is not None:
+            assert "logStreamNamePrefix" not in kw and len(names) <= probes.MAX_STREAM_NAMES
+            kept = self.events
+            self.events = [e for e in kept if e["logStreamName"] in names]
+            try:
+                return super().filter_log_events(**kw)
+            finally:
+                self.events = kept
+        return super().filter_log_events(**kw)
+
+
+# Dev 29/10: GitHub ran the 04:43 gate at 11:06 and the 05:13 probe at 11:29 UTC (outside the S259 6 h slices)
+LATE_NIGHT = [
+    _ev("migrate/migrate/a1", "2026-10-29T11:06:00", LIVENESS_FILE),
+    _ev("migrate/migrate/a1", "2026-10-29T11:06:30", "SCRIPT verdict violations=0 errors=0 list=- pending=0"),
+    _ev("migrate/migrate/b2", "2026-10-29T11:29:00", FRESHNESS_FILE),
+    _ev("migrate/migrate/b2", "2026-10-29T11:29:40", "SCRIPT verdict stale=1 stale_aged=111 errors=0 list=x"),
+    _ev("migrate/migrate/c3", "2026-10-29T03:22:00", "run-script: file=db/scripts/aa838_capacity_probe.py sha256=a"),
+]
+NOISE = [_ev("api/api/x1", "2026-10-30T01:50:00", "GET /health 200"),
+         _ev("worker/worker/w1", "2026-10-30T01:40:00", "job claimed"),
+         _ev("migrate/migrate/old", "2026-10-27T05:00:00", LIVENESS_FILE),     # an earlier day: not searched
+         _ev("migrate/migrate/next", "2026-10-29T18:00:00", LIVENESS_FILE)]    # the next ICT day (UTC 18:00 > 17:00)
+NEXT_MORNING = datetime(2026, 10, 30, 0, 30, tzinfo=UTC)                     # the snapshot of 29/10
+
+
+def test_streams_read_finds_runs_hours_after_the_cron_in_few_calls():
+    logs = StreamLogs(LATE_NIGHT, NOISE)
+    events, window = probes.read_events(date(2026, 10, 29), logs, NEXT_MORNING)
+    assert window["mode"] == "streams" and window["streams"] == 3        # a1, b2, c3 (not old, next, api, worker)
+    assert window["list_pages"] == 1 and window["calls"] == 2
+    (f,) = logs.calls
+    assert sorted(f["logStreamNames"]) == ["migrate/migrate/a1", "migrate/migrate/b2", "migrate/migrate/c3"]
+    start, end = periods.day_bounds(date(2026, 10, 29))
+    assert f["startTime"] == int(start.timestamp() * 1000) and f["endTime"] == int(end.timestamp() * 1000) - 1
+    results = {r.probe.key: r for r in probes.summarize(probes.group_runs(events))}
+    assert results["liveness"].status == "passed"
+    assert results["freshness"].status == "failed" and results["freshness"].value == 111
+
+
+def test_streams_read_stops_listing_at_the_day_start_and_pages_names_by_100():
+    many = [_ev(f"migrate/migrate/t{i:03d}", f"2026-10-29T{10 + i // 60:02d}:{i % 60:02d}:00", "x")
+            for i in range(130)] + LATE_NIGHT
+    older = [_ev(f"migrate/migrate/o{i:03d}", "2026-10-20T05:00:00", "x") for i in range(500)]
+    logs = StreamLogs(many, older, page=50, per_page=1000)
+    events, window = probes.read_events(date(2026, 10, 29), logs, NEXT_MORNING)
+    assert window["streams"] == 133 and window["list_pages"] == 3           # 133 streams of the day, 50 a page
+    assert [len(c["logStreamNames"]) for c in logs.calls] == [100, 33]
+    assert {r.probe.key: r.status for r in probes.summarize(probes.group_runs(events))}["liveness"] == "passed"
+
+
+def test_a_lagging_last_event_time_is_still_listed():
+    lag = StreamLogs(LATE_NIGHT)
+    # a stream of the day whose lastEventTimestamp lags (shown 30 min before the day starts, AWS eventual consistency)
+    start, _ = periods.day_bounds(date(2026, 10, 29))
+    lag.streams.append({"logStreamName": "migrate/migrate/lag",
+                        "firstEventTimestamp": int(start.timestamp() * 1000) - 1,
+                        "lastEventTimestamp": int((start - timedelta(minutes=30)).timestamp() * 1000)})
+    _, window = probes.read_events(date(2026, 10, 29), lag, NEXT_MORNING)
+    assert window["streams"] == 4
+
+
+def test_no_migrator_stream_in_the_day_means_every_probe_missing_without_a_search():
+    logs = StreamLogs([], NOISE)
+    events, window = probes.read_events(date(2026, 10, 29), logs, NEXT_MORNING)
+    assert window["streams"] == 0 and logs.calls == [] and events == []
+    assert {r.status for r in probes.summarize(probes.group_runs(events))} == {"missing"}
+
+
+def test_a_day_too_far_back_falls_back_to_the_slices():
+    filler = [_ev(f"migrate/migrate/f{i:04d}", "2026-10-29T20:00:00", "x") for i in range(probes.MAX_STREAM_PAGES * 50)]
+    logs = StreamLogs(NIGHT, filler)
+    events, window = probes.read_events(date(2026, 10, 29), logs, NEXT_MORNING)
+    assert window["mode"] == "slices" and "log streams back" in window["why"]
+    assert len(logs.list_calls) == probes.MAX_STREAM_PAGES and "logStreamNamePrefix" in logs.calls[0]
+    assert {r.probe.key: r.status for r in probes.summarize(probes.group_runs(events))}["liveness"] == "passed"
+
+
+def test_streams_read_is_bounded_by_the_budget():
+    logs = StreamLogs(LATE_NIGHT, [_ev(f"api/api/n{i}", "2026-10-30T01:00:00", "x") for i in range(400)], page=50,
+                      seconds_per_call=4.0)
+    with pytest.raises(probes.LogsUnavailable) as e:
+        probes.read_streams_day(logs, "/ecs/aa-cis-dev", date(2026, 10, 29), NEXT_MORNING, clock=logs.clock)
+    assert e.value.reason == "incomplete" and logs.now <= probes.FETCH_BUDGET_S + 4.0
+
+
+def test_a_refused_search_after_the_list_is_not_permitted_not_a_fallback():
+    logs = StreamLogs(LATE_NIGHT)
+    logs.filter_log_events = MagicMock(side_effect=_Denied("no"))
+    with pytest.raises(probes.LogsUnavailable) as e:
+        probes.read_events(date(2026, 10, 29), logs, NEXT_MORNING)
+    assert e.value.reason == "not_permitted"
+
+
+def test_a_day_still_running_is_searched_up_to_now():
+    logs = StreamLogs(LATE_NIGHT)
+    now = datetime(2026, 10, 29, 11, 10, tzinfo=UTC)
+    _, window = probes.read_events(date(2026, 10, 29), logs, now)
+    assert logs.calls[0]["endTime"] == int(now.timestamp() * 1000) - 1
+    assert window["streams"] == 2                                          # b2 (11:29) starts after now

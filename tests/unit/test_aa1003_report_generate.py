@@ -121,7 +121,8 @@ def test_register_lists_every_report_and_flags_failures():
     assert len(rows) == len(reg.reports)
     out = generate.render_register(reg, reg.report("EX-06"), DAY, rows, NOW)
     assert "EX-04" in out.output["attention"]
-    assert out.output["registry"]["automated"] == 20         # EX-04, EX-06; R2: OPS-12, TP-03; R3: 8 money; R4: 8
+    # EX-04, EX-06; R2: OPS-12, TP-03; R3: 8 money; R4: 8; R4 part 2: TP-01, SEC-03, SEC-08, DEV-01, DEV-03, OPS-15
+    assert out.output["registry"]["automated"] == 26
     assert "## Generated here" in out.markdown and "| P0 |" in out.markdown
 
 
