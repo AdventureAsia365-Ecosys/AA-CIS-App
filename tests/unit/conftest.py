@@ -133,3 +133,25 @@ def _served_state_unknown(request, monkeypatch):
 
     monkeypatch.setattr(tour_liveness, "served_states", _no_states)
     monkeypatch.setattr(tour_liveness, "request_tours", _no_tours)
+
+
+# AA-1002 (gateway slice S2): every catalog-key call asks shared/llm_client/vendor_route.py whether an Anthropic API
+# deployment comes first, which reads the connection registry (a DB read, cached in process). Unit tests have no DB:
+# by default the registry is EMPTY (today's path), so no test opens a connection and none depends on what another
+# test left in the cache. Tests of the registry patch `connections.run_sync` themselves (their patch wins).
+@pytest.fixture(autouse=True)
+def _empty_llm_connection_registry(monkeypatch):
+    from shared.llm_client import connections, deployments
+
+    def _empty(fn):
+        return {} if fn is connections._fetch_all else []
+
+    def _reset():
+        connections.invalidate()
+        deployments.invalidate()
+        connections._connections = {}
+        deployments._by_model = {}
+    _reset()
+    monkeypatch.setattr(connections, "run_sync", _empty)
+    yield
+    _reset()

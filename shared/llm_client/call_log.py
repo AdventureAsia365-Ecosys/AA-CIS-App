@@ -26,6 +26,8 @@ import structlog
 
 from shared.secrets import get_database_url
 
+from .models import ANTHROPIC_API_LABEL_PREFIX
+
 logger = structlog.get_logger()
 
 _INSERT_SQL = """
@@ -164,6 +166,7 @@ def _normalize_model_provider(model: str, provider: Optional[str]) -> tuple[str,
     We strip the "satellite-" prefix so GROUP BY model is clean (the account distinction now lives
     in its own column), and derive `provider` from the shape when the caller didn't pass one:
       - "satellite-" prefix  -> bedrock-satellite
+      - "anthropic-api-" prefix -> anthropic (AA-1002 S2, the Anthropic Messages API path)
       - starts with "gpt"    -> openai
       - anything else        -> bedrock-native (acc2 raw inference-profile id, or already-clean id)
     A caller that DOES pass `provider` wins (e.g. it knows better than a string heuristic)."""
@@ -172,6 +175,10 @@ def _normalize_model_provider(model: str, provider: Optional[str]) -> tuple[str,
     if model and model.startswith("satellite-"):
         clean = model[len("satellite-"):]
         derived = derived or "bedrock-satellite"
+    elif model and model.startswith(ANTHROPIC_API_LABEL_PREFIX):
+        # AA-1002 (S2): the Anthropic Messages API path ("anthropic-api-<model key>")
+        clean = model[len(ANTHROPIC_API_LABEL_PREFIX):]
+        derived = derived or "anthropic"
     elif model and model.lower().startswith("gpt"):
         derived = derived or "openai"
     elif model:

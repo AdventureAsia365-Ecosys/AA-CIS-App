@@ -1,0 +1,151 @@
+{
+ "converse": {
+  "converse_kwargs": {
+   "inferenceConfig": {
+    "maxTokens": 4096
+   },
+   "messages": [
+    {
+     "content": [
+      {
+       "text": "u"
+      }
+     ],
+     "role": "user"
+    }
+   ],
+   "modelId": "global.anthropic.claude-sonnet-5",
+   "system": [
+    {
+     "text": "s"
+    }
+   ]
+  },
+  "invoke_kwargs": null,
+  "response": {
+   "content": "hello",
+   "cost_usd": 0.007,
+   "fallback_used": false,
+   "input_tokens": 1000,
+   "model_used": "satellite-sonnet-5",
+   "output_tokens": 500,
+   "provider": "bedrock-satellite",
+   "satellite_account": "acc3",
+   "stop_reason": "end_turn"
+  },
+  "satellite_calls": [
+   [
+    [
+     "bedrock-runtime"
+    ],
+    {
+     "account": "acc3"
+    }
+   ]
+  ],
+  "session_calls": []
+ },
+ "converse_structured": {
+  "converse_kwargs": {
+   "inferenceConfig": {
+    "maxTokens": 4096
+   },
+   "messages": [
+    {
+     "content": [
+      {
+       "text": "u"
+      }
+     ],
+     "role": "user"
+    }
+   ],
+   "modelId": "global.anthropic.claude-sonnet-5",
+   "system": [
+    {
+     "text": "s"
+    }
+   ],
+   "toolConfig": {
+    "toolChoice": {
+     "tool": {
+      "name": "verdict"
+     }
+    },
+    "tools": [
+     {
+      "toolSpec": {
+       "description": "Return the result as this object.",
+       "inputSchema": {
+        "json": {
+         "properties": {
+          "score": {
+           "type": "integer"
+          }
+         },
+         "required": [
+          "score"
+         ],
+         "type": "object"
+        }
+       },
+       "name": "verdict"
+      }
+     }
+    ]
+   }
+  },
+  "invoke_kwargs": null,
+  "response": {
+   "content": "{\"score\": 3}",
+   "cost_usd": 0.007,
+   "fallback_used": false,
+   "input_tokens": 1000,
+   "model_used": "satellite-sonnet-5",
+   "output_tokens": 500,
+   "provider": "bedrock-satellite",
+   "satellite_account": "acc3",
+   "stop_reason": "tool_use"
+  },
+  "satellite_calls": [
+   [
+    [
+     "bedrock-runtime"
+    ],
+    {
+     "account": "acc3"
+    }
+   ]
+  ],
+  "session_calls": []
+ },
+ "legacy_haiku": {
+  "converse_kwargs": null,
+  "invoke_kwargs": {
+   "accept": "application/json",
+   "body": "{\"anthropic_version\": \"bedrock-2023-05-31\", \"max_tokens\": 4096, \"messages\": [{\"role\": \"user\", \"content\": \"u\"}], \"system\": [{\"type\": \"text\", \"text\": \"s\", \"cache_control\": {\"type\": \"ephemeral\"}}]}",
+   "contentType": "application/json",
+   "modelId": "arn:aws:bedrock:us-west-1:acc3-test-account:inference-profile/global.anthropic.claude-haiku-4-5-20251001-v1:0"
+  },
+  "response": {
+   "content": "legacy",
+   "cost_usd": 7e-05,
+   "fallback_used": false,
+   "input_tokens": 10,
+   "model_used": "satellite-haiku-4-5",
+   "output_tokens": 5,
+   "provider": "bedrock-satellite",
+   "satellite_account": "acc3",
+   "stop_reason": "end_turn"
+  },
+  "satellite_calls": [],
+  "session_calls": [
+   [
+    [
+     "acc3"
+    ],
+    {}
+   ]
+  ]
+ }
+}

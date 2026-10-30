@@ -1,6 +1,11 @@
 from pydantic import BaseModel
 from typing import Optional
 
+# AA-1002 (gateway slice S2): the LLMResponse.model_used label of a call served by the Anthropic Messages API
+# ("anthropic-api-sonnet-5-5"). Like "satellite-", call_log strips it (llm_call_log.model = the Model Key) and derives
+# provider = 'anthropic' from it, so every caller that logs only `model=resp.model_used` records the right provider.
+ANTHROPIC_API_LABEL_PREFIX = "anthropic-api-"
+
 class LLMRequest(BaseModel):
     system_prompt: str
     user_prompt:   str
@@ -59,3 +64,6 @@ class LLMResponse(BaseModel):
     # schema retry (AA-714) ran: the first, unusable reply was billed too, and its tokens + cost are
     # folded into this response (so the caller's single llm_call_log row carries both).
     provider_requests: int = 1
+    # AA-1002 (S2): the model id the provider says answered (Anthropic `response.model`), when it reports one. The
+    # gateway prices by the catalog Model Key; this is the evidence of what really ran. None on the other paths.
+    provider_model: Optional[str] = None

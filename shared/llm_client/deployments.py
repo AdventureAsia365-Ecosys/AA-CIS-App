@@ -11,6 +11,7 @@ on the sync read: a DB failure or a table that is not migrated yet means no depl
 from __future__ import annotations
 
 import json
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -79,13 +80,26 @@ _loaded_at = 0.0
 _failed_at = 0.0
 
 
+_load_lock = threading.Lock()      # one reload at a time (connections._ensure_loaded)
+
+
+def _fresh(now: float) -> bool:
+    return bool((_loaded_at and now - _loaded_at < _CACHE_TTL_SECONDS)
+                or (_failed_at and now - _failed_at < _FAILURE_TTL_SECONDS))
+
+
 def _ensure_loaded() -> None:
+    if _fresh(time.monotonic()):
+        return
+    with _load_lock:
+        now = time.monotonic()
+        if _fresh(now):
+            return              # another thread reloaded while this one waited
+        _load(now)
+
+
+def _load(now: float) -> None:
     global _by_model, _loaded_at, _failed_at
-    now = time.monotonic()
-    if _loaded_at and now - _loaded_at < _CACHE_TTL_SECONDS:
-        return
-    if _failed_at and now - _failed_at < _FAILURE_TTL_SECONDS:
-        return
     try:
         rows = connections.run_sync(_fetch_all)
         grouped: dict[str, list[ModelDeployment]] = {}

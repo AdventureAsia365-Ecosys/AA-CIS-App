@@ -3226,6 +3226,21 @@
         "title": "LlmConfigPatch",
         "type": "object"
       },
+      "LlmConnectionPatch": {
+        "additionalProperties": false,
+        "description": "AA-1002 (S2): only the on/off switch. secret_name / base_url / limits are edited in slice S4.",
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "LlmConnectionPatch",
+        "type": "object"
+      },
       "LlmRoutePatch": {
         "properties": {
           "fallback_model_ids": {
@@ -17919,6 +17934,104 @@
           }
         },
         "summary": "LLM connections and model deployments (read-only, no secret values)",
+        "tags": [
+          "admin-llm-ops"
+        ]
+      }
+    },
+    "/admin/llm-connections/{connection_key}": {
+      "patch": {
+        "operationId": "patch_llm_connection_admin_llm_connections__connection_key__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_key",
+            "required": true,
+            "schema": {
+              "title": "Connection Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LlmConnectionPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Switch an LLM connection on or off (admin-only, audited)",
         "tags": [
           "admin-llm-ops"
         ]

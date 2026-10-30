@@ -17,6 +17,7 @@ ENTRY_POINTS = (
     ("shared.llm_client.bedrock_satellite", "invoke_claude"),
     ("shared.llm_client.bedrock_satellite", "get_satellite_client"),
     ("shared.llm_client.embed", "_call"),
+    ("shared.llm_client.adapters.anthropic_messages", "send"),     # AA-1002 S2: the Anthropic Messages API
 )
 
 

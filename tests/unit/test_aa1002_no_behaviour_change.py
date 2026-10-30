@@ -1,9 +1,14 @@
-"""AA-1002 (gateway slice S1) — the connection registry is off the routing path: no behaviour change.
+"""AA-1002 (gateway slices S1 + S2) — the registry changes nothing unless an Anthropic API deployment is first.
 
-Two proofs. Static: no module on a call path (generate / embed / decide / judge / shadow / batch / call log) imports
-``connections`` or ``deployments``. Runtime: a Converse call and a legacy-chain call give byte-identical provider
-requests and responses whether the registry is empty or holds a contradictory picture (acc3 disabled, other wire ids),
-and the registry is never consulted.
+S1 kept the connection registry off the routing path. S2 (the Anthropic Messages adapter) reads it through ONE module,
+``vendor_route.py``, and only an enabled deployment on an enabled ``anthropic`` connection that sorts first by
+priority changes where a call goes. Two proofs:
+
+- Static: no call-path module imports ``connections`` / ``deployments``; only ``client.py`` imports ``vendor_route``.
+- Runtime: a Converse call and a legacy-chain call give byte-identical provider requests and responses for every
+  registry state that has no such first row (table missing, Anthropic row or connection disabled, Anthropic row
+  behind acc3, an Anthropic row on a legacy key, a contradictory acc3 row), and the Anthropic adapter and the secret
+  are never touched. The positive cases are in test_aa1002_s2_vendor_route.py.
 """
 import ast
 from pathlib import Path
@@ -12,6 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from shared.llm_client import catalog, connections, deployments
+from shared.llm_client.adapters import anthropic_messages
 from shared.llm_client.catalog import CatalogModel
 from shared.llm_client.client import LLMClient
 from shared.llm_client.connections import ProviderConnection
@@ -43,8 +49,13 @@ def test_call_path_modules_do_not_import_the_registry(name):
 
 def test_every_gateway_module_is_classified():
     on_disk = {p.name for p in LLM_CLIENT.glob("*.py")} - {"__init__.py"}
-    assert on_disk == set(CALL_PATH) | {"connections.py", "deployments.py"}, \
+    assert on_disk == set(CALL_PATH) | {"connections.py", "deployments.py", "vendor_route.py"}, \
         "new gateway module: add it to CALL_PATH (or move the registry check)"
+
+
+@pytest.mark.parametrize("name", [n for n in CALL_PATH if n != "client.py"])
+def test_only_the_client_asks_the_vendor_route(name):
+    assert "vendor_route" not in _imported_modules(LLM_CLIENT / name)
 
 
 # ── runtime ───────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -54,19 +65,38 @@ SONNET5 = CatalogModel(model_key="sonnet-5", label="Sonnet 5", vendor="anthropic
                        callable_via=("llm_client",), supports_temperature=False, price_in_per_mtok=2.0,
                        price_out_per_mtok=10.0, enabled=True)
 
-CONTRADICTORY_CONNECTIONS = {
-    "acc3": ProviderConnection(connection_key="acc3", kind="bedrock", auth_mode="assume_role", label="x",
-                               data_scope="aws_only", enabled=False),
-    "anthropic-direct": ProviderConnection(connection_key="anthropic-direct", kind="anthropic", auth_mode="api_key",
-                                           label="x", data_scope="vendor_direct", enabled=True,
-                                           secret_name="aa-llm/dev/anthropic-direct",
-                                           base_url="https://api.anthropic.com"),
+def _anthropic(enabled=True):
+    return ProviderConnection(connection_key="anthropic-direct", kind="anthropic", auth_mode="api_key", label="x",
+                              data_scope="vendor_direct", enabled=enabled, secret_name="aa-llm/dev/anthropic-direct",
+                              base_url="https://api.anthropic.com")
+
+
+def _acc3(enabled=True):
+    return ProviderConnection(connection_key="acc3", kind="bedrock", auth_mode="assume_role", label="x",
+                              data_scope="aws_only", enabled=enabled)
+
+
+ACC3_DEP = ModelDeployment("sonnet-5", "acc3", "global.anthropic.claude-sonnet-5", 10, True, "bedrock_profile")
+
+# Registry states that must leave every call on today's path: (connections, deployments).
+NO_ROUTE_STATES = {
+    "anthropic_deployment_disabled": (
+        {"acc3": _acc3(), "anthropic-direct": _anthropic()},
+        [ACC3_DEP, ModelDeployment("sonnet-5", "anthropic-direct", "claude-sonnet-5", 0, False, "admin")]),
+    "anthropic_connection_disabled": (
+        {"acc3": _acc3(), "anthropic-direct": _anthropic(enabled=False)},
+        [ACC3_DEP, ModelDeployment("sonnet-5", "anthropic-direct", "claude-sonnet-5", 0, True, "admin")]),
+    "anthropic_behind_acc3": (
+        {"acc3": _acc3(), "anthropic-direct": _anthropic()},
+        [ACC3_DEP, ModelDeployment("sonnet-5", "anthropic-direct", "claude-sonnet-5", 100, True, "seed")]),
+    "anthropic_on_a_legacy_key": (
+        {"acc3": _acc3(), "anthropic-direct": _anthropic()},
+        [ACC3_DEP, ModelDeployment("haiku", "anthropic-direct", "claude-haiku-4-5", 0, True, "admin")]),
+    "contradictory_acc3": (
+        {"acc3": _acc3(enabled=False), "anthropic-direct": _anthropic(enabled=False)},
+        [ModelDeployment("sonnet-5", "acc3", "global.anthropic.something-else", 10, True, "admin"),
+         ModelDeployment("sonnet-5", "anthropic-direct", "claude-sonnet-5", 0, True, "admin")]),
 }
-CONTRADICTORY_DEPLOYMENTS = [
-    ModelDeployment("sonnet-5", "anthropic-direct", "claude-sonnet-5", 0, True, "admin"),
-    ModelDeployment("sonnet-5", "acc3", "global.anthropic.something-else", 10, True, "admin"),
-    ModelDeployment("haiku", "anthropic-direct", "claude-haiku-4-5", 0, True, "admin"),
-]
 
 
 def _converse_response():
@@ -82,15 +112,17 @@ def _invoke_response():
 
 
 def _run(registry: str):
-    """One Converse call (catalog key) and one legacy-chain call (haiku), with the registry empty or contradictory.
+    """One Converse call (catalog key) and one legacy-chain call (haiku) under a registry state.
     Returns what reached the provider and what the caller got back."""
     connections.invalidate()
     deployments.invalidate()
-    if registry == "empty":
+    connections._connections = {}          # a failed load keeps the last good registry: start from nothing
+    deployments._by_model = {}
+    if registry == "missing_table":
         fetch = MagicMock(side_effect=OSError("relation shared.llm_provider_connection does not exist"))
     else:
-        fetch = MagicMock(side_effect=lambda fn: CONTRADICTORY_CONNECTIONS if fn is connections._fetch_all
-                          else CONTRADICTORY_DEPLOYMENTS)
+        conns, deps = NO_ROUTE_STATES[registry]
+        fetch = MagicMock(side_effect=lambda fn: conns if fn is connections._fetch_all else deps)
     rt = MagicMock()
     rt.converse.return_value = _converse_response()
     rt.invoke_model.return_value = _invoke_response()
@@ -98,6 +130,7 @@ def _run(registry: str):
         client = LLMClient()
     with patch.object(connections, "run_sync", fetch), \
             patch.object(connections, "_fetch_secret") as secret, \
+            patch.object(anthropic_messages, "send") as send, \
             patch("shared.llm_client.client.get_model_sync", return_value=SONNET5), \
             patch("shared.llm_client.client.get_stage_config_sync", return_value=None), \
             patch("shared.llm_client.pricing._catalog_rates",
@@ -108,7 +141,7 @@ def _run(registry: str):
         session.return_value.client.return_value = rt
         converse = client.generate(LLMRequest(system_prompt="s", user_prompt="u", model_tier="sonnet-5"))
         legacy = client.generate(LLMRequest(system_prompt="s", user_prompt="u", model_tier="haiku"))
-    assert fetch.call_count == 0, "the gateway consulted the connection registry"
+    send.assert_not_called()
     secret.assert_not_called()
     seen = {
         "converse_kwargs": rt.converse.call_args.kwargs,
@@ -117,17 +150,54 @@ def _run(registry: str):
         "session_calls": session.call_args_list,
     }
     out = [(r.content, r.model_used, r.provider, r.satellite_account, r.fallback_used, r.cost_usd, r.stop_reason,
-            r.input_tokens, r.output_tokens) for r in (converse, legacy)]
+            r.input_tokens, r.output_tokens, r.provider_model) for r in (converse, legacy)]
     return seen, out
 
 
-def test_calls_are_byte_identical_whatever_the_registry_holds():
+@pytest.mark.parametrize("registry", sorted(NO_ROUTE_STATES))
+def test_calls_are_byte_identical_whatever_the_registry_holds(registry):
     catalog.invalidate()
-    empty = _run("empty")
-    contradictory = _run("contradictory")
-    assert repr(empty) == repr(contradictory)
-    seen, out = empty
+    baseline = _run("missing_table")
+    assert repr(_run(registry)) == repr(baseline)
+    seen, out = baseline
     assert seen["converse_kwargs"]["modelId"] == "global.anthropic.claude-sonnet-5"
     assert seen["invoke_kwargs"] is not None, "the legacy haiku call did not reach invoke_model"
     assert out[0][0] == "hello" and out[1][0] == "legacy"
     assert out[0][3] == "acc3" and out[1][3] == "acc3"
+    assert out[0][9] is None and out[0][2] == "bedrock-satellite"
+
+
+# ── golden snapshot taken from pre-S2 code ─────────────────────────────────────────────────────────────────────────
+
+PRE_S2_GOLDEN = Path(__file__).resolve().parent / "snapshots" / "aa1002_pre_s2_calls.json"
+
+
+def _registry_patches(registry: str):
+    if registry == "missing_table":
+        fetch = MagicMock(side_effect=OSError("relation shared.llm_provider_connection does not exist"))
+    else:
+        conns, deps = NO_ROUTE_STATES[registry]
+        fetch = MagicMock(side_effect=lambda fn: conns if fn is connections._fetch_all else deps)
+    return [patch.object(connections, "run_sync", fetch)]
+
+
+@pytest.mark.parametrize("registry", ["missing_table", *sorted(NO_ROUTE_STATES)])
+def test_calls_match_the_golden_snapshot_of_pre_s2_code(registry):
+    """Review S258: the byte-identical test above compares S2 with S2's own missing-table path. This one compares with
+    what code from before S2 (origin/main dd8eea05, no vendor_route) sent and returned, captured by
+    tests/unit/aa1002_golden_calls.py run unchanged on that checkout: Converse, Converse with a schema (forced tool)
+    and the legacy InvokeModel chain."""
+    import json
+
+    from tests.unit.aa1002_golden_calls import capture
+
+    catalog.invalidate()
+    connections.invalidate()
+    deployments.invalidate()
+    connections._connections = {}
+    deployments._by_model = {}
+    with patch.object(anthropic_messages, "send") as send, patch.object(connections, "_fetch_secret") as secret:
+        got = capture(_registry_patches(registry))
+    send.assert_not_called()
+    secret.assert_not_called()
+    assert json.loads(json.dumps(got, sort_keys=True)) == json.loads(PRE_S2_GOLDEN.read_text())

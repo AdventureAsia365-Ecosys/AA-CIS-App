@@ -7,8 +7,13 @@ A provider refuses a call for one of three reasons the gateway and the job runne
   account``, an IAM ``not authorized to perform``, an OpenAI 401/403). A retry minutes later is refused the same way.
 - ``quota_exhausted``: the account has no credit left (OpenAI ``insufficient_quota``, a 429 that is not a rate
   limit). Same as above for a retry.
-- ``throttled``: a rate limit (``ThrottlingException``, ``Too many requests``, an OpenAI rate-limit 429). A retry
-  with backoff can succeed.
+- ``throttled``: a rate limit (``ThrottlingException``, ``Too many requests``, an OpenAI rate-limit 429, an
+  Anthropic API 429 ``rate_limit_error`` or 529 ``overloaded_error``). A retry with backoff can succeed.
+
+AA-1002 (S2): the Anthropic API adapter sets ``llm_error_class`` on its own errors from the HTTP status (429 / 529
+throttled first, 402 / credit or spend-limit wording quota, 401 / 403 access denied); the text patterns below also
+carry the Anthropic error types and the credit / spend-limit wording (the adapter reads that wording through
+``classify_text`` too), so a stored job error classifies the same way.
 
 Everything else is ``other`` (outage, timeout, bad reply), and keeps today's behaviour. The first two are the
 "account-level" classes: when every model a request tried failed with one of them, the gateway raises
@@ -46,12 +51,18 @@ _PATTERNS: tuple[tuple[str, re.Pattern], ...] = (
         r"|permissiondeniederror"
         r"|authenticationerror"
         r"|invalid_api_key"
-        r"|unsupported_country_region_territory",
+        r"|unsupported_country_region_territory"
+        r"|\bauthentication_error\b"         # AA-1002 S2: Anthropic API 401 / 403 error types
+        r"|\bpermission_error\b",
         re.IGNORECASE)),
     (QUOTA_EXHAUSTED, re.compile(
         r"insufficient_quota"
         r"|exceeded your current quota"
-        r"|billing_hard_limit_reached",
+        r"|billing_hard_limit_reached"
+        r"|\bbilling_error\b"                # AA-1002 S2: Anthropic API 402
+        r"|credit balance is too low"        # AA-1002 S2: Anthropic API 400, no prepaid credit left
+        r"|\bapi usage limits?\b"            # AA-1002 S2: Anthropic API 400, workspace / org spend limit reached
+        r"|\bspend(ing)? limit\b",
         re.IGNORECASE)),
     (THROTTLED, re.compile(
         r"throttlingexception"
@@ -59,7 +70,9 @@ _PATTERNS: tuple[tuple[str, re.Pattern], ...] = (
         r"|rate exceeded"
         r"|ratelimiterror"
         r"|rate_limit_exceeded"
-        r"|servicequotaexceededexception",
+        r"|servicequotaexceededexception"
+        r"|\brate_limit_error\b"             # AA-1002 S2: Anthropic API 429
+        r"|\boverloaded_error\b",            # AA-1002 S2: Anthropic API 529 (retry with backoff)
         re.IGNORECASE)),
 )
 
