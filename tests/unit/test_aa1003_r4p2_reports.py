@@ -236,6 +236,38 @@ def test_deploys_count_commit_changes_and_rollbacks_inside_the_window():
     assert delivery.deploys([_start("bbb", MON, 5)], start, end) == []
 
 
+def test_first_deploy_after_a_quiet_stretch_counts_against_the_baseline_row():
+    """A worker started 10 days before the week and still heartbeating is older than the 8-day history cutoff; the
+    baseline row the SQL adds gives its commit, so the week's single deploy counts (and is not a rollback)."""
+    start, end = periods.range_bounds(MON, SUN)
+    base = dict(_start("aaa", MON - timedelta(days=10)), baseline=True)
+    dl = delivery.deploys([base, _start("bbb", date(2026, 10, 28))], start, end)
+    assert [(d["git_sha"], d["previous"], d["rollback"]) for d in dl] == [("bbb", "aaa", False)]
+    # the baseline row does not extend the covered days: only rows the history read keeps do
+    md = delivery.month_deploys({"starts": [dict(_start("s0", date(2026, 9, 1)), baseline=True),
+                                            _start("s1", date(2026, 10, 27))], "weekly": []}, OCT1, OCT31)
+    assert [d["git_sha"] for d in md["deploys"]] == ["s1"]
+    assert md["covered_days"] == 5                                         # 27-31/10
+
+
+def test_worker_starts_reads_the_history_window_and_the_newest_start_before_it():
+    class Conn:
+        def __init__(self):
+            self.calls = []
+
+        async def fetch(self, sql, *args):
+            self.calls.append((sql, args))
+            return [{"git_sha": "aaa", "task_revision": 1, "started_at": _ts(date(2026, 10, 1)), "baseline": True}]
+
+    conn = Conn()
+    start, end = periods.range_bounds(MON, SUN)
+    rows = asyncio.run(delivery.worker_starts(conn, start, end))
+    (sql, args), = conn.calls
+    assert args == (start - delivery.HISTORY_BEFORE, end)
+    assert "UNION ALL" in sql and "started_at < $1 AND git_sha IS NOT NULL" in sql and "LIMIT 1" in sql
+    assert rows[0]["baseline"] is True
+
+
 def test_dev03_lists_deploys_schema_changes_and_unavailable_sources():
     facts = {"starts": [_start("aaa", date(2026, 10, 24)), _start("bbb", MON, 5, 2)],
              "versions": [{"version": "311", "description": "x", "applied_at": _ts(date(2026, 10, 27))},

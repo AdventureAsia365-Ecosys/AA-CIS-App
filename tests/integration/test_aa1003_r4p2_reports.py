@@ -59,7 +59,9 @@ async def env():
                 "created_at, actor_type, http_method, route, status) VALUES (gen_random_uuid(), NULL, $1, $2, "
                 "'admin_user', $3, '{}'::jsonb, $4, 'staff', 'POST', '/admin/x', $5)",
                 actor, action, f"{TAG}-{i}", _ts(MON + timedelta(days=1), hour), status)
-        for sha, day, rev in (("aaa111", MON - timedelta(days=2), 1), ("bbb222", MON + timedelta(days=1), 2),
+        # aaa111 started 12 days before the week (before the 8-day history cutoff) and is still live at its start:
+        # only the baseline row of WORKER_STARTS_SQL tells DEV-03 that bbb222 is a deploy
+        for sha, day, rev in (("aaa111", MON - timedelta(days=12), 1), ("bbb222", MON + timedelta(days=1), 2),
                               ("aaa111", MON + timedelta(days=3), 3)):
             await c.execute(
                 "INSERT INTO shared.job_worker (worker_id, host, started_at, last_seen_at, max_parallel, caps, "

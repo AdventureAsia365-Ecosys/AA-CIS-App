@@ -36,14 +36,24 @@ from services.reports.reliability import (ICT_NOTE, _iso, _render, _unreadable, 
 
 NOT_AVAILABLE = "Source not available"
 CFR_FLAG = 0.15                  # K-DORA-CFR: < 15 %
+DAYS_PER_WEEK = 7                # K-DORA-DF is deploys per week; not a quality pass line
 HISTORY_BEFORE = timedelta(days=8)   # worker rows read before the window, to know the commit live at its start
 
-# Every worker start of the window and the week before (shared.job_worker keeps 7 days after the last heartbeat).
+# Every worker start of the window and the week before (shared.job_worker keeps 7 days after the last heartbeat),
+# plus the newest start with a commit before that cutoff (`baseline`): a worker that started earlier and still
+# heartbeats keeps its row, and without it the first deploy after a quiet stretch of 8+ days has no predecessor and is
+# not counted. The baseline row gives the commit live at the start only; it does not extend the covered days.
 WORKER_STARTS_SQL = """
-    SELECT coalesce(git_sha, 'unknown') AS git_sha, task_revision, started_at
-      FROM shared.job_worker
-     WHERE started_at >= $1 AND started_at < $2
-     ORDER BY started_at
+    (SELECT coalesce(git_sha, 'unknown') AS git_sha, task_revision, started_at, false AS baseline
+       FROM shared.job_worker
+      WHERE started_at >= $1 AND started_at < $2)
+    UNION ALL
+    (SELECT git_sha, task_revision, started_at, true AS baseline
+       FROM shared.job_worker
+      WHERE started_at < $1 AND git_sha IS NOT NULL
+      ORDER BY started_at DESC
+      LIMIT 1)
+    ORDER BY started_at
 """
 DEV03_RUNS_SQL = """
     SELECT period_start, period_end, output FROM shared.report_run
@@ -209,8 +219,9 @@ def month_deploys(facts: dict, first: date, last: date) -> dict:
                 covered.add(d)
                 d += timedelta(days=1)
     starts = facts.get("starts")
-    if starts is not None and not failed(starts) and starts:
-        oldest = min(r["started_at"] for r in starts).astimezone(periods.ICT).date()
+    kept = [] if starts is None or failed(starts) else [r for r in starts if not r.get("baseline")]
+    if kept:
+        oldest = min(r["started_at"] for r in kept).astimezone(periods.ICT).date()
         d = max(oldest, first)
         while d <= last:
             covered.add(d)
@@ -230,7 +241,7 @@ def _in(at: Any, start: datetime, end: datetime) -> bool:
 
 
 def dev01_kpis(md: dict) -> list[dict]:
-    dl, weeks = md["deploys"], md["days"] / 7.0
+    dl, weeks = md["deploys"], md["days"] / DAYS_PER_WEEK
     known = md["covered_days"] > 0
     rollbacks = sum(1 for d in dl if d.get("rollback"))
     cfr = ratio(rollbacks, len(dl)) if dl else None
