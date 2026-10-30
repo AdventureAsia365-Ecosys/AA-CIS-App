@@ -62,10 +62,14 @@ def _existing(c):
     return found
 
 
+# A later quarantine (CIS 316, AA-923 WM-34: the replay moves shared.pipeline_lessons there) is not this file's.
+_LATER_WAVES = ("pipeline_lessons", "acp_output_rules")
+
+
 def _retired_relations(c):
     c.execute("SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
               "WHERE n.nspname = 'retired' ORDER BY 1")
-    return [r[0] for r in c.fetchall()]
+    return [r[0] for r in c.fetchall() if not any(w in r[0] for w in _LATER_WAVES)]
 
 
 def _pre_296(c):
