@@ -1382,18 +1382,32 @@ async def _sibling_titles(tenant_id: Optional[str], channel: Optional[str], piec
         return []
 
 
-def _repair_feedback(gate_ledger: list[dict], channel: Optional[str] = None) -> list[str]:
+def _repair_feedback(gate_ledger: list[dict], channel: Optional[str] = None, *, source: Optional[str] = None,
+                     content_text: Optional[str] = None) -> list[str]:
     """AA-768 — every failed BLOCKING gate's violations, each prefixed with its gate, for the
     rewrite. Before this only `first_failure` was sent, so a piece failing F1 + F4 + F3 + F9 got
     one gate fixed per attempt and held on the rest (S231 pilot, atlas-hearth blog).
     AA-984 — a blog's over-max F4 violation also carries the size to reach; the target is the blog band's,
-    so another channel (max 6,000) never gets it (S248 review)."""
+    so another channel (max 6,000) never gets it (S248 review).
+    AA-788 — with the writer's `source` and the attempt's `content_text`, an under-floor F14 block (AA-780) also lists
+    the source's fact sentences the post does not tell yet (quality_gates.unused_source_facts), so the rewrite
+    lengthens the post with seed facts instead of padding."""
     target = F4_OVER_MAX_TARGET if channel == "blog" else ""
-    return [
+    failed = [g for g in expand_ledger(gate_ledger) if not g["passed"] and g.get("blocking", True)]  # AA-924
+    out = [
         f"{g['gate']}: {v}" + (target if g["gate"] == qr.F4_EXTREME_LENGTH and _F4_OVER_RE.search(v) else "")
-        for g in expand_ledger(gate_ledger) if not g["passed"] and g.get("blocking", True)  # AA-924: legacy view
-        for v in g["violations"]
+        for g in failed for v in g["violations"]
     ]
+    if source and any(_is_floor_block(g) for g in failed):
+        unused = unused_source_facts(source, content_text or "", limit=F14_UNUSED_FACTS_MAX)
+        if unused:
+            out.append(f"{F14_GATE}: source facts this post does not tell yet — lengthen it with these, in your own "
+                       "words, and add nothing else: " + "; ".join(f"'{f}'" for f in unused))
+    return out
+
+
+# AA-788 — at most this many unused source facts go into an under-floor F14 rewrite's feedback.
+F14_UNUSED_FACTS_MAX = 5
 
 
 # AA-984 — an over-long blog's rewrite is told the size to reach (the violation alone gave no number; S247 r9
@@ -2259,7 +2273,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 "attempt": attempt, "gate_targeted": targeted,
                 "violations": first_failure["violations"], "repairable": first_failure["repairable"],
                 # AA-768 — what the rewrite is actually told: every blocking failure, not one gate.
-                "feedback": _repair_feedback(gate_ledger, channel),
+                "feedback": _repair_feedback(gate_ledger, channel, source=grounding_text, content_text=content_text),
                 # AA-791 — this attempt's whole ledger (trimmed), so every attempt's gates are kept.
                 "gate_ledger": ledger_snapshot(gate_ledger),
             })

@@ -41,6 +41,7 @@ gates total, read verbatim — docs/claude_audit/AA-514-step0-investigation.md):
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import Optional, TypedDict
 
@@ -48,7 +49,8 @@ import structlog
 
 from services.acp_content_writing import authenticity
 from services.acp_content_writing.hygiene import (EM_DASH_PATTERN, HygieneContext, brief_phrases, content_words,
-                                                  contrast_excess, copies, dangling_opener, find_issues, fold,
+                                                  contrast_excess, copies, dangling_opener, expand_to_sentence,
+                                                  find_issues, fold,
                                                   names_place, near_verbatim, phrase_tokens, proper_nouns,
                                                   sentence_spans, sibling_templates, template_lines,
                                                   unsupported_ages, unsupported_reasons)
@@ -1363,6 +1365,49 @@ def _gate_brand_voice(
     ]
 
 
+# AA-788 — the phrases of an F9_brand_style violation ("audit flagged: <CODE> — exact flagged phrase(s):
+# "a"; "b""), the same reading the admin highlight uses (admin_content_quality._F9_PHRASE_RE / _QUOTED_RE).
+_F9_STYLE_PHRASES_RE = re.compile(r"exact flagged phrase\(s\): (.+)$", re.DOTALL)
+_F9_STYLE_QUOTED_RE = re.compile(r'"([^"]{3,})"')
+F9_STYLE_PROBLEM = ("flagged style wording ('{phrase}'): say this sentence plainly, keep its facts, add none, "
+                    "or return \"\" to drop it")
+
+
+def brand_style_sentences(content_text: str, violation: str) -> list[tuple[str, str]]:
+    """AA-788 — (sentence, phrase) for each phrase of one F9_brand_style violation that sits in a body sentence: the
+    first case-insensitive hit, widened to its whole sentence (hygiene.expand_to_sentence), tag-stripped, at least
+    _MIN_QUOTE_WORDS words (sentence_repair.locate_sentence needs them), one entry per sentence, in text order. The
+    one reading of the violation for the gate (does it block?) and sentence_repair.plan (what to repair)."""
+    m = _F9_STYLE_PHRASES_RE.search(violation or "")
+    text = content_text or ""
+    out: dict[int, tuple[str, str]] = {}
+    for phrase in _F9_STYLE_QUOTED_RE.findall(m.group(1)) if m else []:
+        hit = re.search(re.escape(phrase.strip()), text, re.IGNORECASE)
+        if hit is None:
+            continue
+        start, end = expand_to_sentence(text, hit.start(), hit.end())
+        sentence = " ".join(_strip_tags(text[start:end], " ").split())
+        if len(sentence.split()) >= _MIN_QUOTE_WORDS and start not in out:
+            out[start] = (sentence, phrase.strip())
+    return [out[k] for k in sorted(out)]
+
+
+def promote_brand_style(result: GateResultLite, content_text: str, *, attempt_one: bool) -> GateResultLite:
+    """AA-788 — F9_brand_style in its `repair` mode (f9_brand_style_mode): a failed result whose phrases locate in a
+    body sentence blocks on attempt 1 (`attempt_one`, run_quality_gates' `stock_blocking`) for one sentence repair,
+    and never holds a piece (STYLE_ONLY_GATES). Otherwise — warn mode, a later attempt, no locatable phrase — the
+    judge's result unchanged (a warn). A new dict; the input is not changed."""
+    mode = f9_brand_style_mode()
+    if result.get("gate") != qr.F9_BRAND_STYLE or result.get("passed") or mode == WARN_MODE:
+        return result
+    located = any(brand_style_sentences(content_text, v) for v in result.get("violations") or [])
+    promoted = {**result, "blocking": attempt_one and located, "repairable": attempt_one and located}
+    _log_promotion(qr.F9_BRAND_STYLE, mode, promoted,
+                   "phrase in a body sentence, attempt 1" if promoted["blocking"]
+                   else ("not attempt 1" if located else "no flagged phrase locates in a body sentence"))
+    return promoted
+
+
 # ---------------------------------------------------------------- FAQ restates the body (F7 fixer, blog only)
 
 _FAQ_ANSWER_RE = re.compile(r"\*\*Q: .*?\*\*\s*\nA: (.*?)(?=\n\*\*Q: |\Z)", re.DOTALL)
@@ -2002,18 +2047,74 @@ def gate_faq_contract(content_text: str) -> GateResultLite:
 
 # F12_scope warns for one checkpoint round (S234 plan C4); flip to True once the replay and the
 # live checkpoint show 0 false positives. It is repairable either way: a body violation quotes
-# its sentence, so sentence_repair can fix it once it blocks.
+# its sentence, so sentence_repair can fix it once it blocks. AA-788 — the code default stays False; the
+# promotion is the per-check mode below (`T10_F12_SCOPE_MODE=block`), so it is switched on and off without a deploy.
 F12_SCOPE_BLOCKING = False
+
+
+# ---------------------------------------------------------------- AA-788: per-check modes of the promoted checks
+
+# AA-788 (Report 12 #4, S234 panel) promotes three advisory checks. Each has its own mode (worker task-def env, read
+# per call, like T10_SA_MODE). An unset or unknown value is the code default — today's behaviour, so the ledger is byte
+# for byte what it was until a mode is set (S246 standing rule: no new blocking gate before the freeze ends, ~19/11,
+# without the tech lead's go):
+# - T10_F12_SCOPE_MODE       warn (default) | block  — a BODY finding blocks: one sentence repair, held when it is
+#                            left after the repair; a title / meta-only finding stays a warning (the SEO fit owns it
+#                            and refuses such a value, like F17 / F18).
+# - T10_F9_BRAND_STYLE_MODE  warn (default) | repair — on attempt 1 only, a flagged phrase that sits in a body sentence
+#                            blocks for one sentence repair (t9_repair); it never holds a piece (STYLE_ONLY_GATES).
+# - T10_F14_FLOOR_MODE       repair (default, AA-780) | warn — the kill switch of the attempt-1 under-floor rewrite.
+WARN_MODE, BLOCK_MODE, REPAIR_MODE = "warn", "block", "repair"
+F12_SCOPE_MODE_ENV = "T10_F12_SCOPE_MODE"
+F9_BRAND_STYLE_MODE_ENV = "T10_F9_BRAND_STYLE_MODE"
+F14_FLOOR_MODE_ENV = "T10_F14_FLOOR_MODE"
+# The decision log line of a promoted check that failed while its mode is not the default (gate, mode, blocking, why).
+PROMOTION_LOG_EVENT = "t10_promoted_check"
+
+
+def _check_mode(env: str, allowed: tuple[str, ...], default: str) -> str:
+    raw = (os.environ.get(env) or "").strip().lower()
+    return raw if raw in allowed else default
+
+
+def f12_scope_mode() -> str:
+    """AA-788 — F12_scope's mode: `block` or `warn` (env T10_F12_SCOPE_MODE, else F12_SCOPE_BLOCKING)."""
+    return _check_mode(F12_SCOPE_MODE_ENV, (WARN_MODE, BLOCK_MODE), BLOCK_MODE if F12_SCOPE_BLOCKING else WARN_MODE)
+
+
+def f9_brand_style_mode() -> str:
+    """AA-788 — F9_brand_style's mode: `repair` or `warn` (env T10_F9_BRAND_STYLE_MODE, default warn)."""
+    return _check_mode(F9_BRAND_STYLE_MODE_ENV, (WARN_MODE, REPAIR_MODE), WARN_MODE)
+
+
+def f14_floor_mode() -> str:
+    """AA-788 — the under-floor F14 block's mode: `repair` or `warn` (env T10_F14_FLOOR_MODE, else
+    F14_FLOOR_BLOCKING)."""
+    return _check_mode(F14_FLOOR_MODE_ENV, (WARN_MODE, REPAIR_MODE), REPAIR_MODE if F14_FLOOR_BLOCKING else WARN_MODE)
+
+
+def _log_promotion(gate: str, mode: str, result: GateResultLite, why: str) -> None:
+    logger.info(PROMOTION_LOG_EVENT, gate=gate, mode=mode, blocking=bool(result.get("blocking")),
+                findings=len(result.get("violations") or []), why=why)
 
 
 def gate_scope(content_text: str, hygiene_ctx: Optional[HygieneContext], seo_title: Optional[str] = None,
                meta_description: Optional[str] = None) -> GateResultLite:
     """F12_scope — the title, meta, headings or body name a place outside the piece's SCOPE (the
-    TRIP name's or another trip's places; hygiene.build_scope_lexicon). No context → passes."""
+    TRIP name's or another trip's places; hygiene.build_scope_lexicon). No context → passes.
+    AA-788 — in `block` mode (f12_scope_mode) a body finding blocks; a title / meta-only finding stays a warning."""
+    mode = f12_scope_mode()
     if hygiene_ctx is None:
-        return _result(qr.F12_SCOPE, [], blocking=F12_SCOPE_BLOCKING)
+        return _result(qr.F12_SCOPE, [], blocking=mode == BLOCK_MODE)
     found = find_issues(content_text, hygiene_ctx, seo_title=seo_title, meta_description=meta_description)
-    return _result(qr.F12_SCOPE, found["scope"], repairable=True, blocking=F12_SCOPE_BLOCKING)
+    vs = found["scope"]
+    if mode != BLOCK_MODE:
+        return _result(qr.F12_SCOPE, vs, repairable=True, blocking=False)
+    body = [v for v in vs if not v.startswith(("title ", "meta "))]
+    result = _result(qr.F12_SCOPE, vs, repairable=True, blocking=bool(body) or not vs)
+    if vs:
+        _log_promotion(qr.F12_SCOPE, mode, result, "body finding" if body else "title / meta finding only")
+    return result
 
 
 F13_LEAK_GATE = qr.F13_LEAK
@@ -2099,14 +2200,16 @@ F15_GATE = qr.F15_VOICE
 F15_WARN_GATE = qr.F15_VOICE_WARN
 # Gates that may block (to trigger one repair) but never hold a piece on their own.
 # AA-800: a second stock superlative (F2_superlatives) is style too.
-STYLE_ONLY_GATES = frozenset({F15_GATE, qr.F2_SUPERLATIVES})
+# AA-788: F9_brand_style too (off-brand voice / generic AI wording; it blocks only in its `repair` mode, attempt 1).
+STYLE_ONLY_GATES = frozenset({F15_GATE, qr.F2_SUPERLATIVES, qr.F9_BRAND_STYLE})
 # S234 round 3 — gates whose sentence repair runs on the cheap t9_repair stage route when they are
 # the only blocking failures: style (F15), near-duplicates (F13_repeat), trip facts and rarity
 # (F17/F18 — the repair keeps or cuts a sentence the seed already bounds).
 # AA-819 — F19_authenticity too: the repair rewrites the sentence in the brand's voice or cuts it.
 # AA-800 — the F2 word layers too: the repair swaps or cuts one word.
+# AA-788 — F9_brand_style too: the repair rewrites the flagged sentence in the brand's voice or cuts it.
 CHEAP_REPAIR_GATES = frozenset({F15_GATE, qr.F13_REPEAT, qr.F17_TRIP_FACT, qr.F18_RARITY, qr.F19_AUTHENTICITY,
-                                qr.F2_PLATFORM_TRUTH, qr.F2_SUPERLATIVES})
+                                qr.F2_PLATFORM_TRUTH, qr.F2_SUPERLATIVES, qr.F9_BRAND_STYLE})
 # S234 round 2 — gates a dedicated deterministic/one-call step in service.py fixes every attempt
 # (like F4_seo_surface and the SEO fit): sentence_repair.plan never turns them into a rewrite.
 OWNED_BY_FIX_STEP = frozenset({qr.F16_FAQ, qr.F14_FIRST_LINE})
@@ -2773,7 +2876,8 @@ def run_quality_gates(
         # AA-771 (S234) — LinkedIn shape and voice from the brand's channel spec; both pass for a
         # channel without a spec (every channel but LinkedIn).
         # AA-780 — under the floor blocks on attempt 1 only (`stock_blocking`), for one full rewrite.
-        gate_social_shape(content_text, spec, floor_blocking=F14_FLOOR_BLOCKING and stock_blocking),
+        # AA-788 — T10_F14_FLOOR_MODE=warn is its kill switch (f14_floor_mode).
+        gate_social_shape(content_text, spec, floor_blocking=f14_floor_mode() == REPAIR_MODE and stock_blocking),
         # F15_voice (the source check, deduplicated above) and the warn-only checks (F15_voice_warn), kept apart
         # so a stock repair never rewrites them; AA-924 stores both in one F15_voice entry.
         voice,
@@ -2794,6 +2898,10 @@ def run_quality_gates(
         sources += gate_brand_voice(length_check_text, cta or "", brand_rubric_text, source_text=atom_text,
                                     voice=(brand_pack or {}).get("voice"), passed_sentences=f9_passed_sentences,
                                     **seo_kw)
+    # AA-788 — F9_brand_style's `repair` mode: attempt 1 blocks for one sentence repair, never a hold (a no-op in the
+    # default warn mode). A replay's stored verdicts get the same promotion.
+    sources = [promote_brand_style(g, content_text, attempt_one=stock_blocking) if g.get("gate") == qr.F9_BRAND_STYLE
+               else g for g in sources]
     # S234 round 2 — contract gates owned by a dedicated fix step in service.py (FAQ regeneration,
     # first-line rewrite). Last in the ledger and not repairable: when one is the only blocking
     # failure left the piece is held at once; when another gate fails first, that gate's repair
@@ -2850,6 +2958,9 @@ __all__ = [
     "faq_pairs", "merge_faq_pairs", "FAQ_MAX_PAIRS",
     "faq_subject_tokens", "faq_answer_problem", "drop_subjectless_faq", "paa_for_scope", "PAA_MAX_QUESTIONS",
     "gate_scope", "gate_hygiene", "F12_SCOPE_BLOCKING",
+    "WARN_MODE", "BLOCK_MODE", "REPAIR_MODE", "F12_SCOPE_MODE_ENV", "F9_BRAND_STYLE_MODE_ENV", "F14_FLOOR_MODE_ENV",
+    "PROMOTION_LOG_EVENT", "f12_scope_mode", "f9_brand_style_mode", "f14_floor_mode", "brand_style_sentences",
+    "promote_brand_style", "F9_STYLE_PROBLEM",
     "gate_social_shape", "gate_voice", "gate_voice_warn", "hold_failure", "F15_STOCK_BLOCKING", "STYLE_ONLY_GATES",
     "F14_FLOOR_BLOCKING", "never_holds", "BROETRY_MAX_WORDS", "BROETRY_RUN",
     "FAQ_MIN_PAIRS", "F16_GATE", "faq_pair_count", "replace_faq_section", "gate_faq_contract", "F13_LEAK_GATE",

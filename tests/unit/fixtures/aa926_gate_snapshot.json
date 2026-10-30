@@ -14954,7 +14954,8 @@
     "F18_rarity",
     "F19_authenticity",
     "F2_platform_truth",
-    "F2_superlatives"
+    "F2_superlatives",
+    "F9_brand_style"
    ],
    "quality_gates.OWNED_BY_FIX_STEP": [
     "F14_first_line",
@@ -14962,7 +14963,8 @@
    ],
    "quality_gates.STYLE_ONLY_GATES": [
     "F15_voice",
-    "F2_superlatives"
+    "F2_superlatives",
+    "F9_brand_style"
    ],
    "quality_gates.named": {
     "F13_LEAK_GATE": "F13_leak",
@@ -15001,6 +15003,7 @@
     "F2_brand_forbidden",
     "F2_platform_truth",
     "F2_superlatives",
+    "F9_brand_style",
     "F9_cta_fact"
    ],
    "sentence_repair._QUOTED_GATES": [
