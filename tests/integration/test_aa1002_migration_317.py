@@ -103,8 +103,9 @@ def test_unknown_connection_is_refused(cur):
 def test_the_code_sql_runs_as_cis_app(cur):
     # The replay skips CIS 244 and conftest's x1_244_undo revokes the shared tables from cis_app, so (as in the 251 and
     # 311 tests) schema USAGE is granted for this test only and 317's table grants are put back first.
-    cur.execute("SELECT has_schema_privilege('cis_app', 'shared', 'USAGE')")
-    usage_granted = not cur.fetchone()[0]
+    cur.execute("SELECT has_schema_privilege('cis_app', 'shared', 'USAGE') AS ok")
+    row = cur.fetchone()
+    usage_granted = not (row["ok"] if isinstance(row, dict) else row[0])
     if usage_granted:
         cur.execute("GRANT USAGE ON SCHEMA shared TO cis_app")
     for table in ("llm_connection_cost_policy", "llm_cost_reconcile"):
