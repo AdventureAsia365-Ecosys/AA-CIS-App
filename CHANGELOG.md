@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.17.0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/compare/v0.16.0...v0.17.0) (2026-10-30)
+
+
+### Features
+
+* Anthropic API deployments behind Bedrock and the connection switch grant (migration 306) ([#1163](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1163)) ([c96fc58](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/c96fc58afa5734a8fc7a8f6096e6dd2bd9b8af9b))
+* Anthropic Messages API adapter behind the connection registry (gateway slice S2) ([#1164](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1164)) ([ec0dd46](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/ec0dd46bfbdd8ec1a91b08fbc38ea6ddfd4d87ee))
+* daily safety net (OPS-12 digest, TP-03 handoff check, DATA-01 probe KPIs) ([#1162](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1162)) ([f7462bf](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/f7462bf055733603bf68ff544ee13bbd65549875))
+* freeze chosen ids for a calibration labelling round and pick the fixed blog sample ([#1154](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1154)) ([2d959a1](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/2d959a140d5d993b5c6f0de3f12cad4f38356ee2))
+* kit form controls and staged lint rule no-raw-form-control ([#1155](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1155)) ([16d8428](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/16d8428106743add51dcc8f069fc678b23746eb0))
+* LLM availability card and fail fast on account-level LLM refusals ([#1148](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1148)) ([907662a](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/907662a22869264618653f6962ad1f2aecc4b921))
+* LLM connection registry and model deployment tables (migration 304) ([#1158](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1158)) ([8128086](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/8128086da66412c751c3d42d804cc637dea8eb3d))
+* photo matcher v2 and a nearby/country cover chain for pool tours ([#1153](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1153)) ([557edcd](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/557edcd04dfc77c82ca9da95c4a831bdf0090b64))
+* read side of the LLM connection registry and an admin listing ([#1159](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1159)) ([2cc3cc5](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/2cc3cc52b46a8ca38a6b936eebc8414c3ac2ae13))
+* report core R1 (KPI snapshots, report runs, /admin/reports) ([#1161](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1161)) ([dd8eea0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/dd8eea05f6b4b72f6ea0ea6bce7b5fb02d6bbeff))
+* seed alignment checks for the T10 recall gap, default off ([#1152](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1152)) ([5840b0a](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/5840b0a4bf60857f9c3becb1da0a56497d2b3f8f))
+* strict geocode rule aa997.3 - route evidence only from the day's own stop ([#1147](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1147)) ([24fda20](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/24fda2089817dc576d1c74ba4291b3d14ecd41d0))
+* T2 reads Facts Entries behind T2_FACTS, and the Facts Source label in the leak checks ([#1149](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1149)) ([fb68375](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/fb683750bb96093de9f32a3253a81ec7e162bd2c))
+* writer input without the naming-note prose or a thin-moment shape ([#1151](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1151)) ([02e5e4c](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/02e5e4c806a5bffd3aa8522fe5c5fe63a074015e))
+
+
+### Bug Fixes
+
+* allow-list the TP-03 inquiry key contract views in the RLS catalogue rules ([#1166](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1166)) ([4f14735](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/4f14735aafab069de7eaac178ce6e64173eee4e9))
+* Cost Ops shows the acc2 budget Terraform sets (300 USD) ([#1157](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1157)) ([e2d5914](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/e2d59144239413801f33c67ee429633517a597ff))
+* schema gate accepts a newer green standalone isolation probe after a probe-only red run ([#1167](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1167)) ([3980b77](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/3980b775cad2df51bae7c900727e70989941e7ae))
+* the LLM availability card says unknown when the last answer is older than 6 hours ([#1160](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1160)) ([d4950cf](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/d4950cfe262dba59980ddb80dfe876647be8c61a))
+
 ## [0.16.0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/compare/v0.15.0...v0.16.0) (2026-10-29)
 
 
