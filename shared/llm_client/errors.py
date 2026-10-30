@@ -62,7 +62,9 @@ _PATTERNS: tuple[tuple[str, re.Pattern], ...] = (
         r"|\bbilling_error\b"                # AA-1002 S2: Anthropic API 402
         r"|credit balance is too low"        # AA-1002 S2: Anthropic API 400, no prepaid credit left
         r"|\bapi usage limits?\b"            # AA-1002 S2: Anthropic API 400, workspace / org spend limit reached
-        r"|\bspend(ing)? limit\b",
+        r"|\bspend(ing)? limit\b"
+        r"|you have no credits remaining"   # S259: OpenAI 429 on a prepaid org with no credit (not a rate limit)
+        r"|add credits to continue",
         re.IGNORECASE)),
     (THROTTLED, re.compile(
         r"throttlingexception"

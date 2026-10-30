@@ -25,6 +25,9 @@ NO_CREDIT = ("RateLimitError: Error code: 429 - {'error': {'message': 'You excee
 THROTTLE = ("An error occurred (ThrottlingException) when calling the Converse operation (reached max retries: 2): "
             "Too many requests, please wait before trying again.")
 RATE_LIMIT = "RateLimitError: Error code: 429 - {'error': {'code': 'rate_limit_exceeded'}}"
+# S259 live (30/10): the OpenAI org has no prepaid credit left; the 429 carries no insufficient_quota code
+NO_CREDITS_LEFT = ("RateLimitError: Error code: 429 - You have no credits remaining. Add credits to continue using "
+                   "the API at https://platform.openai.com/settings/organization/billing/.")
 
 
 # ── classifier ────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -38,6 +41,7 @@ RATE_LIMIT = "RateLimitError: Error code: 429 - {'error': {'code': 'rate_limit_e
     ("An error occurred (AccessDenied) when calling the AssumeRole operation", E.ACCESS_DENIED),
     ("PermissionDeniedError: Error code: 403 - unsupported_country_region_territory", E.ACCESS_DENIED),
     (NO_CREDIT, E.QUOTA_EXHAUSTED),
+    (NO_CREDITS_LEFT, E.QUOTA_EXHAUSTED),
     (THROTTLE, E.THROTTLED),
     (RATE_LIMIT, E.THROTTLED),
     ("ReadTimeoutError: Read timeout on endpoint URL", E.OTHER),
