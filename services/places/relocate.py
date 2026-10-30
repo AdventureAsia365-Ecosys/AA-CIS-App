@@ -45,6 +45,20 @@ hide / unhide (no paid call; AA-997 v2, the readers' "hide unconfirmed" policy, 
 skip `suspect` rows), stamped `geocoder_meta.hidden = {by, reason, at, log}`; `unhide` reverts the rows that stamp
 marks whose review_reason is still the one hidden (a row another path flagged since stays as it is) and keeps the
 record (`unhidden_at`; a later hide moves the old stamp into `log`).
+
+hide_flagged (AA-997 S260, no paid call): the same hide, scoped by the relocate STAMP instead of the review reason —
+only rows a relocate run already processed and left on the model's point (`geocoder_meta.relocate.outcome` in
+HIDE_FLAGGED_OUTCOMES, default llm_point / off_route; optionally one stamp version / accept rule), still flagged
+(review_reason set, not linear_feature), still on the point the stamp judged (located_by llm / mapbox; weak_confirm:
+geoapify), geo_status 'ok' — the `_FLAG_SQL` hide of `hide_unconfirmed`, applied after the fact. Rows the chain has
+not reached yet (no stamp) are never taken. Report first (counts per country / outcome / reason / stamp version, how
+many are linked to a tour, a sample spread over countries); `confirm` writes in batches of HIDE_BATCH under the
+destinations lock, each row re-checked unchanged since the report read it, stamped `hidden = {by: HIDE_FLAGGED_STAMP,
+reason, outcome, stamp_v, at, job, actor}`, one `acp_shared.audit_log` row per batch (ids hidden). `max_rows` (the
+report's count, set by the endpoint) refuses a confirm whose selection grew since its report. Reverted by `unhide`
+(`by` = the stamps to revert, `destination_ids` = only those rows: the single-row restore of the review list), which
+writes its own audit rows. A hidden row the geocoder later confirms (relocate `confirmed` / `reconfirmed`) is shown
+again: its point is now the geocoder's (`unhidden_by` 'relocate:<outcome>').
 """
 from __future__ import annotations
 
@@ -80,6 +94,16 @@ HIDE_REASONS = (locate.REVIEW_LLM_POINT, locate.REVIEW_OFF_ROUTE, locate.REVIEW_
 # verified not-a-place names, but also 3/439 verified-correct names (S254 fixture), so it is asked for explicitly
 HIDE_NON_PLACE = name_filter.NON_PLACE_PREFIX
 HIDE_STAMP = "aa997.2-policy"
+# hide_flagged (S260): rows a relocate run stamped and left on the model's point
+HIDE_FLAGGED_STAMP = "aa997.3-flagged"
+HIDE_FLAGGED_OUTCOMES = (locate.REVIEW_LLM_POINT, locate.REVIEW_OFF_ROUTE, REVIEW_WEAK_CONFIRM)
+HIDE_FLAGGED_DEFAULT = (locate.REVIEW_LLM_POINT, locate.REVIEW_OFF_ROUTE)
+# every stamp a hide policy writes (unhide reverts these; a confirmed relocate shows these rows again)
+POLICY_STAMPS = (HIDE_STAMP, HIDE_FLAGGED_STAMP)
+HIDE_BATCH = 100
+AUDIT_RESOURCE = "places_relocate"
+AUDIT_HIDE = "places.relocate.hide_flagged"
+AUDIT_UNHIDE = "places.relocate.unhide"
 
 OUTCOMES = ("confirmed", "non_place", "off_route", "llm_point", "country_fixed", "skipped", "kept", "kept_unjudged",
             "reconfirmed", "weak_confirm")
@@ -158,7 +182,8 @@ _COUNTRY_SQL = "UPDATE shared.destinations SET country = $2 WHERE id = $1::uuid"
 # re-read under the destinations lock: an admin may fix the row, or place_dedupe merge it, while the run (≤ 400 rows,
 # minutes of geocoder calls) works from the selection it read at the start
 _CURRENT_SQL = """
-    SELECT located_by, geo_status, duplicate_of IS NOT NULL AS merged FROM shared.destinations
+    SELECT located_by, geo_status, duplicate_of IS NOT NULL AS merged, geocoder_meta -> 'hidden' AS hidden
+      FROM shared.destinations
      WHERE id = $1::uuid FOR UPDATE
 """
 # hide / unhide policy (no call)
@@ -180,22 +205,68 @@ _HIDE_ROW_SQL = """
                           ELSE '[]'::jsonb END))
      WHERE id = $1::uuid AND geo_status = 'ok' AND duplicate_of IS NULL
 """
-# only rows still hidden by the policy, for the reason it hid them: a row another path flagged since (relocate with
-# hide_unconfirmed, the outlier rule …) keeps its state
+# hide_flagged: rows a relocate run stamped and left on the model's point, still flagged and still on that point
+# ($1 outcomes, $2 stamp versions — empty = any, $3 stamp accept rule | NULL, $4 located_by of a kept model point,
+# $5 country | NULL); `linked` = used by a tour day (a pin a reader can show)
+_HIDE_FLAGGED_SQL = """
+    SELECT d.id::text AS id, d.name, d.country, d.lat, d.lng, d.review_reason, d.located_by,
+           d.geocoder_meta -> 'relocate' ->> 'outcome' AS outcome, d.geocoder_meta -> 'relocate' ->> 'v' AS stamp_v,
+           d.geocoder_meta -> 'relocate' ->> 'accept_rule' AS accept_rule,
+           d.geocoder_meta -> 'relocate' ->> 'route_km' AS route_km,
+           (EXISTS (SELECT 1 FROM geo.tour_place tp WHERE tp.destination_id = d.id)
+            OR EXISTS (SELECT 1 FROM geo.tour_day td WHERE td.overnight_destination_id = d.id)) AS linked
+      FROM shared.destinations d
+     WHERE d.duplicate_of IS NULL AND d.geo_status = 'ok'
+       AND d.review_reason IS NOT NULL AND d.review_reason <> 'linear_feature'
+       AND (d.geocoder_meta -> 'relocate' ->> 'outcome') = ANY($1::text[])
+       AND (cardinality($2::text[]) = 0 OR (d.geocoder_meta -> 'relocate' ->> 'v') = ANY($2::text[]))
+       AND ($3::text IS NULL OR (d.geocoder_meta -> 'relocate' ->> 'accept_rule') = $3)
+       AND (d.located_by = ANY($4::text[])
+            OR ((d.geocoder_meta -> 'relocate' ->> 'outcome') = 'weak_confirm' AND d.located_by = 'geoapify'))
+       AND ($5::text IS NULL OR lower(btrim(d.country)) = lower(btrim($5)))
+     ORDER BY lower(btrim(d.country)), d.id
+"""
+# one row, re-checked unchanged since the report read it (reason, stamp outcome, located_by); the hidden.log append
+# of _HIDE_ROW_SQL
+_HIDE_FLAGGED_ROW_SQL = """
+    UPDATE shared.destinations
+       SET geo_status = 'suspect',
+           geocoder_meta = coalesce(geocoder_meta, '{}'::jsonb) || jsonb_build_object('hidden', $2::jsonb
+               || jsonb_build_object('log', coalesce(geocoder_meta -> 'hidden' -> 'log', '[]'::jsonb)
+                  || CASE WHEN geocoder_meta ? 'hidden' THEN jsonb_build_array((geocoder_meta -> 'hidden') - 'log')
+                          ELSE '[]'::jsonb END))
+     WHERE id = $1::uuid AND geo_status = 'ok' AND duplicate_of IS NULL
+       AND review_reason IS NOT DISTINCT FROM $3
+       AND (geocoder_meta -> 'relocate' ->> 'outcome') IS NOT DISTINCT FROM $4
+       AND located_by IS NOT DISTINCT FROM $5
+"""
+# only rows still hidden by a policy stamp in $1, for the reason it hid them: a row another path flagged since
+# (relocate with hide_unconfirmed, the outlier rule …) keeps its state; $3 = only these ids (NULL = all)
 _UNHIDE_ROWS_SQL = """
     SELECT d.id::text AS id,
            d.review_reason IS NOT DISTINCT FROM (d.geocoder_meta -> 'hidden' ->> 'reason') AS same_reason
       FROM shared.destinations d
-     WHERE d.geo_status = 'suspect' AND (d.geocoder_meta -> 'hidden' ->> 'by') = $1
+     WHERE d.geo_status = 'suspect' AND (d.geocoder_meta -> 'hidden' ->> 'by') = ANY($1::text[])
        AND (d.geocoder_meta -> 'hidden' ->> 'unhidden_at') IS NULL
        AND ($2::text IS NULL OR lower(btrim(d.country)) = lower(btrim($2)))
+       AND ($3::uuid[] IS NULL OR d.id = ANY($3::uuid[]))
+     ORDER BY d.id
 """
 _UNHIDE_ROW_SQL = """
     UPDATE shared.destinations
        SET geo_status = 'ok',
-           geocoder_meta = jsonb_set(geocoder_meta, '{hidden,unhidden_at}', to_jsonb($2::text))
+           geocoder_meta = jsonb_set(jsonb_set(geocoder_meta, '{hidden,unhidden_at}', to_jsonb($2::text)),
+                                     '{hidden,unhidden_by}', to_jsonb($3::text))
      WHERE id = $1::uuid AND geo_status = 'suspect' AND (geocoder_meta -> 'hidden' ->> 'unhidden_at') IS NULL
        AND review_reason IS NOT DISTINCT FROM (geocoder_meta -> 'hidden' ->> 'reason')
+"""
+# a policy-hidden row the geocoder just confirmed: shown again, the hide record kept ($2 = the hidden stamp with
+# unhidden_at / unhidden_by; _write_point replaced geocoder_meta, so the stamp is written back whole)
+_REVEAL_CONFIRMED_SQL = """
+    UPDATE shared.destinations
+       SET geo_status = 'ok',
+           geocoder_meta = coalesce(geocoder_meta, '{}'::jsonb) || jsonb_build_object('hidden', $2::jsonb)
+     WHERE id = $1::uuid AND geo_status = 'suspect'
 """
 _UNHIDE_NAMES_SQL = """
     UPDATE geo.place_name SET status = 'resolved', updated_at = now()
@@ -210,6 +281,33 @@ async def _still_due(conn, row: dict) -> Optional[dict]:
     if cur is None or cur["merged"] or cur["geo_status"] == "manual" or cur["located_by"] != row["located_by"]:
         return None
     return dict(cur)
+
+
+def _policy_hidden(cur: dict) -> Optional[dict]:
+    """The hide-policy stamp of a row a policy hid and nothing unhid since (still 'suspect'), else None."""
+    h = cur.get("hidden")
+    if isinstance(h, str):
+        try:
+            h = json.loads(h)
+        except ValueError:
+            h = None
+    if cur.get("geo_status") != "suspect" or not isinstance(h, dict):
+        return None
+    return h if h.get("by") in POLICY_STAMPS and not h.get("unhidden_at") else None
+
+
+async def _reveal_if_policy_hidden(conn, row_id: str, cur: dict, outcome: str) -> bool:
+    """After the geocoder's point was written: a row a hide policy hid is shown again (and its names), the stamp kept
+    with unhidden_at / unhidden_by. Any other suspect row (outlier rule, hide_unconfirmed) stays as it is."""
+    h = _policy_hidden(cur)
+    if h is None:
+        return False
+    stamp = {**h, "unhidden_at": datetime.now(timezone.utc).isoformat(), "unhidden_by": f"relocate:{outcome}"}
+    status = await conn.execute(_REVEAL_CONFIRMED_SQL, row_id, json.dumps(stamp, default=str))
+    if not str(status).endswith(" 1"):
+        return False
+    await conn.execute(_UNHIDE_NAMES_SQL, row_id)
+    return True
 
 
 def located_by_list(value) -> list[str]:
@@ -556,15 +654,18 @@ async def _apply_confirmed_recheck(conn, row: dict, routes: tuple, geocoder, *, 
     cap = guards.route_radius(query)
     async with conn.transaction():
         await store.lock_destinations(conn)
-        if await _still_due(conn, row) is None:
+        cur = await _still_due(conn, row)
+        if cur is None:
             return {"outcome": "skipped"}
         km = round(guards.km(lat, lng, hit.lat, hit.lng), 1) if hit is not None else None
         if hit is not None and km <= cap:
             await store._write_point(conn, row["id"], hit, False)
+            shown = await _reveal_if_policy_hidden(conn, row["id"], cur, "reconfirmed")
             fixed = hit.country != row["country"] and await _fix_country(conn, row, hit.country)
             await conn.execute(_STAMP_SQL, row["id"], _stamp("reconfirmed", moved_km=km, prev=_prev(row),
                                                              refused=j["reason"], accept_rule=accept_rule))
-            return {"outcome": "reconfirmed", "moved_km": km, "country_fixed": bool(fixed)}
+            return {"outcome": "reconfirmed", "moved_km": km, "country_fixed": bool(fixed),
+                    **({"unhidden": True} if shown else {})}
         await conn.execute(_FLAG_SQL, row["id"], _keep_linear(row, REVIEW_WEAK_CONFIRM), hide_unconfirmed)
         if hide_unconfirmed:
             await conn.execute(_HIDE_NAMES_SQL, row["id"])
@@ -611,13 +712,16 @@ async def apply_row(conn, row: dict, routes: tuple, geocoder, *, hide_unconfirme
         if cur is None:            # fixed by an admin / merged / re-located meanwhile: nothing to do, no stamp
             return {"outcome": "skipped"}
         if hit is not None:
+            shown = False
             if guards.may_overwrite(cur["located_by"], cur["geo_status"], hit.located_by):
                 await store._write_point(conn, row["id"], hit, False)
+                shown = await _reveal_if_policy_hidden(conn, row["id"], cur, "confirmed")
             fixed = hit.country != row["country"] and await _fix_country(conn, row, hit.country)
             km = round(guards.km(lat, lng, hit.lat, hit.lng), 1)
             await conn.execute(_STAMP_SQL, row["id"], _stamp("confirmed", moved_km=km, prev=_prev(row),
                                                              accept_rule=accept_rule))
-            return {"outcome": "confirmed", "moved_km": km, "country_fixed": bool(fixed)}
+            return {"outcome": "confirmed", "moved_km": km, "country_fixed": bool(fixed),
+                    **({"unhidden": True} if shown else {})}
         outcome = locate.REVIEW_OFF_ROUTE if c["on_route"] is False else locate.REVIEW_LLM_POINT
         # an off-route flag wins; otherwise a reason the row already carries (unconfirmed_hard_type …) is kept
         reason = _keep_linear(row, outcome if outcome == locate.REVIEW_OFF_ROUTE
@@ -650,7 +754,8 @@ async def apply(pool, geocoder, *, located_by: list[str], country: Optional[str]
     out: dict = {"mode": "apply", "rule_version": RULE_VERSION, "located_by": located_by, "country": country,
                  "recheck": recheck_list(recheck), "strategy": strategy, "accept_rule": accept_rule,
                  "hide_unconfirmed": hide_unconfirmed,
-                 "rows": len(rows), "done": 0, "errors": 0, **{o: 0 for o in OUTCOMES}, "moved_km_max": 0.0,
+                 "rows": len(rows), "done": 0, "errors": 0, **{o: 0 for o in OUTCOMES}, "unhidden": 0,
+                 "moved_km_max": 0.0,
                  "samples": []}
     start_requests = getattr(geocoder, "requests", 0) or 0
     for n, row in enumerate(rows):
@@ -680,6 +785,7 @@ async def apply(pool, geocoder, *, located_by: list[str], country: Optional[str]
         out["done"] += 1
         out[r["outcome"]] += 1
         out["country_fixed"] += 1 if r.get("country_fixed") else 0
+        out["unhidden"] += 1 if r.get("unhidden") else 0
         out["moved_km_max"] = max(out["moved_km_max"], r.get("moved_km") or 0.0)
         notable = (r["outcome"] not in ("confirmed", "kept", "kept_unjudged")
                    or (r.get("moved_km") or 0) > geomatch.ACCEPT_KM)
@@ -733,23 +839,134 @@ async def hide(pool, *, reasons: list[str], country: Optional[str], confirm: boo
     return out
 
 
-async def unhide(pool, *, country: Optional[str]) -> dict:
-    """Revert the rows `hide` marked that are still suspect for the reason it hid them: geo_status 'ok', their suspect
-    names 'resolved', the stamp kept with `unhidden_at` (the record stays). A row whose review_reason changed since
-    (another path flagged it) is left as it is (`kept_reason_changed`). No call."""
-    async with pool.acquire() as conn:
-        rows = [dict(r) for r in await conn.fetch(_UNHIDE_ROWS_SQL, HIDE_STAMP, country)]
-    n = changed = 0
+def hide_flagged_outcomes(value) -> list[str]:
+    """The relocate outcomes a hide_flagged run takes: the asked ones among HIDE_FLAGGED_OUTCOMES, default
+    HIDE_FLAGGED_DEFAULT (llm_point, off_route; weak_confirm only when asked)."""
+    vals = [v for v in (value or HIDE_FLAGGED_DEFAULT) if v in HIDE_FLAGGED_OUTCOMES]
+    return sorted(set(vals)) or sorted(HIDE_FLAGGED_DEFAULT)
+
+
+def policy_stamps(value) -> list[str]:
+    """The hide stamps an unhide reverts: the asked ones among POLICY_STAMPS, default all of them."""
+    vals = [v for v in (value or POLICY_STAMPS) if v in POLICY_STAMPS]
+    return sorted(set(vals)) or sorted(POLICY_STAMPS)
+
+
+def _spread_sample(rows: list[dict], n: int) -> list[dict]:
+    """Up to n rows taken round-robin over countries (rows are ordered by country, id): every country shows up."""
+    by: dict[str, list] = {}
     for r in rows:
-        if r.get("same_reason") is False:
-            changed += 1
-            continue
+        by.setdefault(r.get("country") or "", []).append(r)
+    out: list[dict] = []
+    while len(out) < n and any(by.values()):
+        for k in sorted(by):
+            if by[k] and len(out) < n:
+                out.append(by[k].pop(0))
+    return out
+
+
+def _count(rows: list[dict], key: str) -> dict:
+    c: dict = {}
+    for r in rows:
+        k = r.get(key) if r.get(key) is not None else "-"
+        c[k] = c.get(k, 0) + 1
+    return dict(sorted(c.items(), key=lambda kv: (-kv[1], str(kv[0]))))
+
+
+async def _audit_batch(conn, *, actor: str, action: str, resource_id: str, details: dict) -> None:
+    """One acp_shared.audit_log row, written last in the batch's transaction (the table's trigger holds a lock)."""
+    from services.acp_shared.audit_log import write_audit_log
+    await write_audit_log(conn, tenant_id=None, actor=actor[:64], action=action, resource_type=AUDIT_RESOURCE,
+                          resource_id=resource_id[:200], details=json.loads(json.dumps(details, default=str)))
+
+
+async def hide_flagged(pool, *, outcomes: list[str], stamp_versions: Optional[list[str]] = None,
+                       stamp_accept: Optional[str] = None, country: Optional[str] = None, confirm: bool = False,
+                       max_rows: Optional[int] = None, actor: str = "job", job_id: Optional[str] = None) -> dict:
+    """Rows a relocate run stamped with one of `outcomes` and left on the model's point (module docstring): the report
+    (no write) or, with `confirm`, hidden in batches with an audit row each. `max_rows` refuses a confirm whose
+    selection is larger than the report it follows. No call."""
+    async with pool.acquire() as conn:
+        rows = [dict(r) for r in await conn.fetch(_HIDE_FLAGGED_SQL, list(outcomes), list(stamp_versions or []),
+                                                  stamp_accept, list(LOCATED_BY_ALLOWED), country)]
+    out = {"mode": "hide_flagged", "rule_version": RULE_VERSION, "outcomes": list(outcomes),
+           "stamp_versions": list(stamp_versions or []), "stamp_accept": stamp_accept, "country": country,
+           "confirm": confirm, "rows": len(rows), "linked": sum(1 for r in rows if r.get("linked")),
+           "by_country": _count(rows, "country"), "by_outcome": _count(rows, "outcome"),
+           "by_reason": _count(rows, "review_reason"), "by_stamp_version": _count(rows, "stamp_v"),
+           "by_located_by": _count(rows, "located_by"), "hidden": 0, "audit_rows": 0,
+           "samples": [{"id": r["id"], "name": r["name"], "country": r["country"], "outcome": r["outcome"],
+                        "reason": r["review_reason"], "lat": r["lat"], "lng": r["lng"],
+                        "route_km": r.get("route_km"), "linked": bool(r.get("linked"))}
+                       for r in _spread_sample(rows, SAMPLE)]}
+    if not confirm:
+        return out
+    if max_rows is not None and len(rows) > max_rows:
+        return {**out, "status": "refused_selection_grew", "max_rows": max_rows,
+                "detail": "more rows match than the report this confirm follows: run the report again, then confirm"}
+    out["max_rows"] = max_rows
+    at = datetime.now(timezone.utc).isoformat()
+    selection = {"outcomes": list(outcomes), "stamp_versions": list(stamp_versions or []),
+                 "stamp_accept": stamp_accept, "country": country}
+    for start in range(0, len(rows), HIDE_BATCH):
+        batch, ids = rows[start:start + HIDE_BATCH], []
         async with pool.acquire() as conn:
             async with conn.transaction():
                 await store.lock_destinations(conn)
-                status = await conn.execute(_UNHIDE_ROW_SQL, r["id"], datetime.now(timezone.utc).isoformat())
-                if status.endswith(" 1"):
-                    await conn.execute(_UNHIDE_NAMES_SQL, r["id"])
-                    n += 1
-    return {"mode": "unhide", "rule_version": RULE_VERSION, "country": country, "rows": len(rows), "unhidden": n,
-            "kept_reason_changed": changed}
+                for r in batch:
+                    stamp = json.dumps({"by": HIDE_FLAGGED_STAMP, "reason": r["review_reason"],
+                                        "outcome": r["outcome"], "stamp_v": r.get("stamp_v"), "at": at,
+                                        "job": job_id, "actor": actor})
+                    status = await conn.execute(_HIDE_FLAGGED_ROW_SQL, r["id"], stamp, r["review_reason"],
+                                                r["outcome"], r["located_by"])
+                    if str(status).endswith(" 1"):
+                        await conn.execute(_HIDE_NAMES_SQL, r["id"])
+                        ids.append(r["id"])
+                if ids:
+                    await _audit_batch(conn, actor=actor, action=AUDIT_HIDE,
+                                       resource_id=f"hide_flagged:{country or '*'}:{job_id or '-'}",
+                                       details={**selection, "job": job_id, "batch": start // HIDE_BATCH,
+                                                "hidden": len(ids), "destination_ids": ids})
+                    out["audit_rows"] += 1
+        out["hidden"] += len(ids)
+    out["changed_since_report"] = len(rows) - out["hidden"]
+    logger.info("place_relocate_hide_flagged", rows=len(rows), hidden=out["hidden"], job_id=job_id)
+    return out
+
+
+async def unhide(pool, *, country: Optional[str], by: Optional[list[str]] = None,
+                 destination_ids: Optional[list[str]] = None, actor: str = "job",
+                 job_id: Optional[str] = None) -> dict:
+    """Revert the rows a hide policy (`by`: its stamps, default every POLICY_STAMPS) marked that are still suspect for
+    the reason it hid them: geo_status 'ok', their suspect names 'resolved', the stamp kept with `unhidden_at` /
+    `unhidden_by` (the record stays); `destination_ids` = only those rows (a single-row restore). A row whose
+    review_reason changed since (another path flagged it) is left as it is (`kept_reason_changed`). One audit row per
+    batch of rows reverted. No call."""
+    stamps = policy_stamps(by)
+    ids_filter = list(destination_ids) if destination_ids else None
+    async with pool.acquire() as conn:
+        rows = [dict(r) for r in await conn.fetch(_UNHIDE_ROWS_SQL, stamps, country, ids_filter)]
+    due = [r for r in rows if r.get("same_reason") is not False]
+    n, audits, at = 0, 0, datetime.now(timezone.utc).isoformat()
+    who = f"{actor}:{job_id}" if job_id else actor
+    for start in range(0, len(due), HIDE_BATCH):
+        ids = []
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await store.lock_destinations(conn)
+                for r in due[start:start + HIDE_BATCH]:
+                    status = await conn.execute(_UNHIDE_ROW_SQL, r["id"], at, who)
+                    if str(status).endswith(" 1"):
+                        await conn.execute(_UNHIDE_NAMES_SQL, r["id"])
+                        ids.append(r["id"])
+                if ids:
+                    await _audit_batch(conn, actor=actor, action=AUDIT_UNHIDE,
+                                       resource_id=f"unhide:{country or '*'}:{job_id or '-'}",
+                                       details={"by": stamps, "country": country, "job": job_id,
+                                                "batch": start // HIDE_BATCH, "unhidden": len(ids),
+                                                "destination_ids": ids})
+                    audits += 1
+        n += len(ids)
+    return {"mode": "unhide", "rule_version": RULE_VERSION, "country": country, "by": stamps,
+            "destination_ids": len(ids_filter) if ids_filter else None, "rows": len(rows), "unhidden": n,
+            "kept_reason_changed": len(rows) - len(due), "audit_rows": audits}

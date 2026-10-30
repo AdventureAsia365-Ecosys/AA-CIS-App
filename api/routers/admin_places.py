@@ -57,6 +57,13 @@ AA-997 (S254 geocode audit, fix plan step 1: coordinates come from the geocoder 
        llm_point / off_route / unconfirmed_hard_type / weak_confirm (+ non_place:* only when "non_place" is in
        reasons) become suspect (hidden everywhere); unhide reverts the rows still flagged for the reason they were
        hidden and keeps the record (unhidden_at). No paid call.
+       AA-997 S260 hide_flagged {outcomes = [llm_point, off_route] (| weak_confirm), stamp_versions?, stamp_accept?,
+       country?, confirm = false}: the same hide scoped by the relocate stamp — only rows a relocate run already
+       processed and left on the model's point (still flagged, still on that point); the report (confirm=false)
+       counts them per country / outcome / reason / stamp version with a sample; confirm=true needs the latest
+       report of the same selection (409 otherwise) and refuses on the job when more rows match than that report
+       (max_rows); one audit row per batch. unhide {by?, destination_ids?}: the policy stamps to revert (default
+       all), only these rows (≤ 500; the single-row restore of the review list), audited.
 
 Every response that shows coordinates carries the Geoapify / OpenStreetMap attribution (ADR 0007).
 """
@@ -628,7 +635,7 @@ async def dedupe_run(body: DedupeRunRequest, request: Request, x_admin_secret: s
 
 
 class RelocateRequest(BaseModel):
-    mode: str = Field("dry_run", pattern="^(dry_run|apply|hide|unhide)$")
+    mode: str = Field("dry_run", pattern="^(dry_run|apply|hide|unhide|hide_flagged)$")
     located_by: list[str] = Field(default_factory=lambda: ["llm"], min_length=1, max_length=2)
     country: Optional[str] = Field(None, max_length=80)
     limit: int = Field(400, ge=1, le=400)
@@ -639,7 +646,43 @@ class RelocateRequest(BaseModel):
     accept_rule: str = Field("v1", pattern="^(v1|aa997\\.[23])$")
     max_requests: Optional[int] = Field(None, ge=1, le=100_000)
     reasons: Optional[list[str]] = Field(None, max_length=8)      # hide
-    confirm: bool = False                                         # hide: false = report only
+    confirm: bool = False                                         # hide / hide_flagged: false = report only
+    # AA-997 S260 hide_flagged / unhide
+    outcomes: Optional[list[str]] = Field(None, max_length=3)
+    stamp_versions: list[str] = Field(default_factory=list, max_length=4)
+    stamp_accept: Optional[str] = Field(None, pattern="^(v1|aa997\\.[23])$")
+    by: Optional[list[str]] = Field(None, max_length=4)            # unhide: the policy stamps to revert
+    destination_ids: Optional[list[uuid.UUID]] = Field(None, max_length=500)   # unhide: only these rows
+
+    @field_validator("outcomes")
+    @classmethod
+    def _outcomes(cls, v):
+        from services.places.relocate import HIDE_FLAGGED_OUTCOMES
+        if v is None:
+            return v
+        bad = [x for x in v if x not in HIDE_FLAGGED_OUTCOMES]
+        if bad:
+            raise ValueError(f"outcomes must be in {list(HIDE_FLAGGED_OUTCOMES)}")
+        return sorted(set(v))
+
+    @field_validator("stamp_versions")
+    @classmethod
+    def _stamp_versions(cls, v):
+        bad = [x for x in v if not x.startswith("aa997.") or len(x) > 16]
+        if bad:
+            raise ValueError("stamp_versions are relocate rule versions such as 'aa997.1' or 'aa997.2'")
+        return sorted(set(v))
+
+    @field_validator("by")
+    @classmethod
+    def _by(cls, v):
+        from services.places.relocate import POLICY_STAMPS
+        if v is None:
+            return v
+        bad = [x for x in v if x not in POLICY_STAMPS]
+        if bad:
+            raise ValueError(f"by must be in {list(POLICY_STAMPS)}")
+        return sorted(set(v))
 
     @field_validator("recheck")
     @classmethod
@@ -672,6 +715,12 @@ class RelocateRequest(BaseModel):
         return sorted(set(v))
 
 
+_LAST_HIDE_FLAGGED_REPORT_SQL = """
+    SELECT id::text AS id, result FROM shared.job
+     WHERE kind = 'place_relocate' AND status = 'succeeded' AND payload ->> 'mode' = 'hide_flagged'
+       AND coalesce((payload ->> 'confirm')::boolean, false) = false
+     ORDER BY finished_at DESC NULLS LAST LIMIT 1
+"""
 _LAST_RELOCATE_DRY_RUN_SQL = """
     SELECT id::text AS id, result FROM shared.job
      WHERE kind = 'place_relocate' AND status = 'succeeded' AND payload ->> 'mode' = 'dry_run'
@@ -702,7 +751,30 @@ async def relocate_run(body: RelocateRequest, request: Request, x_admin_secret: 
     if body.mode == "hide":
         payload["reasons"] = relocate.hide_reasons(body.reasons)
         payload["confirm"] = body.confirm
+    if body.mode == "hide_flagged":
+        payload.update({"outcomes": relocate.hide_flagged_outcomes(body.outcomes),
+                        "stamp_versions": body.stamp_versions, "stamp_accept": body.stamp_accept,
+                        "confirm": body.confirm})
+    if body.mode == "unhide":
+        payload["by"] = relocate.policy_stamps(body.by)
+        if body.destination_ids:
+            payload["destination_ids"] = sorted({str(i) for i in body.destination_ids})
     async with request.app.state.pool.acquire() as conn:
+        if body.mode == "hide_flagged" and body.confirm:
+            last = await conn.fetchrow(_LAST_HIDE_FLAGGED_REPORT_SQL)
+            res = (_json(last["result"]) or {}) if last is not None else {}
+            same = (last is not None and res.get("mode") == "hide_flagged"
+                    and sorted(res.get("outcomes") or []) == payload["outcomes"]
+                    and sorted(res.get("stamp_versions") or []) == payload["stamp_versions"]
+                    and (res.get("stamp_accept") or None) == (body.stamp_accept or None)
+                    and (res.get("country") or None) == (body.country or None))
+            if not same:
+                raise HTTPException(status_code=409, detail={
+                    "error": "run the hide_flagged report of this selection first (confirm=false; same outcomes, "
+                             "stamp_versions, stamp_accept, country)",
+                    "last_report": last["id"] if last is not None else None})
+            payload["dry_run_job"] = last["id"]
+            payload["max_rows"] = int(res.get("rows") or 0)
         if body.mode == "apply":
             last = await conn.fetchrow(_LAST_RELOCATE_DRY_RUN_SQL)
             res = (_json(last["result"]) or {}) if last is not None else {}
