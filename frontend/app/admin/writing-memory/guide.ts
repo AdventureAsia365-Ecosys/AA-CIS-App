@@ -241,6 +241,23 @@ export const WRITING_MEMORY_GUIDE: GuideContent = {
             + "platform release's examples fill the gap, never another tenant's.",
         ] },
 
+        { kind: "subheading", text: "Metrics tab" },
+        { kind: "paragraph", text: "The weekly report, measured every Monday for the week before. It costs nothing. A "
+          + "dash means the writer could not be measured (no data), never zero." },
+        { kind: "list", items: [
+          "Per writer: Writes, Re-flag (95% interval), Repeat errors, Light-edit share, Minutes to fix, Tenant edits "
+            + "/ write, Reasons captured (green from 80%), Cost / write, Replay hit rate and Clean pairs.",
+          "Soft stops: for each active release with content, the soft stops that fired since it went live and What "
+            + "the job did. A soft stop takes the release out of service unless someone clicked Keep and gave a "
+            + "reason (for 1 to 30 days).",
+          "Rules not re-confirmed by fresh edits expire after 60 days. The project stop rule is flagged when a "
+            + "writer had two releases without improvement.",
+          "Measure now (dry run) shows this week's numbers without storing or moving anything. Run the weekly job "
+            + "now does the real run.",
+          "Disagreement queue: 5-10 cases a week where the judge or the gates and a human label disagree. Click "
+            + "Judge right, Human right or Unclear.",
+        ] },
+
         { kind: "subheading", text: "Header buttons" },
         { kind: "paragraph", text: "Refresh only reloads the page data. Every other button queues one background job, "
           + "and a message says 'Queued (job …); see Platform › Jobs'. The result numbers are on Platform › Jobs, not "
@@ -489,7 +506,6 @@ export const WRITING_MEMORY_GUIDE: GuideContent = {
           "Approving a candidate (candidate → approved). So rules other than T9 lexicon rules cannot move forward "
             + "yet.",
           "Writers reading rules from a release. Today only empty releases can be active.",
-          "The Metrics tab.",
           "Tenant names, the numbers of a dry run or baseline (Platform › Jobs only), and more than 200 signals in "
             + "the list.",
         ] },

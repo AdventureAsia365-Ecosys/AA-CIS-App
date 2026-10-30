@@ -231,6 +231,23 @@ export const WRITING_MEMORY_GUIDE_VI: GuideContent = {
             + "kênh, ví dụ của bản phát hành nền tảng bù vào, không bao giờ lấy của tenant khác.",
         ] },
 
+        { kind: "subheading", text: "Tab Chỉ số" },
+        { kind: "paragraph", text: "Báo cáo hằng tuần, đo mỗi thứ Hai cho tuần trước. Không tốn tiền. Dấu gạch nghĩa là "
+          + "không đo được writer đó (không có dữ liệu), không bao giờ là số không." },
+        { kind: "list", items: [
+          "Mỗi writer: Số bài, Bị gắn cờ (khoảng 95%), Lỗi lặp lại, Tỷ lệ sửa nhẹ, Phút để sửa, Tenant sửa / bài, "
+            + "Có lý do (xanh từ 80%), Chi phí / bài, Tỷ lệ khớp replay và Cặp sạch.",
+          "Điểm dừng mềm: với mỗi bản phát hành có nội dung đang chạy, các điểm dừng mềm đã chạm từ khi chạy và Job đã "
+            + "làm gì. Một điểm dừng mềm đưa bản phát hành ra khỏi vận hành, trừ khi có người bấm Giữ lại và ghi lý do "
+            + "(từ 1 đến 30 ngày).",
+          "Luật không được xác nhận lại bởi chỉnh sửa mới sẽ hết hạn sau 60 ngày. Luật dừng dự án được gắn cờ khi một "
+            + "writer có hai bản phát hành không cải thiện.",
+          "Đo ngay (chạy thử) cho xem số liệu tuần này mà không lưu hay đổi gì. Chạy job hằng tuần ngay là lần chạy "
+            + "thật.",
+          "Hàng đợi bất đồng: 5-10 trường hợp mỗi tuần mà judge hoặc cổng kiểm và nhãn của người không khớp. Bấm Judge "
+            + "đúng, Người đúng hoặc Chưa rõ.",
+        ] },
+
         { kind: "subheading", text: "Các nút ở đầu trang" },
         { kind: "paragraph", text: "Làm mới chỉ tải lại dữ liệu trang. Mọi nút khác xếp một job nền, và một thông báo "
           + "hiện 'Đã xếp hàng (job …); xem Nền tảng › Jobs'. Kết quả số liệu nằm ở Nền tảng › Jobs, không phải trên "
@@ -484,7 +501,6 @@ export const WRITING_MEMORY_GUIDE_VI: GuideContent = {
         { kind: "list", items: [
           "Duyệt một ứng viên (ứng viên → đã duyệt). Vì vậy các quy tắc ngoài quy tắc từ vựng T9 chưa đi tiếp được.",
           "Trình viết đọc quy tắc từ một bản phát hành. Hôm nay chỉ bản phát hành rỗng mới hoạt động được.",
-          "Tab Chỉ số.",
           "Tên tenant, số liệu của lần chạy thử hoặc baseline (chỉ ở Nền tảng › Jobs), và hơn 200 tín hiệu trong danh "
             + "sách.",
         ] },

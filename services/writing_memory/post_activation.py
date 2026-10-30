@@ -285,12 +285,24 @@ async def check_release(pool, release_id: str, *, n: int = cfg.POST_ACTIVATION_N
 
 
 async def _move_pointer(pool, release: dict, report: dict, *, actor: str) -> dict:
-    """The automatic rollback, in one transaction with its audit row."""
+    """The automatic rollback of a post-activation violation (move_pointer with this check's reason and audit row)."""
+    codes = ",".join(sorted(report["violation_codes"]))
+    return await move_pointer(
+        pool, release, actor=actor, reason=f"post_activation: {codes} on {report['violations']} of "
+                                           f"{report['carried']} writes",
+        audit_action="writing_memory.release_post_activation_failed",
+        audit_details={"codes": report["violation_codes"], "carried": report["carried"],
+                       "violations": report["violations"], "refs": report["violating_refs"][:20]})
+
+
+async def move_pointer(pool, release: dict, *, actor: str, reason: str, audit_action: str,
+                       audit_details: Optional[dict] = None) -> dict:
+    """Take an active release out of service, in one transaction with its audit row (AA-920; AA-922 reuses it for the
+    weekly soft stops): roll the pointer back to the previous release; a tenant release with no previous is retired
+    alone; a platform one without a previous, or any refused rollback, turns the writer's memory off."""
     from services.acp_shared.audit_log import write_audit_log
     from services.writing_memory import releases as rel
 
-    codes = ",".join(sorted(report["violation_codes"]))
-    reason = f"post_activation: {codes} on {report['violations']} of {report['carried']} writes"
     out: dict[str, Any] = {}
     try:
         async with pool.acquire() as conn:
@@ -314,16 +326,14 @@ async def _move_pointer(pool, release: dict, report: dict, *, actor: str) -> dic
                                **({"rollback_refused": e.code} if e.code != "no_previous" else {})}
                 await write_audit_log(
                     conn, tenant_id=release.get("tenant_id") or rel.PLATFORM_TENANT_ID, actor=actor[:128],
-                    action="writing_memory.release_post_activation_failed", resource_type="writing_memory_release",
+                    action=audit_action, resource_type="writing_memory_release",
                     resource_id=str(release["release_id"]),
                     details={"writer": release["writer"], "scope": release["scope"],
-                             "release_no": release["release_no"], "codes": report["violation_codes"],
-                             "carried": report["carried"], "violations": report["violations"],
-                             "refs": report["violating_refs"][:20], **out})
+                             "release_no": release["release_no"], **(audit_details or {}), **out})
     except rel.ReleaseError as e:
-        logger.error("wm_post_activation_rollback_refused", release_id=release["release_id"], code=e.code)
+        logger.error("wm_release_out_of_service_refused", release_id=release["release_id"], code=e.code)
         return {"action": f"refused:{e.code}", "action_detail": e.detail[:300]}
-    logger.warning("wm_post_activation_rolled_back", release_id=release["release_id"], **out)
+    logger.warning("wm_release_out_of_service", release_id=release["release_id"], why=audit_action, **out)
     return out
 
 
