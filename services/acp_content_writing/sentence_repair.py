@@ -28,7 +28,8 @@ from services.acp_content_writing.hygiene import (
     integrity_problems, is_sentence_end, near_duplicates, restates, sentence_spans, sentence_tail_end,
     tidy_after_cut,
 )
-from services.acp_content_writing.quality_gates import OWNED_BY_FIX_STEP, expand_ledger
+from services.acp_content_writing.quality_gates import (F9_STYLE_PROBLEM, OWNED_BY_FIX_STEP, brand_style_sentences,
+                                                         expand_ledger)
 from services.acp_shared.citation_tags import TAG as _TAG
 from services.acp_shared.citation_tags import strip_citation_tags, trailing_tags
 from services.quality import repair_contract
@@ -45,7 +46,8 @@ _ELIGIBLE_GATES = {qr.F1_GROUNDING, qr.F9_CTA_FACT, qr.F2_BRAND_FORBIDDEN, qr.F1
                    qr.F12_SCOPE, qr.F13_HYGIENE, qr.F13_LEAK, qr.F15_VOICE,
                    qr.F13_REPEAT, qr.F17_TRIP_FACT, qr.F18_RARITY,  # S234 round 3
                    qr.F19_AUTHENTICITY,  # AA-819 (AUP 2026-11)
-                   qr.F2_PLATFORM_TRUTH, qr.F2_SUPERLATIVES}  # AA-800
+                   qr.F2_PLATFORM_TRUTH, qr.F2_SUPERLATIVES,  # AA-800
+                   qr.F9_BRAND_STYLE}  # AA-788 — only blocks in its `repair` mode, attempt 1
 # Gates whose violations read "<problem>: '<sentence>'" (parsed with _BRAND_QUOTE_RE).
 _QUOTED_GATES = {qr.F2_BRAND_FORBIDDEN, qr.F11_BRAND_NAME, qr.F12_SCOPE, qr.F13_HYGIENE, qr.F13_LEAK, qr.F15_VOICE,
                  qr.F13_REPEAT, qr.F17_TRIP_FACT, qr.F18_RARITY, qr.F19_AUTHENTICITY,
@@ -342,6 +344,10 @@ def plan(content_text: str, gate_ledger: list[dict]) -> Optional[list[dict]]:
                 if not m:
                     return None
                 items.append((m.group(2), m.group(1), g["gate"]))
+            elif g["gate"] == qr.F9_BRAND_STYLE:
+                # AA-788 — each flagged phrase's body sentence (the gate blocked only when one locates)
+                items += [(sentence, F9_STYLE_PROBLEM.format(phrase=phrase), g["gate"])
+                          for sentence, phrase in brand_style_sentences(content_text, v)]
             elif g["gate"] == qr.F1_GROUNDING:
                 m = _F1_QUOTE_RE.search(v)
                 if not m:
@@ -369,7 +375,7 @@ def plan(content_text: str, gate_ledger: list[dict]) -> Optional[list[dict]]:
             span = locate_heading(content_text, quote)
             heading = span is not None
         if span is None:
-            if gate == qr.F9_CTA_FACT:
+            if gate in (qr.F9_CTA_FACT, qr.F9_BRAND_STYLE):
                 continue  # S234 round 3 — a judge quote that matches no sentence; the others are still fixed
             return None
         hit = next((o for o in out if not (span[1] <= o["start"] or span[0] >= o["end"])), None)
