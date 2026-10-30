@@ -112,6 +112,25 @@ def finding_text(cls: str, sentence: str) -> str:
     return f"{sa_modes.FINDING_PREFIX}{CLASS_TAG}{cls}: {REASONS[cls]}: '{sentence[:300]}'"
 
 
+def tier2_only_failure(g: dict) -> bool:
+    """Is legacy result `g` failed and blocking ONLY because of tier-2 findings? True when it carries an
+    `sa:t2.…` finding, no tier-1 `sa:` finding, and its own findings (if any) did not block before `apply`
+    (seed_align.modes.BASE_BLOCKING_KEY). The AA-528 regression guard leaves such a result out (service.py): tier 2
+    is re-asked every attempt (not sticky) and defers triggers past MAX_ITEMS, so a finding that first shows on a
+    later attempt is not a sign the rewrite broke anything — and the revert it would trigger could keep an earlier
+    attempt's product-truth failure. The finding itself still gets its sentence repair; it never holds."""
+    if g.get("passed", True) or not g.get("blocking", True):
+        return False
+    t2_prefix = f"{sa_modes.FINDING_PREFIX}{CLASS_TAG}"
+    vs = [str(v) for v in g.get("violations") or []]
+    if not any(v.startswith(t2_prefix) for v in vs):
+        return False
+    rest = [v for v in vs if not v.startswith(t2_prefix)]
+    if any(v.startswith(sa_modes.FINDING_PREFIX) for v in rest):
+        return False  # a tier-1 finding blocks it too
+    return not (rest and sa_modes.base_blocking(g))
+
+
 # ---------------------------------------------------------------- triggers (deterministic, no spaCy)
 
 @dataclass(frozen=True)
@@ -548,6 +567,7 @@ def run(content_text: str, *, tier1=None, trip_ctx=None, hygiene_ctx=None, brief
 
 
 __all__ = ["STAGE", "ROLE", "MODE_ENV", "OFF", "SHADOW", "REPAIR", "MODES", "CLASS_TAG", "CLASSES", "CLASS_GATE",
-           "REASONS", "MAX_ITEMS", "Trigger", "class_mode", "active_modes", "finding_text", "tier1_skip_set",
+           "REASONS", "MAX_ITEMS", "Trigger", "class_mode", "active_modes", "finding_text", "tier2_only_failure",
+           "tier1_skip_set",
            "find_triggers", "SYSTEM_PROMPT", "SCHEMA", "build_user_prompt", "build_request", "parse_verdicts",
            "AdjudicateReplyError", "quote_in", "verify", "Adjudication", "adjudicate", "run"]

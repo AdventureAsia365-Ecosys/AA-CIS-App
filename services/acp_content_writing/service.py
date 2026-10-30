@@ -87,6 +87,7 @@ from services.writing_memory import insertion as wm_insertion  # AA-919 (WM-18 /
 from services.writing_memory import signals as wm_signals  # AA-916
 from services.acp_content_writing.prompts import SYSTEM_PROMPT  # AA-916 WM-08 (writer_prompt_version)
 from services.acp_content_writing import brief_grounding  # AA-790 round 9 (writer_input marker)
+from services.acp_content_writing.seed_align import adjudicate as seed_adjudicate  # AA-1000 (regression guard)
 from services.acp_content_writing import reader_checklist  # AA-790 round 10 (writer_input marker)
 from services.content_generation.batch_prompt import prompt_version_of
 from services.quality.registry import threshold
@@ -565,6 +566,15 @@ def _blocking_failures(gate_ledger: list) -> set:
     (expand_ledger), so each source of a merged entry counts on its own: a new banned-pattern failure inside
     F2_lexicon is a regression even when F2_lexicon already failed on a stock phrase."""
     return {g["gate"] for g in expand_ledger(gate_ledger) if g.get("blocking", True) and not g["passed"]}
+
+
+def _regression_failures(gate_ledger: list) -> set:
+    """AA-1000 review — `_blocking_failures` for the AA-528 regression guard only: without a result that fails only on
+    a tier-2 seed-alignment finding (`seed_adjudicate.tier2_only_failure`). Tier 2 is re-asked every attempt and
+    defers triggers past its per-call cap, so a tier-2 finding new on this attempt must not revert a rewrite that
+    fixed a product-truth failure (it would keep that failure); the finding still gets its sentence repair."""
+    return {g["gate"] for g in expand_ledger(gate_ledger) if g.get("blocking", True) and not g["passed"]
+            and not seed_adjudicate.tier2_only_failure(g)}
 
 
 def _floor_only_failure(blocking_fails: list) -> bool:
@@ -2274,8 +2284,9 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             if prev_snapshot is not None:
                 prev_ledger = prev_snapshot["gate_ledger"]
                 # AA-924 — keyed by source on the legacy views (_blocking_failures)
-                prev_blocking_fail = _blocking_failures(prev_ledger)
-                cur_blocking_fail = _blocking_failures(gate_ledger)
+                # AA-1000 review — a result failed only by a tier-2 finding is left out (_regression_failures)
+                prev_blocking_fail = _regression_failures(prev_ledger)
+                cur_blocking_fail = _regression_failures(gate_ledger)
                 new_regressions = cur_blocking_fail - prev_blocking_fail
                 # AA-780 review — an attempt 1 that blocked only on gates that never hold, one of them the
                 # under-floor F14 (a too-short post sent to a full rewrite), had no product-truth problem for

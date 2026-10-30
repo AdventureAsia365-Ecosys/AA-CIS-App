@@ -394,6 +394,86 @@ def test_a_tier2_finding_never_holds_whatever_the_env(env, monkeypatch, cls):
     assert qg.never_holds(g) and qg.hold_failure([g]) is None
 
 
+# ---------------------------------------------------------------- AA-528 regression guard (review finding)
+
+def _t2_result(gate: str, cls: str, sentence: str, own: list | None = None, own_blocking: bool = False) -> dict:
+    """A legacy result as modes.apply leaves it after one tier-2 finding (own findings optional)."""
+    base = {"gate": gate, "passed": not own, "blocking": True if not own else own_blocking, "repairable": True,
+            "violations": list(own or [])}
+    (out,) = modes.apply([base], modes.SeedAlignRun(live={gate: [adj.finding_text(cls, sentence)]}))
+    return out
+
+
+def test_tier2_only_failure_spots_a_result_failed_only_by_tier2():
+    assert adj.tier2_only_failure(_t2_result(qr.F18_RARITY, adj.HYPE, HYPE_S))
+    # an own warning (did not block before apply) does not count either
+    assert adj.tier2_only_failure(_t2_result(qr.F18_RARITY, adj.HYPE, HYPE_S, own=["title is hype: 'x y z'"]))
+
+
+def test_tier2_only_failure_keeps_own_blocking_and_tier1_findings():
+    own = _t2_result(qr.F13_LEAK, adj.NAMING, NAMING_S, own=["writer instruction: 'A sentence.'"], own_blocking=True)
+    assert not adj.tier2_only_failure(own)
+    g = _t2_result(qr.F18_RARITY, adj.HYPE, HYPE_S)
+    g = {**g, "violations": g["violations"] + ["sa:scopeless_superlative: r: 'The best lake.'"]}
+    assert not adj.tier2_only_failure(g)
+    plain = {"gate": qr.F1_GROUNDING, "passed": False, "blocking": True, "violations": ["x: 'y'"]}
+    assert not adj.tier2_only_failure(plain) and not adj.tier2_only_failure({**plain, "passed": True})
+
+
+def test_regression_guard_ignores_a_tier2_only_result_on_the_merged_ledger():
+    from services.acp_content_writing import service as svc
+    f1 = {"gate": qr.F1_GROUNDING, "passed": False, "blocking": True, "repairable": True,
+          "violations": ["sentence states 25 not present in the content seed: 'The lake is 25 m deep.'"]}
+    f1_ok = {**f1, "passed": True, "violations": []}
+    prev = qg.merge_ledger([f1, {"gate": qr.F18_RARITY, "passed": True, "blocking": True, "violations": []}])
+    cur = qg.merge_ledger([f1_ok, _t2_result(qr.F18_RARITY, adj.HYPE, HYPE_S)])
+    assert svc._blocking_failures(cur) - svc._blocking_failures(prev) == {qr.F18_RARITY}  # the wider view keeps it
+    assert svc._regression_failures(cur) == set() and svc._regression_failures(prev) == {qr.F1_GROUNDING}
+
+
+@pytest.mark.asyncio
+async def test_a_tier2_finding_new_on_attempt_2_does_not_revert_the_f1_fix(monkeypatch):
+    """Attempt 1 fails F1; attempt 2 fixes F1 and tier 2 flags a hype sentence for the first time. The AA-528 guard
+    must not revert to attempt 1 (that would keep the F1 failure): attempt 3 repairs the hype sentence, it ships."""
+    import uuid
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from services.acp_content_writing import service as svc
+
+    quote, hype = "The lake is 25 metres deep.", "Few places can match the calm of this shore."
+    text1 = f"Lake Vashra is a glacial lake.\n\n{quote} {hype}\n\nAsk us."
+    calls = []
+
+    def fake_gates(*, content_text, **_):
+        calls.append(content_text)
+        n = len(calls)
+        f1 = ({"gate": qr.F1_GROUNDING, "passed": False, "blocking": True, "repairable": True,
+               "violations": [f"sentence states 25 not present in the content seed: '{quote}'"]}
+              if quote in content_text else qg._result(qr.F1_GROUNDING, []))
+        f18 = (_t2_result(qr.F18_RARITY, adj.HYPE, hype) if n == 2 and hype in content_text
+               else qg._result(qr.F18_RARITY, []))
+        ledger = [f1, f18]
+        first = next((g for g in ledger if not g["passed"] and g.get("blocking", True)), None)
+        return {"passed": first is None, "gate_ledger": ledger, "first_failure": first, "flags": []}
+
+    ctx = {"atom_text": "seed", "goal": {"key": "promotion", "name": "P", "description": "d", "logic": "l"},
+           "channel_style": {"channel": "linkedin"}, "brand_audience": {"brand_name": "Pretend Brand"},
+           "chosen": {"name": "a"}, "cta": "Ask us.", "destination": None, "trip_name": None,
+           "brand_rubric_text": "r", "channel": "linkedin", "atom_id": "a1", "tenant_id": None}
+    live = MagicMock(side_effect=AssertionError("no live model call in this test"))
+    with patch("shared.llm_client.client.LLMClient.generate", new=live), \
+            patch.object(svc, "write_content", return_value=(text1, 0.01, {}, None)), \
+            patch.object(svc, "rewrite_with_feedback", return_value=(text1.replace(quote, "The lake is deep."),
+                                                                     0.01, {}, None)), \
+            patch.object(svc, "repair_sentences", return_value=(["The lake is deep."], 0.001)), \
+            patch.object(svc, "run_quality_gates", new=MagicMock(side_effect=fake_gates)), \
+            patch.object(svc, "_finalize_piece", new=AsyncMock()) as fin:
+        await svc.run_write_background(uuid.uuid4(), uuid.uuid4(), ctx, pool=MagicMock())
+    kw = fin.await_args.kwargs
+    assert len(calls) == 3 and live.call_count == 0
+    assert not any(e.get("gate_targeted") == "gate_regression_guard" for e in kw["repair_log"])
+    assert quote not in kw["content_text"] and kw["status"] == "approved"
+
+
 # ---------------------------------------------------------------- run_quality_gates
 
 def _gates(text: str = PIECE, f9_results=None):

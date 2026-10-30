@@ -2245,7 +2245,8 @@ open WHAT / WHY / HOW FAQ answer that does not answer (F13_repeat; answers of 2+
 overstate" (F18_rarity). A VIOLATION counts only when its piece quote is in the sentence and its seed quote in the
 excerpt and the seed. Modes `T10_ADJ_MODE` / `T10_ADJ_MODE_<CLASS>`: off (default; no call) / shadow (recorded in
 `writer_input.seed_align[*].tier2`) / repair (at most ONE `sa:t2.<class>: …` finding per attempt → that gate's
-sentence repair or cut); any other value is off. It never holds (`t2.` classes are never hold-capable); any model
+sentence repair or cut); any other value is off. It never holds (`t2.` classes are never hold-capable), and a
+result failed only by a tier-2 finding is no AA-528 regression (`service._regression_failures`); any model
 error or the 60 s deadline changes nothing; a $0 replay (`f9_results`) calls nothing. Offline calibration:
 `scripts/aa1000_adjudicate_calibrate.py` (hard cap $5).
 S245 (AA-779) — **FAQ from People Also Ask, every answer names its subject.** The request's
