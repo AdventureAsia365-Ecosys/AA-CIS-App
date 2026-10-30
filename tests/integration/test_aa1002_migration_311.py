@@ -104,7 +104,25 @@ def test_the_check_refuses_unknown_or_empty_scopes(cur, bad):
 
 def test_cis_app_edits_routes_but_not_scopes(cur):
     _stage(cur, "grants", "gpt-5.6-luna", ["gpt-6-luna"], scopes="ARRAY['aws_only']")
-    conn = _connect("cis_app", CIS_APP_CI_PASSWORD)
+    # The replay skips CIS 244 and conftest's x1_244_undo revokes the shared tables from cis_app, so (as in the 251
+    # test) schema USAGE is granted for this test only, and 311 is re-run (idempotent) to put its column grants back.
+    cur.execute("SELECT has_schema_privilege('cis_app', 'shared', 'USAGE')")
+    usage_granted = not cur.fetchone()[0]
+    if usage_granted:
+        cur.execute("GRANT USAGE ON SCHEMA shared TO cis_app")
+    cur.execute("SELECT has_table_privilege('cis_app', 'shared.llm_role_config', 'SELECT')")
+    select_granted = not cur.fetchone()[0]
+    if select_granted:  # an UPDATE ... WHERE stage = ... also needs SELECT; 244 gives it on Dev
+        cur.execute("GRANT SELECT ON shared.llm_role_config TO cis_app")
+    _run(cur)
+    try:
+        conn = _connect("cis_app", CIS_APP_CI_PASSWORD)
+    except psycopg2.OperationalError as e:
+        if select_granted:
+            cur.execute("REVOKE SELECT ON shared.llm_role_config FROM cis_app")
+        if usage_granted:
+            cur.execute("REVOKE USAGE ON SCHEMA shared FROM cis_app")
+        pytest.skip(f"cannot log in as cis_app here: {e}")
     try:
         c = conn.cursor()
         c.execute("UPDATE shared.llm_role_config SET fallback_model_ids = %s, updated_by = 'cis_app' WHERE stage = %s",
@@ -120,4 +138,8 @@ def test_cis_app_edits_routes_but_not_scopes(cur):
                       (PREFIX + "grants2", BOTH))
     finally:
         conn.close()
+        if select_granted:
+            cur.execute("REVOKE SELECT ON shared.llm_role_config FROM cis_app")
+        if usage_granted:
+            cur.execute("REVOKE USAGE ON SCHEMA shared FROM cis_app")
     assert _scopes(cur, "grants") == ["aws_only"]
