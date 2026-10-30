@@ -210,8 +210,11 @@ export default function MetricsTab() {
 
   const stopCodes = new Set<SoftStopCode>(SOFT_STOP_CODES);
   const spend = report?.kpis.learning_spend;
+  // minmax(0, 1fr), like ReleasesTab: the implicit `auto` track grew to the KPI table's min-content width (its
+  // tableMinWidth plus the nowrap headers, 1,413 px at 1440) and pushed the header actions, the spend tile and the last
+  // KPI columns past the frame (S260 F3). Capped at the frame width, the table scrolls inside its own wrapper.
   return (
-    <div style={{ display: "grid", gap: 16, minWidth: 0 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 16 }}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ fontSize: 12.5, color: K.muted, maxWidth: 760 }}>{t("help")}</div>
         {canAdmin && (
@@ -231,7 +234,7 @@ export default function MetricsTab() {
               <strong style={{ fontSize: 14 }}>{t("week", report.week_start)}</strong>
               {dry && <Badge tone="warning" dot={false}>{t("dryRunBadge")}</Badge>}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 170px), 1fr))", gap: 10 }}>
               <KpiTile size="sm" label={t("spend")} value={usd(spend?.month_spent_usd ?? null)}
                 hint={`/ ${usd(spend?.month_cap_usd ?? 25)}`} />
             </div>

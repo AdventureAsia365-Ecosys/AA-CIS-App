@@ -197,8 +197,9 @@ export default function ExemplarsTab() {
     { accessorKey: "created_at", header: t("colAdded"), cell: (c) => formatDateTime(c.row.original.created_at) },
   ], [t, status, ownerOf, formatDateTime]);
 
+  // minmax(0, 1fr): an `auto` track grows to the exemplar table's min-content width once it has rows (S260 F3).
   return (
-    <div style={{ display: "grid", gap: 14, minWidth: 0 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 14 }}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ fontSize: 12.5, color: K.muted, maxWidth: 760 }}>{t("help")}</div>
         {canAdmin && (

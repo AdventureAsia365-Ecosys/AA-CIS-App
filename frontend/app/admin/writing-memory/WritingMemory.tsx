@@ -56,10 +56,12 @@ import { useWmText } from "./useWmText";
 const FACT_STATUSES: FactStatus[] = ["pending", "grey", "pass", "fail"];
 const RULE_STATUSES: RuleStatus[] = ["candidate", "rejected", "approved", "active", "expired"];
 
+// overflowWrap anywhere: a hint can hold one long token (the "automatic mining is off (<the env switch name>)" reason),
+// which at 390 stuck 10 px out of its tile and gave the frame a sideways scroll on every tab (S260 F3).
 function Stat({ label, value, hint }: { label: string; value: React.ReactNode; hint?: React.ReactNode }) {
   return (
     <div style={{ background: K.card, border: `1px solid ${K.line}`, borderRadius: 10, padding: "12px 14px",
-      minWidth: 150, flex: "1 1 150px" }}>
+      minWidth: "min(150px, 100%)", flex: "1 1 150px", overflowWrap: "anywhere" }}>
       <div style={{ fontSize: 11.5, color: K.muted }}>{label}</div>
       <div style={{ fontSize: 20, fontWeight: 600, color: K.ink, marginTop: 2 }}>{value}</div>
       {hint && <div style={{ fontSize: 11.5, color: K.muted2, marginTop: 2 }}>{hint}</div>}
