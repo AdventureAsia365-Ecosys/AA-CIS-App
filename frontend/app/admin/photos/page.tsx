@@ -6,10 +6,10 @@
 // Places (destinations) are matched only with "Match places + covers", per country, after its rerun
 // tours are re-extracted; a photo is compared only with the places on its own tour's itinerary.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw, HardDrive, Map as MapIcon, Images, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { A, sans, mono, Card, SLabel, Badge, LoadingScreen, TH, TD, StatCard } from "../_components/adminUi";
-import { Button, Tabs, PageFrame, PageHeader, useFormat, useT } from "../../_kit";
+import { Button, DataTable, Tabs, PageFrame, PageHeader, useFormat, useT, type ColumnDef } from "../../_kit";
 import { PH } from "./messages";
 
 type CountryRow = {
@@ -79,6 +79,32 @@ function Thumbs({ urls, h = 56 }: { urls: string[]; h?: number }) {
 }
 
 const selectStyle = { padding: "6px 8px", borderRadius: 8, border: `1px solid ${A.line}`, fontFamily: sans, fontSize: 13 };
+
+// AA-994 S6b: the tour coverage list is a kit DataTable (was a raw table with the legacy TH / TD styles). Every row
+// shows, as before (no pager).
+function ToursTable({ tours }: { tours: TourCov[] }) {
+  const t = useT(PH);
+  const columns = useMemo<ColumnDef<TourCov, unknown>[]>(() => [
+    { id: "tour", header: t("colTour"), accessorKey: "src_name", cell: ({ row }) => <span style={{ fontWeight: 600, display: "inline-block", maxWidth: 360 }}>{row.original.src_name}</span> },
+    { id: "country", header: t("colCountry"), accessorKey: "country" },
+    { id: "duration", header: t("colDuration"), accessorKey: "duration", cell: ({ row }) => row.original.duration ?? "—" },
+    {
+      id: "published", header: t("colPublished"), accessorKey: "published",
+      cell: ({ row }) => row.original.published ? <Badge color="green">{t("yes")}</Badge> : <Badge color="gray">{t("no")}</Badge>,
+    },
+    {
+      id: "photos", header: t("colPhotos"), accessorKey: "photos",
+      cell: ({ row }) => <span style={{ fontFamily: mono, color: row.original.photos ? undefined : A.amber }}>{row.original.photos}</span>,
+    },
+    { id: "sample", header: t("colSample"), enableSorting: false, cell: ({ row }) => <Thumbs urls={row.original.sample} h={40} /> },
+  ], [t]);
+  return (
+    <DataTable<TourCov>
+      data={tours} columns={columns} tableId="photos-tours" getRowId={tc => tc.tour_id}
+      searchable={false} paginate={false} stickyHeader={false} emptyTitle={t("noTours")}
+    />
+  );
+}
 
 export default function PhotosPage() {
   const t = useT(PH);
@@ -339,25 +365,7 @@ export default function PhotosPage() {
                 {t("toursHavePhotos", tours.filter(x => x.photos).length, tours.length, country ? t("inCountry", country) : "")}
               </span>
             </div>
-            <Card style={{ padding: 0, overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead><tr>{(["colTour", "colCountry", "colDuration", "colPublished", "colPhotos", "colSample"] as const)
-                  .map(h => <th key={h} style={TH}>{t(h)}</th>)}</tr></thead>
-                <tbody>
-                  {tours.map(tc => (
-                    <tr key={tc.tour_id}>
-                      <td style={{ ...TD, fontWeight: 600, maxWidth: 360 }}>{tc.src_name}</td>
-                      <td style={TD}>{tc.country}</td>
-                      <td style={TD}>{tc.duration ?? "—"}</td>
-                      <td style={TD}>{tc.published ? <Badge color="green">{t("yes")}</Badge> : <Badge color="gray">{t("no")}</Badge>}</td>
-                      <td style={{ ...TD, fontFamily: mono, color: tc.photos ? undefined : A.amber }}>{tc.photos}</td>
-                      <td style={TD}><Thumbs urls={tc.sample} h={40} /></td>
-                    </tr>
-                  ))}
-                  {tours.length === 0 && <tr><td style={TD} colSpan={6}>{t("noTours")}</td></tr>}
-                </tbody>
-              </table>
-            </Card>
+            <ToursTable tours={tours} />
           </>
         )}
 

@@ -270,9 +270,6 @@
   "app/admin/jobs/JobDrawer.tsx": {
     "aa-kit/no-legacy-kit": {
       "count": 1
-    },
-    "aa-kit/no-raw-table": {
-      "count": 2
     }
   },
   "app/admin/jobs/JobKinds.tsx": {
@@ -365,7 +362,7 @@
       "count": 6
     },
     "aa-kit/no-raw-table": {
-      "count": 2
+      "count": 1
     }
   },
   "app/admin/places/LinesTab.tsx": {

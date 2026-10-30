@@ -9,8 +9,9 @@
 // fetch of the calls and then it stops too.
 
 import { useQuery } from "@tanstack/react-query";
-import { A, serif, mono, SLabel, TH, TD } from "../_components/adminUi";
-import { Button, Drawer, StatusBadge, apiGet, useFormat, useT } from "../../_kit";
+import { useMemo } from "react";
+import { A, serif, mono, SLabel } from "../_components/adminUi";
+import { Button, DataTable, Drawer, StatusBadge, apiGet, useFormat, useT, type ColumnDef } from "../../_kit";
 import { TenantName } from "../_components/TenantSelect";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import { accountName, withAccountNames } from "@/lib/awsAccounts";
@@ -22,6 +23,8 @@ interface LlmCall {
   provider: string | null; fallback_used: boolean | null; tokens_in: number | null;
   tokens_out: number | null; cost_usd: number | null; texts: number | null;
 }
+type StageRow = LlmCalls["by_stage"][number];
+type CallRow = LlmCall & { _i: number };
 interface LlmCalls {
   calls: LlmCall[];
   totals: { calls: number; cost_usd: number; tokens_in: number; tokens_out: number; first_at: string | null; last_at: string | null };
@@ -95,6 +98,35 @@ export default function JobDrawer({ jobId, refetchMs, expectedSeconds, maxReleas
   const total = job?.cost_usd ?? 0;
   const links = job?.links;
 
+  // AA-994 S6b: the two LLM tables are kit DataTables (were raw tables with the legacy TH / TD styles).
+  const stageColumns = useMemo<ColumnDef<StageRow, unknown>[]>(() => [
+    { id: "stage", header: t("stage"), accessorKey: "stage", cell: ({ row }) => <span style={{ fontFamily: mono }}>{row.original.stage}</span> },
+    { id: "model", header: t("model"), accessorKey: "model", cell: ({ row }) => <span style={{ fontFamily: mono }}>{row.original.model}</span> },
+    { id: "calls", header: t("callsCol"), accessorKey: "calls", meta: { align: "right" }, cell: ({ row }) => <span style={{ fontFamily: mono }}>{row.original.calls}</span> },
+    { id: "cost", header: t("cost"), accessorKey: "cost_usd", meta: { align: "right" }, cell: ({ row }) => <span style={{ fontFamily: mono }}>{usd(row.original.cost_usd, 5)}</span> },
+  ], [t]);
+  const callRows = useMemo<CallRow[]>(() => (llm?.calls ?? []).map((c, i) => ({ ...c, _i: i })), [llm]);
+  const callColumns = useMemo<ColumnDef<CallRow, unknown>[]>(() => [
+    { id: "time", header: t("time"), accessorKey: "created_at", cell: ({ row }) => <span style={{ whiteSpace: "nowrap" }}>{fmtTime(row.original.created_at)}</span> },
+    {
+      id: "stage", header: t("stage"), accessorKey: "stage",
+      cell: ({ row: { original: c } }) => <span style={{ fontFamily: mono }}>{c.stage}{c.texts && c.texts > 1 ? ` ×${c.texts}` : ""}</span>,
+    },
+    {
+      id: "model", header: t("modelAccount"), accessorKey: "model",
+      cell: ({ row: { original: c } }) => (
+        <span style={{ fontFamily: mono }}>
+          {c.model}{c.account ? ` · ${accountName(c.account, awsAccounts, accountText)}` : ""}{c.fallback_used ? t("fallback") : ""}
+        </span>
+      ),
+    },
+    {
+      id: "tokens", header: t("tokens"), accessorFn: (c) => (c.tokens_in ?? 0) + (c.tokens_out ?? 0), meta: { align: "right" },
+      cell: ({ row: { original: c } }) => <span style={{ fontFamily: mono }}>{c.tokens_in ?? 0}/{c.tokens_out ?? 0}</span>,
+    },
+    { id: "cost", header: t("cost"), accessorKey: "cost_usd", meta: { align: "right" }, cell: ({ row }) => <span style={{ fontFamily: mono }}>{usd(row.original.cost_usd, 6)}</span> },
+  ], [t, fmtTime, awsAccounts, accountText]);
+
   const header = (
     // S241 UI verify — one row that fits the Drawer's title box: the kind ends in an ellipsis and the
     // status badge keeps its size (it used to push the close X off-screen at 390).
@@ -167,38 +199,17 @@ export default function JobDrawer({ jobId, refetchMs, expectedSeconds, maxReleas
           {llm && llm.totals.calls > 0 && (
             <div style={{ marginTop: 16 }}>
               <SLabel>{t("llmByStage")}</SLabel>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                <thead><tr><th style={TH}>{t("stage")}</th><th style={TH}>{t("model")}</th><th style={{ ...TH, textAlign: "right" }}>{t("callsCol")}</th><th style={{ ...TH, textAlign: "right" }}>{t("cost")}</th></tr></thead>
-                <tbody>
-                  {llm.by_stage.map(s => (
-                    <tr key={`${s.stage}:${s.model}`}>
-                      <td style={{ ...TD, fontFamily: mono }}>{s.stage}</td>
-                      <td style={{ ...TD, fontFamily: mono }}>{s.model}</td>
-                      <td style={{ ...TD, fontFamily: mono, textAlign: "right" }}>{s.calls}</td>
-                      <td style={{ ...TD, fontFamily: mono, textAlign: "right" }}>{usd(s.cost_usd, 5)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <DataTable<StageRow>
+                data={llm.by_stage} columns={stageColumns} tableId="job-drawer-llm-stages"
+                getRowId={s => `${s.stage}:${s.model}`} searchable={false} paginate={false} stickyHeader={false}
+              />
 
               <div style={{ marginTop: 12 }}>
                 <SLabel>{t("recentCalls")}{llm.truncated ? t("latestOf", llm.calls.length, llm.totals.calls) : ""}</SLabel>
-                <div style={{ maxHeight: 260, overflowY: "auto", border: `1px solid ${A.line2}`, borderRadius: 6 }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11.5 }}>
-                    <thead><tr><th style={TH}>{t("time")}</th><th style={TH}>{t("stage")}</th><th style={TH}>{t("modelAccount")}</th><th style={{ ...TH, textAlign: "right" }}>{t("tokens")}</th><th style={{ ...TH, textAlign: "right" }}>{t("cost")}</th></tr></thead>
-                    <tbody>
-                      {llm.calls.map((c, i) => (
-                        <tr key={i}>
-                          <td style={{ ...TD, whiteSpace: "nowrap" }}>{fmtTime(c.created_at)}</td>
-                          <td style={{ ...TD, fontFamily: mono }}>{c.stage}{c.texts && c.texts > 1 ? ` ×${c.texts}` : ""}</td>
-                          <td style={{ ...TD, fontFamily: mono }}>{c.model}{c.account ? ` · ${accountName(c.account, awsAccounts, accountText)}` : ""}{c.fallback_used ? t("fallback") : ""}</td>
-                          <td style={{ ...TD, fontFamily: mono, textAlign: "right" }}>{c.tokens_in ?? 0}/{c.tokens_out ?? 0}</td>
-                          <td style={{ ...TD, fontFamily: mono, textAlign: "right" }}>{usd(c.cost_usd, 6)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <DataTable<CallRow>
+                  data={callRows} columns={callColumns} tableId="job-drawer-llm-calls"
+                  getRowId={c => String(c._i)} searchable={false} paginate={false} maxBodyHeight={260}
+                />
               </div>
             </div>
           )}
