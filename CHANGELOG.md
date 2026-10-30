@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.18.0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/compare/v0.17.0...v0.18.0) (2026-10-30)
+
+
+### Features
+
+* circuit breaker, limiter, provider health and the Connections tab (gateway S4) ([#1176](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1176)) ([1878349](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/1878349b9fe2921da3ba7aaec20774c82f0af3c9))
+* R4 quality, reliability and data reports (CIS-01, CIS-06, CIS-07, OPS-13, OPS-14, DATA-02, DATA-03, DATA-04) ([#1174](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1174)) ([02b1f4f](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/02b1f4f3678ead2d6c6938f5d4b051815d2f8372))
+* route LLM calls over deployments, alias legacy keys, accounts from the registry (gateway S3) ([#1168](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1168)) ([b7cd4cf](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/b7cd4cfa36b3b9fca42cfd2e3d01ccdba3251c21))
+* T10 tier-2 LLM adjudicator for the recall forms seed alignment cannot reach (off by default) ([#1172](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1172)) ([a38b3dc](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/a38b3dc59d81b6cbb194b9fee9a0ec574e74adfb))
+* weekly and monthly money reports (EX-01, FI-01..FI-06, OPS-08) on the report engine ([#1169](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1169)) ([6372fbe](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/6372fbeda5d8977bb63003d84ddcfdd80bc1d6e9))
+
+
+### Bug Fixes
+
+* an OpenAI 429 'no credits remaining' reads as quota_exhausted ([#1173](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1173)) ([b327896](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/b32789677c63096a7126e6dc8824c39d35c5949a))
+
 ## [0.17.0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/compare/v0.16.0...v0.17.0) (2026-10-30)
 
 
