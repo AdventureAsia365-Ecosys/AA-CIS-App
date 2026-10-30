@@ -27,8 +27,8 @@ from api.services import llm_connections  # noqa: E402
 from shared.llm_client import breaker  # noqa: E402
 
 MIGRATIONS = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations")
-M310 = os.path.join(MIGRATIONS, "310_llm_provider_health.sql")
-M311 = os.path.join(MIGRATIONS, "311_llm_connection_admin_edit_grant.sql")
+M310 = os.path.join(MIGRATIONS, "309_llm_provider_health.sql")
+M311 = os.path.join(MIGRATIONS, "310_llm_connection_admin_edit_grant.sql")
 T0 = datetime(2026, 10, 30, 12, tzinfo=timezone.utc)
 KEY = ("acc3", "sonnet-5")
 

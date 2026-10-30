@@ -23,7 +23,7 @@ from shared.llm_client import connections
 from shared.llm_client.adapters import anthropic_messages
 
 MIGRATION_306 = Path(__file__).resolve().parents[2] / "api" / "migrations" / "306_llm_anthropic_deployments.sql"
-MIGRATION_311 = Path(__file__).resolve().parents[2] / "api" / "migrations" / "311_llm_connection_admin_edit_grant.sql"
+MIGRATION_311 = Path(__file__).resolve().parents[2] / "api" / "migrations" / "310_llm_connection_admin_edit_grant.sql"
 
 
 def _row(**kw):
@@ -225,7 +225,7 @@ def test_route_switches_and_names_the_admin():
 
 # ── migration 306 (text checks; the SQL itself runs in tests/integration/test_aa1002_migration_306.py) ─────────
 
-def test_migrations_306_and_311_grant_exactly_the_columns_the_patch_writes():
+def test_migrations_306_and_310_grant_exactly_the_columns_the_patch_writes():
     grants = []
     for path in (MIGRATION_306, MIGRATION_311):
         grants += re.findall(r"^GRANT UPDATE \((.+?)\)\s+ON (\S+) TO (\w+);", path.read_text(), re.MULTILINE)
