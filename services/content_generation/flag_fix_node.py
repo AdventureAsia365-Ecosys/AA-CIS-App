@@ -1,18 +1,13 @@
 """AA-134: Targeted flag-fix node — rewrites only brand-flagged fields.
-AA-132: write_lessons_log — persists audit lessons to shared.pipeline_lessons.
-AA-915: that write-back is frozen behind PIPELINE_LESSONS_ENABLED (default off, see
-services/content_generation/pipeline_lessons.py); superseded by app ADR 0010, retired in WM-34.
+AA-132's lessons write-back (shared.pipeline_lessons) was frozen by AA-915 and is retired by AA-923 (WM-34): learned
+rules come only from the governed writing memory (app ADR 0010).
 """
 
-import asyncio
 import json
 import structlog
-import asyncpg
 from services.content_generation.stages import stage_for
-from services.content_generation.pipeline_lessons import pipeline_lessons_enabled
 from json_repair import repair_json
 
-from shared.secrets import get_database_url
 
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
@@ -562,7 +557,7 @@ def flag_fix_node(state: dict) -> dict:
                     "fix_pass_fields":  [],
                 }
             logger.info("flag_fix_done", fixed_keys=sorted(applied_fields), cost=extra_cost)
-            # AA-132 lessons write-back — a no-op while the loop is frozen (AA-915, guard inside).
+            # AA-132 lessons write-back — retired (AA-923 WM-34): a no-op kept for the harness patches.
             lessons = state.get("lessons_extracted", [])
             if lessons:
                 _write_lessons_safe(lessons, state)
@@ -731,8 +726,7 @@ Keep all other fields unchanged."""
 
         logger.info("flag_fix_done", fixed_keys=list(fix_keys), cost=resp.cost_usd)
 
-        # AA-132: write lessons back to shared.pipeline_lessons — a no-op while the loop is frozen
-        # (AA-915, PIPELINE_LESSONS_ENABLED default off; the guard is inside _write_lessons_safe).
+        # AA-132 lessons write-back — retired (AA-923 WM-34): a no-op kept for the harness patches.
         lessons = state.get("lessons_extracted", [])
         if lessons:
             _write_lessons_safe(lessons, state)
@@ -771,104 +765,7 @@ def _contract_degraded(state: dict, reverts: dict) -> list:
 
 
 def _write_lessons_safe(lessons: list, state: dict) -> None:
-    """Fire-and-forget lessons write-back — swallows all errors.
-
-    AA-915: returns at once while PIPELINE_LESSONS_ENABLED is off (the default), so neither call site
-    above touches shared.pipeline_lessons. The name is kept on purpose: the AA-729 harness
-    (scripts/aa729/evalpatch.py) and two unit tests patch it by name.
-    Do not "repair" the run_until_complete below: this node runs in an executor thread with no event
-    loop, so the call has most likely always failed into `lessons_writeback_failed` — reviving it
-    would revive the ungated loop ADR 0010 replaces."""
-    if not pipeline_lessons_enabled():
-        logger.info("lessons_writeback_frozen", n=len(lessons))
-        return
-    from shared.llm_client.call_log import eval_label
-    if eval_label() is not None:          # AA-919: an eval run (R2 / shadow) never writes lessons
-        logger.info("lessons_writeback_skipped_eval", n=len(lessons))
-        return
-    try:
-        batch = state.get("tour", {}).get("batch_name", "")
-        country = state.get("tour", {}).get("country", "")
-        loop = asyncio.get_event_loop()
-        new_count = loop.run_until_complete(
-            write_lessons_log(lessons, batch=batch, country=country)
-        )
-        logger.info("lessons_writeback", new_count=new_count)
-    except Exception as e:
-        logger.warning("lessons_writeback_failed", error=str(e))
-
-
-# ── AA-132: lessons write-back ────────────────────────────────────────────────
-
-async def write_lessons_log(
-    lessons: list[dict],
-    batch: str = "",
-    country: str = "",
-    min_frequency: int = 2,
-) -> int:
-    """
-    Insert new lessons into shared.pipeline_lessons.
-    Deduplicates by (stage, field, pattern). Only inserts patterns that appear
-    >= min_frequency times within the provided lessons batch.
-    Returns count inserted.
-    """
-    if not lessons:
-        return 0
-    # AA-915: second line of defence — no connection, no dedup SELECT, no INSERT while frozen.
-    if not pipeline_lessons_enabled():
-        return 0
-
-    from collections import Counter
-
-    def freq_key(les):
-        return (
-            f"{les.get('failure_code', '')}:{les.get('field', '')}:"
-            f"{les.get('pattern', '')[:50].lower().strip()}"
-        )
-    freq = Counter(freq_key(les) for les in lessons)
-
-    eligible = [les for les in lessons if freq[freq_key(les)] >= min_frequency]
-    if not eligible:
-        return 0
-
-    seen: set = set()
-    unique_lessons = []
-    for les in eligible:
-        k = freq_key(les)
-        if k not in seen:
-            seen.add(k)
-            unique_lessons.append(les)
-
-    conn = await asyncpg.connect(get_database_url())
-    inserted = 0
-    try:
-        for lesson in unique_lessons:
-            # Left as written (AA-915): the S1 readers ask for S1_rewrite / S1_editor, so these rows
-            # were never read. Do not align the stages — that would revive the ungated loop.
-            stage = "audit"
-            field = lesson.get("field", "")
-            pattern = lesson.get("pattern", "")
-            existing = await conn.fetchval(
-                "SELECT id FROM shared.pipeline_lessons WHERE stage=$1 AND field=$2 AND pattern=$3 LIMIT 1",
-                stage, field, pattern,
-            )
-            if existing:
-                continue
-            await conn.execute(
-                """INSERT INTO shared.pipeline_lessons
-                   (batch, country, stage, field, pattern, why_it_matters,
-                    what_to_do, example_before, is_active)
-                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,true)""",
-                batch,
-                country,
-                stage,
-                field,
-                pattern,
-                f"Failure code: {lesson.get('failure_code', '')} — severity: {lesson.get('severity', '')}",
-                f"Fix field {field} — failure code {lesson.get('failure_code', '')}",
-                lesson.get("example_before", ""),
-            )
-            inserted += 1
-    finally:
-        await conn.close()
-    return inserted
+    """Retired (AA-923 WM-34): the AA-132 lessons write-back to shared.pipeline_lessons (frozen since AA-915) writes
+    nothing. The name stays: the AA-729 harness (scripts/aa729/evalpatch.py) and unit tests patch it by name. Learned
+    rules come only from the governed writing memory (app ADR 0010)."""
+    logger.info("lessons_writeback_retired", n=len(lessons or []))

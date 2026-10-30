@@ -28,7 +28,6 @@ from api.routers.auth import verify_tenant_jwt
 from api.middleware import tenant_role as _tenant_role  # AA-979 csr check in the dependency
 from api.routers.v1_pipeline import _rewrite_tour
 from shared.llm_client.errors import is_llm_access_denied
-from services.content_generation.pipeline_lessons import load_s1_lessons_block
 from services.content_generation import s1_checkpoint as _ckpt  # AA-993 G2
 from shared.aws_client.bronze import bronze_bucket
 from shared.secrets import get_database_url  # AA-838 D9: default application_name
@@ -668,12 +667,8 @@ async def _execute_run_tour(
         except Exception as _br_err:
             logger.warning("brand_rules_fetch_failed", error=str(_br_err))
 
-        # AA-915: the AA-132 lessons append, frozen behind PIPELINE_LESSONS_ENABLED (default off).
-        # One shared helper for this path, the batch path (s1_batch) and the AA-729 sampler; with the
-        # flag off it sends no SQL and returns "".
-        lessons_text = await load_s1_lessons_block(conn)
-        if lessons_text:
-            brand_rules["system_prompt"] = (brand_rules.get("system_prompt") or "") + lessons_text
+        # AA-923 (WM-34): the AA-132 lessons append is retired (frozen since AA-915, it added nothing);
+        # learned rules reach the writer only through a writing-memory release (app ADR 0010).
 
         seo_data: dict = {}
         dataforseo_used: bool = False

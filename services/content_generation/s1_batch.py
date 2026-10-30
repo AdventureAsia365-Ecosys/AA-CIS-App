@@ -31,7 +31,6 @@ from shared.llm_client import bedrock_batch
 from shared.llm_client.bedrock_batch import BatchUnavailable
 from shared.secrets import get_database_url  # AA-838 D9: default application_name
 from services.content_generation.batch_prompt import materialize_s1_prompt
-from services.content_generation.pipeline_lessons import load_s1_lessons_block
 
 logger = structlog.get_logger()
 
@@ -44,11 +43,11 @@ async def _load_prompt_state(conn, tour_id: str, tenant_uuid: str, *,
                              rewrite_language: str = "en-US",
                              subtitle_focus: str = "standard") -> Optional[dict]:
     """Build the graph-state-shaped dict the prompt builder needs for one tour: tour data +
-    resolved brand rule (+ the frozen AA-132 lessons, only when PIPELINE_LESSONS_ENABLED is on — AA-915)
-    + SEO context. Returns None if the tour is missing/trashed.
+    resolved brand rule + SEO context (the AA-132 lessons append is retired, AA-923 WM-34). Returns None if the tour
+    is missing/trashed.
 
     Deliberately mirrors _execute_run_tour's own context load (raw_tours row shape, brand resolve,
-    lessons append via the shared load_s1_lessons_block, SEO fetch) so the materialized prompt matches
+    SEO fetch) so the materialized prompt matches
     the synchronous writer prompt.
     Imported lazily from admin_pipeline to reuse _resolve_brand_rule without a circular import."""
     from api.routers.admin_pipeline import _resolve_brand_rule
@@ -107,13 +106,6 @@ async def _load_prompt_state(conn, tour_id: str, tenant_uuid: str, *,
             }
     except Exception as _br_err:
         logger.warning("s1_batch_brand_fetch_failed", tour_id=tour_id, error=str(_br_err))
-
-    # AA-915: the AA-132 lessons append (same helper as the sync path). Frozen behind
-    # PIPELINE_LESSONS_ENABLED (default off): with the flag off no SQL is sent and the prompt has no
-    # lessons block. Non-fatal either way.
-    lessons_block = await load_s1_lessons_block(conn)
-    if lessons_block:
-        brand_rules["system_prompt"] = (brand_rules.get("system_prompt") or "") + lessons_block
 
     seo_data: dict = {}
     _SEO_MODE_MAP = {"standard": "dataforseo", "aggressive": "dataforseo", "minimal": "disabled"}

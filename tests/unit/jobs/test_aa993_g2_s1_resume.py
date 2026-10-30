@@ -156,7 +156,6 @@ def _patches(db: FakeDB, rewrite: FakeRewrite) -> ExitStack:
     stack.enter_context(patch("api.routers.admin_pipeline.asyncpg.connect",
                               AsyncMock(side_effect=lambda *a, **k: db.conn())))
     stack.enter_context(patch("api.routers.admin_pipeline._resolve_brand_rule", AsyncMock(return_value=None)))
-    stack.enter_context(patch("api.routers.admin_pipeline.load_s1_lessons_block", AsyncMock(return_value="")))
     stack.enter_context(patch("api.routers.admin_pipeline._rewrite_tour", rewrite))
     stack.enter_context(patch("api.routers.admin_pipeline._is_publishable", MagicMock(return_value=False)))
     stack.enter_context(patch("api.routers.admin_pipeline._build_s1_progress_sink", return_value=None))

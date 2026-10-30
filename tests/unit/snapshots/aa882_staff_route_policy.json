@@ -107,6 +107,10 @@
     "capability": null,
     "module": "api.routers.admin"
   },
+  "GET /admin/content-quality/a1-content/{content_id}/label": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_content_quality"
+  },
   "GET /admin/content-quality/pieces": {
     "capability": "tenant.read",
     "module": "api.routers.admin_content_quality"
@@ -140,6 +144,10 @@
     "module": "api.routers.admin_content_quality"
   },
   "GET /admin/content-quality/tour-versions/{version_id}": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_content_quality"
+  },
+  "GET /admin/content-quality/tour-versions/{version_id}/label": {
     "capability": "tenant.read",
     "module": "api.routers.admin_content_quality"
   },
@@ -723,10 +731,6 @@
     "capability": null,
     "module": "api.routers.v1_pipeline"
   },
-  "GET /v1/rules": {
-    "capability": null,
-    "module": "api.routers.v1_rules"
-  },
   "PATCH /admin/atoms/{atom_id}": {
     "capability": "atoms.write",
     "module": "api.routers.admin_atoms"
@@ -835,10 +839,6 @@
     "capability": "ai.admin",
     "module": "api.routers.admin_writing_memory"
   },
-  "PATCH /v1/rules/{rule_id}": {
-    "capability": "content.settings.write",
-    "module": "api.routers.v1_rules"
-  },
   "POST /admin/a4/publish-log/{publish_id}/unpublish": {
     "capability": "a4.unpublish",
     "module": "api.routers.admin_a4"
@@ -887,6 +887,10 @@
     "capability": "content.settings.write",
     "module": "api.routers.admin_pipeline"
   },
+  "POST /admin/content-quality/a1-content/{content_id}/label": {
+    "capability": "quality.write",
+    "module": "api.routers.admin_content_quality"
+  },
   "POST /admin/content-quality/pieces/{piece_id}/label": {
     "capability": "quality.write",
     "module": "api.routers.admin_content_quality"
@@ -912,6 +916,10 @@
     "module": "api.routers.admin_content_quality"
   },
   "POST /admin/content-quality/requests/{request_id}/regenerate-angles": {
+    "capability": "quality.write",
+    "module": "api.routers.admin_content_quality"
+  },
+  "POST /admin/content-quality/tour-versions/{version_id}/label": {
     "capability": "quality.write",
     "module": "api.routers.admin_content_quality"
   },

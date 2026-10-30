@@ -56,7 +56,7 @@ class RepairRoundLog(BaseModel):
     reviewing a held piece has the whole repair history in the same place
     they already look (`acp_deliver.pieces`), without a separate log query
     -- see gates.py::run_gates()'s own docstring for what still needs manual
-    promotion into `acp_shared.acp_output_rules` from here."""
+    promotion from here (the N8 output-rules table is retired, AA-923; learned rules: app ADR 0010)."""
     round: int
     gate_targeted: str
     violations: list[str] = Field(default_factory=list)

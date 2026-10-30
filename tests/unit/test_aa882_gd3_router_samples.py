@@ -74,7 +74,6 @@ SAMPLES = [
     ("admin_facts", "PATCH", "/admin/facts/{fact_id}", {"body": "b", "expected_updated_at": "2026-10-29T08:00:00Z"}),
     ("v1_trip_page", "POST", "/admin/trip-pages/{tour_id}/publish", None),
     ("v1_pipeline", "POST", "/v1/pipeline/review-queue/{review_id}/approve", {}),
-    ("v1_rules", "PATCH", "/v1/rules/{rule_id}", {"is_active": False}),
 ]
 
 PRINCIPALS = ["admin", "reviewer", "content", None]  # None = machine (secret, no role header)
@@ -167,6 +166,6 @@ def test_brand_identity_tenant_jwt_path_is_not_narrowed(client):
     assert staff.json()["detail"] == "Role 'content' lacks the 'content.settings.write' permission"
 
 
-@pytest.mark.parametrize("path", ["/v1/rules", "/v1/pipeline/review-queue"])
+@pytest.mark.parametrize("path", ["/v1/pipeline/review-queue"])  # /v1/rules: retired by AA-923
 def test_v1_staff_reads_keep_their_401_without_credentials(client, path):
     assert client.get(path).status_code == 401

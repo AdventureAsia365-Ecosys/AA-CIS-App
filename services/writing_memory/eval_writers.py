@@ -13,7 +13,7 @@ shadow candidate). Model calls happen here; nothing is written to app data.
               in the run details (`t9_first_draft_only`).
 
 Side effects checked: `_rewrite_tour` / `run_t3_qa_gate` return their result and write no app row; flag-fix lessons
-are written only with PIPELINE_LESSONS_ENABLED (default off) and never inside an eval run (call_log.eval_label). Every
+are never written (the AA-132 write-back is retired, AA-923 WM-34). Every
 llm_call_log row is relabelled to the eval stage by the caller's `call_log.bind_eval_stage` (tenant NULL), and the
 gateway starts no A/B shadow call inside it.
 """

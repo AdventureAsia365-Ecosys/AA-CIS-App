@@ -51,7 +51,7 @@ STAFF_DEPENDENCIES = {
     admin_settings.verify_admin,               # same check, local copy in admin_settings
     admin_atoms._require_atoms_staff,          # X-Admin-Secret; logs + refuses a tenant Bearer
     v1_pipeline._require_admin,                # X-Admin-Secret; any JWT -> 403 (AA-799)
-    staff_secret.require_staff_secret,         # same rule, shared by /v1/rules + /v1/social (S241)
+    staff_secret.require_staff_secret,         # same rule (S241); no router uses it since AA-923
     staff_authz.staff_policy,                  # AA-882: admin.verify_admin_secret, then the route POLICY
     # NOT staff_authz.staff_policy_if_staff: a no-op without the secret, so it is no auth check alone.
     main.require_admin_secret_for_docs,        # X-Admin-Secret on /docs, /redoc, /openapi.json (AA-577)
@@ -532,7 +532,9 @@ def test_unconfigured_secret_is_still_503(client, monkeypatch):
     assert client.get("/admin/budgets").status_code == 503
 
 
-# ── /v1/rules: staff only; a tenant JWT is refused (S241 review; /v1/social was removed by AA-850) ─────────────
+# ── staff_secret.require_staff_secret: staff only; a tenant JWT is refused (S241 review) ─────────────────────────
+# /v1/social was removed by AA-850 and /v1/rules by AA-923 (WM-34); the guard stays, so it is exercised on a probe
+# router with the same shape the /v1/rules router had.
 
 _RULE_ID = "bbbbbbbb-0000-0000-0000-000000000001"
 _V1_STAFF_ROUTES = [
@@ -543,15 +545,24 @@ _V1_STAFF_ROUTES = [
 
 @pytest.fixture
 def v1_client(monkeypatch):
+    from fastapi import APIRouter, Depends
     from fastapi.testclient import TestClient
 
-    from api.routers import v1_rules
-
-    # The router alone (no rate-limit middleware, which would look up the tenant in Redis/DB).
-    # The DB pool raises if touched: the guard must refuse before any query runs.
+    # A probe router (no rate-limit middleware, which would look up the tenant in Redis/DB). The DB pool raises if
+    # touched: the guard must refuse before any query runs.
     monkeypatch.setenv("ADMIN_SECRET", _SECRET)
+    probe = APIRouter(prefix="/v1/rules", dependencies=[Depends(staff_secret.require_staff_secret)])
+
+    @probe.get("")
+    async def _list():
+        return {"ok": True}
+
+    @probe.patch("/{rule_id}")
+    async def _patch(rule_id: str):
+        return {"ok": True}
+
     v1_app = FastAPI()
-    v1_app.include_router(v1_rules.router)
+    v1_app.include_router(probe)
     v1_app.state.pool = MagicMock(acquire=MagicMock(side_effect=AssertionError("the DB must not be reached")))
     return TestClient(v1_app, raise_server_exceptions=True)
 
@@ -570,11 +581,21 @@ def test_v1_staff_routes_refuse_anonymous_and_a_wrong_secret(v1_client, method, 
     assert v1_client.request(method, path, json=body).status_code == 401
     wrong = v1_client.request(method, path, json=body, headers={"X-Admin-Secret": _SECRET + "x"})
     assert wrong.status_code == 403
+    right = v1_client.request(method, path, json=body, headers={"X-Admin-Secret": _SECRET})
+    assert right.status_code == 200
 
 
 def test_v1_staff_routes_refuse_a_bad_jwt_with_401(v1_client):
     resp = v1_client.get("/v1/rules", headers={"Authorization": "Bearer not-a-jwt"})
     assert resp.status_code == 401
+
+
+def test_v1_rules_is_retired():
+    """AA-923 (WM-34): the app serves no /v1/rules route (the N8 output rules are retired); the prefix itself stays
+    staff-only in STAFF_PATH_PREFIXES (fail closed, like /v1/social)."""
+    paths = {getattr(r, "path", "") for r in app.routes}
+    assert not any(p == "/v1/rules" or p.startswith("/v1/rules/") for p in paths)
+    assert "/v1/rules" in staff_authz.STAFF_PATH_PREFIXES
 
 
 @pytest.mark.parametrize("provided,expected,ok", [

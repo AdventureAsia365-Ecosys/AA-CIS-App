@@ -1152,9 +1152,6 @@ def test_build_addendum_freezes_only_the_ids_and_leaves_post_edit_out(monkeypatc
     ids = [f"0a919e00-0000-4000-8000-00000000000{i}" for i in range(1, 6)]
     seen = {}
 
-    async def _lessons(conn):
-        return ""
-
     def _cand(i, post_edit=False, label=None):
         return Candidate(id=ids[i], group="zz-agency", tags={"held"}, data={
             "post_edit": post_edit, "label": label or common.needs_panel_label()})
@@ -1176,7 +1173,7 @@ def test_build_addendum_freezes_only_the_ids_and_leaves_post_edit_out(monkeypatc
     async def _freeze_t2(pool, c, shared):
         return {"kind": "t2", "country": "Zzland", "refs": {"version_id": c.id}, "label": c.data["label"]}
 
-    for name, fn in (("_pool", _pool), ("load_s1_lessons_block", _lessons), ("s1_candidates", _s1),
+    for name, fn in (("_pool", _pool), ("s1_candidates", _s1),
                      ("t2_candidates", _t2), ("t9_candidates", _t9), ("freeze_t9", _freeze_t9),
                      ("freeze_t2", _freeze_t2)):
         monkeypatch.setattr(select_samples, name, fn)

@@ -7,13 +7,18 @@
 // Admin role only (the page, the BFF write rule and the backend all check). The backend answers 503
 // until migration 231 (acp_shared.content_piece_label) is applied — shown as a plain note.
 // Labels are admin data: they never reach the tenant.
+// AA-923 WM-32 — the same form on a T2 tour version (TourVersionDrawer) and an A1 (S1) rewrite (the tour
+// panel's Rewrite tab): SubjectLabelSection, backed by acp_shared.content_label (migration 315)
+//   GET/POST /admin/content-quality/tour-versions/{id}/label
+//   GET/POST /admin/content-quality/a1-content/{id}/label
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { K, ApiError, Badge, Button, apiGet, apiSend, useAdminIdentity, useT, useToast } from "../../_kit";
 import {
-  fmtTime,
-  type DefectLevel, type PieceDetail, type PieceLabel as Label, type PieceLabelBody, type PieceLabelValue, type PieceLabels,
+  fmtTime, subjectLabelPath,
+  type DefectLevel, type LabelSubjectType, type PieceDetail, type PieceLabel as Label, type PieceLabelBody,
+  type PieceLabelValue, type PieceLabels, type SubjectLabels,
 } from "./shared";
 import { D } from "./drawer.messages";
 import { DEFECT, DEFECT_LEVEL, LABEL_HINT, LABEL_NAME, STATUS } from "./messages";
@@ -53,7 +58,10 @@ function labelBodyFrom(d: LabelDraft): PieceLabelBody | null {
   return { ...d, label: d.label, reason: (d.reason ?? "").trim() || null };
 }
 
-function LabelForm({ piece, mine }: { piece: PieceDetail; mine: Label | null }) {
+/** Where the form saves and which cached queries a save refreshes. */
+interface LabelTarget { path: string; queryKey: readonly unknown[]; invalidate?: readonly unknown[] }
+
+function LabelForm({ target, mine }: { target: LabelTarget; mine: Label | null }) {
   const t = useT(D);
   const labelName = useT(LABEL_NAME);
   const labelHint = useT(LABEL_HINT);
@@ -65,10 +73,10 @@ function LabelForm({ piece, mine }: { piece: PieceDetail; mine: Label | null }) 
   const body = labelBodyFrom(d);
   const save = useMutation({
     mutationFn: (body: PieceLabelBody) =>
-      apiSend<PieceLabels>(`/api/admin/content-quality/pieces/${piece.piece_id}/label`, { body, admin: true }),
+      apiSend<PieceLabels | SubjectLabels>(target.path, { body, admin: true }),
     onSuccess: (r) => {
-      qc.setQueryData(["cq-piece-label", piece.piece_id], (old: PieceLabels | undefined) => ({ ...old, ...r }));
-      qc.invalidateQueries({ queryKey: ["cq-pieces"] });
+      qc.setQueryData(target.queryKey, (old: PieceLabels | SubjectLabels | undefined) => ({ ...old, ...r }));
+      if (target.invalidate) qc.invalidateQueries({ queryKey: target.invalidate });
       const saved = r.mine?.label ?? d.label;
       toast.success(saved ? t("labelledAs", labelName(saved)) : t("labelSaved"));
     },
@@ -132,11 +140,11 @@ function LabelForm({ piece, mine }: { piece: PieceDetail; mine: Label | null }) 
   );
 }
 
-function LabelList({ labels }: { labels: Label[] }) {
+function LabelList({ labels, empty }: { labels: Label[]; empty: string }) {
   const t = useT(D);
   const defectName = useLookup(DEFECT);
   const level = useLookup(DEFECT_LEVEL);
-  if (!labels.length) return <div style={{ fontSize: 12, color: K.muted }}>{t("noLabels")}</div>;
+  if (!labels.length) return <div style={{ fontSize: 12, color: K.muted }}>{empty}</div>;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       {labels.map((l) => (
@@ -155,17 +163,9 @@ function LabelList({ labels }: { labels: Label[] }) {
   );
 }
 
-export function PieceLabelSection({ piece }: { piece: PieceDetail }) {
+/** The error / loading states every label section shares (503 until the label migration is applied). */
+function LabelLoadState({ error }: { error: unknown }) {
   const t = useT(D);
-  const status = useLookup(STATUS);
-  const { isAdmin } = useAdminIdentity();
-  const { data, error, isLoading } = useQuery({
-    queryKey: ["cq-piece-label", piece.piece_id],
-    queryFn: () => apiGet<PieceLabels>(`/api/admin/content-quality/pieces/${piece.piece_id}/label`, { admin: true }),
-    enabled: isAdmin,
-    retry: false,
-  });
-  if (!isAdmin) return <div style={{ fontSize: 12, color: K.muted }}>{t("onlyAdminLabel")}</div>;
   if (error) {
     const unavailable = error instanceof ApiError && error.status === 503;
     return (
@@ -174,13 +174,18 @@ export function PieceLabelSection({ piece }: { piece: PieceDetail }) {
       </div>
     );
   }
-  if (isLoading || !data) return <div style={{ fontSize: 12, color: K.muted }}>{t("loading")}</div>;
+  return <div style={{ fontSize: 12, color: K.muted }}>{t("loading")}</div>;
+}
+
+/** The form (or why there is none), the "edited after your label" note and the other labellers. */
+function LabelBody({ target, data, form, emptyText }: {
+  target: LabelTarget; data: PieceLabels | SubjectLabels; form: React.ReactNode | null; emptyText: string;
+}) {
+  const t = useT(D);
   const others = data.labels.filter((l) => l.labelled_by !== data.mine?.labelled_by);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      {EDITABLE.includes(piece.status)
-        ? <LabelForm key={data.mine?.labelled_at ?? "new"} piece={piece} mine={data.mine} />
-        : <div style={{ fontSize: 12, color: K.muted }}>{t("noFinalText", status(piece.status))}</div>}
+      {form ?? <LabelForm key={data.mine?.labelled_at ?? "new"} target={target} mine={data.mine} />}
       {data.mine?.text_changed_since_label && (
         <div style={{ fontSize: 12, background: K.amberSoft, padding: "6px 8px", borderRadius: 6, color: K.ink }}>
           {t("editedAfterLabel")}
@@ -188,8 +193,55 @@ export function PieceLabelSection({ piece }: { piece: PieceDetail }) {
       )}
       <div>
         <div style={{ fontSize: 11.5, fontWeight: 600, marginBottom: 4, color: K.ink }}>{t("otherLabellers", others.length)}</div>
-        <LabelList labels={others} />
+        <LabelList labels={others} empty={emptyText} />
       </div>
+    </div>
+  );
+}
+
+export function PieceLabelSection({ piece }: { piece: PieceDetail }) {
+  const t = useT(D);
+  const status = useLookup(STATUS);
+  const { isAdmin } = useAdminIdentity();
+  const target: LabelTarget = {
+    path: `/api/admin/content-quality/pieces/${piece.piece_id}/label`,
+    queryKey: ["cq-piece-label", piece.piece_id], invalidate: ["cq-pieces"],
+  };
+  const { data, error, isLoading } = useQuery({
+    queryKey: target.queryKey,
+    queryFn: () => apiGet<PieceLabels>(target.path, { admin: true }),
+    enabled: isAdmin,
+    retry: false,
+  });
+  if (!isAdmin) return <div style={{ fontSize: 12, color: K.muted }}>{t("onlyAdminLabel")}</div>;
+  if (error || isLoading || !data) return <LabelLoadState error={error} />;
+  const form = EDITABLE.includes(piece.status)
+    ? null
+    : <div style={{ fontSize: 12, color: K.muted }}>{t("noFinalText", status(piece.status))}</div>;
+  return <LabelBody target={target} data={data} form={form} emptyText={t("noLabels")} />;
+}
+
+/** AA-923 WM-32 — the label of one T2 tour version or one A1 (S1) rewrite, same form and rules as a T9 piece. */
+export function SubjectLabelSection({ subjectType, subjectId }: { subjectType: LabelSubjectType; subjectId: string }) {
+  const t = useT(D);
+  const { isAdmin } = useAdminIdentity();
+  const target: LabelTarget = {
+    path: subjectLabelPath(subjectType, subjectId), queryKey: ["cq-subject-label", subjectType, subjectId],
+  };
+  const { data, error, isLoading } = useQuery({
+    queryKey: target.queryKey,
+    queryFn: () => apiGet<SubjectLabels>(target.path, { admin: true }),
+    enabled: isAdmin,
+    retry: false,
+  });
+  if (!isAdmin) return <div style={{ fontSize: 12, color: K.muted }}>{t("onlyAdminTextLabel")}</div>;
+  if (error || isLoading || !data) return <LabelLoadState error={error} />;
+  const form = data.labellable
+    ? null
+    : <div style={{ fontSize: 12, color: K.muted }}>{t("noFinishedText", data.status)}</div>;
+  return (
+    <div data-testid={`cq-subject-label-${subjectType}`}>
+      <LabelBody target={target} data={data} form={form} emptyText={t("noTextLabels")} />
     </div>
   );
 }

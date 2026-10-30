@@ -18,6 +18,8 @@ actions on one piece:
   GET/POST /pieces/{id}/label         — AA-791: a human label per piece and labeller
                                          (acp_shared.content_piece_label, migration 231; 503 until
                                          it is applied). Admin data only, never shown to a tenant.
+  GET/POST /tour-versions/{id}/label  — AA-923 WM-32: the same label on a T2 version and on an A1
+  GET/POST /a1-content/{id}/label       (S1) rewrite (acp_shared.content_label, migration 315).
 All of them require the `admin` staff role (x-admin-role, forwarded by the BFF from the verified JWT).
 Gate results (`gate_ledger`, `flags`) are left as the writer produced them: they measure the
 writer, not the admin's edit.
@@ -973,6 +975,152 @@ async def set_piece_label(piece_id: str, body: PieceLabelBody, request: Request,
     labels = [_label_row(r) for r in rows]
     me = f"admin:{x_admin_user_id}"
     return {"piece_id": piece_id, "labels": labels, "mine": next((x for x in labels if x["labelled_by"] == me), None)}
+
+
+# ── AA-923 WM-32: the same label on a T2 tour version and an A1 (S1) rewrite (acp_shared.content_label, CIS 315) ──
+
+_SUBJECT_LABEL_TABLE = "acp_shared.content_label"
+SUBJECT_LABELS_UNAVAILABLE = ("Labels are not available yet: migration 315 (acp_shared.content_label) has not been "
+                              "applied on this database.")
+# Statuses of a T2 version with no finished AI text to judge.
+_T2_UNLABELLABLE_STATUSES = ("pending", "failed")
+_A1_TEXT_SQL = ("concat_ws(E'\\n', g.aa_name, g.aa_subtitle, g.aa_summary, g.aa_description, g.aa_highlights::text, "
+                "g.aa_itineraries, g.seo_title, g.seo_meta)")
+# subject_type -> (the subject row: tenant, status, sha256 of its current text; "not found" detail)
+_LABEL_SUBJECTS: dict[str, tuple[str, str]] = {
+    "t2_version": (
+        """SELECT v.tenant_id, v.status::text AS status,
+                  encode(sha256(convert_to(COALESCE(v.rewritten_content::text, ''), 'UTF8')), 'hex') AS sha
+           FROM gold_aa_internal.tenant_tour_versions v WHERE v.id = $1::uuid""",
+        "Version not found"),
+    "a1_content": (
+        f"""SELECT g.tenant_id, g.status::text AS status,
+                   encode(sha256(convert_to({_A1_TEXT_SQL}, 'UTF8')), 'hex') AS sha
+            FROM silver_aa_internal.generated_content g WHERE g.id = $1::uuid""",
+        "Rewrite not found"),
+}
+_SUBJECT_LABELS_SQL = f"""
+    SELECT l.labelled_by, l.label, l.defects, l.minutes_to_fix, l.reason, l.labelled_at,
+           (l.content_sha256 IS DISTINCT FROM $3) AS text_changed_since_label
+    FROM {_SUBJECT_LABEL_TABLE} l
+    WHERE l.subject_type = $1 AND l.subject_id = $2::uuid
+    ORDER BY l.labelled_at DESC
+"""
+
+
+def _uuid_or_404(value: str, detail: str) -> str:
+    try:
+        return str(UUID(value))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=404, detail=detail)
+
+
+async def _label_subject(conn, subject_type: str, subject_id: str):
+    sql, not_found = _LABEL_SUBJECTS[subject_type]
+    if not await conn.fetchval(f"SELECT to_regclass('{_SUBJECT_LABEL_TABLE}') IS NOT NULL"):
+        raise HTTPException(status_code=503, detail=SUBJECT_LABELS_UNAVAILABLE)
+    row = await conn.fetchrow(sql, _uuid_or_404(subject_id, not_found))
+    if row is None:
+        raise HTTPException(status_code=404, detail=not_found)
+    return row
+
+
+def _subject_labels_out(subject_type: str, subject_id: str, rows, me: Optional[str], subject) -> dict:
+    labels = [_label_row(r) for r in rows]
+    return {"subject_type": subject_type, "subject_id": subject_id, "status": subject["status"], "labels": labels,
+            "mine": next((x for x in labels if me and x["labelled_by"] == me), None),
+            "labellable": _labellable(subject_type, subject["status"]),
+            "choices": {"label": list(LABELS), "defect_classes": list(DEFECT_CLASSES),
+                        "defect_levels": list(DEFECT_LEVELS)}}
+
+
+def _labellable(subject_type: str, status: Optional[str]) -> bool:
+    return not (subject_type == "t2_version" and status in _T2_UNLABELLABLE_STATUSES)
+
+
+async def _get_subject_label(request: Request, subject_type: str, subject_id: str, x_admin_secret: Optional[str],
+                             x_admin_user_id: Optional[str], x_admin_role: Optional[str]) -> dict:
+    verify_admin_secret(x_admin_secret)
+    _require_label_admin(x_admin_role)
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        subject = await _label_subject(conn, subject_type, subject_id)
+        rows = await conn.fetch(_SUBJECT_LABELS_SQL, subject_type, subject_id, subject["sha"])
+    me = f"admin:{x_admin_user_id}" if x_admin_user_id else None
+    return _subject_labels_out(subject_type, subject_id, rows, me, subject)
+
+
+async def _set_subject_label(request: Request, subject_type: str, subject_id: str, body: PieceLabelBody,
+                             x_admin_secret: Optional[str], x_admin_user_id: Optional[str],
+                             x_admin_role: Optional[str]) -> dict:
+    """One row per subject and labeller (a second save overwrites the caller's own row), the AA-791 rules: AA-783
+    criteria, defects per class, minutes to fix, reason, the sha256 of the text labelled."""
+    verify_admin_secret(x_admin_secret)
+    _require_label_admin(x_admin_role)
+    if not x_admin_user_id:
+        raise HTTPException(status_code=400, detail="No admin identity on the request — sign in again")
+    if body.label not in LABELS:
+        raise HTTPException(status_code=422, detail=f"label must be one of {', '.join(LABELS)}")
+    bad = {k: v for k, v in body.defects.items() if k not in DEFECT_CLASSES or v not in DEFECT_LEVELS}
+    if bad:
+        raise HTTPException(status_code=422, detail=f"defects take {', '.join(DEFECT_CLASSES)} with a value in "
+                                                    f"{', '.join(DEFECT_LEVELS)} (got {bad})")
+    reason = (body.reason or "").strip() or None
+    me = f"admin:{x_admin_user_id}"
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        subject = await _label_subject(conn, subject_type, subject_id)
+        if not _labellable(subject_type, subject["status"]):
+            raise HTTPException(status_code=409, detail=f"A {subject['status']} version has no finished text to label")
+        await conn.execute(
+            f"""
+            INSERT INTO {_SUBJECT_LABEL_TABLE} AS l (subject_type, subject_id, tenant_id, labelled_by, label, defects,
+                                                     minutes_to_fix, reason, content_sha256, labelled_at)
+            VALUES ($1, $2::uuid, $3::uuid, $4, $5, $6::jsonb, $7, $8, $9, now())
+            ON CONFLICT (subject_type, subject_id, labelled_by) DO UPDATE SET
+                tenant_id = EXCLUDED.tenant_id, label = EXCLUDED.label, defects = EXCLUDED.defects,
+                minutes_to_fix = EXCLUDED.minutes_to_fix, reason = EXCLUDED.reason,
+                content_sha256 = EXCLUDED.content_sha256, labelled_at = now()
+            """, subject_type, subject_id, subject["tenant_id"], me, body.label, json.dumps(body.defects),
+            body.minutes_to_fix, reason, subject["sha"])
+        rows = await conn.fetch(_SUBJECT_LABELS_SQL, subject_type, subject_id, subject["sha"])
+    return _subject_labels_out(subject_type, subject_id, rows, me, subject)
+
+
+@router.get("/tour-versions/{version_id}/label")
+async def get_tour_version_label(version_id: str, request: Request, x_admin_secret: str = Header(None),
+                                 x_admin_user_id: Optional[str] = Header(None),
+                                 x_admin_role: Optional[str] = Header(None)):
+    """AA-923 WM-32 — every human label on this T2 version (newest first) and the caller's own (`mine`).
+    503 until migration 315 is applied."""
+    return await _get_subject_label(request, "t2_version", version_id, x_admin_secret, x_admin_user_id, x_admin_role)
+
+
+@router.post("/tour-versions/{version_id}/label")
+async def set_tour_version_label(version_id: str, body: PieceLabelBody, request: Request,
+                                 x_admin_secret: str = Header(None), x_admin_user_id: Optional[str] = Header(None),
+                                 x_admin_role: Optional[str] = Header(None)):
+    """AA-923 WM-32 — save the caller's label on one T2 version (not a pending / failed one: no finished text)."""
+    return await _set_subject_label(request, "t2_version", version_id, body, x_admin_secret, x_admin_user_id,
+                                    x_admin_role)
+
+
+@router.get("/a1-content/{content_id}/label")
+async def get_a1_content_label(content_id: str, request: Request, x_admin_secret: str = Header(None),
+                               x_admin_user_id: Optional[str] = Header(None),
+                               x_admin_role: Optional[str] = Header(None)):
+    """AA-923 WM-32 — every human label on this A1 (S1) rewrite (a silver_aa_internal.generated_content row) and the
+    caller's own. 503 until migration 315 is applied."""
+    return await _get_subject_label(request, "a1_content", content_id, x_admin_secret, x_admin_user_id, x_admin_role)
+
+
+@router.post("/a1-content/{content_id}/label")
+async def set_a1_content_label(content_id: str, body: PieceLabelBody, request: Request,
+                               x_admin_secret: str = Header(None), x_admin_user_id: Optional[str] = Header(None),
+                               x_admin_role: Optional[str] = Header(None)):
+    """AA-923 WM-32 — save the caller's label on one A1 rewrite (any status: every S1 output is writer output)."""
+    return await _set_subject_label(request, "a1_content", content_id, body, x_admin_secret, x_admin_user_id,
+                                    x_admin_role)
 
 
 @router.get("/stats")

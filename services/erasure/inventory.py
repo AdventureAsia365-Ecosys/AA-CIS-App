@@ -73,6 +73,8 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     _d("acp_shared.acp_quota_ledger", "tenant quota ledger"),
     _d("acp_shared.angle_gate_request", "T8 angle requests (options follow through the FK)"),
     _d("acp_shared.content_piece", "T9 content pieces (labels and publish rows follow)"),
+    # AA-923 WM-32 (315): human labels on the tenant's T2 versions (keyed on tenant_id: the subject has no FK here).
+    _d("acp_shared.content_label", "admin labels on the tenant's T2 versions and A1 rewrites"),
     _d("acp_shared.debate_brand_fit_cache", "brand-fit cache of the tenant"),
     _d("acp_shared.facts", "tenant-scope facts (platform facts have no tenant)"),
     _d("acp_shared.publish_log", "tenant publish history (channels)"),

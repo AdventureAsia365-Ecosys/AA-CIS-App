@@ -316,6 +316,23 @@ export interface PieceLabels {
   mine: PieceLabel | null;
   choices?: { label: PieceLabelValue[]; defect_classes: string[]; defect_levels: DefectLevel[] };
 }
+// AA-923 WM-32 — the same label on a T2 version and an A1 (S1) rewrite (acp_shared.content_label, migration 315).
+export type LabelSubjectType = "t2_version" | "a1_content";
+export interface SubjectLabels {
+  subject_type: LabelSubjectType;
+  subject_id: string;
+  status: string;
+  labellable: boolean;
+  labels: PieceLabel[];
+  mine: PieceLabel | null;
+  choices?: { label: PieceLabelValue[]; defect_classes: string[]; defect_levels: DefectLevel[] };
+}
+/** Same-origin BFF path of a subject's label routes. */
+export function subjectLabelPath(type: LabelSubjectType, id: string): string {
+  return type === "t2_version"
+    ? `/api/admin/content-quality/tour-versions/${id}/label`
+    : `/api/admin/content-quality/a1-content/${id}/label`;
+}
 export interface PieceLabelBody {
   label: PieceLabelValue;
   defects: Record<string, DefectLevel>;

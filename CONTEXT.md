@@ -2498,6 +2498,11 @@ labeller: `as_is`/`light`/`heavy`/`reject`, per-class defects, minutes to fix, r
 sha256 of the text labelled, so a later admin edit shows as changed). It is the ground truth gates
 are re-scored against (AA-783 criteria); admin-only, set from the Content Quality drawer, no tenant
 column and no `aa_app_user` grant.
+The same Label exists for a T2 tour version and an A1 (S1) rewrite (AA-923 WM-32,
+`acp_shared.content_label`, migration 315: `subject_type` `t2_version` / `a1_content`, `subject_id`,
+the subject's `tenant_id` as the erasure key, the same CHECKs; one row per subject and labeller),
+set from the T2 version drawer and the tour panel's Rewrite tab (`PieceLabel.tsx` `SubjectLabelSection`);
+`content_piece_label` and its T9 readers are unchanged.
 `held` is an **admin-only quality label** (AA-770, S233): the tenant always receives the content
 and can export and publish a held Piece like an approved one — including a piece held because a detector
 was down (AA-925 `degraded`). **Tenants never see internal gate
@@ -3271,13 +3276,15 @@ this is the table that resolves Open Question 1 below.
 | 9 | Facts Entry | **Both** (one table, two scopes) | Platform scope: once, by admin. Tenant scope: per tenant | **Yes for `scope='platform'` rows, by design.** `acp_shared.facts` (migration 145:33-46), `scope` column (`'platform'`\|`'tenant'`), `tenant_id IS NULL iff scope='platform'` (CHECK, migration 145:44-46). RLS (migration 229, AA-817, for the tenant pool role `aa_app_user`; the owner/main pool is exempt): `facts_platform_read` FOR SELECT `USING (scope = 'platform')` — platform rows are readable by every tenant — and `tenant_isolation` FOR ALL `USING`/`WITH CHECK (scope = 'tenant' AND tenant_id = NULLIF(app.tenant_id, '')::uuid)` — a tenant reads and writes only its own rows and can never write, delete or re-scope a platform fact (145's FOR ALL policy allowed that). |
 | 10 | Writing memory (Writing Rules, Pinned Exemplars, Releases; ADR 0010) | **Both** (one model, two scopes) | Platform scope: per monthly Release, approved by Nghiệp. Tenant scope: per tenant Release, one human click | **Tenant scope: no** — every `cis_app` read filters `tenant_id = $1` explicitly and the tables carry the `tenant_isolation` RLS policy (FORCE RLS), following the `acp_shared.facts` pattern; a CI test proves tenant A's rules never resolve for tenant B. **Platform scope: yes, by design** — a platform rule may be drawn from ≥ 3 distinct tenants' evidence (D9) and then applies to every tenant's writer, but platform rows never hold tenant text. Tables are CIS-owned in `shared`: `writing_signal` exists (CIS 277, AA-916; isolation tests `tests/integration/test_aa916_migration_277.py`, `test_aa817_rls_tenant_isolation.py`) and `writing_rule` (CIS 280, AA-917; `tests/integration/test_aa917_migration_280.py`: no tenant-pool privilege, a `tenant_id = $1` read never resolves another tenant's rule), and the golden set's tenant items and results `eval_golden_item` / `eval_item_result` (CIS 284, AA-919; `tests/integration/test_aa919_migration_284.py`), the releases and shadow outputs `writing_memory_release` / `writing_memory_shadow` (CIS 287, AA-919 WM-18; `tests/integration/test_aa919_migration_287.py`: tenant A's release never resolves for tenant B), and the pinned exemplars `writing_exemplar` / `writing_memory_release_exemplar` (CIS 313, AA-921 WM-27; `tests/integration/test_aa921_exemplars.py`: as cis_app, tenant A's draft pins only A's examples and resolving for tenant B returns none of them; the link trigger refuses a cross-tenant link). |
 
-**Frozen predecessor (AA-915).** The AA-132 lessons loop (`shared.pipeline_lessons`) is frozen
-behind `PIPELINE_LESSONS_ENABLED` (env, default off, no per-tenant override): with the flag off
-nothing reads or writes the table, and the S1 system prompt carries no lessons block. The only
-reader is `services/content_generation/pipeline_lessons.py`; a unit test keeps every other file
-from querying the table. ADR 0010 supersedes it and WM-34 drops the table. Do not "fix" its stage
-mismatch (`audit` written, `S1_rewrite`/`S1_editor` read): that would revive an ungated,
-tenant-blind loop.
+**Retired predecessor (AA-915 → AA-923).** The AA-132 lessons loop (`shared.pipeline_lessons`) was
+frozen by AA-915 behind `PIPELINE_LESSONS_ENABLED` and its code is gone since AA-923 (WM-34): no
+reader, no writer, the S1 system prompt carries no lessons block, and `flag_fix_node._write_lessons_safe`
+is a logging no-op kept only because the AA-729 harness patches it by name. The N8 output rules
+(`acp_shared.acp_output_rules`, `/v1/rules`, `api/services/acp_post_processor.py`,
+`services/acp_produce/rule_adapter.py`) went in the same change. Both tables move to the `retired`
+quarantine schema by a later contract migration and are dropped after 14 days (DM-3.9); a unit test
+(`tests/unit/test_aa923_retired_lesson_paths.py`) keeps every file from naming them again.
+Learned rules reach a writer only through a writing-memory release (ADR 0010).
 
 ### Cross-tenant mechanisms — full inventory (AA-540's specific ask)
 
@@ -3294,10 +3301,10 @@ everything from the Slate onward is per tenant.** The shared parts:
    from ≥ 3 tenants' evidence and apply to every tenant's writer; they never hold tenant text, and
    each needs Nghiệp's approval. Tenant-scope rows are isolated.
 
-One **latent** cross-tenant path, frozen: `shared.pipeline_lessons` (AA-132) has no `tenant_id`
-and was written from the shared S1/T2 flag_fix node, so a working loop would have let one tenant's
-T2 failures steer the global S1 prompt. Frozen behind `PIPELINE_LESSONS_ENABLED` (default off) by
-AA-915; retired by WM-34.
+One former **latent** cross-tenant path, retired: `shared.pipeline_lessons` (AA-132) has no
+`tenant_id` and was written from the shared S1/T2 flag_fix node, so a working loop would have let
+one tenant's T2 failures steer the global S1 prompt. Frozen by AA-915; its code was removed by
+AA-923 (WM-34) and the table goes to quarantine.
 
 Plus one **cross-tenant read (not a cache)**: the F10 cannibalization Gate (row 8) compares a new
 Piece's embedding against every other tenant's approved content to block near-duplicates.

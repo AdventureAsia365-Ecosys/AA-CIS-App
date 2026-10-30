@@ -148,15 +148,6 @@ def test_cognito_without_the_secret_on_v1_pipeline(real, pool, issuer):
     assert pool.route_args and pool.route_args[0][0] == "00000000-0000-0000-0000-000000000001"
 
 
-def test_cognito_without_the_secret_on_v1_rules_goes_through_policy(real, pool, issuer):
-    """staff_policy_if_staff must run for a principal without the secret, or POLICY would be skipped."""
-    pool.add(role="content", iss=ISS, sub=SUB)
-    res = real.patch("/v1/rules/00000000-0000-0000-0000-000000000008", json={},
-                     headers=_cognito(issuer, "cis-content"))
-    assert res.status_code == 403
-    assert res.json()["detail"] == "Role 'content' lacks the 'content.settings.write' permission"
-
-
 def test_cognito_without_the_secret_on_admin_atoms_goes_through_policy(real, pool, issuer):
     pool.add(role="reviewer", iss=ISS, sub=SUB)
     res = real.get("/admin/atoms/summary", headers=_cognito(issuer, "cis-reviewer"))
@@ -181,11 +172,10 @@ def test_cognito_admin_write_without_the_secret(real, pool, issuer, monkeypatch)
 
 
 def test_guard_functions_accept_a_verified_principal_only_inside_its_request():
-    """verify_admin_secret, admin_settings.verify_admin, v1_pipeline._require_admin, staff_secret and the atoms guard:
+    """verify_admin_secret, admin_settings.verify_admin, v1_pipeline._require_admin and the atoms guard:
     with the contextvar set (the middleware did it) no secret is needed; without it, the old answers."""
     from types import SimpleNamespace
 
-    from api.core.staff_secret import require_staff_secret
     from api.routers import admin_atoms, v1_pipeline
 
     req = SimpleNamespace(headers={}, method="GET", url=SimpleNamespace(path="/admin/x"))
@@ -197,7 +187,6 @@ def test_guard_functions_accept_a_verified_principal_only_inside_its_request():
             admin_settings.verify_admin(None)
             admin_atoms._require_atoms_staff(req, None, None)
             assert v1_pipeline._require_admin(req, None)["role"] == "admin"
-            assert require_staff_secret(req, None)["role"] == "admin"
         finally:
             var.reset(token)
     assert not staff_credential.principal_verified()
@@ -210,7 +199,8 @@ def test_guard_functions_accept_a_verified_principal_only_inside_its_request():
     ("GET", "/admin/platform/staff", {"X-Admin-Secret": "wrong", "x-admin-role": "admin"}, 403, "Invalid admin secret"),
     ("GET", "/v1/pipeline/sources", {}, 401, "Not authenticated"),
     ("GET", "/v1/pipeline/sources", {"X-Admin-Secret": "wrong"}, 403, "Invalid admin secret"),
-    ("GET", "/v1/rules", {}, 401, "Not authenticated"),
+    ("GET", "/v1/rules", {}, 404, "Not Found"),                     # AA-923 (WM-34): retired, the prefix stays staff
+    ("PATCH", "/v1/rules/00000000-0000-0000-0000-000000000008", {"X-Admin-Secret": "wrong"}, 404, "Not Found"),
 ])
 def test_no_secret_and_no_principal_answer_as_before(real, pool, method, path, headers, status, detail):
     res = real.request(method, path, headers=headers)
@@ -270,11 +260,6 @@ def test_preview_is_never_the_machine(real, key, role):
     res = real.request(method, _concrete(path), json={}, headers=_preview(role))
     assert res.status_code == 403, (key, res.text)
     assert res.json()["detail"] in ("Role 'viewer' is read-only", f"Role 'viewer' lacks the '{POLICY[key]}' permission")
-
-
-def test_preview_on_v1_rules_write_is_read_only(real):
-    res = real.patch("/v1/rules/00000000-0000-0000-0000-000000000008", json={}, headers=_preview("admin"))
-    assert res.status_code == 403 and res.json()["detail"] == "Role 'viewer' is read-only"
 
 
 def test_preview_on_v1_pipeline_read(real, pool):

@@ -280,6 +280,84 @@ async def _seed(pools, tid: str, stage: str) -> dict:
             "master": master, "own_tour": own, "golden_set_id": set_id}
 
 
+async def _seed_learned_writing(pools, tid: str) -> str:
+    """AA-923 WM-33: one row in every learned-writing store a tenant leaves behind (ADR 0010 decision 11, tenant text
+    only in deletable tables): a preference summary (writing_rule kind preference_summary, AA-921), a masked voice
+    example pinned in a rules draft (writing_exemplar + writing_memory_release + writing_memory_release_exemplar), a
+    shadow output of a release run, a keep decision, a disagreement-queue item and a human label on a T2 version
+    (acp_shared.content_label, CIS 315). Returns a marker shared by the rows for the after-check."""
+    from services.writing_memory import exemplars as ex
+    admin, _ = pools
+    mark = f"zz923-{tid[:8]}"
+    sha = "b" * 64
+    text = ("Fictional Valeport walks stay slow and small. Mornings start early and every route ends with time to sit "
+            "and look around the old harbour of Brinmoor.")
+    m = ex.masked_excerpt(text)
+    async with admin.acquire() as c:
+        async with c.transaction():   # the link is written in the draft's own transaction (CIS 313 trigger)
+            rule = await c.fetchval(
+                "INSERT INTO shared.writing_rule (kind, scope, tenant_id, writer, cluster_key, rule_text, status, "
+                "approved_by, approved_at) VALUES ('preference_summary', 'tenant', $1::uuid, 't9_blog', $2, "
+                "'Short, plain sentences; no superlatives.', 'approved', 'pytest', now()) RETURNING rule_id", tid, mark)
+            exemplar = await c.fetchval(
+                "INSERT INTO shared.writing_exemplar (scope, tenant_id, writer, channel, masked_text, text_sha256, "
+                "word_count, source_table, source_id) VALUES ('tenant', $1::uuid, 't9_blog', 'blog', $2, $3, $4, "
+                "'content_piece', $5) RETURNING exemplar_id", tid, m["masked_text"], m["text_sha256"], m["word_count"],
+                mark)
+            release = await c.fetchval(
+                "INSERT INTO shared.writing_memory_release (writer, scope, tenant_id, release_no, train_kind, "
+                "content_class, rule_ids, items_sha256, created_by, notes) VALUES ('t9_blog', 'tenant', $1::uuid, 1, "
+                "'regular', 'rules', ARRAY[$2]::uuid[], $3, 'pytest', $4) RETURNING release_id", tid, rule, sha, mark)
+            await c.execute(
+                "INSERT INTO shared.writing_memory_release_exemplar (release_id, exemplar_id, writer, scope, "
+                "tenant_id, channel, position) VALUES ($1, $2, 't9_blog', 'tenant', $3::uuid, 'blog', 1)",
+                release, exemplar, tid)
+        run = await c.fetchval(
+            "INSERT INTO shared.prompt_eval_runs (pipeline, prompt_version, tour_count, cost_usd, details, "
+            "triggered_by, run_kind, writer) VALUES ('writing_memory', 'zz923', 1, 0, '{}'::jsonb, $1, 'shadow', "
+            "'t9_blog') RETURNING id", mark)
+        await c.execute(
+            "INSERT INTO shared.writing_memory_shadow (release_id, run_id, writer, channel, scope, tenant_id, "
+            "input_source, input_id, input_sha256, output, output_sha256, verdict) VALUES ($1, $2, 't9_blog', 'blog', "
+            "'tenant', $3::uuid, 'content_piece', gen_random_uuid(), $4, '{\"text\": \"Fictional output.\"}'::jsonb, "
+            "$4, 'pass')", release, run, tid, sha)
+        await c.execute(
+            "INSERT INTO shared.writing_memory_keep (release_id, writer, scope, tenant_id, codes, reason, kept_by, "
+            "kept_until) VALUES ($1, 't9_blog', 'tenant', $2::uuid, ARRAY['cost_up'], $3, 'admin:pytest', "
+            "current_date + 7)", release, tid, mark)
+        await c.execute(
+            "INSERT INTO shared.writing_memory_disagreement (source, source_ref, writer, scope, tenant_id, "
+            "machine_verdict, human_label, week_start, note) VALUES ('piece_label', gen_random_uuid(), 't9_blog', "
+            "'tenant', $1::uuid, 'approved', 'heavy', DATE '2026-10-26', $2)", tid, mark)
+        version = await c.fetchval("SELECT id FROM gold_aa_internal.tenant_tour_versions WHERE tenant_id = $1::uuid "
+                                   "ORDER BY version_number LIMIT 1", tid)
+        await c.execute(
+            "INSERT INTO acp_shared.content_label (subject_type, subject_id, tenant_id, labelled_by, label, reason) "
+            "VALUES ('t2_version', $1, $2::uuid, 'admin:pytest', 'light', $3)", version, tid, mark)
+    return mark
+
+
+# AA-923 WM-33: the learned-writing stores the offboarding deletion covers, with the count query of each (marker $1).
+LEARNED_WRITING = {
+    "shared.writing_rule": "SELECT count(*) FROM shared.writing_rule WHERE cluster_key = $1",
+    "shared.writing_exemplar": "SELECT count(*) FROM shared.writing_exemplar WHERE source_id = $1",
+    "shared.writing_memory_release": "SELECT count(*) FROM shared.writing_memory_release WHERE notes = $1",
+    "shared.writing_memory_release_exemplar": (
+        "SELECT count(*) FROM shared.writing_memory_release_exemplar l JOIN shared.writing_exemplar e "
+        "ON e.exemplar_id = l.exemplar_id WHERE e.source_id = $1"),
+    "shared.writing_memory_shadow": (
+        "SELECT count(*) FROM shared.writing_memory_shadow s JOIN shared.prompt_eval_runs r ON r.id = s.run_id "
+        "WHERE r.triggered_by = $1"),
+    "shared.writing_memory_keep": "SELECT count(*) FROM shared.writing_memory_keep WHERE reason = $1",
+    "shared.writing_memory_disagreement": "SELECT count(*) FROM shared.writing_memory_disagreement WHERE note = $1",
+    "acp_shared.content_label": "SELECT count(*) FROM acp_shared.content_label WHERE reason = $1",
+}
+
+
+async def _learned_counts(admin, mark: str) -> dict:
+    return {t: await admin.fetchval(q, mark) for t, q in LEARNED_WRITING.items()}
+
+
 def _rows(result) -> dict:
     return {(r["table"], r["action"]): r["rows"] for r in result["rows"]}
 
@@ -687,3 +765,34 @@ async def test_now_is_checked_against_the_dry_run_age(pool):
         await _run(pool, {"subject": "tenant", "tenant": tid, "mode": "apply", "dry_run_job_id": dry_id,
                           "approved_fingerprint": dry["fingerprint"], "approved_by": "N", "snapshot_id": "s"},
                    env=ON, now=later)
+
+
+# ── AA-923 WM-33: offboarding deletion of the learned writing data ─────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_offboarding_erases_every_learned_writing_store_and_no_other_tenant(pool):
+    """WM-33 Done-when on real Postgres: a synthetic offboarded tenant with one row in every learned-writing store, a
+    second tenant with the same; the DRY RUN counts them and writes nothing, the apply deletes them all, and the other
+    tenant's rows are untouched."""
+    admin, _ = pool
+    tid, other = await _tenant(pool, offboarded_days=40), await _tenant(pool)
+    stage = f"adhoc_aa923_{uuid.uuid4().hex[:8]}"
+    await _seed(pool, tid, stage)
+    await _seed(pool, other, stage + "_o")
+    mine, theirs = await _seed_learned_writing(pool, tid), await _seed_learned_writing(pool, other)
+    before = await _learned_counts(admin, mine)
+    assert before == {t: 1 for t in LEARNED_WRITING}, before
+
+    dry_id, dry = await _run(pool, {"subject": "tenant", "tenant": tid})
+    assert dry["mode"] == "dry_run" and not dry["blocked"], dry["blockers"]
+    counted = {t: n for (t, _action), n in _rows(dry).items() if t in LEARNED_WRITING}
+    for table in LEARNED_WRITING:
+        assert counted.get(table, 0) >= 1, f"the DRY RUN does not count {table}: {counted}"
+    assert await _learned_counts(admin, mine) == before                       # a DRY RUN writes nothing
+
+    _, res = await _run(pool, {"subject": "tenant", "tenant": tid, "mode": "apply", "dry_run_job_id": dry_id,
+                               "approved_fingerprint": dry["fingerprint"], "approved_by": "Nghiep",
+                               "snapshot_id": "dsar-test-pre", "actor": "admin:test"}, env=ON)
+    assert res["mode"] == "apply" and res["verified"] is True, res.get("verified_left")
+    assert await _learned_counts(admin, mine) == {t: 0 for t in LEARNED_WRITING}
+    assert await _learned_counts(admin, theirs) == {t: 1 for t in LEARNED_WRITING}   # the other tenant: untouched
