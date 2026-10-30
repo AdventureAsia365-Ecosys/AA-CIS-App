@@ -213,6 +213,7 @@ def _run_stage(cfg, rec: Recorder, structured: bool):
     def openai_fail(**kwargs):
         rec.calls.append(["openai", "openai-direct", kwargs.get("model")])
         raise RuntimeError("fake openai outage")
+    client._openai = MagicMock()          # AA-1002 (S9): an injected OpenAI client (LLMClient no longer builds one)
     client._openai.chat.completions.create.side_effect = openai_fail
     client._bedrock = rec.runtime("acc2-native")
     req = LLMRequest(system_prompt="s", user_prompt="u", stage=cfg.stage, json_schema=SCHEMA if structured else None)

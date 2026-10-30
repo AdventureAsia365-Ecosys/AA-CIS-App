@@ -85,10 +85,11 @@ def _catalog_rates(model: str) -> Optional[dict]:
     """AA-658 — $/1K rates from shared.llm_model_catalog, or None when the catalog is
     unreachable or has no price for this model."""
     from .catalog import get_model_sync
-    from .models import ANTHROPIC_API_LABEL_PREFIX
+    from .models import VENDOR_LABEL_PREFIXES
     key = model[len("satellite-"):] if model and model.startswith("satellite-") else model
-    if key and key.startswith(ANTHROPIC_API_LABEL_PREFIX):          # AA-1002 S2: the Anthropic API path label
-        key = key[len(ANTHROPIC_API_LABEL_PREFIX):]
+    for prefix in VENDOR_LABEL_PREFIXES:            # AA-1002 S2 / S9: the Anthropic API / Azure OpenAI path labels
+        if key and key.startswith(prefix):
+            key = key[len(prefix):]
     key = _MODEL_ID_TO_CATALOG_KEY.get(key, key)
     try:
         m = get_model_sync(key)
@@ -152,10 +153,11 @@ class Quote:
 
 
 def _catalog_key(model: str) -> str:
-    from .models import ANTHROPIC_API_LABEL_PREFIX
+    from .models import VENDOR_LABEL_PREFIXES
     key = model[len("satellite-"):] if model and model.startswith("satellite-") else (model or "")
-    if key.startswith(ANTHROPIC_API_LABEL_PREFIX):
-        key = key[len(ANTHROPIC_API_LABEL_PREFIX):]
+    for prefix in VENDOR_LABEL_PREFIXES:
+        if key.startswith(prefix):
+            key = key[len(prefix):]
     return _MODEL_ID_TO_CATALOG_KEY.get(key, key)
 
 

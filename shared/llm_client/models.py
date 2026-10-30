@@ -5,6 +5,9 @@ from typing import Optional
 # ("anthropic-api-sonnet-5-5"). Like "satellite-", call_log strips it (llm_call_log.model = the Model Key) and derives
 # provider = 'anthropic' from it, so every caller that logs only `model=resp.model_used` records the right provider.
 ANTHROPIC_API_LABEL_PREFIX = "anthropic-api-"
+# AA-1002 (S9): the label of a reply from an Azure OpenAI connection ("azure-openai-<catalog key>").
+AZURE_OPENAI_LABEL_PREFIX = "azure-openai-"
+VENDOR_LABEL_PREFIXES = (ANTHROPIC_API_LABEL_PREFIX, AZURE_OPENAI_LABEL_PREFIX)
 
 class LLMRequest(BaseModel):
     system_prompt: str

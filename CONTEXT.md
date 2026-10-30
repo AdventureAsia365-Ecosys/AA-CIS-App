@@ -348,6 +348,17 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   `{"cachePoint": {"type": "default"}}`, so tools + system are cached and the user message is not; Luna / OpenAI on
   Bedrock never get one; a ValidationException naming the cache point is retried once without it and remembered;
   ECS env `LLM_CONVERSE_CACHE_POINT=off` restores the pre-S6 body.
+- **OpenAI-format connections** (AA-1002 slice S9, no migration): `shared/llm_client/adapters/openai_chat.py` builds the
+  SDK client of each `openai` / `azure_openai` connection at call time (`LLMClient` no longer builds one in
+  `__init__` from `OPENAI_API_KEY`): the key from the connection's `aa-llm/` secret when it names one, else its
+  allowlisted credential env (openai-direct's `OPENAI_API_KEY`, a fallback until `secret_name` is set on the
+  Connections tab); endpoint from `base_url` on the kind's host allowlist (openai default `https://api.openai.com/v1`;
+  Azure `https://<resource>.openai.azure.com` + `api_version` from `request_defaults.api_version`, default
+  `AZURE_API_VERSION`; wire id = the Azure deployment name); per-connection timeout / retries (NULL = 300 s / 1, never
+  the SDK's 600 s / 2); a 401 drops the cached key and client. An `azure_openai` connection serves `openai_chat` rows of
+  an OpenAI model (S235 gate keyed on the catalog row; the stage scope reads the called connection's data scope); its
+  reply is labelled `azure-openai-<key>` (llm_call_log provider `azure_openai`, account = the connection). A client set
+  on `LLMClient._openai` (tests, scripts) is used for every OpenAI-format call.
 - **Budget per connection + nightly cost reconciliation** (AA-1002 slice S10, migration 317 expand):
   `llm_provider_connection.monthly_budget_usd` is enforced per connection, independent of the job budgets
   (`shared.spend_budget`) and wave caps, which still apply. The policy is `shared.llm_connection_cost_policy` (no row =

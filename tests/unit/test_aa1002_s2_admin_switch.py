@@ -134,8 +134,8 @@ def test_no_change_writes_no_audit_row():
 @pytest.mark.parametrize("row,match", [
     (_row(connection_key="acc3", kind="bedrock", auth_mode="assume_role", secret_name=None, base_url=None),
      "assume_role needs"),
-    (_row(connection_key="az", kind="azure_openai", secret_name="aa-llm/dev/az",
-          base_url="https://x.openai.azure.com"), "no adapter"),
+    # S9 gave azure_openai an adapter (test_aa1002_s9_openai_connections.py); a mock connection still has none
+    (_row(connection_key="mk", kind="mock", auth_mode="none", secret_name=None, base_url=None), "no adapter"),
     (_row(secret_name="aa-cis/dev/rds"), "aa-llm"),
     (_row(base_url="https://evil.example.com"), "not allowed"),
 ])

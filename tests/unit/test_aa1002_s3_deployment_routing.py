@@ -104,6 +104,7 @@ class World:
         monkeypatch.setattr(anthropic_messages, "send", self.anthropic_send)
         with patch("shared.llm_client.client.boto3"), patch("shared.llm_client.client.openai"):
             self.client = LLMClient()
+        self.client._openai = MagicMock()     # AA-1002 (S9): an injected OpenAI client (no longer built in __init__)
         self.client._openai.chat.completions.create.side_effect = self._openai
         self.reset()
 

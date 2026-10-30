@@ -20,6 +20,7 @@ ENTRY_POINTS = (
     ("shared.llm_client.bedrock_satellite", "native_runtime"),      # AA-1002 S3: a task-role (acc2) deployment
     ("shared.llm_client.embed", "_call"),
     ("shared.llm_client.adapters.anthropic_messages", "send"),     # AA-1002 S2: the Anthropic Messages API
+    ("shared.llm_client.adapters.openai_chat", "client_for"),     # AA-1002 S9: the OpenAI / Azure OpenAI client
 )
 
 

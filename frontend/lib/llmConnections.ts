@@ -226,7 +226,7 @@ export function connectionName(c: Pick<Connection, "connection_key" | "kind" | "
 }
 
 /** The kinds whose on/off switch the gateway reads (api/services/llm_connections.TOGGLE_KINDS). */
-export const TOGGLE_KINDS: readonly string[] = ["bedrock", "anthropic", "openai"];
+export const TOGGLE_KINDS: readonly string[] = ["bedrock", "anthropic", "openai", "azure_openai"];
 /** The kinds that take a base URL (shared/llm_client/connections.BASE_URL_ALLOWLIST). */
 export const BASE_URL_KINDS: readonly string[] = ["anthropic", "openai", "azure_openai"];
 
