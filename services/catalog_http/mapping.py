@@ -307,10 +307,21 @@ def tour_summary(body: Mapping[str, Any], updated_at: Any) -> dict:
     }
 
 
+# AA-997: CIS hides this destination's point from every reader (catalog.v_destination.geo_status, CIS 228).
+HIDDEN_GEO_STATUS = "suspect"
+
+
 def destination_body(row: Mapping[str, Any]) -> dict:
-    """The contract ``Destination`` for one ``catalog.v_destination`` row."""
+    """The contract ``Destination`` for one ``catalog.v_destination`` row.
+
+    AA-997: a hidden destination (``geo_status = 'suspect'``: its point is not confirmed, or the CIS point policy hid
+    it) is served without its point (``lat`` / ``lng`` null, allowed by the contract) and its time zone comes from
+    its country alone, so an unconfirmed point never reaches the CRM, not even through the zone."""
     code = country_code(row.get("country"))
-    lat, lng = _coord(row.get("lat"), 90), _coord(row.get("lng"), 180)
+    if row.get("geo_status") == HIDDEN_GEO_STATUS:
+        lat = lng = None
+    else:
+        lat, lng = _coord(row.get("lat"), 90), _coord(row.get("lng"), 180)
     return {
         "destination_id": str(row["destination_id"]),
         "name": _clip(row.get("name") or "", MAX_NAME) or "",

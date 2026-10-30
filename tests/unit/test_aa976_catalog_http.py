@@ -482,6 +482,69 @@ def test_unknown_or_malformed_destination_is_404(client, issuer, dest):
     _problem(client.get(f"/catalog/v1/destinations/{dest}", headers=_auth(issuer)), 404, "not_found")
 
 
+class _MainPool:
+    """The CIS main pool for the merge lookup (AA-997): keeper by id, or an error."""
+
+    def __init__(self, keepers=None, fail=None):
+        self.keepers, self.fail, self.calls = dict(keepers or {}), fail, []
+
+    async def fetchval(self, sql, *args):
+        self.calls.append((sql, args))
+        if self.fail is not None:
+            raise self.fail
+        return self.keepers.get(args[0])
+
+
+def _with_main_pool(views, main):
+    app = catalog_app(FakePool(views))
+    app.state.pool = main
+    return TestClient(app)
+
+
+def test_hidden_destination_is_served_without_its_point(views, issuer):
+    """AA-997: geo_status 'suspect' → lat / lng null, time zone from the country alone (no zone from the point)."""
+    views.destinations[DEST_BALI]["geo_status"] = "suspect"
+    resp = _with_main_pool(views, _MainPool()).get(f"/catalog/v1/destinations/{DEST_BALI}", headers=_auth(issuer))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["lat"] is None and body["lng"] is None
+    assert body["time_zone"] == geo.time_zone("ID") and body["time_zone"] != "Asia/Makassar"
+    assert body["name"] == "Ubud" and body["country_code"] == "ID"
+
+
+def test_shown_destination_keeps_its_point(views, issuer):
+    views.destinations[DEST_BALI]["geo_status"] = "ok"
+    main = _MainPool()
+    body = _with_main_pool(views, main).get(f"/catalog/v1/destinations/{DEST_BALI}", headers=_auth(issuer)).json()
+    assert (body["lat"], body["lng"], body["time_zone"]) == (-8.5, 115.26, "Asia/Makassar")
+    assert main.calls == [(reader.MERGED_INTO_SQL, (DEST_BALI,))]
+
+
+def test_merged_destination_is_404(views, issuer):
+    keeper = DEST_HANOI
+    client = _with_main_pool(views, _MainPool({DEST_BALI: keeper}))
+    body = _problem(client.get(f"/catalog/v1/destinations/{DEST_BALI}", headers=_auth(issuer)), 404, "not_found")
+    assert "merged" in body["message"] and "reason" not in body
+
+
+def test_unknown_destination_never_reads_the_merge_state(views, issuer):
+    main = _MainPool({DEST_HALONG: DEST_HANOI})
+    _problem(_with_main_pool(views, main).get(f"/catalog/v1/destinations/{DEST_HALONG}", headers=_auth(issuer)),
+             404, "not_found")
+    assert main.calls == []
+
+
+def test_merge_lookup_failure_is_503(views, issuer):
+    client = _with_main_pool(views, _MainPool(fail=OSError("down")))
+    _problem(client.get(f"/catalog/v1/destinations/{DEST_BALI}", headers=_auth(issuer)), 503, "unavailable")
+
+
+def test_merge_lookup_reads_the_redirect_predicate():
+    sql = " ".join(reader.MERGED_INTO_SQL.split())
+    assert sql == "SELECT duplicate_of::text FROM shared.destinations WHERE id = $1::uuid AND duplicate_of IS NOT NULL"
+    assert "geo_status" in reader.DESTINATION_SQL
+
+
 # ── wiring in the real app ────────────────────────────────────────────────────
 
 def test_main_app_serves_the_catalog_routes_with_problem_bodies():
