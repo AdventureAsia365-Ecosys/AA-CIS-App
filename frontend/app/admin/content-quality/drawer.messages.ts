@@ -151,6 +151,10 @@ export const D = defineMessages(
     noFinalText: (status: string) => `A ${status} piece has no final text to label.`,
     editedAfterLabel: "The text was edited after your label — check it still holds, then save again.",
     otherLabellers: (n: number) => `Other labellers · ${n}`,
+    // AA-923 — the same label form on a T2 version and on an A1 (S1) rewrite
+    noTextLabels: "No one has labelled this text yet.",
+    onlyAdminTextLabel: "Only an admin can label texts.",
+    noFinishedText: (status: string) => `A ${status} version has no finished text to label.`,
     // tour version drawer
     tenantCopyUpdatedCut: "Sentence cut — the tenant's copy is updated",
     tenantCopyUpdatedReplaced: "Sentence replaced — the tenant's copy is updated",
@@ -346,6 +350,9 @@ export const D = defineMessages(
     noFinalText: (status: string) => `Bài ở trạng thái ${status} không có nội dung cuối để gắn nhãn.`,
     editedAfterLabel: "Nội dung đã được sửa sau khi bạn gắn nhãn — hãy kiểm nhãn còn đúng, rồi lưu lại.",
     otherLabellers: (n: number) => `Người gắn nhãn khác · ${n}`,
+    noTextLabels: "Chưa ai gắn nhãn cho nội dung này.",
+    onlyAdminTextLabel: "Chỉ admin mới gắn nhãn nội dung được.",
+    noFinishedText: (status: string) => `Phiên bản ở trạng thái ${status} chưa có nội dung hoàn chỉnh để gắn nhãn.`,
     tenantCopyUpdatedCut: "Đã cắt câu — bản của tenant đã được cập nhật",
     tenantCopyUpdatedReplaced: "Đã thay câu — bản của tenant đã được cập nhật",
     rewriteFromSourceTitle: "Nhờ model viết lại từ tour nguồn (khoảng $0.001-0.006)",

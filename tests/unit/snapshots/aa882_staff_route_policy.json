@@ -107,6 +107,10 @@
     "capability": null,
     "module": "api.routers.admin"
   },
+  "GET /admin/content-quality/a1-content/{content_id}/label": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_content_quality"
+  },
   "GET /admin/content-quality/pieces": {
     "capability": "tenant.read",
     "module": "api.routers.admin_content_quality"
@@ -140,6 +144,10 @@
     "module": "api.routers.admin_content_quality"
   },
   "GET /admin/content-quality/tour-versions/{version_id}": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_content_quality"
+  },
+  "GET /admin/content-quality/tour-versions/{version_id}/label": {
     "capability": "tenant.read",
     "module": "api.routers.admin_content_quality"
   },
@@ -879,6 +887,10 @@
     "capability": "content.settings.write",
     "module": "api.routers.admin_pipeline"
   },
+  "POST /admin/content-quality/a1-content/{content_id}/label": {
+    "capability": "quality.write",
+    "module": "api.routers.admin_content_quality"
+  },
   "POST /admin/content-quality/pieces/{piece_id}/label": {
     "capability": "quality.write",
     "module": "api.routers.admin_content_quality"
@@ -904,6 +916,10 @@
     "module": "api.routers.admin_content_quality"
   },
   "POST /admin/content-quality/requests/{request_id}/regenerate-angles": {
+    "capability": "quality.write",
+    "module": "api.routers.admin_content_quality"
+  },
+  "POST /admin/content-quality/tour-versions/{version_id}/label": {
     "capability": "quality.write",
     "module": "api.routers.admin_content_quality"
   },

@@ -285,7 +285,11 @@ POLICY: dict[tuple[str, str], str] = {
     ("GET", "/admin/content-quality/stats"): TENANT_READ,
     ("GET", "/admin/content-quality/tour-versions"): TENANT_READ,
     ("GET", "/admin/content-quality/tour-versions/{version_id}"): TENANT_READ,
+    ("GET", "/admin/content-quality/tour-versions/{version_id}/label"): TENANT_READ,     # AA-923 WM-32
+    ("GET", "/admin/content-quality/a1-content/{content_id}/label"): TENANT_READ,
     ("POST", "/admin/content-quality/pieces/{piece_id}/label"): QUALITY_WRITE,
+    ("POST", "/admin/content-quality/tour-versions/{version_id}/label"): QUALITY_WRITE,    # AA-923 WM-32
+    ("POST", "/admin/content-quality/a1-content/{content_id}/label"): QUALITY_WRITE,
     ("POST", "/admin/content-quality/pieces/{piece_id}/sentences/suggest"): QUALITY_WRITE,
     ("POST", "/admin/content-quality/pieces/{piece_id}/sentences/apply"): QUALITY_WRITE,
     ("POST", "/admin/content-quality/tour-versions/{version_id}/sentences/suggest"): QUALITY_WRITE,

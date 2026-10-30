@@ -10,12 +10,14 @@
 // Admin role only; the backend re-checks the role, the version status and the span.
 // AA-916 WM-07: every sentence action carries a reason chip row (a flagged sentence preselects the API's
 // `suggested_reason`, a sentence picked in the text `style_only`); Cut / Apply send it as `reason_code`.
+// AA-923 WM-32: a "Label" section (PieceLabel.tsx SubjectLabelSection), the T9 label form on this version.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
 import { K, mono, ApiError, Badge, Button, ConfirmModal, Drawer, Spinner, apiGet, apiSend, useAdminIdentity, useT, useToast } from "../../_kit";
 import { AdminEdits, ProblemList, RewritePanel, TenantCopyNotice, type Editor } from "./SentenceActions";
 import { JudgeBreakdownPanel } from "./JudgeBreakdownPanel";
+import { SubjectLabelSection } from "./PieceLabel";
 import { SEVERITY_TONE, worstOf } from "@/lib/gateSeverity";
 import { ReasonTag, WritingReasonChips } from "../_components/WritingReasonChips";
 import { preselect, type ReasonCode } from "@/lib/writingReasons";
@@ -275,6 +277,9 @@ export default function TourVersionDrawer({ id, onClose }: { id: string; onClose
               <AdminEdits edits={v.admin_edits} owner={{ kind: "tour-versions", id: String(v.id), queryKey: ["cq-version", id] }} />
             </Section>
           )}
+
+          {/* AA-923 WM-32 — the human label of this version (same criteria as a T9 piece) */}
+          <Section title={t("labelSection")}><SubjectLabelSection subjectType="t2_version" subjectId={String(v.id)} /></Section>
 
           <Section title={t("escalations", v.reviews.length)}>
             {v.reviews.length === 0 ? <div style={{ fontSize: 12, color: K.muted }}>{t("noneDot")}</div> : <pre style={pre}>{JSON.stringify(v.reviews, null, 2)}</pre>}

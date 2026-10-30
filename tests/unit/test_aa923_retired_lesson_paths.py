@@ -17,6 +17,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_DIRS = ("api", "services", "shared", "scripts", "worker")
+# The read-only census run before the quarantine (destructive-ops step 1) is the one file allowed to name them.
+ALLOWED = {"scripts/aa923/wm34_dry_run.py"}
 SQL_FORM = re.compile(r"\b(FROM|INTO|UPDATE|JOIN|TABLE)\s+[\w.\"]*\b(pipeline_lessons|acp_output_rules)\b", re.I)
 
 
@@ -30,6 +32,8 @@ def _runtime_files():
 def test_no_runtime_file_queries_a_retired_table():
     hits = []
     for p in _runtime_files():
+        if str(p.relative_to(ROOT)) in ALLOWED:
+            continue
         for n, line in enumerate(p.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
             if SQL_FORM.search(line):
                 hits.append(f"{p.relative_to(ROOT)}:{n}: {line.strip()[:120]}")

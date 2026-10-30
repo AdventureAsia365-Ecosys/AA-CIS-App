@@ -5,6 +5,7 @@ import { X, ChevronRight } from "lucide-react";
 import { K, Badge, alpha, mono, sans, serif, useFormat, useT } from "../../_kit";
 import { M } from "./tour.messages";
 import { SCORE_BANDS } from "@/lib/quality-registry.generated";
+import { SubjectLabelSection } from "../content-quality/PieceLabel";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -737,6 +738,13 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                   onSave={v => saveGenerated("seo_keywords_used", commaToArray(v))}
                   placeholder={t("keywordsPlaceholder")}
                 />
+                {/* AA-923 WM-32 — the human label of this rewrite (the T9 piece label criteria), admin only */}
+                <div style={{ marginTop: 20, paddingTop: 12, borderTop: `1px solid ${K.line}` }}>
+                  <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: K.muted2, marginBottom: 6 }}>
+                    {t("labelSection")}
+                  </div>
+                  <SubjectLabelSection subjectType="a1_content" subjectId={gen.id} />
+                </div>
               </div>
             ) : (
               <div style={{ textAlign: "center", padding: 40, color: K.muted }}>{t("noRewrite")}</div>

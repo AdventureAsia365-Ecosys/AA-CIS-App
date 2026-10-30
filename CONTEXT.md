@@ -2498,6 +2498,11 @@ labeller: `as_is`/`light`/`heavy`/`reject`, per-class defects, minutes to fix, r
 sha256 of the text labelled, so a later admin edit shows as changed). It is the ground truth gates
 are re-scored against (AA-783 criteria); admin-only, set from the Content Quality drawer, no tenant
 column and no `aa_app_user` grant.
+The same Label exists for a T2 tour version and an A1 (S1) rewrite (AA-923 WM-32,
+`acp_shared.content_label`, migration 315: `subject_type` `t2_version` / `a1_content`, `subject_id`,
+the subject's `tenant_id` as the erasure key, the same CHECKs; one row per subject and labeller),
+set from the T2 version drawer and the tour panel's Rewrite tab (`PieceLabel.tsx` `SubjectLabelSection`);
+`content_piece_label` and its T9 readers are unchanged.
 `held` is an **admin-only quality label** (AA-770, S233): the tenant always receives the content
 and can export and publish a held Piece like an approved one — including a piece held because a detector
 was down (AA-925 `degraded`). **Tenants never see internal gate

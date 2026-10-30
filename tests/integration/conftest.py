@@ -98,7 +98,8 @@ X1_POST_244_RLS = ("shared.tenant_brand_rules", "shared.tenant_seo_config",
                    "shared.writing_exemplar",        # 313 (AA-921 WM-27), FORCE: also X1_POST_245_FORCE_RLS
                    "shared.writing_memory_release_exemplar",   # 313 (AA-921), FORCE: also X1_POST_245_FORCE_RLS
                    "shared.writing_memory_keep",               # 314 (AA-922), FORCE: also X1_POST_245_FORCE_RLS
-                   "shared.writing_memory_disagreement")       # 314 (AA-922), FORCE: also X1_POST_245_FORCE_RLS
+                   "shared.writing_memory_disagreement",       # 314 (AA-922), FORCE: also X1_POST_245_FORCE_RLS
+                   "acp_shared.content_label")                 # 315 (AA-923 WM-32), FORCE: also X1_POST_245_FORCE_RLS
 # FORCE RLS tables of migrations applied on Dev AFTER 245 (CIS 277, AA-916; CIS 280, AA-917; CIS 284, AA-919): their
 # own <table>_cis_owner_all policy (X1 S21 standing check). 245's guards and test_aa860_migration_245 know only its 8
 # FORCE tables, and its teardown (x1_245_undo: DROP OWNED BY cis_owner) drops every policy TO cis_owner:
@@ -106,7 +107,8 @@ X1_POST_244_RLS = ("shared.tenant_brand_rules", "shared.tenant_seo_config",
 X1_POST_245_FORCE_RLS = ("shared.writing_signal", "shared.writing_rule", "shared.eval_golden_item",
                          "shared.eval_item_result", "shared.writing_memory_release", "shared.writing_memory_shadow",
                          "shared.writing_exemplar", "shared.writing_memory_release_exemplar",
-                         "shared.writing_memory_keep", "shared.writing_memory_disagreement")
+                         "shared.writing_memory_keep", "shared.writing_memory_disagreement",
+                         "acp_shared.content_label")
 
 # AA-919: CIS 284's guard 1 requires 281, 282 and 283 registered (Dev order; readiness compares max(version), so a
 # missing predecessor would be hidden once 284 is in, critic 17). The replay skips 281 (above) and 282 / 283 may fail
