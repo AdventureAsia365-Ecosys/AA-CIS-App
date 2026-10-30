@@ -101,6 +101,23 @@ def test_unknown_connection_is_refused(cur):
 
 
 def test_the_code_sql_runs_as_cis_app(cur):
+    # The replay skips CIS 244 and conftest's x1_244_undo revokes the shared tables from cis_app, so (as in the 251 and
+    # 311 tests) schema USAGE is granted for this test only and 317's table grants are put back first.
+    cur.execute("SELECT has_schema_privilege('cis_app', 'shared', 'USAGE')")
+    usage_granted = not cur.fetchone()[0]
+    if usage_granted:
+        cur.execute("GRANT USAGE ON SCHEMA shared TO cis_app")
+    for table in ("llm_connection_cost_policy", "llm_cost_reconcile"):
+        cur.execute(f"GRANT SELECT, INSERT, UPDATE, DELETE ON shared.{table} TO cis_app")
+    try:
+        _code_sql_as_cis_app(cur)
+    finally:
+        if usage_granted:
+            cur.execute("RESET ROLE")
+            cur.execute("REVOKE USAGE ON SCHEMA shared FROM cis_app")
+
+
+def _code_sql_as_cis_app(cur):
     cur.execute("SET ROLE cis_app")
     cur.execute("INSERT INTO shared.llm_connection_cost_policy (connection_key, alert_pct, hard_stop, "
                 "usage_secret_name, usage_scope_id, updated_by) VALUES (%s, 70, false, 'aa-llm/dev/openai-usage', "
