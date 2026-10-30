@@ -164,6 +164,24 @@ def test_get_destination_every_status(client, issuer):
                                                                headers=_h(issuer)))
 
 
+def test_hidden_and_merged_destinations_conform(issuer):
+    """AA-997: a hidden destination (null point) and a merged one (404) are v1.2 answers, no contract change."""
+    views = seeded()
+    views.destinations[DEST_BALI]["geo_status"] = "suspect"
+
+    class _Main:
+        async def fetchval(self, sql, destination_id):
+            return DEST_BALI if destination_id == DEST_HANOI else None
+
+    app = catalog_app(FakePool(views))
+    app.state.pool = _Main()
+    c = TestClient(app)
+    hidden = _check("getDestination", c.get(f"/catalog/v1/destinations/{DEST_BALI}", headers=_h(issuer)))
+    assert hidden.status_code == 200 and hidden.json()["lat"] is None
+    assert _check("getDestination", c.get(f"/catalog/v1/destinations/{DEST_HANOI}",
+                                          headers=_h(issuer))).status_code == 404
+
+
 def test_served_tour_never_carries_a_price_or_person_field(client, issuer):
     body = client.get(f"/catalog/v1/tours/cis/{SID_A}", headers=_h(issuer)).json()
     text = str(body).lower()

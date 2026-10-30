@@ -166,6 +166,42 @@ def test_destination_read(seeded):
     c, dest = seeded
     row = _run(reader.get_destination(PgConn(c), dest))
     assert row is not None and str(row["destination_id"]) == dest and row["country"] == "Laos"
+    assert row["geo_status"] == "ok"
+
+
+class MainPool:
+    """``pool.fetchval`` as the CIS runtime (cis_app) on the psycopg2 test cursor: the AA-997 merge lookup."""
+
+    def __init__(self, c):
+        self.c = c
+
+    async def fetchval(self, sql, *args):
+        params = {f"p{i + 1}": a for i, a in enumerate(args)}
+        self.c.execute("SAVEPOINT aa997")
+        try:
+            self.c.execute("SET LOCAL ROLE cis_app")
+            self.c.execute(_PARAM.sub(lambda m: f"%(p{m.group(1)})s", sql), params)
+            row = self.c.fetchone()
+        finally:
+            self.c.execute("ROLLBACK TO SAVEPOINT aa997")
+        return row[0] if row else None
+
+
+def test_hidden_and_merged_destinations(seeded):
+    """AA-997: v_destination keeps a suspect and a merged row; the reader sees geo_status (the body drops the point)
+    and the merge lookup, run as cis_app on shared.destinations, names the keeper."""
+    from services.catalog_http.mapping import destination_body
+    c, dest = seeded
+    hidden = t228._dest(c, f"Ban Fictiveau {dest[:8]}", country="Laos", lat=19.5, lng=102.5, geo_status="suspect")
+    merged = t228._dest(c, f"Ban Fictiveau Nuea {dest[:8]}", country="Laos", lat=19.6, lng=102.6, duplicate_of=dest)
+    row = _run(reader.get_destination(PgConn(c), hidden))
+    assert row["geo_status"] == "suspect"
+    body = destination_body(row)
+    assert body["lat"] is None and body["lng"] is None and body["time_zone"] == "Asia/Vientiane"
+    assert _run(reader.get_destination(PgConn(c), merged)) is not None       # the view still lists it
+    assert _run(reader.merged_into(MainPool(c), merged)) == dest
+    assert _run(reader.merged_into(MainPool(c), dest)) is None
+    assert _run(reader.merged_into(MainPool(c), hidden)) is None
 
 
 def test_catalog_connection_shape_on_a_fake_pool_matches_the_adapter():

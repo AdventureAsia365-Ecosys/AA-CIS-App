@@ -76,9 +76,18 @@ _DETAIL_SQL = {
 # tour_id, not source_id: see the module docstring (pushdown through DISTINCT ON / window functions).
 DETAIL_COND = "source_system = 'cis' AND tour_id = ANY($1::uuid[])"
 DESTINATION_SQL = """
-    SELECT destination_id, name, country, lat, lng
+    SELECT destination_id, name, country, lat, lng, geo_status
       FROM catalog.v_destination
      WHERE destination_id = $1::uuid
+"""
+# AA-997: catalog.v_destination still lists a merged destination (its row stays, duplicate_of set), and the merge map
+# catalog.v_destination_redirect (CIS 257) is granted to tripplanner / booking only, not to aa_app_user. The merge
+# state is read from the CIS table on the main pool (cis_app: SELECT on shared.destinations), the same predicate as
+# that view (``duplicate_of IS NOT NULL``).
+MERGED_INTO_SQL = """
+    SELECT duplicate_of::text
+      FROM shared.destinations
+     WHERE id = $1::uuid AND duplicate_of IS NOT NULL
 """
 
 _POOL_ERRORS = (asyncpg.PostgresConnectionError, asyncpg.TooManyConnectionsError, asyncpg.InterfaceError,
@@ -250,8 +259,20 @@ async def get_destination(conn: Any, destination_id: str) -> Optional[dict]:
     return dict(row) if row is not None else None
 
 
+async def merged_into(pool: Any, destination_id: str) -> Optional[str]:
+    """The keeper of a merged destination (AA-997), else None. Read on the CIS main pool (see
+    :data:`MERGED_INTO_SQL`); None when no main pool is configured. :class:`CatalogUnavailable` on a pool or
+    statement error: an unknown merge state is not served (fail closed, like the catalog reads)."""
+    if pool is None:
+        return None
+    try:
+        return await asyncio.wait_for(pool.fetchval(MERGED_INTO_SQL, destination_id), timeout=ACQUIRE_TIMEOUT_S)
+    except (*_POOL_ERRORS, asyncpg.PostgresError) as exc:
+        raise CatalogUnavailable(f"merge state: {type(exc).__name__}") from exc
+
+
 __all__ = [
     "CatalogUnavailable", "InvalidRequest", "TourLookup", "TourPage", "SOURCE_SYSTEM", "DEFAULT_PAGE", "MAX_PAGE",
     "catalog_connection", "country_names", "decode_cursor", "encode_cursor", "get_destination", "get_tour",
-    "list_tours", "reset_gate",
+    "list_tours", "merged_into", "reset_gate",
 ]

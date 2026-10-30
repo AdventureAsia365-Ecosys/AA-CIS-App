@@ -32,6 +32,10 @@ Liveness (root ADR 0015 decision 5, AA-Partner row): a served key is in ``catalo
 offered"); ``paused`` (Master deactivated, or a supersede waiting for its Master) answers 404 with the reason, so the
 CRM hides the tour without marking lines; a key never served is a plain 404.
 
+Destinations (AA-997): a destination CIS hides from readers (``geo_status = 'suspect'``) answers 200 with ``lat`` /
+``lng`` null and its country's time zone; a merged destination answers 404 ``not_found`` (the tour bodies already name
+its keeper). Neither needs a contract change: both shapes are what v1.2 declares.
+
 Caching: every 200 carries a strong ``ETag`` (the body's ``content_hash`` for a tour, a hash of the body otherwise),
 ``Cache-Control: private, max-age=60`` and ``Vary: Authorization``; ``If-None-Match`` with a matching tag answers 304
 with no body. Errors use the contract ``Problem`` body ``{error, message[, reason]}``.
@@ -56,7 +60,7 @@ from api.schemas.public_api import (  # AA-899: doc only
 from services.aa_content import reader as aa_reader
 from services.aa_content import validate as aa_validate
 from services.catalog_http import reader
-from services.catalog_http.mapping import destination_body, tour_summary
+from services.catalog_http.mapping import HIDDEN_GEO_STATUS, destination_body, tour_summary
 from services.photos.sync import public_base
 
 logger = structlog.get_logger()
@@ -220,11 +224,16 @@ async def get_destination(destination_id: str, request: Request,
     try:
         async with reader.catalog_connection(_pool(request)) as conn:
             row = await reader.get_destination(conn, key)
+        # AA-997: a merged id is not served (the CRM finds the keeper's id in the tour bodies); no redirect in v1
+        keeper = await reader.merged_into(getattr(request.app.state, "pool", None), key) if row else None
     except reader.CatalogUnavailable as exc:
         raise _unavailable(exc) from exc
-    logger.info("catalog_http_served", op="getDestination", client_id=caller.client_id, found=row is not None)
+    logger.info("catalog_http_served", op="getDestination", client_id=caller.client_id, found=row is not None,
+                merged=keeper is not None, hidden=bool(row and row.get("geo_status") == HIDDEN_GEO_STATUS))
     if row is None:
         raise CatalogProblem(404, "not_found", "No destination has this id.")
+    if keeper is not None:
+        raise CatalogProblem(404, "not_found", "This destination was merged into another one.")
     body = destination_body(row)
     return _cached(request, body, _body_hash(body))
 
