@@ -110,11 +110,19 @@ def test_the_code_sql_runs_as_cis_app(cur):
         cur.execute("GRANT USAGE ON SCHEMA shared TO cis_app")
     for table in ("llm_connection_cost_policy", "llm_cost_reconcile"):
         cur.execute(f"GRANT SELECT, INSERT, UPDATE, DELETE ON shared.{table} TO cis_app")
+    # the reconcile reads the call log as cis_app (Dev: CIS 244 grants SELECT on it)
+    cur.execute("SELECT has_table_privilege('cis_app', 'shared.llm_call_log', 'SELECT') AS ok")
+    row = cur.fetchone()
+    log_granted = not (row["ok"] if isinstance(row, dict) else row[0])
+    if log_granted:
+        cur.execute("GRANT SELECT ON shared.llm_call_log TO cis_app")
     try:
         _code_sql_as_cis_app(cur)
     finally:
+        cur.execute("RESET ROLE")
+        if log_granted:
+            cur.execute("REVOKE SELECT ON shared.llm_call_log FROM cis_app")
         if usage_granted:
-            cur.execute("RESET ROLE")
             cur.execute("REVOKE USAGE ON SCHEMA shared FROM cis_app")
 
 
