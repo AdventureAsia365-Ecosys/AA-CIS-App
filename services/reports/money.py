@@ -228,13 +228,14 @@ def runway(balance: Optional[float], per_day: Optional[float]) -> Optional[float
 def credit_outlook(remaining: Optional[float], per_day: Optional[float], expires_on: Optional[date],
                    today: date) -> dict:
     """acc3 credit: runway days, the amount left at expiry at this burn, and the flag (> 50 USD expiring unused, or
-    exhausted before expiry)."""
+    exhausted before expiry). An unknown burn (per_day None: the spend source was not read) gives no amount and no
+    flag, so a missing source never reads as "the whole credit expires unused"; a known zero burn does."""
     out = {"remaining_usd": remaining, "per_day_usd": per_day, "expires_on": expires_on.isoformat() if expires_on
            else None, "runway_days": runway(remaining, per_day), "left_at_expiry_usd": None, "flag": None}
-    if remaining is None or expires_on is None:
+    if remaining is None or expires_on is None or per_day is None:
         return out
     days_left = max(0, (expires_on - today).days)
-    left = round(remaining - (per_day or 0.0) * days_left, 2)
+    left = round(remaining - per_day * days_left, 2)
     out["left_at_expiry_usd"] = max(left, 0.0)
     if left > CREDIT_UNUSED_FLAG_USD:
         out["flag"] = f"about {usd(left)} would expire unused on {expires_on.isoformat()}"
@@ -650,9 +651,17 @@ def month_cba(facts: dict, key: str) -> Optional[dict]:
 
 
 def app_lines(cba: Optional[dict]) -> dict[str, dict]:
-    """{budget key: row}: App rows by App id, shared tags by tag name, `untagged`."""
+    """{budget key: row}: App rows by App id, shared tags by tag name, `untagged`.
+
+    cost_by_app returns a row for every App with aws_usd 0.0 even when no Cost Explorer snapshot is stored for the
+    month (aws.has_data false). Those zeros are not spend: the AWS amounts (and total_usd, which includes them)
+    become None, so ratios, statuses, variances, averages and unit costs read no_data instead of "0 USD, ok". The AI
+    amounts come from the LLM ledger and stay."""
     out: dict[str, dict] = {}
+    aws_known = bool(((cba or {}).get("aws") or {}).get("has_data"))
     for r in (cba or {}).get("apps") or []:
+        if not aws_known:
+            r = {**r, "aws_usd": None, "aws_bedrock_usd": None, "total_usd": None}
         if r["kind"] == "app":
             out[r["app"]] = r
         elif r["kind"] in ("shared_tag", "other_tag"):
@@ -1371,7 +1380,7 @@ MONTH_NEEDS = {
     "FI-03": ("cost_by_app", "llm"),
     "FI-04": ("vendors", "llm"),
     "FI-05": ("cost_by_app", "units", "llm"),
-    "FI-06": ("cost_by_app", "budgets", "vendors"),
+    "FI-06": ("cost_by_app", "budgets", "vendors", "llm"),     # llm: acc3 burn and Jev rate of the Credits section
     "OPS-08": ("capacity",),
 }
 MONTH_RENDER = {"FI-01": render_fi01, "FI-03": render_fi03, "FI-04": render_fi04, "FI-05": render_fi05,

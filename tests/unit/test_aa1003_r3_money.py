@@ -181,6 +181,11 @@ def test_runways_and_the_credit_outlook():
     short = money.credit_outlook(100.0, 2.0, date(2026, 12, 31), date(2026, 10, 26))
     assert short["runway_days"] == 50.0 and "runs out" in short["flag"] and short["left_at_expiry_usd"] == 0.0
     assert money.credit_outlook(None, 2.0, None, date(2026, 10, 26))["flag"] is None
+    # unknown burn (spend source not read): no amount at expiry and no "expire unused" warning
+    unknown = money.credit_outlook(249.94, None, date(2026, 12, 31), date(2026, 10, 26))
+    assert unknown["left_at_expiry_usd"] is None and unknown["flag"] is None and unknown["runway_days"] is None
+    # a known zero burn still warns
+    assert "expire unused" in money.credit_outlook(249.94, 0.0, date(2026, 12, 31), date(2026, 10, 26))["flag"]
     assert money.runway(10.0, 0.0) is None and money.runway(None, 1.0) is None
 
 
@@ -268,7 +273,7 @@ def _cba(aws_total, apps, untagged=0.0, sat=(10.0, 9.0), covered=("2026-10-01", 
                      "ai_outside_aws_usd": 0.0})
     rows.append({"app": "untagged", "kind": "untagged", "aws_usd": untagged, "total_usd": untagged,
                  "ai_outside_aws_usd": 0.0})
-    return {"aws": {"total_usd": aws_total, "untagged_usd": untagged, "covered_from": covered[0],
+    return {"aws": {"has_data": True, "total_usd": aws_total, "untagged_usd": untagged, "covered_from": covered[0],
                     "covered_to": covered[1], "fetched_at": fetched},
             "apps": rows, "llm_satellites": {"acc3": {"ce_bedrock_usd": sat[0], "llm_log_estimate_usd": sat[1]}}}
 
@@ -334,6 +339,67 @@ def test_by_app_against_the_per_app_budgets():
     assert ab["untagged_ratio"] == pytest.approx(28 / 280, abs=1e-4)
     assert ab["worst"]["app"] == "cis" and ab["aws_status"] == "final"
     assert ab["acc2_history_usd"] == [None, 250.0, 280.0]
+
+
+def _no_aws_snapshot(cba):
+    """cost_by_app's shape for a month with no stored Cost Explorer snapshot: aws.has_data false, every App row 0.0
+    (platform_cost.cost_by_app builds a row per App before reading the tags)."""
+    out = {**cba, "aws": {"has_data": False, "total_usd": None, "untagged_usd": 0.0, "covered_from": None,
+                          "covered_to": None, "fetched_at": None}}
+    out["apps"] = [{**r, "aws_usd": 0.0, "total_usd": r["ai_outside_aws_usd"]} for r in cba["apps"]]
+    return out
+
+
+def test_no_aws_snapshot_reads_no_data_not_zero_spend(monkeypatch):
+    from api.services import cost_ops
+
+    facts = _month_facts()
+    facts["cost_by_app:2026-10"] = _no_aws_snapshot(facts["cost_by_app:2026-10"])
+    ab = money.by_app(facts, {"cis": 90.0, "booking": 25.0, "shared": 120.0})
+    rows = {r["app"]: r for r in ab["rows"]}
+    for name in ("cis", "booking", "shared"):
+        assert rows[name]["aws_usd"] is None and rows[name]["ratio"] is None and rows[name]["status"] == "no_data"
+        assert rows[name]["variance_usd"] is None and rows[name]["total_usd"] is None
+    assert rows["cis"]["prev_usd"] == 80.0 and rows["cis"]["avg_3m_usd"] == 80.0    # only September is known
+    assert rows["cis"]["ai_outside_aws_usd"] == 1.0                                   # the LLM ledger part stays
+    assert ab["aws_status"] == "missing" and ab["worst"] is None and ab["untagged_ratio"] is None
+    b = money.budgets(facts, {"acc2": 300.0, "acc3": 250.0}, ab)
+    app_lines = [x for x in b["lines"] if x["line"].startswith("App ")]
+    assert app_lines and all(x["actual_usd"] is None and x["variance"] is None for x in app_lines)
+    u = money.units(facts)
+    assert u["months"][-1]["tour"] is None and u["months"][-1]["numerators"]["cis"] is None   # not AI only
+    k = {x["id"]: x for x in money.unit_kpis(u)}
+    assert k["K-UNIT-TOUR"]["status"] == "no_data"
+    monkeypatch.delenv(cost_ops.APP_BUDGET_ENV, raising=False)
+    reg = _reg()
+    out = money.render_fi01(reg, reg.report("FI-01"), date(2026, 10, 1), date(2026, 10, 31), facts, NOW)
+    kpis = {x["id"]: x for x in out.output["kpis"]}
+    assert kpis["K-COST-APP"]["status"] == "no_data" and kpis["K-COST-APP"]["value"] is None
+
+
+def test_fi06_reads_the_llm_ledger_through_collect_month(monkeypatch):
+    """FI-06's Credits section needs the LLM ledger (acc3 burn, Jev rate): drive it through collect_month's real part
+    set, so a missing part shows up here and not as a false "expire unused" warning."""
+    from api.services import cost_ops
+
+    full = _month_facts()
+    full["balances"]["credits"] = {"acc3": {"remaining_usd": 249.94, "expires_on": "2026-12-31"}}
+    asked = {}
+
+    async def fake_run_parts(parts):
+        asked["parts"] = set(parts)
+        return {k: full[k] for k in parts}
+    monkeypatch.setattr(src, "run_parts", fake_run_parts)
+    monkeypatch.delenv(cost_ops.APP_BUDGET_ENV, raising=False)
+    reg = _reg()
+    out = asyncio.run(money.render_month(None, reg, reg.report("FI-06"), date(2026, 10, 1), date(2026, 10, 31), NOW))
+    assert "llm" in asked["parts"]
+    bal = out.output["budgets"]["balances"]
+    burn = 13 / 14                                       # acc3 gateway estimate, 18..30 Oct at 1 USD, 31 Oct none
+    assert bal["acc3_credit"]["per_day_usd"] == pytest.approx(burn, abs=1e-4)
+    assert bal["acc3_credit"]["left_at_expiry_usd"] == pytest.approx(249.94 - burn * 60, abs=0.05)  # 1 Nov -> 31 Dec
+    assert bal["jev"]["per_day_usd"] == 0.0              # read (the 1 Oct Jev call is outside the 14 days), not None
+    assert "LLM account credit" in out.markdown
 
 
 def test_movers_need_twenty_percent_and_two_dollars():
