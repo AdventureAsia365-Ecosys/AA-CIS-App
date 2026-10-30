@@ -108,8 +108,17 @@ async def test_hide_flagged_report_confirm_and_unhide_round_trip(env):
                                ids["flagged"]) == "resolved"
     rest = await R.unhide(pool, country=country, by=[R.HIDE_FLAGGED_STAMP], actor="admin:test", job_id=f"job-{tag}")
     assert rest["unhidden"] == 1 and (await _state(pool, ids["off"]))[0] == "ok"
-    # hidden again: the earlier stamp moves into hidden.log
-    await R.hide_flagged(pool, outcomes=["llm_point"], country=country, confirm=True)
+    # a person's restore lasts: the next hide_flagged run skips both restored rows (reported, not hidden)
+    skip = await R.hide_flagged(pool, outcomes=["llm_point", "off_route"], country=country, confirm=True)
+    assert skip["rows"] == 0 and skip["restored_skipped"] == 2 and skip["hidden"] == 0
+    assert (await _state(pool, ids["flagged"]))[0] == "ok" and (await _state(pool, ids["off"]))[0] == "ok"
+    # a newer relocate judgement (its stamp later than the restore) may hide it again: the earlier stamp moves into
+    # hidden.log
+    await pool.execute(
+        """UPDATE shared.destinations SET geocoder_meta = jsonb_set(geocoder_meta, '{relocate,at}',
+                  to_jsonb((now() + interval '1 minute')::text)) WHERE id = $1::uuid""", ids["flagged"])
+    again = await R.hide_flagged(pool, outcomes=["llm_point"], country=country, confirm=True)
+    assert again["hidden"] == 1 and again["restored_skipped"] == 0
     status, meta = await _state(pool, ids["flagged"])
     assert status == "suspect" and meta["hidden"]["log"][0]["unhidden_at"]
 
@@ -125,3 +134,46 @@ async def test_the_current_row_read_and_the_reveal_of_a_confirmed_row(env):
             assert await R._reveal_if_policy_hidden(conn, ids["flagged"], cur, "confirmed")
     status, meta = await _state(pool, ids["flagged"])
     assert status == "ok" and meta["hidden"]["unhidden_by"] == "relocate:confirmed"
+
+
+class _NoHit:
+    calls_external = True
+
+    async def confirm(self, *a, **k):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_a_hidden_row_a_recheck_flags_with_another_reason_can_still_be_restored(env, monkeypatch):
+    """hide_flagged hides an llm_point row; an aa997.1-style recheck finds no geocoder hit and flags it off_route (it
+    stays suspect): the hide stamp follows the new reason, so unhide by stamp reverts it; and an explicit id restore
+    reverts a row whose reason changed some other way."""
+    pool, tag, country, ids = env
+    await R.hide_flagged(pool, outcomes=["llm_point", "off_route"], country=country, confirm=True)
+    row = dict(await pool.fetchrow(
+        """SELECT id::text AS id, name, country, lat, lng, located_by, geo_status, geo_precision, review_reason,
+                  name_norm, locality_norm, geocoder_meta FROM shared.destinations WHERE id = $1::uuid""",
+        ids["flagged"]))
+    real = R.classify_row
+    monkeypatch.setattr(R, "classify_row", lambda r, routes, **k: {**real(r, routes, **k), "on_route": False,
+                                                                     "route_km": 80.0, "non_place": None})
+    async with pool.acquire() as conn:
+        r = await R.apply_row(conn, row, (), _NoHit(), hide_unconfirmed=False)
+    assert r["outcome"] == "off_route"
+    status, meta = await _state(pool, ids["flagged"])
+    assert status == "suspect" and meta["hidden"]["reason"] == "off_route"
+    assert meta["hidden"]["reason_was"] == "llm_point" and meta["hidden"]["reason_by"] == "relocate:off_route"
+    out = await R.unhide(pool, country=country, by=[R.HIDE_FLAGGED_STAMP], actor="admin:test")
+    assert out["unhidden"] == 2 and out["kept_reason_changed"] == 0
+    assert (await _state(pool, ids["flagged"]))[0] == "ok"
+
+    # another path changed the reason of a hidden row: a stamp unhide keeps it, the explicit id restore reverts it
+    await pool.execute("UPDATE shared.destinations SET geocoder_meta = jsonb_set(geocoder_meta, '{relocate,at}', "
+                       "to_jsonb((now() + interval '1 minute')::text)) WHERE id = $1::uuid", ids["off"])
+    await R.hide_flagged(pool, outcomes=["off_route"], country=country, confirm=True)
+    await pool.execute("UPDATE shared.destinations SET review_reason = 'outlier' WHERE id = $1::uuid", ids["off"])
+    kept = await R.unhide(pool, country=country, by=[R.HIDE_FLAGGED_STAMP])
+    assert kept["unhidden"] == 0 and kept["kept_reason_changed"] == 1
+    one = await R.unhide(pool, country=None, destination_ids=[ids["off"]], actor="admin:test")
+    assert one["unhidden"] == 1 and one["restored_reason_changed"] == 1
+    assert (await _state(pool, ids["off"]))[0] == "ok"

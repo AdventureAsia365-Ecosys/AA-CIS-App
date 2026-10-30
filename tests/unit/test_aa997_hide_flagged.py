@@ -93,6 +93,19 @@ def test_the_selection_takes_only_stamped_rows_still_on_the_model_point():
                    "located_by IS NOT DISTINCT FROM $5", "SET geo_status = 'suspect'"):
         assert clause in row_sql, clause
     assert "jsonb_build_array" in row_sql            # an earlier hide stamp moves into hidden.log
+    # a row a person restored is reported, never hidden (selection column + the per-row guard)
+    assert "AS restored" in sql and "AND NOT coalesce((geocoder_meta -> 'hidden' ->> 'unhidden_at')" in row_sql
+
+
+def test_a_restored_row_is_one_a_person_unhid_and_no_relocate_judged_since():
+    from services.places import relocate
+    frag = " ".join(relocate._RESTORED_TPL.format(t="d.").split())
+    assert "(d.geocoder_meta -> 'hidden' ->> 'unhidden_at') IS NOT NULL" in frag
+    # a relocate reveal ('relocate:confirmed') is not a person's restore
+    assert "coalesce(d.geocoder_meta -> 'hidden' ->> 'unhidden_by', '') NOT LIKE 'relocate:%'" in frag
+    # a relocate stamp newer than the restore is a new judgement: the row may be hidden again
+    assert ("(d.geocoder_meta -> 'relocate' ->> 'at')::timestamptz <= (d.geocoder_meta -> 'hidden' ->> "
+            "'unhidden_at')::timestamptz") in frag
 
 
 def test_outcomes_default_to_llm_point_and_off_route():
@@ -110,10 +123,11 @@ def test_outcomes_default_to_llm_point_and_off_route():
 @pytest.mark.asyncio
 async def test_the_report_counts_per_country_and_writes_nothing(no_lock):
     from services.places import relocate
-    conn = _Conn(ROWS)
+    conn = _Conn(ROWS + [{**_row(6, "Laos"), "restored": True}])
     out = await relocate.hide_flagged(_Pool(conn), outcomes=["llm_point", "off_route"], stamp_versions=["aa997.2"],
                                       stamp_accept="aa997.3", country=None, confirm=False)
     assert conn.sql == [] and out["hidden"] == 0 and out["rows"] == 5 and out["linked"] == 4
+    assert out["restored_skipped"] == 1 and "Laos" not in out["by_country"]
     assert out["by_country"] == {"India": 2, "Nepal": 2, "Japan": 1}
     assert out["by_outcome"] == {"llm_point": 4, "off_route": 1}
     assert out["by_reason"]["unconfirmed_hard_type"] == 1 and out["by_stamp_version"] == {"aa997.2": 4, "aa997.1": 1}
@@ -156,6 +170,17 @@ async def test_confirm_writes_one_audit_row_per_batch(no_lock, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_confirm_never_hides_a_restored_row(no_lock):
+    from services.places import relocate
+    restored = {**_row(6, "Laos"), "restored": True}
+    conn = _Conn(ROWS + [restored])
+    out = await relocate.hide_flagged(_Pool(conn), outcomes=["llm_point"], country=None, confirm=True, max_rows=5)
+    assert out["hidden"] == 5 and out["restored_skipped"] == 1 and "status" not in out
+    hides = conn.of("UPDATE shared.destinations SET geo_status = 'suspect'")
+    assert restored["id"] not in [h[0] for h in hides]
+
+
+@pytest.mark.asyncio
 async def test_confirm_refuses_when_the_selection_grew_since_the_report(no_lock):
     from services.places import relocate
     conn = _Conn(ROWS)
@@ -171,12 +196,19 @@ async def test_unhide_reverts_by_stamp_or_by_id_and_is_audited(no_lock):
     conn = _Conn([{"id": "d1", "same_reason": True}, {"id": "d2", "same_reason": False}])
     out = await relocate.unhide(_Pool(conn), country="Nepal", by=["aa997.3-flagged"], destination_ids=["d1", "d2"],
                                 actor="admin:u1", job_id="job-7")
-    assert out["unhidden"] == 1 and out["kept_reason_changed"] == 1 and out["by"] == ["aa997.3-flagged"]
-    assert out["destination_ids"] == 2 and out["audit_rows"] == 1
+    # an explicit id list is the admin's restore: reverted whatever the reason now
+    assert out["unhidden"] == 2 and out["kept_reason_changed"] == 0 and out["restored_reason_changed"] == 1
+    assert out["by"] == ["aa997.3-flagged"] and out["destination_ids"] == 2 and out["audit_rows"] == 1
     assert conn.fetch_args[0][1] == (["aa997.3-flagged"], "Nepal", ["d1", "d2"])
-    rid, at, who = conn.of("UPDATE shared.destinations")[0]
-    assert rid == "d1" and at and who == "admin:u1:job-7"
+    rid, at, who, explicit = conn.of("UPDATE shared.destinations")[0]
+    assert rid == "d1" and at and who == "admin:u1:job-7" and explicit is True
     assert "'{hidden,unhidden_by}'" in relocate._UNHIDE_ROW_SQL
+    assert "($4::bool OR review_reason IS NOT DISTINCT FROM" in " ".join(relocate._UNHIDE_ROW_SQL.split())
+    # by stamp: a row another path flagged since keeps its state
+    conn = _Conn([{"id": "d1", "same_reason": True}, {"id": "d2", "same_reason": False}])
+    out = await relocate.unhide(_Pool(conn), country=None, by=["aa997.3-flagged"])
+    assert out["unhidden"] == 1 and out["kept_reason_changed"] == 1 and out["restored_reason_changed"] == 0
+    assert [a[3] for a in conn.of("UPDATE shared.destinations")] == [False]
     assert "d.id = ANY($3::uuid[])" in relocate._UNHIDE_ROWS_SQL
     assert "= ANY($1::text[])" in relocate._UNHIDE_ROWS_SQL
     # all policy stamps by default, every row
@@ -227,6 +259,51 @@ async def test_a_confirmed_relocate_shows_a_policy_hidden_row_again(no_lock, mon
         stamp = json.loads(reveal[0][1])
         assert stamp["by"] == hidden["by"] and stamp["unhidden_by"] == "relocate:confirmed" and stamp["unhidden_at"]
         assert conn.of("UPDATE geo.place_name SET status = 'resolved'")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("on_route, non_place, reason", [
+    (False, None, "off_route"),                      # llm_point -> off_route
+    (None, "generic", "non_place:generic"),          # llm_point -> non_place:*
+])
+async def test_a_recheck_that_flags_a_hidden_row_again_moves_its_hide_stamp_reason(no_lock, monkeypatch, on_route,
+                                                                                   non_place, reason):
+    """hide, then an aa997.1 recheck finds no hit and flags the row with another reason (it stays suspect): the hide
+    stamp takes the new reason, so unhide (by stamp or id) can still revert it."""
+    from services.places import relocate
+    cur = {"located_by": "llm", "geo_status": "suspect", "merged": False,
+           "hidden": json.dumps({"by": "aa997.3-flagged", "reason": "llm_point", "at": "t"})}
+    conn = _Conn(current=cur)
+    monkeypatch.setattr(relocate, "classify_row", lambda row, routes, **k: {
+        "non_place": non_place, "query": row["name"], "on_route": on_route, "route_km": 80.0 if on_route is False
+        else None, "hk_mo": None, "requests": 1})
+    r = await relocate.apply_row(conn, _llm_row(), (), _Geo(None), hide_unconfirmed=False)
+    assert r["outcome"] == ("off_route" if non_place is None else "non_place")
+    flag = conn.of("UPDATE shared.destinations SET review_reason")
+    assert flag and flag[0][1] == reason
+    sync = [a for s, a in conn.sql if "'reason_was'" in s]
+    assert len(sync) == 1 and sync[0][1] == reason and sync[0][2].startswith("relocate:")
+    assert sync[0][3] == list(relocate.POLICY_STAMPS)
+
+
+@pytest.mark.asyncio
+async def test_a_recheck_leaves_the_hide_stamp_of_a_row_no_policy_hid(no_lock, monkeypatch):
+    from services.places import relocate
+    cur = {"located_by": "llm", "geo_status": "suspect", "merged": False, "hidden": None}   # outlier rule
+    conn = _Conn(current=cur)
+    monkeypatch.setattr(relocate, "classify_row", lambda row, routes, **k: {
+        "non_place": None, "query": row["name"], "on_route": False, "route_km": 80.0, "hk_mo": None, "requests": 1})
+    await relocate.apply_row(conn, _llm_row(), (), _Geo(None), hide_unconfirmed=False)
+    assert not [s for s, _ in conn.sql if "'reason_was'" in s]
+
+
+def test_the_hidden_reason_sync_touches_only_a_live_policy_hide():
+    from services.places import relocate
+    sql = " ".join(relocate._HIDDEN_REASON_SQL.split())
+    for clause in ("geo_status = 'suspect'", "(geocoder_meta -> 'hidden' ->> 'unhidden_at') IS NULL",
+                   "(geocoder_meta -> 'hidden' ->> 'by') = ANY($4::text[])",
+                   "(geocoder_meta -> 'hidden' ->> 'reason') IS DISTINCT FROM $2"):
+        assert clause in sql, clause
 
 
 def test_the_current_row_read_carries_the_hide_stamp():
