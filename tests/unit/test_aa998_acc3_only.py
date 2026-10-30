@@ -14,10 +14,15 @@ from shared.llm_client.client import LLMClient
 
 
 def test_the_satellite_table_holds_acc3_only():
-    assert set(bs._SATELLITE_ACCOUNTS) == {"acc3"} == set(bs._INFERENCE_PROFILES)
+    # AA-1002 (S3): the satellite accounts are the assume-role Bedrock connections; the built-in mirror of the 304
+    # seed (used when the registry cannot be read) has acc3 only.
+    from shared.llm_client import connections
+    builtin = {k for k, c in connections.BUILTIN_CONNECTIONS.items() if c.auth_mode == "assume_role"}
+    assert builtin == {"acc3"}
     assert set(bedrock_batch._BATCH_SERVICE_ROLE_ARN) == {"acc3"}
     assert bs.DEFAULT_SATELLITE_ACCOUNT == "acc3"
-    assert bs.INFERENCE_PROFILE_SONNET == bs._INFERENCE_PROFILES["acc3"]["sonnet"]
+    assert bs.INFERENCE_PROFILE_SONNET == bs.legacy_inference_profile("acc3", "sonnet")
+    assert not hasattr(bs, "_SATELLITE_ACCOUNTS") and not hasattr(bs, "_INFERENCE_PROFILES")
 
 
 @pytest.mark.parametrize("fn", [bs._get_satellite_session, bs.get_satellite_client, bs.invoke_claude,

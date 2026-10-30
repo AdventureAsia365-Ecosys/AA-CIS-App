@@ -15,12 +15,17 @@ call path. ``LLMClient`` asks it once per catalog-key attempt (both tables are c
   the deployment and its connection are enabled.
 
 Only Anthropic-vendor catalog rows may run on an Anthropic connection; legacy keys (``haiku`` / ``sonnet`` /
-``gpt-4.1``) never do in S2 (their aliasing is slice S3).
+``gpt-4.1``) never do (slice S3 aliases them to catalog models, see ``deployments.alias_targets_sync``).
+
+Slice S3 adds ``deployment_plan(model)``: the ordered deployments a catalog model is tried on (``LLMClient`` with
+``LLM_DEPLOYMENT_ROUTING`` on, the default; ``embed``; the legacy alias path). See its docstring for the rules; with
+the rows migrations 304 / 306 seeded it gives exactly today's single call per model (acc3, acc2 for an embed row,
+openai-direct for an OpenAI API row), proved for every Dev stage by ``tests/unit/test_aa1002_s3_routes_snapshot.py``.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 import structlog
 
@@ -92,3 +97,123 @@ def pinned_deployment(model: CatalogModel, connection_key: str) -> VendorDeploym
     if found is None:
         raise RuntimeError(f"connection {connection_key!r} ({conn.kind}) cannot serve {model.model_key!r} in S2")
     return found
+
+
+# ── slice S3: spread a model over its deployments ──────────────────────────────────────────────────────────────────
+
+# The connection kinds the gateway has an adapter for, per catalog api_style (anything else is skipped, logged).
+_CALLABLE: dict[str, frozenset] = {
+    "bedrock": frozenset({"converse", "anthropic_native", "embed"}),
+    "anthropic": frozenset({"converse", "anthropic_messages"}),
+    "openai": frozenset({"openai_chat"}),
+}
+_BEDROCK_AUTH = ("assume_role", "task_role")
+
+
+def _never_open(connection_key: str, model_key: str) -> bool:
+    return False
+
+
+# Slice S4's breaker sets this (``vendor_route.circuit_open = breaker.is_open``); until then no circuit is ever open.
+circuit_open: Callable[[str, str], bool] = _never_open
+
+
+def _skip(model: CatalogModel, d: deployments.ModelDeployment, reason: str) -> None:
+    logger.info("llm_deployment_skip", model=model.model_key, connection=d.connection_key, reason=reason)
+
+
+_WIRE_DRIFT_SEEN: set[tuple[str, str, str, str]] = set()
+
+
+def _warn_wire_drift(model: CatalogModel, d: deployments.ModelDeployment, conn: connections.ProviderConnection) -> None:
+    """Review S259: CIS calls the deployment's ``wire_id``; TripPlanner (until S8) still calls the catalog's
+    ``bedrock_profile_ids[connection]``. When both exist and differ, the two apps call different profiles with no error
+    anywhere: say so once per process and combination (the call still uses the deployment row, which is the registry's
+    answer). Nothing to compare when the catalog has no profile for that connection (e.g. a new account's row)."""
+    if conn.kind != "bedrock":
+        return
+    profile = (model.bedrock_profile_ids or {}).get(d.connection_key)
+    if not profile or profile == d.wire_id:
+        return
+    seen = (model.model_key, d.connection_key, d.wire_id, str(profile))
+    if seen in _WIRE_DRIFT_SEEN:
+        return
+    _WIRE_DRIFT_SEEN.add(seen)
+    logger.warning("llm_deployment_wire_drift", model=model.model_key, connection=d.connection_key,
+                   wire_id=d.wire_id, catalog_profile=str(profile), origin=d.origin)
+
+
+def _callable(model: CatalogModel, conn: connections.ProviderConnection) -> Optional[str]:
+    """None when the gateway has a way to call ``model`` on ``conn``, else why not."""
+    if model.api_style not in _CALLABLE.get(conn.kind, frozenset()):
+        return f"no {conn.kind} adapter for api_style {model.api_style}"
+    if conn.kind == "bedrock":
+        # The STS / task-role session is built from the row at call time and fails loudly when a field is missing.
+        return None if conn.auth_mode in _BEDROCK_AUTH else f"bedrock auth_mode {conn.auth_mode} is not supported yet"
+    if conn.kind == "anthropic" and (model.model_key in LEGACY_KEYS or model.vendor != "anthropic"):
+        return "legacy key" if model.model_key in LEGACY_KEYS else "not an Anthropic model"
+    if conn.kind == "openai" and model.provider != "openai":
+        return "an OpenAI API connection serves only provider='openai' catalog rows (S235)"
+    problems = conn.policy_problems()           # an API-key connection: secret prefix, base_url allowlist (S1)
+    if problems:
+        return "connection policy: " + "; ".join(problems)
+    return None
+
+
+def deployment_plan(model: CatalogModel) -> Optional[list[VendorDeployment]]:
+    """AA-1002 (S3) — where ``model`` is called, in order. The model's deployment rows (``shared.llm_model_deployment``,
+    lowest ``priority`` first, ``connection_key`` breaks ties) that the gateway can call — a Bedrock connection
+    (assume_role / task_role) for converse / anthropic_native / embed rows, an Anthropic connection for Anthropic
+    non-legacy rows, an OpenAI connection for provider='openai' rows only (the S235 gate stays keyed on the catalog
+    row), an API-key connection without a policy problem — are its CALLABLE rows. Of those, the plan keeps
+
+    - an enabled deployment on an enabled connection;
+    - data scope (until slice S5 makes it per stage): a ``vendor_direct`` connection only when it is the FIRST enabled
+      callable row, i.e. when the admin deliberately put a vendor API ahead (S2's rule). It is never a same-model
+      fallback behind an ``aws_only`` one, so content never leaves AWS because acc3 failed (migration 306 seeds
+      enabled Anthropic API rows behind acc3 for every Anthropic model, tenant ones included). Decided before the
+      circuit check, so an open acc3 circuit never promotes the row behind it;
+    - one whose circuit is not open (``circuit_open``, slice S4's breaker; never open before S4).
+
+    Returns None — "the registry does not describe this model, take today's path" — when the connection registry has
+    no rows (unreadable, not migrated, DB down) or the model has no callable row at all (none, or only rows the gateway
+    cannot use: they are ignored, as S2 ignored them). Returns [] when callable rows exist but none is usable now
+    (disabled, connection disabled, circuit open): the registry is authoritative once it describes the model, the
+    caller fails that model and the route moves on. Never raises."""
+    try:
+        if not connections.registry_rows_sync() or not deployments.has_rows_sync(model.model_key):
+            return None
+        callable_rows: list[VendorDeployment] = []
+        for d in deployments.deployments_for_sync(model.model_key, enabled_only=False):   # priority order
+            conn = connections.get_connection_sync(d.connection_key)
+            if conn is None:
+                _skip(model, d, "connection not in the registry")
+                continue
+            why = _callable(model, conn)
+            if why:
+                _skip(model, d, why)
+                continue
+            if d.enabled:
+                _warn_wire_drift(model, d, conn)
+            callable_rows.append(VendorDeployment(d, conn))
+        if not callable_rows:
+            return None
+        candidates: list[VendorDeployment] = []
+        for c in callable_rows:
+            if not (c.deployment.enabled and c.connection.enabled):
+                continue
+            if candidates and c.connection.data_scope != "aws_only":
+                _skip(model, c.deployment,
+                      f"{c.connection.data_scope} is never a fallback behind another deployment (S3, until S5)")
+                continue
+            candidates.append(c)
+        plan: list[VendorDeployment] = []
+        for c in candidates:
+            if circuit_open(c.connection.connection_key, model.model_key):
+                _skip(model, c.deployment, "circuit open")
+                continue
+            plan.append(c)
+        return plan
+    except Exception as e:  # noqa: BLE001 — a registry problem must never break today's path
+        logger.warning("llm_deployment_plan_failed", model=model.model_key, error=str(e)[:200])
+        return None

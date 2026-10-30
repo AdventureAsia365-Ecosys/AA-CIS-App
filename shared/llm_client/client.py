@@ -18,7 +18,9 @@ from .catalog import LEGACY_KEYS, CatalogModel, get_model_sync
 from .schema_check import SchemaMismatch, conform
 from .errors import OTHER, THROTTLED, LLMAccessDenied, account_level_class, classify
 from . import stream_sink
-from .vendor_route import VendorDeployment, pinned_deployment, split_pin, vendor_deployment_for
+from .vendor_route import (VendorDeployment, deployment_plan, pinned_deployment, split_pin,
+                           vendor_deployment_for)
+from .deployments import alias_targets_sync
 
 logger = structlog.get_logger()
 
@@ -38,6 +40,18 @@ DEFAULT_MODEL_TIER = os.environ.get("DEFAULT_MODEL_TIER", "haiku")
 # module breaks.
 
 LEGACY_ACC2_NATIVE_ENV = "LLM_LEGACY_ACC2_NATIVE"
+# AA-1002 (S3) rollback switches, read per call (ECS env, AA-CIS-Infra task definition):
+#   LLM_DEPLOYMENT_ROUTING (default ON): a catalog key is tried on its deployments (vendor_route.deployment_plan) —
+#     with the 304 / 306 rows that is today's single call per model, for every Dev stage (snapshot test); "off"
+#     restores the S2 code path byte for byte.
+#   LLM_LEGACY_ALIASES (default OFF): the legacy haiku / sonnet keys run their alias targets (shared.llm_model_alias,
+#     migration 307) through the catalog + deployments instead of the hard-coded _legacy_chain. With the 304 / 307 rows
+#     the calls are identical (tests), but it has not run live yet (every provider is blocked, S259): switch it on
+#     after a live check of one legacy stage. Off, or no alias row / no registry, = _legacy_chain.
+DEPLOYMENT_ROUTING_ENV = "LLM_DEPLOYMENT_ROUTING"
+LEGACY_ALIASES_ENV = "LLM_LEGACY_ALIASES"
+_ON = ("1", "true", "on", "yes")
+_OFF = ("0", "false", "off", "no")
 
 
 def _in_eval_run() -> bool:
@@ -55,6 +69,31 @@ def legacy_acc2_native_enabled() -> bool:
     LLM_LEGACY_ACC2_NATIVE=on (1/true/yes) to restore the old acc2-first order if acc2 ever gains
     model access. Read per call, not at import."""
     return os.environ.get(LEGACY_ACC2_NATIVE_ENV, "").strip().lower() in ("1", "true", "on", "yes")
+
+
+def _switch(name: str, default: bool) -> bool:
+    value = os.environ.get(name, "").strip().lower()
+    if value in _ON:
+        return True
+    if value in _OFF:
+        return False
+    return default
+
+
+def deployment_routing_enabled() -> bool:
+    """AA-1002 (S3): catalog keys are spread over their deployments (default on; LLM_DEPLOYMENT_ROUTING=off rolls back
+    to the S2 path)."""
+    return _switch(DEPLOYMENT_ROUTING_ENV, True)
+
+
+def legacy_aliases_enabled() -> bool:
+    """AA-1002 (S3): legacy haiku / sonnet keys run through their aliases (default off; LLM_LEGACY_ALIASES=on)."""
+    return _switch(LEGACY_ALIASES_ENV, False)
+
+
+# The InvokeModel label and the price key of the two catalog rows whose wire format is the legacy Messages body
+# (api_style anthropic_native): the same values _call_bedrock_satellite / _call_bedrock produce for the legacy chain.
+_NATIVE_PRICE_KEY = {"sonnet": BEDROCK_SONNET, "haiku": BEDROCK_HAIKU}
 
 
 class OpenAIPlatformBlocked(RuntimeError):
@@ -404,7 +443,63 @@ class LLMClient:
         if request.json_schema and key != "gpt-4.1":
             # S251: never lose the schema on a legacy Claude key (gpt-4.1 enforces it through response_format).
             return self._legacy_structured(request, key, primary_acct)
-        return self._legacy_chain(request, key, primary_acct)
+        return self._legacy_call(request, key, primary_acct)
+
+    def _legacy_call(self, request: LLMRequest, tier: str, primary_acct: str) -> LLMResponse:
+        """AA-1002 (S3): a legacy key through its alias (LLM_LEGACY_ALIASES on, an alias row and a registry that
+        describes every target), else the hard-coded _legacy_chain, unchanged (the rollback path)."""
+        steps = self._alias_steps(tier) if legacy_aliases_enabled() else None
+        if steps is None:
+            return self._legacy_chain(request, tier, primary_acct)
+        return self._run_alias(request, tier, steps)
+
+    def _alias_steps(self, tier: str) -> Optional[list]:
+        """The (catalog model, deployment) attempts of legacy key ``tier``, in order: each alias target (shared.
+        llm_model_alias) on each of its deployments (vendor_route.deployment_plan). None = take _legacy_chain: gpt-4.1,
+        acc2-native on (its order is the chain's own), no alias row, or a target the catalog / registry cannot describe
+        (all or nothing: never half an alias). A disabled catalog target is skipped (the catalog is the switch)."""
+        if tier == "gpt-4.1" or legacy_acc2_native_enabled():
+            return None
+        targets = alias_targets_sync(tier)
+        if not targets:
+            return None
+        steps: list = []
+        for key in targets:
+            model = get_model_sync(key)
+            if model is None:
+                logger.warning("llm_alias_fallback_legacy_chain", alias=tier, target=key, reason="not in catalog")
+                return None
+            if not model.enabled:
+                logger.info("llm_alias_target_skip", alias=tier, target=key, reason=model.blocked_reason or "disabled")
+                continue
+            plan = deployment_plan(model)
+            if plan is None:
+                logger.warning("llm_alias_fallback_legacy_chain", alias=tier, target=key, reason="no registry rows")
+                return None
+            steps += [(model, target) for target in plan]
+        return steps
+
+    def _run_alias(self, request: LLMRequest, tier: str, steps: list) -> LLMResponse:
+        """The legacy chain's contract on alias steps: the first that answers wins; `fallback_used` when a later target
+        model answered (Sonnet degraded to Haiku); every step down = the chain's own final error (incl. the S235
+        GPT-4.1 tail, which only runs if that retired catalog row is enabled again)."""
+        failures: list = []
+        intended = (alias_targets_sync(tier) or (None,))[0]     # the alias's first model, even if it had no step
+        for position, (model, target) in enumerate(steps):
+            try:
+                resp = self._call_target(request, model, target)
+            except UnusableReply:
+                raise
+            except Exception as e:
+                failures.append(e)
+                logger.warning("llm_alias_step_failed", alias=tier, model=model.model_key,
+                               connection=target.connection.connection_key, position=position, error=str(e)[:300])
+                continue
+            resp.fallback_used = model.model_key != intended
+            logger.info("llm_alias_used", alias=tier, model=model.model_key,
+                        connection=target.connection.connection_key, position=position)
+            return resp
+        return self._legacy_last_resort(request, tier, failures)
 
     def _legacy_structured(self, request: LLMRequest, key: str, primary_acct: str) -> LLMResponse:
         """S251 (AA-835): a json_schema request on a legacy haiku/sonnet key. The Messages API path has no structured
@@ -421,7 +516,7 @@ class LLMClient:
                            action="schema asked by prompt only; route this stage to a catalog (Converse) key")
         asked = request.model_copy(
             update={"system_prompt": f"{request.system_prompt}\n\n{_legacy_schema_instruction(schema)}"})
-        resp = self._legacy_chain(asked, key, primary_acct)
+        resp = self._legacy_call(asked, key, primary_acct)
         if not resp.content and not (resp.input_tokens or resp.output_tokens):
             # Nothing billed (same rule as the Converse path): a plain failure, no billed_unusable row.
             raise RuntimeError(f"{resp.model_used} returned empty content for schema {schema['name']!r}")
@@ -603,10 +698,13 @@ class LLMClient:
             logger.warning("t2_5a_satellite_failed_trying_t3", model=BEDROCK_HAIKU,
                            account=primary_acct, error=str(e))
 
-        # T3: GPT-4.1 — last resort for all tiers. S235: GPT-4.1 is retired (migration 224 disables
-        # its catalog row), so a Bedrock outage on a Haiku/Sonnet writer raises here. Writers are
-        # Anthropic; an OpenAI last resort for a writer would change vendor unseen (ADR 0005 §4) —
-        # only the judge routes list an OpenAI-API last resort, explicitly.
+        return self._legacy_last_resort(request, tier, failures)
+
+    def _legacy_last_resort(self, request: LLMRequest, tier: str, failures: list) -> LLMResponse:
+        # T3: GPT-4.1 — last resort for all tiers. S235: GPT-4.1 is retired (migration 224 disables its catalog row),
+        # so a Bedrock outage on a Haiku/Sonnet writer raises here. Writers are Anthropic; an OpenAI last resort for a
+        # writer would change vendor unseen (ADR 0005 §4) — only the judge routes list an OpenAI-API last resort,
+        # explicitly. Shared by _legacy_chain and the S3 alias path (_run_alias).
         if not openai_platform_allowed("gpt-4.1"):
             logger.error("t3_skipped_gpt41_retired", tier=tier,
                          reason="GPT-4.1 retired (S235); no OpenAI last resort for legacy tiers")
@@ -704,7 +802,8 @@ class LLMClient:
         )
 
     def _call_bedrock_satellite(self, request: LLMRequest, model: str,
-                                account: str = DEFAULT_SATELLITE_ACCOUNT) -> LLMResponse:
+                                account: str = DEFAULT_SATELLITE_ACCOUNT,
+                                profile_id: Optional[str] = None) -> LLMResponse:
         """AA-296/397 — gọi Claude qua satellite account (acc3, the only one since AA-998),
         dùng khi acc2 không có Anthropic model (TrueIDC channel-program org chặn).
         Xem shared/llm_client/bedrock_satellite.py cho chi tiết AssumeRole chain +
@@ -730,6 +829,8 @@ class LLMClient:
                 on_delta=None if request.json_schema else stream_sink.delta_callback(request.stage),
                 # S224: forward an explicitly requested temperature (was silently dropped).
                 temperature=(request.temperature if "temperature" in request.model_fields_set else None),
+                # AA-1002 (S3): the alias path passes the deployment's wire_id; None = the legacy constant.
+                **({"profile_id": profile_id} if profile_id else {}),
             )
         except BedrockUnavailable as e:
             raise RuntimeError(f"Satellite Bedrock failed: {e}") from e
@@ -778,6 +879,11 @@ class LLMClient:
                                f"{model.blocked_reason or 'no reason given'}")
         if pin:
             return self._call_anthropic_messages(request, model, pinned_deployment(model, pin[1]))
+        # AA-1002 (S3): the model's deployments, in order (vendor_route.deployment_plan). None = the registry does not
+        # describe this model (or LLM_DEPLOYMENT_ROUTING=off): the S2 path below, unchanged.
+        plan = deployment_plan(model) if deployment_routing_enabled() else None
+        if plan is not None:
+            return self._call_plan(request, model, plan)
         # AA-1002 (S2): an enabled deployment on an enabled Anthropic connection, first by priority, serves the
         # model through the Messages API. None (every other registry state) = today's path below, unchanged.
         vendor = vendor_deployment_for(model)
@@ -796,12 +902,74 @@ class LLMClient:
             raise RuntimeError(f"Model {model_key!r} has no satellite account in bedrock_profile_ids")
         return self._call_bedrock_converse(request, model, account)
 
-    def _call_bedrock_converse(self, request: LLMRequest, model: CatalogModel, account: str) -> LLMResponse:
+    def _call_plan(self, request: LLMRequest, model: CatalogModel, plan: list) -> LLMResponse:
+        """AA-1002 (S3): ``model`` on each deployment of its plan, in order, until one answers. Same model first: the
+        route's next model is tried only after every deployment of this one failed (the caller, _call_route).
+
+        - One deployment (every model with today's rows): its call, with its own exception, untouched.
+        - An unusable reply (billed: schema mismatch, refusal, empty) is the model's answer, not an outage: it is
+          raised at once (the gateway's billed_unusable row is written by _call_key_logged; the route moves on).
+        - Every deployment down: _all_failed (LLMAccessDenied when every one was refused at account level)."""
+        if not plan:
+            raise RuntimeError(f"Model {model.model_key!r} has no usable deployment (every deployment or its "
+                               "connection is disabled, cannot serve it, or its circuit is open)")
+        if len(plan) == 1:
+            return self._call_target(request, model, plan[0])
+        failures: list = []
+        errors: list = []
+        for position, target in enumerate(plan):
+            try:
+                resp = self._call_target(request, model, target)
+            except UnusableReply:
+                raise
+            except Exception as e:
+                failures.append(e)
+                errors.append(f"{target.connection.connection_key}: {str(e)[:200]}")
+                logger.warning("llm_deployment_attempt_failed", stage=request.stage, model=model.model_key,
+                               connection=target.connection.connection_key, position=position, error=str(e)[:300])
+                continue
+            if position > 0:
+                logger.info("llm_deployment_fallback_used", stage=request.stage, model=model.model_key,
+                            connection=target.connection.connection_key, position=position)
+            return resp
+        raise _all_failed(f"Every deployment of {model.model_key!r} failed: " + "; ".join(errors), failures)
+
+    def _call_target(self, request: LLMRequest, model: CatalogModel, target: VendorDeployment) -> LLMResponse:
+        """AA-1002 (S3): one catalog model on one deployment, by connection kind and the row's api_style."""
+        dep, conn = target.deployment, target.connection
+        if conn.kind == "anthropic":
+            return self._call_anthropic_messages(request, model, target)
+        if conn.kind == "openai":
+            return self._call_openai(request, model=dep.wire_id, catalog_model=model)
+        if conn.kind != "bedrock":
+            raise RuntimeError(f"connection {conn.connection_key!r} ({conn.kind}) has no adapter")
+        if model.api_style == "converse":
+            if conn.auth_mode == "task_role":
+                from .bedrock_satellite import native_runtime
+                return self._call_bedrock_converse(request, model, conn.connection_key, profile_id=dep.wire_id,
+                                                   runtime=native_runtime(conn))
+            return self._call_bedrock_converse(request, model, conn.connection_key, profile_id=dep.wire_id)
+        if model.api_style == "anthropic_native" and model.model_key in _NATIVE_PRICE_KEY:
+            # The legacy Messages body (InvokeModel), exactly as _legacy_chain sends it: the satellite (T1.5a / T2.5a)
+            # on an assume-role connection, acc2-native (T1 / T2) on a task-role one.
+            if conn.auth_mode == "task_role":
+                return self._call_bedrock(request, model=dep.wire_id, use_cache=True)
+            resp = self._call_bedrock_satellite(request, model=_NATIVE_PRICE_KEY[model.model_key],
+                                                account=conn.connection_key, profile_id=dep.wire_id)
+            resp.satellite_account = conn.connection_key
+            return resp
+        raise RuntimeError(f"Model {model.model_key!r} has api_style={model.api_style!r}, "
+                           f"which LLMClient cannot call on a {conn.kind} connection")
+
+    def _call_bedrock_converse(self, request: LLMRequest, model: CatalogModel, account: str,
+                               profile_id: Optional[str] = None, runtime=None) -> LLMResponse:
         """AA-658 — Bedrock Converse / ConverseStream on a satellite session. One wire format for
-        every vendor on Bedrock (Anthropic and OpenAI models alike)."""
+        every vendor on Bedrock (Anthropic and OpenAI models alike). AA-1002 (S3): `profile_id` is the
+        deployment's wire_id (None = the catalog's bedrock_profile_ids[account]); `runtime` a task-role
+        client (acc2), else the satellite session of connection `account`."""
         from .bedrock_satellite import get_satellite_client
 
-        profile_id = model.bedrock_profile_ids[account]
+        profile_id = profile_id or model.bedrock_profile_ids[account]
         inference = {"maxTokens": request.max_tokens}
         if model.max_output_tokens:
             inference["maxTokens"] = min(request.max_tokens, model.max_output_tokens)
@@ -832,7 +1000,9 @@ class LLMClient:
 
         stream_sink.emit_restart(request.stage)
         on_delta = None if schema else stream_sink.delta_callback(request.stage)
-        rt = get_satellite_client("bedrock-runtime", account=account)
+        rt = runtime if runtime is not None else get_satellite_client("bedrock-runtime", account=account)
+        native = runtime is not None
+        label = model.model_key if native else f"satellite-{model.model_key}"
 
         in_tok = out_tok = cache_read = cache_write = 0
         stop_reason = None
@@ -845,7 +1015,7 @@ class LLMClient:
             cost_ = self._calc_cost(model.model_key, t.get("in", 0), t.get("out", 0),
                                     cache_read=t.get("cache_read", 0), cache_write=t.get("cache_write", 0))
             exc = _billed_unusable(message, [_billed_usage(
-                f"satellite-{model.model_key}", account,
+                label, account,
                 {"tokens_in": t.get("in", 0) + t.get("cache_read", 0) + t.get("cache_write", 0),
                  "tokens_out": t.get("out", 0)}, cost_, stop_reason, provider_requests)])
             exc.__cause__ = cause
@@ -929,16 +1099,17 @@ class LLMClient:
         # cache_read_tokens / cache_write_tokens, and the cost above is unchanged.
         prompt_tok = in_tok + cache_read + cache_write
 
-        logger.info("llm_success", provider="bedrock-satellite", api="converse",
+        logger.info("llm_success", provider="bedrock" if native else "bedrock-satellite", api="converse",
                     model=model.model_key, account=account,
                     in_tokens=prompt_tok, uncached_in_tokens=in_tok, cache_read=cache_read,
                     cache_write=cache_write, out_tokens=out_tok, cost_usd=cost, stop_reason=stop_reason)
 
         return LLMResponse(
-            # "satellite-" prefix: call_log.py strips it and records provider=bedrock-satellite.
-            content=content, model_used=f"satellite-{model.model_key}", provider="bedrock-satellite",
+            # "satellite-" prefix: call_log.py strips it and records provider=bedrock-satellite. A task-role
+            # (acc2-native) deployment answers as plain "bedrock", like the legacy chain's T1 / T2.
+            content=content, model_used=label, provider="bedrock" if native else "bedrock-satellite",
             input_tokens=prompt_tok, output_tokens=out_tok, cost_usd=cost,
-            fallback_used=False, satellite_account=account,
+            fallback_used=False, satellite_account=None if native else account,
             cache_read_tokens=cache_read, cache_write_tokens=cache_write,
             stop_reason=stop_reason, provider_requests=provider_requests,
         )

@@ -7,9 +7,16 @@ table's CHECK, migration 304). Its ``base_url`` must be an https URL on the kind
 ``BASE_URL_ALLOWLIST``). Both checks run before any secret is read, so a row edited in the admin (slice S4) can never
 make the gateway read another app's secret (rds, typesafe, booking ...) or send a key to an arbitrary host.
 
-S1 is read-only and off the routing path: ``LLMClient`` / ``embed`` / ``decide`` do not import this module (guarded by
-``tests/unit/test_aa1002_no_behaviour_change.py``); slice S3 routes through it. The only caller today is the admin
-listing ``GET /admin/llm-connections``.
+S1 was read-only and off the routing path. Since slice S3 the gateway routes through it:
+``vendor_route.deployment_plan`` (which deployment of a model on which enabled connection), ``bedrock_satellite`` (the
+role, ExternalId and region of an assume-role connection, instead of a hard-coded account table),
+``catalog.account_for`` and ``embed`` (which Bedrock connections serve a profile). Which modules may read it is guarded
+by ``tests/unit/test_aa1002_no_behaviour_change.py``.
+
+``BUILTIN_CONNECTIONS`` mirrors the enabled Bedrock / OpenAI rows migration 304 seeded. It is never a routing source: it
+only answers "how do I reach connection X" (``connection_or_builtin``) when the registry cannot be read or has no row
+for X, so a DB outage or a cold process keeps today's satellite, acc2 and OpenAI paths working (lessons: a safe code
+default must run when the DB is down).
 
 Like ``catalog.py``: the table is tiny, loaded in one query and cached in process; the sync read never raises (a DB
 failure or a table that is not migrated yet returns no connections). ``resolve_api_key`` fails closed.
@@ -279,6 +286,54 @@ def _load(now: float) -> None:
 def get_connection_sync(connection_key: str) -> Optional[ProviderConnection]:
     _ensure_loaded()
     return _connections.get(connection_key)
+
+
+def registry_rows_sync() -> dict[str, ProviderConnection]:
+    """Every loaded connection row (empty when the registry is unreadable, not migrated or empty). Never raises."""
+    _ensure_loaded()
+    return dict(_connections)
+
+
+# AA-1002 (S3): the enabled rows migration 304 seeded for today's paths, field for field (tests compare them with the
+# SQL). Credentials only (see the module docstring): routing never reads this table.
+BUILTIN_CONNECTIONS: dict[str, ProviderConnection] = {
+    "acc3": ProviderConnection(connection_key="acc3", kind="bedrock", auth_mode="assume_role",
+                               label="Bedrock, LLM account (assume role)", data_scope="aws_only", enabled=True,
+                               account_id_env="BEDROCK_ACCT_PRIMARY", region="us-west-1",
+                               role_name="AA3-Bedrock-Invoker", external_id="aa296-satellite-bedrock-acc3"),
+    "acc2": ProviderConnection(connection_key="acc2", kind="bedrock", auth_mode="task_role",
+                               label="Bedrock, main account (task role)", data_scope="aws_only", enabled=True,
+                               region="us-west-1"),
+    "openai-direct": ProviderConnection(connection_key="openai-direct", kind="openai", auth_mode="api_key",
+                                        label="OpenAI API (direct)", data_scope="vendor_direct", enabled=True,
+                                        credential_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1"),
+}
+
+
+def connection_or_builtin(connection_key: str) -> Optional[ProviderConnection]:
+    """The registry row of ``connection_key``, else its built-in mirror, else None. For reaching a connection (role,
+    ExternalId, region), not for deciding whether to route to it. The mirror is used when the registry is unreadable,
+    has no such row, or the row breaks the policy (``policy_problems``: e.g. an assume-role row without its role or
+    account): a half-edited row never breaks today's path. Never raises."""
+    row = get_connection_sync(connection_key)
+    builtin = BUILTIN_CONNECTIONS.get(connection_key)
+    if row is not None and builtin is not None and row.policy_problems():
+        logger.warning("llm_connection_row_unusable_builtin_used", connection=connection_key,
+                       problems="; ".join(row.policy_problems())[:300])
+        return builtin
+    return row if row is not None else builtin
+
+
+def bedrock_connection_keys() -> tuple[str, ...]:
+    """The Bedrock connections a catalog ``bedrock_profile_ids`` key may name (registry rows and the built-in mirror),
+    satellites (assume_role) first, then task-role ones, each by key: ("acc3", "acc2") for the 304 seed. Replaces the
+    hard-coded catalog.SERVING_ACCOUNTS (AA-998: acc3 before acc2, an account no connection names is never chosen).
+    ``enabled`` is not read here: switching a connection off is a routing decision (vendor_route.deployment_plan), and
+    this list feeds the no-registry / rollback path (catalog.account_for), which must stay today's. Never raises."""
+    rows = {**BUILTIN_CONNECTIONS, **registry_rows_sync()}
+    usable = [c for c in rows.values() if c.kind == "bedrock" and c.auth_mode in ("assume_role", "task_role")]
+    usable.sort(key=lambda c: (0 if c.auth_mode == "assume_role" else 1, c.connection_key))
+    return tuple(c.connection_key for c in usable)
 
 
 def invalidate() -> None:

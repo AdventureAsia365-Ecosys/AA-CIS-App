@@ -1,14 +1,16 @@
-"""AA-1002 (gateway slices S1 + S2) — the registry changes nothing unless an Anthropic API deployment is first.
+"""AA-1002 (gateway slices S1 + S2 + S3) — the registry changes nothing unless it says something new.
 
-S1 kept the connection registry off the routing path. S2 (the Anthropic Messages adapter) reads it through ONE module,
-``vendor_route.py``, and only an enabled deployment on an enabled ``anthropic`` connection that sorts first by
-priority changes where a call goes. Two proofs:
+S1 kept the connection registry off the routing path. S2 (the Anthropic Messages adapter) read it through ONE module,
+``vendor_route.py``. S3 routes through it (deployment spread, legacy aliases, connection-based satellite sessions and
+embeddings), so the static proof is now an allowlist of the modules that may read it. The runtime proofs:
 
-- Static: no call-path module imports ``connections`` / ``deployments``; only ``client.py`` imports ``vendor_route``.
-- Runtime: a Converse call and a legacy-chain call give byte-identical provider requests and responses for every
-  registry state that has no such first row (table missing, Anthropic row or connection disabled, Anthropic row
-  behind acc3, an Anthropic row on a legacy key, a contradictory acc3 row), and the Anthropic adapter and the secret
-  are never touched. The positive cases are in test_aa1002_s2_vendor_route.py.
+- a Converse call and a legacy-chain call give byte-identical provider requests and responses for every registry state
+  that adds no new usable deployment (table missing, Anthropic row or connection disabled, Anthropic row behind acc3,
+  an Anthropic row on a legacy key), and the Anthropic adapter and the secret are never touched;
+- they match the golden snapshot of pre-S2 code under those states, with LLM_DEPLOYMENT_ROUTING on (default) and off;
+- "contradictory_acc3" (every row of the model disabled or on a disabled connection) changed meaning in S3: the
+  registry is authoritative once it describes a model, so the model is refused; with the rollback switch off it is
+  today's path again. The positive cases are in test_aa1002_s2_vendor_route.py / test_aa1002_s3_*.py.
 """
 import ast
 from pathlib import Path
@@ -26,6 +28,15 @@ from shared.llm_client.models import LLMRequest
 
 LLM_CLIENT = Path(__file__).resolve().parents[2] / "shared" / "llm_client"
 REGISTRY = {"connections", "deployments"}
+# S3: who may read the registry (and why). Everything else in the gateway must not.
+REGISTRY_READERS = {
+    "vendor_route.py": "the deployment plan (S2 vendor row, S3 spread)",
+    "client.py": "the alias targets (deployments.alias_targets_sync)",
+    "embed.py": "the connection of an embedding deployment (_runtime_for)",
+    "bedrock_satellite.py": "role / ExternalId / region of an assume-role connection",
+    "catalog.py": "serving_accounts() = the enabled Bedrock connections",
+    "deployments.py": "reads its own table through connections.run_sync",
+}
 CALL_PATH = ("client.py", "embed.py", "decide.py", "judge.py", "shadow.py", "bedrock_satellite.py",
              "bedrock_batch.py", "call_log.py", "catalog.py", "role_config.py", "pricing.py", "errors.py",
              "prompt_cache.py", "stream_sink.py", "column_mapper.py", "schema_check.py", "models.py")
@@ -42,9 +53,10 @@ def _imported_modules(path: Path) -> set[str]:
     return names
 
 
-@pytest.mark.parametrize("name", CALL_PATH)
-def test_call_path_modules_do_not_import_the_registry(name):
-    assert not (_imported_modules(LLM_CLIENT / name) & REGISTRY), f"{name} reads the registry before slice S3"
+@pytest.mark.parametrize("name", [n for n in CALL_PATH if n not in REGISTRY_READERS])
+def test_other_call_path_modules_do_not_import_the_registry(name):
+    assert not (_imported_modules(LLM_CLIENT / name) & REGISTRY), f"{name} reads the registry: add it to " \
+                                                                  "REGISTRY_READERS with the reason, or route it"
 
 
 def test_every_gateway_module_is_classified():
@@ -53,8 +65,8 @@ def test_every_gateway_module_is_classified():
         "new gateway module: add it to CALL_PATH (or move the registry check)"
 
 
-@pytest.mark.parametrize("name", [n for n in CALL_PATH if n != "client.py"])
-def test_only_the_client_asks_the_vendor_route(name):
+@pytest.mark.parametrize("name", [n for n in CALL_PATH if n not in ("client.py", "embed.py")])
+def test_only_the_client_and_embed_ask_the_vendor_route(name):
     assert "vendor_route" not in _imported_modules(LLM_CLIENT / name)
 
 
@@ -92,11 +104,15 @@ NO_ROUTE_STATES = {
     "anthropic_on_a_legacy_key": (
         {"acc3": _acc3(), "anthropic-direct": _anthropic()},
         [ACC3_DEP, ModelDeployment("haiku", "anthropic-direct", "claude-haiku-4-5", 0, True, "admin")]),
+}
+# S3: every row of the model is disabled / on a disabled connection: refused with routing on, today's path when off.
+REFUSED_STATES = {
     "contradictory_acc3": (
         {"acc3": _acc3(enabled=False), "anthropic-direct": _anthropic(enabled=False)},
         [ModelDeployment("sonnet-5", "acc3", "global.anthropic.something-else", 10, True, "admin"),
          ModelDeployment("sonnet-5", "anthropic-direct", "claude-sonnet-5", 0, True, "admin")]),
 }
+ALL_STATES = {**NO_ROUTE_STATES, **REFUSED_STATES}
 
 
 def _converse_response():
@@ -121,8 +137,9 @@ def _run(registry: str):
     if registry == "missing_table":
         fetch = MagicMock(side_effect=OSError("relation shared.llm_provider_connection does not exist"))
     else:
-        conns, deps = NO_ROUTE_STATES[registry]
-        fetch = MagicMock(side_effect=lambda fn: conns if fn is connections._fetch_all else deps)
+        conns, deps = ALL_STATES[registry]
+        fetch = MagicMock(side_effect=lambda fn: conns if fn is connections._fetch_all else
+                          ([] if fn is deployments._fetch_aliases else deps))
     rt = MagicMock()
     rt.converse.return_value = _converse_response()
     rt.invoke_model.return_value = _invoke_response()
@@ -176,13 +193,15 @@ def _registry_patches(registry: str):
     if registry == "missing_table":
         fetch = MagicMock(side_effect=OSError("relation shared.llm_provider_connection does not exist"))
     else:
-        conns, deps = NO_ROUTE_STATES[registry]
-        fetch = MagicMock(side_effect=lambda fn: conns if fn is connections._fetch_all else deps)
+        conns, deps = ALL_STATES[registry]
+        fetch = MagicMock(side_effect=lambda fn: conns if fn is connections._fetch_all else
+                          ([] if fn is deployments._fetch_aliases else deps))
     return [patch.object(connections, "run_sync", fetch)]
 
 
+@pytest.mark.parametrize("routing", ["default", "off"])
 @pytest.mark.parametrize("registry", ["missing_table", *sorted(NO_ROUTE_STATES)])
-def test_calls_match_the_golden_snapshot_of_pre_s2_code(registry):
+def test_calls_match_the_golden_snapshot_of_pre_s2_code(registry, routing, monkeypatch):
     """Review S258: the byte-identical test above compares S2 with S2's own missing-table path. This one compares with
     what code from before S2 (origin/main dd8eea05, no vendor_route) sent and returned, captured by
     tests/unit/aa1002_golden_calls.py run unchanged on that checkout: Converse, Converse with a schema (forced tool)
@@ -190,6 +209,9 @@ def test_calls_match_the_golden_snapshot_of_pre_s2_code(registry):
     import json
 
     from tests.unit.aa1002_golden_calls import capture
+
+    if routing == "off":
+        monkeypatch.setenv("LLM_DEPLOYMENT_ROUTING", "off")          # the S3 rollback switch
 
     catalog.invalidate()
     connections.invalidate()
@@ -201,3 +223,13 @@ def test_calls_match_the_golden_snapshot_of_pre_s2_code(registry):
     send.assert_not_called()
     secret.assert_not_called()
     assert json.loads(json.dumps(got, sort_keys=True)) == json.loads(PRE_S2_GOLDEN.read_text())
+
+
+def test_s3_refuses_a_model_whose_every_row_is_switched_off(monkeypatch):
+    """S3: the registry describes sonnet-5 (rows exist) but nothing is usable: the model is refused, no provider call.
+    The rollback switch (LLM_DEPLOYMENT_ROUTING=off) gives today's path (the S2 behaviour) back."""
+    catalog.invalidate()
+    with pytest.raises(RuntimeError, match="no usable deployment"):
+        _run("contradictory_acc3")
+    monkeypatch.setenv("LLM_DEPLOYMENT_ROUTING", "off")
+    assert repr(_run("contradictory_acc3")) == repr(_run("missing_table"))

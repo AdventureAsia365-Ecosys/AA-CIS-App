@@ -7,25 +7,33 @@ writes shared.llm_call_log (quality_signal is the caller's to compute).
 
 Only Cohere's Bedrock request/response shape is implemented — it is the only embedding vendor in
 the catalog. A new vendor gets its own body builder here, not a new call site.
+
+AA-1002 (S3): where a model runs comes from the connection registry, not from code. Each model of the
+route is tried on its deployments (vendor_route.deployment_plan: enabled, on an enabled Bedrock
+connection, priority order) and the client comes from that connection (`_runtime_for`: the task role
+for a task_role connection such as acc2, one attempt, no retry; the satellite session for an
+assume_role one such as acc3). Without registry rows for the model (DB down, a cold process, a row
+added without deployments) the catalog's bedrock_profile_ids is used on the Bedrock
+connections (connections.bedrock_connection_keys, the built-in 304 mirror when unreadable) — one
+account per model, acc3 before acc2, as before S3. The request body (input_type, output_dimension)
+is unchanged.
 """
 from __future__ import annotations
 
 import json
 import os
-import threading
 from dataclasses import dataclass
 from typing import Optional
 
-import boto3
 import structlog
-from botocore.config import Config
 
+from . import connections
 from .catalog import CatalogModel, get_model_sync
 from .role_config import get_stage_config_sync
+from .vendor_route import deployment_plan
 
 logger = structlog.get_logger()
 
-BEDROCK_REGION = os.environ.get("BEDROCK_REGION", "us-west-1")
 
 # Used only when the catalog cannot be read, so a DB outage does not stop embeddings (the
 # catalog is the source of truth; this mirrors its migration-169 seed row).
@@ -37,10 +45,6 @@ _CATALOG_FALLBACK = {
         price_in_per_mtok=0.12, price_out_per_mtok=0.0, enabled=True,
     ),
 }
-
-_native_client = None
-_native_lock = threading.Lock()
-
 
 @dataclass
 class EmbedResponse:
@@ -54,27 +58,31 @@ class EmbedResponse:
     fallback_used: bool = False
 
 
-def _acc2_client():
-    # No retry (total_max_attempts=1, one attempt): callers pace to the account's per-minute quota,
-    # and a throttle retried at once spends the same minute's quota again (AA-610). AA-862: the legacy
-    # `max_attempts` key counts RETRIES in botocore (`max_attempts=1` = 2 attempts), which spent two
-    # acc2 calls per throttle and delayed the fall-through to acc3.
-    global _native_client
-    with _native_lock:
-        if _native_client is None:
-            _native_client = boto3.client(
-                "bedrock-runtime", region_name=BEDROCK_REGION,
-                config=Config(read_timeout=30, connect_timeout=10,
-                              retries={"total_max_attempts": 1, "mode": "standard"}),
-            )
-        return _native_client
+def _runtime_for(connection_key: str):
+    """The bedrock-runtime client of a Bedrock connection (registry row, else its built-in mirror).
 
-
-def _runtime_for(account: str):
-    if account == "acc2":
-        return _acc2_client()
+    A task_role connection (acc2) gets its own client with NO retry (total_max_attempts=1, one attempt): callers pace
+    to the account's per-minute quota, and a throttle retried at once spends the same minute's quota again (AA-610).
+    AA-862: the legacy `max_attempts` key counts RETRIES in botocore (`max_attempts=1` = 2 attempts), which spent two
+    acc2 calls per throttle and delayed the fall-through to acc3. An assume_role connection (acc3) uses the shared
+    satellite session (bedrock_satellite.get_satellite_client)."""
+    conn = connections.connection_or_builtin(connection_key)
+    if conn is None or conn.kind != "bedrock":
+        raise RuntimeError(f"{connection_key!r} is not a Bedrock connection")
+    if conn.auth_mode == "task_role":
+        from .bedrock_satellite import native_runtime
+        return native_runtime(conn, read_timeout=30, max_attempts=1)
     from .bedrock_satellite import get_satellite_client
-    return get_satellite_client("bedrock-runtime", account=account)
+    return get_satellite_client("bedrock-runtime", account=connection_key)
+
+
+def _targets(model: CatalogModel, account_route: Optional[str]) -> list[tuple[str, str]]:
+    """(connection_key, wire id) attempts for `model`, in order (see the module docstring)."""
+    plan = deployment_plan(model)
+    if plan is None:
+        account = model.account_for(account_route)
+        return [(account, model.bedrock_profile_ids[account])] if account else []
+    return [(t.connection.connection_key, t.deployment.wire_id) for t in plan]
 
 
 def _resolve(key: str) -> Optional[CatalogModel]:
@@ -90,11 +98,11 @@ def _cohere_body(texts: list[str], input_type: str, dimensions: Optional[int]) -
 
 
 def _call(model: CatalogModel, account: str, texts: list[str], input_type: str,
-          dimensions: Optional[int]) -> EmbedResponse:
+          dimensions: Optional[int], wire_id: Optional[str] = None) -> EmbedResponse:
     if model.vendor != "cohere":
         raise RuntimeError(f"No embedding request shape for vendor {model.vendor!r}")
     resp = _runtime_for(account).invoke_model(
-        modelId=model.bedrock_profile_ids[account],
+        modelId=wire_id or model.bedrock_profile_ids[account],
         body=_cohere_body(texts, input_type, dimensions),
         contentType="application/json", accept="application/json",
     )
@@ -139,19 +147,20 @@ def embed(stage: str, texts: list[str], *, input_type: str = "search_document",
             logger.info("llm_route_skip", stage=stage, model=key, reason=reason)
             errors.append(f"{key}: skipped ({reason})")
             continue
-        account = model.account_for(cfg.account_route)
-        if account is None:
-            errors.append(f"{key}: no Bedrock profile")
+        targets = _targets(model, cfg.account_route)
+        if not targets:
+            errors.append(f"{key}: no Bedrock profile or usable deployment")
             continue
-        try:
-            resp = _call(model, account, texts, input_type, dimensions)
-        except Exception as e:
-            logger.warning("llm_route_attempt_failed", stage=stage, model=key,
-                           position=position, error=str(e)[:300])
-            errors.append(f"{key}: {str(e)[:200]}")
-            continue
-        resp.fallback_used = position > 0
-        logger.info("llm_embed_success", stage=stage, model=key, account=account,
-                    texts=len(texts), in_tokens=resp.input_tokens, cost_usd=resp.cost_usd)
-        return resp
+        for account, wire_id in targets:          # AA-1002 (S3): same model on each deployment first
+            try:
+                resp = _call(model, account, texts, input_type, dimensions, wire_id)
+            except Exception as e:
+                logger.warning("llm_route_attempt_failed", stage=stage, model=key, account=account,
+                               position=position, error=str(e)[:300])
+                errors.append(f"{key}@{account}: {str(e)[:200]}" if len(targets) > 1 else f"{key}: {str(e)[:200]}")
+                continue
+            resp.fallback_used = position > 0
+            logger.info("llm_embed_success", stage=stage, model=key, account=account,
+                        texts=len(texts), in_tokens=resp.input_tokens, cost_usd=resp.cost_usd)
+            return resp
     raise RuntimeError(f"All models in the route failed for stage {stage!r}: " + "; ".join(errors))

@@ -5,7 +5,9 @@ End to end through the real adapter on a fake HTTP transport (tests/unit/aa1002_
 the caller gets (label, provider, tokens with the cache parts, cost from the catalog price, the model the API
 reported), structured output conformed, refusal / empty / bad JSON as billed-unusable replies the gateway logs,
 401 as an account-level refusal, a 429 as a plain failure the route moves past. The "nothing changes" side is
-test_aa1002_no_behaviour_change.py.
+test_aa1002_no_behaviour_change.py. Slice S3 (deployment routing): a failure on the Anthropic row now falls to the
+model's acc3 row behind it (same model first, aws_only); the error-class tests keep the Anthropic row alone. The S3
+cases are in test_aa1002_s3_deployment_routing.py.
 """
 from unittest.mock import MagicMock, patch
 
@@ -167,7 +169,8 @@ def test_a_non_anthropic_model_never_runs_on_the_anthropic_api(gw):
 
 def test_registry_failure_falls_back_to_todays_path(gw, monkeypatch):
     client, fake, state, rt, reset = gw
-    monkeypatch.setattr(vendor_route, "_first_enabled", MagicMock(side_effect=KeyError("boom")))
+    # S3: both readers (deployment_plan and the S2 _first_enabled) go through deployments_for_sync.
+    monkeypatch.setattr(deployments, "deployments_for_sync", MagicMock(side_effect=KeyError("boom")))
     assert client.generate(_req()).provider == "bedrock-satellite"
 
 
@@ -277,14 +280,18 @@ def test_refusal_on_every_model_is_a_route_unusable_reply(gw, monkeypatch):
 
 
 def test_a_401_is_an_account_level_refusal(gw):
-    client, fake, *_ = gw
+    client, fake, state, rt, reset = gw
+    state["deps"] = _deps()[1:]      # S3: the Anthropic row alone (with acc3 behind it the call falls to acc3)
+    reset()
     fake.replies.append(error_reply(401, "authentication_error", "invalid x-api-key"))
     with pytest.raises(LLMAccessDenied):
         client.generate(_req())
 
 
 def test_a_429_is_a_throttle_not_a_denial(gw):
-    client, fake, *_ = gw
+    client, fake, state, rt, reset = gw
+    state["deps"] = _deps()[1:]      # S3: the Anthropic row alone (with acc3 behind it the call falls to acc3)
+    reset()
     fake.replies.append(error_reply(429, "rate_limit_error", "slow down"))
     with pytest.raises(RuntimeError) as e:
         client.generate(_req())
@@ -292,7 +299,9 @@ def test_a_429_is_a_throttle_not_a_denial(gw):
 
 
 def test_a_missing_secret_fails_the_attempt_closed(gw):
-    client, fake, *_ = gw
+    client, fake, state, rt, reset = gw
+    state["deps"] = _deps()[1:]      # S3: the Anthropic row alone (with acc3 behind it the call falls to acc3)
+    reset()
     fake.reader.side_effect = RuntimeError("ResourceNotFoundException")
     with pytest.raises(RuntimeError, match="secret unreadable"):
         client.generate(_req())
@@ -318,7 +327,7 @@ def test_an_expired_registry_is_reloaded_once_however_many_threads_ask(monkeypat
     import threading
     import time
 
-    loads = {"connections": 0, "deployments": 0}
+    loads = {"connections": 0, "deployments": 0, "aliases": 0}
     gate = threading.Event()
 
     def slow_fetch(fn):
@@ -326,6 +335,9 @@ def test_an_expired_registry_is_reloaded_once_however_many_threads_ask(monkeypat
         if fn is connections._fetch_all:
             loads["connections"] += 1
             return {"anthropic-direct": anthropic_connection()}
+        if fn is deployments._fetch_aliases:          # S3: the alias table is read with the deployments
+            loads["aliases"] += 1
+            return []
         loads["deployments"] += 1
         return [ModelDeployment("sonnet-5-5", "anthropic-direct", "claude-sonnet-5-5", 0, True, "admin")]
 
@@ -341,5 +353,5 @@ def test_an_expired_registry_is_reloaded_once_however_many_threads_ask(monkeypat
     gate.set()
     for t in threads:
         t.join(5)
-    assert loads == {"connections": 1, "deployments": 1}
+    assert loads == {"connections": 1, "deployments": 1, "aliases": 1}
     assert len(found) == 8 and all(f is not None and f.connection.connection_key == "anthropic-direct" for f in found)

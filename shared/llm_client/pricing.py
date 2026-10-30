@@ -20,7 +20,7 @@ logger = structlog.get_logger()
 # through to the satellite account (T1.5a, shared/llm_client/bedrock_satellite.py — the
 # common path in practice, native Sonnet is blocked for channel-program accounts, AA-291/AA-329),
 # the model actually invoked is a DIFFERENT, newer version: `global.anthropic.claude-sonnet-4-6`
-# (see bedrock_satellite.py's INFERENCE_PROFILE_SONNET / _INFERENCE_PROFILES). This is a
+# (see bedrock_satellite.py's _PROFILE_ID_SONNET / the deployment sonnet@acc3). This is a
 # deliberate, live-verified difference between the two tiers (bedrock_satellite.py's own
 # 16/07/2026 STATUS note), NOT a copy-paste bug — investigated and confirmed still the real state
 # under AA-348. client.py still passes this constant into the satellite call path, but only as a

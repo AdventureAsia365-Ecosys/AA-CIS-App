@@ -143,6 +143,8 @@ def test_guard_existing_row_with_other_profiles(cur):
 
 def test_guard_missing_sonnet_row(cur):
     cur.execute("BEGIN")
+    # 307's alias rows reference the catalog row (ON DELETE RESTRICT); the rollback restores them too
+    cur.execute("DELETE FROM shared.llm_model_alias WHERE model_key = 'sonnet'")
     cur.execute("DELETE FROM shared.llm_model_catalog WHERE model_key = 'sonnet'")
     with pytest.raises(psycopg2.Error, match="259: shared.llm_model_catalog has no sonnet row"):
         _run(cur)
