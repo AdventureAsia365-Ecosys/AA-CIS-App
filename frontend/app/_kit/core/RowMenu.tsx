@@ -30,7 +30,9 @@ const OPEN_GRACE_MS = 400;
 const MENU_CSS =
   `.aa-kit-rowmenu-btn{color:${K.muted};border-color:${K.line}}` +
   `.aa-kit-rowmenu-btn:hover,.aa-kit-rowmenu-btn[aria-expanded="true"]{color:${K.ink};border-color:${K.accentBorder}}` +
-  `.aa-kit-rowmenu-item{color:${K.body};background:transparent}` +
+  `.aa-kit-rowmenu-item{color:${K.body};background:transparent;outline:none}` +
+  // Keyboard focus: the tint alone is about 1.1:1 on card, so an inset accent-deep ring as well (same as ListButton).
+  `.aa-kit-rowmenu-item:focus-visible{outline:2px solid ${K.accentDeep};outline-offset:-2px}` +
   `.aa-kit-rowmenu-item:not(:disabled):hover,.aa-kit-rowmenu-item:not(:disabled):focus-visible{background:${K.accentTint}}` +
   `.aa-kit-rowmenu-item[data-danger]{color:${K.danger}}` +
   `.aa-kit-rowmenu-item[data-danger]:not(:disabled):hover,` +
@@ -142,7 +144,7 @@ export function RowMenu({ items, label, testId }: { items: RowMenuItem[]; label?
                 style={{
                   display: "flex", width: "100%", alignItems: "center", gap: 10, padding: "8px 14px",
                   textAlign: "left", fontSize: 13, fontFamily: sans, border: "none",
-                  cursor: it.disabled ? "not-allowed" : "pointer", opacity: it.disabled ? 0.5 : 1, outline: "none",
+                  cursor: it.disabled ? "not-allowed" : "pointer", opacity: it.disabled ? 0.5 : 1,
                 }}
               >
                 {it.icon && <span style={{ flexShrink: 0, opacity: 0.8, display: "inline-flex" }}>{it.icon}</span>}

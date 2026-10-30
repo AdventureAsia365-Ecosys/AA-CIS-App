@@ -18,7 +18,8 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { K, RADIUS, sans, BTN_RADIUS, BTN_PRIMARY_TEXT } from "./tokens";
+import { K, RADIUS, sans } from "./tokens";
+import { ButtonStyles, BUTTON_CLASS, rovingTarget } from "./Buttons";
 import { KIT_MESSAGES } from "./kit.messages";
 import { useT } from "./useI18n";
 
@@ -62,74 +63,18 @@ export function Breadcrumb({
   );
 }
 
-// ── Button (AA-752) ───────────────────────────────────────────────────────────
-// The canonical brand button. Variants follow adventure.asia: primary = gold pill (uppercase on
-// md/lg), secondary = gold outline, danger = red soft, ghost = line outline. `size="sm"` stays
-// non-uppercase for dense table rows (AA-605). The admin legacy `Btn` (adminUi.tsx) re-points here.
-export type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
-export type ButtonSize = "sm" | "md" | "lg";
-
-export function Button({
-  children,
-  onClick,
-  variant = "secondary",
-  size = "md",
-  disabled = false,
-  type = "button",
-  style = {},
-  title,
-  ariaLabel,
-}: {
-  children: React.ReactNode;
-  onClick?: () => void;
-  variant?: ButtonVariant;
-  size?: ButtonSize;
-  disabled?: boolean;
-  type?: "button" | "submit" | "reset";
-  style?: React.CSSProperties;
-  title?: string;
-  ariaLabel?: string;
-}) {
-  const pad = { sm: "5px 12px", md: "8px 16px", lg: "10px 22px" }[size];
-  const fz = { sm: 11, md: 13, lg: 14 }[size];
-  // secondary is the adventure.asia gold outline (EXPLORE); primary is the gold pill (ENQUIRE).
-  const base: Record<ButtonVariant, React.CSSProperties> = {
-    primary: { background: K.accent, color: "var(--aa-on-accent)", border: `1px solid ${K.accent}` },
-    secondary: { background: "transparent", color: K.accentDeep, border: `1px solid ${K.accentBorder}` },
-    danger: { background: K.dangerSoft, color: K.danger, border: `1px solid ${K.dangerBorder}` },
-    ghost: { background: "transparent", color: K.muted, border: `1px solid ${K.line}` },
-  };
-  return (
-    <button
-      type={type}
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      aria-label={ariaLabel}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 6,
-        padding: pad,
-        borderRadius: BTN_RADIUS,
-        fontSize: fz,
-        fontWeight: 600,
-        cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.5 : 1,
-        transition: "opacity .15s",
-        fontFamily: sans,
-        // Brand uppercase only on md/lg primary + secondary; "sm" sits in dense table rows where
-        // the wider uppercase label overflowed (AA-605).
-        ...base[variant],
-        ...((variant === "primary" || variant === "secondary") && size !== "sm" ? BTN_PRIMARY_TEXT : {}),
-        ...style,
-      }}
-    >
-      {children}
-    </button>
-  );
-}
+// ── Buttons ───────────────────────────────────────────────────────────────────────────────────────────────────
+// The kit buttons live in ./Buttons (AA-994); re-exported here so every barrel that does
+// `export * from "./core/primitives"` keeps exporting them. Named, not `export *`: Next.js refuses `export *` in a
+// "use client" module. A new export of ./Buttons must be added here too (lib/kitButtons.test.mjs checks it).
+export {
+  Button, LinkButton, IconButton, ChipButton, Switch, SegmentedControl, ButtonGroup, ListButton, Pressable,
+  ButtonStyles, BUTTON_CLASS, rovingTarget,
+} from "./Buttons";
+export type {
+  BaseButtonProps, ButtonProps, ButtonVariant, ButtonSize, LinkButtonProps, LinkButtonTone, IconButtonProps,
+  IconButtonVariant, IconButtonSize, ChipButtonProps, SwitchProps, SegmentedOption, ListButtonProps, PressableProps,
+} from "./Buttons";
 
 // ── Tone system ───────────────────────────────────────────────────────────────
 // One tone vocabulary the whole kit shares. Both the admin Badge `color` union and the portal
@@ -511,17 +456,141 @@ export function PageHeader({
 }
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
+// variant "track" (default): the grey track with the active tab raised, as since AA-662 (its DOM is unchanged: plain
+// buttons, no tab roles yet, so existing page tests keep finding them as buttons).
+// variant "underline" (AA-994): the tab strip under a detail page header (Booking trip case, customer, supplier): a
+// role="tablist" labelled by `ariaLabel`, each tab role="tab" with aria-selected, a 2px accent underline on the
+// active one, an optional count after the label, disabled tabs with a `title` reason. Tab enters on the active tab;
+// the arrow keys (and Home / End) move and select, skipping disabled tabs.
+// Room the underline tablist keeps for the label focus ring (2px ring at a 2px offset).
+const TAB_RING_ROOM = 4;
+
+export type TabItem = {
+  key: string;
+  label: React.ReactNode;
+  /** underline only: a small count after the label ("Proposals 3"). */
+  count?: React.ReactNode;
+  /** underline only: shown but not selectable (give the reason as `title`). */
+  disabled?: boolean;
+  title?: string;
+};
+
 export function Tabs({
   tabs,
   active,
   onChange,
+  variant = "track",
+  ariaLabel,
+  gap = 24,
+  testId,
+  style,
+  className,
 }: {
-  tabs: { key: string; label: string }[];
+  tabs: TabItem[];
   active: string;
   onChange: (k: string) => void;
+  variant?: "track" | "underline";
+  /** underline: the tab list's name for screen readers ("Trip case sections"). */
+  ariaLabel?: string;
+  /** underline: space between tabs in px (default 24). */
+  gap?: number;
+  testId?: string;
+  /** underline: merged into the tab list (a negative bottom margin to sit on a header border). The top, left and
+   * right margins and paddings are the kit's (room for the focus ring): override them only on purpose. */
+  style?: React.CSSProperties;
+  /** underline: layout utilities for Tailwind apps (a bottom margin such as `-mb-px` is fine; inline top / left /
+   * right margins win over a class). */
+  className?: string;
 }) {
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  if (variant === "underline") {
+    const current = tabs.findIndex((t) => t.key === active);
+    const tabStop = current >= 0 && !tabs[current].disabled ? current : tabs.findIndex((t) => !t.disabled);
+    // Arrow keys move and select (automatic activation); ArrowUp / ArrowDown are left to the page (a horizontal list).
+    const onKey = (e: React.KeyboardEvent<HTMLButtonElement>, from: number) => {
+      if (e.key === "ArrowUp" || e.key === "ArrowDown") return;
+      const i = rovingTarget(tabs, from, e.key);
+      if (i === null) return;
+      e.preventDefault();
+      if (i < 0) return;
+      refs.current[i]?.focus();
+      if (tabs[i].key !== active) onChange(tabs[i].key);
+    };
+    return (
+      <>
+        <ButtonStyles />
+        <div
+          role="tablist"
+          aria-label={ariaLabel}
+          data-testid={testId}
+          className={className}
+          // The focus ring is drawn around each tab's label (Buttons.tsx, .aa-kit-tab__label) and reaches 4px past it;
+          // the tablist scrolls sideways (overflow clips), so it keeps 4px of room on the top / left / right, taken
+          // back with negative margins so the tabs stay where they were. The bottom is left alone (the label ring
+          // fits in the tab's 10px bottom padding), so a bottom margin or baseline from `className` keeps working.
+          style={{
+            display: "flex",
+            gap,
+            maxWidth: `calc(100% + ${2 * TAB_RING_ROOM}px)`,
+            overflowX: "auto",
+            paddingTop: TAB_RING_ROOM,
+            paddingLeft: TAB_RING_ROOM,
+            paddingRight: TAB_RING_ROOM,
+            marginTop: -TAB_RING_ROOM,
+            marginLeft: -TAB_RING_ROOM,
+            marginRight: -TAB_RING_ROOM,
+            fontFamily: sans,
+            ...style,
+          }}
+        >
+          {tabs.map((t, i) => {
+            const on = i === current;
+            return (
+              <button
+                key={t.key}
+                ref={(el) => {
+                  refs.current[i] = el;
+                }}
+                type="button"
+                role="tab"
+                aria-selected={on}
+                disabled={t.disabled}
+                title={t.title}
+                tabIndex={i === tabStop ? 0 : -1}
+                onClick={() => onChange(t.key)}
+                onKeyDown={(e) => onKey(e, i)}
+                className={`${BUTTON_CLASS} aa-kit-tab`}
+                style={{
+                  margin: 0,
+                  padding: "0 0 10px",
+                  border: "none",
+                  borderBottom: `2px solid ${on ? K.accent : "transparent"}`,
+                  borderRadius: 0,
+                  background: "transparent",
+                  color: on ? K.accentDeep : K.muted,
+                  fontSize: 13,
+                  fontWeight: on ? 600 : 400,
+                  fontFamily: sans,
+                  whiteSpace: "nowrap",
+                  flexShrink: 0,
+                  cursor: t.disabled ? "not-allowed" : "pointer",
+                  transition: "color .15s, border-color .15s",
+                }}
+              >
+                <span className="aa-kit-tab__label">
+                  {t.label}
+                  {t.count != null && <span style={{ marginLeft: 4, fontSize: 12, color: K.muted2 }}>{t.count}</span>}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </>
+    );
+  }
   return (
     <div
+      data-testid={testId}
       style={{
         display: "flex",
         gap: 4,

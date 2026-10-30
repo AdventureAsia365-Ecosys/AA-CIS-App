@@ -18,6 +18,9 @@
     ]
   },
   "files": {
+    "Buttons.tsx": {
+      "sha256": "6ca183d8c2baa3747a8e58cfc1bb7a8d94e26e454640af9c96e724a72764e8a4"
+    },
     "DataTable.tsx": {
       "sha256": "f91e8ea62e3f0e211378813d6708e8fab682870d2120038721b09c6d30be81c7"
     },
@@ -40,7 +43,7 @@
       "sha256": "8dd928920b5dc760b7b80433011f8b482ae6592c91456557542cb45df59142a5"
     },
     "KitGallery.tsx": {
-      "sha256": "fa6d8033a12ed5f5437ae820d8fa165c65e91f04951fadfd2da5e0ef91327f6f"
+      "sha256": "5d5fc392790bda4579fb479fec8c701d6788591df2595f6534b488c873845ed8"
     },
     "KpiTile.tsx": {
       "sha256": "f421219ad2f1fb24806aad077199fe950aaadbc0c192989e424e96fe338f827f"
@@ -61,7 +64,7 @@
       "sha256": "bbcd0aea4a7b76cad7098c1f6329fd8f137a25281767e75fc8c3d3c39887cfb2"
     },
     "RowMenu.tsx": {
-      "sha256": "9885a2d246acec1cb16684d778e9f3de7e29f4398e7772e54f54ce773bea4e99"
+      "sha256": "eaf5d23f270158a75b7c73d8c0330680dd1fa32dce0a01e7835cf72454846f63"
     },
     "Section.tsx": {
       "sha256": "cd5866f1f9879af76870d189042219eef6a3f9b0a2c67cad0a1247ddfe155388"
@@ -79,7 +82,7 @@
       "sha256": "3609313353164f3d0089b9e5675248d6a825c8826808b2f6b968ddb750c5189f"
     },
     "eslint-kit.mjs": {
-      "sha256": "442b6f177f1742b25e3cc8ada63bc415c920a866e89a3e9fb95f371cdf7cf704"
+      "sha256": "d48d0070d126524dab68dc1dd5478ff985119d7b8ecc04dd95d695d4dfe99934"
     },
     "format.ts": {
       "sha256": "8e6b8c5655c6f32f619b6ad7521edf167276201320015673877e4badb734873d"
@@ -94,10 +97,10 @@
       "sha256": "8bba45273149716306c7c7e41a5caf5cef9f99a29fbe2b198c2a0ed1775dc016"
     },
     "kitGallery.messages.ts": {
-      "sha256": "0e4753097e60420d3c34036e21c05fbc6c59278455bc625abb4dd2356f9b35f9"
+      "sha256": "83fb1d14c07f5545bc5b7087460a9ee2ccfa3f34bab9f4982c9e5d5a7674563f"
     },
     "primitives.tsx": {
-      "sha256": "0dc2c0d34b2286df42d638abcff0d9530842800eff01fa11022528889e423ea7"
+      "sha256": "efcbb67c6e99490b540ac159466fcfb49bbeb1d438e3375f922dceb564f4d80f"
     },
     "savedViews.ts": {
       "sha256": "902e4502baa8e95134d6ef20773bf624fbc07ac044063824e3a424de33c5eb24"

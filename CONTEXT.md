@@ -124,6 +124,19 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `<option>` children), `Textarea`, `Checkbox` (`indeterminate`) and `Radio`; 40px high (`size="sm"`: 36px, the
     FilterBar height), focus / invalid / disabled states from one stylesheet; every native prop passes through, so a
     page swaps `<input>` for `<Input>` without touching its state. ConfirmModal's reason box is a Field + Textarea.
+    **AA-994 button variants (S260):** `Buttons.tsx` — every kind of button, re-exported by `primitives.tsx` (so
+    every barrel that does `export * from "./core/primitives"` has them): `Button` (now with a `dashed` variant and
+    native / ARIA passthrough: `aria-*`, `data-*`, `role`, `id`, `testId` → `data-testid`, `className` for Tailwind
+    layout, `ref`, `onClick(e)`), `LinkButton` (a text-link action; navigation stays `next/link`), `IconButton`
+    (icon only, `label` required = aria-label + default tooltip; outline / plain / overlay, xs–lg, danger tone,
+    `pressed`), `SegmentedControl` (a labelled radio group, track or chips, arrow-key roving focus), `ChipButton`
+    (one toggle chip: aria-pressed, or aria-checked with role checkbox / radio), `Switch` (role="switch", `label`
+    required), `ButtonGroup`
+    (role="group", spaced or attached), `ListButton` (popup list rows: `role="option"` + `selected`, menu items,
+    danger tone) and `Pressable` (an unstyled clickable surface: photo tile, card, select-like trigger); hover /
+    focus-visible / disabled states from one hoisted stylesheet. `Tabs` gains `variant="underline"` (role tablist /
+    tab, aria-selected, counts, disabled tabs with a reason, arrow keys); the default track variant's markup is
+    unchanged. Render-tested in `lib/kitButtons.test.mjs` (transpiles the core, react-dom/server).
     `check-kit-copy.mjs`, **`eslint-kit.mjs`** (AA-994 S1c, see "Kit lint" below), `MANIFEST.json` and **`tokens.css`** (AA-994 S1b: the one `--aa-*` token set of every
     frontend — light and dark palettes, `--aa-scrim` / `--aa-hero-bg`, shadows, `--aa-font-*` as
     `var(--font-*, "<family>")`, and the type / radius / space / z / motion scales from TripPlanner AA-995;
@@ -173,7 +186,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     Booking / TripPlanner). `frontend/eslint.config.mjs` applies `kitConfig({ preset: "inline" })` at `error` to
     `app/**` except `app/_kit/**` (the kit owns the raw elements): no raw `<main>` (PageFrame / AdminMain), `<table>`
     (DataTable), `<dialog>` / `role="dialog"` (Modal / Drawer), no hex / rgb() / hsl() colour, no `<button>` with
-    `style` / `className` (kit Button), no `var(--aa-*)` string (use `K`), no `--aa-*` set from JS, no import of
+    `style` / `className` (kit Button / LinkButton / IconButton / SegmentedControl / ChipButton / Switch / ListButton / Pressable), no `var(--aa-*)` string (use `K`), no `--aa-*` set from JS, no import of
     `app/admin/_components/adminUi` or the portal `ui.tsx` (`no-legacy-kit`), no `className`, and (AA-994 S6a) no
     raw `<input>` / `<select>` / `<textarea>` (`no-raw-form-control`: the kit Field + controls or DateField;
     `type="hidden"` / `"file"` stay allowed). Rule 8 is **staged**: it is in the plugin but in no preset, and an app

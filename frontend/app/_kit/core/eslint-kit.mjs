@@ -19,7 +19,9 @@
 //   2 no-raw-table           no <table> outside DataTable
 //   3 no-raw-dialog          no <dialog> / role="dialog" outside Drawer / Modal
 //   4 no-hex-colour          no hex / rgb() / hsl() colour literal in page code: K (inline) or a token utility
-//   5 no-hand-styled-button  no <button style=…> / <button className=…>: the kit Button
+//   5 no-hand-styled-button  no <button style=…> / <button className=…>: the kit Button, LinkButton, IconButton,
+//                            SegmentedControl, ChipButton, Switch, ButtonGroup, ListButton, Pressable (core
+//                            Buttons.tsx), Tabs
 //   6 no-raw-aa-var          no `var(--aa-…)` string in page code: K (inline) or the Tailwind token
 //   7 no-aa-var-definition   no `--aa-*` custom property set from JS (style key, setProperty, CSS text); CSS files are
 //                            checked by check-kit-copy.mjs --css, since ESLint does not lint CSS
@@ -236,7 +238,10 @@ export const RULES = {
 
   "no-hand-styled-button": rule(
     "No <button> with its own style or className; use the kit Button",
-    `No hand-styled <button> in page code: use the kit Button (icon-only: variant="ghost") from ${KIT}. ${REF}`,
+    "No hand-styled <button> in page code: use the kit Button (dashed for \"add …\"), LinkButton (text link), " +
+      "IconButton (icon only, label required), SegmentedControl (one choice of a few), ChipButton, Switch, " +
+      "Tabs variant=\"underline\", " +
+      `ListButton (popup list rows, menu items) or Pressable (a photo tile, a card) from ${KIT}. ${REF}`,
     (context) => ({
       JSXOpeningElement(node) {
         if (jsxName(node.name) !== "button") return;

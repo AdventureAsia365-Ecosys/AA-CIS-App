@@ -41,3 +41,6 @@ yarn-error.log*
 next-env.d.ts
 .env.local
 .env*.local
+
+# AA-994: lib/kitButtons.test.mjs transpiles the kit core here and removes it after the run
+/.kit-render-*/
