@@ -1,7 +1,11 @@
 """AA-1002 (gateway slice S10) — the monthly budget of each LLM connection, on the call path.
 
 ``stops(connection)`` answers "leave this connection out of the route now?" for ``vendor_route.deployment_plan`` (and
-the S2 ``vendor_deployment_for``). The rules and the SQL live in ``shared/cost_guard.py`` (``ConnectionBudget``); this
+the S2 ``vendor_deployment_for``). ``check(connection_key, what)`` is the same rule for the gateway's direct paths, the
+ones that call a connection without a plan: the hard-coded legacy chain (``haiku`` / ``sonnet`` on acc3 / acc2, the
+``gpt-4.1`` tier and the T3 last resort on openai-direct), and the catalog path with deployment routing off or no
+registry plan (Converse on the satellite account, ``openai_chat`` on openai-direct). It raises the budget stop before
+anything is sent. The rules and the SQL live in ``shared/cost_guard.py`` (``ConnectionBudget``); this
 module only caches them for the sync gateway:
 
 - A connection without ``monthly_budget_usd`` is never read or enforced (every connection today: the seed rows have no
@@ -104,6 +108,24 @@ def stops(connection: connections.ProviderConnection) -> Optional[cost_guard.Con
         return None
     b = budget_of(connection.connection_key)
     return b if b is not None and b.stops else None
+
+
+def check(connection_key: str, what: str) -> None:
+    """Raise ConnectionBudgetExceeded when the registry row of ``connection_key`` has a hard monthly budget it reached,
+    before a direct path (no deployment plan) calls it; ``what`` names the model key for the error. A connection with no
+    row (registry unreadable, no such row: the built-in mirror has no budget) or no budget is never read. Raises
+    nothing else."""
+    try:
+        conn = connections.get_connection_sync(connection_key)
+    except Exception as e:  # noqa: BLE001 — get_connection_sync never raises; belt and braces on the call path
+        logger.warning("llm_connection_budget_registry_failed", error=str(e)[:200])
+        return
+    if conn is None:
+        return
+    over = stops(conn)
+    if over is not None:
+        logger.info("llm_direct_call_skip", model=what, connection=connection_key, reason="monthly budget reached")
+        raise budget_error(what, [(connection_key, over)])
 
 
 def invalidate() -> None:

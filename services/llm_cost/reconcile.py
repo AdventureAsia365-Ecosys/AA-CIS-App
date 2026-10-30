@@ -12,7 +12,11 @@ Sources, one per connection kind (``SOURCES``):
   here (they cost ~$0.01 each): the snapshot is written by the admin's Cost Explorer check. A day without a stored
   row is ``no_data``; a day whose newest fetch was taken less than ``SETTLE_HOURS`` after it ended is ``provisional``
   (Cost Explorer revises the last 24-48 h; never alerted). Cost Explorer bills per AWS account, so every Bedrock
-  connection on the same account is compared together (``details.account_connections``).
+  connection on the same account is compared together (``details.account_connections``). The figure compared is the
+  GROSS Bedrock usage (record types Usage / DiscountedUsage / SavingsPlanCoveredUsage, kept per row since the snapshot
+  is split by RECORD_TYPE, ``cost_explorer.usage_split``), never the stored net amount: acc3 is billed against a
+  promotional credit, so its net is about $0 (or below zero after a refund) on a day of real use. Credits and refunds
+  are shown in ``details.ce_adjustments_usd``. A day stored before the split is ``no_data`` (its net may hide credits).
 - ``anthropic`` → ``anthropic_cost_report``: ``GET /v1/organizations/cost_report`` of the Admin API (raw HTTP: not in
   the SDK), daily buckets, amounts in cents as decimal strings, filtered to the policy's ``usage_scope_id`` workspace
   when set.
@@ -28,8 +32,11 @@ billed; nothing in this module calls a model.
 
 Status of a row (``compare``): ``ok`` when |logged - provider| <= max(``TOLERANCE_USD``, ``TOLERANCE_PCT`` % of the
 provider figure), else ``mismatch``; ``not_configured`` / ``unsupported`` / ``no_data`` / ``error`` when there is no
-provider figure. A non-provisional mismatch on a configured source raises one admin bell per 24 h
-(``MISMATCH_EVENT``). Rows older than ``RETENTION_DAYS`` are deleted by every run.
+provider figure; a provider figure below zero (credits netted in) is ``no_data`` too, never written or alerted. A
+non-provisional mismatch on a configured source raises one admin bell per 24 h (``MISMATCH_EVENT``). Each connection
+runs on its own: one that fails (a read, an upsert) is named in the summary's ``errors`` and the others are still
+written; only a run where every connection failed fails the job. Rows older than ``RETENTION_DAYS`` are deleted by
+every run.
 """
 from __future__ import annotations
 
@@ -239,8 +246,8 @@ _LOGGED_SQL = """
 
 # Newest fetch per (service, day) of one account (cost_explorer.read_cost_range's rule), with when it was fetched.
 _CE_DAYS_SQL = """
-    SELECT service, period_start, amount_usd, fetched_at FROM (
-        SELECT DISTINCT ON (service, period_start) service, period_start, amount_usd, fetched_at
+    SELECT service, period_start, amount_usd, raw, fetched_at FROM (
+        SELECT DISTINCT ON (service, period_start) service, period_start, amount_usd, raw, fetched_at
           FROM shared.cost_explorer_snapshot
          WHERE account_id = $1 AND period_start >= $2 AND period_start < $3
          ORDER BY service, period_start, fetched_at DESC) s
@@ -278,19 +285,42 @@ async def logged_costs(conn, keys: list[str], start: date, end_exclusive: date) 
     return {(r["account"], r["day"]): (float(r["usd"] or 0.0), int(r["calls"] or 0)) for r in rows}
 
 
-async def stored_bedrock_costs(conn, account_id: str, start: date, end_exclusive: date) -> dict[date, tuple]:
-    """{day: (Bedrock USD, newest fetched_at, services)} from the stored Cost Explorer snapshot of one account."""
-    from shared.aws_client.cost_explorer import is_bedrock_service
+@dataclass
+class StoredDay:
+    """The stored Cost Explorer figure of one account and day, Bedrock services only."""
+    usage_usd: Optional[float]         # gross Bedrock usage; None when a row predates the RECORD_TYPE split
+    adjustments_usd: float             # credits, refunds, tax... of those services (<= 0 for a credit)
+    net_usd: float                     # what the Cost page shows (usage + adjustments)
+    fetched_at: datetime
+    services: int
 
-    out: dict[date, list] = {}
+
+async def stored_bedrock_costs(conn, account_id: str, start: date, end_exclusive: date) -> dict[date, StoredDay]:
+    """{day: StoredDay} from the stored Cost Explorer snapshot of one account. The gross usage comes from each row's
+    record-type split (``cost_explorer.usage_split``): the stored ``amount_usd`` nets credits in, so an account billed
+    against a promotional credit (acc3 since 29/10/2026) shows about $0, or less after a refund, for a day of real
+    use."""
+    from shared.aws_client.cost_explorer import is_bedrock_service, usage_split
+
+    out: dict[date, dict] = {}
     for r in await conn.fetch(_CE_DAYS_SQL, account_id, start, end_exclusive):
         day = r["period_start"]
-        entry = out.setdefault(day, [Decimal(0), r["fetched_at"], 0])
-        entry[1] = max(entry[1], r["fetched_at"])
-        if is_bedrock_service(r["service"]):
-            entry[0] += Decimal(str(r["amount_usd"]))
-            entry[2] += 1
-    return {d: (float(v[0]), v[1], v[2]) for d, v in out.items()}
+        entry = out.setdefault(day, {"usage": Decimal(0), "adj": Decimal(0), "net": Decimal(0), "split": True,
+                                     "fetched_at": r["fetched_at"], "services": 0})
+        entry["fetched_at"] = max(entry["fetched_at"], r["fetched_at"])
+        if not is_bedrock_service(r["service"]):
+            continue
+        entry["net"] += Decimal(str(r["amount_usd"]))
+        entry["services"] += 1
+        split = usage_split(r.get("raw"))
+        if split is None:
+            entry["split"] = False
+        else:
+            entry["usage"] += Decimal(str(split["usage_usd"]))
+            entry["adj"] += Decimal(str(split["adjustments_usd"]))
+    return {d: StoredDay(usage_usd=float(v["usage"]) if v["split"] else None, adjustments_usd=float(v["adj"]),
+                         net_usd=float(v["net"]), fetched_at=v["fetched_at"], services=v["services"])
+            for d, v in out.items()}
 
 
 def _bedrock_account(c: conn_registry.ProviderConnection, own_account: Callable[[], str]) -> Optional[str]:
@@ -341,12 +371,73 @@ async def _bedrock_figures(conn, c: conn_registry.ProviderConnection, peers: lis
             details["reason"] = "no stored Cost Explorer snapshot for the day (run a check on the Cost page)"
             out[d] = DayFigure("no_data", details=details)
             continue
-        usd, fetched_at, services = hit
-        settled = fetched_at >= _utc(d + timedelta(days=1)) + timedelta(hours=SETTLE_HOURS)
-        details.update({"ce_fetched_at": fetched_at.isoformat(), "bedrock_services": services,
-                        "provisional": not settled})
-        out[d] = DayFigure("figure", round(usd, 6), details)
+        settled = hit.fetched_at >= _utc(d + timedelta(days=1)) + timedelta(hours=SETTLE_HOURS)
+        details.update({"ce_fetched_at": hit.fetched_at.isoformat(), "bedrock_services": hit.services,
+                        "provisional": not settled, "ce_net_usd": round(hit.net_usd, 6)})
+        if hit.usage_usd is None:
+            # Fetched before the RECORD_TYPE split: its amount may have credits netted in, so it is not compared.
+            details["reason"] = ("the stored Cost Explorer snapshot has no usage/credit split (credits may be netted "
+                                 "in); run a new check on the Cost page")
+            out[d] = DayFigure("no_data", details=details)
+            continue
+        details["ce_adjustments_usd"] = round(hit.adjustments_usd, 6)     # credits / refunds, shown, not compared
+        out[d] = DayFigure("figure", round(hit.usage_usd, 6), details)
     return out
+
+
+def _usable_figure(f: DayFigure) -> DayFigure:
+    """A provider figure below zero (credits or refunds netted in) is never compared or written (the table refuses a
+    negative provider_usd): it becomes no_data with the reason, and rings no bell."""
+    if f.status == "figure" and (f.provider_usd is None or f.provider_usd < 0):
+        details = {**f.details, "reason": "the provider figure is below zero (credits or refunds netted in)",
+                   "provider_figure_usd": f.provider_usd}
+        return DayFigure("no_data", details=details)
+    return f
+
+
+async def _reconcile_connection(conn, key: str, c: conn_registry.ProviderConnection, account_of: dict,
+                                policies: dict, logged: dict, day_list: list[date], start: date, end_exclusive: date,
+                                fetchers: dict, own_account: Callable[[], str], job_id: Optional[str],
+                                summary: dict) -> int:
+    """The rows of one connection over the window (upserted); its totals and settled mismatches go into ``summary``.
+    Returns the number of rows written."""
+    source = SOURCES.get(c.kind, SOURCE_NONE)
+    peers = sorted(k for k, a in account_of.items() if a and a == account_of.get(key)) or [key]
+    if c.kind == "bedrock":
+        figures = await _bedrock_figures(conn, c, peers, day_list, start, end_exclusive, own_account)
+    elif c.kind in fetchers:
+        figures = await _vendor_figures(c, cost_guard.policy_of(policies, key), day_list, start,
+                                        end_exclusive, fetchers)
+    else:
+        figures = {d: DayFigure("unsupported", details={"reason": f"no cost source for kind {c.kind}"})
+                   for d in day_list}
+    counts: dict[str, int] = {}
+    logged_total = provider_total = 0.0
+    mismatches: list[dict] = []
+    rows = 0
+    for d in day_list:
+        f = _usable_figure(figures[d])
+        group = peers if c.kind == "bedrock" else [key]
+        usd = sum(logged.get((k, d), (0.0, 0))[0] for k in group)
+        calls = sum(logged.get((k, d), (0.0, 0))[1] for k in group)
+        if f.status == "figure":
+            status, diff, pct = compare(usd, f.provider_usd)
+        else:
+            status, diff, pct = f.status, None, None
+        counts[status] = counts.get(status, 0) + 1
+        logged_total += usd
+        provider_total += f.provider_usd or 0.0
+        if status == "mismatch" and not f.details.get("provisional"):
+            mismatches.append({"connection_key": key, "day": d.isoformat(), "logged_usd": round(usd, 4),
+                               "provider_usd": f.provider_usd, "diff_usd": diff})
+        await conn.execute(_UPSERT_SQL, key, d, source if status != "unsupported" else SOURCE_NONE, status,
+                           round(usd, 6), calls, f.provider_usd, diff, pct,
+                           json.dumps(f.details, default=str), job_id)
+        rows += 1
+    summary["mismatches"].extend(mismatches)
+    summary["connections"][key] = {"kind": c.kind, "source": source, "statuses": counts,
+                                   "logged_usd": round(logged_total, 4), "provider_usd": round(provider_total, 4)}
+    return rows
 
 
 async def reconcile(pool, *, days: int = DEFAULT_DAYS, end_day: Optional[date] = None, job_id: Optional[str] = None,
@@ -382,43 +473,20 @@ async def reconcile(pool, *, days: int = DEFAULT_DAYS, end_day: Optional[date] =
         summary: dict[str, Any] = {"window": {"start": start.isoformat(), "end": (end_exclusive - timedelta(days=1))
                                               .isoformat(), "days": days}, "connections": {}, "mismatches": []}
         rows = 0
+        errors: dict[str, str] = {}
         for key in sorted(targets):
-            c = targets[key]
-            source = SOURCES.get(c.kind, SOURCE_NONE)
-            peers = sorted(k for k, a in account_of.items() if a and a == account_of.get(key)) or [key]
-            if c.kind == "bedrock":
-                figures = await _bedrock_figures(conn, c, peers, day_list, start, end_exclusive, own_account)
-            elif c.kind in fetchers:
-                figures = await _vendor_figures(c, cost_guard.policy_of(policies, key), day_list, start,
-                                                end_exclusive, fetchers)
-            else:
-                figures = {d: DayFigure("unsupported", details={"reason": f"no cost source for kind {c.kind}"})
-                           for d in day_list}
-            counts: dict[str, int] = {}
-            logged_total = provider_total = 0.0
-            for d in day_list:
-                f = figures[d]
-                group = peers if c.kind == "bedrock" else [key]
-                usd = sum(logged.get((k, d), (0.0, 0))[0] for k in group)
-                calls = sum(logged.get((k, d), (0.0, 0))[1] for k in group)
-                if f.status == "figure":
-                    status, diff, pct = compare(usd, f.provider_usd)
-                else:
-                    status, diff, pct = f.status, None, None
-                counts[status] = counts.get(status, 0) + 1
-                logged_total += usd
-                provider_total += f.provider_usd or 0.0
-                if (status == "mismatch" and not f.details.get("provisional")):
-                    summary["mismatches"].append({"connection_key": key, "day": d.isoformat(),
-                                                  "logged_usd": round(usd, 4), "provider_usd": f.provider_usd,
-                                                  "diff_usd": diff})
-                await conn.execute(_UPSERT_SQL, key, d, source if status != "unsupported" else SOURCE_NONE, status,
-                                   round(usd, 6), calls, f.provider_usd, diff, pct,
-                                   json.dumps(f.details, default=str), job_id)
-                rows += 1
-            summary["connections"][key] = {"kind": c.kind, "source": source, "statuses": counts,
-                                           "logged_usd": round(logged_total, 4),
-                                           "provider_usd": round(provider_total, 4)}
+            try:
+                rows += await _reconcile_connection(conn, key, targets[key], account_of, policies, logged, day_list,
+                                                    start, end_exclusive, fetchers, own_account, job_id, summary)
+            except Exception as e:  # noqa: BLE001 — one connection's failure never costs the other connections' rows
+                errors[key] = f"{type(e).__name__}: {str(e)[:300]}"
+                summary["connections"][key] = {"kind": targets[key].kind, "error": errors[key]}
+                logger.warning("llm_cost_reconcile_connection_failed", connection=key, error=errors[key])
+        if errors:
+            summary["errors"] = errors
+        if targets and len(errors) == len(targets):
+            raise RuntimeError("llm_cost_reconcile: every connection failed: "
+                               + "; ".join(f"{k}: {v}" for k, v in sorted(errors.items())))
         pruned = await conn.execute(_PRUNE_SQL, (today or datetime.now(timezone.utc).date())
                                     - timedelta(days=RETENTION_DAYS))
         summary["rows_written"] = rows

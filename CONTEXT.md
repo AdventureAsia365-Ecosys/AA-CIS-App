@@ -356,12 +356,18 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   cache; a connection without a budget is never read; unreadable state fails open; `LLM_CONNECTION_BUDGETS=off`).
   `deployment_plan` leaves a connection over its hard budget out (`DeploymentPlan.budget_skips`, after the circuit
   check); a model / route with no other way in raises `connection_budget.ConnectionBudgetExceeded` (a
-  `cost_guard.BudgetExceeded`: the job stops as `stopped_budget`, never retried). At `alert_pct` one admin bell +
+  `cost_guard.BudgetExceeded`: the job stops as `stopped_budget`, never retried). The paths that call a connection
+  without a plan check the same rule first (`connection_budget.check`): the legacy chain (`haiku` / `sonnet` on acc3,
+  the acc2-native tiers, the `gpt-4.1` tier and the T3 last resort on openai-direct) and the catalog path with
+  `LLM_DEPLOYMENT_ROUTING=off` (Converse on the satellite, `openai_chat`; an Anthropic deployment over budget falls
+  through to the satellite unless that is over budget too). At `alert_pct` one admin bell +
   ops e-mail per connection per 24 h. Job kind `llm_cost_reconcile` (`services/llm_cost/reconcile.py`, nightly from
   02:00 UTC via the ops metrics sampler, last 3 days, `LLM_COST_RECONCILE=off`; manual
   `POST /admin/llm-connections/reconcile`) writes one `shared.llm_cost_reconcile` row per connection and UTC day:
   logged cost vs the provider's figure — Bedrock from the STORED Cost Explorer snapshot of the connection's account (no
-  live CE call), Anthropic Admin API cost report / OpenAI organization costs only with a read-only usage key NAMED in
+  live CE call; the GROSS usage from the snapshot's RECORD_TYPE split, since the net amount has credits netted in:
+  acc3 is billed against a credit; a day stored before the split, or any figure below zero, is `no_data`, never
+  alerted; one connection's failure never stops the others), Anthropic Admin API cost report / OpenAI organization costs only with a read-only usage key NAMED in
   the policy (`usage_secret_name`, `aa-llm/` only, read by `connections.resolve_usage_key`; hosts are code
   constants), Azure unsupported. Tolerance max($0.05, 5 %); a settled mismatch raises one bell per 24 h; rows older
   than 400 days are pruned by the job. Admin: `GET /admin/llm-connections/costs`, the policy fields in the same

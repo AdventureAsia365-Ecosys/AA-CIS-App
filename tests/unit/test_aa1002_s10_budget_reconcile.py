@@ -237,6 +237,76 @@ def test_the_plan_names_budget_skips_after_the_circuit(world, monkeypatch):
     assert plan.circuit_skips and plan.budget_skips == []           # an open circuit keeps its own error class
 
 
+# ── the direct paths (no deployment plan): the legacy chain, routing off, the OpenAI tiers ────────────────────────
+
+@pytest.mark.parametrize("tier", ["haiku", "sonnet"])
+def test_a_legacy_key_on_a_connection_over_budget_is_a_budget_stop_without_a_call(world, monkeypatch, tier):
+    """LLM_LEGACY_ALIASES off (the default): haiku / sonnet go through _legacy_chain, which calls acc3 without a plan.
+    Each tier checks the budget first; every tier over budget is a budget stop, nothing sent."""
+    monkeypatch.delenv("LLM_LEGACY_ALIASES", raising=False)
+    satellite = MagicMock(side_effect=AssertionError("satellite called"))
+    monkeypatch.setattr("shared.llm_client.bedrock_satellite.invoke_claude", satellite)
+    _over(monkeypatch, "acc3")
+    with pytest.raises(connection_budget.ConnectionBudgetExceeded) as e:
+        world.generate(model_tier=tier)
+    assert e.value.connection_keys == ("acc3",) and isinstance(e.value, cost_guard.BudgetExceeded)
+    satellite.assert_not_called()
+    assert world.calls == []
+
+
+def test_a_legacy_key_under_budget_is_unchanged(world, monkeypatch):
+    monkeypatch.delenv("LLM_LEGACY_ALIASES", raising=False)
+    _over(monkeypatch, "openai-direct")                                   # another connection's budget is not read
+    resp = world.generate(model_tier="haiku")
+    assert resp.satellite_account == "acc3" and [c[1] for c in world.calls] == ["acc3"]
+
+
+def test_the_acc2_native_tiers_check_their_own_connection(world, monkeypatch):
+    monkeypatch.delenv("LLM_LEGACY_ALIASES", raising=False)
+    monkeypatch.setenv("LLM_LEGACY_ACC2_NATIVE", "on")
+    native = MagicMock(side_effect=AssertionError("acc2 native called"))
+    monkeypatch.setattr(world.client, "_call_bedrock", native)
+    _over(monkeypatch, "acc2", "acc3")
+    with pytest.raises(connection_budget.ConnectionBudgetExceeded) as e:
+        world.generate(model_tier="sonnet")
+    assert set(e.value.connection_keys) == {"acc2", "acc3"}
+    native.assert_not_called()
+    assert world.calls == []
+
+
+def test_the_gpt41_tier_over_budget_is_a_budget_stop_not_an_outage(world, monkeypatch):
+    _over(monkeypatch, "openai-direct")
+    with pytest.raises(connection_budget.ConnectionBudgetExceeded):
+        world.generate(model_tier="gpt-4.1")
+    assert world.calls == []
+
+
+def test_routing_off_the_catalog_path_checks_the_budget(world, monkeypatch):
+    """LLM_DEPLOYMENT_ROUTING=off: the S2 path. An Anthropic deployment over budget falls through to today's Converse
+    call on acc3 (the next way in); acc3 over budget too is a budget stop, nothing sent."""
+    monkeypatch.setenv("LLM_DEPLOYMENT_ROUTING", "off")
+    world.conns["anthropic-direct"] = s3._anthropic(True)
+    world.deps = [d for d in world.deps if not (d.model_key == "sonnet-5-5" and d.connection_key == "anthropic-direct")]
+    world.deps.append(_dep("sonnet-5-5", "anthropic-direct", "claude-sonnet-5-5", 1))
+    world.reset()
+    _over(monkeypatch, "anthropic-direct")
+    skips: list = []
+    assert vendor_route.vendor_deployment_for(catalog.get_model_sync("sonnet-5-5"), budget_skips=skips) is None
+    assert [k for k, _ in skips] == ["anthropic-direct"]
+    assert world.generate(model_tier="sonnet-5-5").content == "from acc3"
+    world.calls.clear()
+    _over(monkeypatch, "anthropic-direct", "acc3")
+    with pytest.raises(connection_budget.ConnectionBudgetExceeded):
+        world.generate(model_tier="sonnet-5-5")
+    assert world.calls == []
+
+
+def test_check_reads_no_budget_for_a_connection_without_a_row(monkeypatch):
+    monkeypatch.setattr(connections, "get_connection_sync", lambda key: None)
+    monkeypatch.setattr(connection_budget, "stops", MagicMock(side_effect=AssertionError("read")))
+    connection_budget.check("acc3", "haiku")                               # no row: nothing to enforce
+
+
 # ── reconcile: pure parts and the usage parsers ───────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("logged, provider, status", [
@@ -381,6 +451,15 @@ class Pool:
         return self._acq()
 
 
+def _ce(service, day, usage, fetched_at, credit=None, account="444455556666", split=True):
+    """A stored Cost Explorer row (CE netting a credit into amount_usd, the record types in raw)."""
+    net = Decimal(usage) + Decimal(credit or 0)
+    types = {"Usage": float(usage), **({"Credit": float(credit)} if credit is not None else {})}
+    raw = {"Keys": [service], **({"record_types": types} if split else {})}
+    return {"account_id": account, "service": service, "period_start": day, "amount_usd": net,
+            "raw": json.dumps(raw), "fetched_at": fetched_at}
+
+
 def _upserts(db):
     return {(a[0], a[1]): a for s, a in db.executed if s.startswith("INSERT INTO shared.llm_cost_reconcile")}
 
@@ -399,10 +478,8 @@ def test_a_run_writes_one_row_per_connection_and_day(monkeypatch):
                    "updated_at": None, "updated_by": "admin:u"}],
         logged=[{"account": "acc3", "day": d1, "usd": Decimal("2.00"), "calls": 10},
                 {"account": "openai-direct", "day": d2, "usd": Decimal("1.00"), "calls": 4}],
-        ce=[{"account_id": "444455556666", "service": "Claude Sonnet 4.6 (Amazon Bedrock Edition)",
-             "period_start": d1, "amount_usd": Decimal("2.01"), "fetched_at": settled},
-            {"account_id": "444455556666", "service": "Amazon EC2", "period_start": d1,
-             "amount_usd": Decimal("9"), "fetched_at": settled}],
+        ce=[_ce("Claude Sonnet 4.6 (Amazon Bedrock Edition)", d1, "2.01", settled),
+            _ce("Amazon EC2", d1, "9", settled)],
     )
     monkeypatch.setattr(connections, "_fetch_secret", MagicMock(return_value="adm-test"))
     openai = MagicMock(return_value={d2: 1.5})
@@ -434,12 +511,102 @@ def test_a_provisional_ce_day_is_never_alerted(monkeypatch):
     d1 = date(2026, 10, 29)
     db = ReconcileDB(conns=[BUILTIN_CONNECTIONS["acc3"]],
                      logged=[{"account": "acc3", "day": d1, "usd": Decimal("5"), "calls": 1}],
-                     ce=[{"account_id": "444455556666", "service": "Amazon Bedrock", "period_start": d1,
-                          "amount_usd": Decimal("1"), "fetched_at": datetime(2026, 10, 30, 3, tzinfo=timezone.utc)}])
+                     ce=[_ce("Amazon Bedrock", d1, "1", datetime(2026, 10, 30, 3, tzinfo=timezone.utc))])
     out = asyncio.run(reconcile.reconcile(Pool(db), days=1, today=TODAY, fetchers={}))
     row = _upserts(db)[("acc3", d1)]
     assert row[3] == "mismatch" and json.loads(row[9])["provisional"] is True
     assert out["mismatches"] == [] and "bell" not in out
+
+
+SETTLED = datetime(2026, 11, 2, tzinfo=timezone.utc)
+
+
+def test_a_credit_day_compares_the_gross_bedrock_usage(monkeypatch):
+    """acc3 is billed against a promotional credit: CE's net is $0 (or below zero after a refund) on a day of real
+    use. The figure compared is the gross usage; the credit is shown, never alerted."""
+    monkeypatch.setenv("BEDROCK_ACCT_PRIMARY", "444455556666")
+    d1, d2 = date(2026, 10, 28), date(2026, 10, 29)
+    db = ReconcileDB(conns=[BUILTIN_CONNECTIONS["acc3"]],
+                     logged=[{"account": "acc3", "day": d1, "usd": Decimal("2.00"), "calls": 3},
+                             {"account": "acc3", "day": d2, "usd": Decimal("1.00"), "calls": 1}],
+                     ce=[_ce("Amazon Bedrock", d1, "2.00", SETTLED, credit="-2.00"),          # net $0
+                         _ce("Amazon Bedrock", d2, "1.00", SETTLED, credit="-3.00")])         # net -$2
+    out = asyncio.run(reconcile.reconcile(Pool(db), days=2, today=TODAY, fetchers={}))
+    rows = _upserts(db)
+    for d, credit in ((d1, -2.0), (d2, -3.0)):
+        row = rows[("acc3", d)]
+        assert row[3] == "ok" and row[6] > 0
+        assert json.loads(row[9])["ce_adjustments_usd"] == credit
+    assert out["mismatches"] == [] and "bell" not in out and "errors" not in out
+
+
+def test_a_snapshot_without_the_split_or_a_negative_figure_is_no_data(monkeypatch):
+    """A row stored before the RECORD_TYPE split may hide credits; a figure below zero is never written (the table's
+    provider_usd >= 0 check) and rings no bell."""
+    monkeypatch.setenv("BEDROCK_ACCT_PRIMARY", "444455556666")
+    d1, d2 = date(2026, 10, 28), date(2026, 10, 29)
+    db = ReconcileDB(conns=[BUILTIN_CONNECTIONS["acc3"], BUILTIN_CONNECTIONS["openai-direct"]],
+                     policies=[{"connection_key": "openai-direct", "alert_pct": 80, "hard_stop": True,
+                                "usage_secret_name": "aa-llm/dev/openai-usage", "usage_scope_id": None,
+                                "notes": None, "updated_at": None, "updated_by": "x"}],
+                     logged=[{"account": "acc3", "day": d1, "usd": Decimal("2.00"), "calls": 3},
+                             {"account": "openai-direct", "day": d2, "usd": Decimal("1.00"), "calls": 1}],
+                     ce=[_ce("Amazon Bedrock", d1, "0.00", SETTLED, split=False),
+                         _ce("Amazon Bedrock", d2, "1.00", SETTLED, credit="-3.00", split=False)])
+    monkeypatch.setattr(connections, "_fetch_secret", MagicMock(return_value="adm-test"))
+    out = asyncio.run(reconcile.reconcile(Pool(db), days=2, today=TODAY,
+                                          fetchers={"openai": MagicMock(return_value={d2: -0.4})}))
+    rows = _upserts(db)
+    for key, d in (("acc3", d1), ("acc3", d2), ("openai-direct", d2)):
+        assert rows[(key, d)][3] == "no_data" and rows[(key, d)][6] is None, (key, d)
+    assert "usage/credit split" in json.loads(rows[("acc3", d2)][9])["reason"]
+    assert json.loads(rows[("openai-direct", d2)][9])["provider_figure_usd"] == -0.4
+    assert all(a[6] is None or a[6] >= 0 for a in rows.values())
+    assert out["mismatches"] == [] and "bell" not in out
+
+
+def test_one_failing_connection_never_costs_the_others_their_rows(monkeypatch):
+    class Failing(ReconcileDB):
+        async def execute(self, sql, *args):
+            if "INSERT INTO shared.llm_cost_reconcile" in sql and args[0] == "acc2":
+                raise asyncpg.exceptions.CheckViolationError("llm_cost_reconcile_figures_check")
+            return await super().execute(sql, *args)
+
+    db = Failing(conns=[BUILTIN_CONNECTIONS["acc2"], _anthropic_conn()])
+    out = asyncio.run(reconcile.reconcile(Pool(db), days=1, today=TODAY, own_account=lambda: "111122223333"))
+    assert ("anthropic-direct", date(2026, 10, 29)) in _upserts(db)
+    assert "CheckViolationError" in out["errors"]["acc2"] and out["connections"]["acc2"]["error"]
+    assert out["pruned"] == 2                                                  # the run went on
+
+    db = Failing(conns=[BUILTIN_CONNECTIONS["acc2"]])
+    with pytest.raises(RuntimeError, match="every connection failed"):    # nothing written at all: the job fails
+        asyncio.run(reconcile.reconcile(Pool(db), days=1, today=TODAY, own_account=lambda: "111122223333"))
+
+
+def test_the_ce_fetch_keeps_the_net_amount_and_the_record_types(monkeypatch):
+    """GroupBy SERVICE + RECORD_TYPE: amount_usd is the same net figure as before (the Cost page is unchanged), raw
+    keeps each record type, merged across pages."""
+    from shared.aws_client import cost_explorer as ce_mod
+
+    def group(service, rtype, amount):
+        return {"Keys": [service, rtype], "Metrics": {"UnblendedCost": {"Amount": amount, "Unit": "USD"}}}
+
+    period = {"Start": "2026-10-28", "End": "2026-10-29"}
+    client = MagicMock()
+    client.get_cost_and_usage.side_effect = [
+        {"ResultsByTime": [{"TimePeriod": period, "Groups": [group("Amazon Bedrock", "Usage", "2.5")]}],
+         "NextPageToken": "t1"},
+        {"ResultsByTime": [{"TimePeriod": period, "Groups": [group("Amazon Bedrock", "Credit", "-2.5"),
+                                                             group("Amazon EC2", "Usage", "1")]}]},
+    ]
+    monkeypatch.setattr(ce_mod, "_get_ce_client", lambda account: client)
+    rows = {r["service"]: r for r in ce_mod._fetch_one_account_cost("acc2", "2026-10-28", "2026-10-29")}
+    assert client.get_cost_and_usage.call_args_list[0].kwargs["GroupBy"][1] == {"Type": "DIMENSION",
+                                                                                "Key": "RECORD_TYPE"}
+    assert rows["Amazon Bedrock"]["amount_usd"] == 0.0 and rows["Amazon EC2"]["amount_usd"] == 1.0
+    assert ce_mod.usage_split(json.dumps(rows["Amazon Bedrock"]["raw"])) == {"usage_usd": 2.5,
+                                                                            "adjustments_usd": -2.5}
+    assert ce_mod.usage_split({"Keys": ["x"]}) is None and ce_mod.usage_split(None) is None
 
 
 def test_a_failing_source_is_that_connections_error_only(monkeypatch):

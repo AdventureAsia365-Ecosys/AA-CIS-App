@@ -74,19 +74,25 @@ def _usable(model: CatalogModel, found: Optional[VendorDeployment]) -> Optional[
     return found
 
 
-def vendor_deployment_for(model: CatalogModel,
-                          allowed_scopes: Optional[tuple] = None) -> Optional[VendorDeployment]:
+def vendor_deployment_for(model: CatalogModel, allowed_scopes: Optional[tuple] = None,
+                          budget_skips: Optional[list] = None) -> Optional[VendorDeployment]:
     """The Anthropic deployment to call for ``model``, or None for today's path. AA-1002 (S5): None as well when the
-    stage's ``allowed_scopes`` (None = no stage policy) do not allow that connection's data scope. Never raises."""
+    stage's ``allowed_scopes`` (None = no stage policy) do not allow that connection's data scope. AA-1002 (S10): None
+    when its connection reached its hard monthly budget, and then (connection_key, budget) is appended to
+    ``budget_skips`` when the caller passes a list, so a model only that connection serves stops as a budget stop.
+    Never raises."""
     try:
         found = _usable(model, _first_enabled(model.model_key))
         if found is not None and not data_scope.allows(allowed_scopes, found.connection.data_scope):
             logger.info("llm_deployment_skip", model=model.model_key, connection=found.connection.connection_key,
                         reason=f"data scope {found.connection.data_scope} is not allowed for the stage")
             return None
-        if found is not None and connection_budget.stops(found.connection) is not None:
+        over = connection_budget.stops(found.connection) if found is not None else None
+        if over is not None:
             logger.info("llm_deployment_skip", model=model.model_key, connection=found.connection.connection_key,
                         reason="monthly budget reached")
+            if budget_skips is not None:
+                budget_skips.append((found.connection.connection_key, over))
             return None
         return found
     except Exception as e:  # noqa: BLE001 — a registry problem must never break today's path
