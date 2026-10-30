@@ -135,8 +135,10 @@ POLICY: dict[tuple[str, str], str] = {
     ("PATCH", "/admin/llm-catalog/{model_key}"): AI_ADMIN,
     # AA-1002 — the LLM connection registry names secrets, roles and endpoints: admin-only read
     ("GET", "/admin/llm-connections"): AI_ADMIN,
-    # AA-1002 S2 — switch an Anthropic API connection on / off (audited)
+    # AA-1002 S2 / S4 — switch a connection on / off, edit its secret name, endpoint and limits (audited)
     ("PATCH", "/admin/llm-connections/{connection_key}"): AI_ADMIN,
+    # AA-1002 S4 — one small real (paid) call on a connection (logged in llm_call_log, audited)
+    ("POST", "/admin/llm-connections/{connection_key}/test"): AI_ADMIN,
     # admin_llm_ops — on-demand / scheduled spend + Jev probes (the Lambda ones are MACHINE_ROUTES)
     ("POST", "/admin/dfs-balance/check"): OPS_WRITE,
     ("POST", "/admin/cost-explorer/check"): SPEND_WRITE,

@@ -3228,17 +3228,143 @@
       },
       "LlmConnectionPatch": {
         "additionalProperties": false,
-        "description": "AA-1002 (S2): only the on/off switch. secret_name / base_url / limits are edited in slice S4.",
+        "description": "AA-1002 (S4): the editable fields of a connection (api/services/llm_connections.EDITABLE). Only the fields\nsent are changed; an explicit null clears a nullable one. Identity (kind, auth mode, account, role, ExternalId,\nregion, credential env) and data scope are not editable here (extra fields are refused).",
         "properties": {
+          "base_url": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Url"
+          },
           "enabled": {
-            "title": "Enabled",
-            "type": "boolean"
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "max_concurrency": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Concurrency"
+          },
+          "max_retries": {
+            "anyOf": [
+              {
+                "maximum": 5.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Retries"
+          },
+          "monthly_budget_usd": {
+            "anyOf": [
+              {
+                "maximum": 1000000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Monthly Budget Usd"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "rpm_limit": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rpm Limit"
+          },
+          "secret_name": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secret Name"
+          },
+          "timeout_s": {
+            "anyOf": [
+              {
+                "maximum": 900.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout S"
           }
         },
-        "required": [
-          "enabled"
-        ],
         "title": "LlmConnectionPatch",
+        "type": "object"
+      },
+      "LlmConnectionTest": {
+        "additionalProperties": false,
+        "description": "AA-1002 (S4): which model to test (a deployment of it on the connection); none = the cheapest text model.",
+        "properties": {
+          "model_key": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "pattern": "^[a-z0-9][a-z0-9.-]{0,62}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Key"
+          }
+        },
+        "title": "LlmConnectionTest",
         "type": "object"
       },
       "LlmRoutePatch": {
@@ -18031,7 +18157,112 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Switch an LLM connection on or off (admin-only, audited)",
+        "summary": "Change an LLM connection: on/off, secret name, endpoint, limits (admin-only, audited)",
+        "tags": [
+          "admin-llm-ops"
+        ]
+      }
+    },
+    "/admin/llm-connections/{connection_key}/test": {
+      "post": {
+        "operationId": "test_llm_connection_admin_llm_connections__connection_key__test_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_key",
+            "required": true,
+            "schema": {
+              "title": "Connection Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/LlmConnectionTest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Test an LLM connection with one small real call (admin-only, logged, audited)",
         "tags": [
           "admin-llm-ops"
         ]

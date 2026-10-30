@@ -21,6 +21,9 @@ Slice S3 adds ``deployment_plan(model)``: the ordered deployments a catalog mode
 ``LLM_DEPLOYMENT_ROUTING`` on, the default; ``embed``; the legacy alias path). See its docstring for the rules; with
 the rows migrations 304 / 306 seeded it gives exactly today's single call per model (acc3, acc2 for an embed row,
 openai-direct for an OpenAI API row), proved for every Dev stage by ``tests/unit/test_aa1002_s3_routes_snapshot.py``.
+
+Slice S4 plugs the circuit breaker (``breaker.py``) into the plan: a deployment whose circuit is open is left out (see
+``deployment_plan``); the provider calls themselves are wrapped by ``LLMClient._call_target`` / ``embed``.
 """
 from __future__ import annotations
 
@@ -29,7 +32,7 @@ from typing import Callable, Optional
 
 import structlog
 
-from . import connections, deployments
+from . import breaker, connections, deployments
 from .catalog import LEGACY_KEYS, CatalogModel
 
 logger = structlog.get_logger()
@@ -114,8 +117,20 @@ def _never_open(connection_key: str, model_key: str) -> bool:
     return False
 
 
-# Slice S4's breaker sets this (``vendor_route.circuit_open = breaker.is_open``); until then no circuit is ever open.
-circuit_open: Callable[[str, str], bool] = _never_open
+# Slice S4: the deployment circuit breaker (breaker.py, state in shared.llm_provider_health).
+# ``LLM_CIRCUIT_BREAKER=off`` makes it answer False, i.e. the S3 behaviour (``_never_open``). Tests may replace it.
+circuit_open: Callable[[str, str], bool] = breaker.is_open
+
+
+class DeploymentPlan(list):
+    """The ordered deployments a model is tried on (a list of VendorDeployment), plus ``circuit_skips``: the
+    (connection_key, error class that opened it) of each deployment left out only because its circuit is open. An
+    empty plan with skips is "the model was not called because of the breaker" (``breaker.circuit_error``), which keeps
+    the class of the refusal that opened the circuit (an account-level one still ends the job at once)."""
+
+    def __init__(self, items=(), circuit_skips=()):
+        super().__init__(items)
+        self.circuit_skips: list[tuple[str, Optional[str]]] = list(circuit_skips)
 
 
 def _skip(model: CatalogModel, d: deployments.ModelDeployment, reason: str) -> None:
@@ -173,7 +188,8 @@ def deployment_plan(model: CatalogModel) -> Optional[list[VendorDeployment]]:
       fallback behind an ``aws_only`` one, so content never leaves AWS because acc3 failed (migration 306 seeds
       enabled Anthropic API rows behind acc3 for every Anthropic model, tenant ones included). Decided before the
       circuit check, so an open acc3 circuit never promotes the row behind it;
-    - one whose circuit is not open (``circuit_open``, slice S4's breaker; never open before S4).
+    - one whose circuit is not open (``circuit_open``: slice S4's breaker, ``breaker.is_open``; a skipped one is named
+      in the returned ``DeploymentPlan.circuit_skips``).
 
     Returns None — "the registry does not describe this model, take today's path" — when the connection registry has
     no rows (unreadable, not migrated, DB down) or the model has no callable row at all (none, or only rows the gateway
@@ -208,12 +224,15 @@ def deployment_plan(model: CatalogModel) -> Optional[list[VendorDeployment]]:
                 continue
             candidates.append(c)
         plan: list[VendorDeployment] = []
+        skips: list[tuple[str, Optional[str]]] = []
         for c in candidates:
             if circuit_open(c.connection.connection_key, model.model_key):
                 _skip(model, c.deployment, "circuit open")
+                skips.append((c.connection.connection_key,
+                              breaker.open_class(c.connection.connection_key, model.model_key)))
                 continue
             plan.append(c)
-        return plan
+        return DeploymentPlan(plan, skips)
     except Exception as e:  # noqa: BLE001 — a registry problem must never break today's path
         logger.warning("llm_deployment_plan_failed", model=model.model_key, error=str(e)[:200])
         return None

@@ -6,6 +6,7 @@
 //                shadow-A/B editor (StageRouteEditor, PATCH /llm-config/{stage}/route).
 //   • Catalog  — every catalog model, editable price/source/enabled (CatalogTab).
 //   • Shadow A/B — the shadow comparison report (ShadowReportTab).
+//   • Connections — LLM connections: health per deployment, on/off, settings, test call (ConnectionsTab, AA-1002 S4).
 // AA-900: the Stages sub-tab opens with the LLM availability card (LlmAvailabilityCard).
 // Dead stages (HIDDEN_STAGES) are not rendered in the Stages editor.
 // Built on the kit (Tabs/Badge/Button/ConfirmModal/DataTable/Toast) + react-query.
@@ -49,6 +50,7 @@ import { accountName } from "@/lib/awsAccounts";
 const STAGE_GROUP_LABELS: Record<string, string> = Object.fromEntries(STAGE_GROUPS.map((g) => [g.key, g.label]));
 import { CatalogTab } from "./CatalogTab";
 import { ShadowReportTab } from "./ShadowReportTab";
+import { ConnectionsTab } from "./ConnectionsTab";
 
 interface LlmConfigResp {
   stages: StageConfigRow[];
@@ -336,6 +338,7 @@ const SUB_TABS = [
   { key: "stages", label: "subStages" },
   { key: "catalog", label: "subCatalog" },
   { key: "shadow", label: "subShadow" },
+  { key: "connections", label: "subConnections" },
 ] as const;
 
 function ModelsTabInner() {
@@ -349,6 +352,7 @@ function ModelsTabInner() {
       {sub === "stages" && <StagesSubTab />}
       {sub === "catalog" && <CatalogTab />}
       {sub === "shadow" && <ShadowReportTab />}
+      {sub === "connections" && <ConnectionsTab />}
     </div>
   );
 }

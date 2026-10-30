@@ -17,7 +17,7 @@ from .bedrock_satellite import DEFAULT_SATELLITE_ACCOUNT
 from .catalog import LEGACY_KEYS, CatalogModel, get_model_sync
 from .schema_check import SchemaMismatch, conform
 from .errors import OTHER, THROTTLED, LLMAccessDenied, account_level_class, classify
-from . import stream_sink
+from . import breaker, stream_sink
 from .vendor_route import (VendorDeployment, deployment_plan, pinned_deployment, split_pin,
                            vendor_deployment_for)
 from .deployments import alias_targets_sync
@@ -172,6 +172,16 @@ def _all_failed(message: str, failures: list) -> RuntimeError:
     if failures:
         exc.__cause__ = failures[-1]
     return exc
+
+
+class _AliasSteps(list):
+    """AA-1002 (S4): a legacy alias's (catalog model, deployment) attempts, plus ``circuit_errors``: one
+    breaker.CircuitOpen per alias target none of whose deployments could be called (every circuit open). _run_alias
+    starts its failure list with them, so _all_failed keeps the class that opened the circuits."""
+
+    def __init__(self, items=()):
+        super().__init__(items)
+        self.circuit_errors: list = []
 
 
 def _billed_usage(model_used: str, account: Optional[str], usage_totals: dict, cost: float,
@@ -463,7 +473,7 @@ class LLMClient:
         targets = alias_targets_sync(tier)
         if not targets:
             return None
-        steps: list = []
+        steps = _AliasSteps()
         for key in targets:
             model = get_model_sync(key)
             if model is None:
@@ -476,6 +486,12 @@ class LLMClient:
             if plan is None:
                 logger.warning("llm_alias_fallback_legacy_chain", alias=tier, target=key, reason="no registry rows")
                 return None
+            skips = getattr(plan, "circuit_skips", None)
+            if not plan and skips:
+                # AA-1002 (S4): every deployment of this target is behind an open circuit. Kept as the target's
+                # failure, so an alias whose targets are all refused at account level still ends in LLMAccessDenied.
+                logger.info("llm_alias_target_skip", alias=tier, target=key, reason="circuit open")
+                steps.circuit_errors.append(breaker.circuit_error(model.model_key, skips))
             steps += [(model, target) for target in plan]
         return steps
 
@@ -483,7 +499,7 @@ class LLMClient:
         """The legacy chain's contract on alias steps: the first that answers wins; `fallback_used` when a later target
         model answered (Sonnet degraded to Haiku); every step down = the chain's own final error (incl. the S235
         GPT-4.1 tail, which only runs if that retired catalog row is enabled again)."""
-        failures: list = []
+        failures: list = list(getattr(steps, "circuit_errors", ()))   # targets not called: circuit open (S4)
         intended = (alias_targets_sync(tier) or (None,))[0]     # the alias's first model, even if it had no step
         for position, (model, target) in enumerate(steps):
             try:
@@ -911,6 +927,10 @@ class LLMClient:
           raised at once (the gateway's billed_unusable row is written by _call_key_logged; the route moves on).
         - Every deployment down: _all_failed (LLMAccessDenied when every one was refused at account level)."""
         if not plan:
+            skips = getattr(plan, "circuit_skips", None)
+            if skips:
+                # AA-1002 (S4): not called because of the breaker; the error keeps the class that opened the circuit.
+                raise breaker.circuit_error(model.model_key, skips)
             raise RuntimeError(f"Model {model.model_key!r} has no usable deployment (every deployment or its "
                                "connection is disabled, cannot serve it, or its circuit is open)")
         if len(plan) == 1:
@@ -934,7 +954,32 @@ class LLMClient:
             return resp
         raise _all_failed(f"Every deployment of {model.model_key!r} failed: " + "; ".join(errors), failures)
 
-    def _call_target(self, request: LLMRequest, model: CatalogModel, target: VendorDeployment) -> LLMResponse:
+    def _call_target(self, request: LLMRequest, model: CatalogModel, target: VendorDeployment, *,
+                     admit: bool = True) -> LLMResponse:
+        """AA-1002 (S4): one catalog model on one deployment through the breaker (breaker.guarded): a half-open circuit
+        lets one probe call through (``admit``), the connection's limiter holds a slot, and the outcome is counted on
+        the deployment's circuit (an unusable reply is an answer: it counts as a success). Raises the provider's own
+        exception unchanged, or breaker.CircuitOpen / LimiterSaturated without a call."""
+        return breaker.guarded(target.connection, model.model_key,
+                               lambda: self._dispatch_target(request, model, target),
+                               admit_call=admit, answered=(UnusableReply,))
+
+    def probe(self, request: LLMRequest, model: CatalogModel, target: VendorDeployment) -> LLMResponse:
+        """AA-1002 (S4): the admin's connection test — ``model`` on one explicit deployment (which may be switched off:
+        the test runs before enabling it), no stage route, no shadow, no fallback. It is the operator's half-open
+        probe: an open circuit is not in the way, and the outcome is counted (a success closes the circuit). A billed
+        but unusable reply writes the gateway's billed_unusable llm_call_log row (as _call_key_logged does) and is
+        re-raised; an answered call is logged by the caller (stage adhoc_conn_test)."""
+        try:
+            return self._call_target(request, model, target, admit=False)
+        except Exception as e:
+            billed = _billed_usage_of(e)
+            if billed:
+                log_gateway_billed_failure(request, role="validate", billed=billed, error=str(e),
+                                           extra={"connection_test": target.connection.connection_key})
+            raise
+
+    def _dispatch_target(self, request: LLMRequest, model: CatalogModel, target: VendorDeployment) -> LLMResponse:
         """AA-1002 (S3): one catalog model on one deployment, by connection kind and the row's api_style."""
         dep, conn = target.deployment, target.connection
         if conn.kind == "anthropic":

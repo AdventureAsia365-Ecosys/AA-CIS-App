@@ -36,10 +36,12 @@ REGISTRY_READERS = {
     "bedrock_satellite.py": "role / ExternalId / region of an assume-role connection",
     "catalog.py": "serving_accounts() = the enabled Bedrock connections",
     "deployments.py": "reads its own table through connections.run_sync",
+    "breaker.py": "S4: its own table (llm_provider_health) through connections.run_sync / _connect; the limits and the "
+                  "credential error type of a connection it is handed",
 }
 CALL_PATH = ("client.py", "embed.py", "decide.py", "judge.py", "shadow.py", "bedrock_satellite.py",
              "bedrock_batch.py", "call_log.py", "catalog.py", "role_config.py", "pricing.py", "errors.py",
-             "prompt_cache.py", "stream_sink.py", "column_mapper.py", "schema_check.py", "models.py")
+             "prompt_cache.py", "stream_sink.py", "column_mapper.py", "schema_check.py", "models.py", "breaker.py")
 
 
 def _imported_modules(path: Path) -> set[str]:

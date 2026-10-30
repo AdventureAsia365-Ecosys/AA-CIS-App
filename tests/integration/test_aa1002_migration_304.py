@@ -37,6 +37,17 @@ def _run(c):
     c.execute(open(MIGRATION, encoding="utf-8").read())
 
 
+# AA-1002 S4: 309 (shared.llm_provider_health, FK to the connection) and 310 (the admin edit grant) build on 304's
+# tables; _undo drops them first and the fixture puts them back, so later modules see the post-310 state.
+LATER = [os.path.join(os.path.dirname(MIGRATION), f) for f in
+         ("309_llm_provider_health.sql", "310_llm_connection_admin_edit_grant.sql")]
+
+
+def _run_later(c):
+    for path in LATER:
+        c.execute(open(path, encoding="utf-8").read())
+
+
 @pytest.fixture
 def cur():
     conn = psycopg2.connect(host=DB_HOST, port=DB_PORT, dbname=DB_NAME, user=DB_USER, password=DB_PASS)
@@ -52,11 +63,14 @@ def cur():
         c.execute("DELETE FROM shared.llm_provider_connection WHERE connection_key LIKE 'zz-aa1002%'")
         c.execute("DELETE FROM shared.spend_budget WHERE scope = 'job:zz_aa1002'")
         _run(c)
+        _run_later(c)
         conn.close()
 
 
 def _undo(c):
     """The pre-304 state: no new tables, no capabilities column, the 181 / 169 / 226 CHECKs, 304 unregistered."""
+    c.execute("DROP TABLE IF EXISTS shared.llm_provider_health")          # 309: references the connection table
+    c.execute("DELETE FROM shared.schema_versions WHERE version IN ('309', '310')")
     c.execute("DROP TABLE IF EXISTS shared.llm_model_deployment")
     c.execute("DROP TABLE IF EXISTS shared.llm_provider_connection")
     c.execute("ALTER TABLE shared.llm_model_catalog DROP COLUMN IF EXISTS capabilities")

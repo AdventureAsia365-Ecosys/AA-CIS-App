@@ -23,6 +23,7 @@ from shared.llm_client.adapters.anthropic_messages import _effort_facts  # noqa:
 MIGRATIONS = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations")
 M304 = os.path.join(MIGRATIONS, "304_llm_connection_deployment.sql")
 M306 = os.path.join(MIGRATIONS, "306_llm_anthropic_deployments.sql")
+M310 = os.path.join(MIGRATIONS, "310_llm_connection_admin_edit_grant.sql")   # S4: a 304 re-run drops its column grant
 
 
 def _run(c, path):
@@ -36,6 +37,7 @@ def cur():
     c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     _run(c, M304)
     _run(c, M306)
+    _run(c, M310)
     try:
         yield c
     finally:
@@ -46,6 +48,7 @@ def cur():
         c.execute("DELETE FROM shared.llm_model_deployment WHERE updated_by = 'migration-306-aa1002'")   # edits too
         _run(c, M304)
         _run(c, M306)
+        _run(c, M310)
         conn.close()
 
 
@@ -95,10 +98,15 @@ def test_rerun_is_idempotent_and_keeps_an_admin_edit(cur):
     assert cur.fetchone()
 
 
+# AA-1002 S4: conftest applies every migration, so 310's grant (the admin-editable columns) is there too.
+S311_COLUMNS = {"secret_name", "base_url", "timeout_s", "max_retries", "max_concurrency", "rpm_limit",
+                "monthly_budget_usd", "notes"}
+
+
 def test_cis_app_writes_the_switch_columns_only(cur):
     cur.execute("SELECT column_name FROM information_schema.column_privileges WHERE table_schema = 'shared' "
                 "AND table_name = 'llm_provider_connection' AND grantee = 'cis_app' AND privilege_type = 'UPDATE'")
-    assert {r["column_name"] for r in cur.fetchall()} == {"enabled", "updated_at", "updated_by"}
+    assert {r["column_name"] for r in cur.fetchall()} == {"enabled", "updated_at", "updated_by"} | S311_COLUMNS
     cur.execute("BEGIN")
     cur.execute("GRANT USAGE ON SCHEMA shared TO cis_app")                   # Dev has it; rolled back below
     cur.execute("SET LOCAL SESSION AUTHORIZATION cis_app")
@@ -106,8 +114,8 @@ def test_cis_app_writes_the_switch_columns_only(cur):
                 "FOR UPDATE")                                                  # the switch's row lock
     cur.execute("UPDATE shared.llm_provider_connection SET enabled = true, updated_at = now(), "
                 "updated_by = 'admin:test' WHERE connection_key = 'anthropic-direct'")
-    with pytest.raises(psycopg2.errors.InsufficientPrivilege):
-        cur.execute("UPDATE shared.llm_provider_connection SET secret_name = 'aa-llm/dev/other' "
+    with pytest.raises(psycopg2.errors.InsufficientPrivilege):               # identity stays migration-only (310)
+        cur.execute("UPDATE shared.llm_provider_connection SET data_scope = 'aws_only' "
                     "WHERE connection_key = 'anthropic-direct'")
     cur.execute("ROLLBACK")
     cur.execute("BEGIN")

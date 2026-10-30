@@ -1,8 +1,9 @@
-"""AA-1002 (gateway slice S2) — PATCH /admin/llm-connections/{connection_key}: the one admin switch of S2.
+"""AA-1002 (gateway slices S2 / S4) — PATCH /admin/llm-connections/{connection_key}: the on/off switch.
 
-Admin only (ai.admin), body ``{"enabled": bool}`` only, Anthropic connections only (the gateway reads no other kind's
-flag before S3), enabling refuses a policy problem or an unreadable secret, one audit row per change in the same
-transaction, caches dropped after the change. Migration 306 grants the three columns the switch writes.
+Admin only (ai.admin), every kind the gateway calls since S3 (bedrock, anthropic, openai; S2 allowed anthropic only),
+enabling refuses a policy problem or an unreadable secret, one audit row per change in the same transaction, caches
+dropped after the change. Migrations 306 + 310 grant exactly the columns the PATCH writes. The S4 field edits are in
+test_aa1002_s4_admin_connections.py.
 """
 import asyncio
 import json
@@ -22,6 +23,7 @@ from shared.llm_client import connections
 from shared.llm_client.adapters import anthropic_messages
 
 MIGRATION_306 = Path(__file__).resolve().parents[2] / "api" / "migrations" / "306_llm_anthropic_deployments.sql"
+MIGRATION_311 = Path(__file__).resolve().parents[2] / "api" / "migrations" / "310_llm_connection_admin_edit_grant.sql"
 
 
 def _row(**kw):
@@ -85,12 +87,12 @@ def test_switch_is_admin_only():
         assert staff_authz.AI_ADMIN not in staff_authz.ROLE_PERMS[role]
 
 
-def test_body_takes_only_the_switch():
-    assert ops.LlmConnectionPatch(enabled=True).enabled is True
-    for extra in ({"enabled": True, "secret_name": "aa-cis/dev/rds"}, {"enabled": True, "base_url": "https://x.io"},
-                  {}):
+def test_body_refuses_identity_fields_and_an_empty_patch():
+    assert ops.LlmConnectionPatch(enabled=True).changes() == {"enabled": True}
+    for bad in ({"enabled": True, "kind": "openai"}, {"role_name": "x"}, {"data_scope": "vendor_direct"},
+                {"credential_env": "OPENAI_API_KEY"}, {}, {"enabled": None}):
         with pytest.raises(ValidationError):
-            ops.LlmConnectionPatch(**extra)
+            ops.LlmConnectionPatch(**bad)
 
 
 def test_enable_updates_and_audits_in_one_transaction(_secret):
@@ -131,9 +133,9 @@ def test_no_change_writes_no_audit_row():
 
 @pytest.mark.parametrize("row,match", [
     (_row(connection_key="acc3", kind="bedrock", auth_mode="assume_role", secret_name=None, base_url=None),
-     "slice S3"),
-    (_row(connection_key="openai-direct", kind="openai", secret_name=None, credential_env="OPENAI_API_KEY",
-          base_url="https://api.openai.com/v1"), "slice S3"),
+     "assume_role needs"),
+    (_row(connection_key="az", kind="azure_openai", secret_name="aa-llm/dev/az",
+          base_url="https://x.openai.azure.com"), "no adapter"),
     (_row(secret_name="aa-cis/dev/rds"), "aa-llm"),
     (_row(base_url="https://evil.example.com"), "not allowed"),
 ])
@@ -204,7 +206,7 @@ def _request(db):
 
 
 @pytest.mark.parametrize("db,status", [(FakeDB(None), 404),
-                                       (FakeDB(_row(connection_key="acc3", kind="bedrock")), 422)])
+                                       (FakeDB(_row(connection_key="acc3", kind="mock", auth_mode="none")), 422)])
 def test_route_maps_errors(db, status):
     with patch.object(ops, "verify_admin_secret"):
         with pytest.raises(HTTPException) as e:
@@ -223,13 +225,17 @@ def test_route_switches_and_names_the_admin():
 
 # ── migration 306 (text checks; the SQL itself runs in tests/integration/test_aa1002_migration_306.py) ─────────
 
-def test_migration_306_grants_exactly_the_columns_the_switch_writes():
-    sql = MIGRATION_306.read_text()
-    grants = re.findall(r"^GRANT (.+?) ON (\S+) TO (\w+);", sql, re.MULTILINE)
-    assert grants == [("UPDATE (enabled, updated_at, updated_by)", "shared.llm_provider_connection", "cis_app")]
-    source = re.sub(r'"\s*\n\s*"', "", Path(llm_connections.__file__).read_text())   # join split literals
-    update_sql = re.search(r"UPDATE shared\.llm_provider_connection SET (.+?) WHERE", source).group(1)
-    assert set(re.findall(r"(\w+) =", update_sql)) == {"enabled", "updated_at", "updated_by"}
+def test_migrations_306_and_310_grant_exactly_the_columns_the_patch_writes():
+    grants = []
+    for path in (MIGRATION_306, MIGRATION_311):
+        grants += re.findall(r"^GRANT UPDATE \((.+?)\)\s+ON (\S+) TO (\w+);", path.read_text(), re.MULTILINE)
+    assert {(g[1], g[2]) for g in grants} == {("shared.llm_provider_connection", "cis_app")}
+    granted = {c.strip() for g in grants for c in g[0].split(",")}
+    assert granted == set(llm_connections.EDITABLE) | {"updated_at", "updated_by"}
+    source = Path(llm_connections.__file__).read_text()
+    assert "SET {sets}, updated_at = now(), updated_by = ${n}" in source       # only EDITABLE columns + the stamp
+    assert re.findall(r"^GRANT UPDATE \((.+?)\) ON", MIGRATION_306.read_text(), re.MULTILINE) == [
+        "enabled, updated_at, updated_by"]                                      # 306 itself is unchanged
 
 
 def test_migration_306_seeds_behind_acc3_and_leaves_the_connection_off():

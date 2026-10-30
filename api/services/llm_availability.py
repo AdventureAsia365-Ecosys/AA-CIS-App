@@ -19,6 +19,13 @@ Two sources, both real outcomes inside the window:
 Status: the newest outcome wins. ``blocked`` when the newest account-level refusal is newer than the last answered
 text call (embeddings run on another account and do not clear it), ``degraded`` for a throttle newer than it,
 ``ok`` when an answered call is the newest and at most STALE_OK_HOURS old, ``unknown`` otherwise.
+
+AA-1002 (S4) — per connection: ``connections`` lists every row of ``shared.llm_provider_connection`` with the circuit
+breaker state of each of its deployments that has a health row (``shared.llm_provider_health``, migration 309; the
+state rule is ``shared.llm_client.breaker.state_of``). A connection's status: ``disabled`` (switched off), ``open``
+(a deployment's circuit is open or half-open: calls skip it), ``degraded`` (failures in a row, circuit still closed),
+``ok`` (no failure, an answered call within STALE_OK_HOURS), ``unknown`` otherwise. Before 304 / 309 are applied the
+list is empty and ``health_ready`` is false. Still no probe call: the admin's "Test connection" is a separate action.
 """
 from __future__ import annotations
 
@@ -26,6 +33,9 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Iterable, Optional
 
+import asyncpg
+
+from shared.llm_client.breaker import CLOSED, Health, state_of
 from shared.llm_client.errors import ACCESS_DENIED, QUOTA_EXHAUSTED, THROTTLED, classify_text
 
 FAILURE_CLASSES = (ACCESS_DENIED, QUOTA_EXHAUSTED, THROTTLED)
@@ -157,10 +167,86 @@ def build(call_rows: Iterable[dict], job_rows: Iterable[dict], *, hours: int, no
     }
 
 
+# AA-1002 (S4): every connection with the breaker rows of its deployments (none = every circuit closed).
+CONNECTIONS_SQL = """
+    SELECT c.connection_key, c.kind, c.label, c.enabled,
+           h.model_key, h.last_ok_at, h.last_error_at, h.last_error_class, h.last_error, h.consecutive_failures,
+           h.circuit_open_until, h.open_streak, h.opened_at, h.probe_until
+      FROM shared.llm_provider_connection c
+      LEFT JOIN shared.llm_provider_health h USING (connection_key)
+     ORDER BY c.connection_key, h.model_key
+"""
+
+_HEALTH_FIELDS = ("last_ok_at", "last_error_at", "last_error_class", "last_error", "consecutive_failures",
+                  "circuit_open_until", "open_streak", "opened_at", "probe_until")
+
+
+def connection_status(enabled: bool, models: list[dict], now: datetime) -> str:
+    """See the module docstring (AA-1002 S4)."""
+    if not enabled:
+        return "disabled"
+    if any(m["state"] != CLOSED for m in models):
+        return "open"
+    if any(m["consecutive_failures"] for m in models):
+        return "degraded"
+    last_ok = _latest(m["_last_ok"] for m in models)
+    if last_ok is not None and now - last_ok <= timedelta(hours=STALE_OK_HOURS):
+        return "ok"
+    return "unknown"
+
+
+def build_connections(rows: Iterable[dict], *, now: datetime) -> list[dict]:
+    """One entry per connection (pure: unit-tested without a database)."""
+    by_key: dict[str, dict] = {}
+    for r in rows:
+        entry = by_key.setdefault(r["connection_key"], {
+            "connection_key": r["connection_key"], "kind": r.get("kind"), "label": r.get("label"),
+            "enabled": bool(r.get("enabled")), "models": []})
+        if r.get("model_key") is None:
+            continue
+        h = Health(connection_key=r["connection_key"], model_key=r["model_key"],
+                   **{f: r.get(f) for f in _HEALTH_FIELDS if f not in ("consecutive_failures", "open_streak")},
+                   consecutive_failures=int(r.get("consecutive_failures") or 0),
+                   open_streak=int(r.get("open_streak") or 0))
+        entry["models"].append({
+            "model_key": h.model_key, "state": state_of(h, now), "consecutive_failures": h.consecutive_failures,
+            "last_ok_at": _iso(h.last_ok_at), "last_error_at": _iso(h.last_error_at),
+            "last_error_class": h.last_error_class, "last_error": (h.last_error or "")[:ERROR_SAMPLE_CHARS] or None,
+            "circuit_open_until": _iso(h.circuit_open_until), "probe_until": _iso(h.probe_until),
+            "open_streak": h.open_streak, "_last_ok": h.last_ok_at, "_last_error": h.last_error_at})
+    out = []
+    for entry in by_key.values():
+        models = entry["models"]
+        newest_error = max((m for m in models if m["_last_error"]), key=lambda m: m["_last_error"], default=None)
+        entry.update(
+            status=connection_status(entry["enabled"], models, now),
+            open_models=sum(1 for m in models if m["state"] != CLOSED),
+            last_ok_at=_iso(_latest(m["_last_ok"] for m in models)),
+            last_error_at=newest_error["last_error_at"] if newest_error else None,
+            last_error_class=newest_error["last_error_class"] if newest_error else None,
+        )
+        for m in models:
+            m.pop("_last_ok")
+            m.pop("_last_error")
+        out.append(entry)
+    return out
+
+
+async def read_connections(conn, *, now: datetime) -> tuple[bool, list[dict]]:
+    """(health_ready, connections). Before migration 304 / 309 the tables are missing: (False, [])."""
+    try:
+        rows = [dict(r) for r in await conn.fetch(CONNECTIONS_SQL)]
+    except asyncpg.exceptions.UndefinedTableError:
+        return False, []
+    return True, build_connections(rows, now=now)
+
+
 async def read(conn, *, hours: int = 24, now: Optional[datetime] = None) -> dict:
-    """Two read-only queries on one connection (the job side reads the finished_at and queued indexes)."""
+    """Three read-only queries on one connection (the job side reads the finished_at and queued indexes)."""
     now = now or datetime.now(timezone.utc)
     since = now - timedelta(hours=hours)
     call_rows = [dict(r) for r in await conn.fetch(CALLS_SQL, since)]
     job_rows = [dict(r) for r in await conn.fetch(JOBS_SQL, since, JOB_ROW_LIMIT)]
-    return build(call_rows, job_rows, hours=hours, now=now)
+    out = build(call_rows, job_rows, hours=hours, now=now)
+    out["health_ready"], out["connections"] = await read_connections(conn, now=now)
+    return out

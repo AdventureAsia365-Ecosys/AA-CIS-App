@@ -266,7 +266,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   provider='openai' rows), enabled and on an enabled connection, lowest priority first, the same model on each
   deployment before the route's next model. Until slice S5: a `vendor_direct` connection is used only as the FIRST
   enabled row (an admin's deliberate choice), never as a fallback behind an `aws_only` one, decided before the circuit
-  check (`vendor_route.circuit_open`, the S4 breaker hook, never open before S4). No callable row (or no registry) =
+  check (`vendor_route.circuit_open` = `breaker.is_open`, slice S4). No callable row (or no registry) =
   today's path; callable rows that are all off = the model is refused and the route moves on. A billed unusable reply
   is the model's answer (not retried on another deployment). With the 304 / 306 rows every Dev stage makes exactly
   the calls it made before S3 (`tests/unit/test_aa1002_s3_routes_snapshot.py`, golden from pre-S3 code).
@@ -278,6 +278,26 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   `catalog.serving_accounts()` and `embed._runtime_for` read the registry; `connections.BUILTIN_CONNECTIONS` (the 304
   seed: acc3, acc2, openai-direct) answers only "how to reach X" when the registry is unreadable or a row is broken.
   Still contract work (not in 307): the logical rows `sonnet-4-6` / `haiku-4-5` and the `account_route` CHECK → FK.
+- **Circuit breaker + limiter + Connections tab** (AA-1002 slice S4, migrations 309 expand / 310 contract):
+  `shared/llm_client/breaker.py` keeps one circuit per deployment (connection × catalog model) in
+  `shared.llm_provider_health`, shared by every api / worker task (10 s snapshot; writes lock the row and apply pure
+  transitions). Class rules (`breaker.RULES`): access_denied / quota_exhausted / `credential` (a key that cannot be
+  read) open at once, throttled after 3 in a row, anything else after 5; a refusal of one request's own content
+  (input too long, malformed, content filter: breaker-only class `request`) is never counted; open periods are short (30 s – 5 min first,
+  doubled on each failed half-open probe, capped). Half-open = exactly one call across tasks takes a probe lease.
+  `deployment_plan` leaves out open deployments (`DeploymentPlan.circuit_skips`); a model none of whose deployments
+  may be called raises `breaker.CircuitOpen` carrying the class that opened it (the legacy alias path too), so an
+  account-level refusal still ends in `LLMAccessDenied` without a provider call. `LLMClient._call_target` and `embed` wrap every registry call in
+  `breaker.guarded` (probe admission, the connection's limiter, outcome; an unusable reply counts as an answer). The
+  limiter is per process: `max_concurrency` (semaphore) and `rpm_limit` (rolling minute) from the connection row; no
+  slot within 30 s = `LimiterSaturated` (throttled, not counted). Table missing / DB down = the same breaker in
+  process. `LLM_CIRCUIT_BREAKER=off` (ECS env) = the S3 behaviour. Admin (ai.admin, audited):
+  `PATCH /admin/llm-connections/{key}` switches bedrock / anthropic / openai connections and edits the secret NAME
+  (`aa-llm/` only), base URL (kind allowlist), timeout, retries, limits, budget, notes (310 grant; identity and data
+  scope stay migration-only); `POST /admin/llm-connections/{key}/test` sends one small real call through
+  `LLMClient.probe` (works on a switched-off connection; stage `adhoc_conn_test`, role `validate`, logged + audited;
+  its outcome counts on the circuit). `GET /admin/llm-availability` adds `connections` (status per connection and the
+  circuit of each deployment). UI: Settings › LLM Models › Connections (`frontend/app/admin/settings/ConnectionsTab.tsx`).
 - **Structured output (`LLMRequest.json_schema`) per path**: Converse = one tool whose input is the schema, reply
   conformed (`_checked_json`, AA-659/714); OpenAI = strict `response_format`. The legacy `haiku` / `sonnet` keys
   (Anthropic Messages API, `invoke_claude`) have neither: since S251 (AA-835) the gateway appends a "one JSON object
