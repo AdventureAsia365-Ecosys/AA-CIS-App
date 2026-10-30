@@ -46,6 +46,17 @@ const PAIRS = [
   ["on-dark", "toast-bg"], ["side-text", "side-bg"], ["side-title", "side-bg"], ["side-text2", "side-bg"],
 ];
 
+// Non-text pairs (WCAG 1.4.11 / 2.4.13, 3:1): the kit focus ring (Buttons.tsx FOCUS, accent-deep) on every surface a
+// focusable kit control sits on, and the kit Switch track (on = green, off = muted2) against the page and its knob
+// (card colour). AA-994 review: the ring was --aa-accent (2.5:1 on light card) and the off track --aa-line (1.25:1).
+// [foreground token, background token].
+const NON_TEXT_PAIRS = [
+  ["accent-deep", "card"], ["accent-deep", "bg"], ["accent-deep", "accent-tint"], ["accent-deep", "line2"],
+  ["accent-deep", "red-soft"],
+  ["green", "card"], ["green", "bg"], ["muted2", "card"], ["muted2", "bg"],
+  ["card", "green"], ["card", "muted2"],
+];
+
 // Text over a photo: the worst case is a pure-white pixel under the scrim (AA-812 D6, AA-995).
 const SCRIM_PAIRS = [
   ["#FFFFFF", "scrim", 4.5], // duration pills, photo captions
@@ -78,6 +89,15 @@ for (const theme of ["light", "dark"]) {
       assert.ok(t[fg] && t[bg], `token missing in ${theme}: --aa-${t[fg] ? bg : fg}`);
       return { pair: `--aa-${fg} ${t[fg]} on --aa-${bg} ${t[bg]}`, ratio: round(contrastRatio(t[fg], t[bg])) };
     }).filter((r) => r.ratio < 4.5);
+    assert.deepEqual(failures, []);
+  });
+
+  test(`focus ring and switch pairs meet the 3:1 non-text contrast in the ${theme} theme`, () => {
+    const t = themes[theme];
+    const failures = NON_TEXT_PAIRS.map(([fg, bg]) => {
+      assert.ok(t[fg] && t[bg], `token missing in ${theme}: --aa-${t[fg] ? bg : fg}`);
+      return { pair: `--aa-${fg} ${t[fg]} on --aa-${bg} ${t[bg]}`, ratio: round(contrastRatio(t[fg], t[bg])) };
+    }).filter((r) => r.ratio < 3);
     assert.deepEqual(failures, []);
   });
 

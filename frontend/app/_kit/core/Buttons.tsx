@@ -71,7 +71,12 @@ export type BaseButtonProps = NativePass & {
 
 export const BUTTON_CLASS = "aa-kit-btn";
 
-const FOCUS = `outline:2px solid ${K.accent};outline-offset:2px`;
+// The focus ring is accent-deep, not accent: a focus indicator needs 3:1 on the surfaces it sits on (WCAG 1.4.11 /
+// 2.4.13) and light --aa-accent is about 2.5:1 on card. lib/tokensContrast.test.mjs checks the ring pairs.
+const FOCUS_RING = `outline:2px solid ${K.accentDeep}`;
+const FOCUS = `${FOCUS_RING};outline-offset:2px`;
+// Inset variant for buttons that fill their row (ListButton): an outside ring would be clipped by the popup.
+const FOCUS_INSET = `${FOCUS_RING};outline-offset:-2px`;
 
 // One stylesheet for every button state. Inline styles win over a class, so a state that changes a colour the inline
 // base sets uses !important.
@@ -99,8 +104,14 @@ const BUTTONS_CSS =
   `.aa-kit-chip:not([data-on]):not(:disabled):hover{color:${K.ink} !important;border-color:${K.accentBorder} !important}` +
   // Tabs variant="underline" (primitives.tsx)
   `.aa-kit-tab[aria-selected="false"]:not(:disabled):hover{color:${K.ink} !important}` +
+  // The ring goes round the label, not the whole tab: the tablist scrolls (overflow clips) and the tab has no top
+  // padding, so a ring round the tab would lose its top and bottom. The tablist keeps 4px of room for it.
+  `.aa-kit-tab:focus-visible{outline:none}` +
+  `.aa-kit-tab:focus-visible>.aa-kit-tab__label{${FOCUS};border-radius:4px}` +
   // ListButton
-  `.aa-kit-listbtn:not(:disabled):hover,.aa-kit-listbtn:not(:disabled):focus-visible{background:${K.accentTint} !important;outline:none}` +
+  // Keyboard focus keeps a visible inset ring; the tint alone is about 1.1:1 on card and would not show.
+  `.aa-kit-listbtn:not(:disabled):hover,.aa-kit-listbtn:not(:disabled):focus-visible{background:${K.accentTint} !important}` +
+  `.aa-kit-listbtn:focus-visible{${FOCUS_INSET}}` +
   `.aa-kit-listbtn[data-tone="danger"]:not(:disabled):hover,` +
   `.aa-kit-listbtn[data-tone="danger"]:not(:disabled):focus-visible{background:${K.dangerSoft} !important}` +
   // ButtonGroup attached: neighbours share one border and only the outer corners are round.
@@ -425,7 +436,8 @@ export function ChipButton(props: ChipButtonProps) {
 
 // ── Switch ─────────────────────────────────────────────────────────────────────────────────────────────────────
 // An on / off setting that takes effect at once ("Email me when a payment arrives"): role="switch" with aria-checked,
-// 44 × 24 track (success green when on), 20px knob. `label` is required (the switch has no visible text of its own;
+// 44 × 24 track (success green when on, muted2 grey when off: both 3:1+ on card / bg, WCAG 1.4.11), 20px knob in the
+// card colour (5:1+ on either track in both themes; lib/tokensContrast.test.mjs checks the pairs). `label` is required (the switch has no visible text of its own;
 // put the visible label next to it). For a choice that is saved with a form, use the kit Checkbox.
 export type SwitchProps = Omit<BaseButtonProps, "ariaLabel" | "role" | "onClick"> & {
   checked: boolean;
@@ -454,7 +466,7 @@ export function Switch(props: SwitchProps) {
           padding: 0,
           border: "none",
           borderRadius: 999,
-          background: checked ? K.success : K.line,
+          background: checked ? K.success : K.muted2,
           cursor: rest.disabled ? "not-allowed" : "pointer",
           transition: "background .15s",
           ...style,
@@ -657,8 +669,8 @@ export function ButtonGroup({
 
 // ── ListButton ─────────────────────────────────────────────────────────────────────────────────────────────────
 // A full-width, left-aligned row inside a popup list or menu: a picker result (role="option", `selected` →
-// aria-selected), a menu item (role="menuitem"), a "Clear filter" row. Hover / keyboard focus = the accent tint, like
-// the kit RowMenu items; tone danger = red text and a red tint ("Cancel case…"). The popup itself (role="listbox" /
+// aria-selected), a menu item (role="menuitem"), a "Clear filter" row. Hover = the accent tint, like the kit RowMenu
+// items; keyboard focus = the tint plus an inset accent-deep ring; tone danger = red text and a red tint ("Cancel case…"). The popup itself (role="listbox" /
 // "menu", placement, Escape) stays with the caller; for a row's action menu use RowMenu.
 export type ListButtonProps = BaseButtonProps & {
   children: ReactNode;

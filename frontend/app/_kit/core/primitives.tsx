@@ -462,6 +462,9 @@ export function PageHeader({
 // role="tablist" labelled by `ariaLabel`, each tab role="tab" with aria-selected, a 2px accent underline on the
 // active one, an optional count after the label, disabled tabs with a `title` reason. Tab enters on the active tab;
 // the arrow keys (and Home / End) move and select, skipping disabled tabs.
+// Room the underline tablist keeps for the label focus ring (2px ring at a 2px offset).
+const TAB_RING_ROOM = 4;
+
 export type TabItem = {
   key: string;
   label: React.ReactNode;
@@ -492,9 +495,11 @@ export function Tabs({
   /** underline: space between tabs in px (default 24). */
   gap?: number;
   testId?: string;
-  /** underline: merged into the tab list (a negative bottom margin to sit on a header border). */
+  /** underline: merged into the tab list (a negative bottom margin to sit on a header border). The top, left and
+   * right margins and paddings are the kit's (room for the focus ring): override them only on purpose. */
   style?: React.CSSProperties;
-  /** underline: layout utilities for Tailwind apps. */
+  /** underline: layout utilities for Tailwind apps (a bottom margin such as `-mb-px` is fine; inline top / left /
+   * right margins win over a class). */
   className?: string;
 }) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
@@ -519,7 +524,24 @@ export function Tabs({
           aria-label={ariaLabel}
           data-testid={testId}
           className={className}
-          style={{ display: "flex", gap, maxWidth: "100%", overflowX: "auto", fontFamily: sans, ...style }}
+          // The focus ring is drawn around each tab's label (Buttons.tsx, .aa-kit-tab__label) and reaches 4px past it;
+          // the tablist scrolls sideways (overflow clips), so it keeps 4px of room on the top / left / right, taken
+          // back with negative margins so the tabs stay where they were. The bottom is left alone (the label ring
+          // fits in the tab's 10px bottom padding), so a bottom margin or baseline from `className` keeps working.
+          style={{
+            display: "flex",
+            gap,
+            maxWidth: `calc(100% + ${2 * TAB_RING_ROOM}px)`,
+            overflowX: "auto",
+            paddingTop: TAB_RING_ROOM,
+            paddingLeft: TAB_RING_ROOM,
+            paddingRight: TAB_RING_ROOM,
+            marginTop: -TAB_RING_ROOM,
+            marginLeft: -TAB_RING_ROOM,
+            marginRight: -TAB_RING_ROOM,
+            fontFamily: sans,
+            ...style,
+          }}
         >
           {tabs.map((t, i) => {
             const on = i === current;
@@ -555,8 +577,10 @@ export function Tabs({
                   transition: "color .15s, border-color .15s",
                 }}
               >
-                {t.label}
-                {t.count != null && <span style={{ marginLeft: 4, fontSize: 12, color: K.muted2 }}>{t.count}</span>}
+                <span className="aa-kit-tab__label">
+                  {t.label}
+                  {t.count != null && <span style={{ marginLeft: 4, fontSize: 12, color: K.muted2 }}>{t.count}</span>}
+                </span>
               </button>
             );
           })}

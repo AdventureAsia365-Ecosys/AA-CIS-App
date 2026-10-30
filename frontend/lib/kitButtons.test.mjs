@@ -227,6 +227,9 @@ test("Switch: role=switch with aria-checked and a required name; the click flips
   assert.match(off, /aria-checked="false"/);
   assert.match(off, /disabled=""/);
   assert.match(off, /left:2px/);
+  // Off track muted2 (not --aa-line: 1.25:1 on card), knob in the card colour (lib/tokensContrast.test.mjs, 3:1).
+  assert.match(off, /background:var\(--aa-muted2\)/);
+  assert.match(off, /<span aria-hidden="true" style="[^"]*background:var\(--aa-card\)/);
   // The element's onClick calls onChange(!checked).
   const seen = [];
   const el = B.Switch({ label: "x", checked: false, onChange: (v) => seen.push(v) });
@@ -281,11 +284,33 @@ test("Tabs underline: a tablist with aria-selected, a disabled tab with its reas
   assert.match(btns[2], /disabled=""[^>]*title="Coming in wave 3"/);
   assert.match(btns[1], /border-bottom:2px solid var\(--aa-accent\)/);
   assert.match(out, /Proposals<span[^>]*>3<\/span>/);
+  // The focus ring goes round the label; the tablist keeps 4px of room for it on top / left / right (not the bottom,
+  // where a className margin or baseline sits) and takes it back with negative margins.
+  assert.match(out, /aria-selected="true"[^>]*><span class="aa-kit-tab__label">Proposals/);
+  assert.match(out, /^<div [^>]*style="[^"]*max-width:calc\(100% \+ 8px\);overflow-x:auto;padding-top:4px;padding-left:4px;padding-right:4px;margin-top:-4px;margin-left:-4px;margin-right:-4px/);
+  assert.doesNotMatch(out.match(/^<div [^>]*>/)[0], /padding-bottom|margin-bottom/);
+  const marked = html(h(P.Tabs, { tabs, active: "overview", onChange: () => {}, variant: "underline",
+    ariaLabel: "x", style: { marginBottom: -1 } }));
+  assert.match(marked.match(/^<div [^>]*>/)[0], /margin-bottom:-1px/, "a caller's bottom margin is kept");
 
   const track = html(h(P.Tabs, { tabs: [{ key: "a", label: "A" }, { key: "b", label: "B" }], active: "a",
     onChange: () => {} }));
   assert.doesNotMatch(track, /role=/, "the track variant keeps its plain-button markup");
   assert.match(track, /^<div style="display:flex;gap:4px;padding:4px;background:var\(--aa-line2\)/);
+});
+
+test("focus styles: one accent-deep ring (3:1 on every surface), inset in list rows, round the label in tabs", () => {
+  const css = B.ButtonStyles().props.children;
+  assert.equal(typeof css, "string");
+  assert.match(css, /\.aa-kit-btn:focus-visible\{outline:2px solid var\(--aa-accent-deep\);outline-offset:2px\}/);
+  assert.doesNotMatch(css, /outline:2px solid var\(--aa-accent\)/, "light --aa-accent is 2.5:1 on card");
+  assert.match(css, /\.aa-kit-listbtn:focus-visible\{outline:2px solid var\(--aa-accent-deep\);outline-offset:-2px\}/);
+  assert.doesNotMatch(css, /aa-kit-listbtn[^{]*\{[^}]*outline:none/, "list rows keep a visible focus ring");
+  assert.match(css, /\.aa-kit-tab:focus-visible\{outline:none\}/);
+  assert.match(css, /\.aa-kit-tab:focus-visible>\.aa-kit-tab__label\{outline:2px solid var\(--aa-accent-deep\);outline-offset:2px;/);
+  // The later rule wins at equal specificity: the list row and tab rules must come after the generic ring.
+  const generic = css.indexOf(".aa-kit-btn:focus-visible{");
+  assert.ok(generic < css.indexOf(".aa-kit-listbtn:focus-visible{") && generic < css.indexOf(".aa-kit-tab:focus-visible{"));
 });
 
 test("rovingTarget: arrows, Home / End, wrap-around, disabled skipped, other keys ignored", () => {
