@@ -48,7 +48,7 @@ from services.acp_content_writing.seed_align import checks as sa_checks
 from services.acp_content_writing.seed_align import modes as sa_modes
 from services.acp_content_writing.seed_align import seed_graph
 from services.quality import registry as qr
-from shared.llm_client.call_log import record_call_sync, record_unusable_sync
+from shared.llm_client.call_log import billed_fields, record_call_sync, record_unusable_sync
 from shared.llm_client.models import LLMRequest
 
 logger = structlog.get_logger()
@@ -462,6 +462,7 @@ def _call(items: Sequence[Trigger], *, client, stage: str, role: str, model_tier
         quality_signal=signal | {"json_parsed": True, "violations": sum(v["verdict"] == VIOLATION for v in verdicts)},
         stop_reason=getattr(resp, "stop_reason", None), account=getattr(resp, "satellite_account", None),
         fallback_used=getattr(resp, "fallback_used", None), provider=getattr(resp, "provider", None),
+        **billed_fields(resp),
     )
     return verdicts, resp
 

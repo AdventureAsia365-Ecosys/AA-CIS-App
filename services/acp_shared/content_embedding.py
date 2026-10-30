@@ -38,7 +38,7 @@ import time
 
 import structlog
 
-from shared.llm_client.call_log import record_call_sync
+from shared.llm_client.call_log import billed_fields, record_call_sync
 from shared.llm_client.embed import embed
 
 logger = structlog.get_logger()
@@ -131,7 +131,7 @@ def compute_embeddings(texts: list[str]) -> list[list[float] | None]:
             quality_signal={"texts": len(batch), "dimensions": len(resp.vectors[0]),
                             "tokens_estimated": resp.tokens_estimated},
             account=resp.account, fallback_used=resp.fallback_used,
-            provider="bedrock-native" if resp.account == "acc2" else "bedrock-satellite",
+            provider="bedrock-native" if resp.account == "acc2" else "bedrock-satellite", **billed_fields(resp),
         )
         for i, vector in zip(batch, resp.vectors):
             out[i] = vector

@@ -323,6 +323,31 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   unavailable with a reason, and the PATCHes refuse such a model (422) and keep the S235 position rule in scope terms
   (a model reached only outside AWS: last fallback only). A new stage seeded with an OpenAI-API last resort must set
   both scopes in its seed migration.
+- **Cost parity** (AA-1002 slice S6, migration 312 contract): `pricing.quote(model, Usage, deployment)` prices one
+  billed request from its full usage (uncached input, output, cache reads, 5-minute writes 1.25x, 1-hour writes 2x,
+  Message Batches 50% off every token, Anthropic `inference_geo: "us"` 1.1x, Claude Haiku 5.5 x5 above 100K prompt
+  tokens) on the deployment it ran on (`llm_model_deployment.price_*_override` first, then the catalog, then
+  `COST_TABLE`, then a flagged estimate at Sonnet rates: never 0) and returns `Quote(cost_usd, pricing_mode)`.
+  `calc_cost` is a wrapper with the pre-S6 numbers (golden `tests/unit/snapshots/aa1002_s6_pre_s6_costs.json`, the
+  Haiku 5.5 tier the only change). The Converse, Anthropic API and OpenAI paths price through `LLMClient._quote`
+  and set `LLMResponse.pricing_mode`; OpenAI cached prompt tokens (`prompt_tokens_details.cached_tokens`) are billed
+  at the cache-read rate and reported as `cache_read_tokens`. `llm_call_log.cache_read_tokens / cache_write_tokens /
+  pricing_mode` (`override|catalog|code_table|estimate[+batch][+geo_us]`) are written only for a row that has
+  something there (cache tokens, a stated mode, or an unknown model: `estimate` even when the caller is silent);
+  other rows keep the pre-S6 INSERT, an AA-729 relabelled INSERT is never replaced, and before 312 the write falls
+  back to the old statement. `llm_call_daily` gains the cache sums and `estimate_calls` (rollup switches to the S6
+  statement once both tables have the columns). Every call site that logs `model=resp.model_used` also passes
+  `**call_log.billed_fields(resp)` (cache split, pricing_mode, vendor `connection_key`; AST guard
+  `tests/unit/test_aa1002_s6_billed_fields.py`); the judge paths carry the same keys (`brand_fit.RUN_BILLING_KEYS`,
+  T10 `invoke_judge`). A vendor-API row stores its connection key as `account` (`openai-direct`,
+  `anthropic-direct`; `LLMResponse.connection_key`, never `satellite_account`, which the pipeline copies to
+  `generated_content` under an AWS-account CHECK); the admin names it by vendor ("OpenAI API",
+  `accounts.VENDOR_CONNECTION_LABELS` = `frontend/lib/awsAccounts.ts`). **Prompt caching on Converse**: a Claude
+  profile (`anthropic.` in the wire id) whose system prompt reaches the model's minimum cacheable length (512 tokens
+  on the 5.x models, 1024 Sonnet 4.6 / 5, 4096 Haiku 4.5; chars / 4) ends its system list with
+  `{"cachePoint": {"type": "default"}}`, so tools + system are cached and the user message is not; Luna / OpenAI on
+  Bedrock never get one; a ValidationException naming the cache point is retried once without it and remembered;
+  ECS env `LLM_CONVERSE_CACHE_POINT=off` restores the pre-S6 body.
 - **Structured output (`LLMRequest.json_schema`) per path**: Converse = one tool whose input is the schema, reply
   conformed (`_checked_json`, AA-659/714); OpenAI = strict `response_format`. The legacy `haiku` / `sonnet` keys
   (Anthropic Messages API, `invoke_claude`) have neither: since S251 (AA-835) the gateway appends a "one JSON object

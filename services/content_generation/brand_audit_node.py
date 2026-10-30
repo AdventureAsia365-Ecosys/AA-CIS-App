@@ -7,7 +7,7 @@ import structlog
 from services.content_generation.stages import stage_for
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
-from shared.llm_client.call_log import record_call_sync, record_unusable_sync
+from shared.llm_client.call_log import billed_fields, record_call_sync, record_unusable_sync
 from services.content_generation.brand_fit import itinerary_digest
 from .brand_standards import AA_BRAND_IDENTITY_PROMPT, AA_COWORK_STRUCTURE_PROMPT
 
@@ -695,7 +695,7 @@ Return JSON only per schema."""
             tokens_in=in_tok, tokens_out=out_tok, cost_usd=cost,
             quality_signal={"status": result["status"], "failure_code_count": len(all_codes)},
             stop_reason=stop_reason, account=resp.satellite_account,
-            fallback_used=resp.fallback_used, provider=resp.provider,
+            fallback_used=resp.fallback_used, provider=resp.provider, **billed_fields(resp),
         )
         logged = True
         out = {

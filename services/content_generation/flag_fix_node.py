@@ -16,7 +16,7 @@ from shared.secrets import get_database_url
 
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
-from shared.llm_client.call_log import record_call_sync, record_unusable_sync
+from shared.llm_client.call_log import billed_fields, record_call_sync, record_unusable_sync
 from .seo_meta_utils import (best_meta_candidate, meta_in_band, meta_complete_sentence,
                              meta_has_forbidden, fit_seo_meta_final, fit_seo_title,
                              SEO_META_FORBIDDEN, SEO_META_MIN, SEO_META_MAX, SEO_TITLE_MAX)
@@ -303,7 +303,7 @@ def _rerepair_meta(post: str, tour: dict, content: dict, model_tier: str, intent
                                 "attempt": attempt},
                 stop_reason=getattr(resp, "stop_reason", None),
                 account=getattr(resp, "satellite_account", None),
-                fallback_used=getattr(resp, "fallback_used", None),
+                fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
             )
             logged = True
             if landed:
@@ -418,7 +418,7 @@ def _repair_still_compressed_days(state: dict, itinerary_text: str, nudge_budget
             quality_signal={"landed_in_clamp": in_clamp, "ratio_after_nudge": round(new_ratio, 3)},
             stop_reason=getattr(resp, "stop_reason", None),
             account=getattr(resp, "satellite_account", None),
-            fallback_used=getattr(resp, "fallback_used", None),
+            fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
         )
         if in_clamp:
             days[day_num] = {"title": new_title, "body": new_body}
@@ -668,7 +668,7 @@ Keep all other fields unchanged."""
             quality_signal={"fields_fixed": len(fix_keys), "fields_requested": sorted(fix_keys)},
             stop_reason=getattr(resp, "stop_reason", None),
             account=getattr(resp, "satellite_account", None),
-            fallback_used=getattr(resp, "fallback_used", None),
+            fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
         )
         logged = True
 

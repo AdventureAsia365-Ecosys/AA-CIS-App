@@ -162,7 +162,7 @@ def draft_content(entity_type: str, facts: dict, *, client: Optional[Any] = None
     """One LLM draft (sync: run it in a thread). Returns (draft, usage); usage = model, tokens, cost_usd.
     Logs one shared.llm_call_log row per billed reply; raises DraftUnusable (also when the gateway itself refused every
     reply of the route as unusable) or the gateway's error (an outage: the job may retry)."""
-    from shared.llm_client.call_log import record_call_sync, record_unusable_sync
+    from shared.llm_client.call_log import billed_fields, record_call_sync, record_unusable_sync
     from shared.llm_client.client import LLMClient, UnusableReply
     from shared.llm_client.models import LLMRequest
 
@@ -198,7 +198,7 @@ def draft_content(entity_type: str, facts: dict, *, client: Optional[Any] = None
                         "highlights": len(draft["highlights"]), "good_to_know": len(draft["good_to_know"])},
         stop_reason=getattr(resp, "stop_reason", None),
         account=getattr(resp, "satellite_account", None),
-        fallback_used=getattr(resp, "fallback_used", None),
+        fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
     )
     usage = {"model": resp.model_used, "tokens_in": getattr(resp, "input_tokens", None),
              "tokens_out": getattr(resp, "output_tokens", None), "cost_usd": float(resp.cost_usd or 0.0)}

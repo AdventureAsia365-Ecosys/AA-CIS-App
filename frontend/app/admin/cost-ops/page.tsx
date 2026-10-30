@@ -103,17 +103,21 @@ interface CallRow {  // AA-622 fallback drill-down — GET /admin/llm-usage/call
 const ROLE_COLOR: Record<string, "gray" | "gold" | "green"> = { writer: "gold", judge: "green", validate: "gray" };
 // AA-998: one LLM account. "retired" groups the older llm_call_log rows of the former fallback account (history
 // only, shown without an ID). AWS accounts are named by their account ID (lib/awsAccounts.ts), never by the key.
-const ACCOUNTS = [LLM_ACCOUNT, MAIN_ACCOUNT, "openai", "typesafe", RETIRED_ACCOUNT, "unknown"] as const;
+const ACCOUNTS = [LLM_ACCOUNT, MAIN_ACCOUNT, "openai", "anthropic", "typesafe", RETIRED_ACCOUNT, "unknown"] as const;
 const ACCOUNT_COLOR: Record<string, string> = {
-  [LLM_ACCOUNT]: A.slate, [MAIN_ACCOUNT]: A.green, openai: A.ink3, typesafe: A.accent, [RETIRED_ACCOUNT]: A.gold,
-  unknown: A.muted,
+  [LLM_ACCOUNT]: A.slate, [MAIN_ACCOUNT]: A.green, openai: A.ink3, anthropic: A.ink3, typesafe: A.accent,
+  [RETIRED_ACCOUNT]: A.gold, unknown: A.muted,
 };
 // Buckets that are not an AWS account (message keys of messages.ts COST).
 const OTHER_ACCOUNT_META: Record<
   string,
-  { label: "acctOpenaiLong" | "acctJevLong" | "acctLegacyLong"; short: "acctOpenai" | "acctJev" | "acctLegacy" }
+  {
+    label: "acctOpenaiLong" | "acctAnthropicLong" | "acctJevLong" | "acctLegacyLong";
+    short: "acctOpenai" | "acctAnthropic" | "acctJev" | "acctLegacy";
+  }
 > = {
   openai:  { label: "acctOpenaiLong", short: "acctOpenai" },
+  anthropic: { label: "acctAnthropicLong", short: "acctAnthropic" },
   // AA-660 — Jev decisions (shared/llm_client/decide.py); details per stage in /admin/decisions.
   typesafe: { label: "acctJevLong", short: "acctJev" },
   unknown: { label: "acctLegacyLong", short: "acctLegacy" },
@@ -148,10 +152,13 @@ const ceName = (r: { account_id: string; account_key?: string | null }, name: (k
 // AA-617 added the column; both COALESCE to "unknown" in the backend. To keep OpenAI distinct from
 // truly-unknown legacy rows, we key the account dimension off `provider` when account is unknown:
 // provider="openai" -> "openai" bucket, otherwise "unknown". Real Bedrock rows carry a live account key; any other
-// logged account is the AA-998 retired fallback account's history -> "retired".
+// logged account is the AA-998 retired fallback account's history -> "retired". Gateway S6: a vendor-API row now
+// stores its connection key ("openai-direct", "anthropic-direct") as the account; it is keyed by its provider too,
+// never "retired".
 function acctKey(b: { account: string; provider: string }): string {
+  if (b.provider === "openai") return "openai";
+  if (b.provider === "anthropic") return "anthropic";
   if (b.account === "unknown") {
-    if (b.provider === "openai") return "openai";
     if (b.provider === "typesafe") return "typesafe";   // AA-660 — Jev
     return "unknown";
   }

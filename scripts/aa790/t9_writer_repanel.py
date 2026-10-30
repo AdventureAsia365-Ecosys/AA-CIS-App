@@ -207,7 +207,7 @@ def call_writer(row: dict, args: dict, model_tier: Optional[str], run_id: str, a
     quality signal, so the cost per arm comes from ``quality_signal->>'arm'``."""
     from services.acp_content_writing import generate
     from services.acp_content_writing.prompts import SYSTEM_PROMPT, build_user_prompt
-    from shared.llm_client.call_log import record_call_sync, record_unusable_sync
+    from shared.llm_client.call_log import billed_fields, record_call_sync, record_unusable_sync
     from shared.llm_client.client import LLMClient
     from shared.llm_client.models import LLMRequest
 
@@ -236,7 +236,7 @@ def call_writer(row: dict, args: dict, model_tier: Optional[str], run_id: str, a
         tokens_out=getattr(resp, "output_tokens", None), cost_usd=resp.cost_usd, quality_signal=signal,
         stop_reason=getattr(resp, "stop_reason", None), account=getattr(resp, "satellite_account", None),
         fallback_used=getattr(resp, "fallback_used", None),
-        provider=resp.provider if isinstance(getattr(resp, "provider", None), str) else None)
+        provider=resp.provider if isinstance(getattr(resp, "provider", None), str) else None, **billed_fields(resp))
     return {"text": body, "cost_usd": float(resp.cost_usd or 0.0), "model": resp.model_used,
             "stop_reason": getattr(resp, "stop_reason", None)}
 

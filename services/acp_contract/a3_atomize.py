@@ -48,7 +48,7 @@ from services.content_generation.itinerary_utils import parse_canonical_itinerar
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
 from shared.llm_client.role_config import get_stage_config
-from shared.llm_client.call_log import record_call_with_pool, record_unusable
+from shared.llm_client.call_log import billed_fields, record_call_with_pool, record_unusable
 from shared.llm_client.decide import decide
 
 logger = structlog.get_logger()
@@ -359,7 +359,7 @@ async def _atomize_whole_tour_legacy(
         quality_signal={"atoms_extracted": inserted, "is_empty_marker": inserted == 0, "attempt": attempt},
         stop_reason=llm_result.stop_reason,
         account=llm_result.satellite_account, fallback_used=llm_result.fallback_used,
-        provider=llm_result.provider,
+        provider=llm_result.provider, **billed_fields(llm_result),
     )
     return {"status": "success", "atom_count": inserted, "replaced_atoms_deleted": replaced}
 
@@ -579,7 +579,7 @@ async def _atomize_per_day(
                              "is_empty_marker": not atoms, "attempt": attempt},
             stop_reason=llm_result.stop_reason,
             account=llm_result.satellite_account, fallback_used=llm_result.fallback_used,
-            provider=llm_result.provider,
+            provider=llm_result.provider, **billed_fields(llm_result),
         )
 
     result = {

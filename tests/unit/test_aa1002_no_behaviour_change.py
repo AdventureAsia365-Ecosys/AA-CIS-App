@@ -36,6 +36,7 @@ REGISTRY_READERS = {
     "bedrock_satellite.py": "role / ExternalId / region of an assume-role connection",
     "catalog.py": "serving_accounts() = the enabled Bedrock connections",
     "deployments.py": "reads its own table through connections.run_sync",
+    "pricing.py": "S6: the price overrides of the deployment a call ran on (deployments.deployments_for_sync)",
     "breaker.py": "S4: its own table (llm_provider_health) through connections.run_sync / _connect; the limits and the "
                   "credential error type of a connection it is handed",
 }

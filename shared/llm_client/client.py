@@ -12,7 +12,8 @@ import openai
 import structlog
 from .models import ANTHROPIC_API_LABEL_PREFIX, LLMRequest, LLMResponse
 from .prompt_cache import build_cached_system_prompt, build_cached_messages
-from .pricing import BEDROCK_SONNET, BEDROCK_HAIKU, COST_TABLE, calc_cost
+from .pricing import BEDROCK_SONNET, BEDROCK_HAIKU, COST_TABLE, Usage, calc_cost
+from . import pricing
 from .role_config import get_stage_config_sync
 from .bedrock_satellite import DEFAULT_SATELLITE_ACCOUNT
 from .catalog import LEGACY_KEYS, CatalogModel, get_model_sync
@@ -51,6 +52,10 @@ LEGACY_ACC2_NATIVE_ENV = "LLM_LEGACY_ACC2_NATIVE"
 #     after a live check of one legacy stage. Off, or no alias row / no registry, = _legacy_chain.
 DEPLOYMENT_ROUTING_ENV = "LLM_DEPLOYMENT_ROUTING"
 LEGACY_ALIASES_ENV = "LLM_LEGACY_ALIASES"
+#   LLM_CONVERSE_CACHE_POINT (default ON, AA-1002 S6): a Converse request to a Claude model whose system prompt
+#     reaches the model's minimum cacheable length ends its system list with a cachePoint (_converse_cache_point);
+#     "off" sends the pre-S6 request body byte for byte.
+CONVERSE_CACHE_POINT_ENV = "LLM_CONVERSE_CACHE_POINT"
 _ON = ("1", "true", "on", "yes")
 _OFF = ("0", "false", "off", "no")
 
@@ -87,6 +92,11 @@ def deployment_routing_enabled() -> bool:
     return _switch(DEPLOYMENT_ROUTING_ENV, True)
 
 
+def converse_cache_point_enabled() -> bool:
+    """AA-1002 (S6): Converse sends a cachePoint after a long Claude system prompt (default on; read per call)."""
+    return _switch(CONVERSE_CACHE_POINT_ENV, True)
+
+
 def legacy_aliases_enabled() -> bool:
     """AA-1002 (S3): legacy haiku / sonnet keys run through their aliases (default off; LLM_LEGACY_ALIASES=on)."""
     return _switch(LEGACY_ALIASES_ENV, False)
@@ -119,6 +129,26 @@ def openai_platform_allowed(model_key: str) -> bool:
     means not allowed. AA-1002 (S5): the stage's data scope is a second gate (``openai_scope_allowed``)."""
     m = get_model_sync(model_key)
     return m is not None and m.provider == "openai" and m.enabled
+
+
+def _int_attr(obj, name: str) -> int:
+    value = getattr(obj, name, 0)
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _str_attr(obj, name: str) -> Optional[str]:
+    value = getattr(obj, name, None)
+    return value if isinstance(value, str) else None
+
+
+def _openai_cached_tokens(usage, prompt_tokens) -> int:
+    """AA-1002 (S6): OpenAI's cached prompt tokens (usage.prompt_tokens_details.cached_tokens), 0 when absent or not an
+    int (an older SDK, a test double), never more than the prompt."""
+    details = getattr(usage, "prompt_tokens_details", None)
+    value = details.get("cached_tokens") if isinstance(details, dict) else getattr(details, "cached_tokens", None)
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0 or not isinstance(prompt_tokens, int):
+        return 0
+    return min(value, prompt_tokens)
 
 
 def openai_scope_allowed(allowed_scopes: Optional[tuple]) -> bool:
@@ -222,10 +252,19 @@ class _AliasSteps(list):
 
 
 def _billed_usage(model_used: str, account: Optional[str], usage_totals: dict, cost: float,
-                  stop_reason: Optional[str], provider_requests: int) -> dict:
-    return {"model": model_used, "account": account, "tokens_in": usage_totals.get("tokens_in"),
-            "tokens_out": usage_totals.get("tokens_out"), "cost_usd": cost, "stop_reason": stop_reason,
-            "provider_requests": provider_requests}
+                  stop_reason: Optional[str], provider_requests: int, *, cache_read: int = 0, cache_write: int = 0,
+                  pricing_mode: Optional[str] = None) -> dict:
+    """One billed attempt of a BilledUnusableReply. `account` is the AWS account key on Bedrock, the vendor
+    connection key on a vendor API (AA-1002 S6: OPENAI_CONNECTION_KEY / the Anthropic connection); the cache split
+    and pricing_mode reach llm_call_log through call_log.billed_unusable_rows."""
+    rec = {"model": model_used, "account": account, "tokens_in": usage_totals.get("tokens_in"),
+           "tokens_out": usage_totals.get("tokens_out"), "cost_usd": cost, "stop_reason": stop_reason,
+           "provider_requests": provider_requests}
+    if cache_read or cache_write:
+        rec.update(cache_read_tokens=cache_read, cache_write_tokens=cache_write)
+    if pricing_mode:
+        rec["pricing_mode"] = pricing_mode
+    return rec
 
 
 def _add_converse_usage(total: dict, usage: dict) -> None:
@@ -319,7 +358,77 @@ def _use_auto_tool_choice(kwargs: dict, schema: dict) -> None:
     """Switch a Converse request from a forced tool to `auto` + an explicit instruction. The original
     system block stays first and unchanged (prompt-cache prefix); the instruction is a second block."""
     kwargs["toolConfig"] = {**kwargs["toolConfig"], "toolChoice": {"auto": {}}}
-    kwargs["system"] = [*kwargs["system"], {"text": _auto_tool_instruction(schema)}]
+    # AA-1002 (S6): before a trailing cachePoint, so the instruction is part of the cached prefix.
+    system = list(kwargs["system"])
+    at = len(system) - 1 if system and "cachePoint" in system[-1] else len(system)
+    kwargs["system"] = [*system[:at], {"text": _auto_tool_instruction(schema)}, *system[at:]]
+
+
+# AA-1002 (S6) — prompt caching on Converse. Bedrock caches a Claude prompt prefix only up to an explicit cachePoint
+# block (the Luna / OpenAI-on-Bedrock models cache on their own and take no cachePoint). The point goes at the END of
+# the system list, so the cached prefix is the tool definitions + the whole system prompt (render order tools ->
+# system -> messages): the part that repeats across the tours of a stage; the user message (the tour) stays uncached.
+# A prefix below the model's minimum is simply not cached (no error, no charge); the threshold only keeps the block
+# off requests that cannot cache. Minimums (claude-api skill, prompt caching, 30/10/2026; same on every platform),
+# matched against the profile id in order (first hit wins); unknown Claude family = the highest minimum.
+_CACHE_POINT_MIN_TOKENS = (
+    (("claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-opus-5", "claude-fable-5",
+      "claude-mythos-5"), 512),
+    (("claude-opus-4-8", "claude-sonnet-5", "claude-sonnet-4-6", "claude-sonnet-4-5", "claude-opus-4-1",
+      "claude-opus-4-2025", "claude-sonnet-4-2025"), 1024),
+    (("claude-opus-4-7", "claude-3-5-haiku", "claude-haiku-3-5"), 2048),
+    (("claude-opus-4-6", "claude-opus-4-5", "claude-haiku-4-5"), 4096),
+)
+_CACHE_POINT_DEFAULT_MIN_TOKENS = 4096
+# A rough token estimate for the threshold (English prose ~4 characters per token). Erring either way is harmless:
+# too short a prefix is not cached and not charged.
+_CHARS_PER_TOKEN = 4
+CACHE_POINT_BLOCK = {"cachePoint": {"type": "default"}}
+_CACHE_POINT_REJECTED: set[str] = set()
+
+
+def _cache_point_min_tokens(profile_id: str) -> int:
+    pid = (profile_id or "").lower()
+    for markers, minimum in _CACHE_POINT_MIN_TOKENS:
+        if any(m in pid for m in markers):
+            return minimum
+    return _CACHE_POINT_DEFAULT_MIN_TOKENS
+
+
+def _converse_cache_point(model, profile_id: str, system_prompt: str) -> bool:
+    """True when a Converse request to ``profile_id`` should end its system list with a cachePoint: a Claude model
+    on Bedrock (an ``anthropic.`` inference profile), the switch on, the model not seen rejecting it, and a system
+    prompt at or above the model's minimum cacheable length."""
+    pid = (profile_id or "").lower()
+    if "anthropic." not in pid or not converse_cache_point_enabled() or model.model_key in _CACHE_POINT_REJECTED:
+        return False
+    return len(system_prompt or "") // _CHARS_PER_TOKEN >= _cache_point_min_tokens(pid)
+
+
+def _cache_point_rejected(exc: BaseException) -> bool:
+    """Bedrock's 400 for a cachePoint the model / profile does not take (a ValidationException naming caching)."""
+    text = f"{type(exc).__name__} {exc}".lower()
+    return "validationexception" in text and ("cachepoint" in text or "cache point" in text
+                                              or "prompt caching" in text or "cache_control" in text)
+
+
+def _strip_cache_point(kwargs: dict) -> None:
+    kwargs["system"] = [b for b in kwargs.get("system") or [] if "cachePoint" not in b]
+
+
+def _converse_call(call, kwargs: dict, model_key: str):
+    """One Converse request. AA-1002 (S6): when Bedrock rejects the cachePoint we sent, retry ONCE without it (a
+    ValidationException is not billed), drop it from ``kwargs`` for any follow-up call and remember the model."""
+    try:
+        return call(**kwargs)
+    except Exception as e:  # noqa: BLE001 — botocore ClientError; anything else is re-raised below
+        if not any("cachePoint" in b for b in kwargs.get("system") or []) or not _cache_point_rejected(e):
+            raise
+        logger.warning("converse_cache_point_rejected", model=model_key, error=str(e)[:200],
+                       action="retry_without_cache_point")
+        _CACHE_POINT_REJECTED.add(model_key)
+        _strip_cache_point(kwargs)
+        return call(**kwargs)
 
 
 def _converse_with_param_downgrades(call, kwargs: dict, model_key: str, schema: Optional[dict]):
@@ -353,7 +462,7 @@ def _converse_dropping_rejected_temperature(call, kwargs: dict, model_key: str):
     call. A ValidationException is not billed, so the retry costs nothing extra. The real fix is the
     catalog flag (migration 227 for sonnet-5); this keeps a stale flag from failing every call."""
     try:
-        return call(**kwargs)
+        return _converse_call(call, kwargs, model_key)
     except Exception as e:  # noqa: BLE001 — botocore ClientError; anything else is re-raised below
         inference = kwargs.get("inferenceConfig") or {}
         if "temperature" not in inference or not _temperature_rejected(e):
@@ -361,7 +470,7 @@ def _converse_dropping_rejected_temperature(call, kwargs: dict, model_key: str):
         logger.warning("converse_temperature_rejected", model=model_key, error=str(e)[:200],
                        action="retry_without_temperature; set supports_temperature=false in the catalog")
         kwargs["inferenceConfig"] = {k: v for k, v in inference.items() if k != "temperature"}
-        return call(**kwargs)
+        return _converse_call(call, kwargs, model_key)
 
 
 def _billed_usage_of(exc: BaseException) -> list:
@@ -1090,6 +1199,10 @@ class LLMClient:
             # ask them with `auto` and an explicit instruction instead (`_forced_tool_choice_ok`).
             if not _forced_tool_choice_ok(model, profile_id):
                 _use_auto_tool_choice(kwargs, schema)
+        # AA-1002 (S6): cache the tools + system prefix of a long Claude system prompt (_converse_cache_point). Last
+        # in the list, after the auto-tool instruction, so the whole stable prefix is cached.
+        if _converse_cache_point(model, profile_id, request.system_prompt):
+            kwargs["system"] = [*kwargs["system"], dict(CACHE_POINT_BLOCK)]
         # AA-803: no `thinking` / `budget_tokens` field is ever sent (no additionalModelRequestFields), so
         # adaptive-thinking-only models (Haiku 5.5, Sonnet 5.5, Opus 5.5) run their default, and the
         # last message is always the user's (no assistant prefill, which those models reject).
@@ -1113,7 +1226,8 @@ class LLMClient:
             exc = _billed_unusable(message, [_billed_usage(
                 label, account,
                 {"tokens_in": t.get("in", 0) + t.get("cache_read", 0) + t.get("cache_write", 0),
-                 "tokens_out": t.get("out", 0)}, cost_, stop_reason, provider_requests)])
+                 "tokens_out": t.get("out", 0)}, cost_, stop_reason, provider_requests,
+                cache_read=t.get("cache_read", 0), cache_write=t.get("cache_write", 0))])
             exc.__cause__ = cause
             return exc
 
@@ -1185,8 +1299,11 @@ class LLMClient:
         cache_write = billed_tok.get("cache_write", 0)
         # AA-927: after a schema retry these are the sums of BOTH billed requests (the first reply was
         # billed too) — before AA-927 only the second request was priced.
-        cost = self._calc_cost(model.model_key, in_tok, out_tok,
-                               cache_read=cache_read, cache_write=cache_write)
+        # AA-1002 (S6): priced on the deployment it ran on (its price overrides), the basis kept on the response.
+        priced = self._quote(model.model_key, Usage(input_tokens=in_tok, output_tokens=out_tok,
+                                                    cache_read_tokens=cache_read, cache_write_tokens=cache_write),
+                             account)
+        cost = priced.cost_usd
         # S234 (AA-772/PR0): Converse's `inputTokens` is only the UNCACHED part of the prompt.
         # Bedrock caches long prompt prefixes of the Luna models on its own (no cachePoint sent),
         # so llm_call_log showed tokens_in of 2-118 for 2-5k-character prompts (t10_judge,
@@ -1207,7 +1324,7 @@ class LLMClient:
             input_tokens=prompt_tok, output_tokens=out_tok, cost_usd=cost,
             fallback_used=False, satellite_account=None if native else account,
             cache_read_tokens=cache_read, cache_write_tokens=cache_write,
-            stop_reason=stop_reason, provider_requests=provider_requests,
+            stop_reason=stop_reason, provider_requests=provider_requests, pricing_mode=priced.pricing_mode,
         )
 
     def _call_anthropic_messages(self, request: LLMRequest, model: CatalogModel,
@@ -1239,7 +1356,12 @@ class LLMClient:
         in_tok, out_tok = result.input_tokens, result.output_tokens
         cache_read, cache_write = result.cache_read_tokens, result.cache_write_tokens
         prompt_tok = in_tok + cache_read + cache_write
-        cost = self._calc_cost(model.model_key, in_tok, out_tok, cache_read=cache_read, cache_write=cache_write)
+        # AA-1002 (S6): 1-hour writes at 2x, the US-only inference premium, the deployment's price overrides.
+        priced = self._quote(model.model_key, Usage(
+            input_tokens=in_tok, output_tokens=out_tok, cache_read_tokens=cache_read, cache_write_tokens=cache_write,
+            cache_write_1h_tokens=_int_attr(result, "cache_write_1h_tokens"),
+            inference_geo=_str_attr(result, "inference_geo")), conn.connection_key, deployment=dep)
+        cost = priced.cost_usd
         stop_reason = result.stop_reason
         billed = bool(in_tok or out_tok or cache_read or cache_write)
 
@@ -1247,7 +1369,8 @@ class LLMClient:
             if not billed:
                 return RuntimeError(message)
             return _billed_unusable(message, [_billed_usage(
-                label, None, {"tokens_in": prompt_tok, "tokens_out": out_tok}, cost, stop_reason, 1)])
+                label, conn.connection_key, {"tokens_in": prompt_tok, "tokens_out": out_tok}, cost, stop_reason, 1,
+                cache_read=cache_read, cache_write=cache_write, pricing_mode=priced.pricing_mode)])
 
         content = result.text
         if stop_reason == "refusal":
@@ -1273,7 +1396,8 @@ class LLMClient:
             content=content, model_used=label, provider="anthropic",
             input_tokens=prompt_tok, output_tokens=out_tok, cost_usd=cost, fallback_used=False,
             cache_read_tokens=cache_read, cache_write_tokens=cache_write, stop_reason=stop_reason,
-            provider_model=result.provider_model,
+            provider_model=result.provider_model, pricing_mode=priced.pricing_mode,
+            cache_write_1h_tokens=_int_attr(result, "cache_write_1h_tokens"), connection_key=conn.connection_key,
         )
 
     def _call_openai(self, request: LLMRequest, model: str,
@@ -1328,7 +1452,12 @@ class LLMClient:
             _cb(content)
         in_tok  = resp.usage.prompt_tokens
         out_tok = resp.usage.completion_tokens
-        cost    = self._calc_cost(model_label, in_tok, out_tok)
+        # AA-1002 (S6): `prompt_tokens` includes the cached prefix (usage.prompt_tokens_details.cached_tokens), which
+        # OpenAI bills at the cache-read rate; before S6 every prompt token was priced at the input rate.
+        cached = _openai_cached_tokens(resp.usage, in_tok)
+        priced = self._quote(model_label, Usage(input_tokens=in_tok - cached, output_tokens=out_tok,
+                                                cache_read_tokens=cached), OPENAI_CONNECTION_KEY)
+        cost    = priced.cost_usd
         # AA-493: OpenAI's field is "finish_reason" ("stop" | "length" | "content_filter" | ...)
         # — different name from Anthropic's "stop_reason", same purpose. Stored under the same
         # LLMResponse.stop_reason field so callers/the DB log don't need a provider branch.
@@ -1336,8 +1465,10 @@ class LLMClient:
 
         def billed_failure(message: str) -> BilledUnusableReply:
             # AA-927: the request was billed even though the reply is unusable.
+            # AA-1002 (S6): the row's account is the connection (no AWS account on the OpenAI API).
             return _billed_unusable(message, [_billed_usage(
-                model_label, None, {"tokens_in": in_tok, "tokens_out": out_tok}, cost, finish_reason, 1)])
+                model_label, OPENAI_CONNECTION_KEY, {"tokens_in": in_tok, "tokens_out": out_tok}, cost,
+                finish_reason, 1, cache_read=cached, pricing_mode=priced.pricing_mode)])
 
         if catalog_model is not None and not content:
             # A reasoning model can spend the whole token budget thinking and return nothing.
@@ -1360,7 +1491,8 @@ class LLMClient:
         return LLMResponse(
             content=content, model_used=model_label, provider="openai",
             input_tokens=in_tok, output_tokens=out_tok, cost_usd=cost,
-            stop_reason=finish_reason,
+            stop_reason=finish_reason, cache_read_tokens=cached, pricing_mode=priced.pricing_mode,
+            connection_key=OPENAI_CONNECTION_KEY,
         )
 
     def _calc_cost(self, model: str, in_tok: int, out_tok: int,
@@ -1368,3 +1500,11 @@ class LLMClient:
         # AA-635 — delegates to pricing.calc_cost() (was a second copy of the same formula) so
         # cache-token pricing and any future rate fix land in one place for both mechanisms.
         return calc_cost(model, in_tok, out_tok, cache_read=cache_read, cache_write=cache_write)
+
+    def _quote(self, model: str, usage: Usage, connection_key: Optional[str] = None,
+               deployment=None) -> "pricing.Quote":
+        """AA-1002 (S6): pricing.quote on the deployment of ``model`` on ``connection_key`` (looked up when not
+        given; None = catalog / code-table rates)."""
+        if deployment is None:
+            deployment = pricing.deployment_for(model, connection_key)
+        return pricing.quote(model, usage, deployment)

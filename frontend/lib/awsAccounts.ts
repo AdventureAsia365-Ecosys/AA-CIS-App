@@ -3,8 +3,9 @@
 // The API keys accounts internally ("acc2" = main infrastructure, "acc3" = the LLM account): llm_call_log.account,
 // llm_role_config.account_route and the cost rows carry these keys. No page prints a key: it shows the 12-digit AWS
 // account ID instead, from GET /api/admin/aws-accounts (backend shared/aws_client/accounts.py). This repo is public,
-// so no ID is written here. Any other stored account (the history of the retired fallback account) is "Retired
-// account", with no ID.
+// so no ID is written here. A vendor-API call stores its connection key as the account (gateway S6: "openai-direct",
+// "anthropic-direct"); pages name it by its vendor ("OpenAI API"). Any other stored account (the history of the
+// retired fallback account) is "Retired account", with no ID.
 //
 // This is the only frontend file that may spell the keys: the guard tests/unit/test_aa998_no_account_keys_in_ui.py
 // fails on any other occurrence. Pages use the constants and accountName() below.
@@ -16,6 +17,12 @@ export const RETIRED_ACCOUNT = "retired";
 export const LIVE_ACCOUNTS: readonly string[] = [LLM_ACCOUNT, MAIN_ACCOUNT];
 
 export const RETIRED_ACCOUNT_LABEL = "Retired account";
+/** Vendor-API connections whose key a call-log row stores as its account (no AWS account behind them). Product
+ *  names, the same in every UI language; the backend map is shared/aws_client/accounts.py VENDOR_CONNECTION_LABELS. */
+export const VENDOR_CONNECTION_LABELS: Readonly<Record<string, string>> = {
+  "openai-direct": "OpenAI API",
+  "anthropic-direct": "Anthropic API",
+};
 export const UNRESOLVED_ACCOUNT_LABEL = "AWS account";
 
 export interface AwsAccountInfo {
@@ -54,11 +61,13 @@ function roleOf(key: string, text: AccountText): string {
 export const isLiveAccount = (key: string | null | undefined): boolean => !!key && LIVE_ACCOUNTS.includes(key);
 
 /** What a page shows for an account key: the account ID of a live account ("AWS account" until the directory has
- *  loaded or when the API could not read the ID), "Retired account" for any other stored key, "" for no account. */
+ *  loaded or when the API could not read the ID), the vendor of a vendor-API connection, "Retired account" for any
+ *  other stored key, "" for no account. */
 export function accountName(
   key: string | null | undefined, dir?: AwsAccounts | null, text: AccountText = ACCOUNT_TEXT,
 ): string {
   if (!key || key === "unknown" || key === "none") return "";
+  if (Object.prototype.hasOwnProperty.call(VENDOR_CONNECTION_LABELS, key)) return VENDOR_CONNECTION_LABELS[key];
   if (!isLiveAccount(key)) return text.retired;
   return dir?.[key]?.account_id ?? text.unresolved;
 }

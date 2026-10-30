@@ -39,6 +39,73 @@ _INSERT_SQL = """
             $15::uuid)
 """
 
+# AA-1002 (S6, migration 312): the same row plus the cache split and how cost_usd was priced. Used only for a row that
+# has something to say there (cache tokens, a caller-stated pricing_mode, or a model no price source knows: flagged
+# 'estimate'); every other row keeps _INSERT_SQL, byte for byte. Before 312 is applied the columns are missing: the
+# write falls back to _INSERT_SQL (the row is kept, its S6 fields dropped) and the S6 statement is not tried again for
+# _S6_RETRY_SECONDS.
+_INSERT_S6_SQL = """
+    INSERT INTO shared.llm_call_log
+        (tenant_id, stage, role, model, tokens_in, tokens_out, cost_usd, quality_signal,
+         content_piece_id, angle_gate_request_id, stop_reason, account, fallback_used, provider,
+         job_id, cache_read_tokens, cache_write_tokens, pricing_mode)
+    VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::uuid, $10::uuid, $11, $12, $13, $14,
+            $15::uuid, $16, $17, $18)
+"""
+_S6_RETRY_SECONDS = 300.0
+_s6_missing_at = 0.0
+# The statement as shipped. The AA-729 eval harness replaces _INSERT_SQL at run time (stage / tenant relabel,
+# scripts/aa729/evalpatch.py): a replaced statement is always used as is, never the S6 one, so an eval row can never
+# escape the relabel through the S6 path.
+_SHIPPED_INSERT_SQL = _INSERT_SQL
+
+
+def _s6_extras(model: str, cache_read_tokens, cache_write_tokens, pricing_mode) -> Optional[tuple]:
+    """(cache_read_tokens, cache_write_tokens, pricing_mode) for _INSERT_S6_SQL, or None when the row has nothing
+    for those columns. A model the pricing cannot price is flagged even when the caller said nothing. Never raises."""
+    mode = pricing_mode if isinstance(pricing_mode, str) else None
+    if mode is None:
+        try:
+            from . import pricing
+            if pricing.pricing_mode_for(model) == "estimate":
+                mode = "estimate"
+        except Exception:  # noqa: BLE001 — a log write never fails on pricing
+            mode = None
+    cr, cw = (v if isinstance(v, int) and not isinstance(v, bool) else None
+              for v in (cache_read_tokens, cache_write_tokens))
+    if not (cr or cw or mode):
+        return None
+    return (cr, cw, mode)
+
+
+def _s6_ready() -> bool:
+    import time as _time
+    return not (_s6_missing_at and _time.monotonic() - _s6_missing_at < _S6_RETRY_SECONDS)
+
+
+async def _execute_rows(conn, insert_sql: str, base_rows: list[tuple], extras: list[Optional[tuple]], *,
+                        many: bool) -> None:
+    """INSERT the rows: _INSERT_S6_SQL when any row has S6 fields, the columns exist and ``insert_sql`` (the caller's
+    _INSERT_SQL, read at call time) is the shipped statement; else ``insert_sql``."""
+    global _s6_missing_at
+    if any(e is not None for e in extras) and insert_sql == _SHIPPED_INSERT_SQL and _s6_ready():
+        args = [(*b, *(e or (None, None, None))) for b, e in zip(base_rows, extras)]
+        try:
+            if many:
+                await conn.executemany(_INSERT_S6_SQL, args)
+            else:
+                await conn.execute(_INSERT_S6_SQL, *args[0])
+            return
+        except asyncpg.exceptions.UndefinedColumnError:
+            import time as _time
+            _s6_missing_at = _time.monotonic()
+            logger.warning("llm_call_log_s6_columns_missing", hint="migration 312 not applied: cache / pricing_mode "
+                                                                   "columns dropped from this row")
+    if many:
+        await conn.executemany(insert_sql, base_rows)
+    else:
+        await conn.execute(insert_sql, *base_rows[0])
+
 # AA-652 follow-up — the durable job (shared.job) whose handler is running, bound by the job
 # worker around each handler. Same propagation as stream_sink.py: asyncio tasks,
 # `asyncio.to_thread()` and LangGraph's `run_in_executor` all copy the context, so every
@@ -186,6 +253,35 @@ def _normalize_model_provider(model: str, provider: Optional[str]) -> tuple[str,
     return clean, derived
 
 
+def _row_account(account: Optional[str], connection_key: Optional[str]) -> Optional[str]:
+    """The `account` a row stores: the caller's (an AWS account key), else the vendor connection key (AA-1002 S6)."""
+    if account is not None:
+        return account
+    return connection_key if isinstance(connection_key, str) and connection_key else None
+
+
+def _int_or_none(value) -> Optional[int]:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def billed_fields(resp) -> dict:
+    """AA-1002 (S6): the billing facts of a gateway reply that a call site passes on to ``record_call*`` next to
+    ``model=resp.model_used``: the cache split of the prompt (``cache_read_tokens`` / ``cache_write_tokens``), how
+    ``cost_usd`` was priced (``pricing_mode``) and the vendor connection that answered (``connection_key``, stored
+    as the row's account when the caller passes none). Read defensively: a test double (MagicMock) or an older
+    response object gives None for anything that is not of the right type. Usage:
+    ``record_call_sync(stage=..., model=resp.model_used, ..., **billed_fields(resp))``. The guard
+    ``tests/unit/test_aa1002_s6_billed_fields.py`` fails on a site that logs ``model=<x>.model_used`` without it."""
+    mode = getattr(resp, "pricing_mode", None)
+    conn = getattr(resp, "connection_key", None)
+    return {
+        "cache_read_tokens": _int_or_none(getattr(resp, "cache_read_tokens", None)),
+        "cache_write_tokens": _int_or_none(getattr(resp, "cache_write_tokens", None)),
+        "pricing_mode": mode if isinstance(mode, str) else None,
+        "connection_key": conn if isinstance(conn, str) and conn else None,
+    }
+
+
 async def record_call(
     *, stage: str, role: str, model: str, tokens_in: Optional[int], tokens_out: Optional[int],
     cost_usd: Optional[float], quality_signal: dict, tenant_id: Optional[str] = None,
@@ -193,6 +289,8 @@ async def record_call(
     stop_reason: Optional[str] = None,
     account: Optional[str] = None, fallback_used: Optional[bool] = None,
     provider: Optional[str] = None,
+    cache_read_tokens: Optional[int] = None, cache_write_tokens: Optional[int] = None,
+    pricing_mode: Optional[str] = None, connection_key: Optional[str] = None,
 ) -> None:
     """Opens its own short-lived connection — the call sites this is used from (S1 graph nodes,
     N7 E2-E5, the T10 judge, T5 atomize) are scattered across sync and async code with no
@@ -209,19 +307,29 @@ async def record_call(
     `fallback_used` is LLMResponse.fallback_used;
     `provider` is derived from the model string when not passed. `model` is stored with the
     "satellite-" prefix stripped (see _normalize_model_provider). All optional — a caller that
-    hasn't been threaded through yet writes NULL, staying backward compatible field-by-field."""
+    hasn't been threaded through yet writes NULL, staying backward compatible field-by-field.
+
+    `cache_read_tokens` / `cache_write_tokens` / `pricing_mode` (AA-1002 S6, migration 312): the cache split of the
+    prompt and how `cost_usd` was priced (LLMResponse.pricing_mode); a model no price source knows is written with
+    pricing_mode 'estimate' even when the caller passes nothing (``_s6_extras``).
+
+    `connection_key` (AA-1002 S6): the vendor-API connection that answered (LLMResponse.connection_key:
+    'openai-direct', 'anthropic-direct'), written to `account` when the caller passes no account, so a vendor row
+    names its way in like a Bedrock row names its AWS account. Callers pass all four with ``**billed_fields(resp)``."""
+    account = _row_account(account, connection_key)
     clean_model, provider = _normalize_model_provider(model, provider)
     row_stage, row_tenant, row_signal, row_piece, row_request = _relabel(
         stage, tenant_id, quality_signal, content_piece_id, angle_gate_request_id)
+    extras = _s6_extras(model, cache_read_tokens, cache_write_tokens, pricing_mode)
     try:
         conn = await asyncpg.connect(get_database_url(), ssl="require")
         try:
-            await conn.execute(
-                _INSERT_SQL, row_tenant, row_stage, role, clean_model, tokens_in,
+            await _execute_rows(conn, _INSERT_SQL, [(
+                row_tenant, row_stage, role, clean_model, tokens_in,
                 tokens_out, cost_usd,
                 json.dumps(row_signal), row_piece, row_request, stop_reason,
                 account, fallback_used, provider, current_job_id(),
-            )
+            )], [extras], many=False)
         finally:
             await conn.close()
     except Exception as e:
@@ -235,6 +343,8 @@ async def record_call_with_pool(
     stop_reason: Optional[str] = None,
     account: Optional[str] = None, fallback_used: Optional[bool] = None,
     provider: Optional[str] = None,
+    cache_read_tokens: Optional[int] = None, cache_write_tokens: Optional[int] = None,
+    pricing_mode: Optional[str] = None, connection_key: Optional[str] = None,
 ) -> None:
     """Same as record_call() but reuses an already-open asyncpg.Pool (T5/T9's async orchestrators
     both have one in scope) instead of opening a fresh connection per call. See record_call() for
@@ -243,17 +353,19 @@ async def record_call_with_pool(
     AA-756: a write that fails on the shared pool is retried once on a fresh connection
     (record_call). The call was already billed — 347k Jev calls (30/09–09/10) went unlogged when
     a single shared connection rejected the write with "another operation is in progress"."""
+    account = _row_account(account, connection_key)
     clean_model, provider = _normalize_model_provider(model, provider)
     row_stage, row_tenant, row_signal, row_piece, row_request = _relabel(
         stage, tenant_id, quality_signal, content_piece_id, angle_gate_request_id)
+    extras = _s6_extras(model, cache_read_tokens, cache_write_tokens, pricing_mode)
     try:
         async with pool.acquire() as conn:
-            await conn.execute(
-                _INSERT_SQL, row_tenant, row_stage, role, clean_model, tokens_in,
+            await _execute_rows(conn, _INSERT_SQL, [(
+                row_tenant, row_stage, role, clean_model, tokens_in,
                 tokens_out, cost_usd,
                 json.dumps(row_signal), row_piece, row_request, stop_reason,
                 account, fallback_used, provider, current_job_id(),
-            )
+            )], [extras], many=False)
     except Exception as e:
         logger.warning("llm_call_log_pool_write_failed", stage=stage, role=role, error=str(e))
         await record_call(
@@ -261,6 +373,7 @@ async def record_call_with_pool(
             cost_usd=cost_usd, quality_signal=quality_signal, tenant_id=tenant_id,
             content_piece_id=content_piece_id, angle_gate_request_id=angle_gate_request_id,
             stop_reason=stop_reason, account=account, fallback_used=fallback_used, provider=provider,
+            cache_read_tokens=cache_read_tokens, cache_write_tokens=cache_write_tokens, pricing_mode=pricing_mode,
         )
 
 
@@ -331,7 +444,8 @@ def wait_for_pending_writes(timeout: float = 10.0) -> None:
 
 _ROW_FIELDS = ("stage", "role", "model", "tokens_in", "tokens_out", "cost_usd", "quality_signal",
                "tenant_id", "content_piece_id", "angle_gate_request_id", "stop_reason", "account",
-               "fallback_used", "provider")
+               "fallback_used", "provider", "cache_read_tokens", "cache_write_tokens", "pricing_mode",
+               "connection_key")
 
 
 def _insert_args(row: dict) -> tuple:
@@ -341,7 +455,8 @@ def _insert_args(row: dict) -> tuple:
                                                      row.get("angle_gate_request_id"))
     return (tenant, stage, row["role"], clean_model,
             row.get("tokens_in"), row.get("tokens_out"), row.get("cost_usd"),
-            json.dumps(signal or {}), piece, request, row.get("stop_reason"), row.get("account"),
+            json.dumps(signal or {}), piece, request, row.get("stop_reason"),
+            _row_account(row.get("account"), row.get("connection_key")),
             row.get("fallback_used"), provider, current_job_id())
 
 
@@ -361,7 +476,10 @@ async def record_calls(rows: list[dict]) -> None:
         conn = await asyncpg.connect(get_database_url(), ssl="require", timeout=15)
         try:
             async with conn.transaction():
-                await conn.executemany(_INSERT_SQL, [_insert_args(r) for r in rows])
+                await _execute_rows(conn, _INSERT_SQL, [_insert_args(r) for r in rows],
+                                    [_s6_extras(r.get("model") or "unknown", r.get("cache_read_tokens"),
+                                                r.get("cache_write_tokens"), r.get("pricing_mode")) for r in rows],
+                                    many=True)
         finally:
             await conn.close()
     except Exception as e:
@@ -396,9 +514,14 @@ def billed_record(resp, **overrides) -> dict:
         "tokens_out": getattr(resp, "output_tokens", None),
         "cost_usd": float(getattr(resp, "cost_usd", 0.0) or 0.0),
         "stop_reason": getattr(resp, "stop_reason", None),
-        "account": getattr(resp, "satellite_account", None),
+        # AA-1002 (S6): a vendor-API reply has no AWS account; its connection key is the row's account.
+        "account": _row_account(getattr(resp, "satellite_account", None), getattr(resp, "connection_key", None)),
         "fallback_used": getattr(resp, "fallback_used", None),
         "provider": getattr(resp, "provider", None) if isinstance(getattr(resp, "provider", None), str) else None,
+        # AA-1002 (S6): the cache split and how cost_usd was priced (written by migration 312's columns)
+        "cache_read_tokens": getattr(resp, "cache_read_tokens", None),
+        "cache_write_tokens": getattr(resp, "cache_write_tokens", None),
+        "pricing_mode": getattr(resp, "pricing_mode", None),
     }
     rec.update(overrides)
     return rec
@@ -416,7 +539,10 @@ def billed_unusable_rows(*, stage: str, role: str, billed: Optional[list], error
                  tokens_out=b.get("tokens_out"), cost_usd=b.get("cost_usd"), quality_signal=dict(signal),
                  tenant_id=tenant_id, content_piece_id=content_piece_id,
                  angle_gate_request_id=angle_gate_request_id, stop_reason=b.get("stop_reason"),
-                 account=b.get("account"), fallback_used=b.get("fallback_used"), provider=b.get("provider"))
+                 account=_row_account(b.get("account"), b.get("connection_key")),
+                 fallback_used=b.get("fallback_used"), provider=b.get("provider"),
+                 cache_read_tokens=b.get("cache_read_tokens"), cache_write_tokens=b.get("cache_write_tokens"),
+                 pricing_mode=b.get("pricing_mode"))
             for b in billed or [] if b]
 
 

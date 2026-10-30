@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  LLM_ACCOUNT, MAIN_ACCOUNT, RETIRED_ACCOUNT, accountLabel, accountName, withAccountNames,
+  LLM_ACCOUNT, MAIN_ACCOUNT, RETIRED_ACCOUNT, VENDOR_CONNECTION_LABELS, accountLabel, accountName, withAccountNames,
 } from "./awsAccounts.ts";
 
 // AWS documentation example accounts (the resource-ID check allows them).
@@ -28,6 +28,14 @@ test("any other stored key is the retired account, with no ID", () => {
     assert.equal(accountName(k, DIR), "Retired account");
     assert.equal(accountLabel(k, DIR), "Retired account");
   }
+});
+
+test("a vendor-API connection is named by its vendor, never 'Retired account' (gateway S6)", () => {
+  assert.equal(accountName("openai-direct", DIR), "OpenAI API");
+  assert.equal(accountLabel("anthropic-direct", DIR), "Anthropic API");
+  assert.equal(accountName("openai-direct"), "OpenAI API");          // no directory needed
+  assert.deepEqual(Object.keys(VENDOR_CONNECTION_LABELS).sort(), ["anthropic-direct", "openai-direct"]);
+  assert.equal(accountName("constructor", DIR), "Retired account");  // own keys only, not the prototype's
 });
 
 test("no account shows nothing", () => {

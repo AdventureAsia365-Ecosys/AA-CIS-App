@@ -10,7 +10,7 @@ from langgraph.graph import StateGraph, END
 
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
-from shared.llm_client.call_log import record_call_sync, record_unusable_sync
+from shared.llm_client.call_log import billed_fields, record_call_sync, record_unusable_sync
 from shared.llm_client.errors import is_llm_access_denied
 from services.quality.registry import threshold
 from .prompts import parse_source_day_word_counts
@@ -173,7 +173,7 @@ def _process_itineraries(generated: dict, tour: dict, client: LLMClient,
             },
             stop_reason=getattr(resp, "stop_reason", None),
             account=getattr(resp, "satellite_account", None),
-            fallback_used=getattr(resp, "fallback_used", None),
+            fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
         )
         logger.info("itinerary_day_nudged", day=day_num, ratio_before=record["ratio"],
                     ratio_after=record["ratio_after_nudge"])
@@ -636,7 +636,7 @@ def generate_node(state: ContentState) -> ContentState:
                 quality_signal={"json_parsed": False, "fallback_used": resp.fallback_used},
                 stop_reason=getattr(resp, "stop_reason", None),
                 account=getattr(resp, "satellite_account", None),
-                fallback_used=getattr(resp, "fallback_used", None),
+                fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
             )
             logged = True
             return {**state, "generated": {}, "is_branded": is_branded,
@@ -672,7 +672,7 @@ def generate_node(state: ContentState) -> ContentState:
                             **({"revision": True} if revising else {})},  # AA-793
             stop_reason=getattr(resp, "stop_reason", None),
             account=getattr(resp, "satellite_account", None),
-            fallback_used=getattr(resp, "fallback_used", None),
+            fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
         )
         logged = True
         return {

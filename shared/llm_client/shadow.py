@@ -14,7 +14,7 @@ import structlog
 
 from shared.secrets import get_database_url
 
-from .call_log import record_call
+from .call_log import billed_fields, record_call
 from .models import LLMRequest, LLMResponse
 
 logger = structlog.get_logger()
@@ -46,7 +46,7 @@ async def _record(*, stage: str, role: str, request: LLMRequest, primary: LLMRes
             cost_usd=shadow.cost_usd,
             quality_signal={"shadow": True, "shadow_of": primary.model_used},
             stop_reason=shadow.stop_reason, account=shadow.satellite_account,
-            fallback_used=shadow.fallback_used, provider=shadow.provider,
+            fallback_used=shadow.fallback_used, provider=shadow.provider, **billed_fields(shadow),
         )
     conn = await asyncpg.connect(get_database_url(), ssl="require")
     try:

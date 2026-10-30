@@ -86,7 +86,7 @@ def make_models(pool, budget, names: list[str], generate_sync=_generate_sync) ->
                                                     "rule_version": dd.RULE_VERSION,
                                                     "output_len_chars": len(resp.content or "")},
             stop_reason=getattr(resp, "stop_reason", None), account=getattr(resp, "satellite_account", None),
-            fallback_used=getattr(resp, "fallback_used", None))
+            fallback_used=getattr(resp, "fallback_used", None), **call_log.billed_fields(resp))
         return resp
 
     async def primary(system: str, user: str) -> str:

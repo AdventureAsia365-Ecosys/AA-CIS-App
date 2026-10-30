@@ -670,6 +670,11 @@ def gate_seo_surface(
 
 # ---------------------------------------------------------------- AA-505 judge call logging
 
+# AA-1002 (S6): the billing keys invoke_judge adds from call_log.billed_fields (cache split, pricing basis, vendor
+# connection); a raw dict without them (tests, older callers) logs None.
+_BILLED_FIELD_KEYS = ("cache_read_tokens", "cache_write_tokens", "pricing_mode", "connection_key")
+
+
 def _log_t10_judge_call(raw: dict, *, gate: str, passed: bool, extra: dict) -> None:
     """Used by gate_brand_voice() below (gate_framework() shared it until AA-787). The gate function is
     deliberately channel/context-agnostic (this file's own module docstring), so no tenant identity is threaded
@@ -688,6 +693,7 @@ def _log_t10_judge_call(raw: dict, *, gate: str, passed: bool, extra: dict) -> N
         quality_signal={"gate": gate, "passed": passed, **extra},
         stop_reason=raw.get("stop_reason"),
         account=raw.get("account"), fallback_used=raw.get("fallback_used"),
+        **{k: raw.get(k) for k in _BILLED_FIELD_KEYS},
     )
 
 
@@ -704,7 +710,7 @@ def _log_t10_billed_unusable(raw: dict, *, error: str) -> None:
         billed=[{"model": model, "tokens_in": in_tok, "tokens_out": out_tok,
                  "cost_usd": cost if cost is not None else calc_cost(model, in_tok, out_tok),
                  "stop_reason": raw.get("stop_reason"), "account": raw.get("account"),
-                 "fallback_used": raw.get("fallback_used")}],
+                 "fallback_used": raw.get("fallback_used"), **{k: raw.get(k) for k in _BILLED_FIELD_KEYS}}],
         quality_signal_extra={"f9_gate": qr.F9_BRAND_VOICE, "prompt_version": F9_PROMPT_VERSION})
 
 

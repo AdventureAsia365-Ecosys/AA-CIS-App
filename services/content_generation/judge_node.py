@@ -25,7 +25,7 @@ import structlog
 from services.content_generation import t2_judge_breakdown as t2_breakdown
 from services.content_generation.stages import stage_for
 from services.content_generation.brand_fit import (
-    _JUDGE_SEED, _JUDGE_TEMPERATURE, billed_calls, has_brand_signals, run_billing, runs_signal,
+    _JUDGE_SEED, _JUDGE_TEMPERATURE, RUN_BILLING_KEYS, billed_calls, has_brand_signals, run_billing, runs_signal,
     score_brand_fit,
 )
 from shared.llm_client.call_log import (
@@ -264,13 +264,9 @@ def _judge_rows(stage: str, result, verdict_signal: dict) -> list[dict]:
     n = len(runs) + len(failed)
     if runs:
         first = runs[0]
-        billing = {k: first.get(k) for k in ("model", "tokens_in", "tokens_out", "cost_usd", "stop_reason",
-                                             "account", "fallback_used")}
+        billing = {k: first.get(k) for k in RUN_BILLING_KEYS}
     else:
-        billing = {"model": result.model_used, "tokens_in": result.input_tokens,
-                   "tokens_out": result.output_tokens, "cost_usd": result.cost_usd,
-                   "stop_reason": result.stop_reason, "account": result.account,
-                   "fallback_used": result.fallback_used}
+        billing = {k: v for k, v in run_billing(result).items() if k in RUN_BILLING_KEYS}
     rows = [dict(stage=stage, role="judge", **billing,
                  quality_signal={**verdict_signal, **({"judge_calls": n} if n > 1 else {})})]
     for i, r in enumerate(runs[1:], start=2):
@@ -278,6 +274,8 @@ def _judge_rows(stage: str, result, verdict_signal: dict) -> list[dict]:
             stage=stage, role="judge", model=r.get("model"), tokens_in=r.get("tokens_in"),
             tokens_out=r.get("tokens_out"), cost_usd=r.get("cost_usd"), stop_reason=r.get("stop_reason"),
             account=r.get("account"), fallback_used=r.get("fallback_used"),
+            cache_read_tokens=r.get("cache_read_tokens"), cache_write_tokens=r.get("cache_write_tokens"),
+            pricing_mode=r.get("pricing_mode"), connection_key=r.get("connection_key"),
             quality_signal={"judge_run": i, "of": n, "verdict_row": False, "brand_fit": r.get("brand_fit"),
                             "distinct": r.get("distinct"), "mission": r.get("mission")}))
     rows += billed_unusable_rows(stage=stage, role="judge", billed=failed, error="judge reply unusable",
@@ -297,8 +295,7 @@ def _billed_rows_of(stage: str, result, error: str) -> list[dict]:
     """AA-927: every billed call behind `result` as billed_unusable rows (the verdict was lost after the
     calls returned: tie-break / feedback code raised)."""
     runs = [r for r in (getattr(result, "runs", None) or ()) if isinstance(r, dict) and "brand_fit" in r]
-    billed = [{k: r.get(k) for k in ("model", "tokens_in", "tokens_out", "cost_usd", "stop_reason", "account",
-                                     "fallback_used")} for r in runs] or [run_billing(result)]
+    billed = [{k: r.get(k) for k in RUN_BILLING_KEYS} for r in runs] or [run_billing(result)]
     billed += list(getattr(result, "billed_failed", None) or ())
     return billed_unusable_rows(stage=stage, role="judge", billed=billed, error=error,
                                 quality_signal_extra={"post_call_error": True,

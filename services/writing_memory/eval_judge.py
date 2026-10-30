@@ -43,7 +43,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Optional
 
-from shared.llm_client.call_log import record_call_with_pool, record_unusable
+from shared.llm_client.call_log import billed_fields, record_call_with_pool, record_unusable
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
 from services.writing_memory import config as cfg
@@ -362,7 +362,8 @@ async def judge_output(pool, *, writer: str, source_text: str, output_text: str,
         tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
         cost_usd=resp.cost_usd, quality_signal={**signal, "json_parsed": True, "verdict": v["verdict"]},
         stop_reason=getattr(resp, "stop_reason", None), account=getattr(resp, "satellite_account", None),
-        fallback_used=getattr(resp, "fallback_used", None), provider=getattr(resp, "provider", None))
+        fallback_used=getattr(resp, "fallback_used", None), provider=getattr(resp, "provider", None),
+        **billed_fields(resp))
     return Verdict(verdict=v["verdict"], score=v["score"], failure_codes=v["failure_classes"],
                    model=str(resp.model_used)[:128], cost_usd=float(resp.cost_usd or 0.0),
                    judge_version=judge_version(), claims=tuple(v["claims"]))

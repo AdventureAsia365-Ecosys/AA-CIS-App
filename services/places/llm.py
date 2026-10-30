@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 from typing import Optional
 
-from shared.llm_client.call_log import record_call_with_pool
+from shared.llm_client.call_log import billed_fields, record_call_with_pool
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
 
@@ -48,7 +48,7 @@ def make_generate(pool, stage: str, max_tokens: int, budget=None, quality_signal
             cost_usd=resp.cost_usd, quality_signal={"app": "cis", "issue": "AA-712", **(quality_signal or {}),
                                                     "output_len_chars": len(resp.content or "")},
             stop_reason=getattr(resp, "stop_reason", None), account=getattr(resp, "satellite_account", None),
-            fallback_used=getattr(resp, "fallback_used", None))
+            fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp))
         return resp.content
     return generate
 
@@ -74,7 +74,7 @@ async def embed_texts(pool, texts: list[str], budget=None, spent: Optional[dict]
             quality_signal={"app": "cis", "issue": "AA-712", "texts": len(batch),
                             "dimensions": len(resp.vectors[0]), "tokens_estimated": resp.tokens_estimated},
             account=resp.account, fallback_used=resp.fallback_used,
-            provider="bedrock-native" if resp.account == "acc2" else "bedrock-satellite")
+            provider="bedrock-native" if resp.account == "acc2" else "bedrock-satellite", **billed_fields(resp))
         out.extend(resp.vectors)
     return out
 
