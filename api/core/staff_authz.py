@@ -451,6 +451,15 @@ POLICY: dict[tuple[str, str], str] = {
     ("POST", "/admin/writing-memory/releases/{release_id}/reject"): AI_ADMIN,
     ("GET", "/admin/writing-memory/writers"): TENANT_READ,
     ("PATCH", "/admin/writing-memory/writers/{writer}"): AI_ADMIN,
+    # AA-921 (WM-27 / WM-29): pinned exemplars (tenant text: reads tenant.read, every change ai.admin) and the Tenant
+    # 360 voice card
+    ("GET", "/admin/writing-memory/exemplars"): TENANT_READ,
+    ("GET", "/admin/writing-memory/exemplars/selection"): TENANT_READ,
+    ("POST", "/admin/writing-memory/exemplars/refresh"): AI_ADMIN,
+    ("POST", "/admin/writing-memory/exemplars/{exemplar_id}/pin"): AI_ADMIN,
+    ("POST", "/admin/writing-memory/exemplars/{exemplar_id}/unpin"): AI_ADMIN,
+    ("POST", "/admin/writing-memory/exemplars/{exemplar_id}/never"): AI_ADMIN,
+    ("GET", "/admin/writing-memory/tenants/{tenant_id}/voice"): TENANT_READ,
 
     # ── admin_data_model (AA-894 scope 2) — Developer › Data model: the live ERD from the nightly schema dump
     # (every schema of the shared RDS, PII tags included), admin only.

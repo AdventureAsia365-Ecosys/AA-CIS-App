@@ -116,6 +116,10 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     # Platform releases have no tenant and stay.
     _d("shared.writing_memory_shadow", "writing-memory shadow outputs written from the tenant's inputs"),
     _d("shared.writing_memory_release", "the tenant's writing-memory releases (ids only, no text)"),
+    # AA-921 (313): the tenant's masked voice examples (tenant text) and the links of its releases to them (ids only;
+    # they also cascade from the release and the example). Platform examples have no tenant and stay.
+    _d("shared.writing_exemplar", "writing-memory voice examples masked from the tenant's own content"),
+    _d("shared.writing_memory_release_exemplar", "the examples the tenant's releases pin (ids only)"),
     _d("shared.pipeline_runs", "tenant pipeline batches (raw rows follow through FKs)"),
     _d("shared.tenant_api_usage", "per-request API usage; a CHECK forbids a tenant-actor row without a tenant"),
     _d("shared.tenant_api_usage_monthly", "monthly API usage rollup of the tenant"),

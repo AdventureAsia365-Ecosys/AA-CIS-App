@@ -322,6 +322,9 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
     frozen_src = await store.calibration_sources(baseline, [it["item_id"] for it in calib]) if baseline else {}
     calib_ids = {it["item_id"] for it in calib}
     rule_texts = await store.rule_texts(list((release or {}).get("rule_ids") or []))
+    # AA-921: the candidate's pinned examples (attached with its items), for the carry-over check
+    exemplar_texts = [(str(e["exemplar_id"]), e.get("masked_text") or "")
+                      for e in (release or {}).get("exemplars") or []]
     packs = await store.tenant_packs(gs["set_id"])
     shared_inputs = gs.get("shared_inputs") or {}
     fp = await store.fingerprint(writer)
@@ -389,7 +392,8 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
         foreign = {tid: ec.tenant_fingerprint(p) for tid, p in packs.items() if tid != own}
         iso = ec.isolation_probe(text, foreign=foreign,
                                  allowed_text=ew.allowed_text(writer, item["input"], shared_inputs))
-        return {"qa_artefacts": ec.qa_artefacts(text, rule_texts=rule_texts), "isolation": iso,
+        return {"qa_artefacts": ec.qa_artefacts(text, rule_texts=rule_texts, exemplars=exemplar_texts),
+                "isolation": iso,
                 "injection": ec.injection_violations(text, item.get("injection_spec")) if item.get("trap") else []}
 
     def result_row(item: dict, *, arm: str, mode: str, verdict: str, output: Optional[dict] = None,

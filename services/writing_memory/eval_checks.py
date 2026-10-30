@@ -83,13 +83,15 @@ def _known_codes() -> tuple[frozenset[str], frozenset[str]]:
         return frozenset(), frozenset()
 
 
-def qa_artefacts(text: str, *, rule_texts: Iterable[tuple[str, str]] = ()) -> list[str]:
+def qa_artefacts(text: str, *, rule_texts: Iterable[tuple[str, str]] = (),
+                 exemplars: Iterable[tuple[str, str]] = ()) -> list[str]:
     """Codes of the QA traces found in `text` (sorted, unique): `key:<name>`, `class:<id>`, `citation_tag`,
-    `gate:<name>`, `code:<A1 code>`, `rule:<rule id>` (a rule's text of >= 4 words, verbatim after folding).
-    `rule_texts` = (rule_id, text) of the release's rules."""
+    `gate:<name>`, `code:<A1 code>`, `rule:<rule id>` (a rule's text of >= 4 words, verbatim after folding), and
+    AA-921 `exemplar:<exemplar id>` (the output copied a run of a pinned voice example: exemplar_copies).
+    `rule_texts` = (rule_id, text) of the release's rules; `exemplars` = (exemplar_id, masked text) of its examples."""
     if not text:
         return []
-    out: set[str] = set()
+    out: set[str] = set(exemplar_copies(text, exemplars))
     out.update(f"key:{m}" for m in _KEY_RE.findall(text))
     out.update(f"class:{m}" for m in _CLASS_RE.findall(text))
     if _CITATION_RE.search(text):
@@ -107,6 +109,30 @@ def qa_artefacts(text: str, *, rule_texts: Iterable[tuple[str, str]] = ()) -> li
         if len(rf.split()) >= 4 and f" {rf} " in folded:
             out.add(f"rule:{rid}")
     return sorted(out)
+
+
+# AA-921 WM-27: a pinned example is "voice only, reuse no fact". An output that holds a 6-word run of an example with
+# >= 3 content words (mask tokens and function words do not count) carried text over: the n-gram check of the WM-27
+# Done-when, reported as a QA trace (`exemplar:<id>`), so R2, the shadow and the post-activation check count it.
+EXEMPLAR_COPY_N = 6
+EXEMPLAR_COPY_MIN_CONTENT = 3
+
+
+def _exemplar_content_words(sh: tuple[str, ...]) -> int:
+    return sum(1 for w in sh if len(w) > 2 and w not in _STOP and not w.startswith("["))
+
+
+def exemplar_copies(text: str, exemplars: Iterable[tuple[str, str]]) -> list[str]:
+    """`exemplar:<id>` for every pinned example (id, masked text) the output shares a distinctive 6-word run with (the
+    output is masked the same way first, so a copied sentence with other numbers still matches)."""
+    exemplars = [e for e in exemplars or () if e and e[1]]
+    if not text or not exemplars:
+        return []
+    from services.writing_memory.masking import mask
+    out_sh = {sh for sh in shingles(mask(text), EXEMPLAR_COPY_N)
+              if _exemplar_content_words(sh) >= EXEMPLAR_COPY_MIN_CONTENT}
+    return sorted({f"exemplar:{eid}" for eid, etext in exemplars
+                   if out_sh & shingles(mask(etext), EXEMPLAR_COPY_N)})
 
 
 # ── hard stop 2: isolation probe ───────────────────────────────────────────────────────────────────────────────────
@@ -507,7 +533,8 @@ def shadow_probe_count(scope: str, other_tenants: int) -> int:
     return min(cfg.SHADOW_PROBE_INPUTS, max(0, other_tenants))
 
 
-__all__ = ["STRATUM_DIMS", "cohen_kappa", "compare_item", "control_mode", "criterion_met", "flatten_text",
+__all__ = ["STRATUM_DIMS", "cohen_kappa", "compare_item", "control_mode", "criterion_met", "exemplar_copies",
+           "flatten_text",
            "injection_violations", "isolation_probe", "item_strata", "judge_counts", "kappa_by_stratum", "kappa_max",
            "label_counts", "paired_stats", "plan_phases", "qa_artefacts", "result_phase", "selected_tiers",
            "shadow_probe_count", "shadow_quota", "shadow_size", "shingles", "strata_below", "strata_label_counts",

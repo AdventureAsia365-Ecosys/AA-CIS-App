@@ -46,7 +46,10 @@ logger = structlog.get_logger()
 # S257 — the photo sync upsert, the assign route and the photo_destination_match job write
 # shared.place_photo.destination_match_source; without it the sync fails). 305 (AA-1003 — kpi_snapshot_daily,
 # report_generate and /admin/reports read and write shared.kpi_daily and shared.report_run; strict prefix: 304 too).
-REQUIRED_CIS_SCHEMA = 305
+# 313 (AA-921 WM-27 — /admin/writing-memory/exemplars and a rules draft read and write shared.writing_exemplar and
+# shared.writing_memory_release_exemplar; the writers' resolver reads the links (failing open without them); strict
+# prefix: 306-312 too).
+REQUIRED_CIS_SCHEMA = 313
 # Versions this code needs that were registered after a higher one (reserved numbers): 297 (AA-920 WM-25) was reserved
 # in S255 and applied after 299. max() is already 299 without it, so the version reported is capped below the lowest
 # listed version that is not registered (297 missing -> 296 -> "schema_behind").

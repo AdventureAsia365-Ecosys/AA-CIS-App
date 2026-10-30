@@ -215,6 +215,22 @@ export const WRITING_MEMORY_GUIDE_VI: GuideContent = {
           text: "Bản phát hành 0 là bản rỗng: khi nó là bản đang hoạt động, đầu ra của trình viết giống hệt như khi "
             + "không có bộ nhớ." },
 
+        { kind: "subheading", text: "Tab Ví dụ mẫu" },
+        { kind: "paragraph", text: "Ví dụ giọng văn cho T2 và T9 (A1 không bao giờ có). Một ví dụ là một đoạn trích "
+          + "của bài mà admin đã đánh dấu \"dùng làm ví dụ\" trong Content quality, với địa danh, tên, số, giá và giờ "
+          + "đã được che. Một bản phát hành có luật ghim tối đa hai ví dụ cho mỗi writer và kênh lúc tạo bản nháp: "
+          + "ví dụ đã ghim trước, rồi đến ứng viên mới nhất. Writer chỉ đọc chúng để lấy giọng văn và không được "
+          + "dùng lại dữ kiện nào." },
+        { kind: "list", items: [
+          "Tìm ứng viên (chạy thử) đếm số ví dụ mà Thêm ứng viên sẽ thêm. Thêm ứng viên thêm một ví dụ đã che cho mỗi "
+            + "tín hiệu \"dùng làm ví dụ\" đã qua bộ lọc dữ kiện. Cả hai đều không tốn tiền (không gọi model).",
+          "Bản nháp tới: chọn một writer và một chủ sở hữu để xem bản nháp có luật sẽ ghim gì lúc này, theo từng kênh.",
+          "Bấm một dòng để mở ví dụ. Ghim giữ nó trong bản nháp tới, Bỏ ghim trả nó về ứng viên, Không dùng loại nó "
+            + "vĩnh viễn. Mỗi thao tác cần một lý do.",
+          "Bản phát hành của một tenant chỉ ghim ví dụ của chính tenant đó. Khi tenant có ít hơn hai ví dụ cho một "
+            + "kênh, ví dụ của bản phát hành nền tảng bù vào, không bao giờ lấy của tenant khác.",
+        ] },
+
         { kind: "subheading", text: "Các nút ở đầu trang" },
         { kind: "paragraph", text: "Làm mới chỉ tải lại dữ liệu trang. Mọi nút khác xếp một job nền, và một thông báo "
           + "hiện 'Đã xếp hàng (job …); xem Nền tảng › Jobs'. Kết quả số liệu nằm ở Nền tảng › Jobs, không phải trên "
@@ -468,7 +484,7 @@ export const WRITING_MEMORY_GUIDE_VI: GuideContent = {
         { kind: "list", items: [
           "Duyệt một ứng viên (ứng viên → đã duyệt). Vì vậy các quy tắc ngoài quy tắc từ vựng T9 chưa đi tiếp được.",
           "Trình viết đọc quy tắc từ một bản phát hành. Hôm nay chỉ bản phát hành rỗng mới hoạt động được.",
-          "Các tab Ví dụ mẫu và Chỉ số.",
+          "Tab Chỉ số.",
           "Tên tenant, số liệu của lần chạy thử hoặc baseline (chỉ ở Nền tảng › Jobs), và hơn 200 tín hiệu trong danh "
             + "sách.",
         ] },

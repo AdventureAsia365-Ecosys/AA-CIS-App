@@ -104,6 +104,8 @@ LOGGED_CALL_SITES: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
     ("services/places/llm.py", "embed_texts"): _self("services/places/llm.py", "embed_texts"),
     # AA-917: the writing-memory rule drafter; draft_rule writes the row (or the billed_unusable row) after the call.
     ("services/writing_memory/drafter.py", "_generate_sync"): (("services/writing_memory/drafter.py", "draft_rule"),),
+    ("services/writing_memory/preference.py", "_generate_sync"): (("services/writing_memory/preference.py",
+                                                                  "draft_summary"),),   # AA-921 WM-28
     # AA-919 WM-19: the R2 judge; judge_output writes the row (or the billed_unusable row) after the call.
     ("services/writing_memory/eval_judge.py", "_generate_sync"): (
         ("services/writing_memory/eval_judge.py", "judge_output"),),

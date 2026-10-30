@@ -172,6 +172,12 @@ async def release_rule_texts(conn, release: dict) -> list[tuple[str, str]]:
     return [(r["rule_id"], r["rule_text"] or "") for r in rows]
 
 
+async def release_exemplar_texts(conn, release: dict) -> list[tuple[str, str]]:
+    """AA-921: (exemplar_id, masked text) of the release's pinned examples ([] before CIS 313)."""
+    from services.writing_memory.exemplars import release_exemplars
+    return [(e["exemplar_id"], e["masked_text"] or "") for e in await release_exemplars(conn, release["release_id"])]
+
+
 # ── pure: one write, one release ───────────────────────────────────────────────────────────────────────────────────
 
 def carriage(release: dict, stamp: Any) -> str:
@@ -188,7 +194,7 @@ def carriage(release: dict, stamp: Any) -> str:
 
 
 def check_write(release: dict, write: dict, *, rule_texts: list[tuple[str, str]],
-                foreign: dict[str, dict]) -> dict:
+                foreign: dict[str, dict], exemplar_texts: Optional[list[tuple[str, str]]] = None) -> dict:
     """One write: {ref, source, carriage, qa_artefacts, isolation, violation (codes)}. Ids, codes and counts only."""
     how = carriage(release, write.get("stamp"))
     row: dict[str, Any] = {"ref": write["ref"], "source": write["source"], "carriage": how, "violation": []}
@@ -197,7 +203,7 @@ def check_write(release: dict, write: dict, *, rule_texts: list[tuple[str, str]]
     if how == "fingerprint_mismatch":
         row["violation"].append("fingerprint_mismatch")
     text = write.get("text") or ""
-    arte = ec.qa_artefacts(text, rule_texts=rule_texts)
+    arte = ec.qa_artefacts(text, rule_texts=rule_texts, exemplars=exemplar_texts or ())   # AA-921: + example copies
     others = {t: fp for t, fp in foreign.items() if t != write.get("tenant_id")}
     iso = ec.isolation_probe(text, foreign=others, allowed_text=write.get("allowed_text") or "")
     row["qa_artefacts"] = arte[:20]
@@ -259,8 +265,9 @@ async def check_release(pool, release_id: str, *, n: int = cfg.POST_ACTIVATION_N
             return {**base, **verdict(release, [], n=n)}
         writes = await writes_since(conn, release)
         texts = await release_rule_texts(conn, release)
+        ex_texts = await release_exemplar_texts(conn, release)
         foreign = await tenant_fingerprints(conn)
-    rows = [check_write(release, w, rule_texts=texts, foreign=foreign) for w in writes]
+    rows = [check_write(release, w, rule_texts=texts, foreign=foreign, exemplar_texts=ex_texts) for w in writes]
     report = {**base, **verdict(release, rows, n=n)}
     if report["verdict"] != "violation":
         return report

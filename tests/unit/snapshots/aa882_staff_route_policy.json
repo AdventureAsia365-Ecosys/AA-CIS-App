@@ -659,6 +659,14 @@
     "capability": "tenant.read",
     "module": "api.routers.admin_writing_memory"
   },
+  "GET /admin/writing-memory/exemplars": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_writing_memory"
+  },
+  "GET /admin/writing-memory/exemplars/selection": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_writing_memory"
+  },
   "GET /admin/writing-memory/releases": {
     "capability": "tenant.read",
     "module": "api.routers.admin_writing_memory"
@@ -684,6 +692,10 @@
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/summary": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_writing_memory"
+  },
+  "GET /admin/writing-memory/tenants/{tenant_id}/voice": {
     "capability": "tenant.read",
     "module": "api.routers.admin_writing_memory"
   },
@@ -1244,6 +1256,22 @@
     "module": "api.routers.admin_writing_memory"
   },
   "POST /admin/writing-memory/candidates/{rule_id}/rollback": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_writing_memory"
+  },
+  "POST /admin/writing-memory/exemplars/refresh": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_writing_memory"
+  },
+  "POST /admin/writing-memory/exemplars/{exemplar_id}/never": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_writing_memory"
+  },
+  "POST /admin/writing-memory/exemplars/{exemplar_id}/pin": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_writing_memory"
+  },
+  "POST /admin/writing-memory/exemplars/{exemplar_id}/unpin": {
     "capability": "ai.admin",
     "module": "api.routers.admin_writing_memory"
   },

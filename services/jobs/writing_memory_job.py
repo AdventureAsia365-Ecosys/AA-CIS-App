@@ -8,6 +8,8 @@
   writing_memory_mine         WM-12: one mining run (paid: <= 50 judge-route calls, <= $1, month cap
                               $25). Payload {"trigger": "auto" | "manual", "requested_by": "<admin id>"}. A refused
                               trigger ends the job as succeeded with `ran: false` and the reason (nothing to retry).
+                              AA-921 WM-28: {"mode": "preference_summary"} drafts the tenant preference summaries
+                              instead (same caps; off unless WRITING_MEMORY_PREF_SUMMARY: `state: needs_llm_path`).
 
   writing_memory_r0           AA-918 WM-15: the R0 replay ($0, no model call) of up to 20 rules, each result kept on
                               its rule (`lint.r0`); or, with {"baseline": true}, the sanity check alone (the gates
@@ -76,6 +78,15 @@ async def run_fact_filter_job(ctx: JobContext) -> dict:
 @job_kind(MINE, concurrency=1, max_attempts=1, expected_seconds=1800, background=True)
 async def run_mine_job(ctx: JobContext) -> dict:
     from services.writing_memory.mining import TRIGGERS, run_gate, run_mine
+    if ctx.payload.get("mode") == "preference_summary":
+        # AA-921 WM-28: the tenant preference summaries (same stage, route and caps; its own run, outside the
+        # miner's monthly run count). Off unless WRITING_MEMORY_PREF_SUMMARY is set: no call, state needs_llm_path.
+        from services.writing_memory.preference import run_preference
+        result = await run_preference(ctx.pool, ctx)
+        result["requested_by"] = ctx.payload.get("requested_by")
+        logger.info("aa921_pref_done", **{k: result.get(k) for k in ("state", "calls", "candidates", "quarantined",
+                                                                      "cost_usd")})
+        return result
     trigger = ctx.payload.get("trigger") or "manual"
     if trigger not in TRIGGERS:
         raise NonRetryable(f"unknown trigger {trigger!r}")

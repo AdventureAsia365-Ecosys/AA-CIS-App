@@ -56,6 +56,22 @@ AA-919 (WM-18) — releases (services/writing_memory/releases.py; CIS 287). Ids,
                                                       platform release)
 Every release write leaves an acp_shared.audit_log row (writing_memory.release_*), ids only.
 
+AA-921 (WM-27 / WM-28 / WM-29) — pinned exemplars (services/writing_memory/exemplars.py; CIS 313) and the tenant
+preference summaries (services/writing_memory/preference.py):
+  GET   /admin/writing-memory/exemplars?writer=&channel=&scope=&tenant_id=&status=&limit=&offset=   the pool (masked
+                                                      text, source, status) with `in_next_draft`
+  GET   /admin/writing-memory/exemplars/selection?writer=&scope=&tenant_id=   what a draft of that writer and owner
+                                                      would pin now (<= 2 per channel; the same function as the draft)
+  POST  /admin/writing-memory/exemplars/refresh       {dry_run}: candidates from the "use as example" signals that
+                                                      passed the fact filter ($0; DRY RUN by default)
+  POST  /admin/writing-memory/exemplars/{id}/pin | /unpin | /never   {reason}: one admin click, audited
+  GET   /admin/writing-memory/tenants/{tenant_id}/voice   the Tenant 360 "Voice memory" card: the tenant's active and
+                                                      candidate rules (and its preference summary), its examples per
+                                                      status, its latest release per writer
+  POST  /admin/writing-memory/run {kind: preference_summary}  queue the summary drafting (409 `needs_llm_path` while
+                                                      WRITING_MEMORY_PREF_SUMMARY is off on this service)
+  GET   /admin/writing-memory/releases/{id} also lists the release's pinned `exemplars`.
+
 Who may call (api/core/staff_authz.py POLICY): every read needs tenant.read and every write ai.admin (admin only).
 Approval of a non-lexicon rule is not here: it reaches a writer only through a release (AA-919), one human click. A
 lexicon rule may take the L0 path (ADR 0010 decision 6, D11): R0 + the activate click, no release.
@@ -96,7 +112,8 @@ router = APIRouter(prefix="/admin/writing-memory", tags=["admin-writing-memory"]
 
 PREVIEW_CHARS = 600
 _JOB_KINDS = {"backfill": "writing_signal_backfill", "fact_filter": "writing_signal_fact_filter",
-              "mine": "writing_memory_mine", "r0_baseline": "writing_memory_r0"}
+              "mine": "writing_memory_mine", "r0_baseline": "writing_memory_r0",
+              "preference_summary": "writing_memory_mine"}
 
 
 def _pool(request: Request):
@@ -515,7 +532,7 @@ async def rollback_rule(rule_id: str, body: RollbackBody, request: Request,
 
 class RunBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    kind: Literal["backfill", "fact_filter", "mine", "r0_baseline"]
+    kind: Literal["backfill", "fact_filter", "mine", "r0_baseline", "preference_summary"]
     dry_run: bool = False
 
 
@@ -540,6 +557,14 @@ async def run(body: RunBody, request: Request, x_admin_user_id: Optional[str] = 
             raise _unavailable(e)
         if refusal:
             raise HTTPException(status_code=409, detail={"detail": refusal, "code": "trigger", **facts})
+    elif body.kind == "preference_summary":
+        from services.writing_memory import preference
+        # AA-921 WM-28: the summary drafter is an LLM path; while it is switched off nothing is queued.
+        if not preference.enabled():
+            raise HTTPException(status_code=409, detail={
+                "detail": "Preference summaries need the LLM path, which is switched off "
+                          f"({preference.PREF_ENV} is not set on the worker)", "code": preference.STATE_OFF})
+        payload["mode"] = "preference_summary"
     now = _job_stamp()
     job_id, created = await enqueue(pool, kind, payload, idempotency_key=f"{kind}:admin:{now}",
                                     created_by=f"admin:{actor}")
@@ -603,6 +628,8 @@ async def get_release(release_id: str, request: Request):
             if row is None:
                 raise HTTPException(status_code=404, detail="Unknown release")
             runs = await rel.runs_of(conn, row)
+            from services.writing_memory import exemplars as ex_mod
+            pinned = await ex_mod.release_exemplars(conn, rid)
             problem = None
             if row["status"] == "approved":
                 problem = rel.wiring_problem(row) or await rel.check(conn, row, first_activation=True)
@@ -612,7 +639,10 @@ async def get_release(release_id: str, request: Request):
             "runs": {k: ({**rel.serialise({kk: vv for kk, vv in v.items() if kk != "details"}),
                           "summary": rel.run_summary(v.get("details"))} if v else None)
                      for k, v in runs.items()},
-            "activation": None if problem is None else {"code": problem[0], "detail": problem[1]}}
+            "activation": None if problem is None else {"code": problem[0], "detail": problem[1]},
+            "exemplars": [{"exemplar_id": e["exemplar_id"], "channel": e["channel"], "position": e["position"],
+                           "status": e["status"], "masked_text": e["masked_text"], "source_table": e["source_table"],
+                           "source_id": e["source_id"]} for e in pinned]}
 
 
 class ReleaseCreate(BaseModel):
@@ -621,6 +651,7 @@ class ReleaseCreate(BaseModel):
     scope: Literal["platform", "tenant"] = "platform"
     tenant_id: Optional[UUID] = None
     rule_ids: list[UUID] = Field(default_factory=list, max_length=40)
+    exemplars: bool = True              # AA-921: a rules draft of T2 / T9 pins the owner's selected examples
     train_kind: Optional[Literal["regular", "emergency"]] = None
     emergency_reason: Optional[Literal["hard_stop_1", "hard_stop_2", "hard_stop_3"]] = None
     emergency_ref: Optional[UUID] = None
@@ -640,7 +671,7 @@ async def create_release(body: ReleaseCreate, request: Request, x_admin_user_id:
                     rule_ids=[str(r) for r in body.rule_ids], train_kind=body.train_kind,
                     emergency_reason=body.emergency_reason,
                     emergency_ref=str(body.emergency_ref) if body.emergency_ref else None,
-                    notes=body.notes, created_by=f"admin:{actor}")
+                    notes=body.notes, created_by=f"admin:{actor}", exemplars=body.exemplars)
     except asyncpg.UndefinedTableError as e:
         raise _unavailable(e)
     except rel.ReleaseError as e:
@@ -837,3 +868,165 @@ async def patch_writer(writer: str, body: WriterPatch, request: Request,
     logger.info("aa919_writer_switch", writer=writer, memory_enabled=body.memory_enabled,
                 train_closed_month=str(body.train_closed_month) if body.train_closed_month else None)
     return rel.serialise(row)
+
+
+# ── exemplars and voice memory (AA-921 WM-27 / WM-29) ──────────────────────────────────────────────────────────────
+
+_EXEMPLAR_WRITERS = Literal["t2", "t9_blog", "t9_social"]
+
+
+def _exemplar_error(e) -> HTTPException:
+    return HTTPException(status_code=e.status, detail={"detail": e.detail, "code": e.code})
+
+
+def _owner(scope: str, tenant_id: Optional[str]) -> tuple[str, Optional[str]]:
+    if scope not in ("platform", "tenant") or (scope == "tenant") != bool(tenant_id):
+        raise HTTPException(status_code=422, detail="a platform owner has no tenant_id; a tenant owner has one")
+    return scope, (_uuid(tenant_id, "tenant") if tenant_id else None)
+
+
+@router.get("/exemplars")
+async def list_exemplars(request: Request, writer: Optional[_EXEMPLAR_WRITERS] = None, channel: Optional[str] = None,
+                         scope: Optional[Literal["platform", "tenant"]] = None, tenant_id: Optional[str] = None,
+                         status: Optional[Literal["candidate", "pinned", "never"]] = None,
+                         limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0)):
+    """The pool, with `in_next_draft`: whether a draft of that writer and owner would pin it now."""
+    from services.writing_memory import exemplars as ex_mod
+    try:
+        async with _pool(request).acquire() as conn:
+            rows, total = await ex_mod.list_pool(conn, writer=writer, channel=channel, scope=scope,
+                                                 tenant_id=tenant_id, status=status, limit=limit, offset=offset)
+            picked: set[str] = set()
+            for key in {(r["writer"], r["scope"], r.get("tenant_id")) for r in rows}:
+                picked |= {e["exemplar_id"] for e in await ex_mod.select_for_release(conn, *key)}
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e)
+    except ex_mod.ExemplarError as e:
+        raise _exemplar_error(e)
+    return {"items": [{**ex_mod.serialise(r), "in_next_draft": r["exemplar_id"] in picked} for r in rows],
+            "total": total, "limit": limit, "offset": offset}
+
+
+@router.get("/exemplars/selection")
+async def exemplar_selection(request: Request, writer: _EXEMPLAR_WRITERS,
+                             scope: Literal["platform", "tenant"] = "platform", tenant_id: Optional[str] = None):
+    """What a rules draft of this writer and owner would pin now (the function the draft itself calls)."""
+    from services.writing_memory import exemplars as ex_mod
+    sc, tid = _owner(scope, tenant_id)
+    try:
+        async with _pool(request).acquire() as conn:
+            picked = await ex_mod.select_for_release(conn, writer, sc, tid)
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e)
+    return {"writer": writer, "scope": sc, "tenant_id": tid, "per_channel": ex_mod.PER_CHANNEL,
+            "items": [{**ex_mod.serialise(e), "position": e["position"]} for e in picked]}
+
+
+class RefreshBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    dry_run: bool = True
+
+
+@router.post("/exemplars/refresh")
+async def refresh_exemplars(request: Request, body: Optional[RefreshBody] = None,
+                            x_admin_user_id: Optional[str] = Header(None)):
+    """Candidates from the "use as example" signals ($0). DRY RUN unless dry_run is false."""
+    from services.writing_memory import exemplars as ex_mod
+    dry = True if body is None else body.dry_run
+    actor = f"admin:{_need_actor(x_admin_user_id)}" if not dry else f"admin:{wm.admin_actor_id(x_admin_user_id)}"
+    try:
+        async with _pool(request).acquire() as conn:
+            async with conn.transaction():
+                out = await ex_mod.refresh(conn, dry_run=dry, actor=actor)
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e)
+    logger.info("aa921_exemplar_refresh", **{k: out[k] for k in ("dry_run", "signals", "added", "marked_never")})
+    return out
+
+
+class ExemplarStatusBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(..., min_length=3, max_length=500)
+
+
+async def _exemplar_action(request: Request, exemplar_id: str, action: str, body: ExemplarStatusBody,
+                           x_admin_user_id: Optional[str]) -> dict:
+    from services.writing_memory import exemplars as ex_mod
+    actor = f"admin:{_need_actor(x_admin_user_id)}"
+    eid = _uuid(exemplar_id, "example")
+    try:
+        async with _pool(request).acquire() as conn:
+            async with conn.transaction():
+                row = await ex_mod.set_status(conn, eid, action, reason=body.reason, actor=actor)
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e)
+    except ex_mod.ExemplarError as e:
+        raise _exemplar_error(e)
+    logger.info("aa921_exemplar_status", exemplar_id=eid, action=action, status=row["status"])
+    return ex_mod.serialise(row)
+
+
+@router.post("/exemplars/{exemplar_id}/pin")
+async def pin_exemplar(exemplar_id: str, body: ExemplarStatusBody, request: Request,
+                       x_admin_user_id: Optional[str] = Header(None)):
+    return await _exemplar_action(request, exemplar_id, "pin", body, x_admin_user_id)
+
+
+@router.post("/exemplars/{exemplar_id}/unpin")
+async def unpin_exemplar(exemplar_id: str, body: ExemplarStatusBody, request: Request,
+                         x_admin_user_id: Optional[str] = Header(None)):
+    return await _exemplar_action(request, exemplar_id, "unpin", body, x_admin_user_id)
+
+
+@router.post("/exemplars/{exemplar_id}/never")
+async def never_exemplar(exemplar_id: str, body: ExemplarStatusBody, request: Request,
+                         x_admin_user_id: Optional[str] = Header(None)):
+    return await _exemplar_action(request, exemplar_id, "never", body, x_admin_user_id)
+
+
+_VOICE_RULES_SQL = """
+    SELECT rule_id::text AS rule_id, kind, writer, status, rule_text, token_estimate, expires_at, updated_at
+      FROM shared.writing_rule
+     WHERE scope = 'tenant' AND tenant_id = $1::uuid AND status IN ('candidate', 'approved', 'active')
+     ORDER BY writer, (kind = 'preference_summary') DESC, status, updated_at DESC
+"""
+_VOICE_EXEMPLARS_SQL = """
+    SELECT writer, channel, status, count(*) AS n FROM shared.writing_exemplar
+     WHERE scope = 'tenant' AND tenant_id = $1::uuid GROUP BY 1, 2, 3 ORDER BY 1, 2, 3
+"""
+_VOICE_RELEASES_SQL = """
+    SELECT DISTINCT ON (writer) release_id::text AS release_id, writer, release_no, status, content_class,
+           cardinality(rule_ids) AS rules, activated_at, created_at
+      FROM shared.writing_memory_release
+     WHERE scope = 'tenant' AND tenant_id = $1::uuid
+     ORDER BY writer, (status = 'active') DESC, release_no DESC
+"""
+
+
+@router.get("/tenants/{tenant_id}/voice")
+async def tenant_voice(tenant_id: str, request: Request):
+    """The Tenant 360 "Voice memory" card (admin only): what the writers learned for this tenant. Every read filters
+    tenant_id explicitly (cis_app's policies are USING (true))."""
+    from services.writing_memory import preference
+    tid = _uuid(tenant_id, "tenant")
+    out: dict = {"tenant_id": tid, "rules": [], "exemplars": [], "releases": [], "preference": preference.state()}
+    try:
+        async with _pool(request).acquire() as conn:
+            rules = [dict(r) for r in await conn.fetch(_VOICE_RULES_SQL, tid)]
+            releases = [dict(r) for r in await conn.fetch(_VOICE_RELEASES_SQL, tid)]
+            try:
+                async with conn.transaction():
+                    exemplars = [dict(r) for r in await conn.fetch(_VOICE_EXEMPLARS_SQL, tid)]
+            except asyncpg.UndefinedTableError:
+                exemplars = []
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e)
+    out["rules"] = [{k: _iso(v) for k, v in r.items()} for r in rules]
+    out["exemplars"] = [{**r, "n": int(r["n"])} for r in exemplars]
+    out["releases"] = [{k: _iso(v) for k, v in r.items()} for r in releases]
+    out["totals"] = {"active_rules": sum(1 for r in rules if r["status"] == "active"),
+                     "candidate_rules": sum(1 for r in rules if r["status"] == "candidate"),
+                     "summaries": sum(1 for r in rules if r["kind"] == "preference_summary"),
+                     "exemplars": sum(int(r["n"]) for r in exemplars if r["status"] != "never"),
+                     "active_releases": sum(1 for r in releases if r["status"] == "active")}
+    return out
