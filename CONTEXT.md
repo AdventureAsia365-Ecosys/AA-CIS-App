@@ -298,6 +298,18 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   `LLMClient.probe` (works on a switched-off connection; stage `adhoc_conn_test`, role `validate`, logged + audited;
   its outcome counts on the circuit). `GET /admin/llm-availability` adds `connections` (status per connection and the
   circuit of each deployment). UI: Settings › LLM Models › Connections (`frontend/app/admin/settings/ConnectionsTab.tsx`).
+- **Data scopes per stage** (AA-1002 slice S5, migration 311 contract, app ADR 0012): `shared.llm_role_config.
+  allowed_scopes` (`{aws_only}` or `{aws_only, vendor_direct}`, default `{aws_only}`, migration-only: `cis_app` has no
+  INSERT / UPDATE on the column) says which connections (`data_scope`) a stage's content may use. Backfilled from the
+  routes (both for the stages whose route ends on `gpt-6-luna-openai`, the S235 last resort), so no call changed
+  (`test_aa1002_s3_routes_snapshot.py` `*_scoped` cases). `shared/llm_client/data_scope.py`; the scopes are bound per
+  call in `LLMClient._generate` (`client.stage_scopes`) and filter `vendor_route.deployment_plan` /
+  `vendor_deployment_for`, the OpenAI adapter (`openai_scope_allowed`, second gate after the S235 catalog gate) and
+  `embed`. NULL / no row / column missing = no stage policy = the pre-S5 rules (S3 first-row rule, S235 gate). Admin:
+  `GET /admin/llm-config` returns `allowed_scopes` read-only (Route editor › Data), options outside the scope are
+  unavailable with a reason, and the PATCHes refuse such a model (422) and keep the S235 position rule in scope terms
+  (a model reached only outside AWS: last fallback only). A new stage seeded with an OpenAI-API last resort must set
+  both scopes in its seed migration.
 - **Structured output (`LLMRequest.json_schema`) per path**: Converse = one tool whose input is the schema, reply
   conformed (`_checked_json`, AA-659/714); OpenAI = strict `response_format`. The legacy `haiku` / `sonnet` keys
   (Anthropic Messages API, `invoke_claude`) have neither: since S251 (AA-835) the gateway appends a "one JSON object

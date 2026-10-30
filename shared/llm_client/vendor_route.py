@@ -24,6 +24,9 @@ openai-direct for an OpenAI API row), proved for every Dev stage by ``tests/unit
 
 Slice S4 plugs the circuit breaker (``breaker.py``) into the plan: a deployment whose circuit is open is left out (see
 ``deployment_plan``); the provider calls themselves are wrapped by ``LLMClient._call_target`` / ``embed``.
+
+Slice S5 makes the data policy per stage (``data_scope.py``): ``deployment_plan`` / ``vendor_deployment_for`` take the
+stage's ``allowed_scopes`` and leave out a deployment whose connection's ``data_scope`` the stage does not allow.
 """
 from __future__ import annotations
 
@@ -32,7 +35,7 @@ from typing import Callable, Optional
 
 import structlog
 
-from . import breaker, connections, deployments
+from . import breaker, connections, data_scope, deployments
 from .catalog import LEGACY_KEYS, CatalogModel
 
 logger = structlog.get_logger()
@@ -67,10 +70,17 @@ def _usable(model: CatalogModel, found: Optional[VendorDeployment]) -> Optional[
     return found
 
 
-def vendor_deployment_for(model: CatalogModel) -> Optional[VendorDeployment]:
-    """The Anthropic deployment to call for ``model``, or None for today's path. Never raises."""
+def vendor_deployment_for(model: CatalogModel,
+                          allowed_scopes: Optional[tuple] = None) -> Optional[VendorDeployment]:
+    """The Anthropic deployment to call for ``model``, or None for today's path. AA-1002 (S5): None as well when the
+    stage's ``allowed_scopes`` (None = no stage policy) do not allow that connection's data scope. Never raises."""
     try:
-        return _usable(model, _first_enabled(model.model_key))
+        found = _usable(model, _first_enabled(model.model_key))
+        if found is not None and not data_scope.allows(allowed_scopes, found.connection.data_scope):
+            logger.info("llm_deployment_skip", model=model.model_key, connection=found.connection.connection_key,
+                        reason=f"data scope {found.connection.data_scope} is not allowed for the stage")
+            return None
+        return found
     except Exception as e:  # noqa: BLE001 — a registry problem must never break today's path
         logger.warning("llm_vendor_route_failed", model=model.model_key, error=str(e)[:200])
         return None
@@ -175,7 +185,7 @@ def _callable(model: CatalogModel, conn: connections.ProviderConnection) -> Opti
     return None
 
 
-def deployment_plan(model: CatalogModel) -> Optional[list[VendorDeployment]]:
+def deployment_plan(model: CatalogModel, allowed_scopes: Optional[tuple] = None) -> Optional[list[VendorDeployment]]:
     """AA-1002 (S3) — where ``model`` is called, in order. The model's deployment rows (``shared.llm_model_deployment``,
     lowest ``priority`` first, ``connection_key`` breaks ties) that the gateway can call — a Bedrock connection
     (assume_role / task_role) for converse / anthropic_native / embed rows, an Anthropic connection for Anthropic
@@ -183,11 +193,14 @@ def deployment_plan(model: CatalogModel) -> Optional[list[VendorDeployment]]:
     row), an API-key connection without a policy problem — are its CALLABLE rows. Of those, the plan keeps
 
     - an enabled deployment on an enabled connection;
-    - data scope (until slice S5 makes it per stage): a ``vendor_direct`` connection only when it is the FIRST enabled
-      callable row, i.e. when the admin deliberately put a vendor API ahead (S2's rule). It is never a same-model
-      fallback behind an ``aws_only`` one, so content never leaves AWS because acc3 failed (migration 306 seeds
-      enabled Anthropic API rows behind acc3 for every Anthropic model, tenant ones included). Decided before the
-      circuit check, so an open acc3 circuit never promotes the row behind it;
+    - data scope (slice S5, ``data_scope.py``): with the stage's ``allowed_scopes``, a connection whose ``data_scope``
+      is in them (an ``aws_only`` stage never leaves AWS, whatever the priorities; a stage that allows
+      ``vendor_direct`` may fall back to a vendor API behind acc3). With no stage policy (``allowed_scopes`` None: the
+      column not migrated, a stage with no row) the S3 rule: a ``vendor_direct`` connection only when it is the FIRST
+      enabled callable row (the admin deliberately put a vendor API ahead, S2's rule), never a same-model fallback
+      behind an ``aws_only`` one (migration 306 seeds enabled Anthropic API rows behind acc3 for every Anthropic
+      model, tenant ones included). Decided before the circuit check, so an open acc3 circuit never promotes a row
+      the rule leaves out;
     - one whose circuit is not open (``circuit_open``: slice S4's breaker, ``breaker.is_open``; a skipped one is named
       in the returned ``DeploymentPlan.circuit_skips``).
 
@@ -218,9 +231,14 @@ def deployment_plan(model: CatalogModel) -> Optional[list[VendorDeployment]]:
         for c in callable_rows:
             if not (c.deployment.enabled and c.connection.enabled):
                 continue
-            if candidates and c.connection.data_scope != "aws_only":
+            scope = c.connection.data_scope
+            if allowed_scopes is not None:
+                if not data_scope.allows(allowed_scopes, scope):
+                    _skip(model, c.deployment, f"data scope {scope} is not allowed for the stage")
+                    continue
+            elif candidates and scope != data_scope.AWS_ONLY:
                 _skip(model, c.deployment,
-                      f"{c.connection.data_scope} is never a fallback behind another deployment (S3, until S5)")
+                      f"{scope} is never a fallback behind another deployment (no stage data scope)")
                 continue
             candidates.append(c)
         plan: list[VendorDeployment] = []

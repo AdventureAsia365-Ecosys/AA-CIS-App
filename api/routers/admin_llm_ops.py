@@ -16,6 +16,7 @@ The writes keep their own inline verify_admin_secret() call as before.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from datetime import date, datetime, timedelta, timezone
@@ -46,6 +47,9 @@ from shared.llm_client.catalog import (
     serving_accounts,
     set_catalog_price,
 )
+from shared.llm_client import connections as llm_connections
+from shared.llm_client import data_scope
+from shared.llm_client import deployments as llm_deployments
 from shared.llm_client.client import legacy_acc2_native_enabled
 from shared.llm_client.role_config import (
     list_stage_configs,
@@ -153,11 +157,14 @@ def _route_view(row: dict, models: Optional[list]) -> dict:
     }
 
 
-def _catalog_options(role: str, stage: str, models: list) -> list[dict]:
+def _catalog_options(role: str, stage: str, models: list, scopes: Optional[tuple] = None,
+                     reach: Optional[dict] = None) -> list[dict]:
     """AA-659: every stage now runs through the gateway route, so availability depends only on
     the catalog row and the writer/judge vendor rule (ADR-2026-014/027): writers are Anthropic,
     judges are never Anthropic. ADR 0008: `validate` stages (extraction/checks the judge never
-    scores, e.g. s1_source_facts) may use any vendor."""
+    scores, e.g. s1_source_facts) may use any vendor. AA-1002 (S5): and on the stage's data scopes
+    (`scopes`, None = no stage policy): a model none of whose connections (`reach`, `_reach_scopes`)
+    the stage allows cannot be selected."""
     options = []
     for m in models:
         # AA-685: embedding stages only offer embedding models, and text stages never do.
@@ -174,6 +181,8 @@ def _catalog_options(role: str, stage: str, models: list) -> list[dict]:
             reason = "Judge phải khác vendor với writer (writer là Anthropic)"
         elif role == "writer" and m.vendor != "anthropic":
             reason = "Writer và judge phải khác vendor (judge là OpenAI)"
+        elif not _scope_reaches(scopes, reach, m.model_key):
+            reason = _SCOPE_REASON.format(scopes=", ".join(scopes or ()))
         opt = {"model_id": m.model_key, "label": m.label, "via": model_via(m),
                "available": reason is None}
         if reason:
@@ -191,21 +200,73 @@ async def _load_catalog() -> Optional[list]:
         return None
 
 
-def _openai_api_keys(models: Optional[list]) -> set[str]:
-    """S235 — Model Keys served by the OpenAI platform API (catalog provider 'openai')."""
-    return {m.model_key for m in models or [] if m.provider == "openai"}
+# ── AA-1002 (S5) — data scopes as data (shared/llm_client/data_scope.py) ──────────────────────────────────────────
+# Replaces the S235 constant (an OpenAI platform API model only as the last fallback): a model is judged by the data
+# scopes of the connections its deployments are on, a stage by its allowed_scopes (migration 311, migration-only).
+
+_SCOPE_REASON = "This stage may not send content outside AWS (data scopes: {scopes})"
+
+_VENDOR_DIRECT_LAST_RESORT_ONLY = (
+    "S235: a model reached only outside AWS (data scope vendor_direct, e.g. the OpenAI platform API) may only be the "
+    "last fallback of a route (Bedrock outage), never the primary or the shadow")
 
 
-_OPENAI_LAST_RESORT_ONLY = ("S235: an OpenAI platform API model may only be the last fallback of a "
-                            "route (Bedrock outage), never the primary or the shadow")
+def _reach_scopes(models: Optional[list]) -> dict[str, frozenset]:
+    """Model key -> the data scopes of the connections its deployments are on (every row, enabled or not: the switch is
+    an operation, the scope a policy). A model the registry does not describe (or an unreadable registry) by its
+    provider, as the gateway's no-registry path calls it: an OpenAI platform API row on openai-direct's scope, any
+    other row on acc3's. Sync (registry caches): the handlers run it in a thread. Never raises."""
+    try:
+        rows = llm_connections.registry_rows_sync()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("llm_admin_scope_registry_failed", error=str(e)[:200])
+        rows = {}
+    out: dict[str, frozenset] = {}
+    for m in models or []:
+        scopes: set[str] = set()
+        if rows:
+            try:
+                for d in llm_deployments.deployments_for_sync(m.model_key, enabled_only=False):
+                    c = rows.get(d.connection_key)
+                    if c is not None:
+                        scopes.add(c.data_scope)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("llm_admin_scope_deployments_failed", model=m.model_key, error=str(e)[:200])
+        if not scopes:
+            builtin = llm_connections.BUILTIN_CONNECTIONS["openai-direct" if m.provider == "openai" else "acc3"]
+            scopes.add(builtin.data_scope)
+        out[m.model_key] = frozenset(scopes)
+    return out
 
 
-def _options_for(role: str, stage: str, models: Optional[list]) -> list[dict]:
+async def _load_reach(models: Optional[list]) -> dict[str, frozenset]:
+    return await asyncio.to_thread(_reach_scopes, models)
+
+
+def _scope_reaches(scopes: Optional[tuple], reach: Optional[dict], model_key: str) -> bool:
+    """True when a stage with `scopes` (None = no stage policy) can call `model_key` on at least one connection."""
+    if scopes is None or reach is None or model_key not in reach:
+        return True
+    return bool(reach[model_key] & set(scopes))
+
+
+def _check_scopes(stage: str, scopes: Optional[tuple], reach: dict, keys: list) -> None:
+    """422 when the route names a model the stage's data scopes never let the gateway call."""
+    blocked = [k for k in keys if k and not _scope_reaches(scopes, reach, k)]
+    if blocked:
+        raise HTTPException(status_code=422, detail=(
+            f"stage {stage!r} may not send content outside AWS (data scopes: {', '.join(scopes or ())}): "
+            f"{', '.join(blocked)} is reached only through a vendor API. Allowing a stage to use vendor APIs is a "
+            "migration (shared.llm_role_config.allowed_scopes), not an admin setting"))
+
+
+def _options_for(role: str, stage: str, models: Optional[list], scopes: Optional[tuple] = None,
+                 reach: Optional[dict] = None) -> list[dict]:
     if models is None:
         if role == "embed":
             return []
         return _JUDGE_OPTIONS if role == "judge" else _WRITER_OPTIONS
-    return _catalog_options(role, stage, models)
+    return _catalog_options(role, stage, models, scopes, reach)
 
 
 class LlmConfigPatch(BaseModel):
@@ -217,9 +278,13 @@ class LlmConfigPatch(BaseModel):
 async def get_llm_config():
     rows = await list_stage_configs()
     models = await _load_catalog()
+    reach = await _load_reach(models) if models is not None else None
     for r in rows:
         r["updated_at"] = r["updated_at"].isoformat() if r["updated_at"] else None
-        r["options"] = _options_for(r["role"], r["stage"], models)
+        # AA-1002 (S5): read-only here (a migration sets it); None until migration 311 is applied
+        r["allowed_scopes"] = r.get("allowed_scopes")
+        r["options"] = _options_for(r["role"], r["stage"], models,
+                                    data_scope.normalize(r["allowed_scopes"]), reach)
         r["account_route_options"] = _account_route_options() if r["provider"] == "claude" else []
         r["route"] = _route_view(r, models)
     return {"stages": rows}
@@ -241,12 +306,16 @@ async def patch_llm_config(
     if current is None:
         raise HTTPException(status_code=404, detail=f"unknown stage: {stage!r}")
     models = await _load_catalog()
-    allowed = {o["model_id"] for o in _options_for(current["role"], stage, models) if o["available"]}
+    reach = await _load_reach(models) if models is not None else {}
+    scopes = data_scope.normalize(current.get("allowed_scopes"))
+    # AA-1002 (S5): the stage's data scopes first (the clearer refusal), then the S235 last-resort rule.
+    _check_scopes(stage, scopes, reach, [body.model_id])
+    if body.model_id in data_scope.outside_aws_only(reach):
+        raise HTTPException(status_code=422, detail=_VENDOR_DIRECT_LAST_RESORT_ONLY)
+    allowed = {o["model_id"] for o in _options_for(current["role"], stage, models, scopes, reach) if o["available"]}
     if body.model_id not in allowed:
         raise HTTPException(status_code=422,
                             detail=f"model {body.model_id!r} is not selectable for stage {stage!r}")
-    if body.model_id in _openai_api_keys(models):
-        raise HTTPException(status_code=422, detail=_OPENAI_LAST_RESORT_ONLY)
     # AA-998: only acc3 (or no value = acc3) — the retired fallback account is refused here, before the DB CHECK.
     if body.account_route is not None and body.account_route not in _ACCOUNT_ROUTE_VALUES:
         raise HTTPException(status_code=422,
@@ -310,10 +379,15 @@ async def patch_llm_route(
         sample_pct = 0  # no shadow model → nothing to sample
 
     models = await _load_catalog()
-    allowed = {o["model_id"] for o in _options_for(current["role"], stage, models) if o["available"]}
-    openai_api = _openai_api_keys(models)
-    if any(m in openai_api for m in fallbacks[:-1]) or (shadow is not None and shadow in openai_api):
-        raise HTTPException(status_code=422, detail=_OPENAI_LAST_RESORT_ONLY)
+    reach = await _load_reach(models) if models is not None else {}
+    scopes = data_scope.normalize(current.get("allowed_scopes"))
+    # AA-1002 (S5): every model the route names must be callable within the stage's data scopes; a model reached only
+    # outside AWS stays the S235 last resort (never a non-last fallback, never the shadow).
+    _check_scopes(stage, scopes, reach, [*fallbacks, shadow])
+    allowed = {o["model_id"] for o in _options_for(current["role"], stage, models, scopes, reach) if o["available"]}
+    outside = data_scope.outside_aws_only(reach)
+    if any(m in outside for m in fallbacks[:-1]) or (shadow is not None and shadow in outside):
+        raise HTTPException(status_code=422, detail=_VENDOR_DIRECT_LAST_RESORT_ONLY)
 
     # Fallback list: no duplicates, must not contain the primary, every entry available.
     if len(fallbacks) != len(set(fallbacks)):

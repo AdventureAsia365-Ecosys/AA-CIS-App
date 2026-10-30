@@ -14,6 +14,10 @@ Registry states:
 - ``seed_anthropic_on``: ``seed`` with anthropic-direct ENABLED (the admin switch of S2): its deployments sit behind
   acc3 (priority 100), so the call order must not change either.
 
+AA-1002 (S5): ``capture(..., scoped=True)`` gives every stage the ``allowed_scopes`` migration 311 backfills
+(``stage_scopes``: both scopes when the route names a model whose every seeded deployment is outside AWS, else
+``aws_only``); without it the stages have no scope (the column not migrated), as when the golden was taken.
+
 The snapshot ``snapshots/aa1002_s3_pre_s3_route_calls.json`` was written by running THIS file unchanged against the
 ``origin/main`` checkout from before S3 (``ec0dd46b``, S2 on main), unit-test env (``BEDROCK_ACCT_PRIMARY=
 acc3-test-account``)::
@@ -51,12 +55,28 @@ def catalog_models(fixture: dict) -> dict:
     return out
 
 
-def stage_configs(fixture: dict) -> dict:
+def stage_configs(fixture: dict, scopes: dict | None = None) -> dict:
     from shared.llm_client.role_config import StageConfig
+    extra = (lambda stage: {"allowed_scopes": scopes[stage]}) if scopes is not None else (lambda stage: {})
     return {r["stage"]: StageConfig(stage=r["stage"], role=r["role"], provider=r["provider"], model_id=r["model_id"],
                                     account_route=r["account_route"],
                                     fallback_model_ids=tuple(r["fallback_model_ids"]),
-                                    shadow_model_id=r["shadow_model_id"], shadow_sample_pct=r["shadow_sample_pct"])
+                                    shadow_model_id=r["shadow_model_id"], shadow_sample_pct=r["shadow_sample_pct"],
+                                    **extra(r["stage"]))
+            for r in fixture["routes"]}
+
+
+def stage_scopes(fixture: dict) -> dict:
+    """AA-1002 (S5): migration 311's backfill for the fixture routes over the 304 / 306 seed rows."""
+    from shared.llm_client import data_scope
+    models = catalog_models(fixture)
+    conns = seed_connections()
+    reach: dict = {}
+    for d in seed_deployments(models):
+        reach.setdefault(d.model_key, set()).add(conns[d.connection_key].data_scope)
+    outside = data_scope.outside_aws_only({k: frozenset(v) for k, v in reach.items()})
+    return {r["stage"]: data_scope.backfill_scopes(
+                [r["model_id"], *r["fallback_model_ids"], r["shadow_model_id"]], outside)
             for r in fixture["routes"]}
 
 
@@ -203,13 +223,13 @@ def _run_stage(cfg, rec: Recorder, structured: bool):
         return type(e).__name__
 
 
-def capture(registry: str = "missing", env: dict | None = None) -> dict:
+def capture(registry: str = "missing", env: dict | None = None, scoped: bool = False) -> dict:
     """{stage: {"plain": {"calls": [...], "raised": cls}, "structured": {...}}} for every stage of the fixture."""
     from shared.llm_client import catalog, connections
 
     fixture = load_fixture()
     models = catalog_models(fixture)
-    cfgs = stage_configs(fixture)
+    cfgs = stage_configs(fixture, stage_scopes(fixture) if scoped else None)
     out: dict = {}
     for stage in sorted(cfgs):
         cfg = cfgs[stage]

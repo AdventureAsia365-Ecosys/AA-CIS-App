@@ -31,7 +31,7 @@ REGISTRY = {"connections", "deployments"}
 # S3: who may read the registry (and why). Everything else in the gateway must not.
 REGISTRY_READERS = {
     "vendor_route.py": "the deployment plan (S2 vendor row, S3 spread)",
-    "client.py": "the alias targets (deployments.alias_targets_sync)",
+    "client.py": "the alias targets (deployments.alias_targets_sync); S5: the OpenAI connection's data scope",
     "embed.py": "the connection of an embedding deployment (_runtime_for)",
     "bedrock_satellite.py": "role / ExternalId / region of an assume-role connection",
     "catalog.py": "serving_accounts() = the enabled Bedrock connections",
@@ -41,7 +41,8 @@ REGISTRY_READERS = {
 }
 CALL_PATH = ("client.py", "embed.py", "decide.py", "judge.py", "shadow.py", "bedrock_satellite.py",
              "bedrock_batch.py", "call_log.py", "catalog.py", "role_config.py", "pricing.py", "errors.py",
-             "prompt_cache.py", "stream_sink.py", "column_mapper.py", "schema_check.py", "models.py", "breaker.py")
+             "prompt_cache.py", "stream_sink.py", "column_mapper.py", "schema_check.py", "models.py", "breaker.py",
+             "data_scope.py")
 
 
 def _imported_modules(path: Path) -> set[str]:

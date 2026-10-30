@@ -3,6 +3,7 @@ import json
 import random
 import threading
 import time
+from contextvars import ContextVar
 import boto3
 from botocore.config import Config
 from typing import Optional
@@ -17,7 +18,7 @@ from .bedrock_satellite import DEFAULT_SATELLITE_ACCOUNT
 from .catalog import LEGACY_KEYS, CatalogModel, get_model_sync
 from .schema_check import SchemaMismatch, conform
 from .errors import OTHER, THROTTLED, LLMAccessDenied, account_level_class, classify
-from . import breaker, stream_sink
+from . import breaker, connections, data_scope, stream_sink
 from .vendor_route import (VendorDeployment, deployment_plan, pinned_deployment, split_pin,
                            vendor_deployment_for)
 from .deployments import alias_targets_sync
@@ -100,15 +101,51 @@ class OpenAIPlatformBlocked(RuntimeError):
     """S235 — a call would go to an OpenAI platform API model whose catalog row is not enabled."""
 
 
+# The connection the OpenAI adapter talks to (the client is built once from its credential env, migration 304's row).
+OPENAI_CONNECTION_KEY = "openai-direct"
+
+
+def _openai_data_scope() -> str:
+    conn = connections.connection_or_builtin(OPENAI_CONNECTION_KEY)
+    return conn.data_scope if conn is not None else data_scope.VENDOR_DIRECT
+
+
 def openai_platform_allowed(model_key: str) -> bool:
     """S235 (Nghiệp, 14/10/2026): Bedrock first; the OpenAI platform API is only the last-resort
     fallback of a stage route (gpt-6-luna-openai at the end of the judge routes). The adapter
     (`LLMClient._call_openai`) runs only for a catalog row with provider 'openai' that is enabled.
     Migration 224 retires gpt-4.1 (disabled), so the legacy gpt-4.1 tier and the legacy chain's
     GPT-4.1 last resort are refused here. Fails closed: an unreadable catalog (DB down, unit tests)
-    means not allowed."""
+    means not allowed. AA-1002 (S5): the stage's data scope is a second gate (``openai_scope_allowed``)."""
     m = get_model_sync(model_key)
     return m is not None and m.provider == "openai" and m.enabled
+
+
+def openai_scope_allowed(allowed_scopes: Optional[tuple]) -> bool:
+    """AA-1002 (S5): True when a stage with ``allowed_scopes`` may send content to the OpenAI connection (its data
+    scope: vendor_direct). None (no stage policy: the column not migrated, an adhoc stage) = allowed, the S235 catalog
+    gate alone (``openai_platform_allowed``), i.e. the pre-S5 behaviour."""
+    return allowed_scopes is None or data_scope.allows(allowed_scopes, _openai_data_scope())
+
+
+# AA-1002 (S5): (stage, allowed_scopes) of the call being generated, bound by LLMClient._generate / the shadow so the
+# gateway reads a stage's config once per call (the route and the scopes come from the same row).
+_STAGE_SCOPES: ContextVar[Optional[tuple]] = ContextVar("llm_stage_scopes", default=None)
+
+
+def stage_scopes(request: LLMRequest) -> Optional[tuple]:
+    """AA-1002 (S5): the data scopes of ``request.stage``: the ones bound for this call, else role_config (20 s cache);
+    None for no stage policy (no stage, a stage with no row, the column not migrated). Never raises."""
+    if not request.stage:
+        return None
+    bound = _STAGE_SCOPES.get()
+    if bound is not None and bound[0] == request.stage:
+        return bound[1]
+    try:
+        return data_scope.normalize(getattr(get_stage_config_sync(request.stage), "allowed_scopes", None))
+    except Exception as e:  # noqa: BLE001 — role_config never raises; belt and braces on the call path
+        logger.warning("llm_stage_scope_read_failed", stage=request.stage, error=str(e)[:200])
+        return None
 
 
 def _checked_json(model_label: str, value, schema: dict) -> str:
@@ -408,6 +445,15 @@ class LLMClient:
         # any other real per-request override), same relationship model_tier already had with
         # the DEFAULT_MODEL_TIER env var before this task.
         stage_cfg = get_stage_config_sync(request.stage) if request.stage else None
+        if stage_cfg is None:
+            return self._generate_with(request, stage_cfg)
+        token = _STAGE_SCOPES.set((request.stage, data_scope.normalize(getattr(stage_cfg, "allowed_scopes", None))))
+        try:
+            return self._generate_with(request, stage_cfg)
+        finally:
+            _STAGE_SCOPES.reset(token)
+
+    def _generate_with(self, request: LLMRequest, stage_cfg) -> LLMResponse:
         # The satellite account. AA-998: acc3 is the only one (llm_role_config.account_route is CHECKed
         # to acc3 / NULL by migration 295); any other stored value is ignored, never called.
         primary_acct = DEFAULT_SATELLITE_ACCOUNT
@@ -458,12 +504,12 @@ class LLMClient:
     def _legacy_call(self, request: LLMRequest, tier: str, primary_acct: str) -> LLMResponse:
         """AA-1002 (S3): a legacy key through its alias (LLM_LEGACY_ALIASES on, an alias row and a registry that
         describes every target), else the hard-coded _legacy_chain, unchanged (the rollback path)."""
-        steps = self._alias_steps(tier) if legacy_aliases_enabled() else None
+        steps = self._alias_steps(tier, stage_scopes(request)) if legacy_aliases_enabled() else None
         if steps is None:
             return self._legacy_chain(request, tier, primary_acct)
         return self._run_alias(request, tier, steps)
 
-    def _alias_steps(self, tier: str) -> Optional[list]:
+    def _alias_steps(self, tier: str, allowed_scopes: Optional[tuple] = None) -> Optional[list]:
         """The (catalog model, deployment) attempts of legacy key ``tier``, in order: each alias target (shared.
         llm_model_alias) on each of its deployments (vendor_route.deployment_plan). None = take _legacy_chain: gpt-4.1,
         acc2-native on (its order is the chain's own), no alias row, or a target the catalog / registry cannot describe
@@ -482,7 +528,7 @@ class LLMClient:
             if not model.enabled:
                 logger.info("llm_alias_target_skip", alias=tier, target=key, reason=model.blocked_reason or "disabled")
                 continue
-            plan = deployment_plan(model)
+            plan = deployment_plan(model, allowed_scopes)
             if plan is None:
                 logger.warning("llm_alias_fallback_legacy_chain", alias=tier, target=key, reason="no registry rows")
                 return None
@@ -636,11 +682,14 @@ class LLMClient:
         from .shadow import record_shadow_sync
         t0 = time.monotonic()
         resp, error = None, None
+        token = _STAGE_SCOPES.set((request.stage, data_scope.normalize(getattr(cfg, "allowed_scopes", None))))
         try:
             resp = self._call_key_logged(request, cfg.shadow_model_id, primary_acct,
                                          role=cfg.role or "writer", position=0, extra={"shadow": True})
         except Exception as e:
             error = str(e)[:1000]
+        finally:
+            _STAGE_SCOPES.reset(token)
         record_shadow_sync(
             stage=cfg.stage, role=cfg.role, request=request, primary=primary,
             shadow_model=cfg.shadow_model_id, shadow=resp, error=error,
@@ -721,7 +770,7 @@ class LLMClient:
         # so a Bedrock outage on a Haiku/Sonnet writer raises here. Writers are Anthropic; an OpenAI last resort for a
         # writer would change vendor unseen (ADR 0005 §4) — only the judge routes list an OpenAI-API last resort,
         # explicitly. Shared by _legacy_chain and the S3 alias path (_run_alias).
-        if not openai_platform_allowed("gpt-4.1"):
+        if not (openai_platform_allowed("gpt-4.1") and openai_scope_allowed(stage_scopes(request))):
             logger.error("t3_skipped_gpt41_retired", tier=tier,
                          reason="GPT-4.1 retired (S235); no OpenAI last resort for legacy tiers")
             raise _all_failed("All LLM providers failed (Bedrock tiers down; GPT-4.1 retired)", failures)
@@ -897,12 +946,14 @@ class LLMClient:
             return self._call_anthropic_messages(request, model, pinned_deployment(model, pin[1]))
         # AA-1002 (S3): the model's deployments, in order (vendor_route.deployment_plan). None = the registry does not
         # describe this model (or LLM_DEPLOYMENT_ROUTING=off): the S2 path below, unchanged.
-        plan = deployment_plan(model) if deployment_routing_enabled() else None
+        # AA-1002 (S5): only deployments on connections whose data scope the stage allows.
+        scopes = stage_scopes(request)
+        plan = deployment_plan(model, scopes) if deployment_routing_enabled() else None
         if plan is not None:
             return self._call_plan(request, model, plan)
         # AA-1002 (S2): an enabled deployment on an enabled Anthropic connection, first by priority, serves the
         # model through the Messages API. None (every other registry state) = today's path below, unchanged.
-        vendor = vendor_deployment_for(model)
+        vendor = vendor_deployment_for(model, scopes)
         if vendor is not None:
             return self._call_anthropic_messages(request, model, vendor)
         if model.api_style == "anthropic_messages":
@@ -1258,10 +1309,16 @@ class LLMClient:
         model_label = catalog_model.model_key if catalog_model else model
         # S235 — the single gate in front of the OpenAI platform API: every path into this adapter
         # (legacy gpt-4.1 tier, T3, catalog openai_chat rows, shadows) stops here unless the
-        # model's catalog row is provider 'openai' AND enabled.
+        # model's catalog row is provider 'openai' AND enabled, and (AA-1002 S5) the stage's
+        # data scopes allow the OpenAI connection's.
         if not openai_platform_allowed(model_label):
             raise OpenAIPlatformBlocked(
                 f"{model_label}: OpenAI platform API is disabled (S235 Bedrock-only policy)")
+        scopes = stage_scopes(request)
+        if not openai_scope_allowed(scopes):
+            raise OpenAIPlatformBlocked(
+                f"{model_label}: stage {request.stage!r} may not send content outside AWS "
+                f"(data scopes {', '.join(scopes or ())})")
         stream_sink.emit_restart(request.stage)  # AA-637
         resp = self._openai.chat.completions.create(**kwargs)
         content = resp.choices[0].message.content or ""

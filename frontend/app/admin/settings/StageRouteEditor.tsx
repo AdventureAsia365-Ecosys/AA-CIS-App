@@ -158,6 +158,16 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
             <>{t("shadowLabel")} <b style={{ color: K.ink2 }}>{t("off")}</b></>
           )}
         </span>
+        <span data-testid={`llm-scope-${row.stage}`} title={t("scopeHint")} style={{ fontSize: 11.5, color: K.muted }}>
+          {t("dataScope")}{" "}
+          <b style={{ color: K.ink2 }}>
+            {!row.allowed_scopes
+              ? t("scopeNotSet")
+              : row.allowed_scopes.includes("vendor_direct")
+                ? t("scopeVendorDirect")
+                : t("scopeAwsOnly")}
+          </b>
+        </span>
       </div>
 
       {/* Fallback chain */}

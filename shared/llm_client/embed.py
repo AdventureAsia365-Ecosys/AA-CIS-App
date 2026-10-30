@@ -31,7 +31,7 @@ from typing import Optional
 
 import structlog
 
-from . import breaker, connections
+from . import breaker, connections, data_scope
 from .catalog import CatalogModel, get_model_sync
 from .role_config import get_stage_config_sync
 from .vendor_route import deployment_plan
@@ -80,15 +80,17 @@ def _runtime_for(connection_key: str):
     return get_satellite_client("bedrock-runtime", account=connection_key)
 
 
-def _targets(model: CatalogModel, account_route: Optional[str]) -> list[tuple[str, str]]:
+def _targets(model: CatalogModel, account_route: Optional[str],
+             allowed_scopes: Optional[tuple] = None) -> list[tuple[str, str]]:
     """(connection_key, wire id) attempts for `model`, in order (see the module docstring)."""
-    return [(account, wire_id) for account, wire_id, _ in _plan_targets(model, account_route)[0]]
+    return [(account, wire_id) for account, wire_id, _ in _plan_targets(model, account_route, allowed_scopes)[0]]
 
 
-def _plan_targets(model: CatalogModel, account_route: Optional[str]):
+def _plan_targets(model: CatalogModel, account_route: Optional[str], allowed_scopes: Optional[tuple] = None):
     """([(connection_key, wire id, connection or None)], circuit skips). The connection is None on the no-registry
-    path (today's path, no breaker); circuit skips name the deployments the S4 breaker left out."""
-    plan = deployment_plan(model)
+    path (today's path, no breaker); circuit skips name the deployments the S4 breaker left out. AA-1002 (S5): only
+    deployments on connections whose data scope the stage's ``allowed_scopes`` allow (None = no stage policy)."""
+    plan = deployment_plan(model, allowed_scopes)
     if plan is None:
         account = model.account_for(account_route)
         return ([(account, model.bedrock_profile_ids[account], None)] if account else []), []
@@ -158,7 +160,8 @@ def embed(stage: str, texts: list[str], *, input_type: str = "search_document",
             logger.info("llm_route_skip", stage=stage, model=key, reason=reason)
             errors.append(f"{key}: skipped ({reason})")
             continue
-        targets, skips = _plan_targets(model, cfg.account_route)
+        targets, skips = _plan_targets(model, cfg.account_route,
+                                       data_scope.normalize(getattr(cfg, "allowed_scopes", None)))
         if not targets:
             errors.append(f"{key}: " + (str(breaker.circuit_error(key, skips)) if skips else
                                         "no Bedrock profile or usable deployment"))

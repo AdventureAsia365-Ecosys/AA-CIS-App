@@ -302,7 +302,7 @@ def test_a_task_role_deployment_runs_on_the_native_client(world):
     assert resp.provider == "bedrock" and resp.model_used == "gpt-6-luna" and resp.satellite_account is None
 
 
-# ── data scope until S5 ────────────────────────────────────────────────────────────────────────────────────────────
+# ── data scope with no stage policy (pre-S5 rule; per-stage scopes: test_aa1002_s5_data_scope.py) ──────────────
 
 def test_a_vendor_api_row_is_never_a_fallback_behind_acc3(world):
     world.conns["anthropic-direct"] = _anthropic(enabled=True)
