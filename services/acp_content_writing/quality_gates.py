@@ -1363,8 +1363,8 @@ def _gate_brand_voice(
 # "a"; "b""), the same reading the admin highlight uses (admin_content_quality._F9_PHRASE_RE / _QUOTED_RE).
 _F9_STYLE_PHRASES_RE = re.compile(r"exact flagged phrase\(s\): (.+)$", re.DOTALL)
 _F9_STYLE_QUOTED_RE = re.compile(r'"([^"]{3,})"')
-F9_STYLE_PROBLEM = ("off-brand voice or generic AI wording ('{phrase}') — rewrite the sentence in the brand's voice "
-                    "with the same facts and nothing the SOURCE does not state, or return \"\" to cut it")
+F9_STYLE_PROBLEM = ("flagged style wording ('{phrase}'): say this sentence plainly, keep its facts, add none, "
+                    "or return \"\" to drop it")
 
 
 def brand_style_sentences(content_text: str, violation: str) -> list[tuple[str, str]]:

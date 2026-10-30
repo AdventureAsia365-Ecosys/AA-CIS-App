@@ -16,22 +16,22 @@ from services.acp_content_writing import service as writing_service
 from services.acp_shared.channel_spec import linkedin_spec
 from services.quality import registry as qr
 
-TRIP = "Mongolia: Khövsgöl Lake and Gobi Desert — 15 Days"
-SCOPE = ("SCOPE: this piece covers days 3–4 of the trip, in this order: Sod Camp → Uran Togoo → Moron.")
-SEED = ("Sod Camp — overnight in a standard ger camp\n"
-        "Location: Sod Camp, Khövsgöl Lake area, Khövsgöl Province, Mongolia\n"
+TRIP = "Norland: Selin Lake and Varra Desert — 15 Days"
+SCOPE = ("SCOPE: this piece covers days 3–4 of the trip, in this order: Orin Camp → Kessa Rock → Tarrow.")
+SEED = ("Orin Camp — overnight in a simple tent camp\n"
+        "Location: Orin Camp, Selin Lake area, Selin Province, Norland\n"
         "Day 3 of the trip\n"
-        "Source itinerary: Arrive at Sod Camp in the afternoon. Overnight in a standard ger camp.\n\n"
-        "Uran Togoo — trek into the caldera of a dormant volcano\n"
-        "Location: Uran Togoo Volcano, Bulgan Province, Mongolia\n"
+        "Source itinerary: Arrive at Orin Camp in the afternoon. Overnight in a simple tent camp.\n\n"
+        "Kessa Rock — trek into the caldera of a dormant volcano\n"
+        "Location: Kessa Rock Volcano, Hale Province, Norland\n"
         "Day 3 of the trip\n"
-        "Source itinerary: Journey to Uran Togoo, a dormant volcano. The volcano sits within green steppes and "
-        "forests.")
-BRAND = "Terra Family Expeditions"
-CTA = "Ask Terra Family Expeditions to plan this trip for your family."
-OUT_OF_SCOPE = "The sand dunes of the Gobi are a long way from this green volcano."
-CLEAN = "The trek climbs into the caldera of Uran Togoo, a dormant volcano in green steppe."
-STYLE_SENTENCE = "Uran Togoo is the quiet showpiece of the route, a dormant volcano wrapped in forest."
+        "Source itinerary: Journey to Kessa Rock, a dormant volcano. The old volcano stands above wide grassland "
+        "and pine woods.")
+BRAND = "Example Trails Co"
+CTA = "Ask Example Trails Co to plan this trip for your family."
+OUT_OF_SCOPE = "The dunes of the Varra are far from this quiet hill."
+CLEAN = "The trek climbs into the caldera of Kessa Rock, a dormant volcano above open grassland."
+STYLE_SENTENCE = "Kessa Rock is the quiet showpiece of the route, a dormant volcano ringed by pines."
 F9_STYLE_VIOLATION = 'audit flagged: GENERIC_AI_WORDING — exact flagged phrase(s): "quiet showpiece"'
 
 
@@ -107,7 +107,7 @@ class TestF12Block:
         out = _gates(f"{CLEAN} {OUT_OF_SCOPE} {CTA}", stock_blocking=False)
         assert qg.hold_failure(out["gate_ledger"])["gate"] == qr.F12_SCOPE
         status, reason, _ = writing_service._hold_or_ship(out["gate_ledger"], out["flags"])
-        assert status == "held" and reason.startswith(f"{qr.F12_SCOPE}: names 'Gobi'")
+        assert status == "held" and reason.startswith(f"{qr.F12_SCOPE}: names 'Varra'")
 
     def test_a_passing_piece_is_unaffected(self, modes):
         modes(T10_F12_SCOPE_MODE="block")
@@ -120,7 +120,7 @@ class TestF12Block:
 
     def test_a_title_only_finding_stays_a_warning(self, modes):
         modes(T10_F12_SCOPE_MODE="block")
-        f12 = qg.gate_scope(f"{CLEAN} {CTA}", _ctx(), "Gobi and Uran Togoo in Three Days", None)
+        f12 = qg.gate_scope(f"{CLEAN} {CTA}", _ctx(), "Varra and Kessa Rock in Three Days", None)
         assert not f12["passed"] and f12["blocking"] is False
         assert qg.hold_failure([f12]) is None
 
@@ -234,7 +234,7 @@ async def _run_loop(first_text, repaired):
 async def test_loop_repairs_the_style_sentence_once_and_ships(modes):
     modes(T10_F9_BRAND_STYLE_MODE="repair")
     text = f"{CLEAN} {STYLE_SENTENCE} {CTA}"
-    rw, repair, kw = await _run_loop(text, "Uran Togoo is a dormant volcano wrapped in forest.")
+    rw, repair, kw = await _run_loop(text, "Kessa Rock is a dormant volcano ringed by pines.")
     assert rw.call_count == 0 and repair.call_count == 1
     assert repair.call_args.kwargs["sentences"][0]["sentence"] == STYLE_SENTENCE
     assert kw["status"] == "approved" and "quiet showpiece" not in kw["content_text"]
@@ -244,7 +244,7 @@ async def test_loop_repairs_the_style_sentence_once_and_ships(modes):
 async def test_loop_never_holds_when_the_repair_keeps_the_phrase(modes):
     modes(T10_F9_BRAND_STYLE_MODE="repair")
     text = f"{CLEAN} {STYLE_SENTENCE} {CTA}"
-    rw, repair, kw = await _run_loop(text, "Uran Togoo is a real quiet showpiece, a dormant volcano wrapped in forest.")
+    rw, repair, kw = await _run_loop(text, "Kessa Rock is a real quiet showpiece, a dormant volcano ringed by pines.")
     assert rw.call_count == 0 and repair.call_count == 1  # one repair only: attempt 2 warns
     assert kw["status"] == "approved" and kw["held_reason"] is None
     assert any(f["gate"] == qr.F9_BRAND_STYLE for f in qg.expand_ledger(kw["flags"]))
@@ -254,7 +254,7 @@ async def test_loop_never_holds_when_the_repair_keeps_the_phrase(modes):
 
 TRAIL = {"brand_name": "Trail Pulse", "brand_type": "Young active adventure travel brand",
          "voice": ["Energetic", "Fresh", "Direct"]}
-SHORT_POST = ("Day 3 ends at Sod Camp.\n\nThe ger camp sits on the lake shore and the evening is yours.\n\n"
+SHORT_POST = ("Day 3 ends at Orin Camp.\n\nThe tent camp sits on the lake shore and the evening is yours.\n\n"
               "Ask us for the dates.")
 
 
@@ -273,7 +273,7 @@ def test_f14_floor_rewrite_feedback_lists_unused_source_facts(modes):
     fb = writing_service._repair_feedback([floor], "linkedin", source=SEED, content_text=SHORT_POST)
     assert fb[0].startswith(f"{qr.F14_SOCIAL_SHAPE}: post is") and len(fb) == 2
     assert fb[1].startswith(f"{qr.F14_SOCIAL_SHAPE}: source facts this post does not tell yet")
-    assert "'The volcano sits within green steppes and forests.'" in fb[1]
+    assert "'The old volcano stands above wide grassland and pine woods.'" in fb[1]
     # without a source, or without the floor block, the feedback is what it was
     assert writing_service._repair_feedback([floor], "linkedin") == fb[:1]
     warn = qg.gate_social_shape(SHORT_POST, linkedin_spec(TRAIL))
