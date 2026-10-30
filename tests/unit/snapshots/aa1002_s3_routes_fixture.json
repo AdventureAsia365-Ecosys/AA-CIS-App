@@ -1,0 +1,767 @@
+{
+ "models": [
+  {
+   "api_style": "embed",
+   "bedrock_profile_ids": {
+    "acc2": "global.cohere.embed-v4:0"
+   },
+   "blocked_reason": null,
+   "callable_via": [
+    "embed"
+   ],
+   "enabled": true,
+   "label": "Cohere Embed v4",
+   "max_output_tokens": null,
+   "model_key": "cohere-embed-v4",
+   "price_cache_read_per_mtok": null,
+   "price_cache_write_per_mtok": null,
+   "price_in_per_mtok": 0.12,
+   "price_out_per_mtok": 0.0,
+   "provider": "bedrock",
+   "supports_temperature": false,
+   "vendor": "cohere",
+   "wire_model": null
+  },
+  {
+   "api_style": "embed",
+   "bedrock_profile_ids": {
+    "acc3": "global.cohere.embed-v4:0"
+   },
+   "blocked_reason": null,
+   "callable_via": [
+    "embed"
+   ],
+   "enabled": true,
+   "label": "Cohere Embed v4 (LLM account)",
+   "max_output_tokens": null,
+   "model_key": "cohere-embed-v4-acc3",
+   "price_cache_read_per_mtok": null,
+   "price_cache_write_per_mtok": null,
+   "price_in_per_mtok": 0.12,
+   "price_out_per_mtok": 0.0,
+   "provider": "bedrock",
+   "supports_temperature": false,
+   "vendor": "cohere",
+   "wire_model": null
+  },
+  {
+   "api_style": "openai_chat",
+   "bedrock_profile_ids": {},
+   "blocked_reason": "S235: retired; OpenAI API kept only as last-resort fallback via gpt-6-luna-openai",
+   "callable_via": [
+    "llm_client"
+   ],
+   "enabled": false,
+   "label": "GPT-4.1 (OpenAI direct)",
+   "max_output_tokens": null,
+   "model_key": "gpt-4.1",
+   "price_cache_read_per_mtok": null,
+   "price_cache_write_per_mtok": null,
+   "price_in_per_mtok": 2.0,
+   "price_out_per_mtok": 8.0,
+   "provider": "openai",
+   "supports_temperature": true,
+   "vendor": "openai",
+   "wire_model": "gpt-4.1"
+  },
+  {
+   "api_style": "converse",
+   "bedrock_profile_ids": {
+    "acc3": "global.openai.gpt-5.6-luna"
+   },
+   "blocked_reason": null,
+   "callable_via": [
+    "llm_client"
+   ],
+   "enabled": true,
+   "label": "GPT-5.6 Luna (Bedrock)",
+   "max_output_tokens": null,
+   "model_key": "gpt-5.6-luna",
+   "price_cache_read_per_mtok": 0.02,
+   "price_cache_write_per_mtok": null,
+   "price_in_per_mtok": 0.2,
+   "price_out_per_mtok": 1.2,
+   "provider": "bedrock",
+   "supports_temperature": false,
+   "vendor": "openai",
+   "wire_model": null
+  },
+  {
+   "api_style": "converse",
+   "bedrock_profile_ids": {
+    "acc3": "global.openai.gpt-6-astra"
+   },
+   "blocked_reason": null,
+   "callable_via": [
+    "llm_client"
+   ],
+   "enabled": true,
+   "label": "GPT-6 Astra (Bedrock)",
+   "max_output_tokens": null,
+   "model_key": "gpt-6-astra",
+   "price_cache_read_per_mtok": 1.0,
+   "price_cache_write_per_mtok": null,
+   "price_in_per_mtok": 10.0,
+   "price_out_per_mtok": 50.0,
+   "provider": "bedrock",
+   "supports_temperature": false,
+   "vendor": "openai",
+   "wire_model": null
+  },
+  {
+   "api_style": "converse",
+   "bedrock_profile_ids": {
+    "acc3": "global.openai.gpt-6-luna"
+   },
+   "blocked_reason": null,
+   "callable_via": [
+    "llm_client"
+   ],
+   "enabled": true,
+   "label": "GPT-6 Luna (Bedrock)",
+   "max_output_tokens": null,
+   "model_key": "gpt-6-luna",
+   "price_cache_read_per_mtok": 0.01,
+   "price_cache_write_per_mtok": null,
+   "price_in_per_mtok": 0.1,
+   "price_out_per_mtok": 0.5,
+   "provider": "bedrock",
+   "supports_temperature": false,
+   "vendor": "openai",
+   "wire_model": null
+  },
+  {
+   "api_style": "openai_chat",
+   "bedrock_profile_ids": {},
+   "blocked_reason": null,
+   "callable_via": [
+    "llm_client"
+   ],
+   "enabled": true,
+   "label": "GPT-6 Luna (OpenAI API)",
+   "max_output_tokens": null,
+   "model_key": "gpt-6-luna-openai",
+   "price_cache_read_per_mtok": 0.01,
+   "price_cache_write_per_mtok": null,
+   "price_in_per_mtok": 0.1,
+   "price_out_per_mtok": 0.5,
+   "provider": "openai",
+   "supports_temperature": false,
+   "vendor": "openai",
+   "wire_model": "gpt-6-luna"
+  },
+  {
+   "api_style": "anthropic_native",
+   "bedrock_profile_ids": {
+    "acc2": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "acc3": "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+   },
+   "blocked_reason": null,
+   "callable_via": [
+    "llm_client"
+   ],
+   "enabled": true,
+   "label": "Claude Haiku 4.5",
+   "max_output_tokens": null,
+   "model_key": "haiku",
+   "price_cache_read_per_mtok": null,
+   "price_cache_write_per_mtok": null,
+   "price_in_per_mtok": 1.0,
+   "price_out_per_mtok": 5.0,
+   "provider": "bedrock",
+   "supports_temperature": true,
+   "vendor": "anthropic",
+   "wire_model": null
+  },
+  {
+   "api_style": "converse",
+   "bedrock_profile_ids": {
+    "acc3": "global.anthropic.claude-haiku-5-5"
+   },
+   "blocked_reason": null,
+   "callable_via": [
+    "llm_client"
+   ],
+   "enabled": true,
+   "label": "Claude Haiku 5.5",
+   "max_output_tokens": 128000,
+   "model_key": "haiku-5-5",
+   "price_cache_read_per_mtok": 0.01,
+   "price_cache_write_per_mtok": 0.125,
+   "price_in_per_mtok": 0.1,
+   "price_out_per_mtok": 0.5,
+   "provider": "bedrock",
+   "supports_temperature": false,
+   "vendor": "anthropic",
+   "wire_model": null
+  },
+  {
+   "api_style": "decide",
+   "bedrock_profile_ids": {},
+   "blocked_reason": null,
+   "callable_via": [
+    "decide"
+   ],
+   "enabled": true,
+   "label": "Jev (TypeSafe System One)",
+   "max_output_tokens": null,
+   "model_key": "jev-latest",
+   "price_cache_read_per_mtok": null,
+   "price_cache_write_per_mtok": null,
+   "price_in_per_mtok": 0.042,
+   "price_out_per_mtok": 0.0,
+   "provider": "typesafe",
+   "supports_temperature": false,
+   "vendor": "typesafe",
+   "wire_model": "jev-latest"
+  },
+  {
+   "api_style": "converse",
+   "bedrock_profile_ids": {
+    "acc3": "global.anthropic.claude-opus-5-5"
+   },
+   "blocked_reason": null,
+   "callable_via": [
+    "llm_client"
+   ],
+   "enabled": true,
+   "label": "Claude Opus 5.5",
+   "max_output_tokens": null,
+   "model_key": "opus-5-5",
+   "price_cache_read_per_mtok": 0.2,
+   "price_cache_write_per_mtok": 5.0,
+   "price_in_per_mtok": 4.0,
+   "price_out_per_mtok": 20.0,
+   "provider": "bedrock",
+   "supports_temperature": false,
+   "vendor": "anthropic",
+   "wire_model": null
+  },
+  {
+   "api_style": "anthropic_native",
+   "bedrock_profile_ids": {
+    "acc3": "global.anthropic.claude-sonnet-4-6"
+   },
+   "blocked_reason": null,
+   "callable_via": [
+    "llm_client"
+   ],
+   "enabled": true,
+   "label": "Claude Sonnet 4.6",
+   "max_output_tokens": null,
+   "model_key": "sonnet",
+   "price_cache_read_per_mtok": null,
+   "price_cache_write_per_mtok": null,
+   "price_in_per_mtok": 3.0,
+   "price_out_per_mtok": 15.0,
+   "provider": "bedrock",
+   "supports_temperature": true,
+   "vendor": "anthropic",
+   "wire_model": null
+  },
+  {
+   "api_style": "converse",
+   "bedrock_profile_ids": {
+    "acc3": "global.anthropic.claude-sonnet-5"
+   },
+   "blocked_reason": null,
+   "callable_via": [
+    "llm_client"
+   ],
+   "enabled": true,
+   "label": "Claude Sonnet 5",
+   "max_output_tokens": null,
+   "model_key": "sonnet-5",
+   "price_cache_read_per_mtok": 0.2,
+   "price_cache_write_per_mtok": 2.5,
+   "price_in_per_mtok": 2.0,
+   "price_out_per_mtok": 10.0,
+   "provider": "bedrock",
+   "supports_temperature": false,
+   "vendor": "anthropic",
+   "wire_model": null
+  },
+  {
+   "api_style": "converse",
+   "bedrock_profile_ids": {
+    "acc3": "global.anthropic.claude-sonnet-5-5"
+   },
+   "blocked_reason": null,
+   "callable_via": [
+    "llm_client"
+   ],
+   "enabled": true,
+   "label": "Claude Sonnet 5.5",
+   "max_output_tokens": 128000,
+   "model_key": "sonnet-5-5",
+   "price_cache_read_per_mtok": 0.2,
+   "price_cache_write_per_mtok": 2.5,
+   "price_in_per_mtok": 2.0,
+   "price_out_per_mtok": 10.0,
+   "provider": "bedrock",
+   "supports_temperature": false,
+   "vendor": "anthropic",
+   "wire_model": null
+  }
+ ],
+ "routes": [
+  {
+   "account_route": "acc3",
+   "fallback_model_ids": [],
+   "is_active": true,
+   "model_id": "haiku",
+   "provider": "claude",
+   "role": "writer",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "a0_column_map"
+  },
+  {
+   "account_route": "acc3",
+   "fallback_model_ids": [
+    "haiku"
+   ],
+   "is_active": true,
+   "model_id": "gpt-6-luna",
+   "provider": "openai",
+   "role": "validate",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "a3_atomize"
+  },
+  {
+   "account_route": "acc3",
+   "fallback_model_ids": [
+    "gpt-5.6-luna"
+   ],
+   "is_active": true,
+   "model_id": "gpt-6-luna",
+   "provider": "openai",
+   "role": "validate",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "a3_place_card"
+  },
+  {
+   "account_route": "acc3",
+   "fallback_model_ids": [
+    "sonnet"
+   ],
+   "is_active": true,
+   "model_id": "haiku",
+   "provider": "claude",
+   "role": "validate",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "a3_place_card_check"
+  },
+  {
+   "account_route": "acc3",
+   "fallback_model_ids": [
+    "sonnet"
+   ],
+   "is_active": true,
+   "model_id": "haiku",
+   "provider": "claude",
+   "role": "validate",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "a3_place_days"
+  },
+  {
+   "account_route": "acc3",
+   "fallback_model_ids": [
+    "gpt-6-luna-openai"
+   ],
+   "is_active": true,
+   "model_id": "gpt-6-luna",
+   "provider": "openai",
+   "role": "validate",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "a3_place_dedupe"
+  },
+  {
+   "account_route": "acc3",
+   "fallback_model_ids": [],
+   "is_active": true,
+   "model_id": "haiku",
+   "provider": "claude",
+   "role": "validate",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "a3_place_dedupe_check"
+  },
+  {
+   "account_route": null,
+   "fallback_model_ids": [
+    "cohere-embed-v4-acc3"
+   ],
+   "is_active": true,
+   "model_id": "cohere-embed-v4",
+   "provider": "cohere",
+   "role": "embed",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "a3_place_embed"
+  },
+  {
+   "account_route": "acc3",
+   "fallback_model_ids": [
+    "haiku"
+   ],
+   "is_active": true,
+   "model_id": "sonnet",
+   "provider": "claude",
+   "role": "validate",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "a3_place_locate"
+  },
+  {
+   "account_route": null,
+   "fallback_model_ids": [
+    "cohere-embed-v4-acc3"
+   ],
+   "is_active": true,
+   "model_id": "cohere-embed-v4",
+   "provider": "cohere",
+   "role": "embed",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "f10_embed"
+  },
+  {
+   "account_route": "acc3",
+   "fallback_model_ids": [],
+   "is_active": true,
+   "model_id": "sonnet",
+   "provider": "claude",
+   "role": "writer",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "s1_atom_writer"
+  },
+  {
+   "account_route": null,
+   "fallback_model_ids": [
+    "gpt-6-luna"
+   ],
+   "is_active": true,
+   "model_id": "gpt-5.6-luna",
+   "provider": "openai",
+   "role": "judge",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "s1_brand_audit"
+  },
+  {
+   "account_route": "acc3",
+   "fallback_model_ids": [],
+   "is_active": true,
+   "model_id": "haiku",
+   "provider": "claude",
+   "role": "writer",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "s1_flag_fix"
+  },
+  {
+   "account_route": "acc3",
+   "fallback_model_ids": [],
+   "is_active": true,
+   "model_id": "sonnet-5-5",
+   "provider": "claude",
+   "role": "writer",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "s1_generate"
+  },
+  {
+   "account_route": "acc3",
+   "fallback_model_ids": [],
+   "is_active": true,
+   "model_id": "haiku",
+   "provider": "claude",
+   "role": "writer",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "s1_itinerary_nudge"
+  },
+  {
+   "account_route": null,
+   "fallback_model_ids": [
+    "gpt-6-luna",
+    "gpt-6-luna-openai"
+   ],
+   "is_active": true,
+   "model_id": "gpt-5.6-luna",
+   "provider": "openai",
+   "role": "judge",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "s1_judge"
+  },
+  {
+   "account_route": "acc3",
+   "fallback_model_ids": [
+    "haiku"
+   ],
+   "is_active": true,
+   "model_id": "gpt-6-luna",
+   "provider": "openai",
+   "role": "validate",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "s1_source_facts"
+  },
+  {
+   "account_route": "acc3",
+   "fallback_model_ids": [
+    "sonnet"
+   ],
+   "is_active": true,
+   "model_id": "sonnet-5-5",
+   "provider": "claude",
+   "role": "writer",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "supply_content_writer"
+  },
+  {
+   "account_route": "acc3",
+   "fallback_model_ids": [
+    "gpt-5.6-luna"
+   ],
+   "is_active": true,
+   "model_id": "gpt-6-luna",
+   "provider": "openai",
+   "role": "validate",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "t10_claims"
+  },
+  {
+   "account_route": null,
+   "fallback_model_ids": [
+    "gpt-6-luna",
+    "gpt-6-luna-openai"
+   ],
+   "is_active": true,
+   "model_id": "gpt-5.6-luna",
+   "provider": "openai",
+   "role": "judge",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "t10_judge"
+  },
+  {
+   "account_route": null,
+   "fallback_model_ids": [
+    "gpt-6-luna"
+   ],
+   "is_active": true,
+   "model_id": "gpt-5.6-luna",
+   "provider": "openai",
+   "role": "judge",
+   "shadow_model_id": "gpt-6-luna",
+   "shadow_sample_pct": 10,
+   "stage": "t2_brand_audit"
+  },
+  {
+   "account_route": "acc3",
+   "fallback_model_ids": [],
+   "is_active": true,
+   "model_id": "haiku",
+   "provider": "claude",
+   "role": "writer",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "t2_flag_fix"
+  },
+  {
+   "account_route": "acc3",
+   "fallback_model_ids": [],
+   "is_active": true,
+   "model_id": "sonnet",
+   "provider": "claude",
+   "role": "writer",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "t2_generate"
+  },
+  {
+   "account_route": "acc3",
+   "fallback_model_ids": [],
+   "is_active": true,
+   "model_id": "haiku",
+   "provider": "claude",
+   "role": "writer",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "t2_itinerary_nudge"
+  },
+  {
+   "account_route": null,
+   "fallback_model_ids": [
+    "gpt-6-luna",
+    "gpt-6-luna-openai"
+   ],
+   "is_active": true,
+   "model_id": "gpt-5.6-luna",
+   "provider": "openai",
+   "role": "judge",
+   "shadow_model_id": "gpt-6-luna",
+   "shadow_sample_pct": 10,
+   "stage": "t2_judge"
+  },
+  {
+   "account_route": null,
+   "fallback_model_ids": [
+    "gpt-6-luna",
+    "gpt-6-luna-openai"
+   ],
+   "is_active": true,
+   "model_id": "gpt-5.6-luna",
+   "provider": "openai",
+   "role": "judge",
+   "shadow_model_id": "gpt-6-luna",
+   "shadow_sample_pct": 10,
+   "stage": "t7_debate_judge"
+  },
+  {
+   "account_route": "acc3",
+   "fallback_model_ids": [],
+   "is_active": true,
+   "model_id": "sonnet",
+   "provider": "claude",
+   "role": "writer",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "t8_angle_gen"
+  },
+  {
+   "account_route": "acc3",
+   "fallback_model_ids": [],
+   "is_active": true,
+   "model_id": "sonnet",
+   "provider": "claude",
+   "role": "validate",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "t9_faq_answer_fit"
+  },
+  {
+   "account_route": "acc3",
+   "fallback_model_ids": [],
+   "is_active": true,
+   "model_id": "haiku",
+   "provider": "claude",
+   "role": "validate",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "t9_faq_filter"
+  },
+  {
+   "account_route": "acc3",
+   "fallback_model_ids": [
+    "sonnet"
+   ],
+   "is_active": true,
+   "model_id": "haiku",
+   "provider": "claude",
+   "role": "writer",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "t9_repair"
+  },
+  {
+   "account_route": "acc3",
+   "fallback_model_ids": [],
+   "is_active": true,
+   "model_id": "sonnet",
+   "provider": "claude",
+   "role": "writer",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "t9_write"
+  },
+  {
+   "account_route": null,
+   "fallback_model_ids": [
+    "cohere-embed-v4-acc3"
+   ],
+   "is_active": true,
+   "model_id": "cohere-embed-v4",
+   "provider": "cohere",
+   "role": "embed",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "tp_component_embed"
+  },
+  {
+   "account_route": "acc3",
+   "fallback_model_ids": [],
+   "is_active": true,
+   "model_id": "sonnet",
+   "provider": "claude",
+   "role": "writer",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "tp_compose"
+  },
+  {
+   "account_route": "acc3",
+   "fallback_model_ids": [],
+   "is_active": true,
+   "model_id": "sonnet",
+   "provider": "claude",
+   "role": "writer",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "tp_extract"
+  },
+  {
+   "account_route": null,
+   "fallback_model_ids": [
+    "cohere-embed-v4-acc3"
+   ],
+   "is_active": true,
+   "model_id": "cohere-embed-v4",
+   "provider": "cohere",
+   "role": "embed",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "tp_search_embed"
+  },
+  {
+   "account_route": "acc3",
+   "fallback_model_ids": [
+    "gpt-6-luna",
+    "gpt-6-luna-openai"
+   ],
+   "is_active": true,
+   "model_id": "gpt-5.6-luna",
+   "provider": "openai",
+   "role": "judge",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "writing_memory_eval"
+  },
+  {
+   "account_route": "acc3",
+   "fallback_model_ids": [
+    "gpt-6-luna",
+    "gpt-6-luna-openai"
+   ],
+   "is_active": true,
+   "model_id": "gpt-5.6-luna",
+   "provider": "openai",
+   "role": "judge",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "writing_memory_mine"
+  }
+ ],
+ "source": "root docs/generated/llm-routes.snapshot.json captured 2026-10-29T05:33Z (Dev routes + catalog); bedrock_profile_ids from the CIS catalog migrations"
+}

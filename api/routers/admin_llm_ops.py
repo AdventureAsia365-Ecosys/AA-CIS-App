@@ -39,11 +39,11 @@ from shared.aws_client.cost_explorer import (
 from shared.dfs_client.balance import read_latest_balance, record_balance_snapshot
 from shared.dfs_client.unmapped_market import list_unmapped_market_requests
 from shared.llm_client.catalog import (
-    SERVING_ACCOUNTS,
     CatalogPolicyBlocked,
     CatalogPriceRequired,
     list_catalog_rows,
     list_models,
+    serving_accounts,
     set_catalog_price,
 )
 from shared.llm_client.client import legacy_acc2_native_enabled
@@ -124,7 +124,7 @@ def model_via(m) -> str:
         return "OpenAI API"
     if m.model_key in ("haiku", "sonnet"):
         return _legacy_claude_via()
-    accts = [a for a in SERVING_ACCOUNTS if a in (m.bedrock_profile_ids or {})]
+    accts = [a for a in serving_accounts() if a in (m.bedrock_profile_ids or {})]
     if m.api_style == "embed" and not accts:
         return _bedrock_via((aws_accounts.MAIN_ACCOUNT_KEY,))
     return _bedrock_via(accts)

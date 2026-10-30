@@ -40,10 +40,11 @@ from shared.aws_client import bronze
 
 from .bedrock_satellite import (
     ACC3_ACCOUNT_ID,
+    ACC3_REGION,
     ANTHROPIC_VERSION,
-    _INFERENCE_PROFILES,
-    _SATELLITE_ACCOUNTS,
     get_satellite_client,
+    legacy_inference_profile,
+    satellite_region,
 )
 from .prompt_cache import build_cached_system_prompt
 
@@ -129,7 +130,11 @@ def _s3_client(account: str):
     separate from this client. `account` is accepted for signature symmetry but unused here.
     """
     import boto3
-    return boto3.client("s3", region_name=_SATELLITE_ACCOUNTS.get(account, {}).get("region", "us-west-1"))
+    try:
+        region = satellite_region(account)
+    except ValueError:
+        region = ACC3_REGION
+    return boto3.client("s3", region_name=region)
 
 
 def upload_manifest(jsonl: str, *, account: str, job_slug: str) -> str:
@@ -157,13 +162,15 @@ def submit_batch_job(
     """bedrock:CreateModelInvocationJob. Returns {"job_arn", "job_name", "output_uri", "account"}.
 
     account defaults to acc3 (the LLM primary, AA-397/399). model must be a key in
-    _INFERENCE_PROFILES[account] ("haiku" for the S1 writer). Output goes to the batch-output prefix.
+    the legacy chain's profiles ("haiku" for the S1 writer; bedrock_satellite.legacy_inference_profile, built in the
+    satellite connection's account and region, AA-1002 S3). Output goes to the batch-output prefix.
     """
-    if account not in _SATELLITE_ACCOUNTS:
-        raise BatchUnavailable(f"unknown account {account!r}")
+    try:
+        model_id = legacy_inference_profile(account, model)
+    except ValueError:
+        raise BatchUnavailable(f"unknown account {account!r}") from None
     if account not in _BATCH_SERVICE_ROLE_ARN:
         raise BatchUnavailable(f"account {account!r} has no batch service role configured")
-    model_id = _INFERENCE_PROFILES[account][model]
     slug = job_slug or uuid.uuid4().hex[:12]
     name = job_name or f"s1-rewrite-{slug}"
     output_uri = f"s3://{bronze.bronze_bucket()}/{OUTPUT_PREFIX}/{slug}/"

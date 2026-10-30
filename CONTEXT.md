@@ -256,8 +256,26 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   Migration 306 seeds Anthropic API deployments behind acc3 (priority 100, `vendor_direct`, every Anthropic Converse
   model, tenant ones included) with the `anthropic-direct` connection off: slice S5 data scopes must land before or
   with S3's spread over deployments, or tenant content leaves AWS when acc3 fails; the only admin write in S2 is
-  `PATCH /admin/llm-connections/{key}` `{"enabled": bool}` (Anthropic connections, audited). Spread over
-  deployments, legacy-key aliases, breaker, data scopes and cost parity are later slices (S3–S6).
+  `PATCH /admin/llm-connections/{key}` `{"enabled": bool}` (Anthropic connections, audited). Breaker, data scopes
+  and cost parity are later slices (S4–S6).
+- **Deployment routing + legacy aliases** (AA-1002 slice S3, migration 307): a catalog key is tried on its
+  deployments (`vendor_route.deployment_plan`): the model's callable rows (Bedrock assume_role / task_role for
+  converse, anthropic_native and embed rows; Anthropic for Anthropic non-legacy rows; OpenAI only for
+  provider='openai' rows), enabled and on an enabled connection, lowest priority first, the same model on each
+  deployment before the route's next model. Until slice S5: a `vendor_direct` connection is used only as the FIRST
+  enabled row (an admin's deliberate choice), never as a fallback behind an `aws_only` one, decided before the circuit
+  check (`vendor_route.circuit_open`, the S4 breaker hook, never open before S4). No callable row (or no registry) =
+  today's path; callable rows that are all off = the model is refused and the route moves on. A billed unusable reply
+  is the model's answer (not retried on another deployment). With the 304 / 306 rows every Dev stage makes exactly
+  the calls it made before S3 (`tests/unit/test_aa1002_s3_routes_snapshot.py`, golden from pre-S3 code).
+  `LLM_DEPLOYMENT_ROUTING=off` (ECS env) restores the S2 path. Legacy keys: `shared.llm_model_alias` maps `haiku` →
+  [haiku], `sonnet` → [sonnet, haiku] (the chain's order); with `LLM_LEGACY_ALIASES=on` (default OFF until a live check)
+  each target runs on its deployments with the legacy InvokeModel body (the very requests of `_legacy_chain`); no alias
+  row / no registry / `LLM_LEGACY_ACC2_NATIVE=on` = `_legacy_chain`. Accounts are data: `bedrock_satellite` builds
+  STS sessions from the assume-role connection (cache key: connection, role ARN, ExternalId, region),
+  `catalog.serving_accounts()` and `embed._runtime_for` read the registry; `connections.BUILTIN_CONNECTIONS` (the 304
+  seed: acc3, acc2, openai-direct) answers only "how to reach X" when the registry is unreadable or a row is broken.
+  Still contract work (not in 307): the logical rows `sonnet-4-6` / `haiku-4-5` and the `account_route` CHECK → FK.
 - **Structured output (`LLMRequest.json_schema`) per path**: Converse = one tool whose input is the schema, reply
   conformed (`_checked_json`, AA-659/714); OpenAI = strict `response_format`. The legacy `haiku` / `sonnet` keys
   (Anthropic Messages API, `invoke_claude`) have neither: since S251 (AA-835) the gateway appends a "one JSON object

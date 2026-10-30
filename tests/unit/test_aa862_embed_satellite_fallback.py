@@ -120,10 +120,11 @@ class TestCallLog:
 
 def test_acc2_client_makes_one_attempt_only(monkeypatch):
     """botocore reads the legacy `max_attempts` as retries (1 -> 2 attempts); a throttle must cost one
-    acc2 call before the fall-through, so the client sets `total_max_attempts=1`."""
-    monkeypatch.setattr(embed_mod, "_native_client", None)
-    client = embed_mod._acc2_client()
-    try:
-        assert client.meta.config.retries == {"total_max_attempts": 1, "mode": "standard"}
-    finally:
-        monkeypatch.setattr(embed_mod, "_native_client", None)
+    acc2 call before the fall-through, so the client sets `total_max_attempts=1`. AA-1002 (S3): the acc2
+    client comes from the task-role connection (registry row, else the built-in 304 mirror)."""
+    from shared.llm_client import bedrock_satellite as bs
+    monkeypatch.setattr(bs, "_native_runtimes", {})
+    client = embed_mod._runtime_for("acc2")
+    assert client.meta.config.retries == {"total_max_attempts": 1, "mode": "standard"}
+    assert client.meta.config.read_timeout == 30 and client.meta.region_name == "us-west-1"
+    assert embed_mod._runtime_for("acc2") is client                    # one client per connection and config

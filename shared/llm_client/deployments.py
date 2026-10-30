@@ -5,8 +5,11 @@ inference profile, vendor model name), a priority (lower first), price overrides
 backfilled the paths today's code takes; ``bedrock_profile_ids`` in the catalog is still what the gateway and
 TripPlanner call.
 
-Read-only and off the routing path in S1 (slice S3 spreads a route over a model's enabled deployments). Never raises
-on the sync read: a DB failure or a table that is not migrated yet means no deployments.
+Slice S3 routes through it (``vendor_route.deployment_plan`` spreads a model over its enabled deployments) and adds the
+alias read: ``shared.llm_model_alias`` (migration 307) maps a legacy key (``haiku`` / ``sonnet``) to the ordered catalog
+models its chain tries, each called through its own deployments (``LLMClient`` with ``LLM_LEGACY_ALIASES`` on).
+Read-only. Never raises on the sync read: a DB failure or a table that is not migrated yet means no deployments / no
+aliases, and the two reads fail independently (the alias table may be missing while the deployments load).
 """
 from __future__ import annotations
 
@@ -63,6 +66,16 @@ def _row_to_deployment(row) -> ModelDeployment:
     return ModelDeployment(**d)
 
 
+@dataclass(frozen=True)
+class ModelAlias:
+    alias_key: str
+    position: int
+    model_key: str
+
+
+_ALIAS_SQL = "SELECT alias_key, position, model_key FROM shared.llm_model_alias ORDER BY alias_key, position"
+
+
 async def fetch_deployments(conn) -> list[ModelDeployment]:
     return [_row_to_deployment(r) for r in await conn.fetch(_SELECT_SQL)]
 
@@ -75,7 +88,16 @@ async def _fetch_all() -> list[ModelDeployment]:
         await conn.close()
 
 
+async def _fetch_aliases() -> list[ModelAlias]:
+    conn = await connections._connect()
+    try:
+        return [ModelAlias(r["alias_key"], int(r["position"]), r["model_key"]) for r in await conn.fetch(_ALIAS_SQL)]
+    finally:
+        await conn.close()
+
+
 _by_model: dict[str, list[ModelDeployment]] = {}
+_aliases: dict[str, tuple[str, ...]] = {}
 _loaded_at = 0.0
 _failed_at = 0.0
 
@@ -98,8 +120,21 @@ def _ensure_loaded() -> None:
         _load(now)
 
 
+def _load_aliases() -> None:
+    global _aliases
+    try:
+        grouped: dict[str, list[ModelAlias]] = {}
+        for a in connections.run_sync(_fetch_aliases):
+            grouped.setdefault(a.alias_key, []).append(a)
+        _aliases = {k: tuple(a.model_key for a in sorted(v, key=lambda a: a.position)) for k, v in grouped.items()}
+    except Exception as e:  # noqa: BLE001 — never raises (table before 307, DB down): the last good read stays, and
+        # none at all (a cold process) means no alias = the legacy chain
+        logger.warning("llm_alias_registry_read_failed", error=str(e)[:300])
+
+
 def _load(now: float) -> None:
     global _by_model, _loaded_at, _failed_at
+    _load_aliases()
     try:
         rows = connections.run_sync(_fetch_all)
         grouped: dict[str, list[ModelDeployment]] = {}
@@ -117,6 +152,18 @@ def deployments_for_sync(model_key: str, *, enabled_only: bool = True) -> list[M
     _ensure_loaded()
     rows = _by_model.get(model_key, [])
     return [d for d in rows if d.enabled] if enabled_only else list(rows)
+
+
+def has_rows_sync(model_key: str) -> bool:
+    """Whether ``model_key`` has any deployment row, enabled or not (False when the table cannot be read)."""
+    _ensure_loaded()
+    return bool(_by_model.get(model_key))
+
+
+def alias_targets_sync(alias_key: str) -> tuple[str, ...]:
+    """The catalog models an alias key runs, in order (empty: no alias row, or the table cannot be read)."""
+    _ensure_loaded()
+    return _aliases.get(alias_key, ())
 
 
 def invalidate() -> None:

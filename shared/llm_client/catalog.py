@@ -40,9 +40,13 @@ class CatalogPriceRequired(Exception):
 RETIRED_KEYS = frozenset({"gpt-4.1"})
 
 
-# AA-998 — the accounts a catalog profile may run on, in preference order: acc3 (satellite) then
-# acc2 (native, embed only today). The former fallback account left the ecosystem.
-SERVING_ACCOUNTS = ("acc3", "acc2")
+def serving_accounts() -> tuple[str, ...]:
+    """AA-1002 (S3) — the accounts a catalog profile may run on, in preference order: the Bedrock connections of the
+    registry and its built-in mirror, assume-role (satellite) ones first (connections.bedrock_connection_keys;
+    ("acc3", "acc2") for the 304 seed and when the registry cannot be read). Replaces the hard-coded
+    SERVING_ACCOUNTS of AA-998: an account no connection names (a retired account) is never chosen."""
+    from . import connections
+    return connections.bedrock_connection_keys()
 
 
 class CatalogPolicyBlocked(Exception):
@@ -70,11 +74,14 @@ class CatalogModel:
 
     def account_for(self, preferred: Optional[str]) -> Optional[str]:
         """The preferred account if this model is served there, else the first account that serves
-        it (acc3 before acc2). AA-998: only the ecosystem accounts count — a profile under any other
-        key (a stale row from before migration 295) is never chosen."""
-        if preferred in SERVING_ACCOUNTS and preferred in self.bedrock_profile_ids:
+        it (acc3 before acc2). AA-998 / AA-1002 (S3): only accounts a Bedrock connection names count
+        (serving_accounts) — a profile under any other key (a stale row from before migration
+        295) is never chosen. The deployment route (vendor_route.deployment_plan) replaces this on the
+        call path whenever the model has deployment rows; it remains the no-registry fallback."""
+        serving = serving_accounts()
+        if preferred in serving and preferred in self.bedrock_profile_ids:
             return preferred
-        for acct in SERVING_ACCOUNTS:
+        for acct in serving:
             if acct in self.bedrock_profile_ids:
                 return acct
         return None
