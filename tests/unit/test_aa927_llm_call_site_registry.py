@@ -56,6 +56,10 @@ LOGGED_CALL_SITES: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
     ("services/acp_content_writing/faq_answer_fit.py", "_fit_call"): _self(
         "services/acp_content_writing/faq_answer_fit.py", "_fit_call"),
     ("services/acp_content_writing/quality_gates.py", "_gate_brand_voice"): (_F9_LOG, _F9_FAIL),
+    # AA-1000: the T10 tier-2 adjudicator; record_call_sync right after generate() returns, record_unusable_sync on a
+    # billed reply that does not parse.
+    ("services/acp_content_writing/seed_align/adjudicate.py", "_call"): _self(
+        "services/acp_content_writing/seed_align/adjudicate.py", "_call"),
     # AA-645 S250: both atomize paths call through _ask_atoms (one retry); it writes the billed_unusable rows,
     # the two paths write the row of the reply they keep.
     ("services/acp_contract/a3_atomize.py", "_ask_atoms"): (

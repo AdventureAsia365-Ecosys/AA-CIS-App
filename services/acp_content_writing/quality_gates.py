@@ -64,6 +64,7 @@ from services.acp_shared.real_questions import is_off_meaning, single_word_place
 from shared.llm_client.call_log import record_billed_failure_sync, record_call_sync
 from services.quality import registry as qr
 from services.acp_content_writing.seed_align import modes as seed_align
+from services.acp_content_writing.seed_align import adjudicate as seed_adjudicate
 
 logger = structlog.get_logger()
 
@@ -2655,7 +2656,8 @@ class _QualityCheckOutcomeBase(TypedDict):
 
 class QualityCheckOutcome(_QualityCheckOutcomeBase, total=False):
     # AA-789 tier 1 — only when a seed-alignment class is not off: its modes and every candidate (shadow included),
-    # for writer_input. Absent when every class is off, so the outcome is what it was.
+    # for writer_input. Absent when every class is off, so the outcome is what it was. AA-1000: tier 2's record under
+    # "tier2" when one of its classes is not off.
     seed_align: dict
 
 
@@ -2798,7 +2800,13 @@ def run_quality_gates(
     # the ledger is unchanged), shadow (recorded in outcome["seed_align"] only), repair / hold ('sa:<class>: …'
     # findings appended to F17_trip_fact / F18_rarity / F13_leak / F13_repeat before the ledger is merged). Fails open.
     sa_run = seed_align.run(content_text, trip_ctx=trip_ctx, hygiene_ctx=hygiene_ctx, brief_texts=brief_texts)
+    # AA-1000 tier 2 — an LLM adjudicator over the sentences tier 1 triggered on but left alone (per class: off / shadow
+    # / repair, default off: None, no call). Never holds: at most one 'sa:t2.<class>: …' finding per attempt, routed
+    # like tier 1's (never_holds). A $0 replay (f9_results given) calls nothing. Fails open.
+    t2_run = seed_adjudicate.run(content_text, tier1=sa_run, trip_ctx=trip_ctx, hygiene_ctx=hygiene_ctx,
+                                 brief_texts=brief_texts, replay=f9_results is not None)
     sources = seed_align.apply(sources, sa_run)
+    sources = seed_align.apply(sources, t2_run)
     # AA-924 — the stored ledger: F2_banned_patterns + F2_brand_forbidden + the F15 stock findings → F2_lexicon,
     # F15_voice + F15_voice_warn → F15_voice, each finding with its own severity (26 → 24 distinct results).
     gate_ledger = merge_ledger(sources)
@@ -2817,8 +2825,10 @@ def run_quality_gates(
         "first_failure": first_failure,
         "flags": flags,
     }
-    if sa_run is not None:
-        outcome["seed_align"] = sa_run.record
+    if sa_run is not None or t2_run is not None:
+        # AA-1000 — tier 2's record of this attempt sits next to tier 1's (writer_input.seed_align[*].tier2)
+        outcome["seed_align"] = {**(sa_run.record if sa_run is not None else {}),
+                                 **({"tier2": t2_run.record} if t2_run is not None else {})}
     return outcome
 
 
