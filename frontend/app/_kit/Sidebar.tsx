@@ -24,7 +24,6 @@
 import { useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { ArrowUpRight, CalendarCheck, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, Map as MapIcon } from "lucide-react";
-import { A, alpha, serif, sans } from "../admin/_components/adminUi";
 import { LOGO_SRC } from "./core/brand";
 import {
   SETTINGS_ENTRY, navActive, sectionGroups, visibleSections,
@@ -40,6 +39,7 @@ import { useReviewPendingCount } from "./useReviewPendingCount";
 import { useNavLabel } from "./adminNav";
 import { useT } from "./core/useI18n";
 import { SHELL_MESSAGES } from "./shell.messages";
+import { K, alpha, sans, serif } from "./core/tokens";
 
 export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () => void; drawerOpen?: boolean }) {
   const router = useRouter();
@@ -115,7 +115,7 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
             <span style={{ display: "block", fontFamily: serif, fontSize: 14, fontWeight: 500, color: "var(--aa-side-title)", letterSpacing: "-0.01em", lineHeight: 1.2 }}>
               Adventure Asia
             </span>
-            <span style={{ display: "block", fontSize: 9.5, textTransform: "uppercase" as const, letterSpacing: "0.18em", color: A.accent, fontWeight: 600, marginTop: 1 }}>
+            <span style={{ display: "block", fontSize: 9.5, textTransform: "uppercase" as const, letterSpacing: "0.18em", color: K.accent, fontWeight: 600, marginTop: 1 }}>
               {t("adminSubtitle")}
             </span>
           </span>
@@ -236,7 +236,7 @@ function SectionHeader({ section, closed, hasActive, onToggle }: {
   const t = useT(SHELL_MESSAGES);
   const navLabel = useNavLabel();
   const label = navLabel(section.label);
-  const color = closed && hasActive ? A.gold : "var(--aa-side-title)";
+  const color = closed && hasActive ? K.accent : "var(--aa-side-title)";
   return (
     <button
       onClick={onToggle}
@@ -307,7 +307,7 @@ function AppLinkItem({ app }: { app: AppLink }) {
 function NavItem({ entry, active, badge, onClick }: {
   entry: NavEntry; active: boolean; badge?: number; onClick: () => void;
 }) {
-  const accent = A.gold;
+  const accent = K.accent;
   const label = useNavLabel()(entry.label);
   return (
     <button
@@ -334,7 +334,7 @@ function NavItem({ entry, active, badge, onClick }: {
         {badge != null && (
           <span className="aa-sidebar-badge-dot" style={{
             position: "absolute", top: -4, right: -6,
-            background: A.accent, color: "var(--aa-on-accent)",
+            background: K.accent, color: "var(--aa-on-accent)",
             borderRadius: 999, fontSize: 9, fontWeight: 700,
             minWidth: 15, height: 15, display: "none", placeItems: "center", padding: "0 3px",
           }}>{badge > 99 ? "99+" : badge}</span>
@@ -345,7 +345,7 @@ function NavItem({ entry, active, badge, onClick }: {
       </span>
       {badge != null && (
         <span className="aa-sidebar-badge-pill" style={{
-          background: A.accent, color: "var(--aa-on-accent)",
+          background: K.accent, color: "var(--aa-on-accent)",
           borderRadius: 999, fontSize: 10, fontWeight: 700,
           minWidth: 18, height: 16, display: "grid", placeItems: "center",
           padding: "0 5px", flexShrink: 0,

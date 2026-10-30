@@ -8,8 +8,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { A, mono } from "../../_components/adminUi";
-import { DataTable, ErrorState, KpiTile, Spinner, apiGet, useT, type Translator } from "../../../_kit";
+import { K, mono, DataTable, ErrorState, KpiTile, Spinner, apiGet, useT, type Translator } from "../../../_kit";
 import { type TenantQuality, pct } from "./tenant360";
 import { T360 } from "./tenant360.messages";
 
@@ -19,22 +18,22 @@ const tabular: React.CSSProperties = { fontVariantNumeric: "tabular-nums" };
 function count(color: string) {
   return function CountCell(c: { getValue: () => unknown }) {
     const n = Number(c.getValue());
-    return <span style={{ ...tabular, color: n > 0 ? color : A.muted }}>{n}</span>;
+    return <span style={{ ...tabular, color: n > 0 ? color : K.muted }}>{n}</span>;
   };
 }
 
 const gateColumns = (t: Translator<typeof T360.en>): ColumnDef<GateRow, unknown>[] => [
   { accessorKey: "gate", header: t("colGate"), cell: c => <span style={{ fontFamily: mono, fontSize: 11.5 }}>{String(c.getValue())}</span> },
   { accessorKey: "evaluated", header: t("colEvaluated"), cell: c => <span style={tabular}>{Number(c.getValue())}</span> },
-  { accessorKey: "passed", header: t("colPassed"), cell: count(A.green) },
+  { accessorKey: "passed", header: t("colPassed"), cell: count(K.success) },
   { accessorKey: "pass_rate", header: t("colPassRate"), cell: c => <strong style={tabular}>{pct(c.getValue() as number | null)}</strong> },
-  { accessorKey: "failed_blocking", header: t("colBlocking"), cell: count(A.red) },
-  { accessorKey: "failed_warn", header: t("colWarn"), cell: count(A.amber) },
-  { accessorKey: "held_pieces", header: t("colHeld"), cell: count(A.amber) },
+  { accessorKey: "failed_blocking", header: t("colBlocking"), cell: count(K.danger) },
+  { accessorKey: "failed_warn", header: t("colWarn"), cell: count(K.amber) },
+  { accessorKey: "held_pieces", header: t("colHeld"), cell: count(K.amber) },
 ];
 
 function H({ children }: { children: React.ReactNode }) {
-  return <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: A.muted, margin: "18px 0 8px" }}>{children}</div>;
+  return <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: K.muted, margin: "18px 0 8px" }}>{children}</div>;
 }
 
 export function Tenant360Quality({ tenantId, byChannel }: { tenantId: string; byChannel?: React.ReactNode }) {
@@ -48,17 +47,17 @@ export function Tenant360Quality({ tenantId, byChannel }: { tenantId: string; by
   return (
     <div style={{ minWidth: 0 }}>
       <div style={{ display: "flex", gap: 6, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
-        <span style={{ fontSize: 11.5, color: A.muted }}>{t("window")}</span>
+        <span style={{ fontSize: 11.5, color: K.muted }}>{t("window")}</span>
         {WINDOWS.map(d => (
           <button key={d} type="button" aria-pressed={days === d} onClick={() => setDays(d)}
             style={{ padding: "4px 11px", borderRadius: 20, fontSize: 12, cursor: "pointer",
-              border: `1px solid ${days === d ? A.accent : A.line}`, background: days === d ? A.accentTint : A.bg,
-              color: days === d ? A.accentDeep : A.muted, fontWeight: days === d ? 700 : 400 }}>{t("days", d)}</button>
+              border: `1px solid ${days === d ? K.accent : K.line}`, background: days === d ? K.accentTint : K.bg,
+              color: days === d ? K.accentDeep : K.muted, fontWeight: days === d ? 700 : 400 }}>{t("days", d)}</button>
         ))}
       </div>
 
       {q.isLoading ? (
-        <div style={{ fontSize: 12, color: A.muted, display: "flex", gap: 6, alignItems: "center" }}><Spinner size={12} /> {t("loadingQuality")}</div>
+        <div style={{ fontSize: 12, color: K.muted, display: "flex", gap: 6, alignItems: "center" }}><Spinner size={12} /> {t("loadingQuality")}</div>
       ) : q.isError || !q.data ? (
         <ErrorState message={t("qualityLoadError", (q.error as Error)?.message ?? t("unknownError"))} onRetry={() => q.refetch()} />
       ) : (
@@ -96,9 +95,9 @@ function QualityBody({ data }: { data: TenantQuality }) {
           <H>{t("heldReasons")}</H>
           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
             {data.held_reasons.map(r => (
-              <div key={r.held_reason} style={{ display: "flex", gap: 12, padding: "5px 0", borderBottom: `1px solid ${A.line2}`, fontSize: 12 }}>
-                <span style={{ color: A.body, minWidth: 0, overflowWrap: "anywhere" }}>{r.held_reason}</span>
-                <span style={{ marginLeft: "auto", fontWeight: 700, color: A.amber }}>{r.count}</span>
+              <div key={r.held_reason} style={{ display: "flex", gap: 12, padding: "5px 0", borderBottom: `1px solid ${K.line2}`, fontSize: 12 }}>
+                <span style={{ color: K.body, minWidth: 0, overflowWrap: "anywhere" }}>{r.held_reason}</span>
+                <span style={{ marginLeft: "auto", fontWeight: 700, color: K.amber }}>{r.count}</span>
               </div>
             ))}
           </div>

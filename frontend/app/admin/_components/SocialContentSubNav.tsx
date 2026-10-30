@@ -24,9 +24,9 @@
 // backend gate/error aggregate).
 import Link from "next/link";
 import { Puzzle, Layers, TrendingUp, GitBranch, FileStack, Radio, BarChart3, ShieldCheck } from "lucide-react";
-import { A, sans } from "./adminUi";
 import { useT } from "../../_kit/core/useI18n";
 import { M } from "./components.messages";
+import { K, sans } from "../../_kit";
 
 export type SectionKey = "atomize" | "segment" | "score" | "route_hub" | "slate";
 export type SubNavKey = SectionKey | "content_trace" | "platform_stats" | "content_quality";
@@ -55,22 +55,22 @@ export default function SocialContentSubNav({ active, onSelectSection }: {
           child exactly the container width on all four pages that use this split. */}
       <style>{`
         @media (max-width: 980px) {
-          .a527-inner-sidebar { flex-direction: row !important; overflow-x: auto !important; width: 100% !important; border-right: none !important; border-bottom: 1px solid ${A.line}; position: static !important; }
+          .a527-inner-sidebar { flex-direction: row !important; overflow-x: auto !important; width: 100% !important; border-right: none !important; border-bottom: 1px solid ${K.line}; position: static !important; }
           .a527-inner-sidebar button, .a527-inner-sidebar a { white-space: nowrap; }
           .a527-dash-body { flex-direction: column !important; align-items: stretch !important; }
         }
       `}</style>
       <div className="a527-inner-sidebar" style={{
         width: 200, flexShrink: 0, display: "flex", flexDirection: "column", gap: 2,
-        background: A.card, border: `1px solid ${A.line}`, borderRadius: 10, padding: 6,
+        background: K.card, border: `1px solid ${K.line}`, borderRadius: 10, padding: 6,
         position: "sticky", top: 0,
       }}>
         {SECTIONS.map(s => {
           const isActive = active === s.key;
           const itemStyle: React.CSSProperties = {
             display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 7,
-            border: "none", background: isActive ? A.goldTint : "transparent",
-            color: isActive ? A.gold : A.body, cursor: "pointer", fontFamily: sans,
+            border: "none", background: isActive ? K.accentTint : "transparent",
+            color: isActive ? K.accent : K.body, cursor: "pointer", fontFamily: sans,
             fontSize: 12.5, fontWeight: isActive ? 700 : 500, textAlign: "left",
             textDecoration: "none",
           };
@@ -88,8 +88,8 @@ export default function SocialContentSubNav({ active, onSelectSection }: {
         })}
         <Link href="/admin/tenant-activity" style={{
           display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 7,
-          background: active === "content_trace" ? A.goldTint : "transparent",
-          color: active === "content_trace" ? A.gold : A.body, cursor: "pointer", fontFamily: sans,
+          background: active === "content_trace" ? K.accentTint : "transparent",
+          color: active === "content_trace" ? K.accent : K.body, cursor: "pointer", fontFamily: sans,
           textDecoration: "none", fontSize: 12.5, fontWeight: active === "content_trace" ? 700 : 500,
         }}>
           <Radio size={15} />
@@ -97,8 +97,8 @@ export default function SocialContentSubNav({ active, onSelectSection }: {
         </Link>
         <Link href="/admin/platform-stats" style={{
           display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 7,
-          background: active === "platform_stats" ? A.goldTint : "transparent",
-          color: active === "platform_stats" ? A.gold : A.body, cursor: "pointer", fontFamily: sans,
+          background: active === "platform_stats" ? K.accentTint : "transparent",
+          color: active === "platform_stats" ? K.accent : K.body, cursor: "pointer", fontFamily: sans,
           textDecoration: "none", fontSize: 12.5, fontWeight: active === "platform_stats" ? 700 : 500,
         }}>
           <BarChart3 size={15} />
@@ -107,8 +107,8 @@ export default function SocialContentSubNav({ active, onSelectSection }: {
         {/* AA-769 — every quality signal tenants no longer see (AA-770), for every tenant. */}
         <Link href="/admin/content-quality" style={{
           display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 7,
-          background: active === "content_quality" ? A.goldTint : "transparent",
-          color: active === "content_quality" ? A.gold : A.body, cursor: "pointer", fontFamily: sans,
+          background: active === "content_quality" ? K.accentTint : "transparent",
+          color: active === "content_quality" ? K.accent : K.body, cursor: "pointer", fontFamily: sans,
           textDecoration: "none", fontSize: 12.5, fontWeight: active === "content_quality" ? 700 : 500,
         }}>
           <ShieldCheck size={15} />

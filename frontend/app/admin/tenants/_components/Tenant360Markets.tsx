@@ -10,8 +10,7 @@ import { useMemo } from "react";
 
 import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { A, mono } from "../../_components/adminUi";
-import { Badge, DataTable, ErrorState, Spinner, apiGet, useFormat, useT, type Translator } from "../../../_kit";
+import { K, mono, Badge, DataTable, ErrorState, Spinner, apiGet, useFormat, useT, type Translator } from "../../../_kit";
 import { type TenantMarkets } from "./tenant360";
 import { T360 } from "./tenant360.messages";
 
@@ -25,7 +24,7 @@ const intCell = (c: { getValue: () => unknown }) => <span style={tabular}>{Numbe
 function dateCell(fmt: (s: string) => string) {
   return function DateCell(c: { getValue: () => unknown }) {
     const v = c.getValue() as string | null;
-    return <span style={{ color: A.muted }}>{v ? fmt(v) : "—"}</span>;
+    return <span style={{ color: K.muted }}>{v ? fmt(v) : "—"}</span>;
   };
 }
 
@@ -38,7 +37,7 @@ const coverageColumns = (t: T, formatDate: Fmt): ColumnDef<CoverageRow, unknown>
     accessorKey: "fresh_pct", header: t("colFreshPct"),
     cell: c => {
       const v = c.getValue() as number | null;
-      return <strong style={{ ...tabular, color: v == null ? A.muted : v < 50 ? A.amber : A.body }}>{v == null ? "—" : `${v.toFixed(1)}%`}</strong>;
+      return <strong style={{ ...tabular, color: v == null ? K.muted : v < 50 ? K.amber : K.body }}>{v == null ? "—" : `${v.toFixed(1)}%`}</strong>;
     },
   },
   { accessorKey: "last_researched", header: t("colLastResearched"), cell: dateCell(formatDate) },
@@ -58,14 +57,14 @@ const unmappedColumns = (t: T, formatDate: Fmt, formatDateTime: Fmt): ColumnDef<
 ];
 
 function H({ children }: { children: React.ReactNode }) {
-  return <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: A.muted, margin: "18px 0 8px" }}>{children}</div>;
+  return <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: K.muted, margin: "18px 0 8px" }}>{children}</div>;
 }
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div style={{ display: "flex", gap: 12, padding: "6px 0", borderBottom: `1px solid ${A.line2}`, flexWrap: "wrap", alignItems: "center" }}>
-      <div style={{ width: 170, fontSize: 12, fontWeight: 600, color: A.muted, flexShrink: 0 }}>{label}</div>
-      <div style={{ display: "flex", gap: 5, flexWrap: "wrap", alignItems: "center", fontSize: 12.5, color: A.body, minWidth: 0 }}>{children}</div>
+    <div style={{ display: "flex", gap: 12, padding: "6px 0", borderBottom: `1px solid ${K.line2}`, flexWrap: "wrap", alignItems: "center" }}>
+      <div style={{ width: 170, fontSize: 12, fontWeight: 600, color: K.muted, flexShrink: 0 }}>{label}</div>
+      <div style={{ display: "flex", gap: 5, flexWrap: "wrap", alignItems: "center", fontSize: 12.5, color: K.body, minWidth: 0 }}>{children}</div>
     </div>
   );
 }
@@ -79,7 +78,7 @@ export function Tenant360Markets({ tenantId }: { tenantId: string }) {
     queryKey: ["tenant360", tenantId, "markets"],
     queryFn: () => apiGet<TenantMarkets>(`/api/admin/tenants/${tenantId}/markets`, { admin: true }),
   });
-  if (q.isLoading) return <div style={{ fontSize: 12, color: A.muted, display: "flex", gap: 6, alignItems: "center" }}><Spinner size={12} /> {t("loadingMarkets")}</div>;
+  if (q.isLoading) return <div style={{ fontSize: 12, color: K.muted, display: "flex", gap: 6, alignItems: "center" }}><Spinner size={12} /> {t("loadingMarkets")}</div>;
   if (q.isError || !q.data) return <ErrorState message={t("marketsLoadError", (q.error as Error)?.message ?? t("unknownError"))} onRetry={() => q.refetch()} />;
   const m = q.data;
   const open = m.unmapped_requests.filter(r => !r.resolved_at);
@@ -88,11 +87,11 @@ export function Tenant360Markets({ tenantId }: { tenantId: string }) {
     <div style={{ minWidth: 0 }}>
       <Row label={t("declared")}>
         {m.seo.declared.length ? m.seo.declared.map(d => <Badge key={d} tone="neutral" dot={false}>{d}</Badge>)
-          : <span style={{ color: A.muted }}>{m.seo.configured ? t("nothingDeclared") : t("noSeoRow")}</span>}
+          : <span style={{ color: K.muted }}>{m.seo.configured ? t("nothingDeclared") : t("noSeoRow")}</span>}
       </Row>
       <Row label={t("seoMarkets")}>
         {m.seo.markets.map(c => <Badge key={c} tone="success" dot={false}>{c}</Badge>)}
-        {m.seo.defaulted_to_us && <span style={{ fontSize: 11.5, color: A.amber }}>{t("usDefault")}</span>}
+        {m.seo.defaulted_to_us && <span style={{ fontSize: 11.5, color: K.amber }}>{t("usDefault")}</span>}
       </Row>
       {m.seo.unsupported.length > 0 && (
         <Row label={t("notSupported")}>
@@ -101,7 +100,7 @@ export function Tenant360Markets({ tenantId }: { tenantId: string }) {
       )}
       <Row label={t("planningMarkets")}>
         {m.planning_markets ? m.planning_markets.map(c => <Badge key={c} tone="info" dot={false}>{c}</Badge>)
-          : <span style={{ color: A.muted }}>{t("planningUnset")}</span>}
+          : <span style={{ color: K.muted }}>{t("planningUnset")}</span>}
       </Row>
 
       <H>{t("coverageTitle", m.fresh_days)}</H>
@@ -109,7 +108,7 @@ export function Tenant360Markets({ tenantId }: { tenantId: string }) {
         tableId="tenant360-market-coverage" data={m.coverage} columns={coverageCols}
         getRowId={r => r.market} searchable={false} pageSize={25} stickyHeader={false} />
       {m.coverage.every(r => r.places_in_scope === 0) && (
-        <div style={{ fontSize: 11.5, color: A.muted2, marginTop: 6 }}>
+        <div style={{ fontSize: 11.5, color: K.muted2, marginTop: 6 }}>
           {t("noPlaces")}
         </div>
       )}

@@ -11,11 +11,12 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Plus, Trash2, ChevronDown, ChevronUp, RefreshCw, Upload } from "lucide-react";
-import { A, alpha, serif, sans, Card, SLabel, Btn } from "./adminUi";
+import { A, alpha, serif, sans, Card, SLabel } from "./adminUi";
 import { useAdminIdentity } from "../../_kit/useAdminIdentity";
 import { can } from "@/lib/rbac";
 import { useT } from "../../_kit/core/useI18n";
 import { M } from "./BrandIdentityEditor.messages";
+import { Button } from "../../_kit";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -110,7 +111,7 @@ function TagsInput({ value, onChange, placeholder, readOnly }: {
               background: A.card, color: A.ink, outline: "none",
             }}
           />
-          <Btn variant="secondary" onClick={add} style={{ padding: "7px 12px" }}>{t("add")}</Btn>
+          <Button variant="secondary" onClick={add} style={{ padding: "7px 12px" }}>{t("add")}</Button>
         </div>
       )}
     </div>
@@ -773,14 +774,14 @@ export default function BrandIdentityEditor() {
 
                   {!isReadOnly && (
                     <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 8 }}>
-                      <Btn
+                      <Button
                         onClick={save}
                         disabled={saving || !canSave}
                         variant="primary"
                         style={{ background: A.gold, border: `1px solid ${A.gold}` }}
                       >
                         {saving ? t("saving") : isNew ? t("createBrand") : t("saveNewVersion")}
-                      </Btn>
+                      </Button>
                       {msg && (
                         <span style={{ fontSize: 12, color: msg.ok ? A.green : A.red }}>{msg.text}</span>
                       )}
@@ -789,15 +790,15 @@ export default function BrandIdentityEditor() {
 
                   {viewingOld && (
                     <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 8 }}>
-                      {canEdit && <Btn
+                      {canEdit && <Button
                         onClick={() => activateVersion(viewingVersion!)}
                         disabled={activating || detail?.history.find(h => h.version === viewingVersion)?.is_active}
                         variant="primary"
                         style={{ background: A.gold, border: `1px solid ${A.gold}` }}
                       >
                         {activating ? t("activating") : t("setActiveV", viewingVersion ?? 0)}
-                      </Btn>}
-                      <Btn variant="secondary" onClick={exitVersionView}>{t("cancel")}</Btn>
+                      </Button>}
+                      <Button variant="secondary" onClick={exitVersionView}>{t("cancel")}</Button>
                       {msg && (
                         <span style={{ fontSize: 12, color: msg.ok ? A.green : A.red }}>{msg.text}</span>
                       )}

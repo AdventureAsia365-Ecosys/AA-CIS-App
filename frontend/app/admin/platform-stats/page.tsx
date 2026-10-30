@@ -30,7 +30,7 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import SocialContentSubNav from "../_components/SocialContentSubNav";
 import { TenantSelect } from "../_components/TenantSelect";
 import { A, serif, mono, sans, Card, Badge, LoadingScreen } from "../_components/adminUi";
-import { AdminMain, AdminPaneBody, AdminPaneHeader, PageHeader, useFormat, useT } from "../../_kit";
+import { PageFrame, PageFrameBody, PageFrameHeader, PageHeader, useFormat, useT } from "../../_kit";
 import { STATS } from "./messages";
 import { fetchJson, EmptyState, ErrorState } from "../_components/auditPanels";
 
@@ -614,15 +614,15 @@ function FilterPill({ label, active, onClick }: { label: string; active: boolean
 export default function PlatformStatsPage() {
   const t = useT(STATS);
   return (
-    <AdminMain variant="split">
-        <AdminPaneHeader>
+    <PageFrame variant="split">
+        <PageFrameHeader>
           <PageHeader
             title={t("pageTitle")}
             description={t("pageDescription")}
           />
-        </AdminPaneHeader>
+        </PageFrameHeader>
 
-        <AdminPaneBody scroll style={{ overflowX: "auto" }}>
+        <PageFrameBody scroll style={{ overflowX: "auto" }}>
           <div className="a527-dash-body" style={{ display: "flex", gap: 20, alignItems: "flex-start" }}>
             <SocialContentSubNav active="platform_stats" />
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -631,7 +631,7 @@ export default function PlatformStatsPage() {
               <GateTelemetrySection />
             </div>
           </div>
-        </AdminPaneBody>
-    </AdminMain>
+        </PageFrameBody>
+    </PageFrame>
   );
 }

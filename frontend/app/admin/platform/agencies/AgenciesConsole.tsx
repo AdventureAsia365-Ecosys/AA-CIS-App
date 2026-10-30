@@ -33,7 +33,7 @@ import {
   useFormat,
   useT,
   useToast,
-  type ColumnDef, AdminMain,
+  type ColumnDef, PageFrame,
 } from "../../../_kit";
 import {
   CRM_API,
@@ -134,7 +134,7 @@ export default function AgenciesConsole() {
   const listError = agencies.error ? errorText(agencies.error) : null;
 
   return (
-    <AdminMain>
+    <PageFrame>
       <PageHeader
         title={t("title")}
         breadcrumbs={[{ label: t("crumbPlatform") }, { label: t("crumbTenants") }, { label: t("title") }]}
@@ -211,7 +211,7 @@ export default function AgenciesConsole() {
       )}
       <CreateAgencyModal open={creating} forceSynthetic={!isProd} onClose={() => setCreating(false)}
         onCreated={(agency) => { setCreating(false); void qc.invalidateQueries({ queryKey: AGENCIES_KEY }); setSelected(agency); }} />
-    </AdminMain>
+    </PageFrame>
   );
 }
 

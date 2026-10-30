@@ -13,8 +13,8 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle } from "lucide-react";
-import { A, mono, sans } from "../../_components/adminUi";
 import {
+  K, mono, sans,
   Badge, Button, ErrorState, Section, Spinner, ToastProvider, apiGet, apiSend, useLang, useT, useToast,
 } from "../../../_kit";
 import {
@@ -28,18 +28,18 @@ const PLAN_CHOICES = ["starter", "growth", "business"];
 
 const labelStyle: React.CSSProperties = {
   fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em",
-  color: A.muted, display: "block", marginBottom: 6,
+  color: K.muted, display: "block", marginBottom: 6,
 };
 const inputStyle: React.CSSProperties = {
-  padding: "8px 11px", background: A.card, border: `1px solid ${A.line}`, borderRadius: 8,
-  color: A.body, fontSize: 13, fontFamily: sans, outline: "none", boxSizing: "border-box",
+  padding: "8px 11px", background: K.card, border: `1px solid ${K.line}`, borderRadius: 8,
+  color: K.body, fontSize: 13, fontFamily: sans, outline: "none", boxSizing: "border-box",
   maxWidth: "100%",
 };
 
 function FieldError({ msg }: { msg?: string | null }) {
   if (!msg) return null;
   return (
-    <div role="alert" style={{ marginTop: 5, fontSize: 11.5, color: A.red, display: "flex", alignItems: "center", gap: 5 }}>
+    <div role="alert" style={{ marginTop: 5, fontSize: 11.5, color: K.danger, display: "flex", alignItems: "center", gap: 5 }}>
       <AlertCircle size={12} /> {msg}
     </div>
   );
@@ -118,7 +118,7 @@ function PlanForm({ tenantId, planTier, rateLimitRpm, locked, onChanged }: {
         {(planDirty || rpmDirty) && !m.isPending && (
           <Button variant="ghost" size="sm" onClick={() => { setPlan(saved.plan); setRpm(String(saved.rpm)); }}>{t("reset")}</Button>
         )}
-        <span style={{ fontSize: 11.5, color: A.muted2 }}>
+        <span style={{ fontSize: 11.5, color: K.muted2 }}>
           {t("current")} <span style={{ fontFamily: mono }}>{saved.plan} · {t("perMin", saved.rpm)}</span>
         </span>
       </div>
@@ -188,7 +188,7 @@ function PublishLimitForm({ tenantId, dailyPublishLimit, locked, onChanged }: {
         {supported && saved != null && !m.isPending && (
           <Button variant="ghost" size="sm" disabled={locked} onClick={() => m.mutate(null)}>{t("useDefault")}</Button>
         )}
-        <span style={{ fontSize: 11.5, color: A.muted2 }}>
+        <span style={{ fontSize: 11.5, color: K.muted2 }}>
           {t("current")} <span style={{ fontFamily: mono }}>{fmtDailyPublishLimit(supported ? saved : undefined, words)}</span>
         </span>
       </div>
@@ -252,7 +252,7 @@ function ConfigForm({ tenantId, server, locked }: { tenantId: string; server: Te
             aria-invalid={!!errors.markets} style={{ ...inputStyle, width: 320 }} />
           <FieldError msg={errors.markets} />
           {!errors.markets && notResearched.length > 0 && (
-            <div style={{ marginTop: 5, fontSize: 11.5, color: A.amber }}>
+            <div style={{ marginTop: 5, fontSize: 11.5, color: K.amber }}>
               {t("notResearched", notResearched.join(", "), SEO_SUPPORTED_MARKETS.join(", "))}
             </div>
           )}
@@ -268,8 +268,8 @@ function ConfigForm({ tenantId, server, locked }: { tenantId: string; server: Te
                   style={{
                     padding: "5px 11px", borderRadius: 20, fontSize: 12, fontFamily: sans,
                     cursor: locked ? "not-allowed" : "pointer", fontWeight: on ? 700 : 400,
-                    border: `1px solid ${on ? A.accent : A.line}`, background: on ? A.accentTint : A.bg,
-                    color: on ? A.accentDeep : A.muted,
+                    border: `1px solid ${on ? K.accent : K.line}`, background: on ? K.accentTint : K.bg,
+                    color: on ? K.accentDeep : K.muted,
                   }}>{c}</button>
               );
             })}
@@ -294,7 +294,7 @@ function ConfigForm({ tenantId, server, locked }: { tenantId: string; server: Te
             setMarketsText(server.markets.join(", ")); setChannels(server.channels); setPpw(String(server.posts_per_week));
           }}>{t("reset")}</Button>
         )}
-        <span style={{ fontSize: 11.5, color: A.muted2, display: "inline-flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ fontSize: 11.5, color: K.muted2, display: "inline-flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
           {t("savedLabel")} {server.markets.map(mk => <Badge key={mk} tone="neutral" dot={false}>{mk}</Badge>)}
           <span style={{ fontFamily: mono }}>· {server.channels.join(", ")} · {t("perWeek", server.posts_per_week)}</span>
         </span>
@@ -313,20 +313,20 @@ function SettingsInner({ tenantId, planTier, rateLimitRpm, dailyPublishLimit, st
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14, maxWidth: 640 }}>
       {locked && (
-        <div style={{ padding: "9px 12px", background: A.amberSoft, border: `1px solid ${A.amber}`, borderRadius: 8, fontSize: 12, color: A.ink }}>
+        <div style={{ padding: "9px 12px", background: K.amberSoft, border: `1px solid ${K.amber}`, borderRadius: 8, fontSize: 12, color: K.ink }}>
           {t("offboardedLock")}
         </div>
       )}
       <PlanForm tenantId={tenantId} planTier={planTier} rateLimitRpm={rateLimitRpm} locked={locked} onChanged={onChanged} />
       <PublishLimitForm tenantId={tenantId} dailyPublishLimit={dailyPublishLimit} locked={locked} onChanged={onChanged} />
       {cfg.isLoading ? (
-        <div style={{ fontSize: 12, color: A.muted, display: "flex", gap: 6, alignItems: "center" }}><Spinner size={12} /> {t("loadingConfig")}</div>
+        <div style={{ fontSize: 12, color: K.muted, display: "flex", gap: 6, alignItems: "center" }}><Spinner size={12} /> {t("loadingConfig")}</div>
       ) : cfg.isError || !cfg.data ? (
         <ErrorState message={t("configLoadError", (cfg.error as Error)?.message ?? t("unknownError"))} onRetry={() => cfg.refetch()} />
       ) : (
         <ConfigForm tenantId={tenantId} server={cfg.data} locked={locked} />
       )}
-      <div style={{ fontSize: 11, color: A.muted2 }}>
+      <div style={{ fontSize: 11, color: K.muted2 }}>
         {t("settingsFootnote")}
       </div>
     </div>

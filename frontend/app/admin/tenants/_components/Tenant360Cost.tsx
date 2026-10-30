@@ -8,8 +8,7 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { A, mono } from "../../_components/adminUi";
-import { Badge, DataTable, ErrorState, KpiTile, Spinner, apiGet, useT, type Translator } from "../../../_kit";
+import { K, mono, Badge, DataTable, ErrorState, KpiTile, Spinner, apiGet, useT, type Translator } from "../../../_kit";
 import { type TenantCost, pct, usd } from "./tenant360";
 import { T360 } from "./tenant360.messages";
 
@@ -33,11 +32,11 @@ const stageColumns = (t: T): ColumnDef<StageRow, unknown>[] => [
   { accessorKey: "stage", header: t("colStage"), cell: c => <span style={{ fontFamily: mono, fontSize: 11.5 }}>{String(c.getValue())}</span> },
   { accessorKey: "calls", header: t("colCalls"), cell: c => <span style={tabular}>{Number(c.getValue()).toLocaleString()}</span> },
   { accessorKey: "cost_usd", header: t("colCost"), cell: c => <span style={tabular}>{usd(c.getValue() as number, 4)}</span> },
-  { accessorKey: "share", header: t("colShare"), cell: c => <span style={{ ...tabular, color: A.muted }}>{pct(c.getValue() as number | null)}</span> },
+  { accessorKey: "share", header: t("colShare"), cell: c => <span style={{ ...tabular, color: K.muted }}>{pct(c.getValue() as number | null)}</span> },
 ];
 
 function H({ children }: { children: React.ReactNode }) {
-  return <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: A.muted, margin: "18px 0 8px" }}>{children}</div>;
+  return <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: K.muted, margin: "18px 0 8px" }}>{children}</div>;
 }
 
 export function Tenant360Cost({ tenantId }: { tenantId: string }) {
@@ -53,7 +52,7 @@ export function Tenant360Cost({ tenantId }: { tenantId: string }) {
     if (!d) return [];
     return d.by_stage.map(st => ({ ...st, share: d.total_cost_usd > 0 ? st.cost_usd / d.total_cost_usd : null }));
   }, [q.data]);
-  if (q.isLoading) return <div style={{ fontSize: 12, color: A.muted, display: "flex", gap: 6, alignItems: "center" }}><Spinner size={12} /> {t("loadingCost")}</div>;
+  if (q.isLoading) return <div style={{ fontSize: 12, color: K.muted, display: "flex", gap: 6, alignItems: "center" }}><Spinner size={12} /> {t("loadingCost")}</div>;
   if (q.isError || !q.data) return <ErrorState message={t("costLoadError", (q.error as Error)?.message ?? t("unknownError"))} onRetry={() => q.refetch()} />;
   const c = q.data;
   const mg = c.margin;
@@ -93,7 +92,7 @@ export function Tenant360Cost({ tenantId }: { tenantId: string }) {
         csvFilename={`tenant-${tenantId}-cost-by-stage.csv`}
         emptyTitle={t("noSpend")} emptyDescription={t("noSpendBody")} />
 
-      <div style={{ fontSize: 11, color: A.muted2, marginTop: 10, lineHeight: 1.5 }}>
+      <div style={{ fontSize: 11, color: K.muted2, marginTop: 10, lineHeight: 1.5 }}>
         {c.definition} {t("costFootnote", usd(c.unattributed_to_piece_usd, 4))}
       </div>
     </div>

@@ -13,8 +13,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
-import { A, mono } from "../_components/adminUi";
-import { ApiError, Badge, Button, ConfirmModal, Drawer, Spinner, apiGet, apiSend, useAdminIdentity, useT, useToast } from "../../_kit";
+import { K, mono, ApiError, Badge, Button, ConfirmModal, Drawer, Spinner, apiGet, apiSend, useAdminIdentity, useT, useToast } from "../../_kit";
 import { AdminEdits, ProblemList, RewritePanel, TenantCopyNotice, type Editor } from "./SentenceActions";
 import { JudgeBreakdownPanel } from "./JudgeBreakdownPanel";
 import { SEVERITY_TONE, worstOf } from "@/lib/gateSeverity";
@@ -37,15 +36,15 @@ const problemText = (t: Target) => t.problems.map((p) => `${p.gate}: ${p.problem
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ marginTop: 18 }}>
-      <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: A.muted, marginBottom: 6 }}>{title}</div>
+      <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: K.muted, marginBottom: 6 }}>{title}</div>
       {children}
     </div>
   );
 }
 
 const pre: React.CSSProperties = {
-  whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 12, background: A.bg, border: `1px solid ${A.line}`,
-  borderRadius: 8, padding: 10, maxHeight: 320, overflow: "auto", margin: 0, color: A.body,
+  whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 12, background: K.bg, border: `1px solid ${K.line}`,
+  borderRadius: 8, padding: 10, maxHeight: 320, overflow: "auto", margin: 0, color: K.body,
 };
 
 /** A section's text with each sentence clickable (flagged ones highlighted). Offsets are Python code points. */
@@ -69,9 +68,9 @@ function SectionText({ sec, canEdit, activeKey, onPick }: {
             onClick={canEdit ? () => onPick(s) : undefined}
             onKeyDown={canEdit ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onPick(s); } } : undefined}
             style={{
-              background: active ? A.accentSoft : flagged ? A.redSoft : "transparent",
-              borderBottom: flagged ? `2px solid ${A.red}` : undefined,
-              cursor: canEdit ? "pointer" : "default", borderRadius: 3, color: A.ink,
+              background: active ? K.accentSoft : flagged ? K.dangerSoft : "transparent",
+              borderBottom: flagged ? `2px solid ${K.danger}` : undefined,
+              cursor: canEdit ? "pointer" : "default", borderRadius: 3, color: K.ink,
             }}>
         {sec.text.slice(start, end)}
       </span>,
@@ -79,7 +78,7 @@ function SectionText({ sec, canEdit, activeKey, onPick }: {
     pos = end;
   });
   if (pos < sec.text.length) runs.push(<span key="end">{sec.text.slice(pos)}</span>);
-  return <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 13, lineHeight: 1.65, color: A.body }}>{runs}</div>;
+  return <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 13, lineHeight: 1.65, color: K.body }}>{runs}</div>;
 }
 
 /** The admin UI (Vercel) can go live before the API (ECS) that adds the AA-802 fields: an older
@@ -207,16 +206,16 @@ export default function TourVersionDrawer({ id, onClose }: { id: string; onClose
 
   return (
     <Drawer open onClose={onClose} width={860} title={title}>
-      {isError && <div style={{ color: A.red, fontSize: 12.5 }}>{t("couldNotLoadVersion", error instanceof Error ? error.message : String(error))}</div>}
-      {!v ? <div style={{ color: A.muted, fontSize: 12.5 }}>{t("loading")}</div> : (
+      {isError && <div style={{ color: K.danger, fontSize: 12.5 }}>{t("couldNotLoadVersion", error instanceof Error ? error.message : String(error))}</div>}
+      {!v ? <div style={{ color: K.muted, fontSize: 12.5 }}>{t("loading")}</div> : (
         <>
           <TenantCopyNotice copy={v.tenant_copy} what="version" />
-          <div style={{ fontSize: 12.5, color: A.body }}>
+          <div style={{ fontSize: 12.5, color: K.body }}>
             {t("versionStatus")} <b>{v.status}</b> · {t("score")} <b>{v.quality_score ?? "—"}</b> · {t("qa")} <b>{v.qa_status ?? "—"}</b>
             {v.qa_auto_passed ? t("autoPassed") : ""} · {t("repairs", v.qa_repair_count ?? 0)} · {v.edit_source}
             {v.latest_version_number && v.latest_version_number > v.version_number ? t("tenantHas", v.latest_version_number) : ""}
           </div>
-          <div data-testid="cq-tv-edit-note" style={{ fontSize: 12, marginTop: 8, padding: "6px 8px", borderRadius: 6, background: v.editable ? A.bg : A.amberSoft, color: A.ink }}>
+          <div data-testid="cq-tv-edit-note" style={{ fontSize: 12, marginTop: 8, padding: "6px 8px", borderRadius: 6, background: v.editable ? K.bg : K.amberSoft, color: K.ink }}>
             {!v.editable ? v.edit_block_reason
               : !isAdmin ? t("onlyAdminCorrect")
               : t("editsInPlace")}
@@ -228,21 +227,21 @@ export default function TourVersionDrawer({ id, onClose }: { id: string; onClose
 
           <Section title={t("flaggedSentences", v.flagged_sentences.length)}>
             {v.flagged_sentences.length === 0 ? (
-              <div style={{ fontSize: 12, color: A.muted }}>{t("noFlaggedVersion")}</div>
+              <div style={{ fontSize: 12, color: K.muted }}>{t("noFlaggedVersion")}</div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {v.flagged_sentences.map((f) => {
                   const tg: Target = { field: f.field, index: f.index, s: f, problems: f.problems, suggested: f.suggested_reason };
                   return (
-                    <div key={targetKey(tg)} data-testid="cq-tv-flag-row" style={{ border: `1px solid ${A.redBorder}`, borderRadius: 8, padding: "8px 10px", background: A.card }}>
+                    <div key={targetKey(tg)} data-testid="cq-tv-flag-row" style={{ border: `1px solid ${K.dangerBorder}`, borderRadius: 8, padding: "8px 10px", background: K.card }}>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 6, alignItems: "center" }}>
-                        <span style={{ fontSize: 11, color: A.muted }}>{sectionLabel(f.field, f.index)}</span>
+                        <span style={{ fontSize: 11, color: K.muted }}>{sectionLabel(f.field, f.index)}</span>
                         {f.gates.map((g) => (
                           <Badge key={g} tone={SEVERITY_TONE[worstOf(f.problems.filter((p) => p.gate === g)) ?? "block"]} dot={false}>{gateLabel(g)}</Badge>
                         ))}
                       </div>
                       <ProblemList problems={f.problems} />
-                      <div style={{ fontSize: 12.5, lineHeight: 1.55, color: A.ink, background: A.bg, borderRadius: 6, padding: "6px 8px", wordBreak: "break-word" }}>{f.sentence}</div>
+                      <div style={{ fontSize: 12.5, lineHeight: 1.55, color: K.ink, background: K.bg, borderRadius: 6, padding: "6px 8px", wordBreak: "break-word" }}>{f.sentence}</div>
                       {canEdit && actions(tg)}
                     </div>
                   );
@@ -252,16 +251,16 @@ export default function TourVersionDrawer({ id, onClose }: { id: string; onClose
           </Section>
 
           <Section title={canEdit ? t("textClick") : t("text")}>
-            {v.sections.length === 0 ? <div style={{ fontSize: 12, color: A.muted }}>{t("noEditableText")}</div> : (
+            {v.sections.length === 0 ? <div style={{ fontSize: 12, color: K.muted }}>{t("noEditableText")}</div> : (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {v.sections.map((sec) => (
-                  <div key={`${sec.field}:${sec.index ?? "-"}`} style={{ border: `1px solid ${A.line}`, borderRadius: 8, padding: "8px 10px", background: A.card }}>
-                    <div style={{ fontSize: 11, fontWeight: 600, color: A.muted, marginBottom: 4 }}>{sectionLabel(sec.field, sec.index)}</div>
+                  <div key={`${sec.field}:${sec.index ?? "-"}`} style={{ border: `1px solid ${K.line}`, borderRadius: 8, padding: "8px 10px", background: K.card }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: K.muted, marginBottom: 4 }}>{sectionLabel(sec.field, sec.index)}</div>
                     <SectionText sec={sec} canEdit={canEdit} activeKey={target ? targetKey(target) : null}
                                  onPick={(s) => { setEditor(null); setTarget({ field: sec.field, index: sec.index, s, problems: s.problems }); }} />
                     {canEdit && picked && picked.field === sec.field && picked.index === sec.index && (
-                      <div style={{ marginTop: 8, borderTop: `1px dashed ${A.line}`, paddingTop: 8 }}>
-                        <div style={{ fontSize: 12.5, color: A.ink, background: A.bg, borderRadius: 6, padding: "6px 8px", wordBreak: "break-word" }}>{picked.s.sentence}</div>
+                      <div style={{ marginTop: 8, borderTop: `1px dashed ${K.line}`, paddingTop: 8 }}>
+                        <div style={{ fontSize: 12.5, color: K.ink, background: K.bg, borderRadius: 6, padding: "6px 8px", wordBreak: "break-word" }}>{picked.s.sentence}</div>
                         {actions(picked)}
                       </div>
                     )}
@@ -278,11 +277,11 @@ export default function TourVersionDrawer({ id, onClose }: { id: string; onClose
           )}
 
           <Section title={t("escalations", v.reviews.length)}>
-            {v.reviews.length === 0 ? <div style={{ fontSize: 12, color: A.muted }}>{t("noneDot")}</div> : <pre style={pre}>{JSON.stringify(v.reviews, null, 2)}</pre>}
+            {v.reviews.length === 0 ? <div style={{ fontSize: 12, color: K.muted }}>{t("noneDot")}</div> : <pre style={pre}>{JSON.stringify(v.reviews, null, 2)}</pre>}
           </Section>
 
           <Section title={t("costByStage")}>
-            {v.cost_by_stage.length === 0 ? <div style={{ fontSize: 12, color: A.muted }}>{t("noCallsVersion")}</div> : (
+            {v.cost_by_stage.length === 0 ? <div style={{ fontSize: 12, color: K.muted }}>{t("noCallsVersion")}</div> : (
               <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: "4px 16px", fontSize: 12 }}>
                 {v.cost_by_stage.map((c) => (
                   <Fragment key={`${c.stage}-${c.role}`}><span style={{ fontFamily: mono }}>{c.stage} · {c.role}</span><span>{t("calls", c.calls)}</span><span style={{ fontFamily: mono }}>{usd(c.cost_usd)}</span></Fragment>
@@ -305,10 +304,10 @@ export default function TourVersionDrawer({ id, onClose }: { id: string; onClose
             confirmLabel={t("cut")}
             body={
               <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 13 }}>
-                <div style={{ background: A.redSoft, borderRadius: 6, padding: "6px 8px", color: A.ink }}>{cutting?.s.sentence}</div>
-                {cutting && <div style={{ display: "flex", gap: 6, alignItems: "center", color: A.body }}>{t("reason")} <ReasonTag code={reasonOf(cutting)} /></div>}
-                <div style={{ color: A.body }}>{t("cutBodyVersion")}</div>
-                {v.tenant_copy.exported_at && <div style={{ color: A.amber }}>{t("cutDownloaded")}</div>}
+                <div style={{ background: K.dangerSoft, borderRadius: 6, padding: "6px 8px", color: K.ink }}>{cutting?.s.sentence}</div>
+                {cutting && <div style={{ display: "flex", gap: 6, alignItems: "center", color: K.body }}>{t("reason")} <ReasonTag code={reasonOf(cutting)} /></div>}
+                <div style={{ color: K.body }}>{t("cutBodyVersion")}</div>
+                {v.tenant_copy.exported_at && <div style={{ color: K.amber }}>{t("cutDownloaded")}</div>}
               </div>
             }
           />

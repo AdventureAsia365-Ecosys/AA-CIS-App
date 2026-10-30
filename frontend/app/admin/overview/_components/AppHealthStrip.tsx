@@ -6,9 +6,8 @@
 // S243 — the pill and the reason are `overall`: the same verdict /admin/platform/apps shows (backend
 // api/services/app_health.py, worst of the app's own health check and this traffic), with the same words.
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis } from "recharts";
-import { K, useLang, useT } from "../../../_kit";
+import { CHART_TOOLTIP, K, useLang, useT } from "../../../_kit";
 import { useChartColors } from "../../../_kit/useTheme";
-import { CHART_TOOLTIP } from "../../_components/adminUi";
 import { BOOKING_ADMIN_URL, TRIPPLANNER_URL } from "../../../../lib/apps";
 import { basisText } from "../../../../lib/platform";
 import { BASIS_MESSAGES } from "../../../../lib/platform.messages";

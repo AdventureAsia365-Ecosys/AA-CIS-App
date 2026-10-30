@@ -29,7 +29,7 @@ import {
   apiGet,
   mono,
   sans,
-  AdminMain,
+  PageFrame,
   useT,
   type Tone,
 } from "../../_kit";
@@ -397,7 +397,7 @@ export default function ApiDocsPage() {
     : t("descriptionEmpty");
 
   return (
-    <AdminMain style={{ fontFamily: sans }}>
+    <PageFrame style={{ fontFamily: sans }}>
       <SkeletonStyle />
       <PageHeader
         title={t("title")}
@@ -537,6 +537,6 @@ export default function ApiDocsPage() {
           )}
         </>
       )}
-    </AdminMain>
+    </PageFrame>
   );
 }

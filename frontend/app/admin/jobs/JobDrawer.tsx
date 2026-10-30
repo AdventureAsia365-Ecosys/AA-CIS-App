@@ -9,8 +9,8 @@
 // fetch of the calls and then it stops too.
 
 import { useQuery } from "@tanstack/react-query";
-import { A, serif, mono, SLabel, Btn, TH, TD } from "../_components/adminUi";
-import { Drawer, StatusBadge, apiGet, useFormat, useT } from "../../_kit";
+import { A, serif, mono, SLabel, TH, TD } from "../_components/adminUi";
+import { Button, Drawer, StatusBadge, apiGet, useFormat, useT } from "../../_kit";
 import { TenantName } from "../_components/TenantSelect";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import { accountName, withAccountNames } from "@/lib/awsAccounts";
@@ -107,10 +107,10 @@ export default function JobDrawer({ jobId, refetchMs, expectedSeconds, maxReleas
   const footer = job && (
     <>
       {(job.status === "queued" || (job.status === "running" && !job.cancel_requested)) && (
-        <Btn size="sm" variant="danger" disabled={busy} onClick={() => onAct(job, "cancel")}>{t("cancel")}</Btn>
+        <Button size="sm" variant="danger" disabled={busy} onClick={() => onAct(job, "cancel")}>{t("cancel")}</Button>
       )}
       {(job.status === "failed" || job.status === "stopped_budget" || job.status === "cancelled") && (
-        <Btn size="sm" disabled={busy} onClick={() => onAct(job, "retry")}>{t("retry")}</Btn>
+        <Button size="sm" disabled={busy} onClick={() => onAct(job, "retry")}>{t("retry")}</Button>
       )}
     </>
   );

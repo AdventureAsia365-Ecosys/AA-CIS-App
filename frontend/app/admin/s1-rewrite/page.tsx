@@ -8,12 +8,8 @@
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Play, RefreshCw, ArrowRight, Search, CheckCircle, XCircle, Loader2, ChevronRight } from "lucide-react";
-import {
-  A, alpha, serif, sans, mono,
-  Card, SLabel, Badge, Btn, LoadingScreen,
-  TH, TD,
-} from "../_components/adminUi";
-import { AdminMain, AdminPaneBody, AdminPaneHeader, PageHeader, useFormat, useT, type Translator } from "../../_kit";
+import { A, alpha, serif, sans, mono, Card, SLabel, Badge, LoadingScreen, TH, TD } from "../_components/adminUi";
+import { Button, PageFrame, PageFrameBody, PageFrameHeader, PageHeader, useFormat, useT, type Translator } from "../../_kit";
 import { TourDetailPanelV2 } from "../_components/TourDetailPanelV2";
 import { CompareModal } from "../_components/CompareModal";
 import { Pagination } from "../_components/Pagination";
@@ -600,18 +596,18 @@ export default function S1RewritePage() {
 
   if (loading) {
     return (
-        <AdminMain>
+        <PageFrame>
           <LoadingScreen msg={t("loadingTours")} />
-        </AdminMain>
+        </PageFrame>
     );
   }
 
   return (
     <>
-      <AdminMain variant="split" style={{ overflow: "hidden" }}>
+      <PageFrame variant="split" style={{ overflow: "hidden" }}>
 
         {/* ── Sticky Config Panel ─────────────────────────────────────────── */}
-        <AdminPaneHeader style={{
+        <PageFrameHeader style={{
           position: "sticky", top: 0, zIndex: 20, background: A.card,
           padding: "12px 36px",
         }}>
@@ -667,7 +663,7 @@ export default function S1RewritePage() {
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
               {selectedIds.size >= 2 && selectedIds.size <= 4 && (
-                <Btn
+                <Button
                   variant="secondary"
                   size="lg"
                   onClick={() => setCompareOpen(true)}
@@ -675,9 +671,9 @@ export default function S1RewritePage() {
                   style={{ whiteSpace: "nowrap" as const }}
                 >
                   {t("compare", selectedIds.size)}
-                </Btn>
+                </Button>
               )}
-              <Btn
+              <Button
                 variant="primary"
                 size="lg"
                 disabled={running || selectedIds.size === 0}
@@ -692,13 +688,13 @@ export default function S1RewritePage() {
               >
                 <Play size={14} />
                 {running ? t("running") : t("runRewrite", selectedIds.size)}
-              </Btn>
+              </Button>
             </div>
           </div>
-        </AdminPaneHeader>
+        </PageFrameHeader>
 
         {/* ── Scrollable Content ──────────────────────────────────────────── */}
-        <AdminPaneBody scroll style={{ paddingTop: 24 }}>
+        <PageFrameBody scroll style={{ paddingTop: 24 }}>
 
           {/* Header */}
           <PageHeader
@@ -715,9 +711,9 @@ export default function S1RewritePage() {
               </>
             }
             actions={
-              <Btn size="sm" variant="ghost" onClick={handleRefresh} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <Button size="sm" variant="ghost" onClick={handleRefresh} style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <RefreshCw size={13} /> {t("refresh")}
-              </Btn>
+              </Button>
             }
           />
 
@@ -763,8 +759,8 @@ export default function S1RewritePage() {
                 />
               </div>
 
-              <Btn size="sm" variant="ghost" onClick={selectAll}>{t("selectAll", filteredTours.length)}</Btn>
-              <Btn size="sm" variant="ghost" onClick={deselectAll} disabled={selectedIds.size === 0}>{t("deselectAll")}</Btn>
+              <Button size="sm" variant="ghost" onClick={selectAll}>{t("selectAll", filteredTours.length)}</Button>
+              <Button size="sm" variant="ghost" onClick={deselectAll} disabled={selectedIds.size === 0}>{t("deselectAll")}</Button>
             </div>
           </Card>
 
@@ -773,10 +769,10 @@ export default function S1RewritePage() {
             <Card style={{ textAlign: "center", padding: "48px 24px" }}>
               <div style={{ fontSize: 15, color: A.muted, marginBottom: 14 }}>{t("noTours")}</div>
               <div style={{ fontSize: 13, color: A.muted2, marginBottom: 20 }}>{t("uploadFirst")}</div>
-              <Btn size="sm" variant="secondary" onClick={() => window.location.href = "/admin/upload"}
+              <Button size="sm" variant="secondary" onClick={() => window.location.href = "/admin/upload"}
                 style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                 {t("goToUpload")} <ArrowRight size={12} />
-              </Btn>
+              </Button>
             </Card>
           ) : (
             <Card style={{ marginBottom: 20, padding: 0, overflow: "hidden" }}>
@@ -897,15 +893,15 @@ export default function S1RewritePage() {
                   {brandName ? t("brandSuffix", brandName) : ""}{t("continueQ")}
                 </div>
                 <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-                  <Btn size="sm" variant="ghost" onClick={() => setShowConfirm(false)}>{t("cancel")}</Btn>
-                  <Btn
+                  <Button size="sm" variant="ghost" onClick={() => setShowConfirm(false)}>{t("cancel")}</Button>
+                  <Button
                     size="sm"
                     variant="primary"
                     onClick={startRun}
                     style={{ background: A.gold, border: `1px solid ${A.gold}` }}
                   >
                     {t("yesRun")}
-                  </Btn>
+                  </Button>
                 </div>
               </Card>
             </div>
@@ -973,7 +969,7 @@ export default function S1RewritePage() {
                 )}
                 {running && <span style={{ fontSize: 13, color: A.amber }}>{t("processingEllipsis")}</span>}
                 {runComplete && (
-                  <Btn
+                  <Button
                     size="sm"
                     variant="primary"
                     onClick={() => window.location.href = "/admin/master-content"}
@@ -983,13 +979,13 @@ export default function S1RewritePage() {
                     }}
                   >
                     {t("viewMaster")} <ArrowRight size={12} />
-                  </Btn>
+                  </Button>
                 )}
               </div>
             </Card>
           )}
-        </AdminPaneBody>
-      </AdminMain>
+        </PageFrameBody>
+      </PageFrame>
 
       {/* Detail panel v2 (handles its own backdrop) */}
       {detailTour && (

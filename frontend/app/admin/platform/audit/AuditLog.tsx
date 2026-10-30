@@ -38,7 +38,7 @@ import {
   useIsPhone,
   useT,
   type ColumnDef,
-  type Tone, AdminMain,
+  type Tone, PageFrame,
 } from "../../../_kit";
 import { BOOKING_AUDIT_LOG_URL } from "@/lib/apps";
 import { TenantName } from "../../_components/TenantSelect";
@@ -183,7 +183,7 @@ export default function AuditLog() {
   };
 
   return (
-    <AdminMain>
+    <PageFrame>
       <PageHeader
         title={t("title")}
         description={
@@ -253,7 +253,7 @@ export default function AuditLog() {
       )}
 
       <AuditDrawer row={open} onClose={() => setOpenId(null)} />
-    </AdminMain>
+    </PageFrame>
   );
 }
 

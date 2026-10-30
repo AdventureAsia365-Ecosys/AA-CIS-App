@@ -37,7 +37,7 @@ import {
   useAdminIdentity,
   useFormat,
   useT,
-  useToast, AdminMain,
+  useToast, PageFrame,
 } from "../../_kit";
 import { can } from "@/lib/rbac";
 import { BOOKING_ADMIN_URL } from "@/lib/apps";
@@ -253,9 +253,9 @@ export default function SupplyContentDetail({ entityId }: { entityId: string }) 
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <AdminMain>
+    <PageFrame>
       {children}
-    </AdminMain>
+    </PageFrame>
   );
 }
 

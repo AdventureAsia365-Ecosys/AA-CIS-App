@@ -7,8 +7,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { BookOpen, ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { A, sans, mono, Card, SLabel, Btn, LoadingScreen, TH, TD, CHART_TOOLTIP } from "../_components/adminUi";
-import { AdminMain, AdminPaneBody, AdminPaneHeader, PageHeader, useFormat, useT } from "../../_kit";
+import { A, sans, mono, Card, SLabel, LoadingScreen, TH, TD, CHART_TOOLTIP } from "../_components/adminUi";
+import { Button, PageFrame, PageFrameBody, PageFrameHeader, PageHeader, useFormat, useT } from "../../_kit";
 import { useChartColors } from "../../_kit/useTheme";
 import { stripIssueIds } from "@/lib/issueIds";
 import { DEC } from "./messages";
@@ -220,7 +220,7 @@ function QuestionEditor({ q, onSaved }: { q: Question; onSaved: () => void }) {
       <label style={{ fontSize: 11.5, color: A.muted, flex: 1, minWidth: 240 }}>{t("calibrationRecord")}<br />
         <input value={calib} onChange={e => setCalib(e.target.value)} placeholder="docs/calibration/<question>.md" style={{ ...input, width: "100%" }} />
       </label>
-      <Btn variant="primary" onClick={save} disabled={saving}>{saving ? t("saving") : t("save")}</Btn>
+      <Button variant="primary" onClick={save} disabled={saving}>{saving ? t("saving") : t("save")}</Button>
       {err && <div style={{ width: "100%", color: A.red, fontSize: 12 }}>{err}</div>}
     </div>
   );
@@ -324,9 +324,9 @@ export default function DecisionsPage() {
   const resetPage = <T,>(set: (v: T) => void) => (v: T) => { set(v); setVPage(0); };
 
   return (
-    <AdminMain variant="split">
+    <PageFrame variant="split">
         {/* Sticky header + tabs */}
-        <AdminPaneHeader sticky style={{ paddingBottom: 0 }}>
+        <PageFrameHeader sticky style={{ paddingBottom: 0 }}>
           <PageHeader
             title={t("title")}
             description={
@@ -340,16 +340,16 @@ export default function DecisionsPage() {
                 <select value={days} onChange={e => { setDays(Number(e.target.value)); setVPage(0); }} style={input} title={t("windowTitle")}>
                   <option value={1}>{t("last24h")}</option><option value={7}>{t("last7")}</option><option value={30}>{t("last30")}</option><option value={90}>{t("last90")}</option>
                 </select>
-                <Btn onClick={() => { loadSummary(); if (tab === "verdicts") loadLog(); }}><RefreshCw size={13} /> {t("refresh")}</Btn>
+                <Button onClick={() => { loadSummary(); if (tab === "verdicts") loadLog(); }}><RefreshCw size={13} /> {t("refresh")}</Button>
               </>
             }
           />
           <div style={{ display: "flex", gap: 4, marginTop: 12, maxWidth: "100%", overflowX: "auto" }}>
             {tabBtn("overview", t("tabOverview"))}{tabBtn("questions", t("tabQuestions", qs.length))}{tabBtn("verdicts", t("tabVerdicts"))}{tabBtn("guide", t("guide"))}
           </div>
-        </AdminPaneHeader>
+        </PageFrameHeader>
 
-        <AdminPaneBody>
+        <PageFrameBody>
           {error && <Card style={{ color: A.red, marginBottom: 16 }}>{error}</Card>}
           {!data && !error && tab !== "guide" && <LoadingScreen msg={t("loading")} />}
 
@@ -502,7 +502,7 @@ export default function DecisionsPage() {
                   <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
                     <span style={{ fontFamily: mono, fontWeight: 700, fontSize: 14 }}>{q.question_key}</span>
                     <ModePill m={q.mode} /><span style={{ fontSize: 12, color: A.muted }}>{t("stage", q.stage)}</span>
-                    <span style={{ flex: 1 }} /><Btn size="sm" onClick={() => setOpen(null)}>{t("close")}</Btn>
+                    <span style={{ flex: 1 }} /><Button size="sm" onClick={() => setOpen(null)}>{t("close")}</Button>
                   </div>
 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: 18 }}>
                               <div>
@@ -526,7 +526,7 @@ export default function DecisionsPage() {
                                 <div style={{ fontSize: 12, color: A.muted, marginTop: 10 }}>
                                   {t("floorsLine", q.threshold_version, q.calibration_ref ?? t("noCalibration"), when(q.first_used_at), when(q.updated_at), q.updated_by)}
                                 </div>
-                                <Btn size="sm" style={{ marginTop: 10 }} onClick={() => { setVQuestion(q.question_key); setVPage(0); setTab("verdicts"); }}>{t("seeVerdicts")}</Btn>
+                                <Button size="sm" style={{ marginTop: 10 }} onClick={() => { setVQuestion(q.question_key); setVPage(0); setTab("verdicts"); }}>{t("seeVerdicts")}</Button>
                               </div>
                             </div>
                             <div style={{ marginTop: 16 }}><SLabel>{t("settings")}</SLabel><QuestionEditor q={q} onSaved={() => { setOpen(null); loadSummary(); }} /></div>
@@ -592,8 +592,8 @@ export default function DecisionsPage() {
                 <span style={{ color: A.muted }}>
                   {log.total ? t("range", vPage * PAGE + 1, Math.min((vPage + 1) * PAGE, log.total), log.total.toLocaleString()) : t("zeroVerdicts")}
                 </span>
-                <Btn size="sm" disabled={vPage === 0} onClick={() => setVPage(p => p - 1)}>{t("prev")}</Btn>
-                <Btn size="sm" disabled={(vPage + 1) * PAGE >= log.total} onClick={() => setVPage(p => p + 1)}>{t("next")}</Btn>
+                <Button size="sm" disabled={vPage === 0} onClick={() => setVPage(p => p - 1)}>{t("prev")}</Button>
+                <Button size="sm" disabled={(vPage + 1) * PAGE >= log.total} onClick={() => setVPage(p => p + 1)}>{t("next")}</Button>
               </div>
             </>
           )}
@@ -603,7 +603,7 @@ export default function DecisionsPage() {
               <BookOpen size={13} /> {t("colours")} {ZONES.map(z => <ZonePill key={z} z={z} />)} {t("modes")} {(["off", "shadow", "enforce"] as Mode[]).map(m => <ModePill key={m} m={m} />)}
             </div>
           )}
-        </AdminPaneBody>
-      </AdminMain>
+        </PageFrameBody>
+      </PageFrame>
   );
 }

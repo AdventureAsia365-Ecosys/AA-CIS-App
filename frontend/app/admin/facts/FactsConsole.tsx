@@ -19,7 +19,7 @@ import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-quer
 import { Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
-  AdminMain,
+  PageFrame,
   Badge,
   Button,
   DataTable,
@@ -144,7 +144,7 @@ export default function FactsConsole() {
   );
 
   return (
-    <AdminMain>
+    <PageFrame>
       <PageHeader
         title={t("title")}
         breadcrumbs={[{ label: t("cisContent") }, { label: t("assets") }, { label: t("title") }]}
@@ -187,7 +187,7 @@ export default function FactsConsole() {
         <CreateModal open={creating} onClose={() => setCreating(false)}
           onCreated={() => { setCreating(false); refresh(); }} />
       )}
-    </AdminMain>
+    </PageFrame>
   );
 }
 

@@ -20,18 +20,12 @@
     "aa-kit/no-hand-styled-button": {
       "count": 2
     },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    },
     "react-hooks/set-state-in-effect": {
       "count": 1
     }
   },
   "app/admin/_components/FilterBar.tsx": {
     "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
       "count": 1
     },
     "aa-kit/no-raw-form-control": {
@@ -41,9 +35,6 @@
   "app/admin/_components/Pagination.tsx": {
     "aa-kit/no-hand-styled-button": {
       "count": 3
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
     },
     "aa-kit/no-raw-aa-var": {
       "count": 1
@@ -63,9 +54,6 @@
     },
     "aa-kit/no-hand-styled-button": {
       "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
     }
   },
   "app/admin/_components/TenantSelect.tsx": {
@@ -79,9 +67,6 @@
     },
     "aa-kit/no-hex-colour": {
       "count": 3
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
     },
     "aa-kit/no-raw-aa-var": {
       "count": 6
@@ -176,16 +161,10 @@
   "app/admin/content-quality/PieceDrawer.tsx": {
     "aa-kit/no-hand-styled-button": {
       "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
     }
   },
   "app/admin/content-quality/PieceLabel.tsx": {
     "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
       "count": 1
     },
     "aa-kit/no-raw-form-control": {
@@ -193,36 +172,17 @@
     }
   },
   "app/admin/content-quality/PlaceCardFactsDrawer.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    },
     "aa-kit/no-raw-form-control": {
       "count": 3
     }
   },
   "app/admin/content-quality/SentenceActions.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    },
     "aa-kit/no-raw-form-control": {
       "count": 2
     }
   },
-  "app/admin/content-quality/Severity.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
-  "app/admin/content-quality/TourVersionDrawer.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
   "app/admin/content-quality/page.tsx": {
     "aa-kit/no-class-name": {
-      "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
       "count": 1
     },
     "aa-kit/no-raw-form-control": {
@@ -327,9 +287,6 @@
     }
   },
   "app/admin/jobs/JobsTable.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    },
     "aa-kit/no-raw-form-control": {
       "count": 6
     }
@@ -351,9 +308,6 @@
     },
     "aa-kit/no-hand-styled-button": {
       "count": 2
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
     }
   },
   "app/admin/master-content/page.tsx": {
@@ -379,11 +333,6 @@
       "count": 3
     }
   },
-  "app/admin/overview/_components/AppHealthStrip.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
   "app/admin/overview/_components/BookingFunnelCard.tsx": {
     "aa-kit/no-raw-table": {
       "count": 1
@@ -397,16 +346,8 @@
       "count": 1
     }
   },
-  "app/admin/overview/_components/TripPlannerCard.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
   "app/admin/overview/page.tsx": {
     "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
       "count": 1
     },
     "aa-kit/no-raw-table": {
@@ -528,24 +469,11 @@
       "count": 5
     }
   },
-  "app/admin/review/ClaimChecks.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
-  "app/admin/review/ReasonActionModal.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
   "app/admin/review/RegenerateModal.tsx": {
     "aa-kit/no-class-name": {
       "count": 1
     },
     "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
       "count": 1
     },
     "aa-kit/no-raw-aa-var": {
@@ -555,9 +483,6 @@
   "app/admin/review/ReviewEditor.tsx": {
     "aa-kit/no-class-name": {
       "count": 2
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
     },
     "aa-kit/no-raw-aa-var": {
       "count": 4
@@ -573,17 +498,11 @@
     "aa-kit/no-hand-styled-button": {
       "count": 2
     },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    },
     "aa-kit/no-raw-form-control": {
       "count": 3
     }
   },
   "app/admin/review/reviewModel.ts": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    },
     "aa-kit/no-raw-aa-var": {
       "count": 5
     }
@@ -620,9 +539,6 @@
     "aa-kit/no-hand-styled-button": {
       "count": 1
     },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    },
     "aa-kit/no-raw-form-control": {
       "count": 3
     }
@@ -652,17 +568,11 @@
   "app/admin/settings/ShadowReportTab.tsx": {
     "aa-kit/no-hand-styled-button": {
       "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
     }
   },
   "app/admin/settings/StageRouteEditor.tsx": {
     "aa-kit/no-hand-styled-button": {
       "count": 5
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
     },
     "aa-kit/no-raw-form-control": {
       "count": 3
@@ -712,29 +622,13 @@
       "count": 1
     }
   },
-  "app/admin/tenants/_components/Tenant360Cost.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
-  "app/admin/tenants/_components/Tenant360Markets.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
   "app/admin/tenants/_components/Tenant360Quality.tsx": {
     "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
       "count": 1
     }
   },
   "app/admin/tenants/_components/Tenant360Settings.tsx": {
     "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
       "count": 1
     },
     "aa-kit/no-raw-form-control": {

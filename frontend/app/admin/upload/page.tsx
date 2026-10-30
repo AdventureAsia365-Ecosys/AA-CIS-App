@@ -6,12 +6,9 @@ import {
   ChevronDown, ChevronUp, FileText, Copy, RefreshCw, Search,
   Trash2, RotateCcw,
 } from "lucide-react";
-import {
-  A, serif, sans, mono,
-  Card, SLabel, Btn, TH, TD, Badge,
-} from "../_components/adminUi";
+import { A, serif, sans, mono, Card, SLabel, TH, TD, Badge } from "../_components/adminUi";
 import { Pagination } from "../_components/Pagination";
-import { ScrollX, AdminMain, PageHeader, useFormat, useT } from "../../_kit";
+import { Button, ScrollX, PageFrame, PageHeader, useFormat, useT } from "../../_kit";
 import { UP } from "./messages";
 
 const TENANT_ID = "00000000-0000-0000-0000-000000000001";
@@ -833,7 +830,7 @@ function DuplicateReviewStep({
         <div style={{ color: A.green, fontSize: 14, fontWeight: 600, marginBottom: 16 }}>
           {t("noDups")}
         </div>
-        <Btn variant="secondary" onClick={onDone}>{t("backToUpload")}</Btn>
+        <Button variant="secondary" onClick={onDone}>{t("backToUpload")}</Button>
       </Card>
     );
   }
@@ -977,8 +974,8 @@ function DuplicateReviewStep({
 
       {!allDecided && (
         <div style={{ display: "flex", gap: 12 }}>
-          <Btn variant="secondary" onClick={onDone}>{t("skipLater")}</Btn>
-          <Btn
+          <Button variant="secondary" onClick={onDone}>{t("skipLater")}</Button>
+          <Button
             variant="primary"
             disabled={submitting}
             onClick={confirmAll}
@@ -991,7 +988,7 @@ function DuplicateReviewStep({
             {submitting
               ? <><Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> {t("saving")}</>
               : <>{t("confirmDecisions", items.length)} <ArrowRight size={14} /></>}
-          </Btn>
+          </Button>
         </div>
       )}
 
@@ -1002,7 +999,7 @@ function DuplicateReviewStep({
             <CheckCircle size={16} /> {t("allApplied")}
           </div>
           <div style={{ display: "flex", gap: 12 }}>
-            <Btn variant="secondary" onClick={onDone}>{t("backToUpload")}</Btn>
+            <Button variant="secondary" onClick={onDone}>{t("backToUpload")}</Button>
             <a href="/admin/s1-rewrite" style={{
               display: "inline-flex", alignItems: "center", gap: 8,
               padding: "9px 18px", borderRadius: 8,
@@ -1325,14 +1322,14 @@ function TourContentTab() {
               </div>
             </div>
 
-            <Btn variant="primary" disabled={fileStates.length === 0} onClick={doUploadAndParse}
+            <Button variant="primary" disabled={fileStates.length === 0} onClick={doUploadAndParse}
               style={{
                 background: fileStates.length > 0 ? A.gold : A.muted,
                 border: `1px solid ${fileStates.length > 0 ? A.gold : A.muted}`,
                 display: "flex", alignItems: "center", gap: 8,
               }}>
               {t("uploadFiles")} <ArrowRight size={14} />
-            </Btn>
+            </Button>
           </Card>
         </div>
       )}
@@ -1532,8 +1529,8 @@ function TourContentTab() {
 
           {/* Action buttons */}
           <div style={{ display: "flex", gap: 12 }}>
-            <Btn variant="secondary" onClick={reset}>{t("uploadAnother")}</Btn>
-            <Btn
+            <Button variant="secondary" onClick={reset}>{t("uploadAnother")}</Button>
+            <Button
               variant="primary"
               disabled={!hasFilesToCommit}
               onClick={doCommit}
@@ -1546,7 +1543,7 @@ function TourContentTab() {
               }}
             >
               {t("confirmSave", commitFileCount)} <ArrowRight size={14} />
-            </Btn>
+            </Button>
           </div>
         </div>
       )}
@@ -1604,7 +1601,7 @@ function TourContentTab() {
                   {t("toastNoNew")}
                 </div>
                 <div style={{ display: "flex", gap: 12 }}>
-                  <Btn variant="secondary" onClick={reset}>{t("uploadMore")}</Btn>
+                  <Button variant="secondary" onClick={reset}>{t("uploadMore")}</Button>
                 </div>
               </div>
             )}
@@ -1617,7 +1614,7 @@ function TourContentTab() {
                   {t("doneReady")}
                 </div>
                 <div style={{ display: "flex", gap: 12 }}>
-                  <Btn variant="secondary" onClick={reset}>{t("uploadMore")}</Btn>
+                  <Button variant="secondary" onClick={reset}>{t("uploadMore")}</Button>
                   <a href="/admin/s1-rewrite" style={{
                     display: "inline-flex", alignItems: "center", gap: 8,
                     padding: "9px 18px", borderRadius: 8,
@@ -1663,7 +1660,7 @@ function TourContentTab() {
 export default function UploadPage() {
   const t = useT(UP);
   return (
-        <AdminMain>
+        <PageFrame>
           <PageHeader
             title={t("title")}
             description={
@@ -1679,6 +1676,6 @@ export default function UploadPage() {
             }
           />
           <TourContentTab />
-        </AdminMain>
+        </PageFrame>
   );
 }

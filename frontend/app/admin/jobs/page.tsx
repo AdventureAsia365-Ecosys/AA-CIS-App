@@ -31,15 +31,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
-import { A, mono, Btn, LoadingScreen } from "../_components/adminUi";
 import {
+  K, LoadingScreen, mono,
+  Button,
   PageHeader,
   StatusBadge,
   Tabs,
   ToastProvider,
   apiGet,
   apiSend,
-  useToast, AdminMain, useT,
+  useToast, PageFrame, useT,
 } from "../../_kit";
 import { JOBS } from "./messages";
 import JobDrawer from "./JobDrawer";
@@ -289,10 +290,10 @@ function JobsPageInner() {
   const openJob = jobs.find(j => j.id === open);
 
   // First load only: show the full-page spinner. Later refetches keep the UI visible.
-  if (isLoading && !data) return <AdminMain><LoadingScreen msg={t("loading")} /></AdminMain>;
+  if (isLoading && !data) return <PageFrame><LoadingScreen message={t("loading")} /></PageFrame>;
 
   return (
-    <AdminMain>
+    <PageFrame>
       <PageHeader
         title={t("title")}
         description={t("description",
@@ -306,20 +307,20 @@ function JobsPageInner() {
           <>
             {tourId && (
               <button onClick={() => update({ tourId: "" })} title={t("clearTour")}
-                      style={{ fontSize: 12, padding: "6px 8px", border: `1px solid ${A.accent}`, borderRadius: 6, background: A.card, color: A.ink3, cursor: "pointer", fontFamily: mono }}>
+                      style={{ fontSize: 12, padding: "6px 8px", border: `1px solid ${K.accent}`, borderRadius: 6, background: K.card, color: K.ink3, cursor: "pointer", fontFamily: mono }}>
                 {t("tourChip", tourId.slice(0, 8))}
               </button>
             )}
-            <Btn size="sm" onClick={() => refetch()}>
+            <Button size="sm" onClick={() => refetch()}>
               <RefreshCw size={12} className={isFetching ? "spin" : undefined} style={{ marginRight: 4 }} />{t("refresh")}
-            </Btn>
+            </Button>
           </>
         }
       />
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}.spin{animation:spin .8s linear infinite}`}</style>
 
       {isError && (
-        <div style={{ marginBottom: 14, padding: "10px 12px", borderRadius: 8, background: A.redSoft, color: A.red, border: `1px solid ${A.redBorder}`, fontSize: 12.5 }}>
+        <div style={{ marginBottom: 14, padding: "10px 12px", borderRadius: 8, background: K.dangerSoft, color: K.danger, border: `1px solid ${K.dangerBorder}`, fontSize: 12.5 }}>
           {t("loadError", error instanceof Error ? error.message : String(error))}
         </div>
       )}
@@ -334,8 +335,8 @@ function JobsPageInner() {
           active={tab}
           onChange={(k) => update({ tab: k as TabKey })}
         />
-        <div style={{ marginLeft: "auto", fontSize: 12, color: A.muted, alignSelf: "center" }}>
-          {t("cost30d")} <span style={{ fontFamily: mono, color: A.ink }}>${cost30d.toFixed(4)}</span>
+        <div style={{ marginLeft: "auto", fontSize: 12, color: K.muted, alignSelf: "center" }}>
+          {t("cost30d")} <span style={{ fontFamily: mono, color: K.ink }}>${cost30d.toFixed(4)}</span>
         </div>
       </div>
 
@@ -345,9 +346,9 @@ function JobsPageInner() {
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
             {byStatus.map(s => (
               <button key={s.status} onClick={() => update({ status: status === s.status ? "" : s.status })}
-                      style={{ cursor: "pointer", border: `1px solid ${status === s.status ? A.accent : A.line}`, background: A.card, borderRadius: 8, padding: "8px 12px", display: "flex", gap: 8, alignItems: "center" }}>
+                      style={{ cursor: "pointer", border: `1px solid ${status === s.status ? K.accent : K.line}`, background: K.card, borderRadius: 8, padding: "8px 12px", display: "flex", gap: 8, alignItems: "center" }}>
                 <StatusBadge status={s.status} />
-                <span style={{ fontFamily: mono, fontSize: 13, color: A.ink }}>{s.n}</span>
+                <span style={{ fontFamily: mono, fontSize: 13, color: K.ink }}>{s.n}</span>
               </button>
             ))}
           </div>
@@ -410,7 +411,7 @@ function JobsPageInner() {
           busy={busyId === open}
         />
       )}
-    </AdminMain>
+    </PageFrame>
   );
 }
 

@@ -2,8 +2,7 @@
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { X, ChevronRight } from "lucide-react";
-import { A, alpha, serif, sans, mono, Badge } from "./adminUi";
-import { useFormat, useT } from "../../_kit";
+import { K, Badge, alpha, mono, sans, serif, useFormat, useT } from "../../_kit";
 import { M } from "./tour.messages";
 import { SCORE_BANDS } from "@/lib/quality-registry.generated";
 
@@ -104,10 +103,10 @@ interface VersionContent {
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 export function scoreColor(s: number | null | undefined): string {
-  if (s == null) return A.muted2;
-  if (s >= SCORE_BANDS.top) return A.green;
-  if (s >= SCORE_BANDS.pass) return A.amber;
-  return A.red;
+  if (s == null) return K.muted2;
+  if (s >= SCORE_BANDS.top) return K.success;
+  if (s >= SCORE_BANDS.pass) return K.amber;
+  return K.danger;
 }
 
 /** "just now" / "5m ago" / "3h ago", then the date — in the UI language. */
@@ -149,7 +148,7 @@ function Toast({ msg, type }: { msg: string; type: "success" | "error" }) {
   return (
     <div style={{
       position: "fixed", bottom: 24, right: 24, zIndex: 999,
-      background: type === "success" ? A.green : A.red,
+      background: type === "success" ? K.success : K.danger,
       color: "var(--aa-on-solid)", padding: "11px 18px", borderRadius: 8,
       fontSize: 13, fontWeight: 500, boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
     }}>
@@ -200,8 +199,8 @@ function EditableField({ label, initialValue, onSave, onChange, rows, charLimit,
 
   const inputStyle: React.CSSProperties = {
     width: "100%", padding: "7px 11px", borderRadius: 7,
-    border: `1px solid ${state === "error" ? A.red : A.line}`,
-    background: A.card, fontSize: 13, color: A.ink, fontFamily: sans,
+    border: `1px solid ${state === "error" ? K.danger : K.line}`,
+    background: K.card, fontSize: 13, color: K.ink, fontFamily: sans,
     boxSizing: "border-box",
     resize: rows ? "vertical" : "none",
     outline: "none",
@@ -209,18 +208,18 @@ function EditableField({ label, initialValue, onSave, onChange, rows, charLimit,
   };
 
   const statusText = state === "saving" ? t("saving") : state === "saved" ? t("saved") : state === "error" ? t("saveFailed") : "";
-  const statusColor = state === "saving" ? A.amber : state === "saved" ? A.green : state === "error" ? A.red : "transparent";
+  const statusColor = state === "saving" ? K.amber : state === "saved" ? K.success : state === "error" ? K.danger : "transparent";
 
   return (
     <div style={{ marginBottom: 14 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-        <span style={{ fontSize: 11, fontWeight: 600, color: A.muted, textTransform: "uppercase", letterSpacing: "0.1em" }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: K.muted, textTransform: "uppercase", letterSpacing: "0.1em" }}>
           {label}
         </span>
         <span style={{ fontSize: 11, color: statusColor }}>{statusText}</span>
       </div>
       {charLimit && (
-        <div style={{ fontSize: 11, textAlign: "right", marginBottom: 3, color: value.length > charLimit * 0.9 ? A.amber : A.muted2 }}>
+        <div style={{ fontSize: 11, textAlign: "right", marginBottom: 3, color: value.length > charLimit * 0.9 ? K.amber : K.muted2 }}>
           {value.length}/{charLimit}
         </div>
       )}
@@ -343,14 +342,14 @@ function SeoKeywordsPanel({ tourId }: { tourId: string }) {
   }, [data, sortKey, sortDir]);
 
   if (loading) {
-    return <div style={{ textAlign: "center", padding: 40, color: A.muted }}>{t("loadingSeo")}</div>;
+    return <div style={{ textAlign: "center", padding: 40, color: K.muted }}>{t("loadingSeo")}</div>;
   }
   if (error) {
-    return <div style={{ textAlign: "center", padding: 40, color: A.red }}>{t("seoFailed")}</div>;
+    return <div style={{ textAlign: "center", padding: 40, color: K.danger }}>{t("seoFailed")}</div>;
   }
   if (!data || !data.has_data) {
     return (
-      <div style={{ textAlign: "center", padding: 48, color: A.muted, fontSize: 13 }}>
+      <div style={{ textAlign: "center", padding: 48, color: K.muted, fontSize: 13 }}>
         {t("noSeoData")}
       </div>
     );
@@ -359,7 +358,7 @@ function SeoKeywordsPanel({ tourId }: { tourId: string }) {
   const arrow = (key: SeoSortKey) => (sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : "");
   const th = (key: SeoSortKey, label: string, align: "left" | "right"): React.CSSProperties => ({
     padding: "8px 12px", textAlign: align, cursor: "pointer", userSelect: "none",
-    fontSize: 11, fontWeight: 600, color: sortKey === key ? A.ink : A.muted,
+    fontSize: 11, fontWeight: 600, color: sortKey === key ? K.ink : K.muted,
     textTransform: "uppercase" as const, letterSpacing: "0.1em",
   });
 
@@ -368,27 +367,27 @@ function SeoKeywordsPanel({ tourId }: { tourId: string }) {
       {/* Header — seed + buyer market + fetched_at */}
       <div style={{
         display: "flex", gap: 16, flexWrap: "wrap", padding: "10px 14px",
-        background: A.bg, borderRadius: 8, marginBottom: 18, fontSize: 12, color: A.muted,
+        background: K.bg, borderRadius: 8, marginBottom: 18, fontSize: 12, color: K.muted,
       }}>
-        <span>{t("seed")}: <strong style={{ color: A.ink }}>{data.seed || "—"}</strong></span>
+        <span>{t("seed")}: <strong style={{ color: K.ink }}>{data.seed || "—"}</strong></span>
         <span>
-          {t("buyerMarket")}: <strong style={{ color: A.ink }}>{data.buyer_market || "—"}</strong>
+          {t("buyerMarket")}: <strong style={{ color: K.ink }}>{data.buyer_market || "—"}</strong>
           {data.buyer_market_location_code != null && (
-            <span style={{ color: A.muted2 }}> ({data.buyer_market_location_code})</span>
+            <span style={{ color: K.muted2 }}> ({data.buyer_market_location_code})</span>
           )}
         </span>
-        <span>{t("fetched")}: <strong style={{ color: A.ink }}>{rel(data.fetched_at)}</strong></span>
-        <span>{t("ideas")}: <strong style={{ color: A.ink }}>{data.keyword_ideas.length}</strong></span>
+        <span>{t("fetched")}: <strong style={{ color: K.ink }}>{rel(data.fetched_at)}</strong></span>
+        <span>{t("ideas")}: <strong style={{ color: K.ink }}>{data.keyword_ideas.length}</strong></span>
       </div>
 
       {sorted.length === 0 ? (
-        <div style={{ textAlign: "center", padding: 40, color: A.muted, fontSize: 13 }}>
+        <div style={{ textAlign: "center", padding: 40, color: K.muted, fontSize: 13 }}>
           {t("noIdeas")}
         </div>
       ) : (
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
-            <tr style={{ background: A.line2 }}>
+            <tr style={{ background: K.line2 }}>
               <th style={th("keyword", "Keyword", "left")} onClick={() => onSort("keyword")}>{t("colKeyword")}{arrow("keyword")}</th>
               <th style={th("volume", "Volume", "right")} onClick={() => onSort("volume")}>{t("colVolume")}{arrow("volume")}</th>
               <th style={th("competition", "Competition", "right")} onClick={() => onSort("competition")}>{t("colCompetition")}{arrow("competition")}</th>
@@ -397,11 +396,11 @@ function SeoKeywordsPanel({ tourId }: { tourId: string }) {
           </thead>
           <tbody>
             {sorted.map((k, i) => (
-              <tr key={`${k.keyword}-${i}`} style={{ borderTop: `1px solid ${A.line}`, background: i % 2 === 0 ? A.card : A.bg }}>
-                <td style={{ padding: "8px 12px", color: A.ink }}>{k.keyword}</td>
-                <td style={{ padding: "8px 12px", textAlign: "right", fontFamily: mono, color: A.body }}>{fmtVolume(k.search_volume)}</td>
-                <td style={{ padding: "8px 12px", textAlign: "right", color: A.muted }}>{compDisplay(k)}</td>
-                <td style={{ padding: "8px 12px", textAlign: "right", fontFamily: mono, color: A.gold }}>{fmtCpc(k.cpc)}</td>
+              <tr key={`${k.keyword}-${i}`} style={{ borderTop: `1px solid ${K.line}`, background: i % 2 === 0 ? K.card : K.bg }}>
+                <td style={{ padding: "8px 12px", color: K.ink }}>{k.keyword}</td>
+                <td style={{ padding: "8px 12px", textAlign: "right", fontFamily: mono, color: K.body }}>{fmtVolume(k.search_volume)}</td>
+                <td style={{ padding: "8px 12px", textAlign: "right", color: K.muted }}>{compDisplay(k)}</td>
+                <td style={{ padding: "8px 12px", textAlign: "right", fontFamily: mono, color: K.accent }}>{fmtCpc(k.cpc)}</td>
               </tr>
             ))}
           </tbody>
@@ -539,10 +538,10 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
   const tabBtn = (active: boolean, disabled = false): React.CSSProperties => ({
     padding: "8px 16px", fontSize: 13,
     fontWeight: active ? 600 : 400,
-    color: active ? A.ink : A.muted,
+    color: active ? K.ink : K.muted,
     cursor: disabled ? "default" : "pointer",
     background: "none", border: "none",
-    borderBottom: active ? `2px solid ${A.gold}` : "2px solid transparent",
+    borderBottom: active ? `2px solid ${K.accent}` : "2px solid transparent",
     fontFamily: sans,
     opacity: disabled ? 0.4 : 1,
   });
@@ -562,41 +561,41 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
       {/* Panel */}
       <div style={{
         position: "fixed", top: 0, right: 0, bottom: 0,
-        width: "70vw", background: A.card,
+        width: "70vw", background: K.card,
         boxShadow: "-4px 0 32px rgba(0,0,0,0.14)",
         zIndex: 200, display: "flex", flexDirection: "column",
         fontFamily: sans,
       }}>
         {/* Header */}
-        <div style={{ padding: "16px 24px 0", borderBottom: `1px solid ${A.line}`, flexShrink: 0 }}>
+        <div style={{ padding: "16px 24px 0", borderBottom: `1px solid ${K.line}`, flexShrink: 0 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
             <div style={{ flex: 1, paddingRight: 12 }}>
               {/* Badges */}
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
-                {raw?.country && <Badge color="blue">{raw.country}</Badge>}
+                {raw?.country && <Badge tone="info">{raw.country}</Badge>}
                 {raw?.pipeline_status && (
-                  <Badge color={raw.pipeline_status === "published" ? "green" : "gray"}>
+                  <Badge tone={raw.pipeline_status === "published" ? "success" : "neutral"}>
                     {raw.pipeline_status}
                   </Badge>
                 )}
                 {gen?.score_overall != null && (
-                  <Badge color={gen.score_overall >= SCORE_BANDS.top ? "green" : gen.score_overall >= SCORE_BANDS.pass ? "amber" : "red"}>
+                  <Badge tone={gen.score_overall >= SCORE_BANDS.top ? "success" : gen.score_overall >= SCORE_BANDS.pass ? "warning" : "danger"}>
                     ★ {gen.score_overall.toFixed(1)}
                   </Badge>
                 )}
               </div>
               {/* Name */}
-              <div style={{ fontFamily: serif, fontSize: 17, fontWeight: 600, color: A.ink, lineHeight: 1.3, marginBottom: 5 }}>
+              <div style={{ fontFamily: serif, fontSize: 17, fontWeight: 600, color: K.ink, lineHeight: 1.3, marginBottom: 5 }}>
                 {gen?.aa_name || tourName}
               </div>
               {/* Meta */}
-              <div style={{ fontSize: 11, color: A.muted, display: "flex", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ fontSize: 11, color: K.muted, display: "flex", gap: 12, flexWrap: "wrap" }}>
                 <span>{t("idShort", tourId.slice(0, 8))}</span>
                 {rewriteCount > 0 && <span>{t("rewritten", rewriteCount)}</span>}
                 {pub?.published_at && <span>{t("publishedWhen", rel(pub.published_at))}</span>}
               </div>
             </div>
-            <button onClick={onClose} aria-label={t("close")} style={{ background: "none", border: "none", cursor: "pointer", color: A.muted, padding: 4 }}>
+            <button onClick={onClose} aria-label={t("close")} style={{ background: "none", border: "none", cursor: "pointer", color: K.muted, padding: 4 }}>
               <X size={18} />
             </button>
           </div>
@@ -613,9 +612,9 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
         {/* Body */}
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "20px 24px" }}>
           {loading ? (
-            <div style={{ textAlign: "center", padding: 40, color: A.muted }}>{t("loading")}</div>
+            <div style={{ textAlign: "center", padding: 40, color: K.muted }}>{t("loading")}</div>
           ) : !detail ? (
-            <div style={{ textAlign: "center", padding: 40, color: A.red }}>{t("detailFailed")}</div>
+            <div style={{ textAlign: "center", padding: 40, color: K.danger }}>{t("detailFailed")}</div>
           ) : tab === "original" ? (
             <div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 24px" }}>
@@ -661,7 +660,7 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                 {/* Info bar */}
                 <div style={{
                   display: "flex", gap: 16, flexWrap: "wrap", padding: "10px 14px",
-                  background: A.bg, borderRadius: 8, marginBottom: 20, fontSize: 12, color: A.muted,
+                  background: K.bg, borderRadius: 8, marginBottom: 20, fontSize: 12, color: K.muted,
                 }}>
                   <span>{t("model")}: <strong>{modelShort(gen.model_editorial)}</strong></span>
                   <span>{t("score")}: <strong style={{ color: scoreColor(gen.score_overall) }}>{gen.score_overall?.toFixed(1) ?? "—"}</strong></span>
@@ -683,36 +682,36 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                     <div style={{ marginBottom: 20 }}>
                       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: capped ? 8 : 0 }}>
                         {rows.map(([label, sc]) => (
-                          <span key={label} style={{ fontSize: 12, color: A.muted }}>
+                          <span key={label} style={{ fontSize: 12, color: K.muted }}>
                             {label}: <strong style={{ color: scoreColor(sc) }}>{fmt(sc)}</strong>
                           </span>
                         ))}
                       </div>
-                      {capped && <Badge color="amber">{t("judgeCapped", fmt(vAvg))}</Badge>}
-                      <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${A.line}` }}>
-                        <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: A.muted2, marginBottom: 6 }}>
+                      {capped && <Badge tone="warning">{t("judgeCapped", fmt(vAvg))}</Badge>}
+                      <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${K.line}` }}>
+                        <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: K.muted2, marginBottom: 6 }}>
                           {t("brandJudge")}
                         </div>
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                           {gen.judge ? (
                             <>
-                              <Badge color="gold">{t("fit", fmt(gen.judge.brand_fit))}</Badge>
-                              <Badge color="gold">{t("distinct", fmt(gen.judge.distinct))}</Badge>
-                              <Badge color={gen.judge.mission_present ? "green" : "red"}>
+                              <Badge tone="accent">{t("fit", fmt(gen.judge.brand_fit))}</Badge>
+                              <Badge tone="accent">{t("distinct", fmt(gen.judge.distinct))}</Badge>
+                              <Badge tone={gen.judge.mission_present ? "success" : "danger"}>
                                 {t("mission", !!gen.judge.mission_present)}
                               </Badge>
                             </>
                           ) : (
-                            <span style={{ fontSize: 12, color: A.muted2 }}>{t("notRun")}</span>
+                            <span style={{ fontSize: 12, color: K.muted2 }}>{t("notRun")}</span>
                           )}
                           {gen.brand_audit_status && (
-                            <Badge color={gen.brand_audit_status === "pass" ? "green" : "amber"}>
+                            <Badge tone={gen.brand_audit_status === "pass" ? "success" : "warning"}>
                               {gen.brand_audit_status}
                             </Badge>
                           )}
                         </div>
                         {gen.judge?.feedback && (
-                          <div style={{ fontSize: 12, color: A.body, lineHeight: 1.6, marginTop: 8 }}>
+                          <div style={{ fontSize: 12, color: K.body, lineHeight: 1.6, marginTop: 8 }}>
                             {gen.judge.feedback}
                           </div>
                         )}
@@ -740,22 +739,22 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                 />
               </div>
             ) : (
-              <div style={{ textAlign: "center", padding: 40, color: A.muted }}>{t("noRewrite")}</div>
+              <div style={{ textAlign: "center", padding: 40, color: K.muted }}>{t("noRewrite")}</div>
             )
           ) : tab === "history" ? (
             loadingHistory ? (
-              <div style={{ textAlign: "center", padding: 40, color: A.muted }}>{t("loadingHistory")}</div>
+              <div style={{ textAlign: "center", padding: 40, color: K.muted }}>{t("loadingHistory")}</div>
             ) : history.length === 0 ? (
-              <div style={{ textAlign: "center", padding: 40, color: A.muted, fontSize: 13 }}>{t("noRewrites")}</div>
+              <div style={{ textAlign: "center", padding: 40, color: K.muted, fontSize: 13 }}>{t("noRewrites")}</div>
             ) : (
               <div>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                   <thead>
-                    <tr style={{ background: A.line2 }}>
+                    <tr style={{ background: K.line2 }}>
                       {[t("hVersion"), t("hModel"), t("hPrompt"), t("hBrandV"), t("hOverall"), t("hBrand"), t("hSeo"), t("hCost"), t("hDate"), ""].map((h, hi) => (
                         <th key={hi} style={{
                           padding: "8px 12px", textAlign: "left" as const,
-                          fontSize: 11, fontWeight: 600, color: A.muted,
+                          fontSize: 11, fontWeight: 600, color: K.muted,
                           textTransform: "uppercase" as const, letterSpacing: "0.1em",
                         }}>{h}</th>
                       ))}
@@ -769,17 +768,17 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                           key={h.id}
                           onClick={() => loadVersion(h.version_num)}
                           style={{
-                            borderTop: `1px solid ${A.line}`,
-                            background: isActive ? alpha(A.gold, 9) : i % 2 === 0 ? A.card : A.bg,
+                            borderTop: `1px solid ${K.line}`,
+                            background: isActive ? alpha(K.accent, 9) : i % 2 === 0 ? K.card : K.bg,
                             cursor: "pointer",
                           }}
                         >
                           <td style={{ padding: "8px 12px" }}>
-                            <span style={{ fontSize: 12, padding: "2px 8px", borderRadius: 10, background: isActive ? A.gold : A.goldTint, color: isActive ? "var(--aa-on-solid)" : A.gold, fontWeight: 600 }}>
+                            <span style={{ fontSize: 12, padding: "2px 8px", borderRadius: 10, background: isActive ? K.accent : K.accentTint, color: isActive ? "var(--aa-on-solid)" : K.accent, fontWeight: 600 }}>
                               v{h.version_num}
                             </span>
                           </td>
-                          <td style={{ padding: "8px 12px", fontFamily: mono, fontSize: 11, color: A.muted }}>{modelShort(h.model_editorial)}</td>
+                          <td style={{ padding: "8px 12px", fontFamily: mono, fontSize: 11, color: K.muted }}>{modelShort(h.model_editorial)}</td>
                           {/* AA-318: prompt_version was already typed on HistoryRow but never
                               rendered — the exact "no way to observe/compare prompt over time"
                               gap this issue is about. Short hash (sha256[:8], AA-289) as a
@@ -787,32 +786,32 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                               the actual regression signal an admin scans this column for. */}
                           <td style={{ padding: "8px 12px" }}>
                             {h.prompt_version ? (
-                              <span style={{ fontFamily: mono, fontSize: 10.5, padding: "1px 6px", borderRadius: 8, background: A.line2, color: A.ink2 }} title={`prompt_version ${h.prompt_version}`}>
+                              <span style={{ fontFamily: mono, fontSize: 10.5, padding: "1px 6px", borderRadius: 8, background: K.line2, color: K.ink2 }} title={`prompt_version ${h.prompt_version}`}>
                                 {h.prompt_version}
                               </span>
-                            ) : <span style={{ color: A.muted2 }}>—</span>}
+                            ) : <span style={{ color: K.muted2 }}>—</span>}
                           </td>
-                          <td style={{ padding: "8px 12px", fontSize: 11, color: A.muted2 }}>
-                            {h.brand_rules_version != null ? <span style={{ padding: "1px 6px", borderRadius: 8, background: A.goldTint, color: A.gold, fontWeight: 600, fontSize: 10 }}>{h.brand_name ? `${h.brand_name} · v${h.brand_rules_version}` : `v${h.brand_rules_version}`}</span> : "—"}
+                          <td style={{ padding: "8px 12px", fontSize: 11, color: K.muted2 }}>
+                            {h.brand_rules_version != null ? <span style={{ padding: "1px 6px", borderRadius: 8, background: K.accentTint, color: K.accent, fontWeight: 600, fontSize: 10 }}>{h.brand_name ? `${h.brand_name} · v${h.brand_rules_version}` : `v${h.brand_rules_version}`}</span> : "—"}
                           </td>
                           <td style={{ padding: "8px 12px", fontWeight: 700, color: scoreColor(h.score_overall) }}>{h.score_overall != null ? h.score_overall.toFixed(1) : "—"}</td>
                           <td style={{ padding: "8px 12px", color: scoreColor(h.score_brand) }}>{h.score_brand != null ? h.score_brand.toFixed(1) : "—"}</td>
                           <td style={{ padding: "8px 12px", color: scoreColor(h.score_seo) }}>{h.score_seo != null ? h.score_seo.toFixed(1) : "—"}</td>
-                          <td style={{ padding: "8px 12px", color: A.gold }}>{h.cost_usd != null ? `$${h.cost_usd.toFixed(4)}` : "—"}</td>
-                          <td style={{ padding: "8px 12px", color: A.muted2, fontSize: 12 }}>{rel(h.created_at)}</td>
+                          <td style={{ padding: "8px 12px", color: K.accent }}>{h.cost_usd != null ? `$${h.cost_usd.toFixed(4)}` : "—"}</td>
+                          <td style={{ padding: "8px 12px", color: K.muted2, fontSize: 12 }}>{rel(h.created_at)}</td>
                           <td style={{ padding: "8px 12px" }}>
                             <div style={{ display: "flex", gap: 6 }}>
                               <button
                                 onClick={e => { e.stopPropagation(); loadVersion(h.version_num); }}
                                 disabled={loadingVersion}
-                                style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 4, background: A.card, cursor: "pointer", color: A.muted, fontWeight: 600 }}
+                                style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${K.line}`, borderRadius: 4, background: K.card, cursor: "pointer", color: K.muted, fontWeight: 600 }}
                               >
                                 {loadingVersion && isActive ? "…" : t("viewContent")}
                               </button>
                               <button
                                 onClick={e => { e.stopPropagation(); promoteVersion(h.version_num); }}
                                 disabled={promoting}
-                                style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${A.gold}`, borderRadius: 4, background: A.goldTint, cursor: "pointer", color: A.gold, fontWeight: 600 }}
+                                style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${K.accent}`, borderRadius: 4, background: K.accentTint, cursor: "pointer", color: K.accent, fontWeight: 600 }}
                               >
                                 {promoting ? "…" : t("makeCurrent")}
                               </button>
@@ -826,12 +825,12 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
 
                 {/* Version content preview */}
                 {loadingVersion && (
-                  <div style={{ marginTop: 16, padding: 20, textAlign: "center", color: A.muted, fontSize: 13 }}>{t("loadingVersion")}</div>
+                  <div style={{ marginTop: 16, padding: 20, textAlign: "center", color: K.muted, fontSize: 13 }}>{t("loadingVersion")}</div>
                 )}
                 {selectedVersion && !loadingVersion && (
-                  <div style={{ marginTop: 20, padding: "16px 20px", background: A.bg, borderRadius: 8, border: `1px solid ${A.line}` }}>
+                  <div style={{ marginTop: 20, padding: "16px 20px", background: K.bg, borderRadius: 8, border: `1px solid ${K.line}` }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: A.muted, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: K.muted, textTransform: "uppercase", letterSpacing: "0.08em" }}>
                         v{selectedVersion.version_num} — {modelShort(selectedVersion.model_id)}
                         {selectedVersion.quality_score != null && (
                           <span style={{ marginLeft: 10, color: scoreColor(selectedVersion.quality_score) }}>
@@ -842,7 +841,7 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                       <button
                         onClick={() => promoteVersion(selectedVersion.version_num)}
                         disabled={promoting}
-                        style={{ padding: "5px 12px", fontSize: 12, border: `1px solid ${A.gold}`, borderRadius: 6, background: A.gold, cursor: "pointer", color: "var(--aa-on-solid)", fontWeight: 600 }}
+                        style={{ padding: "5px 12px", fontSize: 12, border: `1px solid ${K.accent}`, borderRadius: 6, background: K.accent, cursor: "pointer", color: "var(--aa-on-solid)", fontWeight: 600 }}
                       >
                         {promoting ? t("promoting") : t("makeCurrent")}
                       </button>
@@ -856,14 +855,14 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                       { label: t("fSeoMeta"),    val: selectedVersion.seo_meta },
                     ].map(({ label, val }) => val ? (
                       <div key={label} style={{ marginBottom: 12 }}>
-                        <div style={{ fontSize: 10, fontWeight: 600, color: A.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{label}</div>
-                        <div style={{ fontSize: 13, color: A.body, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{val}</div>
+                        <div style={{ fontSize: 10, fontWeight: 600, color: K.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{label}</div>
+                        <div style={{ fontSize: 13, color: K.body, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{val}</div>
                       </div>
                     ) : null)}
                     {selectedVersion.aa_highlights.length > 0 && (
                       <div style={{ marginBottom: 12 }}>
-                        <div style={{ fontSize: 10, fontWeight: 600, color: A.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{t("highlights")}</div>
-                        <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: A.body }}>
+                        <div style={{ fontSize: 10, fontWeight: 600, color: K.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{t("highlights")}</div>
+                        <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: K.body }}>
                           {selectedVersion.aa_highlights.map((h, i) => <li key={i}>{h}</li>)}
                         </ul>
                       </div>
@@ -879,32 +878,32 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
             pub ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
                 <div>
-                  <div style={{ fontSize: 11, color: A.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 6 }}>{t("publishedName")}</div>
-                  <div style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: A.ink }}>{pub.aa_name}</div>
+                  <div style={{ fontSize: 11, color: K.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 6 }}>{t("publishedName")}</div>
+                  <div style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: K.ink }}>{pub.aa_name}</div>
                 </div>
                 {pub.aa_subtitle && (
                   <div>
-                    <div style={{ fontSize: 11, color: A.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 4 }}>{t("fSubtitle")}</div>
-                    <div style={{ fontSize: 14, fontStyle: "italic", color: A.body }}>{pub.aa_subtitle}</div>
+                    <div style={{ fontSize: 11, color: K.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 4 }}>{t("fSubtitle")}</div>
+                    <div style={{ fontSize: 14, fontStyle: "italic", color: K.body }}>{pub.aa_subtitle}</div>
                   </div>
                 )}
                 <div>
-                  <div style={{ fontSize: 11, color: A.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 4 }}>{t("qualityScore")}</div>
+                  <div style={{ fontSize: 11, color: K.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 4 }}>{t("qualityScore")}</div>
                   <div style={{ fontFamily: mono, fontSize: 26, fontWeight: 700, color: scoreColor(pub.quality_score) }}>
                     {pub.quality_score?.toFixed(1) ?? "—"}
                   </div>
                 </div>
                 <div>
-                  <div style={{ fontSize: 11, color: A.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 4 }}>{t("publishedAt")}</div>
-                  <div style={{ fontSize: 13, color: A.body }}>{rel(pub.published_at)}</div>
+                  <div style={{ fontSize: 11, color: K.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 4 }}>{t("publishedAt")}</div>
+                  <div style={{ fontSize: 13, color: K.body }}>{rel(pub.published_at)}</div>
                 </div>
-                <div style={{ borderTop: `1px solid ${A.line}`, paddingTop: 16 }}>
+                <div style={{ borderTop: `1px solid ${K.line}`, paddingTop: 16 }}>
                   <a
                     href={`/admin/s1-rewrite?tour_id=${tourId}`}
                     style={{
                       display: "inline-flex", alignItems: "center", gap: 6,
                       padding: "9px 18px", borderRadius: 8,
-                      background: A.gold, border: `1px solid ${A.gold}`,
+                      background: K.accent, border: `1px solid ${K.accent}`,
                       fontSize: 13, fontWeight: 600, color: "var(--aa-on-solid)", textDecoration: "none",
                     }}
                   >
@@ -913,7 +912,7 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                 </div>
               </div>
             ) : (
-              <div style={{ textAlign: "center", padding: 40, color: A.muted }}>{t("notPublished")}</div>
+              <div style={{ textAlign: "center", padding: 40, color: K.muted }}>{t("notPublished")}</div>
             )
           )}
         </div>

@@ -10,8 +10,7 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, Plus, X } from "lucide-react";
-import { A, mono, sans } from "../_components/adminUi";
-import { Badge, Button, ConfirmModal, apiSend, useT, useToast, alpha } from "../../_kit";
+import { K, mono, sans, Badge, Button, ConfirmModal, apiSend, useT, useToast, alpha } from "../../_kit";
 import { MODELS } from "./models.messages";
 import {
   type ModelOption,
@@ -143,36 +142,36 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
         padding: "12px 14px",
         marginTop: 10,
         borderRadius: 10,
-        border: `1px solid ${A.line2}`,
-        background: alpha(A.accent, 3),
+        border: `1px solid ${K.line2}`,
+        background: alpha(K.accent, 3),
       }}
     >
       {/* At-a-glance state line */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
-        <span style={{ fontSize: 11.5, fontWeight: 600, color: A.ink2 }}>{t("routeEditor")}</span>
-        <span data-testid={`llm-shadow-state-${row.stage}`} style={{ fontSize: 11.5, color: A.muted }}>
+        <span style={{ fontSize: 11.5, fontWeight: 600, color: K.ink2 }}>{t("routeEditor")}</span>
+        <span data-testid={`llm-shadow-state-${row.stage}`} style={{ fontSize: 11.5, color: K.muted }}>
           {effShadow ? (
             <>
-              {t("shadowLabel")} <b style={{ color: A.ink2 }}>{shadowLabel}</b> · {effSample}%
+              {t("shadowLabel")} <b style={{ color: K.ink2 }}>{shadowLabel}</b> · {effSample}%
             </>
           ) : (
-            <>{t("shadowLabel")} <b style={{ color: A.ink2 }}>{t("off")}</b></>
+            <>{t("shadowLabel")} <b style={{ color: K.ink2 }}>{t("off")}</b></>
           )}
         </span>
       </div>
 
       {/* Fallback chain */}
       <div>
-        <div style={{ fontSize: 11, fontWeight: 600, color: A.muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: K.muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>
           {t("fallbackChain")}
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
           <span style={{
             display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 9px", borderRadius: 999,
-            fontSize: 11.5, border: `1px solid ${A.line}`, background: A.line2, color: A.ink2,
+            fontSize: 11.5, border: `1px solid ${K.line}`, background: K.line2, color: K.ink2,
           }}>
             <b>{label(row.model_id)}</b>
-            <span style={{ color: A.muted2 }}>{t("primary")}</span>
+            <span style={{ color: K.muted2 }}>{t("primary")}</span>
           </span>
           {fallbacks.map((id, i) => (
             <span
@@ -180,10 +179,10 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
               data-testid={`llm-fallback-chip-${row.stage}-${id}`}
               style={{
                 display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 6px 3px 9px",
-                borderRadius: 999, fontSize: 11.5, border: `1px solid ${A.line}`, background: A.card, color: A.ink2,
+                borderRadius: 999, fontSize: 11.5, border: `1px solid ${K.line}`, background: K.card, color: K.ink2,
               }}
             >
-              <span aria-hidden style={{ color: A.muted2 }}>→</span>
+              <span aria-hidden style={{ color: K.muted2 }}>→</span>
               {label(id)}
               <button
                 aria-label={t("moveUp", id)}
@@ -205,19 +204,19 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
                 aria-label={t("remove", id)}
                 onClick={() => removeFallback(id)}
                 disabled={mut.isPending}
-                style={{ ...iconBtn(mut.isPending), color: A.red }}
+                style={{ ...iconBtn(mut.isPending), color: K.danger }}
               >
                 <X size={12} />
               </button>
             </span>
           ))}
           {fallbacks.length === 0 && (
-            <span style={{ fontSize: 11.5, color: A.muted2 }}>{t("noFallbacks")}</span>
+            <span style={{ fontSize: 11.5, color: K.muted2 }}>{t("noFallbacks")}</span>
           )}
         </div>
         {(addable.length > 0 || disabledOpts.length > 0) && (
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
-            <Plus size={12} style={{ color: A.muted2 }} />
+            <Plus size={12} style={{ color: K.muted2 }} />
             <select
               data-testid={`llm-fallback-add-${row.stage}`}
               defaultValue=""
@@ -245,7 +244,7 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
       {/* Shadow A/B */}
       <div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
-          <span style={{ fontSize: 11, fontWeight: 600, color: A.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: K.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>
             {t("shadowAb")}
           </span>
           <button
@@ -257,18 +256,18 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
             disabled={mut.isPending || shadowOpts.length === 0}
             style={{
               display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px", borderRadius: 999,
-              border: `1px solid ${shadowOn ? A.accentBorder : A.line}`,
-              background: shadowOn ? A.accentTint : A.card, color: shadowOn ? A.accentDeep : A.muted,
+              border: `1px solid ${shadowOn ? K.accentBorder : K.line}`,
+              background: shadowOn ? K.accentTint : K.card, color: shadowOn ? K.accentDeep : K.muted,
               fontSize: 11.5, fontWeight: 600, cursor: shadowOpts.length === 0 ? "not-allowed" : "pointer",
               fontFamily: sans, opacity: shadowOpts.length === 0 ? 0.5 : 1,
             }}
           >
             <span style={{
-              width: 8, height: 8, borderRadius: "50%", background: shadowOn ? A.accentDeep : A.muted2, display: "block",
+              width: 8, height: 8, borderRadius: "50%", background: shadowOn ? K.accentDeep : K.muted2, display: "block",
             }} />
             {shadowOn ? t("on") : t("offUpper")}
           </button>
-          <span style={{ fontSize: 11, color: A.muted2 }}>
+          <span style={{ fontSize: 11, color: K.muted2 }}>
             {t("shadowHint")}
           </span>
         </div>
@@ -288,7 +287,7 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
               ))}
             </select>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <label style={{ fontSize: 11.5, color: A.muted }} htmlFor={`sample-${row.stage}`}>{t("samplePct")}</label>
+              <label style={{ fontSize: 11.5, color: K.muted }} htmlFor={`sample-${row.stage}`}>{t("samplePct")}</label>
               <input
                 id={`sample-${row.stage}`}
                 data-testid={`llm-shadow-pct-${row.stage}`}
@@ -302,8 +301,8 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
                   setSamplePct(Number.isNaN(v) ? 0 : Math.max(0, Math.min(100, v)));
                 }}
                 style={{
-                  width: 68, padding: "5px 8px", borderRadius: 7, border: `1px solid ${A.line}`,
-                  fontSize: 12.5, fontFamily: mono, color: A.body, background: A.card,
+                  width: 68, padding: "5px 8px", borderRadius: 7, border: `1px solid ${K.line}`,
+                  fontSize: 12.5, fontFamily: mono, color: K.body, background: K.card,
                 }}
               />
             </div>
@@ -315,9 +314,9 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
                   disabled={mut.isPending}
                   style={{
                     padding: "4px 9px", borderRadius: 7, fontSize: 11.5, fontFamily: mono, cursor: "pointer",
-                    border: `1px solid ${samplePct === p ? A.accentBorder : A.line}`,
-                    background: samplePct === p ? A.accentTint : A.card,
-                    color: samplePct === p ? A.accentDeep : A.muted,
+                    border: `1px solid ${samplePct === p ? K.accentBorder : K.line}`,
+                    background: samplePct === p ? K.accentTint : K.card,
+                    color: samplePct === p ? K.accentDeep : K.muted,
                   }}
                 >
                   {p}
@@ -337,12 +336,12 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
           {t("cancel")}
         </Button>
         {disabledOpts.length > 0 && (
-          <span style={{ fontSize: 11, color: A.muted2 }}>
+          <span style={{ fontSize: 11, color: K.muted2 }}>
             {t("unavailable", disabledOpts.length)}
           </span>
         )}
         {error && (
-          <span data-testid={`llm-route-error-${row.stage}`} style={{ fontSize: 11.5, color: A.red }}>
+          <span data-testid={`llm-route-error-${row.stage}`} style={{ fontSize: 11.5, color: K.danger }}>
             {error}
           </span>
         )}
@@ -358,16 +357,16 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
         title={t("changeRouteTitle", row.stage)}
         confirmLabel={t("confirmChange")}
         body={
-          <div style={{ fontSize: 13, color: A.body }}>
+          <div style={{ fontSize: 13, color: K.body }}>
             <p style={{ marginTop: 0 }}>
               {t("changeRouteA")} <b style={{ fontFamily: mono }}>{row.stage}</b> {t("changeRouteB")}
             </p>
-            <div style={{ fontSize: 12.5, color: A.ink2 }}>
+            <div style={{ fontSize: 12.5, color: K.ink2 }}>
               <div>{t("fallbacksLine", fallbacks.length ? fallbacks.map(label).join(" → ") : t("nonePrimaryOnly"))}</div>
               <div style={{ marginTop: 4 }}>
                 {t("shadowLabel")} {effShadow ? <>{shadowLabel} · {effSample}%</> : t("off")}
                 {effShadow && (
-                  <span style={{ color: A.amber }}>{t("secondCall", effSample)}</span>
+                  <span style={{ color: K.amber }}>{t("secondCall", effSample)}</span>
                 )}
               </div>
             </div>
@@ -381,11 +380,11 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
 const selectStyle: React.CSSProperties = {
   padding: "6px 10px",
   borderRadius: 7,
-  border: `1px solid ${A.line}`,
+  border: `1px solid ${K.line}`,
   fontSize: 12.5,
   fontFamily: sans,
-  color: A.body,
-  background: A.card,
+  color: K.body,
+  background: K.card,
   maxWidth: "100%",
   minWidth: 0,
 };
@@ -396,7 +395,7 @@ function iconBtn(disabled: boolean): React.CSSProperties {
     alignItems: "center",
     border: "none",
     background: "transparent",
-    color: A.muted2,
+    color: K.muted2,
     cursor: disabled ? "not-allowed" : "pointer",
     opacity: disabled ? 0.4 : 1,
     padding: "0 1px",

@@ -10,11 +10,8 @@ import BrandIdentityEditor from "../_components/BrandIdentityEditor";
 import SettingsKitTab from "../_components/SettingsKitTab";
 import { ModelsTab } from "./ModelsTab";
 import { JevCreditTab } from "./JevCreditTab";
-import {
-  A, alpha, serif, sans, mono,
-  Card, SLabel, TabBar, Badge, Btn, Spinner, LoadingScreen,
-} from "../_components/adminUi";
-import { AdminMain, PageHeader, apiGet, useAdminIdentity, useFormat, useT } from "../../_kit";
+import { A, alpha, serif, sans, mono, Card, SLabel, Badge, Spinner, LoadingScreen } from "../_components/adminUi";
+import { Button, Tabs, PageFrame, PageHeader, apiGet, useAdminIdentity, useFormat, useT } from "../../_kit";
 import { can, staffErrorMessage, type Capability } from "@/lib/rbac";
 import { RBAC_MESSAGES } from "@/lib/rbac.messages";
 import { SETTINGS } from "./messages";
@@ -241,9 +238,9 @@ function SeoConfigTab({ seo: initialSeo, canEdit }: { seo: SettingsData["seo_con
               fontFamily: sans, outline: "none", color: A.body,
             }}
           />
-          <Btn variant="secondary" size="sm" onClick={addKeyword}>
+          <Button variant="secondary" size="sm" onClick={addKeyword}>
             <Plus size={13} /> {t("add")}
-          </Btn>
+          </Button>
         </div>}
       </Card>
 
@@ -265,10 +262,10 @@ function SeoConfigTab({ seo: initialSeo, canEdit }: { seo: SettingsData["seo_con
 
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         {canEdit ? (
-          <Btn variant="primary" onClick={save} disabled={saving}>
+          <Button variant="primary" onClick={save} disabled={saving}>
             {saving ? <Spinner size={13} /> : <Save size={13} />}
             {saving ? t("saving") : t("saveSeo")}
-          </Btn>
+          </Button>
         ) : (
           <span data-testid="seo-read-only" style={{ fontSize: 12, color: A.muted }}>
             {t("seoReadOnly")}
@@ -426,7 +423,7 @@ function SettingsPageInner() {
   });
 
   return (
-      <AdminMain>
+      <PageFrame>
         {/* Header */}
         <PageHeader
           title={t("title")}
@@ -438,7 +435,7 @@ function SettingsPageInner() {
         {!isLoading && isError && (
           <Card style={{ textAlign: "center", padding: 40 }}>
             <div style={{ color: A.red, marginBottom: 12 }}>{t("loadError")}</div>
-            <Btn variant="secondary" onClick={() => refetch()}>{t("retry")}</Btn>
+            <Button variant="secondary" onClick={() => refetch()}>{t("retry")}</Button>
           </Card>
         )}
 
@@ -447,7 +444,7 @@ function SettingsPageInner() {
             {/* AA-601 — "content rendered" signal for the UI smoke: present only once the settings
                 payload has loaded, never on the LoadingScreen. */}
             <div data-testid="admin-content-ready" style={{ marginBottom: 24 }}>
-              <TabBar tabs={tabs} active={tab} onChange={setTab} />
+              <Tabs tabs={tabs} active={tab} onChange={setTab} />
             </div>
 
             {tab === "pipeline" && (
@@ -465,6 +462,6 @@ function SettingsPageInner() {
             {tab === "ui-kit" && <SettingsKitTab />}
           </>
         )}
-      </AdminMain>
+      </PageFrame>
   );
 }

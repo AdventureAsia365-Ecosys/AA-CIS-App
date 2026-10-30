@@ -15,8 +15,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { ReasonTag, WritingReasonChips } from "../_components/WritingReasonChips";
 import { exemplarPath, preselect, toggledPref, type ExemplarPref, type ReasonCode } from "@/lib/writingReasons";
-import { A, mono } from "../_components/adminUi";
-import { ApiError, Badge, Button, ConfirmModal, Spinner, apiSend, useAdminIdentity, useT, useToast } from "../../_kit";
+import { K, mono, ApiError, Badge, Button, ConfirmModal, Spinner, apiSend, useAdminIdentity, useT, useToast } from "../../_kit";
 import {
   fmtTime, usd,
   type AdminEdit, type ApplyBody, type CheckFailure, type FlaggedSentence, type PieceDetail, type SuggestResponse,
@@ -102,18 +101,18 @@ export function FlaggedSentences({ piece }: { piece: PieceDetail }) {
   };
 
   if (piece.flagged_sentences.length === 0) {
-    return <div style={{ fontSize: 12, color: A.muted }}>{t("noFlagged")}</div>;
+    return <div style={{ fontSize: 12, color: K.muted }}>{t("noFlagged")}</div>;
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       {!canEdit && (
-        <div style={{ fontSize: 11.5, color: A.muted }}>
+        <div style={{ fontSize: 11.5, color: K.muted }}>
           {isAdmin ? t("cannotEditStatus", status(piece.status)) : t("onlyAdminCut")}
         </div>
       )}
       {canEdit && delivered && (
-        <div style={{ fontSize: 12, background: A.amberSoft, padding: "6px 8px", borderRadius: 6, color: A.ink }}>
+        <div style={{ fontSize: 12, background: K.amberSoft, padding: "6px 8px", borderRadius: 6, color: K.ink }}>
           {piece.published ? t("deliveredPublished") : t("deliveredExported")}
         </div>
       )}
@@ -122,7 +121,7 @@ export function FlaggedSentences({ piece }: { piece: PieceDetail }) {
         const loadingThis = suggest.isPending && suggest.variables?.s.key === s.key;
         return (
           <div key={s.key} id={`hl-${s.key}`} data-testid="cq-flag-row"
-               style={{ border: `1px solid ${s.blocking ? A.redBorder : A.line}`, borderRadius: 8, padding: "8px 10px", background: A.card }}>
+               style={{ border: `1px solid ${s.blocking ? K.dangerBorder : K.line}`, borderRadius: 8, padding: "8px 10px", background: K.card }}>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 6 }}>
               {/* AA-924 — a gate's chip is red only when one of ITS findings on this sentence blocks */}
               {s.gates.map((g) => (
@@ -130,7 +129,7 @@ export function FlaggedSentences({ piece }: { piece: PieceDetail }) {
               ))}
             </div>
             <ProblemList problems={s.problems} />
-            <div style={{ fontSize: 12.5, lineHeight: 1.55, color: A.ink, background: A.bg, borderRadius: 6, padding: "6px 8px", wordBreak: "break-word" }}>{s.sentence}</div>
+            <div style={{ fontSize: 12.5, lineHeight: 1.55, color: K.ink, background: K.bg, borderRadius: 6, padding: "6px 8px", wordBreak: "break-word" }}>{s.sentence}</div>
             {canEdit && (
               <div style={{ marginTop: 8 }}>
                 <WritingReasonChips value={reasonOf(s)} suggested={preselect(s.suggested_reason)} disabled={busy}
@@ -174,10 +173,10 @@ export function FlaggedSentences({ piece }: { piece: PieceDetail }) {
         confirmLabel={t("cut")}
         body={
           <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 13 }}>
-            <div style={{ background: A.redSoft, borderRadius: 6, padding: "6px 8px", color: A.ink }}>{cutting?.sentence}</div>
-            {cutting && <div style={{ display: "flex", gap: 6, alignItems: "center", color: A.body }}>{t("reason")} <ReasonTag code={reasonOf(cutting)} /></div>}
-            <div style={{ color: A.body }}>{t("cutBodyPiece")}</div>
-            {delivered && <div style={{ color: A.amber }}>{piece.published ? t("cutPublished") : t("cutExported")}</div>}
+            <div style={{ background: K.dangerSoft, borderRadius: 6, padding: "6px 8px", color: K.ink }}>{cutting?.sentence}</div>
+            {cutting && <div style={{ display: "flex", gap: 6, alignItems: "center", color: K.body }}>{t("reason")} <ReasonTag code={reasonOf(cutting)} /></div>}
+            <div style={{ color: K.body }}>{t("cutBodyPiece")}</div>
+            {delivered && <div style={{ color: K.amber }}>{piece.published ? t("cutPublished") : t("cutExported")}</div>}
           </div>
         }
       />
@@ -189,11 +188,11 @@ export function FlaggedSentences({ piece }: { piece: PieceDetail }) {
  *  the legacy gate that found it inside a merged entry. Shared with the T2 drawer. */
 export function ProblemList({ problems }: { problems: FlaggedSentence["problems"] }) {
   return (
-    <div style={{ fontSize: 12, color: A.body, marginBottom: 6, display: "flex", flexDirection: "column", gap: 3 }}>
+    <div style={{ fontSize: 12, color: K.body, marginBottom: 6, display: "flex", flexDirection: "column", gap: 3 }}>
       {problems.map((p, i) => (
         <div key={i} data-testid="cq-problem" style={{ display: "flex", gap: 6, alignItems: "baseline", flexWrap: "wrap", minWidth: 0 }}>
           <SeverityBadge severity={markSeverity(p)} />
-          <span style={{ fontFamily: mono, fontSize: 10.5, color: A.muted }}>{p.gate}</span>
+          <span style={{ fontFamily: mono, fontSize: 10.5, color: K.muted }}>{p.gate}</span>
           <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>{p.problem}</span>
           <SourceNote source={p.source && p.source !== p.gate ? p.source : null} />
         </div>
@@ -212,27 +211,27 @@ export function RewritePanel({ s, ed, busy, regenerating, onChange, onApply, onR
   const empty = !ed.draft.trim();
   return (
     <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
-      <div style={{ fontSize: 11, fontWeight: 600, color: A.muted }}>{t("before")}</div>
-      <div style={{ fontSize: 12.5, background: A.redSoft, color: A.ink, borderRadius: 6, padding: "6px 8px", textDecoration: "line-through", wordBreak: "break-word" }}>{s.sentence}</div>
-      <div style={{ fontSize: 11, fontWeight: 600, color: A.muted }}>
+      <div style={{ fontSize: 11, fontWeight: 600, color: K.muted }}>{t("before")}</div>
+      <div style={{ fontSize: 12.5, background: K.dangerSoft, color: K.ink, borderRadius: 6, padding: "6px 8px", textDecoration: "line-through", wordBreak: "break-word" }}>{s.sentence}</div>
+      <div style={{ fontSize: 11, fontWeight: 600, color: K.muted }}>
         {t("after")}{sug ? t("suggestedBy", sug.model ?? t("theModel"), usd(sug.cost_usd)) : t("yourText")}
       </div>
       <textarea
         aria-label={t("replacementAria")} value={ed.draft} rows={3} maxLength={3000}
         onChange={(e) => onChange({ draft: e.target.value })}
-        style={{ width: "100%", boxSizing: "border-box", fontSize: 12.5, lineHeight: 1.5, background: A.greenSoft, color: A.ink, border: `1px solid ${A.line}`, borderRadius: 6, padding: "6px 8px", fontFamily: "inherit", resize: "vertical" }}
+        style={{ width: "100%", boxSizing: "border-box", fontSize: 12.5, lineHeight: 1.5, background: K.successSoft, color: K.ink, border: `1px solid ${K.line}`, borderRadius: 6, padding: "6px 8px", fontFamily: "inherit", resize: "vertical" }}
       />
       {sug && !sug.replacement && (
-        <div style={{ fontSize: 12, color: A.body }}>{t("nothingLeft")}</div>
+        <div style={{ fontSize: 12, color: K.body }}>{t("nothingLeft")}</div>
       )}
       {sug && sug.checks.length > 0 && ed.draft.trim() === sug.replacement.trim() && (
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           {sug.checks.map((c, i) => (
-            <div key={`${c.gate}-${i}`} style={{ fontSize: 12, color: A.ink }}>
+            <div key={`${c.gate}-${i}`} style={{ fontSize: 12, color: K.ink }}>
               <Badge tone={c.blocking ? "danger" : "warning"} dot={false}>{gateLabel(c.gate)}</Badge> {c.violations.join(" | ")}
             </div>
           ))}
-          <div style={{ fontSize: 11.5, color: A.muted }}>
+          <div style={{ fontSize: 11.5, color: K.muted }}>
             {sug.checks.some((c) => c.blocking)
               ? t("wouldRefuse")
               : t("warningsOnly")}
@@ -243,7 +242,7 @@ export function RewritePanel({ s, ed, busy, regenerating, onChange, onApply, onR
         <input
           aria-label={t("noteAria")} placeholder={t("notePlaceholder")}
           value={ed.note} maxLength={200} onChange={(e) => onChange({ note: e.target.value })}
-          style={{ width: "100%", boxSizing: "border-box", fontSize: 12, background: A.card, color: A.ink, border: `1px solid ${A.line}`, borderRadius: 6, padding: "5px 8px" }}
+          style={{ width: "100%", boxSizing: "border-box", fontSize: 12, background: K.card, color: K.ink, border: `1px solid ${K.line}`, borderRadius: 6, padding: "5px 8px" }}
         />
       )}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
@@ -264,20 +263,20 @@ export function AdminEdits({ edits, owner }: { edits: AdminEdit[]; owner?: EditO
   const mode = useLookup(EDIT_MODE);
   const { sectionLabel } = useCqText();
   const { isAdmin } = useAdminIdentity();
-  if (edits.length === 0) return <div style={{ fontSize: 12, color: A.muted }}>{t("noAdminEdits")}</div>;
+  if (edits.length === 0) return <div style={{ fontSize: 12, color: K.muted }}>{t("noAdminEdits")}</div>;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       {edits.map((e, i) => (
-        <div key={`${e.created_at}-${i}`} data-testid="cq-admin-edit" style={{ fontSize: 12, borderBottom: `1px solid ${A.line}`, paddingBottom: 6 }}>
-          <div style={{ color: A.muted, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+        <div key={`${e.created_at}-${i}`} data-testid="cq-admin-edit" style={{ fontSize: 12, borderBottom: `1px solid ${K.line}`, paddingBottom: 6 }}>
+          <div style={{ color: K.muted, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
             <span>
               {fmtTime(e.created_at)} · {e.actor} · {e.details.mode ? mode(e.details.mode) : e.action}{e.details.gate ? ` · ${e.details.gate}` : ""}
               {e.details.field ? ` · ${sectionLabel(e.details.field, e.details.index ?? null)}` : ""}
             </span>
             <ReasonTag code={e.details.reason_code} />
           </div>
-          <div style={{ textDecoration: "line-through", color: A.body, wordBreak: "break-word" }}>{e.details.before}</div>
-          {e.details.after ? <div style={{ color: A.ink, wordBreak: "break-word" }}>{e.details.after}</div> : <div style={{ color: A.muted }}>{t("removed")}</div>}
+          <div style={{ textDecoration: "line-through", color: K.body, wordBreak: "break-word" }}>{e.details.before}</div>
+          {e.details.after ? <div style={{ color: K.ink, wordBreak: "break-word" }}>{e.details.after}</div> : <div style={{ color: K.muted }}>{t("removed")}</div>}
           {owner && e.details.signal_id && (
             <ExemplarToggles owner={owner} signalId={e.details.signal_id} value={e.details.exemplar_pref ?? null} canEdit={isAdmin} />
           )}
@@ -308,7 +307,7 @@ function ExemplarToggles({ owner, signalId, value, canEdit }: {
     onError: (e) => toast.error(e instanceof Error ? e.message : String(e), 8000),
   });
   if (!canEdit) {
-    return value ? <div style={{ marginTop: 4, fontSize: 11.5, color: A.muted }}>{exemplar(value)}</div> : null;
+    return value ? <div style={{ marginTop: 4, fontSize: 11.5, color: K.muted }}>{exemplar(value)}</div> : null;
   }
   return (
     <div data-testid="cq-exemplar" data-value={value ?? ""} style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6, alignItems: "center" }}>
@@ -334,7 +333,7 @@ export function TenantCopyNotice({ copy, what }: { copy?: TenantCopy | null; wha
   const rest = t("olderCopyBody", how, fmtTime(copy.delivered_at), copy.edits_after_delivery,
     what === "piece" ? t("whatPiece") : t("whatVersion"), copy.published_at ? t("untilRepublish") : t("untilExport"));
   return (
-    <div data-testid="cq-older-copy" style={{ fontSize: 12.5, background: A.amberSoft, borderRadius: 8, padding: "8px 10px", color: A.ink, marginBottom: 10 }}>
+    <div data-testid="cq-older-copy" style={{ fontSize: 12.5, background: K.amberSoft, borderRadius: 8, padding: "8px 10px", color: K.ink, marginBottom: 10 }}>
       <b>{t("olderCopy")}</b>{rest}
     </div>
   );

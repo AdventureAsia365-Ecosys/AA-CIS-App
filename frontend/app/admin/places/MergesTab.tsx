@@ -12,8 +12,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { GitMerge, Play, Undo2 } from "lucide-react";
-import { A, mono, Card, SLabel, Badge, Btn, LoadingScreen, StatCard } from "../_components/adminUi";
-import { DataTable, useFormat, useT } from "../../_kit";
+import { A, mono, Card, SLabel, Badge, LoadingScreen, StatCard } from "../_components/adminUi";
+import { Button, DataTable, useFormat, useT } from "../../_kit";
 import { PL } from "./messages";
 
 type CountryRun = {
@@ -158,8 +158,8 @@ export default function MergesTab({ onError }: { onError: (msg: string) => void 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <SLabel>{t("countries")}</SLabel>
           <div style={{ display: "flex", gap: 8 }}>
-            <Btn size="sm" disabled={!!busy} onClick={() => runNow("dry_run")}><Play size={12} /> {t("dryRunNow")}</Btn>
-            <Btn size="sm" disabled={!!busy} onClick={() => runNow("apply")}><Play size={12} /> {t("runApply")}</Btn>
+            <Button size="sm" disabled={!!busy} onClick={() => runNow("dry_run")}><Play size={12} /> {t("dryRunNow")}</Button>
+            <Button size="sm" disabled={!!busy} onClick={() => runNow("apply")}><Play size={12} /> {t("runApply")}</Button>
           </div>
         </div>
         <div style={{ fontSize: 12, color: A.muted, margin: "4px 0 10px" }}>
@@ -181,15 +181,15 @@ export default function MergesTab({ onError }: { onError: (msg: string) => void 
                   {r.outside != null && t("outside", r.outside, String(r.breaker_limit))}
                 </span>}
                 <span style={{ flex: 1 }} />
-                {!al && <Btn size="sm" disabled={!!busy} onClick={() => setMode(c, "dry_run")}>{t("addDryRun")}</Btn>}
+                {!al && <Button size="sm" disabled={!!busy} onClick={() => setMode(c, "dry_run")}>{t("addDryRun")}</Button>}
                 {al && r?.diff_hash && r.status !== "applied" && (
-                  <Btn variant="primary" size="sm" disabled={!!busy}
+                  <Button variant="primary" size="sm" disabled={!!busy}
                        onClick={() => { if (window.confirm(t("confirmApprove", r.diff_size, c))) setMode(c, "apply", r.diff_hash); }}>
                     {t("approveDiff", r.diff_size)}
-                  </Btn>
+                  </Button>
                 )}
-                {al && <Btn size="sm" disabled={!!busy} onClick={() => setMode(c, al.mode === "apply" ? "dry_run" : "off")}>
-                  {al.mode === "apply" ? t("backToDryRun") : t("remove")}</Btn>}
+                {al && <Button size="sm" disabled={!!busy} onClick={() => setMode(c, al.mode === "apply" ? "dry_run" : "off")}>
+                  {al.mode === "apply" ? t("backToDryRun") : t("remove")}</Button>}
               </div>
               {r && (r.conflicts_detail?.length ?? 0) > 0 && (
                 <details style={{ marginTop: 6 }}>
@@ -225,9 +225,9 @@ export default function MergesTab({ onError }: { onError: (msg: string) => void 
             <span style={{ fontFamily: mono }}>{JSON.stringify(undo.result.would_restore ?? {})}</span>{t("undoTail")}
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <Btn variant="danger" size="sm" disabled={!!busy}
-                 onClick={() => { if (window.confirm(t("confirmUndo"))) runUndo(undo.merge, false); }}>{t("undoMerge")}</Btn>
-            <Btn size="sm" onClick={() => setUndo(null)}>{t("close")}</Btn>
+            <Button variant="danger" size="sm" disabled={!!busy}
+                 onClick={() => { if (window.confirm(t("confirmUndo"))) runUndo(undo.merge, false); }}>{t("undoMerge")}</Button>
+            <Button size="sm" onClick={() => setUndo(null)}>{t("close")}</Button>
           </div>
         </Card>
       )}

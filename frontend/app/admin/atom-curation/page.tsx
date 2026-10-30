@@ -49,9 +49,9 @@ import {
   Trash2, ChevronDown, ChevronRight, Layers, Milestone,
 } from "lucide-react";
 import SocialContentSubNav, { type SectionKey } from "../_components/SocialContentSubNav";
-import { A, mono, sans, Card, Badge, Btn, LoadingScreen, TH, TD } from "../_components/adminUi";
+import { A, mono, sans, Card, Badge, LoadingScreen, TH, TD } from "../_components/adminUi";
 import { fetchJson, EmptyState, ErrorState, AuditTable, Col } from "../_components/auditPanels";
-import { AdminMain, AdminPaneBody, AdminPaneHeader, PageHeader, useFormat, useT } from "../../_kit";
+import { Button, PageFrame, PageFrameBody, PageFrameHeader, PageHeader, useFormat, useT } from "../../_kit";
 import { SeedLine, type SeedInfo } from "../_components/SeedLine";
 import { TenantSelect } from "../_components/TenantSelect";
 import { AT } from "./messages";
@@ -311,20 +311,20 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
                 ⚠ <strong>{t("unatomizedCount", unatomizedTours.length)}</strong>{t("unatomizedBody", unatomizedTours.length)}
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                <Btn
+                <Button
                   variant="secondary" size="sm"
                   disabled={atomizeTriggering || !!atomizeRunning || !selectedTour || !unatomizedTours.some(x => x.tour_id === selectedTour)}
                   onClick={() => selectedTour && triggerAtomize({ tour_id: selectedTour })}
                 >
                   {t("atomizeSelected")}
-                </Btn>
-                <Btn
+                </Button>
+                <Button
                   variant="secondary" size="sm"
                   disabled={atomizeTriggering || !!atomizeRunning}
                   onClick={() => triggerAtomize({ all: true })}
                 >
                   {t("atomizeAll", unatomizedTours.length)}
-                </Btn>
+                </Button>
                 {atomizeRunning && <span style={{ fontSize: 12, color: A.muted }}>{atomizeRunning}</span>}
                 {atomizeJobIds.length > 0 && (
                   <a href={atomizeJobIds.length === 1 ? `/admin/jobs?job=${atomizeJobIds[0]}` : "/admin/jobs?kind=a3_atomize"}
@@ -435,9 +435,9 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
 
               {atoms.length < total && !atomsError && (
                 <div style={{ textAlign: "center", marginTop: 16 }}>
-                  <Btn variant="secondary" disabled={loadingMore} onClick={() => loadAtoms(atoms.length, true)}>
+                  <Button variant="secondary" disabled={loadingMore} onClick={() => loadAtoms(atoms.length, true)}>
                     {loadingMore ? t("loading") : t("loadMore", atoms.length, total)}
-                  </Btn>
+                  </Button>
                 </div>
               )}
             </div>
@@ -675,7 +675,7 @@ function SegmentSection({ tourId, market, focusRouteId, focusSegmentId, onClearF
         <input style={{ ...inputStyle, width: 110 }} type="number" min={0} placeholder={t("minRecurrence")}
           value={minRecurrence} onChange={e => setMinRecurrence(e.target.value)} />
         {(focusRouteId || focusSegmentId) && (
-          <Btn variant="ghost" size="sm" onClick={onClearFocus}>{t("clearCross")}</Btn>
+          <Button variant="ghost" size="sm" onClick={onClearFocus}>{t("clearCross")}</Button>
         )}
       </div>
       {/* AA-554 E.13 — shared market legend. */}
@@ -912,7 +912,7 @@ function RouteHubSection({ tourId, market, focusRouteId, onClearFocus, onNavigat
         <input style={{ ...inputStyle, width: 100 }} type="number" min={1} placeholder={t("minDays")} value={minDays} onChange={e => setMinDays(e.target.value)} />
         <input style={{ ...inputStyle, width: 100 }} type="number" min={1} placeholder={t("maxDays")} value={maxDays} onChange={e => setMaxDays(e.target.value)} />
         <input style={inputStyle} placeholder={t("searchRoute")} value={hubSearch} onChange={e => setHubSearch(e.target.value)} />
-        {focusRouteId && <Btn variant="ghost" size="sm" onClick={onClearFocus}>{t("clearFromSegment")}</Btn>}
+        {focusRouteId && <Button variant="ghost" size="sm" onClick={onClearFocus}>{t("clearFromSegment")}</Button>}
         {!tourId && (
           <span style={{ fontSize: 11.5, color: A.muted2, fontStyle: "italic" }}>
             {t("currentOnly")}
@@ -1065,9 +1065,9 @@ function PageFooter({ total, offset, pageSize, onOffset }: {
   const pages = Math.ceil(total / pageSize);
   return (
     <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 12, marginTop: 16 }}>
-      <Btn variant="secondary" size="sm" disabled={offset === 0} onClick={() => onOffset(Math.max(0, offset - pageSize))}>{t("previous")}</Btn>
+      <Button variant="secondary" size="sm" disabled={offset === 0} onClick={() => onOffset(Math.max(0, offset - pageSize))}>{t("previous")}</Button>
       <span style={{ fontSize: 12, color: A.muted, fontFamily: mono }}>{t("pageOf", page, pages, total)}</span>
-      <Btn variant="secondary" size="sm" disabled={offset + pageSize >= total} onClick={() => onOffset(offset + pageSize)}>{t("next")}</Btn>
+      <Button variant="secondary" size="sm" disabled={offset + pageSize >= total} onClick={() => onOffset(offset + pageSize)}>{t("next")}</Button>
     </div>
   );
 }
@@ -1272,8 +1272,8 @@ export default function AtomCurationDashboardPage() {
 function AtomCurationDashboard() {
   const t = useT(AT);
   const searchParams = useSearchParams();
-  // S241 UI verify (AA-863) / S252 — the header band and body are the kit AdminPaneHeader / AdminPaneBody inside a
-  // split AdminMain: 36px side inset on desktop, 16px on a phone (globals.css), never stacked.
+  // S241 UI verify (AA-863) / S252 — the header band and body are the kit PageFrameHeader / PageFrameBody inside a
+  // split PageFrame: 36px side inset on desktop, 16px on a phone (globals.css), never stacked.
   const sectionParam = searchParams.get("section");
   const initialSection: SectionKey =
     sectionParam && VALID_SECTIONS.has(sectionParam) ? (sectionParam as SectionKey) : "atomize";
@@ -1323,8 +1323,8 @@ function AtomCurationDashboard() {
   const selectedTourMeta = summary?.by_tour.find(x => x.tour_id === selectedTour) ?? null;
 
   return (
-      <AdminMain variant="split">
-        <AdminPaneHeader>
+      <PageFrame variant="split">
+        <PageFrameHeader>
           <PageHeader
             title={t("title")}
             description={
@@ -1385,7 +1385,7 @@ function AtomCurationDashboard() {
               </div>
             ))}
           </div>
-        </AdminPaneHeader>
+        </PageFrameHeader>
 
         {/* AA-564 1.1 — `minHeight: 0` is required here: a flex column's default `min-height:auto`
             makes this item grow to its content's min-content size (which exceeds the viewport once
@@ -1393,7 +1393,7 @@ function AtomCurationDashboard() {
             internally, which pushed the overflow up to the document — dragging the header (which
             relies on being outside this scroll region, not on `position:sticky`) off-screen on a
             real full-page scroll. This is the actual root cause AA-554/AA-557 both missed. */}
-        <AdminPaneBody scroll>
+        <PageFrameBody scroll>
           <div className="a527-dash-body" style={{ display: "flex", gap: 20, alignItems: "flex-start" }}>
             {/* AA-575 — inner-sidebar extracted into a shared component (was JSX embedded only
                 in this page, which is exactly why Content Trace (06) had no sub-nav at all: it's
@@ -1434,7 +1434,7 @@ function AtomCurationDashboard() {
               {activeSection === "slate" && <SlateSection />}
             </div>
           </div>
-        </AdminPaneBody>
-      </AdminMain>
+        </PageFrameBody>
+      </PageFrame>
   );
 }

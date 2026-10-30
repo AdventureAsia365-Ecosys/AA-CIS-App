@@ -5,8 +5,10 @@
 //
 // Checks, over every .tsx file under app/admin:
 //   1. no hand-written <main> and no hand-set `aa-admin-main` / `aa-admin-split` / `aa-admin-pane` class: the frame
-//      and its pane classes come only from app/_kit/core/PageFrame.tsx (AdminMain is its alias);
-//   2. every admin page (page.tsx, except a redirect-only page) reaches the kit AdminMain and the kit PageHeader,
+//      and its pane classes come only from app/_kit/core/PageFrame.tsx;
+//   2. admin code uses the AA-994 names `PageFrame` / `PageFrameHeader` / `PageFrameBody`, not the S252 aliases
+//      `AdminMain` / `AdminPaneHeader` / `AdminPaneBody` (kept in core only for consumers that have not migrated);
+//   3. every admin page (page.tsx, except a redirect-only page) reaches the kit PageFrame and the kit PageHeader,
 //      in the page file itself or in a module it imports from app/admin (followed transitively).
 
 import assert from "node:assert/strict";
@@ -46,10 +48,19 @@ test("no admin file hand-writes the page frame", () => {
   for (const p of FILES) {
     if (!p.endsWith(".tsx")) continue;
     const src = code(p);
-    if (/<main[\s>]/.test(src)) offenders.push(`${rel(p)}: <main> (render the kit AdminMain)`);
+    if (/<main[\s>]/.test(src)) offenders.push(`${rel(p)}: <main> (render the kit PageFrame)`);
     if (/["'`\s]aa-admin-(main|split|pane(-head|-body)?)["'`\s]/.test(src)) {
-      offenders.push(`${rel(p)}: sets an aa-admin-main / aa-admin-split / aa-admin-pane class by hand (use AdminMain, AdminPaneHeader, AdminPaneBody)`);
+      offenders.push(`${rel(p)}: sets an aa-admin-main / aa-admin-split / aa-admin-pane class by hand (use PageFrame, PageFrameHeader, PageFrameBody)`);
     }
+  }
+  assert.deepEqual(offenders, [], offenders.join("\n"));
+});
+
+test("admin code uses the PageFrame names, not the S252 aliases (AA-994 S6b)", () => {
+  const offenders = [];
+  for (const p of FILES) {
+    const m = code(p).match(/\b(AdminMain|AdminPaneHeader|AdminPaneBody)\b/);
+    if (m) offenders.push(`${rel(p)}: ${m[1]} (use ${m[1] === "AdminMain" ? "PageFrame" : m[1].replace("AdminPane", "PageFrame")})`);
   }
   assert.deepEqual(offenders, [], offenders.join("\n"));
 });
@@ -88,14 +99,14 @@ test("the page list is not empty (the walk found app/admin)", () => {
 
 for (const page of PAGES) {
   if (isRedirectOnly(page)) continue;
-  test(`${rel(page)} renders the kit AdminMain and PageHeader`, () => {
+  test(`${rel(page)} renders the kit PageFrame and PageHeader`, () => {
     const tree = pageTree(page).map(code).join("\n");
-    assert.match(tree, /<AdminMain[\s>]/, `${rel(page)}: no <AdminMain> in the page or the app/admin modules it imports`);
+    assert.match(tree, /<PageFrame[\s>]/, `${rel(page)}: no <PageFrame> in the page or the app/admin modules it imports`);
     assert.match(tree, /<PageHeader[\s>]/, `${rel(page)}: no kit <PageHeader> in the page or the modules it imports`);
-    const framed = pageTree(page).filter((p) => /<AdminMain[\s>]/.test(code(p)));
+    const framed = pageTree(page).filter((p) => /<PageFrame[\s>]/.test(code(p)));
     assert.ok(
       framed.length <= 1,
-      `${rel(page)}: more than one module in this page renders <AdminMain>; render the frame once (${framed.map(rel).join(", ")})`,
+      `${rel(page)}: more than one module in this page renders <PageFrame>; render the frame once (${framed.map(rel).join(", ")})`,
     );
   });
 }

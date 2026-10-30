@@ -2,10 +2,9 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { X } from "lucide-react";
-import { A, serif, sans, mono, Badge } from "./adminUi";
 import { scoreColor } from "./TourDetailPanelV2";
 import { SCORE_BANDS } from "@/lib/quality-registry.generated";
-import { useT } from "../../_kit";
+import { K, Badge, mono, sans, serif, useT } from "../../_kit";
 import { M } from "./tour.messages";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -72,12 +71,12 @@ function ScoreRow({ label, score }: { label: string; score: number | null }) {
   return (
     <div style={{ marginBottom: 7 }}>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
-        <span style={{ fontSize: 12, color: A.muted }}>{label}</span>
+        <span style={{ fontSize: 12, color: K.muted }}>{label}</span>
         <span style={{ fontSize: 12, fontWeight: 700, fontFamily: mono, color: scoreColor(score) }}>
           {score != null ? score.toFixed(1) : "—"}
         </span>
       </div>
-      <div style={{ height: 4, background: A.line, borderRadius: 2 }}>
+      <div style={{ height: 4, background: K.line, borderRadius: 2 }}>
         <div style={{
           height: "100%", borderRadius: 2,
           width: score != null ? `${Math.min(score / 10 * 100, 100)}%` : "0%",
@@ -134,22 +133,22 @@ export function CompareModal({ tourIds, onClose }: {
 
   return (
     <div style={{
-      position: "fixed", inset: 0, background: A.card,
+      position: "fixed", inset: 0, background: K.card,
       zIndex: 300, display: "flex", flexDirection: "column",
     }}>
       {/* Modal header */}
       <div style={{
-        padding: "14px 24px", borderBottom: `1px solid ${A.line}`,
-        background: A.bg, flexShrink: 0,
+        padding: "14px 24px", borderBottom: `1px solid ${K.line}`,
+        background: K.bg, flexShrink: 0,
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-          <div style={{ fontFamily: serif, fontSize: 20, fontWeight: 500, color: A.ink }}>
+          <div style={{ fontFamily: serif, fontSize: 20, fontWeight: 500, color: K.ink }}>
             {t("comparing", n)}
           </div>
           <button
             onClick={onClose}
             aria-label={t("close")}
-            style={{ background: "none", border: "none", cursor: "pointer", color: A.muted, padding: 6 }}
+            style={{ background: "none", border: "none", cursor: "pointer", color: K.muted, padding: 6 }}
           >
             <X size={20} />
           </button>
@@ -163,9 +162,9 @@ export function CompareModal({ tourIds, onClose }: {
               style={{
                 padding: "7px 14px", fontSize: 13,
                 fontWeight: activeTab === key ? 600 : 400,
-                color: activeTab === key ? A.ink : A.muted,
+                color: activeTab === key ? K.ink : K.muted,
                 cursor: "pointer", background: "none", border: "none",
-                borderBottom: activeTab === key ? `2px solid ${A.gold}` : "2px solid transparent",
+                borderBottom: activeTab === key ? `2px solid ${K.accent}` : "2px solid transparent",
                 fontFamily: sans,
               }}
             >
@@ -176,7 +175,7 @@ export function CompareModal({ tourIds, onClose }: {
       </div>
 
       {loading ? (
-        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: A.muted, fontSize: 14 }}>
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: K.muted, fontSize: 14 }}>
           {t("loadingTours")}
         </div>
       ) : (
@@ -195,30 +194,30 @@ export function CompareModal({ tourIds, onClose }: {
             return (
               <div key={tourId} style={{
                 display: "flex", flexDirection: "column",
-                borderRight: idx < n - 1 ? `1px solid ${A.line}` : undefined,
+                borderRight: idx < n - 1 ? `1px solid ${K.line}` : undefined,
               }}>
                 {/* Column header (fixed) */}
-                <div style={{ padding: "14px 16px", borderBottom: `1px solid ${A.line}`, flexShrink: 0, background: A.card }}>
+                <div style={{ padding: "14px 16px", borderBottom: `1px solid ${K.line}`, flexShrink: 0, background: K.card }}>
                   {/* Badges */}
                   <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 7 }}>
-                    {raw?.country && <Badge color="blue">{raw.country}</Badge>}
+                    {raw?.country && <Badge tone="info">{raw.country}</Badge>}
                     {raw?.pipeline_status && (
-                      <Badge color={raw.pipeline_status === "published" ? "green" : "gray"}>
+                      <Badge tone={raw.pipeline_status === "published" ? "success" : "neutral"}>
                         {raw.pipeline_status}
                       </Badge>
                     )}
                     {gen?.score_overall != null && (
-                      <Badge color={gen.score_overall >= SCORE_BANDS.top ? "green" : gen.score_overall >= SCORE_BANDS.pass ? "amber" : "red"}>
+                      <Badge tone={gen.score_overall >= SCORE_BANDS.top ? "success" : gen.score_overall >= SCORE_BANDS.pass ? "warning" : "danger"}>
                         ★ {gen.score_overall.toFixed(1)}
                       </Badge>
                     )}
                   </div>
                   {/* Tour name */}
-                  <div style={{ fontFamily: serif, fontSize: 14, fontWeight: 600, color: A.ink, lineHeight: 1.3, marginBottom: 8 }}>
+                  <div style={{ fontFamily: serif, fontSize: 14, fontWeight: 600, color: K.ink, lineHeight: 1.3, marginBottom: 8 }}>
                     {gen?.aa_name || raw?.src_name || tourId.slice(0, 8)}
                   </div>
                   {/* Config */}
-                  <div style={{ fontSize: 11, color: A.muted, marginBottom: 10 }}>
+                  <div style={{ fontSize: 11, color: K.muted, marginBottom: 10 }}>
                     <span style={{ marginRight: 10 }}>{t("model")}: <strong>{modelShort(gen?.model_editorial)}</strong></span>
                     <span>v{gen?.version_num ?? "—"}</span>
                   </div>
@@ -226,7 +225,7 @@ export function CompareModal({ tourIds, onClose }: {
                   <ScoreRow label={t("sOverall")} score={gen?.score_overall ?? null} />
                   {judgeCapped && (
                     <div style={{ marginTop: -3, marginBottom: 7 }}>
-                      <Badge color="amber">{t("judgeCapped", fmtScore(vAvg))}</Badge>
+                      <Badge tone="warning">{t("judgeCapped", fmtScore(vAvg))}</Badge>
                     </div>
                   )}
                   <ScoreRow label={t("sBrand")} score={gen?.score_brand ?? null} />
@@ -235,30 +234,30 @@ export function CompareModal({ tourIds, onClose }: {
                   <ScoreRow label={t("sQuality")} score={gen?.score_quality ?? null} />
 
                   {/* AA-209: brand judge (GPT-4.1) — guarded for older versions with no judge metadata */}
-                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${A.line}` }}>
-                    <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: A.muted2, marginBottom: 6 }}>
+                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${K.line}` }}>
+                    <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: K.muted2, marginBottom: 6 }}>
                       {t("brandJudge")}
                     </div>
                     <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
                       {gen?.judge ? (
                         <>
-                          <Badge color="gold">{t("fit", fmtScore(gen.judge.brand_fit))}</Badge>
-                          <Badge color="gold">{t("distinct", fmtScore(gen.judge.distinct))}</Badge>
-                          <Badge color={gen.judge.mission_present ? "green" : "red"}>
+                          <Badge tone="accent">{t("fit", fmtScore(gen.judge.brand_fit))}</Badge>
+                          <Badge tone="accent">{t("distinct", fmtScore(gen.judge.distinct))}</Badge>
+                          <Badge tone={gen.judge.mission_present ? "success" : "danger"}>
                             {t("mission", !!gen.judge.mission_present)}
                           </Badge>
                         </>
                       ) : (
-                        <span style={{ fontSize: 11, color: A.muted2 }}>{t("notRun")}</span>
+                        <span style={{ fontSize: 11, color: K.muted2 }}>{t("notRun")}</span>
                       )}
                       {gen?.brand_audit_status && (
-                        <Badge color={gen.brand_audit_status === "pass" ? "green" : "amber"}>
+                        <Badge tone={gen.brand_audit_status === "pass" ? "success" : "warning"}>
                           {gen.brand_audit_status}
                         </Badge>
                       )}
                     </div>
                     {gen?.judge?.feedback && (
-                      <div style={{ fontSize: 11, color: A.body, lineHeight: 1.5, marginTop: 6 }}>
+                      <div style={{ fontSize: 11, color: K.body, lineHeight: 1.5, marginTop: 6 }}>
                         {gen.judge.feedback}
                       </div>
                     )}
@@ -273,59 +272,59 @@ export function CompareModal({ tourIds, onClose }: {
                 >
                   {activeTab === "summary" && (
                     gen?.aa_summary
-                      ? <p style={{ fontSize: 13, color: A.body, lineHeight: 1.75, margin: 0 }}>{gen.aa_summary}</p>
-                      : <span style={{ color: A.muted, fontSize: 13 }}>—</span>
+                      ? <p style={{ fontSize: 13, color: K.body, lineHeight: 1.75, margin: 0 }}>{gen.aa_summary}</p>
+                      : <span style={{ color: K.muted, fontSize: 13 }}>—</span>
                   )}
 
                   {activeTab === "highlights" && (
                     (gen?.aa_highlights?.length ?? 0) > 0 ? (
                       <ul style={{ margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 6 }}>
                         {(gen?.aa_highlights || []).map((h, i) => (
-                          <li key={i} style={{ fontSize: 13, color: A.body }}>{h}</li>
+                          <li key={i} style={{ fontSize: 13, color: K.body }}>{h}</li>
                         ))}
                       </ul>
-                    ) : <span style={{ color: A.muted, fontSize: 13 }}>—</span>
+                    ) : <span style={{ color: K.muted, fontSize: 13 }}>—</span>
                   )}
 
                   {activeTab === "itineraries" && (
                     gen?.aa_itineraries
-                      ? <div style={{ fontSize: 12, color: A.body, lineHeight: 1.75, whiteSpace: "pre-wrap" }}>{gen.aa_itineraries}</div>
-                      : <span style={{ color: A.muted, fontSize: 13 }}>—</span>
+                      ? <div style={{ fontSize: 12, color: K.body, lineHeight: 1.75, whiteSpace: "pre-wrap" }}>{gen.aa_itineraries}</div>
+                      : <span style={{ color: K.muted, fontSize: 13 }}>—</span>
                   )}
 
                   {activeTab === "seo" && (
                     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                       {gen?.seo_title && (
                         <div>
-                          <div style={{ fontSize: 11, color: A.muted, marginBottom: 3 }}>
-                            {t("title")} <span style={{ color: (gen.seo_title.length > 60 ? A.amber : A.muted2) }}>({gen.seo_title.length}/70)</span>
+                          <div style={{ fontSize: 11, color: K.muted, marginBottom: 3 }}>
+                            {t("title")} <span style={{ color: (gen.seo_title.length > 60 ? K.amber : K.muted2) }}>({gen.seo_title.length}/70)</span>
                           </div>
-                          <div style={{ fontSize: 13, color: A.ink }}>{gen.seo_title}</div>
+                          <div style={{ fontSize: 13, color: K.ink }}>{gen.seo_title}</div>
                         </div>
                       )}
                       {gen?.seo_meta && (
                         <div>
-                          <div style={{ fontSize: 11, color: A.muted, marginBottom: 3 }}>
-                            {t("meta")} <span style={{ color: (gen.seo_meta.length > 155 ? A.amber : A.muted2) }}>({gen.seo_meta.length}/170)</span>
+                          <div style={{ fontSize: 11, color: K.muted, marginBottom: 3 }}>
+                            {t("meta")} <span style={{ color: (gen.seo_meta.length > 155 ? K.amber : K.muted2) }}>({gen.seo_meta.length}/170)</span>
                           </div>
-                          <div style={{ fontSize: 13, color: A.body }}>{gen.seo_meta}</div>
+                          <div style={{ fontSize: 13, color: K.body }}>{gen.seo_meta}</div>
                         </div>
                       )}
                       {(gen?.seo_keywords_used?.length ?? 0) > 0 && (
                         <div>
-                          <div style={{ fontSize: 11, color: A.muted, marginBottom: 6 }}>{t("keywords")}</div>
+                          <div style={{ fontSize: 11, color: K.muted, marginBottom: 6 }}>{t("keywords")}</div>
                           <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
                             {(gen?.seo_keywords_used || []).map((kw, i) => (
                               <span key={i} style={{
                                 fontSize: 11, padding: "2px 8px", borderRadius: 12,
-                                background: A.goldTint, color: A.gold, border: `1px solid ${A.line}`,
+                                background: K.accentTint, color: K.accent, border: `1px solid ${K.line}`,
                               }}>{kw}</span>
                             ))}
                           </div>
                         </div>
                       )}
                       {!gen?.seo_title && !gen?.seo_meta && (
-                        <span style={{ color: A.muted, fontSize: 13 }}>{t("noSeo")}</span>
+                        <span style={{ color: K.muted, fontSize: 13 }}>{t("noSeo")}</span>
                       )}
                     </div>
                   )}

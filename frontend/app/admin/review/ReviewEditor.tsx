@@ -6,8 +6,7 @@
 
 import { AlertTriangle, Edit3, Loader2, Save, ShieldCheck, XCircle } from "lucide-react";
 import { useState } from "react";
-import { A, mono, sans, Btn } from "../_components/adminUi";
-import { useFormat, useT } from "../../_kit";
+import { K, mono, sans, Button, useFormat, useT } from "../../_kit";
 import { FIELD, M } from "./messages";
 import { ClaimChecks } from "./ClaimChecks";
 import {
@@ -32,9 +31,9 @@ function RevalidatePill({ state }: { state: boolean | null }) {
   const t = useT(M);
   const cfg =
     state === true
-      ? { bg: A.greenSoft, color: A.green, label: t("revalPassed"), Icon: ShieldCheck }
+      ? { bg: K.successSoft, color: K.success, label: t("revalPassed"), Icon: ShieldCheck }
       : state === false
-        ? { bg: A.redSoft, color: A.red, label: t("revalFailed"), Icon: XCircle }
+        ? { bg: K.dangerSoft, color: K.danger, label: t("revalFailed"), Icon: XCircle }
         : { bg: "var(--aa-amber-bg)", color: "var(--aa-amber-deep)", label: t("needsReval"), Icon: AlertTriangle };
   const { Icon } = cfg;
   return (
@@ -67,7 +66,7 @@ function FieldLabel({ field, fails }: { field: string; fails?: { code: string; r
           fontWeight: 700,
           textTransform: "uppercase",
           letterSpacing: "0.1em",
-          color: failed ? A.red : "var(--aa-neutral-fg2)",
+          color: failed ? K.danger : "var(--aa-neutral-fg2)",
         }}
       >
         {field in FIELD.en ? fieldName(field as keyof typeof FIELD.en) : field}
@@ -79,9 +78,9 @@ function FieldLabel({ field, fails }: { field: string; fails?: { code: string; r
             title={f.code}
             style={{
               fontSize: 10,
-              color: A.red,
-              background: A.redSoft,
-              border: `1px solid ${A.redBorder}`,
+              color: K.danger,
+              background: K.dangerSoft,
+              border: `1px solid ${K.dangerBorder}`,
               borderRadius: 4,
               padding: "1px 6px",
             }}
@@ -99,12 +98,12 @@ function fieldBoxStyle(failed: boolean): React.CSSProperties {
     boxSizing: "border-box",
     fontFamily: sans,
     fontSize: 13,
-    color: A.body,
+    color: K.body,
     padding: "8px 10px",
     borderRadius: 6,
-    background: A.card,
+    background: K.card,
     lineHeight: 1.6,
-    border: `1px solid ${failed ? "var(--aa-red-border2)" : A.line}`,
+    border: `1px solid ${failed ? "var(--aa-red-border2)" : K.line}`,
     outline: "none",
     resize: "vertical",
   };
@@ -117,12 +116,12 @@ function ItineraryPreview({ text }: { text: string }) {
       style={{
         fontFamily: sans,
         fontSize: 12,
-        color: A.body,
+        color: K.body,
         lineHeight: 1.7,
         padding: "8px 10px",
         borderRadius: 6,
-        background: A.bg,
-        border: `1px solid ${A.line}`,
+        background: K.bg,
+        border: `1px solid ${K.line}`,
         maxHeight: 320,
         overflowY: "auto",
         whiteSpace: "pre-wrap",
@@ -130,7 +129,7 @@ function ItineraryPreview({ text }: { text: string }) {
     >
       {lines.map((ln, i) =>
         /^\s*Day\s+\d+/i.test(ln) ? (
-          <div key={i} style={{ fontWeight: 700, color: A.ink, marginTop: i ? 10 : 0 }}>
+          <div key={i} style={{ fontWeight: 700, color: K.ink, marginTop: i ? 10 : 0 }}>
             {ln}
           </div>
         ) : (
@@ -236,11 +235,11 @@ export function ReviewEditor({
   }
 
   return (
-    <div style={{ borderTop: `1px solid ${A.line}`, padding: "18px 20px", background: A.bg }}>
+    <div style={{ borderTop: `1px solid ${K.line}`, padding: "18px 20px", background: K.bg }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
         <RevalidatePill state={item.revalidate_passed} />
         {item.human_edited && (
-          <span style={{ fontSize: 11, color: A.muted, display: "inline-flex", alignItems: "center", gap: 4 }}>
+          <span style={{ fontSize: 11, color: K.muted, display: "inline-flex", alignItems: "center", gap: 4 }}>
             <Edit3 size={11} /> {t("editedLabel")}
             {item.edited_at ? ` · ${formatDateTime(item.edited_at)}` : ""}
             {item.reviewed_by ? ` · ${item.reviewed_by}` : ""}
@@ -248,16 +247,16 @@ export function ReviewEditor({
         )}
         <div style={{ flex: 1 }} />
         {readOnly ? (
-          <span style={{ fontSize: 11.5, color: A.muted }}>{t("viewOnly")}</span>
+          <span style={{ fontSize: 11.5, color: K.muted }}>{t("viewOnly")}</span>
         ) : (
           <>
-            <Btn variant="ghost" size="sm" disabled={saving || dirty.size === 0} onClick={save}>
+            <Button variant="ghost" size="sm" disabled={saving || dirty.size === 0} onClick={save}>
               {saving ? <Loader2 size={12} className="spin" /> : <Save size={12} />} {t("saveEdits")}
               {dirty.size ? ` (${dirty.size})` : ""}
-            </Btn>
-            <Btn variant="primary" size="sm" disabled={revalidating || dirty.size > 0} onClick={revalidate}>
+            </Button>
+            <Button variant="primary" size="sm" disabled={revalidating || dirty.size > 0} onClick={revalidate}>
               {revalidating ? <Loader2 size={12} className="spin" /> : <ShieldCheck size={12} />} {t("revalidate")}
-            </Btn>
+            </Button>
           </>
         )}
       </div>
@@ -269,8 +268,8 @@ export function ReviewEditor({
             padding: "8px 12px",
             borderRadius: 6,
             marginBottom: 14,
-            background: msg.kind === "ok" ? A.greenSoft : A.redSoft,
-            color: msg.kind === "ok" ? A.green : A.red,
+            background: msg.kind === "ok" ? K.successSoft : K.dangerSoft,
+            color: msg.kind === "ok" ? K.success : K.danger,
           }}
         >
           {msg.text}
@@ -302,7 +301,7 @@ export function ReviewEditor({
                 const n = draft.seo_meta.length;
                 const inBand = n >= SEO_META_MIN && n <= SEO_META_MAX;
                 return (
-                  <div style={{ fontSize: 11, marginTop: 3, color: inBand ? A.green : A.red, fontFamily: mono }}>
+                  <div style={{ fontSize: 11, marginTop: 3, color: inBand ? K.success : K.danger, fontFamily: mono }}>
                     {t("metaBand", n, SEO_META_MIN, SEO_META_MAX)}
                   </div>
                 );
@@ -321,7 +320,7 @@ export function ReviewEditor({
               placeholder={t("onePerLine")}
               style={{ ...fieldBoxStyle(!!fails[f]), fontFamily: mono, fontSize: 12 }}
             />
-            <div style={{ fontSize: 10, color: A.muted, marginTop: 3 }}>{t("onePerLine")}</div>
+            <div style={{ fontSize: 10, color: K.muted, marginTop: 3 }}>{t("onePerLine")}</div>
           </div>
         ))}
 
@@ -346,17 +345,17 @@ export function ReviewEditor({
               margin: 0,
               fontFamily: mono,
               fontSize: 11,
-              color: A.muted,
+              color: K.muted,
               padding: "8px 10px",
               borderRadius: 6,
-              background: A.bg,
-              border: `1px solid ${A.line}`,
+              background: K.bg,
+              border: `1px solid ${K.line}`,
               overflowX: "auto",
             }}
           >
             {JSON.stringify(item.raw.og_tags ?? {}, null, 2)}
           </pre>
-          <div style={{ fontSize: 10, color: A.muted, marginTop: 3 }}>
+          <div style={{ fontSize: 10, color: K.muted, marginTop: 3 }}>
             {t("ogReadOnly")}
           </div>
         </div>

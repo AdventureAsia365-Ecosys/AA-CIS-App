@@ -5,9 +5,8 @@
 // from shared.llm_call_log; the on-screen source texts (plain words) are in ./sources.ts. Page visits are not in the console (they would need a Vercel token, which the
 // admin console must not hold — S241 design §6); the link opens Vercel Web Analytics instead.
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { K, useLang, useT } from "../../../_kit";
+import { CHART_TOOLTIP, K, useLang, useT } from "../../../_kit";
 import { useChartColors } from "../../../_kit/useTheme";
-import { CHART_TOOLTIP } from "../../_components/adminUi";
 import { ChangeLine, fmtDay, fmtInt, Kpi, OpsCard, UnavailableNote } from "./opsUi";
 import { SourceHint } from "./SourceHint";
 import { OPS } from "./ops.messages";

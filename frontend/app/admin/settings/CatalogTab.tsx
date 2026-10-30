@@ -10,8 +10,8 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, X } from "lucide-react";
-import { A, mono, sans } from "../_components/adminUi";
 import {
+  K, mono, sans,
   Badge,
   Button,
   type ColumnDef,
@@ -78,30 +78,30 @@ function EditRow({ row, onDone }: { row: CatalogRow; onDone: () => void }) {
   }
 
   const inp: React.CSSProperties = {
-    width: 90, padding: "5px 8px", borderRadius: 7, border: `1px solid ${A.line}`,
-    fontSize: 12.5, fontFamily: mono, color: A.body, background: A.card,
+    width: 90, padding: "5px 8px", borderRadius: 7, border: `1px solid ${K.line}`,
+    fontSize: 12.5, fontFamily: mono, color: K.body, background: K.card,
   };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <label style={{ fontSize: 11, color: A.muted }}>{t("inMtok")}
+        <label style={{ fontSize: 11, color: K.muted }}>{t("inMtok")}
           <input type="number" min={0} step="0.01" value={priceIn}
                  onChange={(e) => setPriceIn(e.target.value)} disabled={mut.isPending} style={{ ...inp, marginLeft: 4 }} />
         </label>
-        <label style={{ fontSize: 11, color: A.muted }}>{t("outMtok")}
+        <label style={{ fontSize: 11, color: K.muted }}>{t("outMtok")}
           <input type="number" min={0} step="0.01" value={priceOut}
                  onChange={(e) => setPriceOut(e.target.value)} disabled={mut.isPending} style={{ ...inp, marginLeft: 4 }} />
         </label>
         <input placeholder={t("priceSource")} value={source} onChange={(e) => setSource(e.target.value)}
                disabled={mut.isPending}
-               style={{ width: 160, padding: "5px 8px", borderRadius: 7, border: `1px solid ${A.line}`,
-                 fontSize: 12.5, fontFamily: sans, color: A.body, background: A.card }} />
+               style={{ width: 160, padding: "5px 8px", borderRadius: 7, border: `1px solid ${K.line}`,
+                 fontSize: 12.5, fontFamily: sans, color: K.body, background: K.card }} />
         <Button size="sm" variant="primary" disabled={mut.isPending} onClick={save}>
           {mut.isPending ? t("saving") : t("save")}
         </Button>
         <Button size="sm" variant="ghost" disabled={mut.isPending} onClick={onDone}>{t("cancel")}</Button>
       </div>
-      {error && <span data-testid={`catalog-error-${row.model_key}`} style={{ fontSize: 11.5, color: A.red }}>{error}</span>}
+      {error && <span data-testid={`catalog-error-${row.model_key}`} style={{ fontSize: 11.5, color: K.danger }}>{error}</span>}
     </div>
   );
 }
@@ -145,14 +145,14 @@ export function CatalogTab() {
         const r = c.row.original;
         return (
           <div>
-            <div style={{ fontWeight: 600, color: A.ink }}>{r.label}</div>
-            <div style={{ fontFamily: mono, fontSize: 11.5, color: A.muted2 }}>{r.model_key}</div>
+            <div style={{ fontWeight: 600, color: K.ink }}>{r.label}</div>
+            <div style={{ fontFamily: mono, fontSize: 11.5, color: K.muted2 }}>{r.model_key}</div>
           </div>
         );
       },
     },
-    { accessorKey: "vendor", header: t("colVendor"), cell: (c) => <span style={{ color: A.body }}>{c.row.original.vendor}</span> },
-    { accessorKey: "provider", header: t("colProvider"), cell: (c) => <span style={{ color: A.body }}>{c.row.original.provider}</span> },
+    { accessorKey: "vendor", header: t("colVendor"), cell: (c) => <span style={{ color: K.body }}>{c.row.original.vendor}</span> },
+    { accessorKey: "provider", header: t("colProvider"), cell: (c) => <span style={{ color: K.body }}>{c.row.original.provider}</span> },
     {
       id: "accounts",
       header: t("colAccounts"),
@@ -160,7 +160,7 @@ export function CatalogTab() {
       cell: (c) => {
         const accts = accountsOf(c.row.original);
         return (
-          <span style={{ fontFamily: mono, fontSize: 12, color: A.muted }}>
+          <span style={{ fontFamily: mono, fontSize: 12, color: K.muted }}>
             {accts.length ? accts.map((a) => accountName(a, awsAccounts, accountText)).join(", ") : "—"}
           </span>
         );
@@ -179,7 +179,7 @@ export function CatalogTab() {
     {
       accessorKey: "price_source",
       header: t("colSource"),
-      cell: (c) => <span style={{ color: A.muted, fontSize: 12 }}>{c.row.original.price_source ?? "—"}</span>,
+      cell: (c) => <span style={{ color: K.muted, fontSize: 12 }}>{c.row.original.price_source ?? "—"}</span>,
     },
     {
       accessorKey: "enabled",
@@ -200,8 +200,8 @@ export function CatalogTab() {
               onClick={() => toggleMut.mutate({ model_key: r.model_key, enabled: !r.enabled })}
               style={{
                 display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 9px", borderRadius: 999,
-                border: `1px solid ${r.enabled ? A.accentBorder : A.line}`,
-                background: r.enabled ? A.accentTint : A.card, color: r.enabled ? A.accentDeep : A.muted,
+                border: `1px solid ${r.enabled ? K.accentBorder : K.line}`,
+                background: r.enabled ? K.accentTint : K.card, color: r.enabled ? K.accentDeep : K.muted,
                 fontSize: 11, fontWeight: 600, cursor: canToggle ? "pointer" : "not-allowed",
                 fontFamily: sans, opacity: canToggle ? 1 : 0.5,
               }}
@@ -210,7 +210,7 @@ export function CatalogTab() {
               {r.enabled ? t("onTitle") : t("offTitle")}
             </button>
             {!r.enabled && !hasPrice && (
-              <span title={t("needsPriceTitle")} style={{ fontSize: 10.5, color: A.muted2 }}>
+              <span title={t("needsPriceTitle")} style={{ fontSize: 10.5, color: K.muted2 }}>
                 {t("needsPrice")}
               </span>
             )}
@@ -226,14 +226,14 @@ export function CatalogTab() {
         const r = c.row.original;
         return r.blocked_reason
           ? <Badge tone="warning" dot={false}>{r.blocked_reason}</Badge>
-          : <span style={{ color: A.muted2 }}>—</span>;
+          : <span style={{ color: K.muted2 }}>—</span>;
       },
     },
     {
       id: "updated",
       header: t("colUpdated"),
       cell: (c) => (
-        <span style={{ fontSize: 11.5, color: A.muted2, whiteSpace: "nowrap" }}>
+        <span style={{ fontSize: 11.5, color: K.muted2, whiteSpace: "nowrap" }}>
           {formatDateTime(c.row.original.updated_at)}
         </span>
       ),
@@ -257,16 +257,16 @@ export function CatalogTab() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <p style={{ fontSize: 12, color: A.muted2, margin: 0 }}>
+      <p style={{ fontSize: 12, color: K.muted2, margin: 0 }}>
         {t("catalogIntro")}
       </p>
 
       {editingRow && (
         <div style={{
-          padding: "12px 14px", borderRadius: 10, border: `1px solid ${A.accentBorder}`,
-          background: A.accentTint,
+          padding: "12px 14px", borderRadius: 10, border: `1px solid ${K.accentBorder}`,
+          background: K.accentTint,
         }}>
-          <div style={{ fontSize: 12.5, fontWeight: 600, color: A.ink, marginBottom: 8 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 600, color: K.ink, marginBottom: 8 }}>
             {t("editPriceFor")} <span style={{ fontFamily: mono }}>{editingRow.model_key}</span>
           </div>
           <EditRow row={editingRow} onDone={() => setEditing(null)} />

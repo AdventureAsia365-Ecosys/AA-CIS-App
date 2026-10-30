@@ -8,8 +8,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCw, HardDrive, Map as MapIcon, Images, AlertTriangle, CheckCircle2 } from "lucide-react";
-import { A, sans, mono, Card, SLabel, Badge, Btn, LoadingScreen, TH, TD, StatCard, TabBar } from "../_components/adminUi";
-import { AdminMain, PageHeader, useFormat, useT } from "../../_kit";
+import { A, sans, mono, Card, SLabel, Badge, LoadingScreen, TH, TD, StatCard } from "../_components/adminUi";
+import { Button, Tabs, PageFrame, PageHeader, useFormat, useT } from "../../_kit";
 import { PH } from "./messages";
 
 type CountryRow = {
@@ -208,12 +208,12 @@ export default function PhotosPage() {
     } finally { setBusy(null); }
   }
 
-  if (!countries || !totals) return <AdminMain><LoadingScreen msg={t("loading")} /></AdminMain>;
+  if (!countries || !totals) return <PageFrame><LoadingScreen msg={t("loading")} /></PageFrame>;
   const jobRunning = lastJob && ["queued", "running"].includes(lastJob.status);
   const shownFolders = folders.filter(f => folderFilter === "all" || (folderFilter === "unmatched" ? !f.tour_id : !!f.tour_id));
 
   return (
-      <AdminMain>
+      <PageFrame>
         <PageHeader
           title={t("title")}
           description={t("description")}
@@ -228,10 +228,10 @@ export default function PhotosPage() {
                 <input type="checkbox" checked={matchPlaces} onChange={e => setMatchPlaces(e.target.checked)} />
                 {t("matchPlaces")}
               </label>
-              <Btn onClick={refresh} size="sm"><RefreshCw size={13} /> {t("refresh")}</Btn>
-              <Btn onClick={syncNow} variant="primary" size="sm" disabled={busy === "sync" || !!jobRunning}>
+              <Button onClick={refresh} size="sm"><RefreshCw size={13} /> {t("refresh")}</Button>
+              <Button onClick={syncNow} variant="primary" size="sm" disabled={busy === "sync" || !!jobRunning}>
                 {jobRunning ? t("syncRunning") : country ? t("syncCountry", country) : t("syncAll")}
-              </Btn>
+              </Button>
             </>
           }
         />
@@ -243,7 +243,7 @@ export default function PhotosPage() {
           </Card>
         )}
 
-        <div style={{ marginBottom: 18 }}><TabBar tabs={TABS.map((x) => ({ key: x.key, label: t(x.label) }))} active={tab} onChange={setTab} /></div>
+        <div style={{ marginBottom: 18 }}><Tabs tabs={TABS.map((x) => ({ key: x.key, label: t(x.label) }))} active={tab} onChange={setTab} /></div>
 
         {tab === "overview" && (
           <>
@@ -393,11 +393,11 @@ export default function PhotosPage() {
                           <option value="">{t("chooseTour")}</option>
                           {tourOpts.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
                         </select>
-                        <Btn size="sm" variant="primary" disabled={!pickTour || busy === f.folder_path} onClick={() => assignFolderTo(f)}>{t("save")}</Btn>
-                        <Btn size="sm" onClick={() => setAssignFolder(null)}>{t("cancel")}</Btn>
+                        <Button size="sm" variant="primary" disabled={!pickTour || busy === f.folder_path} onClick={() => assignFolderTo(f)}>{t("save")}</Button>
+                        <Button size="sm" onClick={() => setAssignFolder(null)}>{t("cancel")}</Button>
                       </div>
                     ) : (
-                      <Btn size="sm" onClick={() => openAssign(f)}>{f.tour_id ? t("changeTour") : t("assignTour")}</Btn>
+                      <Button size="sm" onClick={() => openAssign(f)}>{f.tour_id ? t("changeTour") : t("assignTour")}</Button>
                     )}
                   </div>
                 </Card>
@@ -416,8 +416,8 @@ export default function PhotosPage() {
               </select>
               <span style={{ fontSize: 12.5, color: A.muted }}>{t("photosCount", total)}</span>
               <div style={{ flex: 1 }} />
-              <Btn size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE))}>{t("prev")}</Btn>
-              <Btn size="sm" disabled={offset + PAGE >= total} onClick={() => setOffset(offset + PAGE)}>{t("next")}</Btn>
+              <Button size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE))}>{t("prev")}</Button>
+              <Button size="sm" disabled={offset + PAGE >= total} onClick={() => setOffset(offset + PAGE)}>{t("next")}</Button>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 14 }}>
               {photos.map(p => (
@@ -439,7 +439,7 @@ export default function PhotosPage() {
                     {p.error && <div style={{ color: A.red, fontFamily: mono, fontSize: 11, marginTop: 4 }}>{p.error}</div>}
                     {p.status !== "rejected" && (
                       <div style={{ marginTop: 8 }}>
-                        <Btn size="sm" variant="ghost" disabled={busy === p.id} onClick={() => reject(p)}>{t("reject")}</Btn>
+                        <Button size="sm" variant="ghost" disabled={busy === p.id} onClick={() => reject(p)}>{t("reject")}</Button>
                       </div>
                     )}
                   </div>
@@ -449,6 +449,6 @@ export default function PhotosPage() {
             {photos.length === 0 && <div style={{ color: A.muted, fontSize: 13 }}>{t("noPhotos")}</div>}
           </>
         )}
-      </AdminMain>
+      </PageFrame>
   );
 }

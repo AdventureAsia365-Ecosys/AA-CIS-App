@@ -38,7 +38,7 @@ import {
   useLang,
   useT,
   useToast,
-  type ColumnDef, AdminMain,
+  type ColumnDef, PageFrame,
 } from "../../../_kit";
 import { staffErrorMessage } from "@/lib/rbac";
 import { RBAC_MESSAGES } from "@/lib/rbac.messages";
@@ -451,7 +451,7 @@ export default function AlertRecipients() {
   );
 
   return (
-    <AdminMain>
+    <PageFrame>
       <PageHeader
         title={<span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><BellRing size={18} /> {t("title")}</span>}
         description={description}
@@ -590,7 +590,7 @@ export default function AlertRecipients() {
           </p>
         }
       />
-    </AdminMain>
+    </PageFrame>
   );
 }
 

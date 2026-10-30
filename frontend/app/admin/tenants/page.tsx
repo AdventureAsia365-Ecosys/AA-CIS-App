@@ -17,11 +17,8 @@ import {
   Users, Plus, Key, RefreshCw, ChevronDown, ChevronUp,
   AlertCircle, Loader2, CheckCircle, Eye, EyeOff, Copy, X, Ban, Globe, RotateCcw,
 } from "lucide-react";
-import {
-  A, serif, mono, sans,
-  Card, SLabel, Btn, Badge, LoadingScreen, TH, TD,
-} from "../_components/adminUi";
-import { ScrollX, AdminMain, Modal, PageHeader, useFormat, useIsPhone, useLang, useT } from "../../_kit";
+import { A, serif, mono, sans, Card, SLabel, Badge, LoadingScreen, TH, TD } from "../_components/adminUi";
+import { Button, ScrollX, PageFrame, Modal, PageHeader, useFormat, useIsPhone, useLang, useT } from "../../_kit";
 import { Tenant360Settings } from "./_components/Tenant360Settings";
 import { Tenant360Cost } from "./_components/Tenant360Cost";
 import { Tenant360Quality } from "./_components/Tenant360Quality";
@@ -221,10 +218,10 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
           </div>
         )}
         <div style={{ display: "flex", gap: 10 }}>
-          <Btn variant="secondary" onClick={onClose} style={{ flex: 1 }}>{t("cancel")}</Btn>
-          <Btn variant="primary" disabled={loading} onClick={submit} style={{ flex: 2 }}>
+          <Button variant="secondary" onClick={onClose} style={{ flex: 1 }}>{t("cancel")}</Button>
+          <Button variant="primary" disabled={loading} onClick={submit} style={{ flex: 2 }}>
             {loading ? <><Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> {t("creating")}</> : t("createTenant")}
-          </Btn>
+          </Button>
         </div>
       </div>
     </div>
@@ -268,7 +265,7 @@ function ApiKeyModal({ keyData, onClose }: { keyData: NewApiKey; onClose: () => 
           <button onClick={copy} style={{ flex: 1, padding: "10px 0", background: copied ? A.greenSoft : "var(--aa-green-bg2)", border: "1px solid var(--aa-green-border)", borderRadius: 8, color: A.green, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
             <Copy size={13} />{copied ? t("copied") : t("copyKey")}
           </button>
-          <Btn variant="secondary" onClick={onClose} style={{ flex: 1 }}>{t("done")}</Btn>
+          <Button variant="secondary" onClick={onClose} style={{ flex: 1 }}>{t("done")}</Button>
         </div>
       </div>
     </div>
@@ -508,7 +505,7 @@ function BrandTabContent({ rules, tenantId }: { rules: TenantDetails["brand_rule
             <span>{tr("versions", rules.version_count)}</span>
             {rules.last_updated && <span>{tr("lastUpdated", fmtD(rules.last_updated))}</span>}
           </div>
-          <Btn variant="secondary" size="sm" onClick={() => setEditing(true)}>{tr("edit")}</Btn>
+          <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>{tr("edit")}</Button>
         </div>
         {saved && <span style={{ fontSize: 12, color: A.green }}>{tr("saved")}</span>}
         {!hasAnyData ? (
@@ -605,10 +602,10 @@ function BrandTabContent({ rules, tenantId }: { rules: TenantDetails["brand_rule
         <div style={{ padding: "9px 12px", background: A.redSoft, border: `1px solid ${A.redBorder}`, borderRadius: 8, fontSize: 12, color: A.red }}>{error}</div>
       )}
       <div style={{ display: "flex", gap: 10 }}>
-        <Btn variant="primary" size="sm" disabled={saving} onClick={save}>
+        <Button variant="primary" size="sm" disabled={saving} onClick={save}>
           {saving ? <><Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> {tr("saving")}</> : tr("save")}
-        </Btn>
-        <Btn variant="secondary" size="sm" onClick={() => setEditing(false)}>{tr("cancel")}</Btn>
+        </Button>
+        <Button variant="secondary" size="sm" onClick={() => setEditing(false)}>{tr("cancel")}</Button>
       </div>
     </div>
   );
@@ -980,10 +977,10 @@ function OffboardModal({ tenant, onClose, onDone }: {
     <Modal open onClose={busy ? () => {} : onClose} title={t("offboardTitle", tenant.name)}
       footer={
         <>
-          <Btn variant="secondary" onClick={onClose} disabled={busy}>{t("cancel")}</Btn>
-          <Btn variant="danger" onClick={submit} disabled={busy}>
+          <Button variant="secondary" onClick={onClose} disabled={busy}>{t("cancel")}</Button>
+          <Button variant="danger" onClick={submit} disabled={busy}>
             {busy && <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />} {t("offboard")}
-          </Btn>
+          </Button>
         </>
       }>
       <p style={{ margin: "0 0 12px", fontSize: 13, color: A.muted }}>
@@ -1028,10 +1025,10 @@ function RestoreModal({ tenant, onClose, onDone }: {
     <Modal open onClose={busy ? () => {} : onClose} title={t("restoreTitle", tenant.name)}
       footer={
         <>
-          <Btn variant="secondary" onClick={onClose} disabled={busy}>{t("cancel")}</Btn>
-          <Btn variant="primary" onClick={submit} disabled={busy}>
+          <Button variant="secondary" onClick={onClose} disabled={busy}>{t("cancel")}</Button>
+          <Button variant="primary" onClick={submit} disabled={busy}>
             {busy && <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />} {t("restore")}
-          </Btn>
+          </Button>
         </>
       }>
       <p style={{ margin: "0 0 8px", fontSize: 13, color: A.muted }}>
@@ -1343,14 +1340,14 @@ function TenantsPageInner() {
 
   return (
     <>
-        <AdminMain>
+        <PageFrame>
           <PageHeader
             title={tr("title")}
             description={tr("description", totalActive, totalSrcActive.toLocaleString(), totalMstrActive.toLocaleString())}
             actions={
               <>
-                <Btn variant="secondary" onClick={() => load()}><RefreshCw size={13} /> {tr("refresh")}</Btn>
-                <Btn variant="primary" onClick={() => setShowCreate(true)}><Plus size={14} /> {tr("newTenant")}</Btn>
+                <Button variant="secondary" onClick={() => load()}><RefreshCw size={13} /> {tr("refresh")}</Button>
+                <Button variant="primary" onClick={() => setShowCreate(true)}><Plus size={14} /> {tr("newTenant")}</Button>
               </>
             }
           />
@@ -1442,7 +1439,7 @@ function TenantsPageInner() {
               </ScrollX>
             )}
           </Card>
-        </AdminMain>
+        </PageFrame>
 
       {showCreate && <CreateModal onClose={() => setShowCreate(false)} onCreated={k => { setShowCreate(false); setNewKey(k); load(); }} />}
       {newKey && <ApiKeyModal keyData={newKey} onClose={() => setNewKey(null)} />}

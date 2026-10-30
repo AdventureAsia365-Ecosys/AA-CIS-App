@@ -5,8 +5,8 @@
 // while `job:segment_research`'s per-run cap still stops a run. AA-994: text in the UI language (panels.messages.ts).
 
 import { useCallback, useEffect, useState } from "react";
-import { A, mono, Card, SLabel, Badge, Btn, TH, TD } from "../_components/adminUi";
-import { useFormat, useT, type Translator } from "../../_kit";
+import { A, mono, Card, SLabel, Badge, TH, TD } from "../_components/adminUi";
+import { Button, useFormat, useT, type Translator } from "../../_kit";
 import { PANELS } from "./panels.messages";
 
 type T = Translator<typeof PANELS.en>;
@@ -189,10 +189,10 @@ export default function BudgetsPanel() {
                       {r.updated_at && <div>{formatDateTime(r.updated_at)}</div>}
                     </td>
                     <td style={{ ...TD, whiteSpace: "nowrap" }}>
-                      <Btn size="sm" disabled={!dirty || saving === key} onClick={() => save(r.provider, r.scope, d)}>
+                      <Button size="sm" disabled={!dirty || saving === key} onClick={() => save(r.provider, r.scope, d)}>
                         {saving === key ? t("saving") : t("save")}
-                      </Btn>
-                      {dirty && <Btn size="sm" variant="ghost" onClick={() => set(toDraft(r))}>{t("reset")}</Btn>}
+                      </Button>
+                      {dirty && <Button size="sm" variant="ghost" onClick={() => set(toDraft(r))}>{t("reset")}</Button>}
                     </td>
                   </tr>
                 );
@@ -211,7 +211,7 @@ export default function BudgetsPanel() {
           </select>
           <input aria-label={t("ariaNewScope")} style={{ ...input, width: 220 }} value={newRow.scope}
                  onChange={e => setNewRow({ ...newRow, scope: e.target.value })} placeholder={t("scopePlaceholder")} />
-          <Btn size="sm" onClick={addRow}>{t("add")}</Btn>
+          <Button size="sm" onClick={addRow}>{t("add")}</Button>
           <span style={{ color: A.muted }}>{t("addNote")}</span>
         </div>
       </Card>

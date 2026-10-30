@@ -9,8 +9,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { A, mono } from "../_components/adminUi";
-import { type ColumnDef, DataTable, apiGet, useT } from "../../_kit";
+import { K, mono, type ColumnDef, DataTable, apiGet, useT } from "../../_kit";
 import { HIDDEN_STAGES, type ShadowGroup } from "./llmShared";
 import { MODELS } from "./models.messages";
 
@@ -30,8 +29,8 @@ const dev = (v: number | null) => (v == null ? "—" : v.toFixed(3));
 function RateWithSample({ value, sample }: { value: React.ReactNode; sample: number }) {
   return (
     <div>
-      <div style={{ fontFamily: mono, color: A.ink }}>{value}</div>
-      <div style={{ fontSize: 10.5, color: A.muted2 }}>n={sample.toLocaleString()}</div>
+      <div style={{ fontFamily: mono, color: K.ink }}>{value}</div>
+      <div style={{ fontSize: 10.5, color: K.muted2 }}>n={sample.toLocaleString()}</div>
     </div>
   );
 }
@@ -55,7 +54,7 @@ export function ShadowReportTab() {
     {
       accessorKey: "stage",
       header: t("colStage"),
-      cell: (c) => <span style={{ fontFamily: mono, fontWeight: 600, color: A.ink }}>{c.row.original.stage}</span>,
+      cell: (c) => <span style={{ fontFamily: mono, fontWeight: 600, color: K.ink }}>{c.row.original.stage}</span>,
     },
     {
       id: "pair",
@@ -65,8 +64,8 @@ export function ShadowReportTab() {
         const r = c.row.original;
         return (
           <div style={{ fontSize: 12 }}>
-            <div style={{ color: A.body }}>{r.primary_model}</div>
-            <div style={{ color: A.muted }}>→ {r.shadow_model}</div>
+            <div style={{ color: K.body }}>{r.primary_model}</div>
+            <div style={{ color: K.muted }}>→ {r.shadow_model}</div>
           </div>
         );
       },
@@ -94,8 +93,8 @@ export function ShadowReportTab() {
         const r = c.row.original;
         return (
           <div style={{ fontFamily: mono, fontSize: 12 }}>
-            <div style={{ color: A.body }}>{usd(r.primary_cost_per_call)}</div>
-            <div style={{ color: A.muted }}>{usd(r.shadow_cost_per_call)}</div>
+            <div style={{ color: K.body }}>{usd(r.primary_cost_per_call)}</div>
+            <div style={{ color: K.muted }}>{usd(r.shadow_cost_per_call)}</div>
           </div>
         );
       },
@@ -133,7 +132,7 @@ export function ShadowReportTab() {
       cell: (c) => {
         const r = c.row.original;
         return (
-          <span style={{ fontFamily: mono, fontSize: 12, color: r.shadow_error > 0 ? A.red : A.muted }}>
+          <span style={{ fontFamily: mono, fontSize: 12, color: r.shadow_error > 0 ? K.danger : K.muted }}>
             {r.unparsed.toLocaleString()} / {r.shadow_error.toLocaleString()}
           </span>
         );
@@ -143,12 +142,12 @@ export function ShadowReportTab() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <p style={{ fontSize: 12, color: A.muted2, margin: 0 }}>
+      <p style={{ fontSize: 12, color: K.muted2, margin: 0 }}>
         {t("shadowIntro")}
       </p>
 
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ fontSize: 12, color: A.muted }}>{t("window")}</span>
+        <span style={{ fontSize: 12, color: K.muted }}>{t("window")}</span>
         {DAYS_OPTIONS.map((d) => (
           <button
             key={d}
@@ -156,9 +155,9 @@ export function ShadowReportTab() {
             onClick={() => setDays(d)}
             style={{
               padding: "5px 12px", borderRadius: 999, fontSize: 12, fontWeight: 600, cursor: "pointer",
-              border: `1px solid ${days === d ? A.accentBorder : A.line}`,
-              background: days === d ? A.accentTint : A.card,
-              color: days === d ? A.accentDeep : A.muted,
+              border: `1px solid ${days === d ? K.accentBorder : K.line}`,
+              background: days === d ? K.accentTint : K.card,
+              color: days === d ? K.accentDeep : K.muted,
             }}
           >
             {t("daysShort", d)}
