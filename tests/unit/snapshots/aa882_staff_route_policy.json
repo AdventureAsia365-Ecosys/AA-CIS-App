@@ -319,6 +319,10 @@
     "capability": "ai.admin",
     "module": "api.routers.admin_llm_ops"
   },
+  "GET /admin/llm-connections/costs": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_llm_ops"
+  },
   "GET /admin/llm-shadow/report": {
     "capability": "spend.read",
     "module": "api.routers.admin_llm_ops"
@@ -986,6 +990,10 @@
   "POST /admin/job-runner/staff-reconcile/schedule": {
     "capability": "ops.write",
     "module": "api.routers.admin_job_runner"
+  },
+  "POST /admin/llm-connections/reconcile": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_llm_ops"
   },
   "POST /admin/llm-connections/{connection_key}/test": {
     "capability": "ai.admin",

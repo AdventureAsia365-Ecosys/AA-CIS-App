@@ -1222,18 +1222,24 @@ class LlmConnectionPatch(BaseModel):
     rpm_limit: Optional[int] = Field(None, ge=1, le=100000)
     monthly_budget_usd: Optional[float] = Field(None, ge=0, le=1_000_000)
     notes: Optional[str] = Field(None, max_length=2000)
+    # AA-1002 (S10): the budget policy (shared.llm_connection_cost_policy, migration 316)
+    budget_alert_pct: Optional[int] = Field(None, ge=1, le=100)
+    budget_hard_stop: Optional[bool] = None
+    usage_secret_name: Optional[str] = Field(None, max_length=256)
+    usage_scope_id: Optional[str] = Field(None, max_length=128)
 
     @model_validator(mode="after")
     def _something_to_change(self):
         if not self.model_fields_set:
             raise ValueError("send at least one field to change")
-        if "enabled" in self.model_fields_set and self.enabled is None:
-            raise ValueError("enabled must be true or false")
+        for f in ("enabled", "budget_alert_pct", "budget_hard_stop"):
+            if f in self.model_fields_set and getattr(self, f) is None:
+                raise ValueError(f"{f} cannot be null")
         return self
 
     def changes(self) -> dict:
         out = {f: getattr(self, f) for f in self.model_fields_set}
-        for f in ("secret_name", "base_url", "notes"):
+        for f in ("secret_name", "base_url", "notes", "usage_secret_name", "usage_scope_id"):
             if isinstance(out.get(f), str):
                 out[f] = out[f].strip() or None
         return out
@@ -1268,6 +1274,49 @@ async def patch_llm_connection(
         raise HTTPException(status_code=503, detail=str(e))
     logger.info("admin_llm_connection_changed", connection_key=connection_key, fields=sorted(changes),
                 changed=result["changed_fields"], admin_actor=admin_actor)
+    return result
+
+
+# AA-1002 (gateway slice S10) — the month-to-date spend of each connection against its monthly budget and the nightly
+# cost reconciliation rows (logged cost vs the provider's own figure). Admin only (POLICY ai.admin). Reads no secret.
+@router.get("/llm-connections/costs",
+            summary="LLM connection budgets (month to date) and the nightly cost reconciliation (admin-only)")
+async def get_llm_connection_costs(request: Request, days: int = Query(14, ge=1, le=90)):
+    from api.services import llm_connections
+
+    async with request.app.state.pool.acquire() as conn:
+        return await llm_connections.costs(conn, days=days)
+
+
+class LlmCostReconcileRun(BaseModel):
+    """AA-1002 (S10): the window of a manual reconcile run (complete UTC days ending with end_day, default
+    yesterday)."""
+    model_config = {"extra": "forbid"}
+    days: int = Field(3, ge=1, le=31)
+    end_day: Optional[date] = None
+
+
+# AA-1002 (gateway slice S10) — queue one llm_cost_reconcile run (admin only, POLICY ai.admin). $0: database reads, the
+# stored Cost Explorer snapshot, and a provider usage API only for a connection that names a usage key.
+@router.post("/llm-connections/reconcile",
+             summary="Queue an LLM cost reconciliation run (admin-only, $0)")
+async def post_llm_cost_reconcile(
+    request: Request,
+    body: Optional[LlmCostReconcileRun] = None,
+    x_admin_secret: str = Header(None),
+    x_admin_user_id: Optional[str] = Header(None),
+):
+    from api.services import llm_connections
+
+    verify_admin_secret(x_admin_secret)
+    run = body or LlmCostReconcileRun()
+    actor = f"admin:{x_admin_user_id or 'unknown'}"
+    try:
+        result = await llm_connections.start_reconcile(request.app.state.pool, days=run.days, end_day=run.end_day,
+                                                       actor=actor)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    logger.info("admin_llm_cost_reconcile_queued", job_id=result["job_id"], days=run.days, admin_actor=actor)
     return result
 
 

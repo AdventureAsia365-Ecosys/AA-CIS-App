@@ -19,7 +19,7 @@ from .bedrock_satellite import DEFAULT_SATELLITE_ACCOUNT
 from .catalog import LEGACY_KEYS, CatalogModel, get_model_sync
 from .schema_check import SchemaMismatch, conform
 from .errors import OTHER, THROTTLED, LLMAccessDenied, account_level_class, classify
-from . import breaker, connections, data_scope, stream_sink
+from . import breaker, connection_budget, connections, data_scope, stream_sink
 from .vendor_route import (VendorDeployment, deployment_plan, pinned_deployment, split_pin,
                            vendor_deployment_for)
 from .deployments import alias_targets_sync
@@ -230,6 +230,13 @@ def _all_failed(message: str, failures: list) -> RuntimeError:
     LLMAccessDenied when all of them were refused at account level (access denied / no credit): a retry cannot
     help, so the job runner fails the job at once. Otherwise the plain RuntimeError as before. The last failure is
     the cause either way (the job error and the traceback keep the provider's own words)."""
+    if failures and all(isinstance(f, connection_budget.ConnectionBudgetExceeded) for f in failures):
+        # AA-1002 (S10): nothing was called, every model was left out by a connection's hard monthly budget: a budget
+        # stop (the job runner ends the job as stopped_budget), not an outage to retry.
+        keys = tuple(dict.fromkeys(k for f in failures for k in f.connection_keys))
+        budget = connection_budget.exceeded(message, keys)
+        budget.__cause__ = failures[-1]
+        return budget
     classes = [classify(f) for f in failures]
     cls = account_level_class(classes)
     exc: RuntimeError = LLMAccessDenied(message, cls) if cls else RuntimeError(message)
@@ -647,6 +654,10 @@ class LLMClient:
                 # failure, so an alias whose targets are all refused at account level still ends in LLMAccessDenied.
                 logger.info("llm_alias_target_skip", alias=tier, target=key, reason="circuit open")
                 steps.circuit_errors.append(breaker.circuit_error(model.model_key, skips))
+            elif not plan and getattr(plan, "budget_skips", None):
+                # AA-1002 (S10): every connection of this target reached its hard monthly budget.
+                logger.info("llm_alias_target_skip", alias=tier, target=key, reason="monthly budget reached")
+                steps.circuit_errors.append(connection_budget.budget_error(model.model_key, plan.budget_skips))
             steps += [(model, target) for target in plan]
         return steps
 
@@ -1091,6 +1102,10 @@ class LLMClient:
             if skips:
                 # AA-1002 (S4): not called because of the breaker; the error keeps the class that opened the circuit.
                 raise breaker.circuit_error(model.model_key, skips)
+            budget_skips = getattr(plan, "budget_skips", None)
+            if budget_skips:
+                # AA-1002 (S10): every usable connection reached its hard monthly budget (a BudgetExceeded).
+                raise connection_budget.budget_error(model.model_key, budget_skips)
             raise RuntimeError(f"Model {model.model_key!r} has no usable deployment (every deployment or its "
                                "connection is disabled, cannot serve it, or its circuit is open)")
         if len(plan) == 1:

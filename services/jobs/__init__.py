@@ -31,4 +31,5 @@ from . import supply_media_purge_job  # noqa: F401  AA-835 (CIS copies of a with
 from . import writing_memory_job  # noqa: F401  AA-917 (writing-memory backfill, fact filter, mining)
 from . import report_jobs  # noqa: F401  AA-1003 (kpi_snapshot_daily, report_generate)
 from . import report_ops_jobs  # noqa: F401  AA-1003 R2 (inquiry_handoff_check, report_email)
+from . import llm_cost_reconcile_job  # noqa: F401  AA-1002 S10 (LLM cost ledger vs the provider, nightly)
 from . import noop_sleep_job  # noqa: F401  AA-993 G1 (test-only kind, registered only when JOB_TEST_KINDS=1)

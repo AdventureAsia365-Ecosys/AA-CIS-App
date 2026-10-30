@@ -27,6 +27,10 @@ Slice S4 plugs the circuit breaker (``breaker.py``) into the plan: a deployment 
 
 Slice S5 makes the data policy per stage (``data_scope.py``): ``deployment_plan`` / ``vendor_deployment_for`` take the
 stage's ``allowed_scopes`` and leave out a deployment whose connection's ``data_scope`` the stage does not allow.
+
+Slice S10 adds the monthly budget per connection (``connection_budget.py``): a connection that reached its hard budget
+is left out like an open circuit (named in ``DeploymentPlan.budget_skips``). A connection without a budget (every seed
+row) is never read for it, so the plan is unchanged.
 """
 from __future__ import annotations
 
@@ -35,7 +39,7 @@ from typing import Callable, Optional
 
 import structlog
 
-from . import breaker, connections, data_scope, deployments
+from . import breaker, connection_budget, connections, data_scope, deployments
 from .catalog import LEGACY_KEYS, CatalogModel
 
 logger = structlog.get_logger()
@@ -79,6 +83,10 @@ def vendor_deployment_for(model: CatalogModel,
         if found is not None and not data_scope.allows(allowed_scopes, found.connection.data_scope):
             logger.info("llm_deployment_skip", model=model.model_key, connection=found.connection.connection_key,
                         reason=f"data scope {found.connection.data_scope} is not allowed for the stage")
+            return None
+        if found is not None and connection_budget.stops(found.connection) is not None:
+            logger.info("llm_deployment_skip", model=model.model_key, connection=found.connection.connection_key,
+                        reason="monthly budget reached")
             return None
         return found
     except Exception as e:  # noqa: BLE001 — a registry problem must never break today's path
@@ -136,11 +144,16 @@ class DeploymentPlan(list):
     """The ordered deployments a model is tried on (a list of VendorDeployment), plus ``circuit_skips``: the
     (connection_key, error class that opened it) of each deployment left out only because its circuit is open. An
     empty plan with skips is "the model was not called because of the breaker" (``breaker.circuit_error``), which keeps
-    the class of the refusal that opened the circuit (an account-level one still ends the job at once)."""
+    the class of the refusal that opened the circuit (an account-level one still ends the job at once).
 
-    def __init__(self, items=(), circuit_skips=()):
+    AA-1002 (S10): ``budget_skips``: the (connection_key, cost_guard.ConnectionBudget) of each deployment left out
+    because its connection reached its hard monthly budget. An empty plan with only budget skips is
+    ``connection_budget.budget_error`` (a BudgetExceeded: the job stops as a budget stop)."""
+
+    def __init__(self, items=(), circuit_skips=(), budget_skips=()):
         super().__init__(items)
         self.circuit_skips: list[tuple[str, Optional[str]]] = list(circuit_skips)
+        self.budget_skips: list[tuple[str, object]] = list(budget_skips)
 
 
 def _skip(model: CatalogModel, d: deployments.ModelDeployment, reason: str) -> None:
@@ -202,7 +215,9 @@ def deployment_plan(model: CatalogModel, allowed_scopes: Optional[tuple] = None)
       model, tenant ones included). Decided before the circuit check, so an open acc3 circuit never promotes a row
       the rule leaves out;
     - one whose circuit is not open (``circuit_open``: slice S4's breaker, ``breaker.is_open``; a skipped one is named
-      in the returned ``DeploymentPlan.circuit_skips``).
+      in the returned ``DeploymentPlan.circuit_skips``);
+    - one whose connection has not reached its hard monthly budget (slice S10, ``connection_budget.stops``; named in
+      ``DeploymentPlan.budget_skips``). Checked after the circuit, so an open circuit keeps its own error class.
 
     Returns None — "the registry does not describe this model, take today's path" — when the connection registry has
     no rows (unreadable, not migrated, DB down) or the model has no callable row at all (none, or only rows the gateway
@@ -243,14 +258,20 @@ def deployment_plan(model: CatalogModel, allowed_scopes: Optional[tuple] = None)
             candidates.append(c)
         plan: list[VendorDeployment] = []
         skips: list[tuple[str, Optional[str]]] = []
+        budget_skips: list[tuple[str, object]] = []
         for c in candidates:
             if circuit_open(c.connection.connection_key, model.model_key):
                 _skip(model, c.deployment, "circuit open")
                 skips.append((c.connection.connection_key,
                               breaker.open_class(c.connection.connection_key, model.model_key)))
                 continue
+            over = connection_budget.stops(c.connection)
+            if over is not None:
+                _skip(model, c.deployment, "monthly budget reached")
+                budget_skips.append((c.connection.connection_key, over))
+                continue
             plan.append(c)
-        return DeploymentPlan(plan, skips)
+        return DeploymentPlan(plan, skips, budget_skips)
     except Exception as e:  # noqa: BLE001 — a registry problem must never break today's path
         logger.warning("llm_deployment_plan_failed", model=model.model_key, error=str(e)[:200])
         return None
