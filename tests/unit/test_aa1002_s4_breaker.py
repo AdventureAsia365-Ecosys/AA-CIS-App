@@ -8,15 +8,16 @@ Postgres in tests/integration/test_aa1002_migration_310.py.
 import asyncio
 import threading
 import time
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from shared.llm_client import breaker, connections, vendor_route
 from shared.llm_client.breaker import (CLOSED, CREDENTIAL, HALF_OPEN, OPEN, Health, after_failure, after_success,
                                        claimed, state_of)
-from shared.llm_client.client import BilledUnusableReply
+from shared.llm_client.client import BilledUnusableReply, LLMClient
 from shared.llm_client.connections import ProviderConnection
 from shared.llm_client.errors import LLMAccessDenied, classify
 from tests.unit.test_aa1002_s3_deployment_routing import _route, world  # noqa: F401 — the S3 fake world fixture
@@ -343,3 +344,105 @@ def test_a_changed_limit_rebuilds_the_limiter():
     first = breaker._limiter_for(_limited(max_concurrency=2))
     assert breaker._limiter_for(_limited(max_concurrency=2)) is first
     assert breaker._limiter_for(_limited(max_concurrency=3)) is not first
+
+
+# ── review fixes: stale half-open copy, request errors, alias circuit skips ──────────────────────────────────────
+
+def test_admit_lets_the_call_through_when_another_task_already_closed_the_circuit(monkeypatch):
+    """The local copy (up to READ_TTL_S old) is half-open, the row under the lock is closed: not a refusal."""
+    monkeypatch.delenv(breaker.SWITCH_ENV, raising=False)
+    monkeypatch.setattr(breaker, "_now", lambda: T0)
+    breaker._rows[("acc3", "m")] = replace(H, model_key="m", circuit_open_until=T0 - timedelta(seconds=1),
+                                           open_streak=1, last_error_class="other")
+    conn = FakeConn({"last_ok_at": T0})                              # closed in the DB (a probe elsewhere succeeded)
+    monkeypatch.setattr(breaker, "_db", lambda fn: asyncio.run(fn(conn)))
+    assert breaker.admit("acc3", "m") is True
+    assert "UPDATE" not in conn.log                                  # nothing claimed: it is not a probe
+    assert state_of(breaker._get(("acc3", "m")), T0) == CLOSED       # the local copy caught up
+
+
+@pytest.mark.parametrize("row,expected", [
+    ({"circuit_open_until": T0 + timedelta(seconds=60)}, False),                 # a failed probe reopened it
+    ({"circuit_open_until": T0 - timedelta(seconds=1), "probe_until": T0 + timedelta(seconds=60)}, False),  # held
+    ({"circuit_open_until": T0 - timedelta(seconds=1)}, True),                   # half-open, free: this is the probe
+])
+def test_admit_from_a_stale_half_open_copy_follows_the_locked_row(monkeypatch, row, expected):
+    monkeypatch.delenv(breaker.SWITCH_ENV, raising=False)
+    monkeypatch.setattr(breaker, "_now", lambda: T0)
+    breaker._rows[("acc3", "m")] = replace(H, model_key="m", circuit_open_until=T0 - timedelta(seconds=1))
+    conn = FakeConn(row)
+    monkeypatch.setattr(breaker, "_db", lambda fn: asyncio.run(fn(conn)))
+    assert breaker.admit("acc3", "m") is expected
+
+
+BAD_REQUESTS = [
+    RuntimeError("An error occurred (ValidationException) when calling the Converse operation: Input is too long "
+                 "for requested model."),
+    RuntimeError("BadRequestError: Error code: 400 - {'error': {'code': 'context_length_exceeded'}}"),
+]
+
+
+@pytest.mark.parametrize("exc", BAD_REQUESTS)
+def test_request_errors_are_their_own_class(exc):
+    assert breaker.failure_class(exc) == breaker.REQUEST
+
+
+def test_an_anthropic_400_is_a_request_error_unless_it_is_a_credit_refusal():
+    from shared.llm_client.adapters.anthropic_messages import AnthropicAPIError
+    bad = AnthropicAPIError("prompt is too long: 250000 tokens > 200000 maximum", "other", 400,
+                            "invalid_request_error")
+    assert breaker.failure_class(bad) == breaker.REQUEST
+    credit = AnthropicAPIError("Your credit balance is too low", "quota_exhausted", 400, "invalid_request_error")
+    assert breaker.failure_class(credit) == "quota_exhausted"
+
+
+@pytest.mark.parametrize("text", [
+    "An error occurred (ValidationException) when calling the Converse operation: The provided model identifier is "
+    "invalid.",
+    "An error occurred (ValidationException): Invocation of model ID x with on-demand throughput isn't supported. "
+    "Retry your request with the ID or ARN of an inference profile.",
+])
+def test_a_validation_error_about_the_deployment_still_counts(text):
+    assert breaker.failure_class(RuntimeError(text)) == "other"
+
+
+@pytest.mark.real_breaker
+def test_many_bad_requests_leave_the_circuit_closed(monkeypatch):
+    monkeypatch.delenv(breaker.SWITCH_ENV, raising=False)
+    conn = ProviderConnection(connection_key="acc3", kind="bedrock", auth_mode="task_role", label="x",
+                              data_scope="aws_only", enabled=True, region="us-west-1")
+    for _ in range(8):
+        with pytest.raises(RuntimeError, match="too long"):
+            breaker.guarded(conn, "m", MagicMock(side_effect=BAD_REQUESTS[0]))
+    assert breaker.snapshot() == [] and not breaker.is_open("acc3", "m")
+    assert breaker.admit("acc3", "m") is True
+
+
+@pytest.mark.real_breaker
+def test_a_probe_that_meets_a_bad_request_frees_its_lease_without_doubling(monkeypatch):
+    monkeypatch.delenv(breaker.SWITCH_ENV, raising=False)
+    clock = {"now": T0}
+    monkeypatch.setattr(breaker, "_now", lambda: clock["now"])
+    conn = ProviderConnection(connection_key="acc3", kind="bedrock", auth_mode="task_role", label="x",
+                              data_scope="aws_only", enabled=True, region="us-west-1")
+    breaker.record_failure("acc3", "m", ERROR_002)
+    (opened,) = breaker.snapshot()
+    clock["now"] = opened.circuit_open_until + timedelta(seconds=1)
+    with pytest.raises(RuntimeError, match="too long"):
+        breaker.guarded(conn, "m", MagicMock(side_effect=BAD_REQUESTS[0]))     # this call took the probe lease
+    (row,) = breaker.snapshot()
+    assert row.probe_until is None and row.open_streak == 1 and row.circuit_open_until == opened.circuit_open_until
+    assert breaker.admit("acc3", "m") is True                       # the next call is the probe at once
+
+
+@pytest.mark.real_breaker
+def test_an_alias_whose_targets_are_all_behind_an_access_denied_circuit_raises_llm_access_denied(world, monkeypatch):
+    monkeypatch.setenv("LLM_LEGACY_ALIASES", "on")
+    world.reset()
+    for key in ("sonnet", "haiku"):                                  # sonnet -> [sonnet, haiku], both only on acc3
+        breaker.record_failure("acc3", key, ERROR_002)
+    with patch.object(LLMClient, "_legacy_chain", side_effect=AssertionError("legacy chain used")):
+        with pytest.raises(LLMAccessDenied, match="All LLM providers failed") as info:
+            world.generate(model_tier="sonnet")
+    assert world.calls == []                                         # no provider call: the circuits said no
+    assert isinstance(info.value.__cause__, breaker.CircuitOpen) and "circuit open on acc3" in str(info.value.__cause__)

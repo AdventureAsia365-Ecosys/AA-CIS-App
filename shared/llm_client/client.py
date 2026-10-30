@@ -174,6 +174,16 @@ def _all_failed(message: str, failures: list) -> RuntimeError:
     return exc
 
 
+class _AliasSteps(list):
+    """AA-1002 (S4): a legacy alias's (catalog model, deployment) attempts, plus ``circuit_errors``: one
+    breaker.CircuitOpen per alias target none of whose deployments could be called (every circuit open). _run_alias
+    starts its failure list with them, so _all_failed keeps the class that opened the circuits."""
+
+    def __init__(self, items=()):
+        super().__init__(items)
+        self.circuit_errors: list = []
+
+
 def _billed_usage(model_used: str, account: Optional[str], usage_totals: dict, cost: float,
                   stop_reason: Optional[str], provider_requests: int) -> dict:
     return {"model": model_used, "account": account, "tokens_in": usage_totals.get("tokens_in"),
@@ -463,7 +473,7 @@ class LLMClient:
         targets = alias_targets_sync(tier)
         if not targets:
             return None
-        steps: list = []
+        steps = _AliasSteps()
         for key in targets:
             model = get_model_sync(key)
             if model is None:
@@ -476,6 +486,12 @@ class LLMClient:
             if plan is None:
                 logger.warning("llm_alias_fallback_legacy_chain", alias=tier, target=key, reason="no registry rows")
                 return None
+            skips = getattr(plan, "circuit_skips", None)
+            if not plan and skips:
+                # AA-1002 (S4): every deployment of this target is behind an open circuit. Kept as the target's
+                # failure, so an alias whose targets are all refused at account level still ends in LLMAccessDenied.
+                logger.info("llm_alias_target_skip", alias=tier, target=key, reason="circuit open")
+                steps.circuit_errors.append(breaker.circuit_error(model.model_key, skips))
             steps += [(model, target) for target in plan]
         return steps
 
@@ -483,7 +499,7 @@ class LLMClient:
         """The legacy chain's contract on alias steps: the first that answers wins; `fallback_used` when a later target
         model answered (Sonnet degraded to Haiku); every step down = the chain's own final error (incl. the S235
         GPT-4.1 tail, which only runs if that retired catalog row is enabled again)."""
-        failures: list = []
+        failures: list = list(getattr(steps, "circuit_errors", ()))   # targets not called: circuit open (S4)
         intended = (alias_targets_sync(tier) or (None,))[0]     # the alias's first model, even if it had no step
         for position, (model, target) in enumerate(steps):
             try:

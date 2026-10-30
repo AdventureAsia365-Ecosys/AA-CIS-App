@@ -9,7 +9,8 @@ asks for:
   task opened, instead of each process learning it again with its own failed calls;
 - what opens a circuit depends on the error class (``errors.classify``, plus ``credential`` for a connection whose key
   cannot be read): an account-level refusal or a missing credential opens at once, throttling after a few in a row,
-  anything else (outage, timeout) after more (``RULES``);
+  anything else (outage, timeout) after more (``RULES``); a refusal of one request's own content (input too long,
+  malformed, content filter: ``is_request_error``) is not counted at all;
 - after the open period the circuit is half-open: exactly ONE call across all tasks may try it (a probe lease taken
   in the DB row); its success closes the circuit, its failure opens it again for twice as long (capped). A breaker
   that opened by mistake therefore costs one short open period and one probe, never a stuck route.
@@ -34,6 +35,7 @@ provider failure (no breaker count) and lets the route move to its next deployme
 from __future__ import annotations
 
 import os
+import re
 import threading
 import time
 from collections import deque
@@ -45,7 +47,7 @@ from typing import Callable, Iterator, Optional, TypeVar
 import structlog
 
 from . import connections
-from .errors import ACCESS_DENIED, OTHER, QUOTA_EXHAUSTED, THROTTLED, account_level_class, classify
+from .errors import ACCESS_DENIED, OTHER, QUOTA_EXHAUSTED, THROTTLED, _chain, account_level_class, classify
 
 logger = structlog.get_logger()
 
@@ -58,6 +60,31 @@ _OFF = ("0", "false", "off", "no")
 # not a provider answer, but every call on that connection fails the same way until someone fixes the secret.
 CREDENTIAL = "credential"
 CLASSES = (ACCESS_DENIED, QUOTA_EXHAUSTED, THROTTLED, CREDENTIAL, OTHER)
+# Not a circuit class: a refusal of one request's content (input too long, malformed, content filter). It is never
+# counted (``record_failure`` ignores it), so one bad payload retried by a job cannot open the circuit for everyone.
+REQUEST = "request"
+_REQUEST_WORDING = re.compile(
+    r"validationexception"
+    r"|\binvalid_request_error\b"
+    r"|\brequest_too_large\b"
+    r"|badrequesterror"
+    r"|context_length_exceeded"
+    r"|maximum context length"
+    r"|input is too long"
+    r"|prompt is too long"
+    r"|too many (input )?tokens"
+    r"|malformed input request"
+    r"|content_filter"
+    r"|content_policy_violation",
+    re.IGNORECASE)
+_DEPLOYMENT_WORDING = re.compile(
+    r"model identifier is invalid"
+    r"|on-demand throughput"
+    r"|inference profile"
+    r"|end of (its )?life"
+    r"|model (is )?not (found|supported)"
+    r"|unsupported model",
+    re.IGNORECASE)
 
 CLOSED, OPEN, HALF_OPEN = "closed", "open", "half_open"
 
@@ -326,17 +353,36 @@ def admit(connection_key: str, model_key: str) -> bool:
             return True
         if st == OPEN:
             return False
-        _, got = _transition(key, lambda cur: claimed(cur, _now()))
+        before, got = _transition(key, lambda cur: claimed(cur, _now()))
         if got is not None:
             logger.info("llm_circuit_probe", connection=connection_key, model=model_key)
-        return got is not None
+            return True
+        # The local copy (up to READ_TTL_S old) said half-open, but the row under the lock is already closed: a probe
+        # in another task closed it meanwhile. The call goes through (it is not a probe; nothing to claim).
+        return state_of(before, _now()) == CLOSED
     except Exception as e:  # noqa: BLE001
         logger.warning("llm_breaker_admit_failed", connection=connection_key, model=model_key, error=str(e)[:200])
         return True
 
 
+def is_request_error(exc: BaseException) -> bool:
+    """True when the provider refused THIS request's content (input too long, context exceeded, malformed body,
+    content filter): Bedrock ``ValidationException``, Anthropic ``invalid_request_error`` / 400 / 413, OpenAI
+    ``BadRequestError`` / ``context_length_exceeded``. Not when the wording points at the deployment itself (an invalid
+    model identifier, no on-demand throughput, a retired model): that fails every request alike and keeps counting.
+    Read only for an ``errors.classify`` result of ``other`` (a credit-balance 400 stays quota_exhausted)."""
+    for link in _chain(exc):
+        text = f"{type(link).__name__}: {link}"
+        if _DEPLOYMENT_WORDING.search(text):
+            return False
+        if getattr(link, "status_code", None) in (400, 413) or _REQUEST_WORDING.search(text):
+            return True
+    return False
+
+
 def failure_class(exc: BaseException) -> str:
-    """The breaker class of a failed call: ``credential`` for an unreadable key, else ``errors.classify``."""
+    """The breaker class of a failed call: ``credential`` for an unreadable key, else ``errors.classify``, with its
+    ``other`` narrowed to ``request`` for a refusal of the request's own content (``is_request_error``)."""
     seen: set[int] = set()
     cur: Optional[BaseException] = exc
     while cur is not None and id(cur) not in seen:
@@ -344,7 +390,12 @@ def failure_class(exc: BaseException) -> str:
         if isinstance(cur, connections.ConnectionCredentialError):
             return CREDENTIAL
         cur = cur.__cause__ or cur.__context__
-    return classify(exc)
+    cls = classify(exc)
+    return REQUEST if cls == OTHER and is_request_error(exc) else cls
+
+
+def _lease_released(cur: Health) -> Optional[Health]:
+    return replace(cur, probe_until=None) if cur.probe_until is not None else None
 
 
 def record_failure(connection_key: str, model_key: str, exc: BaseException) -> None:
@@ -353,6 +404,15 @@ def record_failure(connection_key: str, model_key: str, exc: BaseException) -> N
         return
     try:
         cls = failure_class(exc)
+        if cls == REQUEST:
+            # Says nothing about the deployment's health: no count, the circuit stays as it is. A half-open probe that
+            # met a bad request frees its lease so the next call probes (no doubled open period, no 3-minute wait).
+            h = _get((connection_key, model_key))
+            if h is not None and h.probe_until is not None:
+                _transition((connection_key, model_key), _lease_released)
+            logger.info("llm_breaker_request_error_not_counted", connection=connection_key, model=model_key,
+                        error=str(exc)[:200])
+            return
         message = f"{type(exc).__name__}: {exc}"
         now_fn = _now
         before, after = _transition((connection_key, model_key),

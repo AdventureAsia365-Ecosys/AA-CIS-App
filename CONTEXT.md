@@ -280,11 +280,12 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   `shared/llm_client/breaker.py` keeps one circuit per deployment (connection × catalog model) in
   `shared.llm_provider_health`, shared by every api / worker task (10 s snapshot; writes lock the row and apply pure
   transitions). Class rules (`breaker.RULES`): access_denied / quota_exhausted / `credential` (a key that cannot be
-  read) open at once, throttled after 3 in a row, anything else after 5; open periods are short (30 s – 5 min first,
+  read) open at once, throttled after 3 in a row, anything else after 5; a refusal of one request's own content
+  (input too long, malformed, content filter: breaker-only class `request`) is never counted; open periods are short (30 s – 5 min first,
   doubled on each failed half-open probe, capped). Half-open = exactly one call across tasks takes a probe lease.
   `deployment_plan` leaves out open deployments (`DeploymentPlan.circuit_skips`); a model none of whose deployments
-  may be called raises `breaker.CircuitOpen` carrying the class that opened it, so an account-level refusal still
-  ends in `LLMAccessDenied` without a provider call. `LLMClient._call_target` and `embed` wrap every registry call in
+  may be called raises `breaker.CircuitOpen` carrying the class that opened it (the legacy alias path too), so an
+  account-level refusal still ends in `LLMAccessDenied` without a provider call. `LLMClient._call_target` and `embed` wrap every registry call in
   `breaker.guarded` (probe admission, the connection's limiter, outcome; an unusable reply counts as an answer). The
   limiter is per process: `max_concurrency` (semaphore) and `rpm_limit` (rolling minute) from the connection row; no
   slot within 30 s = `LimiterSaturated` (throttled, not counted). Table missing / DB down = the same breaker in
