@@ -23,7 +23,7 @@ from typing import Optional
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from api.core.error_ref import log_exception_ref, new_error_ref, public_error
 from api.core.staff_authz import staff_policy
@@ -1135,15 +1135,41 @@ async def get_llm_connections(request: Request):
 
 
 class LlmConnectionPatch(BaseModel):
-    """AA-1002 (S2): only the on/off switch. secret_name / base_url / limits are edited in slice S4."""
+    """AA-1002 (S4): the editable fields of a connection (api/services/llm_connections.EDITABLE). Only the fields
+    sent are changed; an explicit null clears a nullable one. Identity (kind, auth mode, account, role, ExternalId,
+    region, credential env) and data scope are not editable here (extra fields are refused)."""
     model_config = {"extra": "forbid"}
-    enabled: bool
+    enabled: Optional[bool] = None
+    secret_name: Optional[str] = Field(None, max_length=256)
+    base_url: Optional[str] = Field(None, max_length=512)
+    timeout_s: Optional[int] = Field(None, ge=1, le=900)
+    max_retries: Optional[int] = Field(None, ge=0, le=5)
+    max_concurrency: Optional[int] = Field(None, ge=1, le=1000)
+    rpm_limit: Optional[int] = Field(None, ge=1, le=100000)
+    monthly_budget_usd: Optional[float] = Field(None, ge=0, le=1_000_000)
+    notes: Optional[str] = Field(None, max_length=2000)
+
+    @model_validator(mode="after")
+    def _something_to_change(self):
+        if not self.model_fields_set:
+            raise ValueError("send at least one field to change")
+        if "enabled" in self.model_fields_set and self.enabled is None:
+            raise ValueError("enabled must be true or false")
+        return self
+
+    def changes(self) -> dict:
+        out = {f: getattr(self, f) for f in self.model_fields_set}
+        for f in ("secret_name", "base_url", "notes"):
+            if isinstance(out.get(f), str):
+                out[f] = out[f].strip() or None
+        return out
 
 
-# AA-1002 (gateway slice S2) — switch an Anthropic API connection on or off (admin only, POLICY ai.admin; audit row).
-# Enabling refuses a policy problem or an unreadable secret (422). The worker reads the change within 5 minutes.
+# AA-1002 (gateway slices S2 / S4) — switch an LLM connection on or off and edit its secret name, endpoint and limits
+# (admin only, POLICY ai.admin; one audit row per change). Enabling, or moving the secret / endpoint of an enabled
+# connection, refuses a policy problem or an unreadable secret (422). The worker reads the change within 5 minutes.
 @router.patch("/llm-connections/{connection_key}",
-              summary="Switch an LLM connection on or off (admin-only, audited)")
+              summary="Change an LLM connection: on/off, secret name, endpoint, limits (admin-only, audited)")
 async def patch_llm_connection(
     request: Request,
     connection_key: str,
@@ -1155,16 +1181,54 @@ async def patch_llm_connection(
 
     verify_admin_secret(x_admin_secret)
     admin_actor = x_admin_user_id or "unknown"
+    changes = body.changes()
     try:
         async with request.app.state.pool.acquire() as conn:
-            result = await llm_connections.set_enabled(conn, connection_key, enabled=body.enabled,
-                                                       actor=f"admin:{admin_actor}")
+            result = await llm_connections.update_connection(conn, connection_key, changes,
+                                                             actor=f"admin:{admin_actor}")
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except llm_connections.ConnectionToggleRefused as e:
         raise HTTPException(status_code=422, detail=str(e))
-    logger.info("admin_llm_connection_changed", connection_key=connection_key, enabled=body.enabled,
-                changed=result["changed"], admin_actor=admin_actor)
+    except llm_connections.ConnectionEditUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    logger.info("admin_llm_connection_changed", connection_key=connection_key, fields=sorted(changes),
+                changed=result["changed_fields"], admin_actor=admin_actor)
+    return result
+
+
+class LlmConnectionTest(BaseModel):
+    """AA-1002 (S4): which model to test (a deployment of it on the connection); none = the cheapest text model."""
+    model_config = {"extra": "forbid"}
+    model_key: Optional[str] = Field(None, max_length=64, pattern=r"^[a-z0-9][a-z0-9.-]{0,62}$")
+
+
+# AA-1002 (gateway slice S4) — one small real call on a connection (admin only, POLICY ai.admin). Paid (a few tokens,
+# well under $0.001 at catalog prices), logged in shared.llm_call_log (stage adhoc_conn_test) and audited. A provider
+# failure is the answer (200, ok=false + its class); 404 unknown connection, 422 nothing testable / policy problem.
+@router.post("/llm-connections/{connection_key}/test",
+             summary="Test an LLM connection with one small real call (admin-only, logged, audited)")
+async def test_llm_connection(
+    request: Request,
+    connection_key: str,
+    body: Optional[LlmConnectionTest] = None,
+    x_admin_secret: str = Header(None),
+    x_admin_user_id: Optional[str] = Header(None),
+):
+    from api.services import llm_connections
+
+    verify_admin_secret(x_admin_secret)
+    admin_actor = x_admin_user_id or "unknown"
+    try:
+        result = await llm_connections.test_connection(
+            request.app.state.pool, connection_key, model_key=body.model_key if body else None,
+            actor=f"admin:{admin_actor}")
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except llm_connections.ConnectionToggleRefused as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    logger.info("admin_llm_connection_tested", connection_key=connection_key, model_key=result["model_key"],
+                ok=result["ok"], error_class=result.get("error_class"), admin_actor=admin_actor)
     return result
 
 

@@ -181,11 +181,12 @@ class World:
 
 @pytest.fixture
 def world(monkeypatch):
+    hook = vendor_route.circuit_open          # S4: the breaker's is_open; tests may replace it, restore it after
     w = World(monkeypatch)
     yield w
     w.reset()
     catalog.invalidate()
-    vendor_route.circuit_open = vendor_route._never_open
+    vendor_route.circuit_open = hook
 
 
 def _route(monkeypatch, *keys):
@@ -317,7 +318,8 @@ def test_an_open_acc3_circuit_never_promotes_the_vendor_row(world):
     world.conns["anthropic-direct"] = _anthropic(enabled=True)
     world.reset()
     vendor_route.circuit_open = lambda conn, model: conn == "acc3"
-    with pytest.raises(RuntimeError, match="no usable deployment"):
+    # S4: the error names the open circuit (breaker.circuit_error) instead of "no usable deployment"
+    with pytest.raises(RuntimeError, match="not called: circuit open on acc3"):
         world.generate(model_tier="sonnet-5-5")
     assert world.calls == []
 

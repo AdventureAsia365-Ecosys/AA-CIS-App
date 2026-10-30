@@ -85,6 +85,26 @@ def _atom_seed_label_only(request, monkeypatch):
     monkeypatch.setattr(writing_service, "route_moment_seeds", _label_route_seeds)
 
 
+@pytest.fixture(autouse=True)
+def _llm_breaker_off(request, monkeypatch):
+    """AA-1002 (S4): the LLM circuit breaker keeps state across calls (in process, and in shared.llm_provider_health
+    when a DB answers). Gateway tests that script provider failures expect every call to reach the provider, as before
+    S4, so the breaker is off (LLM_CIRCUIT_BREAKER=off = the S3 behaviour) unless a test opts in with the marker
+    `real_breaker`; either way it starts empty and never touches a database."""
+    from shared.llm_client import breaker
+    breaker.reset()
+    if "real_breaker" not in request.keywords:
+        monkeypatch.setenv(breaker.SWITCH_ENV, "off")
+    else:
+        monkeypatch.delenv(breaker.SWITCH_ENV, raising=False)
+
+    def _no_db(fn):
+        raise RuntimeError("no database in unit tests")
+    monkeypatch.setattr(breaker, "_db", _no_db)
+    yield
+    breaker.reset()
+
+
 async def _fake_public_dns(host, port, family=0):
     """AA-875 — no unit test does a real DNS lookup through shared.safe_http: every name resolves to
     one public address. Tests of the DNS rules replace safe_http._getaddrinfo themselves."""

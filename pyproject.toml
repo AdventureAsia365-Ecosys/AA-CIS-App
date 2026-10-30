@@ -1,6 +1,7 @@
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
 markers = ["real_atom_seed: run with the real AA-768 atom seed helper (no conftest stub)",
+           "real_breaker: run with the AA-1002 S4 LLM circuit breaker on (in process; conftest stubs its DB)",
            "real_served_state: run with the real AA-986 served-state reads (no conftest stand-in)"]
 
 [tool.coverage.run]

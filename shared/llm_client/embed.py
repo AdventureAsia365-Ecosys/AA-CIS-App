@@ -17,9 +17,13 @@ added without deployments) the catalog's bedrock_profile_ids is used on the Bedr
 connections (connections.bedrock_connection_keys, the built-in 304 mirror when unreadable) — one
 account per model, acc3 before acc2, as before S3. The request body (input_type, output_dimension)
 is unchanged.
+
+AA-1002 (S4): each call on a registry deployment goes through the circuit breaker and the connection's limiter
+(breaker.guarded); a deployment whose circuit is open is not in the plan.
 """
 from __future__ import annotations
 
+import functools
 import json
 import os
 from dataclasses import dataclass
@@ -27,7 +31,7 @@ from typing import Optional
 
 import structlog
 
-from . import connections
+from . import breaker, connections
 from .catalog import CatalogModel, get_model_sync
 from .role_config import get_stage_config_sync
 from .vendor_route import deployment_plan
@@ -78,11 +82,18 @@ def _runtime_for(connection_key: str):
 
 def _targets(model: CatalogModel, account_route: Optional[str]) -> list[tuple[str, str]]:
     """(connection_key, wire id) attempts for `model`, in order (see the module docstring)."""
+    return [(account, wire_id) for account, wire_id, _ in _plan_targets(model, account_route)[0]]
+
+
+def _plan_targets(model: CatalogModel, account_route: Optional[str]):
+    """([(connection_key, wire id, connection or None)], circuit skips). The connection is None on the no-registry
+    path (today's path, no breaker); circuit skips name the deployments the S4 breaker left out."""
     plan = deployment_plan(model)
     if plan is None:
         account = model.account_for(account_route)
-        return [(account, model.bedrock_profile_ids[account])] if account else []
-    return [(t.connection.connection_key, t.deployment.wire_id) for t in plan]
+        return ([(account, model.bedrock_profile_ids[account], None)] if account else []), []
+    return ([(t.connection.connection_key, t.deployment.wire_id, t.connection) for t in plan],
+            list(getattr(plan, "circuit_skips", [])))
 
 
 def _resolve(key: str) -> Optional[CatalogModel]:
@@ -147,13 +158,18 @@ def embed(stage: str, texts: list[str], *, input_type: str = "search_document",
             logger.info("llm_route_skip", stage=stage, model=key, reason=reason)
             errors.append(f"{key}: skipped ({reason})")
             continue
-        targets = _targets(model, cfg.account_route)
+        targets, skips = _plan_targets(model, cfg.account_route)
         if not targets:
-            errors.append(f"{key}: no Bedrock profile or usable deployment")
+            errors.append(f"{key}: " + (str(breaker.circuit_error(key, skips)) if skips else
+                                        "no Bedrock profile or usable deployment"))
             continue
-        for account, wire_id in targets:          # AA-1002 (S3): same model on each deployment first
+        for account, wire_id, conn in targets:    # AA-1002 (S3): same model on each deployment first
             try:
-                resp = _call(model, account, texts, input_type, dimensions, wire_id)
+                if conn is None:
+                    resp = _call(model, account, texts, input_type, dimensions, wire_id)
+                else:                             # AA-1002 (S4): breaker + limiter of the deployment
+                    resp = breaker.guarded(conn, model.model_key, functools.partial(
+                        _call, model, account, texts, input_type, dimensions, wire_id))
             except Exception as e:
                 logger.warning("llm_route_attempt_failed", stage=stage, model=key, account=account,
                                position=position, error=str(e)[:300])

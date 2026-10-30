@@ -68,6 +68,7 @@ export const MODELS = defineMessages(
     subStages: "Stages",
     subCatalog: "Catalog",
     subShadow: "Shadow A/B",
+    subConnections: "Connections",
     // StageRouteEditor
     routeSaved: (stage: string) => `Route saved for ${stage}`,
     routeEditor: "Route editor",
@@ -207,6 +208,7 @@ export const MODELS = defineMessages(
     subStages: "Các bước",
     subCatalog: "Danh mục",
     subShadow: "Chạy bóng A/B",
+    subConnections: "Kết nối",
     routeSaved: (stage: string) => `Đã lưu tuyến cho ${stage}`,
     routeEditor: "Sửa tuyến",
     shadowLabel: "Chạy bóng:",

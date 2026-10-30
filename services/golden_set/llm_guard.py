@@ -14,6 +14,7 @@ from typing import Callable
 ENTRY_POINTS = (
     ("shared.llm_client.client", "LLMClient.generate"),
     ("shared.llm_client.client", "LLMClient._generate"),
+    ("shared.llm_client.client", "LLMClient.probe"),                # AA-1002 S4: the admin's connection test
     ("shared.llm_client.bedrock_satellite", "invoke_claude"),
     ("shared.llm_client.bedrock_satellite", "get_satellite_client"),
     ("shared.llm_client.bedrock_satellite", "native_runtime"),      # AA-1002 S3: a task-role (acc2) deployment
