@@ -13,7 +13,8 @@
 //      Switch carry their state in ARIA;
 //   5. Tabs underline is a tablist with aria-selected, a disabled tab and a count; the track variant's markup has no
 //      tab roles (unchanged);
-//   6. rovingTarget: arrows, Home / End, wrap-around, disabled items skipped, other keys ignored.
+//   6. rovingTarget: arrows, Home / End, wrap-around, disabled items skipped, other keys ignored;
+//   7. Eyebrow (primitives.tsx, AA-994 S6b): the legacy admin SLabel look, the element choice, test id, on-dark tone.
 
 import assert from "node:assert/strict";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -258,6 +259,18 @@ test("ListButton: option rows carry aria-selected, menu items do not; danger ton
   assert.match(item, /data-tone="danger"/);
   assert.match(item, /color:var\(--aa-red\)/);
   assert.match(html(h(B.ListButton, { density: "compact" }, "Clear status filter")), /padding:6px 8px.*font-size:12px/);
+});
+
+test("Eyebrow: the SLabel look (11px, 600, uppercase, 0.14em, muted, 14px below), element, test id, on dark", () => {
+  const label = html(h(P.Eyebrow, null, "Retry policy"));
+  assert.match(label, /^<div style="[^"]*">Retry policy<\/div>$/);
+  for (const part of ["margin:0", "margin-bottom:14px", "font-size:11px", "font-weight:600", "text-transform:uppercase",
+    "letter-spacing:0.14em", "color:var(--aa-muted)"]) {
+    assert.ok(label.includes(part), `${part} in ${label}`);
+  }
+  const heading = html(h(P.Eyebrow, { as: "h3", testId: "jobs-kinds-label", style: { marginBottom: 0 } }, "Kinds"));
+  assert.match(heading, /^<h3 data-testid="jobs-kinds-label" style="[^"]*margin-bottom:0[^"]*">Kinds<\/h3>$/);
+  assert.match(html(h(P.Eyebrow, { tone: "onDark" }, "Reconcile")), /color:rgba\(255,255,255,0\.5\)/);
 });
 
 test("Pressable: a reset button with the kit focus class; block or inline", () => {

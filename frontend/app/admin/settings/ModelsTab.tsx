@@ -15,7 +15,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle } from "lucide-react";
-import { A, mono, Card, SLabel, Spinner, LoadingScreen } from "../_components/adminUi";
 import {
   Button,
   Badge,
@@ -27,7 +26,14 @@ import {
   useFormat,
   useLocalized,
   useT,
-  useToast, ScrollX,
+  useToast,
+  ScrollX,
+  Eyebrow,
+  K,
+  LoadingScreen,
+  Section,
+  Spinner,
+  mono,
 } from "../../_kit";
 import {
   HIDDEN_STAGES,
@@ -63,17 +69,17 @@ function RouteLine({ route }: { route?: StageRoute }) {
   const chip = (label: string, via: string | null | undefined, key: string, tone: "main" | "fb" | "shadow") => (
     <span key={key} style={{
       display: "inline-flex", gap: 4, alignItems: "center", padding: "2px 8px", borderRadius: 999,
-      fontSize: 11, border: `1px solid ${A.line}`,
-      background: tone === "main" ? A.line2 : A.card, color: tone === "shadow" ? A.muted2 : A.ink2,
+      fontSize: 11, border: `1px solid ${K.line}`,
+      background: tone === "main" ? K.line2 : K.card, color: tone === "shadow" ? K.muted2 : K.ink2,
     }}>
       <span style={{ fontWeight: tone === "main" ? 600 : 400 }}>{label}</span>
-      {via && <span style={{ color: A.muted2 }}>· {via}</span>}
+      {via && <span style={{ color: K.muted2 }}>· {via}</span>}
     </span>
   );
   return (
     <div data-testid="llm-route-line" style={{
       width: "100%", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6,
-      fontSize: 11, color: A.muted2, paddingLeft: 2,
+      fontSize: 11, color: K.muted2, paddingLeft: 2,
     }}>
       <span>{t("route")}</span>
       {route.chain.map((i, n) => (
@@ -142,12 +148,12 @@ function ModelRow({ row }: { row: StageConfigRow }) {
   return (
     <div data-testid={`llm-model-row-${row.stage}`} style={{
       display: "flex", flexDirection: "column", gap: 0, padding: "10px 4px",
-      borderBottom: `1px solid ${A.line2}`,
+      borderBottom: `1px solid ${K.line2}`,
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <div style={{ minWidth: 200 }}>
-          <div style={{ fontFamily: mono, fontSize: 12, color: A.ink, fontWeight: 600 }}>{row.stage}</div>
-          <div style={{ fontSize: 11.5, color: A.muted2 }}>{stageLabels[row.stage] ?? STAGE_LABELS[row.stage] ?? row.stage}</div>
+          <div style={{ fontFamily: mono, fontSize: 12, color: K.ink, fontWeight: 600 }}>{row.stage}</div>
+          <div style={{ fontSize: 11.5, color: K.muted2 }}>{stageLabels[row.stage] ?? STAGE_LABELS[row.stage] ?? row.stage}</div>
         </div>
         <Badge tone={ROLE_TONE[row.role] ?? "neutral"} dot={false}>{row.role}</Badge>
 
@@ -157,8 +163,8 @@ function ModelRow({ row }: { row: StageConfigRow }) {
           onChange={(e) => setModelId(e.target.value)}
           disabled={saving}
           style={{
-            padding: "6px 10px", borderRadius: 7, border: `1px solid ${A.line}`,
-            fontSize: 12.5, fontFamily: "inherit", color: A.body, background: A.card, minWidth: 260, maxWidth: "100%",
+            padding: "6px 10px", borderRadius: 7, border: `1px solid ${K.line}`,
+            fontSize: 12.5, fontFamily: "inherit", color: K.body, background: K.card, minWidth: 260, maxWidth: "100%",
           }}
         >
           {row.options.map((o: ModelOption) => (
@@ -170,7 +176,7 @@ function ModelRow({ row }: { row: StageConfigRow }) {
         {(() => {
           const opt = row.options.find((o) => o.model_id === modelId);
           return !opt?.available && opt?.reason ? (
-            <span title={opt.reason} style={{ display: "inline-flex", color: A.amber }}>
+            <span title={opt.reason} style={{ display: "inline-flex", color: K.amber }}>
               <AlertTriangle size={13} />
             </span>
           ) : null;
@@ -182,8 +188,8 @@ function ModelRow({ row }: { row: StageConfigRow }) {
             onChange={(e) => setAccountRoute(e.target.value)}
             disabled={saving}
             style={{
-              padding: "6px 10px", borderRadius: 7, border: `1px solid ${A.line}`,
-              fontSize: 12.5, fontFamily: "inherit", color: A.body, background: A.card, minWidth: 150, maxWidth: "100%",
+              padding: "6px 10px", borderRadius: 7, border: `1px solid ${K.line}`,
+              fontSize: 12.5, fontFamily: "inherit", color: K.body, background: K.card, minWidth: 150, maxWidth: "100%",
             }}
           >
             {row.account_route_options.map((o: AccountOption) => (
@@ -193,8 +199,8 @@ function ModelRow({ row }: { row: StageConfigRow }) {
         )}
 
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
-          {error && <span style={{ fontSize: 11.5, color: A.red }}>{error}</span>}
-          <span style={{ fontSize: 10.5, color: A.muted2 }}>
+          {error && <span style={{ fontSize: 11.5, color: K.danger }}>{error}</span>}
+          <span style={{ fontSize: 10.5, color: K.muted2 }}>
             {row.updated_at ? formatDateTime(row.updated_at) : "—"} · {row.updated_by}
           </span>
           <Button variant="secondary" size="sm" disabled={!dirty || saving} onClick={() => setConfirming(true)}>
@@ -217,12 +223,12 @@ function ModelRow({ row }: { row: StageConfigRow }) {
         confirmLabel={t("confirmChange")}
         body={
           <div>
-            <p style={{ fontSize: 12.5, color: A.muted, marginTop: 0, marginBottom: 12 }}>
+            <p style={{ fontSize: 12.5, color: K.muted, marginTop: 0, marginBottom: 12 }}>
               {t("changeModelBody")}
             </p>
             <div style={{
-              background: A.line2, borderRadius: 8, padding: "10px 12px",
-              fontSize: 12.5, fontFamily: mono, color: A.ink2,
+              background: K.line2, borderRadius: 8, padding: "10px 12px",
+              fontSize: 12.5, fontFamily: mono, color: K.ink2,
             }}>
               {modelLabel(row.model_id)}{row.account_route ? ` (${acctLabel(row.account_route)})` : ""}
               {" → "}
@@ -252,27 +258,27 @@ function JevStagesCard() {
   const rows = data?.questions ?? null;
   const modeTone = { off: "neutral", shadow: "info", enforce: "accent" } as const;
   return (
-    <Card>
-      <SLabel>{t("jevTitle")}</SLabel>
-      <p style={{ fontSize: 12, color: A.muted2, margin: "0 0 10px" }}>
+    <Section>
+      <Eyebrow>{t("jevTitle")}</Eyebrow>
+      <p style={{ fontSize: 12, color: K.muted2, margin: "0 0 10px" }}>
         {t("jevIntroA")} <b>{t("jevIntroB")}</b> {t("jevIntroC")}{" "}
-        <a href="/admin/decisions" style={{ color: A.gold }}>{t("jevDecisions")}</a>.
+        <a href="/admin/decisions" style={{ color: K.accent }}>{t("jevDecisions")}</a>.
       </p>
       {rows === null ? <Spinner /> : rows.length === 0 ? (
-        <div style={{ fontSize: 12.5, color: A.muted }}>{t("noJevQuestions")}</div>
+        <div style={{ fontSize: 12.5, color: K.muted }}>{t("noJevQuestions")}</div>
       ) : (
         <ScrollX>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
           <tbody>
             {rows.map((q) => (
-              <tr key={q.question_key} style={{ borderTop: `1px solid ${A.line}` }}>
+              <tr key={q.question_key} style={{ borderTop: `1px solid ${K.line}` }}>
                 <td style={{ padding: "6px 0", fontFamily: mono }}>{q.stage}</td>
                 <td style={{ padding: "6px 8px", fontFamily: mono }}>{q.question_key}</td>
                 <td style={{ padding: "6px 8px" }}><Badge tone={modeTone[q.mode]} dot={false}>{q.mode}</Badge></td>
                 <td style={{ padding: "6px 8px", fontFamily: mono }}>
                   {q.accept_floor ?? "—"} / {q.reject_ceiling ?? "—"}
                 </td>
-                <td style={{ padding: "6px 8px", color: A.muted }}>{q.calibration_ref ? t("calibrated") : t("notCalibrated")}</td>
+                <td style={{ padding: "6px 8px", color: K.muted }}>{q.calibration_ref ? t("calibrated") : t("notCalibrated")}</td>
                 <td style={{ padding: "6px 8px", fontFamily: mono }}>{t("verdictsActed", q.verdicts, q.acted)}</td>
                 <td style={{ padding: "6px 0", fontFamily: mono, textAlign: "right" }}>${q.cost_usd.toFixed(5)}</td>
               </tr>
@@ -281,7 +287,7 @@ function JevStagesCard() {
         </table>
         </ScrollX>
       )}
-    </Card>
+    </Section>
   );
 }
 
@@ -296,13 +302,13 @@ function StagesSubTab() {
 
   const rows = useMemo(() => data?.stages ?? [], [data]);
 
-  if (isLoading && !data) return <LoadingScreen msg={t("loadingConfig")} />;
+  if (isLoading && !data) return <LoadingScreen message={t("loadingConfig")} />;
   if (isError || !data) {
     return (
-      <Card style={{ textAlign: "center", padding: 40 }}>
-        <div style={{ color: A.red, marginBottom: 12 }}>{t("loadConfigError")}</div>
+      <Section bodyStyle={{ textAlign: "center", padding: 40 }}>
+        <div style={{ color: K.danger, marginBottom: 12 }}>{t("loadConfigError")}</div>
         <Button variant="secondary" onClick={() => refetch()}>{t("retry")}</Button>
-      </Card>
+      </Section>
     );
   }
 
@@ -310,7 +316,7 @@ function StagesSubTab() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <LlmAvailabilityCard />
-      <p style={{ fontSize: 12, color: A.muted2, margin: 0 }}>
+      <p style={{ fontSize: 12, color: K.muted2, margin: 0 }}>
         {t("stagesIntroA")} <b>{t("stagesIntroB")}</b>{t("stagesIntroC")} <b>{t("stagesIntroD")}</b>{" "}
         {t("stagesIntroE")}
       </p>
@@ -318,14 +324,14 @@ function StagesSubTab() {
         const stages = group.stages.filter((s) => !HIDDEN_STAGES.has(s) && byStage[s]);
         if (stages.length === 0) return null;
         return (
-          <Card key={group.key}>
-            <SLabel>{groupLabels[group.key] ?? group.label}</SLabel>
+          <Section key={group.key}>
+            <Eyebrow>{groupLabels[group.key] ?? group.label}</Eyebrow>
             <div>
               {stages.map((stage) => (
                 <ModelRow key={stage} row={byStage[stage]} />
               ))}
             </div>
-          </Card>
+          </Section>
         );
       })}
       <JevStagesCard />

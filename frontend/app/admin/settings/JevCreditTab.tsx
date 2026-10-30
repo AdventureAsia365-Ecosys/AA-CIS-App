@@ -13,7 +13,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BellRing, Plus, Trash2, Wallet } from "lucide-react";
-import { A, alpha, serif, sans, mono, Card } from "../_components/adminUi";
 import {
   Button,
   ConfirmModal,
@@ -27,6 +26,12 @@ import {
   useFormat,
   useT,
   useToast,
+  K,
+  Section,
+  alpha,
+  mono,
+  sans,
+  serif,
 } from "../../_kit";
 import { SETTINGS } from "./messages";
 
@@ -63,26 +68,26 @@ function Stat({ label, value, hint, tone }: {
   return (
     <div style={{ minWidth: 0 }}>
       <div style={{
-        fontSize: 11, color: A.muted, marginBottom: 4, textTransform: "uppercase",
+        fontSize: 11, color: K.muted, marginBottom: 4, textTransform: "uppercase",
         letterSpacing: "0.1em", display: "flex", alignItems: "center", gap: 6,
       }}>
         {label}
         {tone === "estimate" && (
           <span style={{
             fontSize: 9.5, fontWeight: 600, letterSpacing: "0.04em", padding: "1px 6px",
-            borderRadius: 999, background: alpha(A.accent, 10), color: A.accentDeep,
+            borderRadius: 999, background: alpha(K.accent, 10), color: K.accentDeep,
           }}>
             {t("estimate")}
           </span>
         )}
       </div>
       <div style={{
-        fontFamily: serif, fontSize: 28, fontWeight: 500, color: A.ink,
+        fontFamily: serif, fontSize: 28, fontWeight: 500, color: K.ink,
         letterSpacing: "-0.02em", fontVariantNumeric: "tabular-nums",
       }}>
         {value}
       </div>
-      {hint && <div style={{ fontSize: 10.5, color: A.muted2, marginTop: 2 }}>{hint}</div>}
+      {hint && <div style={{ fontSize: 10.5, color: K.muted2, marginTop: 2 }}>{hint}</div>}
     </div>
   );
 }
@@ -120,7 +125,7 @@ function TestAlertsButton() {
         {mut.isPending ? <Spinner size={12} /> : <BellRing size={13} />}
         {t("sendTest")}
       </Button>
-      <span style={{ fontSize: 11, color: A.muted2 }}>
+      <span style={{ fontSize: 11, color: K.muted2 }}>
         {t("sendTestHint")}
       </span>
     </div>
@@ -161,26 +166,26 @@ function AddTopupForm() {
   }
 
   const inp: React.CSSProperties = {
-    padding: "7px 10px", borderRadius: 8, border: `1px solid ${A.line}`,
-    fontSize: 13, fontFamily: sans, color: A.body, background: A.card, outline: "none",
+    padding: "7px 10px", borderRadius: 8, border: `1px solid ${K.line}`,
+    fontSize: 13, fontFamily: sans, color: K.body, background: K.card, outline: "none",
     minWidth: 0, maxWidth: "100%", boxSizing: "border-box",
   };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
-        <label style={{ fontSize: 11, color: A.muted, display: "flex", flexDirection: "column", gap: 4 }}>
+        <label style={{ fontSize: 11, color: K.muted, display: "flex", flexDirection: "column", gap: 4 }}>
           {t("date")}
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
                  disabled={mut.isPending} style={{ ...inp, width: 150 }} />
         </label>
-        <label style={{ fontSize: 11, color: A.muted, display: "flex", flexDirection: "column", gap: 4 }}>
+        <label style={{ fontSize: 11, color: K.muted, display: "flex", flexDirection: "column", gap: 4 }}>
           {t("amountUsd")}
           <input type="number" min={0} step="0.01" value={amount} placeholder="10.00"
                  onChange={(e) => setAmount(e.target.value)} disabled={mut.isPending}
                  style={{ ...inp, width: 120, fontFamily: mono }} />
         </label>
         <label style={{
-          fontSize: 11, color: A.muted, display: "flex", flexDirection: "column", gap: 4,
+          fontSize: 11, color: K.muted, display: "flex", flexDirection: "column", gap: 4,
           flex: 1, minWidth: 160,
         }}>
           {t("noteOptional")}
@@ -192,7 +197,7 @@ function AddTopupForm() {
           {mut.isPending ? t("saving") : t("addTopup")}
         </Button>
       </div>
-      {error && <span style={{ fontSize: 11.5, color: A.red }}>{error}</span>}
+      {error && <span style={{ fontSize: 11.5, color: K.danger }}>{error}</span>}
     </div>
   );
 }
@@ -235,7 +240,7 @@ function TopupsTable({ topups }: { topups: Topup[] }) {
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, minWidth: 520 }}>
           <thead>
-            <tr style={{ textAlign: "left", color: A.muted, borderBottom: `1px solid ${A.line}` }}>
+            <tr style={{ textAlign: "left", color: K.muted, borderBottom: `1px solid ${K.line}` }}>
               <th style={{ padding: "6px 8px", fontWeight: 600 }}>{t("date")}</th>
               <th style={{ padding: "6px 8px", fontWeight: 600, textAlign: "right" }}>{t("colAmount")}</th>
               <th style={{ padding: "6px 8px", fontWeight: 600 }}>{t("colNote")}</th>
@@ -245,13 +250,13 @@ function TopupsTable({ topups }: { topups: Topup[] }) {
           </thead>
           <tbody>
             {topups.map((row) => (
-              <tr key={row.id} style={{ borderBottom: `1px solid ${A.line2}` }}>
-                <td style={{ padding: "7px 8px", fontFamily: mono, color: A.body }}>{row.topped_up_on}</td>
-                <td style={{ padding: "7px 8px", fontFamily: mono, textAlign: "right", color: A.ink }}>
+              <tr key={row.id} style={{ borderBottom: `1px solid ${K.line2}` }}>
+                <td style={{ padding: "7px 8px", fontFamily: mono, color: K.body }}>{row.topped_up_on}</td>
+                <td style={{ padding: "7px 8px", fontFamily: mono, textAlign: "right", color: K.ink }}>
                   {usd(row.amount_usd)}
                 </td>
-                <td style={{ padding: "7px 8px", color: A.muted }}>{row.note || "—"}</td>
-                <td style={{ padding: "7px 8px", color: A.muted2, fontSize: 11.5 }}>
+                <td style={{ padding: "7px 8px", color: K.muted }}>{row.note || "—"}</td>
+                <td style={{ padding: "7px 8px", color: K.muted2, fontSize: 11.5 }}>
                   <div>{row.created_by || "—"}</div>
                   {row.created_at && (
                     <div style={{ fontSize: 10.5 }}>{formatDateTime(row.created_at)}</div>
@@ -279,7 +284,7 @@ function TopupsTable({ topups }: { topups: Topup[] }) {
         busy={del.isPending}
         body={
           confirming ? (
-            <p style={{ fontSize: 12.5, color: A.muted, margin: 0 }}>
+            <p style={{ fontSize: 12.5, color: K.muted, margin: 0 }}>
               {t("deleteBody", usd(confirming.amount_usd), confirming.topped_up_on)}
             </p>
           ) : null
@@ -315,24 +320,24 @@ function JevCreditTabInner() {
   }
   if (isError && !notDeployed) {
     return (
-      <Card>
+      <Section>
         <ErrorState
           message={error instanceof Error ? error.message : t("loadJevError")}
           onRetry={() => refetch()}
         />
-      </Card>
+      </Section>
     );
   }
   if (!view) return null;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <p style={{ fontSize: 12, color: A.muted2, margin: 0 }}>
+      <p style={{ fontSize: 12, color: K.muted2, margin: 0 }}>
         {t("introA")} <b>{t("introB")}</b>
         {t("introC", view.low_threshold_usd != null ? ` (${usd(view.low_threshold_usd)})` : "")}
       </p>
 
-      <Card>
+      <Section>
         <div style={{
           display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 16,
         }}>
@@ -343,31 +348,31 @@ function JevCreditTabInner() {
           <Stat label={t("estimatedLeft")} value={usd(view.estimated_left_usd)} tone="estimate" />
         </div>
         {view.below_low_threshold && (
-          <div style={{ fontSize: 11.5, color: A.amber, marginTop: 12 }}>
+          <div style={{ fontSize: 11.5, color: K.amber, marginTop: 12 }}>
             {t("belowThreshold", usd(view.low_threshold_usd))}
             {view.last_low_alert_at ? t("lastLowAlert", formatDateTime(view.last_low_alert_at)) : ""}
           </div>
         )}
         {view.last_exhausted_alert_at && (
-          <div style={{ fontSize: 11.5, color: A.amber, marginTop: 12 }}>
+          <div style={{ fontSize: 11.5, color: K.amber, marginTop: 12 }}>
             {t("lastExhausted", formatDateTime(view.last_exhausted_alert_at))}
           </div>
         )}
         {notDeployed && (
-          <div style={{ fontSize: 11.5, color: A.muted2, marginTop: 12 }}>
+          <div style={{ fontSize: 11.5, color: K.muted2, marginTop: 12 }}>
             {t("notDeployed")}
           </div>
         )}
         {!notDeployed && view.low_threshold_usd != null && <TestAlertsButton />}
-      </Card>
+      </Section>
 
-      <Card>
+      <Section>
         <AddTopupForm />
-      </Card>
+      </Section>
 
-      <Card>
+      <Section>
         <TopupsTable topups={view.topups} />
-      </Card>
+      </Section>
     </div>
   );
 }

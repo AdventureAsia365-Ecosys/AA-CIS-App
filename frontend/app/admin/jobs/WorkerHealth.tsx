@@ -8,9 +8,8 @@
 
 import { useState } from "react";
 import { Server } from "lucide-react";
-import { A, mono, Card, SLabel, Badge } from "../_components/adminUi";
 import { ago, fmtSeconds, type Kind, type Worker, type WorkerHealthResp } from "./jobsShared";
-import { ScrollX, useFormat, useT } from "../../_kit";
+import { ScrollX, useFormat, useT, Badge, Eyebrow, K, Section, mono } from "../../_kit";
 import { JOBS } from "./messages";
 
 function WorkerRow({ w, now }: { w: Worker; now: number }) {
@@ -19,25 +18,25 @@ function WorkerRow({ w, now }: { w: Worker; now: number }) {
   const agoT = (iso: string | null) => ago(iso, now, (d) => t("ago", d));
   const reaped = [...(w.last_reaped?.requeued ?? []), ...(w.last_reaped?.failed ?? [])];
   return (
-    <div style={{ fontSize: 12.5, color: A.body, marginBottom: 8 }}>
+    <div style={{ fontSize: 12.5, color: K.body, marginBottom: 8 }}>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <span
-          style={{ width: 8, height: 8, borderRadius: 4, background: w.alive ? A.green : A.muted2, display: "inline-block" }}
+          style={{ width: 8, height: 8, borderRadius: 4, background: w.alive ? K.success : K.muted2, display: "inline-block" }}
           aria-label={w.alive ? t("alive") : t("stopped")}
         />
-        <span style={{ fontFamily: mono, color: A.ink3 }}>{w.host}</span>
+        <span style={{ fontFamily: mono, color: K.ink3 }}>{w.host}</span>
         {w.alive ? (
-          <span style={{ color: A.muted }}>
+          <span style={{ color: K.muted }}>
             {t("seenUp", agoT(w.last_seen_at), fmtSeconds((now - new Date(w.started_at).getTime()) / 1000))}
           </span>
         ) : (
-          <span style={{ color: A.muted }}>
+          <span style={{ color: K.muted }}>
             {w.stopped_at ? t("stoppedAgo", agoT(w.stopped_at)) : t("silentSince", fmtTime(w.last_seen_at))}
           </span>
         )}
-        <Badge color={w.running_jobs >= w.max_parallel ? "amber" : "gray"}>{t("runningOf", w.running_jobs, w.max_parallel)}</Badge>
+        <Badge tone={w.running_jobs >= w.max_parallel ? "warning" : "neutral"}>{t("runningOf", w.running_jobs, w.max_parallel)}</Badge>
       </div>
-      <div style={{ color: A.muted, fontSize: 11.5, marginTop: 3, marginLeft: 16 }}>
+      <div style={{ color: K.muted, fontSize: 11.5, marginTop: 3, marginLeft: 16 }}>
         {t("reaper", w.reaped_requeued, w.reaped_failed)}
         {w.last_reap_at && <>{t("last", fmtTime(w.last_reap_at))}{reaped.length > 0 && ` (${reaped.map(id => id.slice(0, 8)).join(", ")})`}</>}
       </div>
@@ -72,22 +71,22 @@ export default function WorkerHealth({ health, kinds, now }: { health: WorkerHea
   const orphanRunning = health.running.filter(r => !r.worker_id || !alive.some(w => w.worker_id === r.worker_id));
 
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
+    <Section style={{ marginBottom: 16 }} bodyStyle={{ padding: 16 }}>
       <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10, flexWrap: "wrap" }}>
-        <Server size={14} style={{ color: A.muted }} />
-        <span style={{ fontSize: 12, color: A.muted }}>
-          {t("separateLead")}<span style={{ fontFamily: mono, color: A.ink3 }}>aa-cis-dev-worker</span>{t("separateTail")}
+        <Server size={14} style={{ color: K.muted }} />
+        <span style={{ fontSize: 12, color: K.muted }}>
+          {t("separateLead")}<span style={{ fontFamily: mono, color: K.ink3 }}>aa-cis-dev-worker</span>{t("separateTail")}
         </span>
       </div>
 
       <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
         <div style={{ flex: "1 1 340px", minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-            <SLabel>{t("workers")}</SLabel>
+            <Eyebrow>{t("workers")}</Eyebrow>
             {stopped.length > 0 && (
               <button
                 onClick={() => setShowStopped(v => !v)}
-                style={{ marginLeft: "auto", fontSize: 11.5, padding: "3px 9px", border: `1px solid ${A.line}`, borderRadius: 6, background: A.card, color: A.muted, cursor: "pointer" }}
+                style={{ marginLeft: "auto", fontSize: 11.5, padding: "3px 9px", border: `1px solid ${K.line}`, borderRadius: 6, background: K.card, color: K.muted, cursor: "pointer" }}
               >
                 {showStopped ? t("hideStopped") : t("showStopped", stopped.length)}
               </button>
@@ -95,7 +94,7 @@ export default function WorkerHealth({ health, kinds, now }: { health: WorkerHea
           </div>
 
           {alive.length === 0 && !showStopped ? (
-            <div style={{ fontSize: 12.5, color: A.red }}>
+            <div style={{ fontSize: 12.5, color: K.danger }}>
               {t("noLiveWorker", health.alive_seconds)}
             </div>
           ) : (
@@ -103,8 +102,8 @@ export default function WorkerHealth({ health, kinds, now }: { health: WorkerHea
               const list = byRevision.get(rev) ?? [];
               return (
                 <div key={String(rev)} style={{ marginBottom: 10 }}>
-                  <div style={{ fontSize: 11, color: A.muted2, marginBottom: 4 }}>
-                    {t("taskDef")} {rev == null ? t("unknown") : <span style={{ fontFamily: mono, color: A.ink3 }}>:{rev}</span>}
+                  <div style={{ fontSize: 11, color: K.muted2, marginBottom: 4 }}>
+                    {t("taskDef")} {rev == null ? t("unknown") : <span style={{ fontFamily: mono, color: K.ink3 }}>:{rev}</span>}
                     {" · "}{t("workerCount", list.length)}
                   </div>
                   {list.map(w => <WorkerRow key={w.worker_id} w={w} now={now} />)}
@@ -114,18 +113,18 @@ export default function WorkerHealth({ health, kinds, now }: { health: WorkerHea
           )}
 
           {orphanRunning.length > 0 && (
-            <div style={{ fontSize: 11.5, color: A.amber, marginTop: 6 }}>
+            <div style={{ fontSize: 11.5, color: K.amber, marginTop: 6 }}>
               {t("orphan", orphanRunning.reduce((a, r) => a + r.n, 0))}
             </div>
           )}
         </div>
 
         <div style={{ flex: "1 1 340px", minWidth: 0 }}>
-          <SLabel>{t("queueByKind")}</SLabel>
+          <Eyebrow>{t("queueByKind")}</Eyebrow>
           <ScrollX>
           <table style={{ borderCollapse: "collapse", fontSize: 12, width: "100%" }}>
             <thead>
-              <tr style={{ color: A.muted2, textAlign: "left" }}>
+              <tr style={{ color: K.muted2, textAlign: "left" }}>
                 <th style={{ fontWeight: 500, padding: "2px 8px 4px 0" }}>{t("colKind")}</th>
                 <th style={{ fontWeight: 500, padding: "2px 8px 4px 0" }}>{t("runningCap")}</th>
                 <th style={{ fontWeight: 500, padding: "2px 8px 4px 0" }}>{t("queuedReady")}</th>
@@ -139,10 +138,10 @@ export default function WorkerHealth({ health, kinds, now }: { health: WorkerHea
                 const run = runningByKind[k] ?? 0;
                 return (
                   <tr key={k}>
-                    <td style={{ fontFamily: mono, color: A.ink3, padding: "3px 8px 3px 0" }}>{k}</td>
-                    <td style={{ fontFamily: mono, padding: "3px 8px 3px 0", color: cap != null && run >= cap ? A.amber : A.body }}>{run}/{cap ?? "?"}</td>
+                    <td style={{ fontFamily: mono, color: K.ink3, padding: "3px 8px 3px 0" }}>{k}</td>
+                    <td style={{ fontFamily: mono, padding: "3px 8px 3px 0", color: cap != null && run >= cap ? K.amber : K.body }}>{run}/{cap ?? "?"}</td>
                     <td style={{ fontFamily: mono, padding: "3px 8px 3px 0" }}>{q ? `${q.n} (${q.ready})` : "0"}</td>
-                    <td style={{ padding: "3px 0", color: A.muted }}>{q?.oldest_created_at ? ago(q.oldest_created_at, now, (d) => t("ago", d)) : "—"}</td>
+                    <td style={{ padding: "3px 0", color: K.muted }}>{q?.oldest_created_at ? ago(q.oldest_created_at, now, (d) => t("ago", d)) : "—"}</td>
                   </tr>
                 );
               })}
@@ -151,6 +150,6 @@ export default function WorkerHealth({ health, kinds, now }: { health: WorkerHea
           </ScrollX>
         </div>
       </div>
-    </Card>
+    </Section>
   );
 }

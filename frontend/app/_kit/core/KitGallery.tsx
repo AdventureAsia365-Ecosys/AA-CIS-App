@@ -8,7 +8,7 @@
 // FilterBar, RowMenu, ConfirmModal, Money, DateText); S6a adds the form controls (Field, Input, Select, Textarea,
 // Checkbox, Radio, DateField in a Field); the button variants (core Buttons.tsx: Button incl. dashed, LinkButton,
 // IconButton, ButtonGroup, SegmentedControl, ChipButton, Switch, underline Tabs, ListButton, Pressable) have their
-// own entry; the older
+// own entry; S6b adds the Eyebrow (the section entry); the older
 // core components join it with S1d.
 //
 // Demo dates are fixed values and the relative examples use a fixed "now" (no clock read during render), so the
@@ -18,7 +18,7 @@ import { Suspense, useState, type ReactNode } from "react";
 import {
   Archive, CalendarCheck, ChevronRight, Copy, Download, Eye, Lock, Pencil, Pin, Plus, Send, Trash2, X, XCircle,
 } from "lucide-react";
-import { Tabs } from "./primitives";
+import { Eyebrow, Tabs } from "./primitives";
 import {
   Button, ButtonGroup, ChipButton, IconButton, LinkButton, ListButton, Pressable, SegmentedControl, Switch,
 } from "./Buttons";
@@ -264,6 +264,10 @@ export function KitGallery() {
               {t("sectionFlushBody")}
             </div>
             <div style={{ padding: "12px 20px", fontSize: 13, color: K.body }}>{t("sectionFlushBody")}</div>
+          </Section>
+          <Section>
+            <Eyebrow>{t("eyebrow")}</Eyebrow>
+            <div style={{ fontSize: 13, color: K.body }}>{t("eyebrowBody")}</div>
           </Section>
         </div>
       </Entry>

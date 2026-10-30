@@ -11,12 +11,11 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Plus, Trash2, ChevronDown, ChevronUp, RefreshCw, Upload } from "lucide-react";
-import { A, alpha, serif, sans, Card, SLabel } from "./adminUi";
 import { useAdminIdentity } from "../../_kit/useAdminIdentity";
 import { can } from "@/lib/rbac";
 import { useT } from "../../_kit/core/useI18n";
 import { M } from "./BrandIdentityEditor.messages";
-import { Button } from "../../_kit";
+import { Button, Eyebrow, K, Section, alpha, sans, serif } from "../../_kit";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -86,13 +85,13 @@ function TagsInput({ value, onChange, placeholder, readOnly }: {
           <span key={tag} style={{
             display: "inline-flex", alignItems: "center", gap: 4,
             padding: "2px 8px", borderRadius: 20, fontSize: 12,
-            background: A.goldTint, color: A.gold, fontWeight: 600,
+            background: K.accentTint, color: K.accent, fontWeight: 600,
           }}>
             {tag}
             {!readOnly && (
               <button onClick={() => onChange(value.filter(x => x !== tag))} aria-label={t("remove", tag)} style={{
                 background: "none", border: "none", cursor: "pointer", padding: 0,
-                color: A.gold, lineHeight: 1, fontSize: 13,
+                color: K.accent, lineHeight: 1, fontSize: 13,
               }}>×</button>
             )}
           </span>
@@ -106,9 +105,9 @@ function TagsInput({ value, onChange, placeholder, readOnly }: {
             onKeyDown={e => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); add(); } }}
             placeholder={placeholder || t("typeAndEnter")}
             style={{
-              flex: 1, padding: "7px 10px", border: `1px solid ${A.line}`,
+              flex: 1, padding: "7px 10px", border: `1px solid ${K.line}`,
               borderRadius: 6, fontSize: 13, fontFamily: sans,
-              background: A.card, color: A.ink, outline: "none",
+              background: K.card, color: K.ink, outline: "none",
             }}
           />
           <Button variant="secondary" onClick={add} style={{ padding: "7px 12px" }}>{t("add")}</Button>
@@ -123,7 +122,7 @@ function TagsInput({ value, onChange, placeholder, readOnly }: {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div style={{ marginBottom: 18 }}>
-      <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: A.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>
+      <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: K.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>
         {label}
       </label>
       {children}
@@ -132,9 +131,9 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 const inputStyle: React.CSSProperties = {
-  width: "100%", padding: "8px 12px", border: `1px solid ${A.line}`,
+  width: "100%", padding: "8px 12px", border: `1px solid ${K.line}`,
   borderRadius: 6, fontSize: 13, fontFamily: sans,
-  background: A.card, color: A.ink, outline: "none", boxSizing: "border-box",
+  background: K.card, color: K.ink, outline: "none", boxSizing: "border-box",
 };
 
 const textareaStyle: React.CSSProperties = {
@@ -534,13 +533,13 @@ export default function BrandIdentityEditor() {
 
   return (
         <div style={{ display: "flex", minWidth: 0, minHeight: 640, height: "calc(100vh - 220px)", fontFamily: sans,
-                      background: A.bg, border: `1px solid ${A.line}`, borderRadius: 10, overflow: "hidden" }}>
+                      background: K.bg, border: `1px solid ${K.line}`, borderRadius: 10, overflow: "hidden" }}>
           {/* Left panel — brand list */}
-          <div style={{ width: 260, borderRight: `1px solid ${A.line}`, background: A.card, display: "flex", flexDirection: "column" }}>
-            <div style={{ padding: "16px 16px 10px", borderBottom: `1px solid ${A.line}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: A.muted, textTransform: "uppercase", letterSpacing: "0.08em" }}>{t("brands")}</span>
+          <div style={{ width: 260, borderRight: `1px solid ${K.line}`, background: K.card, display: "flex", flexDirection: "column" }}>
+            <div style={{ padding: "16px 16px 10px", borderBottom: `1px solid ${K.line}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: K.muted, textTransform: "uppercase", letterSpacing: "0.08em" }}>{t("brands")}</span>
               <div style={{ display: "flex", gap: 4 }}>
-                <button onClick={loadBrands} aria-label={t("reload")} style={{ background: "none", border: "none", cursor: "pointer", color: A.muted, padding: 4 }}>
+                <button onClick={loadBrands} aria-label={t("reload")} style={{ background: "none", border: "none", cursor: "pointer", color: K.muted, padding: 4 }}>
                   <RefreshCw size={13} />
                 </button>
                 {canEdit && (<>
@@ -558,7 +557,7 @@ export default function BrandIdentityEditor() {
                 </button>
                 <input ref={docxRef} type="file" accept=".docx" style={{ display: "none" }} onChange={handleDocx} />
                 <button onClick={startNew} style={{
-                  background: A.gold, border: "none", borderRadius: 5, color: "var(--aa-on-solid)",
+                  background: K.accent, border: "none", borderRadius: 5, color: "var(--aa-on-solid)",
                   cursor: "pointer", padding: "4px 8px", fontSize: 12, fontWeight: 600,
                   display: "flex", alignItems: "center", gap: 3,
                 }}>
@@ -570,25 +569,25 @@ export default function BrandIdentityEditor() {
 
             <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
               {loading ? (
-                <div style={{ padding: 20, fontSize: 12, color: A.muted }}>{t("loading")}</div>
+                <div style={{ padding: 20, fontSize: 12, color: K.muted }}>{t("loading")}</div>
               ) : brands.length === 0 ? (
-                <div style={{ padding: 20, fontSize: 12, color: A.muted }}>{t("noBrands")}</div>
+                <div style={{ padding: 20, fontSize: 12, color: K.muted }}>{t("noBrands")}</div>
               ) : brands.map(b => (
                 <div
                   key={b.brand_name}
                   onClick={() => selectBrand(b.brand_name)}
                   style={{
-                    padding: "12px 16px", cursor: "pointer", borderBottom: `1px solid ${A.line}`,
-                    background: selected === b.brand_name ? alpha(A.gold, 9) : "transparent",
-                    borderLeft: selected === b.brand_name ? `3px solid ${A.gold}` : "3px solid transparent",
+                    padding: "12px 16px", cursor: "pointer", borderBottom: `1px solid ${K.line}`,
+                    background: selected === b.brand_name ? alpha(K.accent, 9) : "transparent",
+                    borderLeft: selected === b.brand_name ? `3px solid ${K.accent}` : "3px solid transparent",
                     transition: "background .1s",
                   }}
                 >
-                  <div style={{ fontSize: 13, fontWeight: 600, color: A.ink }}>{b.brand_name}</div>
-                  <div style={{ fontSize: 11, color: A.muted, marginTop: 3, display: "flex", gap: 8 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: K.ink }}>{b.brand_name}</div>
+                  <div style={{ fontSize: 11, color: K.muted, marginTop: 3, display: "flex", gap: 8 }}>
                     <span>v{b.version}</span>
                     {b.brand_type && <span>{b.brand_type}</span>}
-                    {!b.is_active && <span style={{ color: A.red }}>{t("inactive")}</span>}
+                    {!b.is_active && <span style={{ color: K.danger }}>{t("inactive")}</span>}
                   </div>
                 </div>
               ))}
@@ -598,7 +597,7 @@ export default function BrandIdentityEditor() {
           {/* Right panel — form */}
           <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "28px 36px 56px" }}>
             {!isNew && !selected ? (
-              <div style={{ paddingTop: 60, textAlign: "center", color: A.muted, fontSize: 14 }}>
+              <div style={{ paddingTop: 60, textAlign: "center", color: K.muted, fontSize: 14 }}>
                 {t("selectBefore")}<strong>{t("new")}</strong>{t("selectAfter")}
               </div>
             ) : (
@@ -606,7 +605,7 @@ export default function BrandIdentityEditor() {
                 {!canEdit && (
                   <div data-testid="brand-read-only" style={{
                     marginBottom: 16, padding: "10px 16px", borderRadius: 8,
-                    background: A.goldTint, border: `1px solid ${A.line}`, fontSize: 13, color: A.body,
+                    background: K.accentTint, border: `1px solid ${K.line}`, fontSize: 13, color: K.body,
                   }}>
                     {t("readOnlyRole")}
                   </div>
@@ -633,22 +632,22 @@ export default function BrandIdentityEditor() {
 
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 }}>
                   <div>
-                    <div style={{ fontFamily: serif, fontSize: 24, fontWeight: 500, color: A.ink, letterSpacing: "-0.01em" }}>
+                    <div style={{ fontFamily: serif, fontSize: 24, fontWeight: 500, color: K.ink, letterSpacing: "-0.01em" }}>
                       {isNew ? t("newBrand") : selected}
                     </div>
                     {!isNew && detail && (
-                      <div style={{ fontSize: 12, color: A.muted, marginTop: 4 }}>
+                      <div style={{ fontSize: 12, color: K.muted, marginTop: 4 }}>
                         v{viewedEntry ? viewedEntry.version : detail.version} · {(viewedEntry ? viewedEntry.updated_at : detail.updated_at)?.slice(0, 10) || "—"}
                         {(viewedEntry ? viewedEntry.is_active : detail.is_active)
-                          ? <span style={{ color: A.green, marginLeft: 8 }}>{t("activeDot")}</span>
-                          : <span style={{ color: A.red, marginLeft: 8 }}>{t("inactiveDot")}</span>}
+                          ? <span style={{ color: K.success, marginLeft: 8 }}>{t("activeDot")}</span>
+                          : <span style={{ color: K.danger, marginLeft: 8 }}>{t("inactiveDot")}</span>}
                       </div>
                     )}
                   </div>
                   {!isNew && selected && !isReadOnly && (
                     <button onClick={deleteBrand} disabled={deleting} style={{
-                      background: "none", border: `1px solid ${A.line}`, borderRadius: 6,
-                      cursor: "pointer", color: A.red, padding: "6px 10px",
+                      background: "none", border: `1px solid ${K.line}`, borderRadius: 6,
+                      cursor: "pointer", color: K.danger, padding: "6px 10px",
                       display: "flex", alignItems: "center", gap: 4, fontSize: 12,
                     }}>
                       <Trash2 size={12} /> {deleting ? t("deleting") : t("delete")}
@@ -656,7 +655,7 @@ export default function BrandIdentityEditor() {
                   )}
                 </div>
 
-                <Card style={{ marginBottom: 20 }}>
+                <Section style={{ marginBottom: 20 }}>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: "0 24px" }}>
                     <Field label={t("fBrandName")}>
                       <input
@@ -778,12 +777,12 @@ export default function BrandIdentityEditor() {
                         onClick={save}
                         disabled={saving || !canSave}
                         variant="primary"
-                        style={{ background: A.gold, border: `1px solid ${A.gold}` }}
+                        style={{ background: K.accent, border: `1px solid ${K.accent}` }}
                       >
                         {saving ? t("saving") : isNew ? t("createBrand") : t("saveNewVersion")}
                       </Button>
                       {msg && (
-                        <span style={{ fontSize: 12, color: msg.ok ? A.green : A.red }}>{msg.text}</span>
+                        <span style={{ fontSize: 12, color: msg.ok ? K.success : K.danger }}>{msg.text}</span>
                       )}
                     </div>
                   )}
@@ -794,21 +793,21 @@ export default function BrandIdentityEditor() {
                         onClick={() => activateVersion(viewingVersion!)}
                         disabled={activating || detail?.history.find(h => h.version === viewingVersion)?.is_active}
                         variant="primary"
-                        style={{ background: A.gold, border: `1px solid ${A.gold}` }}
+                        style={{ background: K.accent, border: `1px solid ${K.accent}` }}
                       >
                         {activating ? t("activating") : t("setActiveV", viewingVersion ?? 0)}
                       </Button>}
                       <Button variant="secondary" onClick={exitVersionView}>{t("cancel")}</Button>
                       {msg && (
-                        <span style={{ fontSize: 12, color: msg.ok ? A.green : A.red }}>{msg.text}</span>
+                        <span style={{ fontSize: 12, color: msg.ok ? K.success : K.danger }}>{msg.text}</span>
                       )}
                     </div>
                   )}
-                </Card>
+                </Section>
 
                 {/* Version history */}
                 {!isNew && detail && detail.history.length > 1 && (
-                  <Card>
+                  <Section>
                     <button
                       onClick={() => setHistoryOpen(!historyOpen)}
                       style={{
@@ -817,21 +816,21 @@ export default function BrandIdentityEditor() {
                         padding: 0, fontFamily: sans,
                       }}
                     >
-                      <span style={{ fontSize: 11, fontWeight: 600, color: A.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>{t("history", detail.history.length)}</span>
-                      {historyOpen ? <ChevronUp size={14} color={A.muted} /> : <ChevronDown size={14} color={A.muted} />}
+                      <span style={{ fontSize: 11, fontWeight: 600, color: K.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>{t("history", detail.history.length)}</span>
+                      {historyOpen ? <ChevronUp size={14} color={K.muted} /> : <ChevronDown size={14} color={K.muted} />}
                     </button>
                     {historyOpen && (
                       <div style={{ marginTop: 12 }}>
                         {detail.history.map(v => (
                           <div key={v.version} style={{
                             display: "flex", justifyContent: "space-between", alignItems: "center",
-                            padding: "8px 0", borderBottom: `1px solid ${A.line}`,
+                            padding: "8px 0", borderBottom: `1px solid ${K.line}`,
                           }}>
                             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                               <span style={{ fontSize: 13, fontWeight: 500 }}>v{v.version}</span>
-                              <span style={{ fontSize: 11, color: A.muted }}>{v.updated_at?.slice(0, 10) || "—"}</span>
+                              <span style={{ fontSize: 11, color: K.muted }}>{v.updated_at?.slice(0, 10) || "—"}</span>
                               {v.is_active && (
-                                <span style={{ fontSize: 10, background: A.gold, color: "var(--aa-on-solid)", borderRadius: 4, padding: "1px 6px" }}>{t("active")}</span>
+                                <span style={{ fontSize: 10, background: K.accent, color: "var(--aa-on-solid)", borderRadius: 4, padding: "1px 6px" }}>{t("active")}</span>
                               )}
                             </div>
                             <div style={{ display: "flex", gap: 6 }}>
@@ -850,8 +849,8 @@ export default function BrandIdentityEditor() {
                                   onClick={() => activateVersion(v.version)}
                                   disabled={activating}
                                   style={{
-                                    background: A.goldTint, border: `1px solid ${A.gold}`,
-                                    borderRadius: 5, color: A.gold, cursor: "pointer",
+                                    background: K.accentTint, border: `1px solid ${K.accent}`,
+                                    borderRadius: 5, color: K.accent, cursor: "pointer",
                                     padding: "3px 10px", fontSize: 12, fontWeight: 600,
                                     opacity: activating ? 0.6 : 1,
                                   }}
@@ -864,7 +863,7 @@ export default function BrandIdentityEditor() {
                         ))}
                       </div>
                     )}
-                  </Card>
+                  </Section>
                 )}
               </>
             )}

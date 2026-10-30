@@ -10,8 +10,10 @@ import BrandIdentityEditor from "../_components/BrandIdentityEditor";
 import SettingsKitTab from "../_components/SettingsKitTab";
 import { ModelsTab } from "./ModelsTab";
 import { JevCreditTab } from "./JevCreditTab";
-import { A, alpha, serif, sans, mono, Card, SLabel, Badge, Spinner, LoadingScreen } from "../_components/adminUi";
-import { Button, Tabs, PageFrame, PageHeader, apiGet, useAdminIdentity, useFormat, useT } from "../../_kit";
+import {
+  Button, Tabs, PageFrame, PageHeader, apiGet, useAdminIdentity, useFormat, useT, Badge, Eyebrow, K, LoadingScreen,
+  Section, Spinner, alpha, mono, sans, serif, type Tone,
+} from "../../_kit";
 import { can, staffErrorMessage, type Capability } from "@/lib/rbac";
 import { RBAC_MESSAGES } from "@/lib/rbac.messages";
 import { SETTINGS } from "./messages";
@@ -60,57 +62,57 @@ function PipelineGatesTab({ gates }: { gates: SettingsData["pipeline_gates"] }) 
   const t = useT(SETTINGS);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <Card>
-        <SLabel>{t("brandThreshold")}</SLabel>
+      <Section>
+        <Eyebrow>{t("brandThreshold")}</Eyebrow>
         <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-          <span style={{ fontFamily: sans, fontVariantNumeric: "tabular-nums", fontSize: 36, fontWeight: 600, color: A.ink, letterSpacing: "-0.03em" }}>
+          <span style={{ fontFamily: sans, fontVariantNumeric: "tabular-nums", fontSize: 36, fontWeight: 600, color: K.ink, letterSpacing: "-0.03em" }}>
             {gates.brand_audit_threshold.toFixed(1)}
           </span>
-          <span style={{ fontSize: 14, color: A.muted }}>/&nbsp;10</span>
-          <Badge color="amber">{t("hardcoded")}</Badge>
+          <span style={{ fontSize: 14, color: K.muted }}>/&nbsp;10</span>
+          <Badge tone="warning">{t("hardcoded")}</Badge>
         </div>
-        <p style={{ fontSize: 12, color: A.muted2, marginTop: 8, fontFamily: sans }}>
+        <p style={{ fontSize: 12, color: K.muted2, marginTop: 8, fontFamily: sans }}>
           {t("thresholdHelp")}
         </p>
-      </Card>
+      </Section>
 
-      <Card>
-        <SLabel>{t("dedupKey")}</SLabel>
+      <Section>
+        <Eyebrow>{t("dedupKey")}</Eyebrow>
         <code style={{
           display: "block", fontFamily: mono, fontSize: 12,
-          background: A.bg, padding: "10px 14px", borderRadius: 8,
-          color: A.body, border: `1px solid ${A.line}`, wordBreak: "break-all",
+          background: K.bg, padding: "10px 14px", borderRadius: 8,
+          color: K.body, border: `1px solid ${K.line}`, wordBreak: "break-all",
         }}>
           {gates.dedup_key}
         </code>
-        <p style={{ fontSize: 12, color: A.muted2, marginTop: 8, fontFamily: sans }}>
+        <p style={{ fontSize: 12, color: K.muted2, marginTop: 8, fontFamily: sans }}>
           {t("dedupHelp")}
         </p>
-      </Card>
+      </Section>
 
-      <Card>
-        <SLabel>{t("pipelineFlow")}</SLabel>
+      <Section>
+        <Eyebrow>{t("pipelineFlow")}</Eyebrow>
         <div style={{ display: "flex", alignItems: "center", gap: 0, flexWrap: "wrap" }}>
           {gates.pipeline_flow.map((step, i) => (
             <div key={step} style={{ display: "flex", alignItems: "center" }}>
               <div style={{
                 padding: "6px 14px", borderRadius: 20,
-                background: alpha(A.accent, 8), color: A.accentDeep,
+                background: alpha(K.accent, 8), color: K.accentDeep,
                 fontSize: 12, fontWeight: 600, fontFamily: mono,
-                border: `1px solid ${alpha(A.accent, 19)}`,
+                border: `1px solid ${alpha(K.accent, 19)}`,
               }}>
                 {step}
               </div>
               {i < gates.pipeline_flow.length - 1 && (
-                <div style={{ padding: "0 6px", color: A.muted2, fontSize: 16 }}>→</div>
+                <div style={{ padding: "0 6px", color: K.muted2, fontSize: 16 }}>→</div>
               )}
             </div>
           ))}
         </div>
-        <p style={{ fontSize: 12, color: A.muted2, marginTop: 10, fontFamily: sans }}>
+        <p style={{ fontSize: 12, color: K.muted2, marginTop: 10, fontFamily: sans }}>
           {t("flowHelp")}
         </p>
-      </Card>
+      </Section>
     </div>
   );
 }
@@ -178,44 +180,44 @@ function SeoConfigTab({ seo: initialSeo, canEdit }: { seo: SettingsData["seo_con
 
   if (!seo) {
     return (
-      <Card>
-        <div style={{ padding: 24, textAlign: "center", color: A.muted }}>
+      <Section>
+        <div style={{ padding: 24, textAlign: "center", color: K.muted }}>
           {t("noSeo")}
         </div>
-      </Card>
+      </Section>
     );
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <Card>
-        <SLabel>{t("seoProvider")}</SLabel>
+      <Section>
+        <Eyebrow>{t("seoProvider")}</Eyebrow>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 14, fontWeight: 600, color: A.ink }}>
+          <span style={{ fontSize: 14, fontWeight: 600, color: K.ink }}>
             {seo.seo_provider === "dataforseo" ? "DataForSEO" : seo.seo_provider}
           </span>
-          <Badge color="gray">{t("readOnly")}</Badge>
+          <Badge tone="neutral">{t("readOnly")}</Badge>
         </div>
-        <p style={{ fontSize: 12, color: A.muted2, marginTop: 6, fontFamily: sans }}>
+        <p style={{ fontSize: 12, color: K.muted2, marginTop: 6, fontFamily: sans }}>
           {t("seedKeyword")} <code style={{ fontFamily: mono }}>{t("seedPattern")}</code> {t("seedHelp")}
         </p>
-      </Card>
+      </Section>
 
-      <Card>
-        <SLabel>{t("customKeywords")}</SLabel>
+      <Section>
+        <Eyebrow>{t("customKeywords")}</Eyebrow>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
           {keywords.map((kw, i) => (
             <span key={i} style={{
               display: "inline-flex", alignItems: "center", gap: 5,
               padding: "4px 10px", borderRadius: 999,
-              background: alpha(A.accent, 7), color: A.accentDeep,
+              background: alpha(K.accent, 7), color: K.accentDeep,
               fontSize: 12, fontWeight: 500, fontFamily: mono,
             }}>
               {kw}
               {canEdit && (
                 <button onClick={() => removeKeyword(kw)} style={{
                   background: "none", border: "none", cursor: "pointer",
-                  color: A.accentDeep, display: "flex", padding: 0,
+                  color: K.accentDeep, display: "flex", padding: 0,
                 }}>
                   <X size={11} />
                 </button>
@@ -223,7 +225,7 @@ function SeoConfigTab({ seo: initialSeo, canEdit }: { seo: SettingsData["seo_con
             </span>
           ))}
           {keywords.length === 0 && (
-            <span style={{ fontSize: 13, color: A.muted2 }}>{t("noKeywords")}</span>
+            <span style={{ fontSize: 13, color: K.muted2 }}>{t("noKeywords")}</span>
           )}
         </div>
         {canEdit && <div style={{ display: "flex", gap: 8 }}>
@@ -234,18 +236,18 @@ function SeoConfigTab({ seo: initialSeo, canEdit }: { seo: SettingsData["seo_con
             placeholder={t("addKeyword")}
             style={{
               flex: 1, padding: "7px 12px", borderRadius: 8,
-              border: `1px solid ${A.line}`, fontSize: 13,
-              fontFamily: sans, outline: "none", color: A.body,
+              border: `1px solid ${K.line}`, fontSize: 13,
+              fontFamily: sans, outline: "none", color: K.body,
             }}
           />
           <Button variant="secondary" size="sm" onClick={addKeyword}>
             <Plus size={13} /> {t("add")}
           </Button>
         </div>}
-      </Card>
+      </Section>
 
-      <Card>
-        <SLabel>{t("targetMarket")}</SLabel>
+      <Section>
+        <Eyebrow>{t("targetMarket")}</Eyebrow>
         <textarea
           value={targetJson}
           onChange={e => setTargetJson(e.target.value)}
@@ -253,12 +255,12 @@ function SeoConfigTab({ seo: initialSeo, canEdit }: { seo: SettingsData["seo_con
           rows={6}
           style={{
             width: "100%", padding: "10px 12px", borderRadius: 8,
-            border: `1px solid ${A.line}`, fontSize: 12,
-            fontFamily: mono, outline: "none", color: A.body,
+            border: `1px solid ${K.line}`, fontSize: 12,
+            fontFamily: mono, outline: "none", color: K.body,
             resize: "vertical", boxSizing: "border-box",
           }}
         />
-      </Card>
+      </Section>
 
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         {canEdit ? (
@@ -267,20 +269,20 @@ function SeoConfigTab({ seo: initialSeo, canEdit }: { seo: SettingsData["seo_con
             {saving ? t("saving") : t("saveSeo")}
           </Button>
         ) : (
-          <span data-testid="seo-read-only" style={{ fontSize: 12, color: A.muted }}>
+          <span data-testid="seo-read-only" style={{ fontSize: 12, color: K.muted }}>
             {t("seoReadOnly")}
           </span>
         )}
         {saved && (
-          <span style={{ fontSize: 12, color: A.green, fontWeight: 600 }}>
+          <span style={{ fontSize: 12, color: K.success, fontWeight: 600 }}>
             {t("saved")}
           </span>
         )}
         {error && (
-          <span style={{ fontSize: 12, color: A.red }}>{error}</span>
+          <span style={{ fontSize: 12, color: K.danger }}>{error}</span>
         )}
         {seo.updated_at && (
-          <span style={{ fontSize: 11, color: A.muted2, marginLeft: "auto" }}>
+          <span style={{ fontSize: 11, color: K.muted2, marginLeft: "auto" }}>
             {t("lastSaved", formatDateTime(seo.updated_at))}
           </span>
         )}
@@ -299,79 +301,79 @@ function TenantInfoTab({
   plan: SettingsData["plan"];
 }) {
   const t = useT(SETTINGS);
-  const PLAN_COLOR: Record<string, "blue" | "green" | "gold" | "purple" | "gray"> = {
-    internal:   "gold",
-    starter:    "blue",
-    growth:     "green",
+  const PLAN_COLOR: Record<string, Tone> = {
+    internal:   "accent",
+    starter:    "info",
+    growth:     "success",
     business:   "purple",
     enterprise: "purple",
   };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <Card>
+      <Section>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))", gap: 20 }}>
           <div>
-            <SLabel>{t("tenantName")}</SLabel>
-            <div style={{ fontSize: 16, fontWeight: 600, color: A.ink, fontFamily: serif }}>
+            <Eyebrow>{t("tenantName")}</Eyebrow>
+            <div style={{ fontSize: 16, fontWeight: 600, color: K.ink, fontFamily: serif }}>
               {tenant.name}
             </div>
           </div>
           <div>
-            <SLabel>{t("slug")}</SLabel>
-            <code style={{ fontSize: 13, fontFamily: mono, color: A.body }}>{tenant.slug}</code>
+            <Eyebrow>{t("slug")}</Eyebrow>
+            <code style={{ fontSize: 13, fontFamily: mono, color: K.body }}>{tenant.slug}</code>
           </div>
           <div>
-            <SLabel>{t("planTier")}</SLabel>
-            <Badge color={PLAN_COLOR[tenant.plan_tier] ?? "gray"}>
+            <Eyebrow>{t("planTier")}</Eyebrow>
+            <Badge tone={PLAN_COLOR[tenant.plan_tier] ?? "neutral"}>
               {tenant.plan_tier}
             </Badge>
           </div>
           <div>
-            <SLabel>{t("status")}</SLabel>
-            <Badge color={tenant.is_active ? "green" : "red"}>
+            <Eyebrow>{t("status")}</Eyebrow>
+            <Badge tone={tenant.is_active ? "success" : "danger"}>
               {tenant.is_active ? t("active") : t("inactive")}
             </Badge>
           </div>
           <div>
-            <SLabel>{t("tenantId")}</SLabel>
-            <code style={{ fontSize: 11, fontFamily: mono, color: A.muted2, wordBreak: "break-all" }}>
+            <Eyebrow>{t("tenantId")}</Eyebrow>
+            <code style={{ fontSize: 11, fontFamily: mono, color: K.muted2, wordBreak: "break-all" }}>
               {tenant.tenant_id}
             </code>
           </div>
         </div>
-      </Card>
+      </Section>
 
-      <Card>
-        <SLabel>{t("planQuota")}</SLabel>
+      <Section>
+        <Eyebrow>{t("planQuota")}</Eyebrow>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))", gap: 16 }}>
           <div>
-            <div style={{ fontSize: 11, color: A.muted, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.1em" }}>
+            <div style={{ fontSize: 11, color: K.muted, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.1em" }}>
               {t("monthlyTours")}
             </div>
-            <div style={{ fontFamily: serif, fontSize: 28, fontWeight: 500, color: A.ink, letterSpacing: "-0.02em" }}>
+            <div style={{ fontFamily: serif, fontSize: 28, fontWeight: 500, color: K.ink, letterSpacing: "-0.02em" }}>
               {plan.tours_quota_monthly > 0 ? plan.tours_quota_monthly.toLocaleString() : "∞"}
             </div>
           </div>
           <div>
-            <div style={{ fontSize: 11, color: A.muted, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.1em" }}>
+            <div style={{ fontSize: 11, color: K.muted, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.1em" }}>
               {t("monthlyPrice")}
             </div>
-            <div style={{ fontFamily: serif, fontSize: 28, fontWeight: 500, color: A.ink, letterSpacing: "-0.02em" }}>
+            <div style={{ fontFamily: serif, fontSize: 28, fontWeight: 500, color: K.ink, letterSpacing: "-0.02em" }}>
               {plan.price_usd_monthly > 0 ? `$${plan.price_usd_monthly.toFixed(0)}` : "—"}
             </div>
           </div>
           <div>
-            <div style={{ fontSize: 11, color: A.muted, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.1em" }}>
+            <div style={{ fontSize: 11, color: K.muted, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.1em" }}>
               {t("trashRetention")}
             </div>
-            <div style={{ fontFamily: serif, fontSize: 28, fontWeight: 500, color: A.ink, letterSpacing: "-0.02em" }}>
+            <div style={{ fontFamily: serif, fontSize: 28, fontWeight: 500, color: K.ink, letterSpacing: "-0.02em" }}>
               {t("days", plan.trash_retention_days)}
             </div>
-            <div style={{ fontSize: 10, color: A.muted2, marginTop: 2 }}>{t("systemDefault")}</div>
+            <div style={{ fontSize: 10, color: K.muted2, marginTop: 2 }}>{t("systemDefault")}</div>
           </div>
         </div>
-      </Card>
+      </Section>
     </div>
   );
 }
@@ -430,13 +432,13 @@ function SettingsPageInner() {
           description={t("description")}
         />
 
-        {isLoading && <LoadingScreen msg={t("loading")} />}
+        {isLoading && <LoadingScreen message={t("loading")} />}
 
         {!isLoading && isError && (
-          <Card style={{ textAlign: "center", padding: 40 }}>
-            <div style={{ color: A.red, marginBottom: 12 }}>{t("loadError")}</div>
+          <Section bodyStyle={{ textAlign: "center", padding: 40 }}>
+            <div style={{ color: K.danger, marginBottom: 12 }}>{t("loadError")}</div>
             <Button variant="secondary" onClick={() => refetch()}>{t("retry")}</Button>
-          </Card>
+          </Section>
         )}
 
         {!isLoading && !isError && data && (

@@ -4,8 +4,7 @@
 // the per-status job count for the last 30 days (from `counts`). Kinds with 0 jobs are still listed
 // so the registry is visible in full. Clicking a count filters the main list by (kind, status).
 
-import { A, mono, Card, SLabel } from "../_components/adminUi";
-import { StatusBadge, useT } from "../../_kit";
+import { StatusBadge, useT, Eyebrow, K, Section, mono } from "../../_kit";
 import { JOBS } from "./messages";
 import { STATUSES, fmtSeconds, type Count, type Kind } from "./jobsShared";
 
@@ -24,16 +23,16 @@ export default function JobKinds({
   for (const c of counts) byKey.set(`${c.kind}:${c.status}`, (byKey.get(`${c.kind}:${c.status}`) ?? 0) + c.n);
   const totalFor = (kind: string) => STATUSES.reduce((a, s) => a + (byKey.get(`${kind}:${s}`) ?? 0), 0);
 
-  const cell: React.CSSProperties = { padding: "7px 10px", fontSize: 12, borderBottom: `1px solid ${A.line2}`, whiteSpace: "nowrap" };
-  const head: React.CSSProperties = { padding: "6px 10px", fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", color: A.muted, textAlign: "left", borderBottom: `1px solid ${A.line}` };
+  const cell: React.CSSProperties = { padding: "7px 10px", fontSize: 12, borderBottom: `1px solid ${K.line2}`, whiteSpace: "nowrap" };
+  const head: React.CSSProperties = { padding: "6px 10px", fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", color: K.muted, textAlign: "left", borderBottom: `1px solid ${K.line}` };
 
   return (
     <div style={{ marginTop: 16 }}>
-      <SLabel>{t("tabKinds")}</SLabel>
-      <div style={{ fontSize: 12, color: A.muted, marginBottom: 8 }}>
+      <Eyebrow>{t("tabKinds")}</Eyebrow>
+      <div style={{ fontSize: 12, color: K.muted, marginBottom: 8 }}>
         {t("kindsIntro", kinds.length)}
       </div>
-      <Card style={{ padding: 0, overflow: "hidden" }}>
+      <Section padded={false} style={{ overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
             <thead>
@@ -49,10 +48,10 @@ export default function JobKinds({
             <tbody>
               {kinds.map(k => (
                 <tr key={k.kind}>
-                  <td style={{ ...cell, fontFamily: mono, color: A.ink3 }}>{k.kind}</td>
+                  <td style={{ ...cell, fontFamily: mono, color: K.ink3 }}>{k.kind}</td>
                   <td style={{ ...cell, fontFamily: mono, textAlign: "right" }}>{k.concurrency}</td>
                   <td style={{ ...cell, fontFamily: mono, textAlign: "right" }}>{k.max_attempts}</td>
-                  <td style={{ ...cell, fontFamily: mono, textAlign: "right", color: A.muted }}>
+                  <td style={{ ...cell, fontFamily: mono, textAlign: "right", color: K.muted }}>
                     {k.expected_seconds ? fmtSeconds(k.expected_seconds) : "—"}
                   </td>
                   {STATUSES.map(s => {
@@ -63,24 +62,24 @@ export default function JobKinds({
                           <button
                             onClick={() => onPick(k.kind, s)}
                             title={t("filterTitle", k.kind, s)}
-                            style={{ border: "none", background: "transparent", cursor: "pointer", fontFamily: mono, fontSize: 12, color: A.accentDeep, padding: 0 }}
+                            style={{ border: "none", background: "transparent", cursor: "pointer", fontFamily: mono, fontSize: 12, color: K.accentDeep, padding: 0 }}
                           >
                             {n}
                           </button>
                         ) : (
-                          <span style={{ fontFamily: mono, color: A.muted2 }}>0</span>
+                          <span style={{ fontFamily: mono, color: K.muted2 }}>0</span>
                         )}
                       </td>
                     );
                   })}
-                  <td style={{ ...cell, fontFamily: mono, textAlign: "right", color: A.ink }}>{totalFor(k.kind)}</td>
+                  <td style={{ ...cell, fontFamily: mono, textAlign: "right", color: K.ink }}>{totalFor(k.kind)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      </Card>
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8, fontSize: 11, color: A.muted }}>
+      </Section>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8, fontSize: 11, color: K.muted }}>
         {STATUSES.map(s => (
           <span key={s} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
             <StatusBadge status={s} />
