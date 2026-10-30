@@ -4471,6 +4471,21 @@
             "title": "Accept Rule",
             "type": "string"
           },
+          "by": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 4,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "By"
+          },
           "confirm": {
             "default": false,
             "title": "Confirm",
@@ -4487,6 +4502,22 @@
               }
             ],
             "title": "Country"
+          },
+          "destination_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "maxItems": 500,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Destination Ids"
           },
           "hide_unconfirmed": {
             "default": false,
@@ -4524,9 +4555,24 @@
           },
           "mode": {
             "default": "dry_run",
-            "pattern": "^(dry_run|apply|hide|unhide)$",
+            "pattern": "^(dry_run|apply|hide|unhide|hide_flagged)$",
             "title": "Mode",
             "type": "string"
+          },
+          "outcomes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 3,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcomes"
           },
           "reasons": {
             "anyOf": [
@@ -4549,6 +4595,26 @@
             },
             "maxItems": 4,
             "title": "Recheck",
+            "type": "array"
+          },
+          "stamp_accept": {
+            "anyOf": [
+              {
+                "pattern": "^(v1|aa997\\.[23])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stamp Accept"
+          },
+          "stamp_versions": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 4,
+            "title": "Stamp Versions",
             "type": "array"
           },
           "strategy": {

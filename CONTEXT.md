@@ -924,6 +924,10 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   descriptions: `services/places/name_filter.py`) never reach a paid call (`unknown`, `last_error='non_place:<cause>'`).
   Existing model-placed rows are re-located by the job kind `place_relocate` (`POST /admin/places/relocate`, dry run
   first; flags `off_route` / `llm_point`, optional hide; no model call; 1,000 daily credits kept for place_geocode).
+  Its no-call modes hide flagged pins from every reader (`suspect`): `hide` by review reason, `hide_flagged` (S260)
+  only rows a run already stamped `llm_point` / `off_route` and left on the model's point (report, then confirm,
+  audited; a confirm hides only the rows its report listed); `unhide` reverts by stamp or by id (a restore by id
+  stays shown on later hides), and a hidden row a later run confirms is shown again.
   Generic phrases ("ger camp", "local market") are not geocoded. Free plan 3,000 credits/day: ≤ 5 req/s, retry on
   429/5xx, daily credit guard 2,500 (UTC day, `geo.geocode_call`); AA-990: a run stopped by it with names still
   due queues the next run for 00:10 UTC + jitter (`enqueue.enqueue_after_credit_reset`, one row per reset day, queued

@@ -645,10 +645,11 @@ async def test_hide_reports_first_and_writes_only_on_confirm_and_unhide_reverts(
     # unhide: only rows still flagged for the reason they were hidden; the stamp stays with unhidden_at
     conn = _HideConn([{"id": "d1", "same_reason": True}, {"id": "d2", "same_reason": False}])
     out = await relocate.unhide(_HidePool(conn), country=None)
-    assert out == {"mode": "unhide", "rule_version": relocate.RULE_VERSION, "country": None, "rows": 2,
-                   "unhidden": 1, "kept_reason_changed": 1}
+    assert out == {"mode": "unhide", "rule_version": relocate.RULE_VERSION, "country": None,
+                   "by": sorted(relocate.POLICY_STAMPS), "destination_ids": None, "rows": 2,
+                   "unhidden": 1, "kept_reason_changed": 1, "restored_reason_changed": 0, "audit_rows": 1}
     row_updates = [a for s, a in conn.sql if s.startswith("UPDATE shared.destinations")]
-    assert len(row_updates) == 1 and row_updates[0][0] == "d1" and row_updates[0][1]      # (id, unhidden_at)
+    assert len(row_updates) == 1 and row_updates[0][0] == "d1" and row_updates[0][1]   # (id, unhidden_at, by)
     assert "geocoder_meta - 'hidden'" not in relocate._UNHIDE_ROW_SQL and "unhidden_at" in relocate._UNHIDE_ROW_SQL
     assert "review_reason IS NOT DISTINCT FROM" in relocate._UNHIDE_ROW_SQL
     assert len([s for s, _ in conn.sql if "geo.place_name" in s]) == 1

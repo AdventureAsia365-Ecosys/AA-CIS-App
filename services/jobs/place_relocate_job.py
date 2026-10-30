@@ -10,7 +10,10 @@ geoapify is dry-run only), "max_requests"? (a cap on Geoapify requests over the 
 the endpoint: the spent count is read from geo.geocode_call of the chain's jobs, so a retried or crashed run is
 counted too), "rule_version" (set by the endpoint; an apply whose rule version is not the deployed one is refused, so
 a chain queued before a rule change stops instead of running the new rule with an old dry run), "reasons"? /
-"confirm"? (hide)}.
+"confirm"? (hide), "outcomes"? / "stamp_versions"? / "stamp_accept"? / "confirm"? / "dry_run_job"? / "max_rows"?
+(hide_flagged: rows a relocate run stamped llm_point / off_route (| weak_confirm) and left on the model's point,
+located_by as given; report unless confirm, a confirm hides only the unchanged rows of the report dry_run_job),
+"by"? / "destination_ids"? (unhide: the policy stamps to revert, only these rows)}.
 Queued by POST /admin/places/relocate.
 
 dry_run: no paid call and no write — the counts and the Geoapify credit estimate in the job result.
@@ -47,7 +50,9 @@ LOCKED_DELAY_S = 120
 CONTINUE_DELAY_S = 15
 
 
-MODES = ("dry_run", "apply", "hide", "unhide")
+MODES = ("dry_run", "apply", "hide", "unhide", "hide_flagged")
+NO_CALL_MODES = ("hide", "unhide", "hide_flagged")
+MAX_UNHIDE_IDS = 500
 
 
 def _int_or_none(v) -> Optional[int]:
@@ -84,6 +89,23 @@ def _payload(p: dict) -> dict:
     if mode == "hide":
         out["reasons"] = relocate.hide_reasons(p.get("reasons"))
         out["confirm"] = bool(p.get("confirm"))
+    if mode == "hide_flagged":
+        out["outcomes"] = relocate.hide_flagged_outcomes(p.get("outcomes"))
+        out["stamp_versions"] = sorted({str(v) for v in (p.get("stamp_versions") or []) if v})
+        out["stamp_accept"] = str(p["stamp_accept"]) if p.get("stamp_accept") else None
+        out["confirm"] = bool(p.get("confirm"))
+        if p.get("max_rows") is not None:
+            try:
+                out["max_rows"] = max(0, int(p["max_rows"]))
+            except (TypeError, ValueError):
+                out["max_rows"] = 0         # unreadable cap: a confirm refuses rather than hides an unknown set
+        if p.get("dry_run_job"):
+            out["dry_run_job"] = str(p["dry_run_job"])
+    if mode == "unhide":
+        out["by"] = relocate.policy_stamps(p.get("by"))
+        ids = [str(i) for i in (p.get("destination_ids") or []) if i][:MAX_UNHIDE_IDS]
+        if ids:
+            out["destination_ids"] = ids
     return out
 
 
@@ -117,10 +139,23 @@ async def _requeue(ctx: JobContext, p: dict, *, run_after: datetime, key: Option
 @job_kind(KIND, concurrency=1, max_attempts=3, expected_seconds=1800, background=True)
 async def run(ctx: JobContext) -> Optional[dict]:
     p = _payload(ctx.payload or {})
-    if p["mode"] in ("hide", "unhide"):     # no call: the readers' hide-unconfirmed policy (report only unless confirm)
-        out = (await relocate.hide(ctx.pool, reasons=p["reasons"], country=p["country"], confirm=p["confirm"])
-               if p["mode"] == "hide" else await relocate.unhide(ctx.pool, country=p["country"]))
-        if out.get("hidden") or out.get("unhidden"):     # the Tour Graph drops / takes back suspect rows on rebuild
+    if p["mode"] in NO_CALL_MODES:     # no call: the readers' hide-unconfirmed policy (report only unless confirm)
+        actor = (getattr(ctx.job, "created_by", None) or KIND)[:64]
+        if p["mode"] == "hide":
+            out = await relocate.hide(ctx.pool, reasons=p["reasons"], country=p["country"], confirm=p["confirm"],
+                                      actor=actor, job_id=ctx.job_id)
+        elif p["mode"] == "hide_flagged":
+            out = await relocate.hide_flagged(ctx.pool, outcomes=p["outcomes"], stamp_versions=p["stamp_versions"],
+                                              stamp_accept=p["stamp_accept"], located_by=p["located_by"],
+                                              country=p["country"], confirm=p["confirm"],
+                                              dry_run_job=p.get("dry_run_job"), max_rows=p.get("max_rows"),
+                                              actor=actor, job_id=ctx.job_id)
+        else:
+            out = await relocate.unhide(ctx.pool, country=p["country"], by=p["by"],
+                                        destination_ids=p.get("destination_ids"), actor=actor, job_id=ctx.job_id)
+        # the Tour Graph drops / takes back suspect rows on rebuild; queued after every write run, not only when this
+        # attempt changed rows: a retry after a crash between batches finds the committed rows already done (0)
+        if p["mode"] == "unhide" or p.get("confirm"):
             out["graph_job"], _ = await enqueue_debounced(ctx.pool, GRAPH_KIND, reason=KIND, created_by=KIND)
         return out
     inner = get_geocoder()
