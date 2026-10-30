@@ -28,6 +28,9 @@ Slice S4 plugs the circuit breaker (``breaker.py``) into the plan: a deployment 
 Slice S5 makes the data policy per stage (``data_scope.py``): ``deployment_plan`` / ``vendor_deployment_for`` take the
 stage's ``allowed_scopes`` and leave out a deployment whose connection's ``data_scope`` the stage does not allow.
 
+Slice S9 adds Azure OpenAI connections (kind ``azure_openai``) for ``openai_chat`` rows of an OpenAI model; the client
+of every OpenAI-format connection is built per connection (``adapters/openai_chat.py``).
+
 Slice S10 adds the monthly budget per connection (``connection_budget.py``): a connection that reached its hard budget
 is left out like an open circuit (named in ``DeploymentPlan.budget_skips``). A connection without a budget (every seed
 row) is never read for it, so the plan is unchanged.
@@ -133,6 +136,7 @@ _CALLABLE: dict[str, frozenset] = {
     "bedrock": frozenset({"converse", "anthropic_native", "embed"}),
     "anthropic": frozenset({"converse", "anthropic_messages"}),
     "openai": frozenset({"openai_chat"}),
+    "azure_openai": frozenset({"openai_chat"}),          # AA-1002 (S9): adapters/openai_chat.py, AzureOpenAI client
 }
 _BEDROCK_AUTH = ("assume_role", "task_role")
 
@@ -198,6 +202,8 @@ def _callable(model: CatalogModel, conn: connections.ProviderConnection) -> Opti
         return "legacy key" if model.model_key in LEGACY_KEYS else "not an Anthropic model"
     if conn.kind == "openai" and model.provider != "openai":
         return "an OpenAI API connection serves only provider='openai' catalog rows (S235)"
+    if conn.kind == "azure_openai" and model.provider not in ("openai", "azure_openai"):
+        return "an Azure OpenAI connection serves only OpenAI-model catalog rows (S235)"
     problems = conn.policy_problems()           # an API-key connection: secret prefix, base_url allowlist (S1)
     if problems:
         return "connection policy: " + "; ".join(problems)

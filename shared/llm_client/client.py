@@ -8,9 +8,9 @@ import boto3
 from botocore.config import Config
 from typing import Optional
 
-import openai
+import openai  # noqa: F401  (kept: tests patch shared.llm_client.client.openai; the client is adapters/openai_chat.py)
 import structlog
-from .models import ANTHROPIC_API_LABEL_PREFIX, LLMRequest, LLMResponse
+from .models import ANTHROPIC_API_LABEL_PREFIX, AZURE_OPENAI_LABEL_PREFIX, LLMRequest, LLMResponse
 from .prompt_cache import build_cached_system_prompt, build_cached_messages
 from .pricing import BEDROCK_SONNET, BEDROCK_HAIKU, COST_TABLE, Usage, calc_cost
 from . import pricing
@@ -111,13 +111,18 @@ class OpenAIPlatformBlocked(RuntimeError):
     """S235 — a call would go to an OpenAI platform API model whose catalog row is not enabled."""
 
 
-# The connection the OpenAI adapter talks to (the client is built once from its credential env, migration 304's row).
+# The OpenAI API connection of the paths that name no deployment (a catalog openai_chat key without registry rows, the
+# retired gpt-4.1 tier): migration 304's row. AA-1002 (S9): the SDK client is built per connection at call time
+# (adapters/openai_chat.py); a deployment on another openai / azure_openai connection names its own.
 OPENAI_CONNECTION_KEY = "openai-direct"
 ACC2_CONNECTION_KEY = "acc2"     # AA-1002 (S10): the task-role Bedrock connection the acc2-native legacy tiers call
+# AA-1002 (S9): a reply from an Azure OpenAI connection is labelled AZURE_OPENAI_LABEL_PREFIX + catalog key (models.py),
+# so llm_call_log records provider='azure_openai' for every caller (call_log._normalize_model_provider), as the
+# Anthropic API path does with "anthropic-api-<key>". OpenAI-API replies keep the bare catalog key.
 
 
-def _openai_data_scope() -> str:
-    conn = connections.connection_or_builtin(OPENAI_CONNECTION_KEY)
+def _openai_data_scope(conn: Optional[connections.ProviderConnection] = None) -> str:
+    conn = conn or connections.connection_or_builtin(OPENAI_CONNECTION_KEY)
     return conn.data_scope if conn is not None else data_scope.VENDOR_DIRECT
 
 
@@ -129,7 +134,12 @@ def openai_platform_allowed(model_key: str) -> bool:
     GPT-4.1 last resort are refused here. Fails closed: an unreadable catalog (DB down, unit tests)
     means not allowed. AA-1002 (S5): the stage's data scope is a second gate (``openai_scope_allowed``)."""
     m = get_model_sync(model_key)
-    return m is not None and m.provider == "openai" and m.enabled
+    return m is not None and m.provider in OPENAI_FORMAT_PROVIDERS and m.enabled
+
+
+# AA-1002 (S9): the catalog providers the OpenAI-format adapter serves (an Azure OpenAI deployment of an OpenAI model is
+# provider 'openai' in the catalog; a model only on Azure may say 'azure_openai').
+OPENAI_FORMAT_PROVIDERS = ("openai", "azure_openai")
 
 
 def _int_attr(obj, name: str) -> int:
@@ -152,11 +162,13 @@ def _openai_cached_tokens(usage, prompt_tokens) -> int:
     return min(value, prompt_tokens)
 
 
-def openai_scope_allowed(allowed_scopes: Optional[tuple]) -> bool:
+def openai_scope_allowed(allowed_scopes: Optional[tuple],
+                         conn: Optional[connections.ProviderConnection] = None) -> bool:
     """AA-1002 (S5): True when a stage with ``allowed_scopes`` may send content to the OpenAI connection (its data
     scope: vendor_direct). None (no stage policy: the column not migrated, an adhoc stage) = allowed, the S235 catalog
-    gate alone (``openai_platform_allowed``), i.e. the pre-S5 behaviour."""
-    return allowed_scopes is None or data_scope.allows(allowed_scopes, _openai_data_scope())
+    gate alone (``openai_platform_allowed``), i.e. the pre-S5 behaviour. AA-1002 (S9): ``conn`` = the connection the
+    call goes to (default openai-direct)."""
+    return allowed_scopes is None or data_scope.allows(allowed_scopes, _openai_data_scope(conn))
 
 
 # AA-1002 (S5): (stage, allowed_scopes) of the call being generated, bound by LLMClient._generate / the shadow so the
@@ -541,9 +553,10 @@ class LLMClient:
                 retries={"max_attempts": 2, "mode": "standard"},
             ),
         )
-        self._openai = openai.OpenAI(
-            api_key=os.environ.get("OPENAI_API_KEY")
-        )
+        # AA-1002 (S9): no OpenAI client is built here any more. Each call gets the client of its connection
+        # (adapters/openai_chat.client_for: the connection's secret, else its allowlisted credential env; its endpoint,
+        # timeout and retries). An object set here (tests, a one-off script) is used for every OpenAI-format call.
+        self._openai = None
 
     def generate(self, request: LLMRequest) -> LLMResponse:
         # AA-637 — report call boundaries to a bound live-progress sink (no-op without one).
@@ -761,7 +774,7 @@ class LLMClient:
                 continue
             if position > 0:
                 resp.fallback_used = True
-            if resp.provider == "openai":
+            if resp.provider in OPENAI_FORMAT_PROVIDERS:
                 # S235 — the OpenAI platform API is a last resort for a Bedrock outage: tenant
                 # content left AWS. Fixed event name for a CloudWatch metric filter / alarm
                 # (proposed in docs/implementation-notes/S235-bedrock-only.md); llm_call_log gets
@@ -1180,8 +1193,9 @@ class LLMClient:
         dep, conn = target.deployment, target.connection
         if conn.kind == "anthropic":
             return self._call_anthropic_messages(request, model, target)
-        if conn.kind == "openai":
-            return self._call_openai(request, model=dep.wire_id, catalog_model=model)
+        if conn.kind in ("openai", "azure_openai"):
+            return self._call_openai(request, model=dep.wire_id, catalog_model=model, connection=conn,
+                                     deployment=dep)
         if conn.kind != "bedrock":
             raise RuntimeError(f"connection {conn.connection_key!r} ({conn.kind}) has no adapter")
         if model.api_style == "converse":
@@ -1436,8 +1450,13 @@ class LLMClient:
             cache_write_1h_tokens=_int_attr(result, "cache_write_1h_tokens"), connection_key=conn.connection_key,
         )
 
-    def _call_openai(self, request: LLMRequest, model: str,
-                     catalog_model: Optional[CatalogModel] = None) -> LLMResponse:
+    def _call_openai(self, request: LLMRequest, model: str, catalog_model: Optional[CatalogModel] = None,
+                     connection: Optional[connections.ProviderConnection] = None,
+                     deployment=None) -> LLMResponse:
+        """One Chat Completions request on an OpenAI-format connection. AA-1002 (S9): ``connection`` (default
+        openai-direct, the 304 row or its built-in mirror) gives the SDK client (adapters/openai_chat.py: key from its
+        secret at call time, else its credential env; endpoint; timeout / retries); a 401 drops the cached key and
+        client. A reply from an Azure OpenAI connection is labelled ``azure-openai-<key>`` (provider azure_openai)."""
         # AA-209: forward sampling controls only when the caller explicitly set them. This makes the
         # GPT-4.1 judge reproducible (it passes temperature + seed) without changing behavior of
         # content/T3-fallback calls that rely on provider defaults (they never set these fields).
@@ -1467,6 +1486,11 @@ class LLMClient:
                                 "schema": request.json_schema["schema"]},
             }
         model_label = catalog_model.model_key if catalog_model else model
+        conn = connection or connections.connection_or_builtin(OPENAI_CONNECTION_KEY)
+        conn_key = conn.connection_key if conn is not None else OPENAI_CONNECTION_KEY
+        azure = conn is not None and conn.kind == "azure_openai"
+        reply_label = f"{AZURE_OPENAI_LABEL_PREFIX}{model_label}" if azure else model_label
+        provider = "azure_openai" if azure else "openai"
         # S235 — the single gate in front of the OpenAI platform API: every path into this adapter
         # (legacy gpt-4.1 tier, T3, catalog openai_chat rows, shadows) stops here unless the
         # model's catalog row is provider 'openai' AND enabled, and (AA-1002 S5) the stage's
@@ -1475,12 +1499,22 @@ class LLMClient:
             raise OpenAIPlatformBlocked(
                 f"{model_label}: OpenAI platform API is disabled (S235 Bedrock-only policy)")
         scopes = stage_scopes(request)
-        if not openai_scope_allowed(scopes):
+        if not openai_scope_allowed(scopes, conn):
             raise OpenAIPlatformBlocked(
                 f"{model_label}: stage {request.stage!r} may not send content outside AWS "
                 f"(data scopes {', '.join(scopes or ())})")
+        if conn is None:
+            raise connections.ConnectionCredentialError(f"connection {OPENAI_CONNECTION_KEY!r} is not known")
+        from .adapters import openai_chat
+        client = self._openai or openai_chat.client_for(
+            conn, getattr(deployment, "request_defaults", None))     # fails closed before any network call
         stream_sink.emit_restart(request.stage)  # AA-637
-        resp = self._openai.chat.completions.create(**kwargs)
+        try:
+            resp = client.chat.completions.create(**kwargs)
+        except Exception as e:
+            if openai_chat.is_auth_error(e):
+                openai_chat.forget_connection(conn_key)              # a rotated key is read on the next call
+            raise
         content = resp.choices[0].message.content or ""
         # AA-637 — no token streaming on this last-resort path; a live view gets the whole text.
         _cb = None if request.json_schema else stream_sink.delta_callback(request.stage)   # S251: as on Converse
@@ -1492,7 +1526,7 @@ class LLMClient:
         # OpenAI bills at the cache-read rate; before S6 every prompt token was priced at the input rate.
         cached = _openai_cached_tokens(resp.usage, in_tok)
         priced = self._quote(model_label, Usage(input_tokens=in_tok - cached, output_tokens=out_tok,
-                                                cache_read_tokens=cached), OPENAI_CONNECTION_KEY)
+                                                cache_read_tokens=cached), conn_key, deployment=deployment)
         cost    = priced.cost_usd
         # AA-493: OpenAI's field is "finish_reason" ("stop" | "length" | "content_filter" | ...)
         # — different name from Anthropic's "stop_reason", same purpose. Stored under the same
@@ -1503,7 +1537,7 @@ class LLMClient:
             # AA-927: the request was billed even though the reply is unusable.
             # AA-1002 (S6): the row's account is the connection (no AWS account on the OpenAI API).
             return _billed_unusable(message, [_billed_usage(
-                model_label, OPENAI_CONNECTION_KEY, {"tokens_in": in_tok, "tokens_out": out_tok}, cost,
+                reply_label, conn_key, {"tokens_in": in_tok, "tokens_out": out_tok}, cost,
                 finish_reason, 1, cache_read=cached, pricing_mode=priced.pricing_mode)])
 
         if catalog_model is not None and not content:
@@ -1520,15 +1554,15 @@ class LLMClient:
             except RuntimeError as e:
                 raise billed_failure(str(e)) from e
 
-        logger.info("llm_success", provider="openai", model=model_label,
+        logger.info("llm_success", provider=provider, model=model_label,
                     in_tokens=in_tok, out_tokens=out_tok, cost_usd=cost,
-                    stop_reason=finish_reason)
+                    stop_reason=finish_reason, connection=conn_key)
 
         return LLMResponse(
-            content=content, model_used=model_label, provider="openai",
+            content=content, model_used=reply_label, provider=provider,
             input_tokens=in_tok, output_tokens=out_tok, cost_usd=cost,
             stop_reason=finish_reason, cache_read_tokens=cached, pricing_mode=priced.pricing_mode,
-            connection_key=OPENAI_CONNECTION_KEY,
+            connection_key=conn_key,
         )
 
     def _calc_cost(self, model: str, in_tok: int, out_tok: int,

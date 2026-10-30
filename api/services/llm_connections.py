@@ -53,7 +53,7 @@ from shared.llm_client import deployments as dep_registry
 
 # The connection kinds whose `enabled` flag the gateway reads (S2: anthropic; since S3 every kind with an adapter,
 # vendor_route._CALLABLE). Enabling another kind (azure_openai, mock) would change nothing, so it is refused.
-TOGGLE_KINDS = ("bedrock", "anthropic", "openai")
+TOGGLE_KINDS = ("bedrock", "anthropic", "openai", "azure_openai")     # S9: azure_openai (adapters/openai_chat.py)
 
 # AA-1002 (S4): what PATCH /admin/llm-connections/{key} may change. `enabled` is migration 306's grant; the others
 # need migration 310 (until then the UPDATE answers permission denied → ConnectionEditUnavailable, 503). Never kind,
@@ -345,8 +345,9 @@ async def update_connection(db, connection_key: str, changes: dict, *, actor: st
         # this process reads the new state at once; the other processes (worker) within the 5-minute registry cache
         conn_registry.invalidate()
         dep_registry.invalidate()
-        from shared.llm_client.adapters import anthropic_messages
+        from shared.llm_client.adapters import anthropic_messages, openai_chat
         anthropic_messages.forget_connection(connection_key)
+        openai_chat.forget_connection(connection_key)          # S9: the OpenAI-format client of the connection
     if diff or policy_diff:
         from shared.llm_client import connection_budget
         connection_budget.invalidate()
