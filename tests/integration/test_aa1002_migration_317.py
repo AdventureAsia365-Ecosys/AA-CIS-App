@@ -26,7 +26,7 @@ from services.llm_cost import reconcile  # noqa: E402
 from shared import cost_guard  # noqa: E402
 
 M316 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
-                    "316_llm_connection_cost_policy_reconcile.sql")
+                    "317_llm_connection_cost_policy_reconcile.sql")
 KEY = "openai-direct"
 
 

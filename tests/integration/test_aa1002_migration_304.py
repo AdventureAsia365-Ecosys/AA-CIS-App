@@ -38,9 +38,11 @@ def _run(c):
 
 
 # AA-1002 S4: 309 (shared.llm_provider_health, FK to the connection) and 310 (the admin edit grant) build on 304's
-# tables; _undo drops them first and the fixture puts them back, so later modules see the post-310 state.
+# tables; S10: 317 (shared.llm_connection_cost_policy + shared.llm_cost_reconcile, FKs to the connection) too.
+# _undo drops them first and the fixture puts them back, so later modules see the post-317 state.
 LATER = [os.path.join(os.path.dirname(MIGRATION), f) for f in
-         ("309_llm_provider_health.sql", "310_llm_connection_admin_edit_grant.sql")]
+         ("309_llm_provider_health.sql", "310_llm_connection_admin_edit_grant.sql",
+          "317_llm_connection_cost_policy_reconcile.sql")]
 
 
 def _run_later(c):
@@ -69,8 +71,10 @@ def cur():
 
 def _undo(c):
     """The pre-304 state: no new tables, no capabilities column, the 181 / 169 / 226 CHECKs, 304 unregistered."""
+    c.execute("DROP TABLE IF EXISTS shared.llm_cost_reconcile")           # 317: references the connection table
+    c.execute("DROP TABLE IF EXISTS shared.llm_connection_cost_policy")   # 317: references the connection table
     c.execute("DROP TABLE IF EXISTS shared.llm_provider_health")          # 309: references the connection table
-    c.execute("DELETE FROM shared.schema_versions WHERE version IN ('309', '310')")
+    c.execute("DELETE FROM shared.schema_versions WHERE version IN ('309', '310', '317')")
     c.execute("DROP TABLE IF EXISTS shared.llm_model_deployment")
     c.execute("DROP TABLE IF EXISTS shared.llm_provider_connection")
     c.execute("ALTER TABLE shared.llm_model_catalog DROP COLUMN IF EXISTS capabilities")
