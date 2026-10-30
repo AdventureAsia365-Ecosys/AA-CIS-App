@@ -52,7 +52,7 @@ from services.seo_intelligence.seed_builder import (
     resolve_buyer_markets,
 )
 from shared.cost_guard import BudgetExceeded, RunBudget
-from shared.llm_client.call_log import record_call_with_pool
+from shared.llm_client.call_log import billed_fields, record_call_with_pool
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
 
@@ -510,7 +510,7 @@ async def _research_place(
                                 "parsed": turn is not None},
                 stop_reason=getattr(resp, "stop_reason", None),
                 account=getattr(resp, "satellite_account", None),
-                fallback_used=getattr(resp, "fallback_used", None),
+                fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
             )
             if turn is None:
                 logger.warning("segment_research_bad_step", place=place, raw=resp.content[:200])

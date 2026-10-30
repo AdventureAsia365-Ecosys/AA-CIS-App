@@ -33,7 +33,7 @@ from services.acp_shared.dfs_relevance import SearchDemandSignal
 from services.acp_shared.piece_history import PriorPiece
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
-from shared.llm_client.call_log import record_call, record_call_with_pool, record_unusable
+from shared.llm_client.call_log import billed_fields, record_call, record_call_with_pool, record_unusable
 
 logger = structlog.get_logger()
 
@@ -168,7 +168,7 @@ async def _generate_once(
             quality_signal=quality_signal,
             stop_reason=getattr(resp, "stop_reason", None),
             account=getattr(resp, "satellite_account", None),
-            fallback_used=getattr(resp, "fallback_used", None),
+            fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
         )
     else:
         await record_call(
@@ -180,7 +180,7 @@ async def _generate_once(
             quality_signal=quality_signal,
             stop_reason=getattr(resp, "stop_reason", None),
             account=getattr(resp, "satellite_account", None),
-            fallback_used=getattr(resp, "fallback_used", None),
+            fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
         )
     return angles, recommended_index, reason, resp.cost_usd
 

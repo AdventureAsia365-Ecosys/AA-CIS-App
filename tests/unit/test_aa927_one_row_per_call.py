@@ -299,6 +299,10 @@ def _client():
 def flat_price(monkeypatch):
     monkeypatch.setattr(LLMClient, "_calc_cost",
                         lambda self, model, i, o, cache_read=0, cache_write=0: (i + o + cache_read) / 1000)
+    # AA-1002 (S6): the Converse / Anthropic / OpenAI paths price through LLMClient._quote (deployment-aware)
+    from shared.llm_client.pricing import Quote
+    monkeypatch.setattr(LLMClient, "_quote", lambda self, model, u, connection_key=None, deployment=None: Quote(
+        (u.input_tokens + u.output_tokens + u.cache_read_tokens) / 1000, "catalog", {}))
 
 
 def test_l_converse_schema_retry_ok_prices_both_requests(flat_price):

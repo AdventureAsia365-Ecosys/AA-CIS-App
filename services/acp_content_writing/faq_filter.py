@@ -36,7 +36,7 @@ import structlog
 
 from services.acp_content_writing.hygiene import fold, names_place
 from services.acp_content_writing.quality_gates import PAA_MAX_QUESTIONS, normalize_paa_question, paa_for_scope
-from shared.llm_client.call_log import record_call_sync, record_unusable_sync
+from shared.llm_client.call_log import billed_fields, record_call_sync, record_unusable_sync
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
 
@@ -293,7 +293,8 @@ def llm_filter_questions(questions, scope: FaqScope, *, out_of_scope=(), limit: 
             "json_parsed": True, "keep": len(model_keep), "drop_reasons": drop_reasons,
             "gazetteer_dropped": len(gazetteer_dropped)},
         stop_reason=getattr(resp, "stop_reason", None), account=getattr(resp, "satellite_account", None),
-        fallback_used=getattr(resp, "fallback_used", None), provider=getattr(resp, "provider", None), **ids,
+        fallback_used=getattr(resp, "fallback_used", None), provider=getattr(resp, "provider", None),
+        **ids, **billed_fields(resp),
     )
     return FilterOutcome(kept=kept, verdicts=rows, model=resp.model_used, cost_usd=cost,
                          gazetteer_dropped=gazetteer_dropped)

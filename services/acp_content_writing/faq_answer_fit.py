@@ -41,7 +41,7 @@ import structlog
 from services.acp_content_writing.faq_filter import MODE_OFF, MODE_ON, faq_filter_mode
 from services.acp_content_writing.quality_gates import (FAQ_MIN_PAIRS, drop_faq_pairs, faq_pairs,
                                                         strip_citation_tags)
-from shared.llm_client.call_log import record_call_sync, record_unusable_sync
+from shared.llm_client.call_log import billed_fields, record_call_sync, record_unusable_sync
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
 
@@ -208,7 +208,8 @@ def _fit_call(sent: Sequence[tuple[str, str]], *, fit_mode: str, stage: str, rol
         tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
         cost_usd=resp.cost_usd, quality_signal=signal | {"json_parsed": True, "verdicts": counts},
         stop_reason=getattr(resp, "stop_reason", None), account=getattr(resp, "satellite_account", None),
-        fallback_used=getattr(resp, "fallback_used", None), provider=getattr(resp, "provider", None), **ids,
+        fallback_used=getattr(resp, "fallback_used", None), provider=getattr(resp, "provider", None),
+        **ids, **billed_fields(resp),
     )
     return verdicts, resp
 

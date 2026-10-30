@@ -36,7 +36,7 @@ import structlog
 
 from services.acp_contract.atom_ranking import CONTESTED_CUT_THRESHOLD, compute_contested
 from services.content_generation.brand_fit import billed_calls, has_brand_signals, score_candidate_fit
-from shared.llm_client.call_log import record_billed_failure, record_call
+from shared.llm_client.call_log import billed_fields, record_billed_failure, record_call
 from shared.llm_client.decide import decide
 from services.quality.registry import threshold
 
@@ -273,7 +273,7 @@ async def apply_debate(
                             "passed": result.judge_score >= BRAND_FIT_CUT_THRESHOLD,
                         },
                         stop_reason=result.stop_reason, account=result.account,
-                        fallback_used=result.fallback_used,
+                        fallback_used=result.fallback_used, **billed_fields(result),
                     )
                     await _store_brand_fit_cache(conn, tenant_id, candidate, brand_profile["_version"], result)
                     judge_score = result.judge_score

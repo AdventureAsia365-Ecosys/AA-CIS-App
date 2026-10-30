@@ -238,7 +238,7 @@ def extract_day_facts(tour: dict, *, client=None, model_tier=None) -> dict:
 
     resp = None  # AA-927
     try:
-        from shared.llm_client.call_log import record_call_sync, record_unusable_sync
+        from shared.llm_client.call_log import billed_fields, record_call_sync, record_unusable_sync
         from shared.llm_client.client import LLMClient
         from shared.llm_client.models import LLMRequest
 
@@ -267,7 +267,7 @@ def extract_day_facts(tour: dict, *, client=None, model_tier=None) -> dict:
             quality_signal={"source": "s1_source_facts", "days": len(days)},
             stop_reason=getattr(resp, "stop_reason", None),
             account=getattr(resp, "satellite_account", None),
-            fallback_used=getattr(resp, "fallback_used", None),
+            fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
         )
     except Exception as exc:                       # never break the rewrite
         logger.warning("source_facts_extract_failed", error=str(exc)[:200])

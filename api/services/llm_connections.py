@@ -282,7 +282,7 @@ async def test_connection(pool, connection_key: str, *, model_key: Optional[str]
     ``adhoc_conn_test``, role ``validate``, account = the connection); a billed but unusable reply is logged by the
     gateway. One audit row (``llm_connection_tested``). Raises LookupError (404) and ConnectionToggleRefused (422);
     a provider failure is the result (``ok: false`` + its class), not an exception."""
-    from shared.llm_client.call_log import record_call_with_pool
+    from shared.llm_client.call_log import billed_fields, record_call_with_pool
     from shared.llm_client.client import LLMClient, UnusableReply, unusable_reply_cost
     from shared.llm_client.models import LLMRequest
     from shared.llm_client.vendor_route import VendorDeployment
@@ -326,7 +326,7 @@ async def test_connection(pool, connection_key: str, *, model_key: Optional[str]
             pool, stage=TEST_STAGE, role=TEST_ROLE, model=resp.model_used, tokens_in=resp.input_tokens,
             tokens_out=resp.output_tokens, cost_usd=resp.cost_usd,
             quality_signal={"connection_test": connection_key, "actor": actor[:64]},
-            stop_reason=resp.stop_reason, account=connection_key, fallback_used=False)
+            stop_reason=resp.stop_reason, account=connection_key, fallback_used=False, **billed_fields(resp))
     result["latency_ms"] = int((time.monotonic() - started) * 1000)
     async with pool.acquire() as db:
         await db.execute(

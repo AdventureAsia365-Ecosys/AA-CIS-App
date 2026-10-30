@@ -54,7 +54,7 @@ from json_repair import repair_json
 
 from services.acp_contract.ranking_reference import PLACE_KINDS, names_somewhere
 from shared import countries as _countries
-from shared.llm_client.call_log import record_call_with_pool
+from shared.llm_client.call_log import billed_fields, record_call_with_pool
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
 
@@ -892,7 +892,7 @@ async def _log(pool, stage: str, role: str, resp, quality_signal: dict) -> None:
         tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
         cost_usd=resp.cost_usd, quality_signal=quality_signal,
         stop_reason=getattr(resp, "stop_reason", None), account=getattr(resp, "satellite_account", None),
-        fallback_used=getattr(resp, "fallback_used", None),
+        fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
     )
 
 

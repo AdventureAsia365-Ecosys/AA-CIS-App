@@ -10,7 +10,7 @@ import json
 import re
 import structlog
 
-from .call_log import record_call_sync
+from .call_log import billed_fields, record_call_sync
 from .client import LLMClient
 from .models import LLMRequest
 
@@ -118,7 +118,7 @@ def _log_call(resp, *, json_parsed: bool, mapped: int) -> None:
         tokens_in=resp.input_tokens, tokens_out=resp.output_tokens, cost_usd=resp.cost_usd,
         quality_signal={"json_parsed": json_parsed, "mapped_columns": mapped},
         stop_reason=resp.stop_reason, account=resp.satellite_account,
-        fallback_used=resp.fallback_used,
+        fallback_used=resp.fallback_used, **billed_fields(resp),
     )
 
 

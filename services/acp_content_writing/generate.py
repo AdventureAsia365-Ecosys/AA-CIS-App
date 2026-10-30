@@ -30,7 +30,7 @@ from services.acp_content_writing.quality_gates import strip_citation_tags
 from shared.llm_client import stream_sink
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
-from shared.llm_client.call_log import record_call_sync
+from shared.llm_client.call_log import billed_fields, record_call_sync
 from services.writing_memory.insertion import t9_platform_block, t9_tenant_lines  # AA-919 (WM-18 / WM-20)
 
 # AA-768 (S233) — output ceiling per channel. A single 2048 cap cut 20/92 t9_write calls in the
@@ -230,7 +230,7 @@ def _record_t9_write_call(resp, channel: str, *, attempt: int, tenant_id, angle_
                         **({"truncation_retry": True} if truncation_retry else {})},
         stop_reason=getattr(resp, "stop_reason", None),
         account=getattr(resp, "satellite_account", None),
-        fallback_used=getattr(resp, "fallback_used", None),
+        fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
     )
 
 
@@ -358,7 +358,7 @@ def repair_sentences_detailed(
                         "sentences": len(sentences), "source_chars": len(source)},
         stop_reason=getattr(resp, "stop_reason", None),
         account=getattr(resp, "satellite_account", None),
-        fallback_used=getattr(resp, "fallback_used", None),
+        fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
     )
     text = _strip_fences(resp.content)
     try:
@@ -430,7 +430,7 @@ def fit_seo_fields(
         quality_signal={"channel": "blog", "mode": "seo_fit"},
         stop_reason=getattr(resp, "stop_reason", None),
         account=getattr(resp, "satellite_account", None),
-        fallback_used=getattr(resp, "fallback_used", None),
+        fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
     )
     text = _strip_fences(resp.content)
     try:
@@ -515,7 +515,7 @@ def write_faq(
                         **({"required_questions": len(required_questions)} if required_questions else {})},
         stop_reason=getattr(resp, "stop_reason", None),
         account=getattr(resp, "satellite_account", None),
-        fallback_used=getattr(resp, "fallback_used", None),
+        fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
     )
     text = _strip_fences(resp.content)
     try:

@@ -187,7 +187,7 @@ def _cosine(a: list[float], b: list[float]) -> float:
 
 
 async def _log_probe(result: dict[str, Any], issue: str = "AA-856") -> None:
-    from shared.llm_client.call_log import record_call
+    from shared.llm_client.call_log import billed_fields, record_call
 
     resp = result.pop("_resp")
     await record_call(
@@ -199,7 +199,7 @@ async def _log_probe(result: dict[str, Any], issue: str = "AA-856") -> None:
                         "dimensions": len(resp.vectors[0]),
                         "tokens_estimated": resp.tokens_estimated},
         account=resp.account, fallback_used=False,
-        provider="bedrock-native" if resp.account == "acc2" else "bedrock-satellite",
+        provider="bedrock-native" if resp.account == "acc2" else "bedrock-satellite", **billed_fields(resp),
     )
 
 

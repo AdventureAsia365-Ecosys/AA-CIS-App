@@ -58,6 +58,7 @@ def call_judge(system_prompt: str, user_prompt: str, *, stage: str, temperature:
 def invoke_judge(system_prompt: str, user_prompt: str, max_tokens: int = 2048, *, stage: str) -> dict:
     """The T10 judge call (temperature 0 is requested; the catalog drops it for models that do not accept
     it). Returns the raw text plus the fields the caller logs."""
+    from shared.llm_client.call_log import billed_fields
     resp = call_judge(system_prompt, user_prompt, stage=stage, temperature=0, max_tokens=max_tokens)
     return {
         "text": resp.content,
@@ -69,6 +70,8 @@ def invoke_judge(system_prompt: str, user_prompt: str, max_tokens: int = 2048, *
         "account": resp.satellite_account,
         "fallback_used": resp.fallback_used,
         "cost_usd": resp.cost_usd,
+        # AA-1002 (S6): cache split, pricing basis, vendor connection (call_log.billed_fields keys)
+        **billed_fields(resp),
     }
 
 

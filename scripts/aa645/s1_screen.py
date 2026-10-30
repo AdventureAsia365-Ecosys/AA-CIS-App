@@ -330,7 +330,7 @@ def run_capped(client, run_id: str, unit: dict, sample: dict, ctx: dict, cap: fl
 def llm_call(client, run_id: str, unit: dict, call: str, system: str, user: str, max_tokens: int) -> dict:
     """One model call through the gateway, logged as adhoc_aa645 / writer. Returns the call record with the reply
     text; a gateway error is recorded (the gateway logs a billed-but-unusable attempt itself)."""
-    from shared.llm_client.call_log import record_call_sync
+    from shared.llm_client.call_log import billed_fields, record_call_sync
     from shared.llm_client.client import _billed_usage_of
     from shared.llm_client.models import LLMRequest
     from services.content_generation.s1_writer_v2 import parse_json
@@ -363,7 +363,7 @@ def llm_call(client, run_id: str, unit: dict, call: str, system: str, user: str,
         quality_signal={"aa645_run": run_id, "arm": unit["arm"], "model_key": unit["model"], "call": call,
                         "sample": unit["sample_id"], "json_parsed": parsed is not None},
         stop_reason=resp.stop_reason, account=resp.satellite_account, fallback_used=resp.fallback_used,
-        provider=resp.provider if isinstance(resp.provider, str) else None)
+        provider=resp.provider if isinstance(resp.provider, str) else None, **billed_fields(resp))
     rec.update(ok=parsed is not None, parsed=parsed, model_used=resp.model_used, tokens_in=resp.input_tokens,
                tokens_out=resp.output_tokens, cost_usd=resp.cost_usd, stop_reason=resp.stop_reason,
                latency_s=round(time.monotonic() - t0, 1))

@@ -114,6 +114,10 @@ class MessagesResult:
     effort: Optional[str]
     request_id: Optional[str] = None
     params: dict = field(default_factory=dict, repr=False)
+    # AA-1002 (S6): the 1-hour-TTL part of cache_write_tokens (usage.cache_creation.ephemeral_1h_input_tokens) and
+    # where inference ran (usage.inference_geo), for pricing.quote.
+    cache_write_1h_tokens: int = 0
+    inference_geo: Optional[str] = None
 
 
 # ── request ──────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -388,4 +392,17 @@ def send(*, connection: connections.ProviderConnection, wire_id: str, system: st
         effort=params.get("output_config", {}).get("effort"),
         request_id=request_id,
         params=params,
+        cache_write_1h_tokens=_int_field(getattr(usage, "cache_creation", None), "ephemeral_1h_input_tokens"),
+        inference_geo=_str_field(usage, "inference_geo"),
     )
+
+
+def _int_field(obj, name: str) -> int:
+    """An int usage field of an SDK object or dict (0 when absent or not an int: an older SDK, a test double)."""
+    value = obj.get(name) if isinstance(obj, dict) else getattr(obj, name, None)
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _str_field(obj, name: str) -> Optional[str]:
+    value = obj.get(name) if isinstance(obj, dict) else getattr(obj, name, None)
+    return value if isinstance(value, str) else None

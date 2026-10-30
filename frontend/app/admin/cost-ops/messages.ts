@@ -9,6 +9,8 @@ export const COST = defineMessages(
     // account buckets that are not an AWS account
     acctOpenaiLong: "OpenAI (no AWS account)",
     acctOpenai: "OpenAI",
+    acctAnthropicLong: "Anthropic API (no AWS account)",
+    acctAnthropic: "Anthropic API",
     acctJevLong: "Jev · TypeSafe (no AWS account)",
     acctJev: "Jev",
     acctLegacyLong: "Legacy (no account logged)",
@@ -163,6 +165,8 @@ export const COST = defineMessages(
   {
     acctOpenaiLong: "OpenAI (không có tài khoản AWS)",
     acctOpenai: "OpenAI",
+    acctAnthropicLong: "Anthropic API (không có tài khoản AWS)",
+    acctAnthropic: "Anthropic API",
     acctJevLong: "Jev · TypeSafe (không có tài khoản AWS)",
     acctJev: "Jev",
     acctLegacyLong: "Cũ (không ghi tài khoản)",

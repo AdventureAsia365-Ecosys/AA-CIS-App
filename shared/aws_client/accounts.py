@@ -9,8 +9,10 @@ repo is public, so no ID is written here; both come from the running task at run
     (shared/aws_client/bronze.caller_account_id, lru_cache).
   - acc3: the task env BEDROCK_ACCT_PRIMARY (shared/llm_client/bedrock_satellite.ACC3_ACCOUNT_ID).
 
-Any other stored account (the history of the fallback account retired in AA-998) is "Retired account", with no
-ID. GET /admin/aws-accounts serves account_directory() to the frontend (frontend/lib/awsAccounts.ts).
+AA-1002 (S6): a vendor-API call stores its connection key as the account ("openai-direct", "anthropic-direct"); the
+admin names it by its vendor ("OpenAI API"). Any other stored account (the history of the fallback account retired
+in AA-998) is "Retired account", with no ID. GET /admin/aws-accounts serves account_directory() to the frontend
+(frontend/lib/awsAccounts.ts).
 """
 from __future__ import annotations
 
@@ -38,6 +40,12 @@ ACCOUNT_ROLES = {
     RETIRED_ACCOUNT_KEY: "former LLM fallback, history only",
 }
 _ACCOUNT_ID_RE = re.compile(r"^[0-9]{12}$")
+# AA-1002 (S6): the vendor-API connections whose key a call-log row stores as its account (no AWS account behind
+# them). Same keys as migration 304 / 306's connection rows; frontend/lib/awsAccounts.ts has the same map.
+VENDOR_CONNECTION_LABELS = {
+    "openai-direct": "OpenAI API",
+    "anthropic-direct": "Anthropic API",
+}
 
 
 def account_id(key: Optional[str]) -> Optional[str]:
@@ -56,10 +64,13 @@ def account_id(key: Optional[str]) -> Optional[str]:
 
 
 def account_name(key: Optional[str]) -> Optional[str]:
-    """What the admin shows for an account key: the account ID of a live account, "Retired account" for any other
-    stored account, None when there is no account (an OpenAI or Jev call)."""
+    """What the admin shows for an account key: the account ID of a live account, the vendor of a vendor-API
+    connection ("OpenAI API"), "Retired account" for any other stored account, None when there is no account (a Jev
+    call, an OpenAI call logged before S6)."""
     if not key or key in ("unknown", "none"):
         return None
+    if key in VENDOR_CONNECTION_LABELS:
+        return VENDOR_CONNECTION_LABELS[key]
     if key in LIVE_ACCOUNT_KEYS:
         return account_id(key) or UNRESOLVED_ACCOUNT_LABEL
     return RETIRED_ACCOUNT_LABEL

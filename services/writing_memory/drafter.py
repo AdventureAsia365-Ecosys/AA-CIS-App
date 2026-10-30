@@ -15,7 +15,7 @@ import json
 from dataclasses import dataclass
 from typing import Optional
 
-from shared.llm_client.call_log import record_call_with_pool, record_unusable
+from shared.llm_client.call_log import billed_fields, record_call_with_pool, record_unusable
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
 from services.writing_memory import config as cfg
@@ -127,7 +127,7 @@ async def draft_rule(pool, *, user_prompt: str, cluster_key: str, tenant_id: Opt
                                                 "none": d["rule_text"].upper() == "NONE"},
         stop_reason=getattr(resp, "stop_reason", None), account=getattr(resp, "satellite_account", None),
         fallback_used=getattr(resp, "fallback_used", None), provider=getattr(resp, "provider", None),
-        tenant_id=tenant_id)
+        tenant_id=tenant_id, **billed_fields(resp))
     return Draft(kind=d["kind"], rule_text=d["rule_text"], replacement=d["replacement"],
                  match_phrases=d["match_phrases"], model=resp.model_used, cost_usd=float(resp.cost_usd or 0.0))
 

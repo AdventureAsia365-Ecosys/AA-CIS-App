@@ -26,7 +26,7 @@ from typing import Optional
 
 import structlog
 
-from shared.llm_client.call_log import billed_record
+from shared.llm_client.call_log import billed_fields, billed_record
 from shared.llm_client.client import LLMClient
 from shared.llm_client.judge import call_judge, strip_json_fence
 from services.quality.registry import threshold
@@ -104,6 +104,22 @@ class BrandFitResult:
     leaks: tuple = ()
     caps: tuple = ()
     raw_brand_fit: Optional[float] = None
+    # AA-1002 (S6): the rest of the call's billing (call_log.billed_fields): cache split, pricing basis, the vendor
+    # connection that answered. Summed over the runs of an aggregated verdict (pricing_mode / connection: run 1's).
+    cache_read_tokens: Optional[int] = None
+    cache_write_tokens: Optional[int] = None
+    pricing_mode: Optional[str] = None
+    connection_key: Optional[str] = None
+
+
+# AA-927 / AA-1002 (S6): the keys of one judge call's billing in `runs` (run_billing), as judge_node logs them.
+RUN_BILLING_KEYS = ("model", "tokens_in", "tokens_out", "cost_usd", "stop_reason", "account", "fallback_used",
+                    "cache_read_tokens", "cache_write_tokens", "pricing_mode", "connection_key")
+
+
+def _sum_or_none(values) -> Optional[int]:
+    present = [v for v in values if isinstance(v, int) and not isinstance(v, bool)]
+    return sum(present) if present else None
 
 
 def aggregate_runs(results: list[BrandFitResult], *, mission_absent_cap: Optional[float],
@@ -150,6 +166,9 @@ def aggregate_runs(results: list[BrandFitResult], *, mission_absent_cap: Optiona
         input_tokens=sum((r.input_tokens or 0) for r in results),
         output_tokens=sum((r.output_tokens or 0) for r in results),
         stop_reason=first.stop_reason, account=first.account, fallback_used=first.fallback_used,
+        cache_read_tokens=_sum_or_none(getattr(r, "cache_read_tokens", None) for r in results),
+        cache_write_tokens=_sum_or_none(getattr(r, "cache_write_tokens", None) for r in results),
+        pricing_mode=getattr(first, "pricing_mode", None), connection_key=getattr(first, "connection_key", None),
         runs=runs + ((_failed_entry(failed, failed_cost_usd),) if failed else ()),
         mission_evidence=evidence,
         evidence_verified=verified,
@@ -170,7 +189,10 @@ def run_billing(r: BrandFitResult) -> dict:
     """AA-927: the billing of ONE judge call, as stored in `runs` (call_log.billed_record keys)."""
     return {"model": r.model_used, "tokens_in": r.input_tokens, "tokens_out": r.output_tokens,
             "cost_usd": r.cost_usd, "stop_reason": r.stop_reason, "account": r.account,
-            "fallback_used": r.fallback_used}
+            "fallback_used": r.fallback_used,
+            # AA-1002 (S6): read with getattr (a result-shaped double without them logs None)
+            **{k: getattr(r, k, None) for k in ("cache_read_tokens", "cache_write_tokens", "pricing_mode",
+                                                "connection_key")}}
 
 
 def _failed_entry(failed: int, failed_cost_usd: float) -> dict:
@@ -770,6 +792,7 @@ def _judge(system_prompt: str, user_prompt: str, *, mission_absent_cap: float | 
         stop_reason=getattr(resp, "stop_reason", None),
         account=getattr(resp, "satellite_account", None),
         fallback_used=getattr(resp, "fallback_used", None),
+        **billed_fields(resp),
         mission_evidence=evidence if mission_present else "",
         evidence_verified=verified,
         **({"rubric": "v2", "unsupported": v2_verdict.unsupported,

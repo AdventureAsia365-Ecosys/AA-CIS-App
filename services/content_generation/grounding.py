@@ -428,7 +428,7 @@ def repair(generated: dict, violations: list[dict], tour: dict, *, model_tier=No
     logged to the tenant), a brand-neutral fact-editor prompt and T3's own unsupported-number test.
     The defaults keep A1's call byte-identical."""
     from json_repair import repair_json
-    from shared.llm_client.call_log import record_call_sync, record_unusable_sync
+    from shared.llm_client.call_log import billed_fields, record_call_sync, record_unusable_sync
     from shared.llm_client.client import LLMClient
     from shared.llm_client.models import LLMRequest
 
@@ -458,7 +458,7 @@ def repair(generated: dict, violations: list[dict], tour: dict, *, model_tier=No
             quality_signal={"source": "grounding_repair", "sentences": len(violations), "fields_changed": fields},
             stop_reason=getattr(resp, "stop_reason", None),
             account=getattr(resp, "satellite_account", None),
-            fallback_used=getattr(resp, "fallback_used", None),
+            fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
         )
         logged = True
         return {"generated": new_generated, "fields": fields, "cost_usd": resp.cost_usd, "error": ""}

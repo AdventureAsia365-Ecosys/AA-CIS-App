@@ -41,7 +41,7 @@ from services.seo_intelligence.dataforseo_client import DataForSEOClient
 from services.seo_intelligence.seed_builder import LOCATION_CODE_TO_MARKET
 from shared.cost_guard import DFS_CALL_ESTIMATE_USD, BudgetExceeded, RunBudget
 from shared.dfs_client.call_log import record_dfs_call_with_pool
-from shared.llm_client.call_log import record_call_with_pool
+from shared.llm_client.call_log import billed_fields, record_call_with_pool
 from shared.llm_client.client import LLMClient
 from shared.llm_client.decide import decide
 from shared.llm_client.models import LLMRequest
@@ -200,7 +200,7 @@ async def _propose(places: list[_Place], pool, guard: _RunGuard, llm_budget: Run
             quality_signal={"phase": "propose", "places": len(chunk), "parsed": len(proposals)},
             stop_reason=getattr(resp, "stop_reason", None),
             account=getattr(resp, "satellite_account", None),
-            fallback_used=getattr(resp, "fallback_used", None),
+            fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
         )
         for p in chunk:
             kws = proposals.get(p.name.casefold()) or []

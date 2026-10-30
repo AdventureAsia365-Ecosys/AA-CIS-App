@@ -53,6 +53,16 @@ class LLMResponse(BaseModel):
     # is the whole prompt (uncached + cache read + cache write) so llm_call_log.tokens_in is real.
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
+    # AA-1002 (S6): the 1-hour-TTL part of cache_write_tokens (Anthropic API), and how cost_usd was priced
+    # (pricing.Quote.pricing_mode: override / catalog / code_table / estimate, +batch, +geo_us; None = not said,
+    # call_log derives the basis from the model label).
+    cache_write_1h_tokens: int = 0
+    pricing_mode: Optional[str] = None
+    # AA-1002 (S6): the vendor-API connection that answered ('openai-direct', 'anthropic-direct'); None on Bedrock,
+    # whose AWS account stays in satellite_account. Never put a connection key in satellite_account: the pipeline
+    # copies it to silver_aa_internal.generated_content.satellite_account (CHECK: an AWS account key or NULL).
+    # call_log.billed_fields() passes it on; the row stores it as `account` when the caller passes none.
+    connection_key: Optional[str] = None
     # AA-493: why generation stopped — Anthropic's `stop_reason` ("end_turn" | "max_tokens" |
     # "stop_sequence" | ...) for both _call_bedrock (native) and _call_bedrock_satellite
     # (acc3), OpenAI's `finish_reason` ("stop" | "length" | ...) for _call_openai. None only

@@ -33,6 +33,47 @@ LLM_DAILY_INSERT_SQL = """
     ON CONFLICT ON CONSTRAINT llm_call_daily_key DO NOTHING
 """
 
+# AA-1002 (S6, migration 312): the same rollup plus the cache split and the count of rows priced by estimate (a model
+# no price source knew). Used only when both tables have the 312 columns (``_s6_columns_ready``), so the retention
+# job keeps working before the migration is applied.
+LLM_DAILY_INSERT_S6_SQL = """
+    INSERT INTO shared.llm_call_daily
+        (day, app, tenant_id, stage, role, model, provider, account, is_shadow,
+         calls, fallback_calls, tokens_in, tokens_out, cost_usd,
+         cache_read_tokens, cache_write_tokens, estimate_calls)
+    SELECT (l.created_at AT TIME ZONE 'UTC')::date,
+           coalesce(l.quality_signal ->> 'app', 'cis'),
+           l.tenant_id, l.stage, l.role, l.model, l.provider, l.account,
+           l.quality_signal @> '{"shadow": true}'::jsonb,
+           count(*),
+           count(*) FILTER (WHERE l.fallback_used),
+           coalesce(sum(l.tokens_in), 0),
+           coalesce(sum(l.tokens_out), 0),
+           coalesce(sum(l.cost_usd), 0),
+           coalesce(sum(l.cache_read_tokens), 0),
+           coalesce(sum(l.cache_write_tokens), 0),
+           count(*) FILTER (WHERE l.pricing_mode LIKE 'estimate%')
+      FROM shared.llm_call_log l
+     WHERE l.created_at < $1
+       AND NOT EXISTS (SELECT 1 FROM shared.llm_call_daily d
+                        WHERE d.day = (l.created_at AT TIME ZONE 'UTC')::date)
+     GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9
+    ON CONFLICT ON CONSTRAINT llm_call_daily_key DO NOTHING
+"""
+
+S6_COLUMNS_SQL = """
+    SELECT count(*) FROM information_schema.columns
+     WHERE table_schema = 'shared'
+       AND ((table_name = 'llm_call_log' AND column_name IN ('cache_read_tokens', 'cache_write_tokens', 'pricing_mode'))
+         OR (table_name = 'llm_call_daily'
+             AND column_name IN ('cache_read_tokens', 'cache_write_tokens', 'estimate_calls')))
+"""
+
+
+async def _s6_columns_ready(conn) -> bool:
+    return int(await conn.fetchval(S6_COLUMNS_SQL) or 0) == 6
+
+
 LLM_DAILY_PENDING_SQL = """
     SELECT count(DISTINCT (l.created_at AT TIME ZONE 'UTC')::date)
       FROM shared.llm_call_log l
@@ -89,5 +130,8 @@ async def write(conn, rollup: str, cutoff) -> int:
     statement (one transaction). Returns the number of rollup rows inserted."""
     async with conn.transaction():
         await conn.execute("SET LOCAL statement_timeout = '300s'")
-        status = await conn.execute(_SQL[rollup][0], cutoff)
+        sql = _SQL[rollup][0]
+        if rollup == "llm_call_daily" and await _s6_columns_ready(conn):
+            sql = LLM_DAILY_INSERT_S6_SQL
+        status = await conn.execute(sql, cutoff)
     return int(status.split()[-1])
