@@ -209,6 +209,27 @@ def test_same_model_on_each_deployment_before_the_next_model(world, monkeypatch)
                            ("converse", "acc3", "global.openai.gpt-6-luna")]
 
 
+def test_a_deployment_wire_id_that_differs_from_the_catalog_profile_is_logged_once(world, monkeypatch):
+    """Review S259: CIS calls the deployment's wire_id, TripPlanner the catalog profile. A drift between the two is
+    called as the registry says, but logged (once per process and combination); a row on a connection the catalog has
+    no profile for (a new account) and a matching row are not drift."""
+    from structlog.testing import capture_logs
+    monkeypatch.setattr(vendor_route, "_WIRE_DRIFT_SEEN", set())
+    world.deps = [d for d in world.deps if d.model_key != "sonnet-5-5"]
+    world.deps.append(_dep("sonnet-5-5", "acc3", "global.anthropic.claude-sonnet-5", 10, origin="bedrock_profile"))
+    world.conns["bedrock-llm-org"] = _org()
+    world.deps.append(_dep("gpt-6-luna", "bedrock-llm-org", "us.openai.gpt-6-luna", 20))
+    world.reset()
+    with capture_logs() as logs:
+        for _ in range(2):
+            assert world.generate(model_tier="sonnet-5-5").content == "from acc3"
+            assert world.generate(model_tier="gpt-6-luna").content == "from acc3"
+    drift = [e for e in logs if e["event"] == "llm_deployment_wire_drift"]
+    assert [(e["model"], e["connection"], e["wire_id"], e["catalog_profile"]) for e in drift] == [
+        ("sonnet-5-5", "acc3", "global.anthropic.claude-sonnet-5", "global.anthropic.claude-sonnet-5-5")]
+    assert world.calls[0] == ("converse", "acc3", "global.anthropic.claude-sonnet-5")
+
+
 def test_the_second_deployment_serves_when_the_first_is_down(world):
     world.conns["bedrock-llm-org"] = _org()
     world.deps.append(_dep("sonnet-5-5", "bedrock-llm-org", "us.anthropic.claude-sonnet-5-5", 20))

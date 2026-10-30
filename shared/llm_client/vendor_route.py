@@ -122,6 +122,27 @@ def _skip(model: CatalogModel, d: deployments.ModelDeployment, reason: str) -> N
     logger.info("llm_deployment_skip", model=model.model_key, connection=d.connection_key, reason=reason)
 
 
+_WIRE_DRIFT_SEEN: set[tuple[str, str, str, str]] = set()
+
+
+def _warn_wire_drift(model: CatalogModel, d: deployments.ModelDeployment, conn: connections.ProviderConnection) -> None:
+    """Review S259: CIS calls the deployment's ``wire_id``; TripPlanner (until S8) still calls the catalog's
+    ``bedrock_profile_ids[connection]``. When both exist and differ, the two apps call different profiles with no error
+    anywhere: say so once per process and combination (the call still uses the deployment row, which is the registry's
+    answer). Nothing to compare when the catalog has no profile for that connection (e.g. a new account's row)."""
+    if conn.kind != "bedrock":
+        return
+    profile = (model.bedrock_profile_ids or {}).get(d.connection_key)
+    if not profile or profile == d.wire_id:
+        return
+    seen = (model.model_key, d.connection_key, d.wire_id, str(profile))
+    if seen in _WIRE_DRIFT_SEEN:
+        return
+    _WIRE_DRIFT_SEEN.add(seen)
+    logger.warning("llm_deployment_wire_drift", model=model.model_key, connection=d.connection_key,
+                   wire_id=d.wire_id, catalog_profile=str(profile), origin=d.origin)
+
+
 def _callable(model: CatalogModel, conn: connections.ProviderConnection) -> Optional[str]:
     """None when the gateway has a way to call ``model`` on ``conn``, else why not."""
     if model.api_style not in _CALLABLE.get(conn.kind, frozenset()):
@@ -172,6 +193,8 @@ def deployment_plan(model: CatalogModel) -> Optional[list[VendorDeployment]]:
             if why:
                 _skip(model, d, why)
                 continue
+            if d.enabled:
+                _warn_wire_drift(model, d, conn)
             callable_rows.append(VendorDeployment(d, conn))
         if not callable_rows:
             return None

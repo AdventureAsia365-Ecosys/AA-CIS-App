@@ -2,8 +2,12 @@
 
 A deployment is one catalog model on one connection (``connections.py``): the wire id that connection calls (Bedrock
 inference profile, vendor model name), a priority (lower first), price overrides and request defaults. Migration 304
-backfilled the paths today's code takes; ``bedrock_profile_ids`` in the catalog is still what the gateway and
-TripPlanner call.
+backfilled the paths today's code takes. From slice S3 (``LLM_DEPLOYMENT_ROUTING`` on, the default) the gateway sends
+``wire_id`` on the wire; ``bedrock_profile_ids`` / ``wire_model`` in the catalog stay what TripPlanner calls (until
+slice S8) and what the gateway calls only with routing off or for a model without deployment rows. Nothing in the DB
+ties the two: a migration that changes one must change the other in the same file. Guarded in CI by
+``tests/integration/test_aa1002_deployment_wire_drift.py`` (after every migration) and at run time by the
+``llm_deployment_wire_drift`` warning (``vendor_route.deployment_plan``).
 
 Slice S3 routes through it (``vendor_route.deployment_plan`` spreads a model over its enabled deployments) and adds the
 alias read: ``shared.llm_model_alias`` (migration 307) maps a legacy key (``haiku`` / ``sonnet``) to the ordered catalog
