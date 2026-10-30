@@ -29,8 +29,10 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import SocialContentSubNav from "../_components/SocialContentSubNav";
 import { TenantSelect } from "../_components/TenantSelect";
-import { A, serif, mono, sans, Card, Badge, LoadingScreen } from "../_components/adminUi";
-import { PageFrame, PageFrameBody, PageFrameHeader, PageHeader, useFormat, useT } from "../../_kit";
+import {
+  PageFrame, PageFrameBody, PageFrameHeader, PageHeader, useFormat, useT, Badge, K, Section, mono,
+  sans, serif,
+} from "../../_kit";
 import { STATS } from "./messages";
 import { fetchJson, EmptyState, ErrorState } from "../_components/auditPanels";
 
@@ -151,8 +153,8 @@ function SortableTh<K extends string>({ label, sortKey, sort, onSort, style }: {
   return (
     <th onClick={sortKey ? () => onSort(sortKey) : undefined} style={{
       padding: "8px 12px", textAlign: "left", fontSize: 10.5, fontWeight: 600,
-      letterSpacing: "0.08em", textTransform: "uppercase", color: active ? A.gold : A.muted,
-      borderBottom: `1px solid ${A.line}`, whiteSpace: "nowrap",
+      letterSpacing: "0.08em", textTransform: "uppercase", color: active ? K.accent : K.muted,
+      borderBottom: `1px solid ${K.line}`, whiteSpace: "nowrap",
       cursor: sortKey ? "pointer" : "default", userSelect: "none", ...style,
     }}>
       <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
@@ -206,13 +208,13 @@ function ReviewLogSection() {
   const sortedRows = useMemo(() => sortRows(rows, sort, reviewSortValue), [rows, sort]);
 
   return (
-    <Card style={{ marginBottom: 24 }}>
+    <Section style={{ marginBottom: 24 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
         <div style={{ flex: "1 1 320px", minWidth: 0 }}>
-          <h2 style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: A.ink, margin: "0 0 4px" }}>
+          <h2 style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: K.ink, margin: "0 0 4px" }}>
             {t("reviewTitle")}
           </h2>
-          <div style={{ fontSize: 12, color: A.muted }}>
+          <div style={{ fontSize: 12, color: K.muted }}>
             {t("reviewIntro")}
           </div>
         </div>
@@ -224,7 +226,7 @@ function ReviewLogSection() {
       {checkIdCounts.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
           {checkIdCounts.map(([checkId, count]) => (
-            <Badge key={checkId} color={count > 1 ? "amber" : "gray"}>
+            <Badge key={checkId} tone={count > 1 ? "warning" : "neutral"}>
               {checkId} × {count}
             </Badge>
           ))}
@@ -232,18 +234,18 @@ function ReviewLogSection() {
       )}
 
       {loading ? (
-        <div style={{ padding: 24, textAlign: "center", color: A.muted }}>{t("loading")}</div>
+        <div style={{ padding: 24, textAlign: "center", color: K.muted }}>{t("loading")}</div>
       ) : error ? (
-        <div style={{ padding: 24, textAlign: "center", color: A.red }}>{error}</div>
+        <div style={{ padding: 24, textAlign: "center", color: K.danger }}>{error}</div>
       ) : rows.length === 0 ? (
         // AA-601 — deterministic "content rendered" signal for the UI smoke: appears only after the
         // review-log load resolves (never on the Loading… state), so a blank/broken page still fails.
-        <div data-testid="admin-content-ready" style={{ padding: 24, textAlign: "center", color: A.muted2 }}>{t("noEscalations")}</div>
+        <div data-testid="admin-content-ready" style={{ padding: 24, textAlign: "center", color: K.muted2 }}>{t("noEscalations")}</div>
       ) : (
         <div data-testid="admin-content-ready" style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
-              <tr style={{ background: A.bg }}>
+              <tr style={{ background: K.bg }}>
                 <SortableTh label={t("colTenant")} sortKey="tenant" sort={sort} onSort={toggle} />
                 <SortableTh label={t("colFailure")} sortKey="failure" sort={sort} onSort={toggle} />
                 <SortableTh label={t("colChecks")} sortKey="checks" sort={sort} onSort={toggle} />
@@ -262,7 +264,7 @@ function ReviewLogSection() {
           </table>
         </div>
       )}
-    </Card>
+    </Section>
   );
 }
 
@@ -271,31 +273,31 @@ function RowLine({ row, expanded, onToggle }: {
 }) {
   const t = useT(STATS);
   const { formatDateTime } = useFormat();
-  const td: React.CSSProperties = { padding: "10px 12px", borderBottom: `1px solid ${A.line}`, fontSize: 12.5, color: A.body, verticalAlign: "top" };
+  const td: React.CSSProperties = { padding: "10px 12px", borderBottom: `1px solid ${K.line}`, fontSize: 12.5, color: K.body, verticalAlign: "top" };
   return (
     <>
       <tr onClick={onToggle} style={{ cursor: "pointer" }}>
         <td style={td}>
           <div style={{ fontWeight: 600 }}>{row.tenant_name || "—"}</div>
-          <div title={row.tenant_id} style={{ fontFamily: mono, fontSize: 10.5, color: A.muted2 }}>{row.tenant_slug || row.tenant_id.slice(0, 8)}</div>
+          <div title={row.tenant_id} style={{ fontFamily: mono, fontSize: 10.5, color: K.muted2 }}>{row.tenant_slug || row.tenant_id.slice(0, 8)}</div>
         </td>
         <td style={td}>{row.failure_summary || "—"}</td>
         <td style={td}>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
             {(row.escalate_detail || []).map((item, i) => (
-              <Badge key={i} color="gray">{item.check_id}</Badge>
+              <Badge key={i} tone="neutral">{item.check_id}</Badge>
             ))}
           </div>
         </td>
-        <td style={td}><Badge color={row.review_status === "pending" ? "amber" : "gray"}>{row.review_status}</Badge></td>
-        <td style={{ ...td, fontFamily: mono, fontSize: 11, color: A.muted }}>{formatDateTime(row.created_at)}</td>
+        <td style={td}><Badge tone={row.review_status === "pending" ? "warning" : "neutral"}>{row.review_status}</Badge></td>
+        <td style={{ ...td, fontFamily: mono, fontSize: 11, color: K.muted }}>{formatDateTime(row.created_at)}</td>
         <td style={{ ...td, textAlign: "center" }}>{expanded ? "▲" : "▼"}</td>
       </tr>
       {expanded && (
         <tr>
-          <td colSpan={6} style={{ padding: "0 12px 14px", borderBottom: `1px solid ${A.line}` }}>
-            <div style={{ background: A.bg, borderRadius: 8, padding: 12, fontFamily: mono, fontSize: 11, color: A.body }}>
-              <div style={{ marginBottom: 6, color: A.muted2 }}>
+          <td colSpan={6} style={{ padding: "0 12px 14px", borderBottom: `1px solid ${K.line}` }}>
+            <div style={{ background: K.bg, borderRadius: 8, padding: 12, fontFamily: mono, fontSize: 11, color: K.body }}>
+              <div style={{ marginBottom: 6, color: K.muted2 }}>
                 tour_id: {row.tour_id} · version_id: {row.tenant_tour_version_id}
               </div>
               {(row.escalate_detail || []).map((item, i) => (
@@ -303,7 +305,7 @@ function RowLine({ row, expanded, onToggle }: {
                   <strong>{item.check_id}</strong>
                   {item.field && <> · {t("field")} {item.field}</>}
                   {item.description && <> — {item.description}</>}
-                  {item.source_span && <div style={{ color: A.muted2, marginTop: 2 }}>“{item.source_span}”</div>}
+                  {item.source_span && <div style={{ color: K.muted2, marginTop: 2 }}>“{item.source_span}”</div>}
                 </div>
               ))}
             </div>
@@ -338,19 +340,19 @@ function PlatformStatsSection() {
   );
 
   return (
-    <Card style={{ marginBottom: 24 }}>
+    <Section style={{ marginBottom: 24 }}>
       <div style={{ marginBottom: 16 }}>
-        <h2 style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: A.ink, margin: "0 0 4px" }}>
+        <h2 style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: K.ink, margin: "0 0 4px" }}>
           {t("aggTitle")}
         </h2>
-        <div style={{ fontSize: 12, color: A.muted }}>
+        <div style={{ fontSize: 12, color: K.muted }}>
           {t("aggIntro")}{" "}
-          <a href="/admin/tenant-activity" style={{ color: A.ink }}>{t("contentTrace")}</a>.
+          <a href="/admin/tenant-activity" style={{ color: K.ink }}>{t("contentTrace")}</a>.
         </div>
       </div>
 
       {loading ? (
-        <div style={{ padding: 24, textAlign: "center", color: A.muted }}>{t("loading")}</div>
+        <div style={{ padding: 24, textAlign: "center", color: K.muted }}>{t("loading")}</div>
       ) : error ? (
         <ErrorState message={error} onRetry={load} />
       ) : !stats ? (
@@ -368,42 +370,42 @@ function PlatformStatsSection() {
           <SectionLabel>{t("byChannel")}</SectionLabel>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 20 }}>
             {stats.by_channel.length === 0 ? (
-              <span style={{ fontSize: 12, color: A.muted2 }}>{t("noChannel")}</span>
+              <span style={{ fontSize: 12, color: K.muted2 }}>{t("noChannel")}</span>
             ) : stats.by_channel.map(c => (
-              <Badge key={c.channel} color="gray">{c.channel} × {c.count}</Badge>
+              <Badge key={c.channel} tone="neutral">{c.channel} × {c.count}</Badge>
             ))}
           </div>
 
           <SectionLabel>{t("topGatesAll")}</SectionLabel>
           {stats.top_gate_failures.length === 0 ? (
-            <div style={{ fontSize: 12, color: A.muted2 }}>{t("noGateFailures")}</div>
+            <div style={{ fontSize: 12, color: K.muted2 }}>{t("noGateFailures")}</div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {stats.top_gate_failures.map(g => (
                 <div key={g.gate} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={{ width: 160, flexShrink: 0, fontSize: 12, fontFamily: mono, color: A.body }}>{g.gate}</div>
-                  <div style={{ flex: 1, background: A.bg, borderRadius: 4, height: 14, overflow: "hidden" }}>
+                  <div style={{ width: 160, flexShrink: 0, fontSize: 12, fontFamily: mono, color: K.body }}>{g.gate}</div>
+                  <div style={{ flex: 1, background: K.bg, borderRadius: 4, height: 14, overflow: "hidden" }}>
                     <div style={{
-                      height: "100%", borderRadius: 4, background: A.red,
+                      height: "100%", borderRadius: 4, background: K.danger,
                       width: `${Math.max(4, (g.fail_count / maxGateCount) * 100)}%`,
                     }} />
                   </div>
-                  <div style={{ width: 32, textAlign: "right", fontSize: 12, fontFamily: mono, color: A.muted }}>{g.fail_count}</div>
+                  <div style={{ width: 32, textAlign: "right", fontSize: 12, fontFamily: mono, color: K.muted }}>{g.fail_count}</div>
                 </div>
               ))}
             </div>
           )}
         </>
       )}
-    </Card>
+    </Section>
   );
 }
 
 function StatTile({ label, value }: { label: string; value: number }) {
   return (
-    <div style={{ background: A.card, border: `1px solid ${A.line}`, borderRadius: 8, padding: "6px 12px", minWidth: 92 }}>
-      <div style={{ fontSize: 10, color: A.muted, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
-      <div style={{ fontFamily: mono, fontSize: 15, fontWeight: 600, color: A.ink }}>{value}</div>
+    <div style={{ background: K.card, border: `1px solid ${K.line}`, borderRadius: 8, padding: "6px 12px", minWidth: 92 }}>
+      <div style={{ fontSize: 10, color: K.muted, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
+      <div style={{ fontFamily: mono, fontSize: 15, fontWeight: 600, color: K.ink }}>{value}</div>
     </div>
   );
 }
@@ -411,7 +413,7 @@ function StatTile({ label, value }: { label: string; value: number }) {
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
     <div style={{
-      fontSize: 11, fontWeight: 600, color: A.ink3, textTransform: "uppercase",
+      fontSize: 11, fontWeight: 600, color: K.ink3, textTransform: "uppercase",
       letterSpacing: "0.06em", marginBottom: 8,
     }}>
       {children}
@@ -472,18 +474,18 @@ function GateTelemetrySection() {
   );
 
   const td: React.CSSProperties = {
-    padding: "8px 12px", borderBottom: `1px solid ${A.line}`, fontSize: 12.5, color: A.body,
+    padding: "8px 12px", borderBottom: `1px solid ${K.line}`, fontSize: 12.5, color: K.body,
   };
   const num: React.CSSProperties = { ...td, textAlign: "right", fontFamily: mono };
 
   return (
-    <Card style={{ marginBottom: 24 }}>
+    <Section style={{ marginBottom: 24 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, gap: 12, flexWrap: "wrap" }}>
         <div>
-          <h2 style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: A.ink, margin: "0 0 4px" }}>
+          <h2 style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: K.ink, margin: "0 0 4px" }}>
             {t("telemetryTitle")}
           </h2>
-          <div style={{ fontSize: 12, color: A.muted, maxWidth: 720 }}>
+          <div style={{ fontSize: 12, color: K.muted, maxWidth: 720 }}>
             {t("telemetryIntro1")} <strong>{t("warn")}</strong> {t("warnMeans")}{" "}
             <strong>{t("held")}</strong> {t("heldMeans")}{" "}
             <strong>{t("retry")}</strong> {t("retryMeans")}
@@ -493,18 +495,18 @@ function GateTelemetrySection() {
           <input
             type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
             aria-label={t("fromDate")}
-            style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 12, fontFamily: mono, outline: "none" }}
+            style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${K.line}`, fontSize: 12, fontFamily: mono, outline: "none" }}
           />
-          <span style={{ fontSize: 12, color: A.muted2 }}>→</span>
+          <span style={{ fontSize: 12, color: K.muted2 }}>→</span>
           <input
             type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
             aria-label={t("toDate")}
-            style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 12, fontFamily: mono, outline: "none" }}
+            style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${K.line}`, fontSize: 12, fontFamily: mono, outline: "none" }}
           />
           {(dateFrom || dateTo) && (
             <button
               onClick={() => { setDateFrom(""); setDateTo(""); }}
-              style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${A.line}`, background: "transparent", color: A.muted, fontSize: 11, cursor: "pointer" }}
+              style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${K.line}`, background: "transparent", color: K.muted, fontSize: 11, cursor: "pointer" }}
             >
               {t("clear")}
             </button>
@@ -522,7 +524,7 @@ function GateTelemetrySection() {
       )}
 
       {loading ? (
-        <div style={{ padding: 24, textAlign: "center", color: A.muted }}>{t("loading")}</div>
+        <div style={{ padding: 24, textAlign: "center", color: K.muted }}>{t("loading")}</div>
       ) : error ? (
         <ErrorState message={error} onRetry={load} />
       ) : !data || data.by_tenant_channel.length === 0 ? (
@@ -532,7 +534,7 @@ function GateTelemetrySection() {
           <div style={{ overflowX: "auto", marginBottom: 24 }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
-                <tr style={{ background: A.bg }}>
+                <tr style={{ background: K.bg }}>
                   <SortableTh label={t("colTenant")} sortKey="tenant" sort={sort} onSort={toggle} />
                   <SortableTh label={t("colChannel")} sortKey="channel" sort={sort} onSort={toggle} />
                   <SortableTh label={t("colTotal")} sortKey="total" sort={sort} onSort={toggle} style={{ textAlign: "right" }} />
@@ -549,13 +551,13 @@ function GateTelemetrySection() {
                   <tr key={`${r.tenant_id}:${r.channel ?? ""}`}>
                     <td style={td}>
                       <div style={{ fontWeight: 600 }}>{r.tenant_name || "—"}</div>
-                      <div title={r.tenant_id} style={{ fontFamily: mono, fontSize: 10.5, color: A.muted2 }}>{r.tenant_id.slice(0, 8)}</div>
+                      <div title={r.tenant_id} style={{ fontFamily: mono, fontSize: 10.5, color: K.muted2 }}>{r.tenant_id.slice(0, 8)}</div>
                     </td>
-                    <td style={td}><Badge color="gray">{r.channel || "—"}</Badge></td>
+                    <td style={td}><Badge tone="neutral">{r.channel || "—"}</Badge></td>
                     <td style={num}>{r.total}</td>
-                    <td style={{ ...num, color: r.warn_count > 0 ? A.amber : A.muted2 }}>{r.warn_count}</td>
-                    <td style={{ ...num, color: r.held_count > 0 ? A.red : A.muted2 }}>{r.held_count}</td>
-                    <td style={{ ...num, color: r.failed_count > 0 ? A.red : A.muted2 }}>{r.failed_count}</td>
+                    <td style={{ ...num, color: r.warn_count > 0 ? K.amber : K.muted2 }}>{r.warn_count}</td>
+                    <td style={{ ...num, color: r.held_count > 0 ? K.danger : K.muted2 }}>{r.held_count}</td>
+                    <td style={{ ...num, color: r.failed_count > 0 ? K.danger : K.muted2 }}>{r.failed_count}</td>
                     <td style={num}>{r.retry_count}</td>
                     <td style={num}>{r.publish_count}</td>
                     <td style={num}>{r.export_count}</td>
@@ -567,32 +569,32 @@ function GateTelemetrySection() {
 
           <SectionLabel>{channelFilter !== "all" ? t("topGatesFor", channelFilter) : t("topGatesByChannel")}</SectionLabel>
           {visibleGates.length === 0 ? (
-            <div style={{ fontSize: 12, color: A.muted2 }}>{t("noGateFailuresWindow")}</div>
+            <div style={{ fontSize: 12, color: K.muted2 }}>{t("noGateFailuresWindow")}</div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {visibleGates.map((g, i) => (
                 <div key={`${g.channel ?? ""}:${g.gate}:${i}`} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={{ width: 90, flexShrink: 0, fontSize: 11, fontFamily: mono, color: A.muted2 }}>{g.channel || "—"}</div>
-                  <div style={{ width: 150, flexShrink: 0, fontSize: 12, fontFamily: mono, color: A.body, display: "flex", alignItems: "center", gap: 5 }}>
+                  <div style={{ width: 90, flexShrink: 0, fontSize: 11, fontFamily: mono, color: K.muted2 }}>{g.channel || "—"}</div>
+                  <div style={{ width: 150, flexShrink: 0, fontSize: 12, fontFamily: mono, color: K.body, display: "flex", alignItems: "center", gap: 5 }}>
                     {g.gate}
                     {g.blocking
-                      ? <Badge color="red">{t("block")}</Badge>
-                      : <Badge color="amber">{t("warnBadge")}</Badge>}
+                      ? <Badge tone="danger">{t("block")}</Badge>
+                      : <Badge tone="warning">{t("warnBadge")}</Badge>}
                   </div>
-                  <div style={{ flex: 1, background: A.bg, borderRadius: 4, height: 14, overflow: "hidden" }}>
+                  <div style={{ flex: 1, background: K.bg, borderRadius: 4, height: 14, overflow: "hidden" }}>
                     <div style={{
-                      height: "100%", borderRadius: 4, background: g.blocking ? A.red : A.amber,
+                      height: "100%", borderRadius: 4, background: g.blocking ? K.danger : K.amber,
                       width: `${Math.max(4, (g.fail_count / maxGateCount) * 100)}%`,
                     }} />
                   </div>
-                  <div style={{ width: 32, textAlign: "right", fontSize: 12, fontFamily: mono, color: A.muted }}>{g.fail_count}</div>
+                  <div style={{ width: 32, textAlign: "right", fontSize: 12, fontFamily: mono, color: K.muted }}>{g.fail_count}</div>
                 </div>
               ))}
             </div>
           )}
         </>
       )}
-    </Card>
+    </Section>
   );
 }
 
@@ -600,8 +602,8 @@ function GateTelemetrySection() {
 function FilterPill({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (
     <button onClick={onClick} style={{
-      padding: "5px 12px", borderRadius: 999, border: `1px solid ${active ? A.gold : A.line}`,
-      background: active ? A.card : "transparent", color: active ? A.ink : A.muted,
+      padding: "5px 12px", borderRadius: 999, border: `1px solid ${active ? K.accent : K.line}`,
+      background: active ? K.card : "transparent", color: active ? K.ink : K.muted,
       fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: sans,
     }}>
       {label}

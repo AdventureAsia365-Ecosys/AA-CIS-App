@@ -3,9 +3,6 @@
     "aa-kit/no-hand-styled-button": {
       "count": 9
     },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    },
     "aa-kit/no-raw-aa-var": {
       "count": 10
     },
@@ -42,9 +39,6 @@
   },
   "app/admin/_components/SettingsKitTab.tsx": {
     "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
       "count": 1
     }
   },
@@ -267,16 +261,8 @@
       "count": 10
     }
   },
-  "app/admin/jobs/JobDrawer.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
   "app/admin/jobs/JobKinds.tsx": {
     "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
       "count": 1
     },
     "aa-kit/no-raw-table": {
@@ -290,9 +276,6 @@
   },
   "app/admin/jobs/WorkerHealth.tsx": {
     "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
       "count": 1
     },
     "aa-kit/no-raw-table": {
@@ -369,18 +352,12 @@
     "aa-kit/no-hand-styled-button": {
       "count": 3
     },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    },
     "aa-kit/no-raw-form-control": {
       "count": 3
     }
   },
   "app/admin/places/MergesTab.tsx": {
     "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
       "count": 1
     },
     "aa-kit/no-raw-form-control": {
@@ -390,9 +367,6 @@
   "app/admin/places/page.tsx": {
     "aa-kit/no-hand-styled-button": {
       "count": 2
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
     },
     "aa-kit/no-raw-form-control": {
       "count": 3
@@ -404,9 +378,6 @@
     },
     "aa-kit/no-hand-styled-button": {
       "count": 2
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
     },
     "aa-kit/no-raw-form-control": {
       "count": 2
@@ -541,9 +512,6 @@
     }
   },
   "app/admin/settings/JevCreditTab.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    },
     "aa-kit/no-raw-form-control": {
       "count": 3
     },
@@ -552,9 +520,6 @@
     }
   },
   "app/admin/settings/ModelsTab.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    },
     "aa-kit/no-raw-form-control": {
       "count": 2
     },
@@ -579,9 +544,6 @@
     "aa-kit/no-hand-styled-button": {
       "count": 1
     },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    },
     "aa-kit/no-raw-form-control": {
       "count": 2
     }
@@ -604,9 +566,6 @@
       "count": 1
     },
     "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
       "count": 1
     },
     "aa-kit/no-raw-form-control": {

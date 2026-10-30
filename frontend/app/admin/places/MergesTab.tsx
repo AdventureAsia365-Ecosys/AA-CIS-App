@@ -12,8 +12,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { GitMerge, Play, Undo2 } from "lucide-react";
-import { A, mono, Card, SLabel, Badge, LoadingScreen, StatCard } from "../_components/adminUi";
-import { Button, DataTable, useFormat, useT } from "../../_kit";
+import {
+  Button, DataTable, useFormat, useT, Badge, Eyebrow, K, KpiTile, LoadingScreen, Section, mono, type Tone,
+} from "../../_kit";
 import { PL } from "./messages";
 
 type CountryRun = {
@@ -46,10 +47,10 @@ type Merge = {
 };
 type MergePage = { total: number; page: number; page_size: number; items: Merge[] };
 
-const selectStyle = { padding: "6px 8px", borderRadius: 8, border: `1px solid ${A.line}`, fontSize: 13 };
-const linkBtn = { border: 0, background: "none", color: A.accentDeep, cursor: "pointer", padding: 0, fontSize: 12 };
-const STATUS_COLOR: Record<string, "green" | "amber" | "red" | "gray" | "blue"> = {
-  applied: "green", dry_run: "blue", held_volume: "red", rule_version_changed: "amber",
+const selectStyle = { padding: "6px 8px", borderRadius: 8, border: `1px solid ${K.line}`, fontSize: 13 };
+const linkBtn = { border: 0, background: "none", color: K.accentDeep, cursor: "pointer", padding: 0, fontSize: 12 };
+const STATUS_COLOR: Record<string, Tone> = {
+  applied: "success", dry_run: "info", held_volume: "danger", rule_version_changed: "warning",
 };
 
 async function post(path: string, body: unknown) {
@@ -117,64 +118,64 @@ export default function MergesTab({ onError }: { onError: (msg: string) => void 
 
   const columns = useMemo<ColumnDef<Merge, unknown>[]>(() => [
     { id: "pair", header: t("mergedKeeper"), accessorFn: m => `${m.merged_name} → ${m.keeper_name}`,
-      cell: ({ row }) => <>{row.original.merged_name} <span style={{ color: A.muted }}>→</span> {row.original.keeper_name}
-        <div style={{ fontSize: 11, color: A.muted, fontFamily: mono }}>{row.original.merged_id.slice(0, 8)} → {row.original.keeper_id.slice(0, 8)}</div></> },
+      cell: ({ row }) => <>{row.original.merged_name} <span style={{ color: K.muted }}>→</span> {row.original.keeper_name}
+        <div style={{ fontSize: 11, color: K.muted, fontFamily: mono }}>{row.original.merged_id.slice(0, 8)} → {row.original.keeper_id.slice(0, 8)}</div></> },
     { accessorKey: "country", header: t("country") },
-    { accessorKey: "decided_by", header: t("decidedBy"), cell: ({ row }) => <Badge color={row.original.decided_by === "admin" ? "purple" : row.original.decided_by === "llm" ? "blue" : "gray"}>{row.original.decided_by}</Badge> },
+    { accessorKey: "decided_by", header: t("decidedBy"), cell: ({ row }) => <Badge tone={row.original.decided_by === "admin" ? "purple" : row.original.decided_by === "llm" ? "info" : "neutral"}>{row.original.decided_by}</Badge> },
     { id: "why", header: t("why"), accessorFn: m => m.reason ?? "",
       cell: ({ row }) => <span style={{ fontSize: 12, fontFamily: mono }}>{row.original.reason ?? "—"}
-        {row.original.km != null && <span style={{ color: A.muted }}> · {row.original.km} km</span>}
-        {row.original.score != null && <span style={{ color: A.muted }}> · {row.original.score}</span>}</span> },
+        {row.original.km != null && <span style={{ color: K.muted }}> · {row.original.km} km</span>}
+        {row.original.score != null && <span style={{ color: K.muted }}> · {row.original.score}</span>}</span> },
     { id: "moved", header: t("rowsMoved"), accessorFn: m => Object.values(m.repointed_counts).reduce((a, b) => a + b, 0),
       meta: { align: "right" } },
     { accessorKey: "created_at", header: t("when"), cell: ({ row }) => <span style={{ fontSize: 12 }}>{formatDateTime(row.original.created_at)}</span> },
     { id: "undo", header: "", accessorFn: m => m.undone_at ?? "",
       cell: ({ row }) => {
         const m = row.original;
-        if (m.undone_at) return <span style={{ fontSize: 12, color: A.muted }}>{t("undone", formatDateTime(m.undone_at), m.undo_reason ?? "")}</span>;
-        if (m.decided_by === "admin") return <span style={{ fontSize: 12, color: A.muted }}>{t("undoInValidity")}</span>;
+        if (m.undone_at) return <span style={{ fontSize: 12, color: K.muted }}>{t("undone", formatDateTime(m.undone_at), m.undo_reason ?? "")}</span>;
+        if (m.decided_by === "admin") return <span style={{ fontSize: 12, color: K.muted }}>{t("undoInValidity")}</span>;
         return <button disabled={!!busy} style={linkBtn} onClick={() => runUndo(m, true)}><Undo2 size={12} /> {t("undoLink")}</button>;
       } },
   // eslint-disable-next-line react-hooks/exhaustive-deps -- runUndo only reads state setters and the loaders
   ], [busy, t, formatDateTime]);
 
-  if (!status) return <LoadingScreen msg={t("loadingMerge")} />;
+  if (!status) return <LoadingScreen message={t("loadingMerge")} />;
   const run = status.last_run;
   const countries = Array.from(new Set([...Object.keys(status.allow_list), ...Object.keys(run?.countries ?? {})])).sort();
 
   return (
     <>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 18 }}>
-        <StatCard label={t("ruleVersion")} value={status.rule_version} icon={<GitMerge size={16} />}
-                  sub={run ? t("lastRun", formatDateTime(run.finished_at), run.mode) : t("noRunYet")} />
-        <StatCard label={t("countriesOnApply")} value={String(Object.values(status.allow_list).filter(a => a.mode === "apply").length)}
-                  sub={t("onAllowList", Object.keys(status.allow_list).length)} />
-        <StatCard label={t("modelCheck")} value={run?.model_calls != null ? String(run.model_calls) : "—"}
-                  sub={run?.model_cost_usd != null ? `$${run.model_cost_usd.toFixed(4)}` : t("calls")} />
-        <StatCard label={t("mergesInLog")} value={log ? String(log.total) : "—"} sub={active === "true" ? t("active") : t("all")} />
+        <KpiTile label={t("ruleVersion")} value={status.rule_version} icon={<GitMerge size={16} />}
+                  hint={run ? t("lastRun", formatDateTime(run.finished_at), run.mode) : t("noRunYet")} />
+        <KpiTile label={t("countriesOnApply")} value={String(Object.values(status.allow_list).filter(a => a.mode === "apply").length)}
+                  hint={t("onAllowList", Object.keys(status.allow_list).length)} />
+        <KpiTile label={t("modelCheck")} value={run?.model_calls != null ? String(run.model_calls) : "—"}
+                  hint={run?.model_cost_usd != null ? `$${run.model_cost_usd.toFixed(4)}` : t("calls")} />
+        <KpiTile label={t("mergesInLog")} value={log ? String(log.total) : "—"} hint={active === "true" ? t("active") : t("all")} />
       </div>
 
-      <Card style={{ marginBottom: 16 }}>
+      <Section style={{ marginBottom: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <SLabel>{t("countries")}</SLabel>
+          <Eyebrow>{t("countries")}</Eyebrow>
           <div style={{ display: "flex", gap: 8 }}>
             <Button size="sm" disabled={!!busy} onClick={() => runNow("dry_run")}><Play size={12} /> {t("dryRunNow")}</Button>
             <Button size="sm" disabled={!!busy} onClick={() => runNow("apply")}><Play size={12} /> {t("runApply")}</Button>
           </div>
         </div>
-        <div style={{ fontSize: 12, color: A.muted, margin: "4px 0 10px" }}>
+        <div style={{ fontSize: 12, color: K.muted, margin: "4px 0 10px" }}>
           {t("mergeHelp")}
         </div>
-        {countries.length === 0 && <div style={{ fontSize: 13, color: A.body }}>{t("noRun")}</div>}
+        {countries.length === 0 && <div style={{ fontSize: 13, color: K.body }}>{t("noRun")}</div>}
         {countries.map(c => {
           const r = run?.countries[c];
           const al = status.allow_list[c];
           return (
-            <div key={c} style={{ borderTop: `1px solid ${A.line2}`, padding: "10px 0", fontSize: 13, color: A.body }}>
+            <div key={c} style={{ borderTop: `1px solid ${K.line2}`, padding: "10px 0", fontSize: 13, color: K.body }}>
               <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                 <strong style={{ minWidth: 110 }}>{c}</strong>
-                <Badge color={al ? (al.mode === "apply" ? "green" : "blue") : "gray"}>{al ? al.mode : "off"}</Badge>
-                {r?.status && <Badge color={STATUS_COLOR[r.status] ?? "gray"}>{r.status}</Badge>}
+                <Badge tone={al ? (al.mode === "apply" ? "success" : "info") : "neutral"}>{al ? al.mode : "off"}</Badge>
+                {r?.status && <Badge tone={STATUS_COLOR[r.status] ?? "neutral"}>{r.status}</Badge>}
                 {r && <span style={{ fontFamily: mono, fontSize: 12 }}>
                   {t("runLine", r.merges, r.band_pairs ?? 0, r.band_asked ?? 0, r.band_cached ?? 0, r.band_unasked ?? 0,
                     count(r.possible), count(r.conflicts), count(r.defects))}
@@ -193,7 +194,7 @@ export default function MergesTab({ onError }: { onError: (msg: string) => void 
               </div>
               {r && (r.conflicts_detail?.length ?? 0) > 0 && (
                 <details style={{ marginTop: 6 }}>
-                  <summary style={{ cursor: "pointer", fontSize: 12, color: A.muted }}>{t("conflictsSummary", r.conflicts_detail!.length)}</summary>
+                  <summary style={{ cursor: "pointer", fontSize: 12, color: K.muted }}>{t("conflictsSummary", r.conflicts_detail!.length)}</summary>
                   {r.conflicts_detail!.map(k => (
                     <div key={`${k.keeper_id}-${k.destination_id}`} style={{ fontSize: 12, fontFamily: mono }}>
                       {t("keptApart", k.destination_id.slice(0, 8), k.keeper_id.slice(0, 8))}
@@ -204,7 +205,7 @@ export default function MergesTab({ onError }: { onError: (msg: string) => void 
               )}
               {r && (r.merges_planned?.length ?? 0) > 0 && (
                 <details style={{ marginTop: 6 }}>
-                  <summary style={{ cursor: "pointer", fontSize: 12, color: A.muted }}>{t("plannedSummary", r.merges_planned.length, (r.diff_hash ?? "").slice(0, 10))}</summary>
+                  <summary style={{ cursor: "pointer", fontSize: 12, color: K.muted }}>{t("plannedSummary", r.merges_planned.length, (r.diff_hash ?? "").slice(0, 10))}</summary>
                   {r.merges_planned.map(m => (
                     <div key={m.merged_id} style={{ fontSize: 12, fontFamily: mono }}>
                       {m.merged_id.slice(0, 8)} → {m.keeper_id.slice(0, 8)} · {m.decided_by} · {m.reason}
@@ -215,12 +216,12 @@ export default function MergesTab({ onError }: { onError: (msg: string) => void 
             </div>
           );
         })}
-      </Card>
+      </Section>
 
       {undo && (
-        <Card style={{ marginBottom: 16 }}>
-          <SLabel>{t("undoDryRun")}</SLabel>
-          <div style={{ fontSize: 13, color: A.body, marginBottom: 8 }}>
+        <Section style={{ marginBottom: 16 }}>
+          <Eyebrow>{t("undoDryRun")}</Eyebrow>
+          <div style={{ fontSize: 13, color: K.body, marginBottom: 8 }}>
             {t("undoBody", `${undo.merge.merged_name} → ${undo.merge.keeper_name}`)}{" "}
             <span style={{ fontFamily: mono }}>{JSON.stringify(undo.result.would_restore ?? {})}</span>{t("undoTail")}
           </div>
@@ -229,11 +230,11 @@ export default function MergesTab({ onError }: { onError: (msg: string) => void 
                  onClick={() => { if (window.confirm(t("confirmUndo"))) runUndo(undo.merge, false); }}>{t("undoMerge")}</Button>
             <Button size="sm" onClick={() => setUndo(null)}>{t("close")}</Button>
           </div>
-        </Card>
+        </Section>
       )}
 
-      <Card style={{ marginBottom: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-        <SLabel>{t("mergeLog")}</SLabel>
+      <Section style={{ marginBottom: 16 }} bodyStyle={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <Eyebrow>{t("mergeLog")}</Eyebrow>
         <select aria-label={t("country")} value={country} onChange={e => { setCountry(e.target.value); setPage(1); }} style={selectStyle}>
           <option value="">{t("allCountries")}</option>
           {countries.map(c => <option key={c} value={c}>{c}</option>)}
@@ -243,7 +244,7 @@ export default function MergesTab({ onError }: { onError: (msg: string) => void 
           <option value="false">{t("stateUndone")}</option>
           <option value="">{t("stateAll")}</option>
         </select>
-      </Card>
+      </Section>
       {log && (
         <DataTable<Merge> tableId="admin-places-merges" data={log.items} columns={columns} getRowId={m => m.id}
                           serverPagination={{ pageIndex: log.page - 1, pageSize: log.page_size, total: log.total,

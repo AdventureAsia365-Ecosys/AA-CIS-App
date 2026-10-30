@@ -9,7 +9,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Trash2, Wand2 } from "lucide-react";
 import { useMemo, useState } from "react";
-import { A, sans, Card, SLabel } from "./adminUi";
 import {
   Badge,
   ConfirmModal,
@@ -33,6 +32,10 @@ import {
   useT,
   useToast,
   type Translator,
+  Eyebrow,
+  K,
+  Section as KitSection,
+  sans,
 } from "../../_kit";
 import { M } from "./SettingsKitTab.messages";
 import { DEMO_GUIDE } from "./kitDemoGuide";
@@ -78,10 +81,10 @@ function demoColumns(t: Translator<typeof M.en>): ColumnDef<DemoTour, unknown>[]
 // AA-919 — a static guide showing every GuideContent block; real guides live next to their page (guide.ts).
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <Card style={{ marginBottom: 20 }}>
-      <SLabel>{title}</SLabel>
+    <KitSection style={{ marginBottom: 20 }}>
+      <Eyebrow>{title}</Eyebrow>
       <div style={{ marginTop: 10 }}>{children}</div>
-    </Card>
+    </KitSection>
   );
 }
 
@@ -98,7 +101,7 @@ function ReactQueryDemo() {
   if (isLoading) return <SkeletonBar w={120} h={16} />;
   if (isError) return <ErrorState message={t("demoQueryFailed")} onRetry={() => refetch()} />;
   return (
-    <span style={{ fontSize: 13, color: A.ink }}>
+    <span style={{ fontSize: 13, color: K.ink }}>
       {t("rqResolved")}<strong>{data}</strong>{t("rqRows")}
     </span>
   );
@@ -197,7 +200,7 @@ function KitTabInner() {
           </Section>
 
           <Section title={t("secInfoTip")}>
-            <div style={{ fontSize: 13, color: A.body, fontFamily: sans }}>
+            <div style={{ fontSize: 13, color: K.body, fontFamily: sans }}>
               {t("toursThisWeek")}<b>12</b>
               <InfoTip
                 text={t("infoTipText")}
@@ -261,7 +264,7 @@ function KitTabInner() {
 
           <Drawer open={drawer} onClose={() => setDrawer(false)} title={t("tourDetail")} footer={<KitBtn onClick={() => setDrawer(false)}>{t("close")}</KitBtn>}>
             <p>{t("drawerBody")}</p>
-            <p style={{ color: A.muted }}>{t("drawerExample")}</p>
+            <p style={{ color: K.muted }}>{t("drawerExample")}</p>
           </Drawer>
         </Section>
       )}
@@ -279,9 +282,9 @@ function KitBtn({ children, onClick }: { children: React.ReactNode; onClick?: ()
         gap: 6,
         padding: "7px 14px",
         borderRadius: 999,
-        border: `1px solid ${A.line}`,
-        background: A.card,
-        color: A.ink3,
+        border: `1px solid ${K.line}`,
+        background: K.card,
+        color: K.ink3,
         fontSize: 13,
         fontWeight: 600,
         cursor: "pointer",

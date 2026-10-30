@@ -60,10 +60,12 @@
 import { Fragment, useState, useEffect, useCallback, useMemo } from "react";
 import { ChevronDown, ChevronRight, ChevronUp, Radio } from "lucide-react";
 import SocialContentSubNav from "../_components/SocialContentSubNav";
-import { A, mono, sans, Card, Badge, LoadingScreen } from "../_components/adminUi";
 import { fetchJson, EmptyState, ErrorState } from "../_components/auditPanels";
 import { TenantSelect } from "../_components/TenantSelect";
-import { PageFrame, PageFrameBody, PageFrameHeader, PageHeader, useFormat, useT } from "../../_kit";
+import {
+  PageFrame, PageFrameBody, PageFrameHeader, PageHeader, useFormat, useT, Badge, K, LoadingScreen, Section, mono,
+  sans, type Tone,
+} from "../../_kit";
 import { CHANNEL, TRACE } from "./messages";
 
 // ── Types — match GET /api/admin/a4/content-log's response (AA-568 extension) ──────────────────
@@ -98,8 +100,8 @@ interface ContentLogRow {
   created_at: string;
 }
 
-const STATUS_COLOR: Record<string, "green" | "amber" | "red" | "gray"> = {
-  approved: "green", held: "amber", processing: "gray", failed: "red",
+const STATUS_COLOR: Record<string, Tone> = {
+  approved: "success", held: "warning", processing: "neutral", failed: "danger",
 };
 
 const STATUS_OPTIONS = [
@@ -131,8 +133,8 @@ const PUBLISHED_OPTIONS = [
 ] as const;
 
 const selectStyle: React.CSSProperties = {
-  padding: "8px 12px", background: A.card, border: `1px solid ${A.line}`, borderRadius: 8,
-  fontSize: 12.5, fontFamily: sans, color: A.body, cursor: "pointer",
+  padding: "8px 12px", background: K.card, border: `1px solid ${K.line}`, borderRadius: 8,
+  fontSize: 12.5, fontFamily: sans, color: K.body, cursor: "pointer",
 };
 
 // AA-572 point 3 — sort state lives at the page level (not the table's) so it can be reset
@@ -348,12 +350,12 @@ export default function ContentTracePage() {
             <SocialContentSubNav active="content_trace" />
             <div style={{ flex: 1, minWidth: 0 }}>
               {unpublishError && (
-                <div style={{ padding: "8px 12px", marginBottom: 12, borderRadius: 6, background: A.redTint, color: A.red, fontSize: 12 }}>
+                <div style={{ padding: "8px 12px", marginBottom: 12, borderRadius: 6, background: K.dangerTint, color: K.danger, fontSize: 12 }}>
                   {unpublishError}
                 </div>
               )}
               {loading ? (
-                <LoadingScreen msg={t("loading")} />
+                <LoadingScreen message={t("loading")} />
               ) : error ? (
                 <ErrorState message={error} onRetry={load} />
               ) : !rows || rows.length === 0 ? (
@@ -381,9 +383,9 @@ export default function ContentTracePage() {
 
 function StatTile({ label, value }: { label: string; value: number }) {
   return (
-    <div style={{ background: A.card, border: `1px solid ${A.line}`, borderRadius: 8, padding: "6px 12px", minWidth: 92 }}>
-      <div style={{ fontSize: 10, color: A.muted, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
-      <div style={{ fontFamily: mono, fontSize: 15, fontWeight: 600, color: A.ink }}>{value}</div>
+    <div style={{ background: K.card, border: `1px solid ${K.line}`, borderRadius: 8, padding: "6px 12px", minWidth: 92 }}>
+      <div style={{ fontSize: 10, color: K.muted, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
+      <div style={{ fontFamily: mono, fontSize: 15, fontWeight: 600, color: K.ink }}>{value}</div>
     </div>
   );
 }
@@ -392,7 +394,7 @@ function FilterField({ label, children }: { label: string; children: React.React
   const t = useT(TRACE);
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-      <span style={{ fontSize: 11.5, color: A.muted }}>{t("filterLabel", label)}</span>
+      <span style={{ fontSize: 11.5, color: K.muted }}>{t("filterLabel", label)}</span>
       {children}
     </div>
   );
@@ -435,7 +437,7 @@ function ContentTraceTable({ rows, expandedId, sort, onSort, onToggle, onForceUn
     // AA-572 point 6 — deliberately NO `overflowX` here (default `visible`): the outer page
     // scroll container now owns horizontal scroll too, so this div isn't its own overflow
     // context and doesn't hijack `<th>`'s `position: sticky` — see file header comment.
-    <div style={{ border: `1px solid ${A.line}`, borderRadius: 10 }}>
+    <div style={{ border: `1px solid ${K.line}`, borderRadius: 10 }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: sans }}>
         <thead>
           <tr>
@@ -444,8 +446,8 @@ function ContentTraceTable({ rows, expandedId, sort, onSort, onToggle, onForceUn
               return (
                 <th key={i} onClick={h.sortKey ? () => onSort(h.sortKey as SortKey) : undefined} style={{
                   padding: "10px 14px", fontSize: 11, fontWeight: 600, textTransform: "uppercase",
-                  letterSpacing: "0.08em", color: active ? A.gold : A.muted, textAlign: "left",
-                  background: A.bg, borderBottom: `1px solid ${A.line}`, whiteSpace: "nowrap",
+                  letterSpacing: "0.08em", color: active ? K.accent : K.muted, textAlign: "left",
+                  background: K.bg, borderBottom: `1px solid ${K.line}`, whiteSpace: "nowrap",
                   position: "sticky", top: 0, zIndex: 2, cursor: h.sortKey ? "pointer" : "default",
                   userSelect: "none",
                 }}>
@@ -469,15 +471,15 @@ function ContentTraceTable({ rows, expandedId, sort, onSort, onToggle, onForceUn
             return (
               <Fragment key={r.piece_id}>
                 <tr onClick={() => onToggle(r.piece_id)} style={{
-                  cursor: "pointer", background: expanded ? A.goldTint : "transparent",
+                  cursor: "pointer", background: expanded ? K.accentTint : "transparent",
                 }}>
-                  <td style={rowTd}>{expanded ? <ChevronDown size={14} color={A.gold} /> : <ChevronRight size={14} color={A.muted2} />}</td>
+                  <td style={rowTd}>{expanded ? <ChevronDown size={14} color={K.accent} /> : <ChevronRight size={14} color={K.muted2} />}</td>
                   <td style={{ ...rowTd, maxWidth: 260, whiteSpace: "normal" }}>{r.topic}</td>
                   <td style={rowTd} title={r.tenant_id}>{r.tenant_name ?? "—"}</td>
                   <td style={rowTd}>{r.tour?.name ?? "—"}</td>
-                  <td style={rowTd}><Badge color="gray">{r.channel}</Badge></td>
+                  <td style={rowTd}><Badge tone="neutral">{r.channel}</Badge></td>
                   <td style={{ ...rowTd, maxWidth: 200, whiteSpace: "normal" }}>{chosenAngle?.name ?? "—"}</td>
-                  <td style={rowTd}><Badge color={STATUS_COLOR[r.status] ?? "gray"}>{r.status}</Badge></td>
+                  <td style={rowTd}><Badge tone={STATUS_COLOR[r.status] ?? "neutral"}>{r.status}</Badge></td>
                   <td style={{ ...rowTd, fontFamily: mono }}>{r.gate_pass_count}/{r.gate_total_count}</td>
                   <td style={{ ...rowTd, fontFamily: mono }}>
                     {r.retry_count}{r.is_buffer_retry && <span title={t("bufferTitle")}>{t("buffer")}</span>}
@@ -486,17 +488,17 @@ function ContentTraceTable({ rows, expandedId, sort, onSort, onToggle, onForceUn
                     {r.publish_status === "published" ? (
                       r.publish_external_url ? (
                         <a href={r.publish_external_url} target="_blank" rel="noreferrer"
-                          onClick={e => e.stopPropagation()} style={{ color: A.gold }}>{t("yesLink")}</a>
-                      ) : <Badge color="green">{t("yes")}</Badge>
+                          onClick={e => e.stopPropagation()} style={{ color: K.accent }}>{t("yesLink")}</a>
+                      ) : <Badge tone="success">{t("yes")}</Badge>
                     ) : r.publish_status === "pending_publish" ? (
-                      <Badge color="amber">{t("notYet")}</Badge>
-                    ) : <Badge color="gray">{t("no")}</Badge>}
+                      <Badge tone="warning">{t("notYet")}</Badge>
+                    ) : <Badge tone="neutral">{t("no")}</Badge>}
                   </td>
                   <td style={rowTd}>{formatDateTime(r.created_at)}</td>
                 </tr>
                 {expanded && (
                   <tr>
-                    <td colSpan={COLS} style={{ padding: "0 14px 18px", background: A.bg, borderBottom: `1px solid ${A.line}` }}>
+                    <td colSpan={COLS} style={{ padding: "0 14px 18px", background: K.bg, borderBottom: `1px solid ${K.line}` }}>
                       <ContentTraceAccordion row={r} onForceUnpublish={onForceUnpublish} unpublishingId={unpublishingId} />
                     </td>
                   </tr>
@@ -511,7 +513,7 @@ function ContentTraceTable({ rows, expandedId, sort, onSort, onToggle, onForceUn
 }
 
 const rowTd: React.CSSProperties = {
-  padding: "11px 14px", fontSize: 12.5, color: A.body, borderBottom: `1px solid ${A.line2}`,
+  padding: "11px 14px", fontSize: 12.5, color: K.body, borderBottom: `1px solid ${K.line2}`,
   whiteSpace: "nowrap",
 };
 
@@ -526,7 +528,7 @@ function ContentTraceAccordion({ row: p, onForceUnpublish, unpublishingId }: {
   const t = useT(TRACE);
   const { formatDateTime } = useFormat();
   return (
-    <Card style={{ padding: "16px 18px", marginTop: 4 }}>
+    <Section style={{ marginTop: 4 }} bodyStyle={{ padding: "16px 18px" }}>
       {/* AA-572 point 5 — Lineage: was 1 concatenated line ("Tour: X → Atom: Y → Slate: Segment —
           Z"), hard to scan. Now one line per real entity (Tour/Atom/Segment/Route/Hub/Slate) —
           always visible, never a blank cell (the pre-Slate direct-atom path is a real,
@@ -555,32 +557,32 @@ function ContentTraceAccordion({ row: p, onForceUnpublish, unpublishingId }: {
         </LineageLine>
         {p.job_id && (
           <LineageLine label={t("job")}>
-            <a href={`/admin/jobs?job=${p.job_id}`} style={{ color: A.accent, fontFamily: mono }}>
+            <a href={`/admin/jobs?job=${p.job_id}`} style={{ color: K.accent, fontFamily: mono }}>
               {t("jobLink", p.job_id.slice(0, 8))}
             </a>
           </LineageLine>
         )}
       </div>
-      {p.goal && <div style={{ fontSize: 12.5, color: A.body, marginBottom: 12 }}><strong>{t("goal")}</strong> {p.goal}</div>}
-      {p.cta && <div style={{ fontSize: 12.5, color: A.body, marginBottom: 12 }}><strong>{t("cta")}</strong> {p.cta}</div>}
+      {p.goal && <div style={{ fontSize: 12.5, color: K.body, marginBottom: 12 }}><strong>{t("goal")}</strong> {p.goal}</div>}
+      {p.cta && <div style={{ fontSize: 12.5, color: K.body, marginBottom: 12 }}><strong>{t("cta")}</strong> {p.cta}</div>}
 
       {/* All 3 angles, chosen one marked — never just the pick. */}
       <SectionLabel>{t("anglesTitle", p.angles.length)}</SectionLabel>
       {p.angles.length === 0 ? (
-        <div style={{ fontSize: 12, color: A.muted2, marginBottom: 14 }}>{t("noAngles")}</div>
+        <div style={{ fontSize: 12, color: K.muted2, marginBottom: 14 }}>{t("noAngles")}</div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
           {p.angles.map(a => (
             <div key={a.option_id} style={{
-              border: `1px solid ${a.chosen ? A.gold : A.line}`, borderRadius: 8, padding: "8px 10px",
-              background: a.chosen ? A.goldTint : "transparent",
+              border: `1px solid ${a.chosen ? K.accent : K.line}`, borderRadius: 8, padding: "8px 10px",
+              background: a.chosen ? K.accentTint : "transparent",
             }}>
-              <div style={{ fontSize: 12.5, fontWeight: 600, color: A.body, marginBottom: 2, display: "flex", alignItems: "center", gap: 6 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: K.body, marginBottom: 2, display: "flex", alignItems: "center", gap: 6 }}>
                 {a.name}
-                {a.chosen && <Badge color="gold">{t("chosen")}</Badge>}
-                {a.recommended && !a.chosen && <Badge color="gray">{t("recommended")}</Badge>}
+                {a.chosen && <Badge tone="accent">{t("chosen")}</Badge>}
+                {a.recommended && !a.chosen && <Badge tone="neutral">{t("recommended")}</Badge>}
               </div>
-              <div style={{ fontSize: 11.5, color: A.muted }}>{a.why_it_works}</div>
+              <div style={{ fontSize: 11.5, color: K.muted }}>{a.why_it_works}</div>
             </div>
           ))}
         </div>
@@ -591,27 +593,27 @@ function ContentTraceAccordion({ row: p, onForceUnpublish, unpublishingId }: {
           scroll area (the accordion itself already scrolls within the page). */}
       <SectionLabel>{t("content")}</SectionLabel>
       <div style={{
-        fontSize: 12.5, color: A.body, lineHeight: 1.6, marginBottom: 14, whiteSpace: "pre-wrap",
-        border: `1px solid ${A.line}`, borderRadius: 8, padding: "10px 12px",
-        background: A.card,
+        fontSize: 12.5, color: K.body, lineHeight: 1.6, marginBottom: 14, whiteSpace: "pre-wrap",
+        border: `1px solid ${K.line}`, borderRadius: 8, padding: "10px 12px",
+        background: K.card,
       }}>
         {p.content_text || t("noContent")}
       </div>
       {p.held_reason && (
-        <div style={{ fontSize: 12, color: A.red, marginBottom: 14 }}><strong>{t("heldReason")}</strong> {p.held_reason}</div>
+        <div style={{ fontSize: 12, color: K.danger, marginBottom: 14 }}><strong>{t("heldReason")}</strong> {p.held_reason}</div>
       )}
 
       {/* Gate ledger — specific violation text, not just counts. */}
       <SectionLabel>{t("gateLedger", p.gate_pass_count, p.gate_total_count)}</SectionLabel>
       {p.gate_ledger.length === 0 ? (
-        <div style={{ fontSize: 12, color: A.muted2, marginBottom: 14 }}>{t("noGates")}</div>
+        <div style={{ fontSize: 12, color: K.muted2, marginBottom: 14 }}>{t("noGates")}</div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
           {p.gate_ledger.map((g, i) => (
-            <div key={i} style={{ fontSize: 12, color: A.body }}>
-              <Badge color={g.passed ? "green" : "red"}>{g.gate ?? "gate"}</Badge>
+            <div key={i} style={{ fontSize: 12, color: K.body }}>
+              <Badge tone={g.passed ? "success" : "danger"}>{g.gate ?? "gate"}</Badge>
               {!g.passed && g.violations && g.violations.length > 0 && (
-                <ul style={{ margin: "4px 0 0 20px", padding: 0, color: A.muted }}>
+                <ul style={{ margin: "4px 0 0 20px", padding: 0, color: K.muted }}>
                   {g.violations.map((v, j) => <li key={j} style={{ fontSize: 11.5 }}>{v}</li>)}
                 </ul>
               )}
@@ -624,44 +626,44 @@ function ContentTraceAccordion({ row: p, onForceUnpublish, unpublishingId }: {
           persisted (STEP0, confirmed structural, AA-570 is the separate follow-up). */}
       <SectionLabel>{t("retryHistory", p.retry_count)}</SectionLabel>
       {p.repair_log.length === 0 ? (
-        <div style={{ fontSize: 12, color: A.muted2, marginBottom: 4 }}>
+        <div style={{ fontSize: 12, color: K.muted2, marginBottom: 4 }}>
           {p.status === "approved" || p.status === "held" ? t("noRetriesFinal") : t("noRetries")}
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 4 }}>
           {p.repair_log.map((round, i) => (
-            <div key={i} style={{ fontSize: 12, color: A.body, border: `1px solid ${A.line}`, borderRadius: 8, padding: "8px 10px" }}>
+            <div key={i} style={{ fontSize: 12, color: K.body, border: `1px solid ${K.line}`, borderRadius: 8, padding: "8px 10px" }}>
               <div style={{ fontWeight: 600, marginBottom: 3 }}>
                 {t("round", round.attempt ?? i + 1, round.gate_targeted ?? "")}
               </div>
               {round.violations && round.violations.length > 0 ? (
-                <ul style={{ margin: 0, paddingLeft: 18, color: A.muted }}>
+                <ul style={{ margin: 0, paddingLeft: 18, color: K.muted }}>
                   {round.violations.map((v, j) => <li key={j} style={{ fontSize: 11.5 }}>{v}</li>)}
                 </ul>
               ) : (
-                <div style={{ fontSize: 11.5, color: A.muted2 }}>{t("noViolation")}</div>
+                <div style={{ fontSize: 11.5, color: K.muted2 }}>{t("noViolation")}</div>
               )}
             </div>
           ))}
         </div>
       )}
       {p.is_buffer_retry && (
-        <div style={{ fontSize: 11.5, color: A.muted, marginTop: 6 }}>
+        <div style={{ fontSize: 11.5, color: K.muted, marginTop: 6 }}>
           {t("bufferNote", p.sibling_piece_count)}
         </div>
       )}
 
       {/* Publish status. */}
       <SectionLabel style={{ marginTop: 14 }}>{t("publish")}</SectionLabel>
-      <div style={{ fontSize: 12.5, color: A.body, display: "flex", alignItems: "center", gap: 8 }}>
-        <Badge color={p.publish_status === "published" ? "green" : p.publish_status === "pending_publish" ? "amber" : "gray"}>
+      <div style={{ fontSize: 12.5, color: K.body, display: "flex", alignItems: "center", gap: 8 }}>
+        <Badge tone={p.publish_status === "published" ? "success" : p.publish_status === "pending_publish" ? "warning" : "neutral"}>
           {p.publish_status}
         </Badge>
         {p.publish_external_url && (
-          <a href={p.publish_external_url} target="_blank" rel="noreferrer" style={{ color: A.gold }}>{t("viewPost")}</a>
+          <a href={p.publish_external_url} target="_blank" rel="noreferrer" style={{ color: K.accent }}>{t("viewPost")}</a>
         )}
         {p.publish_published_at && (
-          <span style={{ fontSize: 11.5, color: A.muted2 }}>{t("publishedAt", formatDateTime(p.publish_published_at))}</span>
+          <span style={{ fontSize: 11.5, color: K.muted2 }}>{t("publishedAt", formatDateTime(p.publish_published_at))}</span>
         )}
         {/* AA-560 — moved here from the deleted a4-oversight page's own Publish Log section, same
             confirm-then-call shape. Only a published row with a real publish_id can be
@@ -671,9 +673,9 @@ function ContentTraceAccordion({ row: p, onForceUnpublish, unpublishingId }: {
             onClick={() => onForceUnpublish(p.publish_id as string)}
             disabled={unpublishingId === p.publish_id}
             style={{
-              padding: "5px 10px", borderRadius: 6, border: `1px solid ${A.red}`,
+              padding: "5px 10px", borderRadius: 6, border: `1px solid ${K.danger}`,
               // AA-986 L3: the record only, never the channel (see handleForceUnpublish)
-              background: "transparent", color: A.red, fontSize: 11.5, cursor: "pointer",
+              background: "transparent", color: K.danger, fontSize: 11.5, cursor: "pointer",
               opacity: unpublishingId === p.publish_id ? 0.5 : 1,
             }}
           >
@@ -681,7 +683,7 @@ function ContentTraceAccordion({ row: p, onForceUnpublish, unpublishingId }: {
           </button>
         )}
       </div>
-    </Card>
+    </Section>
   );
 }
 
@@ -689,7 +691,7 @@ function ContentTraceAccordion({ row: p, onForceUnpublish, unpublishingId }: {
 // concatenated string.
 function LineageLine({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div style={{ fontSize: 12.5, color: A.body, lineHeight: 1.7 }}>
+    <div style={{ fontSize: 12.5, color: K.body, lineHeight: 1.7 }}>
       <strong>{label}:</strong> {children}
     </div>
   );
@@ -698,7 +700,7 @@ function LineageLine({ label, children }: { label: string; children: React.React
 function SectionLabel({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return (
     <div style={{
-      fontSize: 11, fontWeight: 600, color: A.ink3, textTransform: "uppercase",
+      fontSize: 11, fontWeight: 600, color: K.ink3, textTransform: "uppercase",
       letterSpacing: "0.06em", marginBottom: 6, display: "flex", alignItems: "center", gap: 6, ...style,
     }}>
       <Radio size={11} style={{ opacity: 0.5 }} />{children}

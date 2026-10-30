@@ -11,8 +11,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { AlertTriangle, CheckCircle2, Route, Waves } from "lucide-react";
-import { A, mono, Card, SLabel, Badge, LoadingScreen, StatCard } from "../_components/adminUi";
-import { Button, DataTable, useFormat, useT } from "../../_kit";
+import {
+  Button, DataTable, useFormat, useT, Badge, Eyebrow, K, KpiTile, LoadingScreen, Section, mono, type Tone,
+} from "../../_kit";
 import { PL } from "./messages";
 
 export type LineItem = {
@@ -32,11 +33,11 @@ type Backfill = {
 };
 
 const STATUSES = ["missing", "pending", "ok", "approximate", "not_found", "failed", "manual"];
-const STATUS_COLOR: Record<string, "green" | "amber" | "gray" | "red" | "blue"> = {
-  ok: "green", manual: "blue", approximate: "amber", pending: "gray", missing: "red", not_found: "red", failed: "red",
+const STATUS_COLOR: Record<string, Tone> = {
+  ok: "success", manual: "info", approximate: "warning", pending: "neutral", missing: "danger", not_found: "danger", failed: "danger",
 };
-const selectStyle = { padding: "6px 8px", borderRadius: 8, border: `1px solid ${A.line}`, fontSize: 13 };
-const linkBtn = { border: 0, background: "none", color: A.accentDeep, cursor: "pointer", padding: 0, fontSize: 12 };
+const selectStyle = { padding: "6px 8px", borderRadius: 8, border: `1px solid ${K.line}`, fontSize: 13 };
+const linkBtn = { border: 0, background: "none", color: K.accentDeep, cursor: "pointer", padding: 0, fontSize: 12 };
 
 export default function LinesTab({ countries, onError }: { countries: string[]; onError: (m: string) => void }) {
   const t = useT(PL);
@@ -104,7 +105,7 @@ export default function LinesTab({ countries, onError }: { countries: string[]; 
     { accessorKey: "name", header: t("linePlace") },
     { accessorKey: "country", header: t("country") },
     { accessorKey: "status", header: t("geometry"),
-      cell: ({ row }) => <Badge color={STATUS_COLOR[row.original.status] ?? "gray"}>{row.original.status}</Badge> },
+      cell: ({ row }) => <Badge tone={STATUS_COLOR[row.original.status] ?? "neutral"}>{row.original.status}</Badge> },
     { accessorKey: "source", header: t("source"), cell: ({ row }) => row.original.source ?? "—" },
     { accessorKey: "length_km", header: t("length"), meta: { align: "right" },
       cell: ({ row }) => row.original.length_km != null
@@ -117,7 +118,7 @@ export default function LinesTab({ countries, onError }: { countries: string[]; 
     { accessorKey: "tour_days", header: t("tourDays"), meta: { align: "right" } },
     { id: "retry", header: t("triesNext"), accessorFn: it => it.next_retry_at ?? "",
       cell: ({ row }) => <span style={{ fontSize: 12 }}>{row.original.tries ?? 0} · {formatDateTime(row.original.next_retry_at)}
-        {row.original.last_error && <div style={{ color: A.muted }}>{row.original.last_error}</div>}</span> },
+        {row.original.last_error && <div style={{ color: K.muted }}>{row.original.last_error}</div>}</span> },
     { id: "act", header: "", accessorFn: () => "",
       cell: ({ row }) => {
         const it = row.original;
@@ -134,25 +135,25 @@ export default function LinesTab({ countries, onError }: { countries: string[]; 
   // eslint-disable-next-line react-hooks/exhaustive-deps -- the handlers only read state setters and load
   ], [busy, t, formatDateTime]);
 
-  if (!data) return <LoadingScreen msg={t("loadingLines")} />;
+  if (!data) return <LoadingScreen message={t("loadingLines")} />;
   const approx = Object.entries(data.approximate_by_country);
   const waiting = (data.totals.pending ?? 0) + (data.totals.missing ?? 0) + (data.totals.not_found ?? 0) + (data.totals.failed ?? 0);
 
   return (
     <>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 18 }}>
-        <StatCard label={t("linePlaces")} value={String(data.lines)} icon={<Route size={16} />} sub={country || t("wholeCatalog")} />
-        <StatCard label={t("drawn")} value={`${data.drawn}/${data.lines}`} icon={<CheckCircle2 size={16} />}
-                  accent={data.drawn === data.lines ? A.green : A.gold} sub="ok · manual · approximate" />
-        <StatCard label={t("approxRoutes")} value={String(data.totals.approximate ?? 0)} icon={<Waves size={16} />}
-                  accent={A.gold} sub={approx.length ? approx.map(([c, n]) => `${c} ${n}`).join(" · ") : t("none")} />
-        <StatCard label={t("waitingShape")} value={String(waiting)} icon={<AlertTriangle size={16} />}
-                  accent={waiting ? A.gold : A.green} sub={t("waitingSub")} />
-        <StatCard label={t("shapeJob")} value={data.enabled ? t("on") : t("off")} icon={<Route size={16} />}
-                  accent={data.enabled ? A.green : A.gold} sub={data.enabled_env} />
+        <KpiTile label={t("linePlaces")} value={String(data.lines)} icon={<Route size={16} />} hint={country || t("wholeCatalog")} />
+        <KpiTile label={t("drawn")} value={`${data.drawn}/${data.lines}`} icon={<CheckCircle2 size={16} />}
+                  hintTone={data.drawn === data.lines ? "success" : "warning"} hint="ok · manual · approximate" />
+        <KpiTile label={t("approxRoutes")} value={String(data.totals.approximate ?? 0)} icon={<Waves size={16} />}
+                  hintTone="warning" hint={approx.length ? approx.map(([c, n]) => `${c} ${n}`).join(" · ") : t("none")} />
+        <KpiTile label={t("waitingShape")} value={String(waiting)} icon={<AlertTriangle size={16} />}
+                  hintTone={waiting ? "warning" : "success"} hint={t("waitingSub")} />
+        <KpiTile label={t("shapeJob")} value={data.enabled ? t("on") : t("off")} icon={<Route size={16} />}
+                  hintTone={data.enabled ? "success" : "warning"} hint={data.enabled_env} />
       </div>
 
-      <Card style={{ marginBottom: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+      <Section style={{ marginBottom: 16 }} bodyStyle={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
         <select aria-label={t("country")} value={country} onChange={e => setCountry(e.target.value)} style={selectStyle}>
           <option value="">{t("allCountries")}</option>
           {countries.map(c => <option key={c} value={c}>{c}</option>)}
@@ -164,21 +165,21 @@ export default function LinesTab({ countries, onError }: { countries: string[]; 
         <Button size="sm" disabled={busy} onClick={() => runBackfill({ country: country || null, limit: 50, dry_run: true })}>
           {t("previewBackfill", country ? ` (${country})` : "")}
         </Button>
-      </Card>
+      </Section>
 
       {backfill && (
-        <Card style={{ marginBottom: 16 }}>
-          <SLabel>{t("backfillTitle", backfill.result.dry_run ? t("dryRun") : t("queued"), backfill.result.provider)}</SLabel>
-          <div style={{ fontSize: 13, color: A.body }}>
+        <Section style={{ marginBottom: 16 }}>
+          <Eyebrow>{t("backfillTitle", backfill.result.dry_run ? t("dryRun") : t("queued"), backfill.result.provider)}</Eyebrow>
+          <div style={{ fontSize: 13, color: K.body }}>
             {t("estimate", backfill.result.estimate.names, backfill.result.estimate.geoapify_credits_max,
               backfill.result.estimate.overpass_queries_max, backfill.result.estimate.credits_used_today,
               backfill.result.estimate.daily_credit_limit)}
           </div>
-          <div style={{ fontSize: 12, color: A.muted, marginTop: 4 }}>{backfill.result.estimate.credits_note}</div>
+          <div style={{ fontSize: 12, color: K.muted, marginTop: 4 }}>{backfill.result.estimate.credits_note}</div>
           {!!backfill.result.would_refuse?.length && (
-            <div style={{ fontSize: 12.5, color: A.red, marginTop: 6 }}>{t("refused", backfill.result.would_refuse.join("; "))}</div>
+            <div style={{ fontSize: 12.5, color: K.danger, marginTop: 6 }}>{t("refused", backfill.result.would_refuse.join("; "))}</div>
           )}
-          <div style={{ fontSize: 12, fontFamily: mono, color: A.body, marginTop: 6 }}>
+          <div style={{ fontSize: 12, fontFamily: mono, color: K.body, marginTop: 6 }}>
             {backfill.result.items.slice(0, 20).map(i => `${i.name} (${i.status})`).join(" · ")}
           </div>
           <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
@@ -190,23 +191,23 @@ export default function LinesTab({ countries, onError }: { countries: string[]; 
             )}
             <Button size="sm" onClick={() => setBackfill(null)}>{t("close")}</Button>
           </div>
-        </Card>
+        </Section>
       )}
 
       {manual && (
-        <Card style={{ marginBottom: 16 }}>
-          <SLabel>{t("manualTitle", manual.item.name, manual.item.country)}</SLabel>
-          <div style={{ fontSize: 12, color: A.muted, marginBottom: 6 }}>
+        <Section style={{ marginBottom: 16 }}>
+          <Eyebrow>{t("manualTitle", manual.item.name, manual.item.country)}</Eyebrow>
+          <div style={{ fontSize: 12, color: K.muted, marginBottom: 6 }}>
             {t("manualHelp", manual.item.country)}
           </div>
           <textarea aria-label="GeoJSON" value={manual.text} rows={6}
                     onChange={e => setManual({ ...manual, text: e.target.value })}
-                    style={{ width: "100%", fontFamily: mono, fontSize: 12, border: `1px solid ${A.line}`, borderRadius: 8, padding: 8 }} />
+                    style={{ width: "100%", fontFamily: mono, fontSize: 12, border: `1px solid ${K.line}`, borderRadius: 8, padding: 8 }} />
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
             <Button variant="primary" size="sm" disabled={busy || !manual.text.trim()} onClick={saveManual}>{t("save")}</Button>
             <Button size="sm" onClick={() => setManual(null)}>{t("cancel")}</Button>
           </div>
-        </Card>
+        </Section>
       )}
 
       <DataTable<LineItem> tableId="admin-places-lines" data={data.items} columns={columns}

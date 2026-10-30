@@ -146,6 +146,46 @@ export function Badge({
   );
 }
 
+// ── Eyebrow ─────────────────────────────────────────────────────────────────
+// The small uppercase label over a group of fields, a list or a block of figures ("Retry policy", "Last 30 days"):
+// 11px, 600, uppercase, 0.14em tracking, muted, 14px above what it labels. AA-994 S6b: the kit twin of the legacy admin
+// `SLabel`, so pages stop restyling the same label by hand. For a card's own title use Section `title`; for the page
+// title PageHeader. `tone="onDark"` is for a deliberately dark surface (a hero or the sidebar).
+export function Eyebrow({
+  children,
+  as: Tag = "div",
+  tone = "muted",
+  testId,
+  style,
+}: {
+  children: React.ReactNode;
+  /** The element (a <div> by default; "h3" when it heads a group in the outline, "span" inside a line). */
+  as?: "div" | "span" | "h3" | "h4" | "p" | "legend";
+  tone?: "muted" | "onDark";
+  testId?: string;
+  /** Spacing (the default bottom margin is 14px; `marginBottom: 0` inside a flex row). */
+  style?: React.CSSProperties;
+}) {
+  return (
+    <Tag
+      data-testid={testId}
+      style={{
+        margin: 0,
+        marginBottom: 14,
+        fontFamily: sans,
+        fontSize: 11,
+        fontWeight: 600,
+        textTransform: "uppercase",
+        letterSpacing: "0.14em",
+        color: tone === "onDark" ? "rgba(255,255,255,0.5)" : K.muted,
+        ...style,
+      }}
+    >
+      {children}
+    </Tag>
+  );
+}
+
 // ── StatusBadge ───────────────────────────────────────────────────────────────
 // Driven by a job/row status string (AA-662: "driven by job status, see the job runner issue").
 // Maps the known job-runner states to a tone + label; unknown values fall back to neutral.
