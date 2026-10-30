@@ -377,7 +377,11 @@ _KEEPS_SQL = """
 
 
 async def release_window(conn, release: dict, now: datetime) -> tuple[dict, dict]:
-    """(before, after) derived KPIs of one release: its owner's writes 28 days before its activation and since."""
+    """(before, after) derived KPIs of one release: its owner's writes 28 days before its activation and since.
+    `activated_at` is the LATEST move to active: the release guard (CIS 287 / 292) sets it on every transition to
+    active, a rollback (retired -> active) included. A release restored by a soft stop is therefore measured on its
+    own writes since it came back, never on the writes of the release it replaced (no chained rollbacks; integration
+    test `..._restored_by_a_soft_stop_...`). Its baseline is then the replaced release's period (lenient, by design)."""
     act = release["activated_at"]
     tid = release.get("tenant_id") if release["scope"] == "tenant" else None
     b_by, _ = await collect(conn, release["writer"], act - timedelta(days=BASELINE_DAYS), act, tid)

@@ -205,6 +205,50 @@ async def test_a_reflag_soft_stop_rolls_back_unless_kept(conn):
 
 
 @pytest.mark.asyncio
+async def test_a_release_restored_by_a_soft_stop_is_measured_on_its_own_writes_only(conn):
+    """Review finding (S260): after a soft-stop rollback the restored release must not be judged on the writes of the
+    bad release it replaced, or rollbacks chain down to release 0. The 292 guard sets activated_at on EVERY move to
+    active (a rollback included), so the restored release's window starts at the rollback. Releases A then B are
+    backdated (A active 40 days ago, B 10 days ago) with B's 24 re-flagged writes 5 days ago."""
+    t = await _tenant(conn)
+    a = await _rules_release(conn, t)
+    await conn.execute("SET LOCAL session_replication_role = replica")      # backdate past the guard (superuser)
+    await conn.execute("UPDATE shared.writing_memory_release SET activated_at = now() - interval '40 days', "
+                       "train_month = date_trunc('month', now() - interval '40 days')::date "
+                       "WHERE release_id = $1::uuid", a["release_id"])
+    await conn.execute("SET LOCAL session_replication_role = origin")
+    rid = await _rule(conn, t, cluster=f"zz922:{uuid.uuid4().hex[:8]}")
+    d = await rel.create_draft(conn, writer="t9_blog", scope="tenant", tenant_id=t, rule_ids=[rid],
+                               created_by=f"admin:{ADMIN}")
+    ev = await _run(conn, "t9_blog", "r2", release=d["release_id"], details={"candidate": "release"})
+    sh = await _run(conn, "t9_blog", "shadow", release=d["release_id"])
+    await rel.attach_evidence(conn, d["release_id"], eval_run_id=ev, shadow_run_id=sh, actor=f"admin:{ADMIN}")
+    await rel.approve(conn, d["release_id"], approved_by=ADMIN, approval_ref="pytest")
+    b = await rel.activate(conn, d["release_id"], actor=f"admin:{ADMIN}")
+    assert b["previous_release_id"] == a["release_id"]
+    await conn.execute("SET LOCAL session_replication_role = replica")
+    await conn.execute("UPDATE shared.writing_memory_release SET activated_at = now() - interval '10 days' "
+                       "WHERE release_id = $1::uuid", b["release_id"])
+    await conn.execute("SET LOCAL session_replication_role = origin")
+    for _ in range(24):
+        await _piece(conn, t, FAILED, created=datetime.now(timezone.utc) - timedelta(days=5))
+    pool = _OneConnPool(conn)
+
+    first = await kpi.run_weekly(pool, apply=True, trigger="manual")
+    mine = [x for x in first["actions"] if x["release_id"] == b["release_id"]][0]
+    assert mine["action"] == "rolled_back" and "reflag_over_8pct" in mine["codes"]
+    restored = await rel.get_release(conn, a["release_id"])
+    assert restored["status"] == "active"
+    assert restored["activated_at"] > datetime.now(timezone.utc) - timedelta(days=1)   # reset by the rollback
+
+    second = await kpi.run_weekly(pool, apply=True, trigger="manual")
+    win = [s for s in second["soft_stops"] if s["release_id"] == a["release_id"]][0]
+    assert win["after_writes"] == 0 and win["before_writes"] == 24 and win["stops"] == []
+    assert [x["action"] for x in second["actions"] if x["release_id"] == a["release_id"]] == ["none"]
+    assert (await rel.get_release(conn, a["release_id"]))["status"] == "active"
+
+
+@pytest.mark.asyncio
 async def test_a_keep_needs_an_active_release_and_a_bounded_time(conn):
     t = await _tenant(conn)
     r0 = await _release0(conn, "t9_blog", tenant=t)
