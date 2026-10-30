@@ -555,6 +555,22 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     client's short timeouts and a 20 s budget for the paged search, an unfinished search counts nothing). A computer
     whose outside source is unreadable (probe log, or a contract view revoked / dropped / reshaped) raises
     `kpis.Unavailable`: no value, reason under `unavailable` in the job result, the snapshot still succeeds and chains. $0 (view reads, two cheap AWS reads, SES).
+  - **Money reports (AA-1003 R3)**: `report_generate` also renders the weekly **EX-01** (business pack draft) and
+    **FI-02** (spend and vendor balance digest, e-mailed to the `OPS_DIGEST_EMAIL_TO` list like OPS-12) for an ISO week,
+    and the monthly **FI-01** (cost review draft, template cost-finops-review Part A) with **FI-03** (LLM
+    attribution), **FI-04** (vendors), **FI-05** (unit costs), **FI-06** (budgets) and **OPS-08** (capacity) for a
+    calendar month (`services/reports/money.py`, readers in `services/reports/money_sources.py`). The daily chain
+    queues them: the snapshot of a Sunday chains the weekly reports for that ISO week, the snapshot of the day before
+    business day 2 chains the monthly ones for the previous month (`periods.scheduled_period`; the register's due rule
+    follows the same schedule). Stored rows only, per UTC day: the LLM ledger (`shared.llm_call_daily` +
+    `shared.llm_call_log`), the vendor ledgers, the STORED Cost Explorer snapshots through `platform_cost.cost_by_app`
+    (`refresh_if_stale=False`) / `cost_ops.cost_forecast` / `cost_explorer.read_cost_range` (a month's AWS data is
+    labelled missing / partial / provisional / final; a report never calls Cost Explorer), budget bells, the
+    contract views; OPS-08 adds catalog sizes and one CloudWatch GetMetricData call for the RDS metrics (already
+    granted; unreadable = named, not failed). Per-App budgets mirror Terraform in `cost_ops.APP_MONTHLY_BUDGET_USD`
+    (env `COST_OPS_APP_BUDGETS_USD`); the LLM account credit is set by hand in env `COST_OPS_CREDITS_USD`
+    (`acc3=<usd>@<expiry>`). A source that cannot be read is a line in the report ("not wired" / "not readable"),
+    never a failed run. No migration.
   - **Ops metrics sampler (AA-832, AA-751)**: `api/core/ops_metrics_sampler.py`, a background task of
     the **api** (not the worker) started in `api/main.py`'s lifespan after the main pool, cancelled
     before it closes, off when `ENVIRONMENT=test`, never raises. Every 300 s (first tick 30 s after

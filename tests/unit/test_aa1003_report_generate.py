@@ -77,7 +77,7 @@ def test_due_state_of_a_daily_report(now, covered, state):
 
 
 def test_due_state_of_reports_not_generated_here():
-    assert generate.due_state(_reg().report("FI-01"), None, NOW)["state"] == "not_automated"
+    assert generate.due_state(_reg().report("FI-07"), None, NOW)["state"] == "not_automated"   # R3 generates FI-01
 
 
 def test_register_lists_every_report_and_flags_failures():
@@ -86,7 +86,7 @@ def test_register_lists_every_report_and_flags_failures():
     assert len(rows) == len(reg.reports)
     out = generate.render_register(reg, reg.report("EX-06"), DAY, rows, NOW)
     assert "EX-04" in out.output["attention"]
-    assert out.output["registry"]["automated"] == 4          # EX-04, EX-06; R2: OPS-12, TP-03
+    assert out.output["registry"]["automated"] == 12         # EX-04, EX-06; R2: OPS-12, TP-03; R3: 8 money reports
     assert "## Generated here" in out.markdown and "| P0 |" in out.markdown
 
 
@@ -104,4 +104,4 @@ def test_render_refuses_a_report_without_renderer():
 
     reg = _reg()
     with pytest.raises(LookupError):
-        asyncio.run(generate.render(None, reg, reg.report("FI-01"), DAY, DAY, NOW))
+        asyncio.run(generate.render(None, reg, reg.report("FI-07"), DAY, DAY, NOW))

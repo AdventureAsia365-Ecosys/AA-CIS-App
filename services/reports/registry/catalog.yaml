@@ -31,7 +31,7 @@ reports:
   status: partial
   priority: P0
   template: docs/audits/2026-10-29-S258-report-catalog/templates/business-review.md
-  generator: null
+  generator: cis
   kpis:
   - K-DEL-SHIPPED
   - K-COST-MTD
@@ -255,7 +255,7 @@ reports:
   status: partial
   priority: P0
   template: docs/audits/2026-10-29-S258-report-catalog/templates/cost-finops-review.md
-  generator: null
+  generator: cis
   kpis:
   - K-COST-ACC2
   - K-COST-APP
@@ -282,10 +282,10 @@ reports:
   schedule: weekly
   channel: SES e-mail to report subscribers + Weekly panel on /admin/cost-ops; headline into EX-01
   automation: auto
-  status: missing
+  status: partial
   priority: P1
   template: null
-  generator: null
+  generator: cis
   kpis:
   - K-COST-FCST
   - K-COST-WOW
@@ -313,7 +313,7 @@ reports:
   status: partial
   priority: P1
   template: docs/audits/2026-10-29-S258-report-catalog/templates/cost-finops-review.md
-  generator: null
+  generator: cis
   kpis:
   - K-LLM-APP
   - K-LLM-TENANT
@@ -343,7 +343,7 @@ reports:
   status: partial
   priority: P1
   template: null
-  generator: null
+  generator: cis
   kpis:
   - K-VEND-SPEND
   - K-VEND-EXPIRY
@@ -370,7 +370,7 @@ reports:
   status: partial
   priority: P1
   template: docs/audits/2026-10-29-S258-report-catalog/templates/cost-finops-review.md
-  generator: null
+  generator: cis
   kpis:
   - K-UNIT-TOUR
   - K-UNIT-TRIP
@@ -397,7 +397,7 @@ reports:
   status: partial
   priority: P1
   template: docs/audits/2026-10-29-S258-report-catalog/templates/cost-finops-review.md
-  generator: null
+  generator: cis
   kpis:
   - K-FIN-VAR
   - K-FIN-FCSTACC
@@ -1214,7 +1214,7 @@ reports:
   status: partial
   priority: P1
   template: null
-  generator: null
+  generator: cis
   kpis:
   - K-CAP-CPU
   - K-CAP-STORAGE

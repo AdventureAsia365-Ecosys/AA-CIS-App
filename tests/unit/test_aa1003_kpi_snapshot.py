@@ -324,7 +324,7 @@ def test_report_generate_marks_the_run_failed_and_raises(monkeypatch):
 
 
 def test_report_generate_refuses_a_report_without_generator(monkeypatch):
-    monkeypatch.setattr(report_jobs.store, "get_run", AsyncMock(return_value=_run_row("FI-01")))
+    monkeypatch.setattr(report_jobs.store, "get_run", AsyncMock(return_value=_run_row("FI-07")))
     monkeypatch.setattr(report_jobs.store, "finish_failed", AsyncMock())
     with pytest.raises(NonRetryable):
         asyncio.run(report_jobs.run_report(_job_ctx({"run_id": _run_row()["id"]}, FakePool())))

@@ -12,9 +12,10 @@
   report_email           payload {"run_id", "report_id"}
                          Sends a succeeded report run (its Markdown) through the existing SES path
                          (shared/aws_client/ses_mailer.py) to that report's opt-in list only, never to the alert
-                         recipients: OPS-12 -> OPS_DIGEST_EMAIL_TO (comma-separated, set on the worker task definition
+                         recipients: OPS-12 and (R3) FI-02 -> OPS_DIGEST_EMAIL_TO (comma-separated, set on the
+                         worker task definition
                          by AA-CIS-Infra; empty = nobody, the job succeeds as skipped). Queued by report_generate after
-                         a scheduled OPS-12 run succeeded (idempotency key report_email:<run id>).
+                         a scheduled OPS-12 / FI-02 run succeeded (idempotency key report_email:<run id>).
 
 Both are background kinds and cost $0 (view reads; SES within the existing sender).
 """
@@ -40,7 +41,9 @@ CHECK_KIND = handoff.CHECK_KIND
 EMAIL_KIND = "report_email"
 SCHEDULER = "scheduler:aa-1003"
 # Report -> the environment variable that lists its opt-in recipients (tech lead only today).
-EMAILED_REPORTS: dict[str, str] = {"OPS-12": "OPS_DIGEST_EMAIL_TO"}
+# R3: FI-02 (weekly spend digest) goes to the same list as OPS-12 (catalog decision 5: the tech lead gets both); give
+# it its own variable when someone opts in to one of them only.
+EMAILED_REPORTS: dict[str, str] = {"OPS-12": "OPS_DIGEST_EMAIL_TO", "FI-02": "OPS_DIGEST_EMAIL_TO"}
 MAX_REPORT_RECIPIENTS = 10
 _SPLIT = re.compile(r"[,;\s]+")
 
