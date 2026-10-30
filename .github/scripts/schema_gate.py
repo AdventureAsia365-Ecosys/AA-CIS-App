@@ -22,7 +22,11 @@ The Infra run check (critic 4): GitHub's Actions API of AA-CIS-Infra (``--infra-
 copy-PR summary jobs do not guard the schema). A run whose apply or probe is queued or running, or any re-run in
 flight, is waited for. Otherwise the newest run that applied files decides; a red apply or probe can only hide in a run
 concluded failure / cancelled / timed out (last ``lookback_days``, default 45), and such a run blocks until it is
-re-run green or a newer run applies files with apply and probe green. Runs whose apply job was skipped
+re-run green or a newer run applies files with apply and probe green. When only the probe of that run is red (its apply
+green), the newest standalone ``db-isolation-probe.yml`` run on main created after the run finished clears it when
+green (waited for while in flight; a red one keeps the block): the
+probe re-proves the same database, so a probe-only failure (S258: the probe of run 40922869610 had no AWS role) does
+not hold every deploy until the next expand file. Runs whose apply job was skipped
 (``DB_AUTO_APPLY`` not 'true': list only, today's default) never count, so with auto-apply off the gate is exactly
 "every key is registered", which the manual DB Migrate flow already guarantees. Only a 404 of the repo itself
 (anonymous: private again, ADR 0014, auto-apply then off too) skips the run check, with a notice; a 403/429 (rate or
@@ -57,6 +61,7 @@ PREFIX = {"cis": "", "booking": "bk-", "crm": "crm-"}
 FILE_RE = re.compile(r"^([0-9]{3})_[^/]*\.sql$")
 APPLY_JOB = "Apply on Dev"
 WORKFLOW = "migration-apply.yml"
+PROBE_WORKFLOW = "db-isolation-probe.yml"   # the standalone probe (dispatch, nightly, after DB Migrate)
 USER_AGENT = "aa-schema-gate"
 DEFAULT_TIMEOUT = 2400.0                # ADR 0017 d7 (S257 review: 20 min is too short for the chain)
 MAX_TIMEOUT = 2580.0                    # the schema-gate job has timeout-minutes: 45
@@ -240,13 +245,14 @@ class Infra:
             repo_status, _ = self.get(f"/repos/{self.repo}")
             if repo_status == 404:
                 raise Private()
+            name = path.split("/workflows/")[1].split("/")[0] if "/workflows/" in path else WORKFLOW
             raise Unread(f"{path.split('?')[0]} answered 404 while {self.repo} is readable (HTTP {repo_status}): "
-                         f"is {WORKFLOW} renamed?")
+                         f"is {name} renamed?")
         why = "rate limited or refused" if status in (403, 429) else ("network error" if status == 0 else "error")
         raise Unread(f"cannot read {self.repo} Actions (HTTP {status}, {why}) at {path.split('?')[0]}")
 
-    def _runs(self, query: str) -> list:
-        data = self._read(f"/repos/{self.repo}/actions/workflows/{WORKFLOW}/runs?branch=main&per_page={PAGE}&{query}")
+    def _runs(self, query: str, workflow: str = WORKFLOW) -> list:
+        data = self._read(f"/repos/{self.repo}/actions/workflows/{workflow}/runs?branch=main&per_page={PAGE}&{query}")
         return list(data.get("workflow_runs") or [])
 
     def jobs(self, run: dict) -> list:
@@ -329,8 +335,40 @@ class Infra:
                 if guard_verdict(self.jobs(run), True) == "green":
                     return RunState(True, f"run {red['id']} has a red apply or probe, but the newer run {run['id']} "
                                     f"applied files with apply and probe green: {run.get('html_url', '')}")
+            probe = self._standalone_probe(red)
+            if probe is not None:
+                return probe
         return RunState(False, f"migration-apply run {red['id']} has a red apply or Isolation Probe ({url}). Fix it "
-                        "and re-run its failed jobs; the gate passes once its apply and probe are green", url=url)
+                        "and re-run its failed jobs, or (probe red only) run DB Isolation Probe green on main; the "
+                        "gate passes once its apply and probe are green", url=url)
+
+    def _standalone_probe(self, red: dict) -> RunState | None:
+        """A probe-only red run (apply green) is cleared when the NEWEST standalone probe created after the run finished
+        is green (its "Isolation probe" job included). A probe run in flight is waited for; a newer red one blocks."""
+        jobs = self.jobs(red)
+        applied = [j for j in jobs if str(j.get("name", "")).startswith(APPLY_JOB) and j.get("conclusion") != "skipped"]
+        if not applied or any(j.get("conclusion") != "success" for j in applied):
+            return None                 # a red apply is never cleared by a probe
+        finished = max([str(j.get("completed_at") or "") for j in jobs]
+                       + [str(red.get("updated_at") or ""), str(red["created_at"])])
+        since = f"created=%3E%3D{finished}"
+        for status in IN_FLIGHT:
+            for run in self._runs(f"status={status}&{since}", PROBE_WORKFLOW):
+                if str(run.get("created_at") or "") >= finished:
+                    return RunState(False, f"standalone DB Isolation Probe run {run['id']} is in flight: waiting for "
+                                    "it", url=run.get("html_url", ""))
+        done = [r for r in self._runs(f"status=completed&{since}", PROBE_WORKFLOW)
+                if str(r.get("created_at") or "") >= finished]
+        if not done:
+            return None
+        newest = max(done, key=_newest)
+        probe_jobs = [j for j in self.jobs(newest) if str(j.get("name", "")).startswith(PROBE_JOB)]
+        if newest.get("conclusion") != "success" or not probe_jobs or any(
+                j.get("conclusion") != "success" for j in probe_jobs):
+            return None                 # the newest standalone probe is red (or ran no probe job): it decides
+        return RunState(True, f"run {red['id']} has a red Isolation Probe only (apply green); the newest standalone "
+                        f"DB Isolation Probe run {newest['id']} created after it is green: "
+                        f"{newest.get('html_url', '')}")
 
 
 # ── the loop ────────────────────────────────────────────────────────────────────────────────────────────────────────

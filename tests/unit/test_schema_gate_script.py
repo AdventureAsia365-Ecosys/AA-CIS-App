@@ -126,8 +126,11 @@ LIST_ONLY = {
 class FakeGitHub:
     """Answers the run-list queries by status / conclusion (and created >=), the jobs reads and the repo read."""
 
-    def __init__(self, runs: list, jobs: dict, codes: dict | None = None, repo_status: int = 200) -> None:
+    def __init__(
+        self, runs: list, jobs: dict, codes: dict | None = None, repo_status: int = 200, probes: list | None = None
+    ) -> None:
         self.runs, self.jobs, self.codes, self.repo_status, self.calls = runs, jobs, codes or {}, repo_status, []
+        self.probes = probes or []  # runs of the standalone db-isolation-probe.yml
 
     def __call__(self, path: str) -> tuple:
         self.calls.append(path)
@@ -140,7 +143,9 @@ class FakeGitHub:
             query = dict(kv.split("=", 1) for kv in path.split("?", 1)[1].split("&"))
             want = query.get("status", "")
             since = query.get("created", "").replace("%3E%3D", "")
-            hits = [r for r in self.runs if want in (r["status"], r["conclusion"]) and r["created_at"] >= since]
+            pool = self.probes if f"/{sg.PROBE_WORKFLOW}/" in path else self.runs
+            assert "branch=main" in path
+            hits = [r for r in pool if want in (r["status"], r["conclusion"]) and r["created_at"] >= since]
             return 200, {"workflow_runs": sorted(hits, key=lambda r: r["created_at"], reverse=True)}
         rid = int(path.split("/runs/")[1].split("/")[0])
         return 200, self.jobs.get(rid, {"jobs": []})
@@ -206,6 +211,79 @@ def test_a_red_run_superseded_by_a_newer_green_apply_passes() -> None:
     jobs = {4: LIST_ONLY, 3: _jobs("success"), 2: _jobs("failure", "skipped")}
     s = _state(runs, jobs)
     assert s.ok and "newer run 3" in s.reason
+
+
+def _probe(rid: int, minute: int, conclusion: str | None = "success", status: str = "completed") -> dict:
+    run = _run(rid, status=status, conclusion=conclusion)
+    run["created_at"] = f"2026-10-29T10:{minute:02d}:00Z"
+    return run
+
+
+PROBE_OK = {"jobs": [_job("Isolation probe", "success")]}
+
+
+def _probe_state(probes: list, jobs: dict | None = None, red_jobs: dict | None = None, **kw) -> sg.RunState:
+    all_jobs = {2: red_jobs or _jobs("success", "failure"), **{p["id"]: PROBE_OK for p in probes}, **(jobs or {})}
+    return _state([_run(2, conclusion="failure")], all_jobs, probes=probes, **kw)
+
+
+def test_a_probe_only_red_run_is_cleared_by_a_newer_green_standalone_probe() -> None:
+    s = _probe_state([_probe(90, 5)])
+    assert s.ok and "standalone" in s.reason and "run 90" in s.reason
+
+
+def test_a_standalone_probe_older_than_the_red_run_does_not_clear_it() -> None:
+    s = _probe_state([_probe(90, 1)])
+    assert not s.ok and "DB Isolation Probe green" in s.reason
+
+
+def test_a_red_standalone_probe_does_not_clear_a_probe_only_red_run() -> None:
+    assert not _probe_state([_probe(90, 5, conclusion="failure")]).ok
+
+
+def test_a_green_probe_followed_by_a_newer_red_probe_blocks() -> None:
+    assert not _probe_state([_probe(90, 5), _probe(91, 7, conclusion="failure")]).ok
+
+
+def test_a_newer_green_probe_after_a_red_one_clears() -> None:
+    s = _probe_state([_probe(90, 5, conclusion="failure"), _probe(91, 7)])
+    assert s.ok and "run 91" in s.reason
+
+
+def test_a_probe_in_flight_is_waited_for() -> None:
+    s = _probe_state([_probe(90, 5), _probe(91, 7, conclusion=None, status="in_progress")])
+    assert not s.ok and "in flight" in s.reason
+
+
+def test_a_green_probe_run_without_a_probe_job_does_not_clear() -> None:
+    assert not _probe_state([_probe(90, 5)], jobs={90: {"jobs": [_job("Isolation probe", "skipped")]}}).ok
+
+
+def test_a_red_apply_is_never_cleared_by_a_standalone_probe() -> None:
+    assert not _probe_state([_probe(90, 5)], red_jobs=_jobs("failure", "skipped")).ok
+
+
+def test_the_probe_must_start_after_the_red_runs_jobs_finished() -> None:
+    jobs = _jobs("success", "failure")
+    for job in jobs["jobs"]:
+        job["completed_at"] = "2026-10-29T10:30:00Z"
+    jobs["jobs"][0]["completed_at"] = None      # a skipped job has no completed_at
+    assert not _probe_state([_probe(90, 20)], red_jobs=jobs).ok
+    assert _probe_state([_probe(91, 31)], red_jobs=jobs).ok
+
+
+def test_the_red_runs_updated_at_counts_as_its_end() -> None:
+    red = _run(2, conclusion="failure")
+    red["updated_at"] = "2026-10-29T10:40:00Z"
+    jobs = {2: _jobs("success", "failure"), 90: PROBE_OK, 91: PROBE_OK}
+    assert not _state([red], jobs, probes=[_probe(90, 35)]).ok
+    assert _state([red], jobs, probes=[_probe(91, 41)]).ok
+
+
+@pytest.mark.parametrize("code", [403, 404])
+def test_an_unreadable_probe_list_is_not_a_pass(code: int) -> None:
+    s = _probe_state([_probe(90, 5)], codes={f"/{sg.PROBE_WORKFLOW}/": code})
+    assert not s.ok and "not a pass" in s.reason
 
 
 def test_a_red_run_followed_only_by_list_only_runs_blocks() -> None:
