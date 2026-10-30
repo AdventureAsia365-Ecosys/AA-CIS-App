@@ -8,22 +8,32 @@ line; the Infra gates (db/tour_liveness_gate.py, db/freshness_gate.py) read the 
   SCRIPT verdict violations=<n> errors=<n> list=<...> pending=<n>            (s248_tour_deletion_probe, liveness gate)
   SCRIPT verdict stale=<n> stale_aged=<n> errors=<n> list=<...>              (aa991_freshness_probe, freshness probe)
 
-CIS reads those two lines for an ICT day with FilterLogEvents and keeps the last run of each probe it found.
-Narrow windows (S259 fix): a search over the whole ICT day scans every api / worker log line of the group and did not
-finish in 20 s on Dev (29/10: 4 pages, 6 matching lines). Each probe is searched only around its nightly cron time,
-in growing slices ([cron - 10 min, cron + 50 min), then up to + 2 h, then up to + 6 h: GitHub's schedule delay plus
-the task start), and the search of a probe stops at the first slice where its run has a verdict line. A slice already
-searched for another probe is not searched again (the two crons are 30 minutes apart, so one slice usually finds both
-verdicts). A manual re-run outside those slices is not seen; the nightly run is what DATA-01 reports.
+CIS reads those two lines for an ICT day and keeps the last run of each probe it found.
+
+Stream-targeted read (S260, the default): a search with only a stream prefix scans every api / worker line of the
+group (Dev 30/10: 18 s for 16 hours, 0 matches), and GitHub starts the nightly crons hours late (Dev 25-29/10: the
+04:43 liveness gate ran at 09:25-11:06 UTC, the 05:13 freshness probe at 10:29-14:01 UTC, past the S259 slices that
+ended 6 h after the cron, so a probe that ran read "missing"). So CIS first lists the log streams of the group newest
+last event first (DescribeLogStreams, 50 a page) back to the start of the day, keeps the migrator streams
+(migrate/migrate/<task id>) that have events in the day, and runs FilterLogEvents on those streams by name only (at most
+100 names a call) over the whole ICT day. On Dev 29/10 that was 3 list pages and 36 streams, 6 matching lines in about
+6 s, a whole day, every run of the day (manual re-runs included).
+
+Fallback, narrow slices (S259): when the stream list is not permitted (logs:DescribeLogStreams, AA-CIS-Infra
+FilterOwnLogGroup) or the day is further back than MAX_STREAM_PAGES pages of streams, each probe is searched only
+around its nightly cron time, in growing slices ([cron - 10 min, cron + 50 min), then up to + 2 h, + 6 h, + 12 h), and
+the search of a probe stops at the first slice where its run has a verdict line. A slice already searched for another
+probe is not searched again. The read says which mode answered (`window.mode`: streams | slices, and why).
 The other nightly checks (migration and contract copy guards, connection budget, CRM key policy diff) run on GitHub
 only, and the schema dump and the isolation probe print no verdict line this parser knows: NOT_VISIBLE names them, so
 the digest says what it cannot see instead of counting them green.
 
-Permission: logs:FilterLogEvents on the log group (AA-CIS-Infra, ECS task role; the request is recorded in
-docs/implementation-notes/AA-1003.md, "R2 follow-up requests"). Without it, or when CloudWatch does not answer,
-read_day raises LogsUnavailable: the KPI computer then writes no value and says why in the job result, and the OPS-12
-digest prints the reason. A day older than the log retention (30 days, AA-CIS-Infra modules/ecs) has no events left,
-so it is refused the same way rather than reported as "every probe missing".
+Permission: logs:FilterLogEvents and logs:DescribeLogStreams on the log group (AA-CIS-Infra, ECS task role statement
+FilterOwnLogGroup; requests recorded in docs/implementation-notes/AA-1003.md, "R2 follow-up requests" and "R4 part
+2"). Without FilterLogEvents, or when CloudWatch does not answer, read_day raises LogsUnavailable: the KPI computer
+then writes no value and says why in the job result, and the OPS-12 digest prints the reason. A day older than the
+log retention (30 days, AA-CIS-Infra modules/ecs) has no events left, so it is refused the same way rather than
+reported as "every probe missing".
 
 Bounded: both callers hold a pool connection while this runs (kpi_snapshot_daily, report_generate), so the client
 is the ops overview one (api/services/ops_overview/cloudwatch.py: connect 2 s, read 5 s, standard retries, at most 3
@@ -51,7 +61,16 @@ MAX_PAGES = 20                   # per slice; 1 MB / 10,000 events a page; a nig
 # normally answers in < 2 s; the client bounds a stuck one (2 s connect + 5 s read, 3 tries).
 FETCH_BUDGET_S = 12.0
 SLICE_BEFORE_MIN = 10            # a probe's first slice starts this long before its cron time ...
-SLICE_ENDS_MIN = (50, 120, 360)  # ... and the slices end this long after it (GitHub schedule delay + task start)
+SLICE_ENDS_MIN = (50, 120, 360, 720)  # ... and the slices end this long after it (GitHub runs the crons hours late)
+# Stream-targeted read (the default). DescribeLogStreams returns at most 50 streams a page; Dev writes ~60 log streams
+# a day (most of them migrator tasks), so the snapshot of yesterday (00:30 UTC) walks 2-3 pages. 12 pages reach about
+# 10 days back; an older day falls back to the slices.
+STREAM_PAGE_SIZE = 50
+MAX_STREAM_PAGES = 12
+MAX_STREAM_NAMES = 100           # FilterLogEvents logStreamNames: at most 100 names a call
+# lastEventTimestamp is eventually consistent (AWS: "typically updates in less than an hour"): keep walking an hour
+# past the day's start so a stream whose value lags is still listed.
+STREAM_LAG = timedelta(hours=1)
 
 FILE_RE = re.compile(r"run-script: file=db/scripts/([a-z0-9_]+)\.py\b")
 VERDICT_RE = re.compile(r"SCRIPT verdict (.*)$")
@@ -236,12 +255,17 @@ def _error_code(e: Exception) -> str:
 
 def fetch_events(client: Any, group: str, start: datetime, end: datetime, *,
                  budget_s: float = FETCH_BUDGET_S, clock: Callable[[], float] = time.monotonic,
-                 stats: Optional[dict] = None) -> list[dict]:
+                 stats: Optional[dict] = None, streams: Optional[list[str]] = None) -> list[dict]:
     """Every matching event of [start, end) (sync: run it in a thread). Raises LogsUnavailable("incomplete") when the
     search still has a next page after MAX_PAGES pages or after `budget_s` seconds. `stats` (optional) counts the
-    calls made: {"calls": n}."""
-    kwargs = {"logGroupName": group, "logStreamNamePrefix": STREAM_PREFIX, "filterPattern": FILTER_PATTERN,
+    calls made: {"calls": n}. `streams`: search only these log streams (at most MAX_STREAM_NAMES) instead of every
+    stream under the migrator prefix."""
+    kwargs = {"logGroupName": group, "filterPattern": FILTER_PATTERN,
               "startTime": int(start.timestamp() * 1000), "endTime": int(end.timestamp() * 1000) - 1}
+    if streams is not None:
+        kwargs["logStreamNames"] = list(streams)
+    else:
+        kwargs["logStreamNamePrefix"] = STREAM_PREFIX
     events: list[dict] = []
     started = clock()
     for page_no in range(1, MAX_PAGES + 1):
@@ -326,14 +350,94 @@ def search_day(client: Any, group: str, day: date, now: Optional[datetime] = Non
     return list(seen.values()), searched
 
 
+class _UseSlices(Exception):
+    """The stream-targeted read cannot answer for this day (list not permitted, day too far back): use the slices."""
+
+    def __init__(self, why: str):
+        super().__init__(why)
+        self.why = why
+
+
+def list_day_streams(client: Any, group: str, start: datetime, end: datetime, *, budget_s: float = FETCH_BUDGET_S,
+                     clock: Callable[[], float] = time.monotonic, stats: Optional[dict] = None) -> list[str]:
+    """The migrator log streams (STREAM_PREFIX) with events in [start, end), from DescribeLogStreams newest last event
+    first, stopping at the first stream whose last event is older than start - STREAM_LAG. Raises _UseSlices when the
+    list is not permitted or the walk needs more than MAX_STREAM_PAGES pages, LogsUnavailable("incomplete") when the
+    budget runs out."""
+    floor = int((start - STREAM_LAG).timestamp() * 1000)
+    end_ms = int(end.timestamp() * 1000)
+    names: list[str] = []
+    kwargs: dict[str, Any] = {"logGroupName": group, "orderBy": "LastEventTime", "descending": True,
+                              "limit": STREAM_PAGE_SIZE}
+    started = clock()
+    for _ in range(MAX_STREAM_PAGES):
+        if clock() - started >= budget_s:
+            raise LogsUnavailable("incomplete", f"CloudWatch Logs did not list the day's log streams in {budget_s:g} "
+                                                f"s; probe results not counted")
+        try:
+            page = client.describe_log_streams(**kwargs)
+        except Exception as e:  # noqa: BLE001 — a refusal falls back to the slices; anything else is the caller's
+            from api.services.ops_overview import cloudwatch
+
+            if cloudwatch.is_denied(e):
+                raise _UseSlices("listing the log streams is not permitted (logs:DescribeLogStreams)") from e
+            raise
+        if stats is not None:
+            stats["calls"] = stats.get("calls", 0) + 1
+            stats["list_pages"] = stats.get("list_pages", 0) + 1
+        for s in page.get("logStreams") or []:
+            last = s.get("lastEventTimestamp") or s.get("lastIngestionTime") or 0
+            if last < floor:
+                return names
+            first = s.get("firstEventTimestamp")
+            name = s.get("logStreamName") or ""
+            if name.startswith(STREAM_PREFIX) and first is not None and first < end_ms:
+                names.append(name)
+        token = page.get("nextToken")
+        if not token:
+            return names
+        kwargs["nextToken"] = token
+    raise _UseSlices(f"the day is more than {MAX_STREAM_PAGES * STREAM_PAGE_SIZE} log streams back")
+
+
+def read_streams_day(client: Any, group: str, day: date, now: Optional[datetime] = None, *,
+                     budget_s: float = FETCH_BUDGET_S,
+                     clock: Callable[[], float] = time.monotonic) -> tuple[list[dict], dict]:
+    """Every matching event of ICT day `day` (up to `now`) in the day's migrator streams, searched by name. Raises
+    _UseSlices or LogsUnavailable (see list_day_streams / fetch_events)."""
+    started = clock()
+    start, end = periods.day_bounds(day)
+    if now is not None:
+        end = max(start, min(end, now))
+    stats: dict = {"calls": 0, "list_pages": 0}
+    names = list_day_streams(client, group, start, end, budget_s=budget_s, clock=clock, stats=stats)
+    events: list[dict] = []
+    for i in range(0, len(names), MAX_STREAM_NAMES):
+        left = budget_s - (clock() - started)
+        if left <= 0:
+            raise LogsUnavailable("incomplete", f"CloudWatch Logs did not finish the probe searches in {budget_s:g} s "
+                                                f"({stats['calls']} calls, {len(events)} lines); probe results not "
+                                                f"counted")
+        events += fetch_events(client, group, start, end, budget_s=left, clock=clock, stats=stats,
+                               streams=names[i:i + MAX_STREAM_NAMES])
+    return events, {"mode": "streams", "streams": len(names), "list_pages": stats["list_pages"],
+                    "calls": stats["calls"], "seconds": round(clock() - started, 2)}
+
+
 def read_events(day: date, client: Any = None, now: Optional[datetime] = None) -> tuple[list[dict], dict]:
-    """The matching events of an ICT day and the window read. Raises LogsUnavailable."""
+    """The matching events of an ICT day and the window read: the stream-targeted read, else the slices (module doc).
+    Raises LogsUnavailable."""
     if day < periods.today_ict(now) - timedelta(days=LOG_RETENTION_DAYS - 1):
         raise LogsUnavailable("too_old", f"{day.isoformat()} is older than the {LOG_RETENTION_DAYS}-day log retention")
     start, end = periods.day_bounds(day)
     group = log_group()
+    client = client or _client()
     try:
-        events, searched = search_day(client or _client(), group, day, now)
+        try:
+            events, searched = read_streams_day(client, group, day, now)
+        except _UseSlices as why:
+            events, searched = search_day(client, group, day, now)
+            searched = {"mode": "slices", "why": why.why, **searched}
     except LogsUnavailable:
         raise
     except Exception as e:  # noqa: BLE001 — AWS / network: the caller degrades and says why

@@ -13,6 +13,9 @@ Generators (catalog.yaml `generator: cis`):
   R4 (services/reports/quality.py, services/reports/reliability.py): CIS-01 weekly catalog health, CIS-06 eval and
          release report, CIS-07 rerun waves, OPS-13 weekly SLO and DB performance, OPS-14 job runner health, DATA-02
          cross-app reconciliation, DATA-03 schema changes, DATA-04 ledger growth and retention.
+  R4 part 2: TP-01 weekly TripPlanner funnel (services/reports/planner.py); SEC-03 monthly security hygiene, SEC-08
+         privileged actions and audit log (services/reports/security.py); DEV-01 monthly delivery and DORA, DEV-03
+         weekly engineering flow, OPS-15 session-close state snapshot (services/reports/delivery.py).
 
 Each renderer is pure (data in, (summary, output JSON, Markdown) out); the loaders read the DB. Reports read stored
 rows only: no LLM, no paid API, no recomputation of history (automation-plan.md §5).
@@ -281,6 +284,8 @@ async def _register(conn, reg: Registry, report: Report, first: date, last: date
 
 
 Renderer = Callable[..., Awaitable[Rendered]]
+
+
 async def _digest(conn, reg: Registry, report: Report, first: date, last: date, now: datetime) -> Rendered:
     from services.reports import digest      # lazy: digest imports this module
 
@@ -317,17 +322,39 @@ async def _reliability(conn, reg: Registry, report: Report, first: date, last: d
     return await reliability.render(conn, reg, report, first, last, now)
 
 
+async def _planner(conn, reg: Registry, report: Report, first: date, last: date, now: datetime) -> Rendered:
+    from services.reports import planner
+
+    return await planner.render(conn, reg, report, first, last, now)
+
+
+async def _security(conn, reg: Registry, report: Report, first: date, last: date, now: datetime) -> Rendered:
+    from services.reports import security
+
+    return await security.render(conn, reg, report, first, last, now)
+
+
+async def _delivery(conn, reg: Registry, report: Report, first: date, last: date, now: datetime) -> Rendered:
+    from services.reports import delivery
+
+    return await delivery.render(conn, reg, report, first, last, now)
+
+
 # AA-1003 R2: OPS-12 daily digest (services/reports/digest.py), TP-03 inquiry handoff (services/reports/handoff.py).
 # R3 (services/reports/money.py): weekly EX-01, FI-02; monthly FI-01, FI-03, FI-04, FI-05, FI-06, OPS-08.
 # R4: catalog and AI quality (services/reports/quality.py): weekly CIS-01, event CIS-06, CIS-07; reliability and data
 # quality (services/reports/reliability.py): weekly OPS-13, OPS-14, DATA-02, event DATA-03, monthly DATA-04.
+# R4 part 2: weekly TP-01 (planner.py); monthly SEC-03, SEC-08 (security.py); monthly DEV-01, weekly DEV-03, event
+# OPS-15 (delivery.py).
 RENDERERS: dict[str, Renderer] = {"EX-04": _scorecard, "EX-06": _register, "OPS-12": _digest, "TP-03": _handoff,
                                   "EX-01": _money_week, "FI-02": _money_week,
                                   **{rid: _money_month for rid in ("FI-01", "FI-03", "FI-04", "FI-05", "FI-06",
                                                                    "OPS-08")},
                                   **{rid: _quality for rid in ("CIS-01", "CIS-06", "CIS-07")},
                                   **{rid: _reliability for rid in ("OPS-13", "OPS-14", "DATA-02", "DATA-03",
-                                                                   "DATA-04")}}
+                                                                   "DATA-04")},
+                                  "TP-01": _planner, "SEC-03": _security, "SEC-08": _security,
+                                  **{rid: _delivery for rid in ("DEV-01", "DEV-03", "OPS-15")}}
 
 
 def default_period(report: Report, now: Optional[datetime] = None) -> tuple[date, date]:
