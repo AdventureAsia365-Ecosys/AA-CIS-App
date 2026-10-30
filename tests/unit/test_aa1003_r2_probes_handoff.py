@@ -91,17 +91,110 @@ def test_read_events_refuses_and_explains():
     assert e.value.reason == "too_old"
 
 
-def test_read_events_pages_through_the_ict_day():
-    client = MagicMock()
-    client.filter_log_events.side_effect = [{"events": [{"m": 1}], "nextToken": "n"}, {"events": [{"m": 2}]}]
-    events, window = probes.read_events(date(2026, 10, 29), client, datetime(2026, 10, 30, 2, tzinfo=UTC))
-    assert events == [{"m": 1}, {"m": 2}]
-    first = client.filter_log_events.call_args_list[0].kwargs
-    start, end = periods.day_bounds(date(2026, 10, 29))
-    assert first["startTime"] == int(start.timestamp() * 1000) and first["endTime"] == int(end.timestamp() * 1000) - 1
+LIVENESS_FILE = "run-script: file=db/scripts/s248_tour_deletion_probe.py sha256=abcdef012345"
+FRESHNESS_FILE = "run-script: file=db/scripts/aa991_freshness_probe.py sha256=abcdef012345"
+
+
+class FakeLogs:
+    """FilterLogEvents over a fixed event list: honours startTime / endTime, pages `per_page` events at a time and
+    advances a fake clock by `seconds_per_call` on every call."""
+
+    def __init__(self, events, per_page=100, seconds_per_call=0.0):
+        self.events, self.per_page, self.seconds_per_call = events, per_page, seconds_per_call
+        self.calls: list[dict] = []
+        self.now = 0.0
+
+    def clock(self) -> float:
+        return self.now
+
+    def filter_log_events(self, **kw):
+        self.calls.append(kw)
+        self.now += self.seconds_per_call
+        hits = [e for e in self.events if kw["startTime"] <= e["timestamp"] <= kw["endTime"]]
+        offset = int(kw.get("nextToken") or 0)
+        page = hits[offset:offset + self.per_page]
+        out = {"events": page}
+        if offset + self.per_page < len(hits):
+            out["nextToken"] = str(offset + self.per_page)
+        return out
+
+    def spans(self) -> list[tuple[datetime, datetime]]:
+        return [(datetime.fromtimestamp(c["startTime"] / 1000, UTC), datetime.fromtimestamp((c["endTime"] + 1) / 1000,
+                                                                                             UTC)) for c in self.calls]
+
+
+NIGHT = [  # a normal night: both probes ran a few minutes after their cron
+    _ev("migrate/migrate/t1", "2026-10-29T04:46:00", LIVENESS_FILE),
+    _ev("migrate/migrate/t1", "2026-10-29T04:49:00", "SCRIPT verdict violations=0 errors=0 list=- pending=0"),
+    _ev("migrate/migrate/t2", "2026-10-29T05:16:00", FRESHNESS_FILE),
+    _ev("migrate/migrate/t2", "2026-10-29T05:19:00", "SCRIPT verdict stale=1 stale_aged=0 errors=0 list=-"),
+]
+
+
+def test_probe_slices_follow_the_cron_and_stay_inside_the_ict_day():
+    liveness = probes.PROBES[0]
+    slices = probes.probe_slices(liveness, date(2026, 10, 29))
+    assert slices[0] == (datetime(2026, 10, 29, 4, 33, tzinfo=UTC), datetime(2026, 10, 29, 5, 33, tzinfo=UTC))
+    assert slices[-1][1] == datetime(2026, 10, 29, 10, 43, tzinfo=UTC)
+    assert all(b - a <= timedelta(hours=4) for a, b in slices)      # never the whole day
+    # a day still running: slices after `now` are dropped, the current one is cut at now
+    cut = probes.probe_slices(liveness, date(2026, 10, 29), now=datetime(2026, 10, 29, 6, 0, tzinfo=UTC))
+    assert cut[-1][1] == datetime(2026, 10, 29, 6, 0, tzinfo=UTC) and len(cut) == 2
+
+
+def test_a_normal_night_is_read_with_one_narrow_call():
+    logs = FakeLogs(NIGHT)
+    events, searched = probes.search_day(logs, "/ecs/aa-cis-dev", date(2026, 10, 29), clock=logs.clock)
+    assert len(logs.calls) == 1 and searched["calls"] == 1                # freshness found in liveness's slice
+    (a, b), = logs.spans()
+    assert b - a == timedelta(hours=1)
+    results = {r.probe.key: r for r in probes.summarize(probes.group_runs(events))}
+    assert results["liveness"].status == "passed" and results["freshness"].status == "passed"
+    first = logs.calls[0]
     assert first["logStreamNamePrefix"] == "migrate/migrate/" and "SCRIPT verdict" in first["filterPattern"]
-    assert client.filter_log_events.call_args_list[1].kwargs["nextToken"] == "n"
+
+
+def test_a_late_run_is_found_in_a_later_slice_without_searching_a_window_twice():
+    late = [_ev("migrate/migrate/t1", "2026-10-29T06:10:00", LIVENESS_FILE),          # GitHub ran it 1 h 27 late
+            _ev("migrate/migrate/t1", "2026-10-29T06:14:00", "SCRIPT verdict violations=2 errors=0 list=x pending=0"),
+            _ev("migrate/migrate/t2", "2026-10-29T05:16:00", FRESHNESS_FILE),
+            _ev("migrate/migrate/t2", "2026-10-29T05:19:00", "SCRIPT verdict stale=0 stale_aged=0 errors=0 list=-")]
+    logs = FakeLogs(late)
+    events, searched = probes.search_day(logs, "/ecs/aa-cis-dev", date(2026, 10, 29), clock=logs.clock)
+    spans = logs.spans()
+    assert len(spans) == 2 and spans[0][1] == spans[1][0]                  # contiguous, no overlap
+    results = {r.probe.key: r for r in probes.summarize(probes.group_runs(events))}
+    assert results["liveness"].status == "failed" and results["liveness"].value == 2
+    assert results["freshness"].status == "passed"
+    assert searched["slices"][0][0] == "2026-10-29T04:33:00+00:00"
+
+
+def test_a_probe_that_did_not_run_is_missing_after_its_last_slice():
+    logs = FakeLogs(NIGHT[2:])                                             # only freshness ran
+    events, searched = probes.search_day(logs, "/ecs/aa-cis-dev", date(2026, 10, 29), clock=logs.clock)
+    results = {r.probe.key: r for r in probes.summarize(probes.group_runs(events))}
+    assert results["liveness"].status == "missing" and results["freshness"].status == "passed"
+    covered = sorted(logs.spans())
+    assert covered[0][0] == datetime(2026, 10, 29, 4, 33, tzinfo=UTC)
+    assert covered[-1][1] == datetime(2026, 10, 29, 10, 43, tzinfo=UTC)     # liveness's last slice, then stop
+
+
+def test_the_day_search_finishes_within_its_budget_even_when_calls_are_slow():
+    logs = FakeLogs(NIGHT[2:], seconds_per_call=7.0)                     # slow calls (Dev 29/10: ~5 s a page)
+    with pytest.raises(probes.LogsUnavailable) as e:
+        probes.search_day(logs, "/ecs/aa-cis-dev", date(2026, 10, 29), clock=logs.clock)
+    assert e.value.reason == "incomplete"
+    assert logs.now < 20                                                   # the snapshot part's 20 s ceiling
+    assert logs.now <= probes.FETCH_BUDGET_S + 7.0                         # at most one call past the budget
+
+
+def test_read_events_reports_the_slices_it_searched():
+    logs = FakeLogs(NIGHT)
+    events, window = probes.read_events(date(2026, 10, 29), logs, datetime(2026, 10, 30, 2, tzinfo=UTC))
+    assert len(events) == 4 and window["calls"] == 1 and len(window["slices"]) == 1
     assert window["log_group"].startswith("/ecs/aa-cis-")
+    start, end = periods.day_bounds(date(2026, 10, 29))
+    assert window["start"] == start.isoformat() and window["end"] == end.isoformat()
 
 
 def test_fetch_events_never_returns_a_partial_search():

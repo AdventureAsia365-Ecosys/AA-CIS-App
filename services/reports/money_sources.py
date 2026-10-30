@@ -23,7 +23,8 @@ Sources (names: root docs/architecture/db-schema-reference.md). No LLM, no paid 
                   (Jev decisions), shared.jev_credit_topup via shared.jev_credit.estimate.
   budgets         shared.spend_budget, the AWS / App budgets mirrored in api.services.cost_ops, budget bells
                   (shared.notifications event spend_budget_alert), credits from env COST_OPS_CREDITS_USD.
-  demand / units  gold_aa_internal.published_tours.published_at; the ops.overview.v1 contract views
+  demand / units  gold_aa_internal.published_tours (published_at = first publish, updated_at = last republish,
+                  CIS 273), gold_aa_internal.v_tour_liveness (tours live now); the ops.overview.v1 contract views
                   tripplanner.v_ops_traffic_daily and booking.v_ops_funnel_daily (cis_app SELECT; unreadable =
                   "not readable", like TP-03).
   capacity        pg catalog sizes and connection limits (free), shared.kpi_daily job KPIs, OPS-12 runs (daily app
@@ -182,9 +183,20 @@ SPEND_BUDGETS_SQL = """
       FROM shared.spend_budget ORDER BY provider, scope
 """
 
+# K-UNIT-TOUR's denominator: tours published or republished in [$1, $2). Since CIS 273 (AA-645 d06) published_at is the
+# FIRST publish and stays put on a rewrite, which records updated_at instead (status changes do not touch it,
+# services/tour_lifecycle). Counting published_at alone gave 0 for October 2026, the month the whole catalogue was
+# rewritten (S259). A tour republished again after the period counts in the later period only (no publish history).
 PUBLISHED_TOURS_SQL = """
-    SELECT count(*)::bigint FROM gold_aa_internal.published_tours WHERE published_at >= $1 AND published_at < $2
+    SELECT count(*)::bigint AS total,
+           count(*) FILTER (WHERE published_at >= $1 AND published_at < $2)::bigint AS first_published,
+           count(*) FILTER (WHERE published_at < $1)::bigint AS republished
+      FROM gold_aa_internal.published_tours
+     WHERE (published_at >= $1 AND published_at < $2) OR (updated_at >= $1 AND updated_at < $2)
 """
+
+# Tours by liveness state now (the K-CAT-LIVE source, kpis.TOURS_LIVE_SQL, split by state).
+LIVENESS_NOW_SQL = "SELECT state, count(*)::bigint AS n FROM gold_aa_internal.v_tour_liveness GROUP BY state"
 
 TP_METRICS_SQL = """
     SELECT metric, coalesce(sum(n), 0)::bigint AS n FROM tripplanner.v_ops_traffic_daily
@@ -276,8 +288,17 @@ async def spend_budgets(conn) -> list[dict]:
     return _rows(await conn.fetch(SPEND_BUDGETS_SQL))
 
 
-async def published_tours(conn, first: date, end: date) -> int:
-    return int(await conn.fetchval(PUBLISHED_TOURS_SQL, utc_start(first), utc_start(end)) or 0)
+async def published_tours(conn, first: date, end: date) -> dict:
+    """{"total", "first_published", "republished"}: tours published or republished in UTC days [first, end)."""
+    row = await conn.fetchrow(PUBLISHED_TOURS_SQL, utc_start(first), utc_start(end))
+    return {k: int((row or {}).get(k) or 0) for k in ("total", "first_published", "republished")}
+
+
+async def liveness_now(conn) -> dict:
+    """{state: n} of gold_aa_internal.v_tour_liveness now (served / paused / retired) and `as_of`."""
+    out: dict[str, Any] = {r["state"]: int(r["n"] or 0) for r in await conn.fetch(LIVENESS_NOW_SQL)}
+    out["as_of"] = datetime.now(UTC).isoformat()
+    return out
 
 
 async def demand(conn, first: date, last: date) -> dict:
@@ -429,6 +450,9 @@ async def collect_week(conn, first: date, last: date, *, with_business: bool = F
     if with_business:
         parts.update({
             "tours_live": lambda: store.kpi_series(conn, ["K-CAT-LIVE"], first - timedelta(days=7), last),
+            "liveness_now": lambda: liveness_now(conn),
+            "published": lambda: published_tours(conn, first, end),
+            "published_prev": lambda: published_tours(conn, first - timedelta(days=7), first),
             "demand": lambda: demand(conn, first, last),
             "demand_prev": lambda: demand(conn, first - timedelta(days=7), first - timedelta(days=1)),
             "digests": lambda: digest_runs(conn, first, last),
