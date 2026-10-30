@@ -106,8 +106,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     the **canonical copy** for all five frontends (AA-Partner portal and CRM web, AA-Booking admin vendor it byte for
     byte; AA-TripPlanner-Web takes the `tokens` profile). It holds `tokens.ts`, `brand.ts`, `primitives.tsx`,
     `DataTable.tsx`, `csv.ts`, `savedViews.ts`, `Drawer.tsx`, `Modal.tsx`, `Toast.tsx`, `Providers.tsx`,
-    `PageFrame.tsx` (the S252 `AdminMain`, which stays an alias, as do `AdminPaneHeader` / `AdminPaneBody`; marks
-    itself `data-kit-frame`), `GuidePanel.tsx` + `guide.ts` (the content shape; the page passes its content as a
+    `PageFrame.tsx` (the S252 `AdminMain`, which stays an alias, as do `AdminPaneHeader` / `AdminPaneBody`, for
+    consumers that have not migrated; CIS admin code uses the `PageFrame*` names since AA-994 S6b, guarded by
+    `lib/adminFrame.test.mjs`; marks itself `data-kit-frame`), `GuidePanel.tsx` + `guide.ts` (the content shape; the page passes its content as a
     prop), `theme.ts` (`createThemeStore({ storageKey })` + its restore script) and `useTheme.ts`
     (`createThemeHooks(store)`), `useHydrated.ts`, `useMediaQuery.ts`, `sidebarStore.ts`, `useSidebar.ts`,
     **AA-994 S4a (upstreamed from AA-Booking):** `Section.tsx` (card region with a header band), `KpiTile.tsx`,
@@ -149,7 +150,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     the app's lint. CIS-local, outside `core/`: `api.ts`,
     `guideContent.ts` (the guide checks, re-exporting the core shape), the shell (`AdminShell`, `Sidebar`, `Topbar`,
     `BottomNav`, `CommandPalette`, `SessionKeepAlive`), `adminNav.tsx`, `useNavSections.ts`, `useAdminIdentity.ts`,
-    `useReviewPendingCount.ts`, and `theme.ts` / `useTheme.ts` (the core store and hooks bound to `cis_theme`; the
+    `useReviewPendingCount.ts`, `chart.ts` (`CHART_TOOLTIP`, the recharts tooltip style, moved out of `adminUi.tsx`
+    in AA-994 S6b), and `theme.ts` / `useTheme.ts` (the core store and hooks bound to `cis_theme`; the
     root layout's restore script is `themeStore.restoreScript`). Pages import the barrel `app/_kit` (which re-exports
     core), never `core/` directly; only the root layout, the login form and the legacy `adminUi.tsx` import core
     files directly (server layout, light login bundle, and no import cycle through the barrel's `Sidebar`).
