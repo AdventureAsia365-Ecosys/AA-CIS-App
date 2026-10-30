@@ -14,6 +14,7 @@ a bad DB read must never be the reason a writer/judge call fails.
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import time
 from dataclasses import dataclass
@@ -23,6 +24,8 @@ import asyncpg
 import structlog
 
 from shared.secrets import get_database_url
+
+from . import data_scope
 
 logger = structlog.get_logger()
 
@@ -60,6 +63,9 @@ class StageConfig:
     fallback_model_ids: tuple = ()
     shadow_model_id: Optional[str] = None
     shadow_sample_pct: int = 0
+    # AA-1002 (S5, migration 311) — the data scopes this stage's content may be sent through (data_scope.py). None =
+    # no stage policy (column NULL / not migrated, no row): the gateway keeps its pre-S5 rules.
+    allowed_scopes: Optional[tuple] = None
 
 
 # S235 (Nghiệp, 14/10/2026): Bedrock first; the OpenAI platform API is only the LAST-RESORT fallback for
@@ -181,6 +187,19 @@ SAFE_DEFAULTS: dict[str, StageConfig] = {
                                        fallback_model_ids=_JUDGE_ROUTE_DEFAULT),
 }
 
+# AA-1002 (S5): migration 311's backfill for these rows — the stages whose route names a model reached only outside
+# AWS (gpt-6-luna-openai, the S235 last resort) may use vendor_direct connections; every other stage is aws_only
+# (tests/unit/test_aa1002_s5_data_scope.py derives this set from the routes above and the catalog seed rows).
+_VENDOR_DIRECT_STAGES = frozenset({
+    "s1_judge", "s1_brand_audit", "t2_judge", "t2_brand_audit", "t7_debate_judge", "t10_judge", "t10_adjudicate",
+    "a3_place_dedupe", "writing_memory_mine", "writing_memory_eval",
+})
+for _stage, _cfg in list(SAFE_DEFAULTS.items()):
+    SAFE_DEFAULTS[_stage] = dataclasses.replace(
+        _cfg, allowed_scopes=data_scope.ALL_SCOPES if _stage in _VENDOR_DIRECT_STAGES else data_scope.AWS_ONLY_SCOPES)
+del _stage, _cfg
+
+# A stage with no row and no SAFE_DEFAULTS entry (an adhoc_* script, a connection test): no stage policy (None).
 _GENERIC_FALLBACK = StageConfig("unknown", "writer", "claude", "haiku", "acc3")
 
 # stage -> (StageConfig, fetched_at_monotonic)
@@ -194,20 +213,54 @@ def _row_to_config(row) -> StageConfig:
         fallback_model_ids=tuple(row["fallback_model_ids"] or ()),
         shadow_model_id=row["shadow_model_id"],
         shadow_sample_pct=row["shadow_sample_pct"] or 0,
+        allowed_scopes=data_scope.normalize(_scopes_of(row)),
     )
 
 
 _ROUTE_COLUMNS = "fallback_model_ids, shadow_model_id, shadow_sample_pct"
 
+# AA-1002 (S5): migration 311 adds allowed_scopes. Until it is applied the column is missing: the reads retry without
+# it (no stage policy = the pre-S5 behaviour) and try it again after _SCOPE_RETRY_SECONDS, so the code may ship
+# before or after the migration and a process picks the column up without a restart.
+_SCOPE_RETRY_SECONDS = 300.0
+_scope_column_missing_at = 0.0
+
+
+def _scopes_of(row) -> Optional[list]:
+    try:
+        return row["allowed_scopes"]
+    except (KeyError, IndexError):
+        return None
+
+
+def _scope_select() -> str:
+    """", allowed_scopes" while the column is believed to exist, else ""."""
+    if _scope_column_missing_at and time.monotonic() - _scope_column_missing_at < _SCOPE_RETRY_SECONDS:
+        return ""
+    return ", allowed_scopes"
+
+
+async def _fetch_scoped(fetch, sql_for):
+    """``fetch(sql_for(scope_cols))``; on a missing allowed_scopes column, once more without it."""
+    global _scope_column_missing_at
+    cols = _scope_select()
+    try:
+        return await fetch(sql_for(cols))
+    except asyncpg.exceptions.UndefinedColumnError:
+        if not cols:
+            raise
+        _scope_column_missing_at = time.monotonic()
+        logger.warning("llm_role_config_scope_column_missing", hint="migration 311 not applied: no stage data scopes")
+        return await fetch(sql_for(""))
+
 
 async def _fetch_one(stage: str) -> Optional[StageConfig]:
     conn = await asyncpg.connect(get_database_url(), ssl="require")
     try:
-        row = await conn.fetchrow(
-            f"SELECT stage, role, provider, model_id, account_route, {_ROUTE_COLUMNS} "
-            "FROM shared.llm_role_config WHERE stage = $1 AND is_active",
-            stage,
-        )
+        row = await _fetch_scoped(
+            lambda sql: conn.fetchrow(sql, stage),
+            lambda cols: (f"SELECT stage, role, provider, model_id, account_route, {_ROUTE_COLUMNS}{cols} "
+                          "FROM shared.llm_role_config WHERE stage = $1 AND is_active"))
         return _row_to_config(row) if row else None
     finally:
         await conn.close()
@@ -287,13 +340,15 @@ async def list_stage_configs() -> list[StageConfig]:
     intentionally mirrors get_stage_config()'s own `AND is_active` filter for consistency."""
     conn = await asyncpg.connect(get_database_url(), ssl="require")
     try:
-        rows = await conn.fetch(
-            "SELECT stage, role, provider, model_id, account_route, is_active, updated_at, "
-            f"updated_by, {_ROUTE_COLUMNS} FROM shared.llm_role_config ORDER BY stage",
-        )
+        rows = await _fetch_scoped(
+            conn.fetch,
+            lambda cols: ("SELECT stage, role, provider, model_id, account_route, is_active, updated_at, "
+                          f"updated_by, {_ROUTE_COLUMNS}{cols} FROM shared.llm_role_config ORDER BY stage"))
         out = [dict(r) for r in rows]
         for r in out:
             r["fallback_model_ids"] = list(r["fallback_model_ids"] or [])
+            scopes = data_scope.normalize(r.get("allowed_scopes"))   # AA-1002 (S5): None before migration 311
+            r["allowed_scopes"] = list(scopes) if scopes is not None else None
         return out
     finally:
         await conn.close()

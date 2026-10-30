@@ -22,6 +22,7 @@ Older decisions recorded as `ADR-2026-NNN` predate this folder and live in the t
 | [0009](0009-f17-owns-offered-moments-promises-gate-dropped.md) | F17 owns offered moments; the promises_an_option gate is dropped (amends origin ADR 0023/0026) | Accepted (20/10/2026, S245) | AA-787 |
 | [0010](0010-governed-writing-memory.md) | Governed writing memory: release-gated rules and pinned examples, no fine-tuning; supersedes the AA-132 lessons loop | Accepted (20/10/2026, S245) | AA-915 |
 | [0011](0011-t9-faq-question-filter-llm-step.md) | T9 blog FAQ: LLM steps (stages `t9_faq_filter` on Haiku, `t9_faq_answer_fit` on Sonnet; validate) filter the real search questions and drop answers that do not fit, behind a flag | Accepted (22/10/2026, S247) | AA-779 |
+| [0012](0012-llm-data-scopes-per-stage.md) | LLM data scopes per stage: `llm_role_config.allowed_scopes` (migration-only) decides which connections a stage's content may use; replaces the S235 / S3 code rules | Accepted (30/10/2026, S260) | AA-1002 |
 
 Template and format: the ecosystem ADR template (AA-Ecosys `docs/templates/adr.md`) and
 [`.agents/skills/domain-modeling/ADR-FORMAT.md`](../../.agents/skills/domain-modeling/ADR-FORMAT.md).

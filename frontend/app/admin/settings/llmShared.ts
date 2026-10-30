@@ -39,6 +39,8 @@ export interface StageConfigRow {
   options: ModelOption[];
   account_route_options: AccountOption[];
   route?: StageRoute;
+  /** AA-1002 S5: data scopes the stage may use (aws_only, vendor_direct); null before migration 311. Read-only. */
+  allowed_scopes?: string[] | null;
 }
 
 // ── /admin/llm-catalog ──────────────────────────────────────────────────────

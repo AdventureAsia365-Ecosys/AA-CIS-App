@@ -11,6 +11,12 @@ Guards:
    says fallback_used=True / provider='openai' (what llm_call_log records), with a fixed log event.
 4. Admin: an OpenAI-API model cannot be saved as a primary, a shadow or a non-last fallback, and a
    retired catalog row cannot be re-enabled.
+
+AA-1002 (S5): the rule is now data. "An OpenAI-API model" = a model whose every deployment is on a connection outside
+AWS (data scope vendor_direct; `_reach_scopes`, by provider when the registry is unreadable), and a stage may name one
+only when its `allowed_scopes` (migration 311) include vendor_direct; the gateway gate checks the stage scope too.
+The rows below carry no `allowed_scopes` (no stage policy, the pre-311 reading): the S235 behaviour is unchanged.
+Per-scope cases: test_aa1002_s5_data_scope.py.
 """
 import re
 from pathlib import Path
@@ -194,6 +200,12 @@ JUDGE_ROW = {"stage": "t10_judge", "role": "judge", "model_id": "gpt-5.6-luna",
              "shadow_sample_pct": 0}
 
 
+def _reach():
+    """What `_reach_scopes` answers with the registry unreadable: OpenAI-API rows outside AWS, the rest on acc3."""
+    return {m.model_key: frozenset({"vendor_direct" if m.provider == "openai" else "aws_only"})
+            for m in POST_224_CATALOG.values()}
+
+
 async def _route(body, current=JUDGE_ROW):
     from api.routers import admin_llm_ops as ops
 
@@ -207,7 +219,8 @@ async def _route(body, current=JUDGE_ROW):
         return {"stage": stage, "model_id": current["model_id"], "updated_at": None, **kw}
 
     with patch.object(ops, "verify_admin_secret"), patch.object(ops, "list_stage_configs", rows), \
-            patch.object(ops, "_load_catalog", models), patch.object(ops, "set_stage_route", setter):
+            patch.object(ops, "_load_catalog", models), patch.object(ops, "set_stage_route", setter), \
+            patch.object(ops, "_load_reach", AsyncMock(return_value=_reach())):
         return await ops.patch_llm_route("t10_judge", ops.LlmRoutePatch(**body),
                                          x_admin_secret="x", x_admin_user_id="a")
 
@@ -240,7 +253,8 @@ async def test_admin_rejects_openai_api_primary():
         return list(POST_224_CATALOG.values())
 
     with patch.object(ops, "verify_admin_secret"), patch.object(ops, "list_stage_configs", rows), \
-            patch.object(ops, "_load_catalog", models), patch.object(ops, "set_stage_config") as setter:
+            patch.object(ops, "_load_catalog", models), patch.object(ops, "set_stage_config") as setter, \
+            patch.object(ops, "_load_reach", AsyncMock(return_value=_reach())):
         with pytest.raises(HTTPException) as exc:
             await ops.patch_llm_config("t10_judge", ops.LlmConfigPatch(model_id="gpt-6-luna-openai"),
                                        x_admin_secret="x", x_admin_user_id="a")
