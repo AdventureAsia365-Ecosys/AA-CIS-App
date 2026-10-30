@@ -6,14 +6,22 @@
 // admin Settings → UI kit; the gated `KitGallery` route of the visual job (root ADR 0016 decision 9, AA-994 S1d)
 // renders it too. This first slice holds the components upstreamed from AA-Booking in S4a (Section, KpiTile,
 // FilterBar, RowMenu, ConfirmModal, Money, DateText); S6a adds the form controls (Field, Input, Select, Textarea,
-// Checkbox, Radio, DateField in a Field); the older core components join it with S1d.
+// Checkbox, Radio, DateField in a Field); the button variants (core Buttons.tsx: Button incl. dashed, LinkButton,
+// IconButton, ButtonGroup, SegmentedControl, ChipButton, Switch, underline Tabs, ListButton, Pressable) have their
+// own entry; the older
+// core components join it with S1d.
 //
 // Demo dates are fixed values and the relative examples use a fixed "now" (no clock read during render), so the
 // gallery renders the same text on the server and the client and in every screenshot.
 
 import { Suspense, useState, type ReactNode } from "react";
-import { Archive, Copy, Eye, Lock, CalendarCheck } from "lucide-react";
-import { Button } from "./primitives";
+import {
+  Archive, CalendarCheck, ChevronRight, Copy, Download, Eye, Lock, Pencil, Pin, Plus, Send, Trash2, X, XCircle,
+} from "lucide-react";
+import { Tabs } from "./primitives";
+import {
+  Button, ButtonGroup, ChipButton, IconButton, LinkButton, ListButton, Pressable, SegmentedControl, Switch,
+} from "./Buttons";
 import { ConfirmModal } from "./Modal";
 import { Section } from "./Section";
 import { KpiTile } from "./KpiTile";
@@ -108,6 +116,130 @@ function FormDemo() {
   );
 }
 
+/** Every kind of kit button; local state only, nothing is sent. */
+function ButtonsDemo() {
+  const t = useT(GALLERY_MESSAGES);
+  const [pinned, setPinned] = useState(false);
+  const [state, setState] = useState<"open" | "answered" | "all">("open");
+  const [who, setWho] = useState<"existing" | "new">("existing");
+  const [tab, setTab] = useState("overview");
+  const [view, setView] = useState<"grid" | "table">("grid");
+  const [place, setPlace] = useState("hoan-kiem");
+  const [cats, setCats] = useState<string[]>(["hotel"]);
+  const [mail, setMail] = useState(true);
+  const noop = () => {};
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
+      <Row label={t("btnBrand")}>
+        <Button variant="primary" onClick={noop}>{t("btnSave")}</Button>
+        <Button onClick={noop}>{t("btnExplore")}</Button>
+        <Button variant="ghost" onClick={noop}>{t("btnCancel")}</Button>
+        <Button variant="danger" onClick={noop}>{t("btnDelete")}</Button>
+        <Button variant="dashed" onClick={noop}><Plus size={14} /> {t("btnAddDay")}</Button>
+        <Button size="sm" onClick={noop}>{t("btnSmall")}</Button>
+        <Button variant="primary" disabled>{t("btnDisabled")}</Button>
+      </Row>
+      <Row label={t("btnLink")}>
+        <LinkButton onClick={noop}>{t("btnShowAll")}</LinkButton>
+        <LinkButton tone="muted" aria-expanded onClick={noop}>{t("btnHide")}</LinkButton>
+        <LinkButton tone="danger" size="sm" onClick={noop}>{t("btnRemove")}</LinkButton>
+        <LinkButton weight="regular" truncate title={t("btnFile")} onClick={noop} style={{ maxWidth: 200 }}>
+          <Download size={13} />
+          {t("btnFile")}
+        </LinkButton>
+        <LinkButton disabled>{t("btnDisabled")}</LinkButton>
+      </Row>
+      <Row label={t("btnIcon")}>
+        <IconButton label={t("btnEdit")} onClick={noop}><Pencil size={14} /></IconButton>
+        <IconButton label={t("btnRemoveRow")} variant="plain" size="sm" tone="danger" onClick={noop}>
+          <Trash2 size={14} />
+        </IconButton>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 4px 2px 10px",
+          borderRadius: 999, background: K.accentSoft, fontSize: 12, color: K.accentDeep }}>
+          {t("btnChip")}
+          <IconButton label={t("btnRemoveChip")} variant="plain" size="xs" round onClick={noop}><X size={12} /></IconButton>
+        </span>
+        <IconButton label={t("btnPin")} pressed={pinned} onClick={() => setPinned((p) => !p)}><Pin size={14} /></IconButton>
+        <IconButton label={t("btnSend")} disabled><Send size={14} /></IconButton>
+        <span style={{ display: "inline-grid", placeItems: "center", width: 96, height: 56, borderRadius: 8,
+          background: "var(--aa-hero-bg)" }}>
+          <IconButton label={t("btnNextPhoto")} variant="overlay" onClick={noop}><ChevronRight size={16} /></IconButton>
+        </span>
+      </Row>
+      <Row label={t("btnGroup")}>
+        <ButtonGroup label={t("btnRowActions")} gap="sm">
+          <IconButton label={t("btnPreview")} onClick={noop}><Eye size={14} /></IconButton>
+          <IconButton label={t("btnEdit")} onClick={noop}><Pencil size={14} /></IconButton>
+          <IconButton label={t("btnSend")} onClick={noop}><Send size={14} /></IconButton>
+        </ButtonGroup>
+        <ButtonGroup label={t("btnViewSwitch")} attached>
+          <Button size="sm" variant={view === "grid" ? "secondary" : "ghost"} aria-pressed={view === "grid"}
+            onClick={() => setView("grid")}>{t("btnGrid")}</Button>
+          <Button size="sm" variant={view === "table" ? "secondary" : "ghost"} aria-pressed={view === "table"}
+            onClick={() => setView("table")}>{t("btnTable")}</Button>
+        </ButtonGroup>
+      </Row>
+      <Row label={t("btnChoice")}>
+        <SegmentedControl label={t("btnState")} appearance="chips" size="sm" value={state} onChange={setState}
+          options={[
+            { value: "open", label: t("btnWaiting") },
+            { value: "answered", label: t("btnAnswered"), count: 3 },
+            { value: "all", label: t("btnAll") },
+          ]} />
+        <SegmentedControl label={t("btnCustomer")} value={who} onChange={setWho}
+          options={[{ value: "existing", label: t("btnExisting") }, { value: "new", label: t("btnNewLead") }]} />
+      </Row>
+      <Row label={t("btnChips")}>
+        {(["hotel", "guide", "transport"] as const).map((c) => (
+          <ChipButton key={c} role="checkbox" selected={cats.includes(c)}
+            onClick={() => setCats((cur) => (cur.includes(c) ? cur.filter((x) => x !== c) : [...cur, c]))}>
+            {t(c === "hotel" ? "btnCatHotel" : c === "guide" ? "btnCatGuide" : "btnCatTransport")}
+          </ChipButton>
+        ))}
+      </Row>
+      <Row label={t("btnSwitch")}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+          <Switch label={t("btnPayMail")} checked={mail} onChange={setMail} />
+          <span>{t("btnPayMail")}</span>
+        </span>
+        <Switch label={t("btnDisabled")} checked={false} onChange={() => {}} disabled />
+      </Row>
+      <Row label={t("btnTabs")}>
+        <Tabs variant="underline" ariaLabel={t("btnSections")} active={tab} onChange={setTab}
+          tabs={[
+            { key: "overview", label: t("btnOverview") },
+            { key: "proposals", label: t("btnProposals"), count: 2 },
+            { key: "documents", label: t("btnDocuments"), disabled: true, title: t("btnLater") },
+          ]} />
+      </Row>
+      <Row label={t("btnList")}>
+        <span style={{ display: "inline-flex", flexDirection: "column", gap: 8 }}>
+          <span role="listbox" aria-label={t("btnPlaces")} style={{ display: "flex", flexDirection: "column", width: 220,
+            padding: 4, borderRadius: 8, border: `1px solid ${K.line}`, background: K.card }}>
+            {[["hoan-kiem", t("btnTile")], ["old-quarter", t("formNameValue")]].map(([v, l]) => (
+              <ListButton key={v} role="option" selected={place === v} onClick={() => setPlace(v)}>{l}</ListButton>
+            ))}
+          </span>
+          <span role="menu" aria-label={t("menuTitle")} style={{ display: "flex", flexDirection: "column", width: 220,
+            padding: 4, borderRadius: 8, border: `1px solid ${K.line}`, background: K.card }}>
+            <ListButton role="menuitem" onClick={noop}><Copy size={14} /> {t("menuDuplicate")}</ListButton>
+            <ListButton role="menuitem" tone="danger" onClick={noop}><XCircle size={14} /> {t("btnCancelCase")}</ListButton>
+          </span>
+        </span>
+      </Row>
+      <Row label={t("btnPressable")}>
+        <span style={{ display: "inline-block", width: 160 }}>
+          <Pressable ariaLabel={t("btnOpenPhoto")} onClick={noop}
+            style={{ height: 96, borderRadius: 8, background: "var(--aa-hero-bg)", color: "var(--aa-on-solid)",
+              fontSize: 12, display: "grid", placeItems: "end start", padding: 8 }}>
+            {t("btnTile")}
+          </Pressable>
+        </span>
+      </Row>
+    </div>
+  );
+}
+
 /** The fixed "now" of the relative examples: 9 Oct 2026, 07:05 UTC. */
 const DEMO_NOW = Date.UTC(2026, 9, 9, 7, 5);
 
@@ -169,6 +301,10 @@ export function KitGallery() {
 
       <Entry id="form" title={t("formTitle")}>
         <FormDemo />
+      </Entry>
+
+      <Entry id="buttons" title={t("btnTitle")}>
+        <ButtonsDemo />
       </Entry>
 
       <Entry id="rowmenu" title={t("menuTitle")}>

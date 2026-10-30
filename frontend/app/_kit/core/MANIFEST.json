@@ -18,6 +18,9 @@
     ]
   },
   "files": {
+    "Buttons.tsx": {
+      "sha256": "c2c1f832b48f71926bdaee5d5caf57e7ad818faa464e8825f600916d94d33f44"
+    },
     "DataTable.tsx": {
       "sha256": "f91e8ea62e3f0e211378813d6708e8fab682870d2120038721b09c6d30be81c7"
     },
@@ -40,7 +43,7 @@
       "sha256": "8dd928920b5dc760b7b80433011f8b482ae6592c91456557542cb45df59142a5"
     },
     "KitGallery.tsx": {
-      "sha256": "fa6d8033a12ed5f5437ae820d8fa165c65e91f04951fadfd2da5e0ef91327f6f"
+      "sha256": "5d5fc392790bda4579fb479fec8c701d6788591df2595f6534b488c873845ed8"
     },
     "KpiTile.tsx": {
       "sha256": "f421219ad2f1fb24806aad077199fe950aaadbc0c192989e424e96fe338f827f"
@@ -79,7 +82,7 @@
       "sha256": "3609313353164f3d0089b9e5675248d6a825c8826808b2f6b968ddb750c5189f"
     },
     "eslint-kit.mjs": {
-      "sha256": "442b6f177f1742b25e3cc8ada63bc415c920a866e89a3e9fb95f371cdf7cf704"
+      "sha256": "d48d0070d126524dab68dc1dd5478ff985119d7b8ecc04dd95d695d4dfe99934"
     },
     "format.ts": {
       "sha256": "8e6b8c5655c6f32f619b6ad7521edf167276201320015673877e4badb734873d"
@@ -94,10 +97,10 @@
       "sha256": "8bba45273149716306c7c7e41a5caf5cef9f99a29fbe2b198c2a0ed1775dc016"
     },
     "kitGallery.messages.ts": {
-      "sha256": "0e4753097e60420d3c34036e21c05fbc6c59278455bc625abb4dd2356f9b35f9"
+      "sha256": "83fb1d14c07f5545bc5b7087460a9ee2ccfa3f34bab9f4982c9e5d5a7674563f"
     },
     "primitives.tsx": {
-      "sha256": "0dc2c0d34b2286df42d638abcff0d9530842800eff01fa11022528889e423ea7"
+      "sha256": "ddc60c0fb2be1e52e348e9eb26dda1db88ba94f6be3a24ce5aeeabc2ce643373"
     },
     "savedViews.ts": {
       "sha256": "902e4502baa8e95134d6ef20773bf624fbc07ac044063824e3a424de33c5eb24"
