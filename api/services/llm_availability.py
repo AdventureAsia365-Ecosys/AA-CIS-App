@@ -21,10 +21,10 @@ text call (embeddings run on another account and do not clear it), ``degraded`` 
 ``ok`` when an answered call is the newest and at most STALE_OK_HOURS old, ``unknown`` otherwise.
 
 AA-1002 (S4) — per connection: ``connections`` lists every row of ``shared.llm_provider_connection`` with the circuit
-breaker state of each of its deployments that has a health row (``shared.llm_provider_health``, migration 310; the
+breaker state of each of its deployments that has a health row (``shared.llm_provider_health``, migration 309; the
 state rule is ``shared.llm_client.breaker.state_of``). A connection's status: ``disabled`` (switched off), ``open``
 (a deployment's circuit is open or half-open: calls skip it), ``degraded`` (failures in a row, circuit still closed),
-``ok`` (no failure, an answered call within STALE_OK_HOURS), ``unknown`` otherwise. Before 304 / 310 are applied the
+``ok`` (no failure, an answered call within STALE_OK_HOURS), ``unknown`` otherwise. Before 304 / 309 are applied the
 list is empty and ``health_ready`` is false. Still no probe call: the admin's "Test connection" is a separate action.
 """
 from __future__ import annotations
@@ -233,7 +233,7 @@ def build_connections(rows: Iterable[dict], *, now: datetime) -> list[dict]:
 
 
 async def read_connections(conn, *, now: datetime) -> tuple[bool, list[dict]]:
-    """(health_ready, connections). Before migration 304 / 310 the tables are missing: (False, [])."""
+    """(health_ready, connections). Before migration 304 / 309 the tables are missing: (False, [])."""
     try:
         rows = [dict(r) for r in await conn.fetch(CONNECTIONS_SQL)]
     except asyncpg.exceptions.UndefinedTableError:

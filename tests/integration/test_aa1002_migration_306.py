@@ -95,7 +95,7 @@ def test_rerun_is_idempotent_and_keeps_an_admin_edit(cur):
     assert cur.fetchone()
 
 
-# AA-1002 S4: conftest applies every migration, so 311's grant (the admin-editable columns) is there too.
+# AA-1002 S4: conftest applies every migration, so 310's grant (the admin-editable columns) is there too.
 S311_COLUMNS = {"secret_name", "base_url", "timeout_s", "max_retries", "max_concurrency", "rpm_limit",
                 "monthly_budget_usd", "notes"}
 
@@ -111,7 +111,7 @@ def test_cis_app_writes_the_switch_columns_only(cur):
                 "FOR UPDATE")                                                  # the switch's row lock
     cur.execute("UPDATE shared.llm_provider_connection SET enabled = true, updated_at = now(), "
                 "updated_by = 'admin:test' WHERE connection_key = 'anthropic-direct'")
-    with pytest.raises(psycopg2.errors.InsufficientPrivilege):               # identity stays migration-only (311)
+    with pytest.raises(psycopg2.errors.InsufficientPrivilege):               # identity stays migration-only (310)
         cur.execute("UPDATE shared.llm_provider_connection SET data_scope = 'aws_only' "
                     "WHERE connection_key = 'anthropic-direct'")
     cur.execute("ROLLBACK")

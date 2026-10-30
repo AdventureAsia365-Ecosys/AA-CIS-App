@@ -1,7 +1,7 @@
-"""AA-1002 (gateway slice S4) — migrations 310 (shared.llm_provider_health) and 311 (the admin edit grant) against real
+"""AA-1002 (gateway slice S4) — migrations 309 (shared.llm_provider_health) and 310 (the admin edit grant) against real
 Postgres, with the breaker's own SQL.
 
-conftest applies every migration, 310 / 311 included. Each test re-runs both (idempotent: CREATE TABLE IF NOT EXISTS,
+conftest applies every migration, 309 / 310 included. Each test re-runs both (idempotent: CREATE TABLE IF NOT EXISTS,
 GRANT, registration ON CONFLICT DO NOTHING) and checks: the table and its constraints; the breaker's transition SQL
 (row lock, then the pure transition) and snapshot read run as written; the availability read per connection runs;
 health goes with its connection / model (CASCADE, no existing delete is blocked); cis_app writes the health table and
@@ -75,8 +75,8 @@ def test_table_and_registration(cur):
     cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema = 'shared' "
                 "AND table_name = 'llm_provider_health'")
     assert {r["column_name"] for r in cur.fetchall()} == set(breaker._COLUMNS) | {"updated_at"}
-    cur.execute("SELECT version FROM shared.schema_versions WHERE version IN ('310', '311') ORDER BY version")
-    assert [r["version"] for r in cur.fetchall()] == ["310", "311"]
+    cur.execute("SELECT version FROM shared.schema_versions WHERE version IN ('309', '310') ORDER BY version")
+    assert [r["version"] for r in cur.fetchall()] == ["309", "310"]
 
 
 def test_the_breaker_transition_sql_runs_and_counts_under_the_row_lock(cur):

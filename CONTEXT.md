@@ -276,7 +276,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   `catalog.serving_accounts()` and `embed._runtime_for` read the registry; `connections.BUILTIN_CONNECTIONS` (the 304
   seed: acc3, acc2, openai-direct) answers only "how to reach X" when the registry is unreadable or a row is broken.
   Still contract work (not in 307): the logical rows `sonnet-4-6` / `haiku-4-5` and the `account_route` CHECK → FK.
-- **Circuit breaker + limiter + Connections tab** (AA-1002 slice S4, migrations 310 expand / 311 contract):
+- **Circuit breaker + limiter + Connections tab** (AA-1002 slice S4, migrations 309 expand / 310 contract):
   `shared/llm_client/breaker.py` keeps one circuit per deployment (connection × catalog model) in
   `shared.llm_provider_health`, shared by every api / worker task (10 s snapshot; writes lock the row and apply pure
   transitions). Class rules (`breaker.RULES`): access_denied / quota_exhausted / `credential` (a key that cannot be
@@ -291,7 +291,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   slot within 30 s = `LimiterSaturated` (throttled, not counted). Table missing / DB down = the same breaker in
   process. `LLM_CIRCUIT_BREAKER=off` (ECS env) = the S3 behaviour. Admin (ai.admin, audited):
   `PATCH /admin/llm-connections/{key}` switches bedrock / anthropic / openai connections and edits the secret NAME
-  (`aa-llm/` only), base URL (kind allowlist), timeout, retries, limits, budget, notes (311 grant; identity and data
+  (`aa-llm/` only), base URL (kind allowlist), timeout, retries, limits, budget, notes (310 grant; identity and data
   scope stay migration-only); `POST /admin/llm-connections/{key}/test` sends one small real call through
   `LLMClient.probe` (works on a switched-off connection; stage `adhoc_conn_test`, role `validate`, logged + audited;
   its outcome counts on the circuit). `GET /admin/llm-availability` adds `connections` (status per connection and the

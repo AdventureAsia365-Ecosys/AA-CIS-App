@@ -2,7 +2,7 @@
 
 Admin only (ai.admin), every kind the gateway calls since S3 (bedrock, anthropic, openai; S2 allowed anthropic only),
 enabling refuses a policy problem or an unreadable secret, one audit row per change in the same transaction, caches
-dropped after the change. Migrations 306 + 311 grant exactly the columns the PATCH writes. The S4 field edits are in
+dropped after the change. Migrations 306 + 310 grant exactly the columns the PATCH writes. The S4 field edits are in
 test_aa1002_s4_admin_connections.py.
 """
 import asyncio

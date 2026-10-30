@@ -1,5 +1,5 @@
 -- migrate: expand
--- Migration 310: AA-1002 (LLM gateway slice S4) — shared.llm_provider_health: the circuit breaker's shared state.
+-- Migration 309: AA-1002 (LLM gateway slice S4) — shared.llm_provider_health: the circuit breaker's shared state.
 --
 -- Why. The gateway tries a catalog model on its deployments (slice S3, vendor_route.deployment_plan). Without a
 -- breaker every call still goes to a deployment that refuses every request (Bedrock "Error 002" on the LLM account
@@ -17,7 +17,7 @@
 --      it goes with its connection or model (no existing row can block a delete).
 --   2. GRANT SELECT, INSERT, UPDATE, DELETE to cis_app (the api and the worker write it on call outcomes; the admin
 --      reads it through /admin/llm-availability). No tripplanner grant (TripPlanner keeps its own gateway until S8).
---   3. Register 310.
+--   3. Register 309.
 --
 -- Behaviour. None on apply: an empty table means every circuit is closed. Before this file is applied the breaker runs
 -- per process (the code catches the missing table), so code and migration may ship in either order.
@@ -25,7 +25,7 @@
 -- Class: expand (root ADR 0017 d3): one new table, its constraints, a grant on it and comments; no change to any
 -- existing object (the FKs only add the internal RI triggers on the two referenced tables), no DO block.
 --
--- Number. 307 is the highest on main (30/10); 308 is held by the S259 "reports" lane, 309 by the AA-1000 lane.
+-- Number. 307 is the highest on main (30/10); 308 is AA-1000's stage row (S259).
 --
 -- Rollback (a new forward migration, after the code is reverted or LLM_CIRCUIT_BREAKER=off):
 --   DROP TABLE shared.llm_provider_health;   (a destructive file)
@@ -62,22 +62,22 @@ CREATE TABLE IF NOT EXISTS shared.llm_provider_health (
 );
 
 COMMENT ON TABLE shared.llm_provider_health IS
-    'AA-1002 (CIS 310, gateway slice S4): circuit breaker state per deployment (connection x catalog model), shared by '
+    'AA-1002 (CIS 309, gateway slice S4): circuit breaker state per deployment (connection x catalog model), shared by '
     'every api / worker task. Written by shared/llm_client/breaker.py on call outcomes; read by the routing plan and '
     'GET /admin/llm-availability. No row = closed.';
 COMMENT ON COLUMN shared.llm_provider_health.circuit_open_until IS
-    'AA-1002 (310): NULL = closed; in the future = open (the deployment is skipped); in the past = half-open (one '
+    'AA-1002 (309): NULL = closed; in the future = open (the deployment is skipped); in the past = half-open (one '
     'probe call may try it, lease in probe_until; its success clears this column).';
 COMMENT ON COLUMN shared.llm_provider_health.last_error_class IS
-    'AA-1002 (310): shared/llm_client/errors.classify of the last failure, or credential (the connection key could not '
+    'AA-1002 (309): shared/llm_client/errors.classify of the last failure, or credential (the connection key could not '
     'be read). The class sets how many failures open the circuit and for how long (breaker.RULES).';
 COMMENT ON COLUMN shared.llm_provider_health.open_streak IS
-    'AA-1002 (310): openings since the last success; each failed half-open probe doubles the open period (capped).';
+    'AA-1002 (309): openings since the last success; each failed half-open probe doubles the open period (capped).';
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON shared.llm_provider_health TO cis_app;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('310', now(), 'AA-1002 S4: shared.llm_provider_health (circuit breaker state per deployment)')
+VALUES ('309', now(), 'AA-1002 S4: shared.llm_provider_health (circuit breaker state per deployment)')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

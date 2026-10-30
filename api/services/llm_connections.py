@@ -20,7 +20,7 @@ bedrock, anthropic, openai) plus the secret NAME, base URL, timeout / retries, l
 (``EDITABLE``; identity and data-scope fields stay migration-only). A secret name / base URL is checked against the
 credential policy before anything reads it; enabling, or moving the secret / endpoint of an enabled API-key connection,
 reads the key first (the value is never returned). One ``acp_shared.audit_log`` row per change (action
-``llm_connection_changed``), in the same transaction. Grants: 306 (enabled / updated_at / updated_by), 311 (the rest).
+``llm_connection_changed``), in the same transaction. Grants: 306 (enabled / updated_at / updated_by), 310 (the rest).
 
 AA-1002 (S4) — ``test_connection`` backs ``POST /admin/llm-connections/{connection_key}/test``: one small real call
 through ``LLMClient.probe``, logged in ``shared.llm_call_log`` (stage ``adhoc_conn_test``) and audited
@@ -47,7 +47,7 @@ from shared.llm_client import deployments as dep_registry
 TOGGLE_KINDS = ("bedrock", "anthropic", "openai")
 
 # AA-1002 (S4): what PATCH /admin/llm-connections/{key} may change. `enabled` is migration 306's grant; the others
-# need migration 311 (until then the UPDATE answers permission denied → ConnectionEditUnavailable, 503). Never kind,
+# need migration 310 (until then the UPDATE answers permission denied → ConnectionEditUnavailable, 503). Never kind,
 # auth_mode, account, role, ExternalId, region, credential_env or data_scope (identity / data policy: migrations only).
 EDITABLE = ("enabled", "secret_name", "base_url", "timeout_s", "max_retries", "max_concurrency", "rpm_limit",
             "monthly_budget_usd", "notes")
@@ -59,7 +59,7 @@ class ConnectionToggleRefused(ValueError):
 
 
 class ConnectionEditUnavailable(RuntimeError):
-    """The database refused the UPDATE (permission denied): the column grant of migration 311 is not applied yet."""
+    """The database refused the UPDATE (permission denied): the column grant of migration 310 is not applied yet."""
 
 
 def build(connections: dict, deployments: list) -> dict:
@@ -176,7 +176,7 @@ def _json_value(value):
 
 async def update_connection(db, connection_key: str, changes: dict, *, actor: str) -> dict:
     """AA-1002 (S4): change the editable fields of one connection (``EDITABLE``) and audit it. Raises LookupError
-    (unknown key, 404), ConnectionToggleRefused (422) and ConnectionEditUnavailable (503, migration 311 missing). A
+    (unknown key, 404), ConnectionToggleRefused (422) and ConnectionEditUnavailable (503, migration 310 missing). A
     request that changes nothing writes no audit row (``changed: false``).
 
     When the change enables an API-key connection or moves its secret / endpoint while on, the key is read (the
@@ -215,7 +215,7 @@ async def update_connection(db, connection_key: str, changes: dict, *, actor: st
                     connection_key, *[_db_value(f, changes[f]) for f in diff], actor)
             except asyncpg.exceptions.InsufficientPrivilegeError as e:
                 raise ConnectionEditUnavailable(
-                    "editing " + ", ".join(diff) + " needs database migration 311 (column grant); only the on/off "
+                    "editing " + ", ".join(diff) + " needs database migration 310 (column grant); only the on/off "
                     "switch works until it is applied") from e
             await db.execute(
                 "INSERT INTO acp_shared.audit_log (actor, action, resource_type, resource_id, details) "

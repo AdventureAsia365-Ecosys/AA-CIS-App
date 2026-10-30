@@ -2,7 +2,7 @@
 
 - PATCH /admin/llm-connections/{key}: secret name / base URL / limits / notes, admin only, policy checked before any
   secret is read, the key read before the transaction when the credential moves on an enabled connection, one audit
-  row, never the key; 503 until migration 311's grant exists.
+  row, never the key; 503 until migration 310's grant exists.
 - POST /admin/llm-connections/{key}/test: one small call through LLMClient.probe (never a live call here: the client
   is a fake), logged in llm_call_log (stage adhoc_conn_test, role validate), audited, failure = an answer.
 - GET /admin/llm-availability per connection (the breaker state of each deployment).
@@ -143,7 +143,7 @@ def test_without_migration_311_the_route_answers_503():
         with pytest.raises(HTTPException) as e:
             asyncio.run(ops.patch_llm_connection(_request(db), "anthropic-direct",
                                                  ops.LlmConnectionPatch(rpm_limit=10), "s", "u-1"))
-    assert e.value.status_code == 503 and "311" in e.value.detail
+    assert e.value.status_code == 503 and "310" in e.value.detail
 
 
 def test_no_change_no_audit_row():

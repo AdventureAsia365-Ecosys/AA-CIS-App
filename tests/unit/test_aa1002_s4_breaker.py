@@ -1,9 +1,9 @@
 """AA-1002 (gateway slice S4) — the deployment circuit breaker and the connection limiter (shared/llm_client/breaker.py).
 
 Pure transitions per error class; the in-process breaker end to end through LLMClient (no DB: conftest stubs
-breaker._db, so the transitions run on the in-process copy, exactly the fallback used before migration 310); the DB
+breaker._db, so the transitions run on the in-process copy, exactly the fallback used before migration 309); the DB
 transition (row lock, then the same pure function) against a fake connection; the limiter. The SQL itself runs against
-Postgres in tests/integration/test_aa1002_migration_310.py.
+Postgres in tests/integration/test_aa1002_migration_309.py.
 """
 import asyncio
 import threading

@@ -5,7 +5,7 @@ stop the models it may. The state machine is the Jev credit breaker's (``decide.
 a retry cannot fix, skip the provider for a cool-down, close on the next success), with three changes the blueprint
 asks for:
 
-- the state lives in ``shared.llm_provider_health`` (migration 310), so every api / worker task sees a circuit another
+- the state lives in ``shared.llm_provider_health`` (migration 309), so every api / worker task sees a circuit another
   task opened, instead of each process learning it again with its own failed calls;
 - what opens a circuit depends on the error class (``errors.classify``, plus ``credential`` for a connection whose key
   cannot be read): an account-level refusal or a missing credential opens at once, throttling after a few in a row,
@@ -18,7 +18,7 @@ asks for:
 Transitions are pure functions (``after_failure``, ``after_success``, ``claimed``) on a ``Health`` row. A write locks
 the row (``SELECT … FOR UPDATE``), applies the function and writes the result, so concurrent tasks count failures
 correctly. Reads are a cached snapshot of the whole table (``READ_TTL_S``); a success is written at most once a
-minute per deployment and process unless it closes something. When the table cannot be read or written (migration 310
+minute per deployment and process unless it closes something. When the table cannot be read or written (migration 309
 not applied yet, DB down) the same transitions run on the in-process copy: the breaker degrades to a per-process
 breaker, never to an error on the call path. Every public function here never raises.
 
@@ -109,7 +109,7 @@ ERROR_CHARS = 300
 READ_TTL_S = 10.0           # the snapshot of the table every task re-reads
 OK_WRITE_INTERVAL_S = 60.0  # a success on a healthy deployment is written at most this often per process
 DB_RETRY_S = 30.0           # after a DB error, the breaker runs in process for this long before trying the DB again
-DB_MISSING_RETRY_S = 300.0  # the table does not exist (migration 310 not applied)
+DB_MISSING_RETRY_S = 300.0  # the table does not exist (migration 309 not applied)
 LIMIT_WAIT_S = 30.0
 
 
@@ -251,7 +251,7 @@ def _db(fn):
         missing = type(e).__name__ == "UndefinedTableError"
         _db_down_until = time.monotonic() + (DB_MISSING_RETRY_S if missing else DB_RETRY_S)
         logger.warning("llm_breaker_db_unavailable", error=str(e)[:200],
-                       hint="migration 310 not applied: the breaker runs per process" if missing else
+                       hint="migration 309 not applied: the breaker runs per process" if missing else
                        "the breaker runs per process until the DB answers again")
         raise
 
