@@ -23,6 +23,7 @@ from shared.llm_client.adapters.anthropic_messages import _effort_facts  # noqa:
 MIGRATIONS = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations")
 M304 = os.path.join(MIGRATIONS, "304_llm_connection_deployment.sql")
 M306 = os.path.join(MIGRATIONS, "306_llm_anthropic_deployments.sql")
+M310 = os.path.join(MIGRATIONS, "310_llm_connection_admin_edit_grant.sql")   # S4: a 304 re-run drops its column grant
 
 
 def _run(c, path):
@@ -36,6 +37,7 @@ def cur():
     c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     _run(c, M304)
     _run(c, M306)
+    _run(c, M310)
     try:
         yield c
     finally:
@@ -46,6 +48,7 @@ def cur():
         c.execute("DELETE FROM shared.llm_model_deployment WHERE updated_by = 'migration-306-aa1002'")   # edits too
         _run(c, M304)
         _run(c, M306)
+        _run(c, M310)
         conn.close()
 
 
