@@ -22,7 +22,7 @@ credential policy before anything reads it; enabling, or moving the secret / end
 reads the key first (the value is never returned). One ``acp_shared.audit_log`` row per change (action
 ``llm_connection_changed``), in the same transaction. Grants: 306 (enabled / updated_at / updated_by), 310 (the rest).
 
-AA-1002 (S10) — each connection's budget policy (``shared.llm_connection_cost_policy``, migration 316: alert percent,
+AA-1002 (S10) — each connection's budget policy (``shared.llm_connection_cost_policy``, migration 317: alert percent,
 hard stop, the NAME of a read-only usage key and the provider workspace / project) is part of the listing
 (``cost_policy``, ``reconcile_source``) and of the same PATCH (``POLICY_EDITABLE``, upserted in the same transaction and
 audit row). ``costs`` backs ``GET /admin/llm-connections/costs``: the month-to-date spend against each budget and the
@@ -62,7 +62,7 @@ EDITABLE = ("enabled", "secret_name", "base_url", "timeout_s", "max_retries", "m
             "monthly_budget_usd", "notes")
 CREDENTIAL_EDITS = ("secret_name", "base_url")
 
-# AA-1002 (S10): the budget policy fields of the same PATCH -> their column in shared.llm_connection_cost_policy (316).
+# AA-1002 (S10): the budget policy fields of the same PATCH -> their column in shared.llm_connection_cost_policy (317).
 POLICY_EDITABLE = {"budget_alert_pct": "alert_pct", "budget_hard_stop": "hard_stop",
                    "usage_secret_name": "usage_secret_name", "usage_scope_id": "usage_scope_id"}
 USAGE_FIELDS = ("usage_secret_name", "usage_scope_id")
@@ -139,7 +139,7 @@ async def read(conn) -> dict:
 
 
 async def _policies_or_none(conn) -> Optional[dict]:
-    """AA-1002 (S10): the stored policies, or None before migration 316 (the listing says cost_policy_ready false)."""
+    """AA-1002 (S10): the stored policies, or None before migration 317 (the listing says cost_policy_ready false)."""
     out = await cost_guard.read_cost_policies(conn, missing=_NOT_READY)
     return None if out is _NOT_READY else out
 
@@ -259,7 +259,7 @@ async def _apply_policy(db, connection_key: str, changes: dict, actor: str) -> t
     try:
         row = await db.fetchrow(_POLICY_FOR_UPDATE_SQL, connection_key)
     except asyncpg.exceptions.UndefinedTableError as e:
-        raise ConnectionEditUnavailable("budget policy fields need database migration 316") from e
+        raise ConnectionEditUnavailable("budget policy fields need database migration 317") from e
     before = ({f: row[col] for f, col in POLICY_EDITABLE.items()} if row is not None else dict(_POLICY_DEFAULTS))
     diff = [f for f in POLICY_EDITABLE if f in changes and not _same(before[f], changes[f])]
     if not diff:
@@ -287,7 +287,7 @@ async def update_connection(db, connection_key: str, changes: dict, *, actor: st
 
     AA-1002 (S10): the budget policy fields (``POLICY_EDITABLE``) go to shared.llm_connection_cost_policy (upsert) in
     the same transaction and audit row; a new usage key NAME is read once before the transaction (fail closed, never
-    returned). 503 before migration 316."""
+    returned). 503 before migration 317."""
     if not changes:
         raise ConnectionToggleRefused("nothing to change")
     policy_changes = {f: v for f, v in changes.items() if f in POLICY_EDITABLE}
@@ -464,7 +464,7 @@ async def test_connection(pool, connection_key: str, *, model_key: Optional[str]
 async def costs(conn, *, days: int = 14) -> dict:
     """``GET /admin/llm-connections/costs``: per connection, the month-to-date spend against its monthly budget
     (``budget``: None without a budget) and the reconciliation rows of the last ``days`` days, newest first
-    (``reconcile.last`` = the newest day). ``schema_ready`` false before migration 316 (budgets still shown: they need
+    (``reconcile.last`` = the newest day). ``schema_ready`` false before migration 317 (budgets still shown: they need
     only 304). Reads no secret."""
     try:
         connections = await conn_registry.fetch_connections(conn)

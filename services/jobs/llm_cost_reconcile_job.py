@@ -1,5 +1,5 @@
 """AA-1002 (gateway slice S10) — job kind ``llm_cost_reconcile``: the gateway's cost ledger next to each provider's
-own figure, per LLM connection and UTC day (services/llm_cost/reconcile.py, table shared.llm_cost_reconcile, CIS 316).
+own figure, per LLM connection and UTC day (services/llm_cost/reconcile.py, table shared.llm_cost_reconcile, CIS 317).
 
 Payload: {"trigger": "schedule" | "manual", "days": 1..31 (default 3), "end_day": "YYYY-MM-DD" (default yesterday,
 UTC), "requested_by": "admin:<id>" (manual)}.

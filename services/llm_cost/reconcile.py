@@ -1,7 +1,7 @@
 """AA-1002 (gateway slice S10) — nightly reconciliation of the gateway's cost ledger with each provider's own figure.
 
 For every connection of ``shared.llm_provider_connection`` (mock rows excepted) and every UTC day of the window, one
-``shared.llm_cost_reconcile`` row (migration 316, upsert): what ``shared.llm_call_log`` logged on that connection
+``shared.llm_cost_reconcile`` row (migration 317, upsert): what ``shared.llm_call_log`` logged on that connection
 (``account = connection_key``) next to what the provider says it billed, and the difference.
 
 Sources, one per connection kind (``SOURCES``):
@@ -80,7 +80,7 @@ _PLATFORM_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 
 
 class ReconcileUnavailable(RuntimeError):
-    """The reconcile tables are missing (migration 316 not applied)."""
+    """The reconcile tables are missing (migration 317 not applied)."""
 
 
 class SourceError(RuntimeError):
@@ -445,7 +445,7 @@ async def reconcile(pool, *, days: int = DEFAULT_DAYS, end_day: Optional[date] =
                     own_account: Callable[[], str] = _own_account) -> dict:
     """One reconcile run over ``days`` UTC days ending with ``end_day`` (default yesterday). Writes one row per
     connection and day, prunes rows older than RETENTION_DAYS, raises the mismatch bell. Returns the run summary.
-    Raises ReconcileUnavailable before migration 316, ValueError for a bad window."""
+    Raises ReconcileUnavailable before migration 317, ValueError for a bad window."""
     import asyncpg
 
     start, end_exclusive = window(days, end_day, today)
@@ -457,7 +457,7 @@ async def reconcile(pool, *, days: int = DEFAULT_DAYS, end_day: Optional[date] =
             policies = await cost_guard.read_cost_policies(conn)
             await conn.fetchval("SELECT 1 FROM shared.llm_cost_reconcile LIMIT 1")
         except asyncpg.exceptions.UndefinedTableError as e:
-            raise ReconcileUnavailable("shared.llm_cost_reconcile is missing (migration 316 not applied)") from e
+            raise ReconcileUnavailable("shared.llm_cost_reconcile is missing (migration 317 not applied)") from e
         targets = {k: c for k, c in registry.items() if c.kind not in SKIPPED_KINDS}
         logged = await logged_costs(conn, sorted(targets), start, end_exclusive)
 
@@ -529,7 +529,7 @@ def _num(v) -> Optional[float]:
 
 
 async def read_recent(conn, days: int = 14, today: Optional[date] = None) -> Optional[dict[str, list[dict]]]:
-    """{connection_key: [row, ...] newest day first} for the last ``days`` days; None before migration 316."""
+    """{connection_key: [row, ...] newest day first} for the last ``days`` days; None before migration 317."""
     import asyncpg
 
     since = (today or datetime.now(timezone.utc).date()) - timedelta(days=days)

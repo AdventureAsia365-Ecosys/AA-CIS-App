@@ -50,7 +50,7 @@ export interface Connection {
   usage_key_supported?: boolean;
 }
 
-/** The budget policy of a connection (shared.llm_connection_cost_policy, migration 316; defaults when not stored). */
+/** The budget policy of a connection (shared.llm_connection_cost_policy, migration 317; defaults when not stored). */
 export interface CostPolicy {
   alert_pct: number;
   hard_stop: boolean;

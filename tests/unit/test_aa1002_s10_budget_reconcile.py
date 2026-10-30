@@ -768,7 +768,7 @@ def test_policy_refusals_read_no_secret_and_write_nothing(monkeypatch, conn, cha
 
 def test_policy_fields_before_migration_316_answer_503():
     db = PolicyDB(_anthropic_conn(), policy_table=False)
-    with pytest.raises(llm_connections.ConnectionEditUnavailable, match="316"):
+    with pytest.raises(llm_connections.ConnectionEditUnavailable, match="317"):
         _patch(db, {"budget_hard_stop": False})
 
 

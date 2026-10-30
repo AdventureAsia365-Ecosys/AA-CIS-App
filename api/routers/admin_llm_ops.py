@@ -1222,7 +1222,7 @@ class LlmConnectionPatch(BaseModel):
     rpm_limit: Optional[int] = Field(None, ge=1, le=100000)
     monthly_budget_usd: Optional[float] = Field(None, ge=0, le=1_000_000)
     notes: Optional[str] = Field(None, max_length=2000)
-    # AA-1002 (S10): the budget policy (shared.llm_connection_cost_policy, migration 316)
+    # AA-1002 (S10): the budget policy (shared.llm_connection_cost_policy, migration 317)
     budget_alert_pct: Optional[int] = Field(None, ge=1, le=100)
     budget_hard_stop: Optional[bool] = None
     usage_secret_name: Optional[str] = Field(None, max_length=256)

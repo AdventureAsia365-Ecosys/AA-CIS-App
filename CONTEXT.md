@@ -348,7 +348,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   `{"cachePoint": {"type": "default"}}`, so tools + system are cached and the user message is not; Luna / OpenAI on
   Bedrock never get one; a ValidationException naming the cache point is retried once without it and remembered;
   ECS env `LLM_CONVERSE_CACHE_POINT=off` restores the pre-S6 body.
-- **Budget per connection + nightly cost reconciliation** (AA-1002 slice S10, migration 316 expand):
+- **Budget per connection + nightly cost reconciliation** (AA-1002 slice S10, migration 317 expand):
   `llm_provider_connection.monthly_budget_usd` is enforced per connection, independent of the job budgets
   (`shared.spend_budget`) and wave caps, which still apply. The policy is `shared.llm_connection_cost_policy` (no row =
   alert at 80 %, hard stop at 100 %): `shared/cost_guard.py` (`ConnectionBudget`, month-to-date spend = the

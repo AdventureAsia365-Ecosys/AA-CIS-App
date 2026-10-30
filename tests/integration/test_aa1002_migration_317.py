@@ -1,7 +1,7 @@
-"""AA-1002 (gateway slice S10) — migration 316 (shared.llm_connection_cost_policy, shared.llm_cost_reconcile) against
+"""AA-1002 (gateway slice S10) — migration 317 (shared.llm_connection_cost_policy, shared.llm_cost_reconcile) against
 real Postgres, with the code's own SQL.
 
-conftest applies every migration, 316 included. Each test re-runs it (idempotent: CREATE TABLE / INDEX IF NOT EXISTS,
+conftest applies every migration, 317 included. Each test re-runs it (idempotent: CREATE TABLE / INDEX IF NOT EXISTS,
 GRANT, registration ON CONFLICT DO NOTHING) and checks: the tables, CHECKs and FKs (ON DELETE CASCADE with the
 connection); the policy read, the month spend read, the reconcile upsert / prune and the admin read run as written;
 cis_app may write both tables.
@@ -71,7 +71,7 @@ def test_tables_and_registration(cur):
     assert {r["column_name"] for r in cur.fetchall()} == {
         "connection_key", "day", "source", "status", "logged_usd", "logged_calls", "provider_usd", "diff_usd",
         "diff_pct", "details", "job_id", "checked_at"}
-    cur.execute("SELECT 1 FROM shared.schema_versions WHERE version = '316'")
+    cur.execute("SELECT 1 FROM shared.schema_versions WHERE version = '317'")
     assert cur.fetchone() is not None
 
 

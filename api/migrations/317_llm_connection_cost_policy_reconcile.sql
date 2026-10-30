@@ -1,5 +1,5 @@
 -- migrate: expand
--- Migration 316: AA-1002 (LLM gateway slice S10) — the budget policy of each LLM connection and the nightly cost
+-- Migration 317: AA-1002 (LLM gateway slice S10) — the budget policy of each LLM connection and the nightly cost
 -- reconciliation against the provider's own usage.
 --
 -- Why. shared.llm_provider_connection.monthly_budget_usd (304) was stored but never enforced, and nothing compared the
@@ -66,20 +66,20 @@ CREATE TABLE IF NOT EXISTS shared.llm_connection_cost_policy (
 );
 
 COMMENT ON TABLE shared.llm_connection_cost_policy IS
-    'AA-1002 (CIS 316, gateway slice S10): budget policy and reconcile source of one LLM connection. No row = '
+    'AA-1002 (CIS 317, gateway slice S10): budget policy and reconcile source of one LLM connection. No row = '
     'defaults (alert 80 %, hard stop at monthly_budget_usd, no provider source). Edited by PATCH '
     '/admin/llm-connections/{key} (admin only, audited). Never a secret value: usage_secret_name is a NAME.';
 COMMENT ON COLUMN shared.llm_connection_cost_policy.alert_pct IS
-    'AA-1002 (316): month-to-date spend at or above this percent of llm_provider_connection.monthly_budget_usd raises '
+    'AA-1002 (317): month-to-date spend at or above this percent of llm_provider_connection.monthly_budget_usd raises '
     'one admin bell (and the ops e-mail) per 24 h.';
 COMMENT ON COLUMN shared.llm_connection_cost_policy.hard_stop IS
-    'AA-1002 (316): true = at 100 % of the monthly budget the gateway leaves the connection out of every route (the '
+    'AA-1002 (317): true = at 100 % of the monthly budget the gateway leaves the connection out of every route (the '
     'route''s next deployment / model answers; a request with no other way in stops as a budget stop). false = alert only.';
 COMMENT ON COLUMN shared.llm_connection_cost_policy.usage_secret_name IS
-    'AA-1002 (316): Secrets Manager NAME (aa-llm/<env>/<name>) of a read-only usage key (Anthropic Admin API key, '
+    'AA-1002 (317): Secrets Manager NAME (aa-llm/<env>/<name>) of a read-only usage key (Anthropic Admin API key, '
     'OpenAI admin key) for llm_cost_reconcile. NULL = the provider source is not configured.';
 COMMENT ON COLUMN shared.llm_connection_cost_policy.usage_scope_id IS
-    'AA-1002 (316): the provider workspace / project id to reconcile (Anthropic workspace, OpenAI project); NULL = '
+    'AA-1002 (317): the provider workspace / project id to reconcile (Anthropic workspace, OpenAI project); NULL = '
     'the whole organisation.';
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON shared.llm_connection_cost_policy TO cis_app;
@@ -111,24 +111,24 @@ CREATE TABLE IF NOT EXISTS shared.llm_cost_reconcile (
 CREATE INDEX IF NOT EXISTS llm_cost_reconcile_day_idx ON shared.llm_cost_reconcile (day DESC);
 
 COMMENT ON TABLE shared.llm_cost_reconcile IS
-    'AA-1002 (CIS 316, gateway slice S10): nightly reconciliation of one LLM connection and UTC day: the cost '
+    'AA-1002 (CIS 317, gateway slice S10): nightly reconciliation of one LLM connection and UTC day: the cost '
     'shared.llm_call_log logged (account = connection_key) next to the provider''s own figure. Upserted by job kind '
     'llm_cost_reconcile (a later run of the same day replaces the row). Retention: 400 days, pruned by that job.';
 COMMENT ON COLUMN shared.llm_cost_reconcile.source IS
-    'AA-1002 (316): anthropic_cost_report (Admin API cost report), openai_costs (OpenAI organization costs), '
+    'AA-1002 (317): anthropic_cost_report (Admin API cost report), openai_costs (OpenAI organization costs), '
     'aws_cost_explorer (the stored shared.cost_explorer_snapshot, Bedrock services of the connection''s account), none.';
 COMMENT ON COLUMN shared.llm_cost_reconcile.status IS
-    'AA-1002 (316): ok / mismatch (|diff| above the tolerance) / not_configured (no usage key) / unsupported (no '
+    'AA-1002 (317): ok / mismatch (|diff| above the tolerance) / not_configured (no usage key) / unsupported (no '
     'source for this kind) / no_data (the source has no figure for the day yet) / error (the source failed).';
 COMMENT ON COLUMN shared.llm_cost_reconcile.diff_usd IS
-    'AA-1002 (316): logged_usd - provider_usd (positive = our ledger says more than the provider billed).';
+    'AA-1002 (317): logged_usd - provider_usd (positive = our ledger says more than the provider billed).';
 COMMENT ON COLUMN shared.llm_cost_reconcile.job_id IS
-    'AA-1002 (316): the llm_cost_reconcile job that wrote the row (no FK: job rows expire under their own retention).';
+    'AA-1002 (317): the llm_cost_reconcile job that wrote the row (no FK: job rows expire under their own retention).';
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON shared.llm_cost_reconcile TO cis_app;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('316', now(), 'AA-1002 S10: shared.llm_connection_cost_policy + shared.llm_cost_reconcile (budget per connection, nightly reconcile)')
+VALUES ('317', now(), 'AA-1002 S10: shared.llm_connection_cost_policy + shared.llm_cost_reconcile (budget per connection, nightly reconcile)')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;
