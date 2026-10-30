@@ -2237,6 +2237,17 @@ off / shadow / repair / hold, default off): shadow records candidates in `writer
 `quality_gates.never_holds` keeps an `sa:`-only result from holding unless its class is in
 `seed_align.modes.HOLD_PROMOTED` (empty: a promotion PR with shadow evidence, only the four fact classes). With every
 class off the ledger is byte for byte what it was.
+AA-1000 (tier 2) — **adjudicator** (`seed_align/adjudicate.py`): one LLM call per attempt (stage `t10_adjudicate`,
+role judge, GPT-6 Luna on acc3, one `llm_call_log` row per reply) over the sentences tier 1 triggered on but left
+alone (deterministic spaCy-free triggers; tier 1 must have run cleanly this attempt; ≤ 6 sentences), each with a seed
+excerpt, for four forms tier 1 cannot reach: paraphrased naming note (F13_leak), implicit-subject repeat (F13_repeat),
+open WHAT / WHY / HOW FAQ answer that does not answer (F13_repeat; answers of 2+ sentences only), hype such as "hard to
+overstate" (F18_rarity). A VIOLATION counts only when its piece quote is in the sentence and its seed quote in the
+excerpt and the seed. Modes `T10_ADJ_MODE` / `T10_ADJ_MODE_<CLASS>`: off (default; no call) / shadow (recorded in
+`writer_input.seed_align[*].tier2`) / repair (at most ONE `sa:t2.<class>: …` finding per attempt → that gate's
+sentence repair or cut); any other value is off. It never holds (`t2.` classes are never hold-capable); any model
+error or the 60 s deadline changes nothing; a $0 replay (`f9_results`) calls nothing. Offline calibration:
+`scripts/aa1000_adjudicate_calibrate.py` (hard cap $5).
 S245 (AA-779) — **FAQ from People Also Ask, every answer names its subject.** The request's
 `dfs_paa_snapshot.people_also_ask` (per tour) rides in the T9 context; the job keeps the questions of the
 piece's own places (`quality_gates.paa_for_scope`: no out-of-scope place, no topic the source cannot answer,

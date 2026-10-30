@@ -77,6 +77,7 @@ Change a prompt, a model or a route only with an eval run ID in the PR. The proc
 | `t9_faq_answer_fit` | `t9_faq_answer_fit` | validate | `services/acp_content_writing/faq_answer_fit.py` · `SYSTEM_PROMPT`, `ISOLATED_SYSTEM_PROMPT`, `build_user_prompt` | git | Q0 |
 | `t10_judge.f9` | `t10_judge` | judge | `services/acp_content_writing/quality_gates.py` · `_JUDGE_SYSTEM_PROMPT`, `F9_PROMPT_VERSION` | `F9_PROMPT_VERSION` constant, in `quality_signal.prompt_version` | Q2 (when F9 changes), R0 |
 | `t10_claims` | `t10_claims` | validate | `services/acp_content_writing/claim_rules.py` · `EXTRACTION_SYSTEM` | git | Q0, R0 |
+| `t10_adjudicate` | `t10_adjudicate` | judge | `services/acp_content_writing/seed_align/adjudicate.py` · `SYSTEM_PROMPT`, `SCHEMA`, `build_user_prompt` | git | AA-789 eval set via `scripts/aa1000_adjudicate_calibrate.py` (not run yet; $5 hard cap) |
 | `supply_content_writer` | `supply_content_writer` | writer | `services/supply_content/writer.py` · `SYSTEM_PROMPT`, `user_prompt` | git | none |
 | `writing_memory_mine` | `writing_memory_mine` | judge | `services/writing_memory/drafter.py` · `SYSTEM_PROMPT`, `build_user_prompt` | git | none (rules go through L0 and R2 before release) |
 | `writing_memory_eval` | `writing_memory_eval` | judge | `services/writing_memory/eval_judge.py` · `system_prompt`, `build_user_prompt`, `judge_version` | `judge_version()` (sha12), in `prompt_eval_runs.prompt_version` and each result's `judge_version` | Calibration against the golden labels in every R2 run (Cohen's kappa >= 0.6) |

@@ -129,6 +129,11 @@ SAFE_DEFAULTS: dict[str, StageConfig] = {
                                       fallback_model_ids=("sonnet",)),
     "t10_claims":         StageConfig("t10_claims", "validate", "openai", "gpt-6-luna", "acc3",
                                       fallback_model_ids=("gpt-5.6-luna",)),
+    # AA-1000 (migration 309): the T10 tier-2 adjudicator (services/acp_content_writing/seed_align/adjudicate.py,
+    # env T10_ADJ_MODE, default off). It scores the writer's sentences → `judge` (ADR 0008), non-Anthropic; on the
+    # cheapest catalog model (GPT-6 Luna, acc3), GPT-5.6 Luna next, the OpenAI API only as the last resort (S235).
+    "t10_adjudicate":     StageConfig("t10_adjudicate", "judge", "openai", "gpt-6-luna", "acc3",
+                                      fallback_model_ids=("gpt-5.6-luna", "gpt-6-luna-openai")),
     # AA-779 (S247, migration 264, ADR 0011): the optional LLM filter of the blog FAQ's real search questions
     # (flag T9_FAQ_LLM_FILTER, default off). A classification nobody scores → `validate` (ADR 0008), on the
     # Haiku the S247 trial measured; no model fallback (on failure the code keeps the deterministic list).
