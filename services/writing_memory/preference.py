@@ -183,7 +183,7 @@ def _generate_sync(user_prompt: str):
 async def draft_summary(pool, *, user_prompt: str, cluster_key: str, tenant_id: str) -> tuple[dict, str, float]:
     """One judge-route call through the Model Gateway; its llm_call_log row (or billed_unusable row) is written before
     it returns / raises. (parsed reply, model, cost)."""
-    from shared.llm_client.call_log import record_call_with_pool, record_unusable
+    from shared.llm_client.call_log import billed_fields, record_call_with_pool, record_unusable
     resp = await asyncio.to_thread(_generate_sync, user_prompt)
     signal = {"app": "cis", "issue": "AA-921", "cluster_key": cluster_key[:200], "kind": KIND}
     try:
@@ -199,7 +199,7 @@ async def draft_summary(pool, *, user_prompt: str, cluster_key: str, tenant_id: 
                                                 "none": d["summary"].upper() == "NONE"},
         stop_reason=getattr(resp, "stop_reason", None), account=getattr(resp, "satellite_account", None),
         fallback_used=getattr(resp, "fallback_used", None), provider=getattr(resp, "provider", None),
-        tenant_id=tenant_id)
+        tenant_id=tenant_id, **billed_fields(resp))
     return d, resp.model_used, float(resp.cost_usd or 0.0)
 
 
