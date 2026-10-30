@@ -16,17 +16,17 @@ from services.places import locate
 class _Conn:
     """Records every statement; `fetch` answers the canned rows, `execute` answers per-id UPDATE counts."""
 
-    def __init__(self, rows=None, changed=(), current=None):
+    def __init__(self, rows=None, changed=(), current=None, report=None):
         self.rows, self.changed = rows or [], set(changed)
         self.sql, self.fetch_args = [], []
-        self.current = current
+        self.current, self.report = current, report
 
     async def fetch(self, sql, *a):
         self.fetch_args.append((" ".join(sql.split()), a))
         return self.rows
 
     async def fetchrow(self, sql, *a):
-        return self.current
+        return self.report if "FROM shared.job" in sql else self.current
 
     async def execute(self, sql, *a):
         flat = " ".join(sql.split())
@@ -66,6 +66,13 @@ ROWS = [_row(1), _row(2, outcome="off_route", reason="off_route"), _row(3, "Indi
         _row(4, "India", linked=False, v="aa997.1"), _row(5, "Japan")]
 
 
+async def _report_of(rows, *, outcomes=("llm_point", "off_route"), status="succeeded", age_s=60.0, **kw):
+    """The report job a confirm names: a hide_flagged report run over `rows` (what the job stores as its result)."""
+    from services.places import relocate
+    res = await relocate.hide_flagged(_Pool(_Conn(rows)), outcomes=list(outcomes), confirm=False, **kw)
+    return {"id": "rep-1", "status": status, "result": json.dumps(res), "age_s": age_s}
+
+
 @pytest.fixture
 def no_lock(monkeypatch):
     from services.places import store
@@ -102,7 +109,9 @@ def test_a_restored_row_is_one_a_person_unhid_and_no_relocate_judged_since():
     frag = " ".join(relocate._RESTORED_TPL.format(t="d.").split())
     assert "(d.geocoder_meta -> 'hidden' ->> 'unhidden_at') IS NOT NULL" in frag
     # a relocate reveal ('relocate:confirmed') is not a person's restore
-    assert "coalesce(d.geocoder_meta -> 'hidden' ->> 'unhidden_by', '') NOT LIKE 'relocate:%'" in frag
+    # only an explicit restore ('restore:<actor>') is sticky: a bulk unhide ('unhide:<actor>') and a relocate reveal
+    # ('relocate:confirmed') are not
+    assert "coalesce(d.geocoder_meta -> 'hidden' ->> 'unhidden_by', '') LIKE 'restore:%'" in frag
     # a relocate stamp newer than the restore is a new judgement: the row may be hidden again
     assert ("(d.geocoder_meta -> 'relocate' ->> 'at')::timestamptz <= (d.geocoder_meta -> 'hidden' ->> "
             "'unhidden_at')::timestamptz") in frag
@@ -135,37 +144,55 @@ async def test_the_report_counts_per_country_and_writes_nothing(no_lock):
     assert [s["country"] for s in out["samples"][:3]] == ["India", "Japan", "Nepal"]
     assert set(out["samples"][0]) >= {"id", "name", "country", "outcome", "reason", "lat", "lng", "linked"}
     args = conn.fetch_args[0][1]
-    assert args == (["llm_point", "off_route"], ["aa997.2"], "aa997.3", list(relocate.LOCATED_BY_ALLOWED), None)
+    assert args == (["llm_point", "off_route"], ["aa997.2"], "aa997.3", ["llm"], None)     # located_by default llm
+    assert out["located_by"] == ["llm"]
+    # what a confirm may hide: the sorted ids, a digest each (restored rows excluded)
+    assert out["ids"] == sorted(r["id"] for r in ROWS) and len(out["row_digests"]) == 5
+    assert out["row_digests"][0] == relocate._row_digest(ROWS[0])
+
+
+@pytest.mark.asyncio
+async def test_the_selection_takes_the_requested_located_by(no_lock):
+    from services.places import relocate
+    conn = _Conn([_row(1, located_by="mapbox")])
+    out = await relocate.hide_flagged(_Pool(conn), outcomes=["llm_point"], located_by=["mapbox", "llm", "manual"])
+    assert conn.fetch_args[0][1][3] == ["llm", "mapbox"] and out["located_by"] == ["llm", "mapbox"]
+    conn = _Conn([])
+    await relocate.hide_flagged(_Pool(conn), outcomes=["llm_point"], located_by=["mapbox"])
+    assert conn.fetch_args[0][1][3] == ["mapbox"]
 
 
 @pytest.mark.asyncio
 async def test_confirm_hides_each_unchanged_row_with_a_stamp_and_an_audit_row(no_lock):
     from services.places import relocate
-    conn = _Conn(ROWS, changed={ROWS[1]["id"]})        # row 2 changed since the report: not hidden
+    conn = _Conn(ROWS, changed={ROWS[1]["id"]}, report=await _report_of(ROWS))  # row 2 changed meanwhile: kept
     out = await relocate.hide_flagged(_Pool(conn), outcomes=["llm_point", "off_route"], country=None, confirm=True,
-                                      max_rows=5, actor="admin:u1", job_id="job-9")
+                                      dry_run_job="rep-1", max_rows=5, actor="admin:u1", job_id="job-9")
     assert out["hidden"] == 4 and out["changed_since_report"] == 1 and out["audit_rows"] == 1
+    assert out["dropped_ids"] == [ROWS[1]["id"]] and out["new_since_report"] == 0
     hides = conn.of("UPDATE shared.destinations SET geo_status = 'suspect'")
     assert len(hides) == 5
     rid, stamp, reason, outcome, located_by = hides[0]
     stamp = json.loads(stamp)
     assert stamp["by"] == relocate.HIDE_FLAGGED_STAMP and stamp["job"] == "job-9" and stamp["actor"] == "admin:u1"
     assert stamp["reason"] == reason == ROWS[0]["review_reason"] and stamp["outcome"] == outcome == "llm_point"
-    assert stamp["stamp_v"] == "aa997.2" and located_by == "llm"
+    assert stamp["stamp_v"] == "aa997.2" and located_by == "llm" and stamp["report"] == "rep-1"
     assert len(conn.of("UPDATE geo.place_name SET status = 'suspect'")) == 4      # only the rows hidden
     audit = [a for s, a in conn.sql if "acp_shared.audit_log" in s]
     assert len(audit) == 1
     details = json.loads(next(x for x in audit[0] if isinstance(x, str) and x.startswith("{")))
     assert details["hidden"] == 4 and ROWS[1]["id"] not in details["destination_ids"]
     assert details["outcomes"] == ["llm_point", "off_route"] and details["job"] == "job-9"
+    assert details["dry_run_job"] == "rep-1" and details["located_by"] == ["llm"]
 
 
 @pytest.mark.asyncio
 async def test_confirm_writes_one_audit_row_per_batch(no_lock, monkeypatch):
     from services.places import relocate
     monkeypatch.setattr(relocate, "HIDE_BATCH", 2)
-    conn = _Conn(ROWS)
-    out = await relocate.hide_flagged(_Pool(conn), outcomes=["llm_point"], country=None, confirm=True)
+    conn = _Conn(ROWS, report=await _report_of(ROWS, outcomes=["llm_point"]))
+    out = await relocate.hide_flagged(_Pool(conn), outcomes=["llm_point"], country=None, confirm=True,
+                                      dry_run_job="rep-1", max_rows=5)
     assert out["hidden"] == 5 and out["audit_rows"] == 3
 
 
@@ -173,19 +200,96 @@ async def test_confirm_writes_one_audit_row_per_batch(no_lock, monkeypatch):
 async def test_confirm_never_hides_a_restored_row(no_lock):
     from services.places import relocate
     restored = {**_row(6, "Laos"), "restored": True}
-    conn = _Conn(ROWS + [restored])
-    out = await relocate.hide_flagged(_Pool(conn), outcomes=["llm_point"], country=None, confirm=True, max_rows=5)
+    conn = _Conn(ROWS + [restored], report=await _report_of(ROWS + [restored], outcomes=["llm_point"]))
+    out = await relocate.hide_flagged(_Pool(conn), outcomes=["llm_point"], country=None, confirm=True,
+                                      dry_run_job="rep-1", max_rows=5)
     assert out["hidden"] == 5 and out["restored_skipped"] == 1 and "status" not in out
     hides = conn.of("UPDATE shared.destinations SET geo_status = 'suspect'")
     assert restored["id"] not in [h[0] for h in hides]
 
 
 @pytest.mark.asyncio
-async def test_confirm_refuses_when_the_selection_grew_since_the_report(no_lock):
+async def test_confirm_hides_only_the_reported_rows_same_count_different_rows(no_lock):
+    """The report saw rows 1, 2, 3; by the confirm row 1 left the selection (fixed) and row 4 entered it (the chain
+    stamped it): the same count, other rows. Only 2 and 3 are hidden; 1 is dropped, 4 is never written."""
     from services.places import relocate
-    conn = _Conn(ROWS)
-    out = await relocate.hide_flagged(_Pool(conn), outcomes=["llm_point"], country=None, confirm=True, max_rows=3)
-    assert out["status"] == "refused_selection_grew" and out["hidden"] == 0 and conn.sql == []
+    reported = [_row(1), _row(2), _row(3)]
+    now = [_row(2), _row(3), _row(4)]
+    conn = _Conn(now, report=await _report_of(reported))
+    out = await relocate.hide_flagged(_Pool(conn), outcomes=["llm_point", "off_route"], confirm=True,
+                                      dry_run_job="rep-1", max_rows=3)
+    hides = [h[0] for h in conn.of("UPDATE shared.destinations SET geo_status = 'suspect'")]
+    assert hides == [_row(2)["id"], _row(3)["id"]] and out["hidden"] == 2
+    assert out["dropped_ids"] == [_row(1)["id"]] and out["new_since_report"] == 1 and "status" not in out
+    # a reported row whose reason (a digest field) changed since is dropped too, not hidden
+    conn = _Conn([_row(2), {**_row(3), "review_reason": "off_route"}], report=await _report_of(reported))
+    out = await relocate.hide_flagged(_Pool(conn), outcomes=["llm_point", "off_route"], confirm=True,
+                                      dry_run_job="rep-1", max_rows=3)
+    assert [h[0] for h in conn.of("UPDATE shared.destinations SET geo_status = 'suspect'")] == [_row(2)["id"]]
+    assert out["dropped_ids"] == [_row(1)["id"], _row(3)["id"]] and out["changed_since_report"] == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kw, report_kw, status", [
+    ({"dry_run_job": None, "max_rows": 5}, {}, "refused_no_report"),
+    ({"dry_run_job": "rep-1", "max_rows": None}, {}, "refused_no_report"),
+    ({"dry_run_job": "rep-1", "max_rows": 5}, {"age_s": 7 * 3600.0}, "refused_report_stale"),
+    ({"dry_run_job": "rep-1", "max_rows": 5}, {"status": "running"}, "refused_report_pending"),
+    ({"dry_run_job": "rep-1", "max_rows": 5}, {"status": "failed"}, "refused_report_failed"),
+    ({"dry_run_job": "rep-1", "max_rows": 4}, {}, "refused_report_row_count_differs"),
+    ({"dry_run_job": "rep-1", "max_rows": 5, "located_by": ["mapbox"]}, {}, "refused_report_selection_differs"),
+    ({"dry_run_job": "rep-1", "max_rows": 5, "country": "India"}, {}, "refused_report_selection_differs"),
+])
+async def test_a_confirm_without_a_fresh_report_of_its_selection_is_refused(no_lock, kw, report_kw, status):
+    from services.places import relocate
+    conn = _Conn(ROWS, report=await _report_of(ROWS, **report_kw))
+    out = await relocate.hide_flagged(_Pool(conn), outcomes=["llm_point", "off_route"], confirm=True, **kw)
+    assert out["status"] == status and out["hidden"] == 0 and conn.sql == []
+
+
+@pytest.mark.asyncio
+async def test_a_report_job_that_is_missing_or_not_a_report_refuses(no_lock):
+    from services.places import relocate
+    sel = relocate.hide_flagged_selection(outcomes=None, stamp_versions=[], stamp_accept=None, located_by=None,
+                                          country=None)
+    assert relocate.check_hide_flagged_report(None, sel) == "no_report"
+    confirm_job = {"status": "succeeded", "age_s": 1.0, "result": {"mode": "hide_flagged", "confirm": True}}
+    assert relocate.check_hide_flagged_report(confirm_job, sel) == "not_a_report"
+    old = {"status": "succeeded", "age_s": 1.0, "result": {"mode": "hide_flagged", "outcomes": sel["outcomes"],
+                                                           "located_by": ["llm"], "rows": 3}}
+    assert relocate.check_hide_flagged_report(old, sel) == "report_without_ids"     # a report before the id list
+
+
+@pytest.mark.asyncio
+async def test_a_report_too_large_lists_no_ids(no_lock, monkeypatch):
+    from services.places import relocate
+    monkeypatch.setattr(relocate, "MAX_REPORT_IDS", 3)
+    out = await relocate.hide_flagged(_Pool(_Conn(ROWS)), outcomes=["llm_point"])
+    assert "ids" not in out and out["ids_omitted"] and out["rows"] == 5
+
+
+# ── plain hide (reason-based) ────────────────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_plain_hide_skips_restored_rows_and_writes_an_audit_row_per_batch(no_lock, monkeypatch):
+    from services.places import relocate
+    monkeypatch.setattr(relocate, "HIDE_BATCH", 2)
+    rows = [{"id": f"h{i}", "name": f"P{i}", "country": "Nepal", "review_reason": "llm_point", "located_by": "llm",
+             "restored": i == 3} for i in range(1, 5)]
+    conn = _Conn(rows)
+    out = await relocate.hide(_Pool(conn), reasons=["llm_point"], country=None, confirm=False)
+    assert out["rows"] == 3 and out["restored_skipped"] == 1 and conn.sql == []
+    out = await relocate.hide(_Pool(conn), reasons=["llm_point"], country=None, confirm=True, actor="admin:u1",
+                              job_id="job-3")
+    hides = conn.of("UPDATE shared.destinations SET geo_status = 'suspect'")
+    assert [h[0] for h in hides] == ["h1", "h2", "h4"] and out["hidden"] == 3 and out["audit_rows"] == 2
+    rid, stamp, reason = hides[0]
+    assert reason == "llm_point" and json.loads(stamp)["actor"] == "admin:u1" and json.loads(stamp)["job"] == "job-3"
+    audit = [a for s, a in conn.sql if "acp_shared.audit_log" in s]
+    assert len(audit) == 2 and any(x == relocate.AUDIT_HIDE_POLICY for x in audit[0])
+    sql = " ".join(relocate._HIDE_ROW_SQL.split())
+    assert "review_reason IS NOT DISTINCT FROM $3" in sql and "LIKE 'restore:%'" in sql
+    assert "AS restored" in relocate._HIDE_CANDIDATES_SQL
 
 
 # ── unhide ───────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -200,15 +304,18 @@ async def test_unhide_reverts_by_stamp_or_by_id_and_is_audited(no_lock):
     assert out["unhidden"] == 2 and out["kept_reason_changed"] == 0 and out["restored_reason_changed"] == 1
     assert out["by"] == ["aa997.3-flagged"] and out["destination_ids"] == 2 and out["audit_rows"] == 1
     assert conn.fetch_args[0][1] == (["aa997.3-flagged"], "Nepal", ["d1", "d2"])
-    rid, at, who, explicit = conn.of("UPDATE shared.destinations")[0]
-    assert rid == "d1" and at and who == "admin:u1:job-7" and explicit is True
-    assert "'{hidden,unhidden_by}'" in relocate._UNHIDE_ROW_SQL
+    rid, at, who, explicit, job = conn.of("UPDATE shared.destinations")[0]
+    # an explicit id restore is a person's restore: sticky ('restore:'), the job kept next to it
+    assert rid == "d1" and at and who == "restore:admin:u1" and explicit is True and job == "job-7"
+    assert "'unhidden_by', $3::text" in relocate._UNHIDE_ROW_SQL
     assert "($4::bool OR review_reason IS NOT DISTINCT FROM" in " ".join(relocate._UNHIDE_ROW_SQL.split())
     # by stamp: a row another path flagged since keeps its state
     conn = _Conn([{"id": "d1", "same_reason": True}, {"id": "d2", "same_reason": False}])
-    out = await relocate.unhide(_Pool(conn), country=None, by=["aa997.3-flagged"])
+    out = await relocate.unhide(_Pool(conn), country=None, by=["aa997.3-flagged"], actor="admin:u1")
     assert out["unhidden"] == 1 and out["kept_reason_changed"] == 1 and out["restored_reason_changed"] == 0
     assert [a[3] for a in conn.of("UPDATE shared.destinations")] == [False]
+    assert conn.of("UPDATE shared.destinations")[0][2] == "unhide:admin:u1"      # a bulk unhide is not sticky
+    assert "d.duplicate_of IS NULL" in relocate._UNHIDE_ROWS_SQL
     assert "d.id = ANY($3::uuid[])" in relocate._UNHIDE_ROWS_SQL
     assert "= ANY($1::text[])" in relocate._UNHIDE_ROWS_SQL
     # all policy stamps by default, every row
@@ -320,6 +427,7 @@ def test_job_payload_of_hide_flagged_and_unhide():
                       "stamp_accept": "aa997.3", "confirm": True, "max_rows": "812", "country": "India"})
     assert p["mode"] == "hide_flagged" and p["outcomes"] == ["off_route"] and p["stamp_versions"] == ["aa997.2"]
     assert p["stamp_accept"] == "aa997.3" and p["confirm"] is True and p["max_rows"] == 812
+    assert job._payload({"mode": "hide_flagged", "dry_run_job": "rep-1"})["dry_run_job"] == "rep-1"
     assert job._payload({"mode": "hide_flagged", "confirm": True, "max_rows": "x"})["max_rows"] == 0
     assert job._payload({"mode": "hide_flagged"})["outcomes"] == ["llm_point", "off_route"]
     u = job._payload({"mode": "unhide", "by": ["aa997.3-flagged"], "destination_ids": ["a", "", "b"]})
@@ -345,20 +453,39 @@ async def test_job_runs_hide_flagged_without_a_geocoder_and_rebuilds_the_graph(m
     monkeypatch.setattr(job, "get_geocoder", MagicMock(side_effect=AssertionError("no geocoder for a hide")))
     ctx = MagicMock()
     ctx.job_id, ctx.job.created_by = "job-5", "admin:u1"
-    ctx.payload = {"mode": "hide_flagged", "confirm": True, "max_rows": 3}
+    ctx.payload = {"mode": "hide_flagged", "confirm": True, "max_rows": 3, "dry_run_job": "rep-1",
+                   "located_by": ["mapbox"]}
     out = await job.run(ctx)
     assert out["graph_job"] == "graph-1" and graphs == [job.GRAPH_KIND]
     assert seen["actor"] == "admin:u1" and seen["job_id"] == "job-5" and seen["max_rows"] == 3 and seen["confirm"]
+    assert seen["dry_run_job"] == "rep-1" and seen["located_by"] == ["mapbox"]
+    # a confirm that hid nothing now (a retry after a crash between batches) still queues the graph rebuild
+    seen.clear()
+    monkeypatch.setattr(relocate, "hide_flagged", AsyncMock(side_effect=lambda pool, **kw: {"mode": "hide_flagged",
+                                                                                           "hidden": 0}))
+    assert (await job.run(ctx))["graph_job"] == "graph-1" and len(graphs) == 2
+    # a report writes nothing: no rebuild
+    ctx.payload = {"mode": "hide_flagged"}
+    assert "graph_job" not in await job.run(ctx) and len(graphs) == 2
 
 
 # ── endpoint ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 class _AdminConn:
-    def __init__(self, last):
-        self.last = last
+    def __init__(self, last, apply=None):
+        self.last, self.apply = last, apply
 
     async def fetchrow(self, sql, *a):
+        if "'apply'" in sql:
+            return self.apply
         return self.last if "'hide_flagged'" in sql else None
+
+
+def _report_job(*, status="succeeded", age_s=60.0, **res):
+    base = {"mode": "hide_flagged", "outcomes": ["llm_point", "off_route"], "stamp_versions": [],
+            "stamp_accept": None, "located_by": ["llm"], "country": "India", "rows": 3, "ids": ["a", "b", "c"],
+            "row_digests": ["1", "2", "3"]}
+    return {"id": "rep-2", "status": status, "age_s": age_s, "result": json.dumps({**base, **res})}
 
 
 @pytest.mark.asyncio
@@ -383,20 +510,29 @@ async def test_endpoint_confirm_needs_the_report_of_the_same_selection(monkeypat
     assert out["job_id"] == "job-1" and queued[-1]["confirm"] is False
     assert queued[-1]["outcomes"] == ["llm_point", "off_route"] and "max_rows" not in queued[-1]
     body = admin_places.RelocateRequest(mode="hide_flagged", confirm=True, country="India")
-    with pytest.raises(HTTPException) as e:
-        await admin_places.relocate_run(body, request, x_admin_secret="s")
-    assert e.value.status_code == 409
-    other = {"id": "rep-1", "result": json.dumps({"mode": "hide_flagged", "outcomes": ["llm_point", "off_route"],
-                                                  "stamp_versions": [], "country": "Nepal", "rows": 9})}
-    request.app.state.pool = _Pool(_AdminConn(other))
-    with pytest.raises(HTTPException):                 # a report of another country
-        await admin_places.relocate_run(body, request, x_admin_secret="s")
-    same = {"id": "rep-2", "result": json.dumps({"mode": "hide_flagged", "outcomes": ["llm_point", "off_route"],
-                                                 "stamp_versions": [], "stamp_accept": None, "country": "India",
-                                                 "rows": 812})}
-    request.app.state.pool = _Pool(_AdminConn(same))
+
+    async def refused(last, apply=None, b=body):
+        request.app.state.pool = _Pool(_AdminConn(last, apply))
+        with pytest.raises(HTTPException) as e:
+            await admin_places.relocate_run(b, request, x_admin_secret="s")
+        assert e.value.status_code == 409
+        return e.value.detail
+    assert (await refused(None))["reason"] == "no_report"
+    assert (await refused(_report_job(country="Nepal")))["reason"] == "report_selection_differs"
+    assert (await refused(_report_job(status="queued")))["reason"] == "report_pending"
+    assert (await refused(_report_job(age_s=7 * 3600.0)))["reason"] == "report_stale"
+    assert (await refused(_report_job(ids=None)))["reason"] == "report_without_ids"
+    # located_by is part of the selection: a report of llm rows does not back a confirm of mapbox rows
+    mapbox = admin_places.RelocateRequest(mode="hide_flagged", confirm=True, country="India", located_by=["mapbox"])
+    assert (await refused(_report_job(), b=mapbox))["reason"] == "report_selection_differs"
+    # an open apply (any rule version) keeps stamping rows: no confirm meanwhile
+    assert (await refused(_report_job(), apply={"id": "apply-1"}))["apply_job"] == "apply-1"
+    n = len(queued)
+    request.app.state.pool = _Pool(_AdminConn(_report_job()))
     await admin_places.relocate_run(body, request, x_admin_secret="s")
-    assert queued[-1]["max_rows"] == 812 and queued[-1]["dry_run_job"] == "rep-2" and queued[-1]["confirm"] is True
+    assert len(queued) == n + 1
+    assert queued[-1]["max_rows"] == 3 and queued[-1]["dry_run_job"] == "rep-2" and queued[-1]["confirm"] is True
+    assert queued[-1]["located_by"] == ["llm"]
 
 
 def test_request_validation_of_the_new_fields():
