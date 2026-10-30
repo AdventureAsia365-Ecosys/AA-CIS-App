@@ -14,8 +14,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Ban, CheckCircle, Filter, RotateCcw, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { A, mono, sans, Btn } from "../_components/adminUi";
 import {
+  K, mono, sans,
+  Button,
   Badge,
   type ColumnDef,
   DataTable,
@@ -24,7 +25,7 @@ import {
   StatusBadge,
   ToastProvider,
   useAdminIdentity,
-  useToast, AdminMain,
+  useToast, PageFrame,
   useLang,
   useT,
 } from "../../_kit";
@@ -63,7 +64,7 @@ function ensureReviewerId(prompt: string) {
 
 // ── Reason chips (color-coded by failure nature) ──────────────────────────────
 function ReasonChips({ codes }: { codes: string[] }) {
-  if (!codes.length) return <span style={{ fontSize: 11, color: A.muted2 }}>—</span>;
+  if (!codes.length) return <span style={{ fontSize: 11, color: K.muted2 }}>—</span>;
   const shown = codes.slice(0, 3);
   const extra = codes.length - shown.length;
   return (
@@ -89,17 +90,17 @@ function ReasonChips({ codes }: { codes: string[] }) {
           </span>
         );
       })}
-      {extra > 0 && <span style={{ fontSize: 10.5, color: A.muted }}>+{extra}</span>}
+      {extra > 0 && <span style={{ fontSize: 10.5, color: K.muted }}>+{extra}</span>}
     </div>
   );
 }
 
 const selectStyle: React.CSSProperties = {
   padding: "7px 14px",
-  background: A.card,
-  border: `1px solid ${A.line}`,
+  background: K.card,
+  border: `1px solid ${K.line}`,
   borderRadius: 8,
-  color: A.body,
+  color: K.body,
   fontSize: 13,
   fontFamily: sans,
   cursor: "pointer",
@@ -257,7 +258,7 @@ function ReviewQueueInner() {
               title={c.row.original.name}
               style={{
                 fontWeight: 600,
-                color: A.ink,
+                color: K.ink,
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
@@ -269,7 +270,7 @@ function ReviewQueueInner() {
           </div>
         ),
       },
-      { accessorKey: "country", header: t("colCountry"), cell: (c) => <span style={{ color: A.muted }}>{c.row.original.country}</span> },
+      { accessorKey: "country", header: t("colCountry"), cell: (c) => <span style={{ color: K.muted }}>{c.row.original.country}</span> },
       {
         accessorKey: "version_num",
         header: t("colVersion"),
@@ -277,13 +278,13 @@ function ReviewQueueInner() {
           c.row.original.version_num != null ? (
             <Badge tone="info">v{c.row.original.version_num}</Badge>
           ) : (
-            <span style={{ color: A.muted2 }}>—</span>
+            <span style={{ color: K.muted2 }}>—</span>
           ),
       },
       {
         accessorKey: "created_at_ms",
         header: t("colWritten"),
-        cell: (c) => <span style={{ color: A.muted, fontSize: 12 }}>{c.row.original.date || "—"}</span>,
+        cell: (c) => <span style={{ color: K.muted, fontSize: 12 }}>{c.row.original.date || "—"}</span>,
       },
       {
         accessorKey: "score",
@@ -295,12 +296,12 @@ function ReviewQueueInner() {
           // block reason in the next column reads as the headline.
           if (kind === "hard" || kind === "needs_human") {
             return (
-              <span style={{ fontFamily: mono, fontSize: 12, color: A.muted2 }} title={t("scoreNotWhy")}>
+              <span style={{ fontFamily: mono, fontSize: 12, color: K.muted2 }} title={t("scoreNotWhy")}>
                 {s.toFixed(1)}
               </span>
             );
           }
-          const col = s >= SCORE_BANDS.pass ? A.green : s >= SCORE_BANDS.low ? A.amber : A.red;
+          const col = s >= SCORE_BANDS.pass ? K.success : s >= SCORE_BANDS.low ? K.amber : K.danger;
           return (
             <span style={{ fontFamily: mono, fontWeight: 700, fontSize: 14, color: col }}>
               {s.toFixed(1)}
@@ -336,7 +337,7 @@ function ReviewQueueInner() {
               <ReasonChips codes={c.row.original.codes} />
               {/* AA-728 — when Regenerate cannot fix this row, tell the reviewer what to do. */}
               {!c.row.original.retryable && c.row.original.hint && (
-                <span style={{ fontSize: 10.5, color: A.muted, lineHeight: 1.4, maxWidth: 360 }}>
+                <span style={{ fontSize: 10.5, color: K.muted, lineHeight: 1.4, maxWidth: 360 }}>
                   {c.row.original.hint}
                 </span>
               )}
@@ -354,7 +355,7 @@ function ReviewQueueInner() {
           const ok = canApprove(item);
           const busy = item.regenerating;
           if (!canAct) {
-            return <span style={{ fontSize: 11.5, color: A.muted }}>{t("viewOnly")}</span>;
+            return <span style={{ fontSize: 11.5, color: K.muted }}>{t("viewOnly")}</span>;
           }
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }} onClick={(e) => e.stopPropagation()}>
@@ -363,10 +364,10 @@ function ReviewQueueInner() {
                   Row 1: Regenerate, only when the server marked the row retryable. Row 2: the
                   always-present Dismiss · Reject · Approve. */}
               {item.retryable && (
-                <Btn variant="primary" size="sm" disabled={busy} onClick={() => setRegenItems([item])}
+                <Button variant="primary" size="sm" disabled={busy} onClick={() => setRegenItems([item])}
                   title={t("regenerateTitle")}>
                   <RotateCcw size={12} /> {t("regenerate")}
-                </Btn>
+                </Button>
               )}
               <div style={{ display: "flex", gap: 6, alignItems: "center", whiteSpace: "nowrap", flexWrap: "nowrap" }}>
                 <button
@@ -376,23 +377,23 @@ function ReviewQueueInner() {
                   aria-label={t("dismiss")}
                   style={{
                     padding: 7,
-                    border: `1px solid ${A.line}`,
+                    border: `1px solid ${K.line}`,
                     borderRadius: 8,
                     background: "none",
                     cursor: busy ? "not-allowed" : "pointer",
-                    color: A.muted,
+                    color: K.muted,
                     display: "flex",
                     opacity: busy ? 0.5 : 1,
                   }}
                 >
                   <Ban size={13} />
                 </button>
-                <Btn variant="danger" size="sm" disabled={busy} onClick={() => setReasonAction({ action: "reject", item })}>
+                <Button variant="danger" size="sm" disabled={busy} onClick={() => setReasonAction({ action: "reject", item })}>
                   {t("reject")}
-                </Btn>
-                <Btn variant={ok ? "primary" : "ghost"} size="sm" disabled={!ok || busy} onClick={() => approveM.mutate(item.id)}>
+                </Button>
+                <Button variant={ok ? "primary" : "ghost"} size="sm" disabled={!ok || busy} onClick={() => approveM.mutate(item.id)}>
                   {t("approve")}
-                </Btn>
+                </Button>
               </div>
             </div>
           );
@@ -418,7 +419,7 @@ function ReviewQueueInner() {
   }
 
   return (
-    <AdminMain>
+    <PageFrame>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}.spin{animation:spin .8s linear infinite}`}</style>
 
       <PageHeader
@@ -432,13 +433,13 @@ function ReviewQueueInner() {
                 fontVariantNumeric: "tabular-nums",
                 fontSize: 22,
                 fontWeight: 600,
-                color: A.gold,
+                color: K.accent,
                 letterSpacing: "-0.02em",
               }}
             >
               {total}
             </div>
-            <div style={{ fontSize: 11, color: A.muted }}>
+            <div style={{ fontSize: 11, color: K.muted }}>
               {filterStatus === "approved" ? t("statusApproved") : filterStatus === "rejected" ? t("statusRejected")
                 : filterStatus === "pending" ? t("statusPending") : t("total")}
             </div>
@@ -456,13 +457,13 @@ function ReviewQueueInner() {
             marginBottom: 16,
             padding: "8px 14px",
             borderRadius: 8,
-            background: A.goldTint,
-            border: `1px solid ${A.gold}`,
+            background: K.accentTint,
+            border: `1px solid ${K.accent}`,
             fontSize: 12,
-            color: A.ink,
+            color: K.ink,
           }}
         >
-          <Filter size={13} style={{ color: A.gold }} />
+          <Filter size={13} style={{ color: K.accent }} />
           <span>
             {t("showingFor")}<strong>{tourFilterName || t("oneSelectedTour")}</strong>{t("only")}
           </span>
@@ -470,13 +471,13 @@ function ReviewQueueInner() {
             onClick={() => { setTourFilter(null); setPageIndex(0); }}
             style={{
               marginLeft: "auto",
-              border: `1px solid ${A.line}`,
+              border: `1px solid ${K.line}`,
               borderRadius: 6,
-              background: A.card,
+              background: K.card,
               cursor: "pointer",
               padding: "4px 10px",
               fontSize: 12,
-              color: A.body,
+              color: K.body,
               display: "inline-flex",
               alignItems: "center",
               gap: 5,
@@ -489,7 +490,7 @@ function ReviewQueueInner() {
 
       {/* Legend */}
       {!isLoading && filtered.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", columnGap: 16, rowGap: 6, alignItems: "center", marginBottom: 12, fontSize: 11, color: A.muted }}>
+        <div style={{ display: "flex", flexWrap: "wrap", columnGap: 16, rowGap: 6, alignItems: "center", marginBottom: 12, fontSize: 11, color: K.muted }}>
           <span style={{ fontWeight: 600 }}>{t("reasonColors")}</span>
           {(["red", "amber", "gray"] as const).map((sev) => (
             <span key={sev} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
@@ -564,9 +565,9 @@ function ReviewQueueInner() {
               <option value="low">{t("low", SCORE_BANDS.low.toFixed(1), (PASS_LINE - 0.1).toFixed(1))}</option>
               <option value="ok">{t("ok", PASS_LINE.toFixed(1))}</option>
             </select>
-            <Btn variant="ghost" size="sm" onClick={() => refetch()}>
+            <Button variant="ghost" size="sm" onClick={() => refetch()}>
               <RotateCcw size={12} className={isFetching ? "spin" : undefined} /> {t("refresh")}
-            </Btn>
+            </Button>
           </div>
         }
         onRowClick={(row) => setEditorItem(row)}
@@ -578,7 +579,7 @@ function ReviewQueueInner() {
           const skipped = selectedRows.length - retryable.length;
           const noneRetryable = retryable.length === 0;
           return (
-            <Btn
+            <Button
               variant="primary"
               size="sm"
               disabled={noneRetryable}
@@ -599,7 +600,7 @@ function ReviewQueueInner() {
             >
               <RotateCcw size={12} /> {t("regenSelected")}
               {skipped > 0 ? ` (${retryable.length})` : ""}
-            </Btn>
+            </Button>
           );
         }}
       />
@@ -640,10 +641,10 @@ function ReviewQueueInner() {
 
       {!isLoading && filtered.length === 0 && !isError && (
         <div style={{ textAlign: "center", padding: "20px 0" }}>
-          <CheckCircle size={32} style={{ margin: "0 auto 8px", color: A.green, display: "block" }} />
+          <CheckCircle size={32} style={{ margin: "0 auto 8px", color: K.success, display: "block" }} />
         </div>
       )}
-    </AdminMain>
+    </PageFrame>
   );
 }
 

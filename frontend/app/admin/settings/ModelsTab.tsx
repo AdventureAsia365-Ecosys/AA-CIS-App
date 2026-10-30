@@ -14,8 +14,9 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle } from "lucide-react";
-import { A, mono, Card, SLabel, Btn, Spinner, LoadingScreen } from "../_components/adminUi";
+import { A, mono, Card, SLabel, Spinner, LoadingScreen } from "../_components/adminUi";
 import {
+  Button,
   Badge,
   ConfirmModal,
   Tabs,
@@ -194,10 +195,10 @@ function ModelRow({ row }: { row: StageConfigRow }) {
           <span style={{ fontSize: 10.5, color: A.muted2 }}>
             {row.updated_at ? formatDateTime(row.updated_at) : "—"} · {row.updated_by}
           </span>
-          <Btn variant="secondary" size="sm" disabled={!dirty || saving} onClick={() => setConfirming(true)}>
+          <Button variant="secondary" size="sm" disabled={!dirty || saving} onClick={() => setConfirming(true)}>
             {saving ? <Spinner size={12} /> : null}
             {saving ? t("saving") : t("save")}
-          </Btn>
+          </Button>
         </div>
       </div>
 
@@ -298,7 +299,7 @@ function StagesSubTab() {
     return (
       <Card style={{ textAlign: "center", padding: 40 }}>
         <div style={{ color: A.red, marginBottom: 12 }}>{t("loadConfigError")}</div>
-        <Btn variant="secondary" onClick={() => refetch()}>{t("retry")}</Btn>
+        <Button variant="secondary" onClick={() => refetch()}>{t("retry")}</Button>
       </Card>
     );
   }

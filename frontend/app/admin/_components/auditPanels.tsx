@@ -10,9 +10,10 @@
 // `tenant-activity/page.tsx` (its own types/component, no longer generic enough to share).
 import { useState } from "react";
 import { AlertTriangle, ClipboardList, RotateCw } from "lucide-react";
-import { A, sans, Card, Btn, TH, TD } from "./adminUi";
+import { A, sans, Card, TH, TD } from "./adminUi";
 import { useT } from "../../_kit/core/useI18n";
 import { M } from "./components.messages";
+import { Button } from "../../_kit";
 
 export async function fetchJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
@@ -40,7 +41,7 @@ export function ErrorState({ message, onRetry }: { message: string; onRetry: () 
         <AlertTriangle size={26} color={A.red} style={{ marginBottom: 10 }} />
         <div style={{ fontSize: 14, fontWeight: 600, color: A.ink, marginBottom: 6 }}>{t("panelFailed")}</div>
         <div style={{ fontSize: 12.5, color: A.muted, marginBottom: 14 }}>{message}</div>
-        <Btn variant="secondary" size="sm" onClick={onRetry}><RotateCw size={13} /> {t("retry")}</Btn>
+        <Button variant="secondary" size="sm" onClick={onRetry}><RotateCw size={13} /> {t("retry")}</Button>
       </div>
     </Card>
   );

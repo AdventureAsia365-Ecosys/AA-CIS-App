@@ -11,8 +11,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { AlertTriangle, CheckCircle2, Route, Waves } from "lucide-react";
-import { A, mono, Card, SLabel, Badge, Btn, LoadingScreen, StatCard } from "../_components/adminUi";
-import { DataTable, useFormat, useT } from "../../_kit";
+import { A, mono, Card, SLabel, Badge, LoadingScreen, StatCard } from "../_components/adminUi";
+import { Button, DataTable, useFormat, useT } from "../../_kit";
 import { PL } from "./messages";
 
 export type LineItem = {
@@ -161,9 +161,9 @@ export default function LinesTab({ countries, onError }: { countries: string[]; 
           <option value="">{t("allStatuses")}</option>
           {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
-        <Btn size="sm" disabled={busy} onClick={() => runBackfill({ country: country || null, limit: 50, dry_run: true })}>
+        <Button size="sm" disabled={busy} onClick={() => runBackfill({ country: country || null, limit: 50, dry_run: true })}>
           {t("previewBackfill", country ? ` (${country})` : "")}
-        </Btn>
+        </Button>
       </Card>
 
       {backfill && (
@@ -183,12 +183,12 @@ export default function LinesTab({ countries, onError }: { countries: string[]; 
           </div>
           <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
             {backfill.result.dry_run && !backfill.result.would_refuse?.length && backfill.result.items.length > 0 && (
-              <Btn variant="primary" size="sm" disabled={busy}
+              <Button variant="primary" size="sm" disabled={busy}
                    onClick={() => { if (window.confirm(t("confirmBackfill"))) runBackfill({ ...backfill.body, dry_run: false }); }}>
                 {t("apply")}
-              </Btn>
+              </Button>
             )}
-            <Btn size="sm" onClick={() => setBackfill(null)}>{t("close")}</Btn>
+            <Button size="sm" onClick={() => setBackfill(null)}>{t("close")}</Button>
           </div>
         </Card>
       )}
@@ -203,8 +203,8 @@ export default function LinesTab({ countries, onError }: { countries: string[]; 
                     onChange={e => setManual({ ...manual, text: e.target.value })}
                     style={{ width: "100%", fontFamily: mono, fontSize: 12, border: `1px solid ${A.line}`, borderRadius: 8, padding: 8 }} />
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-            <Btn variant="primary" size="sm" disabled={busy || !manual.text.trim()} onClick={saveManual}>{t("save")}</Btn>
-            <Btn size="sm" onClick={() => setManual(null)}>{t("cancel")}</Btn>
+            <Button variant="primary" size="sm" disabled={busy || !manual.text.trim()} onClick={saveManual}>{t("save")}</Button>
+            <Button size="sm" onClick={() => setManual(null)}>{t("cancel")}</Button>
           </div>
         </Card>
       )}

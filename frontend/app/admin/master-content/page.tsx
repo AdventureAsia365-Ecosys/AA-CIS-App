@@ -5,12 +5,10 @@ import React, { Suspense, useState, useEffect, useCallback, useMemo } from "reac
 import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { RefreshCw, ChevronDown, ChevronRight, Download, X, Trash2, RotateCcw } from "lucide-react";
+import { A, alpha, serif, sans, mono, SLabel, Badge, LoadingScreen, StatCard, Card, TH, TD } from "../_components/adminUi";
 import {
-  A, alpha, serif, sans, mono,
-  SLabel, Badge, Btn, LoadingScreen, StatCard, Card, TH, TD,
-} from "../_components/adminUi";
-import {
-  AdminMain, AdminPaneHeader, PageHeader, useFormat, useIsPhone, useAdminIdentity, useT, type Translator,
+  Button,
+  PageFrame, PageFrameHeader, PageHeader, useFormat, useIsPhone, useAdminIdentity, useT, type Translator,
 } from "../../_kit";
 import { can, staffErrorMessage } from "@/lib/rbac";
 import { RBAC_MESSAGES } from "@/lib/rbac.messages";
@@ -1088,9 +1086,9 @@ function MasterContentPageInner() {
 
   if (loading) {
     return (
-        <AdminMain>
+        <PageFrame>
           <LoadingScreen msg={t("loadingPage")} />
-        </AdminMain>
+        </PageFrame>
     );
   }
 
@@ -1111,18 +1109,18 @@ function MasterContentPageInner() {
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
 
       {/* Main area: flex column, fills height */}
-      <AdminMain variant="split" style={{ overflow: "hidden" }}>
+      <PageFrame variant="split" style={{ overflow: "hidden" }}>
 
         {/* ── Section 1: Page header + Stats (fixed) ──────────────────────── */}
-        <AdminPaneHeader>
+        <PageFrameHeader>
           <PageHeader
             title={t("title")}
             description={t("tenantLine", AA_INTERNAL_ID.slice(0, 8))}
             actions={
-              <Btn variant="secondary" size="sm" onClick={refresh} disabled={refreshing}>
+              <Button variant="secondary" size="sm" onClick={refresh} disabled={refreshing}>
                 <RefreshCw size={13} style={{ animation: refreshing ? "spin 1s linear infinite" : "none" }} />
                 {refreshing ? t("refreshing") : t("refresh")}
-              </Btn>
+              </Button>
             }
           />
 
@@ -1175,7 +1173,7 @@ function MasterContentPageInner() {
               )}
             </Card>
           </div>
-        </AdminPaneHeader>
+        </PageFrameHeader>
 
         {/* ── Section 2: Rewritten Tours (flex, scrollable) ───────────────── */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", borderBottom: `2px solid ${A.line}` }}>
@@ -1252,9 +1250,9 @@ function MasterContentPageInner() {
 
               {/* Compare + export */}
               {selectedIds.size >= 2 && selectedIds.size <= 4 && (
-                <Btn variant="secondary" size="sm" onClick={() => setCompareOpen(true)}>
+                <Button variant="secondary" size="sm" onClick={() => setCompareOpen(true)}>
                   {t("compareN", selectedIds.size)}
-                </Btn>
+                </Button>
               )}
               {selectedIds.size > 0 && (
                 <button onClick={() => setSelectedIds(new Set())}
@@ -1262,18 +1260,18 @@ function MasterContentPageInner() {
                   {t("clearN", selectedIds.size)}
                 </button>
               )}
-              <Btn variant="secondary" size="sm" disabled={exporting} onClick={exportAuditCsv}>
+              <Button variant="secondary" size="sm" disabled={exporting} onClick={exportAuditCsv}>
                 <Download size={12} /> {exporting ? "…" : t("exportAudit")}
-              </Btn>
+              </Button>
               <div style={{ display: "inline-flex" }}>
-                <Btn variant="secondary" size="sm" disabled={exporting} onClick={() => exportTours("csv")}
+                <Button variant="secondary" size="sm" disabled={exporting} onClick={() => exportTours("csv")}
                   style={{ borderRadius: "6px 0 0 6px", borderRight: "none" }}>
                   <Download size={12} /> {exporting ? "…" : "CSV"}
-                </Btn>
-                <Btn variant="secondary" size="sm" disabled={exporting} onClick={() => exportTours("xlsx")}
+                </Button>
+                <Button variant="secondary" size="sm" disabled={exporting} onClick={() => exportTours("xlsx")}
                   style={{ borderRadius: "0 6px 6px 0" }}>
                   XLSX
-                </Btn>
+                </Button>
               </div>
             </div>
           </div>
@@ -1706,7 +1704,7 @@ function MasterContentPageInner() {
         {/* AA-722: the "Recent Pipeline Runs" section (fed by the stale shared.pipeline_runs, which
             only S0 upload writes) was removed. The master-pool score distribution now shows in the
             stat-card row above (Score distribution). */}
-      </AdminMain>
+      </PageFrame>
 
       {/* Detail panel v2 */}
       {detailTourId && (

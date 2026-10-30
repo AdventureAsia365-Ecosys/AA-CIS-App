@@ -31,7 +31,7 @@ import {
   apiGet,
   downloadCsv,
   sans,
-  toCsv, AdminMain,
+  toCsv, PageFrame,
   useLang,
   useT,
   type Translator,
@@ -106,7 +106,7 @@ export default function DataCoveragePage() {
   };
 
   return (
-    <AdminMain>
+    <PageFrame>
       <SkeletonStyle />
       <PageHeader
         title={t("title")}
@@ -144,7 +144,7 @@ export default function DataCoveragePage() {
           </div>
         </div>
       )}
-    </AdminMain>
+    </PageFrame>
   );
 }
 

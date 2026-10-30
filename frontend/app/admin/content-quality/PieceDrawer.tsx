@@ -15,8 +15,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
-import { A, mono } from "../_components/adminUi";
-import { Badge, Drawer, StatusBadge, apiGet, useLang, useT } from "../../_kit";
+import { K, mono, Badge, Drawer, StatusBadge, apiGet, useLang, useT } from "../../_kit";
 import { SeedLine, seedSkipText } from "../_components/SeedLine";
 import { PieceLabelSection } from "./PieceLabel";
 import { AdminEdits, FlaggedSentences, TenantCopyNotice } from "./SentenceActions";
@@ -30,7 +29,7 @@ import { useCqText, useLookup } from "./useCqText";
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ marginTop: 18 }}>
-      <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: A.muted, marginBottom: 6 }}>{title}</div>
+      <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: K.muted, marginBottom: 6 }}>{title}</div>
       {children}
     </div>
   );
@@ -46,9 +45,9 @@ function QuestionList({ title, rows }: { title: string; rows: QuestionWithSource
   if (rows.length === 0) return null;
   return (
     <div style={{ marginBottom: 6 }}>
-      <div style={{ fontSize: 11, color: A.muted, marginBottom: 2 }}>{title}</div>
+      <div style={{ fontSize: 11, color: K.muted, marginBottom: 2 }}>{title}</div>
       {rows.map((r, i) => (
-        <div key={i} style={{ display: "flex", gap: 6, alignItems: "baseline", fontSize: 12, color: A.body }}>
+        <div key={i} style={{ display: "flex", gap: 6, alignItems: "baseline", fontSize: 12, color: K.body }}>
           <span style={{ flexShrink: 0, display: "inline-flex" }}>
             <Badge tone={r.source === "writer" ? "warning" : "neutral"} dot={false}>{source(r.source)}</Badge>
           </span>
@@ -68,7 +67,7 @@ function SearchQuestions({ wi }: { wi: WriterInput }) {
   return (
     <div>
       <div style={{ fontSize: 11.5, fontWeight: 600, marginBottom: 4 }}>{t("searchQuestions")}</div>
-      <div style={{ fontSize: 12, color: A.body, marginBottom: 6 }}>
+      <div style={{ fontSize: 12, color: K.body, marginBottom: 6 }}>
         <b>{t("candidates")}</b> {counts(wi.question_sources.candidates, source, t("none"))}<br />
         <b>{t("inScope")}</b> {counts(wi.question_sources.kept, source, t("none"))}<br />
         <b>{t("faqFromReal")}</b> {t("ofN", real, faq.length)}
@@ -81,7 +80,7 @@ function SearchQuestions({ wi }: { wi: WriterInput }) {
 
 function Pre({ text }: { text: string }) {
   return (
-    <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 12, lineHeight: 1.55, background: A.bg, border: `1px solid ${A.line}`, borderRadius: 8, padding: "10px 12px", margin: 0, color: A.body, maxHeight: 320, overflow: "auto" }}>{text}</pre>
+    <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 12, lineHeight: 1.55, background: K.bg, border: `1px solid ${K.line}`, borderRadius: 8, padding: "10px 12px", margin: 0, color: K.body, maxHeight: 320, overflow: "auto" }}>{text}</pre>
   );
 }
 
@@ -103,7 +102,7 @@ function HighlightedText({ text, highlights }: { text: string; highlights: Highl
       <mark key={`h${i}`} data-severity={block ? "block" : "warn"}
             title={`${severityLabel(block ? "block" : "warn")} · ${gateLabel(h.gate)} (${h.source ?? h.gate}): ${h.problem}`}
             onClick={() => document.getElementById(`hl-${h.key}`)?.scrollIntoView({ behavior: "smooth", block: "center" })}
-            style={{ background: block ? A.redSoft : A.amberSoft, color: A.ink, borderBottom: `2px solid ${block ? A.red : A.amber}`, padding: "0 1px", cursor: "pointer" }}>
+            style={{ background: block ? K.dangerSoft : K.amberSoft, color: K.ink, borderBottom: `2px solid ${block ? K.danger : K.amber}`, padding: "0 1px", cursor: "pointer" }}>
         {text.slice(start, end)}
       </mark>,
     );
@@ -111,7 +110,7 @@ function HighlightedText({ text, highlights }: { text: string; highlights: Highl
   });
   if (pos < text.length) runs.push(<span key="end">{text.slice(pos)}</span>);
   return (
-    <div style={{ whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.65, color: A.body, background: A.card, border: `1px solid ${A.line}`, borderRadius: 10, padding: "12px 14px", maxHeight: 460, overflow: "auto" }}>
+    <div style={{ whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.65, color: K.body, background: K.card, border: `1px solid ${K.line}`, borderRadius: 10, padding: "12px 14px", maxHeight: 460, overflow: "auto" }}>
       {runs}
     </div>
   );
@@ -130,8 +129,8 @@ function AttemptLedgers({ log }: { log: Record<string, unknown>[] }) {
         const failed = (e.gate_ledger as Gate[]).filter((g) => !g.passed);
         return (
           <div key={i} style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", fontSize: 12 }}>
-            <span style={{ fontWeight: 600, color: A.ink, minWidth: 74 }}>{t("attempt", String(e.attempt ?? i + 1))}</span>
-            {failed.length === 0 ? <span style={{ color: A.muted }}>{t("noGateFailed")}</span> : failed.map((g) => (
+            <span style={{ fontWeight: 600, color: K.ink, minWidth: 74 }}>{t("attempt", String(e.attempt ?? i + 1))}</span>
+            {failed.length === 0 ? <span style={{ color: K.muted }}>{t("noGateFailed")}</span> : failed.map((g) => (
               <span key={g.gate} data-testid="cq-attempt-gate"
                     title={findingsOf(g).map((f) => `[${severityLabel(f.severity)}] ${f.text}`).join(" | ")}>
                 <Badge tone={SEVERITY_TONE[entrySeverity(g) ?? "block"]} dot={false}>
@@ -139,7 +138,7 @@ function AttemptLedgers({ log }: { log: Record<string, unknown>[] }) {
                 </Badge>
               </span>
             ))}
-            <span style={{ color: A.muted }}>{t("gatesRan", (e.gate_ledger as Gate[]).length)}</span>
+            <span style={{ color: K.muted }}>{t("gatesRan", (e.gate_ledger as Gate[]).length)}</span>
           </div>
         );
       })}
@@ -159,13 +158,13 @@ function GateTable({ gates }: { gates: Gate[] }) {
         const counts = countsLabel(severityCounts(g));
         return (
           <div key={`${g.gate}-${i}`} data-testid="cq-gate-row" data-severity={sev ?? "passed"}
-               style={{ display: "grid", gridTemplateColumns: "minmax(0, 190px) minmax(0, 1fr)", gap: 10, fontSize: 12, padding: "6px 8px", borderRadius: 6, background: sev === null ? "transparent" : (sev === "warn" ? A.amberSoft : A.redSoft) }}>
+               style={{ display: "grid", gridTemplateColumns: "minmax(0, 190px) minmax(0, 1fr)", gap: 10, fontSize: 12, padding: "6px 8px", borderRadius: 6, background: sev === null ? "transparent" : (sev === "warn" ? K.amberSoft : K.dangerSoft) }}>
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontWeight: 600, color: A.ink }}>{gateLabel(g.gate)}</div>
-              <div style={{ fontFamily: mono, fontSize: 10.5, color: A.muted, overflowWrap: "anywhere" }}>{g.gate}{sev === "warn" ? t("warnSuffix") : ""}</div>
-              {sev !== null && counts && <div style={{ fontSize: 10.5, color: A.muted }}>{counts}</div>}
+              <div style={{ fontWeight: 600, color: K.ink }}>{gateLabel(g.gate)}</div>
+              <div style={{ fontFamily: mono, fontSize: 10.5, color: K.muted, overflowWrap: "anywhere" }}>{g.gate}{sev === "warn" ? t("warnSuffix") : ""}</div>
+              {sev !== null && counts && <div style={{ fontSize: 10.5, color: K.muted }}>{counts}</div>}
             </div>
-            <div style={{ color: sev === null ? A.muted : A.body, minWidth: 0 }}>
+            <div style={{ color: sev === null ? K.muted : K.body, minWidth: 0 }}>
               {sev === null ? t("passed") : <FindingList entry={g} />}
             </div>
           </div>
@@ -192,7 +191,7 @@ export default function PieceDrawer({ pieceId, onClose }: { pieceId: string; onC
   const header = p ? (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <span>{p.seo_title || p.angle_name || t("piece")}</span>
-      <span style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12, fontWeight: 400, color: A.muted }}>
+      <span style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12, fontWeight: 400, color: K.muted }}>
         <StatusBadge status={p.status === "held" ? "failed" : p.status === "approved" ? "succeeded" : p.status} label={status(p.status)} />
         {p.tenant_name}{t("pieceMeta", p.channel ?? "", p.attempt_number)} · {usd(p.cost_usd)} · {fmtTime(p.created_at)}
       </span>
@@ -201,12 +200,12 @@ export default function PieceDrawer({ pieceId, onClose }: { pieceId: string; onC
 
   return (
     <Drawer open onClose={onClose} title={header} width={860}>
-      {isError && <div style={{ color: A.red, fontSize: 12.5 }}>{t("couldNotLoadPiece", error instanceof Error ? error.message : String(error))}</div>}
-      {!p ? <div style={{ fontSize: 12.5, color: A.muted }}>{t("loading")}</div> : (
+      {isError && <div style={{ color: K.danger, fontSize: 12.5 }}>{t("couldNotLoadPiece", error instanceof Error ? error.message : String(error))}</div>}
+      {!p ? <div style={{ fontSize: 12.5, color: K.muted }}>{t("loading")}</div> : (
         <>
           <TenantCopyNotice copy={p.tenant_copy} what="piece" />
           {p.held_reason && (
-            <div style={{ fontSize: 12.5, background: A.redSoft, borderRadius: 8, padding: "8px 10px", color: A.ink }}>
+            <div style={{ fontSize: 12.5, background: K.dangerSoft, borderRadius: 8, padding: "8px 10px", color: K.ink }}>
               <b>{t("heldLead")}</b> {p.held_reason}
             </div>
           )}
@@ -214,7 +213,7 @@ export default function PieceDrawer({ pieceId, onClose }: { pieceId: string; onC
             <Section title={t("seedSection")}>
               <SeedLine seed={p.seed} showSegment />
               {!p.seed.atom_id && seedSkipText(p.seed.skip_reason, lang) && (
-                <div style={{ fontSize: 12, color: A.muted, marginTop: 4 }}>{t("noSeed", seedSkipText(p.seed.skip_reason, lang) ?? "")}</div>
+                <div style={{ fontSize: 12, color: K.muted, marginTop: 4 }}>{t("noSeed", seedSkipText(p.seed.skip_reason, lang) ?? "")}</div>
               )}
             </Section>
           )}
@@ -222,14 +221,14 @@ export default function PieceDrawer({ pieceId, onClose }: { pieceId: string; onC
           <Section title={t("textSection", p.highlights.length)}>
             {/* S241 UI verify — alignItems flex-start: with the default `stretch` the two pills grew
                 to the height of the 3-line helper text at 390 (~50px tall). */}
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 6, fontSize: 11.5, color: A.muted }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 6, fontSize: 11.5, color: K.muted }}>
               <span style={{ flexShrink: 0, display: "inline-flex" }}><Badge tone="danger" dot={false}>{severityLabel("block")}</Badge></span>
               <span style={{ flexShrink: 0, display: "inline-flex" }}><Badge tone="warning" dot={false}>{severityLabel("warn")}</Badge></span>
               <span style={{ minWidth: 0 }}>{t("severityHelp")}</span>
             </div>
             <HighlightedText text={p.content_text || ""} highlights={p.highlights} />
             {p.channel === "blog" && (
-              <div style={{ fontSize: 12, marginTop: 8, color: A.body }}>
+              <div style={{ fontSize: 12, marginTop: 8, color: K.body }}>
                 <div><b>{t("seoTitle")}</b> ({(p.seo_title || "").length}): {p.seo_title || "—"}</div>
                 <div><b>{t("meta")}</b> ({(p.meta_description || "").length}): {p.meta_description || "—"}</div>
               </div>
@@ -256,10 +255,10 @@ export default function PieceDrawer({ pieceId, onClose }: { pieceId: string; onC
           )}
 
           <Section title={t("writerGiven")}>
-            {!wi ? <div style={{ fontSize: 12, color: A.muted }}>{t("notRecorded")}</div> : (
+            {!wi ? <div style={{ fontSize: 12, color: K.muted }}>{t("notRecorded")}</div> : (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {thinBrand && <div style={{ fontSize: 12, background: A.amberSoft, padding: "6px 8px", borderRadius: 6 }}>{t("thinBrand")}</div>}
-                <div style={{ fontSize: 12, color: A.body }}>
+                {thinBrand && <div style={{ fontSize: 12, background: K.amberSoft, padding: "6px 8px", borderRadius: 6 }}>{t("thinBrand")}</div>}
+                <div style={{ fontSize: 12, color: K.body }}>
                   <b>{t("angle")}</b> {wi.angle?.name} — {wi.angle?.best_final_style}
                   <br /><b>{t("goal")}</b> {wi.goal} · <b>{t("keyword")}</b> {wi.keyword || "—"} · <b>{t("cta")}</b> {wi.cta}
                   {wi.scope && <><br /><b>{t("scope")}</b> {wi.scope}</>}
@@ -273,7 +272,7 @@ export default function PieceDrawer({ pieceId, onClose }: { pieceId: string; onC
           </Section>
 
           <Section title={t("attempts")}>
-            {(p.repair_log || []).length === 0 ? <div style={{ fontSize: 12, color: A.muted }}>{t("firstAttempt")}</div> : (
+            {(p.repair_log || []).length === 0 ? <div style={{ fontSize: 12, color: K.muted }}>{t("firstAttempt")}</div> : (
               <>
                 <AttemptLedgers log={p.repair_log} />
                 <Pre text={JSON.stringify(p.repair_log, null, 2)} />
@@ -281,7 +280,7 @@ export default function PieceDrawer({ pieceId, onClose }: { pieceId: string; onC
             )}
             {(p.discarded_attempts || []).length > 0 && (
               <div style={{ marginTop: 8 }}>
-                <button onClick={() => setShowDiscarded((v) => !v)} style={{ fontSize: 12, background: "none", border: "none", color: A.accent, cursor: "pointer", padding: 0 }}>
+                <button onClick={() => setShowDiscarded((v) => !v)} style={{ fontSize: 12, background: "none", border: "none", color: K.accent, cursor: "pointer", padding: 0 }}>
                   {showDiscarded ? t("hideDiscarded") : t("showDiscarded")}
                 </button>
                 {showDiscarded && p.discarded_attempts.map((d) => (
@@ -295,7 +294,7 @@ export default function PieceDrawer({ pieceId, onClose }: { pieceId: string; onC
           </Section>
 
           <Section title={t("costByStage")}>
-            {p.cost_by_stage.length === 0 ? <div style={{ fontSize: 12, color: A.muted }}>{t("noCallsPiece")}</div> : (
+            {p.cost_by_stage.length === 0 ? <div style={{ fontSize: 12, color: K.muted }}>{t("noCallsPiece")}</div> : (
               <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: "4px 16px", fontSize: 12 }}>
                 {p.cost_by_stage.map((c) => (
                   <Fragment key={`${c.stage}-${c.role}`}><span style={{ fontFamily: mono }}>{c.stage} · {c.role}</span><span>{t("calls", c.calls)}</span><span style={{ fontFamily: mono }}>{usd(c.cost_usd)}</span></Fragment>

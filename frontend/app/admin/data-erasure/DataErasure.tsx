@@ -207,7 +207,7 @@ export default function DataErasure() {
     } else {
       update({ job: j.id, apply: null });
     }
-    // AdminMain is the scroll region, not the window: scroll the panel into view in whichever ancestor scrolls.
+    // PageFrame is the scroll region, not the window: scroll the panel into view in whichever ancestor scrolls.
     document.querySelector('[data-testid="data-erasure-ready"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 

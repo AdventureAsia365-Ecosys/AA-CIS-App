@@ -29,7 +29,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Play, RefreshCw } from "lucide-react";
 import { useMemo, useState } from "react";
-import { AdminMain,
+import { PageFrame,
   Badge, Button, ConfirmModal, DataTable, Drawer, ErrorState, GuidePanel, K, PageHeader, StatusBadge, TableSkeleton,
   Tabs, apiGet, mono, useFormat, useLocalized, useT, useToast, type ColumnDef,
 } from "../../_kit";
@@ -469,7 +469,7 @@ export default function WritingMemory() {
   }
 
   return (
-    <AdminMain>
+    <PageFrame>
       <PageHeader title={t("title")}
         breadcrumbs={[{ label: t("crumbTenantOutput") }, { label: t("title") }]}
         description={<>{t("description")}{" "}
@@ -509,6 +509,6 @@ export default function WritingMemory() {
       {tab === "signals" ? <SignalsTab /> : tab === "candidates" ? <CandidatesTab />
         : tab === "releases" ? <ReleasesTab />
         : <GuidePanel content={guide} testId="wm-guide" />}
-    </AdminMain>
+    </PageFrame>
   );
 }

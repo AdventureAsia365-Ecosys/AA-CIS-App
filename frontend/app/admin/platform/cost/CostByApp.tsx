@@ -41,7 +41,7 @@ import {
   useLang,
   useT,
   type ColumnDef,
-  type Tone, AdminMain,
+  type Tone, PageFrame,
 } from "../../../_kit";
 import { shownSum } from "@/lib/costWording";
 import { COST_WORDING } from "@/lib/costWording.messages";
@@ -105,7 +105,7 @@ export default function CostByApp() {
   };
 
   return (
-    <AdminMain>
+    <PageFrame>
       <SkeletonStyle />
       <PageHeader
         title={t("title")}
@@ -159,7 +159,7 @@ export default function CostByApp() {
           <DataSources sources={data.sources} />
         </div>
       )}
-    </AdminMain>
+    </PageFrame>
   );
 }
 

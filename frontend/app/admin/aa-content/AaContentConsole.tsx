@@ -28,7 +28,7 @@ import {
   useFormat,
   useT,
   useToast,
-  type ColumnDef, AdminMain,
+  type ColumnDef, PageFrame,
 } from "../../_kit";
 import { can } from "@/lib/rbac";
 import {
@@ -144,7 +144,7 @@ export default function AaContentConsole() {
   );
 
   return (
-    <AdminMain>
+    <PageFrame>
       <PageHeader
         title={t("title")}
         breadcrumbs={[{ label: t("cisContent") }, { label: t("assets") }, { label: t("title") }]}
@@ -192,7 +192,7 @@ export default function AaContentConsole() {
         <CreateModal open={creating} onClose={() => setCreating(false)}
           onCreated={(item) => { setCreating(false); refresh(); setOpenGroup(item.group_key); }} />
       )}
-    </AdminMain>
+    </PageFrame>
   );
 }
 

@@ -14,8 +14,7 @@
 
 import { Loader2, RotateCcw } from "lucide-react";
 import { useState } from "react";
-import { A, mono, sans, Btn } from "../_components/adminUi";
-import { Modal, useT } from "../../_kit";
+import { K, mono, sans, Button, Modal, useT } from "../../_kit";
 import { M } from "./messages";
 import { startRegenerate } from "./reviewApi";
 import { WritingReasonChips } from "../_components/WritingReasonChips";
@@ -95,29 +94,29 @@ export function RegenerateModal({
       title={title}
       footer={
         <>
-          <Btn variant="ghost" size="sm" onClick={onClose} disabled={running}>
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={running}>
             {t("cancel")}
-          </Btn>
-          <Btn variant="primary" size="sm" onClick={run} disabled={!canRun}>
+          </Button>
+          <Button variant="primary" size="sm" onClick={run} disabled={!canRun}>
             {running ? <Loader2 size={12} className="spin" /> : <RotateCcw size={12} />} {t("regenerate")}
-          </Btn>
+          </Button>
         </>
       }
     >
-      <p style={{ fontSize: 13, color: A.body, lineHeight: 1.6, margin: "0 0 8px" }}>
+      <p style={{ fontSize: 13, color: K.body, lineHeight: 1.6, margin: "0 0 8px" }}>
         {t("costBefore")}<strong>{t("fullPipeline")}</strong>{t("costAfter")}
       </p>
-      <p style={{ fontSize: 12, color: A.muted, lineHeight: 1.6, margin: "0 0 14px" }}>
+      <p style={{ fontSize: 12, color: K.muted, lineHeight: 1.6, margin: "0 0 14px" }}>
         {t("regenExplain")}
       </p>
 
       {bulk ? (
-        <ul style={{ margin: "0 0 14px", paddingLeft: 18, fontSize: 12, color: A.body, maxHeight: 160, overflow: "auto" }}>
+        <ul style={{ margin: "0 0 14px", paddingLeft: 18, fontSize: 12, color: K.body, maxHeight: 160, overflow: "auto" }}>
           {items.map((it) => (
             <li key={it.id} style={{ marginBottom: 2 }}>
               {it.name}
               {it.raw?.requested_tier ? (
-                <span style={{ color: A.muted, fontFamily: mono }}> · {String(it.raw.requested_tier)}</span>
+                <span style={{ color: K.muted, fontFamily: mono }}> · {String(it.raw.requested_tier)}</span>
               ) : null}
             </li>
           ))}
@@ -131,7 +130,7 @@ export function RegenerateModal({
 
       {anyMissingTier ? (
         <div style={{ marginBottom: 6 }}>
-          <div style={{ fontSize: 12, color: A.body, marginBottom: 6 }}>
+          <div style={{ fontSize: 12, color: K.body, marginBottom: 6 }}>
             {bulk
               ? t("pickTierMany")
               : t("pickTierOne")}
@@ -150,9 +149,9 @@ export function RegenerateModal({
                   fontSize: 13,
                   fontFamily: sans,
                   textTransform: "capitalize",
-                  border: `1px solid ${tier === opt ? A.gold : A.line}`,
-                  background: tier === opt ? A.gold : A.card,
-                  color: tier === opt ? "var(--aa-on-solid)" : A.body,
+                  border: `1px solid ${tier === opt ? K.accent : K.line}`,
+                  background: tier === opt ? K.accent : K.card,
+                  color: tier === opt ? "var(--aa-on-solid)" : K.body,
                 }}
               >
                 {opt}
@@ -169,8 +168,8 @@ export function RegenerateModal({
             padding: "8px 12px",
             borderRadius: 6,
             marginTop: 12,
-            background: A.redSoft,
-            color: A.red,
+            background: K.dangerSoft,
+            color: K.danger,
           }}
         >
           {error}

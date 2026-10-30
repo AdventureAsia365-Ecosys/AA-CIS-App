@@ -22,7 +22,6 @@ import {
   Users,
 } from "lucide-react";
 import Link from "next/link";
-import { sans } from "../_components/adminUi";
 import { AppHealthStrip } from "./_components/AppHealthStrip";
 import { BookingFunnelCard } from "./_components/BookingFunnelCard";
 import { CostByAppCard } from "./_components/CostByAppCard";
@@ -32,6 +31,7 @@ import { SourceHint } from "./_components/SourceHint";
 import { useSources, type Sources } from "./_components/sources";
 import { OVERVIEW } from "./messages";
 import {
+  sans,
   apiGet,
   Badge,
   ErrorState,
@@ -42,7 +42,7 @@ import {
   SkeletonStyle,
   Spinner,
   StatusBadge,
-  type Tone, AdminMain,
+  type Tone, PageFrame,
   useFormat,
   useT,
 } from "../../_kit";
@@ -311,7 +311,7 @@ export default function OverviewPage() {
   return (
     <>
       <SkeletonStyle />
-      <AdminMain>
+      <PageFrame>
           <PageHeader
             title={t("title")}
             description={t("description")}
@@ -696,7 +696,7 @@ export default function OverviewPage() {
               </div>
             </div>
           )}
-        </AdminMain>
+        </PageFrame>
     </>
   );
 }

@@ -17,8 +17,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { RefreshCw, MapPin, AlertTriangle, CheckCircle2, Route } from "lucide-react";
-import { A, mono, Card, SLabel, Badge, Btn, LoadingScreen, StatCard, TabBar } from "../_components/adminUi";
-import { AdminMain, DataTable, PageHeader, useFormat, useT } from "../../_kit";
+import { A, mono, Card, SLabel, Badge, LoadingScreen, StatCard } from "../_components/adminUi";
+import { Button, Tabs, PageFrame, DataTable, PageHeader, useFormat, useT } from "../../_kit";
 import { PL } from "./messages";
 import LinesTab from "./LinesTab";
 import MergesTab from "./MergesTab";
@@ -179,19 +179,19 @@ export default function PlacesPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- runFix only reads state setters and the loaders
   ], [busy, t]);
 
-  if (!coverage) return <AdminMain><LoadingScreen msg={t("loadingPlaces")} /></AdminMain>;
+  if (!coverage) return <PageFrame><LoadingScreen msg={t("loadingPlaces")} /></PageFrame>;
   const tot = coverage.totals;
   const countries = coverage.countries.map(c => c.country);
   const cat = validity?.summary.catalog;
   const reasons = check && validity ? validity.reasons[check] ?? [] : Object.values(validity?.reasons ?? {}).flat();
 
   return (
-    <AdminMain>
+    <PageFrame>
       <PageHeader
         title={t("title")}
         description={t("description")}
-        actions={<Btn onClick={() => { loadCoverage(); if (tab === "validity") loadValidity(); }} size="sm">
-          <RefreshCw size={13} /> {t("refresh")}</Btn>}
+        actions={<Button onClick={() => { loadCoverage(); if (tab === "validity") loadValidity(); }} size="sm">
+          <RefreshCw size={13} /> {t("refresh")}</Button>}
       />
 
       {error && (
@@ -201,7 +201,7 @@ export default function PlacesPage() {
         </Card>
       )}
 
-      <div style={{ marginBottom: 18 }}><TabBar tabs={TABS.map((x) => ({ key: x.key, label: t(x.label) }))} active={tab} onChange={setTab} /></div>
+      <div style={{ marginBottom: 18 }}><Tabs tabs={TABS.map((x) => ({ key: x.key, label: t(x.label) }))} active={tab} onChange={setTab} /></div>
 
       {tab === "coverage" && (
         <>
@@ -254,10 +254,10 @@ export default function PlacesPage() {
             </select>
             <span style={{ fontSize: 12.5, color: A.muted }}>{t("findings", validity.total)}</span>
             {reason && FIX_OF[reason] && (
-              <Btn size="sm" disabled={!!busy}
+              <Button size="sm" disabled={!!busy}
                    onClick={() => runFix({ check: FIX_OF[reason], country: country || null, dry_run: true })}>
                 {t("previewFix", `${reason}${country ? `, ${country}` : ""}`)}
-              </Btn>
+              </Button>
             )}
           </Card>
 
@@ -284,15 +284,15 @@ export default function PlacesPage() {
               )}
               <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                 {fix.result.dry_run && ((fix.result.changes?.length ?? 0) > 0 || (fix.result.restored ?? 0) > 0) && (
-                  <Btn variant="primary" size="sm" disabled={!!busy}
+                  <Button variant="primary" size="sm" disabled={!!busy}
                        onClick={() => { if (window.confirm(t("confirmFix"))) runFix({ ...fix.body, dry_run: false, fingerprint: fix.result.fingerprint }); }}>
                     {t("apply")}
-                  </Btn>
+                  </Button>
                 )}
                 {!fix.result.dry_run && fix.result.audit_id && fix.result.restored === undefined && (
-                  <Btn size="sm" disabled={!!busy} onClick={() => runFix({ undo: fix.result.audit_id, dry_run: true })}>{t("undoEllipsis")}</Btn>
+                  <Button size="sm" disabled={!!busy} onClick={() => runFix({ undo: fix.result.audit_id, dry_run: true })}>{t("undoEllipsis")}</Button>
                 )}
-                <Btn size="sm" onClick={() => setFix(null)}>{t("close")}</Btn>
+                <Button size="sm" onClick={() => setFix(null)}>{t("close")}</Button>
               </div>
             </Card>
           )}
@@ -322,6 +322,6 @@ export default function PlacesPage() {
       {tab === "merges" && <MergesTab onError={setError} />}
 
       <AttributionFooter a={validity?.attribution ?? DEFAULT_ATTRIBUTION} />
-    </AdminMain>
+    </PageFrame>
   );
 }

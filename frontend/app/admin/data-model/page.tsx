@@ -36,7 +36,7 @@ import {
   useFormat,
   useIsPhone,
   useT,
-  AdminMain,
+  PageFrame,
   type Tone,
 } from "../../_kit";
 import {
@@ -587,7 +587,7 @@ export default function DataModelPage() {
   );
 
   return (
-    <AdminMain style={{ fontFamily: sans }}>
+    <PageFrame style={{ fontFamily: sans }}>
       <SkeletonStyle />
       <PageHeader
         title={t("title")}
@@ -784,6 +784,6 @@ export default function DataModelPage() {
           )}
         </>
       )}
-    </AdminMain>
+    </PageFrame>
   );
 }

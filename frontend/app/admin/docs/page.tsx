@@ -22,7 +22,7 @@ import { ArrowLeft, BookMarked, Lock, RefreshCw, Search, X } from "lucide-react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import {
-  AdminMain,
+  PageFrame,
   ApiError,
   Badge,
   Button,
@@ -612,7 +612,7 @@ function DocsReaderPage() {
   );
 
   return (
-    <AdminMain style={{ fontFamily: sans }}>
+    <PageFrame style={{ fontFamily: sans }}>
       <SkeletonStyle />
       <PageHeader
         title={t("title")}
@@ -666,7 +666,7 @@ function DocsReaderPage() {
           <Card style={{ padding: "18px 22px", minWidth: 0 }}>{reader}</Card>
         </div>
       )}
-    </AdminMain>
+    </PageFrame>
   );
 }
 

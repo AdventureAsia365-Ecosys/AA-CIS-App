@@ -39,7 +39,7 @@ import {
   useFormat,
   useLang,
   useT,
-  type Tone, AdminMain, ScrollX,
+  type Tone, PageFrame, ScrollX,
 } from "../../../_kit";
 import { APP_REGISTRY, PLATFORM_APP_IDS, isPlatformAppId, type PlatformAppId } from "@/lib/apps";
 import { APP_MESSAGES } from "@/lib/apps.messages";
@@ -90,7 +90,7 @@ export default function AppsBoard() {
   const error = (refresh.error as Error | null) ?? (apps.error as Error | null);
 
   return (
-    <AdminMain>
+    <PageFrame>
       <SkeletonStyle />
       <PageHeader
         title={t("title")}
@@ -123,7 +123,7 @@ export default function AppsBoard() {
           </div>
         </>
       )}
-    </AdminMain>
+    </PageFrame>
   );
 }
 

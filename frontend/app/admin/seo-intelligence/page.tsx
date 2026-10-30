@@ -20,7 +20,7 @@ import {
   mono,
   PageHeader,
   SkeletonStyle,
-  Tabs, AdminMain, ScrollX,
+  Tabs, PageFrame, ScrollX,
   useT,
   type Translator,
 } from "../../_kit";
@@ -298,7 +298,7 @@ export default function SeoIntelligencePage() {
   return (
     <>
       <SkeletonStyle />
-      <AdminMain>
+      <PageFrame>
           <PageHeader
             title={t("title")}
             description={t("description")}
@@ -348,7 +348,7 @@ export default function SeoIntelligencePage() {
               {tab === "spend" && <SpendTab spend={data.spend} />}
             </>
           )}
-        </AdminMain>
+        </PageFrame>
     </>
   );
 }

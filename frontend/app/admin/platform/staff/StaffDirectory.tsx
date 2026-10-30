@@ -34,7 +34,7 @@ import {
   useFormat,
   useT,
   type ColumnDef,
-  type Tone, AdminMain,
+  type Tone, PageFrame,
 } from "../../../_kit";
 import { canWriteStaff, type StaffViewer } from "@/lib/rbac";
 import { BOOKING_ADMIN_URL, bookingStaffUrl } from "@/lib/apps";
@@ -171,7 +171,7 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
   const counts = list.data;
 
   return (
-    <AdminMain>
+    <PageFrame>
       <PageHeader
         title={t("title")}
         description={
@@ -263,7 +263,7 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
 
       <StaffDrawer id={openId} fallback={staff.find((s) => s.id === openId) ?? null} onClose={close}
         canWrite={canWrite} selfId={viewer?.admin_id ?? null} />
-    </AdminMain>
+    </PageFrame>
   );
 }
 

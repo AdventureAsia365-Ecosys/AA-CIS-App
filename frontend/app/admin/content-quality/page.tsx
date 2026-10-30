@@ -25,11 +25,12 @@ import { SeedLine } from "../_components/SeedLine";
 import { TenantSelect } from "../_components/TenantSelect";
 import type { TenantRef } from "@/lib/tenants";
 import SocialContentSubNav from "../_components/SocialContentSubNav";
-import { A, mono, Btn } from "../_components/adminUi";
 import {
+  K, mono,
+  Button,
   Badge, ConfirmModal, DataTable, PageHeader, StatusBadge, Tabs, ToastProvider, apiGet, apiSend, useT, useToast,
   type ColumnDef,
-  AdminMain,
+  PageFrame,
 } from "../../_kit";
 import { GATE_LABEL_MESSAGES } from "@/lib/gateLabels.messages";
 import PieceDrawer from "./PieceDrawer";
@@ -84,12 +85,12 @@ function writeView(v: View) {
 }
 
 const inputStyle: React.CSSProperties = {
-  fontSize: 12, padding: "6px 8px", border: `1px solid ${A.line}`, borderRadius: 6, background: A.card, color: A.ink3,
+  fontSize: 12, padding: "6px 8px", border: `1px solid ${K.line}`, borderRadius: 6, background: K.card, color: K.ink3,
 };
 
 function GateChips({ gates, tone }: { gates: string[]; tone: "danger" | "warning" }) {
   const { gateLabel } = useCqText();
-  if (!gates.length) return <span style={{ color: A.muted }}>—</span>;
+  if (!gates.length) return <span style={{ color: K.muted }}>—</span>;
   return (
     <span style={{ display: "inline-flex", gap: 4, flexWrap: "wrap" }}>
       {gates.map((g) => <span key={g} title={g}><Badge tone={tone} dot={false}>{gateLabel(g)}</Badge></span>)}
@@ -125,7 +126,7 @@ function PiecesTab({ view, update, tenants }: { view: View; update: (p: Partial<
   const labelsEnabled = !!data?.labels_enabled;
   const columns = useMemo<ColumnDef<PieceRow, unknown>[]>(() => [
     { id: "created_at", accessorKey: "created_at", header: t("colWritten"),
-      cell: (c) => <span style={{ whiteSpace: "nowrap", color: A.muted }}>{fmtTime(c.row.original.created_at)}</span> },
+      cell: (c) => <span style={{ whiteSpace: "nowrap", color: K.muted }}>{fmtTime(c.row.original.created_at)}</span> },
     { id: "tenant", accessorKey: "tenant_name", header: t("colTenant") },
     { id: "channel", accessorKey: "channel", header: t("colChannel") },
     // AA-863 — under the title: the Segment the piece was written for and its seed place · country,
@@ -144,11 +145,11 @@ function PiecesTab({ view, update, tenants }: { view: View; update: (p: Partial<
     ...(labelsEnabled ? [{ id: "label", header: t("colLabel"), enableSorting: false,
       cell: (c) => {
         const r = c.row.original;
-        if (!r.label) return <span style={{ color: A.muted }}>—</span>;
+        if (!r.label) return <span style={{ color: K.muted }}>—</span>;
         return (
           <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
             <LabelBadge label={r.label} />
-            {(r.label_count ?? 0) > 1 && <span style={{ fontSize: 11, color: A.muted }}>×{r.label_count}</span>}
+            {(r.label_count ?? 0) > 1 && <span style={{ fontSize: 11, color: K.muted }}>×{r.label_count}</span>}
           </span>
         );
       } } as ColumnDef<PieceRow, unknown>] : []),
@@ -229,7 +230,7 @@ function VersionsTab({ view, update, tenants }: { view: View; update: (p: Partia
     queryFn: () => apiGet<Paged<VersionRow>>(`/api/admin/content-quality/tour-versions?${qs}`, { admin: true }),
   });
   const columns = useMemo<ColumnDef<VersionRow, unknown>[]>(() => [
-    { accessorKey: "created_at", header: t("colWritten"), cell: (c) => <span style={{ color: A.muted, whiteSpace: "nowrap" }}>{fmtTime(c.row.original.created_at)}</span> },
+    { accessorKey: "created_at", header: t("colWritten"), cell: (c) => <span style={{ color: K.muted, whiteSpace: "nowrap" }}>{fmtTime(c.row.original.created_at)}</span> },
     { accessorKey: "tenant_name", header: t("colTenant") },
     { accessorKey: "tour_name", header: t("colTour") },
     { accessorKey: "version_number", header: t("colVersion") },
@@ -241,7 +242,7 @@ function VersionsTab({ view, update, tenants }: { view: View; update: (p: Partia
     { id: "brand_claims_flagged", accessorKey: "brand_claims_flagged", header: t("colBrandClaims"), enableSorting: false,
       cell: (c) => {
         const n = c.row.original.brand_claims_flagged;
-        return n == null ? <span style={{ color: A.muted }}>—</span> : n === 0 ? <span style={{ color: A.muted }}>0</span>
+        return n == null ? <span style={{ color: K.muted }}>—</span> : n === 0 ? <span style={{ color: K.muted }}>0</span>
           : <Badge tone="warning" dot={false}>{t("notInSource", n)}</Badge>;
       } },
     { accessorKey: "escalations", header: t("colEscalations") },
@@ -269,7 +270,7 @@ function StatsTab({ gates, tenants, loading }: { gates: GateStat[]; tenants: Ten
   const t = useT(M);
   const { gateLabel } = useCqText();
   const gateCols = useMemo<ColumnDef<GateStat, unknown>[]>(() => [
-    { accessorKey: "gate", header: t("colGate"), cell: (c) => <span><b>{gateLabel(c.row.original.gate)}</b> <span style={{ fontFamily: mono, fontSize: 11, color: A.muted }}>{c.row.original.gate}</span></span> },
+    { accessorKey: "gate", header: t("colGate"), cell: (c) => <span><b>{gateLabel(c.row.original.gate)}</b> <span style={{ fontFamily: mono, fontSize: 11, color: K.muted }}>{c.row.original.gate}</span></span> },
     { accessorKey: "channel", header: t("colChannel") },
     { accessorKey: "runs", header: t("colRuns") },
     { accessorKey: "failed", header: t("colFailed") },
@@ -287,7 +288,7 @@ function StatsTab({ gates, tenants, loading }: { gates: GateStat[]; tenants: Ten
   ], [t]);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-      <div style={{ fontSize: 12, color: A.muted }}>{t("statsNote")}</div>
+      <div style={{ fontSize: 12, color: K.muted }}>{t("statsNote")}</div>
       <DataTable<GateStat> data={gates} columns={gateCols} tableId="admin-cq-gate-stats" getRowId={(r) => `${r.gate}-${r.channel}`}
                            loading={loading} enableCsv csvFilename="gate-stats" pageSize={50} emptyTitle={t("statsEmpty")} />
       <DataTable<TenantStat> data={tenants} columns={tenantCols} tableId="admin-cq-tenant-stats" getRowId={(r) => r.tenant_id}
@@ -314,7 +315,7 @@ function DuplicateClusterRow({ cluster, onMerge, busy }: {
   const toggle = (id: string) => setMerge((m) => { const n = new Set(m); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const keepName = cluster.cards.find((c) => c.card_id === keep)?.display_name ?? "";
   return (
-    <div style={{ border: `1px solid ${A.line}`, borderRadius: 8, padding: "10px 12px", background: A.card }}>
+    <div style={{ border: `1px solid ${K.line}`, borderRadius: 8, padding: "10px 12px", background: K.card }}>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
         <b style={{ fontSize: 13 }}>{cluster.country}</b>
         {cluster.reasons.map((r) => <Badge key={r} tone="warning" dot={false}>{reason(r)}</Badge>)}
@@ -326,21 +327,21 @@ function DuplicateClusterRow({ cluster, onMerge, busy }: {
               <input type="radio" name={`keep-${cluster.cards[0].card_id}`} checked={keep === c.card_id} onChange={() => setKeep(c.card_id)} aria-label={t("keepAria", c.display_name)} />
               {t("keep")}
             </label>
-            <label style={{ display: "inline-flex", gap: 4, alignItems: "center", minWidth: 70, color: keep === c.card_id ? A.muted2 : A.ink3 }}>
+            <label style={{ display: "inline-flex", gap: 4, alignItems: "center", minWidth: 70, color: keep === c.card_id ? K.muted2 : K.ink3 }}>
               <input type="checkbox" disabled={keep === c.card_id} checked={keep !== c.card_id && merge.has(c.card_id)} onChange={() => toggle(c.card_id)} aria-label={t("mergeAria", c.display_name)} />
               {t("merge")}
             </label>
             <span style={{ minWidth: 0 }}>
               <b>{c.display_name}</b>
-              <span style={{ color: A.muted }}> — {[c.locality, c.region].filter(Boolean).join(", ") || t("noLocality")} · {t("cardCounts", c.atoms, c.facts)} · {status(c.status)}</span>
+              <span style={{ color: K.muted }}> — {[c.locality, c.region].filter(Boolean).join(", ") || t("noLocality")} · {t("cardCounts", c.atoms, c.facts)} · {status(c.status)}</span>
             </span>
           </div>
         ))}
       </div>
       <div style={{ marginTop: 8 }}>
-        <Btn size="sm" disabled={busy || fromIds.length === 0} onClick={() => onMerge(keep, fromIds, keepName)}>
+        <Button size="sm" disabled={busy || fromIds.length === 0} onClick={() => onMerge(keep, fromIds, keepName)}>
           {t("mergeInto", fromIds.length ? String(fromIds.length) : "", keepName)}
-        </Btn>
+        </Button>
       </div>
     </div>
   );
@@ -372,13 +373,13 @@ function DuplicatesPanel() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <Btn size="sm" variant="secondary" onClick={() => setOpen((o) => !o)}>
+        <Button size="sm" variant="secondary" onClick={() => setOpen((o) => !o)}>
           {open ? t("hideDuplicates") : t("findDuplicates")}
-        </Btn>
-        {open && !isLoading && !error && <span style={{ fontSize: 12, color: A.muted }}>{t("candidateGroups", clusters.length)}</span>}
+        </Button>
+        {open && !isLoading && !error && <span style={{ fontSize: 12, color: K.muted }}>{t("candidateGroups", clusters.length)}</span>}
       </div>
-      {open && isLoading && <span style={{ fontSize: 12, color: A.muted }}>{t("loading")}</span>}
-      {open && error && <span style={{ fontSize: 12, color: A.red }}>{t("couldNotLoadDuplicates", String(error))}</span>}
+      {open && isLoading && <span style={{ fontSize: 12, color: K.muted }}>{t("loading")}</span>}
+      {open && error && <span style={{ fontSize: 12, color: K.danger }}>{t("couldNotLoadDuplicates", String(error))}</span>}
       {open && clusters.map((c) => (
         <DuplicateClusterRow key={c.cards.map((x) => x.card_id).join(",")} cluster={c} busy={merge.isPending}
           onMerge={(keepId, fromIds, name) => setPending({ keepId, fromIds, name })} />
@@ -426,18 +427,18 @@ function PlaceCardsTab({ view, update }: { view: View; update: (p: Partial<View>
   });
   const columns = useMemo<ColumnDef<PlaceCard, unknown>[]>(() => [
     { accessorKey: "display_name", header: t("colPlace"),
-      cell: (c) => { const p = c.row.original; return <div><b>{p.display_name}</b><div style={{ fontSize: 11.5, color: A.muted }}>{[p.locality, p.region, p.country].filter(Boolean).join(", ")}</div></div>; } },
+      cell: (c) => { const p = c.row.original; return <div><b>{p.display_name}</b><div style={{ fontSize: 11.5, color: K.muted }}>{[p.locality, p.region, p.country].filter(Boolean).join(", ")}</div></div>; } },
     { id: "facts", header: t("colCheckedFacts"), enableSorting: false,
-      cell: (c) => <div style={{ fontSize: 12, maxWidth: 460 }}>{c.row.original.naming_note && <div style={{ color: A.muted, marginBottom: 2 }}>{c.row.original.naming_note}</div>}{c.row.original.facts.map((f, i) => <div key={i}>• {f.text} <span style={{ color: A.muted, fontSize: 11 }}>({f.kind || "what_it_is"})</span></div>)}</div> },
+      cell: (c) => <div style={{ fontSize: 12, maxWidth: 460 }}>{c.row.original.naming_note && <div style={{ color: K.muted, marginBottom: 2 }}>{c.row.original.naming_note}</div>}{c.row.original.facts.map((f, i) => <div key={i}>• {f.text} <span style={{ color: K.muted, fontSize: 11 }}>({f.kind || "what_it_is"})</span></div>)}</div> },
     { accessorKey: "atoms", header: t("colAtoms") },
     { accessorKey: "status", header: t("colStatus"),
       cell: (c) => <Badge tone={c.row.original.status === "verified" ? "success" : c.row.original.status === "rejected" ? "danger" : "neutral"} dot={false}>{statusOf(c.row.original.status)}</Badge> },
     { id: "actions", header: "", enableSorting: false,
       cell: (c) => (
         <div style={{ display: "flex", gap: 6 }} onClick={(e) => e.stopPropagation()}>
-          <Btn size="sm" disabled={verdict.isPending || c.row.original.status === "verified"} onClick={() => verdict.mutate({ id: c.row.original.card_id, status: "verified" })}>{t("verify")}</Btn>
-          <Btn size="sm" variant="danger" disabled={verdict.isPending || c.row.original.status === "rejected"} onClick={() => verdict.mutate({ id: c.row.original.card_id, status: "rejected" })}>{t("reject")}</Btn>
-          <Btn size="sm" variant="secondary" onClick={() => setEditing(c.row.original.card_id)}>{t("facts")}</Btn>
+          <Button size="sm" disabled={verdict.isPending || c.row.original.status === "verified"} onClick={() => verdict.mutate({ id: c.row.original.card_id, status: "verified" })}>{t("verify")}</Button>
+          <Button size="sm" variant="danger" disabled={verdict.isPending || c.row.original.status === "rejected"} onClick={() => verdict.mutate({ id: c.row.original.card_id, status: "rejected" })}>{t("reject")}</Button>
+          <Button size="sm" variant="secondary" onClick={() => setEditing(c.row.original.card_id)}>{t("facts")}</Button>
         </div>
       ) },
   ], [verdict, t, statusOf]);
@@ -458,8 +459,8 @@ function PlaceCardsTab({ view, update }: { view: View; update: (p: Partial<View>
             {(["auto_checked", "verified", "rejected"] as const).map((s) => <option key={s} value={s}>{status(s)}</option>)}
           </select>
           <input value={tourId} onChange={(e) => setTourId(e.target.value)} placeholder="tour_id (uuid)" aria-label={t("tourIdAria")} style={{ ...inputStyle, fontFamily: mono, minWidth: 260 }} />
-          <Btn size="sm" disabled={!/^[0-9a-f-]{36}$/i.test(tourId.trim()) || build.isPending} onClick={() => build.mutate()}>{t("buildCards")}</Btn>
-          <label style={{ display: "inline-flex", gap: 4, alignItems: "center", fontSize: 12, color: A.ink3 }} title={t("retryMissesTitle")}>
+          <Button size="sm" disabled={!/^[0-9a-f-]{36}$/i.test(tourId.trim()) || build.isPending} onClick={() => build.mutate()}>{t("buildCards")}</Button>
+          <label style={{ display: "inline-flex", gap: 4, alignItems: "center", fontSize: 12, color: K.ink3 }} title={t("retryMissesTitle")}>
             <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} aria-label={t("retryMissesAria")} />
             {t("retryMisses")}
           </label>
@@ -492,7 +493,7 @@ function Page() {
   });
   const tenants = stats.data?.tenants ?? [];
   return (
-    <AdminMain>
+    <PageFrame>
       <PageHeader title={t("title")} description={t("description")} />
       <div className="a527-dash-body" style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
         <SocialContentSubNav active="content_quality" />
@@ -508,7 +509,7 @@ function Page() {
       </div>
       {view.piece && <PieceDrawer pieceId={view.piece} onClose={() => update({ piece: null })} />}
       {view.version && <TourVersionDrawer id={view.version} onClose={() => update({ version: null })} />}
-    </AdminMain>
+    </PageFrame>
   );
 }
 

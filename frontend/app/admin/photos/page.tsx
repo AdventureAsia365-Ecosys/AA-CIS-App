@@ -6,10 +6,10 @@
 // Places (destinations) are matched only with "Match places + covers", per country, after its rerun
 // tours are re-extracted; a photo is compared only with the places on its own tour's itinerary.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw, HardDrive, Map as MapIcon, Images, AlertTriangle, CheckCircle2 } from "lucide-react";
-import { A, sans, mono, Card, SLabel, Badge, Btn, LoadingScreen, TH, TD, StatCard, TabBar } from "../_components/adminUi";
-import { AdminMain, PageHeader, useFormat, useT } from "../../_kit";
+import { A, sans, mono, Card, SLabel, Badge, LoadingScreen, TH, TD, StatCard } from "../_components/adminUi";
+import { Button, DataTable, Tabs, PageFrame, PageHeader, useFormat, useT, type ColumnDef } from "../../_kit";
 import { PH } from "./messages";
 
 type CountryRow = {
@@ -79,6 +79,32 @@ function Thumbs({ urls, h = 56 }: { urls: string[]; h?: number }) {
 }
 
 const selectStyle = { padding: "6px 8px", borderRadius: 8, border: `1px solid ${A.line}`, fontFamily: sans, fontSize: 13 };
+
+// AA-994 S6b: the tour coverage list is a kit DataTable (was a raw table with the legacy TH / TD styles). Every row
+// shows, as before (no pager).
+function ToursTable({ tours }: { tours: TourCov[] }) {
+  const t = useT(PH);
+  const columns = useMemo<ColumnDef<TourCov, unknown>[]>(() => [
+    { id: "tour", header: t("colTour"), accessorKey: "src_name", cell: ({ row }) => <span style={{ fontWeight: 600, display: "inline-block", maxWidth: 360 }}>{row.original.src_name}</span> },
+    { id: "country", header: t("colCountry"), accessorKey: "country" },
+    { id: "duration", header: t("colDuration"), accessorKey: "duration", cell: ({ row }) => row.original.duration ?? "—" },
+    {
+      id: "published", header: t("colPublished"), accessorKey: "published",
+      cell: ({ row }) => row.original.published ? <Badge color="green">{t("yes")}</Badge> : <Badge color="gray">{t("no")}</Badge>,
+    },
+    {
+      id: "photos", header: t("colPhotos"), accessorKey: "photos",
+      cell: ({ row }) => <span style={{ fontFamily: mono, color: row.original.photos ? undefined : A.amber }}>{row.original.photos}</span>,
+    },
+    { id: "sample", header: t("colSample"), enableSorting: false, cell: ({ row }) => <Thumbs urls={row.original.sample} h={40} /> },
+  ], [t]);
+  return (
+    <DataTable<TourCov>
+      data={tours} columns={columns} tableId="photos-tours" getRowId={tc => tc.tour_id}
+      searchable={false} paginate={false} stickyHeader={false} emptyTitle={t("noTours")}
+    />
+  );
+}
 
 export default function PhotosPage() {
   const t = useT(PH);
@@ -208,12 +234,12 @@ export default function PhotosPage() {
     } finally { setBusy(null); }
   }
 
-  if (!countries || !totals) return <AdminMain><LoadingScreen msg={t("loading")} /></AdminMain>;
+  if (!countries || !totals) return <PageFrame><LoadingScreen msg={t("loading")} /></PageFrame>;
   const jobRunning = lastJob && ["queued", "running"].includes(lastJob.status);
   const shownFolders = folders.filter(f => folderFilter === "all" || (folderFilter === "unmatched" ? !f.tour_id : !!f.tour_id));
 
   return (
-      <AdminMain>
+      <PageFrame>
         <PageHeader
           title={t("title")}
           description={t("description")}
@@ -228,10 +254,10 @@ export default function PhotosPage() {
                 <input type="checkbox" checked={matchPlaces} onChange={e => setMatchPlaces(e.target.checked)} />
                 {t("matchPlaces")}
               </label>
-              <Btn onClick={refresh} size="sm"><RefreshCw size={13} /> {t("refresh")}</Btn>
-              <Btn onClick={syncNow} variant="primary" size="sm" disabled={busy === "sync" || !!jobRunning}>
+              <Button onClick={refresh} size="sm"><RefreshCw size={13} /> {t("refresh")}</Button>
+              <Button onClick={syncNow} variant="primary" size="sm" disabled={busy === "sync" || !!jobRunning}>
                 {jobRunning ? t("syncRunning") : country ? t("syncCountry", country) : t("syncAll")}
-              </Btn>
+              </Button>
             </>
           }
         />
@@ -243,7 +269,7 @@ export default function PhotosPage() {
           </Card>
         )}
 
-        <div style={{ marginBottom: 18 }}><TabBar tabs={TABS.map((x) => ({ key: x.key, label: t(x.label) }))} active={tab} onChange={setTab} /></div>
+        <div style={{ marginBottom: 18 }}><Tabs tabs={TABS.map((x) => ({ key: x.key, label: t(x.label) }))} active={tab} onChange={setTab} /></div>
 
         {tab === "overview" && (
           <>
@@ -339,25 +365,7 @@ export default function PhotosPage() {
                 {t("toursHavePhotos", tours.filter(x => x.photos).length, tours.length, country ? t("inCountry", country) : "")}
               </span>
             </div>
-            <Card style={{ padding: 0, overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead><tr>{(["colTour", "colCountry", "colDuration", "colPublished", "colPhotos", "colSample"] as const)
-                  .map(h => <th key={h} style={TH}>{t(h)}</th>)}</tr></thead>
-                <tbody>
-                  {tours.map(tc => (
-                    <tr key={tc.tour_id}>
-                      <td style={{ ...TD, fontWeight: 600, maxWidth: 360 }}>{tc.src_name}</td>
-                      <td style={TD}>{tc.country}</td>
-                      <td style={TD}>{tc.duration ?? "—"}</td>
-                      <td style={TD}>{tc.published ? <Badge color="green">{t("yes")}</Badge> : <Badge color="gray">{t("no")}</Badge>}</td>
-                      <td style={{ ...TD, fontFamily: mono, color: tc.photos ? undefined : A.amber }}>{tc.photos}</td>
-                      <td style={TD}><Thumbs urls={tc.sample} h={40} /></td>
-                    </tr>
-                  ))}
-                  {tours.length === 0 && <tr><td style={TD} colSpan={6}>{t("noTours")}</td></tr>}
-                </tbody>
-              </table>
-            </Card>
+            <ToursTable tours={tours} />
           </>
         )}
 
@@ -393,11 +401,11 @@ export default function PhotosPage() {
                           <option value="">{t("chooseTour")}</option>
                           {tourOpts.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
                         </select>
-                        <Btn size="sm" variant="primary" disabled={!pickTour || busy === f.folder_path} onClick={() => assignFolderTo(f)}>{t("save")}</Btn>
-                        <Btn size="sm" onClick={() => setAssignFolder(null)}>{t("cancel")}</Btn>
+                        <Button size="sm" variant="primary" disabled={!pickTour || busy === f.folder_path} onClick={() => assignFolderTo(f)}>{t("save")}</Button>
+                        <Button size="sm" onClick={() => setAssignFolder(null)}>{t("cancel")}</Button>
                       </div>
                     ) : (
-                      <Btn size="sm" onClick={() => openAssign(f)}>{f.tour_id ? t("changeTour") : t("assignTour")}</Btn>
+                      <Button size="sm" onClick={() => openAssign(f)}>{f.tour_id ? t("changeTour") : t("assignTour")}</Button>
                     )}
                   </div>
                 </Card>
@@ -416,8 +424,8 @@ export default function PhotosPage() {
               </select>
               <span style={{ fontSize: 12.5, color: A.muted }}>{t("photosCount", total)}</span>
               <div style={{ flex: 1 }} />
-              <Btn size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE))}>{t("prev")}</Btn>
-              <Btn size="sm" disabled={offset + PAGE >= total} onClick={() => setOffset(offset + PAGE)}>{t("next")}</Btn>
+              <Button size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE))}>{t("prev")}</Button>
+              <Button size="sm" disabled={offset + PAGE >= total} onClick={() => setOffset(offset + PAGE)}>{t("next")}</Button>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 14 }}>
               {photos.map(p => (
@@ -439,7 +447,7 @@ export default function PhotosPage() {
                     {p.error && <div style={{ color: A.red, fontFamily: mono, fontSize: 11, marginTop: 4 }}>{p.error}</div>}
                     {p.status !== "rejected" && (
                       <div style={{ marginTop: 8 }}>
-                        <Btn size="sm" variant="ghost" disabled={busy === p.id} onClick={() => reject(p)}>{t("reject")}</Btn>
+                        <Button size="sm" variant="ghost" disabled={busy === p.id} onClick={() => reject(p)}>{t("reject")}</Button>
                       </div>
                     )}
                   </div>
@@ -449,6 +457,6 @@ export default function PhotosPage() {
             {photos.length === 0 && <div style={{ color: A.muted, fontSize: 13 }}>{t("noPhotos")}</div>}
           </>
         )}
-      </AdminMain>
+      </PageFrame>
   );
 }

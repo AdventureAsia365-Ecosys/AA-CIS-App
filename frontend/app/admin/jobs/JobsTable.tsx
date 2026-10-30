@@ -8,8 +8,7 @@
 
 import { useMemo } from "react";
 import type { SortingState } from "@tanstack/react-table";
-import { A, mono, Btn } from "../_components/adminUi";
-import { Badge, type ColumnDef, DataTable, StatusBadge, useFormat, useT } from "../../_kit";
+import { K, mono, Button, Badge, type ColumnDef, DataTable, StatusBadge, useFormat, useT } from "../../_kit";
 import { JOBS } from "./messages";
 import {
   STATUSES, fmtSeconds, releases, runSeconds, stepProgress, usd,
@@ -73,8 +72,8 @@ export default function JobsTable(props: JobsTableProps) {
   const { formatDateTime: fmtTime } = useFormat();
 
   const inputStyle: React.CSSProperties = {
-    fontSize: 12, padding: "6px 8px", border: `1px solid ${A.line}`, borderRadius: 6,
-    background: A.card, color: A.ink3, minWidth: 0,
+    fontSize: 12, padding: "6px 8px", border: `1px solid ${K.line}`, borderRadius: 6,
+    background: K.card, color: K.ink3, minWidth: 0,
   };
 
   const columns = useMemo<ColumnDef<Job, unknown>[]>(() => {
@@ -91,7 +90,7 @@ export default function JobsTable(props: JobsTableProps) {
         const rel = releases(j);
         return (
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <span style={{ fontFamily: mono, fontWeight: 600, color: A.ink }}>{j.kind}</span>
+            <span style={{ fontFamily: mono, fontWeight: 600, color: K.ink }}>{j.kind}</span>
             {slow && <span title={t("expectedUnder", fmtSeconds(exp!))}><Badge tone="warning" dot={false}>{t("slow")}</Badge></span>}
             {rel > 0 && (j.status === "running" || j.status === "queued") && (
               <span title={t("releasedTitle")}>
@@ -110,7 +109,7 @@ export default function JobsTable(props: JobsTableProps) {
         return (
           <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
             <StatusBadge status={j.status} />
-            {j.cancel_requested && j.status === "running" && <span style={{ fontSize: 11, color: A.muted }}>{t("cancelling")}</span>}
+            {j.cancel_requested && j.status === "running" && <span style={{ fontSize: 11, color: K.muted }}>{t("cancelling")}</span>}
           </span>
         );
       },
@@ -126,20 +125,20 @@ export default function JobsTable(props: JobsTableProps) {
       enableSorting: false,
       cell: (c) => {
         const j = c.row.original;
-        if (j.error && j.status !== "succeeded") return <span style={{ color: A.red }}>{j.error}</span>;
+        if (j.error && j.status !== "succeeded") return <span style={{ color: K.danger }}>{j.error}</span>;
         const p = stepProgress(j);
         const phase = typeof j.progress?.phase === "string" ? j.progress.phase : "";
-        if (!p) return <span style={{ color: A.muted }}>{phase || "—"}</span>;
+        if (!p) return <span style={{ color: K.muted }}>{phase || "—"}</span>;
         const pct = Math.min(100, (p.done / p.total) * 100);
         const eta = etas[j.id] ?? null;
         return (
           <div style={{ minWidth: 150 }}>
-            <div style={{ fontSize: 11.5, color: A.body }}>
+            <div style={{ fontSize: 11.5, color: K.body }}>
               {p.step || phase} · <span style={{ fontFamily: mono }}>{p.done}/{p.total}</span>
-              {j.status === "running" && eta && <span style={{ color: A.muted }}>{t("eta", eta)}</span>}
+              {j.status === "running" && eta && <span style={{ color: K.muted }}>{t("eta", eta)}</span>}
             </div>
-            <div style={{ height: 4, background: A.line2, borderRadius: 2, overflow: "hidden", marginTop: 3 }}>
-              <div style={{ width: `${pct}%`, height: "100%", background: A.accent }} />
+            <div style={{ height: 4, background: K.line2, borderRadius: 2, overflow: "hidden", marginTop: 3 }}>
+              <div style={{ width: `${pct}%`, height: "100%", background: K.accent }} />
             </div>
           </div>
         );
@@ -153,7 +152,7 @@ export default function JobsTable(props: JobsTableProps) {
         const secs = runSeconds(j, now);
         const exp = expected(j.kind);
         const slow = j.status === "running" && exp != null && secs != null && secs > exp;
-        return <span style={{ fontFamily: mono, color: slow ? A.amber : A.body }}>{secs == null ? "—" : fmtSeconds(secs)}</span>;
+        return <span style={{ fontFamily: mono, color: slow ? K.amber : K.body }}>{secs == null ? "—" : fmtSeconds(secs)}</span>;
       },
     },
     {
@@ -165,12 +164,12 @@ export default function JobsTable(props: JobsTableProps) {
       id: "created_at",
       accessorKey: "created_at",
       header: t("colCreated"),
-      cell: (c) => <span style={{ color: A.muted, whiteSpace: "nowrap" }}>{fmtTime(c.row.original.created_at)}</span>,
+      cell: (c) => <span style={{ color: K.muted, whiteSpace: "nowrap" }}>{fmtTime(c.row.original.created_at)}</span>,
     },
     {
       accessorKey: "created_by",
       header: t("colBy"),
-      cell: (c) => <span style={{ color: A.muted }}>{c.row.original.created_by ?? "—"}</span>,
+      cell: (c) => <span style={{ color: K.muted }}>{c.row.original.created_by ?? "—"}</span>,
     },
     {
       id: "actions",
@@ -184,8 +183,8 @@ export default function JobsTable(props: JobsTableProps) {
         if (!canCancel && !canRetry) return null;
         return (
           <div style={{ display: "flex", gap: 8, whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
-            {canCancel && <Btn size="sm" variant="danger" disabled={busyId === j.id} onClick={() => onAct(j, "cancel")}>{t("cancel")}</Btn>}
-            {canRetry && <Btn size="sm" disabled={busyId === j.id} onClick={() => onAct(j, "retry")}>{t("retry")}</Btn>}
+            {canCancel && <Button size="sm" variant="danger" disabled={busyId === j.id} onClick={() => onAct(j, "cancel")}>{t("cancel")}</Button>}
+            {canRetry && <Button size="sm" disabled={busyId === j.id} onClick={() => onAct(j, "retry")}>{t("retry")}</Button>}
           </div>
         );
       },
@@ -260,11 +259,11 @@ export default function JobsTable(props: JobsTableProps) {
           <datalist id="jobs-created-by">
             {createdByOptions.map(o => <option key={o} value={o} />)}
           </datalist>
-          <label style={{ fontSize: 11, color: A.muted, display: "inline-flex", alignItems: "center", gap: 4 }}>
+          <label style={{ fontSize: 11, color: K.muted, display: "inline-flex", alignItems: "center", gap: 4 }}>
             {t("since")}
             <input type="date" value={since} onChange={e => onSinceChange(e.target.value)} aria-label={t("createdSince")} style={inputStyle} />
           </label>
-          <label style={{ fontSize: 11, color: A.muted, display: "inline-flex", alignItems: "center", gap: 4 }}>
+          <label style={{ fontSize: 11, color: K.muted, display: "inline-flex", alignItems: "center", gap: 4 }}>
             {t("until")}
             <input type="date" value={until} onChange={e => onUntilChange(e.target.value)} aria-label={t("createdUntil")} style={inputStyle} />
           </label>

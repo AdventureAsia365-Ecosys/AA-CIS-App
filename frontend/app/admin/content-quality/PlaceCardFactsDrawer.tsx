@@ -7,14 +7,13 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { A } from "../_components/adminUi";
-import { ApiError, Badge, Button, Drawer, apiGet, apiSend, useAdminIdentity, useT, useToast } from "../../_kit";
+import { K, ApiError, Badge, Button, Drawer, apiGet, apiSend, useAdminIdentity, useT, useToast } from "../../_kit";
 import type { FactEdit, PlaceCardDetail, PlaceCardFactRow } from "./shared";
 import { D } from "./drawer.messages";
 
 const fieldStyle: React.CSSProperties = {
-  fontSize: 12.5, padding: "6px 8px", border: `1px solid ${A.line}`, borderRadius: 6, background: A.card,
-  color: A.ink3, width: "100%", boxSizing: "border-box", fontFamily: "inherit",
+  fontSize: 12.5, padding: "6px 8px", border: `1px solid ${K.line}`, borderRadius: 6, background: K.card,
+  color: K.ink3, width: "100%", boxSizing: "border-box", fontFamily: "inherit",
 };
 
 interface Draft { kind: string; text: string; drop: boolean }
@@ -61,18 +60,18 @@ function FactsForm({ card, onSaved }: { card: PlaceCardDetail; onSaved: (c: Plac
   });
   const canSave = isAdmin && edits.length > 0 && !emptyText && reason.trim().length >= 3 && !save.isPending;
 
-  if (!card.fact_rows.length) return <div style={{ fontSize: 13, color: A.muted }}>{t("noFacts")}</div>;
+  if (!card.fact_rows.length) return <div style={{ fontSize: 13, color: K.muted }}>{t("noFacts")}</div>;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ fontSize: 12, color: A.muted }}>{t("factsHelp")}</div>
+      <div style={{ fontSize: 12, color: K.muted }}>{t("factsHelp")}</div>
       {card.fact_rows.map((r) => {
         const d = draftOf(r);
         const changed = edits.some((e) => e.index === r.index);
         return (
-          <div key={r.index} style={{ border: `1px solid ${changed ? A.accent : A.line}`, borderRadius: 8, padding: 10,
+          <div key={r.index} style={{ border: `1px solid ${changed ? K.accent : K.line}`, borderRadius: 8, padding: 10,
                                       display: "flex", flexDirection: "column", gap: 6, opacity: d.drop ? 0.55 : 1 }}>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <span style={{ fontSize: 11.5, color: A.muted }}>#{r.index + 1}</span>
+              <span style={{ fontSize: 11.5, color: K.muted }}>#{r.index + 1}</span>
               <select value={d.kind} disabled={d.drop || !isAdmin} onChange={(e) => set(r, { kind: e.target.value })}
                       aria-label={t("kindAria", r.index + 1)} style={{ ...fieldStyle, width: "auto" }}>
                 {card.fact_kinds.map((k) => <option key={k} value={k}>{k}</option>)}
@@ -90,14 +89,14 @@ function FactsForm({ card, onSaved }: { card: PlaceCardDetail; onSaved: (c: Plac
           </div>
         );
       })}
-      <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: A.ink3 }}>
+      <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: K.ink3 }}>
         {t("factReason")}
         <input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} disabled={!isAdmin}
                placeholder={t("factReasonPlaceholder")} style={fieldStyle} />
       </label>
-      {emptyText && <div role="alert" style={{ fontSize: 12, color: A.red }}>{t("factEmpty")}</div>}
-      {error && <div role="alert" style={{ fontSize: 12, color: A.red }}>{t("couldNotSave", error)}</div>}
-      {!isAdmin && <div style={{ fontSize: 12, color: A.muted }}>{t("onlyAdminFacts")}</div>}
+      {emptyText && <div role="alert" style={{ fontSize: 12, color: K.danger }}>{t("factEmpty")}</div>}
+      {error && <div role="alert" style={{ fontSize: 12, color: K.danger }}>{t("couldNotSave", error)}</div>}
+      {!isAdmin && <div style={{ fontSize: 12, color: K.muted }}>{t("onlyAdminFacts")}</div>}
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <Button variant="primary" size="sm" disabled={!canSave} onClick={() => { setError(null); save.mutate(); }}>
           {save.isPending ? t("saving") : edits.length ? t("saveN", edits.length) : t("save")}
@@ -120,8 +119,8 @@ export default function PlaceCardFactsDrawer({ cardId, onClose }: { cardId: stri
   const title = data ? `${data.display_name} — ${[data.locality, data.region, data.country].filter(Boolean).join(", ")}` : t("placeCard");
   return (
     <Drawer open onClose={onClose} title={title} width={640}>
-      {isLoading && <div style={{ fontSize: 13, color: A.muted }}>{t("loading")}</div>}
-      {error && <div role="alert" style={{ fontSize: 13, color: A.red }}>{t("couldNotLoadCard", String(error))}</div>}
+      {isLoading && <div style={{ fontSize: 13, color: K.muted }}>{t("loading")}</div>}
+      {error && <div role="alert" style={{ fontSize: 13, color: K.danger }}>{t("couldNotLoadCard", String(error))}</div>}
       {data && (
         <FactsForm key={data.updated_at} card={data} onSaved={(c) => {
           qc.setQueryData(key, c);

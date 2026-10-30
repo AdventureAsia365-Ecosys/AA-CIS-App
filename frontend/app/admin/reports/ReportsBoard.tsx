@@ -17,7 +17,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Play, RefreshCw } from "lucide-react";
 import { Suspense, useMemo, useState } from "react";
 import {
-  AdminMain,
+  PageFrame,
   Badge,
   Button,
   Checkbox,
@@ -152,7 +152,7 @@ function Board() {
   const failed7d = data ? data.reports.reduce((n, r) => n + r.failed_7d, 0) : undefined;
 
   return (
-    <AdminMain>
+    <PageFrame>
       <PageHeader
         title={t("title")}
         breadcrumbs={[{ label: t("platform") }, { label: t("overview") }, { label: t("title") }]}
@@ -212,7 +212,7 @@ function Board() {
       )}
 
       {open && <ReportDrawer key={open.id} report={open} onClose={() => setOpen(null)} onQueued={refresh} />}
-    </AdminMain>
+    </PageFrame>
   );
 }
 

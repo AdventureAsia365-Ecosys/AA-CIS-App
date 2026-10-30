@@ -10,8 +10,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { A } from "../_components/adminUi";
-import { ApiError, Badge, Button, apiGet, apiSend, useAdminIdentity, useT, useToast } from "../../_kit";
+import { K, ApiError, Badge, Button, apiGet, apiSend, useAdminIdentity, useT, useToast } from "../../_kit";
 import {
   fmtTime,
   type DefectLevel, type PieceDetail, type PieceLabel as Label, type PieceLabelBody, type PieceLabelValue, type PieceLabels,
@@ -34,7 +33,7 @@ export function LabelBadge({ label }: { label: PieceLabelValue }) {
 }
 
 const fieldStyle: React.CSSProperties = {
-  fontSize: 12, padding: "6px 8px", border: `1px solid ${A.line}`, borderRadius: 6, background: A.card, color: A.ink,
+  fontSize: 12, padding: "6px 8px", border: `1px solid ${K.line}`, borderRadius: 6, background: K.card, color: K.ink,
 };
 
 // The form's working copy. `label` is null until the admin picks a verdict: an unlabelled piece
@@ -90,16 +89,16 @@ function LabelForm({ piece, mine }: { piece: PieceDetail; mine: Label | null }) 
             <button key={l} type="button" role="radio" aria-checked={on} title={labelHint(l)}
                     data-testid={`cq-label-${l}`} onClick={() => setD((x) => ({ ...x, label: l }))}
                     style={{ ...fieldStyle, cursor: "pointer", fontWeight: on ? 700 : 400,
-                             borderColor: on ? A.accent : A.line, background: on ? A.accentSoft : A.card }}>
+                             borderColor: on ? K.accent : K.line, background: on ? K.accentSoft : K.card }}>
               {labelName(l)}
-              <span style={{ display: "block", fontSize: 10.5, fontWeight: 400, color: A.muted }}>{labelHint(l)}</span>
+              <span style={{ display: "block", fontSize: 10.5, fontWeight: 400, color: K.muted }}>{labelHint(l)}</span>
             </button>
           );
         })}
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         {DEFECTS.map((k) => (
-          <label key={k} style={{ display: "flex", gap: 4, alignItems: "center", fontSize: 12, color: A.body }}>
+          <label key={k} style={{ display: "flex", gap: 4, alignItems: "center", fontSize: 12, color: K.body }}>
             {defectName(k)}
             <select value={d.defects[k] ?? ""} onChange={(e) => setDefect(k, e.target.value as DefectLevel | "")}
                     aria-label={t("defectsAria", defectName(k))} style={fieldStyle}>
@@ -108,7 +107,7 @@ function LabelForm({ piece, mine }: { piece: PieceDetail; mine: Label | null }) 
             </select>
           </label>
         ))}
-        <label style={{ display: "flex", gap: 4, alignItems: "center", fontSize: 12, color: A.body }}>
+        <label style={{ display: "flex", gap: 4, alignItems: "center", fontSize: 12, color: K.body }}>
           {t("minutesToFix")}
           <input type="number" min={0} max={600} value={d.minutes_to_fix ?? ""} aria-label={t("minutesToFix")}
                  onChange={(e) => setD((x) => ({ ...x, minutes_to_fix: e.target.value === "" ? null : Math.max(0, Math.min(600, Math.round(Number(e.target.value)))) }))}
@@ -126,8 +125,8 @@ function LabelForm({ piece, mine }: { piece: PieceDetail; mine: Label | null }) 
             {save.isPending ? t("saving") : mine ? t("updateLabel") : t("saveLabel")}
           </Button>
         </span>
-        {!body && <span data-testid="cq-label-pick-hint" style={{ fontSize: 11.5, color: A.muted }}>{t("pickVerdict")}</span>}
-        {mine && <span style={{ fontSize: 11.5, color: A.muted }}>{t("savedAt", fmtTime(mine.labelled_at))}</span>}
+        {!body && <span data-testid="cq-label-pick-hint" style={{ fontSize: 11.5, color: K.muted }}>{t("pickVerdict")}</span>}
+        {mine && <span style={{ fontSize: 11.5, color: K.muted }}>{t("savedAt", fmtTime(mine.labelled_at))}</span>}
       </div>
     </div>
   );
@@ -137,19 +136,19 @@ function LabelList({ labels }: { labels: Label[] }) {
   const t = useT(D);
   const defectName = useLookup(DEFECT);
   const level = useLookup(DEFECT_LEVEL);
-  if (!labels.length) return <div style={{ fontSize: 12, color: A.muted }}>{t("noLabels")}</div>;
+  if (!labels.length) return <div style={{ fontSize: 12, color: K.muted }}>{t("noLabels")}</div>;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       {labels.map((l) => (
-        <div key={l.labelled_by} style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", fontSize: 12, color: A.body }}>
+        <div key={l.labelled_by} style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", fontSize: 12, color: K.body }}>
           <LabelBadge label={l.label} />
-          <span style={{ color: A.muted }}>{l.labelled_by.replace(/^admin:/, "")} · {fmtTime(l.labelled_at)}</span>
+          <span style={{ color: K.muted }}>{l.labelled_by.replace(/^admin:/, "")} · {fmtTime(l.labelled_at)}</span>
           {Object.entries(l.defects || {}).filter(([, v]) => v !== "none").map(([k, v]) => (
-            <span key={k} style={{ color: A.muted }}>{defectName(k)}: {level(v)}</span>
+            <span key={k} style={{ color: K.muted }}>{defectName(k)}: {level(v)}</span>
           ))}
-          {l.minutes_to_fix != null && <span style={{ color: A.muted }}>{t("minutes", l.minutes_to_fix)}</span>}
+          {l.minutes_to_fix != null && <span style={{ color: K.muted }}>{t("minutes", l.minutes_to_fix)}</span>}
           {l.text_changed_since_label && <Badge tone="warning" dot={false}>{t("editedSince")}</Badge>}
-          {l.reason && <span style={{ flexBasis: "100%", color: A.body }}>{l.reason}</span>}
+          {l.reason && <span style={{ flexBasis: "100%", color: K.body }}>{l.reason}</span>}
         </div>
       ))}
     </div>
@@ -166,29 +165,29 @@ export function PieceLabelSection({ piece }: { piece: PieceDetail }) {
     enabled: isAdmin,
     retry: false,
   });
-  if (!isAdmin) return <div style={{ fontSize: 12, color: A.muted }}>{t("onlyAdminLabel")}</div>;
+  if (!isAdmin) return <div style={{ fontSize: 12, color: K.muted }}>{t("onlyAdminLabel")}</div>;
   if (error) {
     const unavailable = error instanceof ApiError && error.status === 503;
     return (
-      <div data-testid="cq-label-unavailable" style={{ fontSize: 12, color: unavailable ? A.muted : A.red }}>
+      <div data-testid="cq-label-unavailable" style={{ fontSize: 12, color: unavailable ? K.muted : K.danger }}>
         {error instanceof Error ? error.message : String(error)}
       </div>
     );
   }
-  if (isLoading || !data) return <div style={{ fontSize: 12, color: A.muted }}>{t("loading")}</div>;
+  if (isLoading || !data) return <div style={{ fontSize: 12, color: K.muted }}>{t("loading")}</div>;
   const others = data.labels.filter((l) => l.labelled_by !== data.mine?.labelled_by);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       {EDITABLE.includes(piece.status)
         ? <LabelForm key={data.mine?.labelled_at ?? "new"} piece={piece} mine={data.mine} />
-        : <div style={{ fontSize: 12, color: A.muted }}>{t("noFinalText", status(piece.status))}</div>}
+        : <div style={{ fontSize: 12, color: K.muted }}>{t("noFinalText", status(piece.status))}</div>}
       {data.mine?.text_changed_since_label && (
-        <div style={{ fontSize: 12, background: A.amberSoft, padding: "6px 8px", borderRadius: 6, color: A.ink }}>
+        <div style={{ fontSize: 12, background: K.amberSoft, padding: "6px 8px", borderRadius: 6, color: K.ink }}>
           {t("editedAfterLabel")}
         </div>
       )}
       <div>
-        <div style={{ fontSize: 11.5, fontWeight: 600, marginBottom: 4, color: A.ink }}>{t("otherLabellers", others.length)}</div>
+        <div style={{ fontSize: 11.5, fontWeight: 600, marginBottom: 4, color: K.ink }}>{t("otherLabellers", others.length)}</div>
         <LabelList labels={others} />
       </div>
     </div>

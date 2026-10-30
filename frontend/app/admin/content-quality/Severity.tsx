@@ -3,8 +3,7 @@
 // Content Quality drawers. Severity rules: lib/gateSeverity.ts (findings when the entry has them, else the entry's
 // own `blocking`).
 
-import { A, mono } from "../_components/adminUi";
-import { Badge, useT } from "../../_kit";
+import { K, mono, Badge, useT } from "../../_kit";
 import { SEVERITY_TONE, findingsOf, type LedgerEntryLike, type Severity } from "@/lib/gateSeverity";
 import { D } from "./drawer.messages";
 import { useCqText } from "./useCqText";
@@ -25,7 +24,7 @@ export function SourceNote({ source }: { source: string | null | undefined }) {
   const { gateLabel } = useCqText();
   if (!source) return null;
   return (
-    <span style={{ fontSize: 10.5, color: A.muted }} title={source}>
+    <span style={{ fontSize: 10.5, color: K.muted }} title={source}>
       {t("foundBy")} {gateLabel(source)} <span style={{ fontFamily: mono }}>{source}</span>
     </span>
   );
@@ -35,7 +34,7 @@ export function SourceNote({ source }: { source: string | null | undefined }) {
 export function FindingList({ entry }: { entry: LedgerEntryLike }) {
   const t = useT(D);
   const findings = findingsOf(entry);
-  if (findings.length === 0) return <span style={{ color: A.muted }}>{t("failedNoDetail")}</span>;
+  if (findings.length === 0) return <span style={{ color: K.muted }}>{t("failedNoDetail")}</span>;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       {findings.map((f, j) => (

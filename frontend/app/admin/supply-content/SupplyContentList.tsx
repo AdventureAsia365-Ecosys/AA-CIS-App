@@ -26,7 +26,7 @@ import {
   adminHeaders,
   useFormat,
   useT,
-  type ColumnDef, AdminMain,
+  type ColumnDef, PageFrame,
 } from "../../_kit";
 import {
   CONTENT_STATUSES,
@@ -135,7 +135,7 @@ export default function SupplyContentList() {
   );
 
   return (
-    <AdminMain>
+    <PageFrame>
       <PageHeader
         title={t("title")}
         breadcrumbs={[{ label: t("cisContent") }, { label: t("assets") }, { label: t("title") }]}
@@ -169,7 +169,7 @@ export default function SupplyContentList() {
         onRowClick={(r) => router.push(detailHref(r.id))}
         tableMinWidth={640}
       />
-    </AdminMain>
+    </PageFrame>
   );
 }
 

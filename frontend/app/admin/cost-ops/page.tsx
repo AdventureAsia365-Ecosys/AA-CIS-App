@@ -18,11 +18,8 @@ import BudgetsPanel from "./BudgetsPanel";
 import DfsRunsPanel from "./DfsRunsPanel";
 import ForecastPanel from "./ForecastPanel";
 import JevPanel from "./JevPanel";
-import {
-  A, serif, sans, mono, Card, SLabel, Badge, Btn, LoadingScreen, StatCard, TabBar, TH, TD,
-  CHART_TOOLTIP,
-} from "../_components/adminUi";
-import { ScrollX, AdminMain, PageHeader, useFormat, useT } from "../../_kit";
+import { A, serif, sans, mono, Card, SLabel, Badge, LoadingScreen, StatCard, TH, TD, CHART_TOOLTIP } from "../_components/adminUi";
+import { Button, Tabs, ScrollX, PageFrame, PageHeader, useFormat, useT } from "../../_kit";
 import { useChartColors } from "../../_kit/useTheme";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import {
@@ -463,7 +460,7 @@ function FallbackModal({ tenantId, tenantLabel, rangeQs, rangeLabel, onClose }: 
               {tenantLabel ? t("tenantIs", tenantLabel) : t("allTenants")} · {rangeLabel} · {t("fallbackSub")}
             </div>
           </div>
-          <Btn size="sm" variant="ghost" onClick={onClose} style={{ marginLeft: "auto" }}>{t("close")}</Btn>
+          <Button size="sm" variant="ghost" onClick={onClose} style={{ marginLeft: "auto" }}>{t("close")}</Button>
         </div>
         <div style={{ padding: "0 4px" }}>
           {err && <div style={{ color: A.red, fontSize: 13, padding: 24 }}>{err}</div>}
@@ -740,15 +737,15 @@ function CostOperationsInner() {
   const filterActive = tenantFilter || acctFilter;
 
   return (
-      <AdminMain>
+      <PageFrame>
         <PageHeader
           title={t("title")}
           description={t("description")}
           actions={
             <>
               {DAY_OPTIONS.map(d => (
-                <Btn key={d} size="sm" variant={!custom && days === d ? "primary" : "secondary"}
-                     onClick={() => { setCustom(null); setDays(d); }}>{t("days", d)}</Btn>
+                <Button key={d} size="sm" variant={!custom && days === d ? "primary" : "secondary"}
+                     onClick={() => { setCustom(null); setDays(d); }}>{t("days", d)}</Button>
               ))}
               <span style={{ width: 1, height: 20, background: A.line, margin: "0 4px" }} />
               <input type="date" value={draftStart} onChange={e => setDraftStart(e.target.value)} aria-label={t("fromUtc")}
@@ -756,8 +753,8 @@ function CostOperationsInner() {
               <span style={{ fontSize: 12, color: A.muted }}>→</span>
               <input type="date" value={draftEnd} onChange={e => setDraftEnd(e.target.value)} aria-label={t("toUtc")}
                      style={{ ...DATE_INPUT, borderColor: custom ? A.ink3 : A.line }} />
-              <Btn size="sm" variant={custom ? "primary" : "secondary"} onClick={applyCustom}
-                   disabled={!draftStart || (!!draftEnd && draftStart > draftEnd)}>{t("apply")}</Btn>
+              <Button size="sm" variant={custom ? "primary" : "secondary"} onClick={applyCustom}
+                   disabled={!draftStart || (!!draftEnd && draftStart > draftEnd)}>{t("apply")}</Button>
             </>
           }
         />
@@ -776,19 +773,19 @@ function CostOperationsInner() {
             </div>
             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
               <span style={{ fontSize: 12, color: A.muted, marginRight: 2 }}>{t("account")}</span>
-              <Btn size="sm" variant={acctFilter === null ? "primary" : "secondary"} onClick={() => setAcctFilter(null)}>{t("all")}</Btn>
+              <Button size="sm" variant={acctFilter === null ? "primary" : "secondary"} onClick={() => setAcctFilter(null)}>{t("all")}</Button>
               {acctOptions.map(a => (
-                <Btn key={a} size="sm" variant={acctFilter === a ? "primary" : "secondary"} onClick={() => setAcctFilter(a)}>{names.short(a)}</Btn>
+                <Button key={a} size="sm" variant={acctFilter === a ? "primary" : "secondary"} onClick={() => setAcctFilter(a)}>{names.short(a)}</Button>
               ))}
             </div>
             {filterActive && (
-              <Btn size="sm" variant="ghost" onClick={() => { setTenantFilter(null); setAcctFilter(null); }}>{t("clear")}</Btn>
+              <Button size="sm" variant="ghost" onClick={() => { setTenantFilter(null); setAcctFilter(null); }}>{t("clear")}</Button>
             )}
           </div>
         </Card>
 
         <div style={{ marginBottom: 20 }}>
-          <TabBar tabs={tabs} active={tab} onChange={setTab} />
+          <Tabs tabs={tabs} active={tab} onChange={setTab} />
         </div>
 
         {/* AA-627 — low DFS balance banner (all tabs). The daily check writes the snapshot; this
@@ -818,7 +815,7 @@ function CostOperationsInner() {
         {!SELF_LOADING_TABS.has(tab) && !loading && error && (
           <Card style={{ textAlign: "center", padding: 40 }}>
             <div style={{ color: A.red, marginBottom: 12 }}>{error}</div>
-            <Btn variant="secondary" onClick={() => load(rangeQs)}>{t("retry")}</Btn>
+            <Button variant="secondary" onClick={() => load(rangeQs)}>{t("retry")}</Button>
           </Card>
         )}
 
@@ -905,9 +902,9 @@ function CostOperationsInner() {
                     <SLabel style={{ marginBottom: 0 }}>{t("awsVsEst")}</SLabel>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                       {ceCheckMsg && <span style={{ fontSize: 11.5, color: A.muted2 }}>{ceCheckMsg}</span>}
-                      <Btn size="sm" variant="secondary" onClick={runCostExplorerCheck} disabled={ceChecking}>
+                      <Button size="sm" variant="secondary" onClick={runCostExplorerCheck} disabled={ceChecking}>
                         {ceChecking ? t("refreshing") : t("refreshAws")}
-                      </Btn>
+                      </Button>
                     </div>
                   </div>
 
@@ -1011,8 +1008,8 @@ function CostOperationsInner() {
 
                 <div style={{ display: "flex", gap: 6, marginBottom: 12, alignItems: "center" }}>
                   <span style={{ fontSize: 12, color: A.muted }}>{t("groupBy")}</span>
-                  <Btn size="sm" variant={groupBy === "tenant" ? "primary" : "secondary"} onClick={() => setGroupBy("tenant")}>{t("groupTenant")}</Btn>
-                  <Btn size="sm" variant={groupBy === "account" ? "primary" : "secondary"} onClick={() => setGroupBy("account")}>{t("groupAccount")}</Btn>
+                  <Button size="sm" variant={groupBy === "tenant" ? "primary" : "secondary"} onClick={() => setGroupBy("tenant")}>{t("groupTenant")}</Button>
+                  <Button size="sm" variant={groupBy === "account" ? "primary" : "secondary"} onClick={() => setGroupBy("account")}>{t("groupAccount")}</Button>
                 </div>
 
                 {llmTree.length === 0 ? (
@@ -1176,6 +1173,6 @@ function CostOperationsInner() {
         {fbModal && (
           <FallbackModal tenantId={fbModal.tenantId} tenantLabel={fbModal.label} rangeQs={rangeQs} rangeLabel={rangeLabel} onClose={() => setFbModal(null)} />
         )}
-      </AdminMain>
+      </PageFrame>
   );
 }

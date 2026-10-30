@@ -6,8 +6,7 @@
 
 import { Ban, X } from "lucide-react";
 import { useState } from "react";
-import { A, Btn } from "../_components/adminUi";
-import { Modal, useT } from "../../_kit";
+import { K, Button, Modal, useT } from "../../_kit";
 import { M } from "./messages";
 import { WritingReasonChips } from "../_components/WritingReasonChips";
 import { reviewReason, type ReasonCode } from "@/lib/writingReasons";
@@ -40,17 +39,17 @@ export function ReasonActionModal({ action, item, busy, onClose, onConfirm }: {
       width={520}
       footer={
         <>
-          <Btn variant="ghost" size="sm" onClick={onClose} disabled={busy}>{t("cancel")}</Btn>
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>{t("cancel")}</Button>
           <span data-testid={`review-${action}-confirm`}>
-            <Btn variant={action === "reject" ? "danger" : "primary"} size="sm" disabled={busy} onClick={() => onConfirm(reason)}>
+            <Button variant={action === "reject" ? "danger" : "primary"} size="sm" disabled={busy} onClick={() => onConfirm(reason)}>
               {action === "reject" ? <X size={12} /> : <Ban size={12} />} {copy.confirm}
-            </Btn>
+            </Button>
           </span>
         </>
       }
     >
-      <div style={{ fontSize: 13, fontWeight: 600, color: A.ink, marginBottom: 4, overflowWrap: "anywhere" }}>{item.name}</div>
-      <p style={{ fontSize: 12.5, color: A.body, lineHeight: 1.6, margin: "0 0 12px" }}>{copy.body}</p>
+      <div style={{ fontSize: 13, fontWeight: 600, color: K.ink, marginBottom: 4, overflowWrap: "anywhere" }}>{item.name}</div>
+      <p style={{ fontSize: 12.5, color: K.body, lineHeight: 1.6, margin: "0 0 12px" }}>{copy.body}</p>
       <WritingReasonChips value={reason} suggested={suggested} disabled={busy} onChange={setReason} />
     </Modal>
   );
