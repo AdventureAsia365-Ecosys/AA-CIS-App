@@ -3296,6 +3296,30 @@
             ],
             "title": "Base Url"
           },
+          "budget_alert_pct": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Budget Alert Pct"
+          },
+          "budget_hard_stop": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Budget Hard Stop"
+          },
           "enabled": {
             "anyOf": [
               {
@@ -3395,6 +3419,30 @@
               }
             ],
             "title": "Timeout S"
+          },
+          "usage_scope_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Usage Scope Id"
+          },
+          "usage_secret_name": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Usage Secret Name"
           }
         },
         "title": "LlmConnectionPatch",
@@ -3419,6 +3467,33 @@
           }
         },
         "title": "LlmConnectionTest",
+        "type": "object"
+      },
+      "LlmCostReconcileRun": {
+        "additionalProperties": false,
+        "description": "AA-1002 (S10): the window of a manual reconcile run (complete UTC days ending with end_day, default\nyesterday).",
+        "properties": {
+          "days": {
+            "default": 3,
+            "maximum": 31.0,
+            "minimum": 1.0,
+            "title": "Days",
+            "type": "integer"
+          },
+          "end_day": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Day"
+          }
+        },
+        "title": "LlmCostReconcileRun",
         "type": "object"
       },
       "LlmRoutePatch": {
@@ -18612,6 +18687,177 @@
           }
         },
         "summary": "LLM connections and model deployments (read-only, no secret values)",
+        "tags": [
+          "admin-llm-ops"
+        ]
+      }
+    },
+    "/admin/llm-connections/costs": {
+      "get": {
+        "operationId": "get_llm_connection_costs_admin_llm_connections_costs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 14,
+              "maximum": 90,
+              "minimum": 1,
+              "title": "Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "LLM connection budgets (month to date) and the nightly cost reconciliation (admin-only)",
+        "tags": [
+          "admin-llm-ops"
+        ]
+      }
+    },
+    "/admin/llm-connections/reconcile": {
+      "post": {
+        "operationId": "post_llm_cost_reconcile_admin_llm_connections_reconcile_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/LlmCostReconcileRun"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Queue an LLM cost reconciliation run (admin-only, $0)",
         "tags": [
           "admin-llm-ops"
         ]

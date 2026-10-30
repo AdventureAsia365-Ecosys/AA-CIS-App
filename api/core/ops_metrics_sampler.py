@@ -61,6 +61,9 @@ samples fire the `*-sampling-stopped` alarms, so a dead api (or a dead loop) is 
   reports (EX-04, EX-06; R2: OPS-12, TP-03). Only while the kind is registered. Field `kpi_snapshot` (the job id,
   when created) or `reports_error`. R2: the same part queues the TP-03 inquiry handoff check once per UTC hour
   (`inquiry_handoff_check`, idempotency key per hour), field `inquiry_handoff_check`.
+- AA-1002 (S10): each tick also queues the nightly LLM cost reconciliation (`llm_cost_reconcile`, $0) once per UTC day
+  from 02:00 UTC (idempotency key per day), while the kind is registered and LLM_COST_RECONCILE is not off. Field
+  `llm_cost_reconcile` (the job id, when created) or `llm_cost_reconcile_error`.
 - AA-845: every JEV_CREDIT_CHECK_EVERY_S (shared/jev_credit.py, 30 min) the loop also runs the Jev low-credit
   check (estimated TypeSafe credit below the threshold -> throttled bell + operator e-mail). It runs after the
   tick, outside sample_once, under its own PART_TIMEOUT_S, and logs its own line (`jev_credit_low_checked` /
@@ -310,6 +313,18 @@ async def _reports_part(pool, kinds: dict, ts: datetime, out: dict) -> None:
             out["inquiry_handoff_check"] = {"job_id": check_id, "hour": hour.isoformat()}
 
 
+async def _llm_cost_reconcile_part(pool, kinds: dict, ts: datetime, out: dict) -> None:
+    """AA-1002 (S10): the nightly LLM cost reconciliation, once per UTC day from 02:00 UTC (idempotency key per day;
+    one indexed EXISTS a tick after that hour). Only while the kind is registered; LLM_COST_RECONCILE=off stops it."""
+    from services.jobs.llm_cost_reconcile_job import KIND, enqueue_nightly, schedule_enabled
+
+    if KIND not in kinds or not schedule_enabled():
+        return
+    job_id, created, day = await enqueue_nightly(pool, now=ts)
+    if created:
+        out["llm_cost_reconcile"] = {"job_id": job_id, "day": day.isoformat()}
+
+
 async def _alert_recipients_part(pool, redis, out: dict) -> None:
     from shared import alert_recipients
 
@@ -388,6 +403,12 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
         await asyncio.wait_for(_reports_part(pool, kinds, ts, out), timeout=5.0)
     except Exception as e:
         out["reports_error"] = _err(e)
+
+    # AA-1002 (S10): one idempotent INSERT a day, same short budget
+    try:
+        await asyncio.wait_for(_llm_cost_reconcile_part(pool, kinds, ts, out), timeout=5.0)
+    except Exception as e:
+        out["llm_cost_reconcile_error"] = _err(e)
 
     try:
         await asyncio.wait_for(_jobs_part(pool, client, kinds, ts, out), timeout=part_timeout_s)

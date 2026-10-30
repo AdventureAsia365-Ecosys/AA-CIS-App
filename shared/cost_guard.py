@@ -28,7 +28,9 @@ logger = structlog.get_logger()
 
 # AA-712: 'geocoder' = the external geocoder of the place pipeline (Mapbox Permanent / Amazon
 # Location, services/places/geocoder.py); its spend is logged in geo.geocode_call (migration 226).
-PROVIDERS = ("dfs", "bedrock", "openai", "jev", "geocoder")
+# AA-1002 (S10): 'anthropic' (the Anthropic Messages API connections) and 'azure_openai' (Azure OpenAI connections),
+# the two vendor-API providers migration 304 added to spend_budget_provider_check.
+PROVIDERS = ("dfs", "bedrock", "openai", "jev", "geocoder", "anthropic", "azure_openai")
 
 # Used only when shared.spend_budget is missing (migration 168 not applied yet). Same values as
 # the migration's seed rows; (per_run_usd, per_day_usd).
@@ -60,6 +62,10 @@ _DAY_SPEND_SQL = {
                "AND created_at >= date_trunc('day', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc'",
     "openai": "SELECT coalesce(sum(cost_usd), 0) FROM shared.llm_call_log WHERE provider = 'openai' "
               "AND created_at >= date_trunc('day', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc'",
+    "anthropic": "SELECT coalesce(sum(cost_usd), 0) FROM shared.llm_call_log WHERE provider = 'anthropic' "
+                 "AND created_at >= date_trunc('day', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc'",
+    "azure_openai": "SELECT coalesce(sum(cost_usd), 0) FROM shared.llm_call_log WHERE provider = 'azure_openai' "
+                    "AND created_at >= date_trunc('day', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc'",
     "geocoder": "SELECT coalesce(sum(cost_usd), 0) FROM geo.geocode_call "
                 "WHERE called_at >= date_trunc('day', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc'",
 }
@@ -300,3 +306,183 @@ async def _queue_alert_email(conn, budget: RunBudget, message: str, pct: Optiona
     except Exception as exc:
         logger.warning("spend_budget_alert_email_enqueue_failed", provider=budget.provider,
                        scope=budget.scope, error=str(exc)[:300])
+
+
+# ── AA-1002 (gateway slice S10): a monthly budget per LLM connection ────────────────────────────────────────────
+#
+# shared.llm_provider_connection.monthly_budget_usd (304) is the cap; shared.llm_connection_cost_policy (317) says how
+# it acts: alert_pct (soft warning, one bell + e-mail per 24 h) and hard_stop (at 100 % the gateway leaves the
+# connection out of every route; false = alert only). No policy row = DEFAULT_CONNECTION_ALERT_PCT / hard stop. The
+# month-to-date spend is the connection's own llm_call_log rows (account = connection_key, UTC calendar month).
+#
+# This axis is independent of the job budgets above (shared.spend_budget, load_run_budget) and of the wave caps,
+# which are job budgets too: a job still stops on its own per-run / per-day cap whatever the connection's state, and
+# a connection over its budget is left out for every job. The gateway reads the state through
+# shared/llm_client/connection_budget.py (cached, never raises); the admin reads it through connection_budgets().
+
+DEFAULT_CONNECTION_ALERT_PCT = 80
+# Same bell type as the job budgets; entity "llm_connection:<key>".
+CONNECTION_BUDGET_ALERT_EVENT = BUDGET_ALERT_EVENT
+
+_CONNECTION_MONTH_SPEND_SQL = """
+    SELECT account, coalesce(sum(cost_usd), 0) AS spent, count(*)::int AS calls
+      FROM shared.llm_call_log
+     WHERE account = ANY($1::text[])
+       AND created_at >= date_trunc('month', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc'
+     GROUP BY account
+"""
+_COST_POLICY_SQL = """
+    SELECT connection_key, alert_pct, hard_stop, usage_secret_name, usage_scope_id, notes, updated_at, updated_by
+      FROM shared.llm_connection_cost_policy
+"""
+
+
+@dataclass(frozen=True)
+class ConnectionCostPolicy:
+    """The 317 policy row of a connection (or the defaults when it has none)."""
+    connection_key: str
+    alert_pct: int = DEFAULT_CONNECTION_ALERT_PCT
+    hard_stop: bool = True
+    usage_secret_name: Optional[str] = None
+    usage_scope_id: Optional[str] = None
+    notes: Optional[str] = None
+    updated_at: Optional[str] = None
+    updated_by: Optional[str] = None
+    stored: bool = False          # False = no row (defaults)
+
+
+@dataclass(frozen=True)
+class ConnectionBudget:
+    connection_key: str
+    monthly_budget_usd: float
+    month_spent_usd: float
+    alert_pct: int = DEFAULT_CONNECTION_ALERT_PCT
+    hard_stop: bool = True
+    month_calls: int = 0
+
+    @property
+    def used_pct(self) -> Optional[float]:
+        if self.monthly_budget_usd <= 0:
+            return None if self.month_spent_usd <= 0 else 100.0
+        return 100.0 * self.month_spent_usd / self.monthly_budget_usd
+
+    @property
+    def reached(self) -> bool:
+        """At or above 100 % of the monthly budget (a $0 budget is reached at once: "no spend allowed")."""
+        return self.month_spent_usd >= self.monthly_budget_usd
+
+    @property
+    def stops(self) -> bool:
+        """The gateway must leave the connection out: the budget is reached and the policy is a hard stop."""
+        return self.hard_stop and self.reached
+
+    @property
+    def alerting(self) -> bool:
+        pct = self.used_pct
+        return self.reached or (pct is not None and pct >= self.alert_pct)
+
+    @property
+    def state(self) -> str:
+        """ok | alert (at or above alert_pct, or reached without a hard stop) | stopped (left out of routes)."""
+        if self.stops:
+            return "stopped"
+        return "alert" if self.alerting else "ok"
+
+    def summary(self) -> dict:
+        return {
+            "provider": "llm_connection", "scope": f"connection:{self.connection_key}",
+            "connection_key": self.connection_key, "monthly_budget_usd": round(self.monthly_budget_usd, 2),
+            "month_spent_usd": round(self.month_spent_usd, 4), "month_calls": self.month_calls,
+            "used_pct": _round(self.used_pct), "alert_pct": self.alert_pct, "hard_stop": self.hard_stop,
+            "state": self.state,
+        }
+
+
+def _iso(v) -> Optional[str]:
+    return v.isoformat() if hasattr(v, "isoformat") else (str(v) if v is not None else None)
+
+
+async def read_cost_policies(conn, *, missing=None) -> Optional[dict[str, ConnectionCostPolicy]]:
+    """Every stored policy row by connection_key. Before migration 317 (the table is missing): ``missing`` when given,
+    else {} (the defaults apply to every connection)."""
+    try:
+        rows = await conn.fetch(_COST_POLICY_SQL)
+    except Exception as exc:  # noqa: BLE001 — UndefinedTableError before 317: defaults for every connection
+        if type(exc).__name__ != "UndefinedTableError":
+            raise
+        return {} if missing is None else missing
+    return {r["connection_key"]: ConnectionCostPolicy(
+        connection_key=r["connection_key"], alert_pct=int(r["alert_pct"]), hard_stop=bool(r["hard_stop"]),
+        usage_secret_name=r["usage_secret_name"], usage_scope_id=r["usage_scope_id"], notes=r["notes"],
+        updated_at=_iso(r["updated_at"]), updated_by=r["updated_by"], stored=True) for r in rows}
+
+
+def policy_of(policies: dict, connection_key: str) -> ConnectionCostPolicy:
+    return policies.get(connection_key) or ConnectionCostPolicy(connection_key=connection_key)
+
+
+async def connection_month_spend(conn, connection_keys: list[str]) -> dict[str, tuple[float, int]]:
+    """{connection_key: (USD, calls)} logged this UTC month (account = the key); keys with no row are absent."""
+    if not connection_keys:
+        return {}
+    rows = await conn.fetch(_CONNECTION_MONTH_SPEND_SQL, list(connection_keys))
+    return {r["account"]: (float(r["spent"] or 0.0), int(r["calls"] or 0)) for r in rows}
+
+
+async def connection_budgets(conn, budgets_usd: dict[str, Optional[float]],
+                             policies: Optional[dict] = None) -> dict[str, ConnectionBudget]:
+    """The budget state of every connection in ``budgets_usd`` ({key: monthly_budget_usd}) that has a budget (None =
+    no budget: left out, never enforced). One query for the spend, one for the policies (when not given)."""
+    capped = {k: float(v) for k, v in budgets_usd.items() if v is not None}
+    if not capped:
+        return {}
+    if policies is None:
+        policies = await read_cost_policies(conn)
+    spent = await connection_month_spend(conn, sorted(capped))
+    out: dict[str, ConnectionBudget] = {}
+    for key, cap in capped.items():
+        p = policy_of(policies, key)
+        usd, calls = spent.get(key, (0.0, 0))
+        out[key] = ConnectionBudget(connection_key=key, monthly_budget_usd=cap, month_spent_usd=usd,
+                                    alert_pct=p.alert_pct, hard_stop=p.hard_stop, month_calls=calls)
+    return out
+
+
+def connection_budget_message(b: ConnectionBudget) -> str:
+    pct = b.used_pct
+    pct_text = f"{pct:.0f}%" if pct is not None else "all"
+    if b.stops:
+        return (f"LLM connection {b.connection_key}: spend this month ${b.month_spent_usd:.2f} reached the "
+                f"${b.monthly_budget_usd:.2f} monthly budget; the gateway leaves it out of every route until the "
+                "budget is raised or the month ends.")
+    return (f"LLM connection {b.connection_key}: spend this month ${b.month_spent_usd:.2f} is {pct_text} of the "
+            f"${b.monthly_budget_usd:.2f} monthly budget"
+            + (" (alert only: calls go on)." if b.reached else "."))
+
+
+async def maybe_alert_connection(conn, budget: ConnectionBudget) -> bool:
+    """One admin bell (and the ops e-mail, AA-828) when a connection is at or above its alert threshold, at most one
+    unread bell per connection per 24 h. Best effort: never raises. ``conn`` is an asyncpg connection."""
+    if not budget.alerting:
+        return False
+    entity = f"llm_connection:{budget.connection_key}"
+    try:
+        if await conn.fetchval(_RECENT_ALERT_SQL, CONNECTION_BUDGET_ALERT_EVENT, entity):
+            return False
+        message = connection_budget_message(budget)
+        await conn.execute(_INSERT_ALERT_SQL, _PLATFORM_TENANT_ID, CONNECTION_BUDGET_ALERT_EVENT, entity,
+                           json.dumps({"message": message, **budget.summary()}))
+        try:
+            from shared import ops_alerts  # lazy: keeps this module import-light for the LLM client
+
+            await ops_alerts.enqueue_spend_budget_email(conn, summary=budget.summary(), alert_pct=budget.alert_pct,
+                                                        stopped=budget.stops, message=message,
+                                                        used_pct=budget.used_pct)
+        except Exception as exc:  # noqa: BLE001 — the bell row stays
+            logger.warning("llm_connection_budget_email_enqueue_failed", connection=budget.connection_key,
+                           error=str(exc)[:300])
+        logger.warning("llm_connection_budget_alert", **budget.summary())
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("llm_connection_budget_alert_failed", connection=budget.connection_key, error=str(exc)[:300])
+        return False

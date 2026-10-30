@@ -1,9 +1,9 @@
 """shared/aws_client/cost_explorer.py — AA-623 satellite Cost Explorer client + snapshot storage.
 
 Two concerns in one module, mirroring shared/dfs_client/balance.py's split (AA-627):
-  - fetch_all_accounts_cost(): live AWS calls (ce:GetCostAndUsage), grouped by SERVICE, one call
-    per AWS account. Costs ~$0.01/request per AWS's own CE pricing docs -- callers should cache,
-    not call this on every page view.
+  - fetch_all_accounts_cost(): live AWS calls (ce:GetCostAndUsage), grouped by SERVICE (and RECORD_TYPE, kept in
+    each row's raw, AA-1002 S10), one call per AWS account. Costs ~$0.01/request per AWS's own CE
+    pricing docs -- callers should cache, not call this on every page view.
   - record_snapshot() / read_cost_range(): DB persistence, same fetch-then-read split as
     balance.py (POST /admin/cost-explorer/check writes, GET /admin/cost-explorer reads a date
     range, Bedrock vs infra split per account).
@@ -133,10 +133,35 @@ def _get_ce_client(account: str):
     return session.client("ce", region_name=_CE_REGION)
 
 
+# AA-1002 (S10): CE record types that are usage itself (gross); every other type (Credit, Refund, Tax, Fee, ...)
+# adjusts it. Without a RECORD_TYPE split a service's UnblendedCost nets credits in: an account billed against a
+# promotional credit shows about $0 (or less, after a refund) for a day of real use.
+USAGE_RECORD_TYPES = frozenset({"Usage", "DiscountedUsage", "SavingsPlanCoveredUsage"})
+
+
+def usage_split(raw: Any) -> Optional[dict[str, float]]:
+    """{"usage_usd", "adjustments_usd"} of a stored snapshot row's ``raw`` (AA-1002 S10), or None for a row fetched
+    before the RECORD_TYPE split (its amount may have credits netted in). Accepts the jsonb as text or a dict."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return None
+    types = raw.get("record_types") if isinstance(raw, dict) else None
+    if not isinstance(types, dict):
+        return None
+    usage = sum(float(v) for k, v in types.items() if k in USAGE_RECORD_TYPES)
+    other = sum(float(v) for k, v in types.items() if k not in USAGE_RECORD_TYPES)
+    return {"usage_usd": usage, "adjustments_usd": other}
+
+
 def _fetch_one_account_cost(account: str, start_date: str, end_date: str) -> list[dict[str, Any]]:
-    """One ce:GetCostAndUsage call for one account, grouped by SERVICE. Returns a list of row
-    dicts ready for record_snapshot(). Raises CostExplorerUnavailable on failure -- caller in
-    fetch_all_accounts_cost() decides whether to skip this account or propagate."""
+    """One ce:GetCostAndUsage call for one account, grouped by SERVICE and RECORD_TYPE (AA-1002 S10). Returns one row
+    per (day, service) ready for record_snapshot(): ``amount_usd`` is the service's UnblendedCost summed over its
+    record types, i.e. the same net figure as before the split (the Cost page is unchanged), and ``raw.record_types``
+    keeps the amount of each record type, so a reader can tell usage from credits and refunds (``usage_split``).
+    Raises CostExplorerUnavailable on failure -- caller in fetch_all_accounts_cost() decides whether to skip this
+    account or propagate."""
     if account != "acc2" and account not in _SATELLITE_ACCOUNTS:
         raise ValueError(f"Unknown Cost Explorer account: {account!r} (valid: {list(FETCH_ACCOUNTS)})")
     account_id = acc2_account_id() if account == "acc2" else _SATELLITE_ACCOUNTS[account]["account_id"]
@@ -149,7 +174,7 @@ def _fetch_one_account_cost(account: str, start_date: str, end_date: str) -> lis
             "TimePeriod": {"Start": start_date, "End": end_date},
             "Granularity": "DAILY",
             "Metrics": ["UnblendedCost"],
-            "GroupBy": [{"Type": "DIMENSION", "Key": "SERVICE"}],
+            "GroupBy": [{"Type": "DIMENSION", "Key": "SERVICE"}, {"Type": "DIMENSION", "Key": "RECORD_TYPE"}],
         }
         while True:
             resp = client.get_cost_and_usage(**kwargs)
@@ -161,26 +186,39 @@ def _fetch_one_account_cost(account: str, start_date: str, end_date: str) -> lis
     except ClientError as e:
         raise CostExplorerUnavailable(f"GetCostAndUsage failed for {account} ({account_id}): {e}") from e
 
-    rows: list[dict[str, Any]] = []
+    # One row per (day, service), summed over its record types -- aggregated across every page, since one service's
+    # Usage and Credit groups of a day may come back on different pages.
+    merged: dict[tuple[str, str], dict[str, Any]] = {}
     for result_by_time in results_by_time:
         period_start = result_by_time["TimePeriod"]["Start"]
         period_end = result_by_time["TimePeriod"]["End"]
         for group in result_by_time.get("Groups", []):
-            service = group["Keys"][0] if group.get("Keys") else "Unknown"
+            keys = group.get("Keys") or []
+            service = keys[0] if keys else "Unknown"
             metric = group.get("Metrics", {}).get("UnblendedCost", {})
             amount = metric.get("Amount")
-            unit = metric.get("Unit", "USD")
             if amount is None:
                 continue
-            rows.append({
+            row = merged.setdefault((period_start, service), {
                 "account_id": account_id,
                 "service": service,
                 "period_start": period_start,
                 "period_end": period_end,
-                "amount_usd": float(amount),
-                "unit": unit,
-                "raw": group,
+                "amount_usd": 0.0,
+                "unit": metric.get("Unit", "USD"),
+                "raw": {"Keys": [service], "record_types": {}},
             })
+            row["amount_usd"] += float(amount)
+            if len(keys) > 1:
+                types = row["raw"]["record_types"]
+                types[keys[1]] = round(types.get(keys[1], 0.0) + float(amount), 10)
+            else:  # a group without a record type: the split of this row is unknown
+                row["raw"]["record_types_complete"] = False
+    rows = list(merged.values())
+    for row in rows:
+        row["amount_usd"] = round(row["amount_usd"], 10)
+        if row["raw"].pop("record_types_complete", True) is False:
+            row["raw"].pop("record_types")
     return rows
 
 

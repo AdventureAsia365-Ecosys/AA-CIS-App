@@ -83,7 +83,9 @@ def test_background_kind_never_claimed_with_two_or_fewer_free_slots(free):
                           # AA-1003 report core: daily KPI snapshot and report rendering ($0, DB reads only)
                           "kpi_snapshot_daily", "report_generate",
                           # AA-1003 R2: TP-03 hourly handoff check and the OPS-12 digest e-mail ($0)
-                          "inquiry_handoff_check", "report_email"}
+                          "inquiry_handoff_check", "report_email",
+                          # AA-1002 S10: nightly LLM cost reconciliation ($0: DB, stored CE snapshot, usage APIs)
+                          "llm_cost_reconcile"}
     assert bool(background & set(w.claim_caps(free))) == (free > worker.BACKGROUND_RESERVE)
 
 

@@ -19,7 +19,7 @@ from .bedrock_satellite import DEFAULT_SATELLITE_ACCOUNT
 from .catalog import LEGACY_KEYS, CatalogModel, get_model_sync
 from .schema_check import SchemaMismatch, conform
 from .errors import OTHER, THROTTLED, LLMAccessDenied, account_level_class, classify
-from . import breaker, connections, data_scope, stream_sink
+from . import breaker, connection_budget, connections, data_scope, stream_sink
 from .vendor_route import (VendorDeployment, deployment_plan, pinned_deployment, split_pin,
                            vendor_deployment_for)
 from .deployments import alias_targets_sync
@@ -113,6 +113,7 @@ class OpenAIPlatformBlocked(RuntimeError):
 
 # The connection the OpenAI adapter talks to (the client is built once from its credential env, migration 304's row).
 OPENAI_CONNECTION_KEY = "openai-direct"
+ACC2_CONNECTION_KEY = "acc2"     # AA-1002 (S10): the task-role Bedrock connection the acc2-native legacy tiers call
 
 
 def _openai_data_scope() -> str:
@@ -230,6 +231,13 @@ def _all_failed(message: str, failures: list) -> RuntimeError:
     LLMAccessDenied when all of them were refused at account level (access denied / no credit): a retry cannot
     help, so the job runner fails the job at once. Otherwise the plain RuntimeError as before. The last failure is
     the cause either way (the job error and the traceback keep the provider's own words)."""
+    if failures and all(isinstance(f, connection_budget.ConnectionBudgetExceeded) for f in failures):
+        # AA-1002 (S10): nothing was called, every model was left out by a connection's hard monthly budget: a budget
+        # stop (the job runner ends the job as stopped_budget), not an outage to retry.
+        keys = tuple(dict.fromkeys(k for f in failures for k in f.connection_keys))
+        budget = connection_budget.exceeded(message, keys)
+        budget.__cause__ = failures[-1]
+        return budget
     classes = [classify(f) for f in failures]
     cls = account_level_class(classes)
     exc: RuntimeError = LLMAccessDenied(message, cls) if cls else RuntimeError(message)
@@ -647,6 +655,10 @@ class LLMClient:
                 # failure, so an alias whose targets are all refused at account level still ends in LLMAccessDenied.
                 logger.info("llm_alias_target_skip", alias=tier, target=key, reason="circuit open")
                 steps.circuit_errors.append(breaker.circuit_error(model.model_key, skips))
+            elif not plan and getattr(plan, "budget_skips", None):
+                # AA-1002 (S10): every connection of this target reached its hard monthly budget.
+                logger.info("llm_alias_target_skip", alias=tier, target=key, reason="monthly budget reached")
+                steps.circuit_errors.append(connection_budget.budget_error(model.model_key, plan.budget_skips))
             steps += [(model, target) for target in plan]
         return steps
 
@@ -808,6 +820,9 @@ class LLMClient:
     def _legacy_chain(self, request: LLMRequest, tier: str, primary_acct: str) -> LLMResponse:
         # Direct GPT-4.1 — no Bedrock fallback (explicit choice)
         if tier == "gpt-4.1":
+            # AA-1002 (S10): no plan on this path, so the connection's hard monthly budget is checked here (a budget
+            # stop, raised as is: not wrapped into the outage error below).
+            connection_budget.check(OPENAI_CONNECTION_KEY, "gpt-4.1")
             try:
                 return self._call_openai(request, model="gpt-4.1")
             except Exception as e:
@@ -824,6 +839,7 @@ class LLMClient:
             # T1: Claude Sonnet — premium quality (acc2-native, off by default)
             if acc2_native:
                 try:
+                    connection_budget.check(ACC2_CONNECTION_KEY, tier)     # AA-1002 (S10), as on every tier below
                     resp = self._call_bedrock(request, model=BEDROCK_SONNET, use_cache=True)
                     return resp
                 except Exception as e:
@@ -836,6 +852,7 @@ class LLMClient:
 
             # T1.5a: Claude Sonnet on the acc3 satellite
             try:
+                connection_budget.check(primary_acct, tier)
                 resp = self._call_bedrock_satellite(request, model=BEDROCK_SONNET, account=primary_acct)
                 resp.fallback_used = False    # KHÔNG phải fallback — vẫn đúng Sonnet, đúng ý định
                 resp.satellite_account = primary_acct
@@ -851,6 +868,7 @@ class LLMClient:
         # T2: Claude Haiku — fast / default tier, or Sonnet fallback (acc2-native, off by default)
         if acc2_native:
             try:
+                connection_budget.check(ACC2_CONNECTION_KEY, tier)
                 resp = self._call_bedrock(request, model=BEDROCK_HAIKU, use_cache=True)
                 resp.fallback_used = tier == "sonnet"  # only a fallback when Sonnet was intended
                 return resp
@@ -860,6 +878,10 @@ class LLMClient:
 
         # T2.5a: Claude Haiku on the acc3 satellite
         try:
+            # AA-1002 (S10): the legacy chain has no deployment plan, so each tier checks its connection's hard monthly
+            # budget before the call. A tier over budget is a failure like any other (the chain moves on); when every
+            # tier was, _all_failed makes it a budget stop (the job ends as stopped_budget, nothing was sent).
+            connection_budget.check(primary_acct, tier)
             resp = self._call_bedrock_satellite(request, model=BEDROCK_HAIKU, account=primary_acct)
             # giữ đúng logic gốc T2: chỉ coi là fallback nếu ý định ban đầu là sonnet
             resp.fallback_used = tier == "sonnet"
@@ -884,6 +906,7 @@ class LLMClient:
                          reason="GPT-4.1 retired (S235); no OpenAI last resort for legacy tiers")
             raise _all_failed("All LLM providers failed (Bedrock tiers down; GPT-4.1 retired)", failures)
         try:
+            connection_budget.check(OPENAI_CONNECTION_KEY, "gpt-4.1")     # AA-1002 (S10)
             resp = self._call_openai(request, model="gpt-4.1")
             resp.fallback_used = True
             logger.warning("t3_fallback_used", model="gpt-4.1",
@@ -1062,13 +1085,19 @@ class LLMClient:
             return self._call_plan(request, model, plan)
         # AA-1002 (S2): an enabled deployment on an enabled Anthropic connection, first by priority, serves the
         # model through the Messages API. None (every other registry state) = today's path below, unchanged.
-        vendor = vendor_deployment_for(model, scopes)
+        # AA-1002 (S10): an Anthropic deployment left out by its connection's hard budget is named in budget_skips.
+        budget_skips: list = []
+        vendor = vendor_deployment_for(model, scopes, budget_skips=budget_skips)
         if vendor is not None:
             return self._call_anthropic_messages(request, model, vendor)
         if model.api_style == "anthropic_messages":
+            if budget_skips:
+                raise connection_budget.budget_error(model.model_key, budget_skips)
             raise RuntimeError(f"Model {model_key!r} is served only by the Anthropic API and has no enabled "
                                "deployment on an enabled Anthropic connection")
+        # AA-1002 (S10): the paths below call a connection without a plan, so they check its hard budget themselves.
         if model.api_style == "openai_chat":
+            connection_budget.check(OPENAI_CONNECTION_KEY, model.model_key)
             return self._call_openai(request, model=model.wire_model or model.model_key, catalog_model=model)
         if model.api_style != "converse":
             raise RuntimeError(f"Model {model_key!r} has api_style={model.api_style!r}, "
@@ -1076,6 +1105,9 @@ class LLMClient:
         account = model.account_for(preferred_acct)
         if account is None or account == "acc2":
             raise RuntimeError(f"Model {model_key!r} has no satellite account in bedrock_profile_ids")
+        # An Anthropic deployment left out by its budget falls through to today's Converse call on the satellite (the
+        # next way in answers), unless that connection is over its own budget too.
+        connection_budget.check(account, model.model_key)
         return self._call_bedrock_converse(request, model, account)
 
     def _call_plan(self, request: LLMRequest, model: CatalogModel, plan: list) -> LLMResponse:
@@ -1091,6 +1123,10 @@ class LLMClient:
             if skips:
                 # AA-1002 (S4): not called because of the breaker; the error keeps the class that opened the circuit.
                 raise breaker.circuit_error(model.model_key, skips)
+            budget_skips = getattr(plan, "budget_skips", None)
+            if budget_skips:
+                # AA-1002 (S10): every usable connection reached its hard monthly budget (a BudgetExceeded).
+                raise connection_budget.budget_error(model.model_key, budget_skips)
             raise RuntimeError(f"Model {model.model_key!r} has no usable deployment (every deployment or its "
                                "connection is disabled, cannot serve it, or its circuit is open)")
         if len(plan) == 1:

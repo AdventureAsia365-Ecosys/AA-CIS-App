@@ -139,6 +139,10 @@ POLICY: dict[tuple[str, str], str] = {
     ("PATCH", "/admin/llm-connections/{connection_key}"): AI_ADMIN,
     # AA-1002 S4 — one small real (paid) call on a connection (logged in llm_call_log, audited)
     ("POST", "/admin/llm-connections/{connection_key}/test"): AI_ADMIN,
+    # AA-1002 S10 — month-to-date spend per connection budget + the nightly reconciliation rows (admin-only read), and
+    # queueing a reconcile run ($0; reads a usage key only on a connection that names one)
+    ("GET", "/admin/llm-connections/costs"): AI_ADMIN,
+    ("POST", "/admin/llm-connections/reconcile"): AI_ADMIN,
     # admin_llm_ops — on-demand / scheduled spend + Jev probes (the Lambda ones are MACHINE_ROUTES)
     ("POST", "/admin/dfs-balance/check"): OPS_WRITE,
     ("POST", "/admin/cost-explorer/check"): SPEND_WRITE,

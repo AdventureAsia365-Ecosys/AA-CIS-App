@@ -400,3 +400,43 @@ def invalidate_credential(connection_key: str) -> None:
     """Drop the cached key of a connection (after a 401), so the next call reads the secret again."""
     for k in [k for k in _credentials if k.split("|", 1)[0] == connection_key]:
         _credentials.pop(k, None)
+
+
+# ── AA-1002 (S10): the read-only usage key of a connection's provider (nightly cost reconciliation) ─────────────────
+
+def _usage_key_from_secret(raw: str) -> str:
+    """The key in a usage secret: a JSON object's ``admin_key`` (else ``api_key``), or the raw string."""
+    raw = (raw or "").strip()
+    if raw.startswith("{"):
+        try:
+            data = json.loads(raw)
+        except ValueError as e:
+            raise ConnectionCredentialError("usage secret is not valid JSON") from e
+        if not isinstance(data, dict):
+            return ""
+        raw = str(data.get("admin_key") or data.get("api_key") or "").strip()
+    return raw
+
+
+def resolve_usage_key(connection_key: str, usage_secret_name: Optional[str]) -> str:
+    """The read-only usage / admin key a reconcile source reads the provider's cost with
+    (``shared.llm_connection_cost_policy.usage_secret_name``, migration 317). Fails closed
+    (ConnectionCredentialError): no name, a name outside ``aa-llm/<env>/<name>`` (checked BEFORE anything is read), the
+    secret unreadable or empty. Never cached, never logged: it runs once per connection per nightly run, and the key is
+    a high-privilege secret (it can read the whole organisation's usage)."""
+    if not usage_secret_name:
+        raise ConnectionCredentialError(f"connection {connection_key!r}: no usage key configured")
+    try:
+        check_secret_name(usage_secret_name)
+    except ConnectionPolicyError as e:
+        raise ConnectionCredentialError(f"connection {connection_key!r}: usage key refused: {e}") from e
+    try:
+        key = _usage_key_from_secret(_fetch_secret(usage_secret_name))
+    except ConnectionCredentialError:
+        raise
+    except Exception as e:  # noqa: BLE001 — AccessDenied, ResourceNotFound, network: all fail closed
+        raise ConnectionCredentialError(
+            f"connection {connection_key!r}: usage secret unreadable ({type(e).__name__})") from e
+    if not key:
+        raise ConnectionCredentialError(f"connection {connection_key!r}: usage secret holds no key")
+    return key
