@@ -10,6 +10,9 @@ Generators (catalog.yaml `generator: cis`):
   R3 money reports (services/reports/money.py): EX-01 weekly business pack (draft), FI-02 weekly spend digest
          (e-mailed), FI-01 monthly cost review with FI-03 LLM attribution, FI-04 vendors, FI-05 unit costs, FI-06
          budgets, and OPS-08 monthly capacity review.
+  R4 (services/reports/quality.py, services/reports/reliability.py): CIS-01 weekly catalog health, CIS-06 eval and
+         release report, CIS-07 rerun waves, OPS-13 weekly SLO and DB performance, OPS-14 job runner health, DATA-02
+         cross-app reconciliation, DATA-03 schema changes, DATA-04 ledger growth and retention.
 
 Each renderer is pure (data in, (summary, output JSON, Markdown) out); the loaders read the DB. Reports read stored
 rows only: no LLM, no paid API, no recomputation of history (automation-plan.md §5).
@@ -297,12 +300,29 @@ async def _money_month(conn, reg: Registry, report: Report, first: date, last: d
     return await money.render_month(conn, reg, report, first, last, now)
 
 
+async def _quality(conn, reg: Registry, report: Report, first: date, last: date, now: datetime) -> Rendered:
+    from services.reports import quality
+
+    return await quality.render(conn, reg, report, first, last, now)
+
+
+async def _reliability(conn, reg: Registry, report: Report, first: date, last: date, now: datetime) -> Rendered:
+    from services.reports import reliability
+
+    return await reliability.render(conn, reg, report, first, last, now)
+
+
 # AA-1003 R2: OPS-12 daily digest (services/reports/digest.py), TP-03 inquiry handoff (services/reports/handoff.py).
 # R3 (services/reports/money.py): weekly EX-01, FI-02; monthly FI-01, FI-03, FI-04, FI-05, FI-06, OPS-08.
+# R4: catalog and AI quality (services/reports/quality.py): weekly CIS-01, event CIS-06, CIS-07; reliability and data
+# quality (services/reports/reliability.py): weekly OPS-13, OPS-14, DATA-02, event DATA-03, monthly DATA-04.
 RENDERERS: dict[str, Renderer] = {"EX-04": _scorecard, "EX-06": _register, "OPS-12": _digest, "TP-03": _handoff,
                                   "EX-01": _money_week, "FI-02": _money_week,
                                   **{rid: _money_month for rid in ("FI-01", "FI-03", "FI-04", "FI-05", "FI-06",
-                                                                   "OPS-08")}}
+                                                                   "OPS-08")},
+                                  **{rid: _quality for rid in ("CIS-01", "CIS-06", "CIS-07")},
+                                  **{rid: _reliability for rid in ("OPS-13", "OPS-14", "DATA-02", "DATA-03",
+                                                                   "DATA-04")}}
 
 
 def default_period(report: Report, now: Optional[datetime] = None) -> tuple[date, date]:

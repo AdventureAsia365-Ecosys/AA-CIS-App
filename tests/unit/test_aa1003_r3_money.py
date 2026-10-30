@@ -75,11 +75,12 @@ def test_chain_adds_weekly_on_sunday_and_monthly_before_business_day_two(monkeyp
     monkeypatch.setattr(report_jobs, "enqueue_report_run", fake_enqueue)
     asyncio.run(report_jobs.chain_reports(MagicMock(), SUN, "job"))
     weekly = {s[0]: s[1:] for s in seen if s[1] != s[2]}
-    assert weekly == {"EX-01": (MON, SUN), "FI-02": (MON, SUN)}
+    # R4 adds the weekly CIS-01, OPS-13, OPS-14, DATA-02
+    assert weekly == {rid: (MON, SUN) for rid in ("EX-01", "FI-02", "CIS-01", "OPS-13", "OPS-14", "DATA-02")}
     seen.clear()
     asyncio.run(report_jobs.chain_reports(MagicMock(), date(2026, 11, 2), "job"))
     monthly = sorted(s[0] for s in seen if s[1] != s[2])
-    assert monthly == ["FI-01", "FI-03", "FI-04", "FI-05", "FI-06", "OPS-08"]
+    assert monthly == ["DATA-04", "FI-01", "FI-03", "FI-04", "FI-05", "FI-06", "OPS-08"]      # R4: DATA-04
     assert all(s[1:] == (date(2026, 10, 1), date(2026, 10, 31)) for s in seen if s[1] != s[2])
 
 
