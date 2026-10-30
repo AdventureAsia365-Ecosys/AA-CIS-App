@@ -72,6 +72,17 @@ preference summaries (services/writing_memory/preference.py):
                                                       WRITING_MEMORY_PREF_SUMMARY is off on this service)
   GET   /admin/writing-memory/releases/{id} also lists the release's pinned `exemplars`.
 
+AA-922 (WM-30 / WM-31) — the weekly KPIs (services/writing_memory/kpi.py) and the disagreement queue
+(services/writing_memory/disagreements.py; CIS 314):
+  GET   /admin/writing-memory/metrics                 the stored weekly reports (newest first, 12)
+  POST  /admin/writing-memory/metrics/run             {dry_run (default true), week_start?}: DRY RUN computes the report
+                                                      now and returns it (nothing stored, no release moves); apply
+                                                      queues the weekly job (manual trigger)
+  POST  /admin/writing-memory/releases/{id}/keep      {reason, codes?, days?}: keep an active release despite its soft
+                                                      stops (<= 30 days)
+  GET   /admin/writing-memory/disagreements?status=open|resolved   the queue
+  POST  /admin/writing-memory/disagreements/{item_id}/resolve   {resolution: judge_right | human_right | unclear, note?}
+
 Who may call (api/core/staff_authz.py POLICY): every read needs tenant.read and every write ai.admin (admin only).
 Approval of a non-lexicon rule is not here: it reaches a writer only through a release (AA-919), one human click. A
 lexicon rule may take the L0 path (ADR 0010 decision 6, D11): R0 + the activate click, no release.
@@ -1030,3 +1041,112 @@ async def tenant_voice(tenant_id: str, request: Request):
                      "exemplars": sum(int(r["n"]) for r in exemplars if r["status"] != "never"),
                      "active_releases": sum(1 for r in releases if r["status"] == "active")}
     return out
+
+
+# ── weekly KPIs, keeps and the disagreement queue (AA-922 WM-30 / WM-31) ────────────────────────────────────────────
+
+@router.get("/metrics")
+async def metrics(request: Request):
+    """The stored weekly reports, newest first."""
+    from services.writing_memory import kpi
+    try:
+        async with _pool(request).acquire() as conn:
+            reports = await kpi.list_reports(conn)
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e)
+    return {"items": reports, "soft_stop_codes": list(kpi.SOFT_STOP_CODES)}
+
+
+class MetricsRunBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    dry_run: bool = True
+    week_start: Optional[date] = None
+
+
+@router.post("/metrics/run")
+async def metrics_run(request: Request, body: Optional[MetricsRunBody] = None,
+                      x_admin_user_id: Optional[str] = Header(None)):
+    """DRY RUN: the report computed now, nothing stored or moved. Apply: queue the weekly job (manual trigger)."""
+    from services.jobs.writing_memory_job import KPI_WEEKLY
+    from services.writing_memory import kpi
+    from shared.jobs.registry import enqueue
+    body = body or MetricsRunBody()
+    if body.week_start is not None and body.week_start.isoweekday() != 1:
+        raise HTTPException(status_code=422, detail="week_start must be a Monday")
+    pool = _pool(request)
+    if body.dry_run:
+        try:
+            return await kpi.run_weekly(pool, week_start=body.week_start, apply=False, trigger="manual",
+                                        actor=f"admin:{wm.admin_actor_id(x_admin_user_id)}")
+        except asyncpg.UndefinedTableError as e:
+            raise _unavailable(e)
+    actor = _need_actor(x_admin_user_id)
+    payload = {"apply": True, "trigger": "manual", "requested_by": actor}
+    if body.week_start:
+        payload["week_start"] = body.week_start.isoformat()
+    job_id, created = await enqueue(pool, KPI_WEEKLY, payload, idempotency_key=f"{KPI_WEEKLY}:admin:{_job_stamp()}",
+                                    created_by=f"admin:{actor}")
+    return {"job_id": job_id, "kind": KPI_WEEKLY, "created": created}
+
+
+class KeepBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(..., min_length=3, max_length=500)
+    codes: list[Literal["reflag_over_8pct", "light_edit_drop", "minutes_to_fix_up", "tenant_edit_up", "cost_up"]] = \
+        Field(default_factory=list, max_length=5)
+    days: int = Field(14, ge=1, le=30)
+
+
+@router.post("/releases/{release_id}/keep")
+async def keep_release(release_id: str, body: KeepBody, request: Request,
+                       x_admin_user_id: Optional[str] = Header(None)):
+    """A human's reason to keep an active release despite its soft stops (the weekly job then leaves it serving)."""
+    from services.writing_memory import kpi
+    actor = f"admin:{_need_actor(x_admin_user_id)}"
+    rid = _uuid(release_id, "release")
+    try:
+        async with _pool(request).acquire() as conn:
+            async with conn.transaction():
+                row = await kpi.record_keep(conn, rid, reason=body.reason, actor=actor, codes=body.codes,
+                                            days=body.days)
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e)
+    except kpi.KeepError as e:
+        raise HTTPException(status_code=e.status, detail={"detail": e.detail, "code": e.code})
+    logger.info("aa922_release_keep", release_id=rid, codes=body.codes, days=body.days)
+    return row
+
+
+@router.get("/disagreements")
+async def list_disagreements(request: Request, status: Optional[Literal["open", "resolved"]] = "open",
+                             limit: int = Query(50, ge=1, le=200)):
+    from services.writing_memory import disagreements as dis
+    try:
+        async with _pool(request).acquire() as conn:
+            items = await dis.list_items(conn, status=status, limit=limit)
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e)
+    return {"items": items, "queue_max": dis.QUEUE_MAX, "queue_min": dis.QUEUE_MIN}
+
+
+class ResolveBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    resolution: Literal["judge_right", "human_right", "unclear"]
+    note: Optional[str] = Field(None, max_length=500)
+
+
+@router.post("/disagreements/{item_id}/resolve")
+async def resolve_disagreement(item_id: str, body: ResolveBody, request: Request,
+                               x_admin_user_id: Optional[str] = Header(None)):
+    from services.writing_memory import disagreements as dis
+    actor = f"admin:{_need_actor(x_admin_user_id)}"
+    iid = _uuid(item_id, "item")
+    try:
+        async with _pool(request).acquire() as conn:
+            async with conn.transaction():
+                row = await dis.resolve(conn, iid, resolution=body.resolution, actor=actor, note=body.note)
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e)
+    except dis.DisagreementError as e:
+        raise HTTPException(status_code=e.status, detail={"detail": e.detail, "code": e.code})
+    return row

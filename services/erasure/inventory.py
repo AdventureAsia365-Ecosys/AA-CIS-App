@@ -120,6 +120,10 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     # they also cascade from the release and the example). Platform examples have no tenant and stay.
     _d("shared.writing_exemplar", "writing-memory voice examples masked from the tenant's own content"),
     _d("shared.writing_memory_release_exemplar", "the examples the tenant's releases pin (ids only)"),
+    # AA-922 (314): keep decisions on the tenant's releases (also cascade from the release) and the disagreement-queue
+    # items of the tenant's pieces / golden items. The weekly KPI report is a platform table (ids and numbers only).
+    _d("shared.writing_memory_keep", "keep decisions on the tenant's writing-memory releases"),
+    _d("shared.writing_memory_disagreement", "judge / human disagreement items of the tenant's content"),
     _d("shared.pipeline_runs", "tenant pipeline batches (raw rows follow through FKs)"),
     _d("shared.tenant_api_usage", "per-request API usage; a CHECK forbids a tenant-actor row without a tenant"),
     _d("shared.tenant_api_usage_monthly", "monthly API usage rollup of the tenant"),

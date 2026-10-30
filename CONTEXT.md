@@ -540,7 +540,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `place_geocode`, `tour_graph_build` — AA-712, `place_shape`, `place_dedupe` — AA-847, `place_relocate` — AA-997, the five `retention_*` kinds — AA-825,
     `ops_alert_email` — AA-828, `data_erasure` — AA-839, the writing-memory kinds `writing_signal_backfill`,
     `writing_signal_fact_filter`, `writing_memory_mine` — AA-917, `writing_memory_r0` — AA-918, `writing_memory_r2`,
-    `writing_memory_shadow` — AA-919, `writing_memory_post_activation` — AA-920, `kpi_snapshot_daily`, `report_generate`,
+    `writing_memory_shadow` — AA-919, `writing_memory_post_activation` — AA-920, `writing_memory_kpi_weekly` — AA-922, `kpi_snapshot_daily`, `report_generate`,
     `inquiry_handoff_check`, `report_email` — AA-1003). Every claim merges `progress.attempt_started_at` (AA-751, F18):
     `started_at` keeps the first attempt's start, so per-attempt age reads the progress key.
   - **Background kinds (AA-712)**: `@job_kind(..., background=True)` kinds never take the worker's
@@ -2780,6 +2780,24 @@ isolation checks, rows in `writing_memory_shadow`, cap <= $7. Every model call o
 `shared.llm_call_log` under the eval stage with `quality_signal.eval_run` and tenant NULL (`call_log.bind_eval_stage`);
 the run row is what the Releases tab attaches as `eval_run_id` / `shadow_run_id`, accepted only when the run names that
 release (`release_id`; no code-train or seeded-fault run: API + CIS 292 trigger).
+**Weekly KPIs and soft stops** (AA-922 WM-30, `services/writing_memory/kpi.py`, job `writing_memory_kpi_weekly`, $0,
+queued every week by the api ops sampler for the last full ISO week; CIS 314): per writer (overall and per tenant id)
+writes, re-flag with its Wilson 95% interval, repeat errors, light-edit share and minutes to fix (T9 labels), tenant
+edits per write, reason capture (target 80%), cost per write, the replay hit rate, the rule funnel, the clean-pairs
+counter (no export path) and the month's learning-loop spend; a rate with no data is None ("not measured"). For each
+active release with content, its writes since activation against the 28 days before: a soft stop (re-flag Wilson lower
+bound > 8% on >= 20 writes, light-edit share -10 points, minutes to fix +20%, tenant edits +20% and +5 points, cost
+per write +20%; minimum samples apply) takes it out of service through the same path as the post-activation check
+(`post_activation.move_pointer`: rollback, else retire alone / memory off; audit `writing_memory.release_soft_stop`, bell,
+e-mail) unless a human recorded a keep (`shared.writing_memory_keep`: codes or all, <= 30 days; POST
+`/admin/writing-memory/releases/{id}/keep`). Active rules past `expires_at` are re-confirmed for 60 days by a fresh
+human pass signal of their cluster, else expire; the P3 project stop rule (two releases without improvement) is
+flagged, never acted on. One stored report a week (`shared.writing_memory_kpi_report`, numbers and ids only); a DRY
+RUN (`POST /admin/writing-memory/metrics/run`) stores and moves nothing. The **disagreement queue** (WM-31,
+`services/writing_memory/disagreements.py`, `shared.writing_memory_disagreement`): up to 10 new items a week where an
+R2 control verdict differs from the golden label, or a T9 piece the gates passed was labelled heavy / reject (or a held
+one as_is / light); one-click resolution judge_right / human_right / unclear, audited. Admin: the Metrics tab of
+`/admin/writing-memory`; trend: `scripts/writing_memory/wm30_kpi_trend.py`.
 _Avoid_: fine-tune, model update, deploy (a Release is data, not code).
 
 **Golden Set**:

@@ -382,3 +382,60 @@ export interface VoiceMemory {
   totals: { active_rules: number; candidate_rules: number; summaries: number; exemplars: number;
     active_releases: number };
 }
+
+// ── AA-922 WM-30 / WM-31 — Metrics tab (services/writing_memory/kpi.py, disagreements.py; CIS 314) ─────────────────
+
+export const SOFT_STOP_CODES = ["reflag_over_8pct", "light_edit_drop", "minutes_to_fix_up", "tenant_edit_up",
+  "cost_up"] as const;
+export type SoftStopCode = (typeof SOFT_STOP_CODES)[number];
+
+export interface WriterKpi {
+  writes: number; flagged: number; labels: number; tenant_edits: number; cost_usd: number;
+  reflag_rate: number | null; reflag_ci95: [number, number] | null; repeat_error_rate: number | null;
+  light_edit_share: number | null; minutes_to_fix: number | null; tenant_edit_rate: number | null;
+  capture_complete: number | null; capture_ok: boolean | null; cost_per_write: number | null;
+}
+export interface WriterBlock {
+  overall: WriterKpi; tenants: Record<string, WriterKpi>; clean_pairs: number;
+  funnel: { total: Record<string, number>; this_week: Record<string, number> };
+  replay: { explained: number; usable: number; rate: number | null };
+}
+export interface SoftStop { code: SoftStopCode; value: number | null; baseline: number | null; n: number }
+export interface ReleaseStops {
+  release_id: string; writer: Writer; scope: Scope; tenant_id: string | null; release_no: number;
+  stops: SoftStop[]; kept: SoftStop[]; after_writes: number | null; before_writes: number | null;
+}
+export interface KpiAction {
+  release_id: string; writer: Writer; scope: Scope; tenant_id: string | null; release_no: number;
+  codes: SoftStopCode[]; kept_codes: SoftStopCode[]; action: string;
+}
+export interface KpiReport {
+  report_id?: string | null; week_start: string; trigger: "schedule" | "manual"; created_at?: string;
+  kpis: { writers: Record<Writer, WriterBlock>; learning_spend: { month_spent_usd: number | null;
+    month_cap_usd: number; share: number | null }; missing?: Record<string, string[]> };
+  soft_stops: ReleaseStops[]; actions: KpiAction[];
+  rules: { expired: string[]; reconfirmed: string[]; stale_candidates?: number };
+  project_stop: { flagged: Writer[]; rule: string };
+  disagreements: number | { found: number; added: number; below_min: boolean };
+}
+export interface MetricsPage { items: KpiReport[]; soft_stop_codes: SoftStopCode[] }
+
+export type Resolution = "judge_right" | "human_right" | "unclear";
+export interface Disagreement {
+  item_id: string; source: "golden" | "piece_label"; source_ref: string; writer: Writer; scope: Scope;
+  tenant_id: string | null; machine_verdict: string; human_label: string; week_start: string;
+  status: "open" | "resolved"; resolution: Resolution | null; note: string | null; resolved_by: string | null;
+  resolved_at: string | null; created_at: string;
+}
+
+/** A rate as a percentage ("—" when the writer could not be measured: never shown as 0%). */
+export function pctOrDash(v: number | null | undefined, digits = 1): string {
+  return v === null || v === undefined ? "—" : `${(v * 100).toFixed(digits)}%`;
+}
+
+/** What the weekly job did to a release, as a tone. */
+export function actionTone(a: string): "success" | "danger" | "warning" | "neutral" {
+  if (a === "rolled_back" || a === "retired_alone" || a === "memory_off") return "danger";
+  if (a === "kept" || a === "dry_run") return "warning";
+  return a === "none" ? "success" : "neutral";
+}

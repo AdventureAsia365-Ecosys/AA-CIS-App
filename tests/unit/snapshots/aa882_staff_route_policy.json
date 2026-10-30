@@ -659,11 +659,19 @@
     "capability": "tenant.read",
     "module": "api.routers.admin_writing_memory"
   },
+  "GET /admin/writing-memory/disagreements": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_writing_memory"
+  },
   "GET /admin/writing-memory/exemplars": {
     "capability": "tenant.read",
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/exemplars/selection": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_writing_memory"
+  },
+  "GET /admin/writing-memory/metrics": {
     "capability": "tenant.read",
     "module": "api.routers.admin_writing_memory"
   },
@@ -1259,6 +1267,10 @@
     "capability": "ai.admin",
     "module": "api.routers.admin_writing_memory"
   },
+  "POST /admin/writing-memory/disagreements/{item_id}/resolve": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_writing_memory"
+  },
   "POST /admin/writing-memory/exemplars/refresh": {
     "capability": "ai.admin",
     "module": "api.routers.admin_writing_memory"
@@ -1272,6 +1284,10 @@
     "module": "api.routers.admin_writing_memory"
   },
   "POST /admin/writing-memory/exemplars/{exemplar_id}/unpin": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_writing_memory"
+  },
+  "POST /admin/writing-memory/metrics/run": {
     "capability": "ai.admin",
     "module": "api.routers.admin_writing_memory"
   },
@@ -1292,6 +1308,10 @@
     "module": "api.routers.admin_writing_memory"
   },
   "POST /admin/writing-memory/releases/{release_id}/evidence": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_writing_memory"
+  },
+  "POST /admin/writing-memory/releases/{release_id}/keep": {
     "capability": "ai.admin",
     "module": "api.routers.admin_writing_memory"
   },

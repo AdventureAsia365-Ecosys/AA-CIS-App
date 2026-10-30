@@ -48,8 +48,9 @@ logger = structlog.get_logger()
 # report_generate and /admin/reports read and write shared.kpi_daily and shared.report_run; strict prefix: 304 too).
 # 313 (AA-921 WM-27 — /admin/writing-memory/exemplars and a rules draft read and write shared.writing_exemplar and
 # shared.writing_memory_release_exemplar; the writers' resolver reads the links (failing open without them); strict
-# prefix: 306-312 too).
-REQUIRED_CIS_SCHEMA = 313
+# prefix: 306-312 too). 314 (AA-922 WM-30 — the weekly KPI job, /admin/writing-memory/metrics, keeps and the
+# disagreement queue read and write shared.writing_memory_kpi_report / _keep / _disagreement).
+REQUIRED_CIS_SCHEMA = 314
 # Versions this code needs that were registered after a higher one (reserved numbers): 297 (AA-920 WM-25) was reserved
 # in S255 and applied after 299. max() is already 299 without it, so the version reported is capped below the lowest
 # listed version that is not registered (297 missing -> 296 -> "schema_behind").

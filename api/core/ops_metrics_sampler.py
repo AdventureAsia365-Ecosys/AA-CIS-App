@@ -47,6 +47,9 @@ samples fire the `*-sampling-stopped` alarms, so a dead api (or a dead loop) is 
   per hour while an active release with content exists (one EXISTS; idempotency key per hour; release 0 is empty, so
   nothing is queued today). Field `writing_memory_post_activation` (the job id) or
   `writing_memory_post_activation_error`.
+- AA-922: each tick also queues the weekly writing-memory KPI job (`writing_memory_kpi_weekly`, $0) for the last full
+  ISO week (idempotency key per week: one job a week). Field `writing_memory_kpi_weekly` (the job id) or
+  `writing_memory_kpi_weekly_error`.
 - AA-913: each tick also reconciles the platform alert recipients with SNS
   (shared/alert_recipients.periodic_reconcile: one ListSubscriptionsByTopic, throttled like a page view; a no-op
   when ALERTS_TOPIC_ARN / ALERT_BOOTSTRAP_EMAIL are unset). An address removed on the admin page while its
@@ -272,6 +275,23 @@ async def _writing_memory_post_activation_part(pool, kinds: dict, ts: datetime, 
         out["writing_memory_post_activation"] = job_id
 
 
+async def _writing_memory_kpi_part(pool, kinds: dict, ts: datetime, out: dict) -> None:
+    """AA-922 WM-30: one weekly KPI job per ISO week, for the week before ($0; idempotent per week). Only while the
+    kind is registered."""
+    from services.jobs.writing_memory_job import KPI_WEEKLY
+    from services.writing_memory.kpi import last_full_week
+    from shared.jobs.registry import enqueue
+
+    if KPI_WEEKLY not in kinds:
+        return
+    week = last_full_week(ts)
+    job_id, created = await enqueue(pool, KPI_WEEKLY, {"week_start": week.isoformat(), "apply": True,
+                                                       "trigger": "schedule"},
+                                    idempotency_key=f"{KPI_WEEKLY}:{week.isoformat()}", created_by="scheduler:aa-922")
+    if created:
+        out["writing_memory_kpi_weekly"] = job_id
+
+
 async def _reports_part(pool, kinds: dict, ts: datetime, out: dict) -> None:
     """AA-1003: the daily KPI snapshot (then the daily reports, chained by the job). Only while the kind is
     registered; one idempotent INSERT a tick (the first tick of the day creates the row)."""
@@ -358,6 +378,10 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
         await asyncio.wait_for(_writing_memory_post_activation_part(pool, kinds, ts, out), timeout=5.0)
     except Exception as e:
         out["writing_memory_post_activation_error"] = _err(e)
+    try:
+        await asyncio.wait_for(_writing_memory_kpi_part(pool, kinds, ts, out), timeout=5.0)
+    except Exception as e:  # noqa: BLE001 — one part never stops the tick
+        out["writing_memory_kpi_weekly_error"] = _err(e)
 
     # AA-1003: one idempotent INSERT a tick, inside the same short budget as the AA-920 check above
     try:
@@ -388,6 +412,7 @@ async def jev_credit_tick(pool, part_timeout_s: float = PART_TIMEOUT_S) -> Optio
 def _log(out: dict) -> None:
     if any(k in out for k in ("rds_error", "retired_error", "jobs_error", "alert_recipients_error",
                               "tripplanner_purge_error", "supply_pull_error", "writing_memory_error",
+                              "writing_memory_kpi_weekly_error",
                               "reports_error")):
         logger.warning("ops_metrics_sampled", **out)
     else:

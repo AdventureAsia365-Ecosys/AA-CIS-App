@@ -1,7 +1,7 @@
 "use client";
 // app/admin/writing-memory/WritingMemory.tsx — AA-917 WM-14: Tenant output › Writing memory (app ADR 0010).
 //
-// Five tabs:
+// Six tabs:
 //   Signals     the writing signals (edits, reason codes, gate failures) as the miner sees them: totals, the month's
 //               learning-loop spend against its $25 cap, the mining trigger, the clusters over threshold (basis,
 //               support, open rule, masked samples), and the signal list with its fact status. A grey signal waits
@@ -13,6 +13,8 @@
 //               back, reject); New draft and Reverify scan above the list.
 //   Exemplars   AA-921 WM-29 (ExemplarsTab.tsx): the pinned voice examples of T2 / T9 per owner, writer and channel,
 //               the next-draft preview and the pin / unpin / never-use drawer.
+//   Metrics     AA-922 WM-31 (MetricsTab.tsx): the weekly KPI report per writer, the soft stops and what the job did
+//               (Keep), the expired rules, the project stop rule and the weekly disagreement queue.
 //   Guide       how to use the page, in plain words (AA-919): guide.ts rendered by the kit GuidePanel, like every
 //               admin page's Guide tab. The description's "New here? Read the Guide" link opens it.
 // Header actions queue a job: backfill (or its dry run), fact filter, or a manual mining run (the paid one: a confirm
@@ -46,6 +48,8 @@ import { WRITING_MEMORY_GUIDE_VI } from "./guide.vi";
 import { FACT_STATUS, M, RULE_STATUS } from "./messages";
 import ExemplarsTab from "./ExemplarsTab";
 import { X } from "./exemplars.messages";
+import { MX } from "./metrics.messages";
+import MetricsTab from "./MetricsTab";
 import ReleasesTab from "./ReleasesTab";
 import { useWmText } from "./useWmText";
 
@@ -451,13 +455,14 @@ export default function WritingMemory() {
   const qc = useQueryClient();
   const t = useT(M);
   const tx = useT(X);
+  const tm = useT(MX);
   const wm = useWmText();
   const { formatDateTime } = useFormat();
   const guide = useLocalized({ en: WRITING_MEMORY_GUIDE, vi: WRITING_MEMORY_GUIDE_VI });
   // Daily-use tabs first; the Guide tab last (the kit pattern for a page's Guide tab, app/_kit/guideContent.ts).
   const tabs = [{ key: "signals", label: t("tabSignals") }, { key: "candidates", label: t("tabCandidates") },
     { key: "releases", label: t("tabReleases") }, { key: "exemplars", label: tx("tabExemplars") },
-    { key: "guide", label: t("tabGuide") }];
+    { key: "metrics", label: tm("tabMetrics") }, { key: "guide", label: t("tabGuide") }];
   const [tab, setTab] = useState("signals");
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmMine, setConfirmMine] = useState(false);
@@ -515,6 +520,7 @@ export default function WritingMemory() {
       {tab === "signals" ? <SignalsTab /> : tab === "candidates" ? <CandidatesTab />
         : tab === "releases" ? <ReleasesTab />
         : tab === "exemplars" ? <ExemplarsTab />
+        : tab === "metrics" ? <MetricsTab />
         : <GuidePanel content={guide} testId="wm-guide" />}
     </PageFrame>
   );

@@ -26,6 +26,10 @@
                               (`apply`, default true) and alerts. Queued hourly by the api ops sampler while such a
                               release exists. Payload {"release_id"?: str, "n"?: int, "apply"?: bool}.
 
+  writing_memory_kpi_weekly   AA-922 WM-30: the weekly KPI report ($0): KPIs per writer and tenant, soft stops ->
+                              rollback unless kept, 60-day rule expiry, the disagreement queue. Queued every Monday by
+                              the api ops sampler for the week before. Payload {"week_start"?, "apply"?, "trigger"?}.
+
 All of them are background kinds (they never take the worker's reserve slots of a wave) with concurrency 1. The paid
 kinds (mine, r2, shadow) have max_attempts 1: a paid run is never retried by the runner (an admin starts a new one).
 """
@@ -208,4 +212,31 @@ async def run_post_activation_job(ctx: JobContext) -> dict:
     return out
 
 
-__all__ = ["BACKFILL", "FACT_FILTER", "MINE", "POST_ACTIVATION", "R0", "R2", "SHADOW"]
+KPI_WEEKLY = "writing_memory_kpi_weekly"
+
+
+@job_kind(KPI_WEEKLY, concurrency=1, max_attempts=2, expected_seconds=900, background=True)
+async def run_kpi_weekly_job(ctx: JobContext) -> dict:
+    """AA-922 WM-30: the weekly KPI report ($0). Payload {"week_start"?: "YYYY-MM-DD", "apply"?: bool (default true),
+    "trigger"?: "schedule" | "manual", "requested_by"?}."""
+    from datetime import date as _date
+
+    from services.writing_memory.kpi import run_weekly
+    week = ctx.payload.get("week_start")
+    try:
+        week_d = _date.fromisoformat(week) if week else None
+    except ValueError:
+        raise NonRetryable(f"bad week_start {week!r}")
+    trigger = ctx.payload.get("trigger") or "schedule"
+    if trigger not in ("schedule", "manual"):
+        raise NonRetryable(f"unknown trigger {trigger!r}")
+    report = await run_weekly(ctx.pool, week_start=week_d, apply=bool(ctx.payload.get("apply", True)),
+                              trigger=trigger, actor=f"job:{ctx.job_id}", job_id=ctx.job_id)
+    return {"week_start": report["week_start"], "report_id": report.get("report_id"), "stored": report.get("stored"),
+            "actions": report["actions"], "rules": {k: (len(v) if isinstance(v, list) else v)
+                                                    for k, v in report["rules"].items()},
+            "project_stop": report["project_stop"].get("flagged"), "disagreements": report["disagreements"],
+            "cost_usd": 0.0}
+
+
+__all__ = ["BACKFILL", "FACT_FILTER", "KPI_WEEKLY", "MINE", "POST_ACTIVATION", "R0", "R2", "SHADOW"]

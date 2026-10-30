@@ -460,6 +460,12 @@ POLICY: dict[tuple[str, str], str] = {
     ("POST", "/admin/writing-memory/exemplars/{exemplar_id}/unpin"): AI_ADMIN,
     ("POST", "/admin/writing-memory/exemplars/{exemplar_id}/never"): AI_ADMIN,
     ("GET", "/admin/writing-memory/tenants/{tenant_id}/voice"): TENANT_READ,
+    # AA-922 (WM-30 / WM-31): the weekly KPI reports, keeps and the disagreement queue
+    ("GET", "/admin/writing-memory/metrics"): TENANT_READ,
+    ("POST", "/admin/writing-memory/metrics/run"): AI_ADMIN,
+    ("POST", "/admin/writing-memory/releases/{release_id}/keep"): AI_ADMIN,
+    ("GET", "/admin/writing-memory/disagreements"): TENANT_READ,
+    ("POST", "/admin/writing-memory/disagreements/{item_id}/resolve"): AI_ADMIN,
 
     # ── admin_data_model (AA-894 scope 2) — Developer › Data model: the live ERD from the nightly schema dump
     # (every schema of the shared RDS, PII tags included), admin only.
