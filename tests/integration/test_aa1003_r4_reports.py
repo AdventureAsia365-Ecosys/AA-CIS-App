@@ -6,6 +6,7 @@ a rerun wave with one failed s1_rewrite job and its LLM call, a retention job ro
 owners' column lists (booking.v_ops_inquiry_inbox bk-035, tripplanner.v_ops_inquiry_keys tp-022 and the ops.overview
 views). pg_stat_statements may be absent from the test server: OPS-13 then names it as not readable.
 """
+import contextlib
 import json
 import os
 import sys
@@ -20,6 +21,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 
 from services.reports import money, quality, registry, reliability  # noqa: E402
+from shared.jobs import queue  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 UTC = timezone.utc
@@ -127,6 +129,31 @@ async def test_quality_readers_and_renderers(env):
     assert any(w["name"] == TAG and w["retry_ratio"] == 1.0 for w in out.output["waves"])
 
 
+class _OneConn:
+    """queue.claim's pool interface over the test connection (its transaction nests as a savepoint)."""
+
+    def __init__(self, conn):
+        self.conn = conn
+
+    @contextlib.asynccontextmanager
+    async def acquire(self):
+        yield self.conn
+
+
+async def _pss_readable(c) -> bool:
+    """pg_stat_statements answers a query: the extension exists AND is preloaded (CI's postgres:15 service creates
+    the extension through CIS 234 but does not preload it). Probed in a savepoint so a refusal does not abort the
+    test's transaction."""
+    if await c.fetchval("SELECT to_regclass('public.pg_stat_statements_info')") is None:
+        return False
+    try:
+        async with c.transaction():
+            await c.fetchval("SELECT stats_reset FROM public.pg_stat_statements_info")
+        return True
+    except asyncpg.PostgresError:
+        return False
+
+
 async def test_reliability_readers_and_renderers(env, monkeypatch):
     from services.reports import money_sources as src
 
@@ -134,7 +161,11 @@ async def test_reliability_readers_and_renderers(env, monkeypatch):
         return {"unavailable": "not_permitted: test"}
     monkeypatch.setattr(src, "rds_metrics", no_rds)
     c = env
-    has_pss = await c.fetchval("SELECT to_regclass('public.pg_stat_statements_info')") is not None
+    has_pss = await _pss_readable(c)
+    if has_pss:         # the real claim, read back through CLAIM_SQL (pg_stat_statements normalises its literals)
+        await queue.claim(_OneConn(c), "aa1003-r4-probe", {TAG: 1}, 60)
+        claim = await c.fetchrow(reliability.CLAIM_SQL)
+        assert claim["calls"] and claim["calls"] >= 1 and claim["mean_ms"] is not None, dict(claim)
     if not has_pss:     # a failed statement would abort this test's transaction (Dev and CI production: no transaction)
         async def no_pss(conn):
             raise RuntimeError("pg_stat_statements is not installed in this test DB")
@@ -149,6 +180,9 @@ async def test_reliability_readers_and_renderers(env, monkeypatch):
     s1 = next(r for r in jobs["job_kinds"] if r["kind"] == "s1_rewrite")
     assert s1["failed"] >= 1 and s1["retried"] >= 1
     assert set(k for k, v in ops13.items() if money.failed(v)) <= ({"statements"} if not has_pss else set()), ops13
+    if has_pss:
+        claim_obj = next(o for o in reliability.objectives(ops13) if o["id"] == "job_claim")
+        assert claim_obj["value"] is not None, claim_obj
     assert {k: v for k, v in data02.items() if money.failed(v)} == {}, data02          # contract stand-ins: empty
     assert data02["unmatched"]["unmatched"] == 0 and data02["inbox"]["status"] == []
     assert any(v["version"] == "305" for v in versions)

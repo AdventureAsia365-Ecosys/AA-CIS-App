@@ -57,6 +57,8 @@ def fmt(value: Optional[float], unit: str) -> str:
         return f"{value * 100:.1f} %"
     if unit == "seconds":
         return f"{value:,.0f} s"
+    if unit == "multiple":       # a value / reference ratio read against 1.0 (K-JOB-P95), not a percentage
+        return f"{value:,.2f}×"
     if unit in ("count", "days", "hours"):
         text = f"{value:,.0f}" if float(value).is_integer() else f"{value:,.1f}"
         return text if unit == "count" else f"{text} {unit}"
@@ -177,14 +179,17 @@ def expected_period_end(report: Report, now: datetime) -> Optional[date]:
 
 def due_state(report: Report, last: Optional[dict], now: datetime) -> dict:
     """{state, expected_period_end}; state: not_automated (no CIS generator), manual (generated on request only),
-    ok (the expected period is covered), due (the chain for it may still be running: within OVERDUE_GRACE of its
-    start), overdue (past the grace)."""
+    pending_first (scheduled, but the newest scheduled period was chained before the report's automated_from day, so
+    the chain never made it: nothing is expected yet), ok (the expected period is covered), due (the chain for it may
+    still be running: within OVERDUE_GRACE of its start), overdue (past the grace)."""
     if not report.runnable:
         return {"state": "not_automated", "expected_period_end": None}
     exp = scheduled_expectation(report, now)
     if exp is None:
         return {"state": "manual", "expected_period_end": None}
     expected, chain_day = exp
+    if report.automated_from is not None and chain_day < report.automated_from:
+        return {"state": "pending_first", "expected_period_end": None}
     covered = (last or {}).get("covered_to")
     if covered is not None and covered >= expected:
         return {"state": "ok", "expected_period_end": expected.isoformat()}

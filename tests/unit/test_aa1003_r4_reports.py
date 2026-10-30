@@ -439,3 +439,39 @@ def test_r4_readers_survive_a_failing_source():
     reg = _reg()
     out = reliability.render_ops14(reg, reg.report("OPS-14"), MON, SUN, facts, NOW, expected=EXPECTED)
     assert out.markdown.startswith("# ")
+
+
+# ── KPI table units ─────────────────────────────────────────────────────────────────────────────────────────────
+
+def _actual(out, kid: str) -> str:
+    """The Actual cell of a KPI row in the Markdown KPIs table (KPI_HEADERS: ID@version, name, target, actual, ...)."""
+    row = next(line for line in out.markdown.splitlines() if line.startswith(f"| {kid}@"))
+    return row[2:-2].split(" | ")[3]
+
+
+def test_kpi_tables_show_values_in_the_unit_they_are_computed_in():
+    """kpis.yaml units were inferred at import; where a value here is a different kind of number the table must show
+    that kind (e.g. 3 migrations, not '300.0 %')."""
+    reg = _reg()
+    cis01 = quality.render_cis01(reg, reg.report("CIS-01"), MON, SUN, _cis01_facts(), NOW)
+    assert _actual(cis01, "K-CAT-LIFECYCLE") == "3"
+    cis06 = quality.render_cis06(reg, reg.report("CIS-06"), MON, SUN, {"eval": {"runs": [
+        _run(), _run(id="33333333-cccc", avg_quality_score=7.5)], "releases": [], "items": []}}, NOW)
+    assert _actual(cis06, "K-EVAL-DELTA") == "-0.50"
+    cis07 = quality.render_cis07(reg, reg.report("CIS-07"), MON, SUN,
+                                 {"waves": {"waves": [_wave()], "capped": False}, "catalog": _catalog()}, NOW)
+    assert _actual(cis07, "K-WAVE-DONE") == "100.0 %"
+    assert _actual(cis07, "K-WAVE-RETRY") == "12.5 %"
+    assert _actual(cis07, "K-WAVE-RUNNING") == "4.50 USD"
+    ops14 = reliability.render_ops14(reg, reg.report("OPS-14"), MON, SUN, _job_facts(), NOW, expected=EXPECTED)
+    assert _actual(ops14, "K-JOB-P95") == "1.33×"                       # 1200 s p95 / 900 s expected
+    rows = [{"version": v, "description": "x", "applied_at": _ts(MON)} for v in ("305", "306", "bk-035")]
+    data03 = reliability.render_data03(reg, reg.report("DATA-03"), MON, SUN, {"versions": rows}, NOW)
+    assert _actual(data03, "K-SCH-APPLIED") == "3"
+    facts = {"runs": [{"kind": "retention_job", "status": s, "mode": "live", "created_by": "s", "finished_at": None}
+                      for s in ("succeeded", "failed")]}
+    data04 = reliability.render_data04(reg, reg.report("DATA-04"), date(2026, 10, 1), date(2026, 10, 31), facts, NOW)
+    assert _actual(data04, "K-RET-RUNS") == "50.0 %"
+    data02 = reliability.render_data02(reg, reg.report("DATA-02"), MON, SUN, {
+        "unmatched": {"unmatched": 2, "keys": 5, "oldest": None}}, NOW)
+    assert _actual(data02, "K-REC-UNMATCHED") == "2"

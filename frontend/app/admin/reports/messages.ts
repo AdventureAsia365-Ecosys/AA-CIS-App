@@ -45,6 +45,7 @@ export const RM = defineMessages(
     due_due: "Due",
     due_overdue: "Overdue",
     due_manual: "On request",
+    due_pending_first: "First run pending",
     due_not_automated: "Not generated here",
     // run statuses
     run_queued: "Queued",
@@ -121,6 +122,7 @@ export const RM = defineMessages(
     due_due: "Đến hạn",
     due_overdue: "Quá hạn",
     due_manual: "Theo yêu cầu",
+    due_pending_first: "Chờ lần chạy đầu",
     due_not_automated: "Chưa sinh tại đây",
     run_queued: "Đang chờ",
     run_running: "Đang chạy",

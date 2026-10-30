@@ -61,10 +61,16 @@ def _header(report: Report, first: date, last: date, generated_at: datetime, tit
             f"{generated_at.strftime('%Y-%m-%d %H:%M UTC')} by the {GENERATED_BY}. {note}", ""]
 
 
+# The unit a value here is computed in, where kpis.yaml (units inferred at import) says otherwise: K-JOB-P95 is the
+# worst p95 duration / expected (read against 1.0), K-SCH-APPLIED the number of migrations applied, K-RET-RUNS the
+# succeeded / scheduled ratio, K-REC-UNMATCHED the number of unmatched inquiries.
+UNIT_OF = {"K-JOB-P95": "multiple", "K-SCH-APPLIED": "count", "K-RET-RUNS": "ratio", "K-REC-UNMATCHED": "count"}
+
+
 def _render(reg: Registry, report: Report, first: date, last: date, generated_at: datetime, title: str,
             headline: str, kpis: list[dict], body: list[str], note: str = ICT_NOTE, **data) -> Rendered:
     md = _header(report, first, last, generated_at, title, note)
-    md += ["## KPIs", ""] + table(KPI_HEADERS, _kpi_rows(reg, kpis)) + [""] + body
+    md += ["## KPIs", ""] + table(KPI_HEADERS, _kpi_rows(reg, kpis, UNIT_OF)) + [""] + body
     out = _output(report, first, last, generated_at, headline, kpis=kpis, **data)
     return Rendered(headline[:1000], out, "\n".join(md))
 
@@ -316,11 +322,15 @@ SLOW_BY_ROLE_SQL = f"""
      GROUP BY 1 ORDER BY 1
 """
 # The CIS job claim (shared/jobs/queue.py claim): its UPDATE ... FOR UPDATE SKIP LOCKED statement, own role only.
+# pg_stat_statements stores the text normalised: every literal becomes $n ('running' -> $4, 1 -> $5) and the leading
+# whitespace is trimmed, so match only what survives: "UPDATE shared.job SET status = $4, attempt = attempt + $5, ...
+# FOR UPDATE SKIP LOCKED" (the integration test runs the real claim and reads it back when the extension is loaded).
 CLAIM_SQL = f"""
     SELECT max(s.mean_exec_time)::float AS mean_ms, sum(s.calls)::bigint AS calls
       FROM public.pg_stat_statements s
      WHERE s.dbid = {_DB} AND s.userid = (SELECT oid FROM pg_roles WHERE rolname = current_user)
-       AND s.query LIKE 'UPDATE shared.job SET status = %running%' AND s.query LIKE '%SKIP LOCKED%'
+       AND s.query LIKE 'UPDATE shared.job SET status = %' AND s.query LIKE '%attempt = attempt + %'
+       AND s.query LIKE '%FOR UPDATE SKIP LOCKED%'
 """
 STATS_RESET_SQL = "SELECT stats_reset FROM public.pg_stat_statements_info"
 ROLE_CONN_SQL = """

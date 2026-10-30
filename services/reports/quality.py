@@ -16,8 +16,8 @@ call): gold_aa_internal.published_tours + silver_aa_internal.raw_tours (the live
 api/services/data_coverage/defs.LIVE), silver_aa_internal.generated_content.metadata writer_version,
 shared.v_tour_photos (catalog.v_tour is not granted to cis_app; it takes cover_photo_path = position 1 and
 photo_count from this view, CIS 253, so the counts are the same), gold_aa_internal.v_tour_liveness,
-gold_aa_internal.tour_lifecycle_event, shared.kpi_daily, shared.prompt_eval_runs, shared.writing_memory_release, shared.eval_item_result, shared.rerun_wave, shared.job,
-shared.llm_call_log, shared.dfs_call_log.
+gold_aa_internal.tour_lifecycle_event, shared.kpi_daily, shared.prompt_eval_runs, shared.writing_memory_release,
+shared.eval_item_result, shared.rerun_wave, shared.job, shared.llm_call_log, shared.dfs_call_log.
 """
 from __future__ import annotations
 
@@ -50,10 +50,17 @@ def _header(report: Report, first: date, last: date, generated_at: datetime, tit
             f"{generated_at.strftime('%Y-%m-%d %H:%M UTC')} by the {GENERATED_BY}. {days_note}", ""]
 
 
+# The unit a value here is computed in, where kpis.yaml (units inferred at import) says otherwise: the completion and
+# retry waste are ratios; the running total is the USD sum, because the approved cap it is defined against is not
+# stored; the lifecycle value is the number of events; the eval delta a quality-score difference (two decimals).
+UNIT_OF = {"K-WAVE-DONE": "ratio", "K-WAVE-RETRY": "ratio", "K-WAVE-RUNNING": "usd", "K-CAT-LIFECYCLE": "count",
+           "K-EVAL-DELTA": "score"}
+
+
 def _render(reg: Registry, report: Report, first: date, last: date, generated_at: datetime, title: str,
             headline: str, kpis: list[dict], body: list[str], days_note: str, **data) -> Rendered:
     md = _header(report, first, last, generated_at, title, days_note)
-    md += ["## KPIs", ""] + table(KPI_HEADERS, _kpi_rows(reg, kpis)) + [""] + body
+    md += ["## KPIs", ""] + table(KPI_HEADERS, _kpi_rows(reg, kpis, UNIT_OF)) + [""] + body
     out = _output(report, first, last, generated_at, headline, kpis=kpis, **data)
     return Rendered(headline[:1000], out, "\n".join(md))
 
