@@ -23,12 +23,15 @@ sys.path.insert(0, os.path.dirname(__file__))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 
 from api.services import llm_availability  # noqa: E402
-from api.services import llm_connections  # noqa: E402
 from shared.llm_client import breaker  # noqa: E402
 
 MIGRATIONS = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations")
 M310 = os.path.join(MIGRATIONS, "309_llm_provider_health.sql")
 M311 = os.path.join(MIGRATIONS, "310_llm_connection_admin_edit_grant.sql")
+M322 = os.path.join(MIGRATIONS, "322_provider_connection_v2.sql")     # AA-1017: re-revokes 310's secret / URL grant
+# The connection columns cis_app may UPDATE after 322 (D9: the secret name and endpoint are migration-only).
+CIS_APP_UPDATE = {"enabled", "timeout_s", "max_retries", "max_concurrency", "rpm_limit", "monthly_budget_usd", "notes",
+                  "access_state", "last_probe_at", "daily_credit_limit", "low_balance_usd", "updated_at", "updated_by"}
 T0 = datetime(2026, 10, 30, 12, tzinfo=timezone.utc)
 KEY = ("acc3", "sonnet-5")
 
@@ -44,6 +47,7 @@ def cur():
     c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     _run(c, M310)
     _run(c, M311)
+    _run(c, M322)
     c.execute("SELECT 1 FROM shared.llm_provider_connection WHERE connection_key = %s", (KEY[0],))
     if c.fetchone() is None:
         conn.close()
@@ -146,7 +150,7 @@ def test_health_goes_with_its_model_and_connection(cur):
 def test_cis_app_writes_health_and_the_editable_connection_columns(cur):
     cur.execute("SELECT column_name FROM information_schema.column_privileges WHERE table_schema = 'shared' "
                 "AND table_name = 'llm_provider_connection' AND grantee = 'cis_app' AND privilege_type = 'UPDATE'")
-    assert {r["column_name"] for r in cur.fetchall()} == set(llm_connections.EDITABLE) | {"updated_at", "updated_by"}
+    assert {r["column_name"] for r in cur.fetchall()} == CIS_APP_UPDATE
     cur.execute("BEGIN")
     cur.execute("GRANT USAGE ON SCHEMA shared TO cis_app")                   # Dev has it; rolled back below
     cur.execute("SET LOCAL SESSION AUTHORIZATION cis_app")
@@ -157,8 +161,13 @@ def test_cis_app_writes_health_and_the_editable_connection_columns(cur):
     cur.execute("UPDATE shared.llm_provider_connection SET rpm_limit = 60, max_concurrency = 4, timeout_s = 120, "
                 "max_retries = 1, notes = 'n', monthly_budget_usd = 10, updated_at = now(), updated_by = 'admin:t' "
                 "WHERE connection_key = 'anthropic-direct'")
-    cur.execute("UPDATE shared.llm_provider_connection SET secret_name = 'aa-llm/dev/anthropic-direct-2', "
-                "base_url = 'https://api.anthropic.com' WHERE connection_key = 'anthropic-direct'")
+    with pytest.raises(psycopg2.errors.InsufficientPrivilege):                 # AA-1017 (322, D9): migration-only
+        cur.execute("UPDATE shared.llm_provider_connection SET secret_name = 'aa-llm/dev/anthropic-direct-2', "
+                    "base_url = 'https://api.anthropic.com' WHERE connection_key = 'anthropic-direct'")
+    cur.execute("ROLLBACK")
+    cur.execute("BEGIN")
+    cur.execute("GRANT USAGE ON SCHEMA shared TO cis_app")
+    cur.execute("SET LOCAL SESSION AUTHORIZATION cis_app")
     with pytest.raises(psycopg2.errors.InsufficientPrivilege):
         cur.execute("UPDATE shared.llm_provider_connection SET role_name = 'x' WHERE connection_key = 'acc3'")
     cur.execute("ROLLBACK")

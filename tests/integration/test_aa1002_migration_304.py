@@ -34,16 +34,25 @@ LEGACY_ACC3 = {"haiku": bedrock_satellite._PROFILE_ID_HAIKU, "sonnet": bedrock_s
 
 
 def _run(c):
+    # AA-1017: 304's closing guard refuses a secret outside aa-llm/, and 322 seeds the typesafe / dataforseo / geoapify
+    # rows (aa-cis/<env>/<kind> secrets). They leave before a 304 re-run; LATER (322) puts them back.
+    c.execute("DO $$ BEGIN IF to_regclass('shared.llm_provider_connection') IS NOT NULL THEN "
+              "DELETE FROM shared.llm_provider_connection WHERE kind NOT IN "
+              "('bedrock', 'anthropic', 'openai', 'azure_openai', 'mock'); END IF; END $$")
     c.execute(open(MIGRATION, encoding="utf-8").read())
 
 
 # AA-1002 S4: 309 (shared.llm_provider_health, FK to the connection) and 310 (the admin edit grant) build on 304's
 # tables; S10: 317 (shared.llm_connection_cost_policy + shared.llm_cost_reconcile, FKs to the connection) too;
-# AA-1017: 320 (llm_model_deployment.api_style, the health class 'truncated') builds on the tables _undo drops.
-# _undo drops them first and the fixture puts them back, so later modules see the post-320 state.
+# AA-1017: 320 (llm_model_deployment.api_style, the health class 'truncated') and 322 (the connection v2 columns,
+# CHECKs, seeds and the D9 revoke of 310's secret / endpoint grant) build on the tables _undo drops.
+# _undo drops them first and the fixture puts them back, so later modules see the post-322 state.
 LATER = [os.path.join(os.path.dirname(MIGRATION), f) for f in
          ("309_llm_provider_health.sql", "310_llm_connection_admin_edit_grant.sql",
-          "317_llm_connection_cost_policy_reconcile.sql", "320_llm_registry_v2_families_params.sql")]
+          "317_llm_connection_cost_policy_reconcile.sql", "320_llm_registry_v2_families_params.sql",
+          "322_provider_connection_v2.sql")]
+# The LLM connection kinds of 304 (322 adds typesafe, dataforseo, geoapify and bedrock_guardrails rows).
+LLM_KINDS = ("bedrock", "anthropic", "openai", "azure_openai", "mock")
 
 
 def _run_later(c):
@@ -75,7 +84,7 @@ def _undo(c):
     c.execute("DROP TABLE IF EXISTS shared.llm_cost_reconcile")           # 317: references the connection table
     c.execute("DROP TABLE IF EXISTS shared.llm_connection_cost_policy")   # 317: references the connection table
     c.execute("DROP TABLE IF EXISTS shared.llm_provider_health")          # 309: references the connection table
-    c.execute("DELETE FROM shared.schema_versions WHERE version IN ('309', '310', '317')")
+    c.execute("DELETE FROM shared.schema_versions WHERE version IN ('309', '310', '317', '322')")
     c.execute("DROP TABLE IF EXISTS shared.llm_model_deployment")
     c.execute("DROP TABLE IF EXISTS shared.llm_provider_connection")
     c.execute("ALTER TABLE shared.llm_model_catalog DROP COLUMN IF EXISTS capabilities")
@@ -143,7 +152,7 @@ def test_rerun_keeps_an_admin_edit(cur):
 
 def test_seeded_connections(cur):
     cur.execute("SELECT * FROM shared.llm_provider_connection ORDER BY connection_key")
-    rows = {r["connection_key"]: r for r in cur.fetchall()}
+    rows = {r["connection_key"]: r for r in cur.fetchall() if r["kind"] in LLM_KINDS}
     assert set(rows) >= {"acc3", "acc2", "openai-direct", "anthropic-direct", "bedrock-llm-org"}
     assert {k for k, r in rows.items() if r["enabled"]} == {"acc3", "acc2", "openai-direct"}
     acc3 = rows["acc3"]
