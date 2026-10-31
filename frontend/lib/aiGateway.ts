@@ -1,5 +1,6 @@
-// lib/aiGateway.ts — AA-804 (UI parts 1 and 2): the admin "AI providers" page (/admin/ai-gateway).
-// Shapes of GET /api/admin/ai-gateway/providers, /trace?job_id= and /budgets (backend api/services/ai_gateway.py),
+// lib/aiGateway.ts — AA-804 (UI parts 1 to 3): the admin "AI providers" page (/admin/ai-gateway).
+// Shapes of GET /api/admin/ai-gateway/providers, /trace?job_id= | ?tour_id=, /budgets (backend
+// api/services/ai_gateway.py) and /calls (api/services/ai_gateway_calls.py),
 // the page's tab and view keys, the links that retired Settings / Cost Operations tabs now point to, and the pure
 // helpers the page uses. Every number comes from the API (database reads only, $0); this file only presents it. No
 // account key or ID is written here: a Bedrock connection is named through lib/llmConnections connectionName + the
@@ -104,6 +105,10 @@ export interface ProvidersResp {
 }
 
 export type TraceSource = "llm" | "jev" | "dfs" | "geocoder";
+/** A Calls row's ledger: the four CIS ledgers plus the CRM's own (crm.ops.v1 GET /llm/calls). */
+export type CallSource = TraceSource | "crm";
+/** Ledger v2 status of an attempt (null on a row written before 31 Oct 2026). */
+export type CallStatus = "ok" | "refused" | "error" | "billed_unusable" | "truncated";
 
 export interface TraceEvent {
   at: string;
@@ -119,6 +124,11 @@ export interface TraceEvent {
   latency_ms: number | null;
   tokens_in: number | null;
   tokens_out: number | null;
+  /** Ledger v2 status; null on an older row (the outcome still says ok / shadow / fallback / cache / live). */
+  status: CallStatus | null;
+  error_class: string | null;
+  job_id: string | null;
+  app: string | null;
   detail: Record<string, unknown>;
 }
 
@@ -131,11 +141,15 @@ export interface TraceSourceSummary {
   error: string | null;
 }
 
+export interface TraceJob {
+  id: string; kind: string; status: string; created_at: string | null; started_at: string | null;
+  finished_at: string | null; cost_usd: number | null;
+}
+
 export interface TraceResp {
-  job: {
-    id: string; kind: string; status: string; created_at: string | null; started_at: string | null;
-    finished_at: string | null; cost_usd: number | null; tour_id: string | null; parent_job_id: string | null;
-  };
+  kind: "job" | "tour";
+  job: (TraceJob & { tour_id: string | null; parent_job_id: string | null }) | null;
+  tour: { id: string; jobs: TraceJob[]; jobs_total: number; jobs_error: string | null } | null;
   window: { from: string; to: string } | null;
   events: TraceEvent[];
   sources: Record<TraceSource, TraceSourceSummary>;
@@ -183,24 +197,51 @@ export function pct(v: number | null | undefined): string {
   return v == null ? "—" : `${v.toFixed(v >= 10 || v === 0 ? 0 : 1)} %`;
 }
 
-/** The page link that opens the trace drawer of a job (JobDrawer "Open trace"). */
+/** What a trace drawer shows: one job, or one tour (every job of the tour and the calls marked with it). */
+export interface TraceTarget {
+  kind: "job" | "tour";
+  id: string;
+}
+
+/** The page link that opens the trace drawer of a job (JobDrawer "Open trace", the decisions log). */
 export function traceHref(jobId: string): string {
   return `${PAGE_PATH}?trace=${encodeURIComponent(`job:${jobId}`)}`;
 }
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/** The job id of a `?trace=job:<uuid>` value, or null (any other form is ignored). */
-export function parseTrace(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const m = /^job:(.+)$/.exec(value.trim());
-  const id = m?.[1]?.trim() ?? "";
-  return UUID_RE.test(id) ? id.toLowerCase() : null;
+/** The page link that opens the trace drawer of a tour (the tour detail panel). */
+export function tourTraceHref(tourId: string): string {
+  return `${PAGE_PATH}?trace=${encodeURIComponent(`tour:${tourId}`)}`;
 }
 
-/** The trace API path of a job. */
-export function tracePath(jobId: string): string {
-  return `${TRACE_API}?job_id=${encodeURIComponent(jobId)}`;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isUuid(value: string | null | undefined): boolean {
+  return !!value && UUID_RE.test(value.trim());
+}
+
+/** The target of a `?trace=job:<uuid>` or `?trace=tour:<uuid>` value, or null (any other form is ignored). */
+export function parseTraceTarget(value: string | null | undefined): TraceTarget | null {
+  if (!value) return null;
+  const m = /^(job|tour):(.+)$/.exec(value.trim());
+  const id = m?.[2]?.trim() ?? "";
+  return m && UUID_RE.test(id) ? { kind: m[1] as TraceTarget["kind"], id: id.toLowerCase() } : null;
+}
+
+/** The job id of a `?trace=job:<uuid>` value, or null (a tour or any other form gives null). */
+export function parseTrace(value: string | null | undefined): string | null {
+  const t = parseTraceTarget(value);
+  return t?.kind === "job" ? t.id : null;
+}
+
+/** The trace API path of a job (a string) or of a target. */
+export function tracePath(target: string | TraceTarget): string {
+  const t = typeof target === "string" ? { kind: "job" as const, id: target } : target;
+  return `${TRACE_API}?${t.kind === "tour" ? "tour_id" : "job_id"}=${encodeURIComponent(t.id)}`;
+}
+
+/** The `?trace=` value of a target (the page keeps it in the address). */
+export function traceParam(t: TraceTarget): string {
+  return `${t.kind}:${t.id}`;
 }
 
 /** Rows grouped as the page lists them: LLM connections, then Jev, then the data providers. */
@@ -213,7 +254,7 @@ export function groupRows(rows: readonly ProviderRow[]): Record<ProviderGroup, P
 // ── tabs, views and the links of retired tabs (AA-804 UI part 2) ──────────────────────────────────────────────────
 
 /** The page's tabs, in order. `providers` is the default (no `tab` in the address). */
-export const TAB_KEYS = ["providers", "routing", "models", "budgets", "guide"] as const;
+export const TAB_KEYS = ["providers", "routing", "models", "budgets", "calls", "guide"] as const;
 export type TabKey = (typeof TAB_KEYS)[number];
 /** The views inside the Providers tab: the read-only overview, the connection settings, the Jev credit ledger. */
 export const PROVIDER_VIEWS = ["overview", "connections", "jev-credit"] as const;
@@ -239,9 +280,30 @@ export const RETIRED_SETTINGS_TABS: Readonly<Record<string, string>> = {
   models: aiGatewayHref("routing"),
   "jev-credit": aiGatewayHref("providers", "jev-credit"),
 };
-/** Cost Operations tabs that moved here. */
+/** The Cost Operations page and its merged "AI & data spend" tab (UI part 3: the LLM, DataForSEO and Jev tabs became
+ *  views of one tab). */
+export const COST_OPS_PATH = "/admin/cost-ops";
+export const SPEND_TAB = "spend";
+export const SPEND_VIEWS = ["llm", "dfs", "jev"] as const;
+export type SpendView = (typeof SPEND_VIEWS)[number];
+
+export function parseSpendView(value: string | null | undefined): SpendView {
+  return (SPEND_VIEWS as readonly string[]).includes(value ?? "") ? (value as SpendView) : "llm";
+}
+
+/** The link of the merged tab: exactly one `tab` value, `view` only when it is not the LLM view. */
+export function costOpsSpendHref(view?: SpendView): string {
+  const q = new URLSearchParams({ tab: SPEND_TAB });
+  if (view && view !== "llm") q.set("view", view);
+  return `${COST_OPS_PATH}?${q.toString()}`;
+}
+
+/** Cost Operations tabs that moved: Budgets to this page, LLM / DataForSEO / Jev into the merged spend tab. */
 export const RETIRED_COST_OPS_TABS: Readonly<Record<string, string>> = {
   budgets: aiGatewayHref("budgets"),
+  llm: costOpsSpendHref("llm"),
+  dfs: costOpsSpendHref("dfs"),
+  jev: costOpsSpendHref("jev"),
 };
 
 /** Where a retired `?tab=` value now lives, or null (the tab still exists, or no tab was asked). */
@@ -402,4 +464,111 @@ export function validScope(scope: string): boolean {
 /** The PUT path of one spend_budget row. */
 export function budgetPutPath(provider: string, scope: string): string {
   return `/api/admin/budgets/${encodeURIComponent(provider)}/${encodeURIComponent(scope)}`;
+}
+
+// ── calls (GET /api/admin/ai-gateway/calls, UI part 3) ─────────────────────────────────────────────────────────────
+
+export const CALLS_API = "/api/admin/ai-gateway/calls";
+export const CALL_SOURCES: readonly CallSource[] = ["llm", "jev", "dfs", "geocoder", "crm"];
+export const CALL_STATUSES: readonly CallStatus[] = ["ok", "refused", "error", "billed_unusable", "truncated"];
+export const CALL_WINDOWS = ["1h", "24h", "7d", "30d"] as const;
+export type CallWindow = (typeof CALL_WINDOWS)[number];
+/** The spend-budget providers (shared/cost_guard.py PROVIDERS), the provider filter's values. */
+export const CALL_PROVIDERS = ["bedrock", "openai", "anthropic", "azure_openai", "jev", "dfs", "geocoder"] as const;
+export const CALL_APPS = ["cis", "tripplanner", "crm"] as const;
+
+export interface CallRow extends Omit<TraceEvent, "source"> {
+  /** `<source>:<ledger row id>`, unique across the page */
+  id: string;
+  source: CallSource;
+  tenant_id: string | null;
+}
+
+export interface CrmCallsState {
+  status: "ok" | "not_asked" | "unavailable" | "refused" | "error";
+  reason?: string | null;
+  rows?: number;
+  http_status?: number | null;
+  /** The CRM's totals for the window (crm.ops.v1 GET /llm/usage) when its rows could not be read. */
+  aggregate?: { calls: number; cost_usd: number; from: string; to: string;
+    by_model: { model: string; calls: number; cost_usd: number }[] } | null;
+}
+
+export interface CallsResp {
+  generated_at: string;
+  window: { key: CallWindow; from: string; to: string };
+  filters: Record<string, string>;
+  sources: CallSource[];
+  rows: CallRow[];
+  next_cursor: string | null;
+  limit: number;
+  crm: CrmCallsState;
+  errors: { source: string; error: string }[];
+}
+
+/** The Calls tab's filters (the address keeps them under CALL_PARAM keys, `c_` prefixed, apart from the page's own). */
+export interface CallFilters {
+  job_id?: string;
+  tour_id?: string;
+  app?: string;
+  provider?: string;
+  status?: string;
+  stage?: string;
+  source?: string;
+  window?: string;
+}
+
+export const CALL_FILTER_KEYS = ["job_id", "tour_id", "app", "provider", "status", "stage", "source",
+  "window"] as const;
+
+/** The API path of one page of calls: only the filters that are set, then the cursor. */
+export function callsPath(f: CallFilters, cursor?: string | null, limit?: number): string {
+  const q = new URLSearchParams();
+  for (const k of CALL_FILTER_KEYS) {
+    const v = f[k]?.trim();
+    if (v) q.set(k, v);
+  }
+  if (cursor) q.set("cursor", cursor);
+  if (limit) q.set("limit", String(limit));
+  const qs = q.toString();
+  return qs ? `${CALLS_API}?${qs}` : CALLS_API;
+}
+
+/** The tone of a call's status / outcome badge. */
+export function callTone(outcome: string | null | undefined): Tone {
+  if (outcome === "error" || outcome === "reject" || outcome === "refused") return "danger";
+  if (outcome === "billed_unusable" || outcome === "truncated" || outcome === "grey" || outcome === "fallback") {
+    return "warning";
+  }
+  if (outcome === "shadow" || outcome === "cache") return "info";
+  if (outcome === "ok" || outcome === "accept" || outcome === "live") return "success";
+  return "neutral";
+}
+
+/** The address keys of the Calls tab's filters. */
+export const CALL_PARAM: Readonly<Record<(typeof CALL_FILTER_KEYS)[number], string>> = {
+  job_id: "c_job", tour_id: "c_tour", app: "c_app", provider: "c_provider", status: "c_status", stage: "c_stage",
+  source: "c_source", window: "c_window",
+};
+
+/** The Calls filters read from the address (`get` returns "" for a missing key); a bad job / tour id is dropped. */
+export function callFiltersFrom(get: (key: string) => string): CallFilters {
+  const f: CallFilters = {};
+  for (const k of CALL_FILTER_KEYS) {
+    const v = get(CALL_PARAM[k]).trim();
+    if (!v) continue;
+    if ((k === "job_id" || k === "tour_id") && !UUID_RE.test(v)) continue;
+    f[k] = k === "job_id" || k === "tour_id" ? v.toLowerCase() : v;
+  }
+  return f;
+}
+
+/** The link of the Calls tab filtered to one job (a job drawer, a trace). */
+export function callsHref(f: CallFilters): string {
+  const q = new URLSearchParams({ tab: "calls" });
+  for (const k of CALL_FILTER_KEYS) {
+    const v = f[k]?.trim();
+    if (v) q.set(CALL_PARAM[k], v);
+  }
+  return `${PAGE_PATH}?${q.toString()}`;
 }

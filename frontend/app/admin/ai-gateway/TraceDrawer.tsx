@@ -1,18 +1,23 @@
 "use client";
-// app/admin/ai-gateway/TraceDrawer.tsx — AA-804 (UI part 1): the Trace drawer of AI providers.
+// app/admin/ai-gateway/TraceDrawer.tsx — AA-804 (UI parts 1 and 3): the Trace drawer of AI providers.
 //
-// Every logged paid call of one job in time order, from GET /api/admin/ai-gateway/trace?job_id= (backend
-// api/services/ai_gateway.py trace_job): the LLM call log, the Jev decision log, the DataForSEO call log and the
-// geocoder log. Opened by the page's `?trace=job:<id>` link (the Jobs drawer's "Open trace"). Calls a provider refused
-// are not logged yet (ledger v2), so the drawer says so instead of implying they did not happen. An account is named
-// through lib/awsAccounts accountName (an AWS account ID or the vendor API's name), never by its key.
+// Every logged paid call of one job, or of one tour, in time order, from GET /api/admin/ai-gateway/trace?job_id= or
+// ?tour_id= (backend api/services/ai_gateway.py trace_job / trace_tour): the LLM call log, the Jev decision log, the
+// DataForSEO call log and the geocoder log. Opened by the page's `?trace=job:<id>` / `?trace=tour:<id>` link (the
+// Jobs drawer's and the tour panel's "Open trace", the decisions log, a Calls row). Shown as a kit TraceTimeline
+// (default) or a table, with a kit LatencyStrip of the calls. Since ledger v2 a refused attempt is a $0 row with its
+// class; older rows have no outcome or latency, which the drawer says. An account is named through lib/awsAccounts
+// accountName (an AWS account ID or the vendor API's name), never by its key.
 
 import { useQuery } from "@tanstack/react-query";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
-  ApiError, Badge, DataTable, DateText, Drawer, Eyebrow, K, StatusBadge, apiGet, mono, serif, useT, type ColumnDef,
+  ApiError, Badge, DataTable, DateText, Drawer, Eyebrow, K, LatencyStrip, SegmentedControl, StatusBadge,
+  TraceTimeline, apiGet, mono, serif, useT, type ColumnDef, type TimelineEvent,
 } from "../../_kit";
-import { TRACE_SOURCES, tracePath, usd, type TraceEvent, type TraceResp } from "@/lib/aiGateway";
+import {
+  TRACE_SOURCES, callTone, callsHref, tracePath, traceHref, usd, type TraceEvent, type TraceResp, type TraceTarget,
+} from "@/lib/aiGateway";
 import { accountName } from "@/lib/awsAccounts";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import { M, OUTCOME, SOURCE } from "./messages";
@@ -20,14 +25,6 @@ import { M, OUTCOME, SOURCE } from "./messages";
 type Row = TraceEvent & { _i: number };
 
 const small = { fontSize: 12, color: K.muted, lineHeight: 1.45 } as const;
-
-function outcomeTone(o: string | null): "success" | "warning" | "danger" | "info" | "neutral" {
-  if (o === "error" || o === "reject") return "danger";
-  if (o === "grey" || o === "fallback") return "warning";
-  if (o === "shadow" || o === "cache") return "info";
-  if (o === "ok" || o === "accept" || o === "live") return "success";
-  return "neutral";
-}
 
 function Line({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -38,19 +35,34 @@ function Line({ label, children }: { label: string; children: React.ReactNode })
   );
 }
 
-export default function TraceDrawer({ jobId, onClose }: { jobId: string; onClose: () => void }) {
+export default function TraceDrawer({ target, onClose }: { target: TraceTarget; onClose: () => void }) {
   const t = useT(M);
   const tsrc = useT(SOURCE);
   const tout = useT(OUTCOME);
   const dir = useAwsAccounts();
   const accountText = useAccountText();
+  const [view, setView] = useState<"timeline" | "table">("timeline");
   const q = useQuery({
-    queryKey: ["ai-gateway", "trace", jobId],
-    queryFn: () => apiGet<TraceResp>(tracePath(jobId), { admin: true }),
+    queryKey: ["ai-gateway", "trace", target.kind, target.id],
+    queryFn: () => apiGet<TraceResp>(tracePath(target), { admin: true }),
     retry: false,
   });
   const data = q.data;
   const rows = useMemo<Row[]>(() => (data?.events ?? []).map((e, i) => ({ ...e, _i: i })), [data]);
+  const timeline = useMemo<TimelineEvent[]>(() => rows.map((e) => {
+    const outcomeText = (o: string | null) =>
+      o != null && o in OUTCOME.en ? tout(o as keyof typeof OUTCOME.en) : (o ?? "—");
+    const who = [e.model ?? e.provider, e.account ? accountName(e.account, dir, accountText) || null : null]
+      .filter(Boolean).join(" · ");
+    const err = typeof e.detail?.error === "string" ? e.detail.error : null;
+    return {
+      id: String(e._i), at: e.at, label: tsrc(e.source), tone: callTone(e.outcome),
+      title: <><span style={{ fontFamily: mono, fontSize: 12 }}>{e.stage ?? e.what ?? "—"}</span>
+        {" "}<span style={{ color: K.muted }}>{outcomeText(e.outcome)}</span></>,
+      detail: [who, e.error_class, err?.slice(0, 120)].filter(Boolean).join(" · ") || null,
+      amount: usd(e.cost_usd), durationMs: e.latency_ms,
+    };
+  }), [rows, dir, accountText, tsrc, tout]);
 
   const columns = useMemo<ColumnDef<Row, unknown>[]>(() => [
     { id: "at", header: t("colWhen"), accessorKey: "at",
@@ -74,7 +86,7 @@ export default function TraceDrawer({ jobId, onClose }: { jobId: string; onClose
         const err = typeof e.detail?.error === "string" ? e.detail.error : null;
         return (
           <span style={{ display: "grid", gap: 2, justifyItems: "start" }}>
-            <Badge tone={outcomeTone(e.outcome)} dot={false}>
+            <Badge tone={callTone(e.outcome)} dot={false}>
               {known ? tout(e.outcome as keyof typeof OUTCOME.en) : (e.outcome ?? "—")}
             </Badge>
             {err && <span style={{ ...small, color: K.danger }} title={err}>{err.slice(0, 80)}</span>}
@@ -93,13 +105,16 @@ export default function TraceDrawer({ jobId, onClose }: { jobId: string; onClose
   ], [t, tsrc, tout, dir, accountText]);
 
   const notFound = q.error instanceof ApiError && q.error.status === 404;
+  const job = data?.job ?? null;
+  const tour = data?.tour ?? null;
+  const subtitle = job ? job.kind : tour ? t("traceTour") : "";
   const header = (
     <span style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, maxWidth: "100%" }}>
       <span style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: K.ink, minWidth: 0, overflow: "hidden",
-        textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={data?.job.kind}>
-        {t("traceTitle")}{data ? ` · ${data.job.kind}` : ""}
+        textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={subtitle}>
+        {t("traceTitle")}{subtitle ? ` · ${subtitle}` : ""}
       </span>
-      {data && <span style={{ flexShrink: 0, display: "inline-flex" }}><StatusBadge status={data.job.status} /></span>}
+      {job && <span style={{ flexShrink: 0, display: "inline-flex" }}><StatusBadge status={job.status} /></span>}
     </span>
   );
 
@@ -109,21 +124,41 @@ export default function TraceDrawer({ jobId, onClose }: { jobId: string; onClose
         {q.isLoading && <div style={small}>{t("traceLoading")}</div>}
         {q.error && (
           <div role="alert" style={{ fontSize: 12.5, color: K.danger }}>
-            {notFound ? t("traceNotFound") : t("traceLoadError", (q.error as Error).message)}
+            {notFound ? (target.kind === "tour" ? t("traceNotFoundTour") : t("traceNotFound"))
+              : t("traceLoadError", (q.error as Error).message)}
           </div>
         )}
         {data && (
           <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 14 }}
             data-testid="ai-gateway-trace-ready">
             <div>
-              <Line label={t("traceJob")}>
-                <span style={{ fontFamily: mono }}>{data.job.id}</span>{" · "}
-                <a href={`/admin/jobs?job=${encodeURIComponent(data.job.id)}`} style={{ color: K.accent }}>
-                  {t("traceOpenJob")}</a>
-              </Line>
-              {data.window && (
+              {job && (
+                <Line label={t("traceJob")}>
+                  <span style={{ fontFamily: mono }}>{job.id}</span>{" · "}
+                  <a href={`/admin/jobs?job=${encodeURIComponent(job.id)}`} style={{ color: K.accent }}>
+                    {t("traceOpenJob")}</a>
+                  {" · "}
+                  <a href={callsHref({ job_id: job.id })} style={{ color: K.accent }}>{t("tabCalls")}</a>
+                </Line>
+              )}
+              {job && data.window && (
                 <Line label={t("traceWindow")}>
-                  <DateText value={data.window.from} withTime /> → <DateText value={data.job.finished_at} withTime />
+                  <DateText value={data.window.from} withTime /> → <DateText value={job.finished_at} withTime />
+                </Line>
+              )}
+              {tour && (
+                <Line label={t("traceTour")}>
+                  <span style={{ fontFamily: mono }}>{tour.id}</span>{" · "}{t("traceTourJobs", tour.jobs_total)}
+                </Line>
+              )}
+              {tour && tour.jobs.length > 0 && (
+                <Line label={t("traceJob")}>
+                  <span style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {tour.jobs.slice(0, 12).map((j) => (
+                      <a key={j.id} href={traceHref(j.id)} style={{ color: K.accent, fontFamily: mono, fontSize: 12 }}
+                        title={j.id}>{j.kind}</a>
+                    ))}
+                  </span>
                 </Line>
               )}
               <Line label={t("colCost")}>
@@ -149,13 +184,34 @@ export default function TraceDrawer({ jobId, onClose }: { jobId: string; onClose
             <div style={{ display: "grid", gap: 4 }}>
               {data.notes.includes("job_not_started") && <div style={small}>{t("noteNotStarted")}</div>}
               {data.notes.includes("truncated") && <div style={small}>{t("noteTruncated", data.limit_per_source)}</div>}
-              {data.notes.includes("refused_calls_not_logged") && <div style={small}>{t("noteRefused")}</div>}
+              {data.notes.includes("rows_before_ledger_v2") && <div style={small}>{t("noteBeforeV2")}</div>}
+              {data.notes.includes("jobs_truncated") && tour && (
+                <div style={small}>{t("noteJobsTruncated", tour.jobs.length)}</div>
+              )}
+              {data.notes.includes("jobs_unreadable") && <div style={small}>{t("noteJobsUnreadable")}</div>}
             </div>
-            <DataTable<Row>
-              tableId="ai-gateway-trace-events" data={rows} columns={columns} getRowId={(r) => String(r._i)}
-              searchable={false} paginate={false} tableMinWidth={900} maxBodyHeight={520}
-              emptyTitle={t("traceEmpty")}
-            />
+            {rows.length > 0 && (
+              <div>
+                <Eyebrow>{t("traceLatency")}</Eyebrow>
+                <LatencyStrip testId="ai-gateway-trace-latency"
+                  points={rows.map((e) => ({ ms: e.latency_ms, tone: callTone(e.outcome) === "danger" ? "danger"
+                    : "info" }))} />
+              </div>
+            )}
+            <SegmentedControl label={t("traceView")} size="sm" value={view} onChange={setView}
+              testId="ai-gateway-trace-view"
+              options={[{ value: "timeline", label: t("traceViewTimeline") },
+                { value: "table", label: t("traceViewTable") }]} />
+            {view === "timeline" ? (
+              <TraceTimeline events={timeline} maxHeight={520} testId="ai-gateway-trace-timeline"
+                emptyText={target.kind === "tour" ? t("traceEmptyTour") : t("traceEmpty")} />
+            ) : (
+              <DataTable<Row>
+                tableId="ai-gateway-trace-events" data={rows} columns={columns} getRowId={(r) => String(r._i)}
+                searchable={false} paginate={false} tableMinWidth={900} maxBodyHeight={520}
+                emptyTitle={target.kind === "tour" ? t("traceEmptyTour") : t("traceEmpty")}
+              />
+            )}
           </div>
         )}
       </div>

@@ -1,7 +1,8 @@
 // app/admin/ai-gateway/messages.ts — the AI providers page (page header, tabs, Providers overview, Trace drawer),
 // English and Vietnamese. The other tabs have their own files: models.messages.ts (Routing, Models & trials),
-// connections.messages.ts, jevCredit.messages.ts, budgets.messages.ts. Provider names (DataForSEO, Geoapify, Jev, OpenAI API…) and stage / model codes stay as the API sends
-// them. The English texts are the page's own words that the Guide quotes (lib/guides.test.mjs reads this file).
+// connections.messages.ts, jevCredit.messages.ts, budgets.messages.ts, calls.messages.ts. Provider names (DataForSEO,
+// Geoapify, Jev, OpenAI API…) and stage / model codes stay as the API sends them. The English texts are the page's
+// own words that the Guide quotes (lib/guides.test.mjs reads this file).
 
 import { defineMessages } from "../../_kit/core/i18n";
 
@@ -45,16 +46,18 @@ export const REASON = defineMessages(
 
 /** Ledger of a trace event (lib/aiGateway.ts TraceSource). */
 export const SOURCE = defineMessages(
-  { llm: "LLM", jev: "Jev", dfs: "DataForSEO", geocoder: "Geocoder" },
-  { llm: "LLM", jev: "Jev", dfs: "DataForSEO", geocoder: "Geocode" },
+  { llm: "LLM", jev: "Jev", dfs: "DataForSEO", geocoder: "Geocoder", crm: "CRM" },
+  { llm: "LLM", jev: "Jev", dfs: "DataForSEO", geocoder: "Geocode", crm: "CRM" },
 );
 
 /** Outcome of a trace event. */
 export const OUTCOME = defineMessages(
   { ok: "answered", shadow: "shadow", fallback: "fallback", cache: "cache", live: "live", accept: "accept",
-    grey: "grey", reject: "reject", error: "error", skipped: "skipped" },
+    grey: "grey", reject: "reject", error: "error", skipped: "skipped", refused: "refused",
+    billed_unusable: "billed, unusable", truncated: "cut short" },
   { ok: "đã trả lời", shadow: "chạy bóng", fallback: "dự phòng", cache: "bộ đệm", live: "gọi thật", accept: "đạt",
-    grey: "xám", reject: "loại", error: "lỗi", skipped: "bỏ qua" },
+    grey: "xám", reject: "loại", error: "lỗi", skipped: "bỏ qua", refused: "bị từ chối",
+    billed_unusable: "tính tiền, không dùng được", truncated: "bị cắt" },
 );
 
 export const M = defineMessages(
@@ -71,6 +74,7 @@ export const M = defineMessages(
     tabRouting: "Routing",
     tabModels: "Models & trials",
     tabBudgets: "Budgets",
+    tabCalls: "Calls",
     tabGuide: "Guide",
     viewsLabel: "Provider views",
     viewOverview: "Overview",
@@ -132,7 +136,8 @@ export const M = defineMessages(
     sourceErrors: "Some sources could not be read; their rows say Unknown.",
     loadError: "The providers could not be loaded",
     emptyLlm: "No LLM connection is registered.",
-    traceHint: "To see every paid call of one job, open the job (Jobs) and click Open trace.",
+    traceHint: "To see every paid call of one job or one tour, open the job (Jobs) or the tour (Master Content) and "
+      + "click Open trace, or open a row of the Calls tab.",
     // trace drawer
     traceTitle: "Trace",
     traceLoadError: (msg: string) => `The trace could not be loaded: ${msg}`,
@@ -146,7 +151,18 @@ export const M = defineMessages(
     traceSourceLine: (n: number, cost: string) => `${n} · ${cost}`,
     traceNotReadSource: "not read",
     traceEmpty: "No logged paid call for this job.",
-    noteRefused: "Calls a provider refused are not logged yet, so a refused attempt does not show here.",
+    noteBeforeV2: "Calls logged before 31 Oct 2026 have no outcome or latency, and a refused attempt from before that "
+      + "date was not logged.",
+    noteJobsTruncated: (n: number) => `Only the newest ${n} jobs of the tour are read.`,
+    noteJobsUnreadable: "The tour's jobs could not be read, so only the calls marked with the tour are listed.",
+    traceTour: "Tour",
+    traceTourJobs: (n: number) => `${n} job${n === 1 ? "" : "s"}`,
+    traceEmptyTour: "No logged paid call for this tour.",
+    traceNotFoundTour: "No such tour.",
+    traceViewTimeline: "Timeline",
+    traceViewTable: "Table",
+    traceView: "Show as",
+    traceLatency: "Latency",
     noteNotStarted: "The job never started, so it made no call.",
     noteTruncated: (n: number) => `Only the first ${n} rows of each log are listed; the totals count every row.`,
     colWhen: "When",
@@ -171,6 +187,7 @@ export const M = defineMessages(
     tabRouting: "Điều hướng",
     tabModels: "Model và thử nghiệm",
     tabBudgets: "Ngân sách",
+    tabCalls: "Lần gọi",
     tabGuide: "Hướng dẫn",
     viewsLabel: "Các góc xem nhà cung cấp",
     viewOverview: "Tổng quan",
@@ -228,7 +245,8 @@ export const M = defineMessages(
     sourceErrors: "Không đọc được vài nguồn; dòng của chúng ghi Chưa rõ.",
     loadError: "Không tải được danh sách nhà cung cấp",
     emptyLlm: "Chưa đăng ký kết nối LLM nào.",
-    traceHint: "Muốn xem mọi lần gọi trả phí của một job, mở job đó (Jobs) rồi bấm Mở truy vết.",
+    traceHint: "Muốn xem mọi lần gọi trả phí của một job hay một tour, mở job (Jobs) hoặc tour (Master Content) rồi "
+      + "bấm Mở truy vết, hoặc mở một dòng ở tab Lần gọi.",
     traceTitle: "Truy vết",
     traceLoadError: (msg: string) => `Không tải được truy vết: ${msg}`,
     traceNotFound: "Không có job này.",
@@ -241,7 +259,18 @@ export const M = defineMessages(
     traceSourceLine: (n: number, cost: string) => `${n} · ${cost}`,
     traceNotReadSource: "không đọc",
     traceEmpty: "Job này không có lần gọi trả phí nào được ghi.",
-    noteRefused: "Lần gọi bị nhà cung cấp từ chối chưa được ghi, nên không hiện ở đây.",
+    noteBeforeV2: "Lần gọi ghi trước 31/10/2026 không có kết quả hay độ trễ, và lần bị từ chối trước ngày đó không được "
+      + "ghi.",
+    noteJobsTruncated: (n: number) => `Chỉ đọc ${n} job mới nhất của tour.`,
+    noteJobsUnreadable: "Không đọc được các job của tour, nên chỉ liệt kê lần gọi có gắn tour.",
+    traceTour: "Tour",
+    traceTourJobs: (n: number) => `${n} job`,
+    traceEmptyTour: "Tour này không có lần gọi trả phí nào được ghi.",
+    traceNotFoundTour: "Không có tour này.",
+    traceViewTimeline: "Dòng thời gian",
+    traceViewTable: "Bảng",
+    traceView: "Xem dạng",
+    traceLatency: "Độ trễ",
     noteNotStarted: "Job chưa chạy nên chưa gọi gì.",
     noteTruncated: (n: number) => `Mỗi sổ chỉ liệt kê ${n} dòng đầu; phần tổng vẫn đếm đủ.`,
     colWhen: "Lúc",

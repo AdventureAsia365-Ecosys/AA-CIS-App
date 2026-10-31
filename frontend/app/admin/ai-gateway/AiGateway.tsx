@@ -7,12 +7,13 @@
 //   Routing          the model route of every stage (RoutingTab.tsx): primary, fallbacks, shadow, LLM availability.
 //   Models & trials  the model catalog (on / off; prices view-only) and the shadow comparisons (ModelsTab.tsx).
 //   Budgets          every spending cap by tier (BudgetsTab.tsx).
+//   Calls            every logged paid call, newest first, across the CIS ledgers and the CRM's (CallsTab.tsx).
 //   Guide            how to read the page (guide.ts / guide.vi.ts), the kit GuidePanel like every admin guide.
 // UI part 2 moved Routing, Models & trials, the connection settings and the Jev credit ledger here from Settings
 // (LLM Models, Jev Credit) and Budgets from Cost Operations; the old links are sent on here by those pages
 // (lib/aiGateway RETIRED_SETTINGS_TABS / RETIRED_COST_OPS_TABS).
-// The Trace drawer (TraceDrawer.tsx) opens from `?trace=job:<id>` (the Jobs drawer's "Open trace" link); closing it
-// drops the parameter. `?tab=` picks the tab and `?view=` the Providers view. They are read once on load and kept
+// The Trace drawer (TraceDrawer.tsx) opens from `?trace=job:<id>` or `?trace=tour:<id>` (the Jobs drawer's and the
+// tour panel's "Open trace" links, the decisions log, a Calls row); closing it drops the parameter. `?tab=` picks the tab and `?view=` the Providers view. They are read once on load and kept
 // with history.replaceState, so the address always carries exactly one `tab`.
 //
 // Admin only (lib/rbac.ts PAGE_RULES and API_READ_RULES /admin/ai-gateway; backend spend.read for the reads, the
@@ -25,8 +26,11 @@ import { useState } from "react";
 import {
   Button, GuidePanel, LinkButton, PageFrame, PageHeader, Tabs, ToastProvider, useLocalized, useT,
 } from "../../_kit";
-import { parseTab, parseTrace, parseView, type ProviderView, type TabKey } from "@/lib/aiGateway";
+import {
+  parseTab, parseTraceTarget, parseView, traceParam, type ProviderView, type TabKey, type TraceTarget,
+} from "@/lib/aiGateway";
 import BudgetsTab from "./BudgetsTab";
+import CallsTab from "./CallsTab";
 import { AI_GATEWAY_GUIDE } from "./guide";
 import { AI_GATEWAY_GUIDE_VI } from "./guide.vi";
 import { M } from "./messages";
@@ -60,12 +64,13 @@ export default function AiGateway() {
   const guide = useLocalized({ en: AI_GATEWAY_GUIDE, vi: AI_GATEWAY_GUIDE_VI });
   const [tab, setTabState] = useState<TabKey>(() => parseTab(params.get("tab")));
   const [view, setViewState] = useState<ProviderView>(() => parseView(params.get("view")));
-  const [traceJob, setTraceJob] = useState<string | null>(() => parseTrace(params.get("trace")));
+  const [trace, setTraceState] = useState<TraceTarget | null>(() => parseTraceTarget(params.get("trace")));
   const tabs = [
     { key: "providers", label: t("tabProviders") },
     { key: "routing", label: t("tabRouting") },
     { key: "models", label: t("tabModels") },
     { key: "budgets", label: t("tabBudgets") },
+    { key: "calls", label: t("tabCalls") },
     { key: "guide", label: t("tabGuide") },
   ];
 
@@ -80,8 +85,12 @@ export default function AiGateway() {
     setViewState(v);
     setParam("view", v === "overview" ? null : v);
   };
+  const openTrace = (target: TraceTarget) => {
+    setTraceState(target);
+    setParam("trace", traceParam(target));
+  };
   const closeTrace = () => {
-    setTraceJob(null);
+    setTraceState(null);
     setParam("trace", null);
   };
 
@@ -105,8 +114,9 @@ export default function AiGateway() {
         {tab === "routing" && <RoutingTab />}
         {tab === "models" && <ModelsTab />}
         {tab === "budgets" && <BudgetsTab onOpenConnections={() => { setTab("providers"); setView("connections"); }} />}
+        {tab === "calls" && <CallsTab onTrace={openTrace} />}
         {tab === "guide" && <GuidePanel content={guide} testId="ai-gateway-guide" />}
-        {traceJob && <TraceDrawer jobId={traceJob} onClose={closeTrace} />}
+        {trace && <TraceDrawer key={traceParam(trace)} target={trace} onClose={closeTrace} />}
       </PageFrame>
     </ToastProvider>
   );
