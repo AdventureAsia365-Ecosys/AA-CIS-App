@@ -78,7 +78,7 @@ predecessor of the same source linked to exactly one card. Infra companion PR: `
 
 - `needs_draft_recorded` also counts the atoms that the carry-over then links, so read both counters.
 - Repair after deploy: run `relink.py APPLY=1` (orchestrator, $0) on the 12 tours. Expected probe result:
-  `place_card_links_missing` 0 once the Infra PR is deployed, and `place_card_needs_draft` ≈ 106
-  (111 minus the ~5 carried over).
+  `place_card_links_missing` 0 once the Infra PR is deployed, and `place_card_needs_draft` between 106 and 111
+  (111 minus the carried-over atoms; the S262 review fix carries fewer: only when every competing predecessor agrees).
 - The probe (Infra) excludes `needs_draft` rows from `place_card_links_missing` and adds an info metric for them. A
   relink that did not run still shows as missing.
