@@ -1975,6 +1975,7 @@ async def list_notifications(
         "tour.master.trashed":      "Master tour trashed",
         "tour.master.restored":     "Master tour restored",
         "tenant.cta.review_claim":  "Tenant CTA mentions reviews or ratings",  # AA-819 follow-up
+        "llm_circuit_open":         "LLM connection paused",  # AA-1018 (connection-level circuit)
     }
 
     items = []

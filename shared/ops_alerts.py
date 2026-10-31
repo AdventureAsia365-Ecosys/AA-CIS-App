@@ -19,6 +19,9 @@ Not configured (SES_FROM_ADDRESS empty) -> nothing is queued; one log line. AA-9
 when the job runs (services/jobs/ops_alert_email_job.py): the confirmed rows of shared.alert_recipient, managed on
 the admin page Platform › Alert recipients, plus ALERT_EMAIL_TO (shared/alert_recipients.ops_recipients). The
 ``test`` template is the page's "Send test e-mail" (api/services/alert_recipients.send_test).
+
+AA-1018: the LLM breaker queues ``llm_circuit_open`` when a connection-level circuit opens (an account-wide refusal),
+gated by its own bell throttle, at most one e-mail per connection, class and UTC day.
 """
 from __future__ import annotations
 
@@ -407,4 +410,80 @@ def render_inquiry_handoff_gap(payload: dict, *, to: Recipients, base_url: Optio
             "<p><strong>Inquiry handoff gap</strong>: TripPlanner inquiries are missing from the Booking inbox.</p>"
             f"<table style=\"border-collapse:collapse\">{_jev_rows_html(rows)}</table>"
             f"<p><a href=\"{html.escape(link)}\">Open Platform › Reports (TP-03)</a></p></div>")
+    return Message(to=to, subject=subject, text=text, html=body)
+
+
+# ── AA-1018 — an LLM connection circuit opened (account-wide refusal: no key, no credit, access denied) ────────────
+
+TEMPLATE_LLM_CIRCUIT_OPEN = "llm_circuit_open"
+# Admin page with the LLM connections, their circuits and the availability card (Settings > LLM Models).
+LLM_PROVIDERS_PAGE_PATH = "/admin/settings?tab=models"
+
+
+def llm_circuit_key(connection_key: str, error_class: str, day: str) -> str:
+    return f"{KIND}:{TEMPLATE_LLM_CIRCUIT_OPEN}:{connection_key}:{error_class}:{day}"
+
+
+async def enqueue_llm_circuit_email(conn, *, details: dict, now: Optional[datetime] = None) -> Optional[str]:
+    """AA-1018: queue the operator e-mail for a connection circuit that just opened (shared/llm_client/breaker.py,
+    called only when a new bell row was written). At most one e-mail per connection, class and UTC day. `details` holds
+    the connection key, class, model keys and times (never a prompt or a key). None when e-mail is not configured or
+    today's e-mail is queued already."""
+    connection_key = str(details.get("connection_key") or "?")
+    error_class = str(details.get("error_class") or "other")
+    if sender_config() is None:
+        logger.info("ops_alert_email_not_configured", template=TEMPLATE_LLM_CIRCUIT_OPEN, connection=connection_key)
+        return None
+    from shared.jobs import queue  # lazy: shared.jobs.worker imports shared.cost_guard
+
+    day = utc_day(now)
+    payload = {"template": TEMPLATE_LLM_CIRCUIT_OPEN, "period": day, **details}
+    job_id, created = await queue.enqueue(conn, KIND, payload, max_attempts=MAX_ATTEMPTS,
+                                          idempotency_key=llm_circuit_key(connection_key, error_class, day),
+                                          created_by="llm_breaker")
+    logger.info("ops_alert_email_queued" if created else "ops_alert_email_already_queued",
+                job_id=job_id, template=TEMPLATE_LLM_CIRCUIT_OPEN, connection=connection_key, period=day)
+    return job_id if created else None
+
+
+_CIRCUIT_ACTIONS = {
+    "credential": "The connection's key cannot be read. Check the secret named on the connection (or the task "
+                  "environment variable), then run Test connection.",
+    "quota_exhausted": "The provider refuses for lack of credit or a spend cap. Top up or raise the cap with the "
+                       "provider, then run Test connection.",
+    "access_denied": "The account is refused on several models at once (for Bedrock: model access or an account "
+                     "block). Check the account with the provider, then run Test connection.",
+}
+
+
+def render_llm_circuit_open(payload: dict, *, to: Recipients, base_url: Optional[str] = None,
+                            environment: Optional[str] = None) -> Message:
+    """AA-1018: an LLM connection was paused by its connection-level circuit. The last provider answer is masked again
+    here (ARNs, account IDs), so a payload queued by an older build cannot carry one into the e-mail."""
+    from shared.llm_client.errors import redact_ids  # lazy: keeps ops_alerts import-light
+
+    env = environment or os.environ.get("ENVIRONMENT", "dev")
+    link = f"{base_url or admin_base_url()}{LLM_PROVIDERS_PAGE_PATH}"
+    key = str(payload.get("connection_key") or "?")
+    cls = str(payload.get("error_class") or "other")
+    models = payload.get("models") or []
+    subject = f"[AA-CIS {env}] LLM connection {key} paused ({cls})"
+    rows = [("Connection", key), ("Reason", cls), ("Models refused", ", ".join(map(str, models)) or "-"),
+            ("Opened at", str(payload.get("opened_at") or "-")),
+            ("Calls skip it until", str(payload.get("open_until") or "-")),
+            ("Last provider answer", redact_ids(str(payload.get("last_error") or "")) or "-"),
+            ("Day", f"{payload.get('period')} (UTC)")]
+    action = _CIRCUIT_ACTIONS.get(cls, "Check the connection with the provider, then run Test connection.")
+    footer = ("Routes fall back to their other models and connections where the stage allows it. The same alert is "
+              "in the admin notification bell. At most one e-mail per connection, reason and UTC day.")
+    text = "\n".join([f"LLM connection {key} was paused: every call to it is refused the same way.", ""]
+                     + [f"{k}: {v}" for k, v in rows]
+                     + ["", action, "", f"LLM connections: {link}", footer])
+    body = ("<div style=\"font-family:Arial,sans-serif;font-size:14px;color:#222\">"
+            f"<p><strong>LLM connection {html.escape(key)} paused</strong>: every call to it is refused the same "
+            "way.</p>"
+            f"<table style=\"border-collapse:collapse\">{_jev_rows_html(rows)}</table>"
+            f"<p>{html.escape(action)}</p>"
+            f"<p><a href=\"{html.escape(link)}\">Open Settings / LLM Models</a></p>"
+            f"<p style=\"color:#777;font-size:12px\">{html.escape(footer)}</p></div>")
     return Message(to=to, subject=subject, text=text, html=body)

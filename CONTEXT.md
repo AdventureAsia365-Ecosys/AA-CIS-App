@@ -383,6 +383,30 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   constants), Azure unsupported. Tolerance max($0.05, 5 %); a settled mismatch raises one bell per 24 h; rows older
   than 400 days are pruned by the job. Admin: `GET /admin/llm-connections/costs`, the policy fields in the same
   PATCH; UI: Connections tab (Budget column, drawer "Budget and cost check").
+- **Reliability part 1** (AA-1018, no migration): a **connection-level circuit** derived from the deployment rows of
+  `shared.llm_provider_health` (`breaker.connection_health`, shown as `model_key "*"`; not stored, because
+  `model_key` references the catalog). It trips only on account-wide signals newer than the connection's last answered
+  call: one deployment refused for a key (`credential`) or credit (`quota_exhausted`: OpenAI `insufficient_quota`,
+  the Anthropic tier spend cap), or `access_denied` on two or more distinct models (one refused model never stops the
+  connection, so acc2 embeddings survive a Claude refusal on acc2). While open, `deployment_plan` (checked before each
+  deployment's own circuit, `vendor_route.connection_circuit_open`) and `breaker.admit` (every `guarded` call) skip
+  every deployment of the connection; afterwards the deployment circuits decide; any success closes it. On the
+  transition to open: one admin bell (`llm_circuit_open`, one unread per connection per 24 h) and the ops e-mail
+  (template `llm_circuit_open`, once per connection, class and UTC day). The legacy chain (`haiku` / `sonnet` keys)
+  does not go through `guarded` yet, so it still reaches a blocked acc3 (AA-1018 part 2 wraps it). Jobs: backoff
+  gets up to 25 % jitter (`queue.backoff_seconds`); `POST /admin/job-runner/jobs/retry-llm-denied` (ops.write, DRY
+  RUN by default, audited `jobs_retry_llm_denied`) re-queues `failed` jobs whose error starts with
+  `llm_access_denied` unless their kind refuses retries or their connection still refuses
+  (`queue.retry_by_reason` / `breaker.connection_refusing`: the connection circuit is tripped, open or half-open, with
+  no answered call since; at most 50 per apply); the jobs list takes `reason` (error prefix). The alert's provider
+  text is masked (`errors.redact_ids`: ARNs and 12-digit account IDs) before it reaches the bell or the e-mail.
+  `shared/llm_client/invariant.py`: the report-only failure-domain rule (domain = kind + account + data scope until
+  migration 321), in `GET /admin/llm-availability` (`invariant`, and per connection `circuit` + `failure_domain`) and
+  the OPS-12 digest provider section. Job kind `llm_connection_probe` (`services/jobs/llm_probe_job.py`: one Test
+  connection per enabled text deployment of every enabled, configured connection, at most 30; max_attempts 1,
+  background, deploy-gate exempt): daily from 05:00 UTC only with `LLM_DAILY_PROBE=on` (default off);
+  `POST /admin/job-runner/llm-probe/run` (ai.admin) queues a DRY RUN by default (deployments + estimated cost, no
+  call). Bedrock runtime clients take the connection's `timeout_s` / `max_retries` only when set (NULL = unchanged).
 - **Structured output (`LLMRequest.json_schema`) per path**: Converse = one tool whose input is the schema, reply
   conformed (`_checked_json`, AA-659/714); OpenAI = strict `response_format`. The legacy `haiku` / `sonnet` keys
   (Anthropic Messages API, `invoke_claude`) have neither: since S251 (AA-835) the gateway appends a "one JSON object

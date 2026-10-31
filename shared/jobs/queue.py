@@ -7,9 +7,11 @@ overwrite what the reaper or another worker already did.
 from __future__ import annotations
 
 import json
+import random
+import re
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Any, Optional, Sequence
+from datetime import datetime, timezone
+from typing import Any, Callable, Optional, Sequence
 
 import asyncpg
 
@@ -21,6 +23,9 @@ _CLAIM_LOCK_KEY = 650_001
 
 BACKOFF_BASE_SECONDS = 30
 BACKOFF_MAX_SECONDS = 900
+# AA-1018: up to this share of the delay is added at random, so jobs that failed together (a provider outage, a
+# blocked account) do not all come back in the same second.
+BACKOFF_JITTER_RATIO = 0.25
 
 
 @dataclass
@@ -50,9 +55,13 @@ def _to_job(row) -> Job:
     )
 
 
-def backoff_seconds(attempt: int) -> int:
-    """Delay before retry number `attempt` (1-based): 30 s, 60 s, 120 s, ... capped at 15 min."""
-    return min(BACKOFF_BASE_SECONDS * 2 ** max(attempt - 1, 0), BACKOFF_MAX_SECONDS)
+def backoff_seconds(attempt: int, *, rand: Optional[Callable[[], float]] = None) -> int:
+    """Delay before retry number `attempt` (1-based): 30 s, 60 s, 120 s, ... capped at 15 min, plus a random jitter of
+    up to BACKOFF_JITTER_RATIO of that delay (AA-1018; `rand` returns 0..1, pass `lambda: 0.0` for the bare delay).
+    Never shorter than the bare delay."""
+    base = min(BACKOFF_BASE_SECONDS * 2 ** max(attempt - 1, 0), BACKOFF_MAX_SECONDS)
+    r = (rand or random.random)()
+    return base + int(base * BACKOFF_JITTER_RATIO * min(max(r, 0.0), 1.0))
 
 
 async def enqueue(pool, kind: str, payload: dict, *, idempotency_key: Optional[str] = None,
@@ -355,6 +364,125 @@ async def retry(pool, job_id: str) -> bool:
     return row is not None
 
 
+# ── AA-1018: re-queue the jobs an LLM account block failed, once the connection answers again ───────────────────────
+
+RETRY_REASON_DEFAULT = "llm_access_denied"      # errors.LLM_ACCESS_DENIED_REASON (the job error prefix, AA-900)
+RETRY_REASON_LIMIT = 200                        # rows read per call (one page; call again for more)
+RETRY_REASON_MAX_LIMIT = 500                    # a dry run may list this many
+RETRY_REASON_APPLY_LIMIT = 50                   # an apply re-queues at most this many per call (paid runs: subset)
+RETRY_SPREAD_SECONDS = 60                       # re-queued rows are due over this window, not all in one second
+
+_RETRY_CANDIDATES_SQL = """
+    SELECT j.id::text AS id, j.kind, j.payload, j.error, j.finished_at
+      FROM shared.job j
+     WHERE j.status = 'failed' AND j.error IS NOT NULL AND left(j.error, length($1)) = $1
+       AND j.finished_at >= $2
+       AND (cardinality($3::text[]) = 0 OR j.kind = ANY($3::text[]))
+     ORDER BY j.finished_at, j.id
+     LIMIT $4
+"""
+_RETRY_ONE_SQL = """
+    UPDATE shared.job SET status = 'queued', attempt = 0, run_after = now() + make_interval(secs => $2),
+           error = NULL, cancel_requested = false, finished_at = NULL, result = NULL, updated_at = now()
+     WHERE id = $1::uuid AND status = 'failed'
+    RETURNING id
+"""
+_CONNECTION_KEYS_SQL = "SELECT connection_key FROM shared.llm_provider_connection"
+
+
+async def blocked_connections(pool, now: Optional[datetime] = None) -> tuple[dict[str, str], list[str]]:
+    """({connection_key: class} of the LLM connections whose circuit still refuses, every registry connection key).
+    Blocked = ``breaker.connection_refusing``: the connection circuit is tripped (open, or half-open of any class) and
+    no call on the connection has answered since the refusals (read from shared.llm_provider_health). A half-open
+    access_denied circuit lets calls probe, but a bulk re-queue waits for a real answer. Before migrations 304 / 309:
+    ({}, [])."""
+    from shared.llm_client import breaker  # lazy: keeps the job queue import-light
+
+    try:
+        health = [breaker.row_to_health(r) for r in await pool.fetch(breaker.SELECT_SQL)]
+        keys = [r["connection_key"] for r in await pool.fetch(_CONNECTION_KEYS_SQL)]
+    except asyncpg.exceptions.UndefinedTableError:
+        return {}, []
+    now = now or datetime.now(timezone.utc)
+    out: dict[str, str] = {}
+    for key in sorted({h.connection_key for h in health}):
+        h = breaker.connection_health(health, key, now)
+        if breaker.connection_refusing(h, now):
+            out[key] = h.last_error_class
+    return out, keys
+
+
+def _named_connections(error: str, keys: Sequence[str]) -> list[str]:
+    """The registry connection keys a job error names (whole words: `acc3` does not match `acc30`)."""
+    text = error or ""
+    return [k for k in keys if re.search(rf"(?<![A-Za-z0-9-]){re.escape(k)}(?![A-Za-z0-9-])", text)]
+
+
+def llm_hold(error: str, blocked: dict[str, str], keys: Sequence[str]) -> Optional[str]:
+    """Why a job refused by an LLM account must not be re-queued yet, or None. A job whose error names a connection
+    waits for that connection; one that names none (a Bedrock "Error 002" says no connection) waits while any
+    connection is blocked with the same class (access_denied / quota_exhausted). Pure."""
+    from shared.llm_client.errors import classify_text  # lazy, pure
+
+    named = _named_connections(error, keys)
+    if named:
+        held = [f"{k} ({blocked[k]})" for k in named if k in blocked]
+        return f"connection still refused: {', '.join(held)}" if held else None
+    cls = classify_text(error)
+    same = [f"{k} ({c})" for k, c in sorted(blocked.items()) if c == cls]
+    return f"a connection is still refused with the same class: {', '.join(same)}" if same else None
+
+
+async def retry_by_reason(pool, prefix: str = RETRY_REASON_DEFAULT, *, since: datetime, kinds: Sequence[str] = (),
+                          dry_run: bool = True, limit: int = RETRY_REASON_LIMIT,
+                          rand: Optional[Callable[[], float]] = None) -> dict:
+    """AA-1018: re-queue the `failed` jobs whose error starts with `prefix` (default `llm_access_denied`, the
+    account-level LLM refusal of AA-900) and that finished at or after `since`, optionally only `kinds`. Each job gets
+    a fresh set of attempts, like `retry`, due within RETRY_SPREAD_SECONDS (jitter). Skipped (in `held`, with the
+    reason): a kind that is not registered, a kind whose `retry_refusal` refuses the job (AA-839), and a job whose
+    connection is still refused (`blocked_connections` / `llm_hold`; only for the LLM prefix). `dry_run` (the
+    default) changes nothing and lists what an apply would do (up to RETRY_REASON_MAX_LIMIT rows); an apply reads at
+    most RETRY_REASON_APPLY_LIMIT rows per call (call again for the next ones). The apply re-checks every row in its
+    own guarded UPDATE (`status = 'failed'`), so a job retried by hand meanwhile is not touched twice."""
+    from shared.jobs.registry import get_kind  # lazy: registry imports this module
+    from shared.jobs.worker import load_kinds
+
+    if not prefix or not prefix.strip():
+        raise ValueError("prefix must not be empty")
+    limit = max(1, min(int(limit), RETRY_REASON_MAX_LIMIT if dry_run else RETRY_REASON_APPLY_LIMIT))
+    load_kinds()
+    rows = [dict(r) for r in await pool.fetch(_RETRY_CANDIDATES_SQL, prefix, since, list(kinds), limit)]
+    llm = prefix.startswith(RETRY_REASON_DEFAULT)
+    blocked, keys = await blocked_connections(pool) if llm else ({}, [])
+    eligible, held = [], []
+    for r in rows:
+        kind = get_kind(r["kind"])
+        entry = {"id": r["id"], "kind": r["kind"], "error": (r["error"] or "")[:200],
+                 "finished_at": r["finished_at"].isoformat() if r["finished_at"] else None}
+        why: Optional[str]
+        if kind is None:
+            why = "kind is not registered"
+        else:
+            why = kind.retry_refusal({**r, "payload": _json(r["payload"])}) if kind.retry_refusal else None
+            if not why and llm:
+                why = llm_hold(r["error"] or "", blocked, keys)
+        if why:
+            held.append({**entry, "held": why})
+        else:
+            eligible.append(entry)
+    requeued: list[str] = []
+    if not dry_run:
+        r_fn = rand or random.random
+        for e in eligible:
+            delay = int(RETRY_SPREAD_SECONDS * min(max(r_fn(), 0.0), 1.0))
+            if await pool.fetchrow(_RETRY_ONE_SQL, e["id"], delay) is not None:
+                requeued.append(e["id"])
+    return {"dry_run": dry_run, "prefix": prefix, "since": since.isoformat(), "kinds": list(kinds), "limit": limit,
+            "matched": len(rows), "eligible": len(eligible), "held_count": len(held), "requeued": len(requeued),
+            "requeued_ids": requeued, "jobs": eligible, "held": held, "blocked_connections": blocked,
+            "more": len(rows) == limit}
+
+
 # Read-side job cost (AA-652 follow-up): `shared.job.cost_usd` holds what the handler reported
 # itself (non-LLM spend such as DataForSEO, via ctx.add_cost); LLM spend is summed from
 # shared.llm_call_log rows the worker tagged with the job id. Summing on read keeps it exact across
@@ -415,7 +543,7 @@ JOB_SORTS: dict[str, str] = {
 # Shared WHERE for list + count so the paged total matches exactly what the page can scroll through.
 # Built once from the same filter set (AA-755: + since/until/created_by/q) so `total` always counts
 # exactly the rows the list pages through. The $N order is fixed and shared by both queries; list
-# appends its own LIMIT/OFFSET params ($8/$9) after these.
+# appends its own LIMIT/OFFSET params ($9/$10) after these (AA-1018: + reason, $8).
 _LIST_WHERE = (
     "($1::text IS NULL OR kind = $1) "
     "AND ($2::text IS NULL OR status = $2) "
@@ -425,13 +553,15 @@ _LIST_WHERE = (
     "AND ($6::text IS NULL OR j.created_by = $6) "
     # q: free-text match on id prefix, kind substring, or created_by substring (case-insensitive).
     "AND ($7::text IS NULL OR j.id::text LIKE $7 || '%' "
-    "     OR j.kind ILIKE '%' || $7 || '%' OR j.created_by ILIKE '%' || $7 || '%')"
+    "     OR j.kind ILIKE '%' || $7 || '%' OR j.created_by ILIKE '%' || $7 || '%') "
+    # AA-1018 reason: the error starts with this text (e.g. llm_access_denied); left() so no LIKE wildcard applies.
+    "AND ($8::text IS NULL OR left(j.error, length($8)) = $8)"
 )
 
 
-def _filter_args(kind, status, tour_id, since, until, created_by, q) -> list:
+def _filter_args(kind, status, tour_id, since, until, created_by, q, reason=None) -> list:
     """The positional args for `_LIST_WHERE`, in a fixed order shared by list_jobs + count_jobs."""
-    return [kind, status, tour_id, since, until, created_by, q]
+    return [kind, status, tour_id, since, until, created_by, q, reason]
 
 
 def _order_by(sort: str, sort_dir: str) -> str:
@@ -451,20 +581,21 @@ async def list_jobs(pool, *, kind: Optional[str] = None, status: Optional[str] =
                     since: Optional[datetime] = None, until: Optional[datetime] = None,
                     created_by: Optional[str] = None, q: Optional[str] = None,
                     sort: str = "created_at", sort_dir: str = "desc",
-                    include_blobs: bool = True) -> list[dict]:
+                    include_blobs: bool = True, reason: Optional[str] = None) -> list[dict]:
     """`tour_id` (AA-687) matches the payload's tour: a3_atomize / segment work (`tour_id`) and
     tenant rewrites of it (t2_rewrite's `published_tour_id`). AA-755: `since`/`until` bound
     created_at, `created_by` is an exact match, `q` is a free-text match on id prefix / kind /
     created_by; `sort`/`sort_dir` select a whitelisted ORDER BY (unknown key → ValueError),
-    `offset`/`limit` page the result. `include_blobs=False` (S241) returns payload/result as None."""
+    `offset`/`limit` page the result. `include_blobs=False` (S241) returns payload/result as None. AA-1018 `reason`:
+    the error starts with it (e.g. `llm_access_denied`)."""
     order_by = _order_by(sort, sort_dir)
-    args = _filter_args(kind, status, tour_id, since, until, created_by, q)
+    args = _filter_args(kind, status, tour_id, since, until, created_by, q, reason)
     columns = _LIST_COLUMNS if include_blobs else _SUMMARY_COLUMNS
     rows = await pool.fetch(
         f"""
         SELECT {columns} FROM shared.job j
         WHERE {_LIST_WHERE}
-        ORDER BY {order_by} LIMIT $8 OFFSET $9
+        ORDER BY {order_by} LIMIT $9 OFFSET $10
         """,
         *args, limit, offset,
     )
@@ -474,9 +605,9 @@ async def list_jobs(pool, *, kind: Optional[str] = None, status: Optional[str] =
 async def count_jobs(pool, *, kind: Optional[str] = None, status: Optional[str] = None,
                      tour_id: Optional[str] = None, since: Optional[datetime] = None,
                      until: Optional[datetime] = None, created_by: Optional[str] = None,
-                     q: Optional[str] = None) -> int:
+                     q: Optional[str] = None, reason: Optional[str] = None) -> int:
     """AA-755 — total rows matching the same filters as list_jobs, for the page's pagination total."""
-    args = _filter_args(kind, status, tour_id, since, until, created_by, q)
+    args = _filter_args(kind, status, tour_id, since, until, created_by, q, reason)
     return int(await pool.fetchval(
         f"SELECT count(*)::int FROM shared.job j WHERE {_LIST_WHERE}",
         *args,

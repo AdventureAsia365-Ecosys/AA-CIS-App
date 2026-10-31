@@ -164,7 +164,9 @@ async def test_deploy_gate_safe_when_idle():
     pool = _gate_pool()
     result = await admin_job_runner.deploy_gate(_make_request(pool), x_admin_secret=_TEST_SECRET)
     # AA-832: exempt kinds (deploy_gate_exempt) are listed, not counted; AA-751: none left (noop_sleep is test-only)
-    assert result == {"active": 0, "by_status": {}, "scheduled_later": 0, "safe_to_deploy": True, "exempt_kinds": [],
+    # until AA-1018's daily LLM probe (it may sit queued across a deploy, a re-run is harmless)
+    assert result == {"active": 0, "by_status": {}, "scheduled_later": 0, "safe_to_deploy": True,
+                      "exempt_kinds": ["llm_connection_probe"],
                       "open_waves": 0, "blocking_kinds": result["blocking_kinds"], "blocking_running": {},
                       "blocking_due": {}, "blocked_by": []}
 

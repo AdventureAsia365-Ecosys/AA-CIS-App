@@ -101,6 +101,8 @@ def _llm_breaker_off(request, monkeypatch):
     def _no_db(fn):
         raise RuntimeError("no database in unit tests")
     monkeypatch.setattr(breaker, "_db", _no_db)
+    # AA-1018: the connection-circuit alert writes a bell through its own DB connection; none in unit tests.
+    monkeypatch.setattr(breaker, "on_connection_open", lambda health, models: None)
     yield
     breaker.reset()
 

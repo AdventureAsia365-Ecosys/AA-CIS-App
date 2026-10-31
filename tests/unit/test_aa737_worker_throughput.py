@@ -85,7 +85,9 @@ def test_background_kind_never_claimed_with_two_or_fewer_free_slots(free):
                           # AA-1003 R2: TP-03 hourly handoff check and the OPS-12 digest e-mail ($0)
                           "inquiry_handoff_check", "report_email",
                           # AA-1002 S10: nightly LLM cost reconciliation ($0: DB, stored CE snapshot, usage APIs)
-                          "llm_cost_reconcile"}
+                          "llm_cost_reconcile",
+                          # AA-1018: the daily LLM connection probe (off unless LLM_DAILY_PROBE=on; dry run $0)
+                          "llm_connection_probe"}
     assert bool(background & set(w.claim_caps(free))) == (free > worker.BACKGROUND_RESERVE)
 
 

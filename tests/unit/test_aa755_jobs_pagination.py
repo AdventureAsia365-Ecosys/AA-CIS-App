@@ -70,12 +70,12 @@ async def test_list_jobs_uses_limit_offset_and_order_by():
     await queue.list_jobs(pool, kind="a3_atomize", status="running", limit=25, offset=50,
                           tour_id="t1", sort="cost_usd", sort_dir="asc")
     sql, *args = pool.fetch.call_args[0]
-    # limit/offset are $8/$9 after the 7 shared filter params.
-    assert "LIMIT $8 OFFSET $9" in sql
+    # limit/offset are $9/$10 after the 8 shared filter params (AA-1018: + reason).
+    assert "LIMIT $9 OFFSET $10" in sql
     # ORDER BY carries the whitelisted expression + the id tie-break.
     assert "ORDER BY" in sql and "j.id ASC" in sql
-    # args: kind, status, tour_id, since, until, created_by, q, limit, offset
-    assert args == ["a3_atomize", "running", "t1", None, None, None, None, 25, 50]
+    # args: kind, status, tour_id, since, until, created_by, q, reason, limit, offset
+    assert args == ["a3_atomize", "running", "t1", None, None, None, None, None, 25, 50]
 
 
 @pytest.mark.asyncio
@@ -115,8 +115,8 @@ async def test_count_jobs_shares_the_list_where_clause():
     sql, *args = pool.fetchval.call_args[0]
     assert "count(*)" in sql
     assert queue._LIST_WHERE in sql
-    # Same fixed 7-arg filter order as list_jobs (so `total` counts exactly the paged rows).
-    assert args == ["a3_atomize", None, None, None, None, None, None]
+    # Same fixed 8-arg filter order as list_jobs (so `total` counts exactly the paged rows).
+    assert args == ["a3_atomize", None, None, None, None, None, None, None]
 
 
 @pytest.mark.asyncio
@@ -126,7 +126,7 @@ async def test_count_jobs_uses_the_same_filters_as_list():
     since = _dt.datetime(2026, 10, 1)
     await queue.count_jobs(pool, created_by="me", q="atom", since=since)
     args = list(pool.fetchval.call_args[0][1:])
-    assert args == [None, None, None, since, None, "me", "atom"]
+    assert args == [None, None, None, since, None, "me", "atom", None]
 
 
 # ── router: page→offset math + 422s ───────────────────────────────────────────────────────────
