@@ -190,6 +190,44 @@ def test_route_deadline_is_null_and_bounded(cur):
     assert cur.fetchall() == []                            # migration-only
 
 
+_OWNER_DEFAULT = "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO cis_app, aa_app_user"
+
+
+def _table_privs(c, table: str, role: str) -> set:
+    c.execute("SELECT privilege_type FROM information_schema.role_table_grants "
+              "WHERE table_schema = 'shared' AND table_name = %s AND grantee = %s", (table, role))
+    return {r["privilege_type"] for r in c.fetchall()}
+
+
+def test_320_321_grants_hold_under_the_owner_default_privileges(cur):
+    """On Dev DB Migrate creates the tables as cis_owner, whose default privileges in shared (CIS 245) give cis_app
+    SELECT / INSERT / UPDATE / DELETE on every new table. The test user stands in for cis_owner: the same default
+    privileges FOR ROLE CURRENT_USER, the four tables created again, and the files' REVOKE ALL must leave only the
+    intended grants."""
+    cur.execute("SELECT count(*) AS n FROM pg_default_acl d JOIN pg_namespace n ON n.oid = d.defaclnamespace "
+                "WHERE n.nspname = 'shared' AND d.defaclrole = (SELECT oid FROM pg_roles WHERE rolname = current_user) "
+                "AND d.defaclobjtype = 'r'")
+    assert cur.fetchone()["n"] == 0, "the test user already has default privileges in shared"
+    cur.execute(f"ALTER DEFAULT PRIVILEGES IN SCHEMA shared {_OWNER_DEFAULT}")
+    try:
+        cur.execute("DROP TABLE shared.prompt_version, shared.tenant_ai_budget")
+        _undo_320(cur)
+        cur.execute("CREATE TABLE shared.zz_aa1017_default_acl (x int)")      # the default really applies here
+        assert _table_privs(cur, "zz_aa1017_default_acl", "cis_app") == {"SELECT", "INSERT", "UPDATE", "DELETE"}
+        _run(cur, M320)
+        _run(cur, M321)
+    finally:
+        cur.execute("DROP TABLE IF EXISTS shared.zz_aa1017_default_acl")
+        cur.execute(f"ALTER DEFAULT PRIVILEGES IN SCHEMA shared "
+                    f"{_OWNER_DEFAULT.replace('GRANT', 'REVOKE').replace(' TO ', ' FROM ')}")
+    for table, cis in (("llm_model_family", {"SELECT"}), ("stage_model_params", {"SELECT"}),
+                       ("prompt_version", {"SELECT"}),
+                       ("tenant_ai_budget", {"SELECT", "INSERT", "UPDATE", "DELETE"})):
+        assert _table_privs(cur, table, "cis_app") == cis, table
+        assert _table_privs(cur, table, "aa_app_user") == set(), table
+        assert _table_privs(cur, table, "PUBLIC") == set(), table
+
+
 def test_320_grants(cur):
     for table in ("llm_model_family", "stage_model_params"):
         for role, privs in (("cis_app", {"SELECT"}), ("tripplanner", set()), ("aa_app_user", set())):
