@@ -396,7 +396,7 @@ async def _resolve(item: Item, answer, geocoder, external: bool) -> Outcome:
 
 
 def _rule_kw() -> dict:
-    """`strict=<rule>` when GEOCODER_ACCEPT_RULE switches a strict acceptance on (AA-997 v2: aa997.2 | aa997.3), else
+    """`strict=<rule>` when GEOCODER_ACCEPT_RULE switches a strict acceptance on (AA-997 v2: aa997.2 | .3 | .4), else
     nothing."""
     rule = default_accept_rule()
     return {"strict": rule} if rule in geomatch.STRICT_RULES else {}

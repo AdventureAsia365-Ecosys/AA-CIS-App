@@ -38,7 +38,12 @@ Every processed row is stamped `geocoder_meta.relocate = {v, outcome, at, …}` 
 component links and destination ids stay as they are (TripPlanner pins them).
 
 Acceptance rule (payload `accept_rule`): "v1" (default — the rule place_geocode uses) | "aa997.2" (v1 + the strict
-checks, geomatch.strict_reason). The confirmation re-check needs aa997.2 (it IS the stricter re-judge).
+checks, geomatch.strict_reason) | "aa997.3" (route evidence from anchored routes) | "aa997.4" (aa997.3 + the
+day-evidence guard). The confirmation re-check needs a strict rule (it IS the stricter re-judge).
+aa997.4 (S261): the routes also carry each use day's other located places (routes_by_destination `day_places`); when
+the geocoder's only same-name candidates are ones the day contradicts (geomatch.day_disagree: refused `day_disagree`)
+the model's point is kept — outcome `kept_model`, review_reason `same_name_elsewhere`, never hidden (a row a hide
+policy hid is shown again), instead of `llm_point` / `off_route`.
 
 hide / unhide (no paid call; AA-997 v2, the readers' "hide unconfirmed" policy, owner's call): `hide` lists — and with
 `confirm` sets `suspect` on — rows still carrying one of HIDE_REASONS (the catalog, TripPlanner and new links already
@@ -97,6 +102,11 @@ MAX_ROWS_PER_RUN = 400
 RESERVE_CREDITS = 1000
 SAMPLE = 25
 REVIEW_WEAK_CONFIRM = "weak_confirm"      # an aa997.1 confirmation the strict rule refuses and no new search confirms
+# AA-997 S261 (rule aa997.4): the geocoder found the name elsewhere, the use day's evidence sides with the model's point
+# (geomatch.day_disagree) — the point is kept (outcome `kept_model`) and listed for review, never hidden: the reason is
+# not in HIDE_REASONS, the outcome not in HIDE_FLAGGED_OUTCOMES
+REVIEW_SAME_NAME = "same_name_elsewhere"
+KEPT_MODEL = "kept_model"
 HIDE_REASONS = (locate.REVIEW_LLM_POINT, locate.REVIEW_OFF_ROUTE, locate.REVIEW_UNCONFIRMED_HARD, REVIEW_WEAK_CONFIRM)
 # opt-in only (never in the default set): pins of names the pre-filter judged not a place (`non_place:<cause>`) — 25/28
 # verified not-a-place names, but also 3/439 verified-correct names (S254 fixture), so it is asked for explicitly
@@ -119,7 +129,7 @@ MAX_DROPPED_IDS = 500            # ids a confirm result lists of the reported ro
 AUDIT_UNHIDE = "places.relocate.unhide"
 
 OUTCOMES = ("confirmed", "non_place", "off_route", "llm_point", "country_fixed", "skipped", "kept", "kept_unjudged",
-            "reconfirmed", "weak_confirm")
+            "reconfirmed", "weak_confirm", "kept_model")
 
 _ROWS_SQL = """
     SELECT d.id::text AS id, d.name, d.country, d.lat, d.lng, d.located_by, d.geo_status, d.geo_precision,
@@ -410,14 +420,15 @@ async def _keys_by_destination(conn, ids: list[str]) -> dict[str, list[tuple]]:
     return keys_by
 
 
-async def routes_by_destination(conn, rows: list[dict]) -> dict[str, tuple]:
-    """{destination id: routes} — the routes of every name key resolved to the row, the row itself excluded."""
+async def routes_by_destination(conn, rows: list[dict], day_places: bool = False) -> dict[str, tuple]:
+    """{destination id: routes} — the routes of every name key resolved to the row, the row itself excluded;
+    `day_places` (rule aa997.4) also reads each use day's other located places (store.route_anchors)."""
     ids = [r["id"] for r in rows]
     if not ids:
         return {}
     keys_by = await _keys_by_destination(conn, ids)
     all_keys = [k for ks in keys_by.values() for k in ks]
-    routes = await store.route_anchors(conn, all_keys, exclude=ids)
+    routes = await store.route_anchors(conn, all_keys, exclude=ids, day_places=day_places)
     return {d: tuple(r for k in ks for r in routes.get(k, ())) for d, ks in keys_by.items()}
 
 
@@ -564,7 +575,8 @@ def rejudge_outcome(j: dict) -> str:
     street / kind without the model's point, or no stored answer), refused."""
     if not j["ok"]:
         return "refused"
-    return "kept_unjudged" if set(j.get("unjudged") or ()) - {"hint_disagree"} else "kept"
+    # hint_disagree / day_disagree (aa997.4) need the model's point itself: listed, never a reason for kept_unjudged
+    return "kept_unjudged" if set(j.get("unjudged") or ()) - {"hint_disagree", "day_disagree"} else "kept"
 
 
 def _brief(row: dict, c: dict) -> dict:
@@ -578,7 +590,7 @@ async def dry_run(conn, *, located_by: list[str], country: Optional[str], cost_p
     """The report apply works from — no paid call, no write. `recheck` must already be recheck_for(…, accept_rule)."""
     recheck = recheck_for(recheck, accept_rule)
     rows = await candidates(conn, located_by=located_by, country=country, limit=1_000_000, recheck=recheck)
-    routes = await routes_by_destination(conn, rows)
+    routes = await routes_by_destination(conn, rows, **_day_kw(accept_rule))
     towns = await towns_by_destination(conn, rows) if strategy == "v2" else {}
     by_country: dict[str, int] = {}
     non_place: dict[str, int] = {}
@@ -675,6 +687,19 @@ def _keep_linear(row: dict, reason: str) -> str:
 
 def _prev(row: dict) -> list:
     return [row["lat"], row["lng"], row.get("located_by")]
+
+
+def _day_kw(accept_rule: Optional[str]) -> dict:
+    """routes_by_destination kwargs: the day's places only for a rule that judges with them (aa997.4), so the
+    earlier rules read exactly what they read before."""
+    return {"day_places": True} if geomatch.needs_day_places(accept_rule) else {}
+
+
+def _day_refused(res) -> bool:
+    """The geocoder refused a candidate as `day_disagree` (rule aa997.4) on one of its searches."""
+    meta = (getattr(res, "meta", None) or {}) if res is not None else {}
+    reasons = [r for t in meta.get("tried") or () if isinstance(t, dict) for r in t.get("rejected") or ()]
+    return "day_disagree" in geomatch.strict_refusals(reasons)
 
 
 def _rule_kw(strategy: str, context: Optional[str], accept_rule: str) -> dict:
@@ -781,13 +806,23 @@ async def apply_row(conn, row: dict, routes: tuple, geocoder, *, hide_unconfirme
                                                              accept_rule=accept_rule))
             return {"outcome": "confirmed", "moved_km": km, "country_fixed": bool(fixed),
                     **({"unhidden": True} if shown else {})}
+        meta = (res.meta if res is not None else {}) or {}
+        if geomatch.needs_day_places(accept_rule) and _day_refused(res):
+            # aa997.4: the geocoder's same-name feature is elsewhere and the day's evidence backs the model's point —
+            # kept, listed for review, never hidden (a policy-hidden row is shown again)
+            await conn.execute(_FLAG_SQL, row["id"], _keep_linear(row, REVIEW_SAME_NAME), False)
+            shown = await _reveal_if_policy_hidden(conn, row["id"], cur, KEPT_MODEL)
+            fixed = bool(c["hk_mo"]) and await _fix_country(conn, row, c["hk_mo"])
+            await conn.execute(_STAMP_SQL, row["id"], _stamp(KEPT_MODEL, route_km=c["route_km"],
+                                                             refused="day_disagree", geocoder=meta.get("outcome"),
+                                                             accept_rule=accept_rule))
+            return {"outcome": KEPT_MODEL, "country_fixed": bool(fixed), **({"unhidden": True} if shown else {})}
         outcome = locate.REVIEW_OFF_ROUTE if c["on_route"] is False else locate.REVIEW_LLM_POINT
         # an off-route flag wins; otherwise a reason the row already carries (unconfirmed_hard_type …) is kept
         reason = _keep_linear(row, outcome if outcome == locate.REVIEW_OFF_ROUTE
                               else (row.get("review_reason") or outcome))
         await _flag(conn, row["id"], cur, reason, hide_unconfirmed, outcome)
         fixed = bool(c["hk_mo"]) and await _fix_country(conn, row, c["hk_mo"])
-        meta = (res.meta if res is not None else {}) or {}
         await conn.execute(_STAMP_SQL, row["id"], _stamp(outcome, route_km=c["route_km"],
                                                          geocoder=meta.get("outcome"), accept_rule=accept_rule))
     return {"outcome": outcome, "country_fixed": bool(fixed)}
@@ -806,7 +841,7 @@ async def apply(pool, geocoder, *, located_by: list[str], country: Optional[str]
     recheck = [v for v in recheck_for(recheck, accept_rule) if v not in RECHECK_DRY_RUN_ONLY]
     async with pool.acquire() as conn:
         rows = await candidates(conn, located_by=located_by, country=country, limit=limit, recheck=recheck)
-        routes = await routes_by_destination(conn, rows)
+        routes = await routes_by_destination(conn, rows, **_day_kw(accept_rule))
         towns = await towns_by_destination(conn, rows) if strategy == "v2" else {}
     out: dict = {"mode": "apply", "rule_version": RULE_VERSION, "located_by": located_by, "country": country,
                  "recheck": recheck_list(recheck), "strategy": strategy, "accept_rule": accept_rule,

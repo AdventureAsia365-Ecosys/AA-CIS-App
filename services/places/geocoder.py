@@ -64,7 +64,8 @@ V2_MAX_QUERIES = 3
 def default_accept_rule(value: Optional[str] = None) -> str:
     """The acceptance rule place_geocode uses for NEW names (AA-997 v2 review fix: strict is behind a switch): env
     GEOCODER_ACCEPT_RULE (⚠️ underscore name — task definition), "v1" (default) | "aa997.2" (geomatch.ACCEPT_RULE: v1 +
-    the strict_reason checks) | "aa997.3" (the same checks, route evidence tuned on the S258 P4 sample). Anything else →
+    the strict_reason checks) | "aa997.3" (the same checks, route evidence tuned on the S258 P4 sample) | "aa997.4"
+    (aa997.3 + the day-evidence guard, geomatch.day_disagree). Anything else →
     v1 (logged). place_relocate takes it from its payload `accept_rule`."""
     raw = (value if value is not None else os.environ.get("GEOCODER_ACCEPT_RULE", geomatch.ACCEPT_RULE_V1)).strip()
     if raw.lower() not in geomatch.ACCEPT_RULES:

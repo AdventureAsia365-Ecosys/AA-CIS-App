@@ -172,7 +172,7 @@ def test_the_endpoint_accepts_aa997_3():
     from api.routers.admin_places import RelocateRequest
     assert RelocateRequest(accept_rule=V3, recheck=["confirmed"]).accept_rule == V3
     with pytest.raises(ValidationError):
-        RelocateRequest(accept_rule="aa997.4")
+        RelocateRequest(accept_rule="aa997.5")      # S261: aa997.4 exists now
 
 
 def test_default_accept_rule_reads_aa997_3(monkeypatch):

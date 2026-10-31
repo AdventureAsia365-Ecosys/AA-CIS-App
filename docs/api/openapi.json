@@ -4624,7 +4624,7 @@
         "properties": {
           "accept_rule": {
             "default": "v1",
-            "pattern": "^(v1|aa997\\.[23])$",
+            "pattern": "^(v1|aa997\\.[234])$",
             "title": "Accept Rule",
             "type": "string"
           },
@@ -4757,7 +4757,7 @@
           "stamp_accept": {
             "anyOf": [
               {
-                "pattern": "^(v1|aa997\\.[23])$",
+                "pattern": "^(v1|aa997\\.[234])$",
                 "type": "string"
               },
               {
