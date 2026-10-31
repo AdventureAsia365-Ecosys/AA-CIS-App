@@ -930,8 +930,14 @@ class LLMClient:
             raise _all_failed("All LLM providers failed", [*failures, e]) from e
 
     def _call_bedrock(
-        self, request: LLMRequest, model: str, use_cache: bool = False
+        self, request: LLMRequest, model: str, use_cache: bool = False,
+        connection_key: str = ACC2_CONNECTION_KEY,
     ) -> LLMResponse:
+        """The acc2-native (task-role) Messages body on InvokeModel: the legacy T1 / T2 tiers and a task-role
+        `anthropic_native` deployment. AA-642 (S0): the reply names its connection (`connection_key`, default the
+        acc2 task role) so the llm_call_log row stores account='acc2' (call_log._row_account) and the monthly
+        connection budget (cost_guard.connection_month_spend) sees it; satellite_account stays None (it only holds a
+        satellite AWS account: generated_content.satellite_account CHECK)."""
         system = (
             build_cached_system_prompt(request.system_prompt)
             if use_cache
@@ -1008,7 +1014,7 @@ class LLMClient:
             # AA-288: cache_read/cache_write were parsed above and logged, but discarded before
             # this fix — the caller had no way to know a cache hit/write happened at all.
             cache_read_tokens=cache_read, cache_write_tokens=cache_write,
-            stop_reason=stop_reason,
+            stop_reason=stop_reason, connection_key=connection_key,
         )
 
     def _call_bedrock_satellite(self, request: LLMRequest, model: str,
@@ -1208,7 +1214,8 @@ class LLMClient:
             # The legacy Messages body (InvokeModel), exactly as _legacy_chain sends it: the satellite (T1.5a / T2.5a)
             # on an assume-role connection, acc2-native (T1 / T2) on a task-role one.
             if conn.auth_mode == "task_role":
-                return self._call_bedrock(request, model=dep.wire_id, use_cache=True)
+                return self._call_bedrock(request, model=dep.wire_id, use_cache=True,
+                                          connection_key=conn.connection_key)
             resp = self._call_bedrock_satellite(request, model=_NATIVE_PRICE_KEY[model.model_key],
                                                 account=conn.connection_key, profile_id=dep.wire_id)
             resp.satellite_account = conn.connection_key
@@ -1370,9 +1377,13 @@ class LLMClient:
         return LLMResponse(
             # "satellite-" prefix: call_log.py strips it and records provider=bedrock-satellite. A task-role
             # (acc2-native) deployment answers as plain "bedrock", like the legacy chain's T1 / T2.
+            # AA-642 (S0): a task-role reply names its connection (`account` is the deployment's connection_key
+            # here), so its llm_call_log row stores account='acc2' instead of NULL; satellite_account stays None
+            # (generated_content.satellite_account only holds a satellite AWS account).
             content=content, model_used=label, provider="bedrock" if native else "bedrock-satellite",
             input_tokens=prompt_tok, output_tokens=out_tok, cost_usd=cost,
             fallback_used=False, satellite_account=None if native else account,
+            connection_key=account if native else None,
             cache_read_tokens=cache_read, cache_write_tokens=cache_write,
             stop_reason=stop_reason, provider_requests=provider_requests, pricing_mode=priced.pricing_mode,
         )
