@@ -222,12 +222,13 @@ def test_migration_secret_pattern_is_the_code_pattern():
 
 
 def test_migration_closed_lists_are_the_code_lists():
-    assert _check_values("llm_provider_connection_kind_check") == set(connections.KINDS)
+    # 304's lists are the LLM kinds; AA-1017's 322 widens them (tests/unit/test_aa1017_registry_v2.py checks 322).
+    assert _check_values("llm_provider_connection_kind_check") == set(connections.LLM_KINDS)
     assert _check_values("llm_provider_connection_data_scope_check") == set(connections.DATA_SCOPES)
     assert _check_values("llm_provider_connection_account_id_env_check") == set(connections.ACCOUNT_ID_ENVS)
     assert _check_values("llm_provider_connection_credential_env_check") == set(connections.CREDENTIAL_ENVS)
     pairs = _check_values("llm_provider_connection_auth_mode_check")
-    assert pairs == set(connections.KINDS) | {m for modes in connections.AUTH_MODES.values() for m in modes}
+    assert pairs == set(connections.LLM_KINDS) | {m for k in connections.LLM_KINDS for m in connections.AUTH_MODES[k]}
 
 
 def test_migration_legacy_constants_are_the_code_constants():

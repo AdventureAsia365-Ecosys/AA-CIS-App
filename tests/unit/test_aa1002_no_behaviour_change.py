@@ -46,7 +46,8 @@ CALL_PATH = ("client.py", "embed.py", "decide.py", "judge.py", "shadow.py", "bed
              "bedrock_batch.py", "call_log.py", "catalog.py", "role_config.py", "pricing.py", "errors.py",
              "prompt_cache.py", "stream_sink.py", "column_mapper.py", "schema_check.py", "models.py", "breaker.py",
              "data_scope.py", "connection_budget.py",
-             "invariant.py")      # AA-1018: report-only failure-domain rule (reads the tables by SQL, not the registry)
+             "invariant.py",      # AA-1018: report-only failure-domain rule (reads the tables by SQL, not the registry)
+             "stage_params.py")   # AA-1017: stage x model parameters (its own table; empty = the same request object)
 
 
 def _imported_modules(path: Path) -> set[str]:

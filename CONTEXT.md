@@ -294,6 +294,26 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   `catalog.serving_accounts()` and `embed._runtime_for` read the registry; `connections.BUILTIN_CONNECTIONS` (the 304
   seed: acc3, acc2, openai-direct) answers only "how to reach X" when the registry is unreadable or a row is broken.
   Still contract work (not in 307): the logical rows `sonnet-4-6` / `haiku-4-5` and the `account_route` CHECK → FK.
+- **Registry v2** (AA-1017 / AA-1016 / AA-900, migrations 320 / 321 / 322, root ADR 0009 §2-§4): the connection table
+  also holds the paid providers that are not LLMs (`typesafe` = Jev, role decide; `dataforseo` and `geoapify`, role
+  data; `bedrock_guardrails`, role guard, seeded off), with a secret guard per kind (LLM kinds `aa-llm/<env>/<name>`,
+  each provider kind only `aa-cis/<env>/<kind>`) and a host per kind, both in code (`connections.check_secret_name`,
+  `BASE_URL_ALLOWLIST`) and as CHECKs; plus `failure_domain`, `served_roles` (not read for routing yet), `access_state`,
+  `last_probe_at`, `balance_source`, `daily_credit_limit`, `low_balance_usd`. The LLM dispatch never sees a provider
+  kind (`connections.fetch_connections` / `registry_rows_sync` return `LLM_KINDS` only; `resolve_api_key` refuses
+  them). Jev's base URL / timeout / retries (`decide.jev_endpoint`), the Jev and DataForSEO low-balance thresholds and
+  the Geoapify daily credit limit (`geocoder.daily_credit_limit`) come from their rows, else env, else the old
+  constants (the seeds equal those). The secret NAME and base URL are migration-only (D9: 322 revoked cis_app's
+  UPDATE; `PATCH /admin/llm-connections/{key}` answers 422), and catalog prices too (`set_catalog_price` refuses; the
+  admin keeps the switch). Catalog rows carry `family` (`shared.llm_model_family`, the maker; NULL = vendor; the closed
+  vendor CHECK is gone) and `capabilities` read as data (`forced_tool_choice`, `prompt_cache`, `cache_min_tokens`,
+  `effort_default`), each falling back to the old code rules when unset (every row today). `shared.stage_model_params`
+  (stage x model: max_tokens, min_output_tokens, temperature, effort, reasoning_mode; `shared/llm_client/stage_params.py`)
+  applies with the precedence call site -> row -> protocol default on every catalog path; empty = the same request
+  object (effort reaches the Anthropic Messages API only). A deployment may state its own `api_style` (NULL = the
+  catalog's). `errors.TRUNCATED` is the recorded, non-failure class of a reply cut at its token limit (ledger status
+  `truncated`; `llm_provider_health` accepts it). `shared.tenant_ai_budget` (AA-1016, no rows = no budget) and
+  `shared.prompt_version` (AA-900, sha256 + path, never prompt text) exist for the enforcement / prompt-gate slices.
 - **Circuit breaker + limiter + Connections tab** (AA-1002 slice S4, migrations 309 expand / 310 contract):
   `shared/llm_client/breaker.py` keeps one circuit per deployment (connection × catalog model) in
   `shared.llm_provider_health`, shared by every api / worker task (10 s snapshot; writes lock the row and apply pure

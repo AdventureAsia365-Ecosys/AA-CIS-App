@@ -234,8 +234,19 @@ def stubs(monkeypatch):
     from shared import jev_credit
     monkeypatch.setattr(gw, "_read_connections", conns)
     monkeypatch.setattr(jev_credit, "estimate", estimate)
-    monkeypatch.setattr(gw, "geo_settings", lambda: (True, 2500))
-    monkeypatch.setattr(gw, "dfs_threshold", lambda: 10.0)
+
+    async def geo_settings(pool):
+        return True, 2500
+
+    async def dfs_threshold(pool):
+        return 10.0
+
+    async def jev_threshold(pool):
+        return 3.0
+
+    monkeypatch.setattr(gw, "geo_settings", geo_settings)
+    monkeypatch.setattr(gw, "dfs_threshold", dfs_threshold)
+    monkeypatch.setattr(jev_credit, "low_credit_threshold", jev_threshold)
 
 
 def test_read_providers_lists_every_paid_source(stubs):
