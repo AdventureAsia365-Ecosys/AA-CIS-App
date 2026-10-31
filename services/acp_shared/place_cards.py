@@ -83,6 +83,10 @@ MISS_RETRY = {
     "identity_rejected": timedelta(days=14),  # the checker rejected the identity
     "error": timedelta(days=1),               # exception / timeout — retry soon
 }
+# S262 (AA-991 probe) — the atom-level marker of a group left for a paid draft (`max_places` cut: the $0 relink after
+# atomize, or a build over its 40-place cap). Not a miss: no place_card_miss row, card_id stays NULL, and every
+# drafting path (place_cards_build, T8) still drafts the atom; a draft replaces the row (_LINK_SQL / _record_miss).
+NEEDS_DRAFT = "needs_draft"
 
 _CARD_SYSTEM = """You write a short reference card about one real place that appears in a travel \
 itinerary. The card is used by writers who must not get basic facts wrong.
@@ -1359,7 +1363,7 @@ async def build_card_for_atom(atom: dict, pool) -> Optional[str]:
 def _empty_counters(atoms: int) -> dict:
     return {"atoms": atoms, "already_linked": 0, "skipped_by_rule": 0, "places": 0, "linked_existing": 0,
             "skipped_cached": 0, "over_cap": 0, "drafted": 0, "linked_new": 0, "missed": 0, "errors": 0,
-            "built": 0, "linked_after_draft": 0, "miss_recorded": 0}
+            "built": 0, "linked_after_draft": 0, "miss_recorded": 0, "needs_draft_recorded": 0}
 
 
 async def ensure_place_cards(atom_ids: list[str], pool, *, force: bool = False,
@@ -1371,8 +1375,9 @@ async def ensure_place_cards(atom_ids: list[str], pool, *, force: bool = False,
 
     Returns counters: atoms, already_linked, skipped_by_rule, places (groups to resolve),
     linked_existing, skipped_cached, over_cap (groups left for a later run by `max_places`),
-    drafted, linked_new, linked_after_draft (AA-809: a draft that named an existing card, linked to it
-    with no insert), missed, errors, built (atoms newly linked by a draft)."""
+    needs_draft_recorded (their atoms, given a NEEDS_DRAFT row), drafted, linked_new, linked_after_draft
+    (AA-809: a draft that named an existing card, linked to it with no insert), missed, errors, built (atoms
+    newly linked by a draft)."""
     ids = [a for a in dict.fromkeys(atom_ids) if a]
     counters = _empty_counters(len(ids))
     if not ids:
@@ -1432,7 +1437,14 @@ async def ensure_place_cards(atom_ids: list[str], pool, *, force: bool = False,
         counters["miss_recorded"] = len(cached_rows)
     if max_places is not None and len(to_draft) > max_places:
         counters["over_cap"] = len(to_draft) - max_places
-        to_draft = to_draft[:max_places]
+        cut, to_draft = to_draft[max_places:], to_draft[:max_places]
+        # S262 — a group left for a paid draft gets the atom-level NEEDS_DRAFT row, so "waiting for a draft" is not
+        # read as "never tried / link lost" (AA-991 place_card_links_missing). card_id stays NULL: the `linked` read
+        # above joins place_card, so a later build / T8 drafts these atoms and the draft replaces the row.
+        pending = [(a["atom_id"], NEEDS_DRAFT) for k in cut for a in groups[k]]
+        async with pool.acquire() as conn:
+            await conn.executemany(_ATOM_MISS_SQL, pending)
+        counters["needs_draft_recorded"] = len(pending)
     if not to_draft:
         return counters
 
@@ -1471,14 +1483,77 @@ _TOUR_PLACE_ATOMS_SQL = """
 RELINK_MAX_ATOMS = 400   # = place_cards_build MAX_ATOMS (the largest tours have ~100 atoms)
 
 
+# S262 — the tour's atoms still waiting for a draft after the free pass, and the cards their REPLACED predecessors
+# (same source: every version of the tour, deleted or superseded atoms) were linked to. Rejected cards never count.
+_WAITING_ATOMS_SQL = """
+    SELECT k.atom_id, a.itinerary_day, btrim(a.place) AS place
+      FROM acp_shared.atom_place_card k
+      JOIN acp_contract.v_active_tour_atoms a ON a.atom_id = k.atom_id
+     WHERE k.atom_id = ANY($1::text[]) AND k.card_id IS NULL AND k.miss_reason = 'needs_draft'
+"""
+_REPLACED_CARDS_SQL = """
+    SELECT a.atom_id, a.itinerary_day, btrim(a.place) AS place, k.card_id::text AS card_id
+      FROM acp_contract.tour_atoms a
+      JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = a.tour_id
+      JOIN acp_shared.atom_place_card k ON k.atom_id = a.atom_id AND k.card_id IS NOT NULL
+      JOIN acp_shared.place_card pc ON pc.card_id = k.card_id AND pc.status <> 'rejected'
+     WHERE COALESCE(rt.source_group_id, rt.tour_id) = (
+               SELECT COALESCE(t.source_group_id, t.tour_id) FROM silver_aa_internal.raw_tours t
+                WHERE t.tour_id = $1::uuid)
+       AND NOT EXISTS (SELECT 1 FROM acp_contract.v_active_tour_atoms v WHERE v.atom_id = a.atom_id)
+"""
+
+
+def plan_carry_over(waiting: list[dict], replaced: list[dict]) -> dict[str, str]:
+    """S262 — atom_id → card_id for waiting atoms whose replaced predecessor carried ONE card (atom_repoint's
+    narrowing, AA-990). Free, pure. Per waiting atom: the replaced atoms with the same place_norm(); several
+    cards → only those on the same itinerary day. No same-place predecessor → the same day and the same core_key()
+    (a respelling: 'X Pass (3550m)' after 'X Pass'; a generic 'City Palace' linked by an earlier draft).
+    Exactly one distinct card left → carried; none or several → left for a draft (never a guess)."""
+    out: dict[str, str] = {}
+    for w in waiting:
+        pn, ck, day = place_norm(w["place"]), core_key(w["place"]), w.get("itinerary_day")
+        same = [r for r in replaced if place_norm(r["place"]) == pn]
+        if len({r["card_id"] for r in same}) > 1:
+            same = [r for r in same if r.get("itinerary_day") == day]
+        if not same:
+            same = [r for r in replaced if r.get("itinerary_day") == day and core_key(r["place"]) == ck]
+        cards = {r["card_id"] for r in same}
+        if len(cards) == 1:
+            out[w["atom_id"]] = cards.pop()
+    return out
+
+
 async def relink_tour_place_cards(pool, tour_id: str) -> dict:
     """AA-989 — the $0 relink of one tour's place atoms after atomize: card links are keyed on atom_id, and a
     re-atomize gives replaced atoms new ids. Free work only (`max_places=0`): rule-skip miss rows, existing cards by
-    alias / core name / locality, stored-miss rows. Groups that would need a draft are left (`over_cap`) for the
-    admin build or T8 on demand. Never calls a model."""
+    alias / core name / locality, stored-miss rows. Groups that would need a draft get a NEEDS_DRAFT row
+    (`over_cap`, S262) for the admin build or T8 on demand; before that, a waiting atom whose replaced predecessor
+    carried one card is linked to it (`carried_over`, S262, plan_carry_over). Never calls a model."""
     async with pool.acquire() as conn:
         ids = [r["atom_id"] for r in await conn.fetch(_TOUR_PLACE_ATOMS_SQL, tour_id, RELINK_MAX_ATOMS)]
-    return await ensure_place_cards(ids, pool, max_places=0)
+    counters = await ensure_place_cards(ids, pool, max_places=0)
+    counters["carried_over"] = 0
+    if ids:
+        try:
+            counters["carried_over"] = await _carry_over(pool, tour_id, ids)
+        except Exception as e:  # noqa: BLE001 — the NEEDS_DRAFT rows stand; a later build drafts them
+            counters["carried_over"] = f"failed: {type(e).__name__}"
+            logger.warning("place_card_carry_over_failed", tour_id=tour_id, error=str(e)[:200])
+    return counters
+
+
+async def _carry_over(pool, tour_id: str, ids: list[str]) -> int:
+    async with pool.acquire() as conn:
+        waiting = [dict(r) for r in await conn.fetch(_WAITING_ATOMS_SQL, ids)]
+        if not waiting:
+            return 0
+        carry = plan_carry_over(waiting, [dict(r) for r in await conn.fetch(_REPLACED_CARDS_SQL, tour_id)])
+        if carry:
+            # _LINK_SQL replaces the NEEDS_DRAFT row. No alias row: the evidence is this tour's own history, not a
+            # name that is safe country-wide (the paid draft adds aliases).
+            await conn.executemany(_LINK_SQL, list(carry.items()))
+    return len(carry)
 
 
 # ── AA-784 (S253): rebuild named cards in place ───────────────────────────────────────────────────

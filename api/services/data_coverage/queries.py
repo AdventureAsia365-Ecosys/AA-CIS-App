@@ -281,6 +281,7 @@ WITH {LIVE}, {ACTIVE_ATOMS}
 SELECT count(*)::int AS place_atoms,
        count(k.atom_id) FILTER (WHERE k.card_id IS NOT NULL)::int AS linked,
        count(*) FILTER (WHERE k.atom_id IS NULL)::int AS no_row,
+       count(*) FILTER (WHERE k.card_id IS NULL AND k.miss_reason = 'needs_draft')::int AS awaiting_draft,
        count(DISTINCT a.tour_id) FILTER (WHERE k.card_id IS NOT NULL)::int AS tours_with_a_card
   FROM act a JOIN live l ON l.tour_id = a.tour_id
   LEFT JOIN acp_shared.atom_place_card k ON k.atom_id = a.atom_id

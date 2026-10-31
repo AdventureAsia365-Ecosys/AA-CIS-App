@@ -198,14 +198,23 @@ def test_gc_mode_defaults_to_report(monkeypatch):
 # ── AA-989 C1: $0 card relink in atomize ──────────────────────────────────────────────────────
 
 class _TourDB(FakeDB):
-    def __init__(self, atoms, **kw):
+    """FakeDB + the relink's tour read and its S262 carry-over reads (`replaced`: the predecessors' card rows)."""
+
+    def __init__(self, atoms, replaced=(), **kw):
         super().__init__(atoms, **kw)
         self.tour_reads = []
+        self.replaced = [dict(r) for r in replaced]
 
     async def fetch(self, sql, *args):
         if "LIMIT $2" in sql and "v_active_tour_atoms" in sql:
             self.tour_reads.append(args)
             return [{"atom_id": a} for a in self.atoms]
+        if "k.miss_reason = 'needs_draft'" in sql:
+            return [{"atom_id": a, "itinerary_day": self.atoms[a]["itinerary_day"], "place": self.atoms[a]["place"]}
+                    for a in args[0] if self.links.get(a) == {"card_id": None, "miss_reason": pc.NEEDS_DRAFT}]
+        if "rt.source_group_id" in sql:
+            assert args == (TOUR,) and "pc.status <> 'rejected'" in sql and "NOT EXISTS" in sql
+            return self.replaced
         return await super().fetch(sql, *args)
 
 
@@ -230,7 +239,89 @@ def test_relink_links_existing_cards_records_misses_and_never_drafts():
     assert db.links["n1"] == {"card_id": "c1", "miss_reason": None} and out["linked_existing"] == 1
     assert db.links["n2"] == {"card_id": None, "miss_reason": "no_name"} and out["miss_recorded"] == 1
     assert db.links["n4"]["miss_reason"] in ("unnamed", "logistics_place")
-    assert "n3" not in db.links and out["over_cap"] == 1         # would need a paid draft: left for later
+    # would need a paid draft: left for later, but recorded (S262) so the AA-991 probe does not read it as lost
+    assert db.links["n3"] == {"card_id": None, "miss_reason": "needs_draft"} and out["over_cap"] == 1
+    assert out["needs_draft_recorded"] == 1 and out["carried_over"] == 0
+
+
+def _day_atom(atom_id, place, day):
+    return dict(_atom(atom_id, place), itinerary_day=day)
+
+
+def _relink(db):
+    llm = FakeLLM()
+    with patch.object(pc, "LLMClient", return_value=llm) as client:
+        out = asyncio.run(pc.relink_tour_place_cards(db.pool(), TOUR))
+    client.assert_not_called()
+    assert llm.drafts == []
+    return out
+
+
+def test_relink_carries_over_the_one_card_of_a_replaced_atom_for_free():
+    """S262 — a respelt pass ('Zorvan pass (3550m)' after 'Zorvan Pass') and a generic name linked by an earlier draft
+    get the card their replaced predecessor carried: no call, no NEEDS_DRAFT row left."""
+    db = _TourDB([_day_atom("n1", "Zorvan pass (3550m)", 6), _day_atom("n2", "City Palace", 3)],
+                 replaced=[{"atom_id": "o1", "itinerary_day": 6, "place": "Zorvan Pass", "card_id": "c9"},
+                           {"atom_id": "o2", "itinerary_day": 3, "place": "the City Palace", "card_id": "c7"}])
+    out = _relink(db)
+    assert out["over_cap"] == 2 and out["needs_draft_recorded"] == 2 and out["carried_over"] == 2
+    assert db.links["n1"] == {"card_id": "c9", "miss_reason": None}
+    assert db.links["n2"] == {"card_id": "c7", "miss_reason": None}
+    assert not db.aliases                                         # tour history, not a country-wide alias
+
+
+def test_relink_never_guesses_between_two_prior_cards():
+    """Two predecessors with two cards on the atom's day: it stays NEEDS_DRAFT for the paid build."""
+    db = _TourDB([_day_atom("n1", "City Palace", 3)],
+                 replaced=[{"atom_id": "o1", "itinerary_day": 3, "place": "City Palace", "card_id": "c7"},
+                           {"atom_id": "o2", "itinerary_day": 3, "place": "City Palace", "card_id": "c8"}])
+    out = _relink(db)
+    assert out["carried_over"] == 0 and db.links["n1"] == {"card_id": None, "miss_reason": "needs_draft"}
+
+
+def test_relink_with_no_waiting_atom_skips_the_predecessor_read():
+    db = _TourDB([_atom("n4", "standard ger camp")],
+                 replaced=[{"atom_id": "o1", "itinerary_day": 1, "place": "standard ger camp", "card_id": "c1"}])
+    out = _relink(db)
+    assert out["carried_over"] == 0 and db.links["n4"]["card_id"] is None
+
+
+def test_a_failed_carry_over_keeps_the_needs_draft_rows():
+    db = _TourDB([_day_atom("n1", "Zorvan pass", 6)])
+    with patch.object(pc, "plan_carry_over", side_effect=RuntimeError("bad")):
+        out = _relink(db)
+    assert out["carried_over"] == "failed: RuntimeError" and out["needs_draft_recorded"] == 1
+    assert db.links["n1"] == {"card_id": None, "miss_reason": "needs_draft"}
+
+
+@pytest.mark.parametrize("waiting, replaced, expected", [
+    # the same place_norm on another day: one card → carried
+    ({"place": "Lake Quellin", "itinerary_day": 4},
+     [{"place": "the Lake Quellin", "itinerary_day": 2, "card_id": "c1"}], "c1"),
+    # the same name twice with two cards → the one on the same day
+    ({"place": "City Palace", "itinerary_day": 5},
+     [{"place": "City Palace", "itinerary_day": 2, "card_id": "c1"},
+      {"place": "City Palace", "itinerary_day": 5, "card_id": "c2"}], "c2"),
+    # two cards, neither on the same day → no guess
+    ({"place": "City Palace", "itinerary_day": 7},
+     [{"place": "City Palace", "itinerary_day": 2, "card_id": "c1"},
+      {"place": "City Palace", "itinerary_day": 5, "card_id": "c2"}], None),
+    # respelt (core name) only counts on the same day
+    ({"place": "Zorvan Pass (3550m)", "itinerary_day": 6},
+     [{"place": "Zorvan Pass", "itinerary_day": 5, "card_id": "c1"}], None),
+    ({"place": "Zorvan Pass (3550m)", "itinerary_day": 6},
+     [{"place": "Zorvan Pass", "itinerary_day": 6, "card_id": "c1"}], "c1"),
+    # two predecessor atoms linked to the SAME card are one card
+    ({"place": "Lake Quellin", "itinerary_day": 1},
+     [{"place": "Lake Quellin", "itinerary_day": 1, "card_id": "c1"},
+      {"place": "Lake Quellin", "itinerary_day": 3, "card_id": "c1"}], "c1"),
+    # nothing alike → no link
+    ({"place": "Lake Quellin", "itinerary_day": 1},
+     [{"place": "Zorvan Pass", "itinerary_day": 1, "card_id": "c1"}], None),
+])
+def test_plan_carry_over_narrows_like_atom_repoint(waiting, replaced, expected):
+    plan = pc.plan_carry_over([dict(waiting, atom_id="n1")], replaced)
+    assert plan.get("n1") == expected
 
 
 def _atomize(relink, after, order):

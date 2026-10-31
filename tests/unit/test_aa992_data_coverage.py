@@ -172,6 +172,17 @@ def test_real_rows_on_known_numbers():
     assert b.evaluate(by_id["master.active"], sources, {})["status"] == "gap"   # critic item 1
 
 
+def test_card_atoms_waiting_for_a_draft_are_counted_apart():
+    """S262 — a NEEDS_DRAFT row is a recorded state, not 'no row': its own info row, outside card.no_row."""
+    from api.services.data_coverage import queries as q
+    from services.acp_shared.place_cards import NEEDS_DRAFT
+    assert f"k.card_id IS NULL AND k.miss_reason = '{NEEDS_DRAFT}'" in q.CARD and "AS awaiting_draft" in q.CARD
+    assert "WHERE k.atom_id IS NULL)::int AS no_row" in q.CARD
+    row = {r.id: r for r in reg.ROWS}["card.awaiting_draft"]
+    out = b.evaluate(row, {"card": _ok(awaiting_draft=106, place_atoms=26000)}, {})
+    assert (out["status"], out["value"]) == ("info", 106)
+
+
 def test_rank_source_binds_the_paa_top_up_market_and_a_full_market_set_is_ok(monkeypatch):
     """r3 review: the ranking market counts leave out TOPUP_MARKET (bound as $2, never hard-coded in the SQL)."""
     from services.acp_shared.real_questions import TOPUP_MARKET

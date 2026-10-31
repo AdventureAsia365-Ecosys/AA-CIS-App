@@ -503,6 +503,35 @@ def test_max_places_caps_paid_drafts():
     assert len(llm.drafts) == 2 and out["over_cap"] == 3
 
 
+def test_over_the_build_cap_records_needs_draft_rows_and_the_next_build_drafts_them():
+    """S262 (AA-991 probe) — place_cards_build over its 40-place cap: the cut groups' atoms get a NEEDS_DRAFT row
+    (card_id NULL, no place_card_miss row, no extra call), and the next build drafts exactly those."""
+    from services.jobs import place_cards_job as job
+    n = job.MAX_PLACES + 2
+    ids = [f"a{i}" for i in range(n)]
+    db = FakeDB([_atom(a, f"Zorvan{i} Peak") for i, a in enumerate(ids)])
+    llm = FakeLLM(card={"display_name": "", "facts": []})          # every draft a cheap no_name miss
+    out = _ensure(db, llm, ids, max_places=job.MAX_PLACES)
+    assert len(llm.drafts) == job.MAX_PLACES and out["over_cap"] == 2 and out["needs_draft_recorded"] == 2
+    cut = [a for a in ids if db.links[a]["miss_reason"] == pc.NEEDS_DRAFT]
+    assert cut == ids[-2:] and all(db.links[a]["card_id"] is None for a in cut)
+    assert not any(k[0].startswith(("zorvan40", "zorvan41")) for k in db.misses)   # not a stored miss
+    out2 = _ensure(db, llm, ids, max_places=job.MAX_PLACES)
+    assert len(llm.drafts) == n and out2["drafted"] == 2 and out2["skipped_cached"] == job.MAX_PLACES
+    assert out2["over_cap"] == 0 and out2["needs_draft_recorded"] == 0
+    assert all(db.links[a]["miss_reason"] == "no_name" for a in ids)  # the draft replaced the marker
+
+
+def test_needs_draft_row_is_drafted_into_a_link():
+    """S262 — an atom holding a NEEDS_DRAFT row is not 'already linked': a build drafts it and links the card."""
+    db = FakeDB([_atom("a1", "Lake Khövsgöl")])
+    db.links["a1"] = {"card_id": None, "miss_reason": pc.NEEDS_DRAFT}
+    llm = FakeLLM()
+    out = _ensure(db, llm, ["a1"], max_places=40)
+    assert len(llm.drafts) == 1 and out["already_linked"] == 0 and out["linked_new"] == 1
+    assert db.links["a1"]["card_id"] and db.links["a1"]["miss_reason"] is None
+
+
 # ── duplicates + merge ──────────────────────────────────────────────────────────────────────────
 
 def _card(cid, name, country="Mongolia", atoms=1):
