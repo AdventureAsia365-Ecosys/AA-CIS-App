@@ -41,6 +41,14 @@ def _utc(*a):
 @pytest_asyncio.fixture
 async def pool():
     p = await asyncpg.create_pool(DSN, min_size=1, max_size=4)
+    # test_aa712_migration_226 (sorted before this file) drops schema geo and re-applies 226 only: put back the
+    # geocode_call columns of 255 (endpoint, credits) and 319 (tenant_id, failed_requests), as test_aa804_ledger_v2_db
+    # does. Both files are idempotent.
+    migrations = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations")
+    async with p.acquire() as c:
+        for name in ("255_geo_place_shape.sql", "319_llm_ledger_v2.sql"):
+            with open(os.path.join(migrations, name), encoding="utf-8") as f:
+                await c.execute(f.read())
     yield p
     async with p.acquire() as c:
         await c.execute("DELETE FROM shared.llm_call_log WHERE stage = $1", STAGE)
