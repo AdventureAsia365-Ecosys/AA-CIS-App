@@ -4,7 +4,7 @@ name: Llm Core Consumers
 # .github/scripts/llm-core-sync.sh --from-local (the same copy the sync bot makes), then runs in that app the copy's
 # integrity check and the consumer's own tests of the code that imports it:
 #   tripplanner  backend: pytest tests/test_llm_gateway.py tests/test_vendored_copies.py (offline)
-#   crm          api: ruff check + ruff format --check on the copy (Partner's config) and tests/test_aa_llm_copy.py
+#   crm          api: ruff check + ruff format --check on the copy (Partner's config) and tests/unit/test_aa_llm_copy.py
 # The lock written by --from-local says "ref": "local", so the integrity tests run with AA_LLM_LOCK_REF_LOCAL_OK=1.
 # Non-required; the stable check name is the "Llm core consumers" job below. Read only: no secret, no App token; the
 # consumer repos are public.
@@ -106,7 +106,7 @@ jobs:
           pip install -q "ruff==${ruff_pin:?no ruff pin in requirements-dev.txt}" pytest
           ruff check app/aa_llm
           ruff format --check app/aa_llm
-          python3 -m pytest -q -p no:cacheprovider --noconftest tests/test_aa_llm_copy.py
+          python3 -m pytest -q -p no:cacheprovider tests/unit/test_aa_llm_copy.py
 
   llm-core-consumers:
     name: Llm core consumers
