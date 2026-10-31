@@ -231,6 +231,58 @@ def test_status_errors_carry_the_aa900_class(fake, status, etype, message, cls):
     assert errors.classify_text(str(e.value)) == cls
 
 
+# ── AA-642 (S0): the usage tier's monthly spend cap is a credit stop, not a rate limit ──────────────────────────────
+
+def _spend_cap_reply():
+    """The documented body (Anthropic rate-limits docs, S257 audit): 429 rate_limit_error with
+    error.details.error_code = enforced_spend_limit_reached and no retry-after."""
+    import httpx2
+
+    return httpx2.Response(429, headers={"content-type": "application/json"}, json={
+        "type": "error",
+        "error": {"type": "rate_limit_error",
+                  "message": "You have reached the monthly spend limit for your usage tier.",
+                  "details": {"error_code": "enforced_spend_limit_reached"}}})
+
+
+def test_a_spend_cap_429_is_quota_exhausted_not_throttled(fake):
+    fake.replies += [_spend_cap_reply()]
+    with pytest.raises(am.AnthropicAPIError) as e:
+        _send(anthropic_connection(max_retries=0))
+    assert e.value.status_code == 429
+    assert e.value.llm_error_class == errors.QUOTA_EXHAUSTED and errors.classify(e.value) == errors.QUOTA_EXHAUSTED
+    # the code is in the message head, so a stored job error classifies the same even when the text is cut
+    assert "enforced_spend_limit_reached" in str(e.value).split(":")[0]
+    assert errors.classify_text(str(e.value)) == errors.QUOTA_EXHAUSTED
+
+
+@pytest.mark.parametrize("status,etype,text,code,cls", [
+    (429, "rate_limit_error", "slow down", "enforced_spend_limit_reached", errors.QUOTA_EXHAUSTED),
+    (429, "rate_limit_error", "Error code: 429 - {'details': {'error_code': 'enforced_spend_limit_reached'}}", None,
+     errors.QUOTA_EXHAUSTED),
+    (429, "rate_limit_error", "slow down", None, errors.THROTTLED),
+    (429, "rate_limit_error", "see usage limits and billing", None, errors.THROTTLED),
+    (429, "rate_limit_error", "slow down", "some_other_code", errors.THROTTLED),
+    (529, "overloaded_error", "Overloaded", None, errors.THROTTLED),
+])
+def test_status_error_class_reads_the_spend_cap_code_before_the_rate_limit(status, etype, text, code, cls):
+    assert am.status_error_class(status, etype, text, code) == cls
+
+
+def test_error_code_of_reads_only_the_documented_place():
+    assert am.error_code_of({"error": {"details": {"error_code": "enforced_spend_limit_reached"}}}) == \
+        "enforced_spend_limit_reached"
+    for body in (None, "x", {}, {"error": "x"}, {"error": {"details": None}}, {"error": {"details": {"error_code": 7}}}):
+        assert am.error_code_of(body) is None
+
+
+def test_classify_text_knows_the_spend_cap_code_and_keeps_plain_rate_limits_throttled():
+    assert errors.classify_text("Anthropic API 429 rate_limit_error enforced_spend_limit_reached on connection "
+                                "'anthropic-direct': cap") == errors.QUOTA_EXHAUSTED
+    assert errors.classify_text("Anthropic API 429 rate_limit_error on connection 'anthropic-direct': slow down") \
+        == errors.THROTTLED
+
+
 def test_a_401_drops_the_cached_key_so_a_rotated_key_is_read(fake):
     _send()
     assert fake.reader.call_count == 1

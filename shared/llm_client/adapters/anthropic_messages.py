@@ -294,12 +294,29 @@ def forget_connection(connection_key: str) -> None:
 # backoff, and reading its free text first could end a job as account-level on a word like "billing".
 _QUOTA_TEXT_STATUSES = (400, 402, 403)
 
+# AA-642 (S0): the organisation's monthly spend cap of its usage tier. Anthropic answers it with a 429 whose type is
+# rate_limit_error and whose `error.details.error_code` is this value, with no retry-after, until 00:00 UTC on the
+# 1st of next month (Anthropic rate-limits docs, quoted in the S257 audit). It is a credit stop, not a rate limit.
+SPEND_LIMIT_ERROR_CODE = "enforced_spend_limit_reached"
 
-def status_error_class(status: Optional[int], error_type: Optional[str], text: str = "") -> str:
-    """The AA-900 class of an Anthropic API status error. Order: rate limit / overload first (status or type, never
-    the text), then billing (402 / billing_error), then the credit / spend-limit wording, only on 400 / 402 / 403 and
-    with the same patterns ``errors.classify_text`` uses (so a stored job error classifies the same), then 401 / 403
-    access denied."""
+
+def error_code_of(body) -> Optional[str]:
+    """``error.details.error_code`` of an Anthropic error body (the SDK's ``APIStatusError.body``), else None."""
+    err = body.get("error") if isinstance(body, dict) else None
+    details = err.get("details") if isinstance(err, dict) else None
+    code = details.get("error_code") if isinstance(details, dict) else None
+    return code if isinstance(code, str) and code else None
+
+
+def status_error_class(status: Optional[int], error_type: Optional[str], text: str = "",
+                       error_code: Optional[str] = None) -> str:
+    """The AA-900 class of an Anthropic API status error. Order: the tier spend cap first (AA-642 S0: error code
+    ``enforced_spend_limit_reached``, read from the body, or that exact code in a 429's text), then rate limit /
+    overload (status or type, never free wording), then billing (402 / billing_error), then the credit / spend-limit
+    wording, only on 400 / 402 / 403 and with the same patterns ``errors.classify_text`` uses (so a stored job error
+    classifies the same), then 401 / 403 access denied."""
+    if error_code == SPEND_LIMIT_ERROR_CODE or (status == 429 and SPEND_LIMIT_ERROR_CODE in (text or "")):
+        return QUOTA_EXHAUSTED
     if status in (429, 529) or error_type in ("rate_limit_error", "overloaded_error"):
         return THROTTLED
     if status == 402 or error_type == "billing_error":
@@ -328,10 +345,13 @@ def _wrap_status_error(conn_key: str, e) -> AnthropicAPIError:
     status = getattr(e, "status_code", None)
     error_type = getattr(e, "type", None)
     text = str(getattr(e, "message", "") or e)
-    cls = status_error_class(status, error_type, text)
+    code = error_code_of(getattr(e, "body", None))
+    cls = status_error_class(status, error_type, text, code)
     response = getattr(e, "response", None)
+    # AA-642 (S0): the error code goes before the (cut) text, so a stored job error still classifies by it.
+    kind = f"{error_type or 'error'} {code}" if code else (error_type or "error")
     return AnthropicAPIError(
-        f"Anthropic API {status} {error_type or 'error'} on connection {conn_key!r}: {text[:300]}",
+        f"Anthropic API {status} {kind} on connection {conn_key!r}: {text[:300]}",
         cls, status, error_type, _retry_after(getattr(response, "headers", None)), getattr(e, "request_id", None))
 
 
