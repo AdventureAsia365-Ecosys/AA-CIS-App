@@ -7,7 +7,9 @@ Every new value is empty / NULL on the live rows at 320 / 322, so each "unset" c
 golden snapshot of the gateway's provider requests is tests/unit/test_aa1002_no_behaviour_change.py.
 """
 import asyncio
+import json
 import re
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -408,6 +410,51 @@ def test_a_provider_row_takes_its_limits_but_no_switch():
     for changes in ({"enabled": False}, {"rpm_limit": 10}, {"monthly_budget_usd": 1}):
         with pytest.raises(llm_connections.ConnectionToggleRefused, match="provider"):
             _update(FakeDB(jev), "typesafe", changes)
+
+
+class _ColumnDB(FakeDB):
+    """Answers only the columns the SELECT names, like Postgres (a dict row would hide a short column list)."""
+
+    async def fetchrow(self, sql, key):
+        row = await super().fetchrow(sql, key)
+        cols = [c.strip() for c in re.search(r"SELECT (.+?) FROM", sql).group(1).split(",")]
+        return {c: row.get(c) for c in cols} if row is not None else None
+
+
+def test_the_edit_reads_the_stored_provider_limits():
+    jev = _conn_row(connection_key="typesafe", kind="typesafe", auth_mode="api_key", label="Jev",
+                    secret_name="aa-cis/dev/typesafe", base_url="https://api.typesafe.ai", enabled=True,
+                    low_balance_usd=Decimal("3.00"), daily_credit_limit=None)
+    db = _ColumnDB(jev)
+    out = _update(db, "typesafe", {"low_balance_usd": 3.0})           # the value it already holds
+    assert out["changed"] is False and db.executed == []
+    db = _ColumnDB(jev)
+    out = _update(db, "typesafe", {"low_balance_usd": None})          # clear it
+    assert out["changed_fields"] == ["low_balance_usd"]
+    (upd, args), (_audit_sql, audit_args) = db.executed
+    assert "low_balance_usd = $2" in upd and args[1] is None
+    details = json.loads(audit_args[-1])
+    assert details["before"] == {"low_balance_usd": 3.0} and details["after"] == {"low_balance_usd": None}
+    geo = _conn_row(connection_key="geoapify", kind="geoapify", auth_mode="api_key", label="Geo",
+                    secret_name="aa-cis/dev/geoapify", base_url="https://api.geoapify.com/v1", enabled=True,
+                    daily_credit_limit=2500)
+    db = _ColumnDB(geo)
+    assert _update(db, "geoapify", {"daily_credit_limit": 2500})["changed"] is False
+    db = _ColumnDB(geo)
+    _update(db, "geoapify", {"daily_credit_limit": 3000})
+    assert json.loads(db.executed[1][1][-1])["before"] == {"daily_credit_limit": 2500}
+
+
+def test_the_edit_answers_503_before_322():
+    class _Before322(FakeDB):
+        async def fetchrow(self, sql, key):
+            raise asyncpg.exceptions.UndefinedColumnError("failure_domain")
+
+    for changes in ({"timeout_s": 4}, {"enabled": True}):             # the locked read only, then the plain one first
+        db = _Before322(_conn_row())
+        with pytest.raises(llm_connections.ConnectionEditUnavailable, match="322"):
+            _update(db, "anthropic-direct", changes)
+        assert db.executed == [] and not db.committed
 
 
 def test_the_listing_shows_the_322_fields():

@@ -167,9 +167,11 @@ async def _policies_or_none(conn) -> Optional[dict]:
 _NOT_READY: dict = {"__not_ready__": None}
 
 
-_SELECT_ONE_SQL = (f"SELECT {', '.join(conn_registry._COLUMNS)} FROM shared.llm_provider_connection "
-                   "WHERE connection_key = $1")
+# AA-1017: the edit reads the 322 columns too (the two provider limits are diffed and audited against the stored
+# value). Before 322 the read answers UndefinedColumnError -> ConnectionEditUnavailable (503); readiness needs 322.
+_SELECT_ONE_SQL = conn_registry._SELECT_ONE_V2_SQL
 _SELECT_ONE_FOR_UPDATE_SQL = _SELECT_ONE_SQL + " FOR UPDATE"
+_NEEDS_322 = "editing a connection needs database migration 322 (the provider connection v2 columns)"
 
 # The fields the credential check depends on: when one of them changed between the check (outside the transaction)
 # and the locked re-read, the check no longer proves anything and the switch is refused.
@@ -311,7 +313,10 @@ async def update_connection(db, connection_key: str, changes: dict, *, actor: st
     changes = {f: v for f, v in changes.items() if f not in POLICY_EDITABLE}
     checked = None
     if changes.get("enabled") or any(f in changes for f in CREDENTIAL_EDITS) or policy_changes:
-        row = await db.fetchrow(_SELECT_ONE_SQL, connection_key)
+        try:
+            row = await db.fetchrow(_SELECT_ONE_SQL, connection_key)
+        except asyncpg.exceptions.UndefinedColumnError as e:
+            raise ConnectionEditUnavailable(_NEEDS_322) from e
         if row is None:
             raise LookupError(f"unknown connection: {connection_key!r}")
         pre = conn_registry._row_to_connection(row)
@@ -325,7 +330,10 @@ async def update_connection(db, connection_key: str, changes: dict, *, actor: st
         checked = tuple(getattr(pre, f) for f in _CREDENTIAL_FIELDS)
     policy_diff: list[str] = []
     async with db.transaction():
-        row = await db.fetchrow(_SELECT_ONE_FOR_UPDATE_SQL, connection_key)
+        try:
+            row = await db.fetchrow(_SELECT_ONE_FOR_UPDATE_SQL, connection_key)
+        except asyncpg.exceptions.UndefinedColumnError as e:      # the transaction rolls back as this propagates
+            raise ConnectionEditUnavailable(_NEEDS_322) from e
         if row is None:
             raise LookupError(f"unknown connection: {connection_key!r}")
         c = conn_registry._row_to_connection(row)
