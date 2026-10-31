@@ -14,7 +14,7 @@
 // for an LLM connection; a field the API does not send is not shown), and the two direct vendor APIs carry the
 // "warm path" label (root ADR 0009 decision 2). Below the LLM connections: "Re-queue refused jobs" (POST
 // /api/admin/job-runner/jobs/retry-llm-denied, ops.write): a dry run first, its numbers in a confirm dialog, then
-// the real re-queue.
+// the real re-queue, one batch of 50 at a time (the server's apply cap), with "Check the next batch" after it.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RotateCcw } from "lucide-react";
@@ -24,11 +24,13 @@ import {
   useT, useToast, type ColumnDef,
 } from "../../_kit";
 import {
-  PROVIDERS_API, PROVIDER_VIEWS, RETRY_LLM_DENIED_API, accessTone, groupRows, heldByReason,
-  isAccessState, needsLook, pct, registryFacts, statusTone, usd, warmPathOf,
-  type ProviderRow, type ProviderView, type ProvidersResp, type RegistryFacts, type RetryLlmDeniedResp,
+  PROVIDERS_API, PROVIDER_VIEWS, RETRY_LLM_DENIED_API, accessTone, groupRows, heldGroups, isAccessState, needsLook,
+  nextRequeueSince, pct, registryFacts, requeueBody, statusTone, statusWordKey, usd, warmPathOf,
+  type HeldGroup, type ProviderRow, type ProviderView, type ProvidersResp, type RegistryFacts,
+  type RetryLlmDeniedResp,
 } from "@/lib/aiGateway";
-import { connectionName } from "@/lib/llmConnections";
+import { accountName } from "@/lib/awsAccounts";
+import { connectionName, type Connection } from "@/lib/llmConnections";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import { ConnectionsPanel } from "./ConnectionsPanel";
 import { JevCreditPanel } from "./JevCreditPanel";
@@ -84,9 +86,9 @@ function StatusCell({ row }: { row: Row }) {
   const tr = useT(REASON);
   const ta = useT(ACCESS);
   const access = row.facts.access_state;
-  // F8: "Unknown" only when the source could not be read; otherwise the same words as Routing ("No recent calls").
-  const statusWord = row.status === "unknown" && row.status_reason !== "source_unreadable"
-    ? ts("no_recent_calls") : ts(row.status);
+  // F8: an LLM connection with no calls in the window says "No recent calls" (the Routing words); any other row,
+  // and any row with a reason, keeps its own status (lib/aiGateway statusWordKey).
+  const statusWord = ts(statusWordKey(row));
   return (
     <Lines>
       <span><Badge tone={statusTone(row.status)} style={{ whiteSpace: "nowrap" }}>{statusWord}</Badge></span>
@@ -237,11 +239,7 @@ function ProvidersOverview() {
   });
   // C4: the registry facts of the LLM connections (shared caches with the Connections view and Routing). Both reads
   // are optional: before migration 322 or on an error the lines are simply not shown.
-  const conns = useQuery({
-    queryKey: ["llm-connections"],
-    queryFn: () => apiGet<{ connections?: (RegistryFacts & { connection_key: string })[] }>(
-      "/api/admin/llm-connections", { admin: true }),
-  });
+  const conns = useLlmConnections();
   const avail = useQuery({
     queryKey: ["llm-availability", 24],
     queryFn: () => apiGet<{ connections?: { connection_key: string; failure_domain?: string | null }[] }>(
@@ -308,56 +306,126 @@ function ProvidersOverview() {
   );
 }
 
+/** GET /api/admin/llm-connections, the registry rows (same react-query cache as the Connections view). Optional:
+ *  before migration 322 or on an error the registry lines and the connection names fall back. */
+type RegistryRow = RegistryFacts & Pick<Connection, "connection_key" | "kind" | "account_id">;
+
+function useLlmConnections() {
+  return useQuery({
+    queryKey: ["llm-connections"],
+    queryFn: () => apiGet<{ connections?: RegistryRow[] }>("/api/admin/llm-connections", { admin: true }),
+  });
+}
+
 // ── re-queue the jobs an LLM account block failed (AA-1018): dry run → confirm → real ──────────────────────────────
+// One batch at a time (lib/aiGateway REQUEUE_BATCH = the server's apply cap): the dry run reads the same rows from the
+// same `since` as the apply right after it, so "Re-queue N jobs" re-queues N. When more rows follow, "Check the next
+// batch" runs a new dry run from where the last batch ended (nextRequeueSince).
+
+/** One held group as people read it: connections named by account ID or vendor (never a key), classes in words. */
+function useHeldText(): (g: HeldGroup) => string {
+  const t = useT(M);
+  const ta = useT(ACCESS);
+  const dir = useAwsAccounts();
+  const accountText = useAccountText();
+  const conns = useLlmConnections();
+  return (g) => {
+    const name = (key: string) => {
+      const row = conns.data?.connections?.find((c) => c.connection_key === key);
+      // a key the registry read did not return: accountName (account ID, vendor name or "Retired account"), never the key
+      return row ? connectionName(row, dir, accountText) : accountName(key, dir, accountText);
+    };
+    const names = g.keys.length ? g.keys.map(name).join(", ") : t("requeueAConnection");
+    const cls = g.classes.length
+      ? g.classes.map((c) => (isAccessState(c) ? ta(c) : t("requeueRefused"))).join(", ") : t("requeueRefused");
+    switch (g.type) {
+      case "connection": return t("requeueHeldConnection", g.jobs, names, cls);
+      case "same_class": return t("requeueHeldSameClass", g.jobs, names, cls);
+      case "kind_unknown": return t("requeueHeldKindUnknown", g.jobs, g.kind ?? "—");
+      default: return t("requeueHeldKindRefuses", g.jobs, g.kind ?? "—");
+    }
+  };
+}
+
+/** What the last real re-queue did, shown under the card until the next check. */
+interface LastRun { requeued: number; expected: number; next: string | null }
 
 function RequeueRefusedJobs() {
   const t = useT(M);
   const toast = useToast();
   const qc = useQueryClient();
+  const heldText = useHeldText();
   const [preview, setPreview] = useState<RetryLlmDeniedResp | null>(null);
+  const [last, setLast] = useState<LastRun | null>(null);
   const [error, setError] = useState("");
-  const run = (dry_run: boolean) =>
-    apiSend<RetryLlmDeniedResp>(RETRY_LLM_DENIED_API, { method: "POST", body: { dry_run }, admin: true });
+  const run = (dryRun: boolean, since?: string | null) =>
+    apiSend<RetryLlmDeniedResp>(RETRY_LLM_DENIED_API, { method: "POST", body: requeueBody(dryRun, since), admin: true });
   const dry = useMutation({
-    mutationFn: () => run(true),
+    mutationFn: (since: string | null) => run(true, since),
     onSuccess: (r) => { setError(""); setPreview(r); },
     onError: (e) => setError(e instanceof Error ? e.message : String(e)),
   });
   const real = useMutation({
-    mutationFn: () => run(false),
-    onSuccess: (r) => {
+    // the dry run's own window, so the apply reads the rows the dialog counted
+    mutationFn: (p: RetryLlmDeniedResp) => run(false, p.since),
+    onSuccess: (r, p) => {
       setPreview(null);
+      setLast({ requeued: r.requeued, expected: p.eligible, next: nextRequeueSince(r) });
       toast.success(t("requeueDone", r.requeued));
       qc.invalidateQueries({ queryKey: ["llm-availability"] });
       qc.invalidateQueries({ queryKey: [...PROVIDERS_KEY] });
     },
     onError: (e) => setError(e instanceof Error ? e.message : String(e)),
   });
-  const held = preview ? heldByReason(preview.held) : [];
+  const check = (since: string | null) => { setLast(null); dry.mutate(since); };
+  const held = preview ? heldGroups(preview.held, preview.blocked_connections) : [];
+  // nothing eligible in a full batch (held jobs fill it): the confirm button checks the next batch instead
+  const nextFromPreview = preview && preview.eligible === 0 ? nextRequeueSince(preview) : null;
+  const busy = dry.isPending || real.isPending;
   return (
     <Section title={t("requeueTitle")} description={t("requeueHelp")} testId="ai-gateway-requeue"
       actions={
-        <Button size="sm" variant="secondary" disabled={dry.isPending || real.isPending} onClick={() => dry.mutate()}
+        <Button size="sm" variant="secondary" disabled={busy} onClick={() => check(null)}
           testId="ai-gateway-requeue-dry-run">
           <RotateCcw size={13} /> {dry.isPending ? t("requeueChecking") : t("requeueButton")}
         </Button>
       }>
       {error
         ? <div role="alert" style={{ ...small, color: K.danger }}>{error}</div>
-        : <div style={small}>{t("requeueIdle")}</div>}
+        : last
+          ? (
+            <div style={{ display: "grid", gap: 6, justifyItems: "start" }} data-testid="ai-gateway-requeue-last">
+              <span style={small}>{t("requeueLast", last.requeued, last.expected)}</span>
+              {last.next && (
+                <>
+                  <span style={small}>{t("requeueLastMore")}</span>
+                  <Button size="sm" variant="secondary" disabled={busy} onClick={() => check(last.next)}
+                    testId="ai-gateway-requeue-next">
+                    {t("requeueNext")}
+                  </Button>
+                </>
+              )}
+            </div>
+          )
+          : <div style={small}>{t("requeueIdle")}</div>}
       <ConfirmModal open={preview !== null} onClose={() => setPreview(null)} onConfirm={() => {
-        if (preview && preview.eligible > 0) real.mutate(); else setPreview(null);
+        if (preview && preview.eligible > 0) real.mutate(preview);
+        else if (nextFromPreview) check(nextFromPreview);
+        else setPreview(null);
       }}
-        title={t("requeueConfirmTitle")} busy={real.isPending} testId="ai-gateway-requeue-confirm"
-        confirmLabel={preview && preview.eligible > 0 ? t("requeueConfirm", preview.eligible) : t("requeueNothing")}
+        title={t("requeueConfirmTitle")} busy={busy} testId="ai-gateway-requeue-confirm"
+        confirmLabel={preview && preview.eligible > 0 ? t("requeueConfirm", preview.eligible)
+          : nextFromPreview ? t("requeueNext") : t("requeueNothing")}
         error={error || null}
         body={preview && (
           <div style={{ display: "grid", gap: 6, fontSize: 12.5, color: K.body }}>
             <span>{t("requeueMatched", preview.matched, preview.since.slice(0, 10))}</span>
             <span><strong style={{ color: K.ink }}>{t("requeueEligible", preview.eligible)}</strong></span>
             {preview.held_count > 0 && <span>{t("requeueHeld", preview.held_count)}</span>}
-            {held.map((h) => (
-              <span key={h.reason} style={{ ...small, overflowWrap: "anywhere" }}>· {h.reason || "—"} ({h.jobs})</span>
+            {held.map((g) => (
+              <span key={`${g.type}|${g.keys.join(",")}|${g.kind ?? ""}`} style={{ ...small, overflowWrap: "anywhere" }}>
+                · {heldText(g)}
+              </span>
             ))}
             {Object.keys(preview.blocked_connections).length > 0 && (
               <span style={small}>{t("requeueStillRefused", Object.keys(preview.blocked_connections).length)}</span>

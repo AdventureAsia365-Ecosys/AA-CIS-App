@@ -169,10 +169,24 @@ export const M = defineMessages(
     requeueEligible: (n: number) => `${n} would go back in the queue with a fresh set of attempts.`,
     requeueHeld: (n: number) => `${n} stay${n === 1 ? "s" : ""} failed:`,
     requeueStillRefused: (n: number) => `${n} connection${n === 1 ? " is" : "s are"} still refused, so their jobs wait.`,
-    requeueMore: (n: number) => `Only the first ${n} jobs were checked; run it again afterwards for the rest.`,
+    requeueMore: (n: number) => `This is one batch of the ${n} oldest refused jobs; more come after it. `
+      + "Check the next batch once this one is done.",
+    requeueHeldConnection: (n: number, names: string, cls: string) => `${n} wait for ${names} (${cls}).`,
+    requeueHeldSameClass: (n: number, names: string, cls: string) => `${n} name no connection; they wait while `
+      + `${names} is refused (${cls}).`,
+    requeueHeldKindRefuses: (n: number, kind: string) => `${n} of type ${kind}: this job type does not allow a retry `
+      + "from here.",
+    requeueHeldKindUnknown: (n: number, kind: string) => `${n} of type ${kind}: the worker does not know this job type.`,
+    requeueAConnection: "a connection",
+    requeueRefused: "refused",
     requeueConfirm: (n: number) => `Re-queue ${n} job${n === 1 ? "" : "s"}`,
     requeueNothing: "Nothing to re-queue",
+    requeueNext: "Check the next batch",
     requeueDone: (n: number) => `${n} job${n === 1 ? "" : "s"} back in the queue`,
+    requeueLast: (done: number, expected: number) => done < expected
+      ? `Last run: ${done} of ${expected} jobs went back in the queue; the others changed since the check.`
+      : `Last run: ${done} job${done === 1 ? "" : "s"} went back in the queue.`,
+    requeueLastMore: "More refused jobs may wait after that batch.",
     traceHint: "To see every paid call of one job or one tour, open the job (Jobs) or the tour (Master Content) and "
       + "click Open trace, or open a row of the Calls tab.",
     // trace drawer
@@ -307,10 +321,23 @@ export const M = defineMessages(
     requeueEligible: (n: number) => `${n} job sẽ về hàng đợi với lượt thử mới.`,
     requeueHeld: (n: number) => `${n} job vẫn để lỗi:`,
     requeueStillRefused: (n: number) => `${n} kết nối vẫn bị từ chối nên job của chúng chờ.`,
-    requeueMore: (n: number) => `Chỉ kiểm ${n} job đầu; chạy lại sau đó cho phần còn lại.`,
+    requeueMore: (n: number) => `Đây là một đợt gồm ${n} job bị từ chối cũ nhất; sau đó còn job khác. `
+      + "Xong đợt này thì kiểm đợt tiếp.",
+    requeueHeldConnection: (n: number, names: string, cls: string) => `${n} job chờ ${names} (${cls}).`,
+    requeueHeldSameClass: (n: number, names: string, cls: string) => `${n} job không nêu kết nối nào; chúng chờ trong `
+      + `khi ${names} còn bị từ chối (${cls}).`,
+    requeueHeldKindRefuses: (n: number, kind: string) => `${n} job loại ${kind}: loại job này không cho thử lại từ đây.`,
+    requeueHeldKindUnknown: (n: number, kind: string) => `${n} job loại ${kind}: worker không biết loại job này.`,
+    requeueAConnection: "một kết nối",
+    requeueRefused: "bị từ chối",
     requeueConfirm: (n: number) => `Đưa lại ${n} job`,
     requeueNothing: "Không có gì để đưa lại",
+    requeueNext: "Kiểm đợt tiếp",
     requeueDone: (n: number) => `${n} job đã về hàng đợi`,
+    requeueLast: (done: number, expected: number) => done < expected
+      ? `Lần chạy trước: ${done}/${expected} job đã về hàng đợi; số còn lại đã đổi trạng thái sau bước kiểm.`
+      : `Lần chạy trước: ${done} job đã về hàng đợi.`,
+    requeueLastMore: "Có thể còn job bị từ chối sau đợt đó.",
     traceHint: "Muốn xem mọi lần gọi trả phí của một job hay một tour, mở job (Jobs) hoặc tour (Master Content) rồi "
       + "bấm Mở truy vết, hoặc mở một dòng ở tab Lần gọi.",
     traceTitle: "Truy vết",

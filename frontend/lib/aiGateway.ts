@@ -177,6 +177,14 @@ export function statusTone(status: string | null | undefined): Tone {
   return STATUS_TONE[(status ?? "unknown") as ProviderStatus] ?? "neutral";
 }
 
+/** The word a row's status badge shows (live finding F8). An LLM connection that is "unknown" with no reason has made
+ *  no call in the window, so it says "No recent calls" like Routing. Any other row keeps its status: a Jev or
+ *  DataForSEO row is "unknown" because no top-up or balance is known (its reason line says so), and an unreadable
+ *  source stays "unknown". */
+export function statusWordKey(row: Pick<ProviderRow, "group" | "status" | "status_reason">): ProviderStatus | "no_recent_calls" {
+  return row.group === "llm" && row.status === "unknown" && !row.status_reason ? "no_recent_calls" : row.status;
+}
+
 /** Worst first: what needs a look sits at the top of the summary tile. */
 const SEVERITY: Record<ProviderStatus, number> = {
   open: 0, cap_reached: 1, degraded: 2, low: 3, unknown: 4, ok: 5, disabled: 6,
@@ -884,11 +892,77 @@ export interface RetryLlmDeniedResp {
   more: boolean;
 }
 
-/** Jobs held back by the dry run, grouped by reason (a kind that refuses a retry, a connection still refused). */
-export function heldByReason(held: readonly RetryJob[]): { reason: string; jobs: number }[] {
-  const m = new Map<string, number>();
-  for (const j of held) m.set(j.held ?? "", (m.get(j.held ?? "") ?? 0) + 1);
-  return [...m.entries()].map(([reason, jobs]) => ({ reason, jobs })).sort((a, b) => b.jobs - a.jobs);
+/** Rows one real re-queue reads at most (backend shared/jobs/queue.py RETRY_REASON_APPLY_LIMIT). The dry run asks
+ *  for the same number, so its "eligible" is exactly what the apply right after it re-queues. */
+export const REQUEUE_BATCH = 50;
+
+/** The POST body: a batch of REQUEUE_BATCH rows from `since` (the server's default window, 14 days, when absent).
+ *  The apply passes the dry run's own `since`, so both read the same rows. */
+export function requeueBody(dryRun: boolean, since?: string | null): { dry_run: boolean; limit: number; since?: string } {
+  return since ? { dry_run: dryRun, limit: REQUEUE_BATCH, since } : { dry_run: dryRun, limit: REQUEUE_BATCH };
+}
+
+/** Where the next batch starts, or null when there is none: the latest `finished_at` of the rows this call read (the
+ *  rows are read oldest first). Its re-queued rows have left the failed set and its held rows before that time are
+ *  skipped, so held rows can not fill every batch. Null as well when the cursor would not move (every row of a full
+ *  batch finished in the same instant), so the page never offers the same batch again. */
+export function nextRequeueSince(r: Pick<RetryLlmDeniedResp, "more" | "since" | "jobs" | "held">): string | null {
+  if (!r.more) return null;
+  let best: string | null = null;
+  let bestMs = -Infinity;
+  for (const j of [...r.jobs, ...r.held]) {
+    const ms = j.finished_at ? Date.parse(j.finished_at) : NaN;
+    if (!Number.isNaN(ms) && ms > bestMs) { bestMs = ms; best = j.finished_at; }
+  }
+  if (best === null || bestMs <= Date.parse(r.since)) return null;
+  return best;
+}
+
+/** Why the dry run holds a job, as the page groups it (backend shared/jobs/queue.py `retry_by_reason` / `llm_hold`):
+ *  its connection is still refused, it names no connection but one is refused with the same class, its job type
+ *  refuses a retry, or its job type is not registered. */
+export type HeldType = "connection" | "same_class" | "kind_refuses" | "kind_unknown";
+
+export interface HeldGroup {
+  type: HeldType;
+  /** Connection keys (for the page to name, never to print), only for the two connection types. */
+  keys: string[];
+  /** The refusal classes of those connections (access_denied, quota_exhausted…). */
+  classes: string[];
+  /** The job kind, only for the two job-type types. */
+  kind: string | null;
+  jobs: number;
+}
+
+const HELD_ORDER: Record<HeldType, number> = { connection: 0, same_class: 1, kind_refuses: 2, kind_unknown: 3 };
+
+function namedKeys(text: string, keys: readonly string[]): string[] {
+  const esc = (k: string) => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return keys.filter((k) => new RegExp(`(?<![A-Za-z0-9-])${esc(k)}(?![A-Za-z0-9-])`).test(text)).sort();
+}
+
+/** The dry run's held jobs grouped by why, biggest group first. The backend's reason text is only parsed here, never
+ *  shown: it names connections by key and classes by code. */
+export function heldGroups(held: readonly RetryJob[], blocked: Readonly<Record<string, string>>): HeldGroup[] {
+  const keys = Object.keys(blocked);
+  const m = new Map<string, HeldGroup>();
+  for (const j of held) {
+    const why = j.held ?? "";
+    let g: Omit<HeldGroup, "jobs">;
+    if (why.startsWith("kind is not registered")) {
+      g = { type: "kind_unknown", keys: [], classes: [], kind: j.kind };
+    } else if (why.startsWith("connection still refused") || why.startsWith("a connection is still refused")) {
+      const named = namedKeys(why, keys);
+      g = { type: why.startsWith("connection") ? "connection" : "same_class", keys: named, kind: null,
+        classes: [...new Set(named.map((k) => blocked[k]).filter(Boolean))].sort() };
+    } else {
+      g = { type: "kind_refuses", keys: [], classes: [], kind: j.kind };
+    }
+    const id = `${g.type}|${g.keys.join(",")}|${g.kind ?? ""}`;
+    const cur = m.get(id);
+    if (cur) cur.jobs += 1; else m.set(id, { ...g, jobs: 1 });
+  }
+  return [...m.values()].sort((a, b) => b.jobs - a.jobs || HELD_ORDER[a.type] - HELD_ORDER[b.type]);
 }
 
 // ── Models & trials: catalog text without internal names (live finding F4) ─────────────────────────────────────

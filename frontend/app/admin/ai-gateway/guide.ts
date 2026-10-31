@@ -87,9 +87,10 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
           { term: "Cap reached", text: "A budget, the balance or today's credits are used up. Calls stop or fall back "
             + "until the cap is raised or the period ends." },
           { term: "Off", text: "Switched off on purpose. Not counted as a problem." },
-          { term: "No recent calls", text: "No answered call in the last 24 hours and no balance read yet. Nothing is "
+          { term: "No recent calls", text: "An LLM connection with no answered call in the last 24 hours. Nothing is "
             + "known to be wrong; the Routing tab uses the same words." },
-          { term: "Unknown", text: "The source could not be read. The row says why." },
+          { term: "Unknown", text: "The source could not be read, or no balance or top-up is known yet (Jev, "
+            + "DataForSEO). The row says why." },
         ] },
       ],
     },
@@ -107,7 +108,8 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
         ] },
         { kind: "control", label: "Re-queue refused jobs", does: "Checks first which failed jobs of the last 14 days "
           + "stopped because a provider refused an account, shows the numbers, and only after you confirm puts them "
-          + "back in the queue with a fresh set of attempts. Jobs whose connection is still refused stay failed.",
+          + "back in the queue with a fresh set of attempts, one batch of 50 at a time (Check the next batch for the rest). "
+          + "Jobs whose connection is still refused stay failed.",
           cost: "The check is free; the re-queued jobs run and cost what they cost the first time.",
           when: "An account that was blocked answers again (its row is OK)." },
       ],

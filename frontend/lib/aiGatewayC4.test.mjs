@@ -10,9 +10,9 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
-  accessTone, actorLabel, blockedReasonText, domainParts, groupRows, heldByReason, invariantByStage, isAccessState,
-  priceSourceText, registryFacts, sameTenantDraft, tenantBudgetBody, tenantBudgetDraftOf, tenantBudgetPath,
-  tenantBudgetTone, tenantCostHref, verdictTone, warmPathOf,
+  REQUEUE_BATCH, accessTone, actorLabel, blockedReasonText, domainParts, groupRows, heldGroups, invariantByStage,
+  isAccessState, nextRequeueSince, priceSourceText, registryFacts, requeueBody, sameTenantDraft, statusWordKey,
+  tenantBudgetBody, tenantBudgetDraftOf, tenantBudgetPath, tenantBudgetTone, tenantCostHref, verdictTone, warmPathOf,
 } from "./aiGateway.ts";
 
 const STAFF = "7a1b2c3d-4e5f-4a6b-9c8d-1e2f3a4b5c6d";
@@ -106,13 +106,61 @@ test("invariantByStage: empty without a report", () => {
   assert.deepEqual(invariantByStage(undefined), {});
 });
 
-test("heldByReason groups the dry run's held jobs, biggest first", () => {
-  const held = [{ id: "1", kind: "a", error: "", finished_at: null, held: "connection still refused" },
-    { id: "2", kind: "a", error: "", finished_at: null, held: "kind refuses retries" },
-    { id: "3", kind: "b", error: "", finished_at: null, held: "connection still refused" }];
-  assert.deepEqual(heldByReason(held), [{ reason: "connection still refused", jobs: 2 },
-    { reason: "kind refuses retries", jobs: 1 }]);
-  assert.deepEqual(heldByReason([]), []);
+test("heldGroups groups the dry run's held jobs by why, never keeping the raw text", () => {
+  const blocked = { "acc7": "access_denied", "acc70": "quota_exhausted", "vendor-x": "throttled" };
+  const job = (id, kind, held, finished_at = null) => ({ id, kind, error: "", finished_at, held });
+  const held = [
+    job("1", "writer_run", "connection still refused: acc7 (access_denied)"),
+    job("2", "writer_run", "connection still refused: acc7 (access_denied)"),
+    job("3", "judge_run", "a connection is still refused with the same class: acc70 (quota_exhausted)"),
+    job("4", "cleanup_run", "kind is not registered"),
+    job("5", "erase_run", "an apply is never retried: start a new check"),
+    job("6", "erase_run", "an apply is never retried: start a new check"),
+    job("7", "writer_run", "connection still refused: acc7 (access_denied), vendor-x (throttled)"),
+  ];
+  const out = heldGroups(held, blocked);
+  assert.deepEqual(out, [
+    { type: "connection", keys: ["acc7"], classes: ["access_denied"], kind: null, jobs: 2 },
+    { type: "kind_refuses", keys: [], classes: [], kind: "erase_run", jobs: 2 },
+    { type: "connection", keys: ["acc7", "vendor-x"], classes: ["access_denied", "throttled"], kind: null, jobs: 1 },
+    { type: "same_class", keys: ["acc70"], classes: ["quota_exhausted"], kind: null, jobs: 1 },
+    { type: "kind_unknown", keys: [], classes: [], kind: "cleanup_run", jobs: 1 },
+  ]);
+  // whole words: "acc7" is not found inside "acc70"
+  assert.deepEqual(heldGroups([job("8", "a", "connection still refused: acc70 (quota_exhausted)")], blocked)[0].keys,
+    ["acc70"]);
+  // no group carries the backend sentence
+  assert.ok(out.every((g) => !("reason" in g)));
+  assert.deepEqual(heldGroups([], blocked), []);
+});
+
+test("re-queue batches: the dry run asks for what one apply does", () => {
+  assert.equal(REQUEUE_BATCH, 50);
+  assert.deepEqual(requeueBody(true), { dry_run: true, limit: 50 });
+  assert.deepEqual(requeueBody(false, "2026-03-01T08:00:00+00:00"),
+    { dry_run: false, limit: 50, since: "2026-03-01T08:00:00+00:00" });
+  assert.deepEqual(requeueBody(false, null), { dry_run: false, limit: 50 });
+});
+
+test("nextRequeueSince starts the next batch where this one ended", () => {
+  const since = "2026-03-01T00:00:00+00:00";
+  const j = (finished_at) => ({ id: finished_at ?? "x", kind: "k", error: "", finished_at });
+  const r = { more: true, since, jobs: [j("2026-03-02T10:00:00.123456+00:00")],
+    held: [j("2026-03-03T09:00:00+00:00"), j(null)] };
+  assert.equal(nextRequeueSince(r), "2026-03-03T09:00:00+00:00");
+  assert.equal(nextRequeueSince({ ...r, more: false }), null);
+  // the cursor would not move: no next batch to offer
+  assert.equal(nextRequeueSince({ more: true, since, jobs: [j(since)], held: [] }), null);
+  assert.equal(nextRequeueSince({ more: true, since, jobs: [], held: [] }), null);
+});
+
+test("statusWordKey: 'No recent calls' only for an LLM connection with no reason (F8)", () => {
+  assert.equal(statusWordKey({ group: "llm", status: "unknown", status_reason: null }), "no_recent_calls");
+  assert.equal(statusWordKey({ group: "llm", status: "unknown", status_reason: "source_unreadable" }), "unknown");
+  assert.equal(statusWordKey({ group: "decide", status: "unknown", status_reason: "no_topup_recorded" }), "unknown");
+  assert.equal(statusWordKey({ group: "data", status: "unknown", status_reason: "no_balance_snapshot" }), "unknown");
+  assert.equal(statusWordKey({ group: "data", status: "unknown", status_reason: null }), "unknown");
+  assert.equal(statusWordKey({ group: "llm", status: "ok", status_reason: null }), "ok");
 });
 
 test("groupRows keeps extra fields of the rows", () => {
@@ -176,4 +224,10 @@ test("no message still says refused calls are not logged (F9)", () => {
   }
   const jev = readFileSync(join(PAGE_DIR, "JevCreditPanel.tsx"), "utf8");
   assert.doesNotMatch(jev, /hint="shared\./, "the Jev credit tile hint names no table");
+});
+
+test("the re-queue dialog never prints the backend's held reason text (connection keys, class codes)", () => {
+  const src = readFileSync(join(PAGE_DIR, "ProvidersTab.tsx"), "utf8");
+  assert.ok(!/\.held\s*\}|\{\s*h\.reason|\.reason\s*\|\|/.test(src), "held reason rendered verbatim");
+  assert.ok(src.includes("heldGroups("), "held jobs go through heldGroups");
 });

@@ -76,9 +76,10 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
           { term: "Chạm trần", text: "Ngân sách, số dư hoặc credit hôm nay đã hết. Lần gọi dừng hoặc chuyển đường dự "
             + "phòng cho tới khi nâng trần hoặc hết kỳ." },
           { term: "Tắt", text: "Cố ý tắt. Không tính là có vấn đề." },
-          { term: "Chưa có lượt gọi gần đây", text: "Không có lượt gọi được trả lời trong 24 giờ qua và chưa đọc số dư. "
+          { term: "Chưa có lượt gọi gần đây", text: "Kết nối LLM không có lượt gọi được trả lời trong 24 giờ qua. "
             + "Chưa thấy gì sai; tab Điều hướng dùng cùng chữ này." },
-          { term: "Chưa rõ", text: "Không đọc được nguồn. Dòng đó ghi rõ lý do." },
+          { term: "Chưa rõ", text: "Không đọc được nguồn, hoặc chưa biết số dư hay lần nạp nào (Jev, DataForSEO). "
+            + "Dòng đó ghi rõ lý do." },
         ] },
       ],
     },
@@ -96,7 +97,8 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
         ] },
         { kind: "control", label: "Đưa lại job bị từ chối", does: "Kiểm trước những job lỗi trong 14 ngày qua đã dừng vì "
           + "nhà cung cấp từ chối một tài khoản, hiện các con số, và chỉ sau khi bạn xác nhận mới đưa chúng về hàng đợi "
-          + "với lượt thử mới. Job mà kết nối vẫn bị từ chối thì vẫn để lỗi.",
+          + "với lượt thử mới, mỗi đợt 50 job (bấm Kiểm đợt tiếp cho phần còn lại). Job mà kết nối vẫn bị từ chối thì "
+          + "vẫn để lỗi.",
           cost: "Bước kiểm miễn phí; job được đưa lại chạy và tốn như lần đầu.",
           when: "Một tài khoản từng bị chặn đã trả lời lại (dòng của nó Ổn)." },
       ],
