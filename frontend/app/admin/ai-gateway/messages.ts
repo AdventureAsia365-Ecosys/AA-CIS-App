@@ -150,6 +150,7 @@ export const M = defineMessages(
     neverProbed: "never probed",
     failureDomain: "Failure domain:",
     domainOwnAccount: "this platform's AWS account",
+    domainVendorAccount: "its own vendor account",
     warmAnthropic: "Warm path · Claude stages",
     warmOpenai: "Warm path · GPT stages",
     warmAnthropicHelp: "The independent way to Claude when the AWS account that runs it is blocked. It is used only "
@@ -288,6 +289,7 @@ export const M = defineMessages(
     neverProbed: "chưa thăm dò lần nào",
     failureDomain: "Miền lỗi:",
     domainOwnAccount: "tài khoản AWS của nền tảng",
+    domainVendorAccount: "tài khoản riêng ở nhà cung cấp",
     warmAnthropic: "Đường dự phòng · stage Claude",
     warmOpenai: "Đường dự phòng · stage GPT",
     warmAnthropicHelp: "Đường độc lập tới Claude khi tài khoản AWS đang chạy nó bị chặn. Chỉ được dùng khi đang bật, "

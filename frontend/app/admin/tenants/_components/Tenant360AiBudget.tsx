@@ -141,10 +141,13 @@ function AiBudgetTile({ tenantId }: { tenantId: string }) {
           ? t("spentOf", usd(d.month_spent_usd), pct(b.used_pct))
           : t("spentNoBudget", usd(d.month_spent_usd));
   return (
-    <div data-testid="tenant360-ai-budget" style={{ display: "grid", gap: 6, minWidth: 0 }}>
-      <KpiTile size="sm" label={t("tileLabel")} value={value} hint={hint}
-        valueTone={b && (b.state === "approval" || b.state === "alert" || b.state === "over") ? "warning" : undefined} />
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+    <div data-testid="tenant360-ai-budget"
+      style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, minWidth: 0, marginBottom: 10 }}>
+      <div style={{ flex: "0 1 300px", minWidth: 0 }}>
+        <KpiTile size="sm" label={t("tileLabel")} value={value} hint={hint}
+          valueTone={b && (b.state === "approval" || b.state === "alert" || b.state === "over") ? "warning" : undefined} />
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
         {b && b.monthly_usd != null && (
           <Badge tone={tenantBudgetTone(b.state)} dot={false} style={{ whiteSpace: "nowrap" }}>
             {t(STATE_KEY[b.state] ?? "state_ok")}
@@ -156,7 +159,7 @@ function AiBudgetTile({ tenantId }: { tenantId: string }) {
           </span>
         )}
         {d?.ready && (
-          <span data-testid="tenant-ai-budget-edit" style={{ display: "inline-flex", marginLeft: "auto" }}>
+          <span data-testid="tenant-ai-budget-edit" style={{ display: "inline-flex" }}>
             <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>
               {b ? t("edit") : t("set")}
             </Button>

@@ -185,7 +185,7 @@ function SpendBudgetTable({ id, rows, loading, onEdit }: {
       cell: (c) => <span style={{ fontFamily: mono }}>{c.row.original.per_day_usd == null ? t("noCap") : usd(c.row.original.per_day_usd, 2)}</span> },
     { id: "at_cap", header: t("colAtCap"), accessorKey: "hard_stop",
       cell: (c) => (
-        <Badge tone={c.row.original.hard_stop ? "danger" : "warning"} dot={false}>
+        <Badge tone={c.row.original.hard_stop ? "danger" : "warning"} dot={false} style={{ whiteSpace: "nowrap" }}>
           {c.row.original.hard_stop ? t("stopsAtCap") : t("alertOnly")}
         </Badge>
       ) },

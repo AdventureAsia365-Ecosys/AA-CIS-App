@@ -26,6 +26,8 @@ test("actorLabel never prints a raw staff id (F5)", () => {
   assert.equal(actorLabel({ updated_by: `admin:${STAFF}` }, "a staff member"), "a staff member");
   assert.equal(actorLabel({ updated_by: "migration-226", updated_by_name: "Migration 226" }, "x"), "Migration 226");
   assert.equal(actorLabel({ updated_by: "ops-tester" }, "x"), "ops-tester");
+  // an API that sends only the raw value (Routing's llm-config rows)
+  assert.equal(actorLabel({ updated_by: "migration-280-wm-seed" }, "x"), "Migration 280");
   assert.equal(actorLabel({ updated_by: null }, "x"), null);
 });
 

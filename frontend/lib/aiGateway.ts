@@ -600,7 +600,8 @@ export function actorLabel(r: { updated_by?: string | null; updated_by_kind?: Ac
   const raw = (r.updated_by ?? "").trim();
   if (!raw) return null;
   if (r.updated_by_kind === "staff" || UUID_ANYWHERE.test(raw)) return staffFallback;
-  return raw;
+  const m = /^migration[-_ ]?(\d{3})(?:[-_].*)?$/i.exec(raw);
+  return m ? `Migration ${m[1]}` : raw;
 }
 
 export type TenantBudgetState = "unlimited" | "ok" | "alert" | "approval" | "over";

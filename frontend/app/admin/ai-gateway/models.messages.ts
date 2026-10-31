@@ -39,6 +39,7 @@ export const MODELS = defineMessages(
       `${n} connection${n === 1 ? " has" : "s have"} an open circuit: calls skip ${n === 1 ? "it" : "them"} for now (Providers shows which). Other connections still answer.`,
     invariantSummary: (ok: number, total: number) =>
       `Failure-domain rule (report only): ${ok} of ${total} stages can fall back to another failure domain.`,
+    staffMember: "a staff member",
     domainOk: "Fallback in another failure domain",
     domainBreach: "No fallback in another failure domain",
     domainOkWhy: (others: string) => `If the first route is blocked, the stage can still run on: ${others}.`,
@@ -201,6 +202,7 @@ export const MODELS = defineMessages(
       `${n} kết nối đang ngắt: các lượt gọi tạm bỏ qua (tab Nhà cung cấp cho biết kết nối nào). Các kết nối khác vẫn trả lời.`,
     invariantSummary: (ok: number, total: number) =>
       `Quy tắc miền lỗi (chỉ báo cáo): ${ok} trên ${total} stage có đường dự phòng ở miền lỗi khác.`,
+    staffMember: "một nhân viên",
     domainOk: "Có dự phòng ở miền lỗi khác",
     domainBreach: "Không có dự phòng ở miền lỗi khác",
     domainOkWhy: (others: string) => `Nếu tuyến đầu bị chặn, stage vẫn chạy được trên: ${others}.`,

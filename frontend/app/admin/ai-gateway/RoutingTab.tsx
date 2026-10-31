@@ -20,7 +20,9 @@ import {
   Badge, Button, ConfirmModal, DataTable, ErrorState, K, LoadingScreen, Section, Select, Spinner, apiGet, apiSend,
   mono, useFormat, useLocalized, useT, useToast, type ColumnDef,
 } from "../../_kit";
-import { accountRouteMatters, invariantByStage, type Invariant, type InvariantStage } from "@/lib/aiGateway";
+import {
+  accountRouteMatters, actorLabel, invariantByStage, type Invariant, type InvariantStage,
+} from "@/lib/aiGateway";
 import { accountName } from "@/lib/awsAccounts";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import {
@@ -189,7 +191,7 @@ function ModelRow({ row, showAccount, domain }: {
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           {error && <span style={{ fontSize: 11.5, color: K.danger }}>{error}</span>}
           <span style={{ fontSize: 11, color: K.muted2 }}>
-            {row.updated_at ? formatDateTime(row.updated_at) : "—"} · {row.updated_by}
+            {row.updated_at ? formatDateTime(row.updated_at) : "—"} · {actorLabel(row, t("staffMember")) ?? "—"}
           </span>
           <Button variant="secondary" size="sm" disabled={!dirty || saving} onClick={() => setConfirming(true)}
             testId={`llm-model-save-${row.stage}`}>
