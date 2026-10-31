@@ -1,0 +1,130 @@
+name: Llm Core Consumers
+# AA-642 S8 (root ADR 0009 decision 13): a CIS PR that changes the shared AI gateway core (shared/aa_llm/) must still
+# pass in every consumer. Each leg overlays this PR's core onto the consumer's main with
+# .github/scripts/llm-core-sync.sh --from-local (the same copy the sync bot makes), then runs in that app the copy's
+# integrity check and the consumer's own tests of the code that imports it:
+#   tripplanner  backend: pytest tests/test_llm_gateway.py tests/test_vendored_copies.py (offline)
+#   crm          api: ruff check + ruff format --check on the copy (Partner's config) and tests/unit/test_aa_llm_copy.py
+# The lock written by --from-local says "ref": "local", so the integrity tests run with AA_LLM_LOCK_REF_LOCAL_OK=1.
+# Non-required; the stable check name is the "Llm core consumers" job below. Read only: no secret, no App token; the
+# consumer repos are public.
+on:
+  pull_request:
+    paths:
+      - "shared/aa_llm/**"
+      - ".github/scripts/llm-core-sync.sh"
+      - ".github/scripts/llm_core_sync_bot.py"
+      - ".github/workflows/llm-core-consumers.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: llm-core-consumers-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.plan.outputs.changed }}
+      consumers: ${{ steps.plan.outputs.consumers }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+      - name: Did the core (or the sync code) change?
+        id: plan
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          python3 .github/scripts/llm_core_sync_bot.py plan --base "$BASE_SHA" --head HEAD \
+            --also .github/scripts/llm-core-sync.sh --also .github/scripts/llm_core_sync_bot.py \
+            --also .github/workflows/llm-core-consumers.yml
+
+  consumer:
+    name: Llm core consumers (${{ matrix.consumer.name }})
+    needs: plan
+    if: needs.plan.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        consumer: ${{ fromJSON(needs.plan.outputs.consumers) }}
+    env:
+      NAME: ${{ matrix.consumer.name }}
+      AA_LLM_LOCK_REF_LOCAL_OK: "1"
+    steps:
+      - name: Check out this PR
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: cis
+          persist-credentials: false
+
+      - name: Check out ${{ matrix.consumer.repo }} main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: AdventureAsia365-Ecosys/${{ matrix.consumer.repo }}
+          ref: main
+          path: consumer
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Overlay this PR's core
+        run: bash cis/.github/scripts/llm-core-sync.sh "$NAME" --from-local --cis cis --dest-repo consumer
+
+      - name: Copy integrity in the app
+        working-directory: consumer/${{ matrix.consumer.app_dir }}
+        env:
+          DEST: ${{ matrix.consumer.dest }}
+          LOCK: ${{ matrix.consumer.lock }}
+          APP: ${{ matrix.consumer.app_dir }}
+        run: python3 "${DEST#"$APP"/}/check_copy.py" --lock "${LOCK#"$APP"/}"
+
+      - name: TripPlanner tests of the gateway
+        if: matrix.consumer.name == 'tripplanner'
+        working-directory: consumer/backend
+        env:
+          PYTHONPATH: ${{ github.workspace }}/consumer
+        run: |
+          pip install -q -r requirements.txt
+          pytest -q tests/test_llm_gateway.py tests/test_vendored_copies.py
+
+      - name: AA-Partner lint and integrity test of the copy
+        if: matrix.consumer.name == 'crm'
+        working-directory: consumer/api
+        run: |
+          ruff_pin=$(sed -n 's/^ruff==\(.*\)$/\1/p' requirements-dev.txt)
+          pip install -q "ruff==${ruff_pin:?no ruff pin in requirements-dev.txt}" pytest
+          ruff check app/aa_llm
+          ruff format --check app/aa_llm
+          python3 -m pytest -q -p no:cacheprovider tests/unit/test_aa_llm_copy.py
+
+  llm-core-consumers:
+    name: Llm core consumers
+    needs: [plan, consumer]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Result
+        env:
+          PLAN: ${{ needs.plan.result }}
+          CHANGED: ${{ needs.plan.outputs.changed }}
+          LEGS: ${{ needs.consumer.result }}
+        run: |
+          if [ "$PLAN" != "success" ]; then echo "::error::plan job: $PLAN"; exit 1; fi
+          if [ "$CHANGED" != "true" ]; then
+            echo "AI gateway core unchanged: nothing to check." >> "$GITHUB_STEP_SUMMARY"; exit 0
+          fi
+          if [ "$LEGS" != "success" ]; then
+            echo "::error::a consumer leg failed ($LEGS): this core change breaks a consumer app"; exit 1
+          fi
+          echo "The AI gateway core change passes in every consumer." >> "$GITHUB_STEP_SUMMARY"

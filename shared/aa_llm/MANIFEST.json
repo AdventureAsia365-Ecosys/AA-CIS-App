@@ -1,0 +1,30 @@
+{
+  "adr": "root ADR 0009 decision 13",
+  "files": {
+    "__init__.py": {
+      "sha256": "044239c98b7d21a7d023aa035626a3445462d7820e58fc822b2b9b63d87ae736"
+    },
+    "budget.py": {
+      "sha256": "e356c389873ca2789480504cf58b7979f7dd074615f7a6f20d9ae44a924f20a7"
+    },
+    "check_copy.py": {
+      "sha256": "c34b956b886483a80fb128444768bb020ea1ba9bf8d3b4ec2a6b907361d94513"
+    },
+    "contract.py": {
+      "sha256": "637439b0a4596b63ef28cba52760e033416dbb24b2f250c504ee4db926950b2a"
+    },
+    "errors.py": {
+      "sha256": "df8460983ff27944aebb295912b5f797492894aabec1a8926ec26e9cc07788a0"
+    },
+    "ledger.py": {
+      "sha256": "8195eff5b4f91af593382a004ec7d10e53864bacfac665fe02be3658a3ddb9ca"
+    },
+    "ports.py": {
+      "sha256": "b4872cef2ea1fb6a64d03acf55bddfb9db3edbc92b9fbf0f786cabca61fa4f1c"
+    },
+    "pricing.py": {
+      "sha256": "535b94897a5894a917b82b3dbc060a735a9ee7661823c91544d676c441499518"
+    }
+  },
+  "name": "aa_llm"
+}
