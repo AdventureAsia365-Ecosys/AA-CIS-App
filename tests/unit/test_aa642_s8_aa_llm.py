@@ -219,3 +219,14 @@ def test_override_reads_a_mapping_too():
 def test_contract_selects_name_their_columns():
     assert "*" not in contract.GATEWAY_CONFIG_SQL and "*" not in contract.APP_SPEND_SQL
     assert contract.GATEWAY_CONFIG_SQL.count("$") == 1 and contract.APP_SPEND_SQL.count("$") == 1
+
+
+@pytest.mark.parametrize("error,want", [
+    ("An error occurred (AccessDeniedException) when calling the Converse operation", ("refused", "access_denied")),
+    ("insufficient_quota", ("refused", "quota_exhausted")),
+    ("ThrottlingException: Too many requests", ("refused", "throttled")),
+    ("read timeout on endpoint", ("error", "other")),
+    (None, ("error", "other")),
+])
+def test_failed_outcome(error, want):
+    assert ledger.failed_outcome(error) == want

@@ -228,3 +228,9 @@ def test_ledger_v2_values_match_cis(case):
     row = core_ledger.LedgerRow(app="cis", stage="s", role="writer", model="m", quality_signal=qs, stop_reason=stop,
                                 connection_key=conn, **case)
     assert row.v2_values() == want
+
+
+@pytest.mark.parametrize("text", [m for m in MESSAGES if m])
+def test_failed_outcome_matches_the_cis_attempt_outcome(text):
+    from shared.llm_client.client import attempt_outcome
+    assert core_ledger.failed_outcome(RuntimeError(text)) == attempt_outcome(RuntimeError(text))

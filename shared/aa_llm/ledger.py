@@ -22,7 +22,16 @@ import re
 import uuid
 from dataclasses import dataclass, field
 
-from .errors import LEDGER_ERROR_CLASSES, TRUNCATED
+from .errors import (
+    ACCESS_DENIED,
+    CREDENTIAL,
+    LEDGER_ERROR_CLASSES,
+    OTHER,
+    QUOTA_EXHAUSTED,
+    THROTTLED,
+    TRUNCATED,
+    classify,
+)
 from .pricing import PRICING_MODE_RE
 
 TABLE = "shared.llm_call_log"
@@ -129,6 +138,20 @@ def derive_status(
     if isinstance(stop_reason, str) and stop_reason in TRUNCATED_STOP_REASONS:
         return STATUS_TRUNCATED
     return STATUS_OK
+
+
+# The classes of an attempt the provider (or the gateway) said no to: status 'refused'. Anything else that raised with
+# nothing billed (outage, timeout, a bad reply) is 'error' with class 'other' (the CIS client's attempt_outcome).
+REFUSED_CLASSES = frozenset({ACCESS_DENIED, QUOTA_EXHAUSTED, THROTTLED, CREDENTIAL})
+
+
+def failed_outcome(error: BaseException | str | None) -> tuple[str, str]:
+    """(status, error_class) of an attempt that raised with nothing billed: ('refused', its class) for an access,
+    credit, credential or rate-limit refusal, else ('error', 'other')."""
+    cls = classify(error)
+    if cls not in REFUSED_CLASSES:
+        return STATUS_ERROR, OTHER
+    return STATUS_REFUSED, cls
 
 
 @dataclass
