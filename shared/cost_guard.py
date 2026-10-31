@@ -191,6 +191,24 @@ class RunBudget:
         }
 
 
+class ConnAsPool:
+    """AA-642 (S0): the `.acquire()` shape load_run_budget / maybe_alert use, over ONE asyncpg connection, for a
+    caller that holds a bare connection (process_seo, the sync S1 rewrite). Every acquisition yields the same
+    connection, so the caller must not run two acquisitions at once (both functions acquire sequentially)."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def acquire(self):
+        return self
+
+    async def __aenter__(self):
+        return self._conn
+
+    async def __aexit__(self, *exc):
+        return False
+
+
 def _round(v: Optional[float]) -> Optional[float]:
     return None if v is None else round(v, 4)
 

@@ -680,7 +680,7 @@ async def _execute_run_tour(
             dataforseo_used = checkpoint.dataforseo_used
         else:
             try:
-                from services.seo_intelligence.handler import process_seo
+                from services.seo_intelligence.handler import S1_REWRITE_BUDGET_KIND, process_seo
                 from services.seo_intelligence.seed_builder import (
                     activity_terms, build_seed, idea_seeds, title_place_terms,
                 )
@@ -706,6 +706,9 @@ async def _execute_run_tour(
                         place_terms=title_place_terms(row.get("src_name"), row.get("country")),
                         activity_words=activity_terms(row.get("activities")),
                         country=row.get("country") or "",
+                        # AA-642 (S0): the per-tour DataForSEO cap (dfs / job:s1_rewrite); a stop leaves S1
+                        # without fresh SEO data, as a DataForSEO failure always did.
+                        budget_kind=S1_REWRITE_BUDGET_KIND,
                     )
                     seo_data = seo_result.get("data", {})
                     dataforseo_used = seo_result.get("status") == "fetched"

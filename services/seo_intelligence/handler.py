@@ -1,4 +1,3 @@
-import asyncio
 import asyncpg
 import json
 import redis.asyncio as _aioredis
@@ -9,6 +8,7 @@ from .dataforseo_client import (
     DEFAULT_LOCATION_CODE, DEFAULT_LOCATION_NAME, DEFAULT_LANGUAGE_CODE,
 )
 from .seed_builder import resolve_buyer_market
+from shared import cost_guard
 from shared.secrets import get_database_url
 from shared.dfs_client.call_log import record_dfs_call
 from shared.services.tenant_config_service import TenantConfigService
@@ -37,6 +37,38 @@ _seo_redis_client = _aioredis.from_url(_redis_url, encoding="utf-8", decode_resp
 # truth for both the Redis TTL and the seo_context.expires_at trace column below.
 _SEO_CACHE_TTL_SECONDS = 7 * 24 * 3600  # 604800
 
+# AA-642 (S0): every live DataForSEO fetch of process_seo runs under a cost_guard.RunBudget. The S1 rewrite (the
+# s1_rewrite job, the sync /admin/run-tour and the S1 batch prep, one tour each) uses the job kind below
+# (shared.spend_budget dfs / job:s1_rewrite, migration 318: 0.50 USD per tour, hard stop); a caller that names no
+# kind gets DEFAULT_BUDGET_KIND, i.e. the dfs `global` row only.
+S1_REWRITE_BUDGET_KIND = "s1_rewrite"
+DEFAULT_BUDGET_KIND = "global"
+
+
+async def _load_budget(kind: str) -> "cost_guard.RunBudget":
+    """The DataForSEO run budget of `kind` on its own connection (process_seo holds no pool). Raises when the DB
+    cannot be read: no live DataForSEO call is made without a budget (the S1 callers then go on without SEO)."""
+    conn = await asyncpg.connect(get_database_url())
+    try:
+        return await cost_guard.load_run_budget(cost_guard.ConnAsPool(conn), "dfs", kind)
+    finally:
+        await conn.close()
+
+
+async def _alert_stop(budget, tour_id: str, stop: dict) -> None:
+    """The budget bell + ops e-mail when a cap stopped a tour's DataForSEO fetch (cost_guard.maybe_alert throttles
+    to one per provider per 24 h). Best-effort."""
+    try:
+        conn = await asyncpg.connect(get_database_url())
+        try:
+            await cost_guard.maybe_alert(
+                cost_guard.ConnAsPool(conn), budget,
+                reason=f"DataForSEO budget stopped the SEO fetch of tour {tour_id}: {stop.get('error', '')}"[:500])
+        finally:
+            await conn.close()
+    except Exception as exc:
+        logger.warning("seo_budget_alert_failed", tour_id=tour_id, error=str(exc)[:200])
+
 
 async def process_seo(
     tour_id: str,
@@ -50,7 +82,14 @@ async def process_seo(
     place_terms: list[str] | None = None,
     activity_words: list[str] | None = None,
     country: str = "",
+    budget: "cost_guard.RunBudget | None" = None,
+    budget_kind: str | None = None,
 ) -> dict:
+    """AA-642 (S0): `budget` caps the live DataForSEO calls of this fetch (checked before each, charged after). None =
+    loaded only when a live fetch is needed, for `budget_kind` (else DEFAULT_BUDGET_KIND), so no path calls
+    DataForSEO without a cap. When the cap or a fatal DataForSEO error (auth, no money) stops the fetch, the partial
+    data is returned with status 'budget_stopped' / 'dfs_stopped', nothing is cached or persisted, and a budget stop
+    raises the budget alert. The S1 callers then write without fresh SEO data, as they did when DataForSEO failed."""
     # "disabled" — skip SEO step entirely
     if seo_mode == "disabled":
         logger.info("seo_disabled", tour_id=tour_id)
@@ -183,12 +222,23 @@ async def process_seo(
         logger.info("cache_miss", destination=effective_seed, seo_mode=seo_mode, location=location_name)
         # AA-618 — pass attribution so each live DFS HTTP call inside fetch_all logs a dfs_call_log
         # row with tenant_id/tour_id + real cost.
-        client = DataForSEOClient(tenant_id=tenant_id, tour_id=tour_id)
+        if budget is None:
+            budget = await _load_budget(budget_kind or DEFAULT_BUDGET_KIND)
+        client = DataForSEOClient(tenant_id=tenant_id, tour_id=tour_id, budget=budget)
         seo_data = await client.fetch_all(
             effective_seed, location_code, location_name, language_code, activity,
             extra_seeds=extra_seeds, place_terms=place_terms, activity_words=activity_words,
             country=country,
         )
+        stop = getattr(client, "last_stop", None)
+        if isinstance(stop, dict) and stop:
+            # AA-642 (S0): a partial result is never cached (7 days, shared by tours of the same seed) nor persisted
+            # as this tour's seo_context row (S1 would reuse it for S1_SEO_REUSE_DAYS instead of buying again).
+            logger.warning("seo_fetch_stopped", tour_id=tour_id, reason=stop.get("reason"), at=stop.get("at"))
+            if stop.get("reason") == "budget":
+                await _alert_stop(budget, tour_id, stop)
+            status = "budget_stopped" if stop.get("reason") == "budget" else "dfs_stopped"
+            return {"status": status, "data": seo_data, "stopped": stop}
         try:
             await cache.set(redis_seed_key, seo_data, ttl_seconds=_SEO_CACHE_TTL_SECONDS)
         except Exception as _cache_err:
@@ -230,62 +280,3 @@ async def process_seo(
         await conn.close()
 
     return {"status": "cache_hit" if cached else "fetched", "id": seo_id, "data": seo_data}
-
-
-async def _lookup_destination(tour_id: str) -> str:
-    """Lookup country/name from DB when destination not in SF payload."""
-    conn = await asyncpg.connect(get_database_url())
-    try:
-        row = await conn.fetchrow(
-            "SELECT country, src_name FROM silver_aa_internal.raw_tours "
-            "WHERE tour_id = $1::uuid",
-            tour_id
-        )
-        if row:
-            return row["country"] or row["src_name"] or ""
-        return ""
-    finally:
-        await conn.close()
-
-
-def lambda_handler(event: dict, context) -> dict:
-    results = []
-
-    # Pattern 1: SF direct invoke
-    if "destination" in event:
-        records = [event]
-    # Pattern 2: SQS trigger (Phase 2)
-    elif "Records" in event:
-        records = [json.loads(r["body"]) for r in event["Records"]]
-    elif "tour_id" in event:
-        # SF invoke without destination — lookup from DB
-        records = [event]
-    else:
-        logger.warning("unknown_event_format", keys=list(event.keys()))
-        return {"processed": 0, "results": []}
-
-    for body in records:
-        try:
-            tour_id     = body.get("tour_id", "unknown")
-            destination = body.get("destination")
-            activity    = body.get("activity")
-            seo_mode    = body.get("seo_mode", "dataforseo")
-
-            # Lookup destination from DB if not provided
-            if not destination and tour_id != "unknown":
-                try:
-                    destination = asyncio.run(_lookup_destination(tour_id))
-                except Exception as _e:
-                    logger.warning("destination_lookup_failed", error=str(_e))
-
-            if not destination and seo_mode != "disabled":
-                logger.warning("missing_destination", tour_id=tour_id)
-                continue
-
-            result = asyncio.run(process_seo(tour_id, destination or "", activity, seo_mode=seo_mode))
-            results.append({"destination": destination, **result})
-        except Exception as e:
-            logger.error("seo_failed", error=str(e))
-            results.append({"status": "failed", "error": str(e)})
-
-    return {"processed": len(results), "results": results}
