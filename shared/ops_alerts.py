@@ -458,7 +458,10 @@ _CIRCUIT_ACTIONS = {
 
 def render_llm_circuit_open(payload: dict, *, to: Recipients, base_url: Optional[str] = None,
                             environment: Optional[str] = None) -> Message:
-    """AA-1018: an LLM connection was paused by its connection-level circuit."""
+    """AA-1018: an LLM connection was paused by its connection-level circuit. The last provider answer is masked again
+    here (ARNs, account IDs), so a payload queued by an older build cannot carry one into the e-mail."""
+    from shared.llm_client.errors import redact_ids  # lazy: keeps ops_alerts import-light
+
     env = environment or os.environ.get("ENVIRONMENT", "dev")
     link = f"{base_url or admin_base_url()}{LLM_PROVIDERS_PAGE_PATH}"
     key = str(payload.get("connection_key") or "?")
@@ -468,7 +471,7 @@ def render_llm_circuit_open(payload: dict, *, to: Recipients, base_url: Optional
     rows = [("Connection", key), ("Reason", cls), ("Models refused", ", ".join(map(str, models)) or "-"),
             ("Opened at", str(payload.get("opened_at") or "-")),
             ("Calls skip it until", str(payload.get("open_until") or "-")),
-            ("Last provider answer", str(payload.get("last_error") or "-")),
+            ("Last provider answer", redact_ids(str(payload.get("last_error") or "")) or "-"),
             ("Day", f"{payload.get('period')} (UTC)")]
     action = _CIRCUIT_ACTIONS.get(cls, "Check the connection with the provider, then run Test connection.")
     footer = ("Routes fall back to their other models and connections where the stage allows it. The same alert is "

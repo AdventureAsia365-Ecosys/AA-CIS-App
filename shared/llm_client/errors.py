@@ -110,6 +110,23 @@ def classify_text(text: Optional[str]) -> str:
     return OTHER
 
 
+# AA-1018: account IDs and ARNs (an IAM / STS refusal names the caller's role and the target role) are masked before a
+# provider message leaves the platform in an alert (bell payload, ops e-mail). Same 12-digit rule as the CI
+# resource-ID guard (.github/scripts/check_resource_ids.py) and api/services/docs_reader.py.
+_ARN = re.compile(r"\barn:aws[a-z-]*:[^\s,;)'\"]*", re.IGNORECASE)
+_ACCOUNT_ID = re.compile(r"(?<!\d)\d{12}(?!\d)")
+ARN_MARKER = "arn:aws:<redacted>"
+ACCOUNT_ID_MARKER = "<account-id>"
+
+
+def redact_ids(text: Optional[str]) -> Optional[str]:
+    """``text`` with every ARN replaced by ``ARN_MARKER`` and every other 12-digit run (an AWS account ID) by
+    ``ACCOUNT_ID_MARKER``. None stays None. Pure."""
+    if not text:
+        return text
+    return _ACCOUNT_ID.sub(ACCOUNT_ID_MARKER, _ARN.sub(ARN_MARKER, text))
+
+
 def _chain(exc: BaseException, *, implicit: bool = True) -> Iterator[BaseException]:
     """The exception, then its explicit causes and (when ``implicit``) implicit contexts (cycle-safe, bounded)."""
     seen: set[int] = set()

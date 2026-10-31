@@ -148,6 +148,33 @@ async def test_a_quota_stop_still_holds_after_its_open_period_until_a_call_answe
 
 
 @pytest.mark.asyncio
+async def test_an_account_block_still_holds_after_its_open_period_until_a_call_answers(now_t0):
+    # review S262: acc3 refused on two models 2 days ago; its circuit is half-open (calls may probe) but nothing has
+    # answered since, so the bulk re-queue must still hold its jobs
+    old = T0 - timedelta(days=2)
+    health = [_health("acc3", "gpt-6-luna", "access_denied", at=old),
+              _health("acc3", "sonnet-5-5", "access_denied", at=old)]
+    pool = FakePool([_job(1), _job(2, error=NAMED)], health=health)
+    out = await queue.retry_by_reason(pool, since=T0 - timedelta(days=3), dry_run=False)
+    assert out["blocked_connections"] == {"acc3": "access_denied"}
+    assert out["requeued"] == 0 and pool.updates == []
+    assert [h["id"] for h in out["held"]] == [_job(1)["id"], _job(2)["id"]]
+
+
+@pytest.mark.asyncio
+async def test_an_answered_call_since_the_block_releases_the_hold(now_t0):
+    old = T0 - timedelta(days=2)
+    answered = {**_health("acc3", "haiku-5-5", None, at=old), "last_error_at": None, "last_error_class": None,
+                "consecutive_failures": 0, "circuit_open_until": None, "opened_at": None,
+                "last_ok_at": T0 - timedelta(hours=1)}                 # e.g. the admin's Test connection
+    health = [_health("acc3", "gpt-6-luna", "access_denied", at=old),
+              _health("acc3", "sonnet-5-5", "access_denied", at=old), answered]
+    pool = FakePool([_job(1)], health=health)
+    out = await queue.retry_by_reason(pool, since=T0 - timedelta(days=3), dry_run=False)
+    assert out["blocked_connections"] == {} and out["requeued"] == 1
+
+
+@pytest.mark.asyncio
 async def test_an_old_access_denied_alone_does_not_hold(now_t0):
     health = [_health("acc3", "gpt-6-luna", "access_denied", at=T0 - timedelta(days=2))]
     pool = FakePool([_job(1)], health=health)
@@ -181,6 +208,9 @@ async def test_limit_is_capped_and_the_prefix_is_required(now_t0):
     pool = FakePool([])
     out = await queue.retry_by_reason(pool, since=T0, limit=10_000, kinds=["t9_write"])
     assert out["limit"] == queue.RETRY_REASON_MAX_LIMIT and pool.candidate_args[2] == ["t9_write"]
+    # review S262: an apply re-queues a subset per call, never hundreds at once
+    out = await queue.retry_by_reason(pool, since=T0, limit=10_000, dry_run=False)
+    assert out["limit"] == queue.RETRY_REASON_APPLY_LIMIT == 50 and pool.candidate_args[3] == 50
     with pytest.raises(ValueError):
         await queue.retry_by_reason(pool, " ", since=T0)
 

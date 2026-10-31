@@ -169,6 +169,18 @@ def test_an_old_credit_refusal_is_half_open_but_still_refusing():
     assert c["failure_domain"] == "openai:openai-direct:vendor_direct"
 
 
+def test_an_old_account_block_is_half_open_but_still_refusing_until_a_call_answers():
+    # review S262: acc3 refused on two models a day ago, nothing answered since -> still refusing (re-queue holds)
+    rows = [_health_row("model-a", "access_denied", NOW - timedelta(days=1)),
+            _health_row("model-b", "access_denied", NOW - timedelta(days=1))]
+    (c,) = av.build_connections(rows, now=NOW)
+    assert c["circuit"]["state"] == "half_open" and c["circuit"]["refusing"] is True
+    answered = rows + [_health_row("model-c", None, NOW, last_error_at=None, last_ok_at=NOW - timedelta(hours=1),
+                                   circuit_open_until=None, consecutive_failures=0, opened_at=None)]
+    (c,) = av.build_connections(answered, now=NOW)
+    assert c["circuit"]["state"] == "closed" and c["circuit"]["refusing"] is False
+
+
 def test_a_connection_without_health_rows_has_a_closed_circuit():
     row = {"connection_key": "acc2", "kind": "bedrock", "label": "main", "enabled": True, "data_scope": "aws_only",
            "account_id": None, "account_id_env": None, "model_key": None}

@@ -63,7 +63,8 @@ from typing import Callable, Iterable, Iterator, Optional, TypeVar
 import structlog
 
 from . import connections
-from .errors import ACCESS_DENIED, OTHER, QUOTA_EXHAUSTED, THROTTLED, _chain, account_level_class, classify
+from .errors import (ACCESS_DENIED, OTHER, QUOTA_EXHAUSTED, THROTTLED, _chain, account_level_class, classify,
+                     redact_ids)
 
 logger = structlog.get_logger()
 
@@ -241,11 +242,15 @@ def connection_members(rows: Iterable[Health], connection_key: str, now: datetim
 
 
 def connection_refusing(h: Optional[Health], now: datetime) -> bool:
-    """Whether a connection circuit (``connection_health``) still means "calls are refused": open, or half-open after
-    a key or credit refusal with no answered call since (no key / no money until a call proves otherwise). Used to hold
-    re-queues (shared/jobs/queue.py) and to count a connection as unfunded (invariant.py); never to skip a call."""
-    st = state_of(h, now)
-    return st == OPEN or (st == HALF_OPEN and h.last_error_class in CONNECTION_SOLO_CLASSES)
+    """Whether a connection circuit (``connection_health``) still means "calls are refused": it is tripped at all, open
+    or half-open of any class. ``connection_health`` already drops every refusal older than the connection's last
+    answered call, so a half-open circuit here means nothing has answered since the refusals: the account is presumed
+    still blocked until a call proves otherwise (a real call, the admin's Test connection, the probe). Used to hold the
+    bulk re-queue (shared/jobs/queue.py: a still-blocked account must not get hundreds of jobs back that fail again or
+    spill onto a paid fallback), to count a connection as unfunded (invariant.py) and for the admin card / digest;
+    never to skip a call (``connection_open`` does that, and lets a half-open circuit probe). ``now`` is kept for the
+    callers' signature."""
+    return h is not None
 
 
 def connection_state(rows: Iterable[Health], connection_key: str, now: datetime) -> str:
@@ -574,12 +579,14 @@ _CLASS_WORDS = {CREDENTIAL: "its key cannot be read", QUOTA_EXHAUSTED: "the prov
 
 
 def circuit_alert_details(h: Health, models: list[str]) -> dict:
-    """The bell payload / e-mail details of an opened connection circuit (ids, classes and times only)."""
+    """The bell payload / e-mail details of an opened connection circuit: keys, classes, times and the last provider
+    answer with its ARNs and account IDs masked (``errors.redact_ids``: an IAM / STS refusal names both accounts and
+    their roles; the alert goes to every recipient and stays in shared.notifications)."""
     words = _CLASS_WORDS.get(h.last_error_class or "", "account-wide refusals")
     until = h.circuit_open_until.isoformat() if h.circuit_open_until else None
     return {"connection_key": h.connection_key, "error_class": h.last_error_class, "models": list(models),
             "open_until": until, "opened_at": h.opened_at.isoformat() if h.opened_at else None,
-            "last_error": (h.last_error or "")[:ERROR_CHARS] or None,
+            "last_error": redact_ids((h.last_error or "")[:ERROR_CHARS]) or None,
             "message": (f"LLM connection {h.connection_key} paused: {words} ({h.last_error_class}). Calls skip it "
                         f"until {until or 'the next probe'}; routes fall back where they can.")}
 

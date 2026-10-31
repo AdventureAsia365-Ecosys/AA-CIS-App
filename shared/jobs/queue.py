@@ -368,7 +368,8 @@ async def retry(pool, job_id: str) -> bool:
 
 RETRY_REASON_DEFAULT = "llm_access_denied"      # errors.LLM_ACCESS_DENIED_REASON (the job error prefix, AA-900)
 RETRY_REASON_LIMIT = 200                        # rows read per call (one page; call again for more)
-RETRY_REASON_MAX_LIMIT = 500
+RETRY_REASON_MAX_LIMIT = 500                    # a dry run may list this many
+RETRY_REASON_APPLY_LIMIT = 50                   # an apply re-queues at most this many per call (paid runs: subset)
 RETRY_SPREAD_SECONDS = 60                       # re-queued rows are due over this window, not all in one second
 
 _RETRY_CANDIDATES_SQL = """
@@ -391,8 +392,10 @@ _CONNECTION_KEYS_SQL = "SELECT connection_key FROM shared.llm_provider_connectio
 
 async def blocked_connections(pool, now: Optional[datetime] = None) -> tuple[dict[str, str], list[str]]:
     """({connection_key: class} of the LLM connections whose circuit still refuses, every registry connection key).
-    Blocked = ``breaker.connection_refusing``: the connection circuit is open, or half-open on a key / credit refusal
-    with no answered call since (read from shared.llm_provider_health). Before migrations 304 / 309: ({}, [])."""
+    Blocked = ``breaker.connection_refusing``: the connection circuit is tripped (open, or half-open of any class) and
+    no call on the connection has answered since the refusals (read from shared.llm_provider_health). A half-open
+    access_denied circuit lets calls probe, but a bulk re-queue waits for a real answer. Before migrations 304 / 309:
+    ({}, [])."""
     from shared.llm_client import breaker  # lazy: keeps the job queue import-light
 
     try:
@@ -404,7 +407,7 @@ async def blocked_connections(pool, now: Optional[datetime] = None) -> tuple[dic
     out: dict[str, str] = {}
     for key in sorted({h.connection_key for h in health}):
         h = breaker.connection_health(health, key, now)
-        if h is not None and breaker.connection_refusing(h, now):
+        if breaker.connection_refusing(h, now):
             out[key] = h.last_error_class
     return out, keys
 
@@ -438,14 +441,15 @@ async def retry_by_reason(pool, prefix: str = RETRY_REASON_DEFAULT, *, since: da
     a fresh set of attempts, like `retry`, due within RETRY_SPREAD_SECONDS (jitter). Skipped (in `held`, with the
     reason): a kind that is not registered, a kind whose `retry_refusal` refuses the job (AA-839), and a job whose
     connection is still refused (`blocked_connections` / `llm_hold`; only for the LLM prefix). `dry_run` (the
-    default) changes nothing and lists what an apply would do. The apply re-checks every row in its own guarded
-    UPDATE (`status = 'failed'`), so a job retried by hand meanwhile is not touched twice."""
+    default) changes nothing and lists what an apply would do (up to RETRY_REASON_MAX_LIMIT rows); an apply reads at
+    most RETRY_REASON_APPLY_LIMIT rows per call (call again for the next ones). The apply re-checks every row in its
+    own guarded UPDATE (`status = 'failed'`), so a job retried by hand meanwhile is not touched twice."""
     from shared.jobs.registry import get_kind  # lazy: registry imports this module
     from shared.jobs.worker import load_kinds
 
     if not prefix or not prefix.strip():
         raise ValueError("prefix must not be empty")
-    limit = max(1, min(int(limit), RETRY_REASON_MAX_LIMIT))
+    limit = max(1, min(int(limit), RETRY_REASON_MAX_LIMIT if dry_run else RETRY_REASON_APPLY_LIMIT))
     load_kinds()
     rows = [dict(r) for r in await pool.fetch(_RETRY_CANDIDATES_SQL, prefix, since, list(kinds), limit)]
     llm = prefix.startswith(RETRY_REASON_DEFAULT)

@@ -6,6 +6,7 @@ open connection; the alert on the transition to OPEN (bell + ops e-mail) against
 documented provider bodies: Bedrock "Error 002" access denied, the Anthropic API tier spend cap
 (429 ``enforced_spend_limit_reached``), and OpenAI ``insufficient_quota``.
 """
+import json
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
@@ -304,6 +305,57 @@ def test_the_circuit_email_template_is_rendered():
     assert msg.subject == "[AA-CIS dev] LLM connection openai-direct paused (quota_exhausted)"
     assert "Top up or raise the cap" in msg.text and "https://admin.example.com/admin/settings?tab=models" in msg.text
     assert "<table" in msg.html
+
+
+# An STS refusal names both accounts and their roles (AWS documentation example accounts, invented role names).
+ASSUME_ROLE_DENIED = ("An error occurred (AccessDenied) when calling the AssumeRole operation: User: "
+                      "arn:aws:sts::111122223333:assumed-role/demo-task-role/abc is not authorized to perform: "
+                      "sts:AssumeRole on resource: arn:aws:iam::444455556666:role/demo-invoker; account 444455556666")
+
+
+def _digits12(text):
+    import re
+    return re.findall(r"\d{12}", text or "")
+
+
+def test_redact_ids_masks_arns_and_account_ids():
+    from shared.llm_client.errors import redact_ids
+    out = redact_ids(ASSUME_ROLE_DENIED)
+    assert _digits12(out) == [] and "demo-invoker" not in out and "demo-task-role" not in out
+    assert "arn:aws:<redacted> is not authorized" in out and out.endswith("account <account-id>")
+    assert redact_ids(None) is None and redact_ids("Error 002: no access") == "Error 002: no access"
+    assert redact_ids("job 1234567890123 took 42") == "job 1234567890123 took 42"   # 13 digits: not an account
+
+
+@pytest.mark.asyncio
+async def test_the_alert_never_carries_an_account_id(monkeypatch):
+    # review S262: an IAM refusal on every acc3 model opens the circuit; neither the bell nor the e-mail shows the IDs
+    from shared import ops_alerts
+    sent = []
+
+    async def enqueue(conn, *, details, now=None):
+        sent.append(details)
+        return "job-1"
+    monkeypatch.setattr(ops_alerts, "enqueue_llm_circuit_email", enqueue)
+    rows = [replace(_row(m, ACCESS_DENIED), last_error=f"ClientError: {ASSUME_ROLE_DENIED}") for m in ("a", "b")]
+    h = connection_health(rows, "acc3", T0)
+    conn = _Conn()
+    assert await breaker.alert_connection_open(conn, h, ["a", "b"]) is True
+    (_, args), = conn.executed
+    assert _digits12(args[3]) == [] and "arn:aws:<redacted>" in args[3]
+    assert _digits12(json.dumps(sent[0])) == []
+    msg = ops_alerts.render_llm_circuit_open({**sent[0], "period": "2026-10-30"}, to=("ops@example.com",),
+                                             base_url="https://admin.example.com", environment="dev")
+    assert _digits12(msg.text) == [] and _digits12(msg.html) == [] and "account <account-id>" in msg.text
+
+
+def test_the_email_masks_a_payload_queued_before_the_fix():
+    from shared import ops_alerts
+    msg = ops_alerts.render_llm_circuit_open(
+        {"connection_key": "acc3", "error_class": "access_denied", "models": ["a", "b"],
+         "last_error": ASSUME_ROLE_DENIED, "period": "2026-10-30"},
+        to=("ops@example.com",), base_url="https://admin.example.com", environment="dev")
+    assert _digits12(msg.text) == [] and _digits12(msg.html) == [] and "account <account-id>" in msg.text
 
 
 @pytest.mark.asyncio

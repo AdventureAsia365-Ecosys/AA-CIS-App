@@ -397,7 +397,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   gets up to 25 % jitter (`queue.backoff_seconds`); `POST /admin/job-runner/jobs/retry-llm-denied` (ops.write, DRY
   RUN by default, audited `jobs_retry_llm_denied`) re-queues `failed` jobs whose error starts with
   `llm_access_denied` unless their kind refuses retries or their connection still refuses
-  (`queue.retry_by_reason` / `breaker.connection_refusing`); the jobs list takes `reason` (error prefix).
+  (`queue.retry_by_reason` / `breaker.connection_refusing`: the connection circuit is tripped, open or half-open, with
+  no answered call since; at most 50 per apply); the jobs list takes `reason` (error prefix). The alert's provider
+  text is masked (`errors.redact_ids`: ARNs and 12-digit account IDs) before it reaches the bell or the e-mail.
   `shared/llm_client/invariant.py`: the report-only failure-domain rule (domain = kind + account + data scope until
   migration 321), in `GET /admin/llm-availability` (`invariant`, and per connection `circuit` + `failure_domain`) and
   the OPS-12 digest provider section. Job kind `llm_connection_probe` (`services/jobs/llm_probe_job.py`: one Test
