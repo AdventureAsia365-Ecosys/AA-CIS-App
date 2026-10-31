@@ -64,7 +64,7 @@ export function ShadowReport() {
       cell: (c) => {
         const r = c.row.original;
         return (
-          <div style={{ fontSize: 12 }}>
+          <div style={{ fontSize: 12, minWidth: 180 }}>
             <div style={{ color: K.body }}>{r.primary_model}</div>
             <div style={{ color: K.muted }}>→ {r.shadow_model}</div>
           </div>

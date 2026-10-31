@@ -711,6 +711,15 @@ function SocialContentTabContent({ tenantId }: { tenantId: string }) {
 type DTab = "tours" | "pipeline" | "activity" | "api" | "brand" | "social_content"
           | "billing" | "cost" | "quality" | "markets" | "audit" | "settings";
 
+const DETAIL_TABS: readonly DTab[] = ["tours", "pipeline", "activity", "api", "brand", "social_content", "billing",
+  "cost", "quality", "markets", "audit", "settings"];
+
+/** The tab a deep link asks for, only for the tenant it names; "tours" otherwise. */
+function initialDetailTab(linkTenant: string | null, linkTab: string | null, tenantId: string): DTab {
+  return linkTenant === tenantId && (DETAIL_TABS as readonly string[]).includes(linkTab ?? "")
+    ? (linkTab as DTab) : "tours";
+}
+
 function TenantDetail({ tenant, onChanged }: {
   tenant: Tenant; onChanged: () => void;
 }) {
@@ -720,7 +729,9 @@ function TenantDetail({ tenant, onChanged }: {
   const isInternal = tenant.plan_tier === "internal";
   const [data, setData]         = useState<TenantDetails | null>(null);
   const [loading, setLoading]   = useState(true);
-  const [tab, setTab]           = useState<DTab>("tours");
+  // C4 (S262): `?tenant=<id>&tab=cost` (AI providers › Budgets "Open the tenant") opens this tenant on that tab.
+  const deepTab = useSearchParams();
+  const [tab, setTab]           = useState<DTab>(() => initialDetailTab(deepTab.get("tenant"), deepTab.get("tab"), tenantId));
   const [activity, setActivity] = useState<RewriteActivityItem[]>([]);
 
   useEffect(() => {

@@ -105,6 +105,10 @@ const ADMIN_PAGES: PageSpec[] = [
   { id: 'ai-gateway-budgets', label: 'AI providers · Budgets', path: '/admin/ai-gateway?tab=budgets', readySelector: '[data-testid="ai-gateway-budgets-ready"]', viewerRefused: true },
   // AA-804 UI part 3: the Calls tab (every logged paid call; `ai-gateway-calls-ready` once the first page answered) and
   // Cost Operations' merged "AI & data spend" tab with TripPlanner's stage caps (AA-1015; `cost-tp-caps` is the section).
+  // S262 C4: the Experiments section of Models & trials (prompt versions + evaluation runs, read-only) and the
+  // "Re-queue refused jobs" card of the Providers tab (no click here: the dry run is a write route).
+  { id: 'ai-gateway-experiments', label: 'AI providers · Experiments', path: '/admin/ai-gateway?tab=models', readySelector: '[data-testid="ai-gateway-experiments"]', viewerRefused: true },
+  { id: 'ai-gateway-requeue', label: 'AI providers · Re-queue refused jobs', path: '/admin/ai-gateway?tab=providers', readySelector: '[data-testid="ai-gateway-requeue"]', viewerRefused: true },
   { id: 'ai-gateway-calls', label: 'AI providers · Calls', path: '/admin/ai-gateway?tab=calls', readySelector: '[data-testid="ai-gateway-calls-ready"]', viewerRefused: true },
   { id: 'cost-ops-spend', label: 'Cost Operations · AI & data spend', path: '/admin/cost-ops?tab=spend', readySelector: '[data-testid="cost-tp-caps"]', viewerRefused: true },
   { id: 'tenant-activity', label: 'Content Trace', path: '/admin/tenant-activity', readySelector: '[data-testid="admin-content-ready"]', viewerRefused: true },

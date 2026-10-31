@@ -119,3 +119,34 @@ test('retired URLs redirect to their new home', async ({ page }) => {
   await expect(page.getByText('Brands', { exact: true })).toBeVisible({ timeout: 15000 });
   await page.screenshot({ path: `${SHOT_DIR}/settings-brand-tab.png` });
 });
+
+// S262 C4 (AA-804 live finding F7): at phone width the tab strip scrolls sideways; the active tab is scrolled into
+// view (Guide is the last tab) and the strip shows a fade on the side that has more tabs.
+test('AI providers tab strip keeps the active tab in view at 400px', async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 860 });
+  await login(page);
+  await page.goto('/admin/ai-gateway?tab=guide');
+  const strip = page.getByTestId('ai-gateway-tabs').locator('div').first();
+  const active = strip.locator('[data-kit-tab-active="true"]');
+  await expect(active).toHaveText('Guide', { timeout: 15000 });
+  await expect.poll(async () => {
+    const [s, a] = await Promise.all([strip.boundingBox(), active.boundingBox()]);
+    return !!s && !!a && a.x >= s.x - 1 && a.x + a.width <= s.x + s.width + 1;
+  }, { timeout: 5000 }).toBe(true);
+  const overflow = await strip.evaluate((el) => el.scrollWidth > el.clientWidth);
+  if (overflow) {
+    await expect.poll(() => strip.evaluate((el) => getComputedStyle(el).maskImage || getComputedStyle(el).webkitMaskImage))
+      .toContain('linear-gradient');
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: `${SHOT_DIR}/400-ai-gateway-guide-tab.png` });
+});
+
+// S262 C4 (root ADR 0009 UI): a Rewrite (S1) run never picks its own model; the page shows the stage route's model.
+test('Rewrite (S1) shows the routed model and has no per-run model select', async ({ page }) => {
+  await login(page);
+  await page.goto('/admin/s1-rewrite');
+  await expect(page.getByTestId('s1-route-model')).toBeVisible({ timeout: 15000 });
+  await expect(page.getByTestId('s1-route-model').getByRole('link')).toHaveAttribute('href', '/admin/ai-gateway?tab=routing');
+  await expect(page.locator('option', { hasText: 'this run only' })).toHaveCount(0);
+});

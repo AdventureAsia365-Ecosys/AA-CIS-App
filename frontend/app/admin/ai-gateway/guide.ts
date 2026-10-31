@@ -62,6 +62,15 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
           { term: "Budget", text: "The monthly budget of a connection and the daily cap of its provider, with how "
             + "much is used. A hard stop blocks further calls at the cap; alert only just warns." },
           { term: "Balance / credits", text: "What is left with the provider, or today's credits for Geoapify." },
+          { term: "Warm path · Claude stages", text: "The Anthropic API: the independent way to Claude when the AWS "
+            + "account that runs it is blocked. Used only when it is switched on, funded and on a stage's route." },
+          { term: "Warm path · GPT stages", text: "The OpenAI API: the same for the GPT judge stages." },
+          { term: "Failure domain:", text: "Who can block this row: the kind of service, the account and the data "
+            + "scope. Two rows in the same domain fail together; a fallback helps only in another domain." },
+          { term: "Access:", text: "What the last call or probe said: answering, access denied, no credit left, no "
+            + "key set up, or not checked yet." },
+          { term: "Last probe", text: "When the daily health probe last called this row (never probed until the "
+            + "probe is switched on)." },
         ] },
       ],
     },
@@ -78,8 +87,10 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
           { term: "Cap reached", text: "A budget, the balance or today's credits are used up. Calls stop or fall back "
             + "until the cap is raised or the period ends." },
           { term: "Off", text: "Switched off on purpose. Not counted as a problem." },
-          { term: "Unknown", text: "No recent call, no balance read yet, or the source could not be read. The row "
-            + "says which." },
+          { term: "No recent calls", text: "An LLM connection with no answered call in the last 24 hours. Nothing is "
+            + "known to be wrong; the Routing tab uses the same words." },
+          { term: "Unknown", text: "The source could not be read, or no balance or top-up is known yet (Jev, "
+            + "DataForSEO). The row says why." },
         ] },
       ],
     },
@@ -95,6 +106,12 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
           { term: "Jev credit", text: "Record each Jev top-up by hand (Jev has no balance service), see the "
             + "estimated credit left, and send test alerts." },
         ] },
+        { kind: "control", label: "Re-queue refused jobs", does: "Checks first which failed jobs of the last 14 days "
+          + "stopped because a provider refused an account, shows the numbers, and only after you confirm puts them "
+          + "back in the queue with a fresh set of attempts, one batch of 50 at a time (Check the next batch for the rest). "
+          + "Jobs whose connection is still refused stay failed.",
+          cost: "The check is free; the re-queued jobs run and cost what they cost the first time.",
+          when: "An account that was blocked answers again (its row is OK)." },
       ],
     },
     {
@@ -105,6 +122,14 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
           + "chain is tried in order when it fails; a shadow model runs a second call on a share of calls only to "
           + "compare (it doubles the cost of those calls). The LLM availability card on top says whether the models "
           + "answered recently, and the Jev questions per stage are listed at the bottom." },
+        { kind: "terms", uiLabels: true, items: [
+          { term: "Fallback in another failure domain", text: "If the account of the first model is blocked, the stage "
+            + "can still run on a model in another failure domain." },
+          { term: "No fallback in another failure domain", text: "Every usable model of the route sits in one failure "
+            + "domain, or none can run now: one blocked account stops the stage. A report only: nothing is changed." },
+          { term: "Answering", text: "Real calls were answered recently. When a connection's circuit is open the badge "
+            + "says so too, with the same words as the Providers tab." },
+        ] },
         { kind: "control", label: "Save", does: "Saves the primary model of one stage, for every call of that stage.",
           cost: "Free to save; the next calls run on the new model at its price.",
           when: "A model is retired, refused, or a cheaper one passed its trial." },
@@ -125,6 +150,9 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
           + "A model can be switched on or off; one with no price cannot be switched on." },
         { kind: "paragraph", text: "The shadow comparisons show, per stage, how often the shadow model agreed with the "
           + "primary, the score gap, the cost per call and the shadow's answer time, each with its sample size." },
+        { kind: "paragraph", text: "Experiments (read-only) lists the prompt versions on record (a short fingerprint, "
+          + "never the prompt text) and the newest evaluation runs: what was compared, on how many tours, the verdict "
+          + "and the cost. Runs are started by the team, not from this page." },
       ],
     },
     {
@@ -139,7 +167,9 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
             + "capped on their own spend (the line under the figure says which)." },
           { term: "LLM connection budgets", text: "The monthly budget of each connection; edit it in Providers › "
             + "Connections." },
-          { term: "Tenant AI budgets", text: "Empty for now: per-tenant budgets come later and are seen by staff only." },
+          { term: "Tenant AI budgets", text: "The monthly AI budget of each tenant that has one, with this month's spend "
+            + "and state. Set or change it on the tenant (Tenants › the tenant › Cost). Staff only. Stored and shown "
+            + "now; holding new jobs at the approval level comes with the gateway check." },
           { term: "Stops at the cap", text: "The run ends when the next call would pass the cap." },
           { term: "Alert only", text: "Never stops; an admin alert goes out at the alert %." },
         ] },

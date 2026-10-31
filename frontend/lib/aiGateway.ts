@@ -92,6 +92,11 @@ export interface ProviderRow {
   error: string | null;
   /** DataForSEO only: the month's calls that went to the live API (the rest were cache hits) */
   live_calls_month?: number;
+  // Registry v2 (CIS migration 322, AA-1017): on the Jev / DataForSEO / Geoapify rows once the registry has them.
+  // Absent on an older API: the page then hides the line (never shows a guess).
+  failure_domain?: string | null;
+  access_state?: string | null;
+  last_probe_at?: string | null;
 }
 
 export interface ProvidersResp {
@@ -172,6 +177,14 @@ export function statusTone(status: string | null | undefined): Tone {
   return STATUS_TONE[(status ?? "unknown") as ProviderStatus] ?? "neutral";
 }
 
+/** The word a row's status badge shows (live finding F8). An LLM connection that is "unknown" with no reason has made
+ *  no call in the window, so it says "No recent calls" like Routing. Any other row keeps its status: a Jev or
+ *  DataForSEO row is "unknown" because no top-up or balance is known (its reason line says so), and an unreadable
+ *  source stays "unknown". */
+export function statusWordKey(row: Pick<ProviderRow, "group" | "status" | "status_reason">): ProviderStatus | "no_recent_calls" {
+  return row.group === "llm" && row.status === "unknown" && !row.status_reason ? "no_recent_calls" : row.status;
+}
+
 /** Worst first: what needs a look sits at the top of the summary tile. */
 const SEVERITY: Record<ProviderStatus, number> = {
   open: 0, cap_reached: 1, degraded: 2, low: 3, unknown: 4, ok: 5, disabled: 6,
@@ -245,8 +258,8 @@ export function traceParam(t: TraceTarget): string {
 }
 
 /** Rows grouped as the page lists them: LLM connections, then Jev, then the data providers. */
-export function groupRows(rows: readonly ProviderRow[]): Record<ProviderGroup, ProviderRow[]> {
-  const out: Record<ProviderGroup, ProviderRow[]> = { llm: [], decide: [], data: [] };
+export function groupRows<R extends Pick<ProviderRow, "group">>(rows: readonly R[]): Record<ProviderGroup, R[]> {
+  const out: Record<ProviderGroup, R[]> = { llm: [], decide: [], data: [] };
   for (const r of rows) (out[r.group] ?? out.data).push(r);
   return out;
 }
@@ -323,6 +336,9 @@ export function accountRouteMatters(rows: readonly { account_route: string | nul
 export type BudgetState = "ok" | "alert" | "cap_reached" | "no_daily_cap";
 export type ConnectionBudgetState = "ok" | "alert" | "stopped" | "no_budget";
 
+/** Who last changed a cap (backend ai_gateway.actor_view): a staff member by name, a migration, other text. */
+export type ActorKind = "staff" | "migration" | "other" | "none";
+
 export interface SpendBudgetRow {
   provider: string;
   scope: string;
@@ -336,6 +352,9 @@ export interface SpendBudgetRow {
   alert_pct: number | null;
   updated_at: string | null;
   updated_by: string | null;
+  /** C4 (F5): absent on an older API (the page then never prints a raw id). */
+  updated_by_kind?: ActorKind;
+  updated_by_name?: string | null;
   spent_today_usd: number;
   used_pct: number | null;
   state: BudgetState;
@@ -371,11 +390,13 @@ export interface BudgetsResp {
   day_start: string;
   month_start: string;
   providers: string[];
+  /** AA-1016 (C4): false before CIS migration 321 (no tenant budget table yet); absent on an older API. */
+  tenant_ready?: boolean;
   tiers: {
     provider: SpendBudgetRow[];
     job: SpendBudgetRow[];
     connection: ConnectionBudgetRow[];
-    tenant: unknown[];
+    tenant: TenantBudgetRow[];
   };
   coverage: CoverageRow[];
   spent_today_usd: Record<string, number>;
@@ -572,4 +593,407 @@ export function callsHref(f: CallFilters): string {
     if (v) q.set(CALL_PARAM[k], v);
   }
   return `${PAGE_PATH}?${q.toString()}`;
+}
+
+// ── C4 (S262 wave 4): actor names, tenant AI budgets, warm paths, access state, the failure-domain rule,
+//    the Experiments section and the re-queue of refused jobs ──────────────────────────────────────────────────────
+
+const UUID_ANYWHERE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+/** What the "Last changed" column prints (live finding F5): a staff member's name, "Migration NNN", other text; a
+ *  staff id with no name (a former member, or an older API) is `staffFallback`, never the raw id. */
+export function actorLabel(r: { updated_by?: string | null; updated_by_kind?: ActorKind; updated_by_name?: string | null },
+  staffFallback: string): string | null {
+  if (r.updated_by_name) return r.updated_by_name;
+  const raw = (r.updated_by ?? "").trim();
+  if (!raw) return null;
+  if (r.updated_by_kind === "staff" || UUID_ANYWHERE.test(raw)) return staffFallback;
+  const m = /^migration[-_ ]?(\d{3})(?:[-_].*)?$/i.exec(raw);
+  return m ? `Migration ${m[1]}` : raw;
+}
+
+export type TenantBudgetState = "unlimited" | "ok" | "alert" | "approval" | "over";
+
+/** One tenant's monthly AI budget (backend api/services/tenant_ai_budget.py budget_view). */
+export interface TenantBudgetRow {
+  tenant_id: string;
+  tenant_name: string | null;
+  monthly_usd: number | null;
+  alert_pct: number;
+  approval_pct: number;
+  hard_stop: boolean;
+  notes: string | null;
+  updated_at: string | null;
+  updated_by: string | null;
+  updated_by_kind?: ActorKind;
+  updated_by_name?: string | null;
+  month_spent_usd: number;
+  month_calls: number;
+  used_pct: number | null;
+  state: TenantBudgetState;
+}
+
+/** GET /api/admin/ai-gateway/tenant-budgets/{tenant_id} (Tenant 360 › Cost). */
+export interface TenantBudgetResp {
+  ready: boolean;
+  tenant_id: string;
+  tenant_name: string | null;
+  budget: TenantBudgetRow | null;
+  month_spent_usd: number;
+  month_calls: number;
+  month_start: string;
+  defaults: { monthly_usd: number | null; alert_pct: number; approval_pct: number; hard_stop: boolean;
+    notes: string | null };
+}
+
+export function tenantBudgetPath(tenantId: string): string {
+  return `/api/admin/ai-gateway/tenant-budgets/${encodeURIComponent(tenantId)}`;
+}
+
+const TENANT_BUDGET_TONE: Record<TenantBudgetState, Tone> = {
+  unlimited: "neutral", ok: "success", alert: "warning", approval: "danger", over: "warning",
+};
+
+export function tenantBudgetTone(state: string | null | undefined): Tone {
+  return TENANT_BUDGET_TONE[(state ?? "") as TenantBudgetState] ?? "neutral";
+}
+
+/** The tenant budget editor's draft: every field a string, like the spend budget editor. */
+export interface TenantBudgetDraft {
+  monthly: string;
+  alert_pct: string;
+  approval_pct: string;
+  hard_stop: boolean;
+  notes: string;
+}
+
+export interface TenantBudgetBody {
+  monthly_usd: number | null;
+  alert_pct: number;
+  approval_pct: number;
+  hard_stop: boolean;
+  notes: string | null;
+}
+
+export type TenantBudgetError = "monthly" | "alertPct" | "approvalPct" | "order" | "notes";
+
+export function tenantBudgetDraftOf(b: Pick<TenantBudgetRow, "monthly_usd" | "alert_pct" | "approval_pct"
+  | "hard_stop" | "notes"> | null): TenantBudgetDraft {
+  return {
+    monthly: b?.monthly_usd == null ? "" : String(b.monthly_usd),
+    alert_pct: String(b?.alert_pct ?? 100),
+    approval_pct: String(b?.approval_pct ?? 150),
+    hard_stop: b?.hard_stop ?? false,
+    notes: b?.notes ?? "",
+  };
+}
+
+function wholePct(v: string): number | undefined {
+  const n = Number(v.trim());
+  return v.trim() !== "" && Number.isInteger(n) && n >= 1 && n <= 1000 ? n : undefined;
+}
+
+/** The PUT body of a draft (backend TenantBudgetBody: amount >= 0 or empty = no amount, whole % 1–1000, approval at
+ *  least the alert %, notes up to 2,000 characters), or the first problem. The API checks again. */
+export function tenantBudgetBody(d: TenantBudgetDraft): { body?: TenantBudgetBody; error?: TenantBudgetError } {
+  const m = d.monthly.trim();
+  const monthly = m === "" ? null : Number(m);
+  if (monthly !== null && (!Number.isFinite(monthly) || monthly < 0 || monthly > 1_000_000)) return { error: "monthly" };
+  const alert = wholePct(d.alert_pct);
+  if (alert === undefined) return { error: "alertPct" };
+  const approval = wholePct(d.approval_pct);
+  if (approval === undefined) return { error: "approvalPct" };
+  if (approval < alert) return { error: "order" };
+  if (d.notes.length > 2000) return { error: "notes" };
+  return { body: { monthly_usd: monthly === null ? null : Math.round(monthly * 100) / 100, alert_pct: alert,
+    approval_pct: approval, hard_stop: d.hard_stop, notes: d.notes.trim() || null } };
+}
+
+export function sameTenantDraft(a: TenantBudgetDraft, b: TenantBudgetDraft): boolean {
+  return a.monthly.trim() === b.monthly.trim() && a.alert_pct.trim() === b.alert_pct.trim()
+    && a.approval_pct.trim() === b.approval_pct.trim() && a.hard_stop === b.hard_stop
+    && a.notes.trim() === b.notes.trim();
+}
+
+/** The Tenant 360 link of a tenant's Cost tab (the Budgets tab's tenant rows). */
+export function tenantCostHref(tenantId: string): string {
+  return `/admin/tenants?tenant=${encodeURIComponent(tenantId)}&tab=cost`;
+}
+
+/** The warm independent paths of root ADR 0009 (decision 2, accepted 31/10/2026): both direct vendor APIs. A row is a
+ *  warm path by its connection kind (the API key connection of that vendor), never by an account key. */
+export type WarmPath = "anthropic" | "openai";
+
+export function warmPathOf(row: { group?: string; provider?: string | null; data_scope?: string | null }):
+  WarmPath | null {
+  if (row.group !== undefined && row.group !== "llm") return null;
+  if (row.data_scope && row.data_scope !== "vendor_direct") return null;
+  return row.provider === "anthropic" || row.provider === "openai" ? row.provider : null;
+}
+
+/** Access state of a registry row (migration 322): unknown | ok | access_denied | quota_exhausted | unconfigured. */
+export const ACCESS_STATES = ["ok", "unknown", "access_denied", "quota_exhausted", "unconfigured"] as const;
+export type AccessState = (typeof ACCESS_STATES)[number];
+
+const ACCESS_TONE: Record<AccessState, Tone> = {
+  ok: "success", unknown: "neutral", access_denied: "danger", quota_exhausted: "danger", unconfigured: "warning",
+};
+
+export function accessTone(state: string | null | undefined): Tone {
+  return ACCESS_TONE[(state ?? "unknown") as AccessState] ?? "neutral";
+}
+
+export function isAccessState(state: string | null | undefined): state is AccessState {
+  return (ACCESS_STATES as readonly string[]).includes(state ?? "");
+}
+
+/** The registry facts of one LLM connection the Providers overview adds to its row: from GET /api/admin/llm-connections
+ *  (access_state, last_probe_at, failure_domain once migration 322 is applied) and GET /api/admin/llm-availability
+ *  (failure_domain derived today). Any field the API does not send stays undefined, and its line is hidden. */
+export interface RegistryFacts {
+  failure_domain?: string | null;
+  access_state?: string | null;
+  last_probe_at?: string | null;
+}
+
+export function registryFacts(
+  key: string | null | undefined,
+  connections: readonly (RegistryFacts & { connection_key: string })[] | undefined,
+  availability: readonly { connection_key: string; failure_domain?: string | null }[] | undefined,
+): RegistryFacts {
+  if (!key) return {};
+  const c = connections?.find((x) => x.connection_key === key);
+  const a = availability?.find((x) => x.connection_key === key);
+  const out: RegistryFacts = {};
+  const domain = c?.failure_domain ?? a?.failure_domain;
+  if (domain !== undefined) out.failure_domain = domain;
+  if (c && "access_state" in c) out.access_state = c.access_state;
+  if (c && "last_probe_at" in c) out.last_probe_at = c.last_probe_at;
+  return out;
+}
+
+/** A failure domain `<kind>:<account>:<scope>` as the page prints it: the account part named by the caller (an AWS
+ *  account ID or the vendor API's name, never a key), then the kind and the scope. */
+export function domainParts(domain: string | null | undefined): { kind: string; account: string; scope: string } | null {
+  if (!domain) return null;
+  const parts = domain.split(":");
+  if (parts.length < 3) return null;
+  return { kind: parts[0], account: parts.slice(1, -1).join(":"), scope: parts[parts.length - 1] };
+}
+
+/** The failure-domain rule's answer for one stage (GET /api/admin/llm-availability `invariant.stages`). */
+export interface InvariantStage {
+  stage: string;
+  role: string;
+  ok: boolean;
+  primary: string | null;
+  primary_domain: string | null;
+  other_domains: string[];
+  reason: string | null;
+}
+
+export interface Invariant {
+  ready?: boolean;
+  report_only?: boolean;
+  ok?: boolean;
+  stages_checked?: number;
+  breaches?: number;
+  stages?: InvariantStage[];
+}
+
+/** The rule's answer per stage, or an empty map when the API has no report (older API, or before migration 304). */
+export function invariantByStage(inv: Invariant | null | undefined): Record<string, InvariantStage> {
+  if (!inv || inv.ready === false || !Array.isArray(inv.stages)) return {};
+  return Object.fromEntries(inv.stages.map((s) => [s.stage, s]));
+}
+
+// ── Experiments (GET /api/admin/ai-gateway/experiments) ──────────────────────────────────────────────────────────
+
+export const EXPERIMENTS_API = "/api/admin/ai-gateway/experiments";
+
+export interface PromptVersionRow {
+  stage: string;
+  version: string;
+  prompt_sha256: string;
+  sha_short: string;
+  source_path: string | null;
+  notes: string | null;
+  created_at: string | null;
+  created_by: string | null;
+}
+
+export interface EvalRunRow {
+  id: string;
+  pipeline: string;
+  prompt_version: string;
+  baseline_prompt_version: string | null;
+  run_kind: string;
+  writer: string | null;
+  tour_count: number;
+  avg_quality_score: number | null;
+  baseline_avg_quality_score: number | null;
+  gate_pass_count: number | null;
+  gate_fail_count: number | null;
+  cost_usd: number | null;
+  cost_cap_usd: number | null;
+  regression_detected: boolean;
+  verdict: string | null;
+  stop_reason: string | null;
+  judge_kappa: number | null;
+  created_at: string | null;
+  finished_at: string | null;
+}
+
+export interface ExperimentList<T> {
+  ready: boolean;
+  rows: T[];
+  limit: number;
+  error: string | null;
+}
+
+export interface ExperimentsResp {
+  prompt_versions: ExperimentList<PromptVersionRow>;
+  eval_runs: ExperimentList<EvalRunRow>;
+}
+
+export function verdictTone(verdict: string | null | undefined, regression?: boolean): Tone {
+  if (regression || verdict === "fail" || verdict === "invalid") return "danger";
+  if (verdict === "pass") return "success";
+  if (verdict === "baseline" || verdict === "informative") return "info";
+  return "neutral";
+}
+
+// ── re-queue the jobs an LLM account block failed (POST /api/admin/job-runner/jobs/retry-llm-denied) ─────────────
+
+export const RETRY_LLM_DENIED_API = "/api/admin/job-runner/jobs/retry-llm-denied";
+
+export interface RetryJob {
+  id: string;
+  kind: string;
+  error: string;
+  finished_at: string | null;
+  held?: string;
+}
+
+export interface RetryLlmDeniedResp {
+  dry_run: boolean;
+  prefix: string;
+  since: string;
+  kinds: string[];
+  limit: number;
+  matched: number;
+  eligible: number;
+  held_count: number;
+  requeued: number;
+  requeued_ids: string[];
+  jobs: RetryJob[];
+  held: RetryJob[];
+  blocked_connections: Record<string, string>;
+  more: boolean;
+}
+
+/** Rows one real re-queue reads at most (backend shared/jobs/queue.py RETRY_REASON_APPLY_LIMIT). The dry run asks
+ *  for the same number, so its "eligible" is exactly what the apply right after it re-queues. */
+export const REQUEUE_BATCH = 50;
+
+/** The POST body: a batch of REQUEUE_BATCH rows from `since` (the server's default window, 14 days, when absent).
+ *  The apply passes the dry run's own `since`, so both read the same rows. */
+export function requeueBody(dryRun: boolean, since?: string | null): { dry_run: boolean; limit: number; since?: string } {
+  return since ? { dry_run: dryRun, limit: REQUEUE_BATCH, since } : { dry_run: dryRun, limit: REQUEUE_BATCH };
+}
+
+/** Where the next batch starts, or null when there is none: the latest `finished_at` of the rows this call read (the
+ *  rows are read oldest first). Its re-queued rows have left the failed set and its held rows before that time are
+ *  skipped, so held rows can not fill every batch. Null as well when the cursor would not move (every row of a full
+ *  batch finished in the same instant), so the page never offers the same batch again. */
+export function nextRequeueSince(r: Pick<RetryLlmDeniedResp, "more" | "since" | "jobs" | "held">): string | null {
+  if (!r.more) return null;
+  let best: string | null = null;
+  let bestMs = -Infinity;
+  for (const j of [...r.jobs, ...r.held]) {
+    const ms = j.finished_at ? Date.parse(j.finished_at) : NaN;
+    if (!Number.isNaN(ms) && ms > bestMs) { bestMs = ms; best = j.finished_at; }
+  }
+  if (best === null || bestMs <= Date.parse(r.since)) return null;
+  return best;
+}
+
+/** Why the dry run holds a job, as the page groups it (backend shared/jobs/queue.py `retry_by_reason` / `llm_hold`):
+ *  its connection is still refused, it names no connection but one is refused with the same class, its job type
+ *  refuses a retry, or its job type is not registered. */
+export type HeldType = "connection" | "same_class" | "kind_refuses" | "kind_unknown";
+
+export interface HeldGroup {
+  type: HeldType;
+  /** Connection keys (for the page to name, never to print), only for the two connection types. */
+  keys: string[];
+  /** The refusal classes of those connections (access_denied, quota_exhausted…). */
+  classes: string[];
+  /** The job kind, only for the two job-type types. */
+  kind: string | null;
+  jobs: number;
+}
+
+const HELD_ORDER: Record<HeldType, number> = { connection: 0, same_class: 1, kind_refuses: 2, kind_unknown: 3 };
+
+function namedKeys(text: string, keys: readonly string[]): string[] {
+  const esc = (k: string) => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return keys.filter((k) => new RegExp(`(?<![A-Za-z0-9-])${esc(k)}(?![A-Za-z0-9-])`).test(text)).sort();
+}
+
+/** The dry run's held jobs grouped by why, biggest group first. The backend's reason text is only parsed here, never
+ *  shown: it names connections by key and classes by code. */
+export function heldGroups(held: readonly RetryJob[], blocked: Readonly<Record<string, string>>): HeldGroup[] {
+  const keys = Object.keys(blocked);
+  const m = new Map<string, HeldGroup>();
+  for (const j of held) {
+    const why = j.held ?? "";
+    let g: Omit<HeldGroup, "jobs">;
+    if (why.startsWith("kind is not registered")) {
+      g = { type: "kind_unknown", keys: [], classes: [], kind: j.kind };
+    } else if (why.startsWith("connection still refused") || why.startsWith("a connection is still refused")) {
+      const named = namedKeys(why, keys);
+      g = { type: why.startsWith("connection") ? "connection" : "same_class", keys: named, kind: null,
+        classes: [...new Set(named.map((k) => blocked[k]).filter(Boolean))].sort() };
+    } else {
+      g = { type: "kind_refuses", keys: [], classes: [], kind: j.kind };
+    }
+    const id = `${g.type}|${g.keys.join(",")}|${g.kind ?? ""}`;
+    const cur = m.get(id);
+    if (cur) cur.jobs += 1; else m.set(id, { ...g, jobs: 1 });
+  }
+  return [...m.values()].sort((a, b) => b.jobs - a.jobs || HELD_ORDER[a.type] - HELD_ORDER[b.type]);
+}
+
+// ── Models & trials: catalog text without internal names (live finding F4) ─────────────────────────────────────
+
+const SESSION_TAG = /\b(?:S\d{3}|AA-\d{2,5})\b[:,]?\s*/g;
+const INTERNAL_PART = /\.py\b|\bmigration\s*\d{3}\b|\b[a-z_]+\.[a-z_]+_(?:log|config|catalog)\b/i;
+
+function tidy(text: string): string {
+  return text.replace(/\s{2,}/g, " ").replace(/\s+([,.;:)])/g, "$1").replace(/\(\s*\)/g, "")
+    .replace(/^[\s,;:.-]+|[\s,;:-]+$/g, "").trim();
+}
+
+function sentenceCase(text: string): string {
+  if (!text) return text;
+  const lower = text === text.toUpperCase() ? text.toLowerCase() : text;
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
+}
+
+/** A model's blocked reason for people: no session or issue tag, no shouting (the kit badge stays short: the page
+ *  shows the badge "Blocked" and this sentence under it). */
+export function blockedReasonText(reason: string | null | undefined): string | null {
+  if (!reason) return null;
+  const out = sentenceCase(tidy(reason.replace(SESSION_TAG, " ")));
+  return out || null;
+}
+
+/** A price source for people: parts naming a code file, a migration or a table are left out, session tags removed;
+ *  nothing left = `fallback` (e.g. "Built-in price table"). */
+export function priceSourceText(source: string | null | undefined, fallback: string): string | null {
+  if (!source) return null;
+  const parts = source.replace(SESSION_TAG, " ").split(/;\s*|\.\s+(?=[A-Z])/)
+    .map((p) => tidy(p)).filter((p) => p && !INTERNAL_PART.test(p));
+  return parts.length ? parts.join("; ") : fallback;
 }

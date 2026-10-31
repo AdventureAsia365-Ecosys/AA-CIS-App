@@ -8,6 +8,8 @@
 // (default) or a table, with a kit LatencyStrip of the calls. Since ledger v2 a refused attempt is a $0 row with its
 // class; older rows have no outcome or latency, which the drawer says. An account is named through lib/awsAccounts
 // accountName (an AWS account ID or the vendor API's name), never by its key.
+// C4 (live finding F2): the table fits the drawer at 1440 (stage and what share a column, tokens sit under the cost,
+// compact cells, a wider drawer) and neither the table nor the timeline has its own height cap: the drawer scrolls.
 
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
@@ -69,15 +71,18 @@ export default function TraceDrawer({ target, onClose }: { target: TraceTarget; 
       cell: ({ row }) => <span style={{ whiteSpace: "nowrap" }}><DateText value={row.original.at} withTime /></span> },
     { id: "source", header: t("colSource"), accessorKey: "source",
       cell: ({ row }) => <Badge dot={false}>{tsrc(row.original.source)}</Badge> },
-    { id: "stage", header: t("colStage"), accessorFn: (r) => r.stage ?? "",
-      cell: ({ row }) => <span style={{ fontFamily: mono, fontSize: 12 }}>{row.original.stage ?? "—"}</span> },
-    { id: "what", header: t("colWhat"), accessorFn: (r) => r.what ?? "",
-      cell: ({ row }) => <span style={{ fontFamily: mono, fontSize: 12 }}>{row.original.what ?? "—"}</span> },
+    { id: "stage", header: t("colStageWhat"), accessorFn: (r) => r.stage ?? r.what ?? "",
+      cell: ({ row: { original: e } }) => (
+        <span style={{ display: "grid", gap: 2, fontFamily: mono, fontSize: 12, overflowWrap: "anywhere" }}>
+          <span>{e.stage ?? "—"}</span>
+          {e.what && e.what !== e.stage && <span style={{ color: K.muted }}>{e.what}</span>}
+        </span>
+      ) },
     { id: "model", header: t("colModel"), accessorFn: (r) => r.model ?? r.provider ?? "",
       cell: ({ row: { original: e } }) => (
-        <span style={{ fontFamily: mono, fontSize: 12 }}>
-          {e.model ?? e.provider ?? "—"}
-          {e.account ? ` · ${accountName(e.account, dir, accountText)}` : ""}
+        <span style={{ display: "grid", gap: 2, fontFamily: mono, fontSize: 12, overflowWrap: "anywhere" }}>
+          <span>{e.model ?? e.provider ?? "—"}</span>
+          {e.account && <span style={{ color: K.muted }}>{accountName(e.account, dir, accountText)}</span>}
         </span>
       ) },
     { id: "outcome", header: t("colOutcome"), accessorFn: (r) => r.outcome ?? "",
@@ -93,15 +98,19 @@ export default function TraceDrawer({ target, onClose }: { target: TraceTarget; 
           </span>
         );
       } },
-    { id: "cost", header: t("colCost"), accessorFn: (r) => r.cost_usd ?? 0, meta: { align: "right" },
-      cell: ({ row }) => <span style={{ fontFamily: mono }}>{usd(row.original.cost_usd)}</span> },
+    { id: "cost", header: t("colCostTokens"), accessorFn: (r) => r.cost_usd ?? 0, meta: { align: "right" },
+      cell: ({ row: { original: e } }) => (
+        <span style={{ display: "grid", gap: 2, justifyItems: "end", fontFamily: mono, whiteSpace: "nowrap" }}>
+          <span>{usd(e.cost_usd)}</span>
+          {(e.tokens_in != null || e.tokens_out != null) && (
+            <span style={{ ...small, fontFamily: mono }} title={t("colTokens")}>
+              {e.tokens_in ?? 0} / {e.tokens_out ?? 0}</span>
+          )}
+        </span>
+      ) },
     { id: "latency", header: t("colLatency"), accessorFn: (r) => r.latency_ms ?? -1, meta: { align: "right" },
-      cell: ({ row }) => <span style={{ fontFamily: mono }}>
+      cell: ({ row }) => <span style={{ fontFamily: mono, whiteSpace: "nowrap" }}>
         {row.original.latency_ms == null ? "—" : `${row.original.latency_ms} ms`}</span> },
-    { id: "tokens", header: t("colTokens"), accessorFn: (r) => (r.tokens_in ?? 0) + (r.tokens_out ?? 0),
-      meta: { align: "right" },
-      cell: ({ row: { original: e } }) => <span style={{ fontFamily: mono }}>
-        {e.tokens_in == null && e.tokens_out == null ? "—" : `${e.tokens_in ?? 0} / ${e.tokens_out ?? 0}`}</span> },
   ], [t, tsrc, tout, dir, accountText]);
 
   const notFound = q.error instanceof ApiError && q.error.status === 404;
@@ -119,7 +128,7 @@ export default function TraceDrawer({ target, onClose }: { target: TraceTarget; 
   );
 
   return (
-    <Drawer open onClose={onClose} title={header} width={880}>
+    <Drawer open onClose={onClose} title={header} width={1000}>
       <div data-testid="ai-gateway-trace">
         {q.isLoading && <div style={small}>{t("traceLoading")}</div>}
         {q.error && (
@@ -203,12 +212,12 @@ export default function TraceDrawer({ target, onClose }: { target: TraceTarget; 
               options={[{ value: "timeline", label: t("traceViewTimeline") },
                 { value: "table", label: t("traceViewTable") }]} />
             {view === "timeline" ? (
-              <TraceTimeline events={timeline} maxHeight={520} testId="ai-gateway-trace-timeline"
+              <TraceTimeline events={timeline} testId="ai-gateway-trace-timeline"
                 emptyText={target.kind === "tour" ? t("traceEmptyTour") : t("traceEmpty")} />
             ) : (
               <DataTable<Row>
                 tableId="ai-gateway-trace-events" data={rows} columns={columns} getRowId={(r) => String(r._i)}
-                searchable={false} paginate={false} tableMinWidth={900} maxBodyHeight={520}
+                searchable={false} paginate={false} compact stickyHeader={false} tableMinWidth={900}
                 emptyTitle={target.kind === "tour" ? t("traceEmptyTour") : t("traceEmpty")}
               />
             )}

@@ -202,13 +202,11 @@ export default function S1RewritePage() {
   const [filterSearch, setFilterSearch]     = useState("");
   const [page, setPage]                     = useState(1);
   const [seoMode, setSeoMode]               = useState("standard");
-  // AA-702: "" = no per-run override, so the s1_generate route in AI providers -> Routing applies
-  // (an explicit model_tier always wins over it in LLMClient). Was hardcoded "haiku", which
-  // silently overrode whatever Settings said on every admin S1 run.
-  const [modelTier, setModelTier]           = useState("");
+  // AA-702 / S262 C4 (root ADR 0009 UI "the per-run model_tier select leaves /admin/s1-rewrite"): a run never picks
+  // its own model. It sends no model_tier, so the s1_generate route in AI providers › Routing applies (an explicit
+  // model_tier would win over the route in LLMClient); the page only shows which model that is.
   const [seoPrefetch, setSeoPrefetch]       = useState<{ state: "running" | "done" | "failed"; text: string } | null>(null);
-  const [s1Models, setS1Models]             = useState<{ current: string; options: { model_id: string; label: string }[] }>(
-    { current: "", options: [] });
+  const [s1Model, setS1Model]               = useState("");
   const [brandList, setBrandList]           = useState<BrandSummary[]>([]);
   const [brandName, setBrandName]           = useState<string | null>(null);
   const [brandId, setBrandId]               = useState<string | null>(null);
@@ -263,9 +261,8 @@ export default function S1RewritePage() {
       .then(d => {
         const row = (d?.stages ?? []).find((x: any) => x.stage === "s1_generate");
         if (!row) return;
-        const options = (row.options ?? []).filter((o: any) => o.available);
-        const cur = options.find((o: any) => o.model_id === row.model_id);
-        setS1Models({ current: cur?.label ?? row.model_id, options });
+        const cur = (row.options ?? []).find((o: any) => o.model_id === row.model_id);
+        setS1Model(cur?.label ?? row.model_id);
       })
       .catch(() => {});
   }, []);
@@ -356,7 +353,6 @@ export default function S1RewritePage() {
           batch_id:             tour.batch_id || TENANT_ID,
           tenant_id:            TENANT_ID,
           seo_mode:             seoMode,
-          model_tier:           modelTier || null,
           brand_identity_id:    brandId || undefined,
           brand_name:           brandName || undefined,
         }),
@@ -590,9 +586,7 @@ export default function S1RewritePage() {
     minimal:    t("seoMinimal"),
   }[m] ?? m);
 
-  const modelLabel = (m: string) => m
-    ? (s1Models.options.find(o => o.model_id === m)?.label ?? m)
-    : t("settingsDefaultModel", s1Models.current);
+  const modelLabel = () => t("settingsDefaultModel", s1Model);
 
   if (loading) {
     return (
@@ -649,17 +643,11 @@ export default function S1RewritePage() {
             </div>
             <div style={{ flex: "1 1 200px", minWidth: 0 }}>
               <label style={{ fontSize: 11, color: A.muted, display: "block", marginBottom: 4 }}>{t("model")}</label>
-              <select
-                value={modelTier}
-                onChange={e => setModelTier(e.target.value)}
-                disabled={running}
-                style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 13, fontFamily: sans, background: A.card }}
-              >
-                <option value="">{t("settingsDefault", s1Models.current)}</option>
-                {s1Models.options.map(o => (
-                  <option key={o.model_id} value={o.model_id}>{t("thisRunOnly", o.label)}</option>
-                ))}
-              </select>
+              <div data-testid="s1-route-model"
+                style={{ padding: "7px 0", fontSize: 13, color: A.ink, fontFamily: sans, overflowWrap: "anywhere" }}>
+                {s1Model || "—"}{" "}
+                <a href="/admin/ai-gateway?tab=routing" style={{ fontSize: 12, color: A.gold }}>{t("routeLink")}</a>
+              </div>
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
               {selectedIds.size >= 2 && selectedIds.size <= 4 && (
@@ -889,7 +877,7 @@ export default function S1RewritePage() {
                   {t("confirmLead")}{" "}
                   <strong>{t("toursCount", selectedIds.size)}</strong>{" "}
                   {t("using")} <strong>{t("seoModeName", seoModeLabel(seoMode))}</strong> {t("modeWith")}{" "}
-                  <strong>{modelLabel(modelTier)}</strong>
+                  <strong>{modelLabel()}</strong>
                   {brandName ? t("brandSuffix", brandName) : ""}{t("continueQ")}
                 </div>
                 <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>

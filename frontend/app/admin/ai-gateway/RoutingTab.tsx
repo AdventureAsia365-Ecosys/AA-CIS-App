@@ -9,6 +9,9 @@
 // The per-stage account select (AA-1017 D10) shows only while a stage still routes to another account than the LLM
 // account (lib/aiGateway accountRouteMatters); hidden, the save sends the row's own account route back unchanged.
 // GET /api/admin/llm-config keeps its path and access (the S1 rewrite page reads it too). Kit only.
+// C4 (S262 wave 4, AA-1018 UI): each stage carries the failure-domain rule's answer (GET /api/admin/llm-availability
+// `invariant`, report only): "Fallback in another failure domain" or "No fallback in another failure domain" with why.
+// An API without the report shows no badge.
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -17,7 +20,9 @@ import {
   Badge, Button, ConfirmModal, DataTable, ErrorState, K, LoadingScreen, Section, Select, Spinner, apiGet, apiSend,
   mono, useFormat, useLocalized, useT, useToast, type ColumnDef,
 } from "../../_kit";
-import { accountRouteMatters } from "@/lib/aiGateway";
+import {
+  accountRouteMatters, actorLabel, invariantByStage, type Invariant, type InvariantStage,
+} from "@/lib/aiGateway";
 import { accountName } from "@/lib/awsAccounts";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import {
@@ -27,6 +32,7 @@ import { STAGE_GROUP_LABELS_VI, STAGE_LABELS_VI } from "./llmShared.vi";
 import { LlmAvailabilityCard } from "./LlmAvailabilityCard";
 import { MODELS } from "./models.messages";
 import { StageRouteEditor } from "./StageRouteEditor";
+import { useDomainText } from "./useDomainText";
 
 const STAGE_GROUP_LABELS: Record<string, string> = Object.fromEntries(STAGE_GROUPS.map((g) => [g.key, g.label]));
 
@@ -70,8 +76,38 @@ function RouteLine({ route }: { route?: StageRoute }) {
   );
 }
 
+// ── Failure-domain badge (AA-1018 invariant, report only) ─────────────────────────────────────────────────────────
+function DomainBadge({ result }: { result: InvariantStage }) {
+  const t = useT(MODELS);
+  const domainText = useDomainText();
+  const others = result.other_domains.map((d) => domainText(d)).filter(Boolean).join("; ");
+  const why = result.ok ? t("domainOkWhy", others)
+    : result.primary_domain ? t("domainBreachOne", domainText(result.primary_domain) ?? "") : t("domainBreachNone");
+  return (
+    <span data-testid={`llm-domain-${result.stage}`} title={why}
+      style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0, flexWrap: "wrap" }}>
+      <Badge tone={result.ok ? "success" : "warning"} dot={false} style={{ whiteSpace: "nowrap" }}>
+        {result.ok ? t("domainOk") : t("domainBreach")}
+      </Badge>
+    </span>
+  );
+}
+
+function DomainLine({ result }: { result: InvariantStage }) {
+  const t = useT(MODELS);
+  const domainText = useDomainText();
+  if (result.ok) return null;
+  return (
+    <div style={{ fontSize: 11.5, color: K.amber, lineHeight: 1.5 }}>
+      {result.primary_domain ? t("domainBreachOne", domainText(result.primary_domain) ?? "") : t("domainBreachNone")}
+    </div>
+  );
+}
+
 // ── Primary-model row (PATCH /llm-config/{stage}) + its route editor ───────────────────────────────────────────────
-function ModelRow({ row, showAccount }: { row: StageConfigRow; showAccount: boolean }) {
+function ModelRow({ row, showAccount, domain }: {
+  row: StageConfigRow; showAccount: boolean; domain?: InvariantStage;
+}) {
   const t = useT(MODELS);
   const { formatDateTime } = useFormat();
   const stageLabels = useLocalized({ en: STAGE_LABELS, vi: STAGE_LABELS_VI });
@@ -133,6 +169,7 @@ function ModelRow({ row, showAccount }: { row: StageConfigRow; showAccount: bool
           </div>
         </div>
         <Badge tone={ROLE_TONE[row.role] ?? "neutral"} dot={false}>{row.role}</Badge>
+        {domain && <DomainBadge result={domain} />}
         <Select size="sm" data-testid={`llm-model-select-${row.stage}`} aria-label={t("primaryFor", row.stage)}
           value={modelId} onChange={(e) => setModelId(e.target.value)} disabled={saving}
           style={{ flex: "1 1 260px", minWidth: 0 }}
@@ -154,7 +191,7 @@ function ModelRow({ row, showAccount }: { row: StageConfigRow; showAccount: bool
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           {error && <span style={{ fontSize: 11.5, color: K.danger }}>{error}</span>}
           <span style={{ fontSize: 11, color: K.muted2 }}>
-            {row.updated_at ? formatDateTime(row.updated_at) : "—"} · {row.updated_by}
+            {row.updated_at ? formatDateTime(row.updated_at) : "—"} · {actorLabel(row, t("staffMember")) ?? "—"}
           </span>
           <Button variant="secondary" size="sm" disabled={!dirty || saving} onClick={() => setConfirming(true)}
             testId={`llm-model-save-${row.stage}`}>
@@ -165,6 +202,7 @@ function ModelRow({ row, showAccount }: { row: StageConfigRow; showAccount: bool
       </div>
 
       <RouteLine route={row.route} />
+      {domain && <DomainLine result={domain} />}
 
       {/* AA-686 — fallback chain + shadow A/B editor */}
       <StageRouteEditor row={row} />
@@ -255,6 +293,13 @@ export default function RoutingTab() {
   });
   const rows = useMemo(() => data?.stages ?? [], [data]);
   const showAccount = useMemo(() => accountRouteMatters(rows), [rows]);
+  // Same cache as the availability card above (one read for both).
+  const avail = useQuery({
+    queryKey: ["llm-availability", 24],
+    queryFn: () => apiGet<{ invariant?: Invariant }>("/api/admin/llm-availability?hours=24", { admin: true }),
+    refetchInterval: 60_000,
+  });
+  const domains = useMemo(() => invariantByStage(avail.data?.invariant), [avail.data]);
 
   if (isLoading && !data) return <LoadingScreen message={t("loadingConfig")} />;
   if (isError || !data) {
@@ -280,7 +325,9 @@ export default function RoutingTab() {
         return (
           <Section key={group.key} title={groupLabels[group.key] ?? group.label}>
             <div style={{ marginTop: -12 }}>
-              {stages.map((stage) => <ModelRow key={stage} row={byStage[stage]} showAccount={showAccount} />)}
+              {stages.map((stage) => (
+                <ModelRow key={stage} row={byStage[stage]} showAccount={showAccount} domain={domains[stage]} />
+              ))}
             </div>
           </Section>
         );

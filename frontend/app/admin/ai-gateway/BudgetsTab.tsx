@@ -6,8 +6,12 @@
 //   Provider daily caps + Job caps   shared.spend_budget, edited in a kit Drawer through the existing
 //                                    PUT /api/admin/budgets/{provider}/{scope} (spend.write; confirm first).
 //   LLM connection budgets           read here; edited with the connection's settings (Providers › Connections).
-//   Tenant AI budgets                empty until the tenant budget table exists (AA-1016).
+//   Tenant AI budgets                shared.tenant_ai_budget (AA-1016, migration 321): each tenant's monthly budget and
+//                                    this month's spend; set on the tenant (Tenants › the tenant › Cost). Before 321
+//                                    (tenant_ready false or absent) the designed empty state.
 //   Coverage                         does every paid provider and switched-on connection have a cap.
+// C4 live findings: "Last changed" names a person, never a raw id (F5, lib/aiGateway actorLabel); state badges do not
+// wrap (F5); a connection without a budget says "no cap set" instead of "Stops at the cap · 80 %" (F6).
 // Built on the kit only (KpiTile, Section, DataTable, Drawer, Field/Input/Select, ConfirmModal, Badge, Toast).
 
 import { useMemo, useState } from "react";
@@ -18,9 +22,9 @@ import {
   Select, apiGet, apiSend, mono, useT, useToast, type ColumnDef,
 } from "../../_kit";
 import {
-  BUDGETS_API, budgetBody, budgetDraftOf, budgetProviderLabel, budgetPutPath, budgetTone, pct, sameDraft, usd,
-  validScope, type BudgetDraft, type BudgetError, type BudgetsResp, type ConnectionBudgetRow, type CoverageRow,
-  type SpendBudgetRow,
+  BUDGETS_API, actorLabel, budgetBody, budgetDraftOf, budgetProviderLabel, budgetPutPath, budgetTone, pct, sameDraft,
+  tenantBudgetTone, tenantCostHref, usd, validScope, type BudgetDraft, type BudgetError, type BudgetsResp,
+  type ConnectionBudgetRow, type CoverageRow, type SpendBudgetRow, type TenantBudgetRow,
 } from "@/lib/aiGateway";
 import { connectionName } from "@/lib/llmConnections";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
@@ -34,10 +38,29 @@ function Lines({ children }: { children: React.ReactNode }) {
   return <div style={{ display: "grid", gap: 2, minWidth: 0 }}>{children}</div>;
 }
 
-function StateBadge({ state }: { state: string }) {
+function StateBadge({ state, tone }: { state: string; tone?: ReturnType<typeof budgetTone> }) {
   const ts = useT(BUDGET_STATE);
   const known = state in BUDGET_STATE.en;
-  return <Badge tone={budgetTone(state)} dot={false}>{known ? ts(state as keyof typeof BUDGET_STATE.en) : state}</Badge>;
+  // whiteSpace nowrap: a two-word state in a narrow column wrapped into a round blob (live finding F5).
+  return (
+    <Badge tone={tone ?? budgetTone(state)} dot={false} style={{ whiteSpace: "nowrap" }}>
+      {known ? ts(state as keyof typeof BUDGET_STATE.en) : state}
+    </Badge>
+  );
+}
+
+/** "Last changed": who (a person's name, "Migration NNN", never a raw id) and when. */
+function ChangedCell({ row }: {
+  row: Pick<SpendBudgetRow, "updated_at" | "updated_by" | "updated_by_kind" | "updated_by_name">;
+}) {
+  const t = useT(BUDGETS);
+  const who = actorLabel(row, t("staffMember"));
+  return (
+    <Lines>
+      <span style={small}>{who ?? "—"}</span>
+      {row.updated_at && <span style={small}><DateText value={row.updated_at} relative /></span>}
+    </Lines>
+  );
 }
 
 // ── the editor (one spend_budget row; new when `row` is null) ──────────────────────────────────────────────────────
@@ -162,7 +185,7 @@ function SpendBudgetTable({ id, rows, loading, onEdit }: {
       cell: (c) => <span style={{ fontFamily: mono }}>{c.row.original.per_day_usd == null ? t("noCap") : usd(c.row.original.per_day_usd, 2)}</span> },
     { id: "at_cap", header: t("colAtCap"), accessorKey: "hard_stop",
       cell: (c) => (
-        <Badge tone={c.row.original.hard_stop ? "danger" : "warning"} dot={false}>
+        <Badge tone={c.row.original.hard_stop ? "danger" : "warning"} dot={false} style={{ whiteSpace: "nowrap" }}>
           {c.row.original.hard_stop ? t("stopsAtCap") : t("alertOnly")}
         </Badge>
       ) },
@@ -182,12 +205,7 @@ function SpendBudgetTable({ id, rows, loading, onEdit }: {
       ) },
     { id: "state", header: t("colState"), accessorKey: "state", cell: (c) => <StateBadge state={c.row.original.state} /> },
     { id: "changed", header: t("colChanged"), accessorFn: (r) => r.updated_at ?? "",
-      cell: (c) => (
-        <Lines>
-          <span style={small}>{c.row.original.updated_by ?? "—"}</span>
-          {c.row.original.updated_at && <span style={small}><DateText value={c.row.original.updated_at} relative /></span>}
-        </Lines>
-      ) },
+      cell: (c) => <ChangedCell row={c.row.original} /> },
     { id: "actions", header: "", enableSorting: false, enableHiding: false,
       cell: (c) => (
         <span onClick={(e) => e.stopPropagation()}>
@@ -241,7 +259,10 @@ function ConnectionBudgetTable({ rows, loading }: { rows: ConnectionBudgetRow[];
         </Lines>
       ) },
     { id: "at_cap", header: t("colAtCap"), accessorKey: "hard_stop",
-      cell: (c) => <span style={small}>{c.row.original.hard_stop ? t("stopsAtCap") : t("alertOnly")} · {c.row.original.alert_pct} %</span> },
+      // F6: a connection without a budget has nothing to stop at or alert on.
+      cell: (c) => c.row.original.monthly_budget_usd == null
+        ? <span style={small}>{t("noCapSet")}</span>
+        : <span style={small}>{c.row.original.hard_stop ? t("stopsAtCap") : t("alertOnly")} · {c.row.original.alert_pct} %</span> },
     { id: "state", header: t("colState"), accessorKey: "state", cell: (c) => <StateBadge state={c.row.original.state} /> },
   ], [t, dir, accountText]);
   return (
@@ -292,6 +313,51 @@ function CoverageTable({ rows, loading }: { rows: CoverageRow[]; loading: boolea
       tableId="ai-gateway-budgets-coverage" data={rows} columns={columns} getRowId={(r) => `${r.tier}:${r.key}`}
       loading={loading} searchable={false} paginate={false} stickyHeader={false} tableMinWidth={560}
       emptyTitle={t("emptyRows")}
+    />
+  );
+}
+
+function TenantBudgetTable({ rows, loading }: { rows: TenantBudgetRow[]; loading: boolean }) {
+  const t = useT(BUDGETS);
+  const columns = useMemo<ColumnDef<TenantBudgetRow, unknown>[]>(() => [
+    { id: "tenant", header: t("colTenant"), accessorFn: (r) => r.tenant_name ?? r.tenant_id,
+      cell: (c) => (
+        <Lines>
+          <span style={{ fontWeight: 600, color: K.ink }}>{c.row.original.tenant_name ?? "—"}</span>
+          <a href={tenantCostHref(c.row.original.tenant_id)} style={{ fontSize: 12, color: K.accent }}>
+            {t("openTenant")}</a>
+        </Lines>
+      ) },
+    { id: "monthly", header: t("colMonthly"), accessorFn: (r) => r.monthly_usd ?? -1, meta: { align: "right" },
+      cell: (c) => <span style={{ fontFamily: mono }}>
+        {c.row.original.monthly_usd == null ? t("noCap") : usd(c.row.original.monthly_usd, 2)}</span> },
+    { id: "spent", header: t("colMonthSpent"), accessorKey: "month_spent_usd", meta: { align: "right" },
+      cell: (c) => (
+        <Lines>
+          <span style={{ fontFamily: mono }}>{usd(c.row.original.month_spent_usd)}</span>
+          <span style={small}>
+            {t("calls", c.row.original.month_calls)}
+            {c.row.original.used_pct != null ? ` · ${t("ofCap", pct(c.row.original.used_pct))}` : ""}
+          </span>
+        </Lines>
+      ) },
+    { id: "levels", header: t("colLevels"), enableSorting: false,
+      cell: (c) => c.row.original.monthly_usd == null ? <span style={small}>—</span> : (
+        <Lines>
+          <span style={small}>{t("levels", c.row.original.alert_pct, c.row.original.approval_pct)}</span>
+          <span style={small}>{c.row.original.hard_stop ? t("holdsJobs") : t("alertsOnly")}</span>
+        </Lines>
+      ) },
+    { id: "state", header: t("colState"), accessorKey: "state",
+      cell: (c) => <StateBadge state={c.row.original.state} tone={tenantBudgetTone(c.row.original.state)} /> },
+    { id: "changed", header: t("colChanged"), accessorFn: (r) => r.updated_at ?? "",
+      cell: (c) => <ChangedCell row={c.row.original} /> },
+  ], [t]);
+  return (
+    <DataTable<TenantBudgetRow>
+      tableId="ai-gateway-budgets-tenant" data={rows} columns={columns} getRowId={(r) => r.tenant_id}
+      loading={loading} searchable={false} paginate={false} stickyHeader={false} tableMinWidth={820}
+      emptyTitle={t("tenantNoneTitle")} emptyDescription={t("tenantNoneBody")}
     />
   );
 }
@@ -355,9 +421,16 @@ export default function BudgetsTab({ onOpenConnections }: { onOpenConnections: (
         actions={<Button size="sm" variant="secondary" onClick={onOpenConnections}>{t("editConnections")}</Button>}>
         <ConnectionBudgetTable rows={tiers?.connection ?? []} loading={loading} />
       </Section>
-      <Section title={t("groupTenant")} description={t("groupTenantHelp")}>
-        <EmptyState icon={<Wallet size={28} />} title={t("tenantEmptyTitle")} description={t("tenantEmptyBody")} />
-      </Section>
+      {data?.tenant_ready ? (
+        <Section title={t("groupTenant")} description={<>{t("groupTenantHelp")} {t("tenantStoredOnly")}</>}
+          padded={false} testId="ai-gateway-budgets-tenant-tier">
+          <TenantBudgetTable rows={tiers?.tenant ?? []} loading={loading} />
+        </Section>
+      ) : (
+        <Section title={t("groupTenant")} description={t("groupTenantHelp")} testId="ai-gateway-budgets-tenant-tier">
+          <EmptyState icon={<Wallet size={28} />} title={t("tenantEmptyTitle")} description={t("tenantEmptyBody")} />
+        </Section>
+      )}
       <Section title={t("groupCoverage")} description={t("groupCoverageHelp")} padded={false}>
         <CoverageTable rows={data?.coverage ?? []} loading={loading} />
       </Section>

@@ -34,6 +34,10 @@ export interface LlmAvailability {
   cause: { error_class: FailureClass; at: string | null; kind?: string; job_id?: string; error?: string } | null;
   providers: ProviderRow[];
   failures: FailureRow[];
+  /** AA-1002 S4 / AA-1018: per connection (absent on an older API). */
+  connections?: { connection_key: string; enabled?: boolean; status?: string; failure_domain?: string | null }[];
+  /** AA-1018: the failure-domain rule, report only (absent on an older API). */
+  invariant?: { ready?: boolean; ok?: boolean; stages_checked?: number; breaches?: number; stages?: unknown[] };
 }
 
 export type StatusTone = "success" | "warning" | "danger" | "neutral";

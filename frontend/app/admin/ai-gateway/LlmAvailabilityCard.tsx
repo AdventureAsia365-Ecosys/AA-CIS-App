@@ -103,18 +103,32 @@ export function LlmAvailabilityCard() {
 
   const causeLink = jobLink(data.cause?.job_id);
   const causeKey = data.cause ? CAUSE_KEY[data.cause.error_class] : undefined;
+  // F8 (S262 live check): "answering" is about the platform as a whole; a connection with an open circuit is named
+  // here too, with the same word as the Providers tab, so the two tabs never seem to disagree.
+  const openCircuits = (data.connections ?? []).filter((c) => c.enabled !== false && c.status === "open").length;
+  const inv = data.invariant && data.invariant.ready !== false && Array.isArray(data.invariant.stages)
+    ? data.invariant : null;
+  const statusBadge = data.status === "ok" && openCircuits > 0
+    ? <Badge tone="warning">{t("availOkSomeOpen", openCircuits)}</Badge>
+    : <Badge tone={statusTone(data.status)}>{t(STATUS_KEY[data.status] ?? "availUnknown")}</Badge>;
   return (
     <Section
       testId="llm-availability"
       title={t("availTitle")}
       description={t("availIntro", data.window_hours)}
-      actions={<Badge tone={statusTone(data.status)}>{t(STATUS_KEY[data.status] ?? "availUnknown")}</Badge>}
+      actions={<span data-testid="llm-availability-status" style={{ display: "inline-flex" }}>{statusBadge}</span>}
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
         <div style={{ fontSize: 12.5, color: K.muted }}>
           {t("availLastOk")}:{" "}
           {data.last_ok_at ? <DateText value={data.last_ok_at} withTime relative /> : t("availNever")}
         </div>
+        {openCircuits > 0 && <div style={{ fontSize: 12.5, color: K.amber }}>{t("availOpenNote", openCircuits)}</div>}
+        {inv && (
+          <div style={{ fontSize: 12.5, color: inv.ok ? K.muted : K.amber }} data-testid="llm-invariant-summary">
+            {t("invariantSummary", (inv.stages_checked ?? 0) - (inv.breaches ?? 0), inv.stages_checked ?? 0)}
+          </div>
+        )}
 
         {data.cause && causeKey && (
           <div style={{

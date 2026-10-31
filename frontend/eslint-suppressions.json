@@ -466,7 +466,7 @@
   },
   "app/admin/s1-rewrite/page.tsx": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 3
+      "count": 2
     },
     "aa-kit/no-hand-styled-button": {
       "count": 2
@@ -478,7 +478,7 @@
       "count": 1
     },
     "aa-kit/no-raw-form-control": {
-      "count": 9
+      "count": 8
     },
     "aa-kit/no-raw-table": {
       "count": 1

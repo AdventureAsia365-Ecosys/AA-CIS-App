@@ -43,10 +43,12 @@ failure domain, access state and balance source, and their thresholds come from 
 from __future__ import annotations
 
 import asyncio
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Optional
 
+import asyncpg
 import structlog
 
 from api.core.error_ref import log_exception_ref, public_error
@@ -853,7 +855,8 @@ async def trace_tour(pool, tour_id: str, *, limit: int = TRACE_LIMIT) -> dict:
 #   provider     shared.spend_budget scope 'global': the provider-wide daily cap (and a per-run default);
 #   job          shared.spend_budget scope 'job:<kind>': the per-run / per-day caps of one job kind;
 #   connection   shared.llm_provider_connection.monthly_budget_usd + shared.llm_connection_cost_policy (alert %, stop);
-#   tenant       per-tenant AI budgets: no table yet (AA-1016), always empty here.
+#   tenant       shared.tenant_ai_budget (AA-1016, migration 321): each tenant's monthly AI budget and this month's
+#                spend (api/services/tenant_ai_budget.py); empty with tenant_ready False before 321.
 # The rows are edited where they always were: PUT /admin/budgets/{provider}/{scope} for the spend_budget tiers (the
 # tab's own editor), PATCH /admin/llm-connections/{key} for a connection budget (Providers › Connections). Today's
 # spend is the figure the guard itself compares with the cap: cost_guard.day_spend for a provider row and for most
@@ -880,10 +883,53 @@ def budget_state(per_day: Optional[float], spent_today: float, alert_pct: Option
     return pct, "ok"
 
 
-def spend_budget_row(r: dict, spent_today: dict, kind_spent_today: Optional[dict] = None) -> dict:
+# AA-804 C4 (live finding F5): ``updated_by`` holds a staff member's admin_users id (the PUT stores
+# x-admin-user-id), a migration tag ("migration-226") or an older free-text name. The page shows a person's name,
+# never the raw id: ``actor_view`` gives the kind and, for a staff id, the directory name.
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+_MIGRATION_RE = re.compile(r"^migration[-_ ]?(\d{3})(?:[-_].*)?$", re.I)
+
+ACTOR_NAMES_SQL = """
+    SELECT id::text AS id, coalesce(nullif(display_name, ''), username) AS name
+      FROM shared.admin_users
+     WHERE id = ANY($1::uuid[])
+"""
+
+
+def _staff_id_part(v: str) -> str:
+    """"admin:<id>" (the actor form of the newer write routes) -> "<id>"; anything else unchanged."""
+    return v[6:] if v.lower().startswith("admin:") and _UUID_RE.match(v[6:]) else v
+
+
+def actor_view(value: Optional[str], names: Optional[dict] = None) -> dict:
+    """{updated_by_kind, updated_by_name} of an ``updated_by`` value. Kinds: staff (an admin_users id; the name from
+    ``names`` {id: name}, None when the directory has no such row), migration (the name is "Migration NNN"), other
+    (free text, shown as is), none. Pure."""
+    v = _staff_id_part((value or "").strip())
+    if not v:
+        return {"updated_by_kind": "none", "updated_by_name": None}
+    if _UUID_RE.match(v):
+        return {"updated_by_kind": "staff", "updated_by_name": (names or {}).get(v.lower())}
+    m = _MIGRATION_RE.match(v)
+    if m:
+        return {"updated_by_kind": "migration", "updated_by_name": f"Migration {m.group(1)}"}
+    return {"updated_by_kind": "other", "updated_by_name": v}
+
+
+async def actor_names(conn, values) -> dict:
+    """{admin_users id: display name or username} of the staff ids among ``values`` (one query; {} when none)."""
+    ids = sorted({_staff_id_part(v.strip()).lower() for v in values
+                  if v and _UUID_RE.match(_staff_id_part(v.strip()))})
+    if not ids:
+        return {}
+    return {r["id"]: r["name"] for r in await conn.fetch(ACTOR_NAMES_SQL, ids)}
+
+
+def spend_budget_row(r: dict, spent_today: dict, kind_spent_today: Optional[dict] = None,
+                     names: Optional[dict] = None) -> dict:
     """One shared.spend_budget row with today's spend against its daily cap, measured the way the guard measures it:
     the provider's whole day, or (``day_scope`` "kind", cost_guard.KIND_DAY_SCOPED) only that job kind's own spend
-    from ``kind_spent_today`` {job_kind: usd}. Pure."""
+    from ``kind_spent_today`` {job_kind: usd}. ``names``: staff names for ``updated_by`` (actor_view). Pure."""
     from shared import cost_guard
 
     scope = r["scope"]
@@ -898,8 +944,8 @@ def spend_budget_row(r: dict, spent_today: dict, kind_spent_today: Optional[dict
     return {"provider": r["provider"], "scope": scope, "job_kind": job_kind, "day_scope": day_scope,
             "per_run_usd": _f(r.get("per_run_usd")), "per_day_usd": per_day, "hard_stop": bool(r.get("hard_stop")),
             "alert_pct": r.get("alert_pct"), "updated_at": _iso(r.get("updated_at")),
-            "updated_by": r.get("updated_by"), "spent_today_usd": round(spent, 4), "used_pct": used,
-            "state": state}
+            "updated_by": r.get("updated_by"), **actor_view(r.get("updated_by"), names),
+            "spent_today_usd": round(spent, 4), "used_pct": used, "state": state}
 
 
 def connection_budget_rows(connections: list[dict], monthly: dict[str, dict], spend: dict[str, tuple],
@@ -955,7 +1001,11 @@ async def _read_spend_budgets(pool) -> dict:
         kinds = sorted({r["scope"][4:] for r in rows if r["scope"].startswith("job:")
                         and cost_guard.day_scope_of(r["provider"], r["scope"][4:]) == "kind"})
         kind_spent = {k: round(await cost_guard.kind_day_spend(conn, k), 4) for k in kinds}
-    return {"rows": rows, "spent_today": spent, "kind_spent_today": kind_spent}
+        try:
+            names = await actor_names(conn, [r.get("updated_by") for r in rows])
+        except asyncpg.PostgresError:  # the names are a convenience: the rows still show (as "a staff member")
+            names = {}
+    return {"rows": rows, "spent_today": spent, "kind_spent_today": kind_spent, "names": names}
 
 
 async def _read_connection_budgets(pool) -> list[dict]:
@@ -981,20 +1031,28 @@ async def read_budgets(pool, *, now: Optional[datetime] = None) -> dict:
 
     now = now or datetime.now(timezone.utc)
     day, month = day_and_month_start(now)
-    (sb, sb_err), (conns, conns_err) = await asyncio.gather(
+    from api.services import tenant_ai_budget
+
+    (sb, sb_err), (conns, conns_err), (tenants, tenants_err) = await asyncio.gather(
         _guard("Spend budgets", lambda: _read_spend_budgets(pool)),
         _guard("LLM connection budgets", lambda: _read_connection_budgets(pool)),
+        _guard("Tenant AI budgets", lambda: tenant_ai_budget.read_tier(pool, now=now)),
     )
     spent_today = (sb or {}).get("spent_today", {})
     kind_spent_today = (sb or {}).get("kind_spent_today", {})
-    rows = [spend_budget_row(r, spent_today, kind_spent_today) for r in (sb or {}).get("rows", [])]
+    names = (sb or {}).get("names", {})
+    rows = [spend_budget_row(r, spent_today, kind_spent_today, names) for r in (sb or {}).get("rows", [])]
     provider_rows = [r for r in rows if r["scope"] == "global"]
     job_rows = [r for r in rows if r["scope"] != "global"]
-    errors = [{"source": s, "error": e} for s, e in (("spend_budgets", sb_err), ("llm_connections", conns_err)) if e]
+    errors = [{"source": s, "error": e} for s, e in (("spend_budgets", sb_err), ("llm_connections", conns_err),
+                                                       ("tenant_budgets", tenants_err)) if e]
     return {
         "generated_at": now.isoformat(), "day_start": day.isoformat(), "month_start": month.isoformat(),
         "providers": list(cost_guard.PROVIDERS),
-        "tiers": {"provider": provider_rows, "job": job_rows, "connection": conns or [], "tenant": []},
+        # AA-1016 (C4): the tenant tier from shared.tenant_ai_budget (migration 321); tenant_ready False before it.
+        "tenant_ready": bool(tenants and tenants.get("ready")),
+        "tiers": {"provider": provider_rows, "job": job_rows, "connection": conns or [],
+                  "tenant": (tenants or {}).get("rows", [])},
         "coverage": [] if sb is None else budget_coverage(provider_rows, conns, cost_guard.PROVIDERS),
         "spent_today_usd": spent_today,
         "errors": errors,

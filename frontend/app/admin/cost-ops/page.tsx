@@ -808,17 +808,20 @@ function CostOperationsInner() {
 
         {/* Filters — tenant + account, apply to all tabs */}
         <Card style={{ marginBottom: 16, padding: "12px 16px" }}>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "center" }}>
-            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <Building2 size={14} color={A.muted} />
+          {/* S262 C4 (live finding F1): every part may wrap and shrink, so the account chips never push the page
+              sideways on a phone (the row measured 747 px at 390). */}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "center", minWidth: 0 }}>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", minWidth: 0, maxWidth: "100%" }}>
+              <Building2 size={14} color={A.muted} style={{ flexShrink: 0 }} />
               <span style={{ fontSize: 12, color: A.muted, marginRight: 4 }}>{t("tenant")}</span>
               <select value={tenantFilter ?? ""} onChange={e => setTenantFilter(e.target.value || null)}
-                style={{ fontSize: 12.5, padding: "5px 8px", borderRadius: 7, border: `1px solid ${A.line}`, background: A.card, color: A.ink2, fontFamily: sans, cursor: "pointer" }}>
+                style={{ fontSize: 12.5, padding: "5px 8px", borderRadius: 7, border: `1px solid ${A.line}`, background: A.card, color: A.ink2, fontFamily: sans, cursor: "pointer", minWidth: 0, maxWidth: "100%" }}>
                 <option value="">{t("allTenants")}</option>
                 {tenantOptions.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
               </select>
             </div>
-            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <div data-testid="cost-ops-account-filter"
+              style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", minWidth: 0, maxWidth: "100%" }}>
               <span style={{ fontSize: 12, color: A.muted, marginRight: 2 }}>{t("account")}</span>
               <Button size="sm" variant={acctFilter === null ? "primary" : "secondary"} onClick={() => setAcctFilter(null)}>{t("all")}</Button>
               {acctOptions.map(a => (
