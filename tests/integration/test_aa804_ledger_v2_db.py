@@ -120,7 +120,8 @@ def test_the_rollup_counts_outcomes_and_sums_latency(cur):
                 "sum(error_calls)::int AS errors, sum(latency_ms_sum)::int AS lat, sum(latency_ms_count)::int AS n "
                 "FROM shared.llm_call_daily WHERE stage = %s GROUP BY 1, 2 ORDER BY 1, 2", (STAGE,))
     got = [tuple(r.values()) for r in cur.fetchall()]
-    assert got == [("cis", False, 2, 1, 1, 12, 2), ("cis", True, 1, 0, 0, 0, 0), ("tripplanner", False, 1, 0, 0, 100, 1)]
+    assert got == [("cis", False, 2, 1, 1, 12, 2), ("cis", True, 1, 0, 0, 0, 0),
+                   ("tripplanner", False, 1, 0, 0, 100, 1)]
 
 
 def test_dfs_and_geocode_v2_rows_land(cur, monkeypatch):
