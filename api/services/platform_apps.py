@@ -25,7 +25,9 @@ What each card reads (S241 constraints: no ECS / Lambda describe calls, no new I
   ``/jobs/summary`` called with the staff member's own Cognito access token (never cached: it is per person).
 - ``tripplanner``: no health endpoint yet, so its status comes from traffic alone (its two Lambdas: invocations,
   errors, throttles, alarms); plus today's customer-facing LLM spend (TP ONLINE_STAGES, rows with
-  ``quality_signal->>'app' = 'tripplanner'`` since UTC midnight) against the mirrored default daily cap.
+  ``quality_signal->>'app' = 'tripplanner'`` since UTC midnight) against the mirrored default daily cap, and
+  (AA-804) ``ai`` = ``{paused, reason}``: paused with reason ``spend_unreadable`` when that spend read fails
+  (TripPlanner fails closed then, ADR 0009 d5). Read-only; CIS cannot read TripPlanner's own counter.
 """
 from __future__ import annotations
 
@@ -44,7 +46,7 @@ from api.services import app_health
 
 logger = structlog.get_logger()
 
-CACHE_KEY = "admin_platform_apps:v3"   # v2 (S243): cards carry probe / traffic / health; v3 (AA-936): + crm
+CACHE_KEY = "admin_platform_apps:v4"   # v2 (S243): probe / traffic / health; v3 (AA-936): + crm; v4 (AA-804): tp ai
 CACHE_TTL_S = 60
 HTTP_TIMEOUT_S = 2.0
 TP_WARN_PCT = 80.0
@@ -306,6 +308,10 @@ async def _tripplanner_card(pool: Any) -> dict:
         logger.warning("platform_apps_tp_spend_failed", error=repr(e)[:200])
         card["spend_today"] = None
         card["error"] = type(e).__name__
+        # AA-804 / ADR 0009 d5: TripPlanner stops calling AI when its spend cannot be read (fail closed, AA-642 S0). The
+        # same database refused this read, so the card says AI is paused. The CIS read is the only signal today:
+        # TripPlanner's own counter (tripplanner.llm_spend_daily) is not readable from CIS.
+        card["ai"] = {"paused": True, "reason": "spend_unreadable"}
         return card
     by_stage = [{"stage": r["stage"], "calls": r["calls"], "cost_usd": round(float(r["cost_usd"]), 6)}
                 for r in rows]
@@ -318,6 +324,7 @@ async def _tripplanner_card(pool: Any) -> dict:
         "level": "ok" if pct is None or pct < TP_WARN_PCT else ("warn" if pct < 100 else "cap_reached"),
         "since": "UTC midnight", "stages": list(TP_ONLINE_STAGES),
     }
+    card["ai"] = {"paused": False, "reason": None}
     return card
 
 

@@ -8541,6 +8541,151 @@
         ]
       }
     },
+    "/admin/ai-gateway/providers": {
+      "get": {
+        "operationId": "get_providers_admin_ai_gateway_providers_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Providers Admin Ai Gateway Providers Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Every paid AI and data provider: health, spend, budget, balance (read-only, $0)",
+        "tags": [
+          "admin-ai-gateway"
+        ]
+      }
+    },
+    "/admin/ai-gateway/trace": {
+      "get": {
+        "operationId": "get_trace_admin_ai_gateway_trace_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Trace Admin Ai Gateway Trace Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Every logged paid call of one job in time order (LLM, Jev, DataForSEO, geocoder)",
+        "tags": [
+          "admin-ai-gateway"
+        ]
+      }
+    },
     "/admin/atoms": {
       "get": {
         "description": "List/filter atoms for curation. Defaults to a 50-atom batch (issue\nAA-300: \"50 atom trên 1 màn hình\", not one atom at a time). Returns a\n`total` matching-filter count (a second COUNT(*) query, same WHERE\nclause) alongside the page — needed so the frontend can reuse the\nexisting Pagination.tsx component as-is, which requires a total item\ncount to compute page numbers (not something the original single-query\ndesign produced; added specifically for that reuse — self-chosen, see\nAA-300 implementation notes).\n\n\"unreviewed\" is derived from updated_at == created_at rather than a new\ncolumn — tour_atoms has no reviewed/reviewed_at field, and both\ntimestamps are set to the same now() at insert time (v1_atoms.py's\nINSERT, migration 079/084/085), so they stay exactly equal until the\nfirst PATCH touches the row. Self-chosen — see AA-300 implementation\nnotes. \"thin\" reuses the tour_atom_count already computed in the JOIN\n(< THIN_TRIP_ATOM_MIN, the same constant N5's B5 fix imports).\n\nAA-859: staff only, so no owner_scope pin — staff see platform + every legacy owner_scope,\nnarrowed only by owner_scope_class.",
