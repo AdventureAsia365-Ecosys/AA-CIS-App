@@ -150,6 +150,9 @@ export interface TripPlannerCard extends CardHealth {
   note?: string;
   error?: string;
   spend_today?: TpSpendToday | null;
+  /** AA-804: TripPlanner stops calling AI when its spend cannot be read (fail closed, root ADR 0009); the card says so
+   *  when CIS's read of that spend fails. Absent on a payload cached before the field existed. */
+  ai?: { paused: boolean; reason: "spend_unreadable" | null };
 }
 
 /** AA-936 — the partner CRM, probed like Booking (/crm/health, /crm/health/ready). */

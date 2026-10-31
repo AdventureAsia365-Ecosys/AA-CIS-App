@@ -55,6 +55,7 @@ export const PAGE_RULES: PageRule[] = [
   { prefix: "/admin/data-coverage", roles: ["admin"] },     // AA-992 — counts from raw upload to CRM (incl. CRM)
   { prefix: "/admin/reports", roles: ["admin"] },          // AA-1003 — report register, KPI scorecard runs
   { prefix: "/admin/tenants", roles: ["admin"] },
+  { prefix: "/admin/ai-gateway", roles: ["admin"] },       // AA-804 — AI providers (health, spend, job trace)
   { prefix: "/admin/cost-ops", roles: ["admin"] },         // AA-505; AA-665 (was /admin/llm-usage, redirected)
   { prefix: "/admin/jobs", roles: ["admin"] },              // AA-650
   { prefix: "/admin/data-erasure", roles: ["admin"] },      // AA-839 — DSAR / tenant erasure (DRY RUN, apply)
@@ -175,6 +176,9 @@ export const API_READ_RULES: { prefix: string; roles: StaffRole[] }[] = [
   // AA-917 — backend /admin/writing-memory/* (signals and rules hold tenant text): admin only, re-checked by the
   // backend (staff_policy, tenant.read / ai.admin).
   { prefix: "writing-memory", roles: ["admin"] },
+  // AA-804 — backend /admin/ai-gateway/* (every paid provider's spend, balance and the job trace): admin only,
+  // re-checked by the backend (staff_policy, spend.read).
+  { prefix: "ai-gateway", roles: ["admin"] },
 ];
 
 /** May `role` call backend /admin/{path} at all (any method)? (path without the leading slash) */

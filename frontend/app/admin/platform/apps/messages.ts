@@ -79,6 +79,8 @@ export const APPS = defineMessages(
     levelWarn: "Over 80 % of the cap",
     levelCap: "Cap reached",
     spendUnreadable: (err: string) => `Spend unreadable${err ? ` (${err})` : ""}.`,
+    aiPaused: "AI paused (spend unreadable)",
+    aiPausedNote: "TripPlanner stops calling AI while its spend cannot be read and serves the simple, non-AI version.",
     spendToday: "LLM spend today",
     ofCap: (cap: string) => `of ${cap}`,
     callsSince: (n: number, since: string, stages: string) =>
@@ -162,6 +164,8 @@ export const APPS = defineMessages(
     levelWarn: "Trên 80 % hạn mức",
     levelCap: "Đã chạm hạn mức",
     spendUnreadable: (err: string) => `Không đọc được chi phí${err ? ` (${err})` : ""}.`,
+    aiPaused: "AI tạm dừng (không đọc được số đã tiêu)",
+    aiPausedNote: "TripPlanner ngừng gọi AI khi không đọc được số đã tiêu và trả bản đơn giản không dùng AI.",
     spendToday: "Chi phí LLM hôm nay",
     ofCap: (cap: string) => `trên ${cap}`,
     callsSince: (n: number, since: string, stages: string) =>

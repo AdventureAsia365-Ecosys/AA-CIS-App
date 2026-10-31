@@ -23,8 +23,12 @@ interface BudgetRow {
 }
 interface Draft { per_run: string; per_day: string; hard_stop: boolean; alert_pct: string }
 
-const PROVIDERS = ["dfs", "bedrock", "openai", "jev"] as const;
-const PROVIDER_LABEL: Record<string, string> = { dfs: "DataForSEO", bedrock: "Bedrock", openai: "OpenAI", jev: "Jev" };
+// AA-804: every provider the backend accepts (shared/cost_guard.py PROVIDERS = the spend_budget provider CHECK).
+const PROVIDERS = ["dfs", "bedrock", "openai", "jev", "geocoder", "anthropic", "azure_openai"] as const;
+const PROVIDER_LABEL: Record<string, string> = {
+  dfs: "DataForSEO", bedrock: "Bedrock", openai: "OpenAI", jev: "Jev", geocoder: "Geocoder (Geoapify)",
+  anthropic: "Anthropic API", azure_openai: "Azure OpenAI",
+};
 
 function toDraft(r: BudgetRow): Draft {
   return {

@@ -15,6 +15,7 @@ import {
 } from "../../_kit";
 import { TenantName } from "../_components/TenantSelect";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
+import { traceHref } from "@/lib/aiGateway";
 import { accountName, withAccountNames } from "@/lib/awsAccounts";
 import { fmtSeconds, releases, runSeconds, stepProgress, usd, type Job } from "./jobsShared";
 import { JOBS } from "./messages";
@@ -194,6 +195,9 @@ export default function JobDrawer({ jobId, refetchMs, expectedSeconds, maxReleas
               <div>{t("total")} <span style={{ fontFamily: mono, color: K.ink }}>{usd(total)}</span></div>
               <div>{t("llm")} <span style={{ fontFamily: mono, color: K.ink }}>{usd(llmCost)}</span> <span style={{ color: K.muted }}>{t("calls", llm?.totals.calls ?? 0)}</span></div>
               <div>{t("other")} <span style={{ fontFamily: mono, color: K.ink }}>{usd(Math.max(0, total - llmCost))}</span></div>
+              {/* AA-804: the job's calls across every paid ledger, on the AI providers page */}
+              <a href={traceHref(job.id)} data-testid="job-drawer-open-trace" title={t("openTraceTitle")}
+                style={{ color: K.accent }}>{t("openTrace")}</a>
             </div>
           </div>
 

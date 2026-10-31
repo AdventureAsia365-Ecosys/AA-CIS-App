@@ -16,6 +16,7 @@ const NAV: { label: string; path: string }[] = [
   { label: 'Staff', path: '/admin/platform/staff' },
   { label: 'Tenants', path: '/admin/tenants' },
   { label: 'Jobs', path: '/admin/jobs' },
+  { label: 'AI providers', path: '/admin/ai-gateway' },   // AA-804
   { label: 'Cost Operations', path: '/admin/cost-ops' },
   { label: 'Jev Decisions', path: '/admin/decisions' },
   { label: 'API Docs', path: '/admin/api-docs' },
