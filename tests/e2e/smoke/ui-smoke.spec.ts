@@ -95,10 +95,12 @@ const ADMIN_PAGES: PageSpec[] = [
   { id: 's1-rewrite', label: 'S1 Rewrite', path: '/admin/s1-rewrite', viewerRefused: true },
   { id: 'seo-intelligence', label: 'SEO Intelligence', path: '/admin/seo-intelligence', viewerRefused: true },
   { id: 'settings', label: 'Settings', path: '/admin/settings', readySelector: '[data-testid="admin-content-ready"]' },
-  // AA-686 / AA-804 UI part 2 — the stage route editor moved from Settings › LLM Models to AI providers › Routing;
-  // the old `?tab=models` link is sent on there, so this row checks the redirect and the tab together.
-  // `ai-gateway-routing-ready` renders only once the stage routes loaded. The page is admin only (viewer refused).
-  { id: 'settings-models', label: 'AI providers · Routing (old Settings · LLM Models link)', path: '/admin/settings?tab=models', readySelector: '[data-testid="ai-gateway-routing-ready"]', viewerRefused: true },
+  // AA-686 / AA-804 UI part 2 — the stage route editor moved from Settings › LLM Models to AI providers › Routing.
+  // The row opens the new tab itself: the page matrix (roleMaySeePage) reads only the asked pathname, and
+  // /admin/settings is open to every staff role, so the old `?tab=models` link cannot stand here. That redirect
+  // is checked by aa663-admin-ia REDIRECTS and aa660-jev-decisions. `ai-gateway-routing-ready` renders only once
+  // the stage routes loaded. The page is admin only (viewer refused).
+  { id: 'ai-gateway-routing', label: 'AI providers · Routing', path: '/admin/ai-gateway?tab=routing', readySelector: '[data-testid="ai-gateway-routing-ready"]', viewerRefused: true },
   { id: 'ai-gateway-models', label: 'AI providers · Models & trials', path: '/admin/ai-gateway?tab=models', readySelector: '[data-testid="ai-gateway-models-ready"]', viewerRefused: true },
   { id: 'ai-gateway-budgets', label: 'AI providers · Budgets', path: '/admin/ai-gateway?tab=budgets', readySelector: '[data-testid="ai-gateway-budgets-ready"]', viewerRefused: true },
   { id: 'tenant-activity', label: 'Content Trace', path: '/admin/tenant-activity', readySelector: '[data-testid="admin-content-ready"]', viewerRefused: true },
