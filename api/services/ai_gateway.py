@@ -22,7 +22,8 @@ Two reads, both $0 (database only; no provider is called):
   ``shared.dfs_call_log`` (``idx_dfs_call_log_job``), ``geo.geocode_call`` and ``shared.decision_log``. The last two
   have no job index, so their reads are bounded by the job's run window (``started_at`` .. ``finished_at`` or now; the
   ``created_at`` / ``called_at`` indexes serve the range). ``started_at`` keeps the first attempt's start
-  (shared/jobs/queue.py), so the window covers every attempt.
+  (shared/jobs/queue.py), so the window covers every attempt. Jev comes only from ``decision_log``: its
+  ``typesafe`` rows in ``llm_call_log`` repeat the same calls and cost and are left out of the LLM source.
 
 Limits of today's ledgers (ledger v2 lifts them): a call the provider refused writes no row (only billed calls are
 logged), ``llm_call_log`` has no latency or outcome column, and nothing links a Jev verdict to its cost row.
@@ -486,13 +487,16 @@ TRACE_JOB_SQL = """
 """
 
 # count(*) / sum() OVER () are taken before LIMIT, so the totals cover every row of the job.
+# A Jev call writes both a ``typesafe`` llm_call_log row (the whole call's cost) and one decision_log row per
+# question (its share of that cost), under the same job (shared/llm_client/decide.py). The trace shows Jev only from
+# decision_log, so the call is listed once and counted once.
 TRACE_LLM_SQL = """
     SELECT created_at AS at, stage, role, model, provider, account, tokens_in, tokens_out, cache_read_tokens,
            cache_write_tokens, cost_usd::float AS cost_usd, stop_reason, fallback_used, pricing_mode,
            coalesce(quality_signal ->> 'shadow', '') = 'true' AS shadow,
            count(*) OVER () AS total_n, coalesce(sum(cost_usd) OVER (), 0)::float AS total_cost
       FROM shared.llm_call_log
-     WHERE job_id = $1::uuid
+     WHERE job_id = $1::uuid AND coalesce(provider, '') <> 'typesafe'
      ORDER BY created_at, id
      LIMIT $2
 """

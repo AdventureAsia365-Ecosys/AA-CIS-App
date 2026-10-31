@@ -349,6 +349,29 @@ def test_trace_merges_the_ledgers_in_time_order():
     assert out["window"] == {"from": window[0].isoformat(), "to": window[1].isoformat()}
 
 
+def test_trace_counts_a_jev_call_once():
+    """decide() logs one Jev call twice under the job: a ``typesafe`` llm_call_log row with the whole cost and one
+    decision_log row per question with its share. The LLM read leaves the typesafe rows out, so the trace lists Jev
+    from decision_log only and the total holds the Jev cost once."""
+    sql = " ".join(gw.TRACE_LLM_SQL.split())
+    assert "WHERE job_id = $1::uuid AND coalesce(provider, '') <> 'typesafe'" in sql
+    t0 = NOW - timedelta(minutes=50)
+
+    def jev(at, q):
+        return {"at": at, "stage": "invented_stage", "question_key": q, "subject_key": "s1", "mode": "enforce",
+                "zone": "accept", "model": "jev", "latency_ms": 300, "cost_usd": 0.002, "error": None,
+                "outcome": None, "cached": False, "total_n": 2, "total_cost": 0.004}
+
+    out = gw.build_trace(_job(), (t0, NOW), {
+        "llm": ([_llm(t0, 0.1, total_n=1, total_cost=0.1)], None),
+        "jev": ([jev(t0 + timedelta(minutes=1), "q1"), jev(t0 + timedelta(minutes=1), "q2")], None),
+    }, gw.TRACE_LIMIT)
+    assert [e["source"] for e in out["events"]] == ["llm", "jev", "jev"]
+    assert all(e["provider"] != "typesafe" for e in out["events"] if e["source"] == "llm")
+    assert out["sources"]["jev"]["cost_usd"] == 0.004 and out["sources"]["llm"]["cost_usd"] == 0.1
+    assert out["totals"] == {"events": 3, "cost_usd": 0.104}
+
+
 def test_trace_flags_truncation():
     out = gw.build_trace(_job(), None, {"llm": ([_llm(NOW, 0.1, total_n=900, total_cost=9.0)], None)}, 1)
     assert out["sources"]["llm"]["truncated"] is True and out["sources"]["llm"]["events"] == 900

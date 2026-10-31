@@ -74,12 +74,12 @@ async def _geo(c, at, job_id, credits=2):
            VALUES ($1, $2, 1, 0, $3::uuid, 'search', $4)""", at, GEO, job_id, credits)
 
 
-async def _decision(c, at, job_id, zone="accept", error=None):
+async def _decision(c, at, job_id, zone="accept", error=None, question="aa804_q", cost=0.001):
     await c.execute(
         """INSERT INTO shared.decision_log (created_at, stage, question_key, subject_key, job_id, mode, zone, model,
                                             latency_ms, cost_usd, error, cached)
-           VALUES ($1, $2, 'aa804_q', 'aa804_subject', $3::uuid, 'shadow', $4, 'probe-jev', 300, 0.001, $5, false)""",
-        at, STAGE, job_id, zone, error)
+           VALUES ($1, $2, $6, 'aa804_subject', $3::uuid, 'shadow', $4, 'probe-jev', 300, $7, $5, false)""",
+        at, STAGE, job_id, zone, error, question, cost)
 
 
 @pytest.mark.asyncio
@@ -111,6 +111,25 @@ async def test_trace_unions_the_four_ledgers_inside_the_run_window(pool):
                                          "error": None}
 
     assert await gw.trace_job(pool, "00000000-0000-4000-8000-000000000804") is None
+
+
+@pytest.mark.asyncio
+async def test_trace_counts_a_jev_call_once(pool):
+    """decide() writes one ``typesafe`` llm_call_log row (whole cost) and one decision_log row per question (its
+    share) for the same Jev call; the trace reads Jev from decision_log only."""
+    start, end = _utc(2024, 7, 11, 1), _utc(2024, 7, 11, 2)
+    async with pool.acquire() as c:
+        job = await _job(c, start, end)
+        await _llm(c, _utc(2024, 7, 11, 1, 5), 0.10, job)
+        await _llm(c, _utc(2024, 7, 11, 1, 10), 0.006, job, provider="typesafe", account=None)
+        await _decision(c, _utc(2024, 7, 11, 1, 10), job, question="aa804_q1", cost=0.003)
+        await _decision(c, _utc(2024, 7, 11, 1, 10), job, question="aa804_q2", cost=0.003)
+
+    out = await gw.trace_job(pool, job, now=_utc(2024, 7, 20))
+    assert [e["source"] for e in out["events"]] == ["llm", "jev", "jev"]
+    assert out["sources"]["llm"]["events"] == 1 and out["sources"]["llm"]["cost_usd"] == pytest.approx(0.1)
+    assert out["sources"]["jev"]["events"] == 2 and out["sources"]["jev"]["cost_usd"] == pytest.approx(0.006)
+    assert out["totals"]["events"] == 3 and out["totals"]["cost_usd"] == pytest.approx(0.106)
 
 
 @pytest.mark.asyncio
