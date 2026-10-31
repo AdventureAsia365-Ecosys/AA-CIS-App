@@ -100,6 +100,7 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     _d("shared.tenant_rewrite_usage", "rewrite counters"),
     _d("shared.tenant_seo_config", "SEO settings"),
     _d("shared.jev_tenant_allowlist", "Jev allow-list (offboard already removed it)"),
+    _d("shared.tenant_ai_budget", "the tenant's AI spend budget"),
     _d("shared.unmapped_market_requests", "market requests"),
     _d("shared.notifications", "tenant notifications (bell)"),
     # AA-978 (276): the guards allow these deletes only for an offboarded tenant (or after the 90-day retention).
