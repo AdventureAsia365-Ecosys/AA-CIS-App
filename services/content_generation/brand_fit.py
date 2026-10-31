@@ -26,7 +26,7 @@ from typing import Optional
 
 import structlog
 
-from shared.llm_client.call_log import billed_fields, billed_record
+from shared.llm_client.call_log import BILLED_FIELD_KEYS, V2_BILLED_KEYS, billed_fields, billed_record
 from shared.llm_client.client import LLMClient
 from shared.llm_client.judge import call_judge, strip_json_fence
 from services.quality.registry import threshold
@@ -110,11 +110,21 @@ class BrandFitResult:
     cache_write_tokens: Optional[int] = None
     pricing_mode: Optional[str] = None
     connection_key: Optional[str] = None
+    # AA-804 (ledger v2): the gateway's attempt facts of the call (call_log.V2_BILLED_KEYS): latency, attempt
+    # position, wire id, request id, effort, reasoning tokens, prompt hash. An aggregated verdict keeps run 1's.
+    latency_ms: Optional[int] = None
+    attempt_no: Optional[int] = None
+    deployment_wire_id: Optional[str] = None
+    request_id: Optional[str] = None
+    effort: Optional[str] = None
+    reasoning_tokens: Optional[int] = None
+    prompt_hash: Optional[str] = None
 
 
-# AA-927 / AA-1002 (S6): the keys of one judge call's billing in `runs` (run_billing), as judge_node logs them.
+# AA-927 / AA-1002 (S6) / AA-804: the keys of one judge call's billing in `runs` (run_billing), as judge_node logs
+# them: the call's own fields plus every key of call_log.billed_fields.
 RUN_BILLING_KEYS = ("model", "tokens_in", "tokens_out", "cost_usd", "stop_reason", "account", "fallback_used",
-                    "cache_read_tokens", "cache_write_tokens", "pricing_mode", "connection_key")
+                    *BILLED_FIELD_KEYS)
 
 
 def _sum_or_none(values) -> Optional[int]:
@@ -169,6 +179,7 @@ def aggregate_runs(results: list[BrandFitResult], *, mission_absent_cap: Optiona
         cache_read_tokens=_sum_or_none(getattr(r, "cache_read_tokens", None) for r in results),
         cache_write_tokens=_sum_or_none(getattr(r, "cache_write_tokens", None) for r in results),
         pricing_mode=getattr(first, "pricing_mode", None), connection_key=getattr(first, "connection_key", None),
+        **{k: getattr(first, k, None) for k in V2_BILLED_KEYS},
         runs=runs + ((_failed_entry(failed, failed_cost_usd),) if failed else ()),
         mission_evidence=evidence,
         evidence_verified=verified,
@@ -190,9 +201,8 @@ def run_billing(r: BrandFitResult) -> dict:
     return {"model": r.model_used, "tokens_in": r.input_tokens, "tokens_out": r.output_tokens,
             "cost_usd": r.cost_usd, "stop_reason": r.stop_reason, "account": r.account,
             "fallback_used": r.fallback_used,
-            # AA-1002 (S6): read with getattr (a result-shaped double without them logs None)
-            **{k: getattr(r, k, None) for k in ("cache_read_tokens", "cache_write_tokens", "pricing_mode",
-                                                "connection_key")}}
+            # AA-1002 (S6) / AA-804: read with getattr (a result-shaped double without them logs None)
+            **{k: getattr(r, k, None) for k in BILLED_FIELD_KEYS}}
 
 
 def _failed_entry(failed: int, failed_cost_usd: float) -> dict:

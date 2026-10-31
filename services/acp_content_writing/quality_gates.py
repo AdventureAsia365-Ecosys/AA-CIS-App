@@ -63,7 +63,7 @@ from services.acp_shared.citation_tags import TAG_RE, strip_citation_tags as _st
 from services.acp_shared.grounding import find_novel_numeric_claims
 from services.acp_shared.offered import STATUS_PREFIX
 from services.acp_shared.real_questions import is_off_meaning, single_word_places
-from shared.llm_client.call_log import record_billed_failure_sync, record_call_sync
+from shared.llm_client.call_log import BILLED_FIELD_KEYS, record_billed_failure_sync, record_call_sync
 from services.quality import registry as qr
 from services.acp_content_writing.seed_align import modes as seed_align
 from services.acp_content_writing.seed_align import adjudicate as seed_adjudicate
@@ -672,9 +672,9 @@ def gate_seo_surface(
 
 # ---------------------------------------------------------------- AA-505 judge call logging
 
-# AA-1002 (S6): the billing keys invoke_judge adds from call_log.billed_fields (cache split, pricing basis, vendor
-# connection); a raw dict without them (tests, older callers) logs None.
-_BILLED_FIELD_KEYS = ("cache_read_tokens", "cache_write_tokens", "pricing_mode", "connection_key")
+# AA-1002 (S6) / AA-804: the billing keys invoke_judge adds from call_log.billed_fields (cache split, pricing basis,
+# vendor connection, the gateway's attempt facts); a raw dict without them (tests, older callers) logs None.
+_BILLED_FIELD_KEYS = BILLED_FIELD_KEYS
 
 
 def _log_t10_judge_call(raw: dict, *, gate: str, passed: bool, extra: dict) -> None:

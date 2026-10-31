@@ -83,7 +83,7 @@ async def test_record_call_forwards_stop_reason_to_insert():
             tokens_in=100, tokens_out=50, cost_usd=0.01,
             quality_signal={"ok": True}, stop_reason="max_tokens",
         )
-    args = fake_conn.execute.call_args.args
+    args = fake_conn.execute.call_args.args[:16]   # AA-804: SQL + the 15 base values (S6 / ledger v2 ones follow)
     # AA-617 appended account/fallback_used/provider AFTER stop_reason, so stop_reason is now
     # the 4th-from-last bind param (…, stop_reason, account, fallback_used, provider).
     assert args[-5] == "max_tokens"
@@ -105,7 +105,7 @@ async def test_record_call_with_pool_forwards_stop_reason_to_insert():
         tokens_in=100, tokens_out=50, cost_usd=0.01,
         quality_signal={"ok": True}, stop_reason="end_turn",
     )
-    args = fake_conn.execute.call_args.args
+    args = fake_conn.execute.call_args.args[:16]   # AA-804: SQL + the 15 base values (S6 / ledger v2 ones follow)
     # AA-617: stop_reason is 4th-from-last now (…, stop_reason, account, fallback_used, provider).
     assert args[-5] == "end_turn"
 
@@ -123,7 +123,7 @@ async def test_record_call_stop_reason_defaults_to_none_for_untouched_callers():
             stage="t9_write", role="writer", model="sonnet-4-6",
             tokens_in=100, tokens_out=50, cost_usd=0.01, quality_signal={"ok": True},
         )
-    args = fake_conn.execute.call_args.args
+    args = fake_conn.execute.call_args.args[:16]   # AA-804: SQL + the 15 base values (S6 / ledger v2 ones follow)
     # AA-617: bind tail is (…, stop_reason, account, fallback_used, provider). An untouched caller
     # leaves stop_reason/account/fallback_used NULL; provider is still DERIVED from the model
     # string ("sonnet-4-6" with no prefix + no explicit provider -> "bedrock-native").

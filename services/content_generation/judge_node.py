@@ -29,7 +29,7 @@ from services.content_generation.brand_fit import (
     score_brand_fit,
 )
 from shared.llm_client.call_log import (
-    billed_unusable_rows, record_billed_failure_sync, record_call_sync, record_calls_sync,
+    V2_BILLED_KEYS, billed_unusable_rows, record_billed_failure_sync, record_call_sync, record_calls_sync,
 )
 from services.quality.registry import threshold
 
@@ -276,6 +276,7 @@ def _judge_rows(stage: str, result, verdict_signal: dict) -> list[dict]:
             account=r.get("account"), fallback_used=r.get("fallback_used"),
             cache_read_tokens=r.get("cache_read_tokens"), cache_write_tokens=r.get("cache_write_tokens"),
             pricing_mode=r.get("pricing_mode"), connection_key=r.get("connection_key"),
+            **{k: r.get(k) for k in V2_BILLED_KEYS},          # AA-804: the run's own attempt facts
             quality_signal={"judge_run": i, "of": n, "verdict_row": False, "brand_fit": r.get("brand_fit"),
                             "distinct": r.get("distinct"), "mission": r.get("mission")}))
     rows += billed_unusable_rows(stage=stage, role="judge", billed=failed, error="judge reply unusable",

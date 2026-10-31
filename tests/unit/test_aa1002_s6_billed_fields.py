@@ -131,13 +131,16 @@ class _Pool:
 
 
 def _logged_row(resp: LLMResponse) -> tuple[str, tuple]:
-    """(sql, args) of the llm_call_log INSERT a real caller (services.places.llm.make_generate) writes for resp."""
+    """(sql, args) of the llm_call_log INSERT a real caller (services.places.llm.make_generate) writes for resp.
+    AA-804: the ledger v2 statement; args[:18] are the S6 row (the cache split + pricing_mode at 15..17), the 17
+    V2_COLUMNS follow — returned here as the S6 slice so the S6 assertions below keep their shape."""
     from services.places import llm as places_llm
     pool = _Pool()
     with patch.object(places_llm, "_generate_sync", return_value=resp):
         asyncio.run(places_llm.make_generate(pool, places_llm.DAYS_STAGE, 4096)("sys", "user"))
     sql, *args = pool.conn.execute.call_args.args
-    return sql, tuple(args)
+    assert sql == call_log._INSERT_V2_SQL and len(args) == 18 + len(call_log.V2_COLUMNS)
+    return call_log._INSERT_S6_SQL, tuple(args[:18])
 
 
 # ── billed_fields ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -146,7 +149,8 @@ def test_billed_fields_reads_the_response_and_ignores_test_doubles():
     resp = LLMResponse(content="", model_used="m", provider="openai", cache_read_tokens=3, cache_write_tokens=4,
                        pricing_mode="catalog", connection_key="openai-direct")
     assert call_log.billed_fields(resp) == {"cache_read_tokens": 3, "cache_write_tokens": 4,
-                                            "pricing_mode": "catalog", "connection_key": "openai-direct"}
+                                            "pricing_mode": "catalog", "connection_key": "openai-direct",
+                                            **dict.fromkeys(call_log.V2_BILLED_KEYS)}     # AA-804: not set here
     assert call_log.billed_fields(MagicMock()) == dict.fromkeys(call_log.billed_fields(resp))
     assert call_log.billed_fields(object()) == dict.fromkeys(call_log.billed_fields(resp))
 

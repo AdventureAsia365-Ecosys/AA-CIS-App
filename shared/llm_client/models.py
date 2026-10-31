@@ -80,3 +80,16 @@ class LLMResponse(BaseModel):
     # AA-1002 (S2): the model id the provider says answered (Anthropic `response.model`), when it reports one. The
     # gateway prices by the catalog Model Key; this is the evidence of what really ran. None on the other paths.
     provider_model: Optional[str] = None
+    # AA-804 (ledger v2, migration 319): the facts of the attempt that answered, set by the gateway and passed on to
+    # llm_call_log by call_log.billed_fields(). latency_ms = wall time of that attempt in the gateway; attempt_no =
+    # its 1-based position among the provider attempts of this request (a route fallback or a second deployment
+    # makes it > 1); deployment_wire_id = the model id sent on the wire; request_id = the provider's request id;
+    # effort = the effort level sent (Anthropic API); reasoning_tokens = reasoning tokens reported (part of
+    # output_tokens); prompt_hash = sha256 hex of the system + user prompt (never the prompt itself). None = not known.
+    latency_ms: Optional[int] = None
+    attempt_no: Optional[int] = None
+    deployment_wire_id: Optional[str] = None
+    request_id: Optional[str] = None
+    effort: Optional[str] = None
+    reasoning_tokens: Optional[int] = None
+    prompt_hash: Optional[str] = None

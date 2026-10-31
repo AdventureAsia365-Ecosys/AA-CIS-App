@@ -1,9 +1,11 @@
 import os
+import hashlib
 import json
 import random
 import threading
 import time
 from contextvars import ContextVar
+from dataclasses import dataclass, field
 import boto3
 from botocore.config import Config
 from typing import Optional
@@ -493,6 +495,20 @@ def _converse_dropping_rejected_temperature(call, kwargs: dict, model_key: str):
         return _converse_call(call, kwargs, model_key)
 
 
+def _bedrock_request_id(resp) -> Optional[str]:
+    """AA-804: the Bedrock RequestId of a Converse / ConverseStream reply (ResponseMetadata), when there is one."""
+    meta = resp.get("ResponseMetadata") if isinstance(resp, dict) else None
+    rid = meta.get("RequestId") if isinstance(meta, dict) else None
+    return rid if isinstance(rid, str) and rid else None
+
+
+def _reasoning_tokens(usage) -> Optional[int]:
+    """AA-804: OpenAI usage.completion_tokens_details.reasoning_tokens (an int), else None."""
+    details = getattr(usage, "completion_tokens_details", None)
+    value = getattr(details, "reasoning_tokens", None)
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
 def _billed_usage_of(exc: BaseException) -> list:
     """The billed attempts carried by `exc` or anything in its cause / context chain (the legacy chain
     wraps a T3 OpenAI failure in its own RuntimeError)."""
@@ -527,6 +543,143 @@ def log_gateway_billed_failure(request: LLMRequest, *, role: str, billed: list[d
             _in_background(record_calls, {"rows": rows})
     except Exception as e:  # noqa: BLE001 — a log write never breaks the call it records
         logger.warning("llm_gateway_billed_failure_log_failed", stage=request.stage, error=str(e)[:200])
+
+
+# ── AA-804 (ledger v2): one llm_call_log row per attempt ─────────────────────────────────────────────────────────
+#
+# Callers keep writing the row of the reply they get (one per success, `**billed_fields(resp)` now also carries the
+# attempt's latency, position, wire id, request id, effort, reasoning tokens and prompt hash). The gateway writes the
+# rows nobody else can: a billed-but-unusable attempt (AA-927, unchanged) and, new, every attempt that was refused or
+# failed with nothing billed — cost 0, status refused | error, error_class, latency, connection, wire id, attempt
+# number. Each provider attempt runs through `LLMClient._attempt` (one level per path: `_call_target` for the
+# deployment plan, alias steps and the admin probe; the legacy chain's tiers; the catalog paths without a plan); a
+# failure the gateway raised before any attempt (model not in the catalog, every deployment behind an open circuit or
+# over its budget) gets its row from the `_call_key_logged` / `probe` net. A logged exception is marked, so an
+# aggregate error raised over it (`_all_failed`) is never logged twice. Written fire-and-forget on a background thread,
+# like the billed-failure rows: a slow or down database never delays the route's next model.
+
+
+@dataclass
+class _AttemptScope:
+    """The ledger context of one gateway request (generate, a shadow call, the admin probe): its role, the route
+    position being tried, extra quality_signal keys and the running attempt counter."""
+    role: str = "writer"
+    position: int = 0
+    extra: dict = field(default_factory=dict)
+    attempts: int = 0
+    prompt_hash: Optional[str] = None
+
+    def next_attempt(self) -> int:
+        self.attempts += 1
+        return self.attempts
+
+
+_ATTEMPT_SCOPE: ContextVar[Optional[_AttemptScope]] = ContextVar("llm_attempt_scope", default=None)
+_LEDGERED_ATTR = "_aa804_ledgered"
+
+
+def prompt_hash(request: LLMRequest) -> Optional[str]:
+    """sha256 hex of the request's system and user prompt (llm_call_log.prompt_hash; never the prompt itself). None
+    when either is not text (a test double)."""
+    system, user = getattr(request, "system_prompt", None), getattr(request, "user_prompt", None)
+    if not isinstance(system, str) or not isinstance(user, str):
+        return None
+    h = hashlib.sha256()
+    h.update(system.encode("utf-8"))
+    h.update(b"\x00")
+    h.update(user.encode("utf-8"))
+    return h.hexdigest()
+
+
+def _scope_for(request: LLMRequest, role: str, extra: Optional[dict] = None) -> _AttemptScope:
+    return _AttemptScope(role=role or "writer", extra=dict(extra or {}), prompt_hash=prompt_hash(request))
+
+
+def _ledgered(exc: BaseException) -> bool:
+    """True when `exc` or anything in its cause / context chain already has its ledger row."""
+    seen: set = set()
+    cur: Optional[BaseException] = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if getattr(cur, _LEDGERED_ATTR, False):
+            return True
+        cur = cur.__cause__ or cur.__context__
+    return False
+
+
+def _mark_ledgered(exc: BaseException) -> None:
+    try:
+        setattr(exc, _LEDGERED_ATTR, True)
+    except Exception:  # noqa: BLE001 — an exception type without __dict__: at worst a second row
+        pass
+
+
+def attempt_outcome(exc: BaseException) -> tuple[str, str]:
+    """(status, error_class) of an attempt that raised with nothing billed. 'refused' when the provider or the gateway
+    said no (access denied, no credit, a missing / rejected key, a rate limit, an open circuit, the connection's own
+    limiter, a budget, a data-scope block); 'error' otherwise (outage, timeout, a bad reply that was not billed).
+    error_class = the breaker class (a request error counts as 'other'), or 'budget'."""
+    from shared.cost_guard import BudgetExceeded
+    if isinstance(exc, BudgetExceeded) or any(isinstance(link, BudgetExceeded) for link in _causes(exc)):
+        return "refused", "budget"
+    cls = breaker.failure_class(exc)
+    if cls not in ("access_denied", "quota_exhausted", "throttled", "credential"):
+        cls = OTHER
+    refused = cls != OTHER or isinstance(exc, (breaker.CircuitOpen, breaker.LimiterSaturated, OpenAIPlatformBlocked))
+    return ("refused" if refused else "error"), cls
+
+
+def _causes(exc: BaseException) -> list:
+    out, seen, cur = [], set(), exc
+    while cur is not None and id(cur) not in seen and len(seen) < 16:
+        seen.add(id(cur))
+        out.append(cur)
+        cur = cur.__cause__ or cur.__context__
+    return out
+
+
+def _provider_of(conn: Optional[connections.ProviderConnection]) -> Optional[str]:
+    """The llm_call_log provider of a call on `conn` (the values call_log derives from a reply's label)."""
+    if conn is None:
+        return None
+    if conn.kind == "bedrock":
+        return "bedrock-native" if conn.auth_mode == "task_role" else "bedrock-satellite"
+    return conn.kind
+
+
+def log_gateway_failed_attempt(request: LLMRequest, exc: BaseException, *, model: str,
+                               connection_key: Optional[str] = None, wire_id: Optional[str] = None,
+                               provider: Optional[str] = None, latency_ms: Optional[int] = None,
+                               attempt_no: Optional[int] = None) -> None:
+    """AA-804: the gateway's llm_call_log row for one attempt that was refused or failed with nothing billed (see the
+    block comment above). A billed attempt (BilledUnusableReply anywhere in the chain) is not logged here: its
+    billed_unusable row is written by `_call_key_logged` / `probe`. Marks `exc`. Never raises."""
+    if _ledgered(exc) or _billed_usage_of(exc):
+        return
+    _mark_ledgered(exc)
+    from .call_log import _in_background, gateway_failure_row, record_calls
+    try:
+        scope = _ATTEMPT_SCOPE.get() or _scope_for(request, "writer")
+        status, error_class = attempt_outcome(exc)
+        row = gateway_failure_row(
+            stage=request.stage or "unstaged", role=scope.role, model=model, status=status, error_class=error_class,
+            error=f"{type(exc).__name__}: {exc}", provider=provider, connection_key=connection_key,
+            latency_ms=latency_ms, attempt_no=attempt_no, deployment_wire_id=wire_id, prompt_hash=scope.prompt_hash,
+            is_shadow=bool(scope.extra.get("shadow")),
+            quality_signal_extra={**scope.extra, "position": scope.position})
+        _in_background(record_calls, {"rows": [row]})
+    except Exception as e:  # noqa: BLE001 — a log write never breaks the call it records
+        logger.warning("llm_gateway_failed_attempt_log_failed", stage=request.stage, error=str(e)[:200])
+
+
+def _enrich_billed(exc: BaseException, facts: dict) -> None:
+    """Add the attempt's facts (latency, attempt number, wire id, connection) to the billed records an unusable reply
+    carries, so its billed_unusable row has them too. Keeps a value already set."""
+    for b in _billed_usage_of(exc):
+        if isinstance(b, dict):
+            for k, v in facts.items():
+                if v is not None and b.get(k) is None:
+                    b[k] = v
 
 
 class LLMClient:
@@ -569,6 +722,46 @@ class LLMClient:
         finally:
             stream_sink.emit_call_end(request.stage, ok)
 
+    def _attempt(self, request: LLMRequest, call, *, model: str, connection_key: Optional[str] = None,
+                 wire_id: Optional[str] = None, provider: Optional[str] = None) -> LLMResponse:
+        """AA-804 (ledger v2): ONE provider attempt (``call()``), timed and numbered in the request's attempt scope. A
+        reply gets ``latency_ms`` / ``attempt_no`` / ``deployment_wire_id`` / ``prompt_hash`` (the caller's row carries
+        them through billed_fields); a billed unusable reply gets them on its billed records; any other failure gets
+        the gateway's 0 USD row (``log_gateway_failed_attempt``). The exception is re-raised unchanged."""
+        scope = _ATTEMPT_SCOPE.get()
+        attempt_no = scope.next_attempt() if scope is not None else None
+        started = time.monotonic()
+        try:
+            resp = call()
+        except Exception as e:
+            latency = int((time.monotonic() - started) * 1000)
+            if _billed_usage_of(e):
+                _enrich_billed(e, {"latency_ms": latency, "attempt_no": attempt_no, "deployment_wire_id": wire_id,
+                                   "connection_key": connection_key,
+                                   "prompt_hash": scope.prompt_hash if scope is not None else None})
+            else:
+                log_gateway_failed_attempt(request, e, model=model, connection_key=connection_key, wire_id=wire_id,
+                                           provider=provider, latency_ms=latency, attempt_no=attempt_no)
+            raise
+        try:
+            resp.latency_ms = int((time.monotonic() - started) * 1000)
+            resp.attempt_no = attempt_no
+            if wire_id and not resp.deployment_wire_id:
+                resp.deployment_wire_id = wire_id
+            if scope is not None and not resp.prompt_hash:
+                resp.prompt_hash = scope.prompt_hash
+        except Exception:  # noqa: BLE001 — a test double that is not an LLMResponse
+            pass
+        return resp
+
+    def _logged_failure_net(self, request: LLMRequest, exc: BaseException, *, model: str) -> None:
+        """AA-804: the row of a request the gateway refused before any provider attempt (a model not in the catalog or
+        disabled, every deployment behind an open circuit or over its budget, no usable deployment). Nothing is
+        written when an attempt row (or a billed row) already covers the failure."""
+        if _ledgered(exc) or _billed_usage_of(exc):
+            return
+        log_gateway_failed_attempt(request, exc, model=model, latency_ms=0)
+
     def _generate(self, request: LLMRequest) -> LLMResponse:
         # AA-518 — request.stage (when set) resolves the admin's per-stage config; an explicit
         # request.model_tier still wins over it (AA-237's opt-in haiku->sonnet auto-upgrade, and
@@ -601,18 +794,24 @@ class LLMClient:
             chain = [DEFAULT_MODEL_TIER]
 
         role = (stage_cfg.role if stage_cfg and stage_cfg.role else "writer")
-        if len(chain) == 1:
-            try:
-                resp = self._call_key_logged(request, chain[0], primary_acct, role=role, position=0)
-            except (LLMAccessDenied, UnusableReply):
-                raise
-            except Exception as e:
-                # AA-900: a single-model request refused at account level raises the typed error (no retry helps).
-                if account_level_class([classify(e)]):
-                    raise _all_failed(f"{chain[0]} refused for stage {request.stage!r}: {str(e)[:300]}", [e]) from e
-                raise
-        else:
-            resp = self._call_route(request, chain, primary_acct, role=role)
+        # AA-804 (ledger v2): the attempt scope of this request (role, attempt counter, prompt hash).
+        scope_token = _ATTEMPT_SCOPE.set(_scope_for(request, role))
+        try:
+            if len(chain) == 1:
+                try:
+                    resp = self._call_key_logged(request, chain[0], primary_acct, role=role, position=0)
+                except (LLMAccessDenied, UnusableReply):
+                    raise
+                except Exception as e:
+                    # AA-900: a single-model request refused at account level raises the typed error (no retry helps).
+                    if account_level_class([classify(e)]):
+                        raise _all_failed(f"{chain[0]} refused for stage {request.stage!r}: {str(e)[:300]}",
+                                          [e]) from e
+                    raise
+            else:
+                resp = self._call_route(request, chain, primary_acct, role=role)
+        finally:
+            _ATTEMPT_SCOPE.reset(scope_token)
 
         # AA-919: no A/B shadow call inside a writing-memory eval run (call_log.bind_eval_stage): it would add spend
         # and llm_shadow_log rows for an eval, not production traffic (cost-cuts K2, "shadow_sample_pct = 0").
@@ -733,6 +932,9 @@ class LLMClient:
         (BilledUnusableReply), write that attempt's llm_call_log row here before re-raising — the caller
         only ever sees the reply that came back, so no one else can. One row per billed attempt,
         `billed_unusable: true`, no ok-rate key (call_log.OK_RATE_KEYS)."""
+        scope = _ATTEMPT_SCOPE.get()
+        if scope is not None:
+            scope.position = position          # AA-804: the route position on this key's attempt rows
         try:
             return self._call_key(request, key, primary_acct)
         except Exception as e:
@@ -740,6 +942,8 @@ class LLMClient:
             if billed:
                 log_gateway_billed_failure(request, role=role, billed=billed, error=str(e),
                                            extra={"position": position, **(extra or {})})
+            else:
+                self._logged_failure_net(request, e, model=split_pin(key)[0] if split_pin(key) else key)
             raise
 
     def _call_route(self, request: LLMRequest, chain: list, primary_acct: str,
@@ -817,12 +1021,14 @@ class LLMClient:
         t0 = time.monotonic()
         resp, error = None, None
         token = _STAGE_SCOPES.set((request.stage, data_scope.normalize(getattr(cfg, "allowed_scopes", None))))
+        scope_token = _ATTEMPT_SCOPE.set(_scope_for(request, cfg.role or "writer", {"shadow": True}))
         try:
             resp = self._call_key_logged(request, cfg.shadow_model_id, primary_acct,
                                          role=cfg.role or "writer", position=0, extra={"shadow": True})
         except Exception as e:
             error = str(e)[:1000]
         finally:
+            _ATTEMPT_SCOPE.reset(scope_token)
             _STAGE_SCOPES.reset(token)
         record_shadow_sync(
             stage=cfg.stage, role=cfg.role, request=request, primary=primary,
@@ -837,7 +1043,8 @@ class LLMClient:
             # stop, raised as is: not wrapped into the outage error below).
             connection_budget.check(OPENAI_CONNECTION_KEY, "gpt-4.1")
             try:
-                return self._call_openai(request, model="gpt-4.1")
+                return self._attempt(request, lambda: self._call_openai(request, model="gpt-4.1"), model="gpt-4.1",
+                                     connection_key=OPENAI_CONNECTION_KEY, wire_id="gpt-4.1", provider="openai")
             except Exception as e:
                 logger.error("gpt41_direct_failed", error=str(e))
                 raise RuntimeError(f"GPT-4.1 failed: {e}") from e
@@ -852,8 +1059,8 @@ class LLMClient:
             # T1: Claude Sonnet — premium quality (acc2-native, off by default)
             if acc2_native:
                 try:
-                    connection_budget.check(ACC2_CONNECTION_KEY, tier)     # AA-1002 (S10), as on every tier below
-                    resp = self._call_bedrock(request, model=BEDROCK_SONNET, use_cache=True)
+                    resp = self._legacy_tier(request, tier, ACC2_CONNECTION_KEY, BEDROCK_SONNET,
+                                             lambda: self._call_bedrock(request, model=BEDROCK_SONNET, use_cache=True))
                     return resp
                 except Exception as e:
                     failures.append(e)
@@ -865,8 +1072,9 @@ class LLMClient:
 
             # T1.5a: Claude Sonnet on the acc3 satellite
             try:
-                connection_budget.check(primary_acct, tier)
-                resp = self._call_bedrock_satellite(request, model=BEDROCK_SONNET, account=primary_acct)
+                resp = self._legacy_tier(request, tier, primary_acct, BEDROCK_SONNET,
+                                         lambda: self._call_bedrock_satellite(request, model=BEDROCK_SONNET,
+                                                                              account=primary_acct))
                 resp.fallback_used = False    # KHÔNG phải fallback — vẫn đúng Sonnet, đúng ý định
                 resp.satellite_account = primary_acct
                 logger.info("t1_5a_satellite_used", model=BEDROCK_SONNET, account=primary_acct,
@@ -881,8 +1089,8 @@ class LLMClient:
         # T2: Claude Haiku — fast / default tier, or Sonnet fallback (acc2-native, off by default)
         if acc2_native:
             try:
-                connection_budget.check(ACC2_CONNECTION_KEY, tier)
-                resp = self._call_bedrock(request, model=BEDROCK_HAIKU, use_cache=True)
+                resp = self._legacy_tier(request, tier, ACC2_CONNECTION_KEY, BEDROCK_HAIKU,
+                                         lambda: self._call_bedrock(request, model=BEDROCK_HAIKU, use_cache=True))
                 resp.fallback_used = tier == "sonnet"  # only a fallback when Sonnet was intended
                 return resp
             except Exception as e:
@@ -894,8 +1102,9 @@ class LLMClient:
             # AA-1002 (S10): the legacy chain has no deployment plan, so each tier checks its connection's hard monthly
             # budget before the call. A tier over budget is a failure like any other (the chain moves on); when every
             # tier was, _all_failed makes it a budget stop (the job ends as stopped_budget, nothing was sent).
-            connection_budget.check(primary_acct, tier)
-            resp = self._call_bedrock_satellite(request, model=BEDROCK_HAIKU, account=primary_acct)
+            resp = self._legacy_tier(request, tier, primary_acct, BEDROCK_HAIKU,
+                                     lambda: self._call_bedrock_satellite(request, model=BEDROCK_HAIKU,
+                                                                          account=primary_acct))
             # giữ đúng logic gốc T2: chỉ coi là fallback nếu ý định ban đầu là sonnet
             resp.fallback_used = tier == "sonnet"
             resp.satellite_account = primary_acct
@@ -909,6 +1118,17 @@ class LLMClient:
 
         return self._legacy_last_resort(request, tier, failures)
 
+    def _legacy_tier(self, request: LLMRequest, tier: str, connection_key: str, wire_id: str, call) -> LLMResponse:
+        """One tier of the legacy chain as one ledger attempt (AA-804): the connection's hard monthly budget check
+        (AA-1002 S10, a budget refusal is a 0 USD 'refused' row), then the call."""
+        def run() -> LLMResponse:
+            connection_budget.check(connection_key, tier)
+            return call()
+        provider = ("openai" if connection_key == OPENAI_CONNECTION_KEY
+                    else "bedrock-native" if connection_key == ACC2_CONNECTION_KEY else "bedrock-satellite")
+        return self._attempt(request, run, model=tier, connection_key=connection_key, wire_id=wire_id,
+                             provider=provider)
+
     def _legacy_last_resort(self, request: LLMRequest, tier: str, failures: list) -> LLMResponse:
         # T3: GPT-4.1 — last resort for all tiers. S235: GPT-4.1 is retired (migration 224 disables its catalog row),
         # so a Bedrock outage on a Haiku/Sonnet writer raises here. Writers are Anthropic; an OpenAI last resort for a
@@ -919,8 +1139,8 @@ class LLMClient:
                          reason="GPT-4.1 retired (S235); no OpenAI last resort for legacy tiers")
             raise _all_failed("All LLM providers failed (Bedrock tiers down; GPT-4.1 retired)", failures)
         try:
-            connection_budget.check(OPENAI_CONNECTION_KEY, "gpt-4.1")     # AA-1002 (S10)
-            resp = self._call_openai(request, model="gpt-4.1")
+            resp = self._legacy_tier(request, "gpt-4.1", OPENAI_CONNECTION_KEY, "gpt-4.1",
+                                     lambda: self._call_openai(request, model="gpt-4.1"))     # AA-1002 (S10) budget
             resp.fallback_used = True
             logger.warning("t3_fallback_used", model="gpt-4.1",
                            reason=f"T2 failed (tier={tier})")
@@ -1094,7 +1314,10 @@ class LLMClient:
             raise RuntimeError(f"Model {model_key!r} is disabled in the catalog: "
                                f"{model.blocked_reason or 'no reason given'}")
         if pin:
-            return self._call_anthropic_messages(request, model, pinned_deployment(model, pin[1]))
+            pinned = pinned_deployment(model, pin[1])
+            return self._attempt(request, lambda: self._call_anthropic_messages(request, model, pinned),
+                                 model=model.model_key, connection_key=pinned.connection.connection_key,
+                                 wire_id=pinned.deployment.wire_id, provider="anthropic")
         # AA-1002 (S3): the model's deployments, in order (vendor_route.deployment_plan). None = the registry does not
         # describe this model (or LLM_DEPLOYMENT_ROUTING=off): the S2 path below, unchanged.
         # AA-1002 (S5): only deployments on connections whose data scope the stage allows.
@@ -1108,7 +1331,9 @@ class LLMClient:
         budget_skips: list = []
         vendor = vendor_deployment_for(model, scopes, budget_skips=budget_skips)
         if vendor is not None:
-            return self._call_anthropic_messages(request, model, vendor)
+            return self._attempt(request, lambda: self._call_anthropic_messages(request, model, vendor),
+                                 model=model.model_key, connection_key=vendor.connection.connection_key,
+                                 wire_id=vendor.deployment.wire_id, provider="anthropic")
         if model.api_style == "anthropic_messages":
             if budget_skips:
                 raise connection_budget.budget_error(model.model_key, budget_skips)
@@ -1116,8 +1341,13 @@ class LLMClient:
                                "deployment on an enabled Anthropic connection")
         # AA-1002 (S10): the paths below call a connection without a plan, so they check its hard budget themselves.
         if model.api_style == "openai_chat":
-            connection_budget.check(OPENAI_CONNECTION_KEY, model.model_key)
-            return self._call_openai(request, model=model.wire_model or model.model_key, catalog_model=model)
+            wire = model.wire_model or model.model_key
+
+            def openai_call() -> LLMResponse:
+                connection_budget.check(OPENAI_CONNECTION_KEY, model.model_key)
+                return self._call_openai(request, model=wire, catalog_model=model)
+            return self._attempt(request, openai_call, model=model.model_key, connection_key=OPENAI_CONNECTION_KEY,
+                                 wire_id=wire, provider="openai")
         if model.api_style != "converse":
             raise RuntimeError(f"Model {model_key!r} has api_style={model.api_style!r}, "
                                "which LLMClient cannot call through the catalog path")
@@ -1126,8 +1356,12 @@ class LLMClient:
             raise RuntimeError(f"Model {model_key!r} has no satellite account in bedrock_profile_ids")
         # An Anthropic deployment left out by its budget falls through to today's Converse call on the satellite (the
         # next way in answers), unless that connection is over its own budget too.
-        connection_budget.check(account, model.model_key)
-        return self._call_bedrock_converse(request, model, account)
+
+        def converse_call() -> LLMResponse:
+            connection_budget.check(account, model.model_key)
+            return self._call_bedrock_converse(request, model, account)
+        return self._attempt(request, converse_call, model=model.model_key, connection_key=account,
+                             wire_id=(model.bedrock_profile_ids or {}).get(account), provider="bedrock-satellite")
 
     def _call_plan(self, request: LLMRequest, model: CatalogModel, plan: list) -> LLMResponse:
         """AA-1002 (S3): ``model`` on each deployment of its plan, in order, until one answers. Same model first: the
@@ -1175,9 +1409,13 @@ class LLMClient:
         lets one probe call through (``admit``), the connection's limiter holds a slot, and the outcome is counted on
         the deployment's circuit (an unusable reply is an answer: it counts as a success). Raises the provider's own
         exception unchanged, or breaker.CircuitOpen / LimiterSaturated without a call."""
-        return breaker.guarded(target.connection, model.model_key,
-                               lambda: self._dispatch_target(request, model, target),
-                               admit_call=admit, answered=(UnusableReply,))
+        conn = target.connection
+        return self._attempt(
+            request, lambda: breaker.guarded(conn, model.model_key,
+                                             lambda: self._dispatch_target(request, model, target),
+                                             admit_call=admit, answered=(UnusableReply,)),
+            model=model.model_key, connection_key=conn.connection_key, wire_id=target.deployment.wire_id,
+            provider=_provider_of(conn))
 
     def probe(self, request: LLMRequest, model: CatalogModel, target: VendorDeployment) -> LLMResponse:
         """AA-1002 (S4): the admin's connection test — ``model`` on one explicit deployment (which may be switched off:
@@ -1185,6 +1423,9 @@ class LLMClient:
         probe: an open circuit is not in the way, and the outcome is counted (a success closes the circuit). A billed
         but unusable reply writes the gateway's billed_unusable llm_call_log row (as _call_key_logged does) and is
         re-raised; an answered call is logged by the caller (stage adhoc_conn_test)."""
+        # AA-804 (ledger v2): a refused or failed test writes its 0 USD attempt row (role validate).
+        scope_token = _ATTEMPT_SCOPE.set(_scope_for(request, "validate",
+                                                    {"connection_test": target.connection.connection_key}))
         try:
             return self._call_target(request, model, target, admit=False)
         except Exception as e:
@@ -1193,6 +1434,8 @@ class LLMClient:
                 log_gateway_billed_failure(request, role="validate", billed=billed, error=str(e),
                                            extra={"connection_test": target.connection.connection_key})
             raise
+        finally:
+            _ATTEMPT_SCOPE.reset(scope_token)
 
     def _dispatch_target(self, request: LLMRequest, model: CatalogModel, target: VendorDeployment) -> LLMResponse:
         """AA-1002 (S3): one catalog model on one deployment, by connection kind and the row's api_style."""
@@ -1290,6 +1533,7 @@ class LLMClient:
 
         if on_delta is None:
             resp = _converse_with_param_downgrades(rt.converse, kwargs, model.model_key, schema)
+            request_id = _bedrock_request_id(resp)
             _add_converse_usage(billed_tok, resp.get("usage", {}))
             stop_reason = resp.get("stopReason")
             # AA-927: from here on the first request is billed — any raise below (schema mismatch after
@@ -1329,6 +1573,7 @@ class LLMClient:
                 raise billed_failure(str(e), e) from e
         else:
             resp = _converse_dropping_rejected_temperature(rt.converse_stream, kwargs, model.model_key)
+            request_id = _bedrock_request_id(resp)
             parts = []
             usage = {}
             for event in resp["stream"]:
@@ -1386,6 +1631,7 @@ class LLMClient:
             connection_key=account if native else None,
             cache_read_tokens=cache_read, cache_write_tokens=cache_write,
             stop_reason=stop_reason, provider_requests=provider_requests, pricing_mode=priced.pricing_mode,
+            request_id=request_id, deployment_wire_id=profile_id,
         )
 
     def _call_anthropic_messages(self, request: LLMRequest, model: CatalogModel,
@@ -1459,6 +1705,8 @@ class LLMClient:
             cache_read_tokens=cache_read, cache_write_tokens=cache_write, stop_reason=stop_reason,
             provider_model=result.provider_model, pricing_mode=priced.pricing_mode,
             cache_write_1h_tokens=_int_attr(result, "cache_write_1h_tokens"), connection_key=conn.connection_key,
+            request_id=_str_attr(result, "request_id"), effort=_str_attr(result, "effort"),
+            deployment_wire_id=dep.wire_id,
         )
 
     def _call_openai(self, request: LLMRequest, model: str, catalog_model: Optional[CatalogModel] = None,
@@ -1573,7 +1821,10 @@ class LLMClient:
             content=content, model_used=reply_label, provider=provider,
             input_tokens=in_tok, output_tokens=out_tok, cost_usd=cost,
             stop_reason=finish_reason, cache_read_tokens=cached, pricing_mode=priced.pricing_mode,
-            connection_key=conn_key,
+            connection_key=conn_key, deployment_wire_id=model if isinstance(model, str) else None,
+            # AA-804 (ledger v2): the SDK's x-request-id and the reasoning part of completion_tokens, when reported
+            request_id=_str_attr(resp, "_request_id"),
+            reasoning_tokens=_reasoning_tokens(resp.usage),
         )
 
     def _calc_cost(self, model: str, in_tok: int, out_tok: int,
