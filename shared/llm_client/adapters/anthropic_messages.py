@@ -133,15 +133,29 @@ def _effort_facts(wire_id: str) -> tuple[bool, Optional[str]]:
 _EFFORT_WARNED: set[str] = set()
 
 
-def resolve_effort(wire_id: str, stage: Optional[str], request_defaults: Optional[dict]) -> Optional[str]:
+def _capability_effort(capabilities: Optional[dict]) -> Optional[tuple[bool, Optional[str]]]:
+    """AA-1017: (True, default) when the catalog row states ``effort_default`` (a valid effort, or null = the model
+    takes no effort parameter); None when it does not (the family table answers)."""
+    if not isinstance(capabilities, dict) or "effort_default" not in capabilities:
+        return None
+    value = capabilities["effort_default"]
+    if value is None or value in EFFORTS:
+        return True, value
+    logger.warning("llm_anthropic_capability_effort_invalid", effort=value)
+    return None
+
+
+def resolve_effort(wire_id: str, stage: Optional[str], request_defaults: Optional[dict],
+                   capabilities: Optional[dict] = None) -> Optional[str]:
     """The effort to send: the deployment's ``request_defaults.effort_by_stage[stage]``, else its ``effort``, else
     the model family's default. None when the family takes no effort (Haiku 4.5, Sonnet 4.5) or is unknown and no
-    effort is configured (warned once per wire id)."""
+    effort is configured (warned once per wire id). AA-1017: the catalog row's ``capabilities.effort_default`` (when
+    stated) replaces the family table for that model."""
     defaults = request_defaults if isinstance(request_defaults, dict) else {}
     by_stage = defaults.get("effort_by_stage")
     configured = by_stage.get(stage) if isinstance(by_stage, dict) and stage else None
     configured = configured or defaults.get("effort")
-    known, family_default = _effort_facts(wire_id)
+    known, family_default = _capability_effort(capabilities) or _effort_facts(wire_id)
     if known and family_default is None:
         if configured:
             logger.warning("llm_anthropic_effort_ignored", wire_id=wire_id, effort=configured,
@@ -209,12 +223,13 @@ def _schema_instruction(schema: dict) -> str:
 
 
 def build_params(*, wire_id: str, system: str, user: str, max_tokens: int, stage: Optional[str],
-                 json_schema: Optional[dict] = None, request_defaults: Optional[dict] = None) -> dict:
+                 json_schema: Optional[dict] = None, request_defaults: Optional[dict] = None,
+                 capabilities: Optional[dict] = None) -> dict:
     """The keyword arguments of ``messages.stream``. Only these keys can appear: model, max_tokens, system, messages,
     output_config (format / effort). Pinned by tests/unit/test_aa1002_anthropic_messages.py."""
     defaults = request_defaults if isinstance(request_defaults, dict) else {}
     output_config: dict = {}
-    effort = resolve_effort(wire_id, stage, defaults)
+    effort = resolve_effort(wire_id, stage, defaults, capabilities)
     if effort:
         output_config["effort"] = effort
     if json_schema:
@@ -359,7 +374,7 @@ def _wrap_status_error(conn_key: str, e) -> AnthropicAPIError:
 
 def send(*, connection: connections.ProviderConnection, wire_id: str, system: str, user: str, max_tokens: int,
          stage: Optional[str], json_schema: Optional[dict] = None, request_defaults: Optional[dict] = None,
-         on_delta: Optional[Callable[[str], None]] = None) -> MessagesResult:
+         on_delta: Optional[Callable[[str], None]] = None, capabilities: Optional[dict] = None) -> MessagesResult:
     """One streamed Messages API request. Raises ConnectionCredentialError / ConnectionPolicyError before any
     network call when the connection may not be used, AnthropicAPIError when the API refuses or the request fails.
     A reply that arrived (any stop_reason, refusal included) is returned: the caller decides whether it is usable."""
@@ -378,7 +393,7 @@ def send(*, connection: connections.ProviderConnection, wire_id: str, system: st
     connections.check_base_url("anthropic", base_url)
     client = _client_for(connection, api_key, base_url)
     params = build_params(wire_id=wire_id, system=system, user=user, max_tokens=max_tokens, stage=stage,
-                          json_schema=json_schema, request_defaults=request_defaults)
+                          json_schema=json_schema, request_defaults=request_defaults, capabilities=capabilities)
     try:
         with client.messages.stream(**params) as stream:
             for event in stream:

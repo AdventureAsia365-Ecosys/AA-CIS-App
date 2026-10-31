@@ -18,10 +18,10 @@ from .pricing import BEDROCK_SONNET, BEDROCK_HAIKU, COST_TABLE, Usage, calc_cost
 from . import pricing
 from .role_config import get_stage_config_sync
 from .bedrock_satellite import DEFAULT_SATELLITE_ACCOUNT
-from .catalog import LEGACY_KEYS, CatalogModel, get_model_sync
+from .catalog import LEGACY_KEYS, CatalogModel, capability, get_model_sync
 from .schema_check import SchemaMismatch, conform
 from .errors import OTHER, THROTTLED, LLMAccessDenied, account_level_class, classify
-from . import breaker, connection_budget, connections, data_scope, stream_sink
+from . import breaker, connection_budget, connections, data_scope, stage_params, stream_sink
 from .vendor_route import (VendorDeployment, deployment_plan, pinned_deployment, split_pin,
                            vendor_deployment_for)
 from .deployments import alias_targets_sync
@@ -350,6 +350,8 @@ def _legacy_schema_instruction(schema: dict) -> str:
 # inference-profile id (e.g. "global.anthropic.claude-sonnet-5-5"), so every account's profile of the
 # same model matches. A model outside this list that rejects forced tool use is caught at runtime
 # (`_tool_choice_rejected`) and remembered for the life of the process.
+# AA-1017 (registry v2): the catalog row's capability `forced_tool_choice` (bool) answers first; these markers are the
+# fallback for a row that does not state it (every row at migration 320).
 _NO_FORCED_TOOL_CHOICE_MARKERS = (
     "claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-1", "claude-mythos-5-1",
 )
@@ -359,6 +361,9 @@ _FORCED_TOOL_REJECTED: set[str] = set()
 def _forced_tool_choice_ok(model, profile_id: str) -> bool:
     if model.model_key in _FORCED_TOOL_REJECTED:
         return False
+    stated = capability(model, "forced_tool_choice")
+    if isinstance(stated, bool):
+        return stated
     pid = (profile_id or "").lower()
     return not any(marker in pid for marker in _NO_FORCED_TOOL_CHOICE_MARKERS)
 
@@ -420,11 +425,19 @@ def _cache_point_min_tokens(profile_id: str) -> int:
 def _converse_cache_point(model, profile_id: str, system_prompt: str) -> bool:
     """True when a Converse request to ``profile_id`` should end its system list with a cachePoint: a Claude model
     on Bedrock (an ``anthropic.`` inference profile), the switch on, the model not seen rejecting it, and a system
-    prompt at or above the model's minimum cacheable length."""
+    prompt at or above the model's minimum cacheable length.
+
+    AA-1017: the catalog row's capabilities answer first — ``prompt_cache`` (bool) instead of the ``anthropic.``
+    profile test, ``cache_min_tokens`` (int) instead of the per-family table; unset = today's rules."""
     pid = (profile_id or "").lower()
-    if "anthropic." not in pid or not converse_cache_point_enabled() or model.model_key in _CACHE_POINT_REJECTED:
+    stated = capability(model, "prompt_cache")
+    cacheable = stated if isinstance(stated, bool) else "anthropic." in pid
+    if not cacheable or not converse_cache_point_enabled() or model.model_key in _CACHE_POINT_REJECTED:
         return False
-    return len(system_prompt or "") // _CHARS_PER_TOKEN >= _cache_point_min_tokens(pid)
+    minimum = capability(model, "cache_min_tokens")
+    if not isinstance(minimum, int) or isinstance(minimum, bool) or minimum < 1:
+        minimum = _cache_point_min_tokens(pid)
+    return len(system_prompt or "") // _CHARS_PER_TOKEN >= minimum
 
 
 def _cache_point_rejected(exc: BaseException) -> bool:
@@ -1316,6 +1329,9 @@ class LLMClient:
         if not model.enabled:
             raise RuntimeError(f"Model {model_key!r} is disabled in the catalog: "
                                f"{model.blocked_reason or 'no reason given'}")
+        # AA-1017: the stage x model parameters (shared.stage_model_params; call site -> row -> protocol default). The
+        # empty table returns the same request object, so the provider request is byte-identical.
+        request = stage_params.apply(request, model)
         if pin:
             pinned = pinned_deployment(model, pin[1])
             return self._attempt(request, lambda: self._call_anthropic_messages(request, model, pinned),
@@ -1441,8 +1457,10 @@ class LLMClient:
             _ATTEMPT_SCOPE.reset(scope_token)
 
     def _dispatch_target(self, request: LLMRequest, model: CatalogModel, target: VendorDeployment) -> LLMResponse:
-        """AA-1002 (S3): one catalog model on one deployment, by connection kind and the row's api_style."""
+        """AA-1002 (S3): one catalog model on one deployment, by connection kind and the row's api_style. AA-1017: the
+        deployment's own api_style when it states one (migration 320; NULL on every row = the catalog's)."""
         dep, conn = target.deployment, target.connection
+        api_style = getattr(dep, "api_style", None) or model.api_style
         if conn.kind == "anthropic":
             return self._call_anthropic_messages(request, model, target)
         if conn.kind in ("openai", "azure_openai"):
@@ -1450,13 +1468,13 @@ class LLMClient:
                                      deployment=dep)
         if conn.kind != "bedrock":
             raise RuntimeError(f"connection {conn.connection_key!r} ({conn.kind}) has no adapter")
-        if model.api_style == "converse":
+        if api_style == "converse":
             if conn.auth_mode == "task_role":
                 from .bedrock_satellite import native_runtime
                 return self._call_bedrock_converse(request, model, conn.connection_key, profile_id=dep.wire_id,
                                                    runtime=native_runtime(conn))
             return self._call_bedrock_converse(request, model, conn.connection_key, profile_id=dep.wire_id)
-        if model.api_style == "anthropic_native" and model.model_key in _NATIVE_PRICE_KEY:
+        if api_style == "anthropic_native" and model.model_key in _NATIVE_PRICE_KEY:
             # The legacy Messages body (InvokeModel), exactly as _legacy_chain sends it: the satellite (T1.5a / T2.5a)
             # on an assume-role connection, acc2-native (T1 / T2) on a task-role one.
             if conn.auth_mode == "task_role":
@@ -1466,7 +1484,7 @@ class LLMClient:
                                                 account=conn.connection_key, profile_id=dep.wire_id)
             resp.satellite_account = conn.connection_key
             return resp
-        raise RuntimeError(f"Model {model.model_key!r} has api_style={model.api_style!r}, "
+        raise RuntimeError(f"Model {model.model_key!r} has api_style={api_style!r}, "
                            f"which LLMClient cannot call on a {conn.kind} connection")
 
     def _call_bedrock_converse(self, request: LLMRequest, model: CatalogModel, account: str,
@@ -1506,6 +1524,8 @@ class LLMClient:
         # in the list, after the auto-tool instruction, so the whole stable prefix is cached.
         if _converse_cache_point(model, profile_id, request.system_prompt):
             kwargs["system"] = [*kwargs["system"], dict(CACHE_POINT_BLOCK)]
+        # AA-1017: a stage x model effort / reasoning_mode is not sent on Converse (see stage_params); said once.
+        stage_params.warn_not_applied(request.stage, model.model_key, "converse")
         # AA-803: no `thinking` / `budget_tokens` field is ever sent (no additionalModelRequestFields), so
         # adaptive-thinking-only models (Haiku 5.5, Sonnet 5.5, Opus 5.5) run their default, and the
         # last message is always the user's (no assistant prefill, which those models reject).
@@ -1657,10 +1677,20 @@ class LLMClient:
             max_tokens = min(max_tokens, model.max_output_tokens)
         stream_sink.emit_restart(request.stage)
         on_delta = None if schema else stream_sink.delta_callback(request.stage)
+        # AA-1017: a stage x model effort beats the deployment's own effort_by_stage / effort; the catalog row's
+        # capabilities (effort_default) are passed only when it states some, so today's call is unchanged.
+        request_defaults = dep.request_defaults
+        effort = stage_params.effort_for(request.stage, model.model_key)
+        if effort and request.stage:
+            by_stage = request_defaults.get("effort_by_stage") if isinstance(request_defaults, dict) else None
+            request_defaults = {**(request_defaults or {}),
+                                "effort_by_stage": {**(by_stage if isinstance(by_stage, dict) else {}),
+                                                    request.stage: effort}}
+        extra = {"capabilities": model.capabilities} if getattr(model, "capabilities", None) else {}
         result = anthropic_messages.send(
             connection=conn, wire_id=dep.wire_id, system=request.system_prompt, user=request.user_prompt,
-            max_tokens=max_tokens, stage=request.stage, json_schema=schema, request_defaults=dep.request_defaults,
-            on_delta=on_delta)
+            max_tokens=max_tokens, stage=request.stage, json_schema=schema, request_defaults=request_defaults,
+            on_delta=on_delta, **extra)
 
         label = f"{ANTHROPIC_API_LABEL_PREFIX}{model.model_key}"
         in_tok, out_tok = result.input_tokens, result.output_tokens
@@ -1741,6 +1771,8 @@ class LLMClient:
             kwargs["temperature"] = request.temperature
         if sampling_ok and "seed" in fields_set and request.seed is not None:
             kwargs["seed"] = request.seed
+        if catalog_model is not None:      # AA-1017: no effort / reasoning field on this path yet (said once)
+            stage_params.warn_not_applied(request.stage, catalog_model.model_key, "openai_chat")
         if request.json_schema:
             kwargs["response_format"] = {
                 "type": "json_schema",

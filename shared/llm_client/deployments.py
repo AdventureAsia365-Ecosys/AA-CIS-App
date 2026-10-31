@@ -14,6 +14,10 @@ alias read: ``shared.llm_model_alias`` (migration 307) maps a legacy key (``haik
 models its chain tries, each called through its own deployments (``LLMClient`` with ``LLM_LEGACY_ALIASES`` on).
 Read-only. Never raises on the sync read: a DB failure or a table that is not migrated yet means no deployments / no
 aliases, and the two reads fail independently (the alias table may be missing while the deployments load).
+
+AA-1017 (registry v2, migration 320): a deployment may state its own ``api_style`` (how it is called); NULL (every row
+at 320) = the catalog row's, which is what ``LLMClient._dispatch_target`` used before. Before 320 the column is absent
+and the read falls back to the 304 columns (``api_style`` None).
 """
 from __future__ import annotations
 
@@ -49,6 +53,7 @@ class ModelDeployment:
     batch_capable: bool = False
     request_defaults: dict = field(default_factory=dict, compare=False)
     notes: Optional[str] = None
+    api_style: Optional[str] = None        # AA-1017 (migration 320): None = the catalog row's api_style
 
 
 _PRICE_COLUMNS = ("price_in_override", "price_out_override", "price_cache_read_override",
@@ -57,10 +62,16 @@ _COLUMNS = ("model_key", "connection_key", "wire_id", "priority", "enabled", "or
             "batch_capable", "request_defaults", "notes")
 _SELECT_SQL = (f"SELECT {', '.join(_COLUMNS)} FROM shared.llm_model_deployment "
                "ORDER BY model_key, priority, connection_key")
+_SELECT_V2_SQL = (f"SELECT {', '.join(_COLUMNS)}, api_style FROM shared.llm_model_deployment "
+                  "ORDER BY model_key, priority, connection_key")
 
 
 def _row_to_deployment(row) -> ModelDeployment:
     d = {k: row[k] for k in _COLUMNS}
+    try:
+        d["api_style"] = row["api_style"]
+    except (KeyError, IndexError):
+        d["api_style"] = None
     for k in _PRICE_COLUMNS:
         d[k] = float(d[k]) if d[k] is not None else None
     defaults = d["request_defaults"]
@@ -81,7 +92,13 @@ _ALIAS_SQL = "SELECT alias_key, position, model_key FROM shared.llm_model_alias 
 
 
 async def fetch_deployments(conn) -> list[ModelDeployment]:
-    return [_row_to_deployment(r) for r in await conn.fetch(_SELECT_SQL)]
+    import asyncpg
+
+    try:
+        rows = await conn.fetch(_SELECT_V2_SQL)
+    except asyncpg.exceptions.UndefinedColumnError:      # before migration 320 (call outside a transaction)
+        rows = await conn.fetch(_SELECT_SQL)
+    return [_row_to_deployment(r) for r in rows]
 
 
 async def _fetch_all() -> list[ModelDeployment]:

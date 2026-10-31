@@ -20,6 +20,17 @@ default must run when the DB is down).
 
 Like ``catalog.py``: the table is tiny, loaded in one query and cached in process; the sync read never raises (a DB
 failure or a table that is not migrated yet returns no connections). ``resolve_api_key`` fails closed.
+
+AA-1017 (registry v2, migration 322; root ADR 0009 §2): the table also holds the paid providers that are not LLMs:
+``typesafe`` (Jev, role decide), ``dataforseo`` and ``geoapify`` (role data) and ``bedrock_guardrails`` (role guard),
+with a secret guard per kind (``check_secret_name(name, kind)``: the LLM kinds keep ``aa-llm/``, each provider kind
+only its own ``aa-cis/<env>/<kind>`` secret) and a host per kind (``BASE_URL_ALLOWLIST``), the same rules as the
+table's CHECKs. They are kept out of the LLM dispatch: ``fetch_connections`` / ``registry_rows_sync`` /
+``get_connection_sync`` return the LLM kinds only (``LLM_KINDS``), ``resolve_api_key`` refuses any other kind, and the
+providers read their own row through ``provider_connection`` (Jev's URL and timeout, the low-balance thresholds, the
+Geoapify daily credit limit). The v2 columns (failure_domain, served_roles, access_state, last_probe_at,
+balance_source, daily_credit_limit, low_balance_usd) are read when the table has them (before 322 they are absent and
+the row carries the defaults).
 """
 from __future__ import annotations
 
@@ -46,19 +57,37 @@ _CONNECT_TIMEOUT_SECONDS = 3.0
 # provider drops it at once (invalidate_credential) so a rotated key is read again on the next call.
 _CREDENTIAL_TTL_SECONDS = 900.0
 
-KINDS = ("bedrock", "anthropic", "openai", "azure_openai", "mock")
+# The kinds the LLM dispatch may use (vendor_route, the breaker, budgets, the admin's LLM connections) ...
+LLM_KINDS = ("bedrock", "anthropic", "openai", "azure_openai", "mock")
+# ... and the paid providers that are not LLMs (AA-1017, migration 322): never routed to, each read by its own client.
+PROVIDER_KINDS = ("typesafe", "dataforseo", "geoapify", "bedrock_guardrails")
+KINDS = LLM_KINDS + PROVIDER_KINDS
 AUTH_MODES = {
     "bedrock": ("assume_role", "task_role", "bedrock_api_key"),
     "anthropic": ("api_key",),
     "openai": ("api_key",),
     "azure_openai": ("api_key",),
     "mock": ("none",),
+    "typesafe": ("api_key",),
+    "dataforseo": ("basic_auth",),           # login + password in one secret
+    "geoapify": ("api_key",),
+    "bedrock_guardrails": ("task_role", "assume_role"),
 }
+# The ledger role each provider kind serves (ADR 0009 §2; llm_call_log role CHECK of migration 319).
+KIND_ROLE = {"typesafe": "decide", "dataforseo": "data", "geoapify": "data", "bedrock_guardrails": "guard"}
+ROLES = ("writer", "judge", "validate", "embed", "decide", "data", "guard")
+ACCESS_STATES = ("unknown", "ok", "access_denied", "quota_exhausted", "unconfigured")
+BALANCE_SOURCES = ("none", "provider_api", "topups_minus_spend", "daily_credit_window", "cost_explorer")
+_KEY_AUTH_MODES = ("api_key", "bedrock_api_key", "basic_auth")
 DATA_SCOPES = ("aws_only", "vendor_direct")
 
 SECRET_PREFIX = "aa-llm/"
-# Same pattern as llm_provider_connection_secret_name_check (migration 304).
+# Same pattern as llm_provider_connection_secret_name_check (migration 304; for the LLM kinds since 322).
 SECRET_NAME_RE = re.compile(r"^aa-llm/[a-z0-9-]+/[a-z0-9][a-z0-9-]*$")
+# AA-1017 (migration 322): each provider kind may name only its own secret (today's aa-cis/<env>/<kind> names), so a
+# row can never read another kind's secret; bedrock_guardrails takes none (AWS credentials).
+PROVIDER_SECRET_RE: dict[str, re.Pattern] = {
+    kind: re.compile(rf"^aa-cis/[a-z0-9-]+/{kind}$") for kind in ("typesafe", "dataforseo", "geoapify")}
 
 # The hosts a connection of each kind may call. An exact host, or a ".suffix" for a per-resource host
 # (Azure OpenAI: https://<resource>.openai.azure.com). bedrock / mock take no base_url (boto3 picks the endpoint).
@@ -66,6 +95,9 @@ BASE_URL_ALLOWLIST: dict[str, tuple[str, ...]] = {
     "anthropic": ("api.anthropic.com",),
     "openai": ("api.openai.com",),
     "azure_openai": (".openai.azure.com",),
+    "typesafe": ("api.typesafe.ai",),        # AA-1017 (migration 322): the provider kinds, one host each
+    "dataforseo": ("api.dataforseo.com",),
+    "geoapify": ("api.geoapify.com",),
 }
 
 # Closed lists, same as the table CHECKs (migration 304): env vars a connection may name instead of a value.
@@ -85,12 +117,21 @@ class ConnectionCredentialError(RuntimeError):
     """No usable credential for a connection: disabled, policy problem, secret unreadable or empty. Fail closed."""
 
 
-def check_secret_name(name: Optional[str]) -> None:
-    """Raise ConnectionPolicyError unless ``name`` is an ``aa-llm/<env>/<name>`` secret name (or None)."""
+def check_secret_name(name: Optional[str], kind: Optional[str] = None) -> None:
+    """Raise ConnectionPolicyError unless ``name`` is None or a secret name ``kind`` may use: ``aa-llm/<env>/<name>``
+    for an LLM kind (and when no kind is given), ``aa-cis/<env>/<kind>`` for typesafe / dataforseo / geoapify, none for
+    bedrock_guardrails (AA-1017, the per-kind CHECK of migration 322)."""
     if name is None:
         return
-    if not isinstance(name, str) or not SECRET_NAME_RE.fullmatch(name):
-        raise ConnectionPolicyError(f"secret_name must match aa-llm/<env>/<name>: {name!r}")
+    if kind is None or kind in LLM_KINDS:
+        if not isinstance(name, str) or not SECRET_NAME_RE.fullmatch(name):
+            raise ConnectionPolicyError(f"secret_name must match aa-llm/<env>/<name>: {name!r}")
+        return
+    pattern = PROVIDER_SECRET_RE.get(kind)
+    if pattern is None:
+        raise ConnectionPolicyError(f"a {kind!r} connection takes no secret_name")
+    if not isinstance(name, str) or not pattern.fullmatch(name):
+        raise ConnectionPolicyError(f"secret_name of a {kind!r} connection must be aa-cis/<env>/{kind}: {name!r}")
 
 
 def check_base_url(kind: str, url: Optional[str]) -> None:
@@ -139,6 +180,19 @@ class ProviderConnection:
     notes: Optional[str] = None
     updated_at: Optional[str] = None
     updated_by: Optional[str] = None
+    # AA-1017 (migration 322); the defaults stand for "not read" (a table before 322, a test double).
+    failure_domain: Optional[str] = None
+    served_roles: Optional[tuple] = None
+    access_state: str = "unknown"
+    last_probe_at: Optional[str] = None
+    balance_source: Optional[str] = None
+    daily_credit_limit: Optional[int] = None
+    low_balance_usd: Optional[float] = None
+
+    @property
+    def is_llm(self) -> bool:
+        """A connection the LLM dispatch may use (``LLM_KINDS``); the decide / data / guard providers are not."""
+        return self.kind in LLM_KINDS
 
     def resolved_account_id(self) -> Optional[str]:
         """``account_id``, else the value of the allowlisted ``account_id_env`` (None when unset or not allowed)."""
@@ -162,7 +216,7 @@ class ProviderConnection:
             return "task_role"
         if self.auth_mode == "none":
             return "none"
-        if self.secret_name:
+        if self.secret_name:            # api_key, bedrock_api_key, basic_auth (dataforseo)
             return "secret"
         if self.credential_env:
             return "env"
@@ -177,7 +231,8 @@ class ProviderConnection:
             problems.append(f"auth_mode {self.auth_mode!r} does not fit kind {self.kind!r}")
         if self.data_scope not in DATA_SCOPES:
             problems.append(f"unknown data_scope {self.data_scope!r}")
-        for check in (lambda: check_secret_name(self.secret_name), lambda: check_base_url(self.kind, self.base_url)):
+        for check in (lambda: check_secret_name(self.secret_name, self.kind),
+                      lambda: check_base_url(self.kind, self.base_url)):
             try:
                 check()
             except ConnectionPolicyError as e:
@@ -195,7 +250,7 @@ class ProviderConnection:
                 missing.append("account_id")
             if missing:
                 problems.append("assume_role needs " + ", ".join(missing))
-        if self.auth_mode in ("api_key", "bedrock_api_key") and self.credential_source() == "missing":
+        if self.auth_mode in _KEY_AUTH_MODES and self.credential_source() == "missing":
             problems.append("no secret_name or credential_env")
         return problems
 
@@ -209,23 +264,75 @@ _COLUMNS = (
     "external_id", "secret_name", "credential_env", "base_url", "data_scope", "timeout_s", "max_retries",
     "max_concurrency", "rpm_limit", "monthly_budget_usd", "enabled", "notes", "updated_at", "updated_by",
 )
+# AA-1017: the columns of migration 322, read when the table has them.
+V2_COLUMNS = ("failure_domain", "served_roles", "access_state", "last_probe_at", "balance_source",
+              "daily_credit_limit", "low_balance_usd")
 _SELECT_SQL = f"SELECT {', '.join(_COLUMNS)} FROM shared.llm_provider_connection ORDER BY connection_key"
+_SELECT_V2_SQL = (f"SELECT {', '.join(_COLUMNS + V2_COLUMNS)} FROM shared.llm_provider_connection "
+                  "ORDER BY connection_key")
+_SELECT_ONE_V2_SQL = (f"SELECT {', '.join(_COLUMNS + V2_COLUMNS)} FROM shared.llm_provider_connection "
+                      "WHERE connection_key = $1")
+_SELECT_ONE_SQL = f"SELECT {', '.join(_COLUMNS)} FROM shared.llm_provider_connection WHERE connection_key = $1"
+
+
+def _field(row, key: str):
+    """``row[key]``, or None when the row does not carry the column (a table before migration 322)."""
+    try:
+        return row[key]
+    except (KeyError, IndexError):
+        return None
 
 
 def _row_to_connection(row) -> ProviderConnection:
     d = {k: row[k] for k in _COLUMNS}
     d["monthly_budget_usd"] = _num(d["monthly_budget_usd"])
     d["updated_at"] = d["updated_at"].isoformat() if d.get("updated_at") else None
-    return ProviderConnection(**d)
+    v2 = {k: _field(row, k) for k in V2_COLUMNS}
+    roles = v2["served_roles"]
+    v2["served_roles"] = tuple(roles) if roles is not None else None
+    v2["access_state"] = v2["access_state"] or "unknown"
+    v2["last_probe_at"] = v2["last_probe_at"].isoformat() if hasattr(v2["last_probe_at"], "isoformat") else None
+    v2["low_balance_usd"] = _num(v2["low_balance_usd"])
+    return ProviderConnection(**d, **v2)
 
 
 async def _connect():
     return await asyncpg.connect(get_database_url(), ssl="require", timeout=_CONNECT_TIMEOUT_SECONDS)
 
 
-async def fetch_connections(conn) -> dict[str, ProviderConnection]:
-    rows = await conn.fetch(_SELECT_SQL)
-    return {r["connection_key"]: _row_to_connection(r) for r in rows}
+async def _fetch_rows(conn, v2_sql: str, v1_sql: str, *args):
+    """The v2 select, or the 304 one when the table has no 322 columns yet (call outside a transaction: the failed
+    statement would abort it)."""
+    try:
+        return await conn.fetch(v2_sql, *args)
+    except asyncpg.exceptions.UndefinedColumnError:
+        return await conn.fetch(v1_sql, *args)
+
+
+async def fetch_connections(conn, *, llm_only: bool = True) -> dict[str, ProviderConnection]:
+    """Every connection row by key. ``llm_only`` (the default, every LLM caller): the LLM kinds only, so a decide /
+    data / guard row (AA-1017) never reaches the LLM dispatch, the breaker, budgets or the reconcile."""
+    rows = await _fetch_rows(conn, _SELECT_V2_SQL, _SELECT_SQL)
+    out = {r["connection_key"]: _row_to_connection(r) for r in rows}
+    return {k: c for k, c in out.items() if c.is_llm} if llm_only else out
+
+
+async def provider_connection(db, connection_key: str) -> Optional[ProviderConnection]:
+    """AA-1017: the row of one connection of any kind (Jev's ``typesafe``, ``dataforseo``, ``geoapify``), for a
+    provider client reading its own settings. ``db``: an asyncpg connection or pool. None when there is no such row,
+    the table is not migrated, or the read fails (the caller keeps its env / constant default). Never raises."""
+    try:
+        if hasattr(db, "acquire"):
+            async with db.acquire() as conn:
+                rows = await _fetch_rows(conn, _SELECT_ONE_V2_SQL, _SELECT_ONE_SQL, connection_key)
+        else:
+            rows = await _fetch_rows(db, _SELECT_ONE_V2_SQL, _SELECT_ONE_SQL, connection_key)
+        if not rows or rows[0]["connection_key"] != connection_key:      # a test double answers anything
+            return None
+        return _row_to_connection(rows[0])
+    except Exception as e:  # noqa: BLE001 — a settings read never breaks the provider call
+        logger.warning("provider_connection_read_failed", connection=connection_key, error=str(e)[:200])
+        return None
 
 
 async def _fetch_all() -> dict[str, ProviderConnection]:
@@ -284,12 +391,14 @@ def _load(now: float) -> None:
 
 
 def get_connection_sync(connection_key: str) -> Optional[ProviderConnection]:
+    """An LLM connection by key (the cache holds the LLM kinds only, ``fetch_connections``)."""
     _ensure_loaded()
     return _connections.get(connection_key)
 
 
 def registry_rows_sync() -> dict[str, ProviderConnection]:
-    """Every loaded connection row (empty when the registry is unreadable, not migrated or empty). Never raises."""
+    """Every loaded LLM connection row (empty when the registry is unreadable, not migrated or empty). Never
+    raises."""
     _ensure_loaded()
     return dict(_connections)
 
@@ -308,6 +417,50 @@ BUILTIN_CONNECTIONS: dict[str, ProviderConnection] = {
                                         label="OpenAI API (direct)", data_scope="vendor_direct", enabled=True,
                                         credential_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1"),
 }
+
+
+# AA-1017 (migration 322): the decide / data / guard rows 322 seeds, field for field (tests compare them with the SQL).
+# Never an LLM connection (not in BUILTIN_CONNECTIONS, so connection_or_builtin and bedrock_connection_keys never see
+# them). A provider client reads its own row (``provider_connection``) and, when there is none, its env / constant
+# default, which these values equal.
+BUILTIN_PROVIDERS: dict[str, ProviderConnection] = {
+    "typesafe": ProviderConnection(connection_key="typesafe", kind="typesafe", auth_mode="api_key",
+                                   label="Jev (TypeSafe decisions)", data_scope="vendor_direct", enabled=True,
+                                   secret_name="aa-cis/dev/typesafe", base_url="https://api.typesafe.ai",
+                                   timeout_s=3, max_retries=2, failure_domain="typesafe:typesafe:vendor_direct",
+                                   served_roles=("decide",), balance_source="topups_minus_spend", low_balance_usd=3.0),
+    "dataforseo": ProviderConnection(connection_key="dataforseo", kind="dataforseo", auth_mode="basic_auth",
+                                     label="DataForSEO", data_scope="vendor_direct", enabled=True,
+                                     secret_name="aa-cis/dev/dataforseo", base_url="https://api.dataforseo.com/v3",
+                                     failure_domain="dataforseo:dataforseo:vendor_direct", served_roles=("data",),
+                                     balance_source="provider_api", low_balance_usd=10.0),
+    "geoapify": ProviderConnection(connection_key="geoapify", kind="geoapify", auth_mode="api_key",
+                                   label="Geoapify (geocoder)", data_scope="vendor_direct", enabled=True,
+                                   secret_name="aa-cis/dev/geoapify", base_url="https://api.geoapify.com/v1",
+                                   failure_domain="geoapify:geoapify:vendor_direct", served_roles=("data",),
+                                   balance_source="daily_credit_window", daily_credit_limit=2500),
+    "bedrock-guardrails": ProviderConnection(connection_key="bedrock-guardrails", kind="bedrock_guardrails",
+                                             auth_mode="task_role", label="Bedrock Guardrails (CRM scrub)",
+                                             data_scope="aws_only", enabled=False, region="us-west-1",
+                                             failure_domain="bedrock_guardrails:bedrock-guardrails:aws_only",
+                                             served_roles=("guard",), balance_source="cost_explorer"),
+}
+
+
+def provider_value(row: Optional[ProviderConnection], field: str, env: Optional[str], default):
+    """AA-1017: one setting of a provider: the connection row's value, else the env var ``env`` (when set and of the
+    default's type), else ``default``. The precedence of the registry v2 slice (row -> env -> constant). Never
+    raises."""
+    value = getattr(row, field, None) if row is not None else None
+    if value is not None:
+        return type(default)(value) if isinstance(default, (int, float)) and not isinstance(default, bool) else value
+    raw = os.environ.get(env) if env else None
+    if raw not in (None, ""):
+        try:
+            return type(default)(float(raw)) if isinstance(default, (int, float)) else raw
+        except ValueError:
+            logger.warning("provider_setting_env_invalid", env=env, value=raw)
+    return default
 
 
 def connection_or_builtin(connection_key: str) -> Optional[ProviderConnection]:
@@ -369,6 +522,9 @@ def resolve_api_key(conn: ProviderConnection) -> str:
     env var are checked BEFORE anything is read. Never logs the value."""
     if not conn.enabled:
         raise ConnectionCredentialError(f"connection {conn.connection_key!r} is disabled")
+    if not conn.is_llm:
+        # AA-1017: a decide / data / guard row (Jev, DataForSEO, Geoapify) is never a source of an LLM key
+        raise ConnectionCredentialError(f"connection {conn.connection_key!r} ({conn.kind}) is not an LLM connection")
     if conn.auth_mode not in ("api_key", "bedrock_api_key"):
         raise ConnectionCredentialError(f"connection {conn.connection_key!r} ({conn.auth_mode}) has no API key")
     problems = conn.policy_problems()
