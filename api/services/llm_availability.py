@@ -26,6 +26,13 @@ state rule is ``shared.llm_client.breaker.state_of``). A connection's status: ``
 (a deployment's circuit is open or half-open: calls skip it), ``degraded`` (failures in a row, circuit still closed),
 ``ok`` (no failure, an answered call within STALE_OK_HOURS), ``unknown`` otherwise. Before 304 / 309 are applied the
 list is empty and ``health_ready`` is false. Still no probe call: the admin's "Test connection" is a separate action.
+
+AA-1018 — each connection also carries ``circuit``: its connection-level circuit (``model_key "*"``, derived from
+the deployment rows by ``shared.llm_client.breaker.connection_health``: tripped by a key or credit refusal, or access
+denied on two or more models; ``state`` closed | open | half_open, ``refusing`` as the re-queue reads it, the class,
+until when, the tripping models), and ``failure_domain`` (``shared.llm_client.invariant.failure_domain``).
+``invariant`` is the report-only failure-domain rule (``invariant.read``): per stage and stage class, whether an
+enabled, funded deployment in another failure domain exists.
 """
 from __future__ import annotations
 
@@ -35,7 +42,9 @@ from typing import Iterable, Optional
 
 import asyncpg
 
-from shared.llm_client.breaker import CLOSED, Health, state_of
+from shared.llm_client import invariant
+from shared.llm_client.breaker import (CLOSED, Health, connection_health, connection_members, connection_refusing,
+                                       state_of)
 from shared.llm_client.errors import ACCESS_DENIED, QUOTA_EXHAUSTED, THROTTLED, classify_text
 
 FAILURE_CLASSES = (ACCESS_DENIED, QUOTA_EXHAUSTED, THROTTLED)
@@ -169,7 +178,7 @@ def build(call_rows: Iterable[dict], job_rows: Iterable[dict], *, hours: int, no
 
 # AA-1002 (S4): every connection with the breaker rows of its deployments (none = every circuit closed).
 CONNECTIONS_SQL = """
-    SELECT c.connection_key, c.kind, c.label, c.enabled,
+    SELECT c.connection_key, c.kind, c.label, c.enabled, c.data_scope, c.account_id, c.account_id_env,
            h.model_key, h.last_ok_at, h.last_error_at, h.last_error_class, h.last_error, h.consecutive_failures,
            h.circuit_open_until, h.open_streak, h.opened_at, h.probe_until
       FROM shared.llm_provider_connection c
@@ -201,13 +210,16 @@ def build_connections(rows: Iterable[dict], *, now: datetime) -> list[dict]:
     for r in rows:
         entry = by_key.setdefault(r["connection_key"], {
             "connection_key": r["connection_key"], "kind": r.get("kind"), "label": r.get("label"),
-            "enabled": bool(r.get("enabled")), "models": []})
+            "enabled": bool(r.get("enabled")), "models": [], "_health": []})
+        if "failure_domain" not in entry and r.get("kind") and r.get("data_scope"):
+            entry["failure_domain"] = invariant.failure_domain(r)
         if r.get("model_key") is None:
             continue
         h = Health(connection_key=r["connection_key"], model_key=r["model_key"],
                    **{f: r.get(f) for f in _HEALTH_FIELDS if f not in ("consecutive_failures", "open_streak")},
                    consecutive_failures=int(r.get("consecutive_failures") or 0),
                    open_streak=int(r.get("open_streak") or 0))
+        entry["_health"].append(h)
         entry["models"].append({
             "model_key": h.model_key, "state": state_of(h, now), "consecutive_failures": h.consecutive_failures,
             "last_ok_at": _iso(h.last_ok_at), "last_error_at": _iso(h.last_error_at),
@@ -228,8 +240,26 @@ def build_connections(rows: Iterable[dict], *, now: datetime) -> list[dict]:
         for m in models:
             m.pop("_last_ok")
             m.pop("_last_error")
+        entry["circuit"] = connection_circuit(entry.pop("_health"), entry["connection_key"], now)
+        entry.setdefault("failure_domain", None)
         out.append(entry)
     return out
+
+
+def connection_circuit(health: list[Health], connection_key: str, now: datetime) -> dict:
+    """AA-1018: the connection-level circuit of one connection, for display (pure)."""
+    h = connection_health(health, connection_key, now)
+    refusing = bool(h is not None and connection_refusing(h, now))
+    return {"model_key": "*", "state": state_of(h, now), "refusing": refusing,
+            "error_class": h.last_error_class if h else None,
+            "open_until": _iso(h.circuit_open_until) if h else None, "opened_at": _iso(h.opened_at) if h else None,
+            "models": connection_members(health, connection_key, now)}
+
+
+def blocked_from(connections: list[dict]) -> dict[str, str]:
+    """{connection_key: class} of the connections whose circuit still refuses (input of the invariant)."""
+    return {c["connection_key"]: c["circuit"]["error_class"] for c in connections
+            if c.get("circuit", {}).get("refusing")}
 
 
 async def read_connections(conn, *, now: datetime) -> tuple[bool, list[dict]]:
@@ -242,11 +272,13 @@ async def read_connections(conn, *, now: datetime) -> tuple[bool, list[dict]]:
 
 
 async def read(conn, *, hours: int = 24, now: Optional[datetime] = None) -> dict:
-    """Three read-only queries on one connection (the job side reads the finished_at and queued indexes)."""
+    """Read-only queries on one connection (the job side reads the finished_at and queued indexes); AA-1018: plus the
+    four registry reads of the failure-domain report."""
     now = now or datetime.now(timezone.utc)
     since = now - timedelta(hours=hours)
     call_rows = [dict(r) for r in await conn.fetch(CALLS_SQL, since)]
     job_rows = [dict(r) for r in await conn.fetch(JOBS_SQL, since, JOB_ROW_LIMIT)]
     out = build(call_rows, job_rows, hours=hours, now=now)
     out["health_ready"], out["connections"] = await read_connections(conn, now=now)
+    out["invariant"] = await invariant.read(conn, blocked=blocked_from(out["connections"]), now=now)
     return out

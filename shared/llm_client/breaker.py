@@ -240,6 +240,14 @@ def connection_members(rows: Iterable[Health], connection_key: str, now: datetim
     return sorted({h.model_key for h in _tripping(list(rows), connection_key, now)[0]})
 
 
+def connection_refusing(h: Optional[Health], now: datetime) -> bool:
+    """Whether a connection circuit (``connection_health``) still means "calls are refused": open, or half-open after
+    a key or credit refusal with no answered call since (no key / no money until a call proves otherwise). Used to hold
+    re-queues (shared/jobs/queue.py) and to count a connection as unfunded (invariant.py); never to skip a call."""
+    st = state_of(h, now)
+    return st == OPEN or (st == HALF_OPEN and h.last_error_class in CONNECTION_SOLO_CLASSES)
+
+
 def connection_state(rows: Iterable[Health], connection_key: str, now: datetime) -> str:
     """closed | open | half_open of the connection circuit (``connection_health``)."""
     return state_of(connection_health(rows, connection_key, now), now)

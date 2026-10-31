@@ -325,6 +325,18 @@ async def _llm_cost_reconcile_part(pool, kinds: dict, ts: datetime, out: dict) -
         out["llm_cost_reconcile"] = {"job_id": job_id, "day": day.isoformat()}
 
 
+async def _llm_probe_part(pool, kinds: dict, ts: datetime, out: dict) -> None:
+    """AA-1018: the daily LLM connection probe, once per UTC day from its hour (idempotency key per day; one indexed
+    EXISTS a tick after that hour). Only while the kind is registered and LLM_DAILY_PROBE=on (default off)."""
+    from services.jobs.llm_probe_job import KIND, enqueue_daily, schedule_enabled
+
+    if KIND not in kinds or not schedule_enabled():
+        return
+    job_id, created, day = await enqueue_daily(pool, now=ts)
+    if created:
+        out["llm_connection_probe"] = {"job_id": job_id, "day": day.isoformat()}
+
+
 async def _alert_recipients_part(pool, redis, out: dict) -> None:
     from shared import alert_recipients
 
@@ -409,6 +421,12 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
         await asyncio.wait_for(_llm_cost_reconcile_part(pool, kinds, ts, out), timeout=5.0)
     except Exception as e:
         out["llm_cost_reconcile_error"] = _err(e)
+
+    # AA-1018: one idempotent INSERT a day when LLM_DAILY_PROBE=on, same short budget
+    try:
+        await asyncio.wait_for(_llm_probe_part(pool, kinds, ts, out), timeout=5.0)
+    except Exception as e:
+        out["llm_connection_probe_error"] = _err(e)
 
     try:
         await asyncio.wait_for(_jobs_part(pool, client, kinds, ts, out), timeout=part_timeout_s)

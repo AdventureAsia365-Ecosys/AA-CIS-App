@@ -387,14 +387,12 @@ _RETRY_ONE_SQL = """
     RETURNING id
 """
 _CONNECTION_KEYS_SQL = "SELECT connection_key FROM shared.llm_provider_connection"
-# Still refused when nothing answered since: no key / no credit until a call proves otherwise (AA-1018).
-_HALF_OPEN_BLOCKING = ("credential", "quota_exhausted")
 
 
 async def blocked_connections(pool, now: Optional[datetime] = None) -> tuple[dict[str, str], list[str]]:
     """({connection_key: class} of the LLM connections whose circuit still refuses, every registry connection key).
-    Blocked = the connection circuit is open, or half-open on a key / credit refusal (shared/llm_client/breaker.py
-    ``connection_health``, read from shared.llm_provider_health). Before migrations 304 / 309: ({}, [])."""
+    Blocked = ``breaker.connection_refusing``: the connection circuit is open, or half-open on a key / credit refusal
+    with no answered call since (read from shared.llm_provider_health). Before migrations 304 / 309: ({}, [])."""
     from shared.llm_client import breaker  # lazy: keeps the job queue import-light
 
     try:
@@ -406,10 +404,7 @@ async def blocked_connections(pool, now: Optional[datetime] = None) -> tuple[dic
     out: dict[str, str] = {}
     for key in sorted({h.connection_key for h in health}):
         h = breaker.connection_health(health, key, now)
-        if h is None:
-            continue
-        st = breaker.state_of(h, now)
-        if st == breaker.OPEN or (st == breaker.HALF_OPEN and h.last_error_class in _HALF_OPEN_BLOCKING):
+        if h is not None and breaker.connection_refusing(h, now):
             out[key] = h.last_error_class
     return out, keys
 

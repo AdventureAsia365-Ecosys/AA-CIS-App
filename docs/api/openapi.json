@@ -3496,6 +3496,18 @@
         "title": "LlmCostReconcileRun",
         "type": "object"
       },
+      "LlmProbeRunRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "dry_run": {
+            "default": true,
+            "title": "Dry Run",
+            "type": "boolean"
+          }
+        },
+        "title": "LlmProbeRunRequest",
+        "type": "object"
+      },
       "LlmRoutePatch": {
         "properties": {
           "fallback_model_ids": {
@@ -5020,6 +5032,44 @@
           "kind"
         ],
         "title": "RetentionRunRequest",
+        "type": "object"
+      },
+      "RetryLlmDeniedRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "dry_run": {
+            "default": true,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "kinds": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Kinds",
+            "type": "array"
+          },
+          "limit": {
+            "default": 200,
+            "maximum": 500.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Since"
+          }
+        },
+        "title": "RetryLlmDeniedRequest",
         "type": "object"
       },
       "ReviewReasonBody": {
@@ -17310,6 +17360,25 @@
             }
           },
           {
+            "description": "AA-1018: the error starts with this text, e.g. llm_access_denied",
+            "in": "query",
+            "name": "reason",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "AA-1018: the error starts with this text, e.g. llm_access_denied",
+              "title": "Reason"
+            }
+          },
+          {
             "description": "S241: full (default) | summary — summary returns payload/result as null (read them from /jobs/{id})",
             "in": "query",
             "name": "fields",
@@ -17381,6 +17450,96 @@
           }
         },
         "summary": "List jobs",
+        "tags": [
+          "admin-job-runner"
+        ]
+      }
+    },
+    "/admin/job-runner/jobs/retry-llm-denied": {
+      "post": {
+        "description": "AA-1018 — the `failed` jobs whose error starts with `llm_access_denied` (every model was refused at account\nlevel, AA-900) get a fresh set of attempts, like the one-job retry. DRY RUN by default: lists the jobs an apply\nwould re-queue and the ones it would hold (a kind that refuses retries, or a job whose LLM connection is still\nrefused: shared/jobs/queue.py `retry_by_reason`). One audit row per call (`jobs_retry_llm_denied`).",
+        "operationId": "retry_llm_denied_admin_job_runner_jobs_retry_llm_denied_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetryLlmDeniedRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Re-queue jobs an LLM account block failed (DRY RUN by default)",
         "tags": [
           "admin-job-runner"
         ]
@@ -17713,6 +17872,96 @@
           }
         },
         "summary": "Re-queue a failed/stopped/cancelled job",
+        "tags": [
+          "admin-job-runner"
+        ]
+      }
+    },
+    "/admin/job-runner/llm-probe/run": {
+      "post": {
+        "description": "AA-1018 — one `llm_connection_probe` job. DRY RUN by default: its result lists the deployments a live run\nwould call, why any is skipped and the estimated cost, with no provider call. A live run (one tiny paid call per\nenabled text deployment) is refused (409) while LLM_DAILY_PROBE is off.",
+        "operationId": "llm_probe_run_admin_job_runner_llm_probe_run_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LlmProbeRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Enqueue the LLM connection probe (DRY RUN by default)",
         "tags": [
           "admin-job-runner"
         ]

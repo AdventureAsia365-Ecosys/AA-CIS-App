@@ -88,10 +88,12 @@ def test_job_failures_are_dated_when_they_happened_and_running_rows_are_left_out
 @pytest.mark.asyncio
 async def test_read_passes_the_window_and_row_limit():
     conn = MagicMock()
-    conn.fetch = AsyncMock(side_effect=[[_calls(ok_at=NOW)], [], []])      # calls, jobs, connections (AA-1002 S4)
+    # calls, jobs, connections (AA-1002 S4), then the four registry reads of the AA-1018 failure-domain report
+    conn.fetch = AsyncMock(side_effect=[[_calls(ok_at=NOW)], [], [], [], [], [], []])
     out = await av.read(conn, hours=6, now=NOW)
     assert out["status"] == "ok" and out["window_hours"] == 6
     assert out["health_ready"] is True and out["connections"] == []
+    assert out["invariant"]["ready"] is True and out["invariant"]["stages_checked"] == 0
     since = NOW - timedelta(hours=6)
     assert conn.fetch.await_args_list[0].args[1:] == (since,)
     assert conn.fetch.await_args_list[1].args[1:] == (since, av.JOB_ROW_LIMIT)

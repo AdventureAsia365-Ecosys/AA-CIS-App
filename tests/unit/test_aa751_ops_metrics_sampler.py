@@ -701,7 +701,8 @@ def test_schedule_endpoint_removed():
 def test_job_kind_removed_and_no_kind_is_exempt():
     worker.load_kinds()
     assert "ops_rds_role_connections" not in registry.kinds()
-    assert [k.name for k in registry.kinds().values() if k.deploy_gate_exempt] == []
+    # AA-1018: the daily LLM probe may sit queued across a deploy (a re-run is harmless), so it is left out
+    assert [k.name for k in registry.kinds().values() if k.deploy_gate_exempt] == ["llm_connection_probe"]
 
 
 @pytest.fixture
@@ -726,8 +727,9 @@ async def test_deploy_gate_still_excludes_an_exempt_kind(monkeypatch, exempt_tes
     request = MagicMock()
     request.app.state.pool = pool
     out = await admin_job_runner.deploy_gate(request, x_admin_secret=_TEST_SECRET)
-    assert out["safe_to_deploy"] is True and out["exempt_kinds"] == [exempt_test_kind]
+    expected = sorted([exempt_test_kind, "llm_connection_probe"])          # AA-1018: + the daily LLM probe
+    assert out["safe_to_deploy"] is True and sorted(out["exempt_kinds"]) == expected
     # AA-990: + the scheduled-later horizon. AA-993 G5: the first fetch is active_count, the second deploy_blockers.
     sql, exempt, *rest = pool.fetch.call_args_list[0][0]
-    assert "NOT (kind = ANY($1::text[]))" in sql and exempt == [exempt_test_kind]
+    assert "NOT (kind = ANY($1::text[]))" in sql and sorted(exempt) == expected
     assert rest == [queue.DEPLOY_GATE_HORIZON_S]

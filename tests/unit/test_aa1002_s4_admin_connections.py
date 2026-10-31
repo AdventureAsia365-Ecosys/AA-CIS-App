@@ -355,6 +355,8 @@ def test_connection_status_per_breaker_state():
 def test_read_without_the_tables_says_so():
     import asyncpg
     conn = MagicMock()
-    conn.fetch = AsyncMock(side_effect=[[], [], asyncpg.exceptions.UndefinedTableError("missing")])
+    missing = asyncpg.exceptions.UndefinedTableError("missing")
+    conn.fetch = AsyncMock(side_effect=[[], [], missing, missing])      # AA-1018: + the failure-domain report
     out = asyncio.run(av.read(conn, hours=6, now=NOW))
     assert out["health_ready"] is False and out["connections"] == []
+    assert out["invariant"] == {"ready": False, "report_only": True}

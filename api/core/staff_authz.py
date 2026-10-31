@@ -171,6 +171,8 @@ POLICY: dict[tuple[str, str], str] = {
     # ── admin_job_runner — job control + retention
     ("POST", "/admin/job-runner/jobs/{job_id}/cancel"): OPS_WRITE,
     ("POST", "/admin/job-runner/jobs/{job_id}/retry"): OPS_WRITE,
+    ("POST", "/admin/job-runner/jobs/retry-llm-denied"): OPS_WRITE,      # AA-1018 (DRY RUN by default, audited)
+    ("POST", "/admin/job-runner/llm-probe/run"): AI_ADMIN,               # AA-1018 (DRY RUN by default)
     ("POST", "/admin/job-runner/retention/run"): OPS_WRITE,
     ("POST", "/admin/job-runner/retention/schedule"): OPS_WRITE,
     ("POST", "/admin/job-runner/staff-reconcile/schedule"): OPS_WRITE,   # AA-816 C7, daily (MACHINE_ROUTES)

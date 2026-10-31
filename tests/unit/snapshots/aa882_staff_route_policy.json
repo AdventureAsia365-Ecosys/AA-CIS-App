@@ -979,12 +979,20 @@
     "capability": "tenant.write",
     "module": "api.routers.admin_job_runner"
   },
+  "POST /admin/job-runner/jobs/retry-llm-denied": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_job_runner"
+  },
   "POST /admin/job-runner/jobs/{job_id}/cancel": {
     "capability": "ops.write",
     "module": "api.routers.admin_job_runner"
   },
   "POST /admin/job-runner/jobs/{job_id}/retry": {
     "capability": "ops.write",
+    "module": "api.routers.admin_job_runner"
+  },
+  "POST /admin/job-runner/llm-probe/run": {
+    "capability": "ai.admin",
     "module": "api.routers.admin_job_runner"
   },
   "POST /admin/job-runner/retention/run": {

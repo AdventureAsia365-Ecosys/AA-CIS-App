@@ -191,7 +191,25 @@ def get_satellite_client(service_name: str = "bedrock-runtime", account: str = D
     "bedrock" (control-plane, vd CreateModelInvocationJob cho Batch API,
     AA-302). `account` = the key of an assume-role Bedrock connection (acc3 by default, AA-998 / AA-1002)."""
     session = _get_satellite_session(account)
-    return session.client(service_name, region_name=satellite_region(account))
+    config = connection_config(satellite_connection(account)) if service_name == "bedrock-runtime" else None
+    if config is None:
+        return session.client(service_name, region_name=satellite_region(account))
+    return session.client(service_name, region_name=satellite_region(account), config=config)
+
+
+def connection_config(conn: connections.ProviderConnection):
+    """AA-1018: a botocore Config from the connection's ``timeout_s`` (read timeout) and ``max_retries`` (+1 = total
+    attempts, standard mode), only for the columns that are set; None when both are NULL (every Dev row today), so
+    the client is built exactly as before (no Config). Runtime clients only, never the Batch control plane."""
+    kw: dict = {}
+    if conn.timeout_s is not None:
+        kw["read_timeout"] = int(conn.timeout_s)
+    if conn.max_retries is not None:
+        kw["retries"] = {"total_max_attempts": int(conn.max_retries) + 1, "mode": "standard"}
+    if not kw:
+        return None
+    from botocore.config import Config
+    return Config(**kw)
 
 
 _native_runtimes: dict[tuple, object] = {}
@@ -200,9 +218,15 @@ _native_lock = threading.Lock()
 
 def native_runtime(conn: connections.ProviderConnection, *, read_timeout: int = 300, max_attempts: int = 2):
     """AA-1002 (S3): a bedrock-runtime client on the task role (a ``task_role`` Bedrock connection, acc2), one per
-    (connection, region, timeout, attempts). The default config is LLMClient._bedrock's (read 300 s, 2 attempts)."""
+    (connection, region, timeout, attempts). The default config is LLMClient._bedrock's (read 300 s, 2 attempts).
+    AA-1018: the connection's ``timeout_s`` / ``max_retries`` (+1 = attempts) replace the caller's values when the
+    column is set; NULL (every Dev row today) keeps them, so the client and its cache key are unchanged."""
     if conn.kind != "bedrock" or conn.auth_mode != "task_role":
         raise ValueError(f"connection {conn.connection_key!r} is not a task-role Bedrock connection")
+    if conn.timeout_s is not None:
+        read_timeout = int(conn.timeout_s)
+    if conn.max_retries is not None:
+        max_attempts = int(conn.max_retries) + 1
     region = conn.region or os.environ.get("BEDROCK_REGION", "us-west-1")
     key = (conn.connection_key, region, read_timeout, max_attempts)
     with _native_lock:

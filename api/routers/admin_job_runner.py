@@ -6,6 +6,8 @@
   POST /admin/job-runner/jobs/{id}/retry   failed / stopped_budget / cancelled -> queued
   POST /admin/job-runner/jobs/retry-llm-denied  re-queue the jobs an LLM account block failed (DRY RUN by default,
                                            audited; AA-1018)
+  POST /admin/job-runner/llm-probe/run     enqueue the LLM connection probe (DRY RUN by default; live only with
+                                           LLM_DAILY_PROBE=on; AA-1018)
   GET  /admin/job-runner/summary           counts per kind and status, registered kinds
   GET  /admin/job-runner/jobs/{id}/llm-calls  LLM calls the job made (AA-687)
   GET  /admin/job-runner/workers           worker liveness, running per worker, queue depth (AA-687)
@@ -316,6 +318,31 @@ async def retry_llm_denied(body: RetryLlmDeniedRequest, request: Request, x_admi
     logger.info("admin_jobs_retry_llm_denied", admin_user=x_admin_user_id, **{k: details[k] for k in (
         "dry_run", "matched", "eligible", "held_count", "requeued")})
     return out
+
+
+# ── AA-1018 — the daily LLM connection probe (services/jobs/llm_probe_job.py) ─────────────────────────────────────
+
+class LlmProbeRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    dry_run: bool = True
+
+
+@router.post("/llm-probe/run", summary="Enqueue the LLM connection probe (DRY RUN by default)")
+async def llm_probe_run(body: LlmProbeRunRequest, request: Request, x_admin_secret: str = Header(None),
+                        x_admin_user_id: Optional[str] = Header(None)):
+    """AA-1018 — one `llm_connection_probe` job. DRY RUN by default: its result lists the deployments a live run
+    would call, why any is skipped and the estimated cost, with no provider call. A live run (one tiny paid call per
+    enabled text deployment) is refused (409) while LLM_DAILY_PROBE is off."""
+    verify_admin_secret(x_admin_secret)
+    from services.jobs import llm_probe_job
+    actor = f"admin:{x_admin_user_id}" if x_admin_user_id else "admin"
+    try:
+        job_id, _ = await llm_probe_job.enqueue_manual(request.app.state.pool, dry_run=body.dry_run, actor=actor)
+    except PermissionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    logger.info("admin_llm_probe_run", job_id=job_id, dry_run=body.dry_run, admin_user=x_admin_user_id)
+    return {"job_id": job_id, "kind": llm_probe_job.KIND, "dry_run": body.dry_run,
+            "switch_on": llm_probe_job.schedule_enabled()}
 
 
 # ── AA-825 — retention kinds (services/jobs/retention_job.py) ─────────────────────────────────

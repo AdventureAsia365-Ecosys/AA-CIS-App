@@ -16,6 +16,9 @@ for in docs/implementation-notes/AA-1003.md, "R2 follow-up requests"):
               now per app. "Fired in 24 h" (K-OPS-ALARMS) needs DescribeAlarmHistory: not measured yet.
   jobs        shared.job: failed rows of day D per kind, queued rows overdue now, running rows past their lease.
   llm         api.services.llm_availability (shared.llm_call_log + shared.job, last 24 h) and K-LLM-FALLBACK-24H.
+              AA-1018 provider section: per LLM connection its status, connection circuit and failure domain, the
+              last daily probe (shared.job kind llm_connection_probe) and the report-only failure-domain rule; an
+              enabled connection that refuses, a failed probe or a rule breach is an attention line.
               `blocked` / `degraded` need a look; so does `unknown` with no answered text call in 24 h (an idle route
               after a refusal reads `unknown` once its failed jobs leave the window: never counted green).
   probes      DATA-01: the nightly probe verdicts of day D (services/reports/probes.py, CloudWatch Logs).
@@ -159,16 +162,53 @@ async def load_jobs(conn, day: date, now: datetime) -> dict:
             "oldest_due_at": _iso((overdue or {}).get("oldest_due_at")), "expired_leases": int(expired or 0)}
 
 
+# AA-1018: the latest daily LLM connection probe (services/jobs/llm_probe_job.py; off unless LLM_DAILY_PROBE=on).
+LAST_PROBE_SQL = """
+    SELECT id::text AS id, status, result, finished_at FROM shared.job
+     WHERE kind = 'llm_connection_probe' AND finished_at >= $1 ORDER BY finished_at DESC LIMIT 1
+"""
+
+
+def _provider_rows(connections: list[dict]) -> list[dict]:
+    """AA-1018: the provider section, one row per LLM connection (pure)."""
+    out = []
+    for c in connections:
+        circuit = c.get("circuit") or {}
+        out.append({"connection_key": c["connection_key"], "kind": c.get("kind"), "enabled": bool(c.get("enabled")),
+                    "status": c.get("status"), "failure_domain": c.get("failure_domain"),
+                    "open_models": c.get("open_models", 0), "last_ok_at": c.get("last_ok_at"),
+                    "circuit": circuit.get("state", "closed"), "refusing": bool(circuit.get("refusing")),
+                    "circuit_class": circuit.get("error_class"), "circuit_until": circuit.get("open_until")})
+    return out
+
+
+def _probe_summary(row) -> Optional[dict]:
+    if row is None:
+        return None
+    res = handoff._json(row["result"]) or {}
+    return {"job_id": row["id"], "status": row["status"], "finished_at": _iso(row["finished_at"]),
+            "dry_run": res.get("dry_run"), "probed": res.get("probed"), "ok": res.get("ok"),
+            "failed": res.get("failed"),
+            "failures": [{k: f.get(k) for k in ("connection_key", "model_key", "error_class")}
+                         for f in (res.get("results") or []) if f.get("ok") is False][:10]}
+
+
 async def load_llm(conn, now: datetime) -> dict:
     from api.services import llm_availability
 
     out = await llm_availability.read(conn, hours=24, now=now)
+    inv = out.get("invariant") or {}
+    probe = await conn.fetchrow(LAST_PROBE_SQL, now - timedelta(hours=24))
     return {"status": out["status"], "last_ok_at": out["last_ok_at"], "cause": out["cause"],
             "calls": sum(p["calls"] for p in out["providers"]),
             "text_ok_calls": sum(p["ok_calls"] for p in out["providers"] if not p["embed"]),
             "providers": [{k: p[k] for k in ("provider", "account", "embed", "calls", "ok_calls")}
                           for p in out["providers"]],
-            "failures": [{k: f.get(k) for k in ("error_class", "jobs", "last_at")} for f in out["failures"]]}
+            "failures": [{k: f.get(k) for k in ("error_class", "jobs", "last_at")} for f in out["failures"]],
+            # AA-1018: per connection (circuit, failure domain), the failure-domain rule, the last daily probe
+            "connections": _provider_rows(out.get("connections") or []),
+            "invariant": {k: inv.get(k) for k in ("ready", "ok", "stages_checked", "breaches", "classes", "domains")},
+            "probe": _probe_summary(probe)}
 
 
 async def load_probes(day: date, now: datetime) -> dict:
@@ -299,6 +339,8 @@ def attention(facts: dict, series: dict, day: date) -> list[str]:
         # 29/10/2026: Dev idle after the refusal, the failed jobs out of the window: "unknown" is not green
         items.append(f"LLM route unknown: no answered text call in the last 24 h (last answered "
                      f"{llm.get('last_ok_at') or 'never in the window'}); nothing shows the route works")
+    if llm:
+        items += provider_attention(llm)
     fallback = _value(series, "K-LLM-FALLBACK-24H", day)
     if fallback is not None and fallback >= FALLBACK_RED:
         items.append(f"LLM fallback rate {fallback * 100:.1f} % (target < 5 %)")
@@ -325,6 +367,29 @@ def attention(facts: dict, series: dict, day: date) -> list[str]:
         items.append(f"{parked:.0f} inquiries parked or failed in the Booking inbox")
     for r in (facts.get("reports") or {}).get("flagged", []):
         items.append(f"Report {r['id']} {r['name']}: {r['due']}, {r['failed_7d']} failed run(s) in 7 days")
+    return items
+
+
+def provider_attention(llm: dict) -> list[str]:
+    """AA-1018: attention lines of the provider section (pure): an enabled connection whose circuit refuses, a failed
+    daily probe, a failure-domain rule breach (report only)."""
+    items = []
+    for c in llm.get("connections") or []:
+        if c["enabled"] and c["refusing"]:
+            until = f" until {c['circuit_until']}" if c["circuit"] == "open" and c.get("circuit_until") else ""
+            items.append(f"LLM connection {c['connection_key']} paused ({c['circuit_class']}, circuit "
+                         f"{c['circuit']}{until})")
+    probe = llm.get("probe") or {}
+    if probe.get("failed"):
+        items.append(f"Daily LLM probe: {probe['failed']} of {probe.get('probed')} deployment(s) failed: "
+                     + ", ".join(f"{f['connection_key']}/{f['model_key']} ({f['error_class']})"
+                                 for f in probe.get("failures") or []))
+    inv = llm.get("invariant") or {}
+    if inv.get("ready") and inv.get("breaches"):
+        by_class = ", ".join(f"{c['role']} {c['stages'] - c['ok']} of {c['stages']}" for c in inv.get("classes") or []
+                             if c["stages"] - c["ok"])
+        items.append(f"Failure-domain rule (report only): {inv['breaches']} stage(s) have no enabled, funded fallback "
+                     f"in another failure domain ({by_class})")
     return items
 
 
@@ -398,6 +463,7 @@ def render_digest(reg: Registry, report: Report, day: date, facts: dict, kpi_row
             md += [f"| {p['provider']} | {p['account'] or '—'} | {'yes' if p['embed'] else 'no'} | {p['calls']} | "
                    f"{p['ok_calls']} |" for p in llm["providers"]]
             md.append("")
+        md += render_providers(llm)
 
     pr = facts.get("probes")
     md += ["## Nightly probes (DATA-01)", ""]
@@ -443,6 +509,37 @@ def render_digest(reg: Registry, report: Report, day: date, facts: dict, kpi_row
                                  for r in flagged] or ["- No report overdue or failed."]) + [""]
     summary = headline[:1000]
     return Rendered(summary, output, "\n".join(md))
+
+
+def render_providers(llm: dict) -> list[str]:
+    """AA-1018: the provider section (Markdown lines, pure). Absent from a digest written before AA-1018."""
+    conns = llm.get("connections")
+    if conns is None:
+        return []
+    md = ["### Providers", "",
+          "| Connection | Kind | On | Status | Connection circuit | Failure domain | Last answered |",
+          "|---|---|---|---|---|---|---|"]
+    for c in conns:
+        circuit = c["circuit"] + (f" ({c['circuit_class']}{', refusing' if c['refusing'] else ''})"
+                                  if c.get("circuit_class") else "")
+        md.append(f"| {c['connection_key']} | {c.get('kind') or '—'} | {'yes' if c['enabled'] else 'no'} | "
+                  f"{c.get('status') or '—'} | {circuit} | {c.get('failure_domain') or '—'} | "
+                  f"{c.get('last_ok_at') or '—'} |")
+    md.append("")
+    probe = llm.get("probe")
+    if probe:
+        kind = "dry run" if probe.get("dry_run") else "live"
+        md += [f"Daily probe ({kind}, {probe['status']}, {probe.get('finished_at')}): "
+               f"{probe.get('probed') or 0} deployment(s), {probe.get('ok') or 0} answered, "
+               f"{probe.get('failed') or 0} failed.", ""]
+    else:
+        md += ["Daily probe: no run in the last 24 h (the schedule is off unless LLM_DAILY_PROBE=on).", ""]
+    inv = llm.get("invariant") or {}
+    if inv.get("ready"):
+        md += [f"Failure-domain rule (report only): {inv.get('stages_checked')} stage(s) checked, "
+               f"{inv.get('breaches')} without a fallback in another failure domain; domains enabled: "
+               + (", ".join(inv.get("domains") or []) or "—") + ".", ""]
+    return md
 
 
 async def render(conn, reg: Registry, report: Report, first: date, last: date, now: datetime) -> Rendered:
