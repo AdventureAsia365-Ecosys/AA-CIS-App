@@ -1,3 +1,5 @@
+import time
+
 from shared.secrets import get_dataforseo_creds
 from shared.dfs_client.call_log import record_dfs_call_sync, extract_cost
 from shared.cost_guard import DFS_CALL_ESTIMATE_USD, BudgetExceeded
@@ -69,7 +71,7 @@ def as_dfs_error(exc: Exception) -> DFSCallError:
 
 class DataForSEOClient:
     def __init__(self, login: str = None, password: str = None,
-                 tenant_id: str = None, tour_id: str = None, budget=None):
+                 tenant_id: str = None, tour_id: str = None, budget=None, stage: str = None):
         if not login or not password:
             login, password = get_dataforseo_creds()
         self.login    = login
@@ -83,27 +85,76 @@ class DataForSEOClient:
         # the real DFS `cost` from the response; cache hits are logged by the caller instead.
         self.tenant_id = tenant_id
         self.tour_id   = tour_id
+        # AA-804 (ledger v2): the pipeline stage that asked (shared.dfs_call_log.stage), when the caller says.
+        self.stage = stage
         # AA-642 (S0): why the last fetch_all stopped before its last sub-call ({"reason": "budget" | "fatal",
         # "error": ..., "at": <step>}), None when it ran every step. A stopped result is partial: never cache it.
         self.last_stop: dict | None = None
 
     def _log_live(self, endpoint: str, response: dict, keyword: str = None,
-                  location_code: int = None, keyword_count: int = None) -> None:
+                  location_code: int = None, keyword_count: int = None, latency_ms: int = None) -> None:
         """AA-618 — record one live DFS call (fetched_live=True) with the real cost from the
-        response. Fire-and-forget; never raises into the fetch path."""
+        response. Fire-and-forget; never raises into the fetch path. AA-804: with its latency, and a body whose
+        status is not 20000 is written as refused (auth / payment) or error, with the DFS message."""
         cost = extract_cost(response)
         if self.budget is not None:
             self.budget.charge(cost if cost is not None else DFS_CALL_ESTIMATE_USD.get(endpoint, 0.0))
+        status_err = _dfs_status_error(response)
         record_dfs_call_sync(
             endpoint=endpoint, fetched_live=True, cost_usd=cost,
             tenant_id=self.tenant_id, tour_id=self.tour_id, keyword=keyword,
             location_code=location_code, keyword_count=keyword_count,
+            status="ok" if status_err is None else ("refused" if status_err.fatal else "error"),
+            latency_ms=latency_ms, error=str(status_err) if status_err is not None else None, stage=self.stage,
         )
 
-    def _precheck(self, endpoint: str) -> None:
-        """AA-649 — raise BudgetExceeded before a paid call that would breach the run's budget."""
+    def _log_failed(self, endpoint: str, *, status: str, error: str, keyword: str = None,
+                    location_code: int = None, keyword_count: int = None, latency_ms: int = None) -> None:
+        """AA-804 (ledger v2): the 0 USD row of a call that was refused before it was sent (the run's budget) or did
+        not answer (HTTP / transport error). Nothing is charged to the budget. Never raises."""
+        try:
+            record_dfs_call_sync(
+                endpoint=endpoint, fetched_live=False, cost_usd=0.0,
+                tenant_id=self.tenant_id, tour_id=self.tour_id, keyword=keyword,
+                location_code=location_code, keyword_count=keyword_count,
+                status=status, latency_ms=latency_ms, error=error, stage=self.stage,
+            )
+        except Exception as e:  # noqa: BLE001 — a log write never breaks the fetch path
+            logger.warning("dfs_failed_call_log_failed", endpoint=endpoint, error=str(e)[:200])
+
+    def _precheck(self, endpoint: str, *, keyword: str = None, location_code: int = None,
+                  keyword_count: int = None) -> None:
+        """AA-649 — raise BudgetExceeded before a paid call that would breach the run's budget. AA-804: the refusal
+        writes its 0 USD row (status refused)."""
         if self.budget is not None:
-            self.budget.check(DFS_CALL_ESTIMATE_USD.get(endpoint, 0.1))
+            try:
+                self.budget.check(DFS_CALL_ESTIMATE_USD.get(endpoint, 0.1))
+            except BudgetExceeded as e:
+                self._log_failed(endpoint, status="refused", error=f"budget: {e}"[:500], keyword=keyword,
+                                 location_code=location_code, keyword_count=keyword_count)
+                raise
+
+    async def _request(self, endpoint: str, url: str, *, payload=None, timeout: float = 30, keyword: str = None,
+                       location_code: int = None, keyword_count: int = None) -> tuple[dict, int]:
+        """AA-804: one live HTTP call (POST with ``payload``, else GET), timed: (JSON body, latency ms). A failure
+        (transport, HTTP status, a body that is not JSON) writes its 0 USD row — refused for 401 / 402 / 403, else
+        error — and re-raises the exception unchanged, so every caller keeps its own handling."""
+        started = time.monotonic()
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                if payload is None:
+                    resp = await client.get(url, auth=self._auth())
+                else:
+                    resp = await client.post(url, auth=self._auth(), json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception as e:
+            err = as_dfs_error(e)
+            self._log_failed(endpoint, status="refused" if err.fatal else "error", error=str(err)[:500],
+                             keyword=keyword, location_code=location_code, keyword_count=keyword_count,
+                             latency_ms=int((time.monotonic() - started) * 1000))
+            raise
+        return data, int((time.monotonic() - started) * 1000)
 
     def _auth(self) -> tuple[str, str]:
         return (self.login, self.password)
@@ -117,15 +168,10 @@ class DataForSEOClient:
         caller (the daily-check endpoint) decides how to handle a failed read; unlike the fetch
         path we do NOT swallow here because a silent failure is exactly the blind spot AA-627 is
         meant to remove. Logs one dfs_call_log row (cost 0) so External Spend still counts it."""
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(
-                f"{DATAFORSEO_BASE}/appendix/user_data",
-                auth=self._auth(),
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        data, ms = await self._request("appendix_user_data", f"{DATAFORSEO_BASE}/appendix/user_data",
+                                       keyword_count=0)
         # cost:0 — free read; logged so the External Spend call counts stay complete.
-        self._log_live("appendix_user_data", data, keyword_count=0)
+        self._log_live("appendix_user_data", data, keyword_count=0, latency_ms=ms)
         money = self._parse_money(data)
         logger.info("dfs_balance_fetched", balance=money.get("balance"))
         return money
@@ -152,16 +198,12 @@ class DataForSEOClient:
             "location_code": location_code,
             "keywords":      [seed],
         }]
-        self._precheck("search_volume")
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                f"{DATAFORSEO_BASE}/keywords_data/google_ads/search_volume/live",
-                auth=self._auth(),
-                json=payload,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-        self._log_live("search_volume", data, keyword=seed, location_code=location_code, keyword_count=1)
+        self._precheck("search_volume", keyword=seed, location_code=location_code, keyword_count=1)
+        data, ms = await self._request("search_volume",
+                                       f"{DATAFORSEO_BASE}/keywords_data/google_ads/search_volume/live",
+                                       payload=payload, keyword=seed, location_code=location_code, keyword_count=1)
+        self._log_live("search_volume", data, keyword=seed, location_code=location_code, keyword_count=1,
+                       latency_ms=ms)
         logger.info("dfs_keywords_fetched", seed=seed, location=location_name)
         return self._parse_keywords(data)
 
@@ -200,16 +242,13 @@ class DataForSEOClient:
             "location_code": location_code,
             "keywords":      keywords[:1000],
         }]
-        self._precheck("search_volume_bulk")  # outside the try: BudgetExceeded is never swallowed
+        # outside the try: BudgetExceeded is never swallowed
+        self._precheck("search_volume_bulk", location_code=location_code, keyword_count=len(keywords[:1000]))
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.post(
-                    f"{DATAFORSEO_BASE}/keywords_data/google_ads/search_volume/live",
-                    auth=self._auth(),
-                    json=payload,
-                )
-                resp.raise_for_status()
-                data = resp.json()
+            data, ms = await self._request("search_volume_bulk",
+                                           f"{DATAFORSEO_BASE}/keywords_data/google_ads/search_volume/live",
+                                           payload=payload, location_code=location_code,
+                                           keyword_count=len(keywords[:1000]))
         except Exception as e:
             err = as_dfs_error(e)
             logger.warning("dfs_volumes_bulk_failed", count=len(keywords), error=str(e),
@@ -219,7 +258,7 @@ class DataForSEOClient:
             return {kw: None for kw in keywords}
 
         self._log_live("search_volume_bulk", data, location_code=location_code,
-                       keyword_count=len(keywords[:1000]))
+                       keyword_count=len(keywords[:1000]), latency_ms=ms)
         status_err = _dfs_status_error(data)
         if status_err is not None:
             logger.warning("dfs_volumes_bulk_status_error", count=len(keywords),
@@ -256,16 +295,11 @@ class DataForSEOClient:
             # AA-779 (B) — DFS expands the PAA box this many levels (1-4; billed extra per click).
             # Only the admin SERP top-up passes it; every other payload is unchanged.
             payload[0]["people_also_ask_click_depth"] = int(people_also_ask_click_depth)
-        self._precheck(log_endpoint)
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                f"{DATAFORSEO_BASE}/serp/google/organic/live/advanced",
-                auth=self._auth(),
-                json=payload,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-        self._log_live(log_endpoint, data, keyword=seed, location_code=location_code, keyword_count=1)
+        self._precheck(log_endpoint, keyword=seed, location_code=location_code, keyword_count=1)
+        data, ms = await self._request(log_endpoint, f"{DATAFORSEO_BASE}/serp/google/organic/live/advanced",
+                                       payload=payload, keyword=seed, location_code=location_code, keyword_count=1)
+        self._log_live(log_endpoint, data, keyword=seed, location_code=location_code, keyword_count=1,
+                       latency_ms=ms)
         # AA-647 — an HTTP-200 body with a failed task status is not a SERP; every caller already
         # wraps this method in try/except, so raising keeps a failure from being parsed as "0 PAA".
         status_err = _dfs_status_error(data)
@@ -362,23 +396,21 @@ class DataForSEOClient:
             "language_code": language_code,
             "limit":         25,
         }]
-        self._precheck("keywords_for_keywords")  # outside the try: BudgetExceeded is never swallowed
+        # outside the try: BudgetExceeded is never swallowed
+        self._precheck("keywords_for_keywords", keyword=seed, location_code=location_code, keyword_count=1)
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.post(
-                    f"{DATAFORSEO_BASE}/keywords_data/google_ads/keywords_for_keywords/live",
-                    auth=self._auth(),
-                    json=payload,
-                )
-                resp.raise_for_status()
-                data = resp.json()
+            data, ms = await self._request("keywords_for_keywords",
+                                           f"{DATAFORSEO_BASE}/keywords_data/google_ads/keywords_for_keywords/live",
+                                           payload=payload, keyword=seed, location_code=location_code,
+                                           keyword_count=1)
         except Exception as e:
             err = as_dfs_error(e)
             logger.warning("dfs_ideas_failed", error=str(e), status_code=err.status_code, fatal=err.fatal)
             if raise_on_error:
                 raise err from e
             return []
-        self._log_live("keywords_for_keywords", data, keyword=seed, location_code=location_code, keyword_count=1)
+        self._log_live("keywords_for_keywords", data, keyword=seed, location_code=location_code, keyword_count=1,
+                       latency_ms=ms)
         status_err = _dfs_status_error(data)
         if status_err is not None:
             logger.warning("dfs_ideas_status_error", status_code=status_err.status_code, fatal=status_err.fatal)
@@ -542,20 +574,16 @@ class DataForSEOClient:
             "language_code": language_code,
             "limit":         limit,
         }]
-        self._precheck("keywords_for_keywords")
+        self._precheck("keywords_for_keywords", location_code=location_code, keyword_count=len(seeds[:20]))
         try:
-            async with httpx.AsyncClient(timeout=60) as client:
-                resp = await client.post(
-                    f"{DATAFORSEO_BASE}/keywords_data/google_ads/keywords_for_keywords/live",
-                    auth=self._auth(),
-                    json=payload,
-                )
-                resp.raise_for_status()
-                data = resp.json()
+            data, ms = await self._request("keywords_for_keywords",
+                                           f"{DATAFORSEO_BASE}/keywords_data/google_ads/keywords_for_keywords/live",
+                                           payload=payload, timeout=60, location_code=location_code,
+                                           keyword_count=len(seeds[:20]))
         except Exception as e:
             raise as_dfs_error(e) from e
         self._log_live("keywords_for_keywords", data, location_code=location_code,
-                       keyword_count=len(seeds[:20]))
+                       keyword_count=len(seeds[:20]), latency_ms=ms)
         status_err = _dfs_status_error(data)
         if status_err is not None:
             raise status_err

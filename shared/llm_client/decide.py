@@ -36,7 +36,8 @@ import structlog
 
 from shared.secrets import get_database_url, get_typesafe_api_key
 
-from .call_log import current_job_id, record_call_with_pool, resolve_tenant
+from .call_log import current_job_id, gateway_failure_row, record_call_with_pool, resolve_tenant
+from .errors import classify
 from .catalog import get_model_sync
 
 logger = structlog.get_logger()
@@ -730,17 +731,23 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
         except Exception as exc:                  # a cache miss is never an error
             logger.warning("decide_cache_read_failed", stage=stage, error=str(exc)[:200])
 
+    # AA-804 (ledger v2): a refused or failed ask gets its own 0 USD llm_call_log row: (status, error_class, error,
+    # questions, latency_ms). None = no refusal / failure (an answered ask is logged with its cost as before).
+    failed_ask: Optional[tuple] = None
+
     if to_ask and jev_breaker_open():
         # AA-720 — credit breaker open: skip TypeSafe entirely (no 3s-per-call bleed), the stage
         # keeps its existing rule just as it would on a fail-open error.
         for key, q in to_ask.items():
             decision.verdicts[key] = Verdict(key, q.mode, "error", error="credit_exhausted (breaker open)")
+        failed_ask = ("refused", "quota_exhausted", "credit_exhausted (breaker open)", len(to_ask), None)
         to_ask = {}
 
     if to_ask and await jev_budget_blocks(db):
         # AA-642 (S0): over the Jev daily cap — no TypeSafe call; the verdicts are errors (fail-open) and are logged.
         for key, q in to_ask.items():
             decision.verdicts[key] = Verdict(key, q.mode, "error", error=JEV_BUDGET_EXCEEDED)
+        failed_ask = ("refused", "budget", JEV_BUDGET_EXCEEDED, len(to_ask), None)
         to_ask = {}
 
     if to_ask:
@@ -767,6 +774,8 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
             logger.warning("decide_call_billing_error", stage=stage, subject=subject_key)
             for key, q in to_ask.items():
                 decision.verdicts[key] = Verdict(key, q.mode, "error", error="credit_exhausted")
+            failed_ask = ("refused", "quota_exhausted", str(exc) or "credit_exhausted", len(to_ask),
+                          decision.latency_ms)
             try:
                 async with db.acquire() as conn:
                     await maybe_alert_jev_credit(conn, source="decide")
@@ -780,8 +789,12 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
             logger.warning("decide_call_failed", stage=stage, subject=subject_key, error=err[:200])
             for key, q in to_ask.items():
                 decision.verdicts[key] = Verdict(key, q.mode, "error", error=err[:500])
+            cls = classify(exc)
+            failed_ask = ("refused" if cls in ("access_denied", "quota_exhausted", "throttled") else "error",
+                          cls if cls in ("access_denied", "quota_exhausted", "throttled") else "other",
+                          err, len(to_ask), decision.latency_ms)
 
-    await _write_logs(db, stage, subject_key, tenant_id, decision, to_ask)
+    await _write_logs(db, stage, subject_key, tenant_id, decision, to_ask, failed_ask=failed_ask)
     return decision
 
 
@@ -794,9 +807,13 @@ async def _insert_logs(conn, rows, hit_rows) -> None:
             await conn.executemany(_HITS_SQL, hit_rows)
 
 
-async def _write_logs(db, stage, subject_key, tenant_id, decision: Decision, asked) -> None:
+async def _write_logs(db, stage, subject_key, tenant_id, decision: Decision, asked,
+                     failed_ask: Optional[tuple] = None) -> None:
     """One ledger row per verdict that was asked, errored or skipped. A cache hit gets no row
-    (AA-742): it is counted into shared.decision_cache_hits_daily, flushed in batches."""
+    (AA-742): it is counted into shared.decision_cache_hits_daily, flushed in batches.
+
+    llm_call_log: one row per answered ask (its cost, latency, the questions as units); AA-804 (ledger v2): one 0 USD
+    row per refused or failed ask (``failed_ask`` = status, error_class, error, questions, latency_ms)."""
     job_id = current_job_id()
     per_q_cost = decision.cost_usd / len(asked) if asked else 0.0
     rows = []
@@ -842,8 +859,17 @@ async def _write_logs(db, stage, subject_key, tenant_id, decision: Decision, ask
         kwargs = dict(stage=stage, role="validate", model=decision.model, tokens_in=decision.input_tokens,
                       tokens_out=0, cost_usd=decision.cost_usd, provider="typesafe",
                       quality_signal={"source": "decide", "questions": len(asked), "zones": zones},
-                      tenant_id=str(tenant_id) if tenant_id else None)
+                      tenant_id=str(tenant_id) if tenant_id else None,
+                      latency_ms=decision.latency_ms, units=len(asked), unit_kind="question")
         await record_call_with_pool(db, **kwargs)       # its own, separate acquisition
+    elif failed_ask is not None:
+        status, error_class, error, questions, latency_ms = failed_ask
+        row = gateway_failure_row(
+            stage=stage, role="validate", model=JEV_MODEL, status=status, error_class=error_class, error=error,
+            provider="typesafe", latency_ms=latency_ms, units=questions, unit_kind="question",
+            quality_signal_extra={"source": "decide", "questions": questions},
+            tenant_id=str(tenant_id) if tenant_id else None)
+        await record_call_with_pool(db, **row)          # its own, separate acquisition
 
 
 async def decide(stage: str, subject_key: str, state: Any, question_keys: list[str], *,

@@ -76,7 +76,10 @@ async def test_over_the_daily_cap_no_call_error_zone_and_the_row_is_still_logged
     rows = conn.executemany.await_args.args[1]                          # decision_log row still written
     assert rows[0][1] == "kw_belongs" and rows[0][6] == "error" and rows[0][14] == d.JEV_BUDGET_EXCEEDED
     assert rows[0][13] == 0.0                                           # nothing billed
-    m_log.assert_not_awaited()                                          # no llm_call_log row (no call)
+    # AA-804 (ledger v2): no call, but the budget refusal has its 0 USD llm_call_log row
+    m_log.assert_awaited_once()
+    row = m_log.await_args.kwargs
+    assert (row["cost_usd"], row["status"], row["error_class"]) == (0.0, "refused", "budget")
     # one stop alert with a reason (cost_guard throttles it to one per provider per 24 h)
     assert alert.await_args.kwargs["reason"].startswith("Jev daily budget $5.00 reached")
 

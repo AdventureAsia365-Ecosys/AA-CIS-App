@@ -39,6 +39,22 @@ _INSERT_SQL = """
     VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::uuid)
 """
 
+# AA-804 (ledger v2, migration 319): the same row plus its outcome, latency, error, stage and app. Used for every row
+# once 319 is applied; before that (UndefinedColumnError) the row is written with _INSERT_SQL (its v2 fields dropped)
+# and v2 is not tried again for _V2_RETRY_SECONDS.
+_INSERT_V2_SQL = """
+    INSERT INTO shared.dfs_call_log
+        (tenant_id, tour_id, endpoint, keyword, location_code, cost_usd, cache_hit, fetched_live,
+         keyword_count, meta, job_id, status, latency_ms, error, stage, app)
+    VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::uuid, $12, $13, $14, $15, $16)
+"""
+_V2_RETRY_SECONDS = 300.0
+_v2_missing_at = 0.0
+APP = "cis"
+# shared.dfs_call_log.status (AA-804): ok = an answered live call or a cache hit; refused = nothing billed because the
+# run's budget, auth or payment said no; error = the call failed.
+STATUSES = ("ok", "refused", "error")
+
 _UNSET = object()
 
 
@@ -73,24 +89,56 @@ def extract_cost(response: dict) -> Optional[float]:
         return None
 
 
+def _v2_values(status, latency_ms, error, stage, app) -> tuple:
+    lat = latency_ms if isinstance(latency_ms, int) and not isinstance(latency_ms, bool) and latency_ms >= 0 else None
+    return (status if status in STATUSES else "ok", lat,
+            str(error)[:500] if error else None, str(stage)[:100] if stage else None, str(app or APP)[:40])
+
+
+def _v2_ready() -> bool:
+    import time as _time
+    return not (_v2_missing_at and _time.monotonic() - _v2_missing_at < _V2_RETRY_SECONDS)
+
+
+async def _insert(conn, base: tuple, v2: tuple) -> None:
+    """The v2 INSERT when migration 319 is applied, else the pre-319 one (the row is never lost)."""
+    global _v2_missing_at
+    if _v2_ready():
+        try:
+            await conn.execute(_INSERT_V2_SQL, *base, *v2)
+            return
+        except asyncpg.exceptions.UndefinedColumnError:
+            import time as _time
+            _v2_missing_at = _time.monotonic()
+            logger.warning("dfs_call_log_v2_columns_missing", hint="migration 319 not applied: status / latency "
+                                                                   "dropped from this row")
+    await conn.execute(_INSERT_SQL, *base)
+
+
 async def record_dfs_call(
     *, endpoint: str, cache_hit: bool = False, fetched_live: bool = False,
     cost_usd: Optional[float] = None, tenant_id: Optional[str] = None,
     tour_id: Optional[str] = None, keyword: Optional[str] = None,
     location_code: Optional[int] = None, keyword_count: Optional[int] = None,
     meta: Optional[dict[str, Any]] = None, job_id: Any = _UNSET,
+    status: Optional[str] = None, latency_ms: Optional[int] = None, error: Optional[str] = None,
+    stage: Optional[str] = None, app: Optional[str] = None,
 ) -> None:
     """Own-connection async variant — for call sites (process_seo) that open ad-hoc asyncpg
-    connections with no pool threaded in. Fire-and-forget."""
+    connections with no pool threaded in. Fire-and-forget.
+
+    AA-804 (ledger v2): ``status`` (ok | refused | error; default ok), ``latency_ms`` of the live call, ``error`` (why
+    a refused / failed call did not answer), ``stage`` and ``app`` (default cis). A refused / failed call is written
+    with cost_usd 0 and fetched_live False."""
     job = _job_id(job_id, endpoint=endpoint)
     try:
         conn = await asyncpg.connect(get_database_url(), ssl="require")
         try:
-            await conn.execute(
-                _INSERT_SQL, tenant_id, tour_id, endpoint, keyword, location_code,
+            await _insert(conn, (
+                tenant_id, tour_id, endpoint, keyword, location_code,
                 cost_usd, cache_hit, fetched_live, keyword_count,
                 json.dumps(meta) if meta is not None else None, job,
-            )
+            ), _v2_values(status, latency_ms, error, stage, app))
         finally:
             await conn.close()
     except Exception as e:
@@ -103,32 +151,40 @@ async def record_dfs_call_with_pool(
     tour_id: Optional[str] = None, keyword: Optional[str] = None,
     location_code: Optional[int] = None, keyword_count: Optional[int] = None,
     meta: Optional[dict[str, Any]] = None, job_id: Any = _UNSET,
+    status: Optional[str] = None, latency_ms: Optional[int] = None, error: Optional[str] = None,
+    stage: Optional[str] = None, app: Optional[str] = None,
 ) -> None:
     """Pool variant — for call sites (segment_research) that already have an asyncpg.Pool in
-    scope, to avoid opening a fresh connection per call. Fire-and-forget."""
+    scope, to avoid opening a fresh connection per call. Fire-and-forget. AA-804: see record_dfs_call."""
     job = _job_id(job_id, endpoint=endpoint)
     try:
         async with pool.acquire() as conn:
-            await conn.execute(
-                _INSERT_SQL, tenant_id, tour_id, endpoint, keyword, location_code,
+            await _insert(conn, (
+                tenant_id, tour_id, endpoint, keyword, location_code,
                 cost_usd, cache_hit, fetched_live, keyword_count,
                 json.dumps(meta) if meta is not None else None, job,
-            )
+            ), _v2_values(status, latency_ms, error, stage, app))
     except Exception as e:
         logger.warning("dfs_call_log_write_failed", endpoint=endpoint, error=str(e))
 
 
 def record_dfs_call_sync(**kwargs) -> None:
-    """Sync wrapper — same reasoning as call_log.record_call_sync(): schedule the write as a
-    background task when a loop is already running, else asyncio.run(). A log write's result is
-    never needed synchronously. The job id is read here, in the caller's context, before the write is scheduled."""
+    """Sync wrapper — same reasoning as call_log.record_call_sync(): a log write's result is never needed
+    synchronously. The job id is read here, in the caller's context, before the write is scheduled.
+
+    AA-804: under a running loop (every async DataForSEOClient method) the write runs on its own non-daemon thread
+    (shared.llm_client.call_log._in_background, the AA-927 fix for llm_call_log): an unreferenced
+    asyncio.ensure_future task could be garbage-collected or cancelled when the caller's loop closed, losing the row
+    of a billed call."""
     kwargs["job_id"] = _job_id(kwargs.get("job_id", _UNSET), endpoint=kwargs.get("endpoint") or "")
     try:
         asyncio.get_running_loop()
-        asyncio.ensure_future(record_dfs_call(**kwargs))
-        return
     except RuntimeError:
         pass
+    else:
+        from shared.llm_client.call_log import _in_background
+        _in_background(record_dfs_call, kwargs)
+        return
     try:
         asyncio.run(record_dfs_call(**kwargs))
     except Exception as e:
