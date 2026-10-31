@@ -61,6 +61,12 @@ export interface WorkerHealthResp {
 // status→tone mapping now (AA-721), so the page no longer keeps a colour map here.
 export const STATUSES = ["queued", "running", "succeeded", "failed", "stopped_budget", "cancelled"] as const;
 
+// A stopped_budget job can be cancelled too: a job that waits for staff approval of its tenant's AI budget keeps its
+// draft running until it is re-queued; Cancel declines it (the draft is then marked failed).
+export function canCancel(job: Job): boolean {
+  return job.status === "queued" || job.status === "stopped_budget" || (job.status === "running" && !job.cancel_requested);
+}
+
 export function fmtTime(iso: string | null | undefined): string {
   return formatDateTime(iso);
 }

@@ -2,7 +2,7 @@
 
   GET  /admin/job-runner/jobs              list, filter by kind/status (fields=summary: no payload/result)
   GET  /admin/job-runner/jobs/{id}         one job (status, progress, result, cost, error)
-  POST /admin/job-runner/jobs/{id}/cancel  queued -> cancelled; running -> flagged, worker stops it
+  POST /admin/job-runner/jobs/{id}/cancel  queued / stopped_budget -> cancelled; running -> flagged, worker stops it
   POST /admin/job-runner/jobs/{id}/retry   failed / stopped_budget / cancelled -> queued
   POST /admin/job-runner/jobs/retry-llm-denied  re-queue the jobs an LLM account block failed (DRY RUN by default,
                                            audited; AA-1018)
@@ -243,14 +243,14 @@ async def job_llm_calls(job_id: str, request: Request, limit: int = Query(500, g
     return out
 
 
-@router.post("/jobs/{job_id}/cancel", summary="Cancel a queued or running job")
+@router.post("/jobs/{job_id}/cancel", summary="Cancel a queued, running or stopped_budget job")
 async def cancel_job(job_id: str, request: Request, x_admin_secret: str = Header(None),
                      x_admin_user_id: Optional[str] = Header(None)):
     verify_admin_secret(x_admin_secret)
     status = await queue.request_cancel(request.app.state.pool, job_id)
     if status is None:
-        raise HTTPException(status_code=409, detail="job is not queued or running")
-    if status == "cancelled":  # a queued job ends here, so its domain row must be told now
+        raise HTTPException(status_code=409, detail="job is not queued, running or stopped_budget")
+    if status == "cancelled":  # a queued / stopped_budget job ends here, so its domain row must be told now
         await run_terminal_hook(request.app.state.pool, job_id)
     logger.info("admin_job_cancel", job_id=job_id, admin_user=x_admin_user_id, status=status)
     return {"job_id": job_id, "status": status,

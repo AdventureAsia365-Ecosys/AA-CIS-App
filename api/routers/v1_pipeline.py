@@ -24,6 +24,7 @@ from shared.tour_liveness import (
 )
 from services.content_generation.graph import build_graph
 from shared.llm_client.errors import is_llm_access_denied
+from shared.llm_client.tenant_budget import approval_stop_in
 from pydantic import BaseModel
 import asyncpg
 import boto3 as _boto3
@@ -405,6 +406,12 @@ async def _rewrite_tour(
             # a "failed" dict would let the caller retry or upgrade into the same refusal.
             logger.error("rewrite_llm_access_denied", idx=idx, error=str(e)[:300])
             raise
+        stop = approval_stop_in(e)
+        if stop is not None:
+            # AA-1016 (review S262): a T2 rewrite of a tenant past its AI budget approval threshold waits for staff;
+            # a "failed" dict would end the job failed (retried into the same stop) instead of stopped_budget.
+            logger.warning("rewrite_tenant_budget_approval", idx=idx, error=str(stop)[:300])
+            raise stop  # the typed stop itself: the worker ends the job stopped_budget
         logger.error("rewrite_failed", idx=idx, error=str(e))
         return {
             "idx": idx,

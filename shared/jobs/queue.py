@@ -313,15 +313,17 @@ async def reap(pool) -> dict:
 
 
 async def request_cancel(pool, job_id: str) -> Optional[str]:
-    """Queued jobs are cancelled at once; a running job is flagged and its worker stops it."""
+    """Queued jobs are cancelled at once; a running job is flagged and its worker stops it. A `stopped_budget` job
+    is cancelled at once too (AA-1016, review S262): a job that waits for staff approval of its tenant's AI budget
+    keeps its piece / version running; Cancel is the decline, and the kind's on_terminal then marks it failed."""
     row = await pool.fetchrow(
         """
         UPDATE shared.job SET
-            status = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
+            status = CASE WHEN status IN ('queued', 'stopped_budget') THEN 'cancelled' ELSE status END,
             finished_at = CASE WHEN status = 'queued' THEN now() ELSE finished_at END,
-            error = CASE WHEN status = 'queued' THEN 'cancelled by admin' ELSE error END,
+            error = CASE WHEN status IN ('queued', 'stopped_budget') THEN 'cancelled by admin' ELSE error END,
             cancel_requested = true, updated_at = now()
-        WHERE id = $1::uuid AND status IN ('queued', 'running')
+        WHERE id = $1::uuid AND status IN ('queued', 'running', 'stopped_budget')
         RETURNING status
         """,
         job_id,

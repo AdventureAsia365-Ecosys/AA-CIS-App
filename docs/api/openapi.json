@@ -18073,7 +18073,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Cancel a queued or running job",
+        "summary": "Cancel a queued, running or stopped_budget job",
         "tags": [
           "admin-job-runner"
         ]

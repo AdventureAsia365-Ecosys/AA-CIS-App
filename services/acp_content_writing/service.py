@@ -36,6 +36,7 @@ from services.acp_shared.writing_progress import progress_show, progress_step
 import structlog
 
 from shared import tour_liveness as _tl
+from shared.llm_client.tenant_budget import approval_stop_in
 from fastapi import Request
 
 from services.acp_angle_gate import service as angle_gate_service
@@ -2496,6 +2497,13 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
         # AA-770 (S233) — the AA-485 buffer retry (a second content_piece row per held request) is
         # gone: attempt 3 above is its replacement, on the same row.
     except Exception as exc:
+        stop = approval_stop_in(exc)
+        if stop is not None:
+            # AA-1016 (review S262): the tenant's AI budget needs staff approval. The piece stays 'processing' and the
+            # t9_write job ends stopped_budget; the approval re-queue runs this write again (no failed piece).
+            logger.warning("t9_write_waits_for_budget_approval", request_id=str(request_id),
+                           piece_id=str(piece_id), attempt=attempt, error=str(stop)[:300])
+            raise stop
         logger.error(
             "t9_write_background_failed", request_id=str(request_id), piece_id=str(piece_id),
             attempt=attempt, error_type=type(exc).__name__, error=str(exc),

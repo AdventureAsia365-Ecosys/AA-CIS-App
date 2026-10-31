@@ -32,6 +32,7 @@ import structlog
 from shared.cost_guard import BudgetExceeded
 from shared.llm_client import call_log
 from shared.llm_client.errors import LLM_ACCESS_DENIED_REASON, LLMAccessDenied, is_llm_access_denied
+from shared.llm_client.tenant_budget import approval_stop_in
 from shared.sentry_init import release  # AA-884: APP_GIT_SHA of this image, written to shared.job_worker
 
 from . import queue
@@ -309,6 +310,15 @@ class Worker:
             await run_terminal_hook(self.pool, job.id)
             log.warning("job_stopped_budget", reason=str(e))
         except Exception as e:
+            # AA-1016 (review S262): a tenant approval stop raised `from` inside a pipeline (or wrapped by LangGraph)
+            # still ends the job stopped_budget, so the approval re-queue finds it.
+            stop = approval_stop_in(e)
+            if stop is not None:
+                await queue.stop_budget(self.pool, job.id, self.worker_id, str(stop), ctx.result,
+                                        round(ctx.cost_usd, 6))
+                await run_terminal_hook(self.pool, job.id)
+                log.warning("job_stopped_budget", reason=str(stop))
+                return
             error, retryable, reason = failure_outcome(e)
             status = await queue.fail(self.pool, job, self.worker_id, error, retryable=retryable,
                                       cost_usd=round(ctx.cost_usd, 6), result=ctx.result)

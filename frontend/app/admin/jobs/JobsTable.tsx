@@ -11,7 +11,7 @@ import type { SortingState } from "@tanstack/react-table";
 import { K, mono, Button, Badge, type ColumnDef, DataTable, StatusBadge, useFormat, useT } from "../../_kit";
 import { JOBS } from "./messages";
 import {
-  STATUSES, fmtSeconds, releases, runSeconds, stepProgress, usd,
+  STATUSES, canCancel, fmtSeconds, releases, runSeconds, stepProgress, usd,
   type Job, type Kind,
 } from "./jobsShared";
 
@@ -178,12 +178,12 @@ export default function JobsTable(props: JobsTableProps) {
       enableHiding: false,
       cell: (c) => {
         const j = c.row.original;
-        const canCancel = j.status === "queued" || (j.status === "running" && !j.cancel_requested);
+        const cancellable = canCancel(j);
         const canRetry = j.status === "failed" || j.status === "stopped_budget" || j.status === "cancelled";
-        if (!canCancel && !canRetry) return null;
+        if (!cancellable && !canRetry) return null;
         return (
           <div style={{ display: "flex", gap: 8, whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
-            {canCancel && <Button size="sm" variant="danger" disabled={busyId === j.id} onClick={() => onAct(j, "cancel")}>{t("cancel")}</Button>}
+            {cancellable && <Button size="sm" variant="danger" disabled={busyId === j.id} onClick={() => onAct(j, "cancel")}>{t("cancel")}</Button>}
             {canRetry && <Button size="sm" disabled={busyId === j.id} onClick={() => onAct(j, "retry")}>{t("retry")}</Button>}
           </div>
         );

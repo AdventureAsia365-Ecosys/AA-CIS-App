@@ -81,6 +81,35 @@ def is_t_stage(stage: Optional[str]) -> bool:
     return bool(stage) and T_STAGE.match(stage) is not None
 
 
+# What the tenant's live progress view says while a job waits for staff approval (plain words: no budget figures,
+# no stage names; the tenant sees content, the bell tells staff why).
+ON_HOLD_MESSAGE = "Writing is on hold and will continue automatically. No need to try again."
+
+
+def approval_stop_in(exc: Optional[BaseException]) -> Optional[TenantBudgetApprovalRequired]:
+    """The ``TenantBudgetApprovalRequired`` in ``exc`` or its explicit cause chain (``raise ... from``), else None.
+    Pipelines that turn the gateway's failures into a failed result re-raise this one (review S262: the T2 graph and
+    the T9 write swallowed it, so the job never ended ``stopped_budget``); the worker reads the chain too."""
+    from .errors import _chain  # pure, import-light
+
+    if exc is None:
+        return None
+    for link in _chain(exc, implicit=False):
+        if isinstance(link, TenantBudgetApprovalRequired):
+            return link
+    return None
+
+
+def is_approval_stop(job_row: Optional[dict]) -> bool:
+    """True for a job that waits for staff approval: ended ``stopped_budget`` by ``TenantBudgetApprovalRequired``.
+    The T-stage ``on_terminal`` hooks leave their piece / version running for such a job, so the approval re-queue
+    (``queue.retry_by_reason``) finds it still to do; an admin Cancel of the job (decline) ends it ``cancelled`` and
+    the hook then marks it failed as for any other stop."""
+    if not job_row:
+        return False
+    return job_row.get("status") == "stopped_budget" and (job_row.get("error") or "").startswith(APPROVAL_REASON)
+
+
 def tenant_of_error(error: Optional[str]) -> Optional[str]:
     """The tenant UUID named in a stored approval-stop job error (``TenantBudgetApprovalRequired``), else None."""
     if not error or not error.startswith(APPROVAL_REASON):
