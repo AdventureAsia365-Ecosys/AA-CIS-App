@@ -143,7 +143,7 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
         { kind: "paragraph", text: "Lần gọi mới nhất ở trên: mỗi lần thử gọi model (cả lần bị từ chối, chi phí 0, có "
           + "loại lý do dưới kết quả), mỗi phán quyết Jev, mỗi yêu cầu DataForSEO và geocode, và các lần gọi AI riêng "
           + "của CRM đối tác. Dòng CRM cần đăng nhập nhân viên; khi không đọc được, tab nói lý do và hiện tổng của "
-          + "CRM trong khoảng đó." },
+          + "CRM, tính theo trọn ngày UTC (nên có thể xa hơn khoảng đã chọn)." },
         { kind: "terms", uiLabels: true, items: [
           { term: "Khoảng", text: "Danh sách lùi xa tới đâu; mặc định 24 giờ qua." },
           { term: "Sổ", text: "Dòng đến từ sổ nào: LLM, Jev, DataForSEO, Geocode hoặc CRM." },

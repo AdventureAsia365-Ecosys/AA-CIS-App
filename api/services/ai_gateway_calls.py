@@ -27,9 +27,13 @@ CRM rows come from the CRM's own ledger (``crm.llm_call``, schema owned by AA-Pa
 ``crm.ops.v1`` 1.6 ``GET /llm/calls`` with the signed-in staff member's own WORKFORCE token (the same pattern as the
 CRM job summary, ``api.services.platform_apps._crm_ops_get``). Its keyset is the same order, so the CIS cursor maps
 onto it (``crm:`` sorts before every other source, so a cursor on another source at time T asks the CRM for its rows
-at or before T). The CRM is asked only when a CRM row could match (no job or tour filter, app unset or ``crm``, a
-stage named ``crm_*`` or none, a status it knows). When it cannot be asked or answers an error, the list carries no
-CRM rows and ``crm`` says why, with the CRM's aggregate for the window (``GET /llm/usage``) when that still answers.
+at or before T). The CRM filters by whole UTC days only, so the first page also sends a cursor at the window's end and
+every CRM row is checked against the window here; a short CRM page (the provider filter, applied here) asks the CRM
+for its next page, at most ``CRM_MAX_PAGES`` reads; when that cap is hit the merged page stops at the last CRM row
+read (the "floor") and ``next_cursor`` resumes from it. The CRM is asked only when a CRM row could match (no job or
+tour filter, app unset or ``crm``, a stage named ``crm_*`` or none, a status it knows). When it cannot be asked or
+answers an error, the list carries no CRM rows and ``crm`` says why, with the CRM's aggregate (``GET /llm/usage``,
+whole UTC days ``from`` .. ``to``, so it can cover more than the window) when that still answers.
 """
 from __future__ import annotations
 
@@ -41,6 +45,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Optional
 
 from api.services import ai_gateway as gw
+from shared.aws_client.accounts import VENDOR_CONNECTION_LABELS
 
 SOURCES = ("llm", "jev", "dfs", "geocoder", "crm")
 CIS_SOURCES = ("llm", "jev", "dfs", "geocoder")
@@ -60,6 +65,8 @@ LLM_PROVIDERS = ("bedrock", "openai", "anthropic", "azure_openai")
 MAX_TOUR_JOBS = gw.TOUR_JOBS_LIMIT
 # The highest uuid: a CRM keyset cursor that keeps every CRM row of time T ("crm:" sorts first at equal T).
 _MAX_UUID = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+# At most this many crm.ops.v1 /llm/calls reads per Calls page (only a provider filter makes a CRM page short).
+CRM_MAX_PAGES = 5
 
 _APP_RE = re.compile(r"^[a-z][a-z0-9_]{0,30}$")
 _STAGE_RE = re.compile(r"^[a-z0-9_]{1,64}$")
@@ -272,7 +279,9 @@ def crm_row(r: dict) -> Optional[dict]:
     return {
         "id": f"crm:{call_id}", "_at": at, "at": at.isoformat(), "source": "crm", "stage": r.get("stage"),
         "what": r.get("role"), "model": r.get("model"), "provider": r.get("provider"),
-        "account": r.get("connection_key"),
+        # The CRM's connection keys ("bedrock", "bedrock_role", "stub", …) are not CIS account keys: only a vendor
+        # API connection is named; the key itself stays in detail.connection_key.
+        "account": r.get("connection_key") if r.get("connection_key") in VENDOR_CONNECTION_LABELS else None,
         "outcome": status if status != "ok" else ("shadow" if shadow else "ok"), "status": status,
         "error_class": r.get("error_class") or r.get("refusal_code"), "cost_usd": _num(r.get("cost_usd")),
         "latency_ms": r.get("latency_ms"), "tokens_in": r.get("input_tokens"), "tokens_out": r.get("output_tokens"),
@@ -286,28 +295,43 @@ def crm_row(r: dict) -> Optional[dict]:
 
 def crm_query(f: CallFilters, *, since: datetime, until: datetime, cursor: Optional[tuple[datetime, str]],
               limit: int) -> dict:
-    """The crm.ops.v1 /llm/calls query of this page (UTC days, CRM keyset cursor). Pure."""
+    """The crm.ops.v1 /llm/calls query of this page (UTC days, CRM keyset cursor). Pure.
+
+    The CRM's ``from`` / ``to`` are whole UTC days, so the cursor is always sent: the page's cursor, or the window's
+    end with the max uuid (every CRM row at or before ``until``). Rows older than ``since`` are dropped by the caller.
+    """
     q: dict[str, Any] = {"from": since.astimezone(timezone.utc).date().isoformat(),
                          "to": until.astimezone(timezone.utc).date().isoformat(), "limit": limit}
     if f.stage is not None:
         q["stage"] = f.stage
     if f.status is not None:
         q["status"] = f.status
-    if cursor is not None:
+    if cursor is None or cursor[0] > until:
+        at, call = until, _MAX_UUID
+    else:
         at, key = cursor
         call = key.split(":", 1)[1] if key.startswith("crm:") else _MAX_UUID
-        q["cursor"] = f"{at.isoformat()}~{call}"
+    q["cursor"] = f"{at.isoformat()}~{call}"
     return q
 
 
-def merge_page(pages: dict[str, list[dict]], limit: int) -> tuple[list[dict], Optional[str]]:
+def merge_page(pages: dict[str, list[dict]], limit: int,
+               floor: Optional[tuple[datetime, str]] = None) -> tuple[list[dict], Optional[str]]:
     """Merge each source's newest-first page into one page of ``limit`` rows and the next cursor (None when every
-    source is exhausted). Pure."""
+    source is exhausted). ``floor``: the last CRM row read when the CRM still had rows below it; rows below it are
+    left for the next page, which starts right after it. Pure."""
     rows = [r for page in pages.values() for r in page]
+    if floor is not None:
+        rows = [r for r in rows if (r["_at"], r["id"]) >= floor]
     rows.sort(key=lambda r: (r["_at"], r["id"]), reverse=True)
     more = len(rows) > limit
     rows = rows[:limit]
-    nxt = make_cursor(rows[-1]["_at"], rows[-1]["id"]) if more and rows else None
+    if more and rows:
+        nxt: Optional[str] = make_cursor(rows[-1]["_at"], rows[-1]["id"])
+    elif floor is not None:
+        nxt = make_cursor(*floor)
+    else:
+        nxt = None
     return [{k: v for k, v in r.items() if k != "_at"} for r in rows], nxt
 
 
@@ -317,15 +341,44 @@ CrmCalls = Callable[[dict], Awaitable[tuple[Optional[dict], dict]]]
 CrmUsage = Callable[[date, date], Awaitable[dict]]
 
 
+def _crm_floor(next_cursor: Any) -> Optional[tuple[datetime, str]]:
+    """The CRM's ``next_cursor`` (``<at ISO>~<call id>``, its page's last row) as a CIS keyset; None if malformed."""
+    if not isinstance(next_cursor, str):
+        return None
+    try:
+        return parse_cursor(next_cursor.replace("~", "~crm:", 1))
+    except ValueError:
+        return None
+
+
 async def _crm_page(crm_calls: CrmCalls, crm_usage: Optional[CrmUsage], f: CallFilters, *, since: datetime,
-                    until: datetime, cursor: Optional[tuple[datetime, str]], limit: int) -> tuple[list[dict], dict]:
-    """(rows, crm status) of the CRM ledger; never raises."""
-    body, problem = await crm_calls(crm_query(f, since=since, until=until, cursor=cursor, limit=limit))
+                    until: datetime, cursor: Optional[tuple[datetime, str]],
+                    limit: int) -> tuple[list[dict], dict, Optional[tuple[datetime, str]]]:
+    """(rows, crm status, floor) of the CRM ledger; never raises. Rows are those in [since, until] that match the
+    provider filter (at least ``limit`` when the window holds that many); ``floor`` is the last CRM row read when the
+    CRM still has unread rows inside the window after ``CRM_MAX_PAGES`` reads (or a later read failed), so the merge
+    stops there."""
+    q = crm_query(f, since=since, until=until, cursor=cursor, limit=limit)
+    body, problem = await crm_calls(q)
     if body is not None and isinstance(body.get("rows"), list):
-        rows = [r for r in (crm_row(x) for x in body["rows"] if isinstance(x, dict)) if r is not None]
-        if f.provider is not None:
-            rows = [r for r in rows if gw.budget_provider(r["provider"]) == f.provider]
-        return rows, {"status": "ok", "rows": len(rows)}
+        rows: list[dict] = []
+        floor: Optional[tuple[datetime, str]] = None
+        for n in range(1, CRM_MAX_PAGES + 1):
+            for r in (crm_row(x) for x in body["rows"] if isinstance(x, dict)):
+                if r is not None and since <= r["_at"] <= until and (
+                        f.provider is None or gw.budget_provider(r["provider"]) == f.provider):
+                    rows.append(r)
+            last = _crm_floor(body.get("next_cursor"))  # this page's last row, when the CRM has more
+            if last is None or last[0] < since or len(rows) >= limit:
+                break  # no more CRM rows in the window, or the page is full
+            if n == CRM_MAX_PAGES:
+                floor = last
+                break
+            body, _ = await crm_calls(dict(q, cursor=body["next_cursor"]))
+            if body is None or not isinstance(body.get("rows"), list):
+                floor = last  # a later read failed: the next page resumes after the last row read
+                break
+        return rows, {"status": "ok", "rows": len(rows)}, floor
     status = {"status": problem.get("status") or "error", "reason": problem.get("reason"),
               "http_status": problem.get("http_status"), "aggregate": None}
     if body is not None:
@@ -341,7 +394,7 @@ async def _crm_page(crm_calls: CrmCalls, crm_usage: Optional[CrmUsage], f: CallF
             status["aggregate"] = {"calls": agg.get("calls", 0), "cost_usd": agg.get("cost_usd", 0.0),
                                    "by_model": agg.get("by_model", []), "from": start.isoformat(),
                                    "to": (end - timedelta(days=1)).isoformat()}
-    return [], status
+    return [], status, None
 
 
 async def list_calls(pool, f: CallFilters, *, cursor: Optional[str] = None, limit: int = DEFAULT_LIMIT,
@@ -377,14 +430,17 @@ async def list_calls(pool, f: CallFilters, *, cursor: Optional[str] = None, limi
             errors.append({"source": s, "error": err})
 
     crm: dict[str, Any]
+    floor: Optional[tuple[datetime, str]] = None
     if "crm" not in sources:
         crm = {"status": "not_asked", "reason": "filtered_out"}
     elif crm_calls is None:
         crm = {"status": "not_asked", "reason": "no_reader"}
     else:
-        pages["crm"], crm = await _crm_page(crm_calls, crm_usage, f, since=since, until=until, cursor=keyset,
-                                            limit=limit + 1)
-    rows, nxt = merge_page(pages, limit)
+        pages["crm"], crm, floor = await _crm_page(crm_calls, crm_usage, f, since=since, until=until,
+                                                   cursor=keyset, limit=limit + 1)
+    rows, nxt = merge_page(pages, limit, floor)
+    if crm.get("status") == "ok":
+        crm["rows"] = sum(1 for r in rows if r["source"] == "crm")  # the CRM rows on this page, after the merge
     return {
         "generated_at": now.isoformat(),
         "window": {"key": f.window, "from": since.isoformat(), "to": until.isoformat()},

@@ -154,7 +154,8 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
         { kind: "paragraph", text: "The newest call first: each model attempt (a refused attempt too, at zero cost, "
           + "with the reason class under its outcome), each Jev verdict, each DataForSEO and geocoder request, and "
           + "the partner CRM's own AI calls. The CRM rows need your staff sign-in; when they cannot be read the tab "
-          + "says why and gives the CRM's totals for the period instead." },
+          + "says why and gives the CRM's totals instead, counted over whole UTC days (so they can reach "
+          + "further back than the period)." },
         { kind: "terms", uiLabels: true, items: [
           { term: "Period", text: "How far back the list reaches; the last 24 hours unless you pick another." },
           { term: "Log", text: "Which log a row comes from: LLM, Jev, DataForSEO, Geocoder or CRM." },

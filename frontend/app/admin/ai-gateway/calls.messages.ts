@@ -64,7 +64,8 @@ export const CALLS = defineMessages(
     crmNotAskedFiltered: "CRM: not asked (no CRM call can match these filters).",
     crmNoSession: "CRM: its rows need your staff sign-in (Cognito). Sign in again to see them.",
     crmUnavailable: (why: string) => `CRM: its log could not be read (${why}).`,
-    crmAggregate: (calls: number, cost: string) => `Its totals for the period: ${calls} calls, ${cost}.`,
+    crmAggregate: (calls: number, cost: string, from: string, to: string) =>
+      `Its totals for the whole UTC days ${from} to ${to} (can cover more than the period): ${calls} calls, ${cost}.`,
   },
   {
     intro: "Mọi lần gọi trả phí đã ghi, mới nhất trước: mỗi lần thử LLM (cả lần bị từ chối, 0 USD), mỗi phán quyết "
@@ -114,6 +115,7 @@ export const CALLS = defineMessages(
     crmNotAskedFiltered: "CRM: không hỏi (không lần gọi CRM nào khớp bộ lọc).",
     crmNoSession: "CRM: cần đăng nhập nhân viên (Cognito) để xem dòng của CRM. Hãy đăng nhập lại.",
     crmUnavailable: (why: string) => `CRM: không đọc được sổ (${why}).`,
-    crmAggregate: (calls: number, cost: string) => `Tổng của khoảng này: ${calls} lần gọi, ${cost}.`,
+    crmAggregate: (calls: number, cost: string, from: string, to: string) =>
+      `Tổng theo trọn ngày UTC ${from} đến ${to} (có thể rộng hơn khoảng đã chọn): ${calls} lần gọi, ${cost}.`,
   },
 );

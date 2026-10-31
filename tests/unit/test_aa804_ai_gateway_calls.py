@@ -136,11 +136,23 @@ def test_crm_row_maps_the_contract_fields_and_drops_bad_rows():
     assert calls.crm_row({"call_id": "x", "at": NOW.isoformat()}) is None
 
 
+@pytest.mark.parametrize("key,account", [
+    ("bedrock", None), ("bedrock_role", None), ("stub", None), (None, None),
+    ("openai-direct", "openai-direct"), ("anthropic-direct", "anthropic-direct"),
+])
+def test_crm_row_names_only_a_vendor_connection_as_its_account(key, account):
+    # the CRM's own connection keys are not CIS account keys: the UI would call them "Retired account"
+    r = calls.crm_row({"call_id": CALL, "at": NOW.isoformat(), "provider": "bedrock", "connection_key": key})
+    assert r["account"] == account and r["detail"]["connection_key"] == key
+
+
 def test_crm_query_maps_the_cis_cursor_onto_the_crm_keyset():
     f = calls.parse_filters(stage="crm_draft", status="ok", window="30d")
     since = NOW - timedelta(days=30)
     q = calls.crm_query(f, since=since, until=NOW, cursor=None, limit=101)
-    assert q == {"from": "2026-02-12", "to": "2026-03-14", "limit": 101, "stage": "crm_draft", "status": "ok"}
+    # whole UTC days plus a cursor at the window's end, so no CRM row newer than the window comes back
+    assert q == {"from": "2026-02-12", "to": "2026-03-14", "limit": 101, "stage": "crm_draft", "status": "ok",
+                 "cursor": f"{NOW.isoformat()}~ffffffff-ffff-ffff-ffff-ffffffffffff"}
     at = NOW - timedelta(minutes=1)
     assert calls.crm_query(f, since=since, until=NOW, cursor=(at, f"crm:{CALL}"), limit=5)["cursor"] == \
         f"{at.isoformat()}~{CALL}"
@@ -195,6 +207,82 @@ def test_list_calls_merges_cis_and_crm_rows():
     assert out["rows"][1]["status"] == "refused" and out["crm"] == {"status": "ok", "rows": 1}
     assert out["next_cursor"] is None and out["errors"] == [] and seen[0]["limit"] == calls.DEFAULT_LIMIT + 1
     assert out["window"]["key"] == "24h" and out["sources"] == list(calls.SOURCES)
+
+
+def _crm_row(at, call, provider="bedrock"):
+    return {"call_id": call, "tenant_id": None, "at": at.isoformat(), "stage": "crm_draft", "role": "writer",
+            "provider": provider, "model": "m", "status": "ok", "input_tokens": 1, "output_tokens": 2,
+            "cost_usd": "0.010000", "latency_ms": 5, "is_shadow": False, "is_experiment": False}
+
+
+def _uuid(i):
+    return f"{i:08x}-0000-4000-8000-000000000000"
+
+
+def test_list_calls_keeps_crm_rows_inside_the_window():
+    # The CRM filters by whole UTC days: just after midnight a 1h window asks for yesterday and today, and the CRM
+    # answers rows from early yesterday too. Only the rows inside the window are listed and counted.
+    now = datetime(2026, 3, 14, 0, 30, tzinfo=timezone.utc)
+    inside = _crm_row(now - timedelta(minutes=20), _uuid(1))
+    stale = _crm_row(datetime(2026, 3, 13, 4, 30, tzinfo=timezone.utc), _uuid(2))
+    read, seen = _crm_ok([inside, stale])
+    out = asyncio.run(calls.list_calls(_calls_pool(llm_rows=[]), calls.parse_filters(source="crm", window="1h"),
+                                       crm_calls=read, now=now))
+    assert [r["id"] for r in out["rows"]] == [f"crm:{_uuid(1)}"]
+    assert out["crm"] == {"status": "ok", "rows": 1} and out["next_cursor"] is None
+    assert (seen[0]["from"], seen[0]["to"]) == ("2026-03-13", "2026-03-14")
+    assert seen[0]["cursor"].startswith(now.isoformat() + "~")
+
+
+def test_a_short_crm_page_reads_the_next_crm_page():
+    # the provider filter is applied here: a CRM page of other providers' rows asks for the next one
+    pages = [[_crm_row(NOW - timedelta(minutes=i), _uuid(i), "openai") for i in (1, 2)],
+             [_crm_row(NOW - timedelta(minutes=i), _uuid(i)) for i in (3, 4, 5)]]
+    seen = []
+
+    async def read(params):
+        seen.append(params["cursor"])
+        rows = pages[len(seen) - 1]
+        nxt = f"{rows[-1]['at']}~{rows[-1]['call_id']}" if len(seen) == 1 else None
+        return {"rows": rows, "next_cursor": nxt}, {}
+
+    out = asyncio.run(calls.list_calls(_calls_pool(llm_rows=[]),
+                                       calls.parse_filters(source="crm", provider="bedrock"), limit=2,
+                                       crm_calls=read, now=NOW))
+    assert len(seen) == 2 and seen[1] == f"{(NOW - timedelta(minutes=2)).isoformat()}~{_uuid(2)}"
+    assert [r["id"] for r in out["rows"]] == [f"crm:{_uuid(3)}", f"crm:{_uuid(4)}"]
+    assert out["next_cursor"] == calls.make_cursor(NOW - timedelta(minutes=4), f"crm:{_uuid(4)}")
+
+
+def test_the_crm_read_cap_stops_the_page_at_the_last_crm_row_read():
+    # every CRM page holds only other providers' rows: after CRM_MAX_PAGES reads the page stops at the last CRM
+    # row read, CIS rows below it wait for the next page, and next_cursor resumes right after that row
+    seen = []
+
+    async def read(params):
+        n = len(seen)
+        seen.append(params["cursor"])
+        row = _crm_row(NOW - timedelta(minutes=n + 1), _uuid(n + 1), "anthropic")
+        return {"rows": [row], "next_cursor": f"{row['at']}~{row['call_id']}"}, {}
+
+    older = _llm_row(NOW - timedelta(minutes=30), "llm:old")
+    newer = _llm_row(NOW - timedelta(seconds=10), "llm:new")
+    out = asyncio.run(calls.list_calls(_calls_pool(llm_rows=[newer, older]), calls.parse_filters(provider="openai"),
+                                       limit=5, crm_calls=read, now=NOW))
+    assert len(seen) == calls.CRM_MAX_PAGES
+    last = NOW - timedelta(minutes=calls.CRM_MAX_PAGES)
+    ids = [r["id"] for r in out["rows"]]
+    assert ids == ["llm:new"] and out["crm"] == {"status": "ok", "rows": 0}
+    assert out["next_cursor"] == calls.make_cursor(last, f"crm:{_uuid(calls.CRM_MAX_PAGES)}")
+
+
+def test_merge_page_with_a_floor_keeps_the_floor_row_and_resumes_after_it():
+    t = NOW - timedelta(minutes=5)
+    pages = {"crm": [{"id": "crm:b", "_at": t, "at": t.isoformat()}],
+             "llm": [{"id": "llm:z", "_at": NOW, "at": NOW.isoformat()},
+                     {"id": "llm:y", "_at": t - timedelta(minutes=1), "at": t.isoformat()}]}
+    rows, nxt = calls.merge_page(pages, 10, (t, "crm:b"))
+    assert [r["id"] for r in rows] == ["llm:z", "crm:b"] and nxt == calls.make_cursor(t, "crm:b")
 
 
 def test_list_calls_falls_back_to_the_crm_aggregate():

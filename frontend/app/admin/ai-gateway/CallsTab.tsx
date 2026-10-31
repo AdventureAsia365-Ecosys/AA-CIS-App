@@ -185,7 +185,8 @@ export default function CallsTab({ onTrace }: { onTrace: (t: TraceTarget) => voi
                 crm.reason === "cognito_session_required" ? t("crmNoSession")
                   : t("crmUnavailable", crm.reason ?? crm.status)
               )}
-              {crm.aggregate && <> {t("crmAggregate", crm.aggregate.calls, usd(crm.aggregate.cost_usd))}</>}
+              {crm.aggregate && <> {t("crmAggregate", crm.aggregate.calls, usd(crm.aggregate.cost_usd),
+                crm.aggregate.from, crm.aggregate.to)}</>}
             </div>
           )}
           {errors.map(([source, error]) => (

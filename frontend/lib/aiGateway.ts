@@ -489,7 +489,8 @@ export interface CrmCallsState {
   reason?: string | null;
   rows?: number;
   http_status?: number | null;
-  /** The CRM's totals for the window (crm.ops.v1 GET /llm/usage) when its rows could not be read. */
+  /** The CRM's totals (crm.ops.v1 GET /llm/usage) when its rows could not be read: whole UTC days from .. to,
+   *  so they can cover more than the window. */
   aggregate?: { calls: number; cost_usd: number; from: string; to: string;
     by_model: { model: string; calls: number; cost_usd: number }[] } | null;
 }
