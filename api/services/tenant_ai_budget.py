@@ -148,7 +148,7 @@ async def _month_spend(conn, tenant_ids: list[str], now: datetime) -> dict[str, 
 
 
 async def _names(conn, rows: list[dict]) -> dict:
-    """Staff names for the rows' ``updated_by`` (ai_gateway.actor_names); {} when the read fails (names are optional)."""
+    """Staff names for the rows' ``updated_by`` (ai_gateway.actor_names); {} when the read fails (optional)."""
     from api.services import ai_gateway
 
     try:
