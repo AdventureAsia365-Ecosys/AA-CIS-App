@@ -1,9 +1,11 @@
-"""AA-804 (UI part 1) — the AI providers page SQL against real Postgres (migrations applied by conftest).
+"""AA-804 (UI parts 1 and 2) — the AI providers page SQL against real Postgres (migrations applied by conftest).
 
 - trace_job: one job's rows from llm_call_log, dfs_call_log, geo.geocode_call and decision_log in time order; the two
   ledgers without a job index are read only inside the job's run window; another job's rows never show.
 - read_providers: every source query runs on the real schema (no error row), the month ledger attributes a row to
   its account, and Jev / DataForSEO / Geoapify rows are always listed.
+- read_budgets (UI part 2): the spend_budget read, the guard's day spend and the connection budget reads run on the
+  real schema; a probe job-scope row lands in the job tier with its kind.
 
 The fixture rows live in July 2024 (no other test writes there) and are deleted at the end. Names are invented.
 """
@@ -162,3 +164,27 @@ async def test_providers_queries_run_on_the_real_schema(pool):
     assert by["jev"]["spend"]["month_usd"] >= 0.02
     assert by["dataforseo"]["spend"]["today_usd"] >= 0.3
     assert out["month_start"] == month.isoformat() == _utc(2024, 7, 1).isoformat()
+
+
+@pytest.mark.asyncio
+async def test_budgets_queries_run_on_the_real_schema(pool):
+    scope = f"job:{KIND}"
+    async with pool.acquire() as c:
+        await c.execute(
+            """INSERT INTO shared.spend_budget (provider, scope, per_run_usd, per_day_usd, hard_stop, alert_pct,
+                                                updated_by)
+               VALUES ('dfs', $1, 0.75, NULL, true, 80, 'admin:probe')""", scope)
+    try:
+        out = await gw.read_budgets(pool)
+        assert out["errors"] == [], out["errors"]
+        job = [r for r in out["tiers"]["job"] if r["scope"] == scope]
+        assert job and job[0]["job_kind"] == KIND and job[0]["per_run_usd"] == 0.75
+        assert job[0]["state"] == "no_daily_cap"
+        assert all(r["scope"] == "global" for r in out["tiers"]["provider"])
+        assert out["tiers"]["tenant"] == []
+        assert set(out["spent_today_usd"]) == set(out["providers"])
+        assert out["tiers"]["connection"], "the seeded connections are listed"
+        assert {c["tier"] for c in out["coverage"]} >= {"provider"}
+    finally:
+        async with pool.acquire() as c:
+            await c.execute("DELETE FROM shared.spend_budget WHERE scope = $1", scope)

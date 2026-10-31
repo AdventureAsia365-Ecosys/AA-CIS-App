@@ -1,6 +1,6 @@
 """shared/jev_credit.py — AA-845: estimated Jev (TypeSafe) credit and the low-credit alert.
 
-TypeSafe has no balance API. Admins record each manual top-up in Settings › Jev Credit
+TypeSafe has no balance API. Admins record each manual top-up in AI providers › Providers › Jev credit
 (shared.jev_credit_topup, AA-756); the estimate is
 
     estimated_left = sum(amount_usd of every top-up) − Jev spend (shared.llm_call_log, provider typesafe)
@@ -101,7 +101,7 @@ def is_below(estimated_left: Optional[float], threshold_usd: float) -> bool:
 def low_message(estimated_left: float, threshold_usd: float, *, test: bool = False) -> str:
     text = (f"Jev (TypeSafe) credit is running low: an estimated ${estimated_left:.2f} is left, below the "
             f"${threshold_usd:.2f} alert threshold. Top up the TypeSafe account (thu@adventure.asia) and record "
-            "the top-up in Settings › Jev Credit. The estimate is the recorded top-ups minus the Jev spend "
+            "the top-up in AI providers › Jev credit. The estimate is the recorded top-ups minus the Jev spend "
             "logged since the first top-up (TypeSafe has no balance API). When credit runs out, Jev calls fail "
             "with 402 and the stages fall back to their rules.")
     return f"[TEST] {text}" if test else text

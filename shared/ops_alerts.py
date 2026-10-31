@@ -46,12 +46,15 @@ TEMPLATE_JEV_CREDIT_EXHAUSTED = "jev_credit_exhausted"     # AA-845: Jev returne
 TEMPLATE_WRITING_MEMORY_ROLLBACK = "writing_memory_rollback"  # AA-920: a release failed its post-activation check
 WRITING_MEMORY_PAGE_PATH = "/admin/writing-memory"
 JEV_TEMPLATES = (TEMPLATE_JEV_CREDIT_LOW, TEMPLATE_JEV_CREDIT_EXHAUSTED)
-JEV_CREDIT_PAGE_PATH = "/admin/settings?tab=jev-credit"
+# AA-804 UI 2: the Jev credit ledger moved from Settings to AI providers › Providers › Jev credit. Mails already sent
+# keep working: the old /admin/settings?tab=jev-credit link is sent on to this page in the browser.
+JEV_CREDIT_PAGE_PATH = "/admin/ai-gateway?tab=providers&view=jev-credit"
 PLACES_PAGE_PATH = "/admin/places"
 ALERTS_PAGE_PATH = "/admin/platform/alerts"
 THRESHOLD_STOP = "stop"
-# Admin page with the spend overview and the Budgets tab (nav: AI & spend -> Cost Operations, AA-665).
-SPEND_PAGE_PATH = "/admin/cost-ops?tab=budgets"
+# Admin page with every spending cap (nav: AI & spend -> AI providers -> Budgets; AA-804 UI 2 moved it there from
+# Cost Operations, whose old ?tab=budgets link is sent on to it in the browser).
+SPEND_PAGE_PATH = "/admin/ai-gateway?tab=budgets"
 
 
 def admin_base_url() -> str:
@@ -152,7 +155,7 @@ def render_spend_budget(payload: dict, *, to: Recipients, base_url: Optional[str
         "<p><strong>Spend budget alert</strong> (shared.spend_budget, cost guard)</p>"
         f"<table style=\"border-collapse:collapse\">{cells}</table>"
         + (f"<p>Detail: {html.escape(note)}</p>" if note else "")
-        + f"<p><a href=\"{html.escape(link)}\">Open Cost Operations / Budgets</a></p>"
+        + f"<p><a href=\"{html.escape(link)}\">Open AI providers / Budgets</a></p>"
         "<p style=\"color:#777;font-size:12px\">The same alert is in the admin notification bell. "
         "One e-mail per budget, threshold and UTC day.</p></div>"
     )
@@ -330,7 +333,7 @@ def render_jev_credit(payload: dict, *, to: Recipients, base_url: Optional[str] 
                 ("Jev spend since then", _usd(payload.get("spent_since_first_topup_usd"))),
                 ("Checked by", str(payload.get("source") or "-")),
                 ("Day", f"{payload.get('period')} (UTC)")]
-        action = ("Top up the TypeSafe account and record the top-up in Settings > Jev Credit. The figure is an "
+        action = ("Top up the TypeSafe account and record the top-up in AI providers > Jev credit. The figure is an "
                   "estimate (recorded top-ups minus logged Jev spend); TypeSafe has no balance API.")
     else:
         subject = f"{tag}[AA-CIS {env}] Jev credit exhausted (TypeSafe 402)"
@@ -340,7 +343,7 @@ def render_jev_credit(payload: dict, *, to: Recipients, base_url: Optional[str] 
                 ("Day", f"{payload.get('period')} (UTC)")]
         action = ("Jev calls are failing open: stages run on their rules without Jev, and each api/worker process "
                   "stops calling TypeSafe for a cooldown after a 402. Top up the TypeSafe account, record the "
-                  "top-up in Settings > Jev Credit; the next daily canary (or the next call after the cooldown) "
+                  "top-up in AI providers > Jev credit; the next daily canary (or the next call after the cooldown) "
                   "closes the breaker.")
     note = str(payload.get("message") or "")
     footer = "The same alert is in the admin notification bell. At most one e-mail per alert type and UTC day."
@@ -354,7 +357,7 @@ def render_jev_credit(payload: dict, *, to: Recipients, base_url: Optional[str] 
             f"<table style=\"border-collapse:collapse\">{_jev_rows_html(rows)}</table>"
             + (f"<p>Detail: {html.escape(note)}</p>" if note else "")
             + f"<p>{html.escape(action)}</p>"
-            f"<p><a href=\"{html.escape(link)}\">Open Settings / Jev Credit</a></p>"
+            f"<p><a href=\"{html.escape(link)}\">Open AI providers / Jev credit</a></p>"
             f"<p style=\"color:#777;font-size:12px\">{html.escape(footer)}</p></div>")
     return Message(to=to, subject=subject, text=text, html=body)
 

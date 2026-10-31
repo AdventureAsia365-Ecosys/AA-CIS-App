@@ -576,7 +576,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   with SNS (best effort). Nobody to mail = `skipped`. Template `test` = the page's "Send test e-mail".
   **Jev credit (AA-845):** the same job sends `jev_credit_exhausted` (queued when the AA-720 402 bell
   `platform.jev_credit.exhausted` is written) and `jev_credit_low` (`shared/jev_credit.py`: estimated TypeSafe
-  credit = Settings › Jev Credit top-ups − logged typesafe spend, below $3 → bell `platform.jev_credit.low`; checked
+  credit = AI providers › Jev credit top-ups − logged typesafe spend, below $3 → bell `platform.jev_credit.low`; checked
   every 30 min by the api ops sampler and on `POST /admin/decisions/jev-credit/check`). Throttle: one exhausted
   bell per 24 h while unread (AA-720), one low bell per 24 h read or not; e-mail only with a new bell, at most one
   per template per UTC day. The daily 402 sweep alerts only on real 402s after the latest recorded top-up and the

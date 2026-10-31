@@ -1,6 +1,6 @@
-"""AA-804 (UI part 1, root ADR 0009) — the read side of the admin "AI providers" page (/admin/ai-gateway).
+"""AA-804 (UI parts 1 and 2, root ADR 0009) — the read side of the admin "AI providers" page (/admin/ai-gateway).
 
-Two reads, both $0 (database only; no provider is called):
+Three reads, all $0 (database only; no provider is called):
 
 - ``read_providers(pool)`` — ``GET /admin/ai-gateway/providers``: one row per paid source.
     * every LLM connection (``shared.llm_provider_connection``): its circuit health (``shared.llm_provider_health``
@@ -24,6 +24,9 @@ Two reads, both $0 (database only; no provider is called):
   ``created_at`` / ``called_at`` indexes serve the range). ``started_at`` keeps the first attempt's start
   (shared/jobs/queue.py), so the window covers every attempt. Jev comes only from ``decision_log``: its
   ``typesafe`` rows in ``llm_call_log`` repeat the same calls and cost and are left out of the LLM source.
+- ``read_budgets(pool)`` — ``GET /admin/ai-gateway/budgets``: every spending cap by tier (provider daily caps and
+  job caps from ``shared.spend_budget``, the monthly budget of each LLM connection, the tenant tier still empty),
+  today's spend per provider, and a coverage checklist (does every paid source have a cap).
 
 Limits of today's ledgers (ledger v2 lifts them): a call the provider refused writes no row (only billed calls are
 logged), ``llm_call_log`` has no latency or outcome column, and nothing links a Jev verdict to its cost row.
@@ -645,3 +648,141 @@ async def trace_job(pool, job_id: str, *, limit: int = TRACE_LIMIT, now: Optiona
               "jev": "Jev decision log"}
     results = await asyncio.gather(*(_guard(labels[s], reads[s]) for s in SOURCES))
     return build_trace(job, window, dict(zip(SOURCES, results)), limit)
+
+
+# ── budgets ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+# AA-804 UI part 2 / AA-1017 (the Budgets tab): every spending cap in one answer, by tier.
+#   provider     shared.spend_budget scope 'global': the provider-wide daily cap (and a per-run default);
+#   job          shared.spend_budget scope 'job:<kind>': the per-run / per-day caps of one job kind;
+#   connection   shared.llm_provider_connection.monthly_budget_usd + shared.llm_connection_cost_policy (alert %, stop);
+#   tenant       per-tenant AI budgets: no table yet (AA-1016), always empty here.
+# The rows are edited where they always were: PUT /admin/budgets/{provider}/{scope} for the spend_budget tiers (the
+# tab's own editor), PATCH /admin/llm-connections/{key} for a connection budget (Providers › Connections). Today's
+# spend per provider is cost_guard.day_spend, the figure the guard itself compares with the cap.
+
+BUDGET_ROWS_SQL = """
+    SELECT provider, scope, per_run_usd::float AS per_run_usd, per_day_usd::float AS per_day_usd, hard_stop,
+           alert_pct, updated_at, updated_by
+      FROM shared.spend_budget
+     ORDER BY provider, scope
+"""
+
+
+def budget_state(per_day: Optional[float], spent_today: float, alert_pct: Optional[int]) -> tuple[Optional[float], str]:
+    """(used % of the daily cap, state) of one spend_budget row against today's spend. Pure."""
+    if per_day is None:
+        return None, "no_daily_cap"
+    pct = _pct(spent_today, per_day) if per_day > 0 else (None if spent_today <= 0 else 100.0)
+    if per_day <= 0 or (pct is not None and pct >= 100):
+        return pct, "cap_reached"
+    if pct is not None and alert_pct and pct >= float(alert_pct):
+        return pct, "alert"
+    return pct, "ok"
+
+
+def spend_budget_row(r: dict, spent_today: dict) -> dict:
+    """One shared.spend_budget row with today's provider spend against its daily cap. Pure."""
+    scope = r["scope"]
+    spent = float(spent_today.get(r["provider"], 0.0))
+    per_day = _f(r.get("per_day_usd"))
+    used, state = budget_state(per_day, spent, r.get("alert_pct"))
+    return {"provider": r["provider"], "scope": scope,
+            "job_kind": scope[4:] if scope.startswith("job:") else None,
+            "per_run_usd": _f(r.get("per_run_usd")), "per_day_usd": per_day, "hard_stop": bool(r.get("hard_stop")),
+            "alert_pct": r.get("alert_pct"), "updated_at": _iso(r.get("updated_at")),
+            "updated_by": r.get("updated_by"), "spent_today_usd": round(spent, 4), "used_pct": used,
+            "state": state}
+
+
+def connection_budget_rows(connections: list[dict], monthly: dict[str, dict], spend: dict[str, tuple],
+                           policies: dict) -> list[dict]:
+    """One row per LLM connection: its monthly budget (None = no budget) and this month's spend. ``monthly``: the
+    cost_guard ConnectionBudget summaries of the capped connections; ``spend``: {key: (usd, calls)} of every
+    connection; ``policies``: cost_guard.read_cost_policies. Pure."""
+    from shared import cost_guard
+
+    rows = []
+    for c in connections:
+        key = c["connection_key"]
+        m = monthly.get(key)
+        usd, calls = spend.get(key, (0.0, 0))
+        p = cost_guard.policy_of(policies, key)
+        rows.append({
+            "connection_key": key, "kind": c.get("kind"), "label": c.get("label") or key,
+            "enabled": bool(c.get("enabled")), "account_id": c.get("account_id"),
+            "monthly_budget_usd": None if m is None else m["monthly_budget_usd"],
+            "month_spent_usd": round(float(usd), 4), "month_calls": int(calls),
+            "used_pct": None if m is None else m["used_pct"],
+            "alert_pct": p.alert_pct, "hard_stop": p.hard_stop,
+            "state": "no_budget" if m is None else m["state"],
+        })
+    order = {k: i for i, k in enumerate(KIND_ORDER)}
+    rows.sort(key=lambda r: (not r["enabled"], order.get(r["kind"] or "", len(order)), r["connection_key"]))
+    return rows
+
+
+def budget_coverage(provider_rows: list[dict], connection_rows: Optional[list[dict]],
+                    providers: tuple[str, ...]) -> list[dict]:
+    """The "does every paid source have a cap" checklist: one line per spend_budget provider (a provider-wide daily
+    cap, and whether it stops) and one per enabled LLM connection (a monthly budget). Pure."""
+    caps = {r["provider"]: r for r in provider_rows if r["scope"] == "global" and r["per_day_usd"] is not None}
+    out = [{"tier": "provider", "key": p, "capped": p in caps,
+            "hard_stop": caps[p]["hard_stop"] if p in caps else None} for p in providers]
+    for c in connection_rows or []:
+        if c["enabled"]:
+            out.append({"tier": "connection", "key": c["connection_key"], "label": c["label"], "kind": c["kind"],
+                        "account_id": c["account_id"], "capped": c["monthly_budget_usd"] is not None,
+                        "hard_stop": c["hard_stop"] if c["monthly_budget_usd"] is not None else None})
+    return out
+
+
+async def _read_spend_budgets(pool) -> dict:
+    """Every spend_budget row and today's spend per provider (the guard's own figure), on one connection."""
+    from shared import cost_guard
+
+    async with pool.acquire() as conn:
+        rows = [dict(r) for r in await conn.fetch(BUDGET_ROWS_SQL)]
+        spent = {p: round(await cost_guard.day_spend(conn, p), 4) for p in cost_guard.PROVIDERS}
+    return {"rows": rows, "spent_today": spent}
+
+
+async def _read_connection_budgets(pool) -> list[dict]:
+    from shared import cost_guard
+    from shared.llm_client import connections as conn_registry
+
+    async with pool.acquire() as conn:
+        registry = await conn_registry.fetch_connections(conn)
+        policies = await cost_guard.read_cost_policies(conn)
+        monthly = await cost_guard.connection_budgets(
+            conn, {k: c.monthly_budget_usd for k, c in registry.items()}, policies)
+        spend = await cost_guard.connection_month_spend(conn, sorted(registry))
+    connections = [{"connection_key": c.connection_key, "kind": c.kind, "label": c.label, "enabled": c.enabled,
+                    "account_id": c.resolved_account_id() if c.kind == "bedrock" else None}
+                   for c in registry.values()]
+    return connection_budget_rows(connections, {k: b.summary() for k, b in monthly.items()}, spend, policies)
+
+
+async def read_budgets(pool, *, now: Optional[datetime] = None) -> dict:
+    """``GET /admin/ai-gateway/budgets``: every cap by tier (see the section comment). Each source is read on its own;
+    a failing one leaves its tier empty and names itself in ``errors``."""
+    from shared import cost_guard
+
+    now = now or datetime.now(timezone.utc)
+    day, month = day_and_month_start(now)
+    (sb, sb_err), (conns, conns_err) = await asyncio.gather(
+        _guard("Spend budgets", lambda: _read_spend_budgets(pool)),
+        _guard("LLM connection budgets", lambda: _read_connection_budgets(pool)),
+    )
+    spent_today = (sb or {}).get("spent_today", {})
+    rows = [spend_budget_row(r, spent_today) for r in (sb or {}).get("rows", [])]
+    provider_rows = [r for r in rows if r["scope"] == "global"]
+    job_rows = [r for r in rows if r["scope"] != "global"]
+    errors = [{"source": s, "error": e} for s, e in (("spend_budgets", sb_err), ("llm_connections", conns_err)) if e]
+    return {
+        "generated_at": now.isoformat(), "day_start": day.isoformat(), "month_start": month.isoformat(),
+        "providers": list(cost_guard.PROVIDERS),
+        "tiers": {"provider": provider_rows, "job": job_rows, "connection": conns or [], "tenant": []},
+        "coverage": [] if sb is None else budget_coverage(provider_rows, conns, cost_guard.PROVIDERS),
+        "spent_today_usd": spent_today,
+        "errors": errors,
+    }

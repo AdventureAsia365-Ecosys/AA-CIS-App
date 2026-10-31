@@ -244,7 +244,7 @@ def test_render_low_and_exhausted_and_test_marker():
          "source": "ops_sampler", "message": "m", "test": False},
         to=("ops@example.com",), base_url="https://admin.example", environment="dev")
     assert low.subject == "[AA-CIS dev] Jev credit low: about $2.40 left (alert below $3.00)"
-    assert "https://admin.example/admin/settings?tab=jev-credit" in low.text and "TEST" not in low.text
+    assert "https://admin.example/admin/ai-gateway?tab=providers&view=jev-credit" in low.text and "TEST" not in low.text
     assert "<script" not in low.html
 
     ex = ops_alerts.render_jev_credit({"template": "jev_credit_exhausted", "period": "2026-10-21",
