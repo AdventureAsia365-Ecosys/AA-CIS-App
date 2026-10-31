@@ -41,9 +41,14 @@ Acceptance rule (payload `accept_rule`): "v1" (default — the rule place_geocod
 checks, geomatch.strict_reason) | "aa997.3" (route evidence from anchored routes) | "aa997.4" (aa997.3 + the
 day-evidence guard). The confirmation re-check needs a strict rule (it IS the stricter re-judge).
 aa997.4 (S261): the routes also carry each use day's other located places (routes_by_destination `day_places`); when
-the geocoder's only same-name candidates are ones the day contradicts (geomatch.day_disagree: refused `day_disagree`)
-the model's point is kept — outcome `kept_model`, review_reason `same_name_elsewhere`, never hidden (a row a hide
-policy hid is shown again), instead of `llm_point` / `off_route`.
+the geocoder's same-name candidates include one the day contradicts on a FAR move (geomatch.day_verdict: refused
+`day_disagree`, another town of the itinerary) and nothing confirmed, the model's point is kept — outcome
+`kept_model`. A relocate-owned flag (none, llm_point, off_route, weak_confirm) on a shown row becomes
+`same_name_elsewhere`, which no hide policy takes, and a row a hide policy hid for such a flag is shown again; any
+other flag (unconfirmed_hard_type, centroid_fallback, non_place:*, linear_feature) and a row hidden by another rule
+(outlier, hide_unconfirmed) stay exactly as they are — the guard judged the move, not those. A NEAR refusal only
+(`day_disagree_near`, another same-name feature in the same city) is weak evidence: the row is flagged as any other
+unconfirmed row (llm_point / off_route, hideable), the stamp records `refused`.
 
 hide / unhide (no paid call; AA-997 v2, the readers' "hide unconfirmed" policy, owner's call): `hide` lists — and with
 `confirm` sets `suspect` on — rows still carrying one of HIDE_REASONS (the catalog, TripPlanner and new links already
@@ -102,12 +107,14 @@ MAX_ROWS_PER_RUN = 400
 RESERVE_CREDITS = 1000
 SAMPLE = 25
 REVIEW_WEAK_CONFIRM = "weak_confirm"      # an aa997.1 confirmation the strict rule refuses and no new search confirms
-# AA-997 S261 (rule aa997.4): the geocoder found the name elsewhere, the use day's evidence sides with the model's point
-# (geomatch.day_disagree) — the point is kept (outcome `kept_model`) and listed for review, never hidden: the reason is
-# not in HIDE_REASONS, the outcome not in HIDE_FLAGGED_OUTCOMES
+# AA-997 S261 (rule aa997.4): the geocoder found the name in another town of the itinerary, the use day's evidence
+# sides with the model's point (geomatch.day_verdict, far) — the point is kept (outcome `kept_model`) and listed for
+# review; the reason is not in HIDE_REASONS, the outcome not in HIDE_FLAGGED_OUTCOMES (_kept_model_reason)
 REVIEW_SAME_NAME = "same_name_elsewhere"
 KEPT_MODEL = "kept_model"
 HIDE_REASONS = (locate.REVIEW_LLM_POINT, locate.REVIEW_OFF_ROUTE, locate.REVIEW_UNCONFIRMED_HARD, REVIEW_WEAK_CONFIRM)
+# the flags a relocate run itself sets on a row it leaves on the model's point: the only ones kept_model relabels
+RELOCATE_REASONS = (locate.REVIEW_LLM_POINT, locate.REVIEW_OFF_ROUTE, REVIEW_WEAK_CONFIRM)
 # opt-in only (never in the default set): pins of names the pre-filter judged not a place (`non_place:<cause>`) — 25/28
 # verified not-a-place names, but also 3/439 verified-correct names (S254 fixture), so it is asked for explicitly
 HIDE_NON_PLACE = name_filter.NON_PLACE_PREFIX
@@ -695,11 +702,28 @@ def _day_kw(accept_rule: Optional[str]) -> dict:
     return {"day_places": True} if geomatch.needs_day_places(accept_rule) else {}
 
 
-def _day_refused(res) -> bool:
-    """The geocoder refused a candidate as `day_disagree` (rule aa997.4) on one of its searches."""
+def _day_refused(res) -> Optional[str]:
+    """The strongest day-guard refusal (rule aa997.4) the geocoder gave on one of its searches: `day_disagree` (a far
+    move), else `day_disagree_near`, else None."""
     meta = (getattr(res, "meta", None) or {}) if res is not None else {}
     reasons = [r for t in meta.get("tried") or () if isinstance(t, dict) for r in t.get("rejected") or ()]
-    return "day_disagree" in geomatch.strict_refusals(reasons)
+    refused = geomatch.strict_refusals(reasons)
+    return next((r for r in (geomatch.DAY_REASONS[geomatch.DAY_FAR], geomatch.DAY_REASONS[geomatch.DAY_NEAR])
+                 if r in refused), None)
+
+
+def _kept_model_reason(row: dict, cur: dict) -> str:
+    """The review_reason of a `kept_model` row. Only a relocate-owned flag (none, RELOCATE_REASONS) on a row that is
+    shown, or hidden by a hide policy, becomes REVIEW_SAME_NAME: the day guard judged the geocoder's move, nothing
+    else. Any other flag (unconfirmed_hard_type, centroid_fallback, non_place:*, linear_feature) is kept, and a row
+    hidden by another rule (outlier, an earlier hide_unconfirmed) keeps its hideable flag, so the hide / unhide
+    selections still match what hides it."""
+    old = row.get("review_reason")
+    if old and old not in RELOCATE_REASONS:
+        return old
+    if cur.get("geo_status") == "suspect" and _policy_hidden(cur) is None:
+        return old or locate.REVIEW_LLM_POINT
+    return REVIEW_SAME_NAME
 
 
 def _rule_kw(strategy: str, context: Optional[str], accept_rule: str) -> dict:
@@ -807,14 +831,18 @@ async def apply_row(conn, row: dict, routes: tuple, geocoder, *, hide_unconfirme
             return {"outcome": "confirmed", "moved_km": km, "country_fixed": bool(fixed),
                     **({"unhidden": True} if shown else {})}
         meta = (res.meta if res is not None else {}) or {}
-        if geomatch.needs_day_places(accept_rule) and _day_refused(res):
-            # aa997.4: the geocoder's same-name feature is elsewhere and the day's evidence backs the model's point —
-            # kept, listed for review, never hidden (a policy-hidden row is shown again)
-            await conn.execute(_FLAG_SQL, row["id"], _keep_linear(row, REVIEW_SAME_NAME), False)
-            shown = await _reveal_if_policy_hidden(conn, row["id"], cur, KEPT_MODEL)
+        day = _day_refused(res) if geomatch.needs_day_places(accept_rule) else None
+        if day == geomatch.DAY_REASONS[geomatch.DAY_FAR]:
+            # aa997.4: the geocoder's same-name feature is in another town of the itinerary and the day's evidence
+            # backs the model's point — kept and listed; a relocate flag becomes same_name_elsewhere (no hide policy
+            # takes it, a policy-hidden row is shown again), any other flag and hide stay as they are
+            reason = _kept_model_reason(row, cur)
+            await conn.execute(_FLAG_SQL, row["id"], reason, False)
+            shown = (reason == REVIEW_SAME_NAME
+                     and await _reveal_if_policy_hidden(conn, row["id"], cur, KEPT_MODEL))
             fixed = bool(c["hk_mo"]) and await _fix_country(conn, row, c["hk_mo"])
-            await conn.execute(_STAMP_SQL, row["id"], _stamp(KEPT_MODEL, route_km=c["route_km"],
-                                                             refused="day_disagree", geocoder=meta.get("outcome"),
+            await conn.execute(_STAMP_SQL, row["id"], _stamp(KEPT_MODEL, route_km=c["route_km"], refused=day,
+                                                             review_reason=reason, geocoder=meta.get("outcome"),
                                                              accept_rule=accept_rule))
             return {"outcome": KEPT_MODEL, "country_fixed": bool(fixed), **({"unhidden": True} if shown else {})}
         outcome = locate.REVIEW_OFF_ROUTE if c["on_route"] is False else locate.REVIEW_LLM_POINT
@@ -823,8 +851,10 @@ async def apply_row(conn, row: dict, routes: tuple, geocoder, *, hide_unconfirme
                               else (row.get("review_reason") or outcome))
         await _flag(conn, row["id"], cur, reason, hide_unconfirmed, outcome)
         fixed = bool(c["hk_mo"]) and await _fix_country(conn, row, c["hk_mo"])
+        # a near day refusal (aa997.4 day_disagree_near) only: weak evidence, flagged as before, recorded
         await conn.execute(_STAMP_SQL, row["id"], _stamp(outcome, route_km=c["route_km"],
-                                                         geocoder=meta.get("outcome"), accept_rule=accept_rule))
+                                                         geocoder=meta.get("outcome"), accept_rule=accept_rule,
+                                                         **({"refused": day} if day else {})))
     return {"outcome": outcome, "country_fixed": bool(fixed)}
 
 

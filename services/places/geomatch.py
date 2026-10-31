@@ -557,7 +557,8 @@ STREET_NEAR_HINT_KM = 5.0     # a street for a site is only its access road: tak
 # covered only within the 50 km site radius refused such correct candidates when they were near one route.
 AMBIGUOUS_ROUTE_KM = 300.0
 # the reasons only the strict rule gives (Verdict.reasons "<i>:<reason>"; locate records them in last_error)
-STRICT_REASONS = frozenset({"site_type", "match", "kind", "ambiguous_route", "hint_disagree", "day_disagree"})
+STRICT_REASONS = frozenset({"site_type", "match", "kind", "ambiguous_route", "hint_disagree", "day_disagree",
+                            "day_disagree_near"})
 
 
 @dataclass(frozen=True)
@@ -581,7 +582,7 @@ class StrictParams:
                       word ("Horombo Hut" mapped as a locality) is the site, not refused as `site_type`;
       day_guard       (aa997.4) the day-evidence guard: a move away from the model's point that the use day's own
                       evidence (its other located places, its own overnight stop) contradicts is refused as
-                      `day_disagree` (day_disagree)."""
+                      `day_disagree` (a far move) or `day_disagree_near` (a near move) (day_verdict)."""
     anchored_only: bool = False
     per_tour: bool = False
     ambiguous_km: float = AMBIGUOUS_ROUTE_KM
@@ -680,9 +681,10 @@ def strict_reason(query: str, c: Candidate, sim: float, lat: Optional[float], ln
                of them than one per 5 (a homonym: one pin cannot serve tours in two distant cities);
       `hint_disagree`  route reference, the model's point is ON the route and the candidate is beyond the bake-off
                radius of it: only an exact-name, full-match POI may overrule an on-route model point;
-      `day_disagree`  (aa997.4, StrictParams.day_guard) the use day's own evidence sides with the model's point
-               against the candidate (day_disagree) — judged on every route the name has (a day's located places are
-               evidence whether or not its night is located); with no model's point it is listed in `unjudged`.
+      `day_disagree` / `day_disagree_near`  (aa997.4, StrictParams.day_guard) the use day's own evidence sides with
+               the model's point against the candidate (day_verdict: a far move / a near move, ≤ the bake-off radius)
+               — judged on every route the name has (a day's located places are evidence whether or not its night is
+               located); with no model's point `day_disagree` is listed in `unjudged`.
     The street / kind checks need the model's point: with none (lat / lng None — a model null, a stored answer
     re-judged without its hint) they use `hint_km` (the candidate's distance from that point when only the distance is
     known: an aa997.1 relocate stamp's moved_km), else they are NOT judged, never refused; their names are appended to
@@ -729,8 +731,9 @@ def strict_reason(query: str, c: Candidate, sim: float, lat: Optional[float], ln
                 return "hint_disagree"
     if p.day_guard:
         if has_hint:
-            if day_disagree(query, c, lat, lng, all_routes):
-                return "day_disagree"
+            dv = day_verdict(query, c, lat, lng, all_routes)
+            if dv is not None:
+                return DAY_REASONS[dv]
         elif unjudged is not None and has_day_evidence(all_routes):
             unjudged.append("day_disagree")
     return None
@@ -744,12 +747,24 @@ def strict_reason(query: str, c: Candidate, sim: float, lat: Optional[float], ln
 # on-route model point (`hint_disagree` "strong"), and a move inside the bake-off radius is never questioned. The
 # evidence that decides is the use DAY itself: the other places of that day that a geocoder located (geo.tour_place,
 # store.route_anchors `day_places`) and the day's own overnight stop (TourRoute.own). A move the day contradicts is
-# refused; the relocate job then keeps the model's point (outcome `kept_model`, never hidden).
+# refused. A FAR refusal (> the bake-off radius: another town of the itinerary) is strong evidence — the relocate job
+# then keeps the model's point (outcome `kept_model`). A NEAR refusal (another same-name feature in the same city) is
+# weak evidence: inside a city the day's sites cluster around the model's point whether it is right (the 4-5 km
+# regressions) or wrong (a palace out of town, the model's point in the old town) — the reason is `day_disagree_near`
+# and relocate leaves the row on its old, hideable flag (the status quo before aa997.3), never `kept_model`.
 DAY_MIN_MOVE_KM = 2.0       # a move this short is never judged (same feature, another entrance / OSM node)
 DAY_SUPPORT_KM = 3.0        # the model's point is backed by a located place of the day this close to it
 DAY_MARGIN_KM = 1.5         # "clearly nearer": at most half the distance and at least this much nearer
 DAY_CENTROID_KM = 0.5       # the model's point IS the day's overnight town point (a town fallback, not a site)
 DAY_OWN_STOP_KM = 15.0      # a far move away from a model's point this close to the day's own overnight stop
+# a near move is judged only with this many located places of the day within DAY_SUPPORT_KM of the model's point (one
+# site nearby is no evidence inside a city)
+DAY_NEAR_SUPPORT_N = 2
+# a model's point this close to another located place of the day is that place's point copied (the usual model slip):
+# a near move away from it is not judged
+DAY_COPIED_KM = 0.3
+DAY_FAR, DAY_NEAR = "far", "near"
+DAY_REASONS = {DAY_FAR: "day_disagree", DAY_NEAR: "day_disagree_near"}
 
 
 def _day_points(routes) -> tuple[list, list]:
@@ -774,37 +789,50 @@ def _clearly_nearer(a: float, b: float) -> bool:
     return a * 2 <= b and b - a >= DAY_MARGIN_KM
 
 
-def day_disagree(query: str, c: Candidate, lat: float, lng: float, routes) -> bool:
-    """The use day's evidence contradicts moving the model's point (lat, lng) to the candidate (rule aa997.4):
+def day_verdict(query: str, c: Candidate, lat: float, lng: float, routes) -> Optional[str]:
+    """DAY_FAR / DAY_NEAR when the use day's evidence contradicts moving the model's point (lat, lng) to the candidate
+    (rule aa997.4), else None:
       1. the day's other located places: the model's point has one within DAY_SUPPORT_KM and is clearly nearer to
          them than the candidate → refused. When they are clearly nearer the CANDIDATE the move is taken (the model
-         put the site in the wrong place; its day's places are around the right one) and rule 2 is not asked. A near
-         move (≤ the bake-off radius) from a model's point that sits on the day's overnight town point
-         (DAY_CENTROID_KM) is not judged by them: the model gave the town, and the site is often out of town;
+         put the site in the wrong place; its day's places are around the right one) and rule 2 is not asked.
+         A NEAR move (≤ the bake-off radius) is judged by them only when the model's point is a site of its own among
+         them: not the day's overnight town point (DAY_CENTROID_KM — the model gave the town, the site is often out
+         of town), not another place's point copied (DAY_COPIED_KM), and with DAY_NEAR_SUPPORT_N of them within
+         DAY_SUPPORT_KM;
       2. a far move (> the bake-off radius) from a model's point within DAY_OWN_STOP_KM of the use day's own overnight
          stop to a candidate near ANOTHER stop of the route (within the bake-off radius of a stop that is farther than
          that radius from every own stop): two same-name features on one itinerary, and the day names the model's.
     Never judged for a move ≤ DAY_MIN_MOVE_KM, or with no day evidence (the result is aa997.3's)."""
     move = _km(lat, lng, c.lat, c.lng)
     if move <= DAY_MIN_MOVE_KM:
-        return False
+        return None
     day, own = _day_points(routes)
     radius = radius_km(query)
     far = move > radius
     if day:
-        dm, dc = _nearest_km(lat, lng, day), _nearest_km(c.lat, c.lng, day)
+        dists = [_km(lat, lng, p[0], p[1]) for p in day]
+        dm, dc = min(dists), _nearest_km(c.lat, c.lng, day)
         if _clearly_nearer(dc, dm):
-            return False
-        centroid = any(_km(lat, lng, o[0], o[1]) <= DAY_CENTROID_KM for o in own)
-        if dm <= DAY_SUPPORT_KM and _clearly_nearer(dm, dc) and (far or not centroid):
-            return True
+            return None
+        if dm <= DAY_SUPPORT_KM and _clearly_nearer(dm, dc):
+            if far:
+                return DAY_FAR
+            centroid = any(_km(lat, lng, o[0], o[1]) <= DAY_CENTROID_KM for o in own)
+            support = sum(d <= DAY_SUPPORT_KM for d in dists)
+            if not centroid and dm > DAY_COPIED_KM and support >= DAY_NEAR_SUPPORT_N:
+                return DAY_NEAR
     if far and own and (_nearest_km(lat, lng, own) or 0.0) <= DAY_OWN_STOP_KM:
         stops = [p for r in routes or () for p in r if p is not None]
         stop = min(stops, key=lambda p: _km(c.lat, c.lng, p[0], p[1]), default=None)
         if (stop is not None and _km(c.lat, c.lng, stop[0], stop[1]) <= radius
                 and (_nearest_km(stop[0], stop[1], own) or 0.0) > radius):
-            return True
-    return False
+            return DAY_FAR
+    return None
+
+
+def day_disagree(query: str, c: Candidate, lat: float, lng: float, routes) -> bool:
+    """day_verdict refuses the move (far or near)."""
+    return day_verdict(query, c, lat, lng, routes) is not None
 
 
 def strict_refusals(reasons) -> list[str]:

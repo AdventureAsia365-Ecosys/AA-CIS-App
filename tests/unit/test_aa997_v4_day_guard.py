@@ -3,8 +3,9 @@
 The S261 audit of the aa997.3 relocate chain found model points the S254 audit labelled CORRECT moved by a `confirmed`
 outcome to a different feature with the same name: a temple of the same name in the next overnight town of the
 itinerary (~140 km), a same-name temple near the base city of a day trip (~120 km), another fort / gurudwara of the
-same name 4-5 km away in the same city. The tests reproduce those four shapes and four genuine moves that must still
-be accepted, table-driven. Every name and place here is invented; coordinates are synthetic; no live call."""
+same name 4-5 km away in the same city. The tests reproduce those four shapes and the genuine moves that must still
+be accepted, table-driven, plus one recorded loss (a near correction the day cannot tell from the same-city
+regressions). Every name and place here is invented; coordinates are synthetic; no live call."""
 from __future__ import annotations
 
 import json
@@ -81,35 +82,57 @@ NAMPHU = (18.40, 104.80)
 NAMKHE = off(NAMPHU, 60, 5)
 CAVE_DAY = (off(NAMKHE, 0.8, -0.5), off(NAMKHE, 1.5, 0.4))
 CAVE_ROUTE = (_r(NAMPHU, NAMKHE, own=NAMPHU, day=CAVE_DAY),)
+# genuine 5 (review case C): the model copied the point of another site of the same day (0.1 km from it); the real
+# palace is 4 km away. A near move from a copied point is not judged.
+ORVANA = (22.50, 76.20)
+ORVANA_DAY = (off(ORVANA, 0.8, 0.6), off(ORVANA, -0.5, 0.9), off(ORVANA, 0.3, -0.7))
+ORVANA_ROUTE = (_r(ORVANA, off(ORVANA, 80, 20), own=ORVANA, day=ORVANA_DAY),)
+# genuine 6: only one other site of the day is located near the model's point — no evidence inside a city.
+HELVAR = (24.90, 77.40)
+HELVAR_ONE = (_r(HELVAR, own=HELVAR, day=(off(HELVAR, 0.6, 1.2),)),)
+# recorded loss (review case A): the model's point sits among the day's old-town sites (1.2 km from the stored town
+# point, so not a town fallback) and the real palace is ~5 km out of town. The same shape as the 4-5 km regressions:
+# refused as a NEAR move (`day_disagree_near`); relocate leaves such a row on its hideable flag (status quo).
+HELVAR_DAY = (off(HELVAR, 0.6, 1.2), off(HELVAR, 1.6, -0.1))
+HELVAR_ROUTE = (_r(HELVAR, own=HELVAR, day=HELVAR_DAY),)
 
-# (case, query, model's point, routes, candidate, accepted under aa997.3, refused under aa997.4)
+FAR, NEAR = "day_disagree", "day_disagree_near"
+# (case, query, model's point, routes, candidate, accepted under aa997.3, aa997.4 refusal reason or None = accepted)
 CASES = [
     ("far_same_name_next_town", "Tolvaresh Temple", TOLVARESH_MODEL, FAR_ROUTE,
-     _c(off(KASVENPUR, 0.5, 0.5), "Tolvaresh Temple"), True, True),
+     _c(off(KASVENPUR, 0.5, 0.5), "Tolvaresh Temple"), True, FAR),
     ("far_same_name_day_trip_base", "Pelvani Temple", PELVANI_MODEL, DAY_TRIP_ROUTE,
-     _c(off(DORAPUR, 1.5, -1.0), "Pelvani Temple"), True, True),
+     _c(off(DORAPUR, 1.5, -1.0), "Pelvani Temple"), True, FAR),
     ("near_other_fort_4km", "Kardhigarh Fort", FORT_MODEL, CITY_ROUTE,
-     _c(off(FORT_MODEL, -3.0, 3.1), "Kardhigarh Fort"), True, True),
+     _c(off(FORT_MODEL, -3.0, 3.1), "Kardhigarh Fort"), True, NEAR),
     ("near_other_shrine_5km", "Gurudwara Tolsar Sahib", SHRINE_MODEL, SHRINE_ROUTE,
-     _c(off(SHRINE_MODEL, 5.0, -1.4), "Gurudwara Tolsar Sahib"), True, True),
+     _c(off(SHRINE_MODEL, 5.0, -1.4), "Gurudwara Tolsar Sahib"), True, NEAR),
     ("genuine_far_correction", "Ambrakot Fort", off(BELVATGARH, 2.0, -100.0), BELVATGARH_ROUTE,
-     _c(off(BELVATGARH, 0.8, 0.5), "Ambrakot Fort"), True, False),
+     _c(off(BELVATGARH, 0.8, 0.5), "Ambrakot Fort"), True, None),
     ("genuine_near_correction", "Kanaki Stepwell", off(TANK_TRUE, -2.0, -2.2), LORVAPUR_ROUTE,
-     _c(TANK_TRUE, "Kanaki Stepwell"), True, False),
+     _c(TANK_TRUE, "Kanaki Stepwell"), True, None),
     ("genuine_town_point_waterfall", "Dhorkund Falls", off(SURALI, 0.2, 0.1), SURALI_ROUTE,
-     _c(off(SURALI, 6.0, 5.5), "Dhorkund Falls"), True, False),
+     _c(off(SURALI, 6.0, 5.5), "Dhorkund Falls"), True, None),
     ("genuine_cave_near_next_night", "Phalom Tura Cave", off(NAMPHU, 0.1, 0.1), CAVE_ROUTE,
-     _c(off(NAMKHE, 1.0, 0.0), "Phalom Tura Cave"), True, False),
+     _c(off(NAMKHE, 1.0, 0.0), "Phalom Tura Cave"), True, None),
+    ("genuine_copied_sibling_point", "Rajvela Palace", off(ORVANA_DAY[0], 0.1, 0.05), ORVANA_ROUTE,
+     _c(off(ORVANA_DAY[0], -3.5, 2.0), "Rajvela Palace"), True, None),
+    ("genuine_one_located_site", "Sonmahal Palace", off(HELVAR, 1.1, 0.5), HELVAR_ONE,
+     _c(off(HELVAR, -3.5, 3.0), "Sonmahal Palace"), True, None),
+    ("loss_old_town_point_palace_out_of_town", "Sonmahal Palace", off(HELVAR, 1.1, 0.5), HELVAR_ROUTE,
+     _c(off(HELVAR, -3.5, 3.0), "Sonmahal Palace"), True, NEAR),
 ]
 
 
-@pytest.mark.parametrize("case,query,model,routes,cand,v3_ok,v4_refused", CASES, ids=[c[0] for c in CASES])
-def test_the_day_guard_on_the_s261_shapes(case, query, model, routes, cand, v3_ok, v4_refused):
+@pytest.mark.parametrize("case,query,model,routes,cand,v3_ok,v4_reason", CASES, ids=[c[0] for c in CASES])
+def test_the_day_guard_on_the_s261_shapes(case, query, model, routes, cand, v3_ok, v4_reason):
     v3 = gm.accept(query, [cand], *model, "in", routes=routes, strict=V3, compact=True)
     assert (v3.accepted is cand) is v3_ok, (case, v3.reasons)
     v4 = gm.accept(query, [cand], *model, "in", routes=routes, strict=V4, compact=True)
-    if v4_refused:
-        assert v4.accepted is None and v4.reasons == ["0:day_disagree"], (case, v4.reasons)
+    if v4_reason:
+        assert v4.accepted is None and v4.reasons == [f"0:{v4_reason}"], (case, v4.reasons)
+        near = gm._km(*model, cand.lat, cand.lng) <= gm.radius_km(query)
+        assert (v4_reason == NEAR) is near, case
     else:
         assert v4.accepted is cand, (case, v4.reasons)
     # aa997.3 reads neither the own stop nor the day's places: the same verdict without them
@@ -174,6 +197,10 @@ def test_the_rule_names_and_switches_take_aa997_4():
     assert job._payload({"mode": "dry_run", "accept_rule": V4})["accept_rule"] == V4
     assert "day_disagree" in gm.STRICT_REASONS
     assert gm.strict_refusals(["0:day_disagree", "1:off_route"]) == ["day_disagree"]
+    assert "day_disagree_near" in gm.STRICT_REASONS
+    assert relocate._day_refused(_refused("0:day_disagree_near", "1:day_disagree")) == "day_disagree"
+    assert relocate._day_refused(_refused("0:day_disagree_near")) == "day_disagree_near"
+    assert relocate._day_refused(_refused("0:hint_disagree")) is None and relocate._day_refused(None) is None
 
 
 def test_the_endpoint_and_the_env_accept_aa997_4(monkeypatch):
@@ -316,6 +343,70 @@ async def test_a_policy_hidden_row_the_day_backs_is_shown_again(monkeypatch):
     assert r["outcome"] == "kept_model" and r["unhidden"] is True
     reveal = [a for s, a in conn.sql if "SET geo_status = 'ok'" in s][0]
     assert json.loads(reveal[1])["unhidden_by"] == "relocate:kept_model"
+
+
+@pytest.mark.asyncio
+async def test_a_near_day_refusal_only_flags_the_row_as_before(monkeypatch):
+    """A near refusal (another same-name feature in the same city) is weak evidence: the row keeps the hideable flag
+    (hide_unconfirmed honoured), the stamp records it; never kept_model."""
+    monkeypatch.setattr(store, "lock_destinations", AsyncMock())
+    row = _llm_row("Kardhigarh Fort", FORT_MODEL)
+    conn = _RecConn()
+    r = await relocate.apply_row(conn, row, CITY_ROUTE, _Geo(_refused("0:day_disagree_near")),
+                                 hide_unconfirmed=True, accept_rule=V4)
+    assert r["outcome"] == "llm_point" and conn.flags() == [(row["id"], "llm_point", True)]
+    stamp = conn.stamps()[0]
+    assert stamp["outcome"] == "llm_point" and stamp["refused"] == "day_disagree_near"
+    # a far refusal on another search of the same row wins
+    conn = _RecConn()
+    r = await relocate.apply_row(conn, row, CITY_ROUTE, _Geo(_refused("0:day_disagree_near", "1:day_disagree")),
+                                 hide_unconfirmed=True, accept_rule=V4)
+    assert r["outcome"] == "kept_model" and conn.stamps()[0]["refused"] == "day_disagree"
+
+
+def _hidden(by, reason):
+    return {"located_by": "llm", "geo_status": "suspect", "merged": False,
+            "hidden": json.dumps({"by": by, "reason": reason, "at": "t"})}
+
+
+def _reveals(conn):
+    return [a for s, a in conn.sql if "SET geo_status = 'ok'" in s]
+
+
+@pytest.mark.parametrize("reason,current,want_reason,want_shown", [
+    # relocate-owned flags on a shown / policy-hidden row become same_name_elsewhere (shown again when policy-hidden)
+    (None, None, "same_name_elsewhere", False),
+    ("off_route", None, "same_name_elsewhere", False),
+    ("weak_confirm", None, "same_name_elsewhere", False),
+    ("llm_point", _hidden(relocate.HIDE_STAMP, "llm_point"), "same_name_elsewhere", True),
+    # any other flag is kept, and a row hidden for it stays hidden
+    ("unconfirmed_hard_type", None, "unconfirmed_hard_type", False),
+    ("unconfirmed_hard_type", _hidden(relocate.HIDE_STAMP, "unconfirmed_hard_type"), "unconfirmed_hard_type", False),
+    ("centroid_fallback", None, "centroid_fallback", False),
+    ("centroid_fallback", _hidden(relocate.HIDE_FLAGGED_STAMP, "centroid_fallback"), "centroid_fallback", False),
+    ("non_place:generic", None, "non_place:generic", False),
+    ("linear_feature", None, "linear_feature", False),
+    # hidden by another rule (outlier / an earlier hide_unconfirmed: no policy stamp): keeps a hideable flag, stays
+    ("llm_point", {"located_by": "llm", "geo_status": "suspect", "merged": False, "hidden": None}, "llm_point", False),
+    (None, {"located_by": "llm", "geo_status": "suspect", "merged": False, "hidden": None}, "llm_point", False),
+], ids=["none", "off_route", "weak_confirm", "llm_point_policy_hidden", "hard_type", "hard_type_policy_hidden",
+        "centroid", "centroid_policy_hidden", "non_place", "linear", "llm_point_suspect_other_rule",
+        "none_suspect_other_rule"])
+@pytest.mark.asyncio
+async def test_kept_model_relabels_only_relocate_flags(monkeypatch, reason, current, want_reason, want_shown):
+    monkeypatch.setattr(store, "lock_destinations", AsyncMock())
+    row = _llm_row("Tolvaresh Temple", TOLVARESH_MODEL, review_reason=reason)
+    conn = _RecConn(current)
+    r = await relocate.apply_row(conn, row, FAR_ROUTE, _Geo(_refused("0:day_disagree")), hide_unconfirmed=True,
+                                 accept_rule=V4)
+    assert r["outcome"] == "kept_model" and r.get("unhidden", False) is want_shown
+    assert conn.flags() == [(row["id"], want_reason, False)]          # hide_unconfirmed never applies to kept_model
+    assert bool(_reveals(conn)) is want_shown
+    stamp = conn.stamps()[0]
+    assert stamp["review_reason"] == want_reason and stamp["refused"] == "day_disagree"
+    # a reason kept for a hiding policy is still one the policy selects
+    if current and current.get("geo_status") == "suspect" and not want_shown:
+        assert want_reason in relocate.HIDE_REASONS or want_reason == "centroid_fallback"
 
 
 @pytest.mark.asyncio

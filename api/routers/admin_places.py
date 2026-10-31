@@ -53,8 +53,9 @@ AA-997 (S254 geocode audit, fix plan step 1: coordinates come from the geocoder 
        AA-997 v2: recheck re-runs rows an earlier rule version stamped (confirmed / geoapify need accept_rule
        aa997.2, aa997.3 or aa997.4: the strict acceptance; geoapify is dry-run only); strategy v2 = query variants +
        hint bias; aa997.4 (S261) = aa997.3 + the day-evidence guard: a same-name feature the use day's own places
-       contradict is refused and the model's point kept (outcome kept_model, review_reason same_name_elsewhere,
-       never hidden);
+       contradict is refused — in another town of the itinerary the model's point is kept (outcome kept_model, a
+       relocate flag becomes review_reason same_name_elsewhere, which no hide policy takes); in the same city
+       (day_disagree_near) the row is flagged as before;
        max_requests caps the chain's Geoapify requests (counted from geo.geocode_call of the chain's jobs).
        hide (report; confirm=true writes) / unhide: the readers' hide-unconfirmed policy — rows still flagged
        llm_point / off_route / unconfirmed_hard_type / weak_confirm (+ non_place:* only when "non_place" is in
