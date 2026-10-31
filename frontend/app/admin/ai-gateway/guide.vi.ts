@@ -51,6 +51,15 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
           { term: "Ngân sách", text: "Ngân sách tháng của kết nối và trần ngày của nhà cung cấp, kèm phần đã dùng. "
             + "Dừng ở trần thì chặn lần gọi tiếp; chỉ cảnh báo thì chỉ báo." },
           { term: "Số dư / credit", text: "Phần còn lại ở nhà cung cấp, hoặc credit hôm nay với Geoapify." },
+          { term: "Đường dự phòng · stage Claude", text: "API của Anthropic: đường độc lập tới Claude khi tài khoản AWS "
+            + "đang chạy nó bị chặn. Chỉ được dùng khi đang bật, có tiền và có trong tuyến của stage." },
+          { term: "Đường dự phòng · stage GPT", text: "API của OpenAI: tương tự cho các stage chấm bằng GPT." },
+          { term: "Miền lỗi:", text: "Ai có thể chặn dòng này: loại dịch vụ, tài khoản và phạm vi dữ liệu. Hai dòng "
+            + "cùng miền lỗi sẽ cùng hỏng; dự phòng chỉ có ích khi ở miền khác." },
+          { term: "Truy cập:", text: "Lần gọi hoặc lần thăm dò gần nhất nói gì: đang trả lời, bị từ chối truy cập, "
+            + "hết credit, chưa cài khoá, hoặc chưa kiểm." },
+          { term: "Thăm dò gần nhất", text: "Lần thăm dò sức khoẻ hằng ngày gọi dòng này gần nhất (chưa thăm dò lần nào "
+            + "cho tới khi bật thăm dò)." },
         ] },
       ],
     },
@@ -67,8 +76,10 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
           { term: "Chạm trần", text: "Ngân sách, số dư hoặc credit hôm nay đã hết. Lần gọi dừng hoặc chuyển đường dự "
             + "phòng cho tới khi nâng trần hoặc hết kỳ." },
           { term: "Tắt", text: "Cố ý tắt. Không tính là có vấn đề." },
-          { term: "Chưa rõ", text: "Chưa có lần gọi gần đây, chưa đọc số dư, hoặc không đọc được nguồn. Dòng đó ghi "
-            + "rõ lý do." },
+          { term: "Chưa có lượt gọi gần đây", text: "Kết nối LLM không có lượt gọi được trả lời trong 24 giờ qua. "
+            + "Chưa thấy gì sai; tab Điều hướng dùng cùng chữ này." },
+          { term: "Chưa rõ", text: "Không đọc được nguồn, hoặc chưa biết số dư hay lần nạp nào (Jev, DataForSEO). "
+            + "Dòng đó ghi rõ lý do." },
         ] },
       ],
     },
@@ -84,6 +95,12 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
           { term: "Số dư Jev", text: "Ghi tay từng lần nạp Jev (Jev không có dịch vụ xem số dư), xem số dư ước tính "
             + "và gửi cảnh báo thử." },
         ] },
+        { kind: "control", label: "Đưa lại job bị từ chối", does: "Kiểm trước những job lỗi trong 14 ngày qua đã dừng vì "
+          + "nhà cung cấp từ chối một tài khoản, hiện các con số, và chỉ sau khi bạn xác nhận mới đưa chúng về hàng đợi "
+          + "với lượt thử mới, mỗi đợt 50 job (bấm Kiểm đợt tiếp cho phần còn lại). Job mà kết nối vẫn bị từ chối thì "
+          + "vẫn để lỗi.",
+          cost: "Bước kiểm miễn phí; job được đưa lại chạy và tốn như lần đầu.",
+          when: "Một tài khoản từng bị chặn đã trả lời lại (dòng của nó Ổn)." },
       ],
     },
     {
@@ -94,6 +111,14 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
           + "lần lượt khi nó lỗi; model chạy bóng gọi thêm một lượt trên một phần lượt gọi chỉ để so sánh (chi phí các "
           + "lượt đó tăng gấp đôi). Ô tình trạng LLM ở trên cho biết các model có trả lời gần đây không; các câu hỏi "
           + "Jev theo bước ở dưới cùng." },
+        { kind: "terms", uiLabels: true, items: [
+          { term: "Có dự phòng ở miền lỗi khác", text: "Nếu tài khoản của model đầu bị chặn, stage vẫn chạy được trên "
+            + "một model ở miền lỗi khác." },
+          { term: "Không có dự phòng ở miền lỗi khác", text: "Mọi model dùng được của tuyến nằm trong một miền lỗi, "
+            + "hoặc không model nào chạy được lúc này: một tài khoản bị chặn là stage dừng. Chỉ báo cáo: không đổi gì." },
+          { term: "Đang trả lời", text: "Các lượt gọi thật gần đây được trả lời. Khi một kết nối đang ngắt, nhãn cũng "
+            + "ghi rõ, cùng chữ với tab Nhà cung cấp." },
+        ] },
         { kind: "control", label: "Lưu", does: "Lưu model chính của một bước, cho mọi lượt gọi của bước đó.",
           cost: "Lưu không tốn tiền; các lượt gọi sau chạy trên model mới theo giá của nó.",
           when: "Một model bị ngừng, bị từ chối, hoặc một model rẻ hơn đã qua thử nghiệm." },
@@ -115,6 +140,9 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
         { kind: "paragraph", text: "Phần so sánh chạy bóng cho thấy, theo từng bước, model chạy bóng đồng ý với model "
           + "chính bao nhiêu lần, chênh lệch điểm, chi phí mỗi lượt và thời gian trả lời của model chạy bóng, kèm cỡ "
           + "mẫu." },
+        { kind: "paragraph", text: "Thử nghiệm (chỉ xem) liệt kê các phiên bản prompt đã ghi (dấu vân tay ngắn, không "
+          + "bao giờ có nội dung prompt) và các lượt đánh giá mới nhất: so sánh gì, trên bao nhiêu tour, kết luận và "
+          + "chi phí. Lượt chạy do nhóm khởi động, không từ trang này." },
       ],
     },
     {
@@ -128,7 +156,9 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
             + "như bộ chặn đo: cả ngày của nhà cung cấp với phần lớn job, riêng loại job này với vài job bị chặn theo "
             + "chi tiêu của chính nó (dòng dưới con số cho biết là loại nào)." },
           { term: "Ngân sách kết nối LLM", text: "Ngân sách tháng của từng kết nối; sửa ở Nhà cung cấp › Kết nối." },
-          { term: "Ngân sách AI theo đại lý", text: "Hiện để trống: ngân sách theo đại lý đến sau và chỉ nhân viên thấy." },
+          { term: "Ngân sách AI theo đại lý", text: "Ngân sách AI hằng tháng của từng đại lý có đặt, kèm chi tiêu tháng "
+            + "này và trạng thái. Đặt hoặc sửa tại đại lý (Đại lý › đại lý đó › Chi phí). Chỉ nhân viên thấy. Hiện được "
+            + "lưu và hiển thị; giữ job mới ở mức duyệt sẽ có khi cổng AI kiểm ngân sách." },
           { term: "Dừng ở trần", text: "Lượt chạy kết thúc khi lượt gọi kế tiếp sẽ vượt trần." },
           { term: "Chỉ cảnh báo", text: "Không bao giờ dừng; gửi cảnh báo cho quản trị ở % cảnh báo." },
         ] },

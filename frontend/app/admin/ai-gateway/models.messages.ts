@@ -33,7 +33,19 @@ export const MODELS = defineMessages(
     availTitle: "LLM availability",
     availIntro: (hours: number) =>
       `From what real calls did in the last ${hours} h: answered calls in the call log, failed jobs classified by error. No test call is made.`,
-    availOk: "Available",
+    availOk: "Answering",
+    availOkSomeOpen: (n: number) => `Answering · ${n} circuit${n === 1 ? "" : "s"} open`,
+    availOpenNote: (n: number) =>
+      `${n} connection${n === 1 ? " has" : "s have"} an open circuit: calls skip ${n === 1 ? "it" : "them"} for now (Providers shows which). Other connections still answer.`,
+    invariantSummary: (ok: number, total: number) =>
+      `Failure-domain rule (report only): ${ok} of ${total} stages can fall back to another failure domain.`,
+    staffMember: "a staff member",
+    domainOk: "Fallback in another failure domain",
+    domainBreach: "No fallback in another failure domain",
+    domainOkWhy: (others: string) => `If the first route is blocked, the stage can still run on: ${others}.`,
+    domainBreachOne: (domain: string) =>
+      `Every usable model on this route runs in one failure domain (${domain}): if it is blocked, the stage stops.`,
+    domainBreachNone: "No switched-on, funded model on this route can run now.",
     availDegraded: "Throttled",
     availBlocked: "Refused",
     availUnknown: "No recent calls",
@@ -131,6 +143,9 @@ export const MODELS = defineMessages(
     needsPriceTitle: "A model needs an input and an output price before it can be switched on (prices change through a migration)",
     needsPrice: "needs price",
     colBlocked: "Blocked",
+    blockedBadge: "Blocked",
+    colVendorProvider: "Vendor / provider",
+    builtInPrices: "Built-in price table",
     colUpdated: "Updated",
     catalogIntro:
       "The admin dropdowns and every cost figure read these rows. Switch a model on or off here; a model cannot be switched on without both an input and an output price.",
@@ -181,7 +196,19 @@ export const MODELS = defineMessages(
     availTitle: "Tình trạng LLM",
     availIntro: (hours: number) =>
       `Theo kết quả của các lượt gọi thật trong ${hours} giờ qua: lượt gọi được trả lời trong nhật ký gọi, job lỗi được phân loại theo lỗi. Không gọi thử.`,
-    availOk: "Dùng được",
+    availOk: "Đang trả lời",
+    availOkSomeOpen: (n: number) => `Đang trả lời · ${n} kết nối đang ngắt`,
+    availOpenNote: (n: number) =>
+      `${n} kết nối đang ngắt: các lượt gọi tạm bỏ qua (tab Nhà cung cấp cho biết kết nối nào). Các kết nối khác vẫn trả lời.`,
+    invariantSummary: (ok: number, total: number) =>
+      `Quy tắc miền lỗi (chỉ báo cáo): ${ok} trên ${total} stage có đường dự phòng ở miền lỗi khác.`,
+    staffMember: "một nhân viên",
+    domainOk: "Có dự phòng ở miền lỗi khác",
+    domainBreach: "Không có dự phòng ở miền lỗi khác",
+    domainOkWhy: (others: string) => `Nếu tuyến đầu bị chặn, stage vẫn chạy được trên: ${others}.`,
+    domainBreachOne: (domain: string) =>
+      `Mọi model dùng được trên tuyến này chạy trong một miền lỗi (${domain}): nếu nó bị chặn, stage dừng.`,
+    domainBreachNone: "Không có model nào trên tuyến này đang bật và có tiền để chạy lúc này.",
     availDegraded: "Bị giới hạn tốc độ",
     availBlocked: "Bị từ chối",
     availUnknown: "Chưa có lượt gọi gần đây",
@@ -274,6 +301,9 @@ export const MODELS = defineMessages(
     needsPriceTitle: "Model cần có giá đầu vào và đầu ra trước khi bật (giá đổi qua migration)",
     needsPrice: "cần có giá",
     colBlocked: "Bị chặn",
+    blockedBadge: "Bị chặn",
+    colVendorProvider: "Hãng / nhà cung cấp",
+    builtInPrices: "Bảng giá có sẵn",
     colUpdated: "Cập nhật",
     catalogIntro:
       "Các danh sách chọn của quản trị và mọi số liệu chi phí đều đọc các dòng này. Bật hoặc tắt một model ở đây; không thể bật một model khi chưa có cả giá đầu vào lẫn đầu ra.",

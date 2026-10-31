@@ -3,6 +3,10 @@
     "capability": "content.write",
     "module": "api.routers.admin_aa_content"
   },
+  "DELETE /admin/ai-gateway/tenant-budgets/{tenant_id}": {
+    "capability": "spend.write",
+    "module": "api.routers.admin_ai_gateway"
+  },
   "DELETE /admin/brands/{brand_name}": {
     "capability": "content.settings.write",
     "module": "api.routers.admin_pipeline"
@@ -71,7 +75,15 @@
     "capability": "spend.read",
     "module": "api.routers.admin_ai_gateway"
   },
+  "GET /admin/ai-gateway/experiments": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_ai_gateway"
+  },
   "GET /admin/ai-gateway/providers": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_ai_gateway"
+  },
+  "GET /admin/ai-gateway/tenant-budgets/{tenant_id}": {
     "capability": "spend.read",
     "module": "api.routers.admin_ai_gateway"
   },
@@ -1382,6 +1394,10 @@
   "PUT /admin/aa-content/{content_id}/draft": {
     "capability": "content.write",
     "module": "api.routers.admin_aa_content"
+  },
+  "PUT /admin/ai-gateway/tenant-budgets/{tenant_id}": {
+    "capability": "spend.write",
+    "module": "api.routers.admin_ai_gateway"
   },
   "PUT /admin/brands/{brand_name}": {
     "capability": "content.settings.write",

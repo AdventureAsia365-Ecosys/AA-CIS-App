@@ -250,7 +250,7 @@ export function JevCreditPanel() {
         <KpiTile label={t("totalToppedUp")} value={usd(view.total_topped_up_usd)}
           hint={view.first_topup_on ? t("since", view.first_topup_on) : undefined} />
         <KpiTile label={t("spentJev")} value={usd(view.spent_since_first_topup_usd)}
-          hint="shared.llm_call_log · provider typesafe" />
+          hint={t("spentJevHint")} />
         <KpiTile label={t("estimatedLeft")} value={usd(view.estimated_left_usd)} hint={t("estimate")}
           valueTone={view.below_low_threshold ? "danger" : undefined} />
       </div>

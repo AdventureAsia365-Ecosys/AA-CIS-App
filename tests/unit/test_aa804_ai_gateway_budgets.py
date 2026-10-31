@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import asyncpg
 import pytest
 
 from api.routers import admin_ai_gateway as router_mod
@@ -55,6 +56,8 @@ class FakeConn:
         self._check(sql)
         if "FROM shared.spend_budget" in sql:
             return [dict(r) for r in BUDGET_ROWS]
+        if "FROM shared.tenant_ai_budget" in sql:       # AA-1016 C4: before migration 321 the table is missing
+            raise asyncpg.exceptions.UndefinedTableError('relation "shared.tenant_ai_budget" does not exist')
         raise AssertionError(f"unexpected SQL: {sql[:80]}")
 
     async def fetchval(self, sql, *args):
@@ -236,7 +239,7 @@ def test_read_budgets_returns_every_tier(registry):
     assert [(r["provider"], r["scope"]) for r in tiers["provider"]] == [("bedrock", "global"), ("dfs", "global"),
                                                                         ("jev", "global")]
     assert sorted(r["scope"] for r in tiers["job"]) == ["job:place_extract", "job:segment_research"]
-    assert tiers["tenant"] == []
+    assert tiers["tenant"] == [] and out["tenant_ready"] is False
     jobs = {r["scope"]: r for r in tiers["job"]}
     # bedrock spent $9 today (90 % of the provider cap) but place_extract only its own $1 of $5
     assert jobs["job:place_extract"]["day_scope"] == "kind" and jobs["job:place_extract"]["spent_today_usd"] == 1.0

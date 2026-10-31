@@ -505,6 +505,61 @@ export function PageHeader({
 // Room the underline tablist keeps for the label focus ring (2px ring at a 2px offset).
 const TAB_RING_ROOM = 4;
 
+// S262 (AA-804 live finding F7) — a tab strip wider than its box scrolls sideways; on a phone nothing showed that, and
+// the active tab could sit out of view (Budgets, the fifth tab). The strip now fades the edge that has more tabs
+// behind it (a mask, so it works on any background) and scrolls the active tab into view when it changes. Pure DOM
+// reads, no layout change: the markup and the test ids are the same as before.
+const TAB_FADE_PX = 28;
+
+/** The mask of a strip with more tabs to the left and / or right ("none" when everything fits). */
+export function tabStripMask(left: boolean, right: boolean): string {
+  if (!left && !right) return "none";
+  const l = left ? `transparent 0, #000 ${TAB_FADE_PX}px` : "#000 0";
+  const r = right ? `#000 calc(100% - ${TAB_FADE_PX}px), transparent 100%` : "#000 100%";
+  return `linear-gradient(to right, ${l}, ${r})`;
+}
+
+/** The scrollLeft that brings [start, start + width) into a box of `clientWidth` scrolled to `scrollLeft` (with a
+ *  margin so the fade does not cover it), or null when it is already in view. Pure. */
+export function scrollToShow(scrollLeft: number, clientWidth: number, start: number, width: number,
+  margin = TAB_FADE_PX): number | null {
+  if (start - margin < scrollLeft) return Math.max(0, start - margin);
+  if (start + width + margin > scrollLeft + clientWidth) return start + width + margin - clientWidth;
+  return null;
+}
+
+function useTabStrip(activeKey: string) {
+  const [el, setEl] = useState<HTMLDivElement | null>(null);
+  const [edges, setEdges] = useState({ left: false, right: false });
+  useEffect(() => {
+    if (!el) return;
+    const measure = () => {
+      const left = el.scrollLeft > 1;
+      const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+      setEdges((e) => (e.left === left && e.right === right ? e : { left, right }));
+    };
+    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    ro?.observe(el);
+    el.addEventListener("scroll", measure, { passive: true });
+    const frame = typeof requestAnimationFrame === "undefined" ? null : requestAnimationFrame(measure);
+    return () => {
+      ro?.disconnect();
+      el.removeEventListener("scroll", measure);
+      if (frame !== null) cancelAnimationFrame(frame);
+    };
+  }, [el]);
+  useEffect(() => {
+    if (!el) return;
+    const btn = el.querySelector<HTMLElement>('[data-kit-tab-active="true"]');
+    if (!btn) return;
+    const next = scrollToShow(el.scrollLeft, el.clientWidth, btn.offsetLeft - el.offsetLeft, btn.offsetWidth);
+    if (next !== null) el.scrollTo({ left: next });
+  }, [el, activeKey]);
+  const mask = tabStripMask(edges.left, edges.right);
+  const fade: React.CSSProperties = mask === "none" ? {} : { maskImage: mask, WebkitMaskImage: mask };
+  return [setEl, fade] as const;
+}
+
 export type TabItem = {
   key: string;
   label: React.ReactNode;
@@ -543,6 +598,7 @@ export function Tabs({
   className?: string;
 }) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  const [attachStrip, stripFade] = useTabStrip(active);
   if (variant === "underline") {
     const current = tabs.findIndex((t) => t.key === active);
     const tabStop = current >= 0 && !tabs[current].disabled ? current : tabs.findIndex((t) => !t.disabled);
@@ -560,6 +616,7 @@ export function Tabs({
       <>
         <ButtonStyles />
         <div
+          ref={attachStrip}
           role="tablist"
           aria-label={ariaLabel}
           data-testid={testId}
@@ -580,6 +637,7 @@ export function Tabs({
             marginLeft: -TAB_RING_ROOM,
             marginRight: -TAB_RING_ROOM,
             fontFamily: sans,
+            ...stripFade,
             ...style,
           }}
         >
@@ -594,6 +652,7 @@ export function Tabs({
                 type="button"
                 role="tab"
                 aria-selected={on}
+                data-kit-tab-active={on ? "true" : undefined}
                 disabled={t.disabled}
                 title={t.title}
                 tabIndex={i === tabStop ? 0 : -1}
@@ -630,6 +689,7 @@ export function Tabs({
   }
   return (
     <div
+      ref={attachStrip}
       data-testid={testId}
       style={{
         display: "flex",
@@ -639,10 +699,11 @@ export function Tabs({
         borderRadius: RADIUS.md,
         width: "fit-content",
         // S252 — more tabs than fit on a phone scroll inside the bar (like adminUi.TabBar since S224); the page never
-        // scrolls sideways.
+        // scrolls sideways. S262: the edge with more tabs fades, and the active tab is scrolled into view.
         maxWidth: "100%",
         overflowX: "auto",
         fontFamily: sans,
+        ...stripFade,
       }}
     >
       {tabs.map((t) => {
@@ -650,6 +711,7 @@ export function Tabs({
         return (
           <button
             key={t.key}
+            data-kit-tab-active={on ? "true" : undefined}
             onClick={() => onChange(t.key)}
             style={{
               padding: "7px 16px",

@@ -7,12 +7,16 @@
 // (PATCH /admin/llm-catalog/{model_key} {enabled}); switching on a model with no price is disabled here and refused
 // by the API (422, shown in a toast).
 // AA-994: text in the UI language (models.messages.ts); catalog values stay as stored.
+// C4 live findings F3 / F4: vendor and provider share one column and the model name keeps a minimum width (it wrapped
+// over 3–4 lines); the blocked reason is a "Blocked" badge with a plain sentence under it (no session tag, no capitals)
+// and the price source leaves out code file and migration names (lib/aiGateway blockedReasonText / priceSourceText).
 
 import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Badge, DataTable, K, Switch, apiGet, apiSend, mono, useFormat, useT, useToast, type ColumnDef,
 } from "../../_kit";
+import { blockedReasonText, priceSourceText } from "@/lib/aiGateway";
 import { accountName } from "@/lib/awsAccounts";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import { type CatalogRow } from "./llmShared";
@@ -60,15 +64,20 @@ export function CatalogTable() {
       cell: (c) => {
         const r = c.row.original;
         return (
-          <div>
+          <div style={{ minWidth: 170 }}>
             <div style={{ fontWeight: 600, color: K.ink }}>{r.label}</div>
             <div style={{ fontFamily: mono, fontSize: 11.5, color: K.muted2 }}>{r.model_key}</div>
           </div>
         );
       },
     },
-    { accessorKey: "vendor", header: t("colVendor"), cell: (c) => <span style={{ color: K.body }}>{c.row.original.vendor}</span> },
-    { accessorKey: "provider", header: t("colProvider"), cell: (c) => <span style={{ color: K.body }}>{c.row.original.provider}</span> },
+    { id: "vendor", accessorFn: (r) => `${r.vendor} ${r.provider}`, header: t("colVendorProvider"),
+      cell: (c) => (
+        <div style={{ display: "grid", gap: 2 }}>
+          <span style={{ color: K.body }}>{c.row.original.vendor}</span>
+          <span style={{ fontSize: 12, color: K.muted }}>{c.row.original.provider}</span>
+        </div>
+      ) },
     {
       id: "accounts",
       header: t("colAccounts"),
@@ -97,7 +106,11 @@ export function CatalogTable() {
     {
       accessorKey: "price_source",
       header: t("colSource"),
-      cell: (c) => <span style={{ color: K.muted, fontSize: 12 }}>{c.row.original.price_source ?? "—"}</span>,
+      cell: (c) => (
+        <span style={{ color: K.muted, fontSize: 12, display: "block", minWidth: 160, maxWidth: 260 }}>
+          {priceSourceText(c.row.original.price_source, t("builtInPrices")) ?? "—"}
+        </span>
+      ),
     },
     {
       accessorKey: "enabled",
@@ -132,8 +145,14 @@ export function CatalogTable() {
       enableSorting: false,
       cell: (c) => {
         const r = c.row.original;
-        return r.blocked_reason
-          ? <Badge tone="warning" dot={false}>{r.blocked_reason}</Badge>
+        const why = blockedReasonText(r.blocked_reason);
+        return why
+          ? (
+            <div style={{ display: "grid", gap: 4, justifyItems: "start", minWidth: 150, maxWidth: 240 }}>
+              <Badge tone="warning" dot={false} style={{ whiteSpace: "nowrap" }}>{t("blockedBadge")}</Badge>
+              <span style={{ fontSize: 12, color: K.muted, lineHeight: 1.4 }}>{why}</span>
+            </div>
+          )
           : <span style={{ color: K.muted2 }}>—</span>;
       },
     },
@@ -163,7 +182,7 @@ export function CatalogTable() {
       csvFilename="llm-catalog"
       pageSize={25}
       pageSizeOptions={[25, 50, 100]}
-      tableMinWidth={1040}
+      tableMinWidth={1000}
       emptyTitle={t("noModels")}
     />
   );

@@ -7,9 +7,9 @@ import { defineMessages } from "../../_kit/core/i18n";
 /** State of a cap row (lib/aiGateway BudgetState / ConnectionBudgetState). */
 export const BUDGET_STATE = defineMessages(
   { ok: "OK", alert: "Near the cap", cap_reached: "Cap reached", stopped: "Stopped", no_daily_cap: "No daily cap",
-    no_budget: "No budget" },
+    no_budget: "No budget", unlimited: "No amount set", approval: "Needs approval", over: "Over the approval level" },
   { ok: "Ổn", alert: "Gần trần", cap_reached: "Chạm trần", stopped: "Đã dừng", no_daily_cap: "Chưa có trần ngày",
-    no_budget: "Chưa có ngân sách" },
+    no_budget: "Chưa có ngân sách", unlimited: "Chưa đặt số tiền", approval: "Cần duyệt", over: "Vượt mức duyệt" },
 );
 
 export const BUDGETS = defineMessages(
@@ -34,6 +34,18 @@ export const BUDGETS = defineMessages(
     tenantEmptyTitle: "No tenant AI budget yet",
     tenantEmptyBody: "Per-tenant budgets come with the tenant budget table. Until then a tenant's AI spend is capped "
       + "by the provider and job caps above.",
+    tenantNoneTitle: "No tenant has an AI budget",
+    tenantNoneBody: "Without a budget a tenant's AI spend is capped only by the provider and job caps above. Set one "
+      + "on the tenant: Tenants › the tenant › Cost.",
+    tenantStoredOnly: "A budget is stored and shown now; holding new jobs for approval comes with the gateway check.",
+    colTenant: "Tenant",
+    colLevels: "Alert / approval",
+    levels: (alert: number, approval: number) => `bell at ${alert} % · approval at ${approval} %`,
+    holdsJobs: "holds new jobs",
+    alertsOnly: "alerts only",
+    openTenant: "Open the tenant",
+    staffMember: "a staff member",
+    noCapSet: "no cap set",
     groupCoverage: "Does every paid source have a cap?",
     groupCoverageHelp: "One line per paid provider and per switched-on LLM connection.",
     colProvider: "Provider",
@@ -113,6 +125,18 @@ export const BUDGETS = defineMessages(
     tenantEmptyTitle: "Chưa có ngân sách AI theo đại lý",
     tenantEmptyBody: "Ngân sách theo đại lý đến cùng bảng ngân sách đại lý. Tới lúc đó chi tiêu AI của đại lý được giới "
       + "hạn bởi các trần nhà cung cấp và trần job ở trên.",
+    tenantNoneTitle: "Chưa đại lý nào có ngân sách AI",
+    tenantNoneBody: "Không có ngân sách, chi tiêu AI của đại lý chỉ bị giới hạn bởi trần nhà cung cấp và trần job ở "
+      + "trên. Đặt ngân sách tại đại lý: Đại lý › đại lý đó › Chi phí.",
+    tenantStoredOnly: "Ngân sách được lưu và hiển thị từ bây giờ; việc giữ job mới chờ duyệt sẽ có khi cổng AI bắt đầu kiểm ngân sách.",
+    colTenant: "Đại lý",
+    colLevels: "Cảnh báo / duyệt",
+    levels: (alert: number, approval: number) => `chuông ở ${alert} % · duyệt ở ${approval} %`,
+    holdsJobs: "giữ job mới",
+    alertsOnly: "chỉ cảnh báo",
+    openTenant: "Mở đại lý",
+    staffMember: "một nhân viên",
+    noCapSet: "chưa đặt trần",
     groupCoverage: "Mọi nguồn trả phí đã có trần chưa?",
     groupCoverageHelp: "Mỗi nhà cung cấp trả phí và mỗi kết nối LLM đang bật một dòng.",
     colProvider: "Nhà cung cấp",
