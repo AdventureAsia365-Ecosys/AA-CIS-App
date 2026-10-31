@@ -1442,6 +1442,22 @@ _JEV_402_SWEEP_SQL = """
 _last_canary_ok_at: Optional[datetime] = None
 
 
+JEV_CANARY_STAGE = "adhoc_jev_canary"
+
+
+async def _log_jev_canary_call(pool, data: dict) -> None:
+    """AA-642 (S0): the canary is a billed TypeSafe call, so it writes its llm_call_log row like decide() does
+    (provider typesafe, role validate, input tokens only) — before, it was spend no ledger or Jev cap saw.
+    record_call_with_pool never raises (a failed write is a warning)."""
+    from shared.llm_client import decide as decide_mod
+    from shared.llm_client.call_log import record_call_with_pool
+
+    model, tokens, cost = decide_mod.jev_usage(data)
+    await record_call_with_pool(pool, stage=JEV_CANARY_STAGE, role="validate", model=model, tokens_in=tokens,
+                                tokens_out=0, cost_usd=cost, provider="typesafe",
+                                quality_signal={"source": "jev_canary"})
+
+
 @router.post("/jev-canary/check", summary="Daily Jev canary: one real decide-endpoint probe")
 async def check_jev_canary(request: Request, x_admin_secret: str = Header(None)):
     global _last_canary_ok_at
@@ -1456,8 +1472,9 @@ async def check_jev_canary(request: Request, x_admin_secret: str = Header(None))
     ok, billing_error, detail = True, False, None
     started = datetime.now(timezone.utc)
     try:
-        await decide_mod._call_jev("Jev credit canary probe.", probe_questions)
+        data = await decide_mod._call_jev("Jev credit canary probe.", probe_questions)
         decide_mod.reset_jev_breaker()        # a billable call proves credit is back
+        await _log_jev_canary_call(pool, data)
     except decide_mod.JevBillingError:
         ok, billing_error = False, True
         decide_mod._trip_jev_breaker()

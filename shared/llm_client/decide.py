@@ -274,6 +274,14 @@ def _price_in_per_mtok() -> float:
         else _FALLBACK_PRICE_IN_PER_MTOK
 
 
+def jev_usage(data: dict) -> tuple[str, int, float]:
+    """(model, input tokens, cost USD) of one TypeSafe reply: Jev bills input tokens only, at the catalog price."""
+    model = data.get("model", JEV_MODEL) if isinstance(data, dict) else JEV_MODEL
+    usage = (data.get("usage") if isinstance(data, dict) else None) or {}
+    tokens = int(usage.get("input_tokens") or 0)
+    return model, tokens, tokens * _price_in_per_mtok() / 1_000_000
+
+
 # A Verdict is a fact about (wording, subject): reuse it instead of asking Jev again (Ms. Thư's
 # "judge once, store beside the subject"). The Zone is recomputed with today's Floors, so moving a
 # Floor never needs a new call. Errors and skips are never reused.
@@ -366,6 +374,7 @@ def reset_decision_memo() -> None:
         _memo.clear()
         _hits.clear()
         _hits_flushed_at = time.monotonic()
+    reset_jev_budget()
 
 
 def cached_answer(q: Question, row: dict) -> Optional[dict]:
@@ -579,6 +588,83 @@ async def clear_outcome(conn_or_pool, question_key: str, subject_key: str, sourc
         return 0
 
 
+# ── AA-642 (S0): the Jev daily cap, checked before every ask ────────────────────────────────────
+#
+# shared.spend_budget row (jev, global) per_day_usd (migration 318) against today's (UTC) Jev spend
+# (cost_guard.day_spend 'jev' = llm_call_log provider 'typesafe', the figure the admin Overview shows). decide() is not
+# run-scoped, so the cap is per day across every caller. The row and the spend are read at most once per
+# _JEV_BUDGET_TTL_S per process; between reads this process adds what its own asks cost, so several processes can
+# overshoot by at most one TTL of their traffic. Over a hard cap the questions get zone 'error' (error
+# 'budget_exceeded'), no TypeSafe call is made, the decision_log rows are still written and the stage keeps its own
+# rule (fail-open, like the credit breaker). An unreadable budget keeps the last value read, and before the first
+# good read fails open (logged), like connection_budget.
+# hard_stop false = alert only. Alerts: cost_guard.maybe_alert (one bell + e-mail per provider per 24 h) on refresh.
+JEV_BUDGET_EXCEEDED = "budget_exceeded"
+_JEV_BUDGET_TTL_S = 60.0
+_JEV_BUDGET_KIND = "decide"          # load_run_budget label: reads jev/global (and jev/job:decide if ever seeded)
+_jev_budget = None                   # cost_guard.RunBudget of the last refresh (None = never read / unreadable)
+_jev_budget_read_at = float("-inf")  # time.monotonic() of the last refresh attempt
+_jev_budget_lock = threading.Lock()  # one refresh at a time; others use the last value (never wait)
+
+
+def reset_jev_budget() -> None:
+    """Tests: forget the cached Jev budget so the next decide() reads it again."""
+    global _jev_budget, _jev_budget_read_at
+    _jev_budget = None
+    _jev_budget_read_at = float("-inf")
+
+
+def _jev_budget_over(budget) -> bool:
+    return (budget is not None and budget.per_day_usd is not None and budget.day_is_hard
+            and budget.day_spent >= budget.per_day_usd)
+
+
+async def _refresh_jev_budget(db) -> None:
+    """Re-read the Jev budget when the cached one is older than the TTL. Never raises."""
+    global _jev_budget, _jev_budget_read_at
+    if time.monotonic() - _jev_budget_read_at < _JEV_BUDGET_TTL_S:
+        return
+    if not _jev_budget_lock.acquire(blocking=False):
+        return                        # another ask is refreshing: use the last value
+    try:
+        from shared import cost_guard   # lazy, like the alert paths: keeps decide's import graph small
+
+        _jev_budget_read_at = time.monotonic()
+        try:
+            budget = await cost_guard.load_run_budget(db, "jev", _JEV_BUDGET_KIND)
+        except Exception as exc:
+            # Keep the last value read (None before the first good read = no cap known: fail open).
+            logger.warning("jev_budget_unreadable", error=f"{type(exc).__name__}: {exc}"[:200])
+            return
+        _jev_budget = budget
+        if budget.per_day_usd is None:
+            return
+        reason = None
+        if _jev_budget_over(budget):
+            reason = (f"Jev daily budget ${budget.per_day_usd:.2f} reached (spent today ${budget.day_spent:.2f}). "
+                      "Jev questions are skipped until the UTC day ends; stages keep their own rule.")
+            logger.warning("jev_budget_exceeded", per_day_usd=budget.per_day_usd, day_spent=budget.day_spent)
+        await cost_guard.maybe_alert(db, budget, reason=reason)
+    finally:
+        _jev_budget_lock.release()
+
+
+def _charge_jev_budget(cost_usd: float) -> None:
+    """Add what this process just spent on Jev to the cached day spend (until the next refresh)."""
+    if _jev_budget is not None and cost_usd:
+        _jev_budget.charge(cost_usd)
+
+
+async def jev_budget_blocks(db) -> bool:
+    """True when the Jev daily budget is a hard cap and today's spend reached it. Never raises."""
+    try:
+        await _refresh_jev_budget(db)
+    except Exception as exc:  # noqa: BLE001 — the cap must never break a decision
+        logger.warning("jev_budget_check_failed", error=str(exc)[:200])
+        return False
+    return _jev_budget_over(_jev_budget)
+
+
 async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: list[str],
                   tenant_id: Optional[str], use_cache: bool = True) -> Decision:
     """`db` is a pool (or `_SingleConn`). A connection is held only while reading config and while
@@ -651,14 +737,19 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
             decision.verdicts[key] = Verdict(key, q.mode, "error", error="credit_exhausted (breaker open)")
         to_ask = {}
 
+    if to_ask and await jev_budget_blocks(db):
+        # AA-642 (S0): over the Jev daily cap — no TypeSafe call; the verdicts are errors (fail-open) and are logged.
+        for key, q in to_ask.items():
+            decision.verdicts[key] = Verdict(key, q.mode, "error", error=JEV_BUDGET_EXCEEDED)
+        to_ask = {}
+
     if to_ask:
         started = time.perf_counter()
         try:
             data = await _call_jev(state, {k: wire_question(q) for k, q in to_ask.items()})
             decision.latency_ms = int((time.perf_counter() - started) * 1000)
-            decision.model = data.get("model", JEV_MODEL)
-            decision.input_tokens = int((data.get("usage") or {}).get("input_tokens") or 0)
-            decision.cost_usd = decision.input_tokens * _price_in_per_mtok() / 1_000_000
+            decision.model, decision.input_tokens, decision.cost_usd = jev_usage(data)
+            _charge_jev_budget(decision.cost_usd)
             answers = data.get("answers") or {}
             for key, q in to_ask.items():
                 answer = answers.get(key)

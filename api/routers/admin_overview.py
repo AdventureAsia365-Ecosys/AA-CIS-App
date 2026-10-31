@@ -164,9 +164,9 @@ LIMIT 10
 """
 
 # ── Section 5: month-to-date DataForSEO (AI per provider comes from api.services.platform_cost) ─────────
-# Today's Jev spend for the provider table only. Jev decisions are logged as provider "typesafe"
-# (shared/llm_client/decide.py) and shared.cost_guard has no Jev day-spend query (AA-660: it reports 0 and does not
-# enforce a Jev daily cap). Display only: the budget enforcement in cost_guard is unchanged.
+# Today's Jev spend for the provider table. Jev decisions are logged as provider "typesafe"
+# (shared/llm_client/decide.py). AA-642 (S0): shared.cost_guard's "jev" day spend uses the same filter, and decide.py
+# checks it against the jev/global daily cap before each ask.
 _JEV_DAY_SPEND_SQL = """
 SELECT coalesce(sum(cost_usd), 0)::float AS cost_usd
 FROM shared.llm_call_log

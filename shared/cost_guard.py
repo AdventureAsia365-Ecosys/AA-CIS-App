@@ -68,6 +68,10 @@ _DAY_SPEND_SQL = {
                     "AND created_at >= date_trunc('day', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc'",
     "geocoder": "SELECT coalesce(sum(cost_usd), 0) FROM geo.geocode_call "
                 "WHERE called_at >= date_trunc('day', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc'",
+    # AA-642 (S0): Jev (TypeSafe) asks are logged in llm_call_log as provider 'typesafe' (decide.py). Same filter
+    # as the admin Overview's Jev figure (api/routers/admin_overview.py _JEV_DAY_SPEND_SQL), so the two agree.
+    "jev": "SELECT coalesce(sum(cost_usd), 0) FROM shared.llm_call_log WHERE lower(provider) IN ('typesafe', 'jev') "
+           "AND created_at >= date_trunc('day', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc'",
 }
 
 # AA-712: today's LLM spend of ONE job kind (its jobs' llm_call_log rows), for a kind whose daily
@@ -217,7 +221,7 @@ async def _read_rows(conn, provider: str, job_scope: str) -> dict[str, dict]:
 
 async def day_spend(conn, provider: str) -> float:
     sql = _DAY_SPEND_SQL.get(provider)
-    if sql is None:  # jev has no call log yet (AA-660)
+    if sql is None:  # a provider with no ledger query
         return 0.0
     if provider == "geocoder":  # geo.geocode_call exists only once migration 226 is applied
         try:
