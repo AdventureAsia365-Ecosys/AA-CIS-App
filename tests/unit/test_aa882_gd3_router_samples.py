@@ -44,6 +44,8 @@ SAMPLES = [
     ("admin_overview", "GET", "/admin/overview", None),
     ("admin_budgets", "GET", "/admin/budgets", None),
     ("admin_llm_ops", "GET", "/admin/spend/daily", None),
+    ("admin_ai_gateway", "GET", "/admin/ai-gateway/providers", None),
+    ("admin_ai_gateway", "GET", "/admin/ai-gateway/trace", None),
     ("admin_dashboard", "GET", "/admin/dashboard/summary", None),
     ("admin_search", "GET", "/admin/search", None),
     ("admin_seo", "GET", "/admin/seo-intelligence", None),

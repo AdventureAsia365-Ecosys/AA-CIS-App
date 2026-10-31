@@ -14,7 +14,7 @@
 // other apps (Booking admin, TripPlanner, tenant portal) are links from lib/apps.ts, not nav entries.
 
 import {
-  Gauge, Users, Upload, Wand2, ClipboardList, Library, Settings, Wallet, UserCog, Radio,
+  Cpu, Gauge, Users, Upload, Wand2, ClipboardList, Library, Settings, Wallet, UserCog, Radio,
   Puzzle, ListChecks, Scale, Search, Image as ImageIcon, BookOpen, BarChart3, ShieldCheck,
   Boxes, ScrollText, ChartPie, BellRing, MapPin, Network, Eraser, Building2, FileText, Hotel, Table2, BookMarked, Quote, Newspaper,
 } from "lucide-react";
@@ -74,6 +74,8 @@ export const NAV_GROUPS: NavGroup[] = [
     { href: "/admin/data-erasure", icon: <Eraser size={16} />, label: "Data erasure" },  // AA-839
   ] },
   { label: "AI & spend", section: "platform", items: [
+    // AA-804 — every paid AI and data provider (health, spend, budget, balance) and the job trace (root ADR 0009)
+    { href: "/admin/ai-gateway", icon: <Cpu size={16} />, label: "AI providers" },
     { href: "/admin/cost-ops", icon: <Wallet size={16} />, label: "Cost Operations" },
     { href: "/admin/platform/cost", icon: <ChartPie size={16} />, label: "Cost per app" },  // AA-884
     { href: "/admin/decisions", icon: <Scale size={16} />,  label: "Jev Decisions" },

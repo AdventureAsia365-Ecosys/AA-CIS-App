@@ -502,8 +502,14 @@ function TripPlannerBody({ card }: { card: TripPlannerCard }) {
     <>
       {card.note && <div style={noteStyle}>{card.note}</div>}
       {!s ? (
-        <div style={{ ...noteStyle, color: K.danger }}>
-          {t("spendUnreadable", card.error ?? "")}
+        <div data-testid="platform-tp-ai-paused" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {/* AA-804: TripPlanner fails closed when its spend is unreadable (root ADR 0009), so AI is paused. */}
+          {card.ai?.paused !== false && (
+            <span><Badge tone="danger" dot={false}>{t("aiPaused")}</Badge></span>
+          )}
+          <div style={{ ...noteStyle, color: K.danger }}>
+            {t("spendUnreadable", card.error ?? "")} {card.ai?.paused !== false ? t("aiPausedNote") : ""}
+          </div>
         </div>
       ) : (
         <div data-testid="platform-tp-spend" style={{ display: "flex", flexDirection: "column", gap: 8 }}>

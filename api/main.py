@@ -58,6 +58,7 @@ from api.routers.admin_llm_ops import router as admin_llm_ops_router  # AA-518/A
 from api.routers.admin_segment_research import router as admin_segment_research_router  # AA-646
 from api.routers.admin_job_runner import router as admin_job_runner_router  # AA-650
 from api.routers.admin_budgets import router as admin_budgets_router  # AA-649
+from api.routers.admin_ai_gateway import router as admin_ai_gateway_router  # AA-804
 from api.routers.admin_decisions import router as admin_decisions_router  # AA-660
 from api.routers.admin_platform import router as admin_platform_router  # AA-883
 from api.routers.admin_photos import router as admin_photos_router, public_router as photos_public_router  # AA-708
@@ -322,6 +323,7 @@ app.include_router(admin_llm_ops_router)  # AA-518/AA-505 — /admin/llm-config,
 app.include_router(admin_segment_research_router)  # AA-646 — /admin/segment-research/{preview,run,status}
 app.include_router(admin_job_runner_router)  # AA-650 — /admin/job-runner/*
 app.include_router(admin_budgets_router)  # AA-649 — /admin/budgets (cost guard limits)
+app.include_router(admin_ai_gateway_router)  # AA-804 — /admin/ai-gateway/{providers,trace} (AI providers page)
 app.include_router(admin_decisions_router)  # AA-660 — /admin/decisions (Jev per stage, cost)
 app.include_router(admin_platform_router)  # AA-883 — /admin/platform/staff (read-only staff directory)
 app.include_router(admin_platform_ops_router)  # AA-884 — /admin/platform/{apps,audit,cost}

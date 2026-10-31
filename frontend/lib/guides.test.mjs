@@ -31,6 +31,13 @@ const GUIDES = [
     sources: ["lib/writingMemory.ts", "app/admin/writing-memory/ReleasesTab.tsx",
       "app/admin/writing-memory/ExemplarsTab.tsx", "app/admin/writing-memory/MetricsTab.tsx"],
     vi: { module: "app/admin/writing-memory/guide.vi.ts", exportName: "WRITING_MEMORY_GUIDE_VI" } },
+  // AA-804 — Platform › AI & spend › AI providers (the "Open trace" control lives in the Jobs drawer)
+  { name: "AI providers", module: "app/admin/ai-gateway/guide.ts", exportName: "AI_GATEWAY_GUIDE",
+    page: "app/admin/ai-gateway/AiGateway.tsx",
+    messages: ["app/admin/ai-gateway/messages.ts", "app/admin/jobs/messages.ts"],
+    sources: ["app/admin/ai-gateway/ProvidersTab.tsx", "app/admin/ai-gateway/TraceDrawer.tsx",
+      "app/admin/jobs/JobDrawer.tsx"],
+    vi: { module: "app/admin/ai-gateway/guide.vi.ts", exportName: "AI_GATEWAY_GUIDE_VI" } },
 ];
 
 // ── the shape check itself ──────────────────────────────────────────────────────────────────────────────────────

@@ -120,6 +120,7 @@ async def test_tripplanner_spend_params_and_levels():
     assert spend["cost_usd"] == 4.1 and spend["calls"] == 110 and spend["pct_of_cap"] == 82.0
     assert spend["level"] == "warn" and "default cap 5 USD" in spend["cap_label"]
     assert card["status"] == "unknown"
+    assert card["ai"] == {"paused": False, "reason": None}   # AA-804: the spend was readable
 
 
 @pytest.mark.asyncio
@@ -128,6 +129,8 @@ async def test_tripplanner_query_failure_is_contained():
     pool.fetch = AsyncMock(side_effect=OSError("db"))
     card = await pa._tripplanner_card(pool)
     assert card["spend_today"] is None and card["error"] == "OSError"
+    # AA-804 / ADR 0009 d5: TripPlanner fails closed when spend is unreadable, so the card says AI is paused
+    assert card["ai"] == {"paused": True, "reason": "spend_unreadable"}
 
 
 @pytest.mark.asyncio

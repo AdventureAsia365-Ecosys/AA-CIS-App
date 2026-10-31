@@ -64,6 +64,9 @@ const ADMIN_PAGES: PageSpec[] = [
   // AA-839 — Jobs › Data erasure (admin only; DRY RUN by default, apply needs the env flag + a Cognito sign-in).
   { id: 'data-erasure', label: 'Data erasure', path: '/admin/data-erasure', readySelector: '[data-testid="data-erasure-ready"]', viewerRefused: true },
   { id: 'cost-ops', label: 'Cost Operations', path: '/admin/cost-ops', viewerRefused: true },
+  // AA-804 — Platform › AI & spend › AI providers (admin only; backend spend.read). The tiles and three provider tables
+  // render once the providers answer; `ai-gateway-ready` marks that.
+  { id: 'ai-gateway', label: 'AI providers', path: '/admin/ai-gateway', readySelector: '[data-testid="ai-gateway-ready"]', viewerRefused: true },
   { id: 'master-content', label: 'Master Content', path: '/admin/master-content' },
   { id: 'overview', label: 'Overview', path: '/admin/overview', viewerRefused: true },
   // AA-883 — Platform › People & access › Staff (backend live on Dev since CIS main c2f9e919).

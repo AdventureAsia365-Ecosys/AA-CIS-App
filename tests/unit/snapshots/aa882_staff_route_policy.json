@@ -63,6 +63,14 @@
     "capability": null,
     "module": "api.routers.admin_aa_content"
   },
+  "GET /admin/ai-gateway/providers": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_ai_gateway"
+  },
+  "GET /admin/ai-gateway/trace": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_ai_gateway"
+  },
   "GET /admin/atoms": {
     "capability": "tenant.read",
     "module": "api.routers.admin_atoms"

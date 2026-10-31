@@ -165,6 +165,9 @@ POLICY: dict[tuple[str, str], str] = {
     # ── admin_budgets
     ("GET", "/admin/budgets"): SPEND_READ,
     ("PUT", "/admin/budgets/{provider}/{scope}"): SPEND_WRITE,
+    # ── admin_ai_gateway (AA-804) — AI providers page: every paid source's health / spend / balance and the job trace
+    ("GET", "/admin/ai-gateway/providers"): SPEND_READ,
+    ("GET", "/admin/ai-gateway/trace"): SPEND_READ,
     # ── admin_job_runner — job control + retention
     ("POST", "/admin/job-runner/jobs/{job_id}/cancel"): OPS_WRITE,
     ("POST", "/admin/job-runner/jobs/{job_id}/retry"): OPS_WRITE,
