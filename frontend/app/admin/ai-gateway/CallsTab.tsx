@@ -134,7 +134,8 @@ export default function CallsTab({ onTrace }: { onTrace: (t: TraceTarget) => voi
   const crm = first?.crm;
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 14 }} data-testid="ai-gateway-calls">
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 14 }}
+      data-testid={list.data || list.isError ? "ai-gateway-calls-ready" : "ai-gateway-calls"}>
       <div style={small}>{t("intro")}</div>
       <FilterBar search={{ key: CALL_PARAM.stage, placeholder: t("stageSearch") }} selects={selects}
         extraKeys={[CALL_PARAM.job_id, CALL_PARAM.tour_id]} testId="ai-gateway-calls-filters" />

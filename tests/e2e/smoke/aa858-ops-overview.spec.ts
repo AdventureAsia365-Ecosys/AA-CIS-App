@@ -181,7 +181,8 @@ test.describe('AA-858 — ops overview', { tag: '@staff' }, () => {
         return { numbered: numbered.length, missing, perCard, texts };
       });
       expect(m.missing, `numbers without a source: ${m.missing.join(' | ')}`).toEqual([]);
-      // CIS sections alone: 6 intelligence + 4 tenant tiles, 3 job numbers, 5 pipeline + 3 provider-cost columns.
+      // CIS sections alone: 6 intelligence + 4 tenant tiles, 3 job numbers, 5 pipeline columns + 3 paid-source tiles
+      // (AA-804 UI part 3: the provider-cost table became the Paid sources tile, still three numbers with a source).
       expect(m.numbered).toBeGreaterThanOrEqual(21);
       for (const [id, n] of Object.entries(m.perCard)) expect(n, `${id} has no source hint`).toBeGreaterThanOrEqual(1);
       for (const t of m.texts) {
@@ -202,7 +203,10 @@ test.describe('AA-858 — ops overview', { tag: '@staff' }, () => {
       await page.keyboard.press('Escape');
       await expect(tip).toBeHidden();
 
-      // The AI note under the cost table (a number in a sentence) names its source too.
+      // The AI note under the paid-sources tile (a number in a sentence) names its source too; the tile links to
+      // AI providers.
+      await expect(page.getByTestId('overview-paid-sources').locator('[data-kpi]')).toHaveCount(3);
+      await expect(page.getByTestId('overview-paid-sources-link')).toHaveAttribute('href', '/admin/ai-gateway');
       const aiNote = page.getByTestId('ops-cost-ai-note');
       if (await aiNote.count()) await expect(aiNote.getByTestId('source-hint')).toHaveCount(1);
 
