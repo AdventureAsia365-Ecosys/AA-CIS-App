@@ -17360,7 +17360,7 @@
             }
           },
           {
-            "description": "AA-1018: the error starts with this text, e.g. llm_access_denied",
+            "description": "the error starts with this text, e.g. llm_access_denied",
             "in": "query",
             "name": "reason",
             "required": false,
@@ -17374,7 +17374,7 @@
                   "type": "null"
                 }
               ],
-              "description": "AA-1018: the error starts with this text, e.g. llm_access_denied",
+              "description": "the error starts with this text, e.g. llm_access_denied",
               "title": "Reason"
             }
           },

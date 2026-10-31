@@ -118,8 +118,9 @@ async def list_jobs(request: Request, kind: Optional[str] = None,
                     until: Optional[str] = Query(None, description="created_at < this ISO datetime"),
                     created_by: Optional[str] = Query(None, description="exact created_by match"),
                     q: Optional[str] = Query(None, description="id prefix / kind / created_by search"),
+                    # AA-1018: error prefix filter
                     reason: Optional[str] = Query(None, max_length=64,
-                                                  description="AA-1018: the error starts with this text, e.g. "
+                                                  description="the error starts with this text, e.g. "
                                                               "llm_access_denied"),
                     fields: Optional[str] = Query(None, description="S241: full (default) | summary — summary "
                                                   "returns payload/result as null (read them from /jobs/{id})")):
