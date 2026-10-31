@@ -251,7 +251,7 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
             checked={shadowOn}
             onChange={toggleShadow}
             label={t("shadowFor", row.stage)}
-            data-testid={`llm-shadow-switch-${row.stage}`}
+            testId={`llm-shadow-switch-${row.stage}`}
             disabled={mut.isPending || shadowOpts.length === 0}
           />
           <span style={{ fontSize: 11.5, fontWeight: 600, color: shadowOn ? K.accentDeep : K.muted }}>

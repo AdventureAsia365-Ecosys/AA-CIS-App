@@ -112,7 +112,7 @@ export function CatalogTable() {
             <Switch
               checked={r.enabled}
               label={t("toggle", r.model_key)}
-              data-testid={`catalog-enabled-${r.model_key}`}
+              testId={`catalog-enabled-${r.model_key}`}
               disabled={!canToggle || toggleMut.isPending}
               onChange={(next) => toggleMut.mutate({ model_key: r.model_key, enabled: next })}
             />
