@@ -650,11 +650,13 @@ def _provider_of(conn: Optional[connections.ProviderConnection]) -> Optional[str
 def log_gateway_failed_attempt(request: LLMRequest, exc: BaseException, *, model: str,
                                connection_key: Optional[str] = None, wire_id: Optional[str] = None,
                                provider: Optional[str] = None, latency_ms: Optional[int] = None,
-                               attempt_no: Optional[int] = None) -> None:
+                               attempt_no: Optional[int] = None, attempt: bool = False) -> None:
     """AA-804: the gateway's llm_call_log row for one attempt that was refused or failed with nothing billed (see the
     block comment above). A billed attempt (BilledUnusableReply anywhere in the chain) is not logged here: its
-    billed_unusable row is written by `_call_key_logged` / `probe`. Marks `exc`. Never raises."""
-    if _ledgered(exc) or _billed_usage_of(exc):
+    billed_unusable row is written by `_call_key_logged` / `probe`. ``attempt`` = a real provider attempt
+    (`LLMClient._attempt`): always logged, even when the provider raised the same exception object before; otherwise
+    (the net) nothing is written when the failure is already covered. Marks `exc`. Never raises."""
+    if _billed_usage_of(exc) or (not attempt and _ledgered(exc)):
         return
     _mark_ledgered(exc)
     from .call_log import _in_background, gateway_failure_row, record_calls
@@ -741,7 +743,8 @@ class LLMClient:
                                    "prompt_hash": scope.prompt_hash if scope is not None else None})
             else:
                 log_gateway_failed_attempt(request, e, model=model, connection_key=connection_key, wire_id=wire_id,
-                                           provider=provider, latency_ms=latency, attempt_no=attempt_no)
+                                           provider=provider, latency_ms=latency, attempt_no=attempt_no,
+                                           attempt=True)
             raise
         try:
             resp.latency_ms = int((time.monotonic() - started) * 1000)
