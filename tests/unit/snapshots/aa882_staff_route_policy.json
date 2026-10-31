@@ -67,6 +67,10 @@
     "capability": "spend.read",
     "module": "api.routers.admin_ai_gateway"
   },
+  "GET /admin/ai-gateway/calls": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_ai_gateway"
+  },
   "GET /admin/ai-gateway/providers": {
     "capability": "spend.read",
     "module": "api.routers.admin_ai_gateway"

@@ -1,6 +1,6 @@
 """AA-804 (UI parts 1 and 2, root ADR 0009) — the read side of the admin "AI providers" page (/admin/ai-gateway).
 
-Three reads, all $0 (database only; no provider is called):
+The reads, all $0 (database only; no provider is called):
 
 - ``read_providers(pool)`` — ``GET /admin/ai-gateway/providers``: one row per paid source.
     * every LLM connection (``shared.llm_provider_connection``): its circuit health (``shared.llm_provider_health``
@@ -19,17 +19,20 @@ Three reads, all $0 (database only; no provider is called):
   ``error`` text, the other rows still show.
 - ``trace_job(pool, job_id)`` — ``GET /admin/ai-gateway/trace?job_id=``: every logged paid call of one job, in time
   order, from the four ledgers that carry a job id: ``shared.llm_call_log`` (index ``llm_call_log_job_idx``),
-  ``shared.dfs_call_log`` (``idx_dfs_call_log_job``), ``geo.geocode_call`` and ``shared.decision_log``. The last two
-  have no job index, so their reads are bounded by the job's run window (``started_at`` .. ``finished_at`` or now; the
-  ``created_at`` / ``called_at`` indexes serve the range). ``started_at`` keeps the first attempt's start
-  (shared/jobs/queue.py), so the window covers every attempt. Jev comes only from ``decision_log``: its
-  ``typesafe`` rows in ``llm_call_log`` repeat the same calls and cost and are left out of the LLM source.
+  ``shared.dfs_call_log`` (``idx_dfs_call_log_job``), ``shared.decision_log`` (``decision_log_job_idx``, migration
+  319) and ``geo.geocode_call`` (no job index: its read is bounded by the job's run window, ``started_at`` ..
+  ``finished_at`` or now; ``started_at`` keeps the first attempt's start, shared/jobs/queue.py). Jev comes only from
+  ``decision_log``: its ``typesafe`` rows in ``llm_call_log`` repeat the same calls and cost and are left out.
+- ``trace_tour(pool, tour_id)`` — ``GET /admin/ai-gateway/trace?tour_id=`` (AA-804 UI part 3): the same, for every
+  job whose payload names the tour (``shared.job.payload ->> 'tour_id'``), the content pieces those jobs wrote
+  (``llm_call_log.content_piece_id``) and the ``tour_id`` columns of ``llm_call_log`` and ``dfs_call_log``.
 - ``read_budgets(pool)`` — ``GET /admin/ai-gateway/budgets``: every spending cap by tier (provider daily caps and
   job caps from ``shared.spend_budget``, the monthly budget of each LLM connection, the tenant tier still empty),
   today's spend per provider, and a coverage checklist (does every paid source have a cap).
 
-Limits of today's ledgers (ledger v2 lifts them): a call the provider refused writes no row (only billed calls are
-logged), ``llm_call_log`` has no latency or outcome column, and nothing links a Jev verdict to its cost row.
+Since ledger v2 (migration 319, CIS #1201) every attempt has a row with its ``status`` (ok, refused, error,
+billed_unusable, truncated), ``error_class`` and ``latency_ms``; older rows have none of them (the trace says so with
+the ``rows_before_ledger_v2`` note). The call list of the Calls tab is ``api/services/ai_gateway_calls.py``.
 """
 from __future__ import annotations
 
@@ -481,6 +484,8 @@ TRACE_LIMIT = 500
 TRACE_WINDOW_SLACK = timedelta(minutes=1)
 ERROR_CHARS = 300
 SOURCES = ("llm", "jev", "dfs", "geocoder")
+# A tour trace reads the jobs whose payload names the tour, newest first, at most this many.
+TOUR_JOBS_LIMIT = 200
 
 TRACE_JOB_SQL = """
     SELECT id::text AS id, kind, status, created_at, started_at, finished_at, cost_usd::float AS cost_usd,
@@ -489,50 +494,107 @@ TRACE_JOB_SQL = """
      WHERE id = $1::uuid
 """
 
-# count(*) / sum() OVER () are taken before LIMIT, so the totals cover every row of the job.
-# A Jev call writes both a ``typesafe`` llm_call_log row (the whole call's cost) and one decision_log row per
-# question (its share of that cost), under the same job (shared/llm_client/decide.py). The trace shows Jev only from
-# decision_log, so the call is listed once and counted once.
-TRACE_LLM_SQL = """
-    SELECT created_at AS at, stage, role, model, provider, account, tokens_in, tokens_out, cache_read_tokens,
-           cache_write_tokens, cost_usd::float AS cost_usd, stop_reason, fallback_used, pricing_mode,
-           coalesce(quality_signal ->> 'shadow', '') = 'true' AS shadow,
-           count(*) OVER () AS total_n, coalesce(sum(cost_usd) OVER (), 0)::float AS total_cost
+# AA-804 UI part 3: the jobs of one tour (shared.job.payload ->> 'tour_id'). No index on the payload key; the table
+# is small (a few thousand rows) and the read is one sequential scan.
+TOUR_JOBS_SQL = """
+    SELECT id::text AS id, kind, status, created_at, started_at, finished_at, cost_usd::float AS cost_usd,
+           count(*) OVER () AS total_n
+      FROM shared.job
+     WHERE payload ->> 'tour_id' = $1
+     ORDER BY created_at DESC, id DESC
+     LIMIT $2
+"""
+
+# The columns of one event per ledger (ledger v2 columns from migration 319). count(*) / sum() OVER () are taken
+# before LIMIT, so the totals cover every matching row. A Jev call writes both a ``typesafe`` llm_call_log row and one
+# decision_log row per question (its share of the cost) under the same job (shared/llm_client/decide.py): the trace
+# shows Jev only from decision_log, so the call is listed once and counted once.
+_LLM_COLS = """created_at AS at, stage, role, model, provider, account, connection_key, job_id::text AS job_id,
+           tour_id::text AS tour_id, tokens_in, tokens_out, cache_read_tokens, cache_write_tokens,
+           cost_usd::float AS cost_usd, stop_reason, fallback_used, pricing_mode, status, error_class, latency_ms,
+           attempt_no, coalesce(app, quality_signal ->> 'app', 'cis') AS app,
+           coalesce(is_shadow, coalesce(quality_signal ->> 'shadow', '') = 'true') AS shadow"""
+_DFS_COLS = """created_at AS at, endpoint, keyword, location_code, keyword_count, cost_usd::float AS cost_usd,
+           cache_hit, fetched_live, tour_id::text AS tour_id, job_id::text AS job_id, status, latency_ms, error,
+           stage"""
+_GEO_COLS = """called_at AS at, provider, endpoint, requests, credits, failed_requests, cost_usd::float AS cost_usd,
+           job_id::text AS job_id"""
+_DECISION_COLS = """created_at AS at, stage, question_key, subject_key, mode, zone, model, latency_ms,
+           cost_usd::float AS cost_usd, error, outcome, cached, job_id::text AS job_id"""
+_COUNTS = "count(*) OVER () AS total_n, coalesce(sum(cost_usd) OVER (), 0)::float AS total_cost"
+
+TRACE_LLM_SQL = f"""
+    SELECT {_LLM_COLS}, {_COUNTS}
       FROM shared.llm_call_log
      WHERE job_id = $1::uuid AND coalesce(provider, '') <> 'typesafe'
      ORDER BY created_at, id
      LIMIT $2
 """
 
-TRACE_DFS_SQL = """
-    SELECT created_at AS at, endpoint, keyword, location_code, keyword_count, cost_usd::float AS cost_usd, cache_hit,
-           fetched_live, tour_id::text AS tour_id,
-           count(*) OVER () AS total_n, coalesce(sum(cost_usd) OVER (), 0)::float AS total_cost
+TRACE_DFS_SQL = f"""
+    SELECT {_DFS_COLS}, {_COUNTS}
       FROM shared.dfs_call_log
      WHERE job_id = $1::uuid
      ORDER BY created_at, id
      LIMIT $2
 """
 
-# No job_id index on these two: the run window bounds the scan (geocode_call_called_at_idx /
-# decision_log_created_id_idx).
-TRACE_GEO_SQL = """
-    SELECT called_at AS at, provider, endpoint, requests, credits, cost_usd::float AS cost_usd,
-           count(*) OVER () AS total_n, coalesce(sum(cost_usd) OVER (), 0)::float AS total_cost
+# geo.geocode_call has no job index: the run window bounds the scan (geocode_call_called_at_idx).
+TRACE_GEO_SQL = f"""
+    SELECT {_GEO_COLS}, {_COUNTS}
       FROM geo.geocode_call
      WHERE called_at >= $2 AND called_at <= $3 AND job_id = $1::uuid
      ORDER BY called_at, id
      LIMIT $4
 """
 
-TRACE_DECISION_SQL = """
-    SELECT created_at AS at, stage, question_key, subject_key, mode, zone, model, latency_ms,
-           cost_usd::float AS cost_usd, error, outcome, cached,
-           count(*) OVER () AS total_n, coalesce(sum(cost_usd) OVER (), 0)::float AS total_cost
+# decision_log_job_idx (migration 319) serves the job read; no run window needed any more.
+TRACE_DECISION_SQL = f"""
+    SELECT {_DECISION_COLS}, {_COUNTS}
       FROM shared.decision_log
-     WHERE created_at >= $2 AND created_at <= $3 AND job_id = $1::uuid
+     WHERE job_id = $1::uuid
      ORDER BY created_at, id
-     LIMIT $4
+     LIMIT $2
+"""
+
+# A tour: $1 = the tour id, $2 = its job ids (TOUR_JOBS_SQL). The LLM rows are the union of three index reads
+# (llm_call_log_tour_idx, llm_call_log_job_idx, idx_llm_call_log_piece through the pieces those jobs wrote).
+TOUR_LLM_SQL = f"""
+    SELECT {_LLM_COLS}, {_COUNTS}
+      FROM shared.llm_call_log
+     WHERE id IN (SELECT id FROM shared.llm_call_log WHERE tour_id = $1::uuid
+                  UNION SELECT id FROM shared.llm_call_log WHERE job_id = ANY($2::uuid[])
+                  UNION SELECT l.id FROM shared.llm_call_log l
+                          JOIN acp_shared.content_piece p ON p.piece_id = l.content_piece_id
+                         WHERE p.job_id = ANY($2::uuid[]))
+       AND coalesce(provider, '') <> 'typesafe'
+     ORDER BY created_at, id
+     LIMIT $3
+"""
+
+TOUR_DFS_SQL = f"""
+    SELECT {_DFS_COLS}, {_COUNTS}
+      FROM shared.dfs_call_log
+     WHERE tour_id = $1::uuid OR job_id = ANY($2::uuid[])
+     ORDER BY created_at, id
+     LIMIT $3
+"""
+
+# geo.geocode_call is a small table (no job index); decision_log uses decision_log_job_idx.
+TOUR_GEO_SQL = f"""
+    SELECT {_GEO_COLS}, {_COUNTS}
+      FROM geo.geocode_call
+     WHERE job_id = ANY($1::uuid[])
+     ORDER BY called_at, id
+     LIMIT $2
+"""
+
+TOUR_DECISION_SQL = f"""
+    SELECT {_DECISION_COLS}, {_COUNTS}
+      FROM shared.decision_log
+     WHERE job_id = ANY($1::uuid[])
+     ORDER BY created_at, id
+     LIMIT $2
 """
 
 
@@ -542,7 +604,7 @@ def parse_job_id(value: str) -> str:
 
 
 def trace_window(job: dict, now: datetime) -> Optional[tuple[datetime, datetime]]:
-    """The run window that bounds the reads without a job index: started_at .. (finished_at or now) + slack; None
+    """The run window that bounds the geocoder read (no job index): started_at .. (finished_at or now) + slack; None
     for a job that never started (it made no call). Pure."""
     start = job.get("started_at")
     if start is None:
@@ -551,43 +613,82 @@ def trace_window(job: dict, now: datetime) -> Optional[tuple[datetime, datetime]
     return start, end + TRACE_WINDOW_SLACK
 
 
+def _err(text: Any) -> Optional[str]:
+    return (str(text) if text else "")[:ERROR_CHARS] or None
+
+
 def llm_event(r: dict) -> dict:
-    outcome = "shadow" if r.get("shadow") else ("fallback" if r.get("fallback_used") else "ok")
+    """One llm_call_log row. ``outcome`` is the ledger v2 status when it is not ok (refused, error, billed_unusable,
+    truncated), else shadow / fallback / ok; ``status`` is None on a row written before ledger v2."""
+    status = r.get("status")
+    if status and status != "ok":
+        outcome = status
+    else:
+        outcome = "shadow" if r.get("shadow") else ("fallback" if r.get("fallback_used") else "ok")
     return {"at": _iso(r["at"]), "source": "llm", "stage": r.get("stage"), "what": r.get("role"),
-            "model": r.get("model"), "provider": r.get("provider"), "account": r.get("account"),
-            "outcome": outcome, "cost_usd": _f(r.get("cost_usd")), "latency_ms": None,
-            "tokens_in": r.get("tokens_in"), "tokens_out": r.get("tokens_out"),
+            "model": r.get("model"), "provider": r.get("provider"),
+            "account": r.get("account") or r.get("connection_key"),
+            "outcome": outcome, "status": status, "error_class": r.get("error_class"),
+            "cost_usd": _f(r.get("cost_usd")), "latency_ms": r.get("latency_ms"),
+            "tokens_in": r.get("tokens_in"), "tokens_out": r.get("tokens_out"), "job_id": r.get("job_id"),
+            "app": r.get("app"),
             "detail": {"stop_reason": r.get("stop_reason"), "pricing_mode": r.get("pricing_mode"),
                        "cache_read_tokens": r.get("cache_read_tokens"),
-                       "cache_write_tokens": r.get("cache_write_tokens")}}
+                       "cache_write_tokens": r.get("cache_write_tokens"), "attempt_no": r.get("attempt_no"),
+                       "connection_key": r.get("connection_key"), "tour_id": r.get("tour_id")}}
+
+
+def jev_verdict_status(r: dict) -> str:
+    """decision_log has no status column: a verdict with an error (zone ``error`` or an error text) is ``error``."""
+    return "error" if r.get("error") or r.get("zone") == "error" else "ok"
 
 
 def jev_event(r: dict) -> dict:
     error = r.get("error")
+    status = jev_verdict_status(r)
     return {"at": _iso(r["at"]), "source": "jev", "stage": r.get("stage"), "what": r.get("question_key"),
             "model": r.get("model"), "provider": "typesafe", "account": None,
-            "outcome": "error" if error else r.get("zone"), "cost_usd": _f(r.get("cost_usd")),
-            "latency_ms": r.get("latency_ms"), "tokens_in": None, "tokens_out": None,
+            "outcome": "error" if status == "error" else r.get("zone"), "status": status, "error_class": None,
+            "cost_usd": _f(r.get("cost_usd")), "latency_ms": r.get("latency_ms"), "tokens_in": None,
+            "tokens_out": None, "job_id": r.get("job_id"), "app": "cis",
             "detail": {"mode": r.get("mode"), "subject_key": r.get("subject_key"), "cached": r.get("cached"),
-                       "result": r.get("outcome"), "error": (error or "")[:ERROR_CHARS] or None}}
+                       "result": r.get("outcome"), "error": _err(error)}}
 
 
 def dfs_event(r: dict) -> dict:
-    return {"at": _iso(r["at"]), "source": "dfs", "stage": None, "what": r.get("endpoint"), "model": None,
-            "provider": "dataforseo", "account": None, "outcome": "cache" if r.get("cache_hit") else "live",
-            "cost_usd": _f(r.get("cost_usd")), "latency_ms": None, "tokens_in": None, "tokens_out": None,
+    status = r.get("status")
+    if status and status != "ok":
+        outcome = status
+    else:
+        outcome = "cache" if r.get("cache_hit") else "live"
+    return {"at": _iso(r["at"]), "source": "dfs", "stage": r.get("stage"), "what": r.get("endpoint"), "model": None,
+            "provider": "dataforseo", "account": None, "outcome": outcome, "status": status, "error_class": None,
+            "cost_usd": _f(r.get("cost_usd")), "latency_ms": r.get("latency_ms"), "tokens_in": None,
+            "tokens_out": None, "job_id": r.get("job_id"), "app": "cis",
             "detail": {"keyword": r.get("keyword"), "location_code": r.get("location_code"),
-                       "keyword_count": r.get("keyword_count"), "tour_id": r.get("tour_id")}}
+                       "keyword_count": r.get("keyword_count"), "tour_id": r.get("tour_id"),
+                       "error": _err(r.get("error"))}}
+
+
+def geo_status(r: dict) -> str:
+    """geocode_call has no status column: a row whose every request failed is ``error``."""
+    failed, requests = int(r.get("failed_requests") or 0), int(r.get("requests") or 0)
+    return "error" if failed > 0 and failed >= requests else "ok"
 
 
 def geo_event(r: dict) -> dict:
+    status = geo_status(r)
     return {"at": _iso(r["at"]), "source": "geocoder", "stage": None, "what": r.get("endpoint"), "model": None,
-            "provider": r.get("provider"), "account": None, "outcome": "ok", "cost_usd": _f(r.get("cost_usd")),
-            "latency_ms": None, "tokens_in": None, "tokens_out": None,
-            "detail": {"requests": r.get("requests"), "credits": r.get("credits")}}
+            "provider": r.get("provider"), "account": None, "outcome": status, "status": status,
+            "error_class": None, "cost_usd": _f(r.get("cost_usd")), "latency_ms": None, "tokens_in": None,
+            "tokens_out": None, "job_id": r.get("job_id"), "app": "cis",
+            "detail": {"requests": r.get("requests"), "credits": r.get("credits"),
+                       "failed_requests": r.get("failed_requests")}}
 
 
 EVENT_OF = {"llm": llm_event, "jev": jev_event, "dfs": dfs_event, "geocoder": geo_event}
+SOURCE_LABELS = {"llm": "LLM call log", "dfs": "DataForSEO call log", "geocoder": "Geocoder call log",
+                 "jev": "Jev decision log"}
 
 
 def source_summary(rows: Optional[list[dict]], error: Optional[str], *, read: bool = True) -> dict:
@@ -598,30 +699,44 @@ def source_summary(rows: Optional[list[dict]], error: Optional[str], *, read: bo
             "truncated": total > len(rows), "read": read and error is None, "error": error}
 
 
-def build_trace(job: dict, window: Optional[tuple[datetime, datetime]], by_source: dict[str, tuple],
-                limit: int) -> dict:
-    """The trace answer from the job row and each source's (rows, error). Pure (unit-tested)."""
+def _trace_events(by_source: dict[str, tuple], unread: tuple[str, ...]) -> tuple[list[dict], dict, list[str]]:
+    """(events in time order, per-source summaries, notes) from each source's (rows, error). Pure."""
     events: list[dict] = []
     sources = {}
     for s in SOURCES:
         rows, error = by_source.get(s, (None, None))
-        read = not (s in ("jev", "geocoder") and window is None)
-        sources[s] = source_summary(rows, error, read=read)
+        sources[s] = source_summary(rows, error, read=s not in unread)
         events += [EVENT_OF[s](r) for r in rows or []]
     events.sort(key=lambda e: (e["at"] or "", e["source"]))
-    notes = ["refused_calls_not_logged"]
-    if window is None:
-        notes.append("job_not_started")
+    notes = []
+    # Rows written before ledger v2 (migration 319) carry no status, latency or refusal rows.
+    if any(e["status"] is None for e in events if e["source"] in ("llm", "dfs")):
+        notes.append("rows_before_ledger_v2")
     if any(v["truncated"] for v in sources.values()):
         notes.append("truncated")
+    return events, sources, notes
+
+
+def _totals(sources: dict) -> dict:
+    return {"events": sum(v["events"] for v in sources.values()),
+            "cost_usd": round(sum(v["cost_usd"] or 0.0 for v in sources.values()), 6)}
+
+
+def build_trace(job: dict, window: Optional[tuple[datetime, datetime]], by_source: dict[str, tuple],
+                limit: int) -> dict:
+    """The job trace answer from the job row and each source's (rows, error). Pure (unit-tested)."""
+    events, sources, notes = _trace_events(by_source, () if window else ("geocoder",))
+    if window is None:
+        notes.append("job_not_started")
     return {
+        "kind": "job",
         "job": {k: _iso(job.get(k)) for k in ("id", "kind", "status", "created_at", "started_at", "finished_at",
                                               "cost_usd", "tour_id", "parent_job_id")},
+        "tour": None,
         "window": None if window is None else {"from": window[0].isoformat(), "to": window[1].isoformat()},
         "events": events,
         "sources": sources,
-        "totals": {"events": sum(v["events"] for v in sources.values()),
-                   "cost_usd": round(sum(v["cost_usd"] or 0.0 for v in sources.values()), 6)},
+        "totals": _totals(sources),
         "limit_per_source": limit,
         "notes": notes,
     }
@@ -642,12 +757,58 @@ async def trace_job(pool, job_id: str, *, limit: int = TRACE_LIMIT, now: Optiona
         "llm": lambda: _fetch(pool, TRACE_LLM_SQL, job_id, limit),
         "dfs": lambda: _fetch(pool, TRACE_DFS_SQL, job_id, limit),
         "geocoder": (lambda: _fetch(pool, TRACE_GEO_SQL, job_id, window[0], window[1], limit)) if window else none,
-        "jev": (lambda: _fetch(pool, TRACE_DECISION_SQL, job_id, window[0], window[1], limit)) if window else none,
+        "jev": lambda: _fetch(pool, TRACE_DECISION_SQL, job_id, limit),
     }
-    labels = {"llm": "LLM call log", "dfs": "DataForSEO call log", "geocoder": "Geocoder call log",
-              "jev": "Jev decision log"}
-    results = await asyncio.gather(*(_guard(labels[s], reads[s]) for s in SOURCES))
+    results = await asyncio.gather(*(_guard(SOURCE_LABELS[s], reads[s]) for s in SOURCES))
     return build_trace(job, window, dict(zip(SOURCES, results)), limit)
+
+
+def build_tour_trace(tour_id: str, jobs: list[dict], by_source: dict[str, tuple], limit: int,
+                     jobs_error: Optional[str] = None) -> dict:
+    """The tour trace answer. Pure (unit-tested)."""
+    events, sources, notes = _trace_events(by_source, ())
+    total_jobs = int(jobs[0]["total_n"]) if jobs else 0
+    if total_jobs > len(jobs):
+        notes.append("jobs_truncated")
+    if jobs_error:
+        notes.append("jobs_unreadable")
+    return {
+        "kind": "tour",
+        "job": None,
+        "tour": {"id": tour_id, "jobs": [{k: _iso(j.get(k)) for k in ("id", "kind", "status", "created_at",
+                                                                       "started_at", "finished_at", "cost_usd")}
+                                         for j in jobs],
+                 "jobs_total": total_jobs, "jobs_error": jobs_error},
+        "window": None,
+        "events": events,
+        "sources": sources,
+        "totals": _totals(sources),
+        "limit_per_source": limit,
+        "notes": notes,
+    }
+
+
+async def tour_job_ids(pool, tour_id: str, limit: int = TOUR_JOBS_LIMIT) -> list[dict]:
+    """The newest jobs whose payload names the tour (``payload ->> 'tour_id'``)."""
+    return await _fetch(pool, TOUR_JOBS_SQL, tour_id, limit)
+
+
+async def trace_tour(pool, tour_id: str, *, limit: int = TRACE_LIMIT) -> dict:
+    """``GET /admin/ai-gateway/trace?tour_id=``: every logged paid call of one tour, from four keys: the jobs whose
+    payload names the tour (shared.job.payload ->> 'tour_id'), the content pieces those jobs wrote
+    (llm_call_log.content_piece_id), and the tour_id columns of llm_call_log and dfs_call_log. A tour with no job and
+    no row gives an empty trace (never a 404: the tour id is not checked against a catalog table)."""
+    jobs, jobs_err = await _guard("Jobs of the tour", lambda: tour_job_ids(pool, tour_id))
+    jobs = jobs or []
+    ids = [j["id"] for j in jobs]
+    reads = {
+        "llm": lambda: _fetch(pool, TOUR_LLM_SQL, tour_id, ids, limit),
+        "dfs": lambda: _fetch(pool, TOUR_DFS_SQL, tour_id, ids, limit),
+        "geocoder": lambda: _fetch(pool, TOUR_GEO_SQL, ids, limit),
+        "jev": lambda: _fetch(pool, TOUR_DECISION_SQL, ids, limit),
+    }
+    results = await asyncio.gather(*(_guard(SOURCE_LABELS[s], reads[s]) for s in SOURCES))
+    return build_tour_trace(tour_id, jobs, dict(zip(SOURCES, results)), limit, jobs_err)
 
 
 # ── budgets ─────────────────────────────────────────────────────────────────────────────────────────────────────────
