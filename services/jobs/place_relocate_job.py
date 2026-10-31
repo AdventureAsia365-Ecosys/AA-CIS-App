@@ -5,7 +5,8 @@ Payload: {"mode": "dry_run" | "apply" | "hide" | "unhide" (default dry_run), "lo
 "country"?, "limit"? (apply, ≤ 400 a run), "hide_unconfirmed"? (default false), "reason"?,
 AA-997 v2: "recheck"? (outcomes of an earlier rule version to take again: llm_point / off_route / confirmed; default
 none), "strategy"? ("v1" default | "v2": query variants, hint bias, compact names — geocoder.STRATEGIES),
-"accept_rule"? ("v1" default | "aa997.2" | "aa997.3": the strict acceptance; recheck confirmed / geoapify need it —
+"accept_rule"? ("v1" default | "aa997.2" | "aa997.3" | "aa997.4": the strict acceptance — aa997.4 adds the
+day-evidence guard (geomatch.day_verdict; a far refusal: outcome kept_model); recheck confirmed / geoapify need it —
 geoapify is dry-run only), "max_requests"? (a cap on Geoapify requests over the whole apply chain, "chain_id" set by
 the endpoint: the spent count is read from geo.geocode_call of the chain's jobs, so a retried or crashed run is
 counted too), "rule_version" (set by the endpoint; an apply whose rule version is not the deployed one is refused, so

@@ -679,20 +679,44 @@ _ROUTE_ANCHORS_SQL = """
        AND d.geo_precision IS DISTINCT FROM 'line' AND NOT (d.id = ANY($4::uuid[]))
      ORDER BY u.n, u.c, u.l, u.source_id, u.day_index, td.day_index
 """
+# AA-997 S261 (rule aa997.4): the OTHER places of each (tour source, day) that uses the name, with a trusted point
+# (the same filter as the anchors) — the evidence geomatch.day_disagree weighs a geocoder's move against. Another name
+# key of the same destination row is skipped too (the row itself is `exclude`).
+_DAY_PLACES_SQL = """
+    WITH k AS (SELECT * FROM unnest($1::text[], $2::text[], $3::text[]) AS k(n, c, l)),
+         uses AS (
+           SELECT k.n, k.c, k.l, tp.source_id, tp.day_index
+             FROM geo.tour_place tp JOIN k ON (tp.name_norm, tp.country_norm, tp.locality_norm) = (k.n, k.c, k.l)
+           UNION
+           SELECT k.n, k.c, k.l, td.source_id, td.day_index
+             FROM geo.tour_day td JOIN k ON (td.anchor_norm, td.anchor_country_norm, td.anchor_locality_norm)
+                                            = (k.n, k.c, k.l))
+    SELECT DISTINCT u.n, u.c, u.l, u.source_id, u.day_index, d.lat, d.lng
+      FROM uses u
+      JOIN geo.tour_place tp ON tp.source_id = u.source_id AND tp.day_index = u.day_index
+                            AND (tp.name_norm, tp.country_norm, tp.locality_norm) IS DISTINCT FROM (u.n, u.c, u.l)
+      JOIN shared.destinations d ON d.id = tp.destination_id
+     WHERE d.located_by IN ('geoapify', 'manual', 'mapbox') AND d.geo_status <> 'suspect' AND d.duplicate_of IS NULL
+       AND d.geo_precision IS DISTINCT FROM 'line' AND NOT (d.id = ANY($4::uuid[]))
+     ORDER BY u.n, u.c, u.l, u.source_id, u.day_index, d.lat, d.lng
+"""
 
 
-async def route_anchors(conn, keys: Iterable[tuple], exclude: Iterable[str] = ()) -> dict[tuple, tuple]:
+async def route_anchors(conn, keys: Iterable[tuple], exclude: Iterable[str] = (),
+                        day_places: bool = False) -> dict[tuple, tuple]:
     """{name key: routes} — one route (tuple of (lat, lng) in day order) per (tour source, day) using the name; keys
     with no located anchor are absent. guards.route_km measures a point against them. Each route is a
     guards.TourRoute: `tour` and `anchored` (the use day's own stop is among the stops — the strict rule aa997.3 uses
-    only those as evidence, geomatch.evidence_routes)."""
+    only those as evidence, geomatch.evidence_routes), `own` (that stop's point) and, with `day_places` (one more
+    query; rule aa997.4 only), `day` = the use day's other located places (_DAY_PLACES_SQL)."""
     from services.places import guards
     a, b, c = _keys_arrays(keys)
     if not a:
         return {}
-    rows = await conn.fetch(_ROUTE_ANCHORS_SQL, a, b, c, sorted({str(x) for x in exclude if x}))
+    excluded = sorted({str(x) for x in exclude if x})
+    rows = await conn.fetch(_ROUTE_ANCHORS_SQL, a, b, c, excluded)
     by: dict[tuple, dict[tuple, list]] = {}
-    anchored: set = set()
+    own: dict[tuple, tuple] = {}
     for r in rows:
         use = (r["source_id"], r["day_index"])
         pts = by.setdefault((r["n"], r["c"], r["l"]), {}).setdefault(use, [])
@@ -700,8 +724,15 @@ async def route_anchors(conn, keys: Iterable[tuple], exclude: Iterable[str] = ()
         if not pts or pts[-1] != p:
             pts.append(p)
         if r["anchor_day"] == r["day_index"]:       # the use day's own stop is located (and is not the row itself)
-            anchored.add((r["n"], r["c"], r["l"], *use))
-    return {k: tuple(guards.TourRoute(v, tour=use[0], anchored=(*k, *use) in anchored) for use, v in routes.items())
+            own[(r["n"], r["c"], r["l"], *use)] = p
+    day: dict[tuple, list] = {}
+    if day_places and by:
+        for r in await conn.fetch(_DAY_PLACES_SQL, a, b, c, excluded):
+            day.setdefault((r["n"], r["c"], r["l"], r["source_id"], r["day_index"]), []).append(
+                (float(r["lat"]), float(r["lng"])))
+    return {k: tuple(guards.TourRoute(v, tour=use[0], anchored=(*k, *use) in own, own=own.get((*k, *use)),
+                                      day=day.get((*k, *use), ()))
+                     for use, v in routes.items())
             for k, routes in by.items()}
 
 

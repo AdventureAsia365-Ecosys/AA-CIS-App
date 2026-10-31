@@ -17,7 +17,8 @@ import structlog
 from services.places import components as comp_mod
 from services.places import days as days_mod
 from services.places import graph as graph_mod
-from services.places import guards, locate, name_filter, store
+from services.places import geomatch, guards, locate, name_filter, store
+from services.places.geocoder import default_accept_rule
 from services.places.names import country_norm, locality_key, name_norm
 from shared import countries as _countries
 
@@ -342,8 +343,10 @@ async def geocode_pending(pool, generate, geocoder, *, limit: int, job_id: Optio
                 out["unknown"] += 1
                 continue
             todo_rows.append((r, k, verdict.query))
-        # AA-997: the route each name is checked against (the located stops of days d-1..d+1 of its tours)
-        routes = await store.route_anchors(conn, [k for _, k, _ in todo_rows])
+        # AA-997: the route each name is checked against (the located stops of days d-1..d+1 of its tours); the rule
+        # aa997.4 (GEOCODER_ACCEPT_RULE) also weighs the day's other located places
+        day_kw = {"day_places": True} if geomatch.needs_day_places(default_accept_rule()) else {}
+        routes = await store.route_anchors(conn, [k for _, k, _ in todo_rows], **day_kw)
     todo = [locate.Item(k, q, r["country"], r.get("tour_name") or "", r.get("locality"), routes=routes.get(k, ()))
             for r, k, q in todo_rows]
     out["with_route"] = sum(1 for it in todo if it.routes)

@@ -112,19 +112,23 @@ class TourRoute(tuple):
     """A Route (the (lat, lng) stops in day order) that knows where it comes from (AA-997 S258, store.route_anchors):
     `tour` = the tour source id, `anchored` = the day that uses the name has its own located overnight stop in it.
     Everything that takes a Route takes it (it IS the tuple of stops); the strict acceptance rule aa997.3 reads the
-    two attributes (geomatch.evidence_routes, route_cover per_tour). A plain tuple counts as anchored."""
+    two attributes (geomatch.evidence_routes, route_cover per_tour). A plain tuple counts as anchored.
+    AA-997 S261 (rule aa997.4, geomatch.day_disagree): `own` = the use day's own overnight stop (lat, lng) or None,
+    `day` = the (lat, lng) of the use day's other located places (store.route_anchors `day_places`; () when not read).
+    Equality stays the tuple's: two routes with the same stops are equal whatever they carry."""
 
-    def __new__(cls, stops, *, tour: Optional[str] = None, anchored: bool = True):
+    def __new__(cls, stops, *, tour: Optional[str] = None, anchored: bool = True,
+                own: Optional[tuple] = None, day: tuple = ()):
         obj = super().__new__(cls, stops)
-        obj.tour, obj.anchored = tour, anchored
+        obj.tour, obj.anchored, obj.own, obj.day = tour, anchored, own, tuple(day or ())
         return obj
 
     def __reduce__(self):
-        return (_tour_route, (tuple(self), self.tour, self.anchored))
+        return (_tour_route, (tuple(self), self.tour, self.anchored, self.own, self.day))
 
 
-def _tour_route(stops, tour, anchored):
-    return TourRoute(stops, tour=tour, anchored=anchored)
+def _tour_route(stops, tour, anchored, own=None, day=()):
+    return TourRoute(stops, tour=tour, anchored=anchored, own=own, day=day)
 
 
 def route_radius(name: Optional[str]) -> float:
