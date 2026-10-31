@@ -308,9 +308,7 @@ def merge_page(pages: dict[str, list[dict]], limit: int) -> tuple[list[dict], Op
     more = len(rows) > limit
     rows = rows[:limit]
     nxt = make_cursor(rows[-1]["_at"], rows[-1]["id"]) if more and rows else None
-    for r in rows:
-        r.pop("_at", None)
-    return rows, nxt
+    return [{k: v for k, v in r.items() if k != "_at"} for r in rows], nxt
 
 
 # ── read ────────────────────────────────────────────────────────────────────────────────────────────────────────────
