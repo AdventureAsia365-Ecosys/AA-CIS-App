@@ -48,6 +48,10 @@ SAMPLES = [
     ("admin_ai_gateway", "GET", "/admin/ai-gateway/trace", None),
     ("admin_ai_gateway", "GET", "/admin/ai-gateway/budgets", None),
     ("admin_ai_gateway", "GET", "/admin/ai-gateway/calls", None),
+    ("admin_ai_gateway", "GET", "/admin/ai-gateway/experiments", None),                  # AA-900 UI (C4)
+    ("admin_ai_gateway", "GET", "/admin/ai-gateway/tenant-budgets/{tenant_id}", None),     # AA-1016 UI (C4)
+    ("admin_ai_gateway", "PUT", "/admin/ai-gateway/tenant-budgets/{tenant_id}", {"monthly_usd": 5}),
+    ("admin_ai_gateway", "DELETE", "/admin/ai-gateway/tenant-budgets/{tenant_id}", None),
     ("admin_dashboard", "GET", "/admin/dashboard/summary", None),
     ("admin_search", "GET", "/admin/search", None),
     ("admin_seo", "GET", "/admin/seo-intelligence", None),
