@@ -31,9 +31,25 @@ Limiter. Per connection, in process (each ECS task enforces its own share): ``ma
 semaphore) and ``rpm_limit`` calls per rolling minute, both from the connection row (NULL = no limit). A call waits
 for a slot up to ``LIMIT_WAIT_S``; past that it fails with ``LimiterSaturated`` (class ``throttled``), which is not a
 provider failure (no breaker count) and lets the route move to its next deployment or model.
+
+AA-1018 (reliability part 1) — the connection-level circuit. An account-wide refusal (Bedrock "Error 002" on the LLM
+account, a key that cannot be read, a provider spend cap) refuses every model of the connection alike, yet the
+per-deployment circuits above learn it one model at a time, each with a failed real call. ``connection_health`` derives
+one circuit per connection (shown with ``model_key "*"``, ``CONNECTION_MODEL``) from the deployment rows every task
+already shares: it trips on account-wide signals only — a non-closed deployment circuit of class ``credential`` or
+``quota_exhausted``, or ``access_denied`` on at least ``CONNECTION_DENIED_MODELS`` distinct models (one model's refusal,
+e.g. acc2 refusing one Claude model, never stops acc2's embeddings) — newer than the connection's last answered call
+(any success on the connection closes it). While it is OPEN (until the newest open period of its tripping rows ends)
+``connection_open`` makes ``vendor_route.deployment_plan`` and ``admit`` (every ``guarded`` call) skip every deployment
+of the connection; afterwards the per-deployment circuits decide alone (a failed probe reopens its row for twice as
+long, which reopens the connection). It is derived, not stored: ``llm_provider_health.model_key`` references the model
+catalog, so no ``"*"`` row can be written (a later migration may persist it). On the transition to OPEN,
+``record_failure`` calls ``on_connection_open``: one admin bell (``shared.notifications``, ``llm_circuit_open``, at
+most one unread per connection per 24 h) and the ops alert e-mail (``ops_alerts.enqueue_llm_circuit_email``).
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import threading
@@ -42,7 +58,7 @@ from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
-from typing import Callable, Iterator, Optional, TypeVar
+from typing import Callable, Iterable, Iterator, Optional, TypeVar
 
 import structlog
 
@@ -172,6 +188,61 @@ def claimed(h: Health, now: datetime) -> Optional[Health]:
     if state_of(h, now) != HALF_OPEN or (h.probe_until is not None and h.probe_until > now):
         return None
     return replace(h, probe_until=now + timedelta(seconds=PROBE_LEASE_S))
+
+
+# ── AA-1018: the connection-level circuit, derived from the deployment rows (pure) ───────────────────────────────
+
+CONNECTION_MODEL = "*"                 # how the connection circuit is named next to the deployment rows
+# Classes that trip the connection from ONE deployment: the key cannot be read, or the account has no money left.
+CONNECTION_SOLO_CLASSES = (CREDENTIAL, QUOTA_EXHAUSTED)
+# access_denied trips it only from this many distinct models: one model the account may not call is not an account
+# block (acc2 refusing a Claude model must not stop acc2's embeddings).
+CONNECTION_DENIED_MODELS = 2
+CONNECTION_CLASSES = (CREDENTIAL, QUOTA_EXHAUSTED, ACCESS_DENIED)    # also the order that names the circuit's class
+
+
+def _tripping(rows: Iterable[Health], connection_key: str, now: datetime) -> tuple[list[Health], Optional[datetime]]:
+    """(the deployment rows that trip the connection circuit, the connection's last answered call)."""
+    mine = [h for h in rows if h.connection_key == connection_key and h.model_key != CONNECTION_MODEL]
+    last_ok = max((h.last_ok_at for h in mine if h.last_ok_at is not None), default=None)
+    signals = [h for h in mine
+               if h.last_error_class in CONNECTION_CLASSES and state_of(h, now) != CLOSED
+               and h.last_error_at is not None and (last_ok is None or h.last_error_at > last_ok)]
+    solo = [h for h in signals if h.last_error_class in CONNECTION_SOLO_CLASSES]
+    denied = [h for h in signals if h.last_error_class == ACCESS_DENIED]
+    if len({h.model_key for h in denied}) < CONNECTION_DENIED_MODELS:
+        denied = []
+    return solo + denied, last_ok
+
+
+def connection_health(rows: Iterable[Health], connection_key: str, now: datetime) -> Optional[Health]:
+    """The connection-level circuit of ``connection_key`` from its deployment rows, or None when nothing account-wide
+    is on record. Tripping rows: a non-closed deployment circuit of a ``CONNECTION_CLASSES`` class whose failure is
+    newer than the connection's last answered call (any deployment). Trips on one ``CONNECTION_SOLO_CLASSES`` row, or
+    on ``access_denied`` rows of at least ``CONNECTION_DENIED_MODELS`` distinct models. The result (``model_key "*"``,
+    ``consecutive_failures`` = the number of tripping rows) is open until the newest open period of its tripping rows
+    ends (``state_of``), then half-open: not blocking, the deployment circuits decide (module docstring)."""
+    members, last_ok = _tripping(list(rows), connection_key, now)
+    if not members:
+        return None
+    cls = next(c for c in CONNECTION_CLASSES if any(h.last_error_class == c for h in members))
+    newest = max(members, key=lambda h: h.last_error_at)
+    return Health(connection_key=connection_key, model_key=CONNECTION_MODEL, last_ok_at=last_ok,
+                  last_error_at=newest.last_error_at, last_error_class=cls, last_error=newest.last_error,
+                  consecutive_failures=len(members),
+                  circuit_open_until=max(h.circuit_open_until for h in members),
+                  open_streak=max(h.open_streak for h in members),
+                  opened_at=min((h.opened_at or h.last_error_at) for h in members))
+
+
+def connection_members(rows: Iterable[Health], connection_key: str, now: datetime) -> list[str]:
+    """The model keys whose rows trip the connection circuit (empty when it is not tripped). For display."""
+    return sorted({h.model_key for h in _tripping(list(rows), connection_key, now)[0]})
+
+
+def connection_state(rows: Iterable[Health], connection_key: str, now: datetime) -> str:
+    """closed | open | half_open of the connection circuit (``connection_health``)."""
+    return state_of(connection_health(rows, connection_key, now), now)
 
 
 # ── storage: shared.llm_provider_health, with an in-process copy ────────────────────────────────────────────────
@@ -336,17 +407,49 @@ def is_open(connection_key: str, model_key: str) -> bool:
 
 
 def open_class(connection_key: str, model_key: str) -> Optional[str]:
-    """The class that opened the deployment's circuit (None when it is closed or unknown)."""
+    """The class that opened the deployment's circuit, else (AA-1018) the class of an open connection circuit (None
+    when both are closed or unknown)."""
     h = _get((connection_key, model_key))
-    return h.last_error_class if h is not None and state_of(h, _now()) != CLOSED else None
+    if h is not None and state_of(h, _now()) != CLOSED:
+        return h.last_error_class
+    return connection_open(connection_key)
+
+
+def _rows_of(connection_key: str) -> list[Health]:
+    with _lock:
+        return [h for k, h in _rows.items() if k[0] == connection_key]
+
+
+def connection_open(connection_key: str) -> Optional[str]:
+    """AA-1018: the class of the connection-level circuit while it is OPEN (every deployment of the connection is
+    skipped), else None. The ``vendor_route.connection_circuit_open`` hook; ``LLM_CIRCUIT_BREAKER=off`` answers None.
+    Never raises."""
+    if not enabled():
+        return None
+    try:
+        _ensure_loaded()
+        now = _now()
+        h = connection_health(_rows_of(connection_key), connection_key, now)
+        return h.last_error_class if h is not None and state_of(h, now) == OPEN else None
+    except Exception as e:  # noqa: BLE001 — a breaker problem never stops a call
+        logger.warning("llm_breaker_read_failed", connection=connection_key, model=CONNECTION_MODEL,
+                       error=str(e)[:200])
+        return None
+
+
+def connection_snapshot(connection_key: str) -> Optional[Health]:
+    """AA-1018: the connection circuit from the in-process copy (None = nothing account-wide on record)."""
+    return connection_health(_rows_of(connection_key), connection_key, _now())
 
 
 def admit(connection_key: str, model_key: str) -> bool:
     """Whether a call may go to the deployment now: closed yes, open no, half-open only for the one call that takes
-    the probe lease (atomically, in the DB row). Never raises."""
+    the probe lease (atomically, in the DB row). AA-1018: no while the connection circuit is open. Never raises."""
     if not enabled():
         return True
     try:
+        if connection_open(connection_key):
+            return False
         key = (connection_key, model_key)
         st = state_of(_get(key), _now())
         if st == CLOSED:
@@ -422,8 +525,85 @@ def record_failure(connection_key: str, model_key: str, exc: BaseException) -> N
             logger.warning("llm_circuit_opened", connection=connection_key, model=model_key, error_class=cls,
                            until=after.circuit_open_until.isoformat(), streak=after.open_streak,
                            consecutive_failures=after.consecutive_failures)
+        _check_connection_opened(connection_key, model_key, before)
     except Exception as e:  # noqa: BLE001
         logger.warning("llm_breaker_record_failed", connection=connection_key, model=model_key, error=str(e)[:200])
+
+
+def _check_connection_opened(connection_key: str, model_key: str, before: Optional[Health]) -> None:
+    """AA-1018: after a failure was written (the in-process copy holds the new row), compare the connection circuit
+    with and without it; on closed / half-open -> OPEN call ``on_connection_open``. Every task that sees the transition
+    calls it; the bell throttle and the e-mail idempotency key keep that to one bell and one e-mail."""
+    now = _now()
+    rows = _rows_of(connection_key)
+    after_c = connection_health(rows, connection_key, now)
+    if after_c is None or state_of(after_c, now) != OPEN:
+        return
+    prior = [h for h in rows if h.model_key != model_key] + ([before] if before is not None else [])
+    before_c = connection_health(prior, connection_key, now)
+    if before_c is not None and state_of(before_c, now) == OPEN:
+        return
+    members = connection_members(rows, connection_key, now)
+    logger.warning("llm_connection_circuit_opened", connection=connection_key, error_class=after_c.last_error_class,
+                   until=after_c.circuit_open_until.isoformat(), models=members)
+    try:
+        on_connection_open(after_c, members)
+    except Exception as e:  # noqa: BLE001 — an alert problem never stops a call
+        logger.warning("llm_connection_alert_failed", connection=connection_key, error=str(e)[:200])
+
+
+# ── AA-1018: the alert when a connection circuit opens (admin bell + ops e-mail) ─────────────────────────────────
+
+CIRCUIT_ALERT_EVENT = "llm_circuit_open"
+_PLATFORM_TENANT_ID = "00000000-0000-0000-0000-000000000001"
+_RECENT_ALERT_SQL = ("SELECT 1 FROM shared.notifications WHERE event_type = $1 AND entity_id = $2 AND is_read = FALSE "
+                     "AND created_at >= now() - interval '24 hours' LIMIT 1")
+_INSERT_ALERT_SQL = ("INSERT INTO shared.notifications (tenant_id, actor_type, event_type, entity_type, entity_id, "
+                     "payload, target_roles) VALUES ($1::uuid, 'system', $2, 'llm_connection', $3, $4::jsonb, "
+                     "ARRAY['admin'])")
+_CLASS_WORDS = {CREDENTIAL: "its key cannot be read", QUOTA_EXHAUSTED: "the provider refuses for lack of credit",
+                ACCESS_DENIED: "the account is refused on several models"}
+
+
+def circuit_alert_details(h: Health, models: list[str]) -> dict:
+    """The bell payload / e-mail details of an opened connection circuit (ids, classes and times only)."""
+    words = _CLASS_WORDS.get(h.last_error_class or "", "account-wide refusals")
+    until = h.circuit_open_until.isoformat() if h.circuit_open_until else None
+    return {"connection_key": h.connection_key, "error_class": h.last_error_class, "models": list(models),
+            "open_until": until, "opened_at": h.opened_at.isoformat() if h.opened_at else None,
+            "last_error": (h.last_error or "")[:ERROR_CHARS] or None,
+            "message": (f"LLM connection {h.connection_key} paused: {words} ({h.last_error_class}). Calls skip it "
+                        f"until {until or 'the next probe'}; routes fall back where they can.")}
+
+
+async def alert_connection_open(conn, h: Health, models: list[str]) -> bool:
+    """One admin bell for an opened connection circuit, at most one unread per connection per 24 h, and the ops
+    e-mail when a bell row was written. True when a bell was written. ``conn`` is an asyncpg connection."""
+    entity = f"llm_connection:{h.connection_key}"
+    if await conn.fetchval(_RECENT_ALERT_SQL, CIRCUIT_ALERT_EVENT, entity):
+        return False
+    details = circuit_alert_details(h, models)
+    await conn.execute(_INSERT_ALERT_SQL, _PLATFORM_TENANT_ID, CIRCUIT_ALERT_EVENT, entity, json.dumps(details))
+    try:
+        from shared import ops_alerts  # lazy: keeps the LLM client import-light
+
+        await ops_alerts.enqueue_llm_circuit_email(conn, details=details)
+    except Exception as e:  # noqa: BLE001 — the bell row stays
+        logger.warning("llm_circuit_email_enqueue_failed", connection=h.connection_key, error=str(e)[:200])
+    return True
+
+
+def _alert_in_db(h: Health, models: list[str]) -> None:
+    """The default ``on_connection_open``: ``alert_connection_open`` on its own connection. Never touches the breaker's
+    DB back-off (a failed alert write must not send the breaker to its per-process fallback). Never raises."""
+    try:
+        connections.run_sync(lambda: _with_conn(lambda conn: alert_connection_open(conn, h, models)))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("llm_connection_alert_failed", connection=h.connection_key, error=str(e)[:200])
+
+
+# Tests replace it (conftest: no database in unit tests).
+on_connection_open: Callable[[Health, list[str]], None] = _alert_in_db
 
 
 def record_success(connection_key: str, model_key: str) -> None:

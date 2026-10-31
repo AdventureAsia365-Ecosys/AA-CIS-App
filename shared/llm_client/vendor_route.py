@@ -28,6 +28,9 @@ Slice S4 plugs the circuit breaker (``breaker.py``) into the plan: a deployment 
 Slice S5 makes the data policy per stage (``data_scope.py``): ``deployment_plan`` / ``vendor_deployment_for`` take the
 stage's ``allowed_scopes`` and leave out a deployment whose connection's ``data_scope`` the stage does not allow.
 
+AA-1018 checks the connection-level circuit (``breaker.connection_open``) before each deployment's own circuit: an
+account-wide refusal on a connection leaves out every deployment of it, including models that never failed.
+
 Slice S9 adds Azure OpenAI connections (kind ``azure_openai``) for ``openai_chat`` rows of an OpenAI model; the client
 of every OpenAI-format connection is built per connection (``adapters/openai_chat.py``).
 
@@ -148,6 +151,9 @@ def _never_open(connection_key: str, model_key: str) -> bool:
 # Slice S4: the deployment circuit breaker (breaker.py, state in shared.llm_provider_health).
 # ``LLM_CIRCUIT_BREAKER=off`` makes it answer False, i.e. the S3 behaviour (``_never_open``). Tests may replace it.
 circuit_open: Callable[[str, str], bool] = breaker.is_open
+# AA-1018: the connection-level circuit (breaker.connection_open: the class while it is open, else None), checked
+# before the deployment's own circuit. Tests may replace it.
+connection_circuit_open: Callable[[str], Optional[str]] = breaker.connection_open
 
 
 class DeploymentPlan(list):
@@ -226,8 +232,10 @@ def deployment_plan(model: CatalogModel, allowed_scopes: Optional[tuple] = None)
       behind an ``aws_only`` one (migration 306 seeds enabled Anthropic API rows behind acc3 for every Anthropic
       model, tenant ones included). Decided before the circuit check, so an open acc3 circuit never promotes a row
       the rule leaves out;
-    - one whose circuit is not open (``circuit_open``: slice S4's breaker, ``breaker.is_open``; a skipped one is named
-      in the returned ``DeploymentPlan.circuit_skips``);
+    - one whose connection circuit is not open (AA-1018, ``connection_circuit_open``: ``breaker.connection_open``, an
+      account-wide refusal stops every deployment of the connection; checked first) and whose own circuit is not open
+      (``circuit_open``: slice S4's breaker, ``breaker.is_open``); a skipped one is named in the returned
+      ``DeploymentPlan.circuit_skips`` with the class that opened it;
     - one whose connection has not reached its hard monthly budget (slice S10, ``connection_budget.stops``; named in
       ``DeploymentPlan.budget_skips``). Checked after the circuit, so an open circuit keeps its own error class.
 
@@ -272,6 +280,11 @@ def deployment_plan(model: CatalogModel, allowed_scopes: Optional[tuple] = None)
         skips: list[tuple[str, Optional[str]]] = []
         budget_skips: list[tuple[str, object]] = []
         for c in candidates:
+            conn_cls = connection_circuit_open(c.connection.connection_key)
+            if conn_cls:
+                _skip(model, c.deployment, f"connection circuit open ({conn_cls})")
+                skips.append((c.connection.connection_key, conn_cls))
+                continue
             if circuit_open(c.connection.connection_key, model.model_key):
                 _skip(model, c.deployment, "circuit open")
                 skips.append((c.connection.connection_key,
