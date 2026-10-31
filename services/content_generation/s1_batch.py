@@ -27,8 +27,9 @@ from typing import Optional
 import asyncpg
 import structlog
 
-from shared.llm_client import bedrock_batch
+from shared.llm_client import bedrock_batch, call_log, pricing
 from shared.llm_client.bedrock_batch import BatchUnavailable
+from shared.llm_client.errors import classify
 from shared.secrets import get_database_url  # AA-838 D9: default application_name
 from services.content_generation.batch_prompt import materialize_s1_prompt
 
@@ -36,6 +37,58 @@ logger = structlog.get_logger()
 
 _MASTER_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 _TENANT_SLUG_MAP = {"aa_internal": _MASTER_TENANT_ID}
+
+# AA-642 S7 (ledger part) / AA-804: the llm_call_log rows of a batch, one per record. The writer stage and the Model
+# Key the batch runs (submit_batch_job(model="haiku"): the legacy Haiku profile = catalog haiku-4-5), priced at the
+# batch rate (pricing.quote, Usage.batch: pricing_mode '<basis>+batch').
+BATCH_STAGE = "s1_generate"
+BATCH_MODEL_KEY = "haiku-4-5"
+BATCH_PROVIDER = "bedrock-satellite"
+
+
+def _usage_tokens(usage: dict) -> tuple[int, int, int, int]:
+    """(uncached input, output, cache read, cache write) of one batch record's Anthropic usage."""
+    def n(key: str) -> int:
+        v = (usage or {}).get(key)
+        return v if isinstance(v, int) and not isinstance(v, bool) and v > 0 else 0
+    return (n("input_tokens"), n("output_tokens"), n("cache_read_input_tokens"), n("cache_creation_input_tokens"))
+
+
+def batch_ledger_rows(outputs: dict, tour_ids: list[str], *, account: str, batch_id: str) -> list[dict]:
+    """AA-642 S7 / AA-804: one shared.llm_call_log row per record of the batch (call_log.record_calls rows), in
+    tour_ids order: a record with usage is billed (cost at the batch rate, status ok / truncated, or billed_unusable
+    when its text cannot be used); a record with an error and no usage, or a tour with no output line, is a 0 USD
+    'error' row. Platform rows (tenant NULL); tour_id, units 1 / unit_kind 'record' and the batch id on every row."""
+    rows: list[dict] = []
+    for tid in tour_ids:
+        rec = outputs.get(str(tid))
+        signal = {"batch": True, "batch_id": str(batch_id)}
+        common = dict(tour_id=str(tid), units=1, unit_kind="record")
+        usage = getattr(rec, "usage", None) or {}
+        in_tok, out_tok, cache_read, cache_write = _usage_tokens(usage)
+        if rec is None or not (in_tok or out_tok or cache_read or cache_write):
+            error = "missing_output" if rec is None else (rec.error or "empty output")
+            cls = classify(error)
+            rows.append(call_log.gateway_failure_row(
+                stage=BATCH_STAGE, role="writer", model=BATCH_MODEL_KEY,
+                status="refused" if cls in ("access_denied", "quota_exhausted", "throttled") else "error",
+                error_class=cls if cls in ("access_denied", "quota_exhausted", "throttled") else "other",
+                error=error, provider=BATCH_PROVIDER, connection_key=account, quality_signal_extra=signal, **common))
+            continue
+        quote = pricing.quote(BATCH_MODEL_KEY, pricing.Usage(input_tokens=in_tok, output_tokens=out_tok,
+                                                             cache_read_tokens=cache_read,
+                                                             cache_write_tokens=cache_write, batch=True))
+        row = dict(stage=BATCH_STAGE, role="writer", model=BATCH_MODEL_KEY,
+                   tokens_in=in_tok + cache_read + cache_write, tokens_out=out_tok, cost_usd=quote.cost_usd,
+                   quality_signal=dict(signal), stop_reason=rec.stop_reason, account=account, fallback_used=False,
+                   provider=BATCH_PROVIDER, cache_read_tokens=cache_read, cache_write_tokens=cache_write,
+                   pricing_mode=quote.pricing_mode, connection_key=account, **common)
+        if not rec.ok:
+            # Billed, but no usable text (an error line with usage, an unexpected modelOutput shape): no ok-rate key.
+            row["quality_signal"].update({"billed_unusable": True, "error": str(rec.error or "no text")[:300]})
+            row["status"] = call_log.STATUS_BILLED_UNUSABLE
+        rows.append(row)
+    return rows
 
 
 async def _load_prompt_state(conn, tour_id: str, tenant_uuid: str, *,
@@ -226,8 +279,13 @@ async def ingest_s1_batch(
 
     outputs = bedrock_batch.read_batch_output(output_uri, account=account)
 
+    # AA-642 S7 (ledger part): the batch's own llm_call_log rows, one per record, before any tour is processed (the
+    # on-demand retries inside _execute_run_tour write their own rows as usual). One transaction; never raises.
+    ledger_rows = batch_ledger_rows(outputs, tour_ids, account=account, batch_id=batch_id)
+    await call_log.record_calls(ledger_rows)
+
     summary = {"ingested": 0, "gate_fail_retry": 0, "batch_write_failed": 0, "missing_output": 0,
-               "per_tour": []}
+               "ledger_rows": len(ledger_rows), "per_tour": []}
     for tid in tour_ids:
         rec = outputs.get(str(tid))
         if rec is None:
