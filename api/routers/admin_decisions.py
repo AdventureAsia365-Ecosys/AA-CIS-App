@@ -588,6 +588,7 @@ async def jev_credit(request: Request, x_admin_secret: str = Header(None)):
     estimated_left = (total - spent) if (total is not None and spent is not None) else None
     last_alert = last_row["last_at"] if last_row else None
     last_low = low_row["last_at"] if low_row else None
+    low_threshold = await jev_credit_mod.low_credit_threshold(pool)      # AA-1017: the Jev row, else $3
     return {
         "topups": topups,
         "total_topped_up_usd": total,
@@ -596,8 +597,8 @@ async def jev_credit(request: Request, x_admin_secret: str = Header(None)):
         "estimated_left_usd": estimated_left,
         "last_exhausted_alert_at": last_alert.isoformat() if last_alert else None,
         # AA-845 — the low-credit alert threshold and state, for the Settings card.
-        "low_threshold_usd": jev_credit_mod.LOW_CREDIT_THRESHOLD_USD,
-        "below_low_threshold": jev_credit_mod.is_below(estimated_left, jev_credit_mod.LOW_CREDIT_THRESHOLD_USD),
+        "low_threshold_usd": low_threshold,
+        "below_low_threshold": jev_credit_mod.is_below(estimated_left, low_threshold),
         "last_low_alert_at": last_low.isoformat() if last_low else None,
     }
 

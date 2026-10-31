@@ -179,13 +179,16 @@ def build(call_rows: Iterable[dict], job_rows: Iterable[dict], *, hours: int, no
     }
 
 
-# AA-1002 (S4): every connection with the breaker rows of its deployments (none = every circuit closed).
+# AA-1002 (S4): every LLM connection with the breaker rows of its deployments (none = every circuit closed). AA-1017:
+# the decide / data / guard rows of migration 322 (typesafe, dataforseo, geoapify, bedrock_guardrails) are not LLM
+# availability; the Providers page shows them.
 CONNECTIONS_SQL = """
     SELECT c.connection_key, c.kind, c.label, c.enabled, c.data_scope, c.account_id, c.account_id_env,
            h.model_key, h.last_ok_at, h.last_error_at, h.last_error_class, h.last_error, h.consecutive_failures,
            h.circuit_open_until, h.open_streak, h.opened_at, h.probe_until
       FROM shared.llm_provider_connection c
       LEFT JOIN shared.llm_provider_health h USING (connection_key)
+     WHERE c.kind IN ('bedrock', 'anthropic', 'openai', 'azure_openai', 'mock')
      ORDER BY c.connection_key, h.model_key
 """
 

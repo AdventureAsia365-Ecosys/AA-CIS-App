@@ -7,8 +7,9 @@ made. Shown by ``GET /admin/llm-availability`` (``invariant``) and the OPS-12 di
 
 Failure domain of a connection: ``<kind>:<account>:<data_scope>``, where account is the row's ``account_id``, else the
 name of its ``account_id_env`` (the account comes from the task environment), else the connection key (a task-role
-Bedrock connection is the main account; an API-key connection is its own vendor account). Migration 321 (registry v2)
-adds a ``failure_domain`` column; until then this derivation is the rule.
+Bedrock connection is the main account; an API-key connection is its own vendor account). Migration 322 (registry v2,
+AA-1017) adds a ``failure_domain`` column, backfilled with this same derivation; the rule reads it from AA-1018 part 2.
+Only the LLM kinds take part (322 also stores the decide / data / guard providers in the table).
 
 Per stage (``shared.llm_role_config``, active rows): the route's keys (``model_id`` then ``fallback_model_ids``), each
 alias expanded to its targets (``shared.llm_model_alias``, position order), each model's deployments in priority order.
@@ -119,7 +120,8 @@ ROUTES_SQL = ("SELECT stage, role, model_id, fallback_model_ids, allowed_scopes,
 ALIASES_SQL = "SELECT alias_key, position, model_key FROM shared.llm_model_alias"
 DEPLOYMENTS_SQL = "SELECT model_key, connection_key, priority, enabled FROM shared.llm_model_deployment"
 CONNECTIONS_SQL = ("SELECT connection_key, kind, enabled, data_scope, account_id, account_id_env "
-                   "FROM shared.llm_provider_connection")
+                   "FROM shared.llm_provider_connection "
+                   "WHERE kind IN ('bedrock', 'anthropic', 'openai', 'azure_openai', 'mock')")
 
 
 async def read(conn, *, blocked: Optional[dict[str, str]] = None, now: Optional[datetime] = None) -> dict:

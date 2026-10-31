@@ -49,6 +49,12 @@ _TIMEOUT_S = 3.0
 _MAX_ATTEMPTS = 3
 _RETRY_STATUS = {429, 500, 502, 503, 504, 529}
 _CONFIG_TTL_S = 20.0
+# AA-1017 (registry v2, migration 322): Jev's connection row (shared.llm_provider_connection 'typesafe', seeded with the
+# values above) gives the base URL, the timeout and the retries; JEV_URL / _TIMEOUT_S / _MAX_ATTEMPTS answer when there
+# is no row or a field is NULL (row -> env TYPESAFE_BASE_URL -> constant). Read with the question config (same TTL).
+JEV_CONNECTION_KEY = "typesafe"
+_PROVIDER_SQL = ("SELECT base_url, timeout_s, max_retries FROM shared.llm_provider_connection "
+                 "WHERE connection_key = $1")
 PLATFORM_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 
 # AA-720 — Jev credit monitoring. TypeSafe has no balance API; a 402 with error_type
@@ -192,6 +198,35 @@ _questions: dict[str, Question] = {}
 _questions_loaded_at = 0.0
 _allowlist: set[str] = set()
 _allowlist_loaded_at = 0.0
+_provider: dict = {}
+_provider_loaded_at = 0.0
+
+
+async def _load_provider(conn) -> None:
+    """AA-1017: Jev's connection row into ``_provider`` (every _CONFIG_TTL_S). A failed read keeps the last good row
+    (none at all = the constants). Call outside a transaction. Never raises."""
+    global _provider, _provider_loaded_at
+    now = time.monotonic()
+    if now - _provider_loaded_at <= _CONFIG_TTL_S:
+        return
+    _provider_loaded_at = now
+    try:
+        row = await conn.fetchrow(_PROVIDER_SQL, JEV_CONNECTION_KEY)
+        _provider = {k: row[k] for k in ("base_url", "timeout_s", "max_retries")} if row is not None else {}
+    except Exception as exc:  # noqa: BLE001 — no table / DB error: the last row (or the constants) stay in force
+        logger.info("decide_provider_row_unavailable", error=str(exc)[:200])
+
+
+def jev_endpoint() -> tuple[str, float, int]:
+    """(URL, timeout in seconds, attempts) of a Jev call: the connection row's base_url / timeout_s / max_retries + 1,
+    else JEV_URL / _TIMEOUT_S / _MAX_ATTEMPTS. A base URL is used only when it is https (the table's CHECK holds it to
+    api.typesafe.ai since migration 322)."""
+    base = _provider.get("base_url")
+    url = (base.rstrip("/") + "/v1/systemone") if isinstance(base, str) and base.startswith("https://") else JEV_URL
+    timeout = _provider.get("timeout_s")
+    retries = _provider.get("max_retries")
+    return (url, float(timeout) if isinstance(timeout, int) and timeout > 0 else _TIMEOUT_S,
+            retries + 1 if isinstance(retries, int) and retries >= 0 else _MAX_ATTEMPTS)
 
 
 async def _load_config(conn) -> None:
@@ -246,10 +281,11 @@ async def _call_jev(state: Any, questions: dict[str, dict]) -> dict:
     body = {"state": state, "model": JEV_MODEL, "questions": questions}
     headers = {"Authorization": f"Bearer {get_typesafe_api_key()}", "Content-Type": "application/json"}
     last: Exception | None = None
-    async with httpx.AsyncClient(timeout=_TIMEOUT_S) as client:
-        for attempt in range(_MAX_ATTEMPTS):
+    url, timeout_s, attempts = jev_endpoint()          # AA-1017: from Jev's connection row, else the constants
+    async with httpx.AsyncClient(timeout=timeout_s) as client:
+        for attempt in range(attempts):
             try:
-                resp = await client.post(JEV_URL, json=body, headers=headers)
+                resp = await client.post(url, json=body, headers=headers)
                 if resp.status_code == 402:          # AA-720 — credit exhausted, do not retry
                     try:
                         parsed = resp.json()
@@ -257,14 +293,14 @@ async def _call_jev(state: Any, questions: dict[str, dict]) -> dict:
                         parsed = None
                     if is_billing_error(402, parsed):
                         raise JevBillingError("TypeSafe 402 billing_error (credit exhausted)")
-                if resp.status_code in _RETRY_STATUS and attempt < _MAX_ATTEMPTS - 1:
+                if resp.status_code in _RETRY_STATUS and attempt < attempts - 1:
                     await asyncio.sleep(0.5 * (attempt + 1))
                     continue
                 resp.raise_for_status()
                 return resp.json()
             except (httpx.TimeoutException, httpx.TransportError) as exc:
                 last = exc
-                if attempt < _MAX_ATTEMPTS - 1:
+                if attempt < attempts - 1:
                     await asyncio.sleep(0.5 * (attempt + 1))
     raise last or RuntimeError("TypeSafe call failed")
 
@@ -680,6 +716,7 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
     try:
         async with db.acquire() as conn:
             await _load_config(conn)
+            await _load_provider(conn)            # AA-1017: Jev's URL / timeout / retries (never raises)
     except Exception as exc:                      # tables missing / DB error → fail open
         logger.warning("decide_config_unavailable", stage=stage, error=str(exc))
         decision.verdicts = {k: Verdict(k, "off", "error", error=f"config: {exc}") for k in question_keys}

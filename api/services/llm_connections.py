@@ -28,6 +28,13 @@ hard stop, the NAME of a read-only usage key and the provider workspace / projec
 audit row). ``costs`` backs ``GET /admin/llm-connections/costs``: the month-to-date spend against each budget and the
 latest nightly reconciliation rows (services/llm_cost/reconcile.py).
 
+AA-1017 (registry v2, migration 322; design D9) — the secret NAME and the base URL are migration-only: they left
+``EDITABLE`` (the PATCH answers 422 "not editable here", and 322 revoked cis_app's UPDATE on both columns); the
+admin keeps the switch, the limits, the budget and notes, plus the two provider limits of 322 (``daily_credit_limit``,
+``low_balance_usd``). The listing stays the LLM kinds (``fetch_connections``); a decide / data / guard row (typesafe,
+dataforseo, geoapify, bedrock_guardrails) can be edited by key (its limits; Jev reads its timeout / retries from its
+row) but never switched (its client does not read ``enabled``). Each listed row also carries the 322 fields.
+
 AA-1002 (S4) — ``test_connection`` backs ``POST /admin/llm-connections/{connection_key}/test``: one small real call
 through ``LLMClient.probe``, logged in ``shared.llm_call_log`` (stage ``adhoc_conn_test``) and audited
 (``llm_connection_tested``).
@@ -58,9 +65,16 @@ TOGGLE_KINDS = ("bedrock", "anthropic", "openai", "azure_openai")     # S9: azur
 # AA-1002 (S4): what PATCH /admin/llm-connections/{key} may change. `enabled` is migration 306's grant; the others
 # need migration 310 (until then the UPDATE answers permission denied → ConnectionEditUnavailable, 503). Never kind,
 # auth_mode, account, role, ExternalId, region, credential_env or data_scope (identity / data policy: migrations only).
-EDITABLE = ("enabled", "secret_name", "base_url", "timeout_s", "max_retries", "max_concurrency", "rpm_limit",
-            "monthly_budget_usd", "notes")
-CREDENTIAL_EDITS = ("secret_name", "base_url")
+# AA-1017 (D9, migration 322): secret_name and base_url are no longer here (migration-only); the two provider limits
+# of 322 are.
+EDITABLE = ("enabled", "timeout_s", "max_retries", "max_concurrency", "rpm_limit", "monthly_budget_usd", "notes",
+            "daily_credit_limit", "low_balance_usd")
+# The fields a credential check depends on, as an edit could move them (none since AA-1017: kept for the check below).
+CREDENTIAL_EDITS: tuple = ()
+# AA-1017: the fields a decide / data / guard row (connections.PROVIDER_KINDS) may change through this PATCH.
+PROVIDER_EDITABLE = ("timeout_s", "max_retries", "notes", "daily_credit_limit", "low_balance_usd")
+# Fields that need migration 322 (the column grant); before it the UPDATE answers permission denied -> 503.
+V2_FIELDS = ("daily_credit_limit", "low_balance_usd")
 
 # AA-1002 (S10): the budget policy fields of the same PATCH -> their column in shared.llm_connection_cost_policy (317).
 POLICY_EDITABLE = {"budget_alert_pct": "alert_pct", "budget_hard_stop": "hard_stop",
@@ -120,6 +134,12 @@ def build(connections: dict, deployments: list, policies: Optional[dict] = None)
             "timeout_s": c.timeout_s, "max_retries": c.max_retries, "max_concurrency": c.max_concurrency,
             "rpm_limit": c.rpm_limit, "monthly_budget_usd": c.monthly_budget_usd,
             "policy_problems": c.policy_problems(),
+            # AA-1017 (migration 322): read-only here, except the two limits
+            "failure_domain": c.failure_domain,
+            "served_roles": list(c.served_roles) if c.served_roles is not None else None,
+            "access_state": c.access_state, "last_probe_at": c.last_probe_at, "balance_source": c.balance_source,
+            "daily_credit_limit": c.daily_credit_limit, "low_balance_usd": c.low_balance_usd,
+            "editable_fields": list(EDITABLE),
             "notes": c.notes, "updated_at": c.updated_at, "updated_by": c.updated_by,
             "deployments": sorted(by_conn.get(key, []), key=lambda d: (d["model_key"], d["priority"])),
             **policy_view(c, cost_guard.policy_of(policies or {}, key)),
@@ -168,26 +188,23 @@ def _check_credential(c: conn_registry.ProviderConnection) -> None:
 
 
 def _validate(c: conn_registry.ProviderConnection, changes: dict) -> conn_registry.ProviderConnection:
-    """The connection with ``changes`` applied, or ConnectionToggleRefused. The secret name and base URL are checked
-    against the credential policy (``aa-llm/<env>/<name>``, the kind's host allowlist) BEFORE anything reads them; an
-    enabled result must have no policy problem at all."""
+    """The connection with ``changes`` applied, or ConnectionToggleRefused. AA-1017 (D9): the secret name and base URL
+    are not editable (migration only); an enabled result must have no policy problem at all."""
     unknown = sorted(set(changes) - set(EDITABLE))
     if unknown:
-        raise ConnectionToggleRefused(f"not editable here: {', '.join(unknown)}")
+        why = (" (the secret name and the endpoint change by migration only)"
+               if set(unknown) & {"secret_name", "base_url"} else "")
+        raise ConnectionToggleRefused(f"not editable here: {', '.join(unknown)}{why}")
+    if not c.is_llm:
+        refused = sorted(set(changes) - set(PROVIDER_EDITABLE))
+        if refused:
+            raise ConnectionToggleRefused(
+                f"connection {c.connection_key!r} is a {c.kind!r} provider: only {', '.join(PROVIDER_EDITABLE)} can "
+                f"be changed here (not {', '.join(refused)})")
     if changes.get("enabled") and c.kind not in TOGGLE_KINDS:
         raise ConnectionToggleRefused(
             f"connection {c.connection_key!r} is a {c.kind!r} connection: the gateway has no adapter for it yet, so "
             "switching it on would change nothing")
-    try:
-        if changes.get("secret_name") is not None:
-            if c.auth_mode not in ("api_key", "bedrock_api_key"):
-                raise conn_registry.ConnectionPolicyError(
-                    f"a {c.auth_mode} connection takes no secret_name (its credential is not an API key)")
-            conn_registry.check_secret_name(changes["secret_name"])
-        if changes.get("base_url") is not None:
-            conn_registry.check_base_url(c.kind, changes["base_url"])
-    except conn_registry.ConnectionPolicyError as e:
-        raise ConnectionToggleRefused(f"connection {c.connection_key!r} refused: {e}") from e
     merged = dataclasses.replace(c, **changes)
     if merged.enabled:
         problems = merged.policy_problems()
@@ -210,7 +227,7 @@ def _same(a, b) -> bool:
 
 
 def _db_value(field: str, value):
-    return Decimal(str(value)) if field == "monthly_budget_usd" and value is not None else value
+    return Decimal(str(value)) if field in ("monthly_budget_usd", "low_balance_usd") and value is not None else value
 
 
 def _json_value(value):
@@ -319,6 +336,7 @@ async def update_connection(db, connection_key: str, changes: dict, *, actor: st
         diff = [f for f in EDITABLE if f in changes and not _same(getattr(c, f), changes[f])]
         if diff:
             sets = ", ".join(f"{f} = ${i + 2}" for i, f in enumerate(diff))
+            needs = "322" if set(diff) & set(V2_FIELDS) else "310"
             n = len(diff) + 2
             try:
                 await db.execute(
@@ -327,8 +345,11 @@ async def update_connection(db, connection_key: str, changes: dict, *, actor: st
                     connection_key, *[_db_value(f, changes[f]) for f in diff], actor)
             except asyncpg.exceptions.InsufficientPrivilegeError as e:
                 raise ConnectionEditUnavailable(
-                    "editing " + ", ".join(diff) + " needs database migration 310 (column grant); only the on/off "
-                    "switch works until it is applied") from e
+                    "editing " + ", ".join(diff) + f" needs database migration {needs} (column grant); only the "
+                    "on/off switch works until it is applied") from e
+            except asyncpg.exceptions.UndefinedColumnError as e:
+                raise ConnectionEditUnavailable(
+                    "editing " + ", ".join(diff) + " needs database migration 322 (the column)") from e
         policy_before: dict = {}
         policy_after: dict = {}
         if policy_changes:

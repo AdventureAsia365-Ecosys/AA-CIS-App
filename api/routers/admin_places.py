@@ -372,13 +372,13 @@ async def shapes_backfill(body: ShapeBackfillRequest, request: Request, x_admin_
     async with pool.acquire() as conn:
         rows = [_line_row(r) for r in await store.lines_report(conn, body.country or None, None)]
         used = await store.geocoder_requests_today(conn, "geoapify")
+        limit = await geocoder_mod.refresh_daily_credit_limit(conn)     # AA-1017: the Geoapify row, else env / 2500
     rows = [r for r in rows if r["status"] in body.statuses and (ids is None or r["destination_id"] in ids)]
     rows = rows[:body.limit]
     provider = geocoder_mod.provider_name()
     calls = provider == "geoapify"
     with_place_id = sum(1 for r in rows if r.get("geocoder_place_id"))
     est_credits = (shape_sources.DETAILS_CREDITS + shape_sources.FULL_GEOMETRY_CREDITS) * with_place_id if calls else 0
-    limit = int(geocoder_mod._env_float("GEOAPIFY_DAILY_CREDIT_LIMIT", geocoder_mod.DEFAULT_DAILY_CREDITS))
     out = {"dry_run": body.dry_run, "country": body.country, "provider": provider, "enabled": enabled(),
            "estimate": {"names": len(rows), "geoapify_details_names": with_place_id if calls else 0,
                         "geoapify_credits_max": est_credits,

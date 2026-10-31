@@ -33,6 +33,12 @@ The reads, all $0 (database only; no provider is called):
 Since ledger v2 (migration 319, CIS #1201) every attempt has a row with its ``status`` (ok, refused, error,
 billed_unusable, truncated), ``error_class`` and ``latency_ms``; older rows have none of them (the trace says so with
 the ``rows_before_ledger_v2`` note). The call list of the Calls tab is ``api/services/ai_gateway_calls.py``.
+
+AA-1017 (registry v2, migration 322): Jev, DataForSEO and Geoapify are rows of ``shared.llm_provider_connection``
+(kinds typesafe / dataforseo / geoapify). Their provider rows here carry the registry row's key, label, enabled flag,
+failure domain, access state and balance source, and their thresholds come from the row (Jev / DataForSEO
+``low_balance_usd``, Geoapify ``daily_credit_limit``), with the env / constant default when the row is missing (before
+322: the rows of today). The LLM rows are the LLM kinds only (``connections.fetch_connections``).
 """
 from __future__ import annotations
 
@@ -357,13 +363,15 @@ async def _fetchrow(pool, sql: str, *args) -> Optional[dict]:
 
 
 async def _read_connections(pool, now: datetime) -> dict:
-    """The connection registry, its health and its monthly budgets (one pooled connection)."""
+    """The connection registry, its health and its monthly budgets (one pooled connection). AA-1017: the LLM kinds
+    become ``connections``; the decide / data rows (typesafe, dataforseo, geoapify) ``providers`` by key."""
     from api.services import llm_availability
     from shared import cost_guard
     from shared.llm_client import connections as conn_registry
 
     async with pool.acquire() as conn:
-        registry = await conn_registry.fetch_connections(conn)
+        everything = await conn_registry.fetch_connections(conn, llm_only=False)
+        registry = {k: c for k, c in everything.items() if c.is_llm}
         _, health = await llm_availability.read_connections(conn, now=now)
         monthly = await cost_guard.connection_budgets(
             conn, {k: c.monthly_budget_usd for k, c in registry.items()})
@@ -372,7 +380,31 @@ async def _read_connections(pool, now: datetime) -> dict:
              "account_id": c.resolved_account_id() if c.kind == "bedrock" else None}
             for c in registry.values()]
     return {"connections": rows, "health": {h["connection_key"]: h for h in health},
-            "monthly": {k: b.summary() for k, b in monthly.items()}}
+            "monthly": {k: b.summary() for k, b in monthly.items()},
+            "providers": {k: c for k, c in everything.items() if not c.is_llm}}
+
+
+def registry_view(row) -> dict:
+    """AA-1017: the registry facts of a decide / data provider row (a connections.ProviderConnection), or {} when the
+    registry has no row for it (the page then shows today's fixed row). Pure."""
+    if row is None:
+        return {}
+    return {"connection_key": row.connection_key, "label": row.label, "enabled": bool(row.enabled),
+            "data_scope": row.data_scope, "failure_domain": row.failure_domain, "access_state": row.access_state,
+            "balance_source": row.balance_source, "from_registry": True}
+
+
+def _with_registry(provider: dict, row) -> dict:
+    """``provider`` (a jev / dfs / geo row) with the registry row's facts laid over it (enabled from the row only when
+    the source did not already decide it: Geoapify's 'configured' stays the geocoder's own answer)."""
+    view = registry_view(row)
+    if not view:
+        return {**provider, "from_registry": False}
+    keep_enabled = provider.get("key") == "geoapify"
+    out = {**provider, **{k: v for k, v in view.items() if not (k == "enabled" and keep_enabled)}}
+    if not out["enabled"] and out.get("status") in ("ok", "low", "unknown", "degraded"):
+        out["status"], out["status_reason"] = "disabled", "switched_off_in_registry"
+    return out
 
 
 async def _read_budgets(pool) -> dict:
@@ -384,20 +416,22 @@ async def _read_jev(pool, now: datetime) -> dict:
 
     estimate = await jev_credit.estimate(pool)
     decisions = await _fetchrow(pool, DECISIONS_SQL, now - timedelta(hours=DECISION_WINDOW_HOURS), now)
-    return {"estimate": estimate, "decisions": decisions, "threshold": jev_credit.LOW_CREDIT_THRESHOLD_USD}
+    return {"estimate": estimate, "decisions": decisions, "threshold": await jev_credit.low_credit_threshold(pool)}
 
 
-def dfs_threshold() -> float:
-    from api.routers.admin_llm_ops import _DFS_BALANCE_ALERT_THRESHOLD_USD
+async def dfs_threshold(pool) -> float:
+    """AA-1017: the DataForSEO row's low_balance_usd, else the env / $10 default (the daily check's own value)."""
+    from api.routers.admin_llm_ops import dfs_balance_threshold
 
-    return float(_DFS_BALANCE_ALERT_THRESHOLD_USD)
+    return await dfs_balance_threshold(pool)
 
 
-def geo_settings() -> tuple[bool, int]:
-    """(Geoapify is the configured geocoder, its daily credit limit) — the values the geocoder itself enforces."""
+async def geo_settings(pool) -> tuple[bool, int]:
+    """(Geoapify is the configured geocoder, its daily credit limit) — the values the geocoder itself enforces
+    (AA-1017: the limit from the Geoapify connection row, else env / 2500)."""
     from services.places import geocoder
 
-    limit = int(geocoder._env_float("GEOAPIFY_DAILY_CREDIT_LIMIT", geocoder.DEFAULT_DAILY_CREDITS))
+    limit = await geocoder.refresh_daily_credit_limit(pool)
     return geocoder.provider_name() == "geoapify", limit
 
 
@@ -430,6 +464,7 @@ async def read_providers(pool, *, now: Optional[datetime] = None) -> dict:
     if geo:
         spent_today["geocoder"] = float(geo.get("today_usd") or 0.0)
 
+    registry_rows = (conns or {}).get("providers") or {}
     providers: list[dict] = []
     if conns is not None:
         providers += llm_rows(conns["connections"], conns["health"], by_account if ledger_err is None else {},
@@ -445,16 +480,18 @@ async def read_providers(pool, *, now: Optional[datetime] = None) -> dict:
                       spent_today)
         if ledger_err:
             row["spend"], row["error"] = None, ledger_err
-        providers.append(row)
+        providers.append(_with_registry(row, registry_rows.get("typesafe")))
     else:
         providers.append(failed_row("jev", "decide", "typesafe", "Jev (TypeSafe decisions)", jev_err))
     if dfs is not None:
-        providers.append(dfs_row(dfs_balance, dfs_threshold(), dfs_spend or {}, budgets, spent_today))
+        providers.append(_with_registry(dfs_row(dfs_balance, await dfs_threshold(pool), dfs_spend or {}, budgets,
+                                                spent_today), registry_rows.get("dataforseo")))
     else:
         providers.append(failed_row("dataforseo", "data", "dataforseo", "DataForSEO", dfs_err))
     if geo is not None:
-        configured, limit = geo_settings()
-        providers.append(geo_row(configured, geo, limit, budgets, spent_today))
+        configured, limit = await geo_settings(pool)
+        providers.append(_with_registry(geo_row(configured, geo, limit, budgets, spent_today),
+                                        registry_rows.get("geoapify")))
     else:
         providers.append(failed_row("geoapify", "data", "geoapify", "Geoapify (geocoder)", geo_err))
 

@@ -55,8 +55,7 @@ def make_clients(provider: str, credits_used_today: int):
     if provider != "geoapify":
         return None, None
     details = GeoapifyDetails(
-        daily_credit_limit=int(geocoder_mod._env_float("GEOAPIFY_DAILY_CREDIT_LIMIT",
-                                                       geocoder_mod.DEFAULT_DAILY_CREDITS)),
+        daily_credit_limit=geocoder_mod.daily_credit_limit(),     # AA-1017: the Geoapify row, else env / 2500
         rate_per_s=geocoder_mod.clamp_rate(geocoder_mod._env_float("GEOAPIFY_RATE_PER_S",
                                                                    geocoder_mod.DEFAULT_RATE_PER_S)),
         credits_used_today=credits_used_today)
@@ -82,6 +81,7 @@ async def _run_locked(ctx: JobContext, limit: int) -> dict:
     provider = geocoder_mod.provider_name()
     async with ctx.pool.acquire() as conn:
         used = await store.geocoder_requests_today(conn, "geoapify")
+        await geocoder_mod.refresh_daily_credit_limit(conn)
     details, overpass = make_clients(provider, used)
     cost_per_credit = geocoder_mod._env_float("GEOCODER_COST_PER_REQUEST_USD", 0.0)
     budget = await load_run_budget(ctx.pool, "geocoder", KIND) if details is not None else None
