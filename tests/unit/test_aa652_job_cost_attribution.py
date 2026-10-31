@@ -35,7 +35,8 @@ async def test_bound_job_id_reaches_tasks_and_threads():
         with call_log.bind_job("11111111-1111-1111-1111-111111111111"):
             task = asyncio.create_task(call_log.record_call(**_kwargs()))
         await task  # created inside the binding, awaited after it ended: still tagged
-        assert conn.execute.call_args.args[-1] == "11111111-1111-1111-1111-111111111111"
+        # AA-804: $15 = job_id (the ledger v2 statement appends the S6 and v2 values after it)
+        assert conn.execute.call_args.args[15] == "11111111-1111-1111-1111-111111111111"
 
         with call_log.bind_job("22222222-2222-2222-2222-222222222222"):
             seen = await asyncio.to_thread(call_log.current_job_id)
