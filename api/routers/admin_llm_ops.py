@@ -41,6 +41,7 @@ from shared.dfs_client.balance import read_latest_balance, record_balance_snapsh
 from shared.dfs_client.unmapped_market import list_unmapped_market_requests
 from shared.llm_client.catalog import (
     CatalogPolicyBlocked,
+    CatalogPriceReadOnly,
     CatalogPriceRequired,
     list_catalog_rows,
     list_models,
@@ -60,6 +61,16 @@ from shared.llm_client.role_config import (
 # AA-627 — DFS low-balance alert threshold (USD). Env-driven to match the repo's config
 # convention (ADMIN_SECRET, DATAFORSEO_*, SECRET_* are all env). Default $10 per the issue.
 _DFS_BALANCE_ALERT_THRESHOLD_USD = float(os.environ.get("DFS_BALANCE_ALERT_THRESHOLD_USD", "10"))
+
+
+async def dfs_balance_threshold(pool) -> float:
+    """AA-1017 (registry v2, migration 322): the DataForSEO low-balance threshold, from its connection row
+    (``dataforseo.low_balance_usd``), else the env DFS_BALANCE_ALERT_THRESHOLD_USD / $10 above. Never raises."""
+    from shared.llm_client import connections as conn_registry
+
+    row = await conn_registry.provider_connection(pool, "dataforseo")
+    value = row.low_balance_usd if row is not None else None
+    return float(value) if value is not None else float(_DFS_BALANCE_ALERT_THRESHOLD_USD)
 # Platform sentinel tenant (silver_aa_internal / master content) — the low-balance notification
 # is platform-wide, not tenant-scoped, so it is attributed to this sentinel (shared.notifications
 # requires a NOT NULL tenant_id). Same UUID used across ingestion/canary/s1_batch.
@@ -452,7 +463,7 @@ async def get_llm_catalog():
 
 
 @router.patch("/llm-catalog/{model_key}",
-              summary="Edit a catalog row's price / enabled (admin-only)")
+              summary="Switch a catalog row on or off (admin-only; prices change by migration only)")
 async def patch_llm_catalog(
     model_key: str,
     body: LlmCatalogPatch,
@@ -469,7 +480,7 @@ async def patch_llm_catalog(
             model_key, fields=fields, updated_by=f"admin:{admin_actor}",
             audit_actor=f"admin:{admin_actor}",
         )
-    except (CatalogPriceRequired, CatalogPolicyBlocked) as e:
+    except (CatalogPriceRequired, CatalogPolicyBlocked, CatalogPriceReadOnly) as e:
         raise HTTPException(status_code=422, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -1057,7 +1068,7 @@ async def check_dfs_balance(request: Request, x_admin_secret: str = Header(None)
     verify_admin_secret(x_admin_secret)
     from services.seo_intelligence.dataforseo_client import DataForSEOClient
 
-    threshold = _DFS_BALANCE_ALERT_THRESHOLD_USD
+    threshold = await dfs_balance_threshold(request.app.state.pool)
     try:
         money = await DataForSEOClient().fetch_balance()
     except Exception as e:
@@ -1097,7 +1108,7 @@ async def check_dfs_balance(request: Request, x_admin_secret: str = Header(None)
 async def get_dfs_balance(request: Request):
     pool = request.app.state.pool
     latest = await read_latest_balance(pool)
-    threshold = _DFS_BALANCE_ALERT_THRESHOLD_USD
+    threshold = await dfs_balance_threshold(pool)
     if not latest:
         return {"balance_usd": None, "currency": None, "threshold_usd": threshold,
                 "below_threshold": False, "fetched_at": None, "has_data": False}
@@ -1211,11 +1222,15 @@ async def get_llm_connections(request: Request):
 class LlmConnectionPatch(BaseModel):
     """AA-1002 (S4): the editable fields of a connection (api/services/llm_connections.EDITABLE). Only the fields
     sent are changed; an explicit null clears a nullable one. Identity (kind, auth mode, account, role, ExternalId,
-    region, credential env) and data scope are not editable here (extra fields are refused)."""
+    region, credential env) and data scope are not editable here (extra fields are refused). AA-1017 (D9, migration
+    322): ``secret_name`` and ``base_url`` are accepted only to be refused with a readable 422 (they change by
+    migration only); ``daily_credit_limit`` and ``low_balance_usd`` are the provider limits of 322."""
     model_config = {"extra": "forbid"}
     enabled: Optional[bool] = None
-    secret_name: Optional[str] = Field(None, max_length=256)
-    base_url: Optional[str] = Field(None, max_length=512)
+    secret_name: Optional[str] = Field(None, max_length=256,
+                                       description="Read-only since migration 322: always refused (422).")
+    base_url: Optional[str] = Field(None, max_length=512,
+                                    description="Read-only since migration 322: always refused (422).")
     timeout_s: Optional[int] = Field(None, ge=1, le=900)
     max_retries: Optional[int] = Field(None, ge=0, le=5)
     max_concurrency: Optional[int] = Field(None, ge=1, le=1000)
@@ -1227,6 +1242,9 @@ class LlmConnectionPatch(BaseModel):
     budget_hard_stop: Optional[bool] = None
     usage_secret_name: Optional[str] = Field(None, max_length=256)
     usage_scope_id: Optional[str] = Field(None, max_length=128)
+    # AA-1017 (migration 322): the provider limits (Geoapify credits a day; Jev / DataForSEO low-balance alert)
+    daily_credit_limit: Optional[int] = Field(None, ge=0, le=10_000_000)
+    low_balance_usd: Optional[float] = Field(None, ge=0, le=1_000_000)
 
     @model_validator(mode="after")
     def _something_to_change(self):
@@ -1245,11 +1263,11 @@ class LlmConnectionPatch(BaseModel):
         return out
 
 
-# AA-1002 (gateway slices S2 / S4) — switch an LLM connection on or off and edit its secret name, endpoint and limits
-# (admin only, POLICY ai.admin; one audit row per change). Enabling, or moving the secret / endpoint of an enabled
-# connection, refuses a policy problem or an unreadable secret (422). The worker reads the change within 5 minutes.
+# AA-1002 (gateway slices S2 / S4) — switch an LLM connection on or off and edit its limits (admin only, POLICY
+# ai.admin; one audit row per change). Enabling refuses a policy problem or an unreadable secret (422). The worker reads
+# the change within 5 minutes. AA-1017 (D9): the secret name and endpoint are migration-only (422).
 @router.patch("/llm-connections/{connection_key}",
-              summary="Change an LLM connection: on/off, secret name, endpoint, limits (admin-only, audited)")
+              summary="Change a provider connection: on/off and limits (admin-only, audited)")
 async def patch_llm_connection(
     request: Request,
     connection_key: str,

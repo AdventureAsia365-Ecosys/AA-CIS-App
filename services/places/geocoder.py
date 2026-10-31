@@ -197,6 +197,35 @@ def _install_log_redaction() -> None:
             lg.addFilter(_RedactApiKey())
 
 
+# AA-1017 (registry v2, migration 322): the daily credit limit is the Geoapify connection row's daily_credit_limit
+# (shared.llm_provider_connection 'geoapify', seeded 2500); the env GEOAPIFY_DAILY_CREDIT_LIMIT and
+# DEFAULT_DAILY_CREDITS answer when there is no row (row -> env -> constant). Jobs refresh it from the DB when they
+# start (refresh_daily_credit_limit); a sync reader (daily_credit_limit) uses the last value read in this process.
+GEOAPIFY_CONNECTION_KEY = "geoapify"
+_registry_daily_limit: Optional[int] = None
+
+
+def daily_credit_limit() -> int:
+    """The Geoapify credits a UTC day: the connection row's value last read in this process, else the env var, else
+    DEFAULT_DAILY_CREDITS."""
+    if _registry_daily_limit is not None:
+        return _registry_daily_limit
+    return int(_env_float("GEOAPIFY_DAILY_CREDIT_LIMIT", DEFAULT_DAILY_CREDITS))
+
+
+async def refresh_daily_credit_limit(db) -> int:
+    """Read the Geoapify connection row (``db``: asyncpg connection or pool) and return ``daily_credit_limit()``. A
+    missing row / column or a failed read keeps the last value (none = env / constant). Never raises."""
+    global _registry_daily_limit
+    from shared.llm_client import connections as conn_registry
+
+    row = await conn_registry.provider_connection(db, GEOAPIFY_CONNECTION_KEY)
+    if row is not None:
+        value = row.daily_credit_limit
+        _registry_daily_limit = value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+    return daily_credit_limit()
+
+
 def _env_float(name: str, default: float) -> float:
     raw = os.environ.get(name)
     if raw in (None, ""):
@@ -461,12 +490,13 @@ def provider_name(value: Optional[str] = None) -> str:
 def get_geocoder(value: Optional[str] = None, **kw) -> Geocoder:
     """The configured geocoder. Env (⚠️ underscore names — set by hand in the task definition):
     GEOCODER_PROVIDER (default geoapify), GEOCODER_COST_PER_REQUEST_USD (default 0: Free plan),
-    GEOAPIFY_DAILY_CREDIT_LIMIT (default 2500), GEOAPIFY_RATE_PER_S (default 5, clamped to (0, 5])."""
+    GEOAPIFY_DAILY_CREDIT_LIMIT (default 2500; AA-1017: the Geoapify connection row first, daily_credit_limit()),
+    GEOAPIFY_RATE_PER_S (default 5, clamped to (0, 5])."""
     name = provider_name(value)
     if name == "model_only":
         return ModelOnlyGeocoder()
     if name == "geoapify":
         kw.setdefault("cost_per_request", _env_float("GEOCODER_COST_PER_REQUEST_USD", 0.0))
-        kw.setdefault("daily_credit_limit", int(_env_float("GEOAPIFY_DAILY_CREDIT_LIMIT", DEFAULT_DAILY_CREDITS)))
+        kw.setdefault("daily_credit_limit", daily_credit_limit())
         kw.setdefault("rate_per_s", clamp_rate(_env_float("GEOAPIFY_RATE_PER_S", DEFAULT_RATE_PER_S)))
     return PROVIDERS[name](**kw)

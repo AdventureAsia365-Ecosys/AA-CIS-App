@@ -329,9 +329,18 @@ def test_prompt_hash_is_stable_and_not_the_prompt():
 
 # ── Jev ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
+def _fresh_decide_config(monkeypatch, d):
+    """decide() caches its questions for 20 s: a decide test run just before (another module, another question set)
+    would leave this test's question unknown, so nothing is asked and nothing logged. Reload from this test's conn."""
+    monkeypatch.setattr(d, "_questions_loaded_at", 0.0)
+    monkeypatch.setattr(d, "_allowlist_loaded_at", 0.0)
+    d.reset_decision_memo()
+
+
 def test_a_jev_ask_refused_by_the_open_credit_breaker_is_a_row(monkeypatch):
     from shared.llm_client import decide as d
     from tests.unit.test_aa660_decide import _conn, _q
+    _fresh_decide_config(monkeypatch, d)
     monkeypatch.setattr(d, "jev_breaker_open", lambda: True)
     conn = _conn([_q()])
     with patch.object(d, "_call_jev", new=AsyncMock()) as m_call, \
@@ -346,6 +355,7 @@ def test_a_jev_ask_refused_by_the_open_credit_breaker_is_a_row(monkeypatch):
 def test_an_answered_jev_ask_logs_its_latency_and_questions(monkeypatch):
     from shared.llm_client import decide as d
     from tests.unit.test_aa660_decide import _conn, _q
+    _fresh_decide_config(monkeypatch, d)
     monkeypatch.setattr(d, "jev_breaker_open", lambda: False)
     monkeypatch.setattr(d, "jev_budget_blocks", AsyncMock(return_value=False))
     answer = {"model": "jev-latest", "usage": {"input_tokens": 100},

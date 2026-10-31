@@ -4,6 +4,21 @@ The whole table is small, so it is loaded in one query and cached in-process. Ne
 DB failure every lookup returns None and callers fall back (pricing.py, the legacy LLMClient
 chain). A failed load is remembered for a short while so a DB outage — or a unit-test run with
 no database — costs one connection attempt, not one per LLM call.
+
+AA-1017 (registry v2, migration 320; root ADR 0009 §3): each row also carries its ``family`` (the maker, a row of
+shared.llm_model_family; NULL = its vendor) and its ``capabilities`` (jsonb, read as data). The gateway reads a
+capability first and falls back to today's code rules when the row does not say (``capability``):
+
+- ``forced_tool_choice`` (bool): False = the model answers a forced tool choice with a 400 (client.py asks with
+  ``auto`` + an instruction). Unset = the profile-id markers (``client._NO_FORCED_TOOL_CHOICE_MARKERS``).
+- ``prompt_cache`` (bool): True / False = a Converse cachePoint may / may not be sent. Unset = only to an
+  ``anthropic.`` inference profile.
+- ``cache_min_tokens`` (int): the minimum cacheable prompt prefix. Unset = the per-family table in client.py.
+- ``effort_default`` (string or null): the Anthropic API effort sent when the deployment sets none; null = the model
+  takes no effort parameter. Unset = ``adapters/anthropic_messages._EFFORT_DEFAULTS``.
+
+Every row has ``{}`` at migration 320, so behaviour is today's. Prices change by migration only: the admin PATCH may
+switch a row on or off but ``set_catalog_price`` refuses a price edit (AA-1017, D9).
 """
 from __future__ import annotations
 
@@ -71,6 +86,14 @@ class CatalogModel:
     price_cache_write_per_mtok: Optional[float] = None
     enabled: bool = False
     blocked_reason: Optional[str] = None
+    # AA-1017 (migration 320): the family key (None = before 320 or not set: read vendor) and the capabilities row.
+    family: Optional[str] = None
+    capabilities: dict = field(default_factory=dict)
+
+    @property
+    def family_key(self) -> str:
+        """The model's family: ``family``, else its vendor (every row before migration 320)."""
+        return self.family or self.vendor
 
     def account_for(self, preferred: Optional[str]) -> Optional[str]:
         """The preferred account if this model is served there, else the first account that serves
@@ -96,10 +119,45 @@ def _num(v) -> Optional[float]:
     return float(v) if v is not None else None
 
 
+_MISSING = object()
+
+
+def capability(model, name: str, default=None):
+    """AA-1017: the value of capability ``name`` in ``model.capabilities`` (the catalog row), else ``default`` (the
+    caller then applies today's code rule). Works on any object with a ``capabilities`` dict (test doubles without one
+    answer ``default``). Never raises."""
+    caps = getattr(model, "capabilities", None)
+    if not isinstance(caps, dict):
+        return default
+    value = caps.get(name, _MISSING)
+    return default if value is _MISSING else value
+
+
+def has_capability(model, name: str) -> bool:
+    """True when the catalog row states capability ``name`` (null included: "takes no effort" is a statement)."""
+    caps = getattr(model, "capabilities", None)
+    return isinstance(caps, dict) and name in caps
+
+
+def _field(row, key: str):
+    try:
+        return row[key]
+    except (KeyError, IndexError):
+        return None
+
+
+def _capabilities(raw) -> dict:
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return {}
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
 def _row_to_model(row) -> CatalogModel:
     profiles = row["bedrock_profile_ids"]
     if isinstance(profiles, str):
-        import json
         profiles = json.loads(profiles)
     return CatalogModel(
         model_key=row["model_key"], label=row["label"], vendor=row["vendor"],
@@ -113,6 +171,7 @@ def _row_to_model(row) -> CatalogModel:
         price_cache_read_per_mtok=_num(row["price_cache_read_per_mtok"]),
         price_cache_write_per_mtok=_num(row["price_cache_write_per_mtok"]),
         enabled=row["enabled"], blocked_reason=row["blocked_reason"],
+        family=_field(row, "family"), capabilities=_capabilities(_field(row, "capabilities")),
     )
 
 
@@ -122,12 +181,22 @@ _SELECT_SQL = (
     "price_cache_read_per_mtok, price_cache_write_per_mtok, enabled, blocked_reason "
     "FROM shared.llm_model_catalog ORDER BY model_key"
 )
+# AA-1017: the same read with the row's capabilities (migration 304) and family (migration 320).
+_SELECT_V2_SQL = _SELECT_SQL.replace(", blocked_reason ", ", blocked_reason, capabilities, family ")
+
+
+async def _fetch_rows(conn, v2_sql: str, v1_sql: str):
+    """The v2 read, or the pre-320 one when the table has no family column yet."""
+    try:
+        return await conn.fetch(v2_sql)
+    except asyncpg.exceptions.UndefinedColumnError:
+        return await conn.fetch(v1_sql)
 
 
 async def _fetch_all() -> dict[str, CatalogModel]:
     conn = await asyncpg.connect(get_database_url(), ssl="require", timeout=_CONNECT_TIMEOUT_SECONDS)
     try:
-        rows = await conn.fetch(_SELECT_SQL)
+        rows = await _fetch_rows(conn, _SELECT_V2_SQL, _SELECT_SQL)
         return {r["model_key"]: _row_to_model(r) for r in rows}
     finally:
         await conn.close()
@@ -197,11 +266,19 @@ _FULL_SELECT_SQL = (
     "price_cache_read_per_mtok, price_cache_write_per_mtok, price_source, enabled, blocked_reason, "
     "notes, updated_at, updated_by FROM shared.llm_model_catalog ORDER BY model_key"
 )
+# AA-1017: the admin read with the family (migration 320) and the capabilities (migration 304).
+_FULL_SELECT_V2_SQL = _FULL_SELECT_SQL.replace(", updated_by FROM", ", updated_by, family, capabilities FROM")
 
 # Columns an admin may edit via PATCH /admin/llm-catalog/{model_key} (ADR 0005: the dropdown
-# options and prices come from here; vendor/provider/api_style/profile ids are a code+migration
-# change, not a config change).
-_CATALOG_EDITABLE_FIELDS = ("price_in_per_mtok", "price_out_per_mtok", "price_source", "enabled")
+# options come from here; vendor/provider/api_style/profile ids are a code+migration change, not a
+# config change). AA-1017 (design D9): prices too — a price record changes by migration only
+# (ADR 0009 §3), so the admin keeps the on/off switch and a price edit is refused (CatalogPriceReadOnly).
+_CATALOG_EDITABLE_FIELDS = ("enabled",)
+CATALOG_PRICE_FIELDS = ("price_in_per_mtok", "price_out_per_mtok", "price_source")
+
+
+class CatalogPriceReadOnly(ValueError):
+    """AA-1017 (D9): a catalog price edit through the admin. Prices change by migration only. Router -> 422."""
 
 
 def _row_to_dict(row) -> dict:
@@ -211,6 +288,10 @@ def _row_to_dict(row) -> dict:
         profiles = json.loads(profiles)
     d["bedrock_profile_ids"] = dict(profiles or {})
     d["callable_via"] = list(d.get("callable_via") or [])
+    if "capabilities" in d:
+        d["capabilities"] = _capabilities(d.get("capabilities"))
+    if "family" in d or "vendor" in d:
+        d["family"] = d.get("family") or d.get("vendor")
     for k in ("price_in_per_mtok", "price_out_per_mtok", "price_cache_read_per_mtok",
               "price_cache_write_per_mtok"):
         d[k] = _num(d.get(k))
@@ -223,7 +304,7 @@ async def list_catalog_rows() -> list[dict]:
     (JSON-ready). Fresh each call (admin surface), unlike the cached CatalogModel read path."""
     conn = await asyncpg.connect(get_database_url(), ssl="require", timeout=_CONNECT_TIMEOUT_SECONDS)
     try:
-        rows = await conn.fetch(_FULL_SELECT_SQL)
+        rows = await _fetch_rows(conn, _FULL_SELECT_V2_SQL, _FULL_SELECT_SQL)
         return [_row_to_dict(r) for r in rows]
     finally:
         await conn.close()
@@ -238,7 +319,15 @@ async def set_catalog_price(
     Raises ValueError when `model_key` does not exist (router -> 404) and CatalogPriceRequired when
     the DB rejects enabling a model with no in/out price (router -> 422, never 500). The in-process
     cache is invalidated after a committed write so the next dropdown read is fresh.
+
+    AA-1017 (D9): a price field (CATALOG_PRICE_FIELDS) raises CatalogPriceReadOnly before anything
+    is read or written (router -> 422): prices change by migration only. ``enabled`` stays editable.
     """
+    prices = sorted(k for k in fields if k in CATALOG_PRICE_FIELDS)
+    if prices:
+        raise CatalogPriceReadOnly(
+            f"{', '.join(prices)}: catalog prices change by migration only (a reviewed price record); "
+            "only the on/off switch is editable here")
     edits = {k: v for k, v in fields.items() if k in _CATALOG_EDITABLE_FIELDS}
     if not edits:
         raise ValueError("no editable catalog fields supplied")

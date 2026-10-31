@@ -231,7 +231,16 @@ def test_migrations_306_and_310_grant_exactly_the_columns_the_patch_writes():
         grants += re.findall(r"^GRANT UPDATE \((.+?)\)\s+ON (\S+) TO (\w+);", path.read_text(), re.MULTILINE)
     assert {(g[1], g[2]) for g in grants} == {("shared.llm_provider_connection", "cis_app")}
     granted = {c.strip() for g in grants for c in g[0].split(",")}
-    assert granted == set(llm_connections.EDITABLE) | {"updated_at", "updated_by"}
+    # AA-1017 (D9): migration 322 revokes the secret name / endpoint (and credential_env) and grants its own columns.
+    m322 = MIGRATION_311.parent / "322_provider_connection_v2.sql"
+    revoked = re.search(r"^REVOKE UPDATE \((.+?)\) ON shared\.llm_provider_connection FROM cis_app;", m322.read_text(),
+                        re.MULTILINE)
+    added = re.search(r"^GRANT UPDATE \((.+?)\)\s+ON shared\.llm_provider_connection TO cis_app;",
+                      m322.read_text(), re.MULTILINE)
+    granted = (granted - {c.strip() for c in revoked.group(1).split(",")}) | {c.strip() for c in
+                                                                              added.group(1).split(",")}
+    assert {"access_state", "last_probe_at"} <= granted        # written by the gateway (AA-1018 part 2), not the PATCH
+    assert granted - {"access_state", "last_probe_at"} == set(llm_connections.EDITABLE) | {"updated_at", "updated_by"}
     source = Path(llm_connections.__file__).read_text()
     assert "SET {sets}, updated_at = now(), updated_by = ${n}" in source       # only EDITABLE columns + the stamp
     assert re.findall(r"^GRANT UPDATE \((.+?)\) ON", MIGRATION_306.read_text(), re.MULTILINE) == [

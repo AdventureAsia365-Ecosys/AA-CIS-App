@@ -1,8 +1,7 @@
 """AA-1002 (gateway slice S4) — the admin side of the Connections tab.
 
-- PATCH /admin/llm-connections/{key}: secret name / base URL / limits / notes, admin only, policy checked before any
-  secret is read, the key read before the transaction when the credential moves on an enabled connection, one audit
-  row, never the key; 503 until migration 310's grant exists.
+- PATCH /admin/llm-connections/{key}: on/off, limits, notes, admin only, one audit row, never the key; 503 until
+  migration 310's grant exists. AA-1017 (D9): the secret name and base URL are refused (migration only).
 - POST /admin/llm-connections/{key}/test: one small call through LLMClient.probe (never a live call here: the client
   is a fake), logged in llm_call_log (stage adhoc_conn_test, role validate), audited, failure = an answer.
 - GET /admin/llm-availability per connection (the breaker state of each deployment).
@@ -81,46 +80,39 @@ def test_limits_update_in_one_statement_with_an_audit_row(_secret):
     assert db.reads == [("locked", True)]
 
 
-@pytest.mark.parametrize("row,changes,match", [
-    (_row(), {"secret_name": "aa-cis/dev/rds"}, "aa-llm"),            # another app's secret
-    (_row(), {"secret_name": "aa-llm/dev/../x"}, "aa-llm"),
-    (_row(), {"base_url": "https://evil.example.com"}, "not allowed"),
-    (_row(), {"base_url": "http://api.anthropic.com"}, "plain https"),
-    (_row(connection_key="acc3", kind="bedrock", auth_mode="task_role", region="us-west-1", secret_name=None,
-          base_url=None), {"secret_name": "aa-llm/dev/x"}, "takes no secret_name"),
-    (_row(connection_key="acc3", kind="bedrock", auth_mode="task_role", region="us-west-1", secret_name=None,
-          base_url=None), {"base_url": "https://api.anthropic.com"}, "takes no base_url"),
-    (_row(enabled=True), {"secret_name": None}, "no secret_name or credential_env"),   # would leave it keyless
+# AA-1017 (D9, migration 322): the secret name and the endpoint are migration-only. Every such edit is refused before
+# anything is read or written, whatever the value (the S4 policy checks of the moved value no longer run).
+@pytest.mark.parametrize("row,changes", [
+    (_row(), {"secret_name": "aa-cis/dev/rds"}),
+    (_row(), {"secret_name": "aa-llm/dev/anthropic-direct-2"}),
+    (_row(enabled=True), {"secret_name": "aa-llm/dev/anthropic-direct-2"}),
+    (_row(), {"base_url": "https://evil.example.com"}),
+    (_row(), {"base_url": "https://api.anthropic.com"}),
+    (_row(enabled=True), {"secret_name": None}),
+    (_row(), {"rpm_limit": 10, "secret_name": "aa-llm/dev/x"}),
 ])
-def test_policy_refusals_read_no_secret_and_write_nothing(row, changes, match, _secret):
+def test_secret_and_endpoint_edits_are_refused_and_read_nothing(row, changes, _secret):
     db = FakeDB(row)
-    with pytest.raises(llm_connections.ConnectionToggleRefused, match=match):
+    with pytest.raises(llm_connections.ConnectionToggleRefused, match="migration only"):
         _update(db, changes, key=row["connection_key"])
     assert db.executed == []
     _secret.assert_not_called()
 
 
-def test_moving_the_secret_of_an_enabled_connection_reads_the_new_one_first(_secret):
+def test_the_route_refuses_a_secret_name_with_422():
     db = FakeDB(_row(enabled=True))
-    out = _update(db, {"secret_name": "aa-llm/dev/anthropic-direct-2"})
-    _secret.assert_called_once_with("aa-llm/dev/anthropic-direct-2")
-    assert out["changed_fields"] == ["secret_name"]
-    assert "sk-ant-test" not in repr(db.executed) and "sk-ant-test" not in repr(out)
-    assert db.reads == [("plain", False), ("locked", True)]          # the key was read outside the transaction
+    with patch.object(ops, "verify_admin_secret"):
+        with pytest.raises(HTTPException) as e:
+            asyncio.run(ops.patch_llm_connection(_request(db), "anthropic-direct",
+                                                 ops.LlmConnectionPatch(secret_name="aa-llm/dev/other"), "s", "u-1"))
+    assert e.value.status_code == 422 and "secret_name" in e.value.detail and db.executed == []
 
 
-def test_an_unreadable_new_secret_is_refused(_secret):
-    _secret.side_effect = RuntimeError("ResourceNotFoundException")
-    db = FakeDB(_row(enabled=True))
-    with pytest.raises(llm_connections.ConnectionToggleRefused, match="secret unreadable"):
-        _update(db, {"secret_name": "aa-llm/dev/missing"})
+def test_enabling_a_keyless_connection_is_still_refused(_secret):
+    db = FakeDB(_row(enabled=False, secret_name=None))
+    with pytest.raises(llm_connections.ConnectionToggleRefused, match="no secret_name or credential_env"):
+        _update(db, {"enabled": True})
     assert db.executed == []
-
-
-def test_moving_the_secret_of_a_disabled_connection_reads_nothing(_secret):
-    db = FakeDB(_row(enabled=False))
-    _update(db, {"secret_name": "aa-llm/dev/next"})
-    _secret.assert_not_called()
 
 
 def test_bedrock_and_openai_connections_can_be_switched_since_s3():

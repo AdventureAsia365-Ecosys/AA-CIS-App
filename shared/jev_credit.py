@@ -37,7 +37,10 @@ import structlog
 logger = structlog.get_logger()
 
 JEV_CREDIT_LOW_EVENT = "platform.jev_credit.low"
+# The default threshold. AA-1017 (registry v2, migration 322): the live value is the Jev connection row's
+# low_balance_usd (shared.llm_provider_connection 'typesafe', seeded 3.00); this constant answers when there is no row.
 LOW_CREDIT_THRESHOLD_USD = 3.0
+JEV_CONNECTION_KEY = "typesafe"
 # How often the api sampler re-checks (the sampler ticks every 300 s). The spend sum reads the
 # provider-typesafe rows of llm_call_log since the first top-up, so it is not run every tick.
 JEV_CREDIT_CHECK_EVERY_S = 1800.0
@@ -140,19 +143,30 @@ async def _maybe_insert_low_bell(conn, estimated_left: float, threshold_usd: flo
     return True
 
 
+async def low_credit_threshold(db) -> float:
+    """AA-1017: the low-credit threshold: the Jev connection row's ``low_balance_usd``, else LOW_CREDIT_THRESHOLD_USD.
+    ``db``: an asyncpg connection or pool. Never raises."""
+    from shared.llm_client import connections as conn_registry
+
+    row = await conn_registry.provider_connection(db, JEV_CONNECTION_KEY)
+    value = row.low_balance_usd if row is not None else None
+    return float(value) if value is not None else LOW_CREDIT_THRESHOLD_USD
+
+
 async def check_low_credit(pool, *, source: str, threshold_usd: Optional[float] = None,
                            now: Optional[datetime] = None) -> dict[str, Any]:
     """Compare the estimate with the threshold; below it, raise the throttled bell and queue the e-mail.
 
-    `threshold_usd` None = the real check at LOW_CREDIT_THRESHOLD_USD. A value = a test check (bell and
+    `threshold_usd` None = the real check at the Jev row's threshold (``low_credit_threshold``, default
+    LOW_CREDIT_THRESHOLD_USD). A value = a test check (bell and
     e-mail marked test). Returns the estimate plus {threshold_usd, below_threshold, alerted, email_job_id,
     test}. Raises only for a failed estimate read (the caller logs it); a failed bell or e-mail is logged and
     reported as alerted False / email_job_id None."""
     from shared import ops_alerts   # lazy: ops_alerts → ses_mailer, not needed by every importer
 
     test = threshold_usd is not None
-    threshold = LOW_CREDIT_THRESHOLD_USD if threshold_usd is None else float(threshold_usd)
     async with pool.acquire() as conn:
+        threshold = await low_credit_threshold(conn) if threshold_usd is None else float(threshold_usd)
         est = await estimate(conn)
         left = est["estimated_left_usd"]
         below = is_below(left, threshold)

@@ -3282,7 +3282,7 @@
       },
       "LlmConnectionPatch": {
         "additionalProperties": false,
-        "description": "AA-1002 (S4): the editable fields of a connection (api/services/llm_connections.EDITABLE). Only the fields\nsent are changed; an explicit null clears a nullable one. Identity (kind, auth mode, account, role, ExternalId,\nregion, credential env) and data scope are not editable here (extra fields are refused).",
+        "description": "AA-1002 (S4): the editable fields of a connection (api/services/llm_connections.EDITABLE). Only the fields\nsent are changed; an explicit null clears a nullable one. Identity (kind, auth mode, account, role, ExternalId,\nregion, credential env) and data scope are not editable here (extra fields are refused). AA-1017 (D9, migration\n322): ``secret_name`` and ``base_url`` are accepted only to be refused with a readable 422 (they change by\nmigration only); ``daily_credit_limit`` and ``low_balance_usd`` are the provider limits of 322.",
         "properties": {
           "base_url": {
             "anyOf": [
@@ -3294,6 +3294,7 @@
                 "type": "null"
               }
             ],
+            "description": "Read-only since migration 322: always refused (422).",
             "title": "Base Url"
           },
           "budget_alert_pct": {
@@ -3320,6 +3321,19 @@
             ],
             "title": "Budget Hard Stop"
           },
+          "daily_credit_limit": {
+            "anyOf": [
+              {
+                "maximum": 10000000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Daily Credit Limit"
+          },
           "enabled": {
             "anyOf": [
               {
@@ -3330,6 +3344,19 @@
               }
             ],
             "title": "Enabled"
+          },
+          "low_balance_usd": {
+            "anyOf": [
+              {
+                "maximum": 1000000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Low Balance Usd"
           },
           "max_concurrency": {
             "anyOf": [
@@ -3405,6 +3432,7 @@
                 "type": "null"
               }
             ],
+            "description": "Read-only since migration 322: always refused (422).",
             "title": "Secret Name"
           },
           "timeout_s": {
@@ -19082,7 +19110,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Edit a catalog row's price / enabled (admin-only)",
+        "summary": "Switch a catalog row on or off (admin-only; prices change by migration only)",
         "tags": [
           "admin-llm-ops"
         ]
@@ -19673,7 +19701,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Change an LLM connection: on/off, secret name, endpoint, limits (admin-only, audited)",
+        "summary": "Change a provider connection: on/off and limits (admin-only, audited)",
         "tags": [
           "admin-llm-ops"
         ]

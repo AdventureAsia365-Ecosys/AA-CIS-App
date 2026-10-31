@@ -15,7 +15,8 @@ throttled first, 402 / credit or spend-limit wording quota, 401 / 403 access den
 carry the Anthropic error types and the credit / spend-limit wording (the adapter reads that wording through
 ``classify_text`` too), so a stored job error classifies the same way.
 
-Everything else is ``other`` (outage, timeout, bad reply), and keeps today's behaviour. The first two are the
+Everything else is ``other`` (outage, timeout, bad reply), and keeps today's behaviour. AA-1017 adds ``truncated``
+for an ANSWERED reply cut at its token limit (``reply_class``): recorded, never a failure. The first two are the
 "account-level" classes: when every model a request tried failed with one of them, the gateway raises
 :class:`LLMAccessDenied` and the job runner fails the job at once with the reason ``llm_access_denied`` instead of
 burning its retries (``shared/jobs/worker.py``). The admin's LLM availability card reads the same classes
@@ -32,6 +33,13 @@ ACCESS_DENIED = "access_denied"
 QUOTA_EXHAUSTED = "quota_exhausted"
 THROTTLED = "throttled"
 OTHER = "other"
+# AA-1017 (design D6): a reply cut at its token limit. Not a failure: the call is billed and its content is returned
+# (the caller decides), so it never counts on a circuit and never raises. It is recorded: llm_call_log status and
+# error_class 'truncated' (call_log, migration 319) and llm_provider_health may hold it as a class (migration 320).
+TRUNCATED = "truncated"
+# The stop reasons that mean "cut at the token limit": Anthropic / Bedrock max_tokens, OpenAI length, Anthropic
+# model_context_window_exceeded.
+TRUNCATED_STOP_REASONS = frozenset({"max_tokens", "length", "model_context_window_exceeded"})
 
 # The job failure reason and the prefix of shared.job.error for a job ended by an account-level denial.
 LLM_ACCESS_DENIED_REASON = "llm_access_denied"
@@ -96,6 +104,17 @@ class LLMAccessDenied(RuntimeError):
 
     def __str__(self) -> str:
         return f"{LLM_ACCESS_DENIED_REASON}: {self.args[0]}"
+
+
+def is_truncated(stop_reason: Optional[str]) -> bool:
+    """AA-1017: True when a reply's stop reason says it was cut at its token limit (the TRUNCATED class)."""
+    return isinstance(stop_reason, str) and stop_reason in TRUNCATED_STOP_REASONS
+
+
+def reply_class(stop_reason: Optional[str]) -> Optional[str]:
+    """AA-1017: the class of a reply that was answered: TRUNCATED when it was cut at its token limit, else None (a
+    complete answer). The ledger writes it as status / error_class 'truncated'; the call still counts as a success."""
+    return TRUNCATED if is_truncated(stop_reason) else None
 
 
 def classify_text(text: Optional[str]) -> str:

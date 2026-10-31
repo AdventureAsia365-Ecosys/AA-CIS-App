@@ -33,6 +33,7 @@ from services.places import llm, locate, store
 from services.places.enqueue import (GEOCODE_KIND, GRAPH_KIND, SHAPE_KIND, enqueue_after_credit_reset,
                                      enqueue_debounced, enqueue_dedupe)
 from services.places.geolock import geoapify_lock
+from services.places import geocoder as geocoder_mod
 from services.places.geocoder import get_geocoder
 from services.places.pipeline import geocode_pending
 from shared.cost_guard import BudgetExceeded, load_run_budget, maybe_alert
@@ -108,6 +109,8 @@ async def _run_locked(ctx: JobContext) -> Optional[dict]:
     if hasattr(inner, "credits_used_today"):
         async with ctx.pool.acquire() as conn:
             inner.credits_used_today = await store.geocoder_requests_today(conn, inner.name)
+            # AA-1017: the daily limit from the Geoapify connection row (else env / 2500)
+            inner.daily_credit_limit = await geocoder_mod.refresh_daily_credit_limit(conn)
     llm_budget = await load_run_budget(ctx.pool, "bedrock", KIND)
     geo_budget = await load_run_budget(ctx.pool, "geocoder", KIND) if inner.calls_external else None
     geocoder = BudgetedGeocoder(inner, geo_budget)

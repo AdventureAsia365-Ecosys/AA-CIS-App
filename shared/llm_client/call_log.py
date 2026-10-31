@@ -26,6 +26,7 @@ import structlog
 
 from shared.secrets import get_database_url
 
+from .errors import TRUNCATED_STOP_REASONS
 from .models import ANTHROPIC_API_LABEL_PREFIX, AZURE_OPENAI_LABEL_PREFIX
 
 logger = structlog.get_logger()
@@ -94,8 +95,9 @@ STATUS_BILLED_UNUSABLE, STATUS_TRUNCATED = "billed_unusable", "truncated"
 STATUSES = (STATUS_OK, STATUS_REFUSED, STATUS_ERROR, STATUS_BILLED_UNUSABLE, STATUS_TRUNCATED)
 ERROR_CLASSES = ("access_denied", "quota_exhausted", "throttled", "credential", "other", "deadline", "budget",
                  "truncated")
-# A billed answer cut at its token limit (Anthropic / Bedrock max_tokens, OpenAI length): status 'truncated'.
-TRUNCATED_STOP_REASONS = frozenset({"max_tokens", "length", "model_context_window_exceeded"})
+# A billed answer cut at its token limit (Anthropic / Bedrock max_tokens, OpenAI length): status 'truncated'. AA-1017:
+# the class and its stop reasons live in errors.py (TRUNCATED, TRUNCATED_STOP_REASONS, imported above), the one place
+# the gateway classifies outcomes.
 # The gateway facts of one reply that billed_fields() passes on (besides the S6 four).
 V2_BILLED_KEYS = ("latency_ms", "attempt_no", "deployment_wire_id", "request_id", "effort", "reasoning_tokens",
                   "prompt_hash")

@@ -53,7 +53,11 @@ logger = structlog.get_logger()
 # T2 version and A1 rewrite label routes of /admin/content-quality read and write acp_shared.content_label).
 # 319 (AA-804 ledger v2 — the readers of shared.llm_call_log name its app / is_shadow / status columns: platform apps
 # and cost, the KPI and money reports, the planner, tenant 360 cost, LLM availability; strict prefix: 316-318 too).
-REQUIRED_CIS_SCHEMA = 319
+# 322 (AA-1017 registry v2 — the catalog read names llm_model_catalog.family (320), the deployment read
+# llm_model_deployment.api_style (320), the gateway reads shared.stage_model_params (320), the connection read and the
+# Jev / DataForSEO / Geoapify settings read the 322 columns and rows; each read falls back without them, so a missing
+# apply degrades to today's behaviour, and readiness says so; strict prefix: 320 and 321 too).
+REQUIRED_CIS_SCHEMA = 322
 # Versions this code needs that were registered after a higher one (reserved numbers): 297 (AA-920 WM-25) was reserved
 # in S255 and applied after 299. max() is already 299 without it, so the version reported is capped below the lowest
 # listed version that is not registered (297 missing -> 296 -> "schema_behind").

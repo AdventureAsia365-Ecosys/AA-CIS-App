@@ -332,14 +332,15 @@ async def test_set_catalog_price_maps_db_check_to_price_required():
 
 @pytest.mark.asyncio
 async def test_set_catalog_price_audits_before_after():
+    # AA-1017 (D9): prices are migration-only; the switch is what the admin edits, audited before / after.
     before = {"price_in_per_mtok": 2.0, "price_out_per_mtok": 10.0, "price_source": "old",
               "enabled": True}
     after_row = {"model_key": "sonnet-5", "label": "Sonnet 5", "vendor": "anthropic",
                  "provider": "bedrock", "api_style": "converse", "bedrock_profile_ids": {},
                  "wire_model": None, "callable_via": ["llm_client"], "supports_temperature": True,
-                 "max_output_tokens": None, "price_in_per_mtok": 3.0, "price_out_per_mtok": 10.0,
+                 "max_output_tokens": None, "price_in_per_mtok": 2.0, "price_out_per_mtok": 10.0,
                  "price_cache_read_per_mtok": None, "price_cache_write_per_mtok": None,
-                 "price_source": "new", "enabled": True, "blocked_reason": None, "notes": None,
+                 "price_source": "old", "enabled": False, "blocked_reason": None, "notes": None,
                  "updated_at": None, "updated_by": "a"}
     conn = _conn()
     conn.fetchrow = AsyncMock(side_effect=[before, after_row])
@@ -348,18 +349,26 @@ async def test_set_catalog_price_audits_before_after():
             patch.object(catalog_mod, "get_database_url", return_value="postgresql://x"), \
             patch.object(catalog_mod, "invalidate"):
         out = await catalog_mod.set_catalog_price(
-            "sonnet-5", fields={"price_in_per_mtok": 3.0, "price_source": "new"},
-            updated_by="u", audit_actor="admin:a")
+            "sonnet-5", fields={"enabled": False}, updated_by="u", audit_actor="admin:a")
 
-    assert out["price_in_per_mtok"] == 3.0
+    assert out["enabled"] is False and out["family"] == "anthropic"
     audit_call = conn.execute.call_args
     assert "acp_shared.audit_log" in audit_call.args[0]
     assert audit_call.args[2] == "llm_catalog_changed"
     assert audit_call.args[3] == "llm_model_catalog"
     assert audit_call.args[4] == "sonnet-5"
     details = json.loads(audit_call.args[5])
-    assert details["before"]["price_in_per_mtok"] == 2.0
-    assert details["after"]["price_in_per_mtok"] == 3.0
+    assert details["before"]["enabled"] is True
+    assert details["after"] == {"enabled": False}
+
+
+@pytest.mark.asyncio
+async def test_set_catalog_price_refuses_a_price_edit():
+    with patch.object(catalog_mod.asyncpg, "connect", AsyncMock()) as connect:
+        with pytest.raises(catalog_mod.CatalogPriceReadOnly):
+            await catalog_mod.set_catalog_price("sonnet-5", fields={"price_in_per_mtok": 3.0, "price_source": "new"},
+                                                updated_by="u", audit_actor="admin:a")
+    connect.assert_not_called()
 
 
 @pytest.mark.asyncio

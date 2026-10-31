@@ -37,7 +37,8 @@ from services.jobs.place_geocode_job import BudgetedGeocoder
 from services.places import relocate, store
 from services.places.enqueue import (GRAPH_KIND, RELOCATE_KIND, enqueue_debounced, enqueue_dedupe,
                                      next_credit_reset)
-from services.places.geocoder import DEFAULT_DAILY_CREDITS, _env_float, get_geocoder
+from services.places import geocoder as geocoder_mod
+from services.places.geocoder import get_geocoder
 from services.places.geolock import geoapify_lock
 from shared.cost_guard import BudgetExceeded, load_run_budget, maybe_alert
 from shared.jobs.registry import JobContext, enqueue, job_kind
@@ -111,8 +112,9 @@ def _payload(p: dict) -> dict:
 
 
 def daily_credits() -> int:
-    """This job's share of the day: the place_geocode credit limit minus RESERVE_CREDITS (never below 0)."""
-    limit = int(_env_float("GEOAPIFY_DAILY_CREDIT_LIMIT", DEFAULT_DAILY_CREDITS))
+    """This job's share of the day: the place_geocode credit limit minus RESERVE_CREDITS (never below 0). AA-1017: the
+    limit is the Geoapify connection row's (geocoder.daily_credit_limit, refreshed when the run starts)."""
+    limit = geocoder_mod.daily_credit_limit()
     return max(0, limit - relocate.RESERVE_CREDITS)
 
 
@@ -159,6 +161,7 @@ async def run(ctx: JobContext) -> Optional[dict]:
         if p["mode"] == "unhide" or p.get("confirm"):
             out["graph_job"], _ = await enqueue_debounced(ctx.pool, GRAPH_KIND, reason=KIND, created_by=KIND)
         return out
+    await geocoder_mod.refresh_daily_credit_limit(ctx.pool)      # AA-1017: the row's limit for daily_credits()
     inner = get_geocoder()
     if p["mode"] == "dry_run":
         async with ctx.pool.acquire() as conn:
