@@ -319,6 +319,75 @@ def test_an_access_state_write_error_never_reaches_the_call(monkeypatch):
     assert breaker._access_written == {}                            # tried again next time
 
 
+@pytest.mark.real_breaker
+def test_a_failing_access_state_write_is_tried_once_per_back_off_window(monkeypatch):
+    # Review S262: record_success runs on every answered call; a refused UPDATE must not open a DB connection each time.
+    calls = []
+
+    def refused(key, state):
+        calls.append((key, state))
+        raise RuntimeError("permission denied for table llm_provider_connection")
+    monkeypatch.setattr(breaker, "set_access_state", refused)
+    for _ in range(50):
+        breaker.record_success("acc3", "gpt-6-luna")
+    assert calls == [("acc3", "ok")]                                # one try, then the back-off
+    wait = breaker._access_failed_until["acc3"] - breaker.time.monotonic()
+    assert breaker.DB_RETRY_S - 5 < wait <= breaker.DB_RETRY_S
+    breaker.note_access_state("acc2", "ok")                         # the back-off is per connection
+    assert calls[-1] == ("acc2", "ok")
+    breaker._access_failed_until["acc3"] = breaker.time.monotonic() - 1   # the window has passed
+    monkeypatch.setattr(breaker, "set_access_state", lambda key, state: calls.append((key, state)))
+    breaker.record_success("acc3", "gpt-6-luna")
+    breaker.record_success("acc3", "gpt-6-luna")
+    assert calls[-1] == ("acc3", "ok") and calls.count(("acc3", "ok")) == 2
+    assert breaker._access_written["acc3"] == "ok" and "acc3" not in breaker._access_failed_until
+
+
+@pytest.mark.real_breaker
+def test_a_missing_access_state_column_waits_the_long_back_off(monkeypatch):
+    class UndefinedColumnError(Exception):
+        pass
+
+    def missing(key, state):
+        raise UndefinedColumnError('column "access_state" does not exist')
+    monkeypatch.setattr(breaker, "set_access_state", missing)
+    breaker.note_access_state("acc3", "ok")
+    wait = breaker._access_failed_until["acc3"] - breaker.time.monotonic()
+    assert breaker.DB_MISSING_RETRY_S - 5 < wait <= breaker.DB_MISSING_RETRY_S
+
+
+@pytest.mark.real_breaker
+def test_no_access_state_write_while_the_breaker_db_back_off_runs(monkeypatch):
+    calls = []
+    monkeypatch.setattr(breaker, "set_access_state", lambda key, state: calls.append((key, state)))
+    monkeypatch.setattr(breaker, "_db_down_until", breaker.time.monotonic() + 30)
+    breaker.note_access_state("acc3", "ok")
+    assert calls == [] and breaker._access_written == {}            # read only: the back-off is not extended
+    monkeypatch.setattr(breaker, "_db_down_until", 0.0)
+    breaker.note_access_state("acc3", "ok")
+    assert calls == [("acc3", "ok")]
+
+
+@pytest.mark.real_breaker
+def test_one_access_state_write_per_connection_at_a_time(monkeypatch):
+    import threading
+    started, release, calls = threading.Event(), threading.Event(), []
+
+    def slow(key, state):
+        calls.append((key, state))
+        started.set()
+        release.wait(5)
+    monkeypatch.setattr(breaker, "set_access_state", slow)
+    t = threading.Thread(target=breaker.note_access_state, args=("acc3", "ok"))
+    t.start()
+    assert started.wait(5)
+    for _ in range(20):
+        breaker.note_access_state("acc3", "ok")                     # another call thread: skipped, no second connect
+    release.set()
+    t.join(5)
+    assert calls == [("acc3", "ok")]
+
+
 def test_breaker_off_writes_no_access_state(monkeypatch):
     written = []
     monkeypatch.setattr(breaker, "set_access_state", lambda key, state: written.append((key, state)))

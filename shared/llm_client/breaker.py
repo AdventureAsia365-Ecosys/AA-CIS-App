@@ -633,8 +633,12 @@ on_connection_open: Callable[[Health, list[str]], None] = _alert_in_db
 # and the probe read: 'ok' after any answered call, else the account-wide class that opened the connection circuit
 # ('access_denied', 'quota_exhausted'; a key that cannot be read = 'unconfigured'). Written once per change and process
 # (a per-process memo; the UPDATE is a no-op when the row already holds the value), on its own DB connection, best
-# effort: a failed write never touches the breaker's DB back-off and never raises. cis_app has column UPDATE on
+# effort: a failed write never sets the breaker's DB back-off and never raises. cis_app has column UPDATE on
 # access_state (322).
+# Bounded (review S262): ``record_success`` runs on every answered call, so a write that fails (DB down, column or
+# grant missing) must not open a connection per call. One write per connection at a time (``_access_inflight``); none
+# while the breaker's own DB back-off runs (read only); after a failed write none for that connection for
+# ``DB_RETRY_S`` (``DB_MISSING_RETRY_S`` when the column / table is missing).
 
 ACCESS_STATE_OF_CLASS = {CREDENTIAL: "unconfigured", ACCESS_DENIED: "access_denied",
                          QUOTA_EXHAUSTED: "quota_exhausted"}
@@ -642,6 +646,10 @@ ACCESS_STATES = ("unknown", "ok", "access_denied", "quota_exhausted", "unconfigu
 _SET_ACCESS_STATE_SQL = ("UPDATE shared.llm_provider_connection SET access_state = $2 "
                          "WHERE connection_key = $1 AND access_state IS DISTINCT FROM $2")
 _access_written: dict[str, str] = {}
+_access_failed_until: dict[str, float] = {}
+_access_inflight: set[str] = set()
+_access_lock = threading.Lock()
+_MISSING_ERRORS = ("UndefinedColumnError", "UndefinedTableError")
 
 
 def access_state_of(error_class: Optional[str]) -> Optional[str]:
@@ -655,17 +663,33 @@ async def _write_access_state(conn, connection_key: str, state: str) -> str:
 
 def note_access_state(connection_key: str, state: Optional[str]) -> None:
     """Persist ``state`` as the connection's access_state unless this process already wrote it (the UPDATE itself
-    changes nothing when the row already holds it). Never raises. ``LLM_CIRCUIT_BREAKER=off`` writes nothing."""
+    changes nothing when the row already holds it). Skipped while a write for the connection runs, while the
+    breaker's DB back-off runs, and for ``DB_RETRY_S`` after a failed write of the connection (bounded: at most one
+    connect per connection per back-off window, whatever the call rate). Never raises. ``LLM_CIRCUIT_BREAKER=off``
+    writes nothing."""
     if not enabled() or state not in ACCESS_STATES:
         return
-    if _access_written.get(connection_key) == state:
-        return
+    now = time.monotonic()
+    with _access_lock:
+        if _access_written.get(connection_key) == state or connection_key in _access_inflight:
+            return
+        if now < _db_down_until or now < _access_failed_until.get(connection_key, float("-inf")):
+            return
+        _access_inflight.add(connection_key)
     try:
         set_access_state(connection_key, state)
-        _access_written[connection_key] = state
+        with _access_lock:
+            _access_written[connection_key] = state
+            _access_failed_until.pop(connection_key, None)
         logger.info("llm_connection_access_state", connection=connection_key, access_state=state)
-    except Exception as e:  # noqa: BLE001 — before migration 322 (no column) or DB down: try again next time
+    except Exception as e:  # noqa: BLE001 — before migration 322 (no column) or DB down: try again after the back-off
+        missing = type(e).__name__ in _MISSING_ERRORS
+        with _access_lock:
+            _access_failed_until[connection_key] = time.monotonic() + (DB_MISSING_RETRY_S if missing else DB_RETRY_S)
         logger.warning("llm_connection_access_state_write_failed", connection=connection_key, error=str(e)[:200])
+    finally:
+        with _access_lock:
+            _access_inflight.discard(connection_key)
 
 
 def _set_access_state_in_db(connection_key: str, state: str) -> None:
@@ -823,6 +847,9 @@ def reset() -> None:
     _loaded_at = 0.0
     _db_down_until = 0.0
     _ok_written.clear()
-    _access_written.clear()
+    with _access_lock:
+        _access_written.clear()
+        _access_failed_until.clear()
+        _access_inflight.clear()
     with _limiters_lock:
         _limiters.clear()
