@@ -65,7 +65,12 @@ PINNED = {
 
 
 def _digest(req) -> str:
-    body = {"dump": req.model_dump(), "set": sorted(req.model_fields_set)}
+    dump = req.model_dump()
+    # AA-1018 part 2: LLMRequest.role (the ledger role of an adhoc stage) never reaches the provider; unset, it is left
+    # out so the pins keep meaning "the provider request did not change". A judge that sets it changes its pin.
+    if dump.get("role") is None:
+        dump.pop("role", None)
+    body = {"dump": dump, "set": sorted(req.model_fields_set)}
     return hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 

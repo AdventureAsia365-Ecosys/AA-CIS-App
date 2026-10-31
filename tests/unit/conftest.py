@@ -103,8 +103,20 @@ def _llm_breaker_off(request, monkeypatch):
     monkeypatch.setattr(breaker, "_db", _no_db)
     # AA-1018: the connection-circuit alert writes a bell through its own DB connection; none in unit tests.
     monkeypatch.setattr(breaker, "on_connection_open", lambda health, models: None)
+    # AA-1018 part 2: the access_state write uses its own DB connection too; none in unit tests.
+    monkeypatch.setattr(breaker, "set_access_state", lambda connection_key, state: None)
+    # AA-1016 / AA-900 (AA-1018 part 2): the tenant AI budget and the prompt register read the DB on the call path;
+    # in unit tests no tenant has a budget and no prompt version is registered (tests that need them set loaders).
+    from shared.llm_client import prompt_registry, tenant_budget
+    tenant_budget.invalidate()
+    prompt_registry.invalidate()
+    monkeypatch.setattr(tenant_budget, "loader_tenants", lambda: frozenset())
+    monkeypatch.setattr(tenant_budget, "loader_state", lambda tenant_id: None)
+    monkeypatch.setattr(prompt_registry, "loader", lambda: set())
     yield
     breaker.reset()
+    tenant_budget.invalidate()
+    prompt_registry.invalidate()
 
 
 async def _fake_public_dns(host, port, family=0):

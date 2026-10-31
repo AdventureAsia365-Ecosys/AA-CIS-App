@@ -88,7 +88,8 @@ class FakePool:
         raise AssertionError(sql)
 
     async def fetchrow(self, sql, *args):
-        assert "status = 'failed'" in sql and "attempt = 0" in sql
+        # AA-1018 part 2: the guarded UPDATE takes the status it re-checks as $3 ('failed' here)
+        assert "status = $3" in sql and "attempt = 0" in sql and args[2] == "failed"
         self.updates.append(args)
         return None if args[0] in self.taken else {"id": args[0]}
 
@@ -113,8 +114,9 @@ async def test_a_dry_run_lists_and_changes_nothing(now_t0):
     out = await queue.retry_by_reason(pool, since=T0 - timedelta(days=14))
     assert out["dry_run"] is True and out["matched"] == 2 and out["eligible"] == 2 and out["requeued"] == 0
     assert pool.updates == []
-    prefix, since, kinds, limit = pool.candidate_args
+    prefix, since, kinds, limit, status = pool.candidate_args
     assert prefix == "llm_access_denied" and kinds == [] and limit == queue.RETRY_REASON_LIMIT
+    assert status == "failed"
 
 
 @pytest.mark.asyncio
