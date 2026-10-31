@@ -310,7 +310,7 @@ reports:
   decision: Which stage or model to optimise or reroute, which tenant is unprofitable, how much shadow/eval spend to keep?
   cadence: monthly section of FI-01 (business day 2) + live
   schedule: monthly
-  channel: /admin/cost-ops LLM tab with CSV export + FI-01 section
+  channel: /admin/cost-ops AI & data spend tab (LLM view) with CSV export + FI-01 section
   automation: auto
   status: partial
   priority: P1

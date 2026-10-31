@@ -6,6 +6,9 @@
 // DfsRunsPanel), AWS bill (the AA-623 Cost Explorer reconciliation), Jev (JevPanel, the Jev Decisions endpoints),
 // Deep link: /admin/cost-ops?tab=<key>. AA-804 UI part 2: Budgets moved to AI providers › Budgets; the old
 // `?tab=budgets` link is replaced in the browser by the new page (lib/aiGateway RETIRED_COST_OPS_TABS).
+// AA-804 UI part 3: the LLM, DataForSEO and Jev tabs became the views of one "AI & data spend" tab
+// (`?tab=spend&view=llm|dfs|jev`), which also shows TripPlanner's AI spend caps per stage (AA-1015); the old
+// `?tab=llm|dfs|jev` links are replaced in the browser by the merged tab (exactly one `tab` value).
 // AA-994: text in the UI language (messages.ts, panels.messages.ts); tenant labels, stages, roles, models, endpoints,
 // markets and AWS service names from the API stay as sent.
 
@@ -19,13 +22,16 @@ import DfsRunsPanel from "./DfsRunsPanel";
 import ForecastPanel from "./ForecastPanel";
 import JevPanel from "./JevPanel";
 import { A, serif, sans, mono, Card, SLabel, Badge, LoadingScreen, StatCard, TH, TD, CHART_TOOLTIP } from "../_components/adminUi";
-import { Button, Tabs, ScrollX, PageFrame, PageHeader, useFormat, useT } from "../../_kit";
+import { Button, SegmentedControl, Tabs, ScrollX, PageFrame, PageHeader, useFormat, useT } from "../../_kit";
 import { useChartColors } from "../../_kit/useTheme";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import {
   LIVE_ACCOUNTS, LLM_ACCOUNT, MAIN_ACCOUNT, RETIRED_ACCOUNT, accountLabel, accountName, isLiveAccount,
 } from "@/lib/awsAccounts";
-import { RETIRED_COST_OPS_TABS, retiredTabTarget } from "@/lib/aiGateway";
+import {
+  RETIRED_COST_OPS_TABS, SPEND_TAB, SPEND_VIEWS, parseSpendView, retiredTabTarget, type SpendView,
+} from "@/lib/aiGateway";
+import { TripPlannerCapsSection } from "../platform/apps/TpStageCaps";
 import { COST } from "./messages";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -505,11 +511,21 @@ function FallbackModal({ tenantId, tenantLabel, rangeQs, rangeLabel, onClose }: 
 // ═══════════════════════ PAGE ═══════════════════════════════════════════════
 
 const TABS = [
-  { key: "overview", label: "tabOverview" }, { key: "llm", label: "tabLlm" }, { key: "dfs", label: "tabDfs" },
-  { key: "aws", label: "tabAws" }, { key: "jev", label: "tabJev" },
+  { key: "overview", label: "tabOverview" }, { key: SPEND_TAB, label: "tabSpend" }, { key: "aws", label: "tabAws" },
 ] as const;
-// Tabs that load their own data (the page's spend fetch, its loading and error states do not apply).
-const SELF_LOADING_TABS = new Set(["jev"]);
+const VIEW_LABEL: Record<SpendView, "tabLlm" | "tabDfs" | "tabJev"> = { llm: "tabLlm", dfs: "tabDfs", jev: "tabJev" };
+
+/** Rewrite one query parameter in the address bar without a navigation (the page keeps its state). */
+function setParam(name: string, value: string | null): void {
+  try {
+    const url = new URL(window.location.href);
+    if (value == null) url.searchParams.delete(name);
+    else url.searchParams.set(name, value);
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  } catch {
+    /* the address bar is a convenience */
+  }
+}
 
 export default function CostOperationsPage() {
   // useSearchParams() needs a Suspense boundary in the App Router.
@@ -534,9 +550,22 @@ function CostOperationsInner() {
   const t = useT(COST);
   const { formatDate, formatDateTime } = useFormat();
   const names = useAcctNames();
-  const wanted = useSearchParams().get("tab");
+  const params = useSearchParams();
+  const wanted = params.get("tab");
   const [days, setDays] = useState(30);
-  const [tab, setTab] = useState<string>(() => (TABS.some(x => x.key === wanted) ? wanted! : "overview"));
+  const [tab, setTabState] = useState<string>(() => (TABS.some(x => x.key === wanted) ? wanted! : "overview"));
+  const [view, setViewState] = useState<SpendView>(() => parseSpendView(params.get("view")));
+  const setTab = (k: string) => {
+    setTabState(k);
+    setParam("tab", k === "overview" ? null : k);
+    setParam("view", k === SPEND_TAB && view !== "llm" ? view : null);
+  };
+  const setView = (v: SpendView) => {
+    setViewState(v);
+    setParam("view", v === "llm" ? null : v);
+  };
+  // The Jev view loads its own data (the page's spend fetch, its loading and error states do not apply).
+  const selfLoading = tab === SPEND_TAB && view === "jev";
   const tabs = useMemo(() => TABS.map(x => ({ key: x.key, label: t(x.label) })), [t]);
   const [branches, setBranches] = useState<Branch[] | null>(null);
   const [dfs, setDfs] = useState<{ summary: DfsSummary; branches: DfsBranch[] } | null>(null);
@@ -824,18 +853,28 @@ function CostOperationsInner() {
           </Card>
         )}
 
-        {/* AA-665 C1 — Jev spend and credit from the Jev Decisions endpoints; the page's window (max 90 days) applies. */}
-        {tab === "jev" && <JevPanel days={windowDays} />}
+        {/* AA-804 UI part 3 — AI & data spend: TripPlanner's caps (AA-1015), then one view per paid source. */}
+        {tab === SPEND_TAB && (
+          <div data-testid="cost-spend-tab" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 14,
+            marginBottom: 18 }}>
+            <TripPlannerCapsSection />
+            <SegmentedControl label={t("spendView")} value={view} onChange={setView} testId="cost-spend-view"
+              options={SPEND_VIEWS.map((v) => ({ value: v, label: t(VIEW_LABEL[v]) }))} />
+          </div>
+        )}
 
-        {!SELF_LOADING_TABS.has(tab) && loading && <LoadingScreen msg={t("loadingSpend")} />}
-        {!SELF_LOADING_TABS.has(tab) && !loading && error && (
+        {/* AA-665 C1 — Jev spend and credit from the Jev Decisions endpoints; the page's window (max 90 days) applies. */}
+        {selfLoading && <JevPanel days={windowDays} />}
+
+        {!selfLoading && loading && <LoadingScreen msg={t("loadingSpend")} />}
+        {!selfLoading && !loading && error && (
           <Card style={{ textAlign: "center", padding: 40 }}>
             <div style={{ color: A.red, marginBottom: 12 }}>{error}</div>
             <Button variant="secondary" onClick={() => load(rangeQs)}>{t("retry")}</Button>
           </Card>
         )}
 
-        {!SELF_LOADING_TABS.has(tab) && !loading && !error && (
+        {!selfLoading && !loading && !error && (
           <>
             {/* ═══════════ OVERVIEW ═══════════ */}
             {tab === "overview" && (
@@ -1002,7 +1041,7 @@ function CostOperationsInner() {
             )}
 
             {/* ═══════════ LLM ═══════════ */}
-            {tab === "llm" && (
+            {tab === SPEND_TAB && view === "llm" && (
               <>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 160px), 1fr))", gap: 14, marginBottom: 18 }}>
                   <StatCard label={t("llmCost")} value={fmtUsd2(llmCost)} sub={filterActive ? t("filtered") : rangeLabel} accent={A.gold} />
@@ -1058,7 +1097,7 @@ function CostOperationsInner() {
             )}
 
             {/* ═══════════ DFS ═══════════ */}
-            {tab === "dfs" && (
+            {tab === SPEND_TAB && view === "dfs" && (
               <>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 150px), 1fr))", gap: 14, marginBottom: 18 }}>
                   {/* AA-627 — account balance (remaining), distinct from cost (spent). Latest daily snapshot. */}

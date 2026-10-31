@@ -140,6 +140,24 @@ export interface TpSpendToday {
   level: "ok" | "warn" | "cap_reached";
   since: string;
   stages: string[];
+  /** AA-1015: each online stage against its own daily cap (cap_usd null = no stage cap set in TripPlanner, only the
+   *  combined cap applies). Absent on a payload cached before the field existed. */
+  stage_caps?: TpStageCap[];
+  /** true when any stage cap is set (mirrored TripPlanner env; unset today) */
+  stage_caps_set?: boolean;
+  /** TripPlanner's own rule: at near_cap_pct % of the combined cap or of a stage cap */
+  near_cap?: boolean;
+  near_cap_pct?: number;
+}
+
+export interface TpStageCap {
+  stage: string;
+  calls: number;
+  cost_usd: number;
+  cap_usd: number | null;
+  pct_of_cap: number | null;
+  near_cap: boolean;
+  level: "ok" | "warn" | "cap_reached";
 }
 
 export interface TripPlannerCard extends CardHealth {
