@@ -147,6 +147,22 @@ async def _month_spend(conn, tenant_ids: list[str], now: datetime) -> dict[str, 
     return {r["tenant_id"]: (float(r["cost_usd"]), int(r["calls"])) for r in rows}
 
 
+async def _names(conn, rows: list[dict]) -> dict:
+    """Staff names for the rows' ``updated_by`` (ai_gateway.actor_names); {} when the read fails (names are optional)."""
+    from api.services import ai_gateway
+
+    try:
+        return await ai_gateway.actor_names(conn, [r.get("updated_by") for r in rows])
+    except asyncpg.PostgresError:
+        return {}
+
+
+def _with_actor(view: dict, names: dict) -> dict:
+    from api.services import ai_gateway
+
+    return {**view, **ai_gateway.actor_view(view.get("updated_by"), names)}
+
+
 async def read_tier(pool, *, now: Optional[datetime] = None) -> dict:
     """{ready, rows}: every tenant budget with its month spend (Budgets tab). Before 321: ready False, no rows."""
     now = now or datetime.now(timezone.utc)
@@ -156,7 +172,8 @@ async def read_tier(pool, *, now: Optional[datetime] = None) -> dict:
         except _MISSING:
             return {"ready": False, "rows": []}
         spend = await _month_spend(conn, [r["tenant_id"] for r in rows], now)
-    return {"ready": True, "rows": [budget_view(r, spend.get(r["tenant_id"])) for r in rows]}
+        names = await _names(conn, rows)
+    return {"ready": True, "rows": [_with_actor(budget_view(r, spend.get(r["tenant_id"])), names) for r in rows]}
 
 
 async def read_one(pool, tenant_id: str, *, now: Optional[datetime] = None) -> Optional[dict]:
@@ -174,9 +191,10 @@ async def read_one(pool, tenant_id: str, *, now: Optional[datetime] = None) -> O
             row = await conn.fetchrow(ONE_SQL, tenant_id)
         except _MISSING:
             ready, row = False, None
+        names = await _names(conn, [dict(row)]) if row is not None else {}
     usd, calls = spend or (0.0, 0)
     return {"ready": ready, "tenant_id": tenant_id, "tenant_name": name,
-            "budget": budget_view(dict(row), spend) if row is not None else None,
+            "budget": _with_actor(budget_view(dict(row), spend), names) if row is not None else None,
             "month_spent_usd": round(float(usd), 4), "month_calls": int(calls), "month_start": start.isoformat(),
             "defaults": dict(DEFAULTS)}
 

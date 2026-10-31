@@ -9,21 +9,31 @@
 // off, limits, monthly budget, test call; secret name and base URL read-only) and Jev credit (JevCreditPanel: the
 // top-up ledger), both moved here from Settings. A Bedrock connection is named by its AWS account ID
 // (lib/llmConnections connectionName + useAwsAccounts), never by a key.
+// C4 (S262 wave 4): each row also says its access state, last probe and failure domain (registry v2, migration 322:
+// from the row itself for Jev / DataForSEO / Geoapify, from GET /api/admin/llm-connections and the availability read
+// for an LLM connection; a field the API does not send is not shown), and the two direct vendor APIs carry the
+// "warm path" label (root ADR 0009 decision 2). Below the LLM connections: "Re-queue refused jobs" (POST
+// /api/admin/job-runner/jobs/retry-llm-denied, ops.write): a dry run first, its numbers in a confirm dialog, then
+// the real re-queue.
 
-import { useQuery } from "@tanstack/react-query";
-import { useMemo } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { RotateCcw } from "lucide-react";
+import { useMemo, useState } from "react";
 import {
-  Badge, DataTable, DateText, ErrorState, K, KpiTile, Section, Tabs, apiGet, mono, useT, type ColumnDef,
+  Badge, Button, ConfirmModal, DataTable, DateText, ErrorState, K, KpiTile, Section, Tabs, apiGet, apiSend, mono,
+  useT, useToast, type ColumnDef,
 } from "../../_kit";
 import {
-  PROVIDERS_API, PROVIDER_VIEWS, groupRows, needsLook, pct, statusTone, usd,
-  type ProviderRow, type ProviderView, type ProvidersResp,
+  PROVIDERS_API, PROVIDER_VIEWS, RETRY_LLM_DENIED_API, accessTone, groupRows, heldByReason,
+  isAccessState, needsLook, pct, registryFacts, statusTone, usd, warmPathOf,
+  type ProviderRow, type ProviderView, type ProvidersResp, type RegistryFacts, type RetryLlmDeniedResp,
 } from "@/lib/aiGateway";
 import { connectionName } from "@/lib/llmConnections";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import { ConnectionsPanel } from "./ConnectionsPanel";
 import { JevCreditPanel } from "./JevCreditPanel";
-import { M, REASON, STATUS } from "./messages";
+import { ACCESS, M, REASON, STATUS } from "./messages";
+import { useDomainText } from "./useDomainText";
 
 export const PROVIDERS_KEY = ["ai-gateway", "providers"] as const;
 
@@ -33,14 +43,20 @@ function Lines({ children }: { children: React.ReactNode }) {
   return <div style={{ display: "grid", gap: 2, minWidth: 0 }}>{children}</div>;
 }
 
-function ProviderCell({ row }: { row: ProviderRow }) {
+/** A provider row with the registry facts the overview found for it (C4). */
+type Row = ProviderRow & { facts: RegistryFacts };
+
+function ProviderCell({ row }: { row: Row }) {
   const t = useT(M);
   const dir = useAwsAccounts();
   const accountText = useAccountText();
+  const domainText = useDomainText();
   const sub = row.group === "llm" && row.connection_key
     ? connectionName({ connection_key: row.connection_key, kind: row.provider, account_id: row.account_id },
       dir, accountText)
     : null;
+  const warm = warmPathOf(row);
+  const domain = row.facts.failure_domain ? domainText(row.facts.failure_domain, sub) : null;
   return (
     <Lines>
       <span style={{ fontWeight: 600, color: K.ink }}>{row.label}</span>
@@ -49,33 +65,63 @@ function ProviderCell({ row }: { row: ProviderRow }) {
         {row.data_scope === "aws_only" ? t("scopeAws") : row.data_scope === "vendor_direct" ? t("scopeVendor") : ""}
         {!row.enabled ? `${row.data_scope ? " · " : ""}${t("off")}` : ""}
       </span>
+      {warm && (
+        <span data-testid={`ai-gateway-warm-${row.key}`} title={t(warm === "anthropic" ? "warmAnthropicHelp" : "warmOpenaiHelp")}
+          style={{ display: "inline-flex", marginTop: 2 }}>
+          <Badge tone="purple" dot={false} style={{ whiteSpace: "nowrap" }}>
+            {t(warm === "anthropic" ? "warmAnthropic" : "warmOpenai")}
+          </Badge>
+        </span>
+      )}
+      {domain && <span style={small} data-testid={`ai-gateway-domain-${row.key}`}>{t("failureDomain")} {domain}</span>}
     </Lines>
   );
 }
 
-function StatusCell({ row }: { row: ProviderRow }) {
+function StatusCell({ row }: { row: Row }) {
+  const t = useT(M);
   const ts = useT(STATUS);
   const tr = useT(REASON);
+  const ta = useT(ACCESS);
+  const access = row.facts.access_state;
+  // F8: "Unknown" only when the source could not be read; otherwise the same words as Routing ("No recent calls").
+  const statusWord = row.status === "unknown" && row.status_reason !== "source_unreadable"
+    ? ts("no_recent_calls") : ts(row.status);
   return (
     <Lines>
-      <span><Badge tone={statusTone(row.status)}>{ts(row.status)}</Badge></span>
+      <span><Badge tone={statusTone(row.status)} style={{ whiteSpace: "nowrap" }}>{statusWord}</Badge></span>
       {row.status_reason && row.status_reason in REASON.en && (
         <span style={small}>{tr(row.status_reason as keyof typeof REASON.en)}</span>
+      )}
+      {access !== undefined && (
+        <span style={{ ...small, color: accessTone(access) === "danger" ? K.danger : K.muted }}
+          data-testid={`ai-gateway-access-${row.key}`}>
+          {t("accessLabel")} {isAccessState(access) ? ta(access) : (access ?? ta("unknown"))}
+        </span>
       )}
       {row.error && <span style={{ ...small, color: K.danger }}>{row.error}</span>}
     </Lines>
   );
 }
 
-function HealthCell({ row }: { row: ProviderRow }) {
+function ProbeLine({ row }: { row: Row }) {
+  const t = useT(M);
+  if (row.facts.last_probe_at === undefined) return null;
+  return row.facts.last_probe_at
+    ? <span style={small}>{t("lastProbe")} <DateText value={row.facts.last_probe_at} relative /></span>
+    : <span style={small}>{t("neverProbed")}</span>;
+}
+
+function HealthCell({ row }: { row: Row }) {
   const t = useT(M);
   const h = row.health;
-  if (!h) return <span style={small}>—</span>;
+  if (!h) return <Lines><span style={small}>—</span><ProbeLine row={row} /></Lines>;
   if (row.group === "decide") {
     return (
       <Lines>
         <span style={small}>{t("jevCalls", h.calls ?? 0, h.errors ?? 0)}</span>
         {h.mean_latency_ms != null && <span style={small}>{t("meanLatency", h.mean_latency_ms)}</span>}
+        <ProbeLine row={row} />
       </Lines>
     );
   }
@@ -84,6 +130,7 @@ function HealthCell({ row }: { row: ProviderRow }) {
       {h.last_ok_at
         ? <span style={small}>{t("lastAnswer")} <DateText value={h.last_ok_at} relative /></span>
         : <span style={small}>{t("noCalls")}</span>}
+      <ProbeLine row={row} />
       {h.last_error_class && <span style={{ ...small, color: K.amber }}>{t("lastError", h.last_error_class)}</span>}
       {!!h.open_models && <span style={{ ...small, color: K.danger }}>{t("openModels", h.open_models)}</span>}
       {!h.open_models && !!h.failing_models && (
@@ -93,7 +140,7 @@ function HealthCell({ row }: { row: ProviderRow }) {
   );
 }
 
-function BudgetCell({ row }: { row: ProviderRow }) {
+function BudgetCell({ row }: { row: Row }) {
   const t = useT(M);
   const m = row.monthly_budget;
   const d = row.daily_cap;
@@ -116,7 +163,7 @@ function BudgetCell({ row }: { row: ProviderRow }) {
   );
 }
 
-function BalanceCell({ row }: { row: ProviderRow }) {
+function BalanceCell({ row }: { row: Row }) {
   const t = useT(M);
   const b = row.balance;
   const c = row.credits;
@@ -142,7 +189,7 @@ function BalanceCell({ row }: { row: ProviderRow }) {
   );
 }
 
-function SpendCell({ row, which }: { row: ProviderRow; which: "today" | "month" }) {
+function SpendCell({ row, which }: { row: Row; which: "today" | "month" }) {
   const t = useT(M);
   const s = row.spend;
   if (!s) return <span style={small}>—</span>;
@@ -157,10 +204,10 @@ function SpendCell({ row, which }: { row: ProviderRow; which: "today" | "month" 
 }
 
 function ProviderTable({ id, rows, loading, empty }: {
-  id: string; rows: ProviderRow[]; loading: boolean; empty?: string;
+  id: string; rows: Row[]; loading: boolean; empty?: string;
 }) {
   const t = useT(M);
-  const columns = useMemo<ColumnDef<ProviderRow, unknown>[]>(() => [
+  const columns = useMemo<ColumnDef<Row, unknown>[]>(() => [
     { id: "provider", header: t("colProvider"), accessorKey: "label", cell: ({ row }) => <ProviderCell row={row.original} /> },
     { id: "status", header: t("colStatus"), accessorKey: "status", cell: ({ row }) => <StatusCell row={row.original} /> },
     { id: "health", header: t("colHealth"), enableSorting: false, cell: ({ row }) => <HealthCell row={row.original} /> },
@@ -172,7 +219,7 @@ function ProviderTable({ id, rows, loading, empty }: {
     { id: "balance", header: t("colBalance"), enableSorting: false, cell: ({ row }) => <BalanceCell row={row.original} /> },
   ], [t]);
   return (
-    <DataTable<ProviderRow>
+    <DataTable<Row>
       tableId={id} data={rows} columns={columns} getRowId={(r) => r.key} loading={loading}
       searchable={false} paginate={false} stickyHeader={false} tableMinWidth={980}
       emptyTitle={empty ?? "—"}
@@ -188,8 +235,33 @@ function ProvidersOverview() {
     refetchInterval: 120_000,
     refetchIntervalInBackground: false,
   });
+  // C4: the registry facts of the LLM connections (shared caches with the Connections view and Routing). Both reads
+  // are optional: before migration 322 or on an error the lines are simply not shown.
+  const conns = useQuery({
+    queryKey: ["llm-connections"],
+    queryFn: () => apiGet<{ connections?: (RegistryFacts & { connection_key: string })[] }>(
+      "/api/admin/llm-connections", { admin: true }),
+  });
+  const avail = useQuery({
+    queryKey: ["llm-availability", 24],
+    queryFn: () => apiGet<{ connections?: { connection_key: string; failure_domain?: string | null }[] }>(
+      "/api/admin/llm-availability?hours=24", { admin: true }),
+    refetchInterval: 60_000,
+  });
   const data = q.data;
-  const groups = useMemo(() => groupRows(data?.providers ?? []), [data]);
+  const groups = useMemo(() => {
+    const withFacts = (data?.providers ?? []).map((r): Row => {
+      if (r.group === "llm") {
+        return { ...r, facts: registryFacts(r.connection_key, conns.data?.connections, avail.data?.connections) };
+      }
+      const facts: RegistryFacts = {};
+      if ("failure_domain" in r) facts.failure_domain = r.failure_domain;
+      if ("access_state" in r) facts.access_state = r.access_state;
+      if ("last_probe_at" in r) facts.last_probe_at = r.last_probe_at;
+      return { ...r, facts };
+    });
+    return groupRows(withFacts);
+  }, [data, conns.data, avail.data]);
   const look = data ? needsLook(data.providers) : undefined;
 
   if (q.error) {
@@ -224,6 +296,7 @@ function ProvidersOverview() {
           </div>
         )}
       </Section>
+      <RequeueRefusedJobs />
       <Section title={t("groupDecide")} description={t("groupDecideHelp")} padded={false}>
         <ProviderTable id="ai-gateway-decide" rows={groups.decide} loading={!data} />
       </Section>
@@ -232,6 +305,67 @@ function ProvidersOverview() {
       </Section>
       <div style={small}>{t("traceHint")}</div>
     </div>
+  );
+}
+
+// ── re-queue the jobs an LLM account block failed (AA-1018): dry run → confirm → real ──────────────────────────────
+
+function RequeueRefusedJobs() {
+  const t = useT(M);
+  const toast = useToast();
+  const qc = useQueryClient();
+  const [preview, setPreview] = useState<RetryLlmDeniedResp | null>(null);
+  const [error, setError] = useState("");
+  const run = (dry_run: boolean) =>
+    apiSend<RetryLlmDeniedResp>(RETRY_LLM_DENIED_API, { method: "POST", body: { dry_run }, admin: true });
+  const dry = useMutation({
+    mutationFn: () => run(true),
+    onSuccess: (r) => { setError(""); setPreview(r); },
+    onError: (e) => setError(e instanceof Error ? e.message : String(e)),
+  });
+  const real = useMutation({
+    mutationFn: () => run(false),
+    onSuccess: (r) => {
+      setPreview(null);
+      toast.success(t("requeueDone", r.requeued));
+      qc.invalidateQueries({ queryKey: ["llm-availability"] });
+      qc.invalidateQueries({ queryKey: [...PROVIDERS_KEY] });
+    },
+    onError: (e) => setError(e instanceof Error ? e.message : String(e)),
+  });
+  const held = preview ? heldByReason(preview.held) : [];
+  return (
+    <Section title={t("requeueTitle")} description={t("requeueHelp")} testId="ai-gateway-requeue"
+      actions={
+        <Button size="sm" variant="secondary" disabled={dry.isPending || real.isPending} onClick={() => dry.mutate()}
+          testId="ai-gateway-requeue-dry-run">
+          <RotateCcw size={13} /> {dry.isPending ? t("requeueChecking") : t("requeueButton")}
+        </Button>
+      }>
+      {error
+        ? <div role="alert" style={{ ...small, color: K.danger }}>{error}</div>
+        : <div style={small}>{t("requeueIdle")}</div>}
+      <ConfirmModal open={preview !== null} onClose={() => setPreview(null)} onConfirm={() => {
+        if (preview && preview.eligible > 0) real.mutate(); else setPreview(null);
+      }}
+        title={t("requeueConfirmTitle")} busy={real.isPending} testId="ai-gateway-requeue-confirm"
+        confirmLabel={preview && preview.eligible > 0 ? t("requeueConfirm", preview.eligible) : t("requeueNothing")}
+        error={error || null}
+        body={preview && (
+          <div style={{ display: "grid", gap: 6, fontSize: 12.5, color: K.body }}>
+            <span>{t("requeueMatched", preview.matched, preview.since.slice(0, 10))}</span>
+            <span><strong style={{ color: K.ink }}>{t("requeueEligible", preview.eligible)}</strong></span>
+            {preview.held_count > 0 && <span>{t("requeueHeld", preview.held_count)}</span>}
+            {held.map((h) => (
+              <span key={h.reason} style={{ ...small, overflowWrap: "anywhere" }}>· {h.reason || "—"} ({h.jobs})</span>
+            ))}
+            {Object.keys(preview.blocked_connections).length > 0 && (
+              <span style={small}>{t("requeueStillRefused", Object.keys(preview.blocked_connections).length)}</span>
+            )}
+            {preview.more && <span style={small}>{t("requeueMore", preview.limit)}</span>}
+          </div>
+        )} />
+    </Section>
   );
 }
 

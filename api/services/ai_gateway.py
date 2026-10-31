@@ -896,11 +896,16 @@ ACTOR_NAMES_SQL = """
 """
 
 
+def _staff_id_part(v: str) -> str:
+    """"admin:<id>" (the actor form of the newer write routes) -> "<id>"; anything else unchanged."""
+    return v[6:] if v.lower().startswith("admin:") and _UUID_RE.match(v[6:]) else v
+
+
 def actor_view(value: Optional[str], names: Optional[dict] = None) -> dict:
     """{updated_by_kind, updated_by_name} of an ``updated_by`` value. Kinds: staff (an admin_users id; the name from
     ``names`` {id: name}, None when the directory has no such row), migration (the name is "Migration NNN"), other
     (free text, shown as is), none. Pure."""
-    v = (value or "").strip()
+    v = _staff_id_part((value or "").strip())
     if not v:
         return {"updated_by_kind": "none", "updated_by_name": None}
     if _UUID_RE.match(v):
@@ -913,7 +918,8 @@ def actor_view(value: Optional[str], names: Optional[dict] = None) -> dict:
 
 async def actor_names(conn, values) -> dict:
     """{admin_users id: display name or username} of the staff ids among ``values`` (one query; {} when none)."""
-    ids = sorted({v.strip().lower() for v in values if v and _UUID_RE.match(v.strip())})
+    ids = sorted({_staff_id_part(v.strip()).lower() for v in values
+                  if v and _UUID_RE.match(_staff_id_part(v.strip()))})
     if not ids:
         return {}
     return {r["id"]: r["name"] for r in await conn.fetch(ACTOR_NAMES_SQL, ids)}

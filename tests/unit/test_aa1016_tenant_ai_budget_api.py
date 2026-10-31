@@ -71,6 +71,8 @@ class FakeConn:
             return [self.row] if self.row else []
         if sql == tb.MONTH_SPEND_SQL:
             return self.spend
+        if sql == gw.ACTOR_NAMES_SQL:
+            return [{"id": i, "name": "Mai Tran"} for i in args[0] if i == STAFF]
         raise AssertionError(f"unexpected SQL: {sql[:80]}")
 
     async def fetchrow(self, sql, *args):
@@ -156,6 +158,7 @@ def test_budget_view_carries_spend_and_state():
     (STAFF, {STAFF: "Mai Tran"}, ("staff", "Mai Tran")),
     (STAFF.upper(), {STAFF: "Mai Tran"}, ("staff", "Mai Tran")),
     (STAFF, {}, ("staff", None)),                        # a former staff member: the page says "a staff member"
+    (f"admin:{STAFF}", {STAFF: "Mai Tran"}, ("staff", "Mai Tran")),   # the actor form of the newer write routes
     ("migration-226", {}, ("migration", "Migration 226")),
     ("migration-280-wm-seed", {}, ("migration", "Migration 280")),
     ("ops-tester", {}, ("other", "ops-tester")),
@@ -212,6 +215,7 @@ def test_get_one_with_budget_and_spend():
     out = asyncio.run(router_mod.get_tenant_budget(_req(conn), tenant_id=TENANT.upper()))
     assert out["ready"] is True and out["tenant_name"] == "Lotus Trails" and out["month_spent_usd"] == 5.0
     assert out["budget"]["used_pct"] == 25.0 and out["budget"]["state"] == "ok"
+    assert out["budget"]["updated_by_name"] == "Mai Tran" and out["budget"]["updated_by_kind"] == "staff"
     assert out["defaults"] == tb.DEFAULTS and out["month_start"].endswith("-01T00:00:00+00:00")
     assert conn.ran(tb.TENANT_EXISTS_SQL) == [(TENANT,)]        # lower-cased before any read
 

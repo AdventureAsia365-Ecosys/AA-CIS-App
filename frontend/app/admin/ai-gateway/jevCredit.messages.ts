@@ -43,6 +43,7 @@ export const JEV_CREDIT = defineMessages(
     totalToppedUp: "Total topped up",
     since: (day: string) => `since ${day}`,
     spentJev: "Spent (Jev)",
+    spentJevHint: "every logged Jev call since the first top-up",
     estimatedLeft: "Estimated left",
     belowThreshold: (threshold: string) =>
       `Estimated credit is below the ${threshold} alert threshold. Top up TypeSafe and record it below.`,
@@ -90,6 +91,7 @@ export const JEV_CREDIT = defineMessages(
     totalToppedUp: "Tổng đã nạp",
     since: (day: string) => `từ ${day}`,
     spentJev: "Đã chi (Jev)",
+    spentJevHint: "mọi lần gọi Jev đã ghi từ lần nạp đầu",
     estimatedLeft: "Ước tính còn lại",
     belowThreshold: (threshold: string) =>
       `Số dư ước tính đang dưới ngưỡng cảnh báo ${threshold}. Hãy nạp thêm TypeSafe và ghi lại bên dưới.`,

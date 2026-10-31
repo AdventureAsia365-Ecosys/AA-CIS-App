@@ -9,9 +9,17 @@ import { defineMessages } from "../../_kit/core/i18n";
 /** Status of a provider row (lib/aiGateway.ts ProviderStatus). */
 export const STATUS = defineMessages(
   { ok: "OK", degraded: "Degraded", open: "Circuit open", low: "Low", cap_reached: "Cap reached", disabled: "Off",
-    unknown: "Unknown" },
+    unknown: "Unknown", no_recent_calls: "No recent calls" },
   { ok: "Ổn", degraded: "Suy giảm", open: "Đang ngắt", low: "Sắp hết", cap_reached: "Chạm trần", disabled: "Tắt",
-    unknown: "Chưa rõ" },
+    unknown: "Chưa rõ", no_recent_calls: "Chưa có lượt gọi gần đây" },
+);
+
+/** Access state of a registry row (CIS migration 322; lib/aiGateway.ts ACCESS_STATES). */
+export const ACCESS = defineMessages(
+  { ok: "answering", unknown: "not checked yet", access_denied: "access denied", quota_exhausted: "no credit left",
+    unconfigured: "no key set up" },
+  { ok: "đang trả lời", unknown: "chưa kiểm", access_denied: "bị từ chối truy cập", quota_exhausted: "hết credit",
+    unconfigured: "chưa cài khoá" },
 );
 
 /** Why a row has its status (backend status_reason). */
@@ -136,6 +144,34 @@ export const M = defineMessages(
     sourceErrors: "Some sources could not be read; their rows say Unknown.",
     loadError: "The providers could not be loaded",
     emptyLlm: "No LLM connection is registered.",
+    // C4: registry v2 facts, warm paths, re-queue
+    accessLabel: "Access:",
+    lastProbe: "Last probe",
+    neverProbed: "never probed",
+    failureDomain: "Failure domain:",
+    domainOwnAccount: "this platform's AWS account",
+    warmAnthropic: "Warm path · Claude stages",
+    warmOpenai: "Warm path · GPT stages",
+    warmAnthropicHelp: "The independent way to Claude when the AWS account that runs it is blocked. It is used only "
+      + "when it is switched on, funded and listed on a stage's route.",
+    warmOpenaiHelp: "The independent way to the GPT judge stages when the AWS account that runs them is blocked. It is "
+      + "used only when it is switched on, funded and listed on a stage's route.",
+    requeueTitle: "Jobs an account block stopped",
+    requeueHelp: "When a provider refuses an account, the jobs that needed it fail at once. Once the account answers "
+      + "again, put them back in the queue. The check comes first and changes nothing.",
+    requeueButton: "Re-queue refused jobs",
+    requeueChecking: "Checking…",
+    requeueIdle: "Shows how many failed jobs of the last 14 days would go back in the queue, before anything moves.",
+    requeueConfirmTitle: "Re-queue the refused jobs?",
+    requeueMatched: (n: number, since: string) => `${n} failed job${n === 1 ? "" : "s"} since ${since} stopped on a `
+      + "refused account.",
+    requeueEligible: (n: number) => `${n} would go back in the queue with a fresh set of attempts.`,
+    requeueHeld: (n: number) => `${n} stay${n === 1 ? "s" : ""} failed:`,
+    requeueStillRefused: (n: number) => `${n} connection${n === 1 ? " is" : "s are"} still refused, so their jobs wait.`,
+    requeueMore: (n: number) => `Only the first ${n} jobs were checked; run it again afterwards for the rest.`,
+    requeueConfirm: (n: number) => `Re-queue ${n} job${n === 1 ? "" : "s"}`,
+    requeueNothing: "Nothing to re-queue",
+    requeueDone: (n: number) => `${n} job${n === 1 ? "" : "s"} back in the queue`,
     traceHint: "To see every paid call of one job or one tour, open the job (Jobs) or the tour (Master Content) and "
       + "click Open trace, or open a row of the Calls tab.",
     // trace drawer
@@ -245,6 +281,32 @@ export const M = defineMessages(
     sourceErrors: "Không đọc được vài nguồn; dòng của chúng ghi Chưa rõ.",
     loadError: "Không tải được danh sách nhà cung cấp",
     emptyLlm: "Chưa đăng ký kết nối LLM nào.",
+    accessLabel: "Truy cập:",
+    lastProbe: "Thăm dò gần nhất",
+    neverProbed: "chưa thăm dò lần nào",
+    failureDomain: "Miền lỗi:",
+    domainOwnAccount: "tài khoản AWS của nền tảng",
+    warmAnthropic: "Đường dự phòng · stage Claude",
+    warmOpenai: "Đường dự phòng · stage GPT",
+    warmAnthropicHelp: "Đường độc lập tới Claude khi tài khoản AWS đang chạy nó bị chặn. Chỉ được dùng khi đang bật, "
+      + "có tiền và có tên trong tuyến của stage.",
+    warmOpenaiHelp: "Đường độc lập tới các stage chấm GPT khi tài khoản AWS đang chạy chúng bị chặn. Chỉ được dùng khi "
+      + "đang bật, có tiền và có tên trong tuyến của stage.",
+    requeueTitle: "Job bị dừng vì tài khoản bị chặn",
+    requeueHelp: "Khi nhà cung cấp từ chối một tài khoản, các job cần nó lỗi ngay. Khi tài khoản trả lời lại, đưa chúng "
+      + "về hàng đợi. Bước kiểm chạy trước và không đổi gì.",
+    requeueButton: "Đưa lại job bị từ chối",
+    requeueChecking: "Đang kiểm…",
+    requeueIdle: "Cho biết bao nhiêu job lỗi trong 14 ngày qua sẽ về hàng đợi, trước khi có gì thay đổi.",
+    requeueConfirmTitle: "Đưa lại các job bị từ chối?",
+    requeueMatched: (n: number, since: string) => `${n} job lỗi từ ${since} dừng vì tài khoản bị từ chối.`,
+    requeueEligible: (n: number) => `${n} job sẽ về hàng đợi với lượt thử mới.`,
+    requeueHeld: (n: number) => `${n} job vẫn để lỗi:`,
+    requeueStillRefused: (n: number) => `${n} kết nối vẫn bị từ chối nên job của chúng chờ.`,
+    requeueMore: (n: number) => `Chỉ kiểm ${n} job đầu; chạy lại sau đó cho phần còn lại.`,
+    requeueConfirm: (n: number) => `Đưa lại ${n} job`,
+    requeueNothing: "Không có gì để đưa lại",
+    requeueDone: (n: number) => `${n} job đã về hàng đợi`,
     traceHint: "Muốn xem mọi lần gọi trả phí của một job hay một tour, mở job (Jobs) hoặc tour (Master Content) rồi "
       + "bấm Mở truy vết, hoặc mở một dòng ở tab Lần gọi.",
     traceTitle: "Truy vết",
