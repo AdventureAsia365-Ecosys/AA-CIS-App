@@ -180,7 +180,8 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
                 null_also=("content_piece_id", "angle_gate_request_id", "job_id")),
     TenantTable("shared.decision_log", "detach", "Jev decision history and cache", null_also=("job_id",)),
     TenantTable("shared.dfs_call_log", "detach", "DataForSEO cost history"),
-    TenantTable("geo.geocode_call", "detach", "Geoapify cost history (tenant_id from CIS 319, AA-804)"),
+    # tenant_id on geo.geocode_call comes from CIS migration 319 (AA-804)
+    TenantTable("geo.geocode_call", "detach", "Geoapify cost history"),
     TenantTable("shared.llm_call_daily", "merge",
                 "daily LLM rollup; added into the NULL-tenant row of the same key, then deleted"),
     # ── kept
