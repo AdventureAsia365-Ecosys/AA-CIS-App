@@ -272,7 +272,9 @@ def test_status_error_class_reads_the_spend_cap_code_before_the_rate_limit(statu
 def test_error_code_of_reads_only_the_documented_place():
     assert am.error_code_of({"error": {"details": {"error_code": "enforced_spend_limit_reached"}}}) == \
         "enforced_spend_limit_reached"
-    for body in (None, "x", {}, {"error": "x"}, {"error": {"details": None}}, {"error": {"details": {"error_code": 7}}}):
+    for body in (
+        None, "x", {}, {"error": "x"}, {"error": {"details": None}}, {"error": {"details": {"error_code": 7}}},
+    ):
         assert am.error_code_of(body) is None
 
 
