@@ -525,3 +525,138 @@ async def maybe_alert_connection(conn, budget: ConnectionBudget) -> bool:
     except Exception as exc:  # noqa: BLE001
         logger.warning("llm_connection_budget_alert_failed", connection=budget.connection_key, error=str(exc)[:300])
         return False
+
+
+# ── AA-1016: the monthly AI budget of a Content studio tenant (shared.tenant_ai_budget, migration 321) ──────────────
+#
+# One optional row per tenant: monthly_usd (NULL = unlimited), alert_pct (default 100: the bell), approval_pct
+# (default 150: from there new T-stage AI calls of that tenant wait for staff approval when hard_stop is on). Spend =
+# the tenant's llm_call_log rows this UTC month (tenant_id = the tenant). No row (every tenant today) = no budget: the
+# gateway reads nothing more and behaves as before (shared/llm_client/tenant_budget.py). No silent cut-off: the
+# approval stop always writes an admin bell (and queues the ops e-mail) naming the tenant and its spend.
+
+TENANT_BUDGET_ALERT_EVENT = BUDGET_ALERT_EVENT       # same bell type as the job and connection budgets
+TENANT_BUDGET_TENANTS_SQL = ("SELECT tenant_id::text AS tenant_id FROM shared.tenant_ai_budget "
+                             "WHERE monthly_usd IS NOT NULL")
+_TENANT_BUDGET_SQL = """
+    SELECT b.tenant_id::text AS tenant_id, b.monthly_usd, b.alert_pct, b.approval_pct, b.hard_stop,
+           (SELECT coalesce(sum(l.cost_usd), 0) FROM shared.llm_call_log l
+             WHERE l.tenant_id = b.tenant_id
+               AND l.created_at >= date_trunc('month', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc') AS spent,
+           (SELECT count(*)::int FROM shared.llm_call_log l
+             WHERE l.tenant_id = b.tenant_id
+               AND l.created_at >= date_trunc('month', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc') AS calls
+      FROM shared.tenant_ai_budget b
+     WHERE b.tenant_id = $1::uuid AND b.monthly_usd IS NOT NULL
+"""
+
+
+@dataclass(frozen=True)
+class TenantAIBudget:
+    tenant_id: str
+    monthly_usd: float
+    month_spent_usd: float
+    alert_pct: int = 100
+    approval_pct: int = 150
+    hard_stop: bool = False
+    month_calls: int = 0
+
+    @property
+    def used_pct(self) -> Optional[float]:
+        if self.monthly_usd <= 0:      # a $0 budget: any spend is past every threshold (the CHECK caps pcts at 1000)
+            return None if self.month_spent_usd <= 0 else 1000.0
+        return 100.0 * self.month_spent_usd / self.monthly_usd
+
+    @property
+    def alerting(self) -> bool:
+        pct = self.used_pct
+        return pct is not None and pct >= self.alert_pct
+
+    @property
+    def needs_approval(self) -> bool:
+        """New T-stage AI calls of the tenant wait for staff: hard_stop on and spend at or past approval_pct."""
+        pct = self.used_pct
+        return self.hard_stop and pct is not None and pct >= self.approval_pct
+
+    @property
+    def state(self) -> str:
+        """ok | alert | approval (new T-stage calls wait for staff)."""
+        if self.needs_approval:
+            return "approval"
+        return "alert" if self.alerting else "ok"
+
+    def summary(self) -> dict:
+        return {
+            "provider": "tenant_ai", "scope": f"tenant:{self.tenant_id}", "tenant_id": self.tenant_id,
+            "monthly_usd": round(self.monthly_usd, 2), "month_spent_usd": round(self.month_spent_usd, 4),
+            "month_calls": self.month_calls, "used_pct": _round(self.used_pct), "alert_pct": self.alert_pct,
+            "approval_pct": self.approval_pct, "hard_stop": self.hard_stop, "state": self.state,
+        }
+
+
+async def budgeted_tenants(conn) -> Optional[frozenset]:
+    """The tenants that have an AI budget (a row with monthly_usd). None before migration 321 (no table)."""
+    try:
+        rows = await conn.fetch(TENANT_BUDGET_TENANTS_SQL)
+    except Exception as exc:  # noqa: BLE001 — UndefinedTableError before 321: no tenant has a budget
+        if type(exc).__name__ != "UndefinedTableError":
+            raise
+        return None
+    return frozenset(r["tenant_id"] for r in rows)
+
+
+async def tenant_budget_check(conn, tenant_id: str) -> Optional[TenantAIBudget]:
+    """The AI budget state of ``tenant_id`` this UTC month (one query), or None when it has no budget (no row, or
+    monthly_usd NULL) or the table does not exist yet (before migration 321)."""
+    try:
+        row = await conn.fetchrow(_TENANT_BUDGET_SQL, str(tenant_id))
+    except Exception as exc:  # noqa: BLE001 — UndefinedTableError before 321
+        if type(exc).__name__ != "UndefinedTableError":
+            raise
+        return None
+    if row is None or row["monthly_usd"] is None:
+        return None
+    return TenantAIBudget(tenant_id=row["tenant_id"], monthly_usd=float(row["monthly_usd"]),
+                          month_spent_usd=float(row["spent"] or 0.0), alert_pct=int(row["alert_pct"]),
+                          approval_pct=int(row["approval_pct"]), hard_stop=bool(row["hard_stop"]),
+                          month_calls=int(row["calls"] or 0))
+
+
+def tenant_budget_message(b: TenantAIBudget) -> str:
+    pct = b.used_pct
+    pct_text = f"{pct:.0f}%" if pct is not None else "all"
+    head = (f"Tenant {b.tenant_id}: AI spend this month ${b.month_spent_usd:.2f} is {pct_text} of its "
+            f"${b.monthly_usd:.2f} AI budget")
+    if b.needs_approval:
+        return (head + f" (approval from {b.approval_pct}%): new T-stage AI jobs of this tenant wait for staff "
+                "approval. Raise the budget or switch its hard stop off, then re-queue the jobs held with "
+                "'tenant_ai_budget_approval'.")
+    return head + f" (alert from {b.alert_pct}%): calls go on."
+
+
+async def maybe_alert_tenant(conn, budget: TenantAIBudget) -> bool:
+    """One admin bell (and the ops e-mail) when a tenant is at or above its alert or approval threshold, at most one
+    unread bell per tenant per 24 h. Best effort: never raises. ``conn`` is an asyncpg connection."""
+    if not (budget.alerting or budget.needs_approval):
+        return False
+    entity = f"tenant_ai_budget:{budget.tenant_id}"
+    try:
+        if await conn.fetchval(_RECENT_ALERT_SQL, TENANT_BUDGET_ALERT_EVENT, entity):
+            return False
+        message = tenant_budget_message(budget)
+        await conn.execute(_INSERT_ALERT_SQL, _PLATFORM_TENANT_ID, TENANT_BUDGET_ALERT_EVENT, entity,
+                           json.dumps({"message": message, **budget.summary()}))
+        try:
+            from shared import ops_alerts  # lazy: keeps this module import-light for the LLM client
+
+            await ops_alerts.enqueue_spend_budget_email(
+                conn, summary=budget.summary(),
+                alert_pct=budget.approval_pct if budget.needs_approval else budget.alert_pct,
+                stopped=budget.needs_approval, message=message, used_pct=budget.used_pct)
+        except Exception as exc:  # noqa: BLE001 — the bell row stays
+            logger.warning("tenant_ai_budget_email_enqueue_failed", tenant_id=budget.tenant_id, error=str(exc)[:300])
+        logger.warning("tenant_ai_budget_alert", **budget.summary())
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("tenant_ai_budget_alert_failed", tenant_id=budget.tenant_id, error=str(exc)[:300])
+        return False

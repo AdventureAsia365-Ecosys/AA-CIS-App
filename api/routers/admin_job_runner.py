@@ -287,6 +287,10 @@ class RetryLlmDeniedRequest(BaseModel):
     since: Optional[str] = None
     kinds: list[str] = Field(default_factory=list, max_length=50)
     limit: int = Field(queue.RETRY_REASON_LIMIT, ge=1, le=queue.RETRY_REASON_MAX_LIMIT)
+    # AA-1016 (AA-1018 part 2): which stop to re-queue. `llm_access_denied` (default): failed jobs an LLM account block
+    # ended. `tenant_ai_budget_approval`: stopped_budget jobs held because their tenant passed the approval threshold
+    # of its AI budget; held while the tenant still needs approval (raise its budget or switch its hard stop off first).
+    reason: Literal["llm_access_denied", "tenant_ai_budget_approval"] = "llm_access_denied"
 
 
 @router.post("/jobs/retry-llm-denied", summary="Re-queue jobs an LLM account block failed (DRY RUN by default)")
@@ -295,7 +299,9 @@ async def retry_llm_denied(body: RetryLlmDeniedRequest, request: Request, x_admi
     """AA-1018 — the `failed` jobs whose error starts with `llm_access_denied` (every model was refused at account
     level, AA-900) get a fresh set of attempts, like the one-job retry. DRY RUN by default: lists the jobs an apply
     would re-queue and the ones it would hold (a kind that refuses retries, or a job whose LLM connection is still
-    refused: shared/jobs/queue.py `retry_by_reason`). One audit row per call (`jobs_retry_llm_denied`)."""
+    refused: shared/jobs/queue.py `retry_by_reason`). One audit row per call (`jobs_retry_llm_denied`).
+    AA-1016: `reason: tenant_ai_budget_approval` re-queues the stopped_budget jobs a tenant's AI budget held for
+    staff approval, each only once its tenant no longer needs approval."""
     verify_admin_secret(x_admin_secret)
     since_dt = _parse_dt(body.since, "since") if body.since else None
     if since_dt is None:
@@ -304,7 +310,7 @@ async def retry_llm_denied(body: RetryLlmDeniedRequest, request: Request, x_admi
         since_dt = since_dt.replace(tzinfo=timezone.utc)
     kinds_clean = [k.strip() for k in body.kinds if k and k.strip()]
     pool = request.app.state.pool
-    out = await queue.retry_by_reason(pool, queue.RETRY_REASON_DEFAULT, since=since_dt, kinds=kinds_clean,
+    out = await queue.retry_by_reason(pool, body.reason, since=since_dt, kinds=kinds_clean,
                                       dry_run=body.dry_run, limit=body.limit)
     actor = f"admin:{x_admin_user_id}" if x_admin_user_id else "admin"
     details = {k: out[k] for k in ("dry_run", "prefix", "since", "kinds", "limit", "matched", "eligible",
@@ -315,7 +321,7 @@ async def retry_llm_denied(body: RetryLlmDeniedRequest, request: Request, x_admi
         await db.execute(
             "INSERT INTO acp_shared.audit_log (actor, action, resource_type, resource_id, details) "
             "VALUES ($1, $2, $3, $4, $5::jsonb)",
-            actor[:64], "jobs_retry_llm_denied", "shared.job", queue.RETRY_REASON_DEFAULT, json.dumps(details))
+            actor[:64], "jobs_retry_llm_denied", "shared.job", body.reason, json.dumps(details, default=str))
     logger.info("admin_jobs_retry_llm_denied", admin_user=x_admin_user_id, **{k: details[k] for k in (
         "dry_run", "matched", "eligible", "held_count", "requeued")})
     return out
