@@ -49,7 +49,8 @@ N_PARAMS = 15
 # AA-804 (ledger v2): call_log._INSERT_V2_SQL = the same 15 + the S6 three + the 17 v2 columns.
 INSERT_V2_COLUMNS = (INSERT_COLUMNS + ", cache_read_tokens, cache_write_tokens, pricing_mode, app, status, "
                      "error_class, latency_ms, connection_key, deployment_wire_id, attempt_no, request_id, tour_id, "
-                     "reasoning_tokens, effort, is_shadow, is_experiment, prompt_hash, prompt_version, units, unit_kind")
+                     "reasoning_tokens, effort, is_shadow, is_experiment, prompt_hash, prompt_version, units, "
+                     "unit_kind")
 N_V2_PARAMS = 35
 DECISION_COLUMNS = ("stage, question_key, subject_key, tenant_id, job_id, mode, zone, probability, choice, "
                     "probabilities, threshold_version, model, latency_ms, cost_usd, error, question_hash, cached")

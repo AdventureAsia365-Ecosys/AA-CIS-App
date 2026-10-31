@@ -18,7 +18,8 @@ Sources, per app row:
   Tags shared by several apps (shared / identity / platform) are their own rows, never split.
 - ``ai_usd``: LLM spend from ``shared.llm_call_log`` (days not rolled up yet) and ``shared.llm_call_daily`` (rolled
   days, AA-825), by ``app`` = ``coalesce(app, quality_signal->>'app', 'cis')`` (AA-804: the real column first;
-  TripPlanner writes ``tripplanner`` in quality_signal). These are the gateway's price-table estimates, incl. OpenAI and Jev, which are not on any AWS bill.
+  TripPlanner writes ``tripplanner`` in quality_signal). These are the gateway's price-table estimates, incl. OpenAI
+  and Jev, which are not on any AWS bill.
 - ``ai_in_aws_acc2_usd``: the part of ``ai_usd`` billed on acc2 itself (Bedrock calls with account acc2 or none),
   already inside ``aws_usd`` of some tag (usually untagged: Bedrock usage carries no App tag). ``total_usd`` =
   ``aws_usd`` + (``ai_usd`` - ``ai_in_aws_acc2_usd``), so acc2 Bedrock is not counted twice.
