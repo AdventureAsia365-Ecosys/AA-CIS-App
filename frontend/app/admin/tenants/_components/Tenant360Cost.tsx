@@ -4,12 +4,14 @@
 // $/tour (T2 rewrite) and plan revenue vs LLM cost -> margin. GET /admin/tenants/{id}/cost, same
 // cost definition as the Usage & Billing tab (AA-798: llm_call_log, Jev in, shadow out).
 // AA-994: text in the UI language (tenant360.messages.ts); the API's cost definition stays as sent.
+// AA-1016 UI (S262 C4): the tenant's monthly AI budget tile (Tenant360AiBudget: set / edit / remove, staff only).
 
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { K, mono, Badge, DataTable, ErrorState, KpiTile, Spinner, apiGet, useT, type Translator } from "../../../_kit";
 import { type TenantCost, pct, usd } from "./tenant360";
+import { Tenant360AiBudget } from "./Tenant360AiBudget";
 import { T360 } from "./tenant360.messages";
 
 type T = Translator<typeof T360.en>;
@@ -63,7 +65,8 @@ export function Tenant360Cost({ tenantId }: { tenantId: string }) {
 
   return (
     <div style={{ minWidth: 0 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(150px, 100%), 1fr))", gap: 10 }}>
+        <Tenant360AiBudget tenantId={tenantId} />
         <KpiTile size="sm" label={t("llmCostMtd", c.billing_month ?? t("thisMonth"))} value={usd(c.total_cost_usd)} />
         <KpiTile size="sm" label={t("planRevenue")} value={mg.plan_attached ? usd(mg.revenue_usd) : t("noPlan")}
           hint={mg.plan_attached ? t("planPlusOverage", usd(mg.plan_price_usd), usd(mg.overage_usd)) : undefined} />

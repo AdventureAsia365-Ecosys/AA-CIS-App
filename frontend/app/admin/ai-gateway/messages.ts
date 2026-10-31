@@ -210,6 +210,8 @@ export const M = defineMessages(
     colCost: "Cost",
     colLatency: "Latency",
     colTokens: "Tokens in / out",
+    colStageWhat: "Stage / what",
+    colCostTokens: "Cost · tokens",
   },
   {
     title: "Nhà cung cấp AI",
@@ -344,5 +346,7 @@ export const M = defineMessages(
     colCost: "Chi phí",
     colLatency: "Độ trễ",
     colTokens: "Token vào / ra",
+    colStageWhat: "Stage / việc",
+    colCostTokens: "Chi phí · token",
   },
 );

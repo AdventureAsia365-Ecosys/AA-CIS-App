@@ -43,6 +43,7 @@ import {
 } from "@tanstack/react-table";
 import {
   ArrowDown,
+  ArrowLeftRight,
   ArrowUp,
   ChevronLeft,
   ChevronRight,
@@ -221,6 +222,21 @@ export function DataTable<T>(props: DataTableProps<T>) {
   // AA-752 — phone card mode (< 768px): render each row as a card (first column = title, the rest
   // as label/value rows) instead of a horizontally-scrolling table.
   const isPhone = useIsPhone();
+
+  // S262 (AA-804 live findings F2 / F3) — a table wider than its box scrolls inside it; say so under the table while it
+  // really overflows (measured, like ScrollX: an overlay scrollbar is invisible until touched), and let the keyboard
+  // scroll it (the box is focusable then).
+  const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
+  const [overflowsX, setOverflowsX] = useState(false);
+  useEffect(() => {
+    const el = scrollEl;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const measure = () => setOverflowsX(el.scrollWidth > el.clientWidth + 1);
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    if (el.firstElementChild) ro.observe(el.firstElementChild);
+    return () => ro.disconnect();
+  }, [scrollEl]);
 
   // Load saved views once on mount (client only).
   useEffect(() => {
@@ -643,7 +659,12 @@ export function DataTable<T>(props: DataTableProps<T>) {
         </div>
       ) : (
         <div
+          ref={setScrollEl}
           data-kit-scroll=""
+          data-overflows={overflowsX ? "true" : "false"}
+          tabIndex={overflowsX ? 0 : undefined}
+          role={overflowsX ? "region" : undefined}
+          aria-label={overflowsX ? t("scrollHint") : undefined}
           style={{
             border: `1px solid ${K.line}`,
             borderRadius: RADIUS.lg,
@@ -726,6 +747,14 @@ export function DataTable<T>(props: DataTableProps<T>) {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+      {!isPhone && overflowsX && scrollEl && !loading && !error && totalFiltered > 0 && (
+        <div
+          data-testid="kit-datatable-scroll-hint"
+          style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, fontSize: 11, color: K.muted, fontFamily: sans }}
+        >
+          <ArrowLeftRight size={12} aria-hidden /> {t("scrollHint")}
         </div>
       )}
 

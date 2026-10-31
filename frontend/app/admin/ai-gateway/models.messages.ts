@@ -142,6 +142,9 @@ export const MODELS = defineMessages(
     needsPriceTitle: "A model needs an input and an output price before it can be switched on (prices change through a migration)",
     needsPrice: "needs price",
     colBlocked: "Blocked",
+    blockedBadge: "Blocked",
+    colVendorProvider: "Vendor / provider",
+    builtInPrices: "Built-in price table",
     colUpdated: "Updated",
     catalogIntro:
       "The admin dropdowns and every cost figure read these rows. Switch a model on or off here; a model cannot be switched on without both an input and an output price.",
@@ -296,6 +299,9 @@ export const MODELS = defineMessages(
     needsPriceTitle: "Model cần có giá đầu vào và đầu ra trước khi bật (giá đổi qua migration)",
     needsPrice: "cần có giá",
     colBlocked: "Bị chặn",
+    blockedBadge: "Bị chặn",
+    colVendorProvider: "Hãng / nhà cung cấp",
+    builtInPrices: "Bảng giá có sẵn",
     colUpdated: "Cập nhật",
     catalogIntro:
       "Các danh sách chọn của quản trị và mọi số liệu chi phí đều đọc các dòng này. Bật hoặc tắt một model ở đây; không thể bật một model khi chưa có cả giá đầu vào lẫn đầu ra.",
