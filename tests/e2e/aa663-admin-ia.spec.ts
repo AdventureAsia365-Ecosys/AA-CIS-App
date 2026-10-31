@@ -54,6 +54,12 @@ const REDIRECTS: [string, RegExp][] = [
   ['/catalog', /\/admin\/master-content$/],
   ['/brand', /\/admin\/settings\?tab=brand$/],
   ['/admin/brand', /\/admin\/settings\?tab=brand$/],
+  // AA-804 UI part 2 — tabs that moved to AI providers: each old link lands on its new tab with exactly one `tab`.
+  ['/admin/settings?tab=models', /\/admin\/ai-gateway\?tab=routing$/],
+  ['/admin/settings?tab=jev-credit', /\/admin\/ai-gateway\?tab=providers&view=jev-credit$/],
+  ['/admin/cost-ops?tab=budgets', /\/admin\/ai-gateway\?tab=budgets$/],
+  ['/admin/llm-usage', /\/admin\/cost-ops\?tab=llm$/],
+  ['/admin/llm-usage?tab=budgets', /\/admin\/ai-gateway\?tab=budgets$/],
 ];
 
 async function login(page: Page) {

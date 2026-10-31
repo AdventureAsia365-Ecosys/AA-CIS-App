@@ -54,9 +54,11 @@ test('Jev Decisions v2: overview stats, questions table, verdicts with filters, 
   expect(errors).toEqual([]);
 });
 
-test('Settings > LLM Models lists Jev per stage', async ({ page }) => {
+test('AI providers > Routing lists Jev per stage', async ({ page }) => {
   await login(page);
+  // AA-804 UI part 2: the stage routes moved from Settings > LLM Models; the old link must still land there.
   await page.goto('/admin/settings?tab=models');
+  await expect(page).toHaveURL(/\/admin\/ai-gateway\?tab=routing$/);
   await expect(page.getByText('Jev decisions per stage')).toBeVisible({ timeout: 20000 });
   await expect(page.getByText('a3_keyword_belongs').first()).toBeVisible({ timeout: 15000 });
 });

@@ -1,19 +1,21 @@
 "use client";
-// app/admin/settings/page.tsx — AA-158 Admin Settings (4 tabs)
+// app/admin/settings/page.tsx — AA-158 Admin Settings
 // AA-994: text in the UI language (messages.ts); gate keys, pipeline steps, keywords and tenant values stay as sent.
+// AA-804 UI part 2: the LLM Models and Jev Credit tabs moved to AI providers (/admin/ai-gateway). Their old links
+// (`?tab=models`, `?tab=jev-credit`: bookmarks, alert e-mails already sent) are replaced in the browser by the new
+// page (lib/aiGateway RETIRED_SETTINGS_TABS), so they never fall back to Pipeline Gates without a word.
 
-import { Suspense, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { X, Plus, Save } from "lucide-react";
 import BrandIdentityEditor from "../_components/BrandIdentityEditor";
 import SettingsKitTab from "../_components/SettingsKitTab";
-import { ModelsTab } from "./ModelsTab";
-import { JevCreditTab } from "./JevCreditTab";
 import {
   Button, Tabs, PageFrame, PageHeader, apiGet, useAdminIdentity, useFormat, useT, Badge, Eyebrow, K, LoadingScreen,
   Section, Spinner, alpha, mono, sans, serif, type Tone,
 } from "../../_kit";
+import { RETIRED_SETTINGS_TABS, retiredTabTarget } from "@/lib/aiGateway";
 import { can, staffErrorMessage, type Capability } from "@/lib/rbac";
 import { RBAC_MESSAGES } from "@/lib/rbac.messages";
 import { SETTINGS } from "./messages";
@@ -383,16 +385,14 @@ function TenantInfoTab({
 // AA-663 — "Brand Rules" (a read-only summary of the active brand) is replaced by the full Brand
 // Identity editor, which used to be its own top-level page at /admin/brand (now a redirect to
 // ?tab=brand). `?tab=` selects the initial tab so old links land in the right place.
-// AA-882 — `needs`: a tab whose reads the backend keeps admin-only (LLM Models: model routes, catalog
-// and the shadow cost report; Jev Credit: the top-up ledger) is not shown to a role without it.
+// AA-882 — `needs`: a tab whose reads the backend keeps admin-only is not shown to a role without it (none today:
+// the two such tabs, LLM Models and Jev Credit, moved to AI providers, an admin-only page).
 // `label` is a key of messages.ts SETTINGS (AA-994).
-type TabLabel = "tabPipeline" | "tabBrand" | "tabSeo" | "tabModels" | "tabJevCredit" | "tabTenant" | "tabUiKit";
+type TabLabel = "tabPipeline" | "tabBrand" | "tabSeo" | "tabTenant" | "tabUiKit";
 const TABS: { key: string; label: TabLabel; needs?: Capability }[] = [
   { key: "pipeline",  label: "tabPipeline" },
   { key: "brand",     label: "tabBrand" },
   { key: "seo",       label: "tabSeo" },
-  { key: "models",    label: "tabModels", needs: "ai.admin" },
-  { key: "jev-credit", label: "tabJevCredit", needs: "spend.read" },
   { key: "tenant",    label: "tabTenant" },
   // AA-662 — UI-kit living reference (design system), moved here from a standalone /admin/kit-demo
   // page so it lives under Settings as a system/reference tab rather than a top-level nav item.
@@ -403,9 +403,19 @@ export default function SettingsPage() {
   // useSearchParams() needs a Suspense boundary in the App Router.
   return (
     <Suspense fallback={null}>
-      <SettingsPageInner />
+      <SettingsRouter />
     </Suspense>
   );
+}
+
+/** A retired tab's link goes to its new page (replace: the old URL leaves no history entry); any other renders. */
+function SettingsRouter() {
+  const router = useRouter();
+  const target = retiredTabTarget(RETIRED_SETTINGS_TABS, useSearchParams().get("tab"));
+  useEffect(() => {
+    if (target) router.replace(target);
+  }, [target, router]);
+  return target ? null : <SettingsPageInner />;
 }
 
 function SettingsPageInner() {
@@ -456,8 +466,6 @@ function SettingsPageInner() {
             {tab === "seo" && (
               <SeoConfigTab seo={data.seo_config} canEdit={can(role, "content.settings.write")} />
             )}
-            {tab === "models" && <ModelsTab />}
-            {tab === "jev-credit" && <JevCreditTab />}
             {tab === "tenant" && (
               <TenantInfoTab tenant={data.tenant} plan={data.plan} />
             )}

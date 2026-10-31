@@ -1,4 +1,4 @@
-"""AA-804 (UI part 1, root ADR 0009) — the read API of the admin "AI providers" page (/admin/ai-gateway).
+"""AA-804 (UI parts 1 and 2, root ADR 0009) — the read API of the admin "AI providers" page (/admin/ai-gateway).
 
   GET /admin/ai-gateway/providers          every paid source in one list: LLM connections (health, spend today and
                                            this month, monthly budget), Jev (estimated credit left, last 24 h of
@@ -6,9 +6,14 @@
                                            the daily limit); each with its provider-wide daily cap.         spend.read
   GET /admin/ai-gateway/trace?job_id=      every logged paid call of one job in time order (LLM, Jev, DataForSEO,
                                            geocoder ledgers).                                                spend.read
+  GET /admin/ai-gateway/budgets            every spending cap by tier: provider daily caps and job caps
+                                           (shared.spend_budget), LLM connection monthly budgets, the tenant tier
+                                           (empty until AA-1016), today's spend and a coverage list.     spend.read
 
-Read-only and $0: database reads only, no provider is called. Admin only (POLICY spend.read; the page is in
-frontend/lib/rbac.ts PAGE_RULES and API_READ_RULES). The sources and their limits: api/services/ai_gateway.py.
+Read-only and $0: database reads only, no provider is called. The caps are edited through the existing write routes
+(PUT /admin/budgets/{provider}/{scope}, PATCH /admin/llm-connections/{key}); this router never writes. Admin only
+(POLICY spend.read; the page is in frontend/lib/rbac.ts PAGE_RULES and API_READ_RULES). The sources and their
+limits: api/services/ai_gateway.py.
 """
 from __future__ import annotations
 
@@ -37,3 +42,8 @@ async def get_trace(request: Request, job_id: str = Query(..., min_length=1, max
     if out is None:
         raise HTTPException(status_code=404, detail="no such job")
     return out
+
+
+@router.get("/budgets", summary="Every spending cap by tier with today's spend (read-only, $0)")
+async def get_budgets(request: Request) -> dict:
+    return await ai_gateway.read_budgets(request.app.state.pool)

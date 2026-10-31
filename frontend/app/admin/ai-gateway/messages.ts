@@ -1,5 +1,6 @@
-// app/admin/ai-gateway/messages.ts — the AI providers page (page header, Providers tab, Trace drawer), English and
-// Vietnamese. Provider names (DataForSEO, Geoapify, Jev, OpenAI API…) and stage / model codes stay as the API sends
+// app/admin/ai-gateway/messages.ts — the AI providers page (page header, tabs, Providers overview, Trace drawer),
+// English and Vietnamese. The other tabs have their own files: models.messages.ts (Routing, Models & trials),
+// connections.messages.ts, jevCredit.messages.ts, budgets.messages.ts. Provider names (DataForSEO, Geoapify, Jev, OpenAI API…) and stage / model codes stay as the API sends
 // them. The English texts are the page's own words that the Guide quotes (lib/guides.test.mjs reads this file).
 
 import { defineMessages } from "../../_kit/core/i18n";
@@ -62,12 +63,19 @@ export const M = defineMessages(
     title: "AI providers",
     crumbPlatform: "Platform",
     crumbGroup: "AI & spend",
-    description: "Every paid AI and data provider in one place: is it answering, what it cost today and this month, "
-      + "how close it is to its cap, and what is left. Read-only; the numbers come from our own logs, no provider "
-      + "is called.",
+    description: "Every paid AI and data provider in one place: is it answering, what it cost, how close it is to its "
+      + "cap, which model each stage uses, and every spending cap. The numbers come from our own logs; opening the "
+      + "page calls no provider.",
     readGuide: "New here? Read the Guide",
     tabProviders: "Providers",
+    tabRouting: "Routing",
+    tabModels: "Models & trials",
+    tabBudgets: "Budgets",
     tabGuide: "Guide",
+    viewsLabel: "Provider views",
+    viewOverview: "Overview",
+    viewConnections: "Connections",
+    viewJevCredit: "Jev credit",
     refresh: "Refresh",
     // tiles
     tileMonth: "Spend this month",
@@ -155,12 +163,19 @@ export const M = defineMessages(
     title: "Nhà cung cấp AI",
     crumbPlatform: "Nền tảng",
     crumbGroup: "AI & chi phí",
-    description: "Mọi nhà cung cấp AI và dữ liệu trả phí ở một chỗ: còn trả lời không, đã chi bao nhiêu hôm nay và "
-      + "tháng này, gần trần chưa, còn lại bao nhiêu. Chỉ xem; số liệu lấy từ sổ ghi của mình, không gọi nhà cung "
-      + "cấp nào.",
+    description: "Mọi nhà cung cấp AI và dữ liệu trả phí ở một chỗ: còn trả lời không, đã chi bao nhiêu, gần trần chưa, "
+      + "mỗi bước dùng model nào, và mọi mức trần chi tiêu. Số liệu lấy từ sổ ghi của mình; mở trang không gọi nhà "
+      + "cung cấp nào.",
     readGuide: "Mới dùng? Đọc Hướng dẫn",
     tabProviders: "Nhà cung cấp",
+    tabRouting: "Điều hướng",
+    tabModels: "Model và thử nghiệm",
+    tabBudgets: "Ngân sách",
     tabGuide: "Hướng dẫn",
+    viewsLabel: "Các góc xem nhà cung cấp",
+    viewOverview: "Tổng quan",
+    viewConnections: "Kết nối",
+    viewJevCredit: "Số dư Jev",
     refresh: "Làm mới",
     tileMonth: "Chi tháng này",
     tileMonthHint: (since: string) => `các lần gọi AI và dữ liệu trả phí từ ${since} (UTC)`,

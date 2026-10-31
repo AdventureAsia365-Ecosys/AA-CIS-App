@@ -4,21 +4,25 @@
 // One row per paid source from GET /api/admin/ai-gateway/providers (backend api/services/ai_gateway.py): every LLM
 // connection, Jev, DataForSEO and Geoapify, in three kit Sections (LLM connections, Decisions, Data providers) above
 // three summary tiles. Each row: status (+ why), health, spend today / this month, the budget (monthly per
-// connection, the provider-wide daily cap), and the balance or today's credits. Read-only: no switch, no edit, no
-// test call here (the existing Settings › LLM Models tab keeps those until the Routing tab lands). A Bedrock
-// connection is named by its AWS account ID (lib/llmConnections connectionName + useAwsAccounts), never by a key.
+// connection, the provider-wide daily cap), and the balance or today's credits. The overview is read-only.
+// AA-804 UI part 2: two more views of the tab (`?view=`): Connections (ConnectionsPanel: switch a connection on or
+// off, limits, monthly budget, test call; secret name and base URL read-only) and Jev credit (JevCreditPanel: the
+// top-up ledger), both moved here from Settings. A Bedrock connection is named by its AWS account ID
+// (lib/llmConnections connectionName + useAwsAccounts), never by a key.
 
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import {
-  Badge, DataTable, DateText, ErrorState, K, KpiTile, Section, apiGet, mono, useT, type ColumnDef,
+  Badge, DataTable, DateText, ErrorState, K, KpiTile, Section, Tabs, apiGet, mono, useT, type ColumnDef,
 } from "../../_kit";
 import {
-  PROVIDERS_API, groupRows, needsLook, pct, statusTone, usd,
-  type ProviderRow, type ProvidersResp,
+  PROVIDERS_API, PROVIDER_VIEWS, groupRows, needsLook, pct, statusTone, usd,
+  type ProviderRow, type ProviderView, type ProvidersResp,
 } from "@/lib/aiGateway";
 import { connectionName } from "@/lib/llmConnections";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
+import { ConnectionsPanel } from "./ConnectionsPanel";
+import { JevCreditPanel } from "./JevCreditPanel";
 import { M, REASON, STATUS } from "./messages";
 
 export const PROVIDERS_KEY = ["ai-gateway", "providers"] as const;
@@ -176,7 +180,7 @@ function ProviderTable({ id, rows, loading, empty }: {
   );
 }
 
-export default function ProvidersTab() {
+function ProvidersOverview() {
   const t = useT(M);
   const q = useQuery({
     queryKey: PROVIDERS_KEY,
@@ -227,6 +231,23 @@ export default function ProvidersTab() {
         <ProviderTable id="ai-gateway-data" rows={groups.data} loading={!data} />
       </Section>
       <div style={small}>{t("traceHint")}</div>
+    </div>
+  );
+}
+
+const VIEW_LABEL = { overview: "viewOverview", connections: "viewConnections", "jev-credit": "viewJevCredit" } as const;
+
+/** The Providers tab: the overview (default) or one of its two editing views, picked with underline tabs. */
+export default function ProvidersTab({ view, onView }: { view: ProviderView; onView: (v: ProviderView) => void }) {
+  const t = useT(M);
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 16 }}>
+      <Tabs variant="underline" ariaLabel={t("viewsLabel")} testId="ai-gateway-provider-views"
+        tabs={PROVIDER_VIEWS.map((v) => ({ key: v, label: t(VIEW_LABEL[v]) }))}
+        active={view} onChange={(k) => onView(k as ProviderView)} />
+      {view === "overview" && <ProvidersOverview />}
+      {view === "connections" && <ConnectionsPanel />}
+      {view === "jev-credit" && <JevCreditPanel />}
     </div>
   );
 }

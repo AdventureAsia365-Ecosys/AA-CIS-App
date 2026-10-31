@@ -202,7 +202,7 @@ export default function S1RewritePage() {
   const [filterSearch, setFilterSearch]     = useState("");
   const [page, setPage]                     = useState(1);
   const [seoMode, setSeoMode]               = useState("standard");
-  // AA-702: "" = no per-run override, so the s1_generate route in Settings -> LLM Models applies
+  // AA-702: "" = no per-run override, so the s1_generate route in AI providers -> Routing applies
   // (an explicit model_tier always wins over it in LLMClient). Was hardcoded "haiku", which
   // silently overrode whatever Settings said on every admin S1 run.
   const [modelTier, setModelTier]           = useState("");

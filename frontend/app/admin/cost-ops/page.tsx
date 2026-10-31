@@ -4,17 +4,17 @@
 // first-class filter/group dimensions), model, stage; the AA-505/AA-617 LLM tree (account/fallback/tokens) + AA-618 DFS
 // log. Tabs: Overview (+ AA-665 C3 month-end forecast vs budget, ForecastPanel), LLM, DataForSEO (+ C2 runs by job,
 // DfsRunsPanel), AWS bill (the AA-623 Cost Explorer reconciliation), Jev (JevPanel, the Jev Decisions endpoints),
-// Budgets. Deep link: /admin/cost-ops?tab=<key>.
+// Deep link: /admin/cost-ops?tab=<key>. AA-804 UI part 2: Budgets moved to AI providers › Budgets; the old
+// `?tab=budgets` link is replaced in the browser by the new page (lib/aiGateway RETIRED_COST_OPS_TABS).
 // AA-994: text in the UI language (messages.ts, panels.messages.ts); tenant labels, stages, roles, models, endpoints,
 // markets and AWS service names from the API stay as sent.
 
 import { Suspense, useState, useEffect, useCallback, useMemo, type CSSProperties } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { AlertTriangle, ChevronRight, ChevronDown, Cpu, Search, Wallet, Building2 } from "lucide-react";
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
 } from "recharts";
-import BudgetsPanel from "./BudgetsPanel";
 import DfsRunsPanel from "./DfsRunsPanel";
 import ForecastPanel from "./ForecastPanel";
 import JevPanel from "./JevPanel";
@@ -25,6 +25,7 @@ import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import {
   LIVE_ACCOUNTS, LLM_ACCOUNT, MAIN_ACCOUNT, RETIRED_ACCOUNT, accountLabel, accountName, isLiveAccount,
 } from "@/lib/awsAccounts";
+import { RETIRED_COST_OPS_TABS, retiredTabTarget } from "@/lib/aiGateway";
 import { COST } from "./messages";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -505,18 +506,28 @@ function FallbackModal({ tenantId, tenantLabel, rangeQs, rangeLabel, onClose }: 
 
 const TABS = [
   { key: "overview", label: "tabOverview" }, { key: "llm", label: "tabLlm" }, { key: "dfs", label: "tabDfs" },
-  { key: "aws", label: "tabAws" }, { key: "jev", label: "tabJev" }, { key: "budgets", label: "tabBudgets" },
+  { key: "aws", label: "tabAws" }, { key: "jev", label: "tabJev" },
 ] as const;
 // Tabs that load their own data (the page's spend fetch, its loading and error states do not apply).
-const SELF_LOADING_TABS = new Set(["budgets", "jev"]);
+const SELF_LOADING_TABS = new Set(["jev"]);
 
 export default function CostOperationsPage() {
   // useSearchParams() needs a Suspense boundary in the App Router.
   return (
     <Suspense fallback={null}>
-      <CostOperationsInner />
+      <CostOperationsRouter />
     </Suspense>
   );
+}
+
+/** A retired tab's link goes to its new page (replace: no history entry for the old URL); any other renders. */
+function CostOperationsRouter() {
+  const router = useRouter();
+  const target = retiredTabTarget(RETIRED_COST_OPS_TABS, useSearchParams().get("tab"));
+  useEffect(() => {
+    if (target) router.replace(target);
+  }, [target, router]);
+  return target ? null : <CostOperationsInner />;
 }
 
 function CostOperationsInner() {
@@ -813,8 +824,6 @@ function CostOperationsInner() {
           </Card>
         )}
 
-        {/* AA-665 — budgets load on their own; the page's time window and filters do not apply. */}
-        {tab === "budgets" && <BudgetsPanel />}
         {/* AA-665 C1 — Jev spend and credit from the Jev Decisions endpoints; the page's window (max 90 days) applies. */}
         {tab === "jev" && <JevPanel days={windowDays} />}
 

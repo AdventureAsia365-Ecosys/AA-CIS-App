@@ -63,6 +63,10 @@
     "capability": null,
     "module": "api.routers.admin_aa_content"
   },
+  "GET /admin/ai-gateway/budgets": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_ai_gateway"
+  },
   "GET /admin/ai-gateway/providers": {
     "capability": "spend.read",
     "module": "api.routers.admin_ai_gateway"

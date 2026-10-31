@@ -394,7 +394,7 @@ reports:
   decision: Raise, cut or reallocate budgets per app; spend or save credits; approve next year's budget.
   cadence: monthly section of FI-01; quarterly in EX-05; annual budget in December or before prod
   schedule: monthly
-  channel: /admin/cost-ops Budgets tab + FI-01 / EX-05 sections
+  channel: /admin/ai-gateway Budgets tab (AI providers) + FI-01 / EX-05 sections
   automation: semi
   status: partial
   priority: P1

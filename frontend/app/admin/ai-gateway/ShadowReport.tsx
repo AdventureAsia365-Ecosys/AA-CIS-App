@@ -1,6 +1,7 @@
 "use client";
-// app/admin/settings/ShadowReportTab.tsx
-// AA-686 — the Shadow A/B sub-tab: a kit DataTable, one row per (stage, primary, shadow) group
+// app/admin/ai-gateway/ShadowReport.tsx
+// AA-686 — the shadow comparison report (AI providers › Models & trials since AA-804 UI part 2; was Settings › LLM
+// Models › Shadow A/B): a kit DataTable, one row per (stage, primary, shadow) group
 // from GET /admin/llm-shadow/report?days=. Shows agreement %, mean |Δscore|, cost per call primary
 // vs shadow, latency p50/p95, repeat-scoring variance, and n / unparsed / errors. Every rate shows
 // its sample size next to it so a rate from 3 rows does not read like one from 3,000. A days
@@ -9,7 +10,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { K, mono, type ColumnDef, DataTable, apiGet, useT } from "../../_kit";
+import { K, mono, type ColumnDef, DataTable, SegmentedControl, apiGet, useT } from "../../_kit";
 import { HIDDEN_STAGES, type ShadowGroup } from "./llmShared";
 import { MODELS } from "./models.messages";
 
@@ -35,7 +36,7 @@ function RateWithSample({ value, sample }: { value: React.ReactNode; sample: num
   );
 }
 
-export function ShadowReportTab() {
+export function ShadowReport() {
   const t = useT(MODELS);
   const [days, setDays] = useState(30);
 
@@ -142,27 +143,17 @@ export function ShadowReportTab() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <p style={{ fontSize: 12, color: K.muted2, margin: 0 }}>
-        {t("shadowIntro")}
-      </p>
-
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <span style={{ fontSize: 12, color: K.muted }}>{t("window")}</span>
-        {DAYS_OPTIONS.map((d) => (
-          <button
-            key={d}
-            data-testid={`shadow-days-${d}`}
-            onClick={() => setDays(d)}
-            style={{
-              padding: "5px 12px", borderRadius: 999, fontSize: 12, fontWeight: 600, cursor: "pointer",
-              border: `1px solid ${days === d ? K.accentBorder : K.line}`,
-              background: days === d ? K.accentTint : K.card,
-              color: days === d ? K.accentDeep : K.muted,
-            }}
-          >
-            {t("daysShort", d)}
-          </button>
-        ))}
+        <SegmentedControl<string>
+          label={t("window")}
+          appearance="chips"
+          size="sm"
+          testId="shadow-days"
+          value={String(days)}
+          onChange={(v) => setDays(Number(v))}
+          options={DAYS_OPTIONS.map((d) => ({ value: String(d), label: t("daysShort", d) }))}
+        />
       </div>
 
       <DataTable<ShadowGroup>

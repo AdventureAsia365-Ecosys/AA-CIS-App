@@ -207,9 +207,9 @@ def test_render_spend_budget_content():
     assert msg.to == "ops@example.com"
     assert msg.subject == "[AA-CIS dev] Spend budget bedrock / job:place_extract: 85% of daily limit"
     for part in ("bedrock / job:place_extract", "2026-10-15 (UTC day)", "$8.50 of daily limit $10.00",
-                 "alert threshold 80%", "https://admin.example/admin/cost-ops?tab=budgets"):
+                 "alert threshold 80%", "https://admin.example/admin/ai-gateway?tab=budgets"):
         assert part in msg.text
-    assert 'href="https://admin.example/admin/cost-ops?tab=budgets"' in msg.html
+    assert 'href="https://admin.example/admin/ai-gateway?tab=budgets"' in msg.html
 
 
 def test_render_stop_and_escaping():

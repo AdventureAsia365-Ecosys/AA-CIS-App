@@ -44,22 +44,30 @@ test("the patch carries only changed fields, emptied ones as null", () => {
 
 test("client-side checks mirror the API rules", () => {
   const c = conn();
-  const { errors } = patchBody(c, {
-    ...formOf(c), secret_name: "aa-cis/dev/rds", base_url: "http://api.anthropic.com", max_retries: "9",
-    max_concurrency: "1.5",
-  });
-  assert.equal(errors.secret_name.code, "secretPrefix");
-  assert.equal(errors.base_url.code, "httpsOnly");
+  const { errors } = patchBody(c, { ...formOf(c), max_retries: "9", max_concurrency: "1.5" });
   assert.deepEqual(errors.max_retries, { code: "range", min: 0, max: 5 });
   assert.equal(errors.max_concurrency.code, "wholeNumber");
 });
 
-test("a Bedrock task-role connection never sends a secret or a base URL", () => {
+test("AA-1017: the secret name and the base URL are read-only, never in the form or the patch", () => {
+  const c = conn();
+  assert.equal(takesSecret(c), true);
+  assert.equal(takesBaseUrl(c), true);
+  const form = formOf(c);
+  assert.equal("secret_name" in form, false);
+  assert.equal("base_url" in form, false);
+  // even a form object that carries them (an old caller) sends neither
+  const { body, errors } = patchBody(c, { ...form, secret_name: "aa-llm/dev/other", base_url: "https://evil.example",
+    rpm_limit: "20" });
+  assert.deepEqual(body, { rpm_limit: 20 });
+  assert.deepEqual(errors, {});
+});
+
+test("a Bedrock task-role connection takes neither a secret nor a base URL", () => {
   const c = conn({ connection_key: "main", kind: "bedrock", auth_mode: "task_role", secret_name: null, base_url: null });
   assert.equal(takesSecret(c), false);
   assert.equal(takesBaseUrl(c), false);
-  const { body } = patchBody(c, { ...formOf(c), secret_name: "aa-llm/dev/x", base_url: "https://x", rpm_limit: "20" });
-  assert.deepEqual(body, { rpm_limit: 20 });
+  assert.deepEqual(patchBody(c, { ...formOf(c), rpm_limit: "20" }).body, { rpm_limit: 20 });
 });
 
 test("test choices skip embeddings, enabled first", () => {

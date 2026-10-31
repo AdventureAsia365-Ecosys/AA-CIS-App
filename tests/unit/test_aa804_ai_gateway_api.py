@@ -59,7 +59,7 @@ class FakePool:
 # ── route policy ───────────────────────────────────────────────────────────────────────────────────────────────────
 
 def test_routes_are_spend_read_and_admin_only():
-    for path in ("/admin/ai-gateway/providers", "/admin/ai-gateway/trace"):
+    for path in ("/admin/ai-gateway/providers", "/admin/ai-gateway/trace", "/admin/ai-gateway/budgets"):
         assert staff_authz.POLICY[("GET", path)] == staff_authz.SPEND_READ
     assert staff_authz.SPEND_READ in staff_authz.ROLE_PERMS["admin"]
     for role in ("reviewer", "content", "viewer"):
@@ -70,7 +70,8 @@ def test_routes_are_served_and_run_the_policy():
     from tests.unit.test_aa882_route_policy import _runs_policy, _staff_routes
 
     found = {(m, p): (r, inh) for m, p, r, inh in _staff_routes() if p.startswith("/admin/ai-gateway")}
-    assert set(found) == {("GET", "/admin/ai-gateway/providers"), ("GET", "/admin/ai-gateway/trace")}
+    assert set(found) == {("GET", "/admin/ai-gateway/providers"), ("GET", "/admin/ai-gateway/trace"),
+                          ("GET", "/admin/ai-gateway/budgets")}
     for (_m, p), (r, inh) in found.items():
         assert r.path == p and _runs_policy(r, inh, p)
 

@@ -67,7 +67,10 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     server-side filter/sort/paginate + filter-aware stat cards + windowed cost + derived pipeline
     status, via react-query — see A3 note below), `atom-curation` (Social Content tabs
     01-05), `tenant-activity` (tabs 06-08), `platform-stats` (includes gate telemetry per tenant
-    and channel, AA-615), `cost-ops` (the **Cost Operations** page, AA-622/623/665; the old `/admin/llm-usage` redirects to it), `tenants`,
+    and channel, AA-615), `cost-ops` (the **Cost Operations** page, AA-622/623/665; the old `/admin/llm-usage` redirects to its LLM tab),
+    `ai-gateway` (**AI providers**, AA-804: tabs Providers (+ views Connections, Jev credit), Routing, Models & trials,
+    Budgets, Guide, and the job Trace drawer; Settings › LLM Models / Jev Credit and Cost Operations › Budgets moved
+    there in UI part 2 and their old `?tab=` links are sent on in the browser), `tenants`,
     `jobs`, `decisions` (**Jev Decisions**, AA-660), `photos` (**Photos**, AA-708 — Drive photo sync, unmatched queue), `api-docs` (**API Docs**,
     admin-only read-only OpenAPI reader built on the kit: `GET /admin/openapi.json` through the BFF, since the
     AA-577 `/docs`, `/redoc`, `/openapi.json` need the X-Admin-Secret header on ECS), `settings` (pipeline gates, **Brand
@@ -310,7 +313,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   scope stay migration-only); `POST /admin/llm-connections/{key}/test` sends one small real call through
   `LLMClient.probe` (works on a switched-off connection; stage `adhoc_conn_test`, role `validate`, logged + audited;
   its outcome counts on the circuit). `GET /admin/llm-availability` adds `connections` (status per connection and the
-  circuit of each deployment). UI: Settings › LLM Models › Connections (`frontend/app/admin/settings/ConnectionsTab.tsx`).
+  circuit of each deployment). UI: AI providers › Providers › Connections (`frontend/app/admin/ai-gateway/ConnectionsPanel.tsx`; secret name
+  and base URL read-only there since AA-1017, changed by migration).
 - **Data scopes per stage** (AA-1002 slice S5, migration 311 contract, app ADR 0012): `shared.llm_role_config.
   allowed_scopes` (`{aws_only}` or `{aws_only, vendor_direct}`, default `{aws_only}`, migration-only: `cis_app` has no
   INSERT / UPDATE on the column) says which connections (`data_scope`) a stage's content may use. Backfilled from the
@@ -444,7 +448,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     OpenAI platform API (`gpt-6-luna-openai`, last resort only). `gpt-4.1` is disabled (migration 224)
     and admin cannot re-enable it; `LLMClient._call_openai` refuses any model whose catalog row is not
     enabled, so the legacy Haiku/Sonnet chain no longer falls back to GPT-4.1. Admin rejects an
-    OpenAI-API model as primary, shadow or non-last fallback. Settings › LLM Models shows each route.
+    OpenAI-API model as primary, shadow or non-last fallback. AI providers › Routing shows each route.
 - **Account-level refusals fail fast** (AA-900, `shared/llm_client/errors.py`): a provider error is classified as
   `access_denied` (Bedrock "Error 002: Access to Bedrock models is not allowed for this account", AccessDenied, IAM,
   OpenAI 401/403), `quota_exhausted` (no OpenAI credit), `throttled` or `other`. When EVERY model a request tried was
@@ -457,7 +461,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   record one refused tour after another. A refusal after a paid draft keeps the draft: the S1 sonnet upgrade
   (`_sonnet_upgrade` returns None) and the writer-v2 meta calls. Per-item loops that swallow LLM errors (A3 atomize
   days) are unchanged.
-  Settings › LLM Models › Stages opens with the **LLM availability** card (`GET /admin/llm-availability`,
+  AI providers › Routing opens with the **LLM availability** card (`GET /admin/llm-availability`,
   `api/services/llm_availability.py`): answered calls per provider / account from `llm_call_log` plus classified
   errors of failed (dated by `finished_at`) or re-queued jobs from `shared.job`; no probe call. A refused call writes no `llm_call_log` row (AA-927 bills
   only), so job errors are the refusal side of the signal.
@@ -531,7 +535,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     fails on a key spelled anywhere else in the frontend. Labels built by the API (Settings › Models "via",
     the account-route option, the forecast and Cost per app lines) use the same module.
   - The admin **Cost Operations** page (`/admin/cost-ops`, AA-665; was External Spend at `/admin/llm-usage`, which
-    redirects) has the tabs Overview, LLM, DataForSEO, AWS bill, Jev and Budgets. It compares estimated spend (token
+    redirects to its LLM tab) has the tabs Overview, LLM, DataForSEO, AWS bill and Jev (Budgets moved to AI providers ›
+    Budgets in AA-804 UI part 2: `GET /admin/ai-gateway/budgets` lists every cap by tier, edits still go through
+    `PUT /admin/budgets/{provider}/{scope}`). It compares estimated spend (token
     logs) with the real AWS bill (AWS bill tab), splitting Bedrock from infrastructure per account, over any date range.
     - Overview: the **month-end forecast vs budget** (`GET /admin/cost-ops/forecast`, `api/services/cost_ops.py`):
       per provider family (Bedrock with the acc3/acc2 split, OpenAI, Jev, DataForSEO) and per AWS account (acc2,
@@ -576,7 +582,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   with SNS (best effort). Nobody to mail = `skipped`. Template `test` = the page's "Send test e-mail".
   **Jev credit (AA-845):** the same job sends `jev_credit_exhausted` (queued when the AA-720 402 bell
   `platform.jev_credit.exhausted` is written) and `jev_credit_low` (`shared/jev_credit.py`: estimated TypeSafe
-  credit = Settings › Jev Credit top-ups − logged typesafe spend, below $3 → bell `platform.jev_credit.low`; checked
+  credit = AI providers › Jev credit top-ups − logged typesafe spend, below $3 → bell `platform.jev_credit.low`; checked
   every 30 min by the api ops sampler and on `POST /admin/decisions/jev-credit/check`). Throttle: one exhausted
   bell per 24 h while unread (AA-720), one low bell per 24 h read or not; e-mail only with a new bell, at most one
   per template per UTC day. The daily 402 sweep alerts only on real 402s after the latest recorded top-up and the

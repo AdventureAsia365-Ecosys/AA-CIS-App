@@ -1,7 +1,8 @@
 "use client";
-// app/admin/settings/StageRouteEditor.tsx
-// AA-686 — per-stage editor for the fallback chain + shadow A/B, inside the LLM Models › Stages
-// sub-tab. The primary model is still set by the existing ModelRow (PATCH /llm-config/{stage});
+// app/admin/ai-gateway/StageRouteEditor.tsx
+// AA-686 — per-stage editor for the fallback chain + shadow A/B, inside the Routing tab of AI providers (moved from
+// Settings › LLM Models by AA-804 UI part 2, rebuilt on kit controls). The primary model is still set by the
+// RoutingTab ModelRow (PATCH /llm-config/{stage});
 // this component owns the route: the ordered fallbacks and the optional shadow model
 // (PATCH /llm-config/{stage}/route). A shadow doubles the judge cost, so the tech lead wants the ON/OFF
 // switch + sample % directly controllable here, with the current state readable at a glance.
@@ -10,7 +11,9 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, Plus, X } from "lucide-react";
-import { K, mono, sans, Badge, Button, ConfirmModal, apiSend, useT, useToast, alpha } from "../../_kit";
+import {
+  K, Badge, Button, ChipButton, ConfirmModal, IconButton, Input, Select, Switch, alpha, apiSend, mono, useT, useToast,
+} from "../../_kit";
 import { MODELS } from "./models.messages";
 import {
   type ModelOption,
@@ -20,6 +23,8 @@ import {
 } from "./llmShared";
 
 const DEFAULT_SAMPLE_PCT = 10;
+// Same key as RoutingTab LLM_CONFIG_KEY (not imported: RoutingTab imports this file).
+const LLM_CONFIG_QUERY = ["llm-config"] as const;
 const SAMPLE_QUICK = [0, 10, 20, 50, 100];
 
 interface RoutePatchBody {
@@ -78,7 +83,7 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
     onSuccess: () => {
       toast.success(t("routeSaved", row.stage));
       setError("");
-      qc.invalidateQueries({ queryKey: ["llm-config"] });
+      qc.invalidateQueries({ queryKey: LLM_CONFIG_QUERY });
     },
     onError: (e) => {
       // Show the 422 detail inline, don't swallow it.
@@ -194,30 +199,18 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
             >
               <span aria-hidden style={{ color: K.muted2 }}>→</span>
               {label(id)}
-              <button
-                aria-label={t("moveUp", id)}
-                onClick={() => moveFallback(i, -1)}
-                disabled={i === 0 || mut.isPending}
-                style={iconBtn(i === 0 || mut.isPending)}
-              >
+              <IconButton variant="plain" size="xs" label={t("moveUp", id)} onClick={() => moveFallback(i, -1)}
+                disabled={i === 0 || mut.isPending}>
                 <ArrowUp size={12} />
-              </button>
-              <button
-                aria-label={t("moveDown", id)}
-                onClick={() => moveFallback(i, 1)}
-                disabled={i === fallbacks.length - 1 || mut.isPending}
-                style={iconBtn(i === fallbacks.length - 1 || mut.isPending)}
-              >
+              </IconButton>
+              <IconButton variant="plain" size="xs" label={t("moveDown", id)} onClick={() => moveFallback(i, 1)}
+                disabled={i === fallbacks.length - 1 || mut.isPending}>
                 <ArrowDown size={12} />
-              </button>
-              <button
-                aria-label={t("remove", id)}
-                onClick={() => removeFallback(id)}
-                disabled={mut.isPending}
-                style={{ ...iconBtn(mut.isPending), color: K.danger }}
-              >
+              </IconButton>
+              <IconButton variant="plain" size="xs" tone="danger" label={t("remove", id)}
+                onClick={() => removeFallback(id)} disabled={mut.isPending}>
                 <X size={12} />
-              </button>
+              </IconButton>
             </span>
           ))}
           {fallbacks.length === 0 && (
@@ -227,26 +220,23 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
         {(addable.length > 0 || disabledOpts.length > 0) && (
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
             <Plus size={12} style={{ color: K.muted2 }} />
-            <select
+            <Select
+              size="sm"
               data-testid={`llm-fallback-add-${row.stage}`}
-              defaultValue=""
+              aria-label={t("addFallback")}
+              value=""
               disabled={mut.isPending}
-              onChange={(e) => {
-                addFallback(e.target.value);
-                e.currentTarget.value = "";
-              }}
-              style={selectStyle}
-            >
-              <option value="" disabled>{t("addFallback")}</option>
-              {addable.map((o) => (
-                <option key={o.model_id} value={o.model_id}>{withVia(o.label, o.via)}</option>
-              ))}
-              {disabledOpts.map((o) => (
-                <option key={o.model_id} value={o.model_id} disabled>
-                  {withVia(o.label, o.via)} — {o.reason ?? t("notAvailableLower")}
-                </option>
-              ))}
-            </select>
+              onChange={(e) => addFallback(e.target.value)}
+              style={{ flex: "0 1 320px", minWidth: 0 }}
+              options={[
+                { value: "", label: t("addFallback"), disabled: true },
+                ...addable.map((o) => ({ value: o.model_id, label: withVia(o.label, o.via) })),
+                ...disabledOpts.map((o) => ({
+                  value: o.model_id, disabled: true,
+                  label: `${withVia(o.label, o.via)} — ${o.reason ?? t("notAvailableLower")}`,
+                })),
+              ]}
+            />
           </div>
         )}
       </div>
@@ -257,26 +247,16 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
           <span style={{ fontSize: 11, fontWeight: 600, color: K.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>
             {t("shadowAb")}
           </span>
-          <button
-            role="switch"
-            aria-checked={shadowOn}
-            aria-label={t("shadowFor", row.stage)}
-            data-testid={`llm-shadow-switch-${row.stage}`}
-            onClick={() => toggleShadow(!shadowOn)}
+          <Switch
+            checked={shadowOn}
+            onChange={toggleShadow}
+            label={t("shadowFor", row.stage)}
+            testId={`llm-shadow-switch-${row.stage}`}
             disabled={mut.isPending || shadowOpts.length === 0}
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px", borderRadius: 999,
-              border: `1px solid ${shadowOn ? K.accentBorder : K.line}`,
-              background: shadowOn ? K.accentTint : K.card, color: shadowOn ? K.accentDeep : K.muted,
-              fontSize: 11.5, fontWeight: 600, cursor: shadowOpts.length === 0 ? "not-allowed" : "pointer",
-              fontFamily: sans, opacity: shadowOpts.length === 0 ? 0.5 : 1,
-            }}
-          >
-            <span style={{
-              width: 8, height: 8, borderRadius: "50%", background: shadowOn ? K.accentDeep : K.muted2, display: "block",
-            }} />
+          />
+          <span style={{ fontSize: 11.5, fontWeight: 600, color: shadowOn ? K.accentDeep : K.muted }}>
             {shadowOn ? t("on") : t("offUpper")}
-          </button>
+          </span>
           <span style={{ fontSize: 11, color: K.muted2 }}>
             {t("shadowHint")}
           </span>
@@ -284,21 +264,23 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
 
         {shadowOn && (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
-            <select
+            <Select
+              size="sm"
               data-testid={`llm-shadow-model-${row.stage}`}
+              aria-label={t("pickShadow")}
               value={shadowModel}
               disabled={mut.isPending}
               onChange={(e) => setShadowModel(e.target.value)}
-              style={selectStyle}
-            >
-              <option value="" disabled>{t("pickShadow")}</option>
-              {shadowOpts.map((o) => (
-                <option key={o.model_id} value={o.model_id}>{withVia(o.label, o.via)}</option>
-              ))}
-            </select>
+              style={{ flex: "0 1 320px", minWidth: 0 }}
+              options={[
+                { value: "", label: t("pickShadow"), disabled: true },
+                ...shadowOpts.map((o) => ({ value: o.model_id, label: withVia(o.label, o.via) })),
+              ]}
+            />
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <label style={{ fontSize: 11.5, color: K.muted }} htmlFor={`sample-${row.stage}`}>{t("samplePct")}</label>
-              <input
+              <Input
+                size="sm"
                 id={`sample-${row.stage}`}
                 data-testid={`llm-shadow-pct-${row.stage}`}
                 type="number"
@@ -310,27 +292,15 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
                   const v = Number(e.target.value);
                   setSamplePct(Number.isNaN(v) ? 0 : Math.max(0, Math.min(100, v)));
                 }}
-                style={{
-                  width: 68, padding: "5px 8px", borderRadius: 7, border: `1px solid ${K.line}`,
-                  fontSize: 12.5, fontFamily: mono, color: K.body, background: K.card,
-                }}
+                style={{ width: 76 }}
               />
             </div>
             <div style={{ display: "flex", gap: 4 }}>
               {SAMPLE_QUICK.map((p) => (
-                <button
-                  key={p}
-                  onClick={() => setSamplePct(p)}
-                  disabled={mut.isPending}
-                  style={{
-                    padding: "4px 9px", borderRadius: 7, fontSize: 11.5, fontFamily: mono, cursor: "pointer",
-                    border: `1px solid ${samplePct === p ? K.accentBorder : K.line}`,
-                    background: samplePct === p ? K.accentTint : K.card,
-                    color: samplePct === p ? K.accentDeep : K.muted,
-                  }}
-                >
+                <ChipButton key={p} size="sm" selected={samplePct === p} onClick={() => setSamplePct(p)}
+                  disabled={mut.isPending}>
                   {p}
-                </button>
+                </ChipButton>
               ))}
             </div>
           </div>
@@ -387,27 +357,3 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
   );
 }
 
-const selectStyle: React.CSSProperties = {
-  padding: "6px 10px",
-  borderRadius: 7,
-  border: `1px solid ${K.line}`,
-  fontSize: 12.5,
-  fontFamily: sans,
-  color: K.body,
-  background: K.card,
-  maxWidth: "100%",
-  minWidth: 0,
-};
-
-function iconBtn(disabled: boolean): React.CSSProperties {
-  return {
-    display: "inline-flex",
-    alignItems: "center",
-    border: "none",
-    background: "transparent",
-    color: K.muted2,
-    cursor: disabled ? "not-allowed" : "pointer",
-    opacity: disabled ? 0.4 : 1,
-    padding: "0 1px",
-  };
-}

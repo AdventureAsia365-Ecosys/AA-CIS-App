@@ -46,6 +46,7 @@ test.describe('Admin pages — structural check (clientHeight capped at viewport
     ['/admin/tenants', 'main'],
     ['/admin/settings', 'main'],
     ['/admin/cost-ops', 'main'],
+    ['/admin/ai-gateway?tab=routing', 'main'],   // AA-804 UI part 2: the long stage list
     ['/admin/run-health', 'div'],
     ['/admin/review', 'main'],
     ['/admin/a4-oversight', 'div'],
