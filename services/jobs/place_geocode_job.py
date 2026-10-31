@@ -126,7 +126,8 @@ async def _run_locked(ctx: JobContext) -> Optional[dict]:
         ctx.add_cost(cost)
         try:
             async with ctx.pool.acquire() as conn:
-                await store.log_geocode_calls(conn, inner.name, inner.requests, cost, ctx.job_id)
+                await store.log_geocode_calls(conn, inner.name, inner.requests, cost, ctx.job_id,
+                                              failed_requests=getattr(inner, "failed_requests", None))
         except Exception as e:  # noqa: BLE001 — the spend is also on the job row
             logger.warning("geocode_call_log_failed", error=str(e)[:200])
         await inner.aclose()

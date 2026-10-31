@@ -43,7 +43,7 @@ SPEND_SQL = """
      WHERE created_at >= ($1::date::timestamp AT TIME ZONE 'UTC')
        AND created_at < (($2::date + 1)::timestamp AT TIME ZONE 'UTC')
        AND stage = ANY($3::text[])
-       AND quality_signal ->> 'app' = $4
+       AND coalesce(app, quality_signal ->> 'app', 'cis') = $4
      GROUP BY 1, 2
 """
 

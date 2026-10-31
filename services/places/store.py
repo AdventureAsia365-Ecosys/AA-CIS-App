@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 from typing import Iterable, Optional
 
+import asyncpg
+
 MASTER_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 
 _LIVE_SQL = """
@@ -862,14 +864,30 @@ async def chain_requests(conn, kind: str, chain_id: str) -> int:
         kind, str(chain_id)) or 0)
 
 
+_GEOCODE_CALL_SQL = ("INSERT INTO geo.geocode_call (provider, requests, cost_usd, job_id, credits, endpoint) "
+                     "VALUES ($1, $2, $3, $4::uuid, $5, $6)")
+# AA-804 (ledger v2, migration 319): the same row plus the job's tenant and the requests that did not answer.
+_GEOCODE_CALL_V2_SQL = ("INSERT INTO geo.geocode_call (provider, requests, cost_usd, job_id, credits, endpoint, "
+                        "tenant_id, failed_requests) VALUES ($1, $2, $3, $4::uuid, $5, $6, $7::uuid, $8)")
+
+
 async def log_geocode_calls(conn, provider: str, requests: int, cost_usd: float, job_id: Optional[str], *,
-                            credits: Optional[int] = None, endpoint: str = "search") -> None:
-    """One row per run and endpoint. `credits` defaults to `requests` (a geocode search is 1 credit)."""
-    if requests:
-        await conn.execute(
-            "INSERT INTO geo.geocode_call (provider, requests, cost_usd, job_id, credits, endpoint) "
-            "VALUES ($1, $2, $3, $4::uuid, $5, $6)",
-            provider, requests, round(cost_usd, 6), job_id, requests if credits is None else credits, endpoint)
+                            credits: Optional[int] = None, endpoint: str = "search",
+                            failed_requests: Optional[int] = None, tenant_id: Optional[str] = None) -> None:
+    """One row per run and endpoint. `credits` defaults to `requests` (a geocode search is 1 credit).
+
+    AA-804: `failed_requests` = the requests of the run that did not answer (each still spent a credit; NULL = not
+    counted); `tenant_id` defaults to the job's bound tenant (call_log.bind_tenant; NULL = platform). Before
+    migration 319 the row is written without them."""
+    if not requests:
+        return
+    from shared.llm_client.call_log import _row_tenant
+    args = (provider, requests, round(cost_usd, 6), job_id, requests if credits is None else credits, endpoint)
+    failed = failed_requests if isinstance(failed_requests, int) and not isinstance(failed_requests, bool) else None
+    try:
+        await conn.execute(_GEOCODE_CALL_V2_SQL, *args, _row_tenant(tenant_id, "geocode_call"), failed)
+    except asyncpg.exceptions.UndefinedColumnError:
+        await conn.execute(_GEOCODE_CALL_SQL, *args)
 
 
 async def destination_briefs(conn, ids: Iterable[str]) -> dict[str, dict]:

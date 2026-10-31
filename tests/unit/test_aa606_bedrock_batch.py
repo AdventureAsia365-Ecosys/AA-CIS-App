@@ -203,3 +203,72 @@ def test_batch_record_ok_flag():
     assert err.ok is False
     empty = BatchRecordResult(tour_id="t3", text="")
     assert empty.ok is False
+
+
+# ── AA-642 S7 (ledger part) / AA-804: one llm_call_log row per batch record ─────────────────────
+
+T_OK, T_LONG, T_ERR, T_MISSING, T_SHAPE = ("11111111-1111-1111-1111-11111111111" + c for c in "12345")
+
+
+def _outputs():
+    usage = {"input_tokens": 1000, "output_tokens": 400, "cache_read_input_tokens": 200}
+    return {
+        T_OK: BatchRecordResult(tour_id=T_OK, text='{"name":"Lakeside Loop"}', usage=usage, stop_reason="end_turn"),
+        T_LONG: BatchRecordResult(tour_id=T_LONG, text='{"name":"Ridge Walk"}', usage=usage, stop_reason="max_tokens"),
+        T_ERR: BatchRecordResult(tour_id=T_ERR, error='{"errorMessage": "ThrottlingException: Too many requests"}'),
+        T_SHAPE: BatchRecordResult(tour_id=T_SHAPE, error="unexpected modelOutput shape", usage=usage),
+    }
+
+
+@pytest.fixture
+def flat_rates(monkeypatch):
+    monkeypatch.setattr("shared.llm_client.pricing._catalog_rates",
+                        lambda m: {"in": 0.001, "out": 0.005, "cache_read": 0.0001, "cache_write": 0.00125})
+
+
+def test_batch_ledger_rows_one_per_record_at_the_batch_rate(flat_rates):
+    from services.content_generation import s1_batch
+    from shared.llm_client import call_log
+
+    rows = s1_batch.batch_ledger_rows(_outputs(), [T_OK, T_LONG, T_ERR, T_MISSING, T_SHAPE], account="acc3",
+                                      batch_id="b-1")
+    assert [r["tour_id"] for r in rows] == [T_OK, T_LONG, T_ERR, T_MISSING, T_SHAPE]
+    assert all(set(r) <= set(call_log._ROW_FIELDS) for r in rows)          # record_calls accepts every row
+    ok, long_, err, missing, shape = rows
+    # (1000 x 0.001 + 400 x 0.005 + 200 x 0.0001) / 1000 x 0.5 batch discount
+    assert ok["cost_usd"] == pytest.approx(0.00151) and ok["pricing_mode"] == "catalog+batch"
+    assert (ok["tokens_in"], ok["tokens_out"], ok["cache_read_tokens"]) == (1200, 400, 200)
+    assert (ok["stage"], ok["role"], ok["model"], ok["account"]) == ("s1_generate", "writer", "haiku-4-5", "acc3")
+    assert ok["units"] == 1 and ok["unit_kind"] == "record" and "status" not in ok   # derived: ok
+    assert call_log._row_v2(long_)[1] == "truncated"
+    assert (err["cost_usd"], err["status"], err["error_class"]) == (0.0, "refused", "throttled")
+    assert (missing["status"], missing["error_class"], missing["quality_signal"]["error"]) == \
+        ("error", "other", "missing_output")
+    assert shape["status"] == "billed_unusable" and shape["cost_usd"] > 0
+    assert not set(shape["quality_signal"]) & set(call_log.OK_RATE_KEYS)
+    assert all(r["quality_signal"]["batch_id"] == "b-1" for r in rows)
+
+
+def test_ingest_writes_the_batch_rows_before_the_tours(monkeypatch, flat_rates):
+    import asyncio
+
+    from api.routers import admin_pipeline
+    from services.content_generation import s1_batch
+    from shared.llm_client import call_log
+
+    order: list = []
+
+    async def record_calls(rows):
+        order.append(("ledger", len(rows)))
+
+    async def run_tour(req, **kw):
+        order.append(("tour", req.tour_id))
+        return {"version_id": "v", "quality_score": 8, "retry_count": 0}
+
+    monkeypatch.setattr(call_log, "record_calls", record_calls)
+    monkeypatch.setattr(admin_pipeline, "_execute_run_tour", run_tour)
+    monkeypatch.setattr(bedrock_batch, "read_batch_output", lambda uri, account: _outputs())
+    summary = asyncio.run(s1_batch.ingest_s1_batch(job_arn="arn", output_uri="s3://x", account="acc3",
+                                                   tour_ids=[T_OK, T_ERR], batch_id="b-1", poll=False))
+    assert order[0] == ("ledger", 2) and summary["ledger_rows"] == 2
+    assert [o for o in order if o[0] == "tour"] == [("tour", T_OK), ("tour", T_ERR)]

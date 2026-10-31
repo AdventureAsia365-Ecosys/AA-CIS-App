@@ -239,6 +239,7 @@ class GeoapifyGeocoder:
         self._key = api_key
         self.cost_per_request = cost_per_request
         self.requests = 0                   # HTTP requests sent by this instance (= credits spent)
+        self.failed_requests = 0            # AA-804: of those, the ones that did not answer 200 (still a credit)
         self.daily_credit_limit = int(daily_credit_limit)
         self.credits_used_today = int(credits_used_today)   # before this instance (geo.geocode_call, UTC day)
         self.max_retries = max_retries
@@ -302,13 +303,16 @@ class GeoapifyGeocoder:
                 resp = await self._client().get(GEOAPIFY_URL, params=params)
             except Exception as e:  # noqa: BLE001 — transport error: the message may hold the URL
                 last = f"{type(e).__name__}"
+                self.failed_requests += 1
             else:
                 status = getattr(resp, "status_code", 0)
                 if status == 200:
                     try:
                         return resp.json()
                     except Exception as e:  # noqa: BLE001
+                        self.failed_requests += 1
                         raise GeocoderError(f"geoapify: invalid JSON ({type(e).__name__})") from None
+                self.failed_requests += 1
                 if status in (401, 403):
                     raise GeocoderUnavailable(f"geoapify: HTTP {status} (key rejected)")
                 if status != 429 and status < 500:

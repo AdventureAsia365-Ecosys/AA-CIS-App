@@ -40,7 +40,7 @@ async def test_record_call_forwards_account_fallback_provider():
             tokens_in=100, tokens_out=50, cost_usd=0.01, quality_signal={"ok": True},
             stop_reason="end_turn", account="acc3", fallback_used=False,
         )
-    args = fake_conn.execute.call_args.args
+    args = fake_conn.execute.call_args.args[:16]   # AA-804: SQL + the 15 base values (S6 / ledger v2 ones follow)
     # bind order tail: …, stop_reason, account, fallback_used, provider, job_id
     assert args[-5] == "end_turn"
     assert args[-4] == "acc3"
@@ -63,7 +63,7 @@ async def test_record_call_openai_account_none_provider_openai():
             tokens_in=100, tokens_out=50, cost_usd=0.02, quality_signal={"passed": True},
             stop_reason="stop",
         )
-    args = fake_conn.execute.call_args.args
+    args = fake_conn.execute.call_args.args[:16]   # AA-804: SQL + the 15 base values (S6 / ledger v2 ones follow)
     assert args[-4] is None            # account: OpenAI has none
     assert args[-2] == "openai"        # provider derived from "gpt" prefix
     assert args[4] == "gpt-4.1"        # model is args[4] (args[0] is the SQL string)

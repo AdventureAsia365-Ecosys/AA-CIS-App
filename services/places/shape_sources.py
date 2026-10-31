@@ -105,6 +105,7 @@ class GeoapifyDetails:
         self._own_http = http is None
         self._key = api_key
         self.requests = 0
+        self.failed_requests = 0       # AA-804: requests that did not answer 200 / 404 (their credits are still spent)
         self.credits = 0
         self.daily_credit_limit = int(daily_credit_limit)
         self.credits_used_today = int(credits_used_today)
@@ -157,17 +158,20 @@ class GeoapifyDetails:
                 resp = await self._client().get(DETAILS_URL, params=params)
             except Exception as e:  # noqa: BLE001
                 last = type(e).__name__
+                self.failed_requests += 1
             else:
                 status = getattr(resp, "status_code", 0)
                 if status == 200:
                     try:
                         return resp.json()
                     except Exception as e:  # noqa: BLE001
+                        self.failed_requests += 1
                         raise ShapeSourceError(f"geoapify details: invalid JSON ({type(e).__name__})") from None
-                if status in (401, 403):
-                    raise geocoder_mod.GeocoderUnavailable(f"geoapify: HTTP {status} (key rejected)")
                 if status == 404:
                     return {}
+                self.failed_requests += 1
+                if status in (401, 403):
+                    raise geocoder_mod.GeocoderUnavailable(f"geoapify: HTTP {status} (key rejected)")
                 if status != 429 and status < 500:
                     raise ShapeSourceError(f"geoapify details: HTTP {status}")
                 last = f"HTTP {status}"

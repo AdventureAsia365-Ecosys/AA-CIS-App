@@ -127,6 +127,9 @@ LOGGED_CALL_SITES: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
     ("scripts/aa645/brandfit_measure.py", "score_page"): (
         ("services/content_generation/judge_node.py", "_write_judge_rows"),
         ("scripts/aa645/brandfit_measure.py", "score_page")),
+    # AA-642 S7 (ledger part, AA-804): the S1 Bedrock Batch; ingest_s1_batch writes one row per record of the batch.
+    ("services/content_generation/s1_batch.py", "submit_s1_batch"): (
+        ("services/content_generation/s1_batch.py", "ingest_s1_batch"),),
     # AA-790 (S251) T9 writer re-panel: the row right after the reply parses, the billed unusable row in the except.
     ("scripts/aa790/t9_writer_repanel.py", "call_writer"): _self("scripts/aa790/t9_writer_repanel.py", "call_writer"),
 }
@@ -139,9 +142,6 @@ EXCLUDED: dict[tuple[str, str], str] = {
                                                "wrapped call's own caller writes the row",
     ("scripts/aa645/brandfit_measure.py", "main"): "reads score_brand_fit's signature (inspect) to check the image / "
                                                    "overlay; no call",
-    ("services/content_generation/s1_batch.py", "submit_s1_batch"): (
-        "S1 Bedrock Batch writes no llm_call_log row: batch has never run (AA-624 blocks it). It MUST log one "
-        "row per record once it is enabled — remove this entry then."),
 }
 
 

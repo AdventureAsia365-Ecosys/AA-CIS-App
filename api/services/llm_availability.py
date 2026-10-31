@@ -53,6 +53,8 @@ ERROR_SAMPLE_CHARS = 300
 JOB_ROW_LIMIT = 1000
 
 # Jev (provider typesafe) is a decision service with its own credit card on Settings; not an LLM route here.
+# AA-804 (ledger v2): the gateway's 0 USD rows of refused / failed attempts (status refused | error) are not answered
+# calls and are left out here; rows before migration 319 have no status and count as before.
 CALLS_SQL = """
     SELECT coalesce(provider, 'unknown')                                        AS provider,
            account,
@@ -66,6 +68,7 @@ CALLS_SQL = """
       FROM shared.llm_call_log
      WHERE created_at >= $1
        AND coalesce(provider, '') <> 'typesafe'
+       AND coalesce(status, 'ok') NOT IN ('refused', 'error')
      GROUP BY 1, 2, 3
      ORDER BY last_call_at DESC
 """

@@ -46,8 +46,9 @@ async def run(ctx: JobContext) -> dict:
         poll=True,
     )
     await ctx.progress(phase="done", ingested=summary.get("ingested"))
+    # AA-642 S7: ingest_s1_batch wrote one llm_call_log row per record (bound to this job id by the worker).
     logger.info("s1_batch_ingest_done", job_id=ctx.job_id, batch_id=p["batch_id"],
-                ingested=summary.get("ingested"),
+                ledger_rows=summary.get("ledger_rows"), ingested=summary.get("ingested"),
                 gate_fail_retry=summary.get("gate_fail_retry"),
                 batch_write_failed=summary.get("batch_write_failed"))
     return dict(summary)

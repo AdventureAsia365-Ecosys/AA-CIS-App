@@ -163,7 +163,11 @@ async def test_jev_down_fails_open_as_error():
         dec = await d._decide(d._SingleConn(conn), "a3_research", "kw:x", "x", ["kw_belongs"], None)
     v = dec.verdicts["kw_belongs"]
     assert v.zone == "error" and not dec.rejected("kw_belongs") and not dec.accepted("kw_belongs")
-    m_log.assert_not_awaited()                                  # nothing billed
+    # AA-804 (ledger v2): nothing billed, but the failed ask has its own 0 USD llm_call_log row
+    m_log.assert_awaited_once()
+    row = m_log.await_args.kwargs
+    assert (row["cost_usd"], row["status"], row["error_class"], row["provider"]) == (0.0, "error", "other", "typesafe")
+    assert row["units"] == 1 and row["unit_kind"] == "question" and row["latency_ms"] is not None
     assert conn.executemany.await_args.args[1][0][6] == "error"
 
 

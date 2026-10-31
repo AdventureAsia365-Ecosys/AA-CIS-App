@@ -97,8 +97,9 @@ async def test_sync_wrapper_inside_a_loop_keeps_the_job_id():
     with patch("shared.dfs_client.call_log.record_dfs_call", fake_record):
         with bind_job(JOB):
             dfs_log.record_dfs_call_sync(endpoint="serp_advanced", fetched_live=True, cost_usd=0.002)
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
+        # AA-804: under a running loop the write runs on its own thread (call_log._in_background), not a task
+        from shared.llm_client.call_log import wait_for_pending_writes
+        wait_for_pending_writes()
     assert seen["job_id"] == JOB
 
 

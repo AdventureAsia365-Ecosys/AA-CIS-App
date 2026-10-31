@@ -130,7 +130,8 @@ async def _log_calls(ctx: JobContext, details, overpass, cost_per_credit: float)
                 cost = round(details.credits * cost_per_credit, 6)
                 ctx.add_cost(cost)
                 await store.log_geocode_calls(conn, "geoapify", details.requests, cost, ctx.job_id,
-                                              credits=details.credits, endpoint="place_details")
+                                              credits=details.credits, endpoint="place_details",
+                                              failed_requests=getattr(details, "failed_requests", None))
             if overpass is not None and overpass.requests:
                 await store.log_geocode_calls(conn, "overpass", overpass.requests, 0.0, ctx.job_id,
                                               credits=0, endpoint="overpass")

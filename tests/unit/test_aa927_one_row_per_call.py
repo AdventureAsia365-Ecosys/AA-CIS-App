@@ -354,6 +354,38 @@ def test_m_route_fallback_writes_one_gateway_attempt_row(monkeypatch):
     assert not set(q) & set(call_log.OK_RATE_KEYS)
 
 
+def test_m1_a_failed_attempt_is_one_more_row_at_0_usd(monkeypatch):
+    """AA-804 (ledger v2): a success is still one row (the caller's, not the gateway's); each attempt that failed with
+    nothing billed before it adds one gateway row at 0 USD with its status."""
+    rows: list = []
+
+    async def record_calls(rows_):
+        rows.extend(rows_)
+    monkeypatch.setattr(call_log, "record_calls", lambda rows: record_calls(rows))
+    good = _resp("ok", cost=0.002)
+    c = _client()
+
+    def outage():
+        raise RuntimeError("ServiceUnavailableException: try again")
+
+    def fake(request, key, *_):
+        return c._attempt(request, outage if key == "gpt-5.6-luna" else (lambda: good), model=key,
+                          connection_key="acc3")
+    cfg = MagicMock(role="judge", model_id="gpt-5.6-luna", fallback_model_ids=("gpt-6-luna",), shadow_model_id=None,
+                    account_route=None, allowed_scopes=None)
+    with patch("shared.llm_client.client.get_model_sync", return_value=LUNA), \
+            patch("shared.llm_client.client.get_stage_config_sync", return_value=cfg), \
+            patch.object(c, "_call_key", side_effect=fake):
+        resp = c.generate(LLMRequest(system_prompt="s", user_prompt="u", stage="t10_judge"))
+    call_log.wait_for_pending_writes()
+    assert resp is good and resp.attempt_no == 2 and resp.fallback_used is True
+    (row,) = rows                                       # the gateway's: the failed attempt only
+    assert (row["cost_usd"], row["status"], row["error_class"], row["attempt_no"], row["role"]) == \
+        (0.0, "error", "other", 1, "judge")
+    # the caller then writes the success's one row, with billed_fields carrying attempt 2
+    assert call_log.billed_fields(resp)["attempt_no"] == 2
+
+
 def test_m2_legacy_chain_wrapped_billed_failure_is_found_through_the_cause(monkeypatch):
     rows: list = []
 

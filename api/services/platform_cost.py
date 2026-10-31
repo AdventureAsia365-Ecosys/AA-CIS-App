@@ -17,8 +17,9 @@ Sources, per app row:
   the same window. Untagged spend is its own row (``app = "untagged"``) with a per-service breakdown (AA-828 tags it).
   Tags shared by several apps (shared / identity / platform) are their own rows, never split.
 - ``ai_usd``: LLM spend from ``shared.llm_call_log`` (days not rolled up yet) and ``shared.llm_call_daily`` (rolled
-  days, AA-825), by ``app`` = ``quality_signal->>'app'`` (default ``cis``; TripPlanner writes ``tripplanner``). These
-  are the gateway's price-table estimates, incl. OpenAI and Jev, which are not on any AWS bill.
+  days, AA-825), by ``app`` = ``coalesce(app, quality_signal->>'app', 'cis')`` (AA-804: the real column first;
+  TripPlanner writes ``tripplanner`` in quality_signal). These are the gateway's price-table estimates, incl. OpenAI
+  and Jev, which are not on any AWS bill.
 - ``ai_in_aws_acc2_usd``: the part of ``ai_usd`` billed on acc2 itself (Bedrock calls with account acc2 or none),
   already inside ``aws_usd`` of some tag (usually untagged: Bedrock usage carries no App tag). ``total_usd`` =
   ``aws_usd`` + (``ai_usd`` - ``ai_in_aws_acc2_usd``), so acc2 Bedrock is not counted twice.
@@ -78,7 +79,7 @@ AI_SPEND_SQL = """
          WHERE d.day >= $1 AND d.day < $2
          GROUP BY 1, 2, 3
     ), raw AS (
-        SELECT coalesce(l.quality_signal ->> 'app', 'cis') AS app, l.provider, l.account,
+        SELECT coalesce(l.app, l.quality_signal ->> 'app', 'cis') AS app, l.provider, l.account,
                count(*)::bigint AS calls, coalesce(sum(l.cost_usd), 0)::float AS cost_usd
           FROM shared.llm_call_log l
          WHERE l.created_at >= ($1::date::timestamp AT TIME ZONE 'UTC')

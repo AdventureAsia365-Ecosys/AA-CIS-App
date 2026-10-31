@@ -61,6 +61,53 @@ LLM_DAILY_INSERT_S6_SQL = """
     ON CONFLICT ON CONSTRAINT llm_call_daily_key DO NOTHING
 """
 
+# AA-804 (ledger v2, migration 319): the S6 rollup with app and is_shadow read from their real columns first (rows
+# before 319 and TripPlanner's keep them in quality_signal: coalesce, no backfill), plus the outcome counts and the
+# latency sum / count. calls stays every row of the group (refused / error attempts included, at 0 USD). Used only
+# when both tables have the 319 columns (``_v2_columns_ready``).
+LLM_DAILY_INSERT_V2_SQL = """
+    INSERT INTO shared.llm_call_daily
+        (day, app, tenant_id, stage, role, model, provider, account, is_shadow,
+         calls, fallback_calls, tokens_in, tokens_out, cost_usd,
+         cache_read_tokens, cache_write_tokens, estimate_calls,
+         refused_calls, error_calls, latency_ms_sum, latency_ms_count)
+    SELECT (l.created_at AT TIME ZONE 'UTC')::date,
+           coalesce(l.app, l.quality_signal ->> 'app', 'cis'),
+           l.tenant_id, l.stage, l.role, l.model, l.provider, l.account,
+           coalesce(l.is_shadow, l.quality_signal @> '{"shadow": true}'::jsonb),
+           count(*),
+           count(*) FILTER (WHERE l.fallback_used),
+           coalesce(sum(l.tokens_in), 0),
+           coalesce(sum(l.tokens_out), 0),
+           coalesce(sum(l.cost_usd), 0),
+           coalesce(sum(l.cache_read_tokens), 0),
+           coalesce(sum(l.cache_write_tokens), 0),
+           count(*) FILTER (WHERE l.pricing_mode LIKE 'estimate%'),
+           count(*) FILTER (WHERE l.status = 'refused'),
+           count(*) FILTER (WHERE l.status = 'error'),
+           coalesce(sum(l.latency_ms), 0),
+           count(l.latency_ms)
+      FROM shared.llm_call_log l
+     WHERE l.created_at < $1
+       AND NOT EXISTS (SELECT 1 FROM shared.llm_call_daily d
+                        WHERE d.day = (l.created_at AT TIME ZONE 'UTC')::date)
+     GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9
+    ON CONFLICT ON CONSTRAINT llm_call_daily_key DO NOTHING
+"""
+
+V2_COLUMNS_SQL = """
+    SELECT count(*) FROM information_schema.columns
+     WHERE table_schema = 'shared'
+       AND ((table_name = 'llm_call_log' AND column_name IN ('app', 'is_shadow', 'status', 'latency_ms'))
+         OR (table_name = 'llm_call_daily'
+             AND column_name IN ('refused_calls', 'error_calls', 'latency_ms_sum', 'latency_ms_count')))
+"""
+
+
+async def _v2_columns_ready(conn) -> bool:
+    return int(await conn.fetchval(V2_COLUMNS_SQL) or 0) == 8
+
+
 S6_COLUMNS_SQL = """
     SELECT count(*) FROM information_schema.columns
      WHERE table_schema = 'shared'
@@ -131,7 +178,9 @@ async def write(conn, rollup: str, cutoff) -> int:
     async with conn.transaction():
         await conn.execute("SET LOCAL statement_timeout = '300s'")
         sql = _SQL[rollup][0]
-        if rollup == "llm_call_daily" and await _s6_columns_ready(conn):
+        if rollup == "llm_call_daily" and await _v2_columns_ready(conn):
+            sql = LLM_DAILY_INSERT_V2_SQL
+        elif rollup == "llm_call_daily" and await _s6_columns_ready(conn):
             sql = LLM_DAILY_INSERT_S6_SQL
         status = await conn.execute(sql, cutoff)
     return int(status.split()[-1])

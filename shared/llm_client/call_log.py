@@ -59,6 +59,47 @@ _s6_missing_at = 0.0
 # escape the relabel through the S6 path.
 _SHIPPED_INSERT_SQL = _INSERT_SQL
 
+# AA-804 (ledger v2, migration 319): the S6 row plus the attempt's outcome and facts ($19..$35, in V2_COLUMNS order).
+# Every row of this module is written with it once 319 is applied. Before that (UndefinedColumnError), or when a v2
+# value is refused by a CHECK, the row falls back to the S6 / plain statement (the billed row is never lost, its v2
+# fields are), and v2 is not tried again for _V2_RETRY_SECONDS. The AA-729 harness relabels this statement too
+# (evalpatch.relabel_v2_sql); v2 is used only when both statements are the shipped ones or both were replaced, so an
+# eval row can never escape the relabel through it.
+V2_COLUMNS = ("app", "status", "error_class", "latency_ms", "connection_key", "deployment_wire_id", "attempt_no",
+              "request_id", "tour_id", "reasoning_tokens", "effort", "is_shadow", "is_experiment", "prompt_hash",
+              "prompt_version", "units", "unit_kind")
+_INSERT_V2_SQL = """
+    INSERT INTO shared.llm_call_log
+        (tenant_id, stage, role, model, tokens_in, tokens_out, cost_usd, quality_signal,
+         content_piece_id, angle_gate_request_id, stop_reason, account, fallback_used, provider,
+         job_id, cache_read_tokens, cache_write_tokens, pricing_mode,
+         app, status, error_class, latency_ms, connection_key, deployment_wire_id, attempt_no,
+         request_id, tour_id, reasoning_tokens, effort, is_shadow, is_experiment, prompt_hash,
+         prompt_version, units, unit_kind)
+    VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::uuid, $10::uuid, $11, $12, $13, $14,
+            $15::uuid, $16, $17, $18,
+            $19, $20, $21, $22, $23, $24, $25,
+            $26, $27::uuid, $28, $29, $30, $31, $32,
+            $33, $34, $35)
+"""
+_SHIPPED_INSERT_V2_SQL = _INSERT_V2_SQL
+_V2_RETRY_SECONDS = 300.0
+_v2_missing_at = 0.0
+
+# The app every row of this module belongs to (llm_call_log.app); TripPlanner writes its own rows.
+APP = "cis"
+# llm_call_log.status / error_class values (migration 319 CHECKs).
+STATUS_OK, STATUS_REFUSED, STATUS_ERROR = "ok", "refused", "error"
+STATUS_BILLED_UNUSABLE, STATUS_TRUNCATED = "billed_unusable", "truncated"
+STATUSES = (STATUS_OK, STATUS_REFUSED, STATUS_ERROR, STATUS_BILLED_UNUSABLE, STATUS_TRUNCATED)
+ERROR_CLASSES = ("access_denied", "quota_exhausted", "throttled", "credential", "other", "deadline", "budget",
+                 "truncated")
+# A billed answer cut at its token limit (Anthropic / Bedrock max_tokens, OpenAI length): status 'truncated'.
+TRUNCATED_STOP_REASONS = frozenset({"max_tokens", "length", "model_context_window_exceeded"})
+# The gateway facts of one reply that billed_fields() passes on (besides the S6 four).
+V2_BILLED_KEYS = ("latency_ms", "attempt_no", "deployment_wire_id", "request_id", "effort", "reasoning_tokens",
+                  "prompt_hash")
+
 
 def _s6_extras(model: str, cache_read_tokens, cache_write_tokens, pricing_mode) -> Optional[tuple]:
     """(cache_read_tokens, cache_write_tokens, pricing_mode) for _INSERT_S6_SQL, or None when the row has nothing
@@ -83,11 +124,110 @@ def _s6_ready() -> bool:
     return not (_s6_missing_at and _time.monotonic() - _s6_missing_at < _S6_RETRY_SECONDS)
 
 
+def _v2_ready() -> bool:
+    import time as _time
+    return not (_v2_missing_at and _time.monotonic() - _v2_missing_at < _V2_RETRY_SECONDS)
+
+
+def _text(value, limit: int) -> Optional[str]:
+    return value[:limit] if isinstance(value, str) and value else None
+
+
+def _uuid_or_none(value) -> Optional[str]:
+    if value is None or str(value) in ("", "None"):
+        return None
+    try:
+        return str(uuid.UUID(str(value)))
+    except ValueError:
+        return None
+
+
+def _v2_values(*, stop_reason=None, quality_signal: Optional[dict] = None, connection_key=None,
+               **fields) -> tuple:
+    """The 17 values of V2_COLUMNS for one row (``fields`` = the caller's v2 keyword arguments). Derived when the
+    caller is silent: app = APP; status = billed_unusable for a billed_unusable signal, truncated for a reply cut at
+    its token limit, else ok; is_shadow from the {"shadow": true} signal; is_experiment while an eval label is bound
+    (or the signal carries an eval run). A value of the wrong type or outside the CHECKs is written NULL. Never
+    raises."""
+    qs = quality_signal if isinstance(quality_signal, dict) else {}
+    status = fields.get("status") if fields.get("status") in STATUSES else None
+    if status is None:
+        if qs.get("billed_unusable") is True:
+            status = STATUS_BILLED_UNUSABLE
+        elif isinstance(stop_reason, str) and stop_reason in TRUNCATED_STOP_REASONS:
+            status = STATUS_TRUNCATED
+        else:
+            status = STATUS_OK
+    error_class = fields.get("error_class") if fields.get("error_class") in ERROR_CLASSES else None
+    if error_class is None and status == STATUS_TRUNCATED:
+        error_class = "truncated"
+    latency = _int_or_none(fields.get("latency_ms"))
+    attempt = _int_or_none(fields.get("attempt_no"))
+    shadow = fields.get("is_shadow")
+    experiment = fields.get("is_experiment")
+    return (
+        _text(fields.get("app"), 40) or APP,
+        status,
+        error_class,
+        latency if latency is not None and latency >= 0 else None,
+        _text(connection_key, 100),
+        _text(fields.get("deployment_wire_id"), 300),
+        attempt if attempt is not None and attempt >= 1 else None,
+        _text(fields.get("request_id"), 200),
+        _uuid_or_none(fields.get("tour_id")),
+        _int_or_none(fields.get("reasoning_tokens")),
+        _text(fields.get("effort"), 40),
+        shadow if isinstance(shadow, bool) else qs.get("shadow") is True,
+        experiment if isinstance(experiment, bool) else (_eval_label.get() is not None or "eval_run" in qs),
+        _text(fields.get("prompt_hash"), 128),
+        _text(fields.get("prompt_version"), 100),
+        _int_or_none(fields.get("units")),
+        _text(fields.get("unit_kind"), 40),
+    )
+
+
+def _in_transaction(conn) -> bool:
+    check = getattr(conn, "is_in_transaction", None)
+    try:
+        return callable(check) and check() is True
+    except Exception:  # noqa: BLE001 — a test double
+        return False
+
+
+async def _run(conn, sql: str, args: list, many: bool) -> None:
+    if many:
+        await conn.executemany(sql, args)
+    else:
+        await conn.execute(sql, *args[0])
+
+
 async def _execute_rows(conn, insert_sql: str, base_rows: list[tuple], extras: list[Optional[tuple]], *,
-                        many: bool) -> None:
-    """INSERT the rows: _INSERT_S6_SQL when any row has S6 fields, the columns exist and ``insert_sql`` (the caller's
-    _INSERT_SQL, read at call time) is the shipped statement; else ``insert_sql``."""
-    global _s6_missing_at
+                        many: bool, v2: Optional[list[tuple]] = None) -> None:
+    """INSERT the rows. AA-804: _INSERT_V2_SQL (looked up at call time) when ``v2`` is given, migration 319 is applied
+    and the statements agree (both shipped, or both replaced by the AA-729 harness). Else _INSERT_S6_SQL when any row
+    has S6 fields, the columns exist and ``insert_sql`` (the caller's _INSERT_SQL, read at call time) is the shipped
+    statement; else ``insert_sql``."""
+    global _s6_missing_at, _v2_missing_at
+    v2_sql = _INSERT_V2_SQL
+    if v2 is not None and _v2_ready() and (insert_sql == _SHIPPED_INSERT_SQL) == (v2_sql == _SHIPPED_INSERT_V2_SQL):
+        args = [(*b, *(e or (None, None, None)), *v) for b, e, v in zip(base_rows, extras, v2)]
+        try:
+            if _in_transaction(conn):
+                # A savepoint: a refused v2 statement must not abort the caller's transaction (record_calls), so the
+                # fallback below can still write the rows.
+                async with conn.transaction():
+                    await _run(conn, v2_sql, args, many)
+            else:
+                await _run(conn, v2_sql, args, many)
+            return
+        except asyncpg.exceptions.UndefinedColumnError:
+            import time as _time
+            _v2_missing_at = _time.monotonic()
+            logger.warning("llm_call_log_v2_columns_missing", hint="migration 319 not applied: ledger v2 columns "
+                                                                   "dropped from this row")
+        except asyncpg.exceptions.CheckViolationError as e:
+            # A value no CHECK knows (should not happen: _v2_values keeps to them). Keep the billed row without v2.
+            logger.warning("llm_call_log_v2_check_refused", error=str(e)[:200])
     if any(e is not None for e in extras) and insert_sql == _SHIPPED_INSERT_SQL and _s6_ready():
         args = [(*b, *(e or (None, None, None))) for b, e in zip(base_rows, extras)]
         try:
@@ -279,12 +419,25 @@ def billed_fields(resp) -> dict:
     ``tests/unit/test_aa1002_s6_billed_fields.py`` fails on a site that logs ``model=<x>.model_used`` without it."""
     mode = getattr(resp, "pricing_mode", None)
     conn = getattr(resp, "connection_key", None)
-    return {
+    out = {
         "cache_read_tokens": _int_or_none(getattr(resp, "cache_read_tokens", None)),
         "cache_write_tokens": _int_or_none(getattr(resp, "cache_write_tokens", None)),
         "pricing_mode": mode if isinstance(mode, str) else None,
         "connection_key": conn if isinstance(conn, str) and conn else None,
     }
+    # AA-804 (ledger v2): the attempt facts the gateway set on the reply (models.LLMResponse), same defensive read.
+    for key in V2_BILLED_KEYS:
+        value = getattr(resp, key, None)
+        if key in ("latency_ms", "attempt_no", "reasoning_tokens"):
+            out[key] = _int_or_none(value)
+        else:
+            out[key] = value if isinstance(value, str) and value else None
+    return out
+
+
+# Every key billed_fields() returns: a structure that carries a reply's billing (brand_fit.RUN_BILLING_KEYS, the T10
+# judge's raw dict) keeps them all.
+BILLED_FIELD_KEYS = ("cache_read_tokens", "cache_write_tokens", "pricing_mode", "connection_key", *V2_BILLED_KEYS)
 
 
 async def record_call(
@@ -296,6 +449,7 @@ async def record_call(
     provider: Optional[str] = None,
     cache_read_tokens: Optional[int] = None, cache_write_tokens: Optional[int] = None,
     pricing_mode: Optional[str] = None, connection_key: Optional[str] = None,
+    **v2,
 ) -> None:
     """Opens its own short-lived connection — the call sites this is used from (S1 graph nodes,
     N7 E2-E5, the T10 judge, T5 atomize) are scattered across sync and async code with no
@@ -320,9 +474,18 @@ async def record_call(
 
     `connection_key` (AA-1002 S6): the vendor-API connection that answered (LLMResponse.connection_key:
     'openai-direct', 'anthropic-direct'), written to `account` when the caller passes no account, so a vendor row
-    names its way in like a Bedrock row names its AWS account. Callers pass all four with ``**billed_fields(resp)``."""
+    names its way in like a Bedrock row names its AWS account. Callers pass all four with ``**billed_fields(resp)``.
+
+    ``**v2`` (AA-804, ledger v2, migration 319): the keys of V2_FIELDS — the attempt facts billed_fields() also
+    passes (latency_ms, attempt_no, deployment_wire_id, request_id, effort, reasoning_tokens, prompt_hash) and what a
+    caller may state itself (status, error_class, tour_id, prompt_version, units, unit_kind, is_shadow,
+    is_experiment, app). Anything else is a TypeError, as before. Unset ones are derived (``_v2_values``)."""
+    _check_v2(v2)
     account = _row_account(account, connection_key)
     clean_model, provider = _normalize_model_provider(model, provider)
+    # The connection column: the vendor connection, else the row's account (a Bedrock account key is its connection).
+    v2_row = _v2_values(stop_reason=stop_reason, quality_signal=quality_signal,
+                        connection_key=connection_key or account, **v2)
     row_stage, row_tenant, row_signal, row_piece, row_request = _relabel(
         stage, tenant_id, quality_signal, content_piece_id, angle_gate_request_id)
     extras = _s6_extras(model, cache_read_tokens, cache_write_tokens, pricing_mode)
@@ -334,7 +497,7 @@ async def record_call(
                 tokens_out, cost_usd,
                 json.dumps(row_signal), row_piece, row_request, stop_reason,
                 account, fallback_used, provider, current_job_id(),
-            )], [extras], many=False)
+            )], [extras], many=False, v2=[v2_row])
         finally:
             await conn.close()
     except Exception as e:
@@ -350,6 +513,7 @@ async def record_call_with_pool(
     provider: Optional[str] = None,
     cache_read_tokens: Optional[int] = None, cache_write_tokens: Optional[int] = None,
     pricing_mode: Optional[str] = None, connection_key: Optional[str] = None,
+    **v2,
 ) -> None:
     """Same as record_call() but reuses an already-open asyncpg.Pool (T5/T9's async orchestrators
     both have one in scope) instead of opening a fresh connection per call. See record_call() for
@@ -358,8 +522,12 @@ async def record_call_with_pool(
     AA-756: a write that fails on the shared pool is retried once on a fresh connection
     (record_call). The call was already billed — 347k Jev calls (30/09–09/10) went unlogged when
     a single shared connection rejected the write with "another operation is in progress"."""
+    _check_v2(v2)
     account = _row_account(account, connection_key)
     clean_model, provider = _normalize_model_provider(model, provider)
+    # The connection column: the vendor connection, else the row's account (a Bedrock account key is its connection).
+    v2_row = _v2_values(stop_reason=stop_reason, quality_signal=quality_signal,
+                        connection_key=connection_key or account, **v2)
     row_stage, row_tenant, row_signal, row_piece, row_request = _relabel(
         stage, tenant_id, quality_signal, content_piece_id, angle_gate_request_id)
     extras = _s6_extras(model, cache_read_tokens, cache_write_tokens, pricing_mode)
@@ -370,7 +538,7 @@ async def record_call_with_pool(
                 tokens_out, cost_usd,
                 json.dumps(row_signal), row_piece, row_request, stop_reason,
                 account, fallback_used, provider, current_job_id(),
-            )], [extras], many=False)
+            )], [extras], many=False, v2=[v2_row])
     except Exception as e:
         logger.warning("llm_call_log_pool_write_failed", stage=stage, role=role, error=str(e))
         await record_call(
@@ -379,6 +547,7 @@ async def record_call_with_pool(
             content_piece_id=content_piece_id, angle_gate_request_id=angle_gate_request_id,
             stop_reason=stop_reason, account=account, fallback_used=fallback_used, provider=provider,
             cache_read_tokens=cache_read_tokens, cache_write_tokens=cache_write_tokens, pricing_mode=pricing_mode,
+            connection_key=connection_key, **v2,
         )
 
 
@@ -447,10 +616,26 @@ def wait_for_pending_writes(timeout: float = 10.0) -> None:
 
 # ── AA-927: several rows at once, and billed calls whose reply was unusable ─────────────────────────
 
+# AA-804: the ledger v2 keyword arguments record_call* / record_calls take (V2_COLUMNS minus connection_key, which
+# record_call already took for S6).
+V2_FIELDS = tuple(c for c in V2_COLUMNS if c != "connection_key")
+
 _ROW_FIELDS = ("stage", "role", "model", "tokens_in", "tokens_out", "cost_usd", "quality_signal",
                "tenant_id", "content_piece_id", "angle_gate_request_id", "stop_reason", "account",
                "fallback_used", "provider", "cache_read_tokens", "cache_write_tokens", "pricing_mode",
-               "connection_key")
+               "connection_key", *V2_FIELDS)
+
+
+def _check_v2(v2: dict) -> None:
+    unknown = set(v2) - set(V2_FIELDS)
+    if unknown:
+        raise TypeError(f"record_call: unexpected keyword argument(s) {sorted(unknown)}")
+
+
+def _row_v2(row: dict) -> tuple:
+    return _v2_values(stop_reason=row.get("stop_reason"), quality_signal=row.get("quality_signal"),
+                      connection_key=row.get("connection_key") or row.get("account"),
+                      **{k: row.get(k) for k in V2_FIELDS})
 
 
 def _insert_args(row: dict) -> tuple:
@@ -484,7 +669,7 @@ async def record_calls(rows: list[dict]) -> None:
                 await _execute_rows(conn, _INSERT_SQL, [_insert_args(r) for r in rows],
                                     [_s6_extras(r.get("model") or "unknown", r.get("cache_read_tokens"),
                                                 r.get("cache_write_tokens"), r.get("pricing_mode")) for r in rows],
-                                    many=True)
+                                    many=True, v2=[_row_v2(r) for r in rows])
         finally:
             await conn.close()
     except Exception as e:
@@ -528,6 +713,11 @@ def billed_record(resp, **overrides) -> dict:
         "cache_write_tokens": getattr(resp, "cache_write_tokens", None),
         "pricing_mode": getattr(resp, "pricing_mode", None),
     }
+    # AA-804 (ledger v2): the attempt facts of the reply (latency, attempt position, wire id, request id, ...).
+    v2 = billed_fields(resp)
+    rec.update({k: v2[k] for k in V2_BILLED_KEYS})
+    if v2["connection_key"]:
+        rec["connection_key"] = v2["connection_key"]
     rec.update(overrides)
     return rec
 
@@ -540,6 +730,7 @@ def billed_unusable_rows(*, stage: str, role: str, billed: Optional[list], error
     quality_signal = {**extra minus OK_RATE_KEYS, "billed_unusable": true, "error": ...}."""
     signal = {k: v for k, v in (quality_signal_extra or {}).items() if k not in OK_RATE_KEYS}
     signal.update({"billed_unusable": True, "error": str(error or "")[:300]})
+    # AA-804 (ledger v2): status billed_unusable; the attempt facts the gateway put on the billed record pass through.
     return [dict(stage=stage, role=role, model=b.get("model") or "unknown", tokens_in=b.get("tokens_in"),
                  tokens_out=b.get("tokens_out"), cost_usd=b.get("cost_usd"), quality_signal=dict(signal),
                  tenant_id=tenant_id, content_piece_id=content_piece_id,
@@ -547,8 +738,31 @@ def billed_unusable_rows(*, stage: str, role: str, billed: Optional[list], error
                  account=_row_account(b.get("account"), b.get("connection_key")),
                  fallback_used=b.get("fallback_used"), provider=b.get("provider"),
                  cache_read_tokens=b.get("cache_read_tokens"), cache_write_tokens=b.get("cache_write_tokens"),
-                 pricing_mode=b.get("pricing_mode"))
+                 pricing_mode=b.get("pricing_mode"), connection_key=b.get("connection_key"),
+                 status=STATUS_BILLED_UNUSABLE,
+                 **{k: b.get(k) for k in (*V2_BILLED_KEYS, "tour_id", "is_shadow") if b.get(k) is not None})
             for b in billed or [] if b]
+
+
+def gateway_failure_row(*, stage: str, role: str, model: str, status: str, error_class: Optional[str], error: str,
+                        provider: Optional[str] = None, connection_key: Optional[str] = None,
+                        latency_ms: Optional[int] = None, attempt_no: Optional[int] = None,
+                        deployment_wire_id: Optional[str] = None, prompt_hash: Optional[str] = None,
+                        is_shadow: Optional[bool] = None, quality_signal_extra: Optional[dict] = None,
+                        tenant_id: Optional[str] = None, **v2) -> dict:
+    """AA-804 (ledger v2): the record_calls row of one attempt that was refused or failed with nothing billed
+    (cost_usd 0, no tokens): the gateway writes it, the caller never sees the attempt. quality_signal = {**extra
+    minus OK_RATE_KEYS, "gateway_attempt": true, "error": ...}, so the row never moves a stage's ok-rate. The account
+    is the connection (an AWS account key for a Bedrock connection, the vendor connection otherwise)."""
+    signal = {k: v for k, v in (quality_signal_extra or {}).items() if k not in OK_RATE_KEYS}
+    signal.update({"gateway_attempt": True, "error": str(error or "")[:300]})
+    return dict(stage=stage, role=role, model=model or "unknown", tokens_in=None, tokens_out=None, cost_usd=0.0,
+                quality_signal=signal, tenant_id=tenant_id, stop_reason=None,
+                account=_row_account(None, connection_key), provider=provider, connection_key=connection_key,
+                status=status if status in (STATUS_REFUSED, STATUS_ERROR) else STATUS_ERROR,
+                error_class=error_class if error_class in ERROR_CLASSES else "other",
+                latency_ms=latency_ms, attempt_no=attempt_no, deployment_wire_id=deployment_wire_id,
+                prompt_hash=prompt_hash, is_shadow=is_shadow, **v2)
 
 
 async def record_billed_failure(*, stage: str, role: str, billed: Optional[list], error: str,

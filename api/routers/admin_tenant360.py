@@ -86,7 +86,7 @@ _COST_WHERE = """
     l.tenant_id = $1::uuid
     AND l.created_at >= date_trunc('month', now())
     AND l.created_at <  date_trunc('month', now()) + interval '1 month'
-    AND NOT (l.quality_signal @> '{"shadow": true}'::jsonb)
+    AND NOT coalesce(l.is_shadow, l.quality_signal @> '{"shadow": true}'::jsonb)
 """
 
 _COST_BY_STAGE_SQL = f"""

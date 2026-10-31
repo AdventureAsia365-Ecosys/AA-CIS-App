@@ -463,8 +463,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   days) are unchanged.
   AI providers › Routing opens with the **LLM availability** card (`GET /admin/llm-availability`,
   `api/services/llm_availability.py`): answered calls per provider / account from `llm_call_log` plus classified
-  errors of failed (dated by `finished_at`) or re-queued jobs from `shared.job`; no probe call. A refused call writes no `llm_call_log` row (AA-927 bills
-  only), so job errors are the refusal side of the signal.
+  errors of failed (dated by `finished_at`) or re-queued jobs from `shared.job`; no probe call. Answered calls only:
+  the gateway's 0 USD rows of refused / failed attempts (AA-804, `status` refused | error) are left out of it, so job
+  errors stay the refusal side of the signal there.
 - **Every model call goes through the gateway** (`shared/llm_client/`, AA-685): text through
   `LLMClient.generate(stage=...)`, embeddings through `shared.llm_client.embed.embed(stage, texts)`
   (catalog `api_style='embed'`, stage role `embed`). `tests/unit/test_aa685_no_raw_model_calls.py` fails
@@ -484,9 +485,26 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `{judge_run, of, verdict_row: false}` rows;
   - rows for unusable / discarded / extra calls carry `billed_unusable: true` (or `verdict_row: false`)
     and none of the ok-rate keys admin LLM ops reads (`call_log.OK_RATE_KEYS`), so ok-rates do not move.
+  - **Ledger v2 (AA-804, migration 319, root ADR 0009 §8):** every row also carries `app` ('cis'), `status` (ok |
+    refused | error | billed_unusable | truncated, derived from the reply when the caller says nothing), and the
+    attempt facts the gateway sets on `LLMResponse` and `billed_fields(resp)` passes on: `latency_ms`, `attempt_no`
+    (1-based over the request's provider attempts), `connection_key`, `deployment_wire_id`, `request_id`, `effort`,
+    `reasoning_tokens`, `prompt_hash` (sha256 of the prompts); plus `is_shadow`, `is_experiment` (eval label),
+    `tour_id`, `units` / `unit_kind` when the caller states them. **Every refused or failed attempt with nothing
+    billed gets one gateway row** (`client.LLMClient._attempt` / `log_gateway_failed_attempt`): cost 0, no tokens,
+    `status` refused (provider or gateway said no: access denied, no credit, missing key, rate limit, open circuit,
+    budget, data scope) or error, `error_class` (the breaker class, or budget), `gateway_attempt: true`, no ok-rate
+    key. So a success is one row (the caller's) and each failed attempt before it one more at 0 USD. Jev failed /
+    refused asks (breaker open, daily cap, 402, outage) and DataForSEO failed calls and budget refusals
+    (`shared.dfs_call_log.status / latency_ms / error`) get rows too; Geoapify counts `geo.geocode_call
+    .failed_requests` and the job's `tenant_id`. Readers take `coalesce(app, quality_signal->>'app', 'cis')` and
+    `coalesce(is_shadow, quality_signal @> '{"shadow": true}')` (no backfill); `llm_call_daily` adds
+    `refused_calls`, `error_calls`, `latency_ms_sum` / `latency_ms_count` (`calls` = every row of the group).
   Exclusions: a Jev verdict-cache hit (no provider call; counted in `decision_cache_hits_daily`), a
-  stream that broke before its usage event (cost unknown), and S1 Bedrock Batch (no row; batch has never
-  run, AA-624 — it must log once enabled). `tests/unit/test_aa927_llm_call_site_registry.py` fails on a
+  stream that broke before its usage event (cost unknown), and embeddings (`embed()`: the caller logs a success,
+  a failed embed writes no row yet). S1 Bedrock Batch: `ingest_s1_batch` writes one row per record of the batch
+  (AA-642 S7, priced at the batch rate, `pricing_mode` '<basis>+batch'; a record with no usage or no output line is a
+  0 USD error row). `tests/unit/test_aa927_llm_call_site_registry.py` fails on a
   new LLM call site that is not registered with the function writing its row. Stages added: `a0_column_map`, `f10_embed`, and `tp_compose` /
   `tp_search_embed` for AA-TripPlanner-Web, which reads the same tables (migration 172).
   Current choices, each decided from a real A/B run:

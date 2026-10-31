@@ -39,7 +39,7 @@ class AppInfo:
     label: str
     repo: str
     cost_tags: tuple[str, ...]
-    llm_app: Optional[str] = None            # quality_signal->>'app' of its shared.llm_call_log rows
+    llm_app: Optional[str] = None            # coalesce(app, quality_signal->>'app') of its llm_call_log rows
     health_base: Optional[str] = None
     health_paths: tuple[str, ...] = ()
     ecs_services: tuple[str, ...] = ()
