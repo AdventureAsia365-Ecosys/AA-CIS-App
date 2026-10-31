@@ -22,6 +22,9 @@ from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER, TENANT_ID  # n
 MIGRATIONS = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations")
 M320 = os.path.join(MIGRATIONS, "320_llm_registry_v2_families_params.sql")
 M321 = os.path.join(MIGRATIONS, "321_tenant_ai_budget_prompt_registry.sql")
+# AA-1017 (324): the five acc2 candidate models are catalogued under the 320 families (vendor amazon / meta / moonshot),
+# which the pre-320 vendor CHECK refuses. The fixture sets them aside for the test and applies 324 again afterwards.
+M324 = os.path.join(MIGRATIONS, "324_llm_acc2_candidate_models.sql")
 FAMILIES = {"anthropic", "openai", "cohere", "typesafe", "amazon", "meta", "moonshot"}
 OLD_HEALTH_CLASSES = "('access_denied', 'quota_exhausted', 'throttled', 'credential', 'other')"
 OLD_VENDORS = "('anthropic', 'openai', 'cohere', 'typesafe')"
@@ -55,6 +58,7 @@ def cur():
     c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     _run(c, M320)
     _run(c, M321)
+    _set_324_aside(c)
     try:
         yield c
     finally:
@@ -64,7 +68,15 @@ def cur():
         c.execute("DELETE FROM shared.tenant_ai_budget WHERE updated_by = 'zz-aa1017'")
         _run(c, M320)
         _run(c, M321)
+        _run(c, M324)
         conn.close()
+
+
+def _set_324_aside(c):
+    """Migration 324's rows out (they need the 320 families); the fixture applies 324 again at teardown."""
+    c.execute("DELETE FROM shared.llm_model_deployment WHERE updated_by = 'migration-324-aa1017'")
+    c.execute("DELETE FROM shared.llm_model_catalog WHERE updated_by = 'migration-324-aa1017'")
+    c.execute("DELETE FROM shared.schema_versions WHERE version = '324'")
 
 
 def _columns(c, table: str) -> set:

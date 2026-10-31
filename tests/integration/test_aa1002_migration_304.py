@@ -46,11 +46,12 @@ def _run(c):
 # tables; S10: 317 (shared.llm_connection_cost_policy + shared.llm_cost_reconcile, FKs to the connection) too;
 # AA-1017: 320 (llm_model_deployment.api_style, the health class 'truncated') and 322 (the connection v2 columns,
 # CHECKs, seeds and the D9 revoke of 310's secret / endpoint grant) build on the tables _undo drops.
-# _undo drops them first and the fixture puts them back, so later modules see the post-322 state.
+# _undo drops them first and the fixture puts them back, so later modules see the post-322 state. 324 (the acc2
+# candidate models, catalogued under 320's families) leaves with the deployment table and comes back last.
 LATER = [os.path.join(os.path.dirname(MIGRATION), f) for f in
          ("309_llm_provider_health.sql", "310_llm_connection_admin_edit_grant.sql",
           "317_llm_connection_cost_policy_reconcile.sql", "320_llm_registry_v2_families_params.sql",
-          "322_provider_connection_v2.sql")]
+          "322_provider_connection_v2.sql", "324_llm_acc2_candidate_models.sql")]
 # The LLM connection kinds of 304 (322 adds typesafe, dataforseo, geoapify and bedrock_guardrails rows).
 LLM_KINDS = ("bedrock", "anthropic", "openai", "azure_openai", "mock")
 
@@ -86,6 +87,8 @@ def _undo(c):
     c.execute("DROP TABLE IF EXISTS shared.llm_provider_health")          # 309: references the connection table
     c.execute("DELETE FROM shared.schema_versions WHERE version IN ('309', '310', '317', '322')")
     c.execute("DROP TABLE IF EXISTS shared.llm_model_deployment")
+    c.execute("DELETE FROM shared.llm_model_catalog WHERE updated_by = 'migration-324-aa1017'")
+    c.execute("DELETE FROM shared.schema_versions WHERE version = '324'")
     c.execute("DROP TABLE IF EXISTS shared.llm_provider_connection")
     c.execute("ALTER TABLE shared.llm_model_catalog DROP COLUMN IF EXISTS capabilities")
     for (table, name), check in OLD_CHECKS.items():
@@ -95,14 +98,18 @@ def _undo(c):
 
 
 def _profiles(c):
-    c.execute("SELECT model_key, bedrock_profile_ids FROM shared.llm_model_catalog ORDER BY model_key")
+    # 324's catalog rows leave with _undo (they come back with LATER), so they are not part of 304's profiles
+    c.execute("SELECT model_key, bedrock_profile_ids FROM shared.llm_model_catalog "
+              "WHERE updated_by <> 'migration-324-aa1017' ORDER BY model_key")
     return [(r["model_key"], r["bedrock_profile_ids"]) for r in c.fetchall()]
 
 
 def _deployments(c):
-    # the rows 304 writes: 306 (AA-1002 S2) adds anthropic-direct seeds that a 304 re-run does not recreate
+    # the rows 304 writes: 306 (AA-1002 S2) adds anthropic-direct seeds and 324 (AA-1017) the acc2 candidate models,
+    # rows a 304 re-run does not recreate
     c.execute("SELECT model_key, connection_key, wire_id, priority, enabled, origin "
-              "FROM shared.llm_model_deployment WHERE updated_by <> 'migration-306-aa1002' "
+              "FROM shared.llm_model_deployment "
+              "WHERE updated_by NOT IN ('migration-306-aa1002', 'migration-324-aa1017') "
               "ORDER BY model_key, priority, connection_key")
     return [tuple(r.values()) for r in c.fetchall()]
 
@@ -191,10 +198,14 @@ def test_first_enabled_deployment_is_the_path_the_gateway_takes_today(cur):
 
 
 def test_acc2_deployments_are_enabled_only_where_the_code_calls_acc2(cur):
-    cur.execute("SELECT d.model_key, d.enabled, m.api_style FROM shared.llm_model_deployment d "
+    # 304: embeddings only. AA-1017 (324): the acc2 candidate chat models (Converse on the task role, which the gateway
+    # calls through bedrock_satellite.native_runtime since AA-1002 S3); every acc2 Claude row stays off.
+    cur.execute("SELECT d.model_key, d.enabled, d.updated_by, m.api_style FROM shared.llm_model_deployment d "
                 "JOIN shared.llm_model_catalog m USING (model_key) WHERE d.connection_key = 'acc2'")
     for r in cur.fetchall():
-        assert r["enabled"] == (r["api_style"] == "embed"), r["model_key"]
+        expected = r["api_style"] == "embed" or (r["api_style"] == "converse"
+                                                 and r["updated_by"] == "migration-324-aa1017")
+        assert r["enabled"] == expected, r["model_key"]
 
 
 def test_deleting_a_model_deletes_its_deployments(cur):
