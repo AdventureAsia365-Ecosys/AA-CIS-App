@@ -444,13 +444,18 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   with `hard_stop`, a T-stage call (`t<digit>_…`) raises `TenantBudgetApprovalRequired` (a BudgetExceeded: the job
   ends `stopped_budget` with error prefix `tenant_ai_budget_approval`, ledger `refused` / `budget`); staff raise the
   budget or switch the hard stop off, then re-queue (`retry-llm-denied` with `reason: tenant_ai_budget_approval`,
-  held per tenant until it no longer needs approval). `LLM_TENANT_BUDGETS=off` switches it off. **Prompt register**:
+  held per tenant until it no longer needs approval). The T2 graph / `_rewrite_tour` and the T9 write re-raise the
+  stop (`tenant_budget.approval_stop_in`; the worker reads the explicit cause chain too), and the `t2_rewrite` /
+  `t9_write` on_terminal hooks leave the version `pending` / piece `processing` for such a job (the tenant's live view
+  says "on hold"), so the re-queue writes it; an admin Cancel of the `stopped_budget` job is the decline (the hook then
+  marks it failed). `LLM_TENANT_BUDGETS=off` switches it off. **Prompt register**:
   `prompt_hash` = sha256 of the system prompt; `prompt_version` = `prompt_registry.version_for(stage)` (the manifest
   `shared/llm_client/prompt_versions.json` hashes the prompt symbols' source with `ast`; the version counts only when
   `shared.prompt_version` holds the same hash; no rows today = NULL), on every reply and attempt row; CI gate
   `tests/unit/test_aa900_prompt_registry_gate.py` / `scripts/prompt_registry_check.py` (`--bump`, `--sql`). The
   breaker writes `llm_provider_connection.access_state` (open connection circuit → `access_denied` /
-  `quota_exhausted` / `unconfigured`; any answer → `ok`; once per change and process); the probe stamps
+  `quota_exhausted` / `unconfigured`; any answer → `ok`; once per change and process, one write per connection at a
+  time, none during the breaker's DB back-off, `DB_RETRY_S` back-off after a failed write); the probe stamps
   `last_probe_at`; `invariant.py` reads the stored `failure_domain`. OpenAI's 400 "max_tokens or model output limit
   was reached" is `truncated` (never counted on a circuit); an adhoc stage logs `LLMRequest.role`. Ratchets:
   `test_aa642_model_tier_allowlist.py` (fixed / passed-through `model_tier` sites), `test_aa642_s11_alias_equivalence.py`
