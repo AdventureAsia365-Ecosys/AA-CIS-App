@@ -3480,6 +3480,19 @@
         "additionalProperties": false,
         "description": "AA-1002 (S4): which model to test (a deployment of it on the connection); none = the cheapest text model.",
         "properties": {
+          "max_tokens": {
+            "anyOf": [
+              {
+                "maximum": 512.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Tokens"
+          },
           "model_key": {
             "anyOf": [
               {
@@ -5084,6 +5097,15 @@
             "minimum": 1.0,
             "title": "Limit",
             "type": "integer"
+          },
+          "reason": {
+            "default": "llm_access_denied",
+            "enum": [
+              "llm_access_denied",
+              "tenant_ai_budget_approval"
+            ],
+            "title": "Reason",
+            "type": "string"
           },
           "since": {
             "anyOf": [
@@ -17809,7 +17831,7 @@
     },
     "/admin/job-runner/jobs/retry-llm-denied": {
       "post": {
-        "description": "AA-1018 — the `failed` jobs whose error starts with `llm_access_denied` (every model was refused at account\nlevel, AA-900) get a fresh set of attempts, like the one-job retry. DRY RUN by default: lists the jobs an apply\nwould re-queue and the ones it would hold (a kind that refuses retries, or a job whose LLM connection is still\nrefused: shared/jobs/queue.py `retry_by_reason`). One audit row per call (`jobs_retry_llm_denied`).",
+        "description": "AA-1018 — the `failed` jobs whose error starts with `llm_access_denied` (every model was refused at account\nlevel, AA-900) get a fresh set of attempts, like the one-job retry. DRY RUN by default: lists the jobs an apply\nwould re-queue and the ones it would hold (a kind that refuses retries, or a job whose LLM connection is still\nrefused: shared/jobs/queue.py `retry_by_reason`). One audit row per call (`jobs_retry_llm_denied`).\nAA-1016: `reason: tenant_ai_budget_approval` re-queues the stopped_budget jobs a tenant's AI budget held for\nstaff approval, each only once its tenant no longer needs approval.",
         "operationId": "retry_llm_denied_admin_job_runner_jobs_retry_llm_denied_post",
         "parameters": [
           {
