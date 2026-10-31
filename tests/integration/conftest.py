@@ -407,6 +407,10 @@ def _apply_schema(conn):
         # v_tour_place (needs 253 / 256 / 289). test_aa996_migration_298 applies 253 + 256 + 257 + 258 + 273 + 289 +
         # 298 the DB Migrate way on the RDS-like state and rolls back.
         and not f.startswith('298')
+        # AA-642 S8 (S262): 323 creates the TripPlanner gateway contract views (catalog.v_llm_gateway_config_v1,
+        # catalog.v_llm_app_spend_today_v1) through the catalog recipe (needs 245's owners).
+        # test_aa642_migration_323 applies it the DB Migrate way on the RDS-like state and undoes it at teardown.
+        and not f.startswith('323')
     ])
 
     for mf in migration_files:
