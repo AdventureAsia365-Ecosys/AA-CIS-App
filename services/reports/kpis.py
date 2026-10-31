@@ -82,7 +82,7 @@ JOB_QUEUE_AGE_P95_SQL = """
 """
 
 LLM_DAY_SQL = """
-    SELECT coalesce(l.quality_signal ->> 'app', 'cis') AS app, l.provider,
+    SELECT coalesce(l.app, l.quality_signal ->> 'app', 'cis') AS app, l.provider,
            count(*)::bigint AS calls,
            count(*) FILTER (WHERE l.fallback_used)::bigint AS fallback_calls,
            coalesce(sum(l.cost_usd), 0) AS cost_usd

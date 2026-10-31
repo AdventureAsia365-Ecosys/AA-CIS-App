@@ -25,9 +25,9 @@ What each card reads (S241 constraints: no ECS / Lambda describe calls, no new I
   ``/jobs/summary`` called with the staff member's own Cognito access token (never cached: it is per person).
 - ``tripplanner``: no health endpoint yet, so its status comes from traffic alone (its two Lambdas: invocations,
   errors, throttles, alarms); plus today's customer-facing LLM spend (TP ONLINE_STAGES, rows with
-  ``quality_signal->>'app' = 'tripplanner'`` since UTC midnight) against the mirrored default daily cap, and
-  (AA-804) ``ai`` = ``{paused, reason}``: paused with reason ``spend_unreadable`` when that spend read fails
-  (TripPlanner fails closed then, ADR 0009 d5). Read-only; CIS cannot read TripPlanner's own counter.
+  ``coalesce(app, quality_signal->>'app', 'cis') = 'tripplanner'`` since UTC midnight, AA-804) against the mirrored
+  default daily cap, and (AA-804) ``ai`` = ``{paused, reason}``: paused with reason ``spend_unreadable`` when that
+  spend read fails (TripPlanner fails closed then, ADR 0009 d5). Read-only; CIS cannot read TripPlanner's own counter.
 """
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ TP_SPEND_TODAY_SQL = """
       FROM shared.llm_call_log
      WHERE created_at >= (date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')
        AND stage = ANY($1::text[])
-       AND quality_signal ->> 'app' = $2
+       AND coalesce(app, quality_signal ->> 'app', 'cis') = $2
      GROUP BY stage
      ORDER BY stage
 """

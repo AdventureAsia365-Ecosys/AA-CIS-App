@@ -46,6 +46,11 @@ from scripts.aa729.common import STAGE, CostCapReached
 INSERT_COLUMNS = ("tenant_id, stage, role, model, tokens_in, tokens_out, cost_usd, quality_signal, "
                   "content_piece_id, angle_gate_request_id, stop_reason, account, fallback_used, provider, job_id")
 N_PARAMS = 15
+# AA-804 (ledger v2): call_log._INSERT_V2_SQL = the same 15 + the S6 three + the 17 v2 columns.
+INSERT_V2_COLUMNS = (INSERT_COLUMNS + ", cache_read_tokens, cache_write_tokens, pricing_mode, app, status, "
+                     "error_class, latency_ms, connection_key, deployment_wire_id, attempt_no, request_id, tour_id, "
+                     "reasoning_tokens, effort, is_shadow, is_experiment, prompt_hash, prompt_version, units, unit_kind")
+N_V2_PARAMS = 35
 DECISION_COLUMNS = ("stage, question_key, subject_key, tenant_id, job_id, mode, zone, probability, choice, "
                     "probabilities, threshold_version, model, latency_ms, cost_usd, error, question_hash, cached")
 N_DECISION_PARAMS = 17
@@ -95,6 +100,26 @@ def relabel_sql(original: str, run_id: str, stage: str = STAGE) -> str:
               "'aa729_tenant', $1::uuid::text, 'aa729_piece', $9::uuid::text, 'aa729_request', $10::uuid::text)")
     return (f"INSERT INTO shared.llm_call_log ({INSERT_COLUMNS}) VALUES (NULL, '{stage}', $3, $4, $5, $6, $7, "
             f"{signal}, NULL, NULL, $11, $12, $13, $14, $15::uuid)")
+
+
+def relabel_v2_sql(original: str, run_id: str, stage: str = STAGE) -> str:
+    """AA-804: the patched ledger v2 INSERT — the relabel of `relabel_sql` (stage forced, tenant / piece / request
+    NULL and kept in quality_signal) plus: tour_id NULL (kept as quality_signal.aa729_tour), is_experiment true, every
+    other v2 value passed through. Same 35 parameters, each still referenced (cast) so the callers' types hold.
+    Raises if `original` is not the statement this was written against."""
+    run = str(uuid.UUID(run_id))
+    stage = _check_stage(stage)
+    _check_insert(_norm(original), "shared.llm_call_log", INSERT_V2_COLUMNS, N_V2_PARAMS,
+                  "shared.llm_client.call_log._INSERT_V2_SQL")
+    signal = ("(CASE WHEN jsonb_typeof($8::jsonb) = 'object' THEN $8::jsonb "
+              "ELSE jsonb_build_object('signal', $8::jsonb) END) || "
+              f"jsonb_build_object('aa729_stage', $2::text, 'aa729_run', '{run}'::text, "
+              "'aa729_tenant', $1::uuid::text, 'aa729_piece', $9::uuid::text, 'aa729_request', $10::uuid::text, "
+              "'aa729_tour', $27::uuid::text)")
+    values = (f"NULL, '{stage}', $3, $4, $5, $6, $7, {signal}, NULL, NULL, $11, $12, $13, $14, $15::uuid, "
+              "$16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, NULL, $28, $29, $30, ($31::boolean OR true), "
+              "$32, $33, $34, $35")
+    return f"INSERT INTO shared.llm_call_log ({INSERT_V2_COLUMNS}) VALUES ({values})"
 
 
 def _prefix_stage(norm: str, param: str, stage: str = STAGE) -> str:
@@ -244,7 +269,8 @@ def install(run_id: str, stage: str = STAGE) -> None:
     from shared.llm_client import embed as embed_mod
     from shared.llm_client.client import LLMClient
 
-    for owner, name in ((call_log, "_INSERT_SQL"), (decide, "_LOG_SQL"), (decide, "_HITS_SQL"),
+    for owner, name in ((call_log, "_INSERT_SQL"), (call_log, "_INSERT_V2_SQL"), (decide, "_LOG_SQL"),
+                        (decide, "_HITS_SQL"),
                         (embed_mod, "_call"),
                         (t9_service, "_finalize_piece"),
                         (t9_service, "_insert_placeholder_piece"), (flag_fix_node, "_write_lessons_safe"),
@@ -253,9 +279,11 @@ def install(run_id: str, stage: str = STAGE) -> None:
             raise RuntimeError(f"{getattr(owner, '__name__', owner)}.{name} is gone — "
                                "update scripts/aa729/evalpatch.py")
 
-    insert_sql = relabel_sql(call_log._INSERT_SQL, run_id, stage)  # all three validated before any is replaced
+    insert_sql = relabel_sql(call_log._INSERT_SQL, run_id, stage)  # all four validated before any is replaced
+    v2_sql = relabel_v2_sql(call_log._INSERT_V2_SQL, run_id, stage)  # AA-804: both or neither (call_log rule)
     log_sql, hits_sql = relabel_decision_sql(decide._LOG_SQL, stage), relabel_hits_sql(decide._HITS_SQL, stage)
-    call_log._INSERT_SQL, decide._LOG_SQL, decide._HITS_SQL = insert_sql, log_sql, hits_sql
+    call_log._INSERT_SQL, call_log._INSERT_V2_SQL = insert_sql, v2_sql
+    decide._LOG_SQL, decide._HITS_SQL = log_sql, hits_sql
     t9_service._finalize_piece = _capture_finalize
     t9_service._insert_placeholder_piece = _capture_placeholder
     flag_fix_node._write_lessons_safe = lambda *a, **k: None

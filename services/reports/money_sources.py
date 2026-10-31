@@ -112,9 +112,10 @@ LLM_LEDGER_SQL = """
           FROM shared.llm_call_daily d
          WHERE d.day >= $1 AND d.day < $2
     ), raw AS (
-        SELECT (l.created_at AT TIME ZONE 'UTC')::date AS day, coalesce(l.quality_signal ->> 'app', 'cis') AS app,
+        SELECT (l.created_at AT TIME ZONE 'UTC')::date AS day,
+               coalesce(l.app, l.quality_signal ->> 'app', 'cis') AS app,
                l.tenant_id, l.stage, l.role, l.model, l.provider, l.account,
-               l.quality_signal @> '{"shadow": true}'::jsonb AS is_shadow,
+               coalesce(l.is_shadow, l.quality_signal @> '{"shadow": true}'::jsonb) AS is_shadow,
                count(*)::bigint AS calls, count(*) FILTER (WHERE l.fallback_used)::bigint AS fallback_calls,
                coalesce(sum(l.tokens_in), 0)::bigint AS tokens_in, coalesce(sum(l.tokens_out), 0)::bigint AS tokens_out,
                coalesce(sum(l.cost_usd), 0) AS cost_usd

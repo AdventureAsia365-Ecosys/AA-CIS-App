@@ -51,7 +51,9 @@ logger = structlog.get_logger()
 # prefix: 306-312 too). 314 (AA-922 WM-30 — the weekly KPI job, /admin/writing-memory/metrics, keeps and the
 # disagreement queue read and write shared.writing_memory_kpi_report / _keep / _disagreement). 315 (AA-923 WM-32 — the
 # T2 version and A1 rewrite label routes of /admin/content-quality read and write acp_shared.content_label).
-REQUIRED_CIS_SCHEMA = 315
+# 319 (AA-804 ledger v2 — the readers of shared.llm_call_log name its app / is_shadow / status columns: platform apps
+# and cost, the KPI and money reports, the planner, tenant 360 cost, LLM availability; strict prefix: 316-318 too).
+REQUIRED_CIS_SCHEMA = 319
 # Versions this code needs that were registered after a higher one (reserved numbers): 297 (AA-920 WM-25) was reserved
 # in S255 and applied after 299. max() is already 299 without it, so the version reported is capped below the lowest
 # listed version that is not registered (297 missing -> 296 -> "schema_behind").
