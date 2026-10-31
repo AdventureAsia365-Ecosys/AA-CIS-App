@@ -162,6 +162,12 @@ def test_budget_view_carries_spend_and_state():
     ("migration-226", {}, ("migration", "Migration 226")),
     ("migration-280-wm-seed", {}, ("migration", "Migration 280")),
     ("ops-tester", {}, ("other", "ops-tester")),
+    # C4 polish N4: an older "<username>:<reference>" value is a login; named only through the staff directory
+    ("mai:ops12", {"user:mai": "Mai Tran"}, ("login", "Mai Tran")),
+    ("Mai:OPS12", {"user:mai": "Mai Tran"}, ("login", "Mai Tran")),
+    ("bao:ops12", {"user:mai": "Mai Tran"}, ("login", None)),   # not a staff username: the page says "staff (ops12)"
+    ("Break-glass", {}, ("other", "Break-glass")),
+    ("note: two words", {}, ("other", "note: two words")),     # not a login form: free text, as is
 ])
 def test_actor_view(value, names, expected):
     out = gw.actor_view(value, names)
@@ -180,8 +186,26 @@ def test_actor_names_queries_only_staff_ids():
 
     c = Conn()
     assert asyncio.run(gw.actor_names(c, ["migration-226", None, STAFF.upper(), STAFF])) == {STAFF: "Mai Tran"}
-    assert c.args == ([STAFF],)
-    assert asyncio.run(gw.actor_names(Conn(), ["migration-226", ""])) == {}
+    assert c.args == ([STAFF], [])
+    assert asyncio.run(gw.actor_names(Conn(), ["migration-226", "", "Break-glass"])) == {}
+
+
+def test_actor_names_also_resolves_login_usernames():
+    """C4 polish N4: "<username>:<reference>" values are looked up by username (lower case) in the same query."""
+    class Conn:
+        def __init__(self):
+            self.args = None
+
+        async def fetch(self, sql, *args):
+            assert sql == gw.ACTOR_NAMES_SQL
+            self.args = args
+            return [{"id": STAFF, "username": "mai", "name": "Mai Tran"}]
+
+    c = Conn()
+    names = asyncio.run(gw.actor_names(c, ["Mai:ops12", "bao:ops3", f"admin:{STAFF}", "migration-226"]))
+    assert c.args == ([STAFF], ["bao", "mai"])
+    assert names == {STAFF: "Mai Tran", "user:mai": "Mai Tran"}
+    assert gw.actor_view("Mai:ops12", names)["updated_by_name"] == "Mai Tran"
 
 
 def test_spend_budget_row_names_its_actor():

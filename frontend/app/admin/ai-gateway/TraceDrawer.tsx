@@ -23,6 +23,7 @@ import {
 import { accountName } from "@/lib/awsAccounts";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import { M, OUTCOME, SOURCE } from "./messages";
+import { useErrorClassText } from "./useErrorClassText";
 
 type Row = TraceEvent & { _i: number };
 
@@ -41,6 +42,7 @@ export default function TraceDrawer({ target, onClose }: { target: TraceTarget; 
   const t = useT(M);
   const tsrc = useT(SOURCE);
   const tout = useT(OUTCOME);
+  const errorText = useErrorClassText();
   const dir = useAwsAccounts();
   const accountText = useAccountText();
   const [view, setView] = useState<"timeline" | "table">("timeline");
@@ -61,10 +63,10 @@ export default function TraceDrawer({ target, onClose }: { target: TraceTarget; 
       id: String(e._i), at: e.at, label: tsrc(e.source), tone: callTone(e.outcome),
       title: <><span style={{ fontFamily: mono, fontSize: 12 }}>{e.stage ?? e.what ?? "—"}</span>
         {" "}<span style={{ color: K.muted }}>{outcomeText(e.outcome)}</span></>,
-      detail: [who, e.error_class, err?.slice(0, 120)].filter(Boolean).join(" · ") || null,
+      detail: [who, errorText(e.error_class), err?.slice(0, 120)].filter(Boolean).join(" · ") || null,
       amount: usd(e.cost_usd), durationMs: e.latency_ms,
     };
-  }), [rows, dir, accountText, tsrc, tout]);
+  }), [rows, dir, accountText, tsrc, tout, errorText]);
 
   const columns = useMemo<ColumnDef<Row, unknown>[]>(() => [
     { id: "at", header: t("colWhen"), accessorKey: "at",

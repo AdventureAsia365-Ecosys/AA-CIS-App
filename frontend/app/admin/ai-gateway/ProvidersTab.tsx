@@ -24,18 +24,21 @@ import {
   useT, useToast, type ColumnDef,
 } from "../../_kit";
 import {
-  PROVIDERS_API, PROVIDER_VIEWS, RETRY_LLM_DENIED_API, accessTone, groupRows, heldGroups, isAccessState, needsLook,
-  nextRequeueSince, pct, registryFacts, requeueBody, statusTone, statusWordKey, usd, warmPathOf,
+  ERROR_CLASSES, PROVIDERS_API, PROVIDER_VIEWS, RETRY_LLM_DENIED_API, accessTone, groupRows, heldGroups,
+  isAccessState, isReadOnlyRefusal, needsLook, nextRequeueSince, pct, registryFacts, requeueBody, statusTone,
+  statusWordKey, usd, warmPathOf,
   type HeldGroup, type ProviderRow, type ProviderView, type ProvidersResp, type RegistryFacts,
   type RetryLlmDeniedResp,
 } from "@/lib/aiGateway";
 import { accountName } from "@/lib/awsAccounts";
-import { connectionName, type Connection } from "@/lib/llmConnections";
+import { connectionName } from "@/lib/llmConnections";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import { ConnectionsPanel } from "./ConnectionsPanel";
 import { JevCreditPanel } from "./JevCreditPanel";
 import { ACCESS, M, REASON, STATUS } from "./messages";
 import { useDomainText } from "./useDomainText";
+import { useErrorClassText } from "./useErrorClassText";
+import { useLlmConnections } from "./useLlmConnections";
 
 export const PROVIDERS_KEY = ["ai-gateway", "providers"] as const;
 
@@ -58,7 +61,9 @@ function ProviderCell({ row }: { row: Row }) {
       dir, accountText)
     : null;
   const warm = warmPathOf(row);
-  const domain = row.facts.failure_domain ? domainText(row.facts.failure_domain, sub) : null;
+  // N4 (C4 polish): a connection without an account ID is named by its label in the failure domain, never its key
+  const own = sub && sub !== row.connection_key ? sub : row.label;
+  const domain = row.facts.failure_domain ? domainText(row.facts.failure_domain, row.group === "llm" ? own : null) : null;
   return (
     <Lines>
       <span style={{ fontWeight: 600, color: K.ink }}>{row.label}</span>
@@ -116,6 +121,7 @@ function ProbeLine({ row }: { row: Row }) {
 
 function HealthCell({ row }: { row: Row }) {
   const t = useT(M);
+  const errorText = useErrorClassText();
   const h = row.health;
   if (!h) return <Lines><span style={small}>—</span><ProbeLine row={row} /></Lines>;
   if (row.group === "decide") {
@@ -133,7 +139,9 @@ function HealthCell({ row }: { row: Row }) {
         ? <span style={small}>{t("lastAnswer")} <DateText value={h.last_ok_at} relative /></span>
         : <span style={small}>{t("noCalls")}</span>}
       <ProbeLine row={row} />
-      {h.last_error_class && <span style={{ ...small, color: K.amber }}>{t("lastError", h.last_error_class)}</span>}
+      {h.last_error_class && (
+        <span style={{ ...small, color: K.amber }}>{t("lastError", errorText(h.last_error_class) ?? "")}</span>
+      )}
       {!!h.open_models && <span style={{ ...small, color: K.danger }}>{t("openModels", h.open_models)}</span>}
       {!h.open_models && !!h.failing_models && (
         <span style={{ ...small, color: K.amber }}>{t("failingModels", h.failing_models)}</span>
@@ -306,17 +314,6 @@ function ProvidersOverview() {
   );
 }
 
-/** GET /api/admin/llm-connections, the registry rows (same react-query cache as the Connections view). Optional:
- *  before migration 322 or on an error the registry lines and the connection names fall back. */
-type RegistryRow = RegistryFacts & Pick<Connection, "connection_key" | "kind" | "account_id">;
-
-function useLlmConnections() {
-  return useQuery({
-    queryKey: ["llm-connections"],
-    queryFn: () => apiGet<{ connections?: RegistryRow[] }>("/api/admin/llm-connections", { admin: true }),
-  });
-}
-
 // ── re-queue the jobs an LLM account block failed (AA-1018): dry run → confirm → real ──────────────────────────────
 // One batch at a time (lib/aiGateway REQUEUE_BATCH = the server's apply cap): the dry run reads the same rows from the
 // same `since` as the apply right after it, so "Re-queue N jobs" re-queues N. When more rows follow, "Check the next
@@ -326,6 +323,7 @@ function useLlmConnections() {
 function useHeldText(): (g: HeldGroup) => string {
   const t = useT(M);
   const ta = useT(ACCESS);
+  const errorText = useErrorClassText();
   const dir = useAwsAccounts();
   const accountText = useAccountText();
   const conns = useLlmConnections();
@@ -337,7 +335,10 @@ function useHeldText(): (g: HeldGroup) => string {
     };
     const names = g.keys.length ? g.keys.map(name).join(", ") : t("requeueAConnection");
     const cls = g.classes.length
-      ? g.classes.map((c) => (isAccessState(c) ? ta(c) : t("requeueRefused"))).join(", ") : t("requeueRefused");
+      ? g.classes.map((c) => (isAccessState(c) ? ta(c)
+        : (ERROR_CLASSES as readonly string[]).includes(c) ? errorText(c) : t("requeueRefused")))
+        .join(", ")
+      : t("requeueRefused");
     switch (g.type) {
       case "connection": return t("requeueHeldConnection", g.jobs, names, cls);
       case "same_class": return t("requeueHeldSameClass", g.jobs, names, cls);
@@ -358,12 +359,18 @@ function RequeueRefusedJobs() {
   const [preview, setPreview] = useState<RetryLlmDeniedResp | null>(null);
   const [last, setLast] = useState<LastRun | null>(null);
   const [error, setError] = useState("");
+  // N4 (C4 polish): the read-only E2E session gets 403 `e2e_read_only` on the dry run (a POST); say so in words
+  const [readOnly, setReadOnly] = useState(false);
+  const fail = (e: unknown) => {
+    setReadOnly(isReadOnlyRefusal(e));
+    setError(isReadOnlyRefusal(e) ? t("requeueReadOnly") : e instanceof Error ? e.message : String(e));
+  };
   const run = (dryRun: boolean, since?: string | null) =>
     apiSend<RetryLlmDeniedResp>(RETRY_LLM_DENIED_API, { method: "POST", body: requeueBody(dryRun, since), admin: true });
   const dry = useMutation({
     mutationFn: (since: string | null) => run(true, since),
     onSuccess: (r) => { setError(""); setPreview(r); },
-    onError: (e) => setError(e instanceof Error ? e.message : String(e)),
+    onError: fail,
   });
   const real = useMutation({
     // the dry run's own window, so the apply reads the rows the dialog counted
@@ -375,7 +382,7 @@ function RequeueRefusedJobs() {
       qc.invalidateQueries({ queryKey: ["llm-availability"] });
       qc.invalidateQueries({ queryKey: [...PROVIDERS_KEY] });
     },
-    onError: (e) => setError(e instanceof Error ? e.message : String(e)),
+    onError: fail,
   });
   const check = (since: string | null) => { setLast(null); dry.mutate(since); };
   const held = preview ? heldGroups(preview.held, preview.blocked_connections) : [];
@@ -391,7 +398,9 @@ function RequeueRefusedJobs() {
         </Button>
       }>
       {error
-        ? <div role="alert" style={{ ...small, color: K.danger }}>{error}</div>
+        ? readOnly
+          ? <div role="status" style={small} data-testid="ai-gateway-requeue-read-only">{error}</div>
+          : <div role="alert" style={{ ...small, color: K.danger }}>{error}</div>
         : last
           ? (
             <div style={{ display: "grid", gap: 6, justifyItems: "start" }} data-testid="ai-gateway-requeue-last">

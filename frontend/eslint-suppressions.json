@@ -545,7 +545,7 @@
   },
   "app/admin/tenants/page.tsx": {
     "aa-kit/no-hand-styled-button": {
-      "count": 13
+      "count": 12
     },
     "aa-kit/no-hex-colour": {
       "count": 3

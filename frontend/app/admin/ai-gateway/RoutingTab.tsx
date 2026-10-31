@@ -191,7 +191,8 @@ function ModelRow({ row, showAccount, domain }: {
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           {error && <span style={{ fontSize: 11.5, color: K.danger }}>{error}</span>}
           <span style={{ fontSize: 11, color: K.muted2 }}>
-            {row.updated_at ? formatDateTime(row.updated_at) : "—"} · {actorLabel(row, t("staffMember")) ?? "—"}
+            {row.updated_at ? formatDateTime(row.updated_at) : "—"} ·{" "}
+            {actorLabel(row, t("staffMember"), (ref) => t("staffLogin", ref)) ?? "—"}
           </span>
           <Button variant="secondary" size="sm" disabled={!dirty || saving} onClick={() => setConfirming(true)}
             testId={`llm-model-save-${row.stage}`}>
