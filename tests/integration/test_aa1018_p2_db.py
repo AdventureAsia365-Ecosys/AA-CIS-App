@@ -47,8 +47,9 @@ async def _spend(pool, tenant, usd, ago=timedelta(minutes=5)):
 
 
 async def _budget(pool, tenant, monthly, hard=True, alert=100, approval=150):
-    await pool.execute("INSERT INTO shared.tenant_ai_budget (tenant_id, monthly_usd, alert_pct, approval_pct, hard_stop, "
-                       "updated_by) VALUES ($1::uuid, $2, $3, $4, $5, 'zz-aa1016') ON CONFLICT (tenant_id) DO UPDATE "
+    await pool.execute("INSERT INTO shared.tenant_ai_budget (tenant_id, monthly_usd, alert_pct, approval_pct, "
+                       "hard_stop, updated_by) VALUES ($1::uuid, $2, $3, $4, $5, 'zz-aa1016') "
+                       "ON CONFLICT (tenant_id) DO UPDATE "
                        "SET monthly_usd = EXCLUDED.monthly_usd, hard_stop = EXCLUDED.hard_stop",
                        tenant, monthly, alert, approval, hard)
 
