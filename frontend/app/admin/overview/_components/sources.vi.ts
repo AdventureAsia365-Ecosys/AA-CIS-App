@@ -139,7 +139,7 @@ const PROVIDER_COST_SRC: Sources["PROVIDER_COST_SRC"] = {
     "khi chạm mức cảnh báo của ngân sách",
   month:
     "Nhật ký cuộc gọi AI, tháng này (cùng ước tính AI với trang Chi phí theo ứng dụng); DataForSEO: nhật ký cuộc gọi của nó, tháng này",
-  budget: "Ngân sách chi tiêu đặt trong CIS (Vận hành chi phí), hạn mức theo ngày cho từng nhà cung cấp",
+  budget: "Ngân sách chi tiêu đặt trong CIS (Nhà cung cấp AI, Ngân sách), hạn mức theo ngày cho từng nhà cung cấp; được đếm khi chi hôm nay chạm mức cảnh báo",
   aiMonth: "Nhật ký cuộc gọi AI, mọi nhà cung cấp AI, tháng này (UTC)",
   dfsBalance: "Số dư tài khoản DataForSEO từ lần kiểm tra số dư được lưu gần nhất (không gọi trực tiếp)",
 };
