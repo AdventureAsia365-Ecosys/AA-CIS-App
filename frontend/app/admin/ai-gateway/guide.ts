@@ -132,7 +132,9 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
         { kind: "terms", uiLabels: true, items: [
           { term: "Provider daily caps", text: "The most one provider may cost in a UTC day across the whole "
             + "platform." },
-          { term: "Job caps", text: "Caps of one kind of job, per run and per day." },
+          { term: "Job caps", text: "Caps of one kind of job, per run and per day. Spent today is measured the way "
+            + "the guard measures it: the whole provider's day for most jobs, this job kind only for the few jobs "
+            + "capped on their own spend (the line under the figure says which)." },
           { term: "LLM connection budgets", text: "The monthly budget of each connection; edit it in Providers › "
             + "Connections." },
           { term: "Tenant AI budgets", text: "Empty for now: per-tenant budgets come later and are seen by staff only." },

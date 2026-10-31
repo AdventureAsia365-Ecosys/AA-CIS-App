@@ -173,6 +173,11 @@ function SpendBudgetTable({ id, rows, loading, onEdit }: {
         <Lines>
           <span style={{ fontFamily: mono }}>{usd(c.row.original.spent_today_usd)}</span>
           {c.row.original.used_pct != null && <span style={small}>{t("ofCap", pct(c.row.original.used_pct))}</span>}
+          {c.row.original.job_kind && (
+            <span style={small} data-testid={`budget-day-scope-${c.row.original.provider}-${c.row.original.scope}`}>
+              {c.row.original.day_scope === "kind" ? t("spentKindOnly") : t("spentProviderDay")}
+            </span>
+          )}
         </Lines>
       ) },
     { id: "state", header: t("colState"), accessorKey: "state", cell: (c) => <StateBadge state={c.row.original.state} /> },

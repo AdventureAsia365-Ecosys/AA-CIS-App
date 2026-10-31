@@ -250,6 +250,23 @@ async def day_spend(conn, provider: str) -> float:
     return float(await conn.fetchval(sql) or 0.0)
 
 
+# AA-712 / AA-804 — the (provider, job kind) pairs whose run budget is loaded with day_scope="kind": their job row's
+# daily cap is measured against that kind's own spend (kind_day_spend), not the provider's whole day. Readers that
+# show a job row's daily cap (the admin Budgets tab, api/services/ai_gateway.py) use the same figure as the guard.
+# A caller that adds or drops day_scope="kind" updates this set; tests/unit/test_aa804_ai_gateway_budgets.py fails
+# when the two disagree.
+KIND_DAY_SCOPED: frozenset[tuple[str, str]] = frozenset({
+    ("bedrock", "place_extract"),
+    ("bedrock", "supply_content_draft"),
+    ("bedrock", "writing_memory_mine"),
+})
+
+
+def day_scope_of(provider: str, job_kind: str) -> str:
+    """"kind" when that job kind's daily cap is guarded against its own spend, else "provider"."""
+    return "kind" if (provider, job_kind) in KIND_DAY_SCOPED else "provider"
+
+
 async def kind_day_spend(conn, job_kind: str) -> float:
     """Today's (UTC) LLM spend of one job kind's jobs."""
     return float(await conn.fetchval(_KIND_DAY_SPEND_SQL, job_kind) or 0.0)

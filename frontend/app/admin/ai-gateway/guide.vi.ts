@@ -123,7 +123,9 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
         { kind: "terms", uiLabels: true, items: [
           { term: "Trần ngày theo nhà cung cấp", text: "Mức tối đa một nhà cung cấp được tiêu trong một ngày UTC trên "
             + "toàn nền tảng." },
-          { term: "Trần theo job", text: "Trần của một loại job, mỗi lượt chạy và mỗi ngày." },
+          { term: "Trần theo job", text: "Trần của một loại job, mỗi lượt chạy và mỗi ngày. Số đã chi hôm nay đo đúng "
+            + "như bộ chặn đo: cả ngày của nhà cung cấp với phần lớn job, riêng loại job này với vài job bị chặn theo "
+            + "chi tiêu của chính nó (dòng dưới con số cho biết là loại nào)." },
           { term: "Ngân sách kết nối LLM", text: "Ngân sách tháng của từng kết nối; sửa ở Nhà cung cấp › Kết nối." },
           { term: "Ngân sách AI theo đại lý", text: "Hiện để trống: ngân sách theo đại lý đến sau và chỉ nhân viên thấy." },
           { term: "Dừng ở trần", text: "Lượt chạy kết thúc khi lượt gọi kế tiếp sẽ vượt trần." },

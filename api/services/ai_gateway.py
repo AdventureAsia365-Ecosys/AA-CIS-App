@@ -658,7 +658,9 @@ async def trace_job(pool, job_id: str, *, limit: int = TRACE_LIMIT, now: Optiona
 #   tenant       per-tenant AI budgets: no table yet (AA-1016), always empty here.
 # The rows are edited where they always were: PUT /admin/budgets/{provider}/{scope} for the spend_budget tiers (the
 # tab's own editor), PATCH /admin/llm-connections/{key} for a connection budget (Providers › Connections). Today's
-# spend per provider is cost_guard.day_spend, the figure the guard itself compares with the cap.
+# spend is the figure the guard itself compares with the cap: cost_guard.day_spend for a provider row and for most
+# job rows; cost_guard.kind_day_spend for a job kind whose run budget is kind scoped (cost_guard.KIND_DAY_SCOPED,
+# AA-712), so its state never reports the provider's other stages as that job's spend.
 
 BUDGET_ROWS_SQL = """
     SELECT provider, scope, per_run_usd::float AS per_run_usd, per_day_usd::float AS per_day_usd, hard_stop,
@@ -680,14 +682,22 @@ def budget_state(per_day: Optional[float], spent_today: float, alert_pct: Option
     return pct, "ok"
 
 
-def spend_budget_row(r: dict, spent_today: dict) -> dict:
-    """One shared.spend_budget row with today's provider spend against its daily cap. Pure."""
+def spend_budget_row(r: dict, spent_today: dict, kind_spent_today: Optional[dict] = None) -> dict:
+    """One shared.spend_budget row with today's spend against its daily cap, measured the way the guard measures it:
+    the provider's whole day, or (``day_scope`` "kind", cost_guard.KIND_DAY_SCOPED) only that job kind's own spend
+    from ``kind_spent_today`` {job_kind: usd}. Pure."""
+    from shared import cost_guard
+
     scope = r["scope"]
-    spent = float(spent_today.get(r["provider"], 0.0))
+    job_kind = scope[4:] if scope.startswith("job:") else None
+    day_scope = cost_guard.day_scope_of(r["provider"], job_kind) if job_kind else "provider"
+    if day_scope == "kind":
+        spent = float((kind_spent_today or {}).get(job_kind, 0.0))
+    else:
+        spent = float(spent_today.get(r["provider"], 0.0))
     per_day = _f(r.get("per_day_usd"))
     used, state = budget_state(per_day, spent, r.get("alert_pct"))
-    return {"provider": r["provider"], "scope": scope,
-            "job_kind": scope[4:] if scope.startswith("job:") else None,
+    return {"provider": r["provider"], "scope": scope, "job_kind": job_kind, "day_scope": day_scope,
             "per_run_usd": _f(r.get("per_run_usd")), "per_day_usd": per_day, "hard_stop": bool(r.get("hard_stop")),
             "alert_pct": r.get("alert_pct"), "updated_at": _iso(r.get("updated_at")),
             "updated_by": r.get("updated_by"), "spent_today_usd": round(spent, 4), "used_pct": used,
@@ -737,13 +747,17 @@ def budget_coverage(provider_rows: list[dict], connection_rows: Optional[list[di
 
 
 async def _read_spend_budgets(pool) -> dict:
-    """Every spend_budget row and today's spend per provider (the guard's own figure), on one connection."""
+    """Every spend_budget row, today's spend per provider and, for each kind-scoped job row, that kind's own spend
+    today (the guard's own figures), on one connection."""
     from shared import cost_guard
 
     async with pool.acquire() as conn:
         rows = [dict(r) for r in await conn.fetch(BUDGET_ROWS_SQL)]
         spent = {p: round(await cost_guard.day_spend(conn, p), 4) for p in cost_guard.PROVIDERS}
-    return {"rows": rows, "spent_today": spent}
+        kinds = sorted({r["scope"][4:] for r in rows if r["scope"].startswith("job:")
+                        and cost_guard.day_scope_of(r["provider"], r["scope"][4:]) == "kind"})
+        kind_spent = {k: round(await cost_guard.kind_day_spend(conn, k), 4) for k in kinds}
+    return {"rows": rows, "spent_today": spent, "kind_spent_today": kind_spent}
 
 
 async def _read_connection_budgets(pool) -> list[dict]:
@@ -774,7 +788,8 @@ async def read_budgets(pool, *, now: Optional[datetime] = None) -> dict:
         _guard("LLM connection budgets", lambda: _read_connection_budgets(pool)),
     )
     spent_today = (sb or {}).get("spent_today", {})
-    rows = [spend_budget_row(r, spent_today) for r in (sb or {}).get("rows", [])]
+    kind_spent_today = (sb or {}).get("kind_spent_today", {})
+    rows = [spend_budget_row(r, spent_today, kind_spent_today) for r in (sb or {}).get("rows", [])]
     provider_rows = [r for r in rows if r["scope"] == "global"]
     job_rows = [r for r in rows if r["scope"] != "global"]
     errors = [{"source": s, "error": e} for s, e in (("spend_budgets", sb_err), ("llm_connections", conns_err)) if e]

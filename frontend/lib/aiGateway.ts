@@ -265,6 +265,9 @@ export interface SpendBudgetRow {
   provider: string;
   scope: string;
   job_kind: string | null;
+  /** "kind": the guard measures this job row's daily cap against that job kind's own spend today; "provider": against
+   *  the provider's whole day. `spent_today_usd` is that same figure. */
+  day_scope: "provider" | "kind";
   per_run_usd: number | null;
   per_day_usd: number | null;
   hard_stop: boolean;

@@ -188,3 +188,27 @@ async def test_budgets_queries_run_on_the_real_schema(pool):
     finally:
         async with pool.acquire() as c:
             await c.execute("DELETE FROM shared.spend_budget WHERE scope = $1", scope)
+
+
+@pytest.mark.asyncio
+async def test_a_kind_scoped_job_row_reads_its_kind_spend(pool, monkeypatch):
+    """A job kind guarded on its own spend (cost_guard.KIND_DAY_SCOPED) is measured with kind_day_spend on the real
+    schema: the probe kind has no LLM rows today, so its row reads $0 while the provider figure is untouched."""
+    from shared import cost_guard
+
+    scope = f"job:{KIND}"
+    monkeypatch.setattr(cost_guard, "KIND_DAY_SCOPED", frozenset({("dfs", KIND)}))
+    async with pool.acquire() as c:
+        await c.execute(
+            """INSERT INTO shared.spend_budget (provider, scope, per_run_usd, per_day_usd, hard_stop, alert_pct,
+                                                updated_by)
+               VALUES ('dfs', $1, NULL, 0.5, true, 80, 'admin:probe')""", scope)
+    try:
+        out = await gw.read_budgets(pool)
+        assert out["errors"] == [], out["errors"]
+        job = [r for r in out["tiers"]["job"] if r["scope"] == scope]
+        assert job and job[0]["day_scope"] == "kind" and job[0]["spent_today_usd"] == 0.0
+        assert job[0]["used_pct"] == 0.0 and job[0]["state"] == "ok"
+    finally:
+        async with pool.acquire() as c:
+            await c.execute("DELETE FROM shared.spend_budget WHERE scope = $1", scope)
