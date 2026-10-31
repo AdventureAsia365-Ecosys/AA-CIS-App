@@ -111,7 +111,8 @@ class BrandFitResult:
     pricing_mode: Optional[str] = None
     connection_key: Optional[str] = None
     # AA-804 (ledger v2): the gateway's attempt facts of the call (call_log.V2_BILLED_KEYS): latency, attempt
-    # position, wire id, request id, effort, reasoning tokens, prompt hash. An aggregated verdict keeps run 1's.
+    # position, wire id, request id, effort, reasoning tokens, prompt hash, prompt version (AA-900, AA-1018 part 2).
+    # An aggregated verdict keeps run 1's.
     latency_ms: Optional[int] = None
     attempt_no: Optional[int] = None
     deployment_wire_id: Optional[str] = None
@@ -119,6 +120,7 @@ class BrandFitResult:
     effort: Optional[str] = None
     reasoning_tokens: Optional[int] = None
     prompt_hash: Optional[str] = None
+    prompt_version: Optional[str] = None
 
 
 # AA-927 / AA-1002 (S6) / AA-804: the keys of one judge call's billing in `runs` (run_billing), as judge_node logs

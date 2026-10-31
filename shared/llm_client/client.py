@@ -20,8 +20,10 @@ from .role_config import get_stage_config_sync
 from .bedrock_satellite import DEFAULT_SATELLITE_ACCOUNT
 from .catalog import LEGACY_KEYS, CatalogModel, capability, get_model_sync
 from .schema_check import SchemaMismatch, conform
-from .errors import OTHER, THROTTLED, LLMAccessDenied, account_level_class, classify
-from . import breaker, connection_budget, connections, data_scope, stage_params, stream_sink
+from .errors import (DEADLINE, OTHER, THROTTLED, TRUNCATED, LLMAccessDenied, RouteDeadlineExceeded,
+                     account_level_class, classify)
+from . import (breaker, connection_budget, connections, data_scope, prompt_registry, stage_params, stream_sink,
+               tenant_budget)
 from .vendor_route import (VendorDeployment, deployment_plan, pinned_deployment, split_pin,
                            vendor_deployment_for)
 from .deployments import alias_targets_sync
@@ -176,6 +178,98 @@ def openai_scope_allowed(allowed_scopes: Optional[tuple],
 # AA-1002 (S5): (stage, allowed_scopes) of the call being generated, bound by LLMClient._generate / the shadow so the
 # gateway reads a stage's config once per call (the route and the scopes come from the same row).
 _STAGE_SCOPES: ContextVar[Optional[tuple]] = ContextVar("llm_stage_scopes", default=None)
+
+# ── AA-1018 part 2: the route deadline ───────────────────────────────────────────────────────────────────────────
+#
+# llm_role_config.route_deadline_s (migration 320) caps the wall time of a whole request: every model of the route,
+# every deployment of a model, every legacy tier. NULL (every row today) binds nothing: no check, no timeout, the
+# provider requests are byte-identical. When set, the gateway checks the remaining time before each attempt after the
+# first (the first always runs) and raises RouteDeadlineExceeded instead of starting another one (ledger status
+# 'error', error_class 'deadline', 0 USD); the OpenAI and Anthropic API adapters also get the remaining time as their
+# per-request timeout. Bedrock requests keep their client's read timeout (botocore has no per-request timeout): a slow
+# Bedrock attempt finishes, the next attempt is the one refused.
+_DEADLINE: ContextVar[Optional[tuple]] = ContextVar("llm_route_deadline", default=None)   # (monotonic end, seconds)
+DEADLINE_MIN_TIMEOUT_S = 1.0       # a per-request timeout never below this (the SDKs refuse 0 / negative values)
+
+
+def deadline_remaining() -> Optional[float]:
+    """Seconds left of the bound route deadline (may be <= 0), or None when the request has no deadline."""
+    bound = _DEADLINE.get()
+    return None if bound is None else bound[0] - time.monotonic()
+
+
+def request_timeout() -> Optional[float]:
+    """The per-request timeout an API adapter should pass: the remaining route time (at least
+    DEADLINE_MIN_TIMEOUT_S), or None without a deadline (the connection's own timeout applies, as before)."""
+    left = deadline_remaining()
+    return None if left is None else max(left, DEADLINE_MIN_TIMEOUT_S)
+
+
+def check_deadline(request: LLMRequest, before: str) -> None:
+    """Raise RouteDeadlineExceeded when the bound route deadline has passed (``before`` names the attempt not
+    started). No deadline bound: nothing."""
+    bound = _DEADLINE.get()
+    if bound is not None and time.monotonic() >= bound[0]:
+        raise RouteDeadlineExceeded(f"route deadline of {bound[1]} s for stage {request.stage!r} passed before "
+                                    f"{before}")
+
+
+# ── AA-1018 part 2: deprecated gateway paths (D4 in part) ─────────────────────────────────────────────────────────
+#
+# Paths that call a connection without the deployment plan. Since S262 each runs inside breaker.guarded (circuit,
+# limiter, outcome), and each use is logged once per (path, stage) per process with its deprecation dates, so the
+# removal can be planned from the logs and the S262 step-0 queries Q1-Q3 (legacy-key routes, traffic per stage x model,
+# route vs models seen). Removal needs: S11 (the legacy stages moved to aliases, a route change with approval and a
+# paid trial) and 30 days without traffic on the path. REMOVE_AFTER is the proposed date, not a gate.
+DEPRECATED_SINCE = "2026-10-31"
+DEPRECATED_PATHS = {
+    "legacy_chain": ("2026-12-31", "the haiku / sonnet aliases (LLM_LEGACY_ALIASES=on, shared.llm_model_alias)"),
+    "s2_vendor_deployment": ("2026-12-31", "the deployment plan (LLM_DEPLOYMENT_ROUTING on)"),
+    "catalog_fallback_converse": ("2026-12-31", "the deployment plan (registry rows for the model)"),
+    "catalog_fallback_openai": ("2026-12-31", "the deployment plan (registry rows for the model)"),
+}
+_DEPRECATED_LOGGED: set = set()
+
+
+def log_deprecated_path(path: str, stage: Optional[str]) -> None:
+    """One warning per (path, stage) per process: llm_deprecated_path_used with the dates and the replacement."""
+    key = (path, stage or "unstaged")
+    if key in _DEPRECATED_LOGGED:
+        return
+    _DEPRECATED_LOGGED.add(key)
+    remove_after, replacement = DEPRECATED_PATHS.get(path, ("", ""))
+    logger.warning("llm_deprecated_path_used", path=path, stage=key[1], deprecated_since=DEPRECATED_SINCE,
+                   remove_after=remove_after, replacement=replacement)
+
+
+def _guarded(conn: Optional[connections.ProviderConnection], model_key: str, call, *, answered: tuple = ()):
+    """``breaker.guarded`` on ``conn`` (admission, limiter, outcome); a plain call when the connection is unknown."""
+    if conn is None:
+        return call()
+    return breaker.guarded(conn, model_key, call, answered=answered)
+
+
+# The catalog key of what a legacy tier really calls (its health row: llm_provider_health.model_key references the
+# catalog). The T2.5a tier of a "sonnet" request calls Haiku, so it is counted on haiku.
+_LEGACY_BREAKER_KEY = {BEDROCK_SONNET: "sonnet", BEDROCK_HAIKU: "haiku", "gpt-4.1": "gpt-4.1"}
+
+# AA-1018 part 2: the ledger roles an LLM request may state for itself (LLMRequest.role, used when its stage has no
+# llm_role_config row: an adhoc_* script, a drill). The stage row's role always wins.
+REQUEST_ROLES = ("writer", "judge", "validate", "embed")
+
+
+def _role_of(request: LLMRequest, stage_cfg) -> str:
+    """The ledger role of a request: its stage row's (llm_role_config or SAFE_DEFAULTS), else the role the request
+    states (REQUEST_ROLES), else 'writer' (the pre-AA-1018 default). A stage with no row resolves to role_config's
+    generic fallback (stage 'unknown'), which does not count as a row."""
+    has_row = (stage_cfg is not None and getattr(stage_cfg, "role", None)
+               and getattr(stage_cfg, "stage", None) != "unknown")
+    if has_row:
+        return stage_cfg.role
+    asked = getattr(request, "role", None)
+    if asked in REQUEST_ROLES:
+        return asked
+    return getattr(stage_cfg, "role", None) or "writer"
 
 
 def stage_scopes(request: LLMRequest) -> Optional[tuple]:
@@ -581,6 +675,7 @@ class _AttemptScope:
     extra: dict = field(default_factory=dict)
     attempts: int = 0
     prompt_hash: Optional[str] = None
+    prompt_version: Optional[str] = None      # AA-900: the stage's registered prompt version (prompt_registry)
 
     def next_attempt(self) -> int:
         self.attempts += 1
@@ -592,20 +687,18 @@ _LEDGERED_ATTR = "_aa804_ledgered"
 
 
 def prompt_hash(request: LLMRequest) -> Optional[str]:
-    """sha256 hex of the request's system and user prompt (llm_call_log.prompt_hash; never the prompt itself). None
-    when either is not text (a test double)."""
-    system, user = getattr(request, "system_prompt", None), getattr(request, "user_prompt", None)
-    if not isinstance(system, str) or not isinstance(user, str):
+    """sha256 hex of the request's system prompt (llm_call_log.prompt_hash; never the prompt itself). AA-1018 part 2:
+    the system prompt only (S262 plan A4), so every call that sends one prompt version shares one hash whatever the
+    tour; the user prompt (the tour's data) is left out. None when it is not text (a test double)."""
+    system = getattr(request, "system_prompt", None)
+    if not isinstance(system, str):
         return None
-    h = hashlib.sha256()
-    h.update(system.encode("utf-8"))
-    h.update(b"\x00")
-    h.update(user.encode("utf-8"))
-    return h.hexdigest()
+    return hashlib.sha256(system.encode("utf-8")).hexdigest()
 
 
 def _scope_for(request: LLMRequest, role: str, extra: Optional[dict] = None) -> _AttemptScope:
-    return _AttemptScope(role=role or "writer", extra=dict(extra or {}), prompt_hash=prompt_hash(request))
+    return _AttemptScope(role=role or "writer", extra=dict(extra or {}), prompt_hash=prompt_hash(request),
+                         prompt_version=prompt_registry.version_for(getattr(request, "stage", None)))
 
 
 def _ledgered(exc: BaseException) -> bool:
@@ -631,10 +724,17 @@ def attempt_outcome(exc: BaseException) -> tuple[str, str]:
     """(status, error_class) of an attempt that raised with nothing billed. 'refused' when the provider or the gateway
     said no (access denied, no credit, a missing / rejected key, a rate limit, an open circuit, the connection's own
     limiter, a budget, a data-scope block); 'error' otherwise (outage, timeout, a bad reply that was not billed).
-    error_class = the breaker class (a request error counts as 'other'), or 'budget'."""
+    error_class = the breaker class (a request error counts as 'other'), or 'budget'. AA-1018 part 2: a route deadline
+    is ('error', 'deadline'); a refusal to return a reply cut at its token limit is ('truncated', 'truncated')."""
     from shared.cost_guard import BudgetExceeded
     if isinstance(exc, BudgetExceeded) or any(isinstance(link, BudgetExceeded) for link in _causes(exc)):
         return "refused", "budget"
+    if any(isinstance(link, RouteDeadlineExceeded) for link in _causes(exc)):
+        return "error", DEADLINE                       # AA-1018 part 2: the route's time ran out, nothing was sent
+    if classify(exc) == TRUNCATED:
+        # AA-1018 part 2: the provider refused a reply cut at its token limit (OpenAI 400): the request asked for too
+        # few tokens; recorded as truncated, like a cut reply that came back.
+        return "truncated", TRUNCATED
     cls = breaker.failure_class(exc)
     if cls not in ("access_denied", "quota_exhausted", "throttled", "credential"):
         cls = OTHER
@@ -680,7 +780,7 @@ def log_gateway_failed_attempt(request: LLMRequest, exc: BaseException, *, model
             stage=request.stage or "unstaged", role=scope.role, model=model, status=status, error_class=error_class,
             error=f"{type(exc).__name__}: {exc}", provider=provider, connection_key=connection_key,
             latency_ms=latency_ms, attempt_no=attempt_no, deployment_wire_id=wire_id, prompt_hash=scope.prompt_hash,
-            is_shadow=bool(scope.extra.get("shadow")),
+            prompt_version=scope.prompt_version, is_shadow=bool(scope.extra.get("shadow")),
             quality_signal_extra={**scope.extra, "position": scope.position})
         _in_background(record_calls, {"rows": [row]})
     except Exception as e:  # noqa: BLE001 — a log write never breaks the call it records
@@ -753,7 +853,8 @@ class LLMClient:
             if _billed_usage_of(e):
                 _enrich_billed(e, {"latency_ms": latency, "attempt_no": attempt_no, "deployment_wire_id": wire_id,
                                    "connection_key": connection_key,
-                                   "prompt_hash": scope.prompt_hash if scope is not None else None})
+                                   "prompt_hash": scope.prompt_hash if scope is not None else None,
+                                   "prompt_version": scope.prompt_version if scope is not None else None})
             else:
                 log_gateway_failed_attempt(request, e, model=model, connection_key=connection_key, wire_id=wire_id,
                                            provider=provider, latency_ms=latency, attempt_no=attempt_no,
@@ -766,6 +867,8 @@ class LLMClient:
                 resp.deployment_wire_id = wire_id
             if scope is not None and not resp.prompt_hash:
                 resp.prompt_hash = scope.prompt_hash
+            if scope is not None and not resp.prompt_version:
+                resp.prompt_version = scope.prompt_version
         except Exception:  # noqa: BLE001 — a test double that is not an LLMResponse
             pass
         return resp
@@ -809,10 +912,17 @@ class LLMClient:
         else:
             chain = [DEFAULT_MODEL_TIER]
 
-        role = (stage_cfg.role if stage_cfg and stage_cfg.role else "writer")
+        role = _role_of(request, stage_cfg)
         # AA-804 (ledger v2): the attempt scope of this request (role, attempt counter, prompt hash).
         scope_token = _ATTEMPT_SCOPE.set(_scope_for(request, role))
+        # AA-1018 part 2: the stage's route deadline (None = no deadline: nothing bound, nothing changes).
+        deadline_s = getattr(stage_cfg, "route_deadline_s", None) if stage_cfg else None
+        if not isinstance(deadline_s, int) or isinstance(deadline_s, bool) or deadline_s <= 0:
+            deadline_s = None                   # a test double or a bad value: no deadline
+        deadline_token = _DEADLINE.set((time.monotonic() + deadline_s, deadline_s)) if deadline_s else None
         try:
+            # AA-1016: the tenant's monthly AI budget, before any attempt (no budget row = nothing read, no change).
+            self._tenant_budget_gate(request, chain[0])
             if len(chain) == 1:
                 try:
                     resp = self._call_key_logged(request, chain[0], primary_acct, role=role, position=0)
@@ -827,6 +937,8 @@ class LLMClient:
             else:
                 resp = self._call_route(request, chain, primary_acct, role=role)
         finally:
+            if deadline_token is not None:
+                _DEADLINE.reset(deadline_token)
             _ATTEMPT_SCOPE.reset(scope_token)
 
         # AA-919: no A/B shadow call inside a writing-memory eval run (call_log.bind_eval_stage): it would add spend
@@ -835,6 +947,17 @@ class LLMClient:
                 and random.random() * 100 < stage_cfg.shadow_sample_pct and not _in_eval_run()):
             self._start_shadow(request, stage_cfg, resp, primary_acct)
         return resp
+
+    def _tenant_budget_gate(self, request: LLMRequest, first_key: str) -> None:
+        """AA-1016: ``tenant_budget.check`` for the tenant bound to this call (the job's tenant). A refusal (a T-stage
+        call of a tenant past its approval threshold with hard_stop on) gets its 0 USD 'refused' / 'budget' ledger row
+        and is raised as is: the job ends ``stopped_budget`` and waits for staff (``tenant_budget`` module)."""
+        try:
+            tenant_budget.check(request.stage)
+        except tenant_budget.TenantBudgetApprovalRequired as e:
+            pin = split_pin(first_key)
+            log_gateway_failed_attempt(request, e, model=pin[0] if pin else first_key, latency_ms=0)
+            raise
 
     def _call_key(self, request: LLMRequest, key: str, primary_acct: str) -> LLMResponse:
         # AA-658 / ADR 0005 — non-legacy Model Keys resolve through the catalog, with no hidden
@@ -897,9 +1020,12 @@ class LLMClient:
         failures: list = list(getattr(steps, "circuit_errors", ()))   # targets not called: circuit open (S4)
         intended = (alias_targets_sync(tier) or (None,))[0]     # the alias's first model, even if it had no step
         for position, (model, target) in enumerate(steps):
+            if position > 0:
+                where = f"{model.model_key}@{target.connection.connection_key}"
+                self._deadline_gate(request, model.model_key, f"alias {tier} step {position} ({where})", failures)
             try:
                 resp = self._call_target(request, model, target)
-            except UnusableReply:
+            except (UnusableReply, RouteDeadlineExceeded):
                 raise
             except Exception as e:
                 failures.append(e)
@@ -978,9 +1104,13 @@ class LLMClient:
                     logger.info("llm_route_skip", stage=request.stage, model=key, reason=reason)
                     errors.append(f"{key}: skipped ({reason})")
                     continue
+            if position > 0:
+                self._deadline_gate(request, key, f"route position {position} ({key})", errors)
             try:
                 resp = self._call_key_logged(request, key, primary_acct, role=role,
                                              position=position)
+            except RouteDeadlineExceeded:
+                raise
             except Exception as e:
                 logger.warning("llm_route_attempt_failed", stage=request.stage, model=key,
                                position=position, error=str(e)[:300])
@@ -1009,6 +1139,19 @@ class LLMClient:
             exc.logged_usage = tuple(unusable_usage)
             raise exc
         raise _all_failed(message, failures)
+
+    def _deadline_gate(self, request: LLMRequest, model: str, before: str, errors: Optional[list] = None) -> None:
+        """AA-1018 part 2: ``check_deadline`` before a later attempt; when it passed, the request's 0 USD 'deadline'
+        ledger row (model = the attempt not started) and RouteDeadlineExceeded naming what failed so far."""
+        try:
+            check_deadline(request, before)
+        except RouteDeadlineExceeded as e:
+            if errors:
+                e.args = (f"{e.args[0]}; tried: " + "; ".join(str(x) for x in errors)[:600],)
+            logger.warning("llm_route_deadline_passed", stage=request.stage, model=model, before=before)
+            log_gateway_failed_attempt(request, e, model=split_pin(model)[0] if split_pin(model) else model,
+                                       latency_ms=0)
+            raise
 
     def _start_shadow(self, request: LLMRequest, cfg, primary: LLMResponse,
                       primary_acct: str) -> None:
@@ -1053,14 +1196,19 @@ class LLMClient:
         )
 
     def _legacy_chain(self, request: LLMRequest, tier: str, primary_acct: str) -> LLMResponse:
+        # AA-1018 part 2 (D4 in part): every tier runs inside breaker.guarded (_legacy_tier), and the path is logged as
+        # deprecated (log_deprecated_path); its replacement is the alias path (_run_alias).
+        log_deprecated_path("legacy_chain", request.stage)
         # Direct GPT-4.1 — no Bedrock fallback (explicit choice)
         if tier == "gpt-4.1":
             # AA-1002 (S10): no plan on this path, so the connection's hard monthly budget is checked here (a budget
             # stop, raised as is: not wrapped into the outage error below).
             connection_budget.check(OPENAI_CONNECTION_KEY, "gpt-4.1")
+            gpt_conn = connections.connection_or_builtin(OPENAI_CONNECTION_KEY)
             try:
-                return self._attempt(request, lambda: self._call_openai(request, model="gpt-4.1"), model="gpt-4.1",
-                                     connection_key=OPENAI_CONNECTION_KEY, wire_id="gpt-4.1", provider="openai")
+                return self._attempt(
+                    request, lambda: _guarded(gpt_conn, "gpt-4.1", lambda: self._call_openai(request, model="gpt-4.1")),
+                    model="gpt-4.1", connection_key=OPENAI_CONNECTION_KEY, wire_id="gpt-4.1", provider="openai")
             except Exception as e:
                 logger.error("gpt41_direct_failed", error=str(e))
                 raise RuntimeError(f"GPT-4.1 failed: {e}") from e
@@ -1078,6 +1226,8 @@ class LLMClient:
                     resp = self._legacy_tier(request, tier, ACC2_CONNECTION_KEY, BEDROCK_SONNET,
                                              lambda: self._call_bedrock(request, model=BEDROCK_SONNET, use_cache=True))
                     return resp
+                except RouteDeadlineExceeded:
+                    raise
                 except Exception as e:
                     failures.append(e)
                     if "AccessDeniedException" in str(e) or "not authorized" in str(e).lower():
@@ -1096,6 +1246,8 @@ class LLMClient:
                 logger.info("t1_5a_satellite_used", model=BEDROCK_SONNET, account=primary_acct,
                             reason="acc2 T1 failed" if acc2_native else "acc2 native off (AA-843)")
                 return resp
+            except RouteDeadlineExceeded:
+                raise
             except Exception as e:
                 failures.append(e)
                 # AA-998: no cross-account retry; Sonnet degrades to Haiku on the same account.
@@ -1109,6 +1261,8 @@ class LLMClient:
                                          lambda: self._call_bedrock(request, model=BEDROCK_HAIKU, use_cache=True))
                 resp.fallback_used = tier == "sonnet"  # only a fallback when Sonnet was intended
                 return resp
+            except RouteDeadlineExceeded:
+                raise
             except Exception as e:
                 failures.append(e)
                 logger.warning("t2_failed_trying_t2_5a", model=BEDROCK_HAIKU, error=str(e))
@@ -1127,6 +1281,8 @@ class LLMClient:
             logger.info("t2_5a_satellite_used", model=BEDROCK_HAIKU, account=primary_acct,
                         reason="acc2 T2 failed" if acc2_native else "acc2 native off (AA-843)")
             return resp
+        except RouteDeadlineExceeded:
+            raise
         except Exception as e:
             failures.append(e)
             logger.warning("t2_5a_satellite_failed_trying_t3", model=BEDROCK_HAIKU,
@@ -1136,10 +1292,18 @@ class LLMClient:
 
     def _legacy_tier(self, request: LLMRequest, tier: str, connection_key: str, wire_id: str, call) -> LLMResponse:
         """One tier of the legacy chain as one ledger attempt (AA-804): the connection's hard monthly budget check
-        (AA-1002 S10, a budget refusal is a 0 USD 'refused' row), then the call."""
+        (AA-1002 S10, a budget refusal is a 0 USD 'refused' row), then the call. AA-1018 part 2: a later tier first
+        checks the route deadline, and the call runs inside breaker.guarded on the tier's connection and the catalog
+        key it really calls (an open connection or deployment circuit skips it without a call, like a plan)."""
+        scope = _ATTEMPT_SCOPE.get()
+        if scope is not None and scope.attempts > 0:
+            self._deadline_gate(request, tier, f"legacy tier {wire_id} on {connection_key}")
+        conn = connections.connection_or_builtin(connection_key)
+        breaker_key = _LEGACY_BREAKER_KEY.get(wire_id, tier)
+
         def run() -> LLMResponse:
-            connection_budget.check(connection_key, tier)
-            return call()
+            connection_budget.check(connection_key, tier)     # outside the breaker: a budget stop is not a failure
+            return _guarded(conn, breaker_key, call)
         provider = ("openai" if connection_key == OPENAI_CONNECTION_KEY
                     else "bedrock-native" if connection_key == ACC2_CONNECTION_KEY else "bedrock-satellite")
         return self._attempt(request, run, model=tier, connection_key=connection_key, wire_id=wire_id,
@@ -1161,6 +1325,8 @@ class LLMClient:
             logger.warning("t3_fallback_used", model="gpt-4.1",
                            reason=f"T2 failed (tier={tier})")
             return resp
+        except RouteDeadlineExceeded:
+            raise
         except Exception as e:
             logger.error("t3_failed_all_providers_down", error=str(e))
             raise _all_failed("All LLM providers failed", [*failures, e]) from e
@@ -1350,9 +1516,14 @@ class LLMClient:
         budget_skips: list = []
         vendor = vendor_deployment_for(model, scopes, budget_skips=budget_skips)
         if vendor is not None:
-            return self._attempt(request, lambda: self._call_anthropic_messages(request, model, vendor),
-                                 model=model.model_key, connection_key=vendor.connection.connection_key,
-                                 wire_id=vendor.deployment.wire_id, provider="anthropic")
+            # AA-1018 part 2 (D4 in part): inside breaker.guarded like a plan target; deprecated (the plan replaces it).
+            log_deprecated_path("s2_vendor_deployment", request.stage)
+            return self._attempt(
+                request, lambda: _guarded(vendor.connection, model.model_key,
+                                          lambda: self._call_anthropic_messages(request, model, vendor),
+                                          answered=(UnusableReply,)),
+                model=model.model_key, connection_key=vendor.connection.connection_key,
+                wire_id=vendor.deployment.wire_id, provider="anthropic")
         if model.api_style == "anthropic_messages":
             if budget_skips:
                 raise connection_budget.budget_error(model.model_key, budget_skips)
@@ -1361,10 +1532,14 @@ class LLMClient:
         # AA-1002 (S10): the paths below call a connection without a plan, so they check its hard budget themselves.
         if model.api_style == "openai_chat":
             wire = model.wire_model or model.model_key
+            log_deprecated_path("catalog_fallback_openai", request.stage)    # AA-1018 part 2 (D4 in part)
+            openai_conn = connections.connection_or_builtin(OPENAI_CONNECTION_KEY)
 
             def openai_call() -> LLMResponse:
                 connection_budget.check(OPENAI_CONNECTION_KEY, model.model_key)
-                return self._call_openai(request, model=wire, catalog_model=model)
+                return _guarded(openai_conn, model.model_key,
+                                lambda: self._call_openai(request, model=wire, catalog_model=model),
+                                answered=(UnusableReply,))
             return self._attempt(request, openai_call, model=model.model_key, connection_key=OPENAI_CONNECTION_KEY,
                                  wire_id=wire, provider="openai")
         if model.api_style != "converse":
@@ -1376,9 +1551,14 @@ class LLMClient:
         # An Anthropic deployment left out by its budget falls through to today's Converse call on the satellite (the
         # next way in answers), unless that connection is over its own budget too.
 
+        log_deprecated_path("catalog_fallback_converse", request.stage)     # AA-1018 part 2 (D4 in part)
+        converse_conn = connections.connection_or_builtin(account)
+
         def converse_call() -> LLMResponse:
             connection_budget.check(account, model.model_key)
-            return self._call_bedrock_converse(request, model, account)
+            return _guarded(converse_conn, model.model_key,
+                            lambda: self._call_bedrock_converse(request, model, account),
+                            answered=(UnusableReply,))
         return self._attempt(request, converse_call, model=model.model_key, connection_key=account,
                              wire_id=(model.bedrock_profile_ids or {}).get(account), provider="bedrock-satellite")
 
@@ -1406,9 +1586,13 @@ class LLMClient:
         failures: list = []
         errors: list = []
         for position, target in enumerate(plan):
+            if position > 0:
+                self._deadline_gate(request, model.model_key,
+                                    f"deployment {position} of {model.model_key} ({target.connection.connection_key})",
+                                    errors)
             try:
                 resp = self._call_target(request, model, target)
-            except UnusableReply:
+            except (UnusableReply, RouteDeadlineExceeded):
                 raise
             except Exception as e:
                 failures.append(e)
@@ -1687,6 +1871,9 @@ class LLMClient:
                                 "effort_by_stage": {**(by_stage if isinstance(by_stage, dict) else {}),
                                                     request.stage: effort}}
         extra = {"capabilities": model.capabilities} if getattr(model, "capabilities", None) else {}
+        timeout = request_timeout()       # AA-1018 part 2: the route deadline's remaining time; None = unchanged
+        if timeout is not None:
+            extra["timeout"] = timeout
         result = anthropic_messages.send(
             connection=conn, wire_id=dep.wire_id, system=request.system_prompt, user=request.user_prompt,
             max_tokens=max_tokens, stage=request.stage, json_schema=schema, request_defaults=request_defaults,
@@ -1803,8 +1990,10 @@ class LLMClient:
         client = self._openai or openai_chat.client_for(
             conn, getattr(deployment, "request_defaults", None))     # fails closed before any network call
         stream_sink.emit_restart(request.stage)  # AA-637
+        timeout = request_timeout()       # AA-1018 part 2: the route deadline's remaining time; None = unchanged
         try:
-            resp = client.chat.completions.create(**kwargs)
+            resp = (client.chat.completions.create(**kwargs) if timeout is None
+                    else client.chat.completions.create(**kwargs, timeout=timeout))
         except Exception as e:
             if openai_chat.is_auth_error(e):
                 openai_chat.forget_connection(conn_key)              # a rotated key is read on the next call

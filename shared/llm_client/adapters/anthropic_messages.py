@@ -374,10 +374,12 @@ def _wrap_status_error(conn_key: str, e) -> AnthropicAPIError:
 
 def send(*, connection: connections.ProviderConnection, wire_id: str, system: str, user: str, max_tokens: int,
          stage: Optional[str], json_schema: Optional[dict] = None, request_defaults: Optional[dict] = None,
-         on_delta: Optional[Callable[[str], None]] = None, capabilities: Optional[dict] = None) -> MessagesResult:
+         on_delta: Optional[Callable[[str], None]] = None, capabilities: Optional[dict] = None,
+         timeout: Optional[float] = None) -> MessagesResult:
     """One streamed Messages API request. Raises ConnectionCredentialError / ConnectionPolicyError before any
     network call when the connection may not be used, AnthropicAPIError when the API refuses or the request fails.
-    A reply that arrived (any stop_reason, refusal included) is returned: the caller decides whether it is usable."""
+    A reply that arrived (any stop_reason, refusal included) is returned: the caller decides whether it is usable.
+    ``timeout`` (AA-1018 part 2): the route deadline's remaining seconds for this request; None = the client's own."""
     import anthropic
 
     if connection.kind != "anthropic":
@@ -395,7 +397,7 @@ def send(*, connection: connections.ProviderConnection, wire_id: str, system: st
     params = build_params(wire_id=wire_id, system=system, user=user, max_tokens=max_tokens, stage=stage,
                           json_schema=json_schema, request_defaults=request_defaults, capabilities=capabilities)
     try:
-        with client.messages.stream(**params) as stream:
+        with client.messages.stream(**params, **({"timeout": timeout} if timeout is not None else {})) as stream:
             for event in stream:
                 if (on_delta is not None and getattr(event, "type", None) == "content_block_delta"
                         and getattr(event.delta, "type", None) == "text_delta"):

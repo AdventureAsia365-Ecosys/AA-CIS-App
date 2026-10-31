@@ -397,6 +397,7 @@ async def set_enabled(db, connection_key: str, *, enabled: bool, actor: str) -> 
 TEST_STAGE = "adhoc_conn_test"
 TEST_ROLE = "validate"
 TEST_MAX_TOKENS = 32
+TEST_MAX_TOKENS_LIMIT = 512        # AA-1018 part 2: the most a caller may ask for (a reasoning model needs room)
 TEST_SYSTEM = "This is a connectivity test. Reply with the single word OK."
 TEST_USER = "Are you there?"
 TEXT_STYLES = ("converse", "anthropic_messages", "anthropic_native", "openai_chat")
@@ -425,7 +426,7 @@ def _pick(pairs: list, model_key: Optional[str]):
 
 
 async def test_connection(pool, connection_key: str, *, model_key: Optional[str] = None, actor: str,
-                          client=None) -> dict:
+                          client=None, max_tokens: Optional[int] = None) -> dict:
     """AA-1002 (S4): one small real call (``TEST_MAX_TOKENS`` output tokens) of one text model on the connection,
     through ``LLMClient.probe`` (the gateway's own adapters: same credential resolver, same limiter; the outcome
     counts on the deployment's circuit, a success closes it). Works on a switched-off connection or deployment: the
@@ -455,7 +456,9 @@ async def test_connection(pool, connection_key: str, *, model_key: Optional[str]
             f"connection {connection_key!r} has no text-model deployment the gateway can call")
     dep, model = picked
     target = VendorDeployment(dataclasses.replace(dep, enabled=True), dataclasses.replace(conn, enabled=True))
-    max_tokens = min(TEST_MAX_TOKENS, model.max_output_tokens or TEST_MAX_TOKENS)
+    # AA-1018 part 2: ``max_tokens`` (1..TEST_MAX_TOKENS_LIMIT) overrides the default budget, never the model's cap.
+    budget = TEST_MAX_TOKENS if not max_tokens else max(1, min(int(max_tokens), TEST_MAX_TOKENS_LIMIT))
+    max_tokens = min(budget, model.max_output_tokens or budget)
     request = LLMRequest(system_prompt=TEST_SYSTEM, user_prompt=TEST_USER, max_tokens=max_tokens, stage=TEST_STAGE)
     client = client or LLMClient()
     started = time.monotonic()

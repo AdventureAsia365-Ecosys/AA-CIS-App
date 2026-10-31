@@ -8,7 +8,8 @@ made. Shown by ``GET /admin/llm-availability`` (``invariant``) and the OPS-12 di
 Failure domain of a connection: ``<kind>:<account>:<data_scope>``, where account is the row's ``account_id``, else the
 name of its ``account_id_env`` (the account comes from the task environment), else the connection key (a task-role
 Bedrock connection is the main account; an API-key connection is its own vendor account). Migration 322 (registry v2,
-AA-1017) adds a ``failure_domain`` column, backfilled with this same derivation; the rule reads it from AA-1018 part 2.
+AA-1017) adds a ``failure_domain`` column, backfilled with this same derivation; since AA-1018 part 2 the rule reads it
+(the derivation stays the fallback for a NULL value and before 322).
 Only the LLM kinds take part (322 also stores the decide / data / guard providers in the table).
 
 Per stage (``shared.llm_role_config``, active rows): the route's keys (``model_id`` then ``fallback_model_ids``), each
@@ -30,6 +31,11 @@ AWS_ONLY = "aws_only"
 
 
 def failure_domain(conn: dict) -> str:
+    """The row's ``failure_domain`` (migration 322; set by migration only), else the derivation it was backfilled
+    with (AA-1018 part 2: the column answers first)."""
+    stored = conn.get("failure_domain")
+    if isinstance(stored, str) and stored:
+        return stored
     account = conn.get("account_id") or conn.get("account_id_env") or conn["connection_key"]
     return f"{conn['kind']}:{account}:{conn['data_scope']}"
 
@@ -122,6 +128,8 @@ DEPLOYMENTS_SQL = "SELECT model_key, connection_key, priority, enabled FROM shar
 CONNECTIONS_SQL = ("SELECT connection_key, kind, enabled, data_scope, account_id, account_id_env "
                    "FROM shared.llm_provider_connection "
                    "WHERE kind IN ('bedrock', 'anthropic', 'openai', 'azure_openai', 'mock')")
+# AA-1018 part 2: with migration 322's failure_domain (the stored domain wins over the derivation).
+CONNECTIONS_V2_SQL = CONNECTIONS_SQL.replace("account_id_env ", "account_id_env, failure_domain ")
 
 
 async def read(conn, *, blocked: Optional[dict[str, str]] = None, now: Optional[datetime] = None) -> dict:
@@ -133,7 +141,10 @@ async def read(conn, *, blocked: Optional[dict[str, str]] = None, now: Optional[
         routes = [dict(r) for r in await conn.fetch(ROUTES_SQL)]
         aliases = [dict(r) for r in await conn.fetch(ALIASES_SQL)]
         deps = [dict(r) for r in await conn.fetch(DEPLOYMENTS_SQL)]
-        conns = [dict(r) for r in await conn.fetch(CONNECTIONS_SQL)]
+        try:
+            conns = [dict(r) for r in await conn.fetch(CONNECTIONS_V2_SQL)]
+        except asyncpg.exceptions.UndefinedColumnError:          # before migration 322: the derivation
+            conns = [dict(r) for r in await conn.fetch(CONNECTIONS_SQL)]
     except (asyncpg.exceptions.UndefinedTableError, asyncpg.exceptions.UndefinedColumnError):
         return {"ready": False, "report_only": True}
     out = check(routes, aliases, deps, conns, blocked)
