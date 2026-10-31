@@ -38,11 +38,12 @@ def _run(c):
 
 
 # AA-1002 S4: 309 (shared.llm_provider_health, FK to the connection) and 310 (the admin edit grant) build on 304's
-# tables; S10: 317 (shared.llm_connection_cost_policy + shared.llm_cost_reconcile, FKs to the connection) too.
-# _undo drops them first and the fixture puts them back, so later modules see the post-317 state.
+# tables; S10: 317 (shared.llm_connection_cost_policy + shared.llm_cost_reconcile, FKs to the connection) too;
+# AA-1017: 320 (llm_model_deployment.api_style, the health class 'truncated') builds on the tables _undo drops.
+# _undo drops them first and the fixture puts them back, so later modules see the post-320 state.
 LATER = [os.path.join(os.path.dirname(MIGRATION), f) for f in
          ("309_llm_provider_health.sql", "310_llm_connection_admin_edit_grant.sql",
-          "317_llm_connection_cost_policy_reconcile.sql")]
+          "317_llm_connection_cost_policy_reconcile.sql", "320_llm_registry_v2_families_params.sql")]
 
 
 def _run_later(c):
