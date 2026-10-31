@@ -40,6 +40,16 @@ TRUNCATED = "truncated"
 # The stop reasons that mean "cut at the token limit": Anthropic / Bedrock max_tokens, OpenAI length, Anthropic
 # model_context_window_exceeded.
 TRUNCATED_STOP_REASONS = frozenset({"max_tokens", "length", "model_context_window_exceeded"})
+# AA-1018 part 2: a provider that REFUSES to return a reply cut at its token limit (OpenAI 400 "Could not finish the
+# message because max_tokens or model output limit was reached", seen live in the S262 drill on 31/10/2026 and logged
+# as 'other'). Same class as a cut reply: the request asked for too few tokens, the deployment is healthy, so the
+# breaker does not count it and the ledger row says 'truncated'.
+_TRUNCATED_ERROR = re.compile(
+    r"max_tokens or model output limit was reached"
+    r"|could not parse response content as the length limit was reached",   # openai LengthFinishReasonError
+    re.IGNORECASE)
+# AA-1018 part 2: the route's wall-time budget (llm_role_config.route_deadline_s) ran out before the next attempt.
+DEADLINE = "deadline"
 
 # The job failure reason and the prefix of shared.job.error for a job ended by an account-level denial.
 LLM_ACCESS_DENIED_REASON = "llm_access_denied"
@@ -91,6 +101,14 @@ _PATTERNS: tuple[tuple[str, re.Pattern], ...] = (
 _OWN_MARKER = re.compile(r"\bllm_access_denied\b|\bLLMAccessDenied\b")
 
 
+class RouteDeadlineExceeded(RuntimeError):
+    """AA-1018 part 2: the stage's route deadline (``llm_role_config.route_deadline_s``) passed before the next model
+    or deployment could be tried. Raised by the gateway without a provider call; ``llm_error_class`` = DEADLINE (ledger
+    error_class 'deadline', status 'error'). Not account-level: a job retries it with its normal backoff."""
+
+    llm_error_class = DEADLINE
+
+
 class LLMAccessDenied(RuntimeError):
     """Every model a request tried was refused at account level (access denied / no credit). A RuntimeError, so a
     caller that already catches RuntimeError behaves as before; the job runner fails the job without a retry.
@@ -117,10 +135,18 @@ def reply_class(stop_reason: Optional[str]) -> Optional[str]:
     return TRUNCATED if is_truncated(stop_reason) else None
 
 
+def is_truncated_error(text: Optional[str]) -> bool:
+    """AA-1018 part 2: True when a provider error says the reply hit its token limit (``_TRUNCATED_ERROR``)."""
+    return bool(text) and _TRUNCATED_ERROR.search(text) is not None
+
+
 def classify_text(text: Optional[str]) -> str:
-    """The error class of one message (an exception's str, a stored job error)."""
+    """The error class of one message (an exception's str, a stored job error). AA-1018 part 2: a refusal to return a
+    reply cut at its token limit is TRUNCATED (checked first: the OpenAI 400 also carries "invalid_request_error")."""
     if not text:
         return OTHER
+    if is_truncated_error(text):
+        return TRUNCATED
     for cls, pattern in _PATTERNS:
         if pattern.search(text):
             return cls

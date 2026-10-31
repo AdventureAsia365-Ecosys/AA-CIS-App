@@ -100,7 +100,7 @@ ERROR_CLASSES = ("access_denied", "quota_exhausted", "throttled", "credential", 
 # the gateway classifies outcomes.
 # The gateway facts of one reply that billed_fields() passes on (besides the S6 four).
 V2_BILLED_KEYS = ("latency_ms", "attempt_no", "deployment_wire_id", "request_id", "effort", "reasoning_tokens",
-                  "prompt_hash")
+                  "prompt_hash", "prompt_version")
 
 
 def _s6_extras(model: str, cache_read_tokens, cache_write_tokens, pricing_mode) -> Optional[tuple]:
@@ -753,7 +753,8 @@ def gateway_failure_row(*, stage: str, role: str, model: str, status: str, error
                         is_shadow: Optional[bool] = None, quality_signal_extra: Optional[dict] = None,
                         tenant_id: Optional[str] = None, **v2) -> dict:
     """AA-804 (ledger v2): the record_calls row of one attempt that was refused or failed with nothing billed
-    (cost_usd 0, no tokens): the gateway writes it, the caller never sees the attempt. quality_signal = {**extra
+    (cost_usd 0, no tokens): the gateway writes it, the caller never sees the attempt. AA-1018 part 2: status
+    'truncated' too (a provider that refused to return a reply cut at its token limit). quality_signal = {**extra
     minus OK_RATE_KEYS, "gateway_attempt": true, "error": ...}, so the row never moves a stage's ok-rate. The account
     is the connection (an AWS account key for a Bedrock connection, the vendor connection otherwise)."""
     signal = {k: v for k, v in (quality_signal_extra or {}).items() if k not in OK_RATE_KEYS}
@@ -761,7 +762,7 @@ def gateway_failure_row(*, stage: str, role: str, model: str, status: str, error
     return dict(stage=stage, role=role, model=model or "unknown", tokens_in=None, tokens_out=None, cost_usd=0.0,
                 quality_signal=signal, tenant_id=tenant_id, stop_reason=None,
                 account=_row_account(None, connection_key), provider=provider, connection_key=connection_key,
-                status=status if status in (STATUS_REFUSED, STATUS_ERROR) else STATUS_ERROR,
+                status=status if status in (STATUS_REFUSED, STATUS_ERROR, STATUS_TRUNCATED) else STATUS_ERROR,
                 error_class=error_class if error_class in ERROR_CLASSES else "other",
                 latency_ms=latency_ms, attempt_no=attempt_no, deployment_wire_id=deployment_wire_id,
                 prompt_hash=prompt_hash, is_shadow=is_shadow, **v2)

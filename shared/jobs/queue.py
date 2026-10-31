@@ -313,15 +313,17 @@ async def reap(pool) -> dict:
 
 
 async def request_cancel(pool, job_id: str) -> Optional[str]:
-    """Queued jobs are cancelled at once; a running job is flagged and its worker stops it."""
+    """Queued jobs are cancelled at once; a running job is flagged and its worker stops it. A `stopped_budget` job
+    is cancelled at once too (AA-1016, review S262): a job that waits for staff approval of its tenant's AI budget
+    keeps its piece / version running; Cancel is the decline, and the kind's on_terminal then marks it failed."""
     row = await pool.fetchrow(
         """
         UPDATE shared.job SET
-            status = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
+            status = CASE WHEN status IN ('queued', 'stopped_budget') THEN 'cancelled' ELSE status END,
             finished_at = CASE WHEN status = 'queued' THEN now() ELSE finished_at END,
-            error = CASE WHEN status = 'queued' THEN 'cancelled by admin' ELSE error END,
+            error = CASE WHEN status IN ('queued', 'stopped_budget') THEN 'cancelled by admin' ELSE error END,
             cancel_requested = true, updated_at = now()
-        WHERE id = $1::uuid AND status IN ('queued', 'running')
+        WHERE id = $1::uuid AND status IN ('queued', 'running', 'stopped_budget')
         RETURNING status
         """,
         job_id,
@@ -372,10 +374,16 @@ RETRY_REASON_MAX_LIMIT = 500                    # a dry run may list this many
 RETRY_REASON_APPLY_LIMIT = 50                   # an apply re-queues at most this many per call (paid runs: subset)
 RETRY_SPREAD_SECONDS = 60                       # re-queued rows are due over this window, not all in one second
 
+# AA-1016 (AA-1018 part 2): the job error prefix of a T-stage job stopped because its tenant passed the approval
+# threshold of its AI budget (shared/llm_client/tenant_budget.APPROVAL_REASON). Those jobs end `stopped_budget`, not
+# `failed`; the same bulk re-queue takes them once staff approved (raised the budget / switched the hard stop off).
+RETRY_REASON_TENANT_BUDGET = "tenant_ai_budget_approval"
+RETRY_REASONS = (RETRY_REASON_DEFAULT, RETRY_REASON_TENANT_BUDGET)
+
 _RETRY_CANDIDATES_SQL = """
     SELECT j.id::text AS id, j.kind, j.payload, j.error, j.finished_at
       FROM shared.job j
-     WHERE j.status = 'failed' AND j.error IS NOT NULL AND left(j.error, length($1)) = $1
+     WHERE j.status = $5 AND j.error IS NOT NULL AND left(j.error, length($1)) = $1
        AND j.finished_at >= $2
        AND (cardinality($3::text[]) = 0 OR j.kind = ANY($3::text[]))
      ORDER BY j.finished_at, j.id
@@ -384,7 +392,7 @@ _RETRY_CANDIDATES_SQL = """
 _RETRY_ONE_SQL = """
     UPDATE shared.job SET status = 'queued', attempt = 0, run_after = now() + make_interval(secs => $2),
            error = NULL, cancel_requested = false, finished_at = NULL, result = NULL, updated_at = now()
-     WHERE id = $1::uuid AND status = 'failed'
+     WHERE id = $1::uuid AND status = $3
     RETURNING id
 """
 _CONNECTION_KEYS_SQL = "SELECT connection_key FROM shared.llm_provider_connection"
@@ -437,7 +445,9 @@ async def retry_by_reason(pool, prefix: str = RETRY_REASON_DEFAULT, *, since: da
                           dry_run: bool = True, limit: int = RETRY_REASON_LIMIT,
                           rand: Optional[Callable[[], float]] = None) -> dict:
     """AA-1018: re-queue the `failed` jobs whose error starts with `prefix` (default `llm_access_denied`, the
-    account-level LLM refusal of AA-900) and that finished at or after `since`, optionally only `kinds`. Each job gets
+    account-level LLM refusal of AA-900) and that finished at or after `since`, optionally only `kinds`. AA-1016
+    (AA-1018 part 2): prefix `tenant_ai_budget_approval` takes the `stopped_budget` jobs a tenant's AI budget held
+    for staff approval instead, and holds each one while its tenant still needs approval (`tenant_hold`). Each job gets
     a fresh set of attempts, like `retry`, due within RETRY_SPREAD_SECONDS (jitter). Skipped (in `held`, with the
     reason): a kind that is not registered, a kind whose `retry_refusal` refuses the job (AA-839), and a job whose
     connection is still refused (`blocked_connections` / `llm_hold`; only for the LLM prefix). `dry_run` (the
@@ -451,9 +461,12 @@ async def retry_by_reason(pool, prefix: str = RETRY_REASON_DEFAULT, *, since: da
         raise ValueError("prefix must not be empty")
     limit = max(1, min(int(limit), RETRY_REASON_MAX_LIMIT if dry_run else RETRY_REASON_APPLY_LIMIT))
     load_kinds()
-    rows = [dict(r) for r in await pool.fetch(_RETRY_CANDIDATES_SQL, prefix, since, list(kinds), limit)]
+    tenant_stop = prefix.startswith(RETRY_REASON_TENANT_BUDGET)
+    status = "stopped_budget" if tenant_stop else "failed"
+    rows = [dict(r) for r in await pool.fetch(_RETRY_CANDIDATES_SQL, prefix, since, list(kinds), limit, status)]
     llm = prefix.startswith(RETRY_REASON_DEFAULT)
     blocked, keys = await blocked_connections(pool) if llm else ({}, [])
+    waiting = await tenants_waiting(pool, rows) if tenant_stop else {}
     eligible, held = [], []
     for r in rows:
         kind = get_kind(r["kind"])
@@ -466,6 +479,8 @@ async def retry_by_reason(pool, prefix: str = RETRY_REASON_DEFAULT, *, since: da
             why = kind.retry_refusal({**r, "payload": _json(r["payload"])}) if kind.retry_refusal else None
             if not why and llm:
                 why = llm_hold(r["error"] or "", blocked, keys)
+            if not why and tenant_stop:
+                why = tenant_hold(r["error"] or "", waiting)
         if why:
             held.append({**entry, "held": why})
         else:
@@ -475,12 +490,44 @@ async def retry_by_reason(pool, prefix: str = RETRY_REASON_DEFAULT, *, since: da
         r_fn = rand or random.random
         for e in eligible:
             delay = int(RETRY_SPREAD_SECONDS * min(max(r_fn(), 0.0), 1.0))
-            if await pool.fetchrow(_RETRY_ONE_SQL, e["id"], delay) is not None:
+            if await pool.fetchrow(_RETRY_ONE_SQL, e["id"], delay, status) is not None:
                 requeued.append(e["id"])
     return {"dry_run": dry_run, "prefix": prefix, "since": since.isoformat(), "kinds": list(kinds), "limit": limit,
             "matched": len(rows), "eligible": len(eligible), "held_count": len(held), "requeued": len(requeued),
             "requeued_ids": requeued, "jobs": eligible, "held": held, "blocked_connections": blocked,
+            "tenants_waiting": {k: v.summary() for k, v in waiting.items() if v is not None and v.needs_approval},
             "more": len(rows) == limit}
+
+
+async def tenants_waiting(pool, rows: Sequence[dict]) -> dict:
+    """AA-1016: {tenant_id: TenantAIBudget or None} for the tenants the approval-stopped jobs in ``rows`` name (read
+    now, one query per tenant; None = the tenant has no budget any more)."""
+    from shared import cost_guard
+    from shared.llm_client.tenant_budget import tenant_of_error
+
+    out: dict = {}
+    for r in rows:
+        tid = tenant_of_error(r.get("error"))
+        if tid and tid not in out:
+            async with pool.acquire() as conn:
+                out[tid] = await cost_guard.tenant_budget_check(conn, tid)
+    return out
+
+
+def tenant_hold(error: str, waiting: dict) -> Optional[str]:
+    """Why an approval-stopped job must stay held: its tenant still needs approval (spend at or past approval_pct
+    with the hard stop on). None once staff raised the budget, switched the hard stop off or removed the budget.
+    A job whose error names no tenant is held (it cannot be checked). Pure."""
+    from shared.llm_client.tenant_budget import tenant_of_error
+
+    tid = tenant_of_error(error)
+    if tid is None:
+        return "the stop names no tenant: re-queue it with the one-job Retry after checking"
+    budget = waiting.get(tid)
+    if budget is not None and budget.needs_approval:
+        return (f"tenant {tid} still waits for approval ({budget.used_pct:.0f}% of ${budget.monthly_usd:.2f}, "
+                f"approval from {budget.approval_pct}%)")
+    return None
 
 
 # Read-side job cost (AA-652 follow-up): `shared.job.cost_usd` holds what the handler reported

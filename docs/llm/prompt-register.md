@@ -7,7 +7,7 @@ status: draft
 owner: nghiep
 audience: [engineer, agent]
 applies_to: [aa-cis-api, aa-cis-worker]
-last_reviewed: 2026-10-29
+last_reviewed: 2026-10-31
 review_every_days: 90
 related: [APP-06-eval, APP-06-routes, CAT-01, AA-900, AA-729, AA-804]
 ---
@@ -41,6 +41,20 @@ Change a prompt, a model or a route only with an eval run ID in the PR. The proc
   - `Q0` / `Q2` / `R0` / `Q3` = the quality-system tier for the file in `services/quality/paths.yaml`
     (Q0 cases in CI, Q2 judge re-score before merge, R0 replay on stored output, Q3 writer train).
   - `none` = no eval exists for this prompt yet: a change states its manual check in the PR.
+
+## Version register and CI gate
+
+Every stage in the table has a numbered version in `shared/llm_client/prompt_versions.json` (newest last): the file,
+the symbols above and `prompt_sha256`, the sha256 of those symbols' source text (read with `ast`, so other code in the
+file does not count). The gate `tests/unit/test_aa900_prompt_registry_gate.py` fails when a stage's newest version no
+longer matches its source. To change a prompt:
+
+1. `python3 scripts/prompt_registry_check.py --bump` appends the next version for each changed stage.
+2. A CIS migration registers the new rows in `shared.prompt_version` (`python3 scripts/prompt_registry_check.py --sql`
+   prints the INSERT; the table stores no prompt text).
+3. After the migration, `llm_call_log.prompt_version` carries the version for every call of that stage (the gateway
+   writes it only when the deployed source and the registered hash agree). `llm_call_log.prompt_hash` is the sha256 of
+   the system prompt the call sent.
 
 ## Register
 
@@ -95,7 +109,8 @@ Not in the register:
 
 ## Change a prompt
 
-1. Edit the prompt in the file named above. If the row has a version constant, bump it in the same commit.
+1. Edit the prompt in the file named above. If the row has a version constant, bump it in the same commit, and bump
+   the registered version (`scripts/prompt_registry_check.py --bump`, see "Version register and CI gate").
 2. Update the row here when the file, symbol, stage or version rule moves. The guard test fails on a stale file or
    symbol.
 3. Follow the [eval runbook](eval-runbook.md): R2 for the four writers, the quality-system tier otherwise.

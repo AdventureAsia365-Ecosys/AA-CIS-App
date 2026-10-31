@@ -17,7 +17,7 @@ import { TenantName } from "../_components/TenantSelect";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import { traceHref } from "@/lib/aiGateway";
 import { accountName, withAccountNames } from "@/lib/awsAccounts";
-import { fmtSeconds, releases, runSeconds, stepProgress, usd, type Job } from "./jobsShared";
+import { canCancel, fmtSeconds, releases, runSeconds, stepProgress, usd, type Job } from "./jobsShared";
 import { JOBS } from "./messages";
 
 interface LlmCall {
@@ -140,7 +140,7 @@ export default function JobDrawer({ jobId, refetchMs, expectedSeconds, maxReleas
 
   const footer = job && (
     <>
-      {(job.status === "queued" || (job.status === "running" && !job.cancel_requested)) && (
+      {canCancel(job) && (
         <Button size="sm" variant="danger" disabled={busy} onClick={() => onAct(job, "cancel")}>{t("cancel")}</Button>
       )}
       {(job.status === "failed" || job.status === "stopped_budget" || job.status === "cancelled") && (

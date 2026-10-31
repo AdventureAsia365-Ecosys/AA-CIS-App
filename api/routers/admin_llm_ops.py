@@ -1342,6 +1342,9 @@ class LlmConnectionTest(BaseModel):
     """AA-1002 (S4): which model to test (a deployment of it on the connection); none = the cheapest text model."""
     model_config = {"extra": "forbid"}
     model_key: Optional[str] = Field(None, max_length=64, pattern=r"^[a-z0-9][a-z0-9.-]{0,62}$")
+    # AA-1018 part 2: the output budget of the test call (default 32; a reasoning model such as Kimi K3 spends a
+    # short budget thinking and returns no text). Capped at TEST_MAX_TOKENS_LIMIT (512): still well under $0.01.
+    max_tokens: Optional[int] = Field(None, ge=1, le=512)
 
 
 # AA-1002 (gateway slice S4) — one small real call on a connection (admin only, POLICY ai.admin). Paid (a few tokens,
@@ -1363,7 +1366,7 @@ async def test_llm_connection(
     try:
         result = await llm_connections.test_connection(
             request.app.state.pool, connection_key, model_key=body.model_key if body else None,
-            actor=f"admin:{admin_actor}")
+            actor=f"admin:{admin_actor}", max_tokens=body.max_tokens if body else None)
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except llm_connections.ConnectionToggleRefused as e:

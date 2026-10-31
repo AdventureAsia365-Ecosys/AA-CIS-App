@@ -66,6 +66,9 @@ class StageConfig:
     # AA-1002 (S5, migration 311) — the data scopes this stage's content may be sent through (data_scope.py). None =
     # no stage policy (column NULL / not migrated, no row): the gateway keeps its pre-S5 rules.
     allowed_scopes: Optional[tuple] = None
+    # AA-1018 part 2 (migration 320) — the wall-time budget of the whole route in seconds (every model and deployment
+    # it tries, fallbacks included). None = no deadline (every row today, column NULL / not migrated): no change.
+    route_deadline_s: Optional[int] = None
 
 
 # S235 (Nghiệp, 14/10/2026): Bedrock first; the OpenAI platform API is only the LAST-RESORT fallback for
@@ -214,7 +217,16 @@ def _row_to_config(row) -> StageConfig:
         shadow_model_id=row["shadow_model_id"],
         shadow_sample_pct=row["shadow_sample_pct"] or 0,
         allowed_scopes=data_scope.normalize(_scopes_of(row)),
+        route_deadline_s=_deadline_of(row),
     )
+
+
+def _deadline_of(row) -> Optional[int]:
+    try:
+        value = row["route_deadline_s"]
+    except (KeyError, IndexError):
+        return None
+    return int(value) if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
 
 
 _ROUTE_COLUMNS = "fallback_model_ids, shadow_model_id, shadow_sample_pct"
@@ -233,25 +245,40 @@ def _scopes_of(row) -> Optional[list]:
         return None
 
 
+# AA-1018 part 2: migration 320 adds route_deadline_s, read the same way (missing column = no deadline, retried later).
+_deadline_column_missing_at = 0.0
+
+
 def _scope_select() -> str:
-    """", allowed_scopes" while the column is believed to exist, else ""."""
-    if _scope_column_missing_at and time.monotonic() - _scope_column_missing_at < _SCOPE_RETRY_SECONDS:
+    """", allowed_scopes[, route_deadline_s]" for the optional columns believed to exist, else ""."""
+    now = time.monotonic()
+    if _scope_column_missing_at and now - _scope_column_missing_at < _SCOPE_RETRY_SECONDS:
         return ""
-    return ", allowed_scopes"
+    if _deadline_column_missing_at and now - _deadline_column_missing_at < _SCOPE_RETRY_SECONDS:
+        return ", allowed_scopes"
+    return ", allowed_scopes, route_deadline_s"
 
 
 async def _fetch_scoped(fetch, sql_for):
-    """``fetch(sql_for(scope_cols))``; on a missing allowed_scopes column, once more without it."""
-    global _scope_column_missing_at
-    cols = _scope_select()
-    try:
-        return await fetch(sql_for(cols))
-    except asyncpg.exceptions.UndefinedColumnError:
-        if not cols:
-            raise
-        _scope_column_missing_at = time.monotonic()
-        logger.warning("llm_role_config_scope_column_missing", hint="migration 311 not applied: no stage data scopes")
-        return await fetch(sql_for(""))
+    """``fetch(sql_for(optional_cols))``; on a missing optional column (route_deadline_s before migration 320,
+    allowed_scopes before 311), once more without it."""
+    global _scope_column_missing_at, _deadline_column_missing_at
+    for _ in range(3):
+        cols = _scope_select()
+        try:
+            return await fetch(sql_for(cols))
+        except asyncpg.exceptions.UndefinedColumnError as e:
+            if not cols:
+                raise
+            if "route_deadline_s" in cols and "route_deadline_s" in str(e):
+                _deadline_column_missing_at = time.monotonic()
+                logger.warning("llm_role_config_deadline_column_missing",
+                               hint="migration 320 not applied: no route deadlines")
+            else:
+                _scope_column_missing_at = time.monotonic()
+                logger.warning("llm_role_config_scope_column_missing",
+                               hint="migration 311 not applied: no stage data scopes")
+    return await fetch(sql_for(""))
 
 
 async def _fetch_one(stage: str) -> Optional[StageConfig]:

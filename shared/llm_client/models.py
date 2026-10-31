@@ -36,6 +36,10 @@ class LLMRequest(BaseModel):
     # legacy haiku/sonnet key -> an instruction with the schema in the system prompt, the reply
     # checked the same way. The response content is then the JSON text of that object.
     json_schema:   Optional[dict] = None
+    # AA-1018 part 2: the ledger role of a request whose stage has no llm_role_config row (an adhoc_* script, a drill):
+    # writer | judge | validate | embed. The stage row's role always wins; None = 'writer' as before. Only the
+    # gateway's own attempt rows read it (the caller still passes role= to record_call*).
+    role:          Optional[str] = None
 
 class LLMResponse(BaseModel):
     content:       str
@@ -85,7 +89,9 @@ class LLMResponse(BaseModel):
     # its 1-based position among the provider attempts of this request (a route fallback or a second deployment
     # makes it > 1); deployment_wire_id = the model id sent on the wire; request_id = the provider's request id;
     # effort = the effort level sent (Anthropic API); reasoning_tokens = reasoning tokens reported (part of
-    # output_tokens); prompt_hash = sha256 hex of the system + user prompt (never the prompt itself). None = not known.
+    # output_tokens); prompt_hash = sha256 hex of the system prompt (AA-1018 part 2: the system prompt only, so every
+    # call of one prompt version shares it; never the prompt itself); prompt_version = the stage's registered prompt
+    # version (shared.prompt_version, AA-900) when the deployed prompt file matches a row. None = not known.
     latency_ms: Optional[int] = None
     attempt_no: Optional[int] = None
     deployment_wire_id: Optional[str] = None
@@ -93,3 +99,4 @@ class LLMResponse(BaseModel):
     effort: Optional[str] = None
     reasoning_tokens: Optional[int] = None
     prompt_hash: Optional[str] = None
+    prompt_version: Optional[str] = None

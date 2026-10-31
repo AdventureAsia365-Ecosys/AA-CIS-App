@@ -63,8 +63,8 @@ from typing import Callable, Iterable, Iterator, Optional, TypeVar
 import structlog
 
 from . import connections
-from .errors import (ACCESS_DENIED, OTHER, QUOTA_EXHAUSTED, THROTTLED, _chain, account_level_class, classify,
-                     redact_ids)
+from .errors import (ACCESS_DENIED, OTHER, QUOTA_EXHAUSTED, THROTTLED, TRUNCATED, _chain, account_level_class,
+                     classify, redact_ids)
 
 logger = structlog.get_logger()
 
@@ -507,6 +507,10 @@ def failure_class(exc: BaseException) -> str:
             return CREDENTIAL
         cur = cur.__cause__ or cur.__context__
     cls = classify(exc)
+    if cls == TRUNCATED:
+        # AA-1018 part 2: the provider refused a reply cut at its token limit (OpenAI 400): the request asked for too
+        # few tokens, the deployment is healthy. Not counted, like any other refusal of the request's own content.
+        return REQUEST
     return REQUEST if cls == OTHER and is_request_error(exc) else cls
 
 
@@ -552,6 +556,8 @@ def _check_connection_opened(connection_key: str, model_key: str, before: Option
     after_c = connection_health(rows, connection_key, now)
     if after_c is None or state_of(after_c, now) != OPEN:
         return
+    # AA-1018 part 2: the lasting access state follows every OPEN connection circuit (written only on a change).
+    note_access_state(connection_key, access_state_of(after_c.last_error_class))
     prior = [h for h in rows if h.model_key != model_key] + ([before] if before is not None else [])
     before_c = connection_health(prior, connection_key, now)
     if before_c is not None and state_of(before_c, now) == OPEN:
@@ -621,11 +627,86 @@ def _alert_in_db(h: Health, models: list[str]) -> None:
 on_connection_open: Callable[[Health, list[str]], None] = _alert_in_db
 
 
+# ── AA-1018 part 2: the connection's lasting access state (llm_provider_connection.access_state, migration 322) ──
+#
+# The connection circuit above is derived and short-lived (minutes). The access state is the lasting answer the admin
+# and the probe read: 'ok' after any answered call, else the account-wide class that opened the connection circuit
+# ('access_denied', 'quota_exhausted'; a key that cannot be read = 'unconfigured'). Written once per change and process
+# (a per-process memo; the UPDATE is a no-op when the row already holds the value), on its own DB connection, best
+# effort: a failed write never sets the breaker's DB back-off and never raises. cis_app has column UPDATE on
+# access_state (322).
+# Bounded (review S262): ``record_success`` runs on every answered call, so a write that fails (DB down, column or
+# grant missing) must not open a connection per call. One write per connection at a time (``_access_inflight``); none
+# while the breaker's own DB back-off runs (read only); after a failed write none for that connection for
+# ``DB_RETRY_S`` (``DB_MISSING_RETRY_S`` when the column / table is missing).
+
+ACCESS_STATE_OF_CLASS = {CREDENTIAL: "unconfigured", ACCESS_DENIED: "access_denied",
+                         QUOTA_EXHAUSTED: "quota_exhausted"}
+ACCESS_STATES = ("unknown", "ok", "access_denied", "quota_exhausted", "unconfigured")
+_SET_ACCESS_STATE_SQL = ("UPDATE shared.llm_provider_connection SET access_state = $2 "
+                         "WHERE connection_key = $1 AND access_state IS DISTINCT FROM $2")
+_access_written: dict[str, str] = {}
+_access_failed_until: dict[str, float] = {}
+_access_inflight: set[str] = set()
+_access_lock = threading.Lock()
+_MISSING_ERRORS = ("UndefinedColumnError", "UndefinedTableError")
+
+
+def access_state_of(error_class: Optional[str]) -> Optional[str]:
+    """The access_state a connection circuit opened by ``error_class`` means (None: not a lasting account state)."""
+    return ACCESS_STATE_OF_CLASS.get(error_class or "")
+
+
+async def _write_access_state(conn, connection_key: str, state: str) -> str:
+    return await conn.execute(_SET_ACCESS_STATE_SQL, connection_key, state)
+
+
+def note_access_state(connection_key: str, state: Optional[str]) -> None:
+    """Persist ``state`` as the connection's access_state unless this process already wrote it (the UPDATE itself
+    changes nothing when the row already holds it). Skipped while a write for the connection runs, while the
+    breaker's DB back-off runs, and for ``DB_RETRY_S`` after a failed write of the connection (bounded: at most one
+    connect per connection per back-off window, whatever the call rate). Never raises. ``LLM_CIRCUIT_BREAKER=off``
+    writes nothing."""
+    if not enabled() or state not in ACCESS_STATES:
+        return
+    now = time.monotonic()
+    with _access_lock:
+        if _access_written.get(connection_key) == state or connection_key in _access_inflight:
+            return
+        if now < _db_down_until or now < _access_failed_until.get(connection_key, float("-inf")):
+            return
+        _access_inflight.add(connection_key)
+    try:
+        set_access_state(connection_key, state)
+        with _access_lock:
+            _access_written[connection_key] = state
+            _access_failed_until.pop(connection_key, None)
+        logger.info("llm_connection_access_state", connection=connection_key, access_state=state)
+    except Exception as e:  # noqa: BLE001 — before migration 322 (no column) or DB down: try again after the back-off
+        missing = type(e).__name__ in _MISSING_ERRORS
+        with _access_lock:
+            _access_failed_until[connection_key] = time.monotonic() + (DB_MISSING_RETRY_S if missing else DB_RETRY_S)
+        logger.warning("llm_connection_access_state_write_failed", connection=connection_key, error=str(e)[:200])
+    finally:
+        with _access_lock:
+            _access_inflight.discard(connection_key)
+
+
+def _set_access_state_in_db(connection_key: str, state: str) -> None:
+    connections.run_sync(lambda: _with_conn(lambda conn: _write_access_state(conn, connection_key, state)))
+
+
+# Tests replace it (conftest: no database in unit tests).
+set_access_state: Callable[[str, str], None] = _set_access_state_in_db
+
+
 def record_success(connection_key: str, model_key: str) -> None:
     """A provider call answered: close the circuit. A healthy deployment's success is written at most once a minute
-    per process (it only refreshes ``last_ok_at``). Never raises."""
+    per process (it only refreshes ``last_ok_at``). AA-1018 part 2: the connection's access_state becomes 'ok' (written
+    only when it changes). Never raises."""
     if not enabled():
         return
+    note_access_state(connection_key, "ok")
     key = (connection_key, model_key)
     try:
         h = _get(key)
@@ -766,5 +847,9 @@ def reset() -> None:
     _loaded_at = 0.0
     _db_down_until = 0.0
     _ok_written.clear()
+    with _access_lock:
+        _access_written.clear()
+        _access_failed_until.clear()
+        _access_inflight.clear()
     with _limiters_lock:
         _limiters.clear()

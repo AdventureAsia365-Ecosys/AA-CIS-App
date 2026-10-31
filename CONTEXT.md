@@ -416,8 +416,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   deployment's own circuit, `vendor_route.connection_circuit_open`) and `breaker.admit` (every `guarded` call) skip
   every deployment of the connection; afterwards the deployment circuits decide; any success closes it. On the
   transition to open: one admin bell (`llm_circuit_open`, one unread per connection per 24 h) and the ops e-mail
-  (template `llm_circuit_open`, once per connection, class and UTC day). The legacy chain (`haiku` / `sonnet` keys)
-  does not go through `guarded` yet, so it still reaches a blocked acc3 (AA-1018 part 2 wraps it). Jobs: backoff
+  (template `llm_circuit_open`, once per connection, class and UTC day). Since part 2 the legacy chain (`haiku` /
+  `sonnet` keys) goes through `guarded` too (see "Reliability part 2"). Jobs: backoff
   gets up to 25 % jitter (`queue.backoff_seconds`); `POST /admin/job-runner/jobs/retry-llm-denied` (ops.write, DRY
   RUN by default, audited `jobs_retry_llm_denied`) re-queues `failed` jobs whose error starts with
   `llm_access_denied` unless their kind refuses retries or their connection still refuses
@@ -431,6 +431,35 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   background, deploy-gate exempt): daily from 05:00 UTC only with `LLM_DAILY_PROBE=on` (default off);
   `POST /admin/job-runner/llm-probe/run` (ai.admin) queues a DRY RUN by default (deployments + estimated cost, no
   call). Bedrock runtime clients take the connection's `timeout_s` / `max_retries` only when set (NULL = unchanged).
+- **Reliability part 2** (AA-1018 / AA-1016 / AA-900, no migration; reads 320 / 321 / 322): **route deadline**
+  `llm_role_config.route_deadline_s` (NULL on every row = nothing bound, requests byte-identical): checked before every
+  attempt after the first (route position, plan deployment, alias step, legacy tier), `RouteDeadlineExceeded` (ledger
+  `error` / `deadline`, 0 USD); the OpenAI and Anthropic API adapters get the remaining time as their per-request
+  timeout (Bedrock keeps its client read timeout). The paths that bypass the plan (`_legacy_chain` tiers on the catalog
+  key they call, the S2 `vendor_deployment_for` path, the catalog-fallback Converse / OpenAI calls) run inside
+  `breaker.guarded` and log `llm_deprecated_path_used` once per path and stage (`client.DEPRECATED_PATHS`: since
+  2026-10-31, proposed removal 2026-12-31 after S11). **Tenant AI budget** (`shared/llm_client/tenant_budget.py`,
+  rules in `cost_guard.TenantAIBudget`): before any attempt, for the job's tenant with a `shared.tenant_ai_budget`
+  row only (no row = nothing read beyond a cached tenant set): bell + ops e-mail at `alert_pct`; at `approval_pct`
+  with `hard_stop`, a T-stage call (`t<digit>_…`) raises `TenantBudgetApprovalRequired` (a BudgetExceeded: the job
+  ends `stopped_budget` with error prefix `tenant_ai_budget_approval`, ledger `refused` / `budget`); staff raise the
+  budget or switch the hard stop off, then re-queue (`retry-llm-denied` with `reason: tenant_ai_budget_approval`,
+  held per tenant until it no longer needs approval). The T2 graph / `_rewrite_tour` and the T9 write re-raise the
+  stop (`tenant_budget.approval_stop_in`; the worker reads the explicit cause chain too), and the `t2_rewrite` /
+  `t9_write` on_terminal hooks leave the version `pending` / piece `processing` for such a job (the tenant's live view
+  says "on hold"), so the re-queue writes it; an admin Cancel of the `stopped_budget` job is the decline (the hook then
+  marks it failed). `LLM_TENANT_BUDGETS=off` switches it off. **Prompt register**:
+  `prompt_hash` = sha256 of the system prompt; `prompt_version` = `prompt_registry.version_for(stage)` (the manifest
+  `shared/llm_client/prompt_versions.json` hashes the prompt symbols' source with `ast`; the version counts only when
+  `shared.prompt_version` holds the same hash; no rows today = NULL), on every reply and attempt row; CI gate
+  `tests/unit/test_aa900_prompt_registry_gate.py` / `scripts/prompt_registry_check.py` (`--bump`, `--sql`). The
+  breaker writes `llm_provider_connection.access_state` (open connection circuit → `access_denied` /
+  `quota_exhausted` / `unconfigured`; any answer → `ok`; once per change and process, one write per connection at a
+  time, none during the breaker's DB back-off, `DB_RETRY_S` back-off after a failed write); the probe stamps
+  `last_probe_at`; `invariant.py` reads the stored `failure_domain`. OpenAI's 400 "max_tokens or model output limit
+  was reached" is `truncated` (never counted on a circuit); an adhoc stage logs `LLMRequest.role`. Ratchets:
+  `test_aa642_model_tier_allowlist.py` (fixed / passed-through `model_tier` sites), `test_aa642_s11_alias_equivalence.py`
+  (the 17 legacy stages send the same wire ids through aliases; the switch stays off).
 - **Structured output (`LLMRequest.json_schema`) per path**: Converse = one tool whose input is the schema, reply
   conformed (`_checked_json`, AA-659/714); OpenAI = strict `response_format`. The legacy `haiku` / `sonnet` keys
   (Anthropic Messages API, `invoke_claude`) have neither: since S251 (AA-835) the gateway appends a "one JSON object

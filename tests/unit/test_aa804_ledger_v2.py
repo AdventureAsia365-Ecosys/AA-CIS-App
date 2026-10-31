@@ -100,11 +100,12 @@ def test_values_outside_the_checks_are_written_null():
 def test_billed_fields_carries_the_attempt_facts():
     resp = LLMResponse(content="x", model_used="m", provider="bedrock", latency_ms=840, attempt_no=2,
                        deployment_wire_id="global.anthropic.claude-sonnet-5-5", request_id="req-1", effort="high",
-                       reasoning_tokens=12, prompt_hash="ab" * 32)
+                       reasoning_tokens=12, prompt_hash="ab" * 32, prompt_version="v3")
     got = call_log.billed_fields(resp)
     assert {k: got[k] for k in call_log.V2_BILLED_KEYS} == {
         "latency_ms": 840, "attempt_no": 2, "deployment_wire_id": "global.anthropic.claude-sonnet-5-5",
-        "request_id": "req-1", "effort": "high", "reasoning_tokens": 12, "prompt_hash": "ab" * 32}
+        "request_id": "req-1", "effort": "high", "reasoning_tokens": 12, "prompt_hash": "ab" * 32,
+        "prompt_version": "v3"}
     assert set(got) == set(call_log.BILLED_FIELD_KEYS)
     assert all(v is None for v in call_log.billed_fields(MagicMock()).values())
 
@@ -324,6 +325,8 @@ def test_prompt_hash_is_stable_and_not_the_prompt():
     assert len(h) == 64 and "Varra" not in h
     assert h == client_mod.prompt_hash(LLMRequest(system_prompt="Write about Lake Varra.", user_prompt="Day 1"))
     assert h != client_mod.prompt_hash(LLMRequest(system_prompt="Write about Lake Varra.Day", user_prompt=" 1"))
+    # AA-1018 part 2: the system prompt only, so every tour of one prompt version shares the hash
+    assert h == client_mod.prompt_hash(LLMRequest(system_prompt="Write about Lake Varra.", user_prompt="Day 9"))
     assert client_mod.prompt_hash(MagicMock()) is None
 
 

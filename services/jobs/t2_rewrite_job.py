@@ -20,6 +20,7 @@ from services.acp_shared.writing_progress import (
 )
 from shared.jobs.registry import JobContext, NonRetryable, job_kind
 from shared.llm_client import stream_sink
+from shared.llm_client.tenant_budget import ON_HOLD_MESSAGE, approval_stop_in, is_approval_stop
 from services.quality.registry import threshold
 
 logger = structlog.get_logger()
@@ -389,9 +390,16 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
 
 
 async def mark_version_failed(pool, job_row: dict) -> None:
-    """on_terminal: the job ended without success, so the version must not stay 'pending'."""
+    """on_terminal: the job ended without success, so the version must not stay 'pending'. Except a job that waits
+    for staff approval of its tenant's AI budget (AA-1016, review S262): the version stays 'pending' so the approval
+    re-queue writes it (a 'failed' version would make the re-run skip it); a Cancel of that job (decline) marks it
+    failed."""
     version_id = (job_row.get("payload") or {}).get("version_id")
     if not version_id:
+        return
+    if is_approval_stop(job_row):
+        logger.warning("tenant_rewrite_job_waits_for_approval", version_id=version_id, job_id=job_row.get("id"),
+                       error=(job_row.get("error") or "")[:300])
         return
     async with pool.acquire() as conn:
         await conn.execute(
@@ -441,16 +449,19 @@ async def run(ctx: JobContext) -> dict:
     progress.start()
     progress.step("research")
     await ctx.progress(phase="writing", version_id=version_id)
+    on_hold = False
     try:
         with stream_sink.bind(progress):
             diag = await _rewrite_and_save(pool, pt, tour_dict, brand_rules, tenant_id, version_id,
                                            published_tour_id)
-    except Exception:
+    except Exception as e:
         progress.fail()
+        on_hold = approval_stop_in(e) is not None  # AA-1016: waits for staff approval, resumes on its own
         raise
     finally:
         await progress.finish(not progress.failed,
-                              None if not progress.failed else "Writing didn't finish. Please try again.")
+                              None if not progress.failed else
+                              ON_HOLD_MESSAGE if on_hold else "Writing didn't finish. Please try again.")
 
     async with pool.acquire() as conn:
         final = await conn.fetchrow(

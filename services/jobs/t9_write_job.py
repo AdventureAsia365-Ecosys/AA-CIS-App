@@ -22,6 +22,7 @@ from services.acp_content_writing import service
 from services.acp_shared.writing_progress import WritingProgress
 from shared.jobs.registry import JobContext, NonRetryable, job_kind
 from shared.llm_client import stream_sink
+from shared.llm_client.tenant_budget import ON_HOLD_MESSAGE, approval_stop_in, is_approval_stop
 
 logger = structlog.get_logger()
 
@@ -43,15 +44,17 @@ async def _run_write_with_progress(request_id: UUID, piece_id: UUID, context: di
     own final status decides how the live view ends; the view never affects the piece."""
     progress.start()
     progress.step("prepare")
+    on_hold = False
     try:
         with stream_sink.bind(progress):
             await service.run_write_background(request_id, piece_id, context, pool)
-    except Exception:
+    except Exception as e:
         progress.fail()
+        on_hold = approval_stop_in(e) is not None  # AA-1016: waits for staff approval, resumes on its own
         raise
     finally:
         if progress.failed:
-            await progress.finish(False, "Writing didn't finish. Please try again.")
+            await progress.finish(False, ON_HOLD_MESSAGE if on_hold else "Writing didn't finish. Please try again.")
     status = None
     try:
         async with pool.acquire() as conn:
@@ -68,9 +71,16 @@ async def _run_write_with_progress(request_id: UUID, piece_id: UUID, context: di
 
 
 async def mark_piece_failed(pool, job_row: dict) -> None:
-    """on_terminal: the job ended without success, so the piece must not stay 'processing'."""
+    """on_terminal: the job ended without success, so the piece must not stay 'processing'. Except a job that waits
+    for staff approval of its tenant's AI budget (AA-1016, review S262): the piece stays 'processing' so the approval
+    re-queue writes it (a 'failed' piece would make the re-run skip it); a Cancel of that job (decline) marks it
+    failed."""
     piece_id = (job_row.get("payload") or {}).get("piece_id")
     if not piece_id:
+        return
+    if is_approval_stop(job_row):
+        logger.warning("t9_write_job_waits_for_approval", piece_id=piece_id, job_id=job_row.get("id"),
+                       error=(job_row.get("error") or "")[:300])
         return
     async with pool.acquire() as conn:
         await conn.execute(

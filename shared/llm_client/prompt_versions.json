@@ -1,0 +1,327 @@
+{
+  "_about": "AA-900 prompt register manifest. One entry per (stage, version), newest last. prompt_sha256 = sha256 of the source text of the symbols (shared/llm_client/prompt_registry.prompt_hash_of). Changing a prompt: run python3 scripts/prompt_registry_check.py --bump, then register the new rows with a migration (scripts/prompt_registry_check.py --sql). Never edit an existing entry.",
+  "prompts": [
+    {
+      "stage": "s1_generate",
+      "version": "v1",
+      "source_path": "services/content_generation/s1_writer_v2.py",
+      "symbols": [
+        "w_system_prompt",
+        "w_user_prompt",
+        "VERSION"
+      ],
+      "prompt_sha256": "f3ab407a9f5d124859fd77b3cc7c4131c5c3f1ea4d48afe25fad2b2351fc006d"
+    },
+    {
+      "stage": "t2_generate",
+      "version": "v1",
+      "source_path": "services/content_generation/prompts.py",
+      "symbols": [
+        "T2_SYSTEM_PROMPT",
+        "build_t2_base_prompt"
+      ],
+      "prompt_sha256": "324a9e3818d2085063ae52726f526f823116265fcdfa902b45a0a07a6f739d4f"
+    },
+    {
+      "stage": "s1_judge",
+      "version": "v1",
+      "source_path": "services/content_generation/brand_fit_v2.py",
+      "symbols": [
+        "SYSTEM_V2",
+        "build_user_prompt"
+      ],
+      "prompt_sha256": "390f7fc2eebc93897c2da5c0fc56b3f517be9be05438dfc068f915bfd76b351c"
+    },
+    {
+      "stage": "t2_judge",
+      "version": "v1",
+      "source_path": "services/content_generation/brand_fit_v2.py",
+      "symbols": [
+        "SYSTEM_V2",
+        "build_user_prompt"
+      ],
+      "prompt_sha256": "390f7fc2eebc93897c2da5c0fc56b3f517be9be05438dfc068f915bfd76b351c"
+    },
+    {
+      "stage": "t7_debate_judge",
+      "version": "v1",
+      "source_path": "services/content_generation/brand_fit.py",
+      "symbols": [
+        "CANDIDATE_JUDGE_SYSTEM",
+        "_build_candidate_prompt"
+      ],
+      "prompt_sha256": "7fd11eb74b684358ac24a7adc6cddb9a2dbc4f01b183b0bb0e958242789a67a8"
+    },
+    {
+      "stage": "s1_brand_audit",
+      "version": "v1",
+      "source_path": "services/content_generation/brand_standards.py",
+      "symbols": [
+        "AA_BRAND_IDENTITY_PROMPT",
+        "AA_COWORK_STRUCTURE_PROMPT"
+      ],
+      "prompt_sha256": "f9cbafc5d5e29d23d20a0cfe54a9d0842047d8b4ac7a37e43b6fc06b2cc7360f"
+    },
+    {
+      "stage": "t2_brand_audit",
+      "version": "v1",
+      "source_path": "services/content_generation/brand_standards.py",
+      "symbols": [
+        "AA_BRAND_IDENTITY_PROMPT",
+        "AA_COWORK_STRUCTURE_PROMPT"
+      ],
+      "prompt_sha256": "f9cbafc5d5e29d23d20a0cfe54a9d0842047d8b4ac7a37e43b6fc06b2cc7360f"
+    },
+    {
+      "stage": "s1_flag_fix",
+      "version": "v1",
+      "source_path": "services/content_generation/flag_fix_node.py",
+      "symbols": [
+        "FIX_SYSTEM",
+        "fix_system_prompt"
+      ],
+      "prompt_sha256": "1bf4af05aaadbeb6dae4b9f7597073d60c40b4439e1376e486aca3b173923e42"
+    },
+    {
+      "stage": "t2_flag_fix",
+      "version": "v1",
+      "source_path": "services/content_generation/flag_fix_node.py",
+      "symbols": [
+        "FIX_SYSTEM",
+        "fix_system_prompt"
+      ],
+      "prompt_sha256": "1bf4af05aaadbeb6dae4b9f7597073d60c40b4439e1376e486aca3b173923e42"
+    },
+    {
+      "stage": "s1_itinerary_nudge",
+      "version": "v1",
+      "source_path": "services/content_generation/itinerary_utils.py",
+      "symbols": [
+        "_ITINERARY_NUDGE_SYSTEM_PROMPT"
+      ],
+      "prompt_sha256": "a9e4c0126545921b2547de6c865f2f2e6732f98bea34af99fe1bce5086d9121d"
+    },
+    {
+      "stage": "t2_itinerary_nudge",
+      "version": "v1",
+      "source_path": "services/content_generation/itinerary_utils.py",
+      "symbols": [
+        "_T2_ITINERARY_NUDGE_SYSTEM_PROMPT"
+      ],
+      "prompt_sha256": "7d1658b33072f0dc7b714ebd96157cb9e89a65b2cfe830cd44fc0fea192ef82f"
+    },
+    {
+      "stage": "s1_source_facts",
+      "version": "v1",
+      "source_path": "services/content_generation/source_facts.py",
+      "symbols": [
+        "_SYSTEM_PROMPT",
+        "_extract_prompt"
+      ],
+      "prompt_sha256": "f1607ebad95744e225cfcbda9fe61704aec51b9784815635f62c829224070436"
+    },
+    {
+      "stage": "a0_column_map",
+      "version": "v1",
+      "source_path": "shared/llm_client/column_mapper.py",
+      "symbols": [
+        "detect_column_mapping"
+      ],
+      "prompt_sha256": "611ad8b6916a6f7d1a51f7dd08b237920d448ef6c807b04fdbc78c15bcd45fd6"
+    },
+    {
+      "stage": "a3_atomize",
+      "version": "v1",
+      "source_path": "services/acp_shared/atom_extraction.py",
+      "symbols": [
+        "SYSTEM_PROMPT",
+        "build_user_prompt",
+        "build_day_user_prompt"
+      ],
+      "prompt_sha256": "788aa1e89a28e265c1bbc1a3a1ff4950219b050d1ecbff84a14773b7301faa37"
+    },
+    {
+      "stage": "a3_place_card",
+      "version": "v1",
+      "source_path": "services/acp_shared/place_cards.py",
+      "symbols": [
+        "_CARD_SYSTEM"
+      ],
+      "prompt_sha256": "91c5a7a019faea04edb0b7ecbb0bde636286554215d66c640cb3fc981c3bcdbc"
+    },
+    {
+      "stage": "a3_place_card_check",
+      "version": "v1",
+      "source_path": "services/acp_shared/place_cards.py",
+      "symbols": [
+        "_CHECK_SYSTEM"
+      ],
+      "prompt_sha256": "476e183a4002c0706a789b563638fcc2d789eecadcfa98b91194aef72f048eff"
+    },
+    {
+      "stage": "a3_place_days",
+      "version": "v1",
+      "source_path": "services/places/days.py",
+      "symbols": [
+        "SYSTEM_PROMPT",
+        "build_user_prompt"
+      ],
+      "prompt_sha256": "7ef8f7d14cd331ef8f7c9b82bd7470cbecfb82b1dd4986ff44fbd177a38eb696"
+    },
+    {
+      "stage": "a3_place_locate",
+      "version": "v1",
+      "source_path": "services/places/locate.py",
+      "symbols": [
+        "SYSTEM_PROMPT",
+        "build_prompt"
+      ],
+      "prompt_sha256": "c9fd0152c321c1ef1d16f8a1e306bd08780aa364af13a81e4ec42aee1b4f2d41"
+    },
+    {
+      "stage": "a3_place_dedupe",
+      "version": "v1",
+      "source_path": "services/places/dedupe.py",
+      "symbols": [
+        "SYSTEM_PROMPT",
+        "PROMPT_VERSION"
+      ],
+      "prompt_sha256": "cca9491aaf31da0057fd3cd13232352efc7a7ce456130ed71f0b6114d94d25b1"
+    },
+    {
+      "stage": "a3_place_dedupe_check",
+      "version": "v1",
+      "source_path": "services/places/dedupe.py",
+      "symbols": [
+        "SYSTEM_PROMPT",
+        "PROMPT_VERSION"
+      ],
+      "prompt_sha256": "cca9491aaf31da0057fd3cd13232352efc7a7ce456130ed71f0b6114d94d25b1"
+    },
+    {
+      "stage": "a3_search_demand",
+      "version": "v1",
+      "source_path": "services/acp_contract/segment_research.py",
+      "symbols": [
+        "SYSTEM_PROMPT",
+        "USER_PROMPT"
+      ],
+      "prompt_sha256": "c417a3b548f924154abd4824e9421125b561a8f32a1a6a61b353a2e1a78405bc"
+    },
+    {
+      "stage": "t8_angle_gen",
+      "version": "v1",
+      "source_path": "services/acp_angle_gate/prompts.py",
+      "symbols": [
+        "SYSTEM_PROMPT",
+        "SYSTEM_PROMPT_R8",
+        "system_prompt",
+        "build_user_prompt"
+      ],
+      "prompt_sha256": "ac67e8d2e32fae9f16f090efd605a23d2bcf79fc2879c38d369a3f55f4f4fb72"
+    },
+    {
+      "stage": "t9_write",
+      "version": "v1",
+      "source_path": "services/acp_content_writing/prompts.py",
+      "symbols": [
+        "SYSTEM_PROMPT",
+        "build_user_prompt"
+      ],
+      "prompt_sha256": "166d555c256cf6ea83edc6a60d61a5a8400c9c85b6f824de643fa755ad873bb5"
+    },
+    {
+      "stage": "t9_repair",
+      "version": "v1",
+      "source_path": "services/acp_content_writing/generate.py",
+      "symbols": [
+        "_REPAIR_SYSTEM",
+        "_SEO_FIT_SYSTEM",
+        "_FAQ_SYSTEM"
+      ],
+      "prompt_sha256": "2131e13b610294d088c1f1da91273f073805e4661a7d98d841f1f20a331afb59"
+    },
+    {
+      "stage": "t9_faq_filter",
+      "version": "v1",
+      "source_path": "services/acp_content_writing/faq_filter.py",
+      "symbols": [
+        "SYSTEM_PROMPT",
+        "build_user_prompt"
+      ],
+      "prompt_sha256": "eae27d526be68f04f32ebd1acc11c0ba689c9c054d2de11d6a16dc795180f6eb"
+    },
+    {
+      "stage": "t9_faq_answer_fit",
+      "version": "v1",
+      "source_path": "services/acp_content_writing/faq_answer_fit.py",
+      "symbols": [
+        "SYSTEM_PROMPT",
+        "ISOLATED_SYSTEM_PROMPT",
+        "build_user_prompt"
+      ],
+      "prompt_sha256": "0bb91f4cf4e8630e222ac1e95f2454c5f9fa674575e162cf34e9cdcdb87636a0"
+    },
+    {
+      "stage": "t10_judge",
+      "version": "v1",
+      "source_path": "services/acp_content_writing/quality_gates.py",
+      "symbols": [
+        "_JUDGE_SYSTEM_PROMPT",
+        "F9_PROMPT_VERSION"
+      ],
+      "prompt_sha256": "7351485bea5a7b869c999d77ff0ca3357e9c6740049ed4ffe9531f8727b5aa6f"
+    },
+    {
+      "stage": "t10_claims",
+      "version": "v1",
+      "source_path": "services/acp_content_writing/claim_rules.py",
+      "symbols": [
+        "EXTRACTION_SYSTEM"
+      ],
+      "prompt_sha256": "7e99cefd208b339085e00e2c35c9eb058cb6b58f2a298a437c03e7ca363f4e4c"
+    },
+    {
+      "stage": "t10_adjudicate",
+      "version": "v1",
+      "source_path": "services/acp_content_writing/seed_align/adjudicate.py",
+      "symbols": [
+        "SYSTEM_PROMPT",
+        "SCHEMA",
+        "build_user_prompt"
+      ],
+      "prompt_sha256": "46ccd5b7b70380e2b5508559d931a6f527aafc42b864fd4464fa77f0ccd360fd"
+    },
+    {
+      "stage": "supply_content_writer",
+      "version": "v1",
+      "source_path": "services/supply_content/writer.py",
+      "symbols": [
+        "SYSTEM_PROMPT",
+        "user_prompt"
+      ],
+      "prompt_sha256": "51ae46761bb836f998c0e28c5cfcd79481628b52e6f1c2d75d13e143772e1a47"
+    },
+    {
+      "stage": "writing_memory_mine",
+      "version": "v1",
+      "source_path": "services/writing_memory/drafter.py",
+      "symbols": [
+        "SYSTEM_PROMPT",
+        "build_user_prompt"
+      ],
+      "prompt_sha256": "2c57d971d6c37305c06f1ef0dc8bb3e238bcb5a4dbc0f590d1950cb46d3c4e1b"
+    },
+    {
+      "stage": "writing_memory_eval",
+      "version": "v1",
+      "source_path": "services/writing_memory/eval_judge.py",
+      "symbols": [
+        "system_prompt",
+        "build_user_prompt",
+        "judge_version"
+      ],
+      "prompt_sha256": "c8ddffc252af1784b0ced1bdddc470f1254635fde62ea34e4ce7952aec93ce9f"
+    }
+  ]
+}

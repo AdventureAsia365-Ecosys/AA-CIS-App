@@ -41,13 +41,17 @@ REGISTRY_READERS = {
                   "credential error type of a connection it is handed",
     "connection_budget.py": "S10: which connections have a monthly budget (registry_rows_sync) and the month spend / "
                             "policy reads through connections.run_sync / _connect",
+    "tenant_budget.py": "AA-1016: the tenant budget and month-spend reads through connections.run_sync / _connect",
+    "prompt_registry.py": "AA-900: the shared.prompt_version read through connections.run_sync / _connect",
 }
 CALL_PATH = ("client.py", "embed.py", "decide.py", "judge.py", "shadow.py", "bedrock_satellite.py",
              "bedrock_batch.py", "call_log.py", "catalog.py", "role_config.py", "pricing.py", "errors.py",
              "prompt_cache.py", "stream_sink.py", "column_mapper.py", "schema_check.py", "models.py", "breaker.py",
              "data_scope.py", "connection_budget.py",
              "invariant.py",      # AA-1018: report-only failure-domain rule (reads the tables by SQL, not the registry)
-             "stage_params.py")   # AA-1017: stage x model parameters (its own table; empty = the same request object)
+             "stage_params.py",   # AA-1017: stage x model parameters (its own table; empty = the same request object)
+             "tenant_budget.py",  # AA-1016: tenant AI budget check (no budget row = nothing read beyond the tenant set)
+             "prompt_registry.py")  # AA-900: prompt version lookup (no registered row = None on the ledger)
 
 
 def _imported_modules(path: Path) -> set[str]:

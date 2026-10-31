@@ -109,21 +109,42 @@ async def load_plan(pool) -> dict:
     return await asyncio.to_thread(build_plan, conns, deps, svc._testable)
 
 
+# AA-1018 part 2: the probe stamps each connection it probed (migration 322 column; cis_app has UPDATE on it). The
+# outcome itself goes to access_state through the breaker (a success = 'ok', an account-wide refusal = its class).
+_STAMP_PROBE_SQL = ("UPDATE shared.llm_provider_connection SET last_probe_at = now() "
+                    "WHERE connection_key = ANY($1::text[])")
+
+
+async def stamp_probed(pool, connection_keys: list[str]) -> None:
+    """Set last_probe_at on the probed connections. Best effort (before migration 322 the column is missing)."""
+    if not connection_keys:
+        return
+    try:
+        async with pool.acquire() as db:
+            await db.execute(_STAMP_PROBE_SQL, sorted(set(connection_keys)))
+    except Exception as e:  # noqa: BLE001 — a stamp never fails the probe
+        logger.warning("llm_probe_stamp_failed", error=str(e)[:200])
+
+
 async def run_probes(pool, plan: dict, *, test=None) -> list[dict]:
-    """One ``test_connection`` per planned deployment, sequential (a few calls; no burst on one account)."""
+    """One ``test_connection`` per planned deployment, sequential (a few calls; no burst on one account). AA-1018
+    part 2: then ``last_probe_at`` on every connection a probe reached (started, whatever its outcome)."""
     from api.services import llm_connections as svc
 
     test = test or svc.test_connection
     results = []
+    reached: list[str] = []
     for p in plan["probes"]:
         try:
             r = await test(pool, p["connection_key"], model_key=p["model_key"], actor=ACTOR)
+            reached.append(p["connection_key"])
             results.append({"connection_key": p["connection_key"], "model_key": p["model_key"], "ok": bool(r["ok"]),
                             "error_class": r.get("error_class"), "cost_usd": r.get("cost_usd"),
                             "latency_ms": r.get("latency_ms")})
         except Exception as e:  # noqa: BLE001 — a probe that cannot even start is a result too
             results.append({"connection_key": p["connection_key"], "model_key": p["model_key"], "ok": False,
                             "error_class": "unavailable", "error": f"{type(e).__name__}: {e}"[:200]})
+    await stamp_probed(pool, reached)
     return results
 
 
