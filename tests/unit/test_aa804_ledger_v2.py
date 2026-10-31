@@ -24,8 +24,8 @@ from shared.llm_client.client import LLMClient, attempt_outcome
 from shared.llm_client.connections import ConnectionCredentialError
 from shared.llm_client.models import LLMRequest, LLMResponse
 from shared.llm_client.vendor_route import VendorDeployment
-from tests.unit.test_aa1002_s3_deployment_routing import (  # noqa: F401 (world is a fixture)
-    MODELS, World, _dep, _org, _route, world)
+from shared.llm_client import catalog, vendor_route
+from tests.unit.test_aa1002_s3_deployment_routing import MODELS, World, _dep, _org, _route
 
 RUN = "6f1c5f8e-1b9e-4c55-9f5e-1a2b3c4d5e6f"
 TOUR = "22222222-2222-2222-2222-222222222222"
@@ -48,6 +48,17 @@ def rows(monkeypatch):
 
 def _wait():
     call_log.wait_for_pending_writes()
+
+
+@pytest.fixture
+def gw(monkeypatch):
+    """The S3 routing world (registry + fake providers, test_aa1002_s3_deployment_routing.World)."""
+    hook = vendor_route.circuit_open
+    w = World(monkeypatch)
+    yield w
+    w.reset()
+    catalog.invalidate()
+    vendor_route.circuit_open = hook
 
 
 # ── call_log: the v2 values ────────────────────────────────────────────────────────────────────────────────────────
@@ -167,15 +178,15 @@ def test_relabel_v2_refuses_a_changed_statement():
 
 # ── gateway: one row per refused / failed attempt ──────────────────────────────────────────────────────────────────
 
-def test_a_route_fallback_writes_one_0_usd_row_for_the_failed_attempt(world, monkeypatch, rows):
-    world.fail = {"acc3": RuntimeError("An error occurred (AccessDeniedException): Error 002: Access to Bedrock "
+def test_a_route_fallback_writes_one_0_usd_row_for_the_failed_attempt(gw, monkeypatch, rows):
+    gw.fail = {"acc3": RuntimeError("An error occurred (AccessDeniedException): Error 002: Access to Bedrock "
                                        "models is not allowed for this account")}
-    world.conns["bedrock-llm-org"] = _org()
-    world.deps = [d for d in world.deps if d.model_key != "gpt-6-luna"]
-    world.deps.append(_dep("gpt-6-luna", "bedrock-llm-org", "us.openai.gpt-6-luna", 10))
-    world.reset()
+    gw.conns["bedrock-llm-org"] = _org()
+    gw.deps = [d for d in gw.deps if d.model_key != "gpt-6-luna"]
+    gw.deps.append(_dep("gpt-6-luna", "bedrock-llm-org", "us.openai.gpt-6-luna", 10))
+    gw.reset()
     _route(monkeypatch, "sonnet-5-5", "gpt-6-luna")
-    resp = world.generate(stage="adhoc_s3")
+    resp = gw.generate(stage="adhoc_s3")
     _wait()
     assert resp.content == "from bedrock-llm-org" and resp.fallback_used is True
     (row,) = rows
@@ -193,39 +204,39 @@ def test_a_route_fallback_writes_one_0_usd_row_for_the_failed_attempt(world, mon
     assert set(row) <= set(call_log._ROW_FIELDS)
 
 
-def test_every_deployment_down_writes_one_row_each_and_no_row_for_the_aggregate(world, monkeypatch, rows):
-    world.fail = {"acc3": RuntimeError("acc3 outage")}
+def test_every_deployment_down_writes_one_row_each_and_no_row_for_the_aggregate(gw, monkeypatch, rows):
+    gw.fail = {"acc3": RuntimeError("acc3 outage")}
     _route(monkeypatch, "sonnet-5-5", "gpt-6-luna")
     with pytest.raises(RuntimeError):
-        world.generate(stage="adhoc_s3")
+        gw.generate(stage="adhoc_s3")
     _wait()
     assert [(r["model"], r["status"], r["error_class"], r["attempt_no"]) for r in rows] == [
         ("sonnet-5-5", "error", "other", 1), ("gpt-6-luna", "error", "other", 2)]
 
 
-def test_a_success_writes_no_gateway_row(world, monkeypatch, rows):
+def test_a_success_writes_no_gateway_row(gw, monkeypatch, rows):
     _route(monkeypatch, "sonnet-5-5")
-    resp = world.generate(stage="adhoc_s3")
+    resp = gw.generate(stage="adhoc_s3")
     _wait()
     assert rows == [] and resp.attempt_no == 1
 
 
-def test_a_model_the_catalog_does_not_know_gets_its_row_from_the_net(world, rows):
+def test_a_model_the_catalog_does_not_know_gets_its_row_from_the_net(gw, rows):
     with pytest.raises(RuntimeError, match="not in shared.llm_model_catalog"):
-        world.generate(stage="adhoc_s3", model_tier="opus-9-9")
+        gw.generate(stage="adhoc_s3", model_tier="opus-9-9")
     _wait()
     (row,) = rows
     assert (row["model"], row["status"], row["error_class"], row["cost_usd"]) == ("opus-9-9", "error", "other", 0.0)
     assert row["attempt_no"] is None and row["latency_ms"] == 0
 
 
-def test_the_legacy_chain_logs_each_tier(world, monkeypatch, rows):
+def test_the_legacy_chain_logs_each_tier(gw, monkeypatch, rows):
     from shared.llm_client import bedrock_satellite as bs
     monkeypatch.setattr(bs, "invoke_claude", MagicMock(side_effect=bs.BedrockUnavailable("Error 002: Access to "
                                                                                           "Bedrock models is not "
                                                                                           "allowed")))
     with pytest.raises(RuntimeError):
-        world.generate(stage="adhoc_s3", model_tier="sonnet")
+        gw.generate(stage="adhoc_s3", model_tier="sonnet")
     _wait()
     assert [(r["model"], r["status"], r["error_class"], r["deployment_wire_id"]) for r in rows] == [
         ("sonnet", "refused", "access_denied", client_mod.BEDROCK_SONNET),
@@ -233,18 +244,18 @@ def test_the_legacy_chain_logs_each_tier(world, monkeypatch, rows):
     assert [r["attempt_no"] for r in rows] == [1, 2]
 
 
-def test_a_billed_unusable_attempt_keeps_its_billed_row_with_the_attempt_facts(world, monkeypatch, rows):
+def test_a_billed_unusable_attempt_keeps_its_billed_row_with_the_attempt_facts(gw, monkeypatch, rows):
     billed: list = []
     monkeypatch.setattr("shared.llm_client.client.log_gateway_billed_failure",
                         lambda request, **kw: billed.append(kw))
-    rt = world.runtime("acc3")
+    rt = gw.runtime("acc3")
     rt.converse.side_effect = lambda **kw: {"output": {"message": {"content": [{"text": ""}]}},
                                             "usage": {"inputTokens": 10, "outputTokens": 0}, "stopReason": "end_turn"}
     monkeypatch.setattr("shared.llm_client.bedrock_satellite.get_satellite_client",
                         lambda service="bedrock-runtime", account="acc3": rt)
     _route(monkeypatch, "sonnet-5-5")
     with pytest.raises(client_mod.UnusableReply):
-        world.generate(stage="adhoc_s3")
+        gw.generate(stage="adhoc_s3")
     _wait()
     assert rows == []                                  # no 0 USD row: the attempt was billed
     (b,) = billed[0]["billed"]
@@ -254,29 +265,29 @@ def test_a_billed_unusable_attempt_keeps_its_billed_row_with_the_attempt_facts(w
     assert row["status"] == "billed_unusable" and row["attempt_no"] == 1
 
 
-def test_a_shadow_attempt_row_is_flagged_shadow(world, monkeypatch, rows):
+def test_a_shadow_attempt_row_is_flagged_shadow(gw, monkeypatch, rows):
     from shared.llm_client.role_config import StageConfig
     cfg = StageConfig(stage="adhoc_s3", role="judge", provider="claude", model_id="sonnet-5-5",
                       account_route="acc3", fallback_model_ids=(), shadow_model_id="opus-9-9")
     monkeypatch.setattr("shared.llm_client.shadow.record_shadow_sync", lambda **kw: None)
-    world.client._run_shadow_bound(LLMRequest(system_prompt="s", user_prompt="u", stage="adhoc_s3"), cfg,
+    gw.client._run_shadow_bound(LLMRequest(system_prompt="s", user_prompt="u", stage="adhoc_s3"), cfg,
                                    MagicMock(), "acc3")
     _wait()
     (row,) = rows
     assert row["is_shadow"] is True and row["role"] == "judge" and row["quality_signal"]["shadow"] is True
 
 
-def test_the_connection_test_without_a_key_is_one_refused_credential_row(world, monkeypatch, rows):
+def test_the_connection_test_without_a_key_is_one_refused_credential_row(gw, monkeypatch, rows):
     """The A2 live check: POST /admin/llm-connections/anthropic-direct/test with no key fails before any HTTP call and
     writes exactly one row, status refused, error_class credential, cost 0."""
     from shared.llm_client.adapters import anthropic_messages
     target = VendorDeployment(_dep("sonnet-5-5", "anthropic-direct", "claude-sonnet-5-5", 100),
-                              world.conns["anthropic-direct"])
+                              gw.conns["anthropic-direct"])
     monkeypatch.setattr(anthropic_messages, "send", MagicMock(side_effect=ConnectionCredentialError(
         "connection 'anthropic-direct': secret aa-llm/dev/anthropic-direct not found")))
     request = LLMRequest(system_prompt="s", user_prompt="u", stage="adhoc_conn_test", max_tokens=8)
     with pytest.raises(ConnectionCredentialError):
-        world.client.probe(request, MODELS["sonnet-5-5"], target)
+        gw.client.probe(request, MODELS["sonnet-5-5"], target)
     _wait()
     (row,) = rows
     assert (row["stage"], row["role"], row["model"], row["cost_usd"]) == \
