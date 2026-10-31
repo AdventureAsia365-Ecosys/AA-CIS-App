@@ -90,8 +90,9 @@ async def test_actor_names_resolve_display_name_then_username(pool):
                         "VALUES ($1, 'aa1016-named', 'admin'::shared.admin_role, true, 'Probe Person')", a)
         await c.execute("INSERT INTO shared.admin_users (id, username, role, is_active) "
                         "VALUES ($1, 'aa1016-plain', 'admin'::shared.admin_role, true)", b)
-        names = await gw.actor_names(c, [str(a).upper(), str(b), "migration-226", None])
-    assert names == {str(a): "Probe Person", str(b): "aa1016-plain"}
+        names = await gw.actor_names(c, [str(a).upper(), str(b), "migration-226", None, "AA1016-named:ops12",
+                                         "nobody-here:ops12"])
+    assert names == {str(a): "Probe Person", str(b): "aa1016-plain", "user:aa1016-named": "Probe Person"}
 
 
 @pytest.mark.asyncio

@@ -24,6 +24,7 @@ import { accountName } from "@/lib/awsAccounts";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import { APP, CALLS, WINDOW } from "./calls.messages";
 import { OUTCOME, SOURCE } from "./messages";
+import { useErrorClassText } from "./useErrorClassText";
 
 const small = { fontSize: 12, color: K.muted, lineHeight: 1.45 } as const;
 const PAGE = 100;
@@ -38,6 +39,7 @@ export default function CallsTab({ onTrace }: { onTrace: (t: TraceTarget) => voi
   const ta = useT(APP);
   const tsrc = useT(SOURCE);
   const tout = useT(OUTCOME);
+  const errorText = useErrorClassText();
   const dir = useAwsAccounts();
   const accountText = useAccountText();
   const { get, setMany } = useUrlFilters();
@@ -101,7 +103,7 @@ export default function CallsTab({ onTrace }: { onTrace: (t: TraceTarget) => voi
             <Badge tone={callTone(e.outcome)} dot={false}>
               {known ? tout(e.outcome as keyof typeof OUTCOME.en) : (e.outcome ?? "—")}
             </Badge>
-            {e.error_class && <span style={{ ...small, fontFamily: mono }}>{e.error_class}</span>}
+            {e.error_class && <span style={small}>{errorText(e.error_class)}</span>}
           </span>
         );
       } },
@@ -127,7 +129,7 @@ export default function CallsTab({ onTrace }: { onTrace: (t: TraceTarget) => voi
           )}
         </span>
       ) : <span style={small}>{t("noJob")}</span> },
-  ], [t, ta, tsrc, tout, dir, accountText, onTrace, filters.job_id, setMany]);
+  ], [t, ta, tsrc, tout, errorText, dir, accountText, onTrace, filters.job_id, setMany]);
 
   const cost = rows.reduce((s, r) => s + (r.cost_usd ?? 0), 0);
   const failed = rows.filter((r) => r.status === "refused" || r.status === "error").length;
@@ -196,7 +198,7 @@ export default function CallsTab({ onTrace }: { onTrace: (t: TraceTarget) => voi
           ))}
           <DataTable<CallRow>
             tableId="ai-gateway-calls" data={rows} columns={columns} getRowId={(r) => r.id}
-            loading={list.isLoading} searchable={false} paginate={false} tableMinWidth={1100} maxBodyHeight={640}
+            loading={list.isLoading} searchable={false} paginate={false} stickyHeader={false} tableMinWidth={1100}
             emptyTitle={t("empty")}
           />
           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>

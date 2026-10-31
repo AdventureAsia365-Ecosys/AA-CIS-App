@@ -20,6 +20,7 @@ import {
   sans, useT, useToast, type ColumnDef, type Translator,
 } from "../../_kit";
 import { CONNECTIONS } from "./connections.messages";
+import { useErrorClassText } from "./useErrorClassText";
 import { type CatalogRow } from "./llmShared";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import {
@@ -103,6 +104,7 @@ function HealthBadge({ health, t }: { health?: ConnectionHealth; t: T }) {
 // ── the drawer: details, deployments with their circuit, settings, test ─────────────────────────────────────────
 
 function DeploymentsTable({ conn, health, t }: { conn: Connection; health?: ConnectionHealth; t: T }) {
+  const errorText = useErrorClassText();
   const columns = useMemo<ColumnDef<Deployment, unknown>[]>(() => [
     {
       accessorKey: "model_key",
@@ -159,7 +161,7 @@ function DeploymentsTable({ conn, health, t }: { conn: Connection; health?: Conn
         if (!h?.last_error_at) return <span style={small}>—</span>;
         return (
           <div style={{ display: "flex", flexDirection: "column", gap: 2, maxWidth: 260 }}>
-            <span style={{ ...code, color: K.danger }}>{h.last_error_class}</span>
+            <span style={{ ...small, color: K.danger }}>{errorText(h.last_error_class)}</span>
             <DateText value={h.last_error_at} relative style={small} />
             {h.last_error && <span style={{ ...small, overflowWrap: "anywhere" }} title={h.last_error}>
               {h.last_error.slice(0, 120)}</span>}
@@ -167,7 +169,7 @@ function DeploymentsTable({ conn, health, t }: { conn: Connection; health?: Conn
         );
       },
     },
-  ], [health, t]);
+  ], [health, t, errorText]);
   return (
     <DataTable<Deployment>
       data={conn.deployments}
@@ -276,6 +278,7 @@ function SettingsForm({ conn, name, t }: { conn: Connection; name: string; t: T 
 }
 
 function TestPanel({ conn, name, t }: { conn: Connection; name: string; t: T }) {
+  const errorText = useErrorClassText();
   const qc = useQueryClient();
   const catalog = useQuery({
     queryKey: ["llm-catalog"],
@@ -334,7 +337,7 @@ function TestPanel({ conn, name, t }: { conn: Connection; name: string; t: T }) 
               {t("testDetail", result.model_key, result.latency_ms, `$${(result.cost_usd ?? 0).toFixed(6)}`)}
             </span>
           </div>
-          {result.error_class && <span style={small}>{t("testErrorClass")}: <span style={code}>{result.error_class}</span></span>}
+          {result.error_class && <span style={small}>{t("testErrorClass")}: {errorText(result.error_class)}</span>}
           {result.error && <span style={{ ...small, overflowWrap: "anywhere" }}>{result.error}</span>}
         </div>
       )}

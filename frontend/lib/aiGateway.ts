@@ -6,7 +6,7 @@
 // account key or ID is written here: a Bedrock connection is named through lib/llmConnections connectionName + the
 // account directory (useAwsAccounts); the only key used is the LLM account constant of lib/awsAccounts.
 
-import { LLM_ACCOUNT } from "./awsAccounts.ts";
+import { LLM_ACCOUNT, VENDOR_CONNECTION_LABELS } from "./awsAccounts.ts";
 
 export type ProviderStatus =
   | "ok" | "degraded" | "open" | "low" | "cap_reached" | "disabled" | "unknown";
@@ -336,8 +336,9 @@ export function accountRouteMatters(rows: readonly { account_route: string | nul
 export type BudgetState = "ok" | "alert" | "cap_reached" | "no_daily_cap";
 export type ConnectionBudgetState = "ok" | "alert" | "stopped" | "no_budget";
 
-/** Who last changed a cap (backend ai_gateway.actor_view): a staff member by name, a migration, other text. */
-export type ActorKind = "staff" | "migration" | "other" | "none";
+/** Who last changed a cap (backend ai_gateway.actor_view): a staff member by name, a migration, an older
+ *  "<username>:<reference>" login value (C4 polish N4), other text. */
+export type ActorKind = "staff" | "migration" | "login" | "other" | "none";
 
 export interface SpendBudgetRow {
   provider: string;
@@ -600,16 +601,24 @@ export function callsHref(f: CallFilters): string {
 
 const UUID_ANYWHERE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
+/** "<username>:<reference>" (backend ai_gateway._LOGIN_RE): an older hand-set actor, e.g. "mai:ops12". */
+const LOGIN_ACTOR = /^([a-z][a-z0-9._-]{0,99}):([a-z0-9._-]{1,64})$/i;
+
 /** What the "Last changed" column prints (live finding F5): a staff member's name, "Migration NNN", other text; a
- *  staff id with no name (a former member, or an older API) is `staffFallback`, never the raw id. */
+ *  staff id with no name (a former member, or an older API) is `staffFallback`, never the raw id. C4 polish (N4): a
+ *  "<username>:<reference>" value the staff directory could not name reads `loginText(reference)` ("staff (ops12)"),
+ *  never the raw login value. */
 export function actorLabel(r: { updated_by?: string | null; updated_by_kind?: ActorKind; updated_by_name?: string | null },
-  staffFallback: string): string | null {
-  if (r.updated_by_name) return r.updated_by_name;
-  const raw = (r.updated_by ?? "").trim();
+  staffFallback: string, loginText?: (reference: string) => string): string | null {
+  if (r.updated_by_name && r.updated_by_kind !== "other") return r.updated_by_name;
+  const raw = (r.updated_by ?? r.updated_by_name ?? "").trim();
   if (!raw) return null;
   if (r.updated_by_kind === "staff" || UUID_ANYWHERE.test(raw)) return staffFallback;
   const m = /^migration[-_ ]?(\d{3})(?:[-_].*)?$/i.exec(raw);
-  return m ? `Migration ${m[1]}` : raw;
+  if (m) return `Migration ${m[1]}`;
+  const login = LOGIN_ACTOR.exec(raw);
+  if (login) return loginText ? loginText(login[2]) : staffFallback;
+  return r.updated_by_name ?? raw;
 }
 
 export type TenantBudgetState = "unlimited" | "ok" | "alert" | "approval" | "over";
@@ -745,6 +754,46 @@ export function accessTone(state: string | null | undefined): Tone {
 
 export function isAccessState(state: string | null | undefined): state is AccessState {
   return (ACCESS_STATES as readonly string[]).includes(state ?? "");
+}
+
+// ── C4 polish (N4): raw codes in plain words ─────────────────────────────────────────────────────────────────────
+
+/** The ledger's error classes (shared/llm_client/call_log.py ERROR_CLASSES, migration 319 CHECK; a unit test keeps
+ *  the two lists equal). The page prints each one in words (messages.ts ERROR_CLASS), never the code. */
+export const ERROR_CLASSES = [
+  "access_denied", "quota_exhausted", "throttled", "credential", "other", "deadline", "budget", "truncated",
+] as const;
+export type ErrorClass = (typeof ERROR_CLASSES)[number];
+
+/** The words key of an error class; a class this build does not know reads as "other" (never the raw code). */
+export function errorClassKey(cls: string | null | undefined): ErrorClass | null {
+  if (!cls) return null;
+  return (ERROR_CLASSES as readonly string[]).includes(cls) ? (cls as ErrorClass) : "other";
+}
+
+/** The backend's refusal of a write by the read-only E2E session (api/core/e2e_staff.py E2E_READ_ONLY): 403
+ *  `e2e_read_only` before the route runs. The page says "read-only session" instead of the code. */
+export const READ_ONLY_REFUSAL = "e2e_read_only";
+
+export function isReadOnlyRefusal(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  const status = (e as Error & { status?: number }).status;
+  return e.message.trim() === READ_ONLY_REFUSAL && (status === undefined || status === 403);
+}
+
+/** The account part of a failure domain `<kind>:<account>:<scope>` as people read it (C4, polish N4): a 12-digit AWS
+ *  account ID as is, a direct vendor API's name, a registry connection's label when the account part is a connection
+ *  key (`labels` {connection_key: label}), a Bedrock row's own name (`ownName`, ignored when it is the key itself),
+ *  else "this platform's AWS account" (Bedrock) or "its own vendor account". Never a connection key or an environment variable name. */
+export function domainAccountText(kind: string, account: string, words: { own: string; vendor: string },
+  opts: { ownName?: string | null; labels?: Readonly<Record<string, string>> } = {}): string {
+  if (/^\d{12}$/.test(account)) return account;
+  if (Object.prototype.hasOwnProperty.call(VENDOR_CONNECTION_LABELS, account)) return VENDOR_CONNECTION_LABELS[account];
+  const label = opts.labels && Object.prototype.hasOwnProperty.call(opts.labels, account) ? opts.labels[account] : null;
+  if (label && label !== account) return label;
+  // the caller's own name for the row, unless it is just the same key again
+  const own = opts.ownName && opts.ownName !== account ? opts.ownName : null;
+  return kind.startsWith("bedrock") ? own ?? words.own : words.vendor;
 }
 
 /** The registry facts of one LLM connection the Providers overview adds to its row: from GET /api/admin/llm-connections

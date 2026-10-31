@@ -307,19 +307,30 @@ function TenantSpendTable({ branches, onFallbackClick }: {
 }
 
 // ── LLM tree — leaf + generic collapsible group (works for either grouping order) ────────────
+// C4 polish (N1, S262): on a phone every row wraps its middle (name, calls, $/1K) and keeps the cost on the right
+// (`minWidth: 0` + `flexShrink: 0`, never cut by the card's `overflow: hidden`); the indents shrink with the width.
+const TREE_MID = {
+  flex: "1 1 auto", minWidth: 0, display: "flex", flexWrap: "wrap", alignItems: "baseline", columnGap: 8, rowGap: 2,
+} as const;
+const TREE_COST = { flexShrink: 0, whiteSpace: "nowrap", marginLeft: "auto", fontFamily: mono } as const;
 
 function StageLeaf({ b }: { b: Branch }) {
   const t = useT(COST);
   const { formatDateTime } = useFormat();
   const fbPct = b.call_count > 0 ? b.fallback_count / b.call_count : 0;
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0 8px 60px", borderBottom: `1px solid ${A.line2}` }}>
-      <span style={{ fontFamily: mono, fontSize: 12, color: A.ink, minWidth: 150 }}>{b.stage}</span>
+    <div style={{
+      display: "flex", flexWrap: "wrap", alignItems: "center", columnGap: 10, rowGap: 4,
+      padding: "8px 0 8px min(60px, 8vw)", borderBottom: `1px solid ${A.line2}`,
+    }}>
+      <span style={{ fontFamily: mono, fontSize: 12, color: A.ink, minWidth: "min(150px, 100%)", overflowWrap: "anywhere" }}>
+        {b.stage}</span>
       <Badge color={ROLE_COLOR[b.role] ?? "gray"}>{b.role}</Badge>
       <AcctDot account={acctKey(b)} />
       <span style={{ fontSize: 12, color: A.muted2, minWidth: 110 }}>{b.tenant_label}</span>
       <span style={{ fontSize: 12, color: A.muted, minWidth: 60 }}>{fmtInt(b.call_count)}</span>
-      <span style={{ fontSize: 12, color: A.ink2, minWidth: 84, fontFamily: mono }}>{fmtUsd(b.total_cost_usd)}</span>
+      <span style={{ fontSize: 12, color: A.ink2, minWidth: 84, fontFamily: mono, whiteSpace: "nowrap" }}>
+        {fmtUsd(b.total_cost_usd)}</span>
       <span style={{ fontSize: 12, minWidth: 120 }}><QualityCell b={b} /></span>
       {b.fallback_count > 0 && <Badge color="amber">{t("fbBadge", Math.round(fbPct * 100))}</Badge>}
       {b.truncated_count > 0 && <Badge color="red">{t("truncBadge", b.truncated_count)}</Badge>}
@@ -343,17 +354,24 @@ function SubNode({ label, sublabel, branches, indent, dotColor }: {
   return (
     <div>
       <button onClick={() => setOpen(o => !o)} style={{
-        display: "flex", alignItems: "center", gap: 8, width: "100%",
-        padding: `8px 0 8px ${indent}px`, background: "none", border: "none", cursor: "pointer",
+        display: "flex", alignItems: "center", gap: 8, width: "100%", minWidth: 0,
+        padding: `8px 0 8px min(${indent}px, 4vw)`, background: "none", border: "none", cursor: "pointer",
         borderBottom: `1px solid ${A.line2}`, textAlign: "left",
       }}>
-        {open ? <ChevronDown size={14} color={A.muted} /> : <ChevronRight size={14} color={A.muted} />}
+        {open ? <ChevronDown size={14} color={A.muted} style={{ flexShrink: 0 }} />
+          : <ChevronRight size={14} color={A.muted} style={{ flexShrink: 0 }} />}
         {dotColor && <span style={{ width: 8, height: 8, borderRadius: "50%", background: dotColor, flexShrink: 0 }} />}
-        <span style={{ fontFamily: mono, fontSize: 12.5, color: A.ink2, fontWeight: 600 }}>{label}</span>
-        {sublabel && <span style={{ fontSize: 11, color: A.muted2 }}>{sublabel}</span>}
-        <span style={{ fontSize: 11.5, color: A.muted2 }}>{t("calls", fmtInt(calls))}</span>
-        {tok > 0 && <span style={{ fontSize: 11, color: A.muted2, fontFamily: mono }}>{t("perK", fmtUsd(perK))}</span>}
-        <span style={{ fontSize: 11.5, color: A.ink3, marginLeft: "auto", fontFamily: mono }}>{fmtUsd(cost)}</span>
+        <span style={TREE_MID}>
+          <span style={{ fontFamily: mono, fontSize: 12.5, color: A.ink2, fontWeight: 600, overflowWrap: "anywhere" }}>
+            {label}</span>
+          {sublabel && <span style={{ fontSize: 11, color: A.muted2 }}>{sublabel}</span>}
+          <span style={{ fontSize: 11.5, color: A.muted2, whiteSpace: "nowrap" }}>{t("calls", fmtInt(calls))}</span>
+          {tok > 0 && (
+            <span style={{ fontSize: 11, color: A.muted2, fontFamily: mono, whiteSpace: "nowrap" }}>
+              {t("perK", fmtUsd(perK))}</span>
+          )}
+        </span>
+        <span data-testid="cost-tree-node-cost" style={{ ...TREE_COST, fontSize: 11.5, color: A.ink3 }}>{fmtUsd(cost)}</span>
       </button>
       {open && branches.map((b, i) => <StageLeaf key={`${b.stage}-${b.tenant_label}-${b.account}-${i}`} b={b} />)}
     </div>
@@ -383,17 +401,23 @@ function TopGroup({ label, sublabel, dotColor, branches, groupBy }: {
   return (
     <Card style={{ padding: 0, overflow: "hidden" }}>
       <button onClick={() => setOpen(o => !o)} style={{
-        display: "flex", alignItems: "center", gap: 10, width: "100%",
-        padding: "14px 18px", background: "none", border: "none", cursor: "pointer", textAlign: "left",
+        display: "flex", alignItems: "center", gap: 10, width: "100%", minWidth: 0,
+        padding: "14px min(18px, 4vw)", background: "none", border: "none", cursor: "pointer", textAlign: "left",
       }}>
-        {open ? <ChevronDown size={15} color={A.ink} /> : <ChevronRight size={15} color={A.ink} />}
+        {open ? <ChevronDown size={15} color={A.ink} style={{ flexShrink: 0 }} />
+          : <ChevronRight size={15} color={A.ink} style={{ flexShrink: 0 }} />}
         {dotColor && <span style={{ width: 9, height: 9, borderRadius: "50%", background: dotColor, flexShrink: 0 }} />}
-        <span style={{ fontFamily: serif, fontSize: 14.5, color: A.ink, fontWeight: 500 }}>{label}</span>
-        <span style={{ fontSize: 12, color: A.muted2 }}>{t("groupSub", sublabel, fmtInt(calls), sub.size, groupBy === "account")}</span>
-        <span style={{ fontSize: 13, color: A.ink2, marginLeft: "auto", fontFamily: mono, fontWeight: 600 }}>{fmtUsd(cost)}</span>
+        <span style={TREE_MID}>
+          <span style={{ fontFamily: serif, fontSize: 14.5, color: A.ink, fontWeight: 500, overflowWrap: "anywhere" }}>
+            {label}</span>
+          <span style={{ fontSize: 12, color: A.muted2 }}>
+            {t("groupSub", sublabel, fmtInt(calls), sub.size, groupBy === "account")}</span>
+        </span>
+        <span data-testid="cost-tree-group-cost" style={{ ...TREE_COST, fontSize: 13, color: A.ink2, fontWeight: 600 }}>
+          {fmtUsd(cost)}</span>
       </button>
       {open && (
-        <div style={{ padding: "0 18px 10px" }}>
+        <div style={{ padding: "0 min(18px, 4vw) 10px" }}>
           {[...sub.entries()].map(([k, bs]) => (
             <SubNode
               key={k}

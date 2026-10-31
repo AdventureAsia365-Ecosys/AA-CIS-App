@@ -886,13 +886,17 @@ def budget_state(per_day: Optional[float], spent_today: float, alert_pct: Option
 # AA-804 C4 (live finding F5): ``updated_by`` holds a staff member's admin_users id (the PUT stores
 # x-admin-user-id), a migration tag ("migration-226") or an older free-text name. The page shows a person's name,
 # never the raw id: ``actor_view`` gives the kind and, for a staff id, the directory name.
+# C4 polish (N4): an older hand-set "<username>:<reference>" value (a staff login name and a ticket or key reference,
+# e.g. "mai:ops12") is kind "login": the directory name when the username is a staff member's, else the page says
+# "staff (<reference>)"; the raw value is never printed.
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 _MIGRATION_RE = re.compile(r"^migration[-_ ]?(\d{3})(?:[-_].*)?$", re.I)
+_LOGIN_RE = re.compile(r"^([a-z][a-z0-9._-]{0,99}):([a-z0-9._-]{1,64})$", re.I)
 
 ACTOR_NAMES_SQL = """
-    SELECT id::text AS id, coalesce(nullif(display_name, ''), username) AS name
+    SELECT id::text AS id, lower(username) AS username, coalesce(nullif(display_name, ''), username) AS name
       FROM shared.admin_users
-     WHERE id = ANY($1::uuid[])
+     WHERE id = ANY($1::uuid[]) OR lower(username) = ANY($2::text[])
 """
 
 
@@ -901,10 +905,19 @@ def _staff_id_part(v: str) -> str:
     return v[6:] if v.lower().startswith("admin:") and _UUID_RE.match(v[6:]) else v
 
 
+def _login_user(v: str) -> Optional[str]:
+    """The lower-case username of a "<username>:<reference>" actor (not "admin:<id>" or a migration tag), else None."""
+    if _UUID_RE.match(v) or _MIGRATION_RE.match(v):
+        return None
+    m = _LOGIN_RE.match(v)
+    return m.group(1).lower() if m else None
+
+
 def actor_view(value: Optional[str], names: Optional[dict] = None) -> dict:
     """{updated_by_kind, updated_by_name} of an ``updated_by`` value. Kinds: staff (an admin_users id; the name from
-    ``names`` {id: name}, None when the directory has no such row), migration (the name is "Migration NNN"), other
-    (free text, shown as is), none. Pure."""
+    ``names`` {id: name}, None when the directory has no such row), migration (the name is "Migration NNN"), login
+    ("<username>:<reference>"; the name from ``names`` {"user:<username>": name}, None when the username is not a
+    staff member's), other (free text, shown as is), none. Pure."""
     v = _staff_id_part((value or "").strip())
     if not v:
         return {"updated_by_kind": "none", "updated_by_name": None}
@@ -913,16 +926,28 @@ def actor_view(value: Optional[str], names: Optional[dict] = None) -> dict:
     m = _MIGRATION_RE.match(v)
     if m:
         return {"updated_by_kind": "migration", "updated_by_name": f"Migration {m.group(1)}"}
+    user = _login_user(v)
+    if user:
+        return {"updated_by_kind": "login", "updated_by_name": (names or {}).get(f"user:{user}")}
     return {"updated_by_kind": "other", "updated_by_name": v}
 
 
 async def actor_names(conn, values) -> dict:
-    """{admin_users id: display name or username} of the staff ids among ``values`` (one query; {} when none)."""
-    ids = sorted({_staff_id_part(v.strip()).lower() for v in values
-                  if v and _UUID_RE.match(_staff_id_part(v.strip()))})
-    if not ids:
+    """{admin_users id: name, "user:<username>": name} (name = display name, else username) for the staff ids and the
+    login usernames among ``values`` (one query; {} when there is neither)."""
+    vs = [_staff_id_part(v.strip()) for v in values if v and v.strip()]
+    ids = sorted({v.lower() for v in vs if _UUID_RE.match(v)})
+    users = sorted({u for u in (_login_user(v) for v in vs) if u})
+    if not ids and not users:
         return {}
-    return {r["id"]: r["name"] for r in await conn.fetch(ACTOR_NAMES_SQL, ids)}
+    out: dict = {}
+    for r in await conn.fetch(ACTOR_NAMES_SQL, ids, users):
+        if r["id"] in ids:
+            out[r["id"]] = r["name"]
+        username = r.get("username")
+        if username and username in users:
+            out[f"user:{username}"] = r["name"]
+    return out
 
 
 def spend_budget_row(r: dict, spent_today: dict, kind_spent_today: Optional[dict] = None,

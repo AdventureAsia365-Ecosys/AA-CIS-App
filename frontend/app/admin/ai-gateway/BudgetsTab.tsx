@@ -22,7 +22,8 @@ import {
   Select, apiGet, apiSend, mono, useT, useToast, type ColumnDef,
 } from "../../_kit";
 import {
-  BUDGETS_API, actorLabel, budgetBody, budgetDraftOf, budgetProviderLabel, budgetPutPath, budgetTone, pct, sameDraft,
+  BUDGETS_API, actorLabel, budgetBody, budgetDraftOf, budgetProviderLabel, budgetPutPath, budgetTone, isReadOnlyRefusal,
+  pct, sameDraft,
   tenantBudgetTone, tenantCostHref, usd, validScope, type BudgetDraft, type BudgetError, type BudgetsResp,
   type ConnectionBudgetRow, type CoverageRow, type SpendBudgetRow, type TenantBudgetRow,
 } from "@/lib/aiGateway";
@@ -54,7 +55,7 @@ function ChangedCell({ row }: {
   row: Pick<SpendBudgetRow, "updated_at" | "updated_by" | "updated_by_kind" | "updated_by_name">;
 }) {
   const t = useT(BUDGETS);
-  const who = actorLabel(row, t("staffMember"));
+  const who = actorLabel(row, t("staffMember"), (ref) => t("staffLogin", ref));
   return (
     <Lines>
       <span style={small}>{who ?? "—"}</span>
@@ -103,7 +104,7 @@ function BudgetEditor({ editing, providers, existing, onClose }: {
     },
     onError: (e) => {
       setConfirming(false);
-      setApiError(e instanceof Error ? e.message : String(e));
+      setApiError(isReadOnlyRefusal(e) ? t("readOnlySession") : e instanceof Error ? e.message : String(e));
     },
   });
 

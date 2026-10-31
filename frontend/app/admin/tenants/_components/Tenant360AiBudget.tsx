@@ -16,7 +16,8 @@ import {
   apiSend, useT, useToast,
 } from "../../../_kit";
 import {
-  actorLabel, pct, sameTenantDraft, tenantBudgetBody, tenantBudgetDraftOf, tenantBudgetPath, tenantBudgetTone, usd,
+  actorLabel, isReadOnlyRefusal, pct, sameTenantDraft, tenantBudgetBody, tenantBudgetDraftOf, tenantBudgetPath,
+  tenantBudgetTone, usd,
   type TenantBudgetDraft, type TenantBudgetError, type TenantBudgetResp, type TenantBudgetState,
 } from "@/lib/aiGateway";
 import { T360_BUDGET } from "./tenant360Budget.messages";
@@ -52,12 +53,18 @@ function BudgetEditor({ data, onClose }: { data: TenantBudgetResp; onClose: () =
   const save = useMutation({
     mutationFn: () => apiSend(tenantBudgetPath(data.tenant_id), { method: "PUT", body, admin: true }),
     onSuccess: () => done(t("saved")),
-    onError: (e) => { setConfirm(null); setApiError(e instanceof Error ? e.message : String(e)); },
+    onError: (e) => {
+      setConfirm(null);
+      setApiError(isReadOnlyRefusal(e) ? t("readOnlySession") : e instanceof Error ? e.message : String(e));
+    },
   });
   const remove = useMutation({
     mutationFn: () => apiSend(tenantBudgetPath(data.tenant_id), { method: "DELETE", admin: true }),
     onSuccess: () => done(t("removed")),
-    onError: (e) => { setConfirm(null); setApiError(e instanceof Error ? e.message : String(e)); },
+    onError: (e) => {
+      setConfirm(null);
+      setApiError(isReadOnlyRefusal(e) ? t("readOnlySession") : e instanceof Error ? e.message : String(e));
+    },
   });
   const busy = save.isPending || remove.isPending;
   const err = (k: TenantBudgetError) => (error === k ? t(ERROR_KEY[k]) : undefined);
@@ -155,7 +162,7 @@ function AiBudgetTile({ tenantId }: { tenantId: string }) {
         )}
         {b && (
           <span style={small}>
-            {actorLabel(b, t("staffMember")) ?? "—"}{b.updated_at && <> · <DateText value={b.updated_at} relative /></>}
+            {actorLabel(b, t("staffMember"), (ref) => t("staffLogin", ref)) ?? "—"}{b.updated_at && <> · <DateText value={b.updated_at} relative /></>}
           </span>
         )}
         {d?.ready && (

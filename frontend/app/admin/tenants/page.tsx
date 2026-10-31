@@ -18,7 +18,7 @@ import {
   AlertCircle, Loader2, CheckCircle, Eye, EyeOff, Copy, X, Ban, Globe, RotateCcw,
 } from "lucide-react";
 import { A, serif, mono, sans, Card, SLabel, Badge, LoadingScreen, TH, TD } from "../_components/adminUi";
-import { Button, ScrollX, PageFrame, Modal, PageHeader, useFormat, useIsPhone, useLang, useT } from "../../_kit";
+import { Button, ScrollX, PageFrame, Modal, PageHeader, Tabs, useFormat, useIsPhone, useLang, useT } from "../../_kit";
 import { Tenant360Settings } from "./_components/Tenant360Settings";
 import { Tenant360Cost } from "./_components/Tenant360Cost";
 import { Tenant360Quality } from "./_components/Tenant360Quality";
@@ -807,17 +807,12 @@ function TenantDetail({ tenant, onChanged }: {
           </div>
         ))}
       </div>
-      {/* S235: the tab row scrolls horizontally on phones — it overflowed a hidden container at 390px. */}
-      <div style={{ display: "flex", borderBottom: `1px solid ${A.line}`, marginBottom: 14, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-        {TABS.map(t => (
-          <button key={t.key} onClick={() => setTab(t.key)} style={{
-            flexShrink: 0, whiteSpace: "nowrap",
-            padding: "7px 14px", fontSize: 12, fontWeight: tab === t.key ? 700 : 400,
-            color: tab === t.key ? A.accentDeep : A.muted,
-            border: "none", borderBottom: `2px solid ${tab === t.key ? A.accent : "transparent"}`,
-            background: "none", cursor: "pointer", fontFamily: sans,
-          }}>{t.label}</button>
-        ))}
+      {/* S235: the tab row scrolls sideways on phones. C4 polish (N3, S262): kit Tabs (underline), which fades the
+          edge with more tabs and scrolls the active tab into view, so a deep link (`?tab=cost`) shows its tab at 390. */}
+      <div style={{ borderBottom: `1px solid ${A.line}`, marginBottom: 14 }}>
+        <Tabs variant="underline" gap={18} ariaLabel={tr("detailTabsLabel")} testId={`tenant-detail-tabs-${tenantId}`}
+          tabs={TABS.map((x) => ({ key: x.key, label: x.label }))} active={tab} onChange={(k) => setTab(k as DTab)}
+          style={{ marginBottom: -1 }} />
       </div>
       {tab === "tours"    && <ToursTabContent    tours={data.rewritten_tours} toursView={data.summary.tours_view} />}
       {tab === "pipeline" && <PipelineTabContent runs={data.pipeline_runs}    pipelineNote={data.summary.pipeline_note} />}

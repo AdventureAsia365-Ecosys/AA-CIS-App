@@ -68,6 +68,16 @@ export const OUTCOME = defineMessages(
     billed_unusable: "tính tiền, không dùng được", truncated: "bị cắt" },
 );
 
+/** An LLM call's error class in words (lib/aiGateway ERROR_CLASSES; C4 polish N4: never the code). */
+export const ERROR_CLASS = defineMessages(
+  { access_denied: "access denied", quota_exhausted: "no credit or quota left", throttled: "rate-limited",
+    credential: "key or sign-in problem", other: "other error", deadline: "timed out",
+    budget: "stopped by a spending cap", truncated: "answer cut off at its length limit" },
+  { access_denied: "bị từ chối truy cập", quota_exhausted: "hết credit hoặc hạn mức", throttled: "bị giới hạn tần suất",
+    credential: "lỗi khoá hoặc đăng nhập", other: "lỗi khác", deadline: "quá thời gian",
+    budget: "bị trần chi phí chặn", truncated: "câu trả lời bị cắt ở giới hạn độ dài" },
+);
+
 export const M = defineMessages(
   {
     // page
@@ -187,6 +197,8 @@ export const M = defineMessages(
       ? `Last run: ${done} of ${expected} jobs went back in the queue; the others changed since the check.`
       : `Last run: ${done} job${done === 1 ? "" : "s"} went back in the queue.`,
     requeueLastMore: "More refused jobs may wait after that batch.",
+    requeueReadOnly: "This is a read-only session: it can see this card but cannot check or re-queue jobs. Sign in "
+      + "with your own staff account to run it.",
     traceHint: "To see every paid call of one job or one tour, open the job (Jobs) or the tour (Master Content) and "
       + "click Open trace, or open a row of the Calls tab.",
     // trace drawer
@@ -338,6 +350,8 @@ export const M = defineMessages(
       ? `Lần chạy trước: ${done}/${expected} job đã về hàng đợi; số còn lại đã đổi trạng thái sau bước kiểm.`
       : `Lần chạy trước: ${done} job đã về hàng đợi.`,
     requeueLastMore: "Có thể còn job bị từ chối sau đợt đó.",
+    requeueReadOnly: "Phiên này chỉ được xem: thấy thẻ này nhưng không kiểm hay đưa lại job được. Đăng nhập bằng tài "
+      + "khoản nhân viên của bạn để chạy.",
     traceHint: "Muốn xem mọi lần gọi trả phí của một job hay một tour, mở job (Jobs) hoặc tour (Master Content) rồi "
       + "bấm Mở truy vết, hoặc mở một dòng ở tab Lần gọi.",
     traceTitle: "Truy vết",
