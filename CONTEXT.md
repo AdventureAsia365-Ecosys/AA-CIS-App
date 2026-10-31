@@ -865,7 +865,12 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     GC takes it exclusive (30 s lock timeout → `skipped`). The `a3_atomize` path re-lands the Segments the tour had
     BEFORE its segment stage too (cache clear + recompute scope), and then runs the $0 place-card relink
     (`place_cards.relink_tour_place_cards`, `max_places=0`, result key `place_cards_relink`) before `place_extract`
-    (AA-989).
+    (AA-989). S262: a group the relink (or a build over its 40-place cap) leaves for a paid draft gets an
+    `atom_place_card` row with `card_id` NULL and `miss_reason = 'needs_draft'` (`place_cards.NEEDS_DRAFT`, not a
+    `place_card_miss` row: the build and T8 still draft it); such an atom is linked for free (`carried_over`) only
+    when every replaced predecessor of the same source that competes for it carries the same non-rejected card:
+    same name (any day while they agree, else the same day; a generic name such as "City Palace" the same day only),
+    else same day + core name. A cardless predecessor (miss, needs_draft, no row, rejected card) competes too.
 - **Bedrock Batch for S1 (AA-606)**: `shared/llm_client/bedrock_batch.py` +
   `services/content_generation/s1_batch.py`, endpoints `POST /admin/s1-batch/submit` and
   `GET /admin/s1-batch/{job_id}`. Built and merged, but **never run for real**: AWS has not yet
@@ -3243,7 +3248,8 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   facts — `acp_shared.place_card`, drafted by `a3_place_card` + checked by `a3_place_card_check` in the
   T8 job (request atom) and the `place_cards_build` job — T9 only reads cards (S234). One draft per
   place: free rule skip (unnamed / logistics places), atoms grouped by folded place + country, reuse
-  through `place_card_alias` / core name, and misses cached in `place_card_miss`; a generic name such
+  through `place_card_alias` / core name, misses cached in `place_card_miss`, and an atom left for a later paid
+  draft marked `miss_reason = 'needs_draft'` (S262); a generic name such
   as "City Palace" keeps its locality in the key and is never reused across tours by name; AA-784 S253: region is
   a first-level administrative division or empty and locality the settlement the place is IN or empty —
   `place_cards.clean_identity` clears geographic / trekking areas and the nearest town of a remote point before the

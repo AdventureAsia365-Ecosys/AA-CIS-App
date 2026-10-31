@@ -1,0 +1,84 @@
+# AA-997 / AA-991 follow-up (S262 lane w1d) — `needs_draft` card rows and the free carry-over
+
+The Infra DB Freshness Probe (AA-991) was red four nights in a row: `place_card_links_missing` = 111 active place
+atoms in 12 tours. A read-only diagnosis (31/10/2026, role `cis_app`) found that all 111 were groups that the $0
+relink after `a3_atomize` (AA-989, `max_places=0`) cut as `over_cap`. Those atoms were left with no
+`atom_place_card` row at all, so the probe read "waiting for a paid draft" as "link lost". 5 of them had a replaced
+predecessor of the same source linked to exactly one card. Infra companion PR: `fix/aa-991-probe-needs-draft`.
+
+## Decisions
+
+- **Fix A: record the cut groups.** In `ensure_place_cards`, the groups past `max_places` get the atom-level row
+  through the existing `_ATOM_MISS_SQL`, with `miss_reason = 'needs_draft'` (`place_cards.NEEDS_DRAFT`) and
+  `card_id` NULL. This happens for the relink (`max_places=0`) and for a `place_cards_build` over its 40-place cap.
+  New counter `needs_draft_recorded` (atoms).
+- **`needs_draft` is a marker, not a miss.** No `place_card_miss` row is written and the value is not in
+  `MISS_RETRY`. The next `ensure_place_cards` run still treats the atom as unlinked, because the `linked` read joins
+  `place_card`, and no stored miss blocks the group. So `place_cards_build` and T8 draft it. A draft replaces the row:
+  `_LINK_SQL` on success, `_record_miss` (a different reason) on a miss. A later relink that finds a stored miss
+  replaces the marker with that reason (the AA-989 cached-miss path).
+- **Fix B: free carry-over in `relink_tour_place_cards`.** It runs after `ensure_place_cards`. It reads the tour's
+  atoms that still hold a `needs_draft` row, and the non-rejected cards of the replaced atoms of the same source
+  (`COALESCE(raw_tours.source_group_id, tour_id)`, atoms not in `v_active_tour_atoms`). The pure
+  `plan_carry_over` uses the atom_repoint narrowing:
+  1. Same `place_norm()`. A distinctive name looks at every day while all those predecessors agree on one card. If
+     they disagree (two cards, or one of them cardless), only the same itinerary day counts; nothing on that day
+     means ambiguous, so no weaker rule is tried. A generic name (`is_generic_name`, "City Palace") only ever looks
+     at its own day: it names a different place in every city.
+  2. If no predecessor has the same name on the day(s) above, the same day and the same `core_key()`. This catches
+     respellings ("X Pass (3550m)" after "X Pass").
+
+  The atom is linked only when every predecessor left carries the same non-rejected card. New counter
+  `carried_over`.
+- **Every predecessor competes (review fix, S262).** `_REPLACED_CARDS_SQL` reads every replaced place atom of the
+  source with LEFT JOINs to `atom_place_card` / `place_card`. `card_id` is NULL for a miss row, a `needs_draft` row,
+  no row, or a rejected card, and such a row still counts as a competitor. The first version inner-joined the card,
+  so a cardless "City Palace" on day 8 was invisible and the day-3 card of another city was carried to it (and,
+  being a link, it would never be re-drafted).
+- **No alias row on a carry-over.** The evidence is this tour's own history, not a name that is safe as a
+  country-wide alias. A paid draft still adds aliases as before.
+- **The carry-over soft-fails.** An error leaves the `needs_draft` rows and sets `carried_over = "failed: <Type>"`.
+  The relink counters stay intact, and atomize never fails because of it (the handler already catches a relink
+  failure).
+- **Data coverage.** The `CARD` query has a new field `awaiting_draft`, and there is a new info row
+  `card.awaiting_draft` ("Place atoms waiting for a paid card draft"). `card.no_row` keeps its meaning: an atom with
+  no row at all.
+
+## Changed
+
+- `services/acp_shared/place_cards.py`: `NEEDS_DRAFT`, the cut rows in `ensure_place_cards`, `_WAITING_ATOMS_SQL`,
+  `_REPLACED_CARDS_SQL`, `plan_carry_over`, `_carry_over`, and the relink docstring and counters.
+- `api/services/data_coverage/queries.py` and `registry.py`: `awaiting_draft`.
+- Tests:
+  - `tests/unit/test_aa988_989_follow.py`: the AA-989 test now expects the `needs_draft` row. New tests cover the
+    carry-over (respelling and generic name), no guess between two cards, the soft-fail, and the narrowing table.
+  - `tests/unit/test_aa772_place_card_cost.py`: a build over the 40 cap records `needs_draft` and the next build
+    drafts exactly those atoms. A `needs_draft` atom is drafted into a link.
+  - `tests/unit/test_aa992_data_coverage.py`: the `awaiting_draft` count.
+- `CONTEXT.md`: the relink paragraph and the Place Card paragraph.
+
+## Tradeoffs
+
+- **No migration.** `atom_place_card.miss_reason` has no CHECK constraint (only `place_card_miss.reason` has one,
+  migration 221), so no migration is needed. The column COMMENT from 221 still lists the old reasons. Updating it
+  would need a migration number, and lane A owns the CIS numbers this wave. It is left for a later migration.
+- **Carry-over before or after the free pass.** It runs after, and only on `needs_draft` atoms, so an alias or
+  core-name match always wins over the history guess. The cost is two writes for a carried atom (the marker, then the
+  link), about 5 atoms on Dev.
+- **The carry-over is per atom, not per group.** Two atoms of one group on different days can end up in different
+  states. That is the same per-atom rule atom_repoint uses.
+- **Known edge case.** A generic name is matched on the same day number. On a tour whose days shifted, the same day
+  number can hold the other city's "City Palace", and its card is carried. atom_repoint has the same limit. The
+  harm is bounded: the predecessor on that day had that card, and an admin can rebuild. Never across days.
+- **Conservative on purpose.** Several tour versions that disagree (an older version cardless, a newer one with a
+  card) leave the atom for the paid draft. The cost is a draft that a looser rule would have saved; a wrong sticky
+  link costs more (writers get another place's facts and the link is never re-drafted).
+
+## Should know
+
+- `needs_draft_recorded` also counts the atoms that the carry-over then links, so read both counters.
+- Repair after deploy: run `relink.py APPLY=1` (orchestrator, $0) on the 12 tours. Expected probe result:
+  `place_card_links_missing` 0 once the Infra PR is deployed, and `place_card_needs_draft` between 106 and 111
+  (111 minus the carried-over atoms; the S262 review fix carries fewer: only when every competing predecessor agrees).
+- The probe (Infra) excludes `needs_draft` rows from `place_card_links_missing` and adds an info metric for them. A
+  relink that did not run still shows as missing.

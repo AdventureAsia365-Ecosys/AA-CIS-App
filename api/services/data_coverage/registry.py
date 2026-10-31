@@ -361,6 +361,12 @@ ROWS: tuple[Row, ...] = (
     Row("card.no_row", "places", "Place atoms with no card link and no recorded miss", f("card", "no_row"), "info",
         "defect", unit="atoms", denominator=f("card", "place_atoms"), denominator_label="place atoms",
         expected_note="optional enrichment", drill="/admin/content-quality", sources=("card",)),
+    # S262: the atoms the $0 relink after atomize (or a build over its 40-place cap) left for a paid draft carry a
+    # 'needs_draft' row (place_cards.NEEDS_DRAFT); counted apart from the other recorded misses.
+    Row("card.awaiting_draft", "places", "Place atoms waiting for a paid card draft", f("card", "awaiting_draft"),
+        "info", "defect", unit="atoms", denominator=f("card", "place_atoms"), denominator_label="place atoms",
+        expected_note="drafted by the place card build or on request (paid)", drill="/admin/content-quality",
+        sources=("card",)),
     Row("card.tours", "places", "Live tours with at least one place card", f("card", "tours_with_a_card"), "info",
         denominator=LIVE, denominator_label=LIVE_LABEL, expected_note="optional enrichment",
         drill="/admin/content-quality", sources=("card", "atoms")),
