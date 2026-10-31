@@ -98,3 +98,9 @@ Lane file: the AA-804 UI lane keeps `AA-804.md`; this file is the backend ledger
   `tests/integration/test_aa804_migration_319.py`; updated `test_aa927_one_row_per_call.py` (m1),
   `test_aa1002_s6_billed_fields.py`, `test_aa606_bedrock_batch.py`, `test_aa660_decide.py`,
   `test_aa642_s0_jev_budget.py`, `test_aa493_stop_reason.py`, `test_aa617_llm_account_instrumentation.py`.
+- Review fix pass: the erasure inventory reason for `geo.geocode_call` is plain words ("Geoapify cost history"); the
+  admin shows that text, and `test_aa994_no_issue_ids_in_ui.py` refuses issue IDs in it (the 319 / AA-804 origin is a
+  code comment). Same edit on both CIS branches so the rebase stays clean.
+- Gateway failed-attempt rows are written by `_in_background`, one thread per row, so the order they reach
+  `record_calls` is not fixed. Tests that check several rows sort them by `attempt_no` first (`_by_attempt`), which is
+  the order the gateway tried them; production code is unchanged.

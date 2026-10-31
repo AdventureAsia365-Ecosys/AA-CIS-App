@@ -50,6 +50,11 @@ def _wait():
     call_log.wait_for_pending_writes()
 
 
+def _by_attempt(rows: list) -> list:
+    """Each background write runs on its own thread, so the arrival order is not fixed; attempt_no carries it."""
+    return sorted(rows, key=lambda r: r["attempt_no"] or 0)
+
+
 @pytest.fixture
 def gw(monkeypatch):
     """The S3 routing world (registry + fake providers, test_aa1002_s3_deployment_routing.World)."""
@@ -210,7 +215,7 @@ def test_every_deployment_down_writes_one_row_each_and_no_row_for_the_aggregate(
     with pytest.raises(RuntimeError):
         gw.generate(stage="adhoc_s3")
     _wait()
-    assert [(r["model"], r["status"], r["error_class"], r["attempt_no"]) for r in rows] == [
+    assert [(r["model"], r["status"], r["error_class"], r["attempt_no"]) for r in _by_attempt(rows)] == [
         ("sonnet-5-5", "error", "other", 1), ("gpt-6-luna", "error", "other", 2)]
 
 
@@ -238,10 +243,10 @@ def test_the_legacy_chain_logs_each_tier(gw, monkeypatch, rows):
     with pytest.raises(RuntimeError):
         gw.generate(stage="adhoc_s3", model_tier="sonnet")
     _wait()
-    assert [(r["model"], r["status"], r["error_class"], r["deployment_wire_id"]) for r in rows] == [
+    assert [(r["model"], r["status"], r["error_class"], r["deployment_wire_id"]) for r in _by_attempt(rows)] == [
         ("sonnet", "refused", "access_denied", client_mod.BEDROCK_SONNET),
         ("sonnet", "refused", "access_denied", client_mod.BEDROCK_HAIKU)]
-    assert [r["attempt_no"] for r in rows] == [1, 2]
+    assert [r["attempt_no"] for r in _by_attempt(rows)] == [1, 2]
 
 
 def test_a_billed_unusable_attempt_keeps_its_billed_row_with_the_attempt_facts(gw, monkeypatch, rows):
