@@ -24,9 +24,16 @@ MIGRATIONS = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrati
 M304 = os.path.join(MIGRATIONS, "304_llm_connection_deployment.sql")
 M306 = os.path.join(MIGRATIONS, "306_llm_anthropic_deployments.sql")
 M310 = os.path.join(MIGRATIONS, "310_llm_connection_admin_edit_grant.sql")   # S4: a 304 re-run drops its column grant
+M322 = os.path.join(MIGRATIONS, "322_provider_connection_v2.sql")            # AA-1017: re-revokes what 310 re-grants
 
 
 def _run(c, path):
+    if path == M304:
+        # AA-1017: 304's closing guard refuses a secret outside aa-llm/: the decide / data rows 322 seeds leave before a
+        # 304 re-run, and the 322 re-run below puts them back.
+        c.execute("DO $$ BEGIN IF to_regclass('shared.llm_provider_connection') IS NOT NULL THEN "
+                  "DELETE FROM shared.llm_provider_connection WHERE kind NOT IN "
+                  "('bedrock', 'anthropic', 'openai', 'azure_openai', 'mock'); END IF; END $$")
     c.execute(open(path, encoding="utf-8").read())
 
 
@@ -38,6 +45,7 @@ def cur():
     _run(c, M304)
     _run(c, M306)
     _run(c, M310)
+    _run(c, M322)
     try:
         yield c
     finally:
@@ -49,6 +57,7 @@ def cur():
         _run(c, M304)
         _run(c, M306)
         _run(c, M310)
+        _run(c, M322)
         conn.close()
 
 
@@ -98,9 +107,10 @@ def test_rerun_is_idempotent_and_keeps_an_admin_edit(cur):
     assert cur.fetchone()
 
 
-# AA-1002 S4: conftest applies every migration, so 310's grant (the admin-editable columns) is there too.
-S311_COLUMNS = {"secret_name", "base_url", "timeout_s", "max_retries", "max_concurrency", "rpm_limit",
-                "monthly_budget_usd", "notes"}
+# AA-1002 S4: conftest applies every migration, so 310's grant (the admin-editable columns) is there too, without the
+# secret name and endpoint that AA-1017's 322 revoked (D9), plus 322's own column grants.
+S311_COLUMNS = {"timeout_s", "max_retries", "max_concurrency", "rpm_limit", "monthly_budget_usd", "notes",
+                "access_state", "last_probe_at", "daily_credit_limit", "low_balance_usd"}
 
 
 def test_cis_app_writes_the_switch_columns_only(cur):
