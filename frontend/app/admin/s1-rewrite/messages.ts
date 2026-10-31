@@ -45,7 +45,7 @@ export const M = defineMessages(
     seoStandard: "Standard",
     seoAggressive: "Aggressive",
     seoMinimal: "Minimal",
-    settingsDefaultModel: (current: string) => `the Settings default model${current ? ` (${current})` : ""}`,
+    settingsDefaultModel: (current: string) => `the default model in AI providers › Routing${current ? ` (${current})` : ""}`,
     loadingTours: "Loading tours…",
     // config bar
     brandIdentity: "Brand Identity",
@@ -140,7 +140,7 @@ export const M = defineMessages(
     seoStandard: "Chuẩn",
     seoAggressive: "Mạnh",
     seoMinimal: "Tối thiểu",
-    settingsDefaultModel: (current: string) => `model mặc định trong Cài đặt${current ? ` (${current})` : ""}`,
+    settingsDefaultModel: (current: string) => `model mặc định ở Nhà cung cấp AI › Điều hướng${current ? ` (${current})` : ""}`,
     loadingTours: "Đang tải tour…",
     brandIdentity: "Nhận diện thương hiệu",
     noBrand: "Chưa cấu hình thương hiệu",

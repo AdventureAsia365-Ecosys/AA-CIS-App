@@ -95,10 +95,12 @@ const ADMIN_PAGES: PageSpec[] = [
   { id: 's1-rewrite', label: 'S1 Rewrite', path: '/admin/s1-rewrite', viewerRefused: true },
   { id: 'seo-intelligence', label: 'SEO Intelligence', path: '/admin/seo-intelligence', viewerRefused: true },
   { id: 'settings', label: 'Settings', path: '/admin/settings', readySelector: '[data-testid="admin-content-ready"]' },
-  // AA-686 — the LLM Models tab (route/shadow editor, catalog, shadow A/B). `?tab=models` opens it
-  // directly; `llm-models-ready` renders once the tab mounts, so a blank/broken tab still fails.
-  // AA-878: the tab needs ai.admin; a viewer's deep link falls back to the first tab (Settings content).
-  { id: 'settings-models', label: 'Settings · LLM Models', path: '/admin/settings?tab=models', readySelector: '[data-testid="llm-models-ready"]', viewerReadySelector: '[data-testid="admin-content-ready"]' },
+  // AA-686 / AA-804 UI part 2 — the stage route editor moved from Settings › LLM Models to AI providers › Routing;
+  // the old `?tab=models` link is sent on there, so this row checks the redirect and the tab together.
+  // `ai-gateway-routing-ready` renders only once the stage routes loaded. The page is admin only (viewer refused).
+  { id: 'settings-models', label: 'AI providers · Routing (old Settings · LLM Models link)', path: '/admin/settings?tab=models', readySelector: '[data-testid="ai-gateway-routing-ready"]', viewerRefused: true },
+  { id: 'ai-gateway-models', label: 'AI providers · Models & trials', path: '/admin/ai-gateway?tab=models', readySelector: '[data-testid="ai-gateway-models-ready"]', viewerRefused: true },
+  { id: 'ai-gateway-budgets', label: 'AI providers · Budgets', path: '/admin/ai-gateway?tab=budgets', readySelector: '[data-testid="ai-gateway-budgets-ready"]', viewerRefused: true },
   { id: 'tenant-activity', label: 'Content Trace', path: '/admin/tenant-activity', readySelector: '[data-testid="admin-content-ready"]', viewerRefused: true },
   { id: 'tenants', label: 'Tenants', path: '/admin/tenants', viewerRefused: true },
   { id: 'upload', label: 'Upload', path: '/admin/upload', viewerRefused: true },

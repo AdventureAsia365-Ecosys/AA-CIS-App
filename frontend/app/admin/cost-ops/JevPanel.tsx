@@ -2,13 +2,14 @@
 // app/admin/cost-ops/JevPanel.tsx — AA-665 C1: Cost Operations › Jev. The Jev (TypeSafe) spend and credit in one place,
 // reusing the Jev Decisions endpoints: GET /api/admin/decisions/summary?days=N (billed calls and verdicts per stage;
 // days 1–90) and GET /api/admin/decisions/jev-credit (top-ups and the estimated credit left; spend.read = admin).
-// Question settings stay on /admin/decisions; top-ups are recorded in Settings › Jev Credit.
+// Question settings stay on /admin/decisions; top-ups are recorded in AI providers › Providers › Jev credit.
 // AA-994: text in the UI language (panels.messages.ts).
 
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useMemo } from "react";
 import { DataTable, ErrorState, K, SkeletonBar, apiGet, mono, useFormat, useT, type ColumnDef } from "../../_kit";
+import { aiGatewayHref } from "@/lib/aiGateway";
 import { PanelTitle, Stat, int, noteStyle, numStyle, panelStyle, statGrid, usd } from "./costOpsUi";
 import { PANELS } from "./panels.messages";
 
@@ -85,7 +86,7 @@ export default function JevPanel({ days }: { days: number }) {
         <span style={noteStyle}>
           <Link href="/admin/decisions" style={linkStyle}>{t("jevDecisions")}</Link>
           {" · "}
-          <Link href="/admin/settings?tab=jev-credit" style={linkStyle}>{t("recordTopup")}</Link>
+          <Link href={aiGatewayHref("providers", "jev-credit")} style={linkStyle}>{t("recordTopup")}</Link>
         </span>
       }>
         {t("jevTitle", d)}

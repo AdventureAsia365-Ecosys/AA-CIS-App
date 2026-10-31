@@ -1,6 +1,6 @@
-// app/admin/settings/connections.messages.ts — Settings › LLM Models › Connections (gateway slice S4), English and
-// Vietnamese. Connection keys, kinds, auth modes, model keys, wire ids, secret names, URLs, error classes and API
-// errors stay as sent.
+// app/admin/ai-gateway/connections.messages.ts — AI providers › Providers › Connections (gateway slice S4; moved from
+// Settings › LLM Models by AA-804 UI part 2), English and Vietnamese. Connection keys, kinds, auth modes, model keys,
+// wire ids, secret names, URLs, error classes and API errors stay as sent.
 
 import { defineMessages } from "../../_kit/core/i18n";
 
@@ -74,11 +74,12 @@ export const CONNECTIONS = defineMessages(
     // edit
     editTitle: "Settings",
     editIntro:
-      "Only the secret name is stored, never a key. Identity (kind, account, role, region) and data scope change only through a migration.",
+      "Only the secret name is stored, never a key. The secret name, the base URL, the identity (kind, account, role, region) and the data scope change only through a reviewed migration; the limits and the budget below are edited here.",
     secretName: "Secret name",
     secretHint: "A Secrets Manager name of the form aa-llm/<env>/<name>.",
     baseUrl: "Base URL",
     baseUrlHint: "https only, on the provider's own host.",
+    viaMigration: "Read-only here: changed by a reviewed migration.",
     timeout: "Timeout (s)",
     retries: "Retries",
     concurrency: "Calls at once (per task)",
@@ -87,7 +88,6 @@ export const CONNECTIONS = defineMessages(
     notes: "Notes",
     emptyMeansDefault: "Empty: the provider default / no limit.",
     errSecretPrefix: "Must look like aa-llm/<env>/<name>",
-    errHttps: "Must start with https://",
     errWhole: "A whole number",
     errRange: (min: number, max: number) => `Between ${min} and ${max}`,
     save: "Save",
@@ -230,11 +230,12 @@ export const CONNECTIONS = defineMessages(
     noHealth: "Chưa ghi nhận lượt gọi nào",
     editTitle: "Cài đặt",
     editIntro:
-      "Chỉ lưu tên secret, không bao giờ lưu khoá. Danh tính (loại, tài khoản, role, region) và phạm vi dữ liệu chỉ đổi qua migration.",
+      "Chỉ lưu tên secret, không bao giờ lưu khoá. Tên secret, base URL, danh tính (loại, tài khoản, role, region) và phạm vi dữ liệu chỉ đổi qua migration có duyệt; các giới hạn và ngân sách bên dưới sửa ở đây.",
     secretName: "Tên secret",
     secretHint: "Tên trong Secrets Manager dạng aa-llm/<env>/<name>.",
     baseUrl: "Base URL",
     baseUrlHint: "Chỉ https, trên host của chính nhà cung cấp.",
+    viaMigration: "Chỉ xem ở đây: đổi qua migration có duyệt.",
     timeout: "Timeout (giây)",
     retries: "Số lần thử lại",
     concurrency: "Số lượt cùng lúc (mỗi task)",
@@ -243,7 +244,6 @@ export const CONNECTIONS = defineMessages(
     notes: "Ghi chú",
     emptyMeansDefault: "Để trống: mặc định của nhà cung cấp / không giới hạn.",
     errSecretPrefix: "Phải có dạng aa-llm/<env>/<name>",
-    errHttps: "Phải bắt đầu bằng https://",
     errWhole: "Một số nguyên",
     errRange: (min: number, max: number) => `Từ ${min} đến ${max}`,
     save: "Lưu",

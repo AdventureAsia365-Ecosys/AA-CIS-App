@@ -1,6 +1,6 @@
-// app/admin/settings/llmShared.ts
-// AA-686 — shared types + presentation constants for the LLM Models tab (route/shadow editor,
-// model catalog, shadow A/B report). The API (api/routers/admin_llm_ops.py) is the source of
+// app/admin/ai-gateway/llmShared.ts
+// AA-686 — shared types + presentation constants for the Routing and Models & trials tabs of AI providers (route /
+// shadow editor, model catalog, shadow A/B report; moved from Settings › LLM Models by AA-804 UI part 2). The API (api/routers/admin_llm_ops.py) is the source of
 // truth for which stages/values exist; everything here is a pure presentation layer over its rows.
 
 // ── /admin/llm-config ───────────────────────────────────────────────────────

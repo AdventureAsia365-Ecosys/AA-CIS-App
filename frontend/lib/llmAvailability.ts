@@ -1,4 +1,4 @@
-// lib/llmAvailability.ts — AA-900: the LLM availability card (Settings › LLM Models › Stages).
+// lib/llmAvailability.ts — AA-900: the LLM availability card (AI providers › Routing).
 // Shape of GET /api/admin/llm-availability (backend api/services/llm_availability.py) and the pure helpers the card
 // uses. The status is decided by the API from real outcomes (no probe call); this file only presents it.
 

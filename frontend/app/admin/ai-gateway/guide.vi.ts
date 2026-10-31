@@ -6,8 +6,8 @@ import type { GuideContent } from "../../_kit/guideContent";
 
 export const AI_GATEWAY_GUIDE_VI: GuideContent = {
   title: "Cách dùng trang Nhà cung cấp AI",
-  intro: "Một trang cho mọi nguồn AI và dữ liệu trả phí. Đọc trang để trả lời ba câu: từng nguồn còn trả lời không, "
-    + "đã tốn bao nhiêu, có gì sắp chạm giới hạn không.",
+  intro: "Một trang cho mọi nguồn AI và dữ liệu trả phí. Đọc trang để trả lời bốn câu: từng nguồn còn trả lời không, "
+    + "đã tốn bao nhiêu, mỗi bước dùng model nào, có gì sắp chạm giới hạn không.",
   sections: [
     {
       id: "purpose",
@@ -16,9 +16,11 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
         { kind: "paragraph", text: "Nền tảng trả tiền cho vài dịch vụ bên ngoài: các model ngôn ngữ (qua AWS Bedrock "
           + "hoặc API của hãng), Jev cho các quyết định có / không, DataForSEO cho dữ liệu tìm kiếm và Geoapify cho "
           + "toạ độ địa điểm. Trang này đặt tất cả cạnh nhau." },
-        { kind: "paragraph", text: "Trang chỉ đọc. Mọi con số lấy từ sổ ghi của mình và các lần kiểm số dư đã lưu; "
-          + "mở trang không gọi nhà cung cấp nào và không tốn tiền. Bật / tắt kết nối và sửa giới hạn vẫn làm ở Cài "
-          + "đặt › LLM Models; ngân sách vẫn đặt ở Cost Operations." },
+        { kind: "paragraph", text: "Mọi con số lấy từ sổ ghi của mình và các lần kiểm số dư đã lưu; mở trang không gọi "
+          + "nhà cung cấp nào và không tốn tiền. Trang có năm tab: Nhà cung cấp (sức khoẻ, chi tiêu, số dư, kèm cài "
+          + "đặt kết nối và sổ nạp Jev), Điều hướng (mỗi bước dùng model nào), Model và thử nghiệm (danh mục model và "
+          + "so sánh chạy bóng), Ngân sách (mọi mức trần) và Hướng dẫn này. Cài đặt › LLM Models, Cài đặt › Số dư Jev "
+          + "và Cost Operations › Ngân sách đã dời về đây; link cũ mở đúng tab mới." },
       ],
     },
     {
@@ -39,7 +41,7 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
         { kind: "terms", uiLabels: true, items: [
           { term: "Kết nối LLM", text: "Mỗi dòng là một đường nền tảng gọi tới model, ví dụ Bedrock trong một tài "
             + "khoản AWS (hiện bằng số tài khoản) hoặc API của OpenAI." },
-          { term: "Quyết định (Jev)", text: "Dòng của Jev. Số dư là ước tính: tổng nạp đã ghi ở Cài đặt trừ chi tiêu "
+          { term: "Quyết định (Jev)", text: "Dòng của Jev. Số dư là ước tính: tổng nạp đã ghi ở Số dư Jev trừ chi tiêu "
             + "đã ghi, vì Jev không có dịch vụ xem số dư." },
           { term: "Nhà cung cấp dữ liệu", text: "DataForSEO (số dư từ lần kiểm hằng ngày) và Geoapify (credit đã dùng "
             + "hôm nay so với giới hạn ngày; giới hạn đặt lại mỗi ngày UTC)." },
@@ -70,6 +72,68 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
       ],
     },
     {
+      id: "views",
+      heading: "Bên trong tab Nhà cung cấp",
+      blocks: [
+        { kind: "terms", uiLabels: true, items: [
+          { term: "Tổng quan", text: "Danh sách chỉ đọc ở trên: mỗi nguồn trả phí một dòng." },
+          { term: "Kết nối", text: "Bật hoặc tắt một kết nối LLM, đổi timeout, số lần thử lại, giới hạn và ngân sách "
+            + "tháng, và gửi một lần gọi thử nhỏ. Tên secret và base URL chỉ hiện, không sửa ở đây: chúng chỉ đổi qua "
+            + "migration có duyệt." },
+          { term: "Số dư Jev", text: "Ghi tay từng lần nạp Jev (Jev không có dịch vụ xem số dư), xem số dư ước tính "
+            + "và gửi cảnh báo thử." },
+        ] },
+      ],
+    },
+    {
+      id: "routing",
+      heading: "Điều hướng: mỗi bước dùng model nào",
+      blocks: [
+        { kind: "paragraph", text: "Mỗi bước của pipeline một dòng. Model chính trả lời trước; chuỗi dự phòng được thử "
+          + "lần lượt khi nó lỗi; model chạy bóng gọi thêm một lượt trên một phần lượt gọi chỉ để so sánh (chi phí các "
+          + "lượt đó tăng gấp đôi). Ô tình trạng LLM ở trên cho biết các model có trả lời gần đây không; các câu hỏi "
+          + "Jev theo bước ở dưới cùng." },
+        { kind: "control", label: "Lưu", does: "Lưu model chính của một bước, cho mọi lượt gọi của bước đó.",
+          cost: "Lưu không tốn tiền; các lượt gọi sau chạy trên model mới theo giá của nó.",
+          when: "Một model bị ngừng, bị từ chối, hoặc một model rẻ hơn đã qua thử nghiệm." },
+        { kind: "control", label: "Lưu tuyến", does: "Lưu chuỗi dự phòng và model chạy bóng của một bước.",
+          cost: "Lưu không tốn tiền; chạy bóng làm chi phí các lượt được lấy mẫu tăng gấp đôi.",
+          when: "Thiếu dự phòng, hoặc muốn so sánh một model mới trên lượt gọi thật." },
+        { kind: "callout", tone: "note", title: "Tài khoản AWS theo bước",
+          text: "Khi mọi bước đều chạy trong tài khoản LLM thì không có gì để chọn, nên ô chọn tài khoản bị ẩn; nó "
+            + "chỉ hiện lại khi còn bước đi qua tài khoản khác." },
+      ],
+    },
+    {
+      id: "models",
+      heading: "Model và thử nghiệm",
+      blocks: [
+        { kind: "paragraph", text: "Danh mục model liệt kê mọi model nền tảng gọi được, kèm hãng, nơi chạy và giá. Giá "
+          + "chỉ xem: chỉ đổi qua thay đổi cấu hình có duyệt. Một model bật hoặc tắt được; model chưa có giá thì "
+          + "không bật được." },
+        { kind: "paragraph", text: "Phần so sánh chạy bóng cho thấy, theo từng bước, model chạy bóng đồng ý với model "
+          + "chính bao nhiêu lần, chênh lệch điểm, chi phí mỗi lượt và thời gian trả lời của model chạy bóng, kèm cỡ "
+          + "mẫu." },
+      ],
+    },
+    {
+      id: "budgets",
+      heading: "Ngân sách: mọi mức trần chi tiêu",
+      blocks: [
+        { kind: "terms", uiLabels: true, items: [
+          { term: "Trần ngày theo nhà cung cấp", text: "Mức tối đa một nhà cung cấp được tiêu trong một ngày UTC trên "
+            + "toàn nền tảng." },
+          { term: "Trần theo job", text: "Trần của một loại job, mỗi lượt chạy và mỗi ngày." },
+          { term: "Ngân sách kết nối LLM", text: "Ngân sách tháng của từng kết nối; sửa ở Nhà cung cấp › Kết nối." },
+          { term: "Ngân sách AI theo đại lý", text: "Hiện để trống: ngân sách theo đại lý đến sau và chỉ nhân viên thấy." },
+          { term: "Dừng ở trần", text: "Lượt chạy kết thúc khi lượt gọi kế tiếp sẽ vượt trần." },
+          { term: "Chỉ cảnh báo", text: "Không bao giờ dừng; gửi cảnh báo cho quản trị ở % cảnh báo." },
+        ] },
+        { kind: "control", label: "Thêm trần", does: "Tạo một trần cho cả nhà cung cấp hoặc cho một loại job.",
+          cost: "Miễn phí.", when: "Một nguồn trả phí hiện Không trong danh sách có trần chưa." },
+      ],
+    },
+    {
       id: "trace",
       heading: "Xem các lần gọi của một job (Truy vết)",
       blocks: [
@@ -92,6 +156,7 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
         { kind: "list", items: [
           "Thời gian trả lời của từng lần gọi model chưa được ghi; chỉ Jev có.",
           "Bedrock Guardrails và Mapbox chưa ghi sổ nên chưa có dòng.",
+          "Các lần chạy thử model mới (thử nhanh, kiểm model chấm, so sánh) chưa có trên tab Model và thử nghiệm.",
           "Chi tiêu là số mình ghi theo giá của mình. Hoá đơn AWS có thể lệch chút; Cost Operations hiện hoá đơn.",
         ] },
       ],
@@ -103,5 +168,7 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
     { term: "Cổng", text: "Phần code chung mà mọi lần gọi model đi qua; nó chọn đường, ghi lần gọi và giữ ngân sách." },
     { term: "Trần ngày", text: "Mức tối đa một nhà cung cấp được tốn trong một ngày UTC cho cả nền tảng." },
     { term: "Truy vết", text: "Mọi lần gọi trả phí đã ghi của một job, theo thời gian." },
+    { term: "Dự phòng", text: "Model kế tiếp một bước thử khi model chính lỗi." },
+    { term: "Chạy bóng", text: "Model thứ hai trả lời cùng lượt gọi chỉ để so sánh; câu trả lời của nó không được dùng." },
   ],
 };

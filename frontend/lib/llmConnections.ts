@@ -235,10 +235,9 @@ export const takesSecret = (c: Pick<Connection, "auth_mode">) =>
   c.auth_mode === "api_key" || c.auth_mode === "bedrock_api_key";
 export const takesBaseUrl = (c: Pick<Connection, "kind">) => BASE_URL_KINDS.includes(c.kind);
 
-/** The edit form: every field a string as typed. */
+/** The edit form: every field a string as typed. AA-1017 (AA-804 UI part 2): the secret name and the base URL are not
+ *  in it any more; they are shown read-only and change only through a reviewed migration. */
 export interface EditForm {
-  secret_name: string;
-  base_url: string;
   timeout_s: string;
   max_retries: string;
   max_concurrency: string;
@@ -254,7 +253,7 @@ export interface EditForm {
 
 export type EditField = keyof EditForm;
 
-type TextField = "secret_name" | "base_url" | "notes" | "budget_hard_stop" | "usage_secret_name" | "usage_scope_id";
+type TextField = "notes" | "budget_hard_stop" | "usage_secret_name" | "usage_scope_id";
 
 const NUMERIC: Record<Exclude<EditField, TextField>, [number, number, boolean]> = {
   timeout_s: [1, 900, true],
@@ -278,7 +277,7 @@ export const takesUsageKey = (c: Pick<Connection, "usage_key_supported">) => !!c
 export function formOf(c: Connection): EditForm {
   const p = c.cost_policy;
   return {
-    secret_name: str(c.secret_name), base_url: str(c.base_url), timeout_s: str(c.timeout_s),
+    timeout_s: str(c.timeout_s),
     max_retries: str(c.max_retries), max_concurrency: str(c.max_concurrency), rpm_limit: str(c.rpm_limit),
     monthly_budget_usd: str(c.monthly_budget_usd), notes: str(c.notes),
     budget_alert_pct: str(p?.alert_pct ?? DEFAULT_ALERT_PCT),
@@ -290,10 +289,11 @@ export function formOf(c: Connection): EditForm {
 // Same pattern as the table CHECK (migration 304) and connections.SECRET_NAME_RE.
 const SECRET_NAME_RE = /^aa-llm\/[a-z0-9-]+\/[a-z0-9][a-z0-9-]*$/;
 
-export type FieldError = "secretPrefix" | "httpsOnly" | "wholeNumber" | "range" | "scopeId";
+export type FieldError = "secretPrefix" | "wholeNumber" | "range" | "scopeId";
 
 /** The PATCH body (only the fields that changed; an emptied field is null) and the client-side errors per field.
- *  The API checks everything again (secret prefix, host allowlist, ranges): this only saves a round trip.
+ *  The API checks everything again (secret prefix, ranges): this only saves a round trip. Never carries
+ *  `secret_name` or `base_url` (AA-1017: change by migration only).
  *  S10: an emptied alert percent goes back to the default (80); the hard stop is a boolean; the usage key fields
  *  exist only on a connection whose provider has a usage API (usage_key_supported). */
 export function patchBody(c: Connection, form: EditForm): {
@@ -303,9 +303,7 @@ export function patchBody(c: Connection, form: EditForm): {
   const body: Record<string, string | number | boolean | null> = {};
   const errors: Partial<Record<EditField, { code: FieldError; min?: number; max?: number }>> = {};
   const before = formOf(c);
-  for (const f of Object.keys(form) as EditField[]) {
-    if (f === "secret_name" && !takesSecret(c)) continue;
-    if (f === "base_url" && !takesBaseUrl(c)) continue;
+  for (const f of Object.keys(before) as EditField[]) {     // the editable fields only, never an extra key
     if (USAGE_FIELDS.includes(f) && !takesUsageKey(c)) continue;
     if (POLICY_FIELDS.includes(f) && !c.cost_policy) continue;   // an older API without the policy fields
     const typed = form[f].trim();
@@ -319,14 +317,11 @@ export function patchBody(c: Connection, form: EditForm): {
       body[f] = null;
       continue;
     }
-    if (f === "secret_name" || f === "usage_secret_name") {
+    if (f === "usage_secret_name") {
       if (!SECRET_NAME_RE.test(raw)) errors[f] = { code: "secretPrefix" };
       body[f] = raw;
     } else if (f === "usage_scope_id") {
       if (!SCOPE_ID_RE.test(raw)) errors[f] = { code: "scopeId" };
-      body[f] = raw;
-    } else if (f === "base_url") {
-      if (!raw.startsWith("https://")) errors[f] = { code: "httpsOnly" };
       body[f] = raw;
     } else if (f === "notes") {
       body[f] = raw;

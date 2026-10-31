@@ -1,8 +1,11 @@
-// lib/aiGateway.ts — AA-804 (UI part 1): the admin "AI providers" page (/admin/ai-gateway).
-// Shapes of GET /api/admin/ai-gateway/providers and GET /api/admin/ai-gateway/trace?job_id= (backend
-// api/services/ai_gateway.py) and the pure helpers the page uses. Every number comes from the API (database reads
-// only, $0); this file only presents it. No account key or ID is written here: a Bedrock connection is named through
-// lib/llmConnections connectionName + the account directory (useAwsAccounts).
+// lib/aiGateway.ts — AA-804 (UI parts 1 and 2): the admin "AI providers" page (/admin/ai-gateway).
+// Shapes of GET /api/admin/ai-gateway/providers, /trace?job_id= and /budgets (backend api/services/ai_gateway.py),
+// the page's tab and view keys, the links that retired Settings / Cost Operations tabs now point to, and the pure
+// helpers the page uses. Every number comes from the API (database reads only, $0); this file only presents it. No
+// account key or ID is written here: a Bedrock connection is named through lib/llmConnections connectionName + the
+// account directory (useAwsAccounts); the only key used is the LLM account constant of lib/awsAccounts.
+
+import { LLM_ACCOUNT } from "./awsAccounts.ts";
 
 export type ProviderStatus =
   | "ok" | "degraded" | "open" | "low" | "cap_reached" | "disabled" | "unknown";
@@ -205,4 +208,195 @@ export function groupRows(rows: readonly ProviderRow[]): Record<ProviderGroup, P
   const out: Record<ProviderGroup, ProviderRow[]> = { llm: [], decide: [], data: [] };
   for (const r of rows) (out[r.group] ?? out.data).push(r);
   return out;
+}
+
+// ── tabs, views and the links of retired tabs (AA-804 UI part 2) ──────────────────────────────────────────────────
+
+/** The page's tabs, in order. `providers` is the default (no `tab` in the address). */
+export const TAB_KEYS = ["providers", "routing", "models", "budgets", "guide"] as const;
+export type TabKey = (typeof TAB_KEYS)[number];
+/** The views inside the Providers tab: the read-only overview, the connection settings, the Jev credit ledger. */
+export const PROVIDER_VIEWS = ["overview", "connections", "jev-credit"] as const;
+export type ProviderView = (typeof PROVIDER_VIEWS)[number];
+
+export function parseTab(value: string | null | undefined): TabKey {
+  return (TAB_KEYS as readonly string[]).includes(value ?? "") ? (value as TabKey) : "providers";
+}
+
+export function parseView(value: string | null | undefined): ProviderView {
+  return (PROVIDER_VIEWS as readonly string[]).includes(value ?? "") ? (value as ProviderView) : "overview";
+}
+
+/** The page link of a tab (and a Providers view): exactly one `tab` value, `view` only when it is not the overview. */
+export function aiGatewayHref(tab: TabKey, view?: ProviderView): string {
+  const q = new URLSearchParams({ tab });
+  if (tab === "providers" && view && view !== "overview") q.set("view", view);
+  return `${PAGE_PATH}?${q.toString()}`;
+}
+
+/** Settings tabs that moved here: the old `?tab=` links (bookmarks, mails already sent) are sent on to these. */
+export const RETIRED_SETTINGS_TABS: Readonly<Record<string, string>> = {
+  models: aiGatewayHref("routing"),
+  "jev-credit": aiGatewayHref("providers", "jev-credit"),
+};
+/** Cost Operations tabs that moved here. */
+export const RETIRED_COST_OPS_TABS: Readonly<Record<string, string>> = {
+  budgets: aiGatewayHref("budgets"),
+};
+
+/** Where a retired `?tab=` value now lives, or null (the tab still exists, or no tab was asked). */
+export function retiredTabTarget(map: Readonly<Record<string, string>>, wanted: string | null | undefined): string | null {
+  return wanted && Object.prototype.hasOwnProperty.call(map, wanted) ? map[wanted] : null;
+}
+
+/** Show the per-stage account select only while a stage still routes to an account other than the LLM account.
+ *  Every row NULL or the LLM account: nothing to choose, so the select is hidden (the column stays; the PATCH keeps
+ *  sending the row's own value). */
+export function accountRouteMatters(rows: readonly { account_route: string | null | undefined }[]): boolean {
+  return rows.some((r) => r.account_route != null && r.account_route !== "" && r.account_route !== LLM_ACCOUNT);
+}
+
+// ── budgets (GET /api/admin/ai-gateway/budgets; edits through PUT /api/admin/budgets/{provider}/{scope}) ───────────
+
+export type BudgetState = "ok" | "alert" | "cap_reached" | "no_daily_cap";
+export type ConnectionBudgetState = "ok" | "alert" | "stopped" | "no_budget";
+
+export interface SpendBudgetRow {
+  provider: string;
+  scope: string;
+  job_kind: string | null;
+  per_run_usd: number | null;
+  per_day_usd: number | null;
+  hard_stop: boolean;
+  alert_pct: number | null;
+  updated_at: string | null;
+  updated_by: string | null;
+  spent_today_usd: number;
+  used_pct: number | null;
+  state: BudgetState;
+}
+
+export interface ConnectionBudgetRow {
+  connection_key: string;
+  kind: string | null;
+  label: string;
+  enabled: boolean;
+  account_id: string | null;
+  monthly_budget_usd: number | null;
+  month_spent_usd: number;
+  month_calls: number;
+  used_pct: number | null;
+  alert_pct: number;
+  hard_stop: boolean;
+  state: ConnectionBudgetState;
+}
+
+export interface CoverageRow {
+  tier: "provider" | "connection";
+  key: string;
+  label?: string;
+  kind?: string | null;
+  account_id?: string | null;
+  capped: boolean;
+  hard_stop: boolean | null;
+}
+
+export interface BudgetsResp {
+  generated_at: string;
+  day_start: string;
+  month_start: string;
+  providers: string[];
+  tiers: {
+    provider: SpendBudgetRow[];
+    job: SpendBudgetRow[];
+    connection: ConnectionBudgetRow[];
+    tenant: unknown[];
+  };
+  coverage: CoverageRow[];
+  spent_today_usd: Record<string, number>;
+  errors: { source: string; error: string }[];
+}
+
+export const BUDGETS_API = "/api/admin/ai-gateway/budgets";
+
+/** The spend_budget providers (shared/cost_guard.py PROVIDERS) and their product names. */
+export const BUDGET_PROVIDER_LABEL: Readonly<Record<string, string>> = {
+  dfs: "DataForSEO", bedrock: "Bedrock", openai: "OpenAI API", jev: "Jev", geocoder: "Geocoder (Geoapify)",
+  anthropic: "Anthropic API", azure_openai: "Azure OpenAI",
+};
+
+export function budgetProviderLabel(provider: string): string {
+  return BUDGET_PROVIDER_LABEL[provider] ?? provider;
+}
+
+const BUDGET_TONE: Record<BudgetState | ConnectionBudgetState, Tone> = {
+  ok: "success", alert: "warning", cap_reached: "danger", stopped: "danger", no_daily_cap: "neutral",
+  no_budget: "neutral",
+};
+
+export function budgetTone(state: string | null | undefined): Tone {
+  return BUDGET_TONE[(state ?? "") as BudgetState] ?? "neutral";
+}
+
+/** One spend_budget row as the editor types it: every field a string. */
+export interface BudgetDraft {
+  per_run: string;
+  per_day: string;
+  hard_stop: boolean;
+  alert_pct: string;
+}
+
+export interface BudgetBody {
+  per_run_usd: number | null;
+  per_day_usd: number | null;
+  hard_stop: boolean;
+  alert_pct: number;
+}
+
+export type BudgetError = "cap" | "alertPct" | "scope";
+
+export function budgetDraftOf(r: Pick<SpendBudgetRow, "per_run_usd" | "per_day_usd" | "hard_stop" | "alert_pct">):
+  BudgetDraft {
+  return {
+    per_run: r.per_run_usd == null ? "" : String(r.per_run_usd),
+    per_day: r.per_day_usd == null ? "" : String(r.per_day_usd),
+    hard_stop: r.hard_stop,
+    alert_pct: String(r.alert_pct ?? 80),
+  };
+}
+
+export function sameDraft(a: BudgetDraft, b: BudgetDraft): boolean {
+  return a.per_run.trim() === b.per_run.trim() && a.per_day.trim() === b.per_day.trim()
+    && a.hard_stop === b.hard_stop && a.alert_pct.trim() === b.alert_pct.trim();
+}
+
+function cap(v: string): number | null | undefined {
+  const s = v.trim();
+  if (s === "") return null;            // no cap
+  const n = Number(s);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+/** The PUT body of a draft (the backend BudgetUpdate: caps >= 0 or null, alert % a whole number 1–100), or the first
+ *  problem. The API checks again; this only saves a round trip. */
+export function budgetBody(d: BudgetDraft): { body?: BudgetBody; error?: BudgetError } {
+  const run = cap(d.per_run);
+  const day = cap(d.per_day);
+  if (run === undefined || day === undefined) return { error: "cap" };
+  const pct = Number(d.alert_pct.trim());
+  if (!Number.isInteger(pct) || pct < 1 || pct > 100) return { error: "alertPct" };
+  return { body: { per_run_usd: run, per_day_usd: day, hard_stop: d.hard_stop, alert_pct: pct } };
+}
+
+const SCOPE_RE = /^job:[a-z0-9_]+$/;
+
+/** A new row's scope: `global` or `job:<kind>` (the backend _valid rule, kind in lower snake case). */
+export function validScope(scope: string): boolean {
+  const s = scope.trim();
+  return s === "global" || SCOPE_RE.test(s);
+}
+
+/** The PUT path of one spend_budget row. */
+export function budgetPutPath(provider: string, scope: string): string {
+  return `/api/admin/budgets/${encodeURIComponent(provider)}/${encodeURIComponent(scope)}`;
 }

@@ -43,7 +43,7 @@ def test_the_one_allowed_file_defines_the_keys():
 def test_the_scan_sees_the_account_pages():
     scanned = {p.relative_to(REPO).as_posix() for p in _files()}
     for page in ("frontend/app/admin/cost-ops/page.tsx", "frontend/app/admin/platform/cost/CostByApp.tsx",
-                 "frontend/app/admin/settings/ModelsTab.tsx", "frontend/app/admin/jobs/JobDrawer.tsx"):
+                 "frontend/app/admin/ai-gateway/RoutingTab.tsx", "frontend/app/admin/jobs/JobDrawer.tsx"):
         assert page in scanned, page
 
 

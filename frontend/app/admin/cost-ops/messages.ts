@@ -59,7 +59,6 @@ export const COST = defineMessages(
     tabDfs: "DataForSEO",
     tabAws: "AWS bill",
     tabJev: "Jev",
-    tabBudgets: "Budgets",
     // page
     lastDays: (n: number) => `last ${n} days`,
     loadError: "Failed to load spend data",
@@ -138,7 +137,7 @@ export const COST = defineMessages(
     noLlmFilter: "No LLM calls match the filter.",
     subAccount: "account",
     subTenant: "tenant",
-    modelConfig: "Current model config (Settings → LLM Models)",
+    modelConfig: "Current model config (AI providers → Routing)",
     accountBalance: "Account balance",
     asOfDay: (day: string) => `as of ${day}`,
     noReading: "no reading yet",
@@ -210,7 +209,6 @@ export const COST = defineMessages(
     tabDfs: "DataForSEO",
     tabAws: "Hoá đơn AWS",
     tabJev: "Jev",
-    tabBudgets: "Ngân sách",
     lastDays: (n: number) => `${n} ngày qua`,
     loadError: "Không tải được dữ liệu chi phí",
     ceFetchedErrors: (rows: number, errors: number) =>
@@ -291,7 +289,7 @@ export const COST = defineMessages(
     noLlmFilter: "Không có lượt gọi LLM nào khớp bộ lọc.",
     subAccount: "tài khoản",
     subTenant: "đại lý",
-    modelConfig: "Cấu hình model hiện tại (Cài đặt → LLM Models)",
+    modelConfig: "Cấu hình model hiện tại (Nhà cung cấp AI → Điều hướng)",
     accountBalance: "Số dư tài khoản",
     asOfDay: (day: string) => `tính đến ${day}`,
     noReading: "chưa có số đọc",

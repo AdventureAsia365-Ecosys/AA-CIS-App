@@ -1,9 +1,11 @@
 "use client";
-// app/admin/settings/ConnectionsTab.tsx
-// Gateway slice S4 — the Connections sub-tab of Settings › LLM Models (admin only: the LLM Models tab needs ai.admin).
+// app/admin/ai-gateway/ConnectionsPanel.tsx
+// Gateway slice S4 — the connection settings, now AI providers › Providers › Connections (AA-804 UI part 2; was the
+// Connections sub-tab of Settings › LLM Models). Admin only (the page; the writes need ai.admin on the backend).
 // One row per LLM connection (GET /api/admin/llm-connections) with its circuit-breaker health
-// (GET /api/admin/llm-availability → connections). Switch a connection on/off and edit its secret NAME, base URL,
-// timeout, retries and limiter (PATCH /api/admin/llm-connections/{key}); send one small test request
+// (GET /api/admin/llm-availability → connections). Switch a connection on/off and edit its timeout, retries, limiter
+// and budget (PATCH /api/admin/llm-connections/{key}). AA-1017: the secret NAME and the base URL are shown read-only
+// (they change through a reviewed migration; lib/llmConnections patchBody never sends them); send one small test request
 // (POST /api/admin/llm-connections/{key}/test). A Bedrock connection is named by its AWS account ID.
 // Gateway slice S10 — the budget column and the drawer's "Budget and cost check" section
 // (GET /api/admin/llm-connections/costs: month-to-date spend against each budget, the nightly reconciliation rows;
@@ -204,7 +206,6 @@ function SettingsForm({ conn, name, t }: { conn: Connection; name: string; t: T 
     const e = errors[f];
     if (!e) return undefined;
     if (e.code === "secretPrefix") return t("errSecretPrefix");
-    if (e.code === "httpsOnly") return t("errHttps");
     if (e.code === "wholeNumber") return t("errWhole");
     if (e.code === "scopeId") return t("errScopeId");
     return t("errRange", e.min ?? 0, e.max ?? 0);
@@ -221,15 +222,15 @@ function SettingsForm({ conn, name, t }: { conn: Connection; name: string; t: T 
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <p style={{ ...small, margin: 0 }}>{t("editIntro")}</p>
       {takesSecret(conn) && (
-        <Field label={t("secretName")} error={errorText("secret_name")} hint={t("secretHint")}>
-          <Input value={form.secret_name} onChange={set("secret_name")} disabled={mut.isPending}
-                 spellCheck={false} autoComplete="off" style={{ fontFamily: mono }} />
+        <Field label={t("secretName")} hint={`${t("secretHint")} ${t("viaMigration")}`} locked>
+          <Input value={conn.secret_name ?? ""} readOnly spellCheck={false} autoComplete="off"
+                 style={{ fontFamily: mono }} data-testid="conn-field-secret_name" />
         </Field>
       )}
       {takesBaseUrl(conn) && (
-        <Field label={t("baseUrl")} error={errorText("base_url")} hint={t("baseUrlHint")}>
-          <Input type="url" value={form.base_url} onChange={set("base_url")} disabled={mut.isPending}
-                 spellCheck={false} autoComplete="off" style={{ fontFamily: mono }} />
+        <Field label={t("baseUrl")} hint={`${t("baseUrlHint")} ${t("viaMigration")}`} locked>
+          <Input type="url" value={conn.base_url ?? ""} readOnly spellCheck={false} autoComplete="off"
+                 style={{ fontFamily: mono }} data-testid="conn-field-base_url" />
         </Field>
       )}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))", gap: 12 }}>
@@ -494,7 +495,7 @@ function ConnectionDrawer({ conn, health, name, onClose, t, cost, costs, costsEr
 
 // ── the tab ────────────────────────────────────────────────────────────────────────────────────────────────────
 
-export function ConnectionsTab() {
+export function ConnectionsPanel() {
   const t = useT(CONNECTIONS);
   const toast = useToast();
   const qc = useQueryClient();

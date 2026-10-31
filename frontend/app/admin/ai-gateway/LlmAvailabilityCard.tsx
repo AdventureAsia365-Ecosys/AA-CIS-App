@@ -1,6 +1,7 @@
 "use client";
-// app/admin/settings/LlmAvailabilityCard.tsx
-// AA-900 — "can the platform call its LLMs right now?" at the top of Settings › LLM Models › Stages.
+// app/admin/ai-gateway/LlmAvailabilityCard.tsx
+// AA-900 — "can the platform call its LLMs right now?" at the top of AI providers › Routing (AA-804 UI part 2; was
+// Settings › LLM Models › Stages).
 // Reads GET /api/admin/llm-availability: the status comes from real outcomes (answered calls in the call log, failed
 // jobs classified by error), never from a test call. Accounts are named through lib/awsAccounts (AA-998).
 // Built on the kit only (Section, Badge, DataTable, DateText, tokens).

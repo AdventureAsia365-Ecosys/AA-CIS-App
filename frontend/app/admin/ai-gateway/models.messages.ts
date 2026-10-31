@@ -1,13 +1,24 @@
-// app/admin/settings/models.messages.ts — AA-994: Settings › LLM Models (Stages, route editor, Catalog, Shadow A/B)
-// in English and Vietnamese. Stage keys, roles, model ids and labels, vendors, providers, price sources, blocked
-// reasons, Jev question keys and API errors stay as sent. Stage labels: llmShared.ts + llmShared.vi.ts.
+// app/admin/ai-gateway/models.messages.ts — AA-994: the Routing tab (stages, route editor, LLM availability, Jev
+// questions) and the Models & trials tab (catalog, shadow comparisons) of AI providers (AA-804 UI part 2; was
+// Settings › LLM Models), in English and Vietnamese. Stage keys, roles, model ids and labels, vendors, providers,
+// price sources, blocked reasons, Jev question keys and API errors stay as sent. Stage labels: llmShared.ts + llmShared.vi.ts.
 
 import { defineMessages } from "../../_kit/core/i18n";
 
 export const MODELS = defineMessages(
   {
-    // ModelsTab
+    // RoutingTab
     route: "Route:",
+    primaryFor: (stage: string) => `Primary model for ${stage}`,
+    accountFor: (stage: string) => `AWS account for ${stage}`,
+    accountHidden: "Every stage runs in the LLM account, so there is no account to pick.",
+    colQuestion: "Question",
+    colMode: "Mode",
+    colBands: "Accept / reject",
+    colCalibration: "Calibration",
+    colVerdicts: "Verdicts (7 days)",
+    colCost7d: "Cost (7 days)",
+    loadJevStagesError: "Could not load the Jev questions.",
     shadowCompare: (pct: number) => `Shadow (${pct}%, compare only):`,
     modelSaved: (stage: string) => `Model saved for ${stage}`,
     saveFailed: "Save failed",
@@ -65,10 +76,6 @@ export const MODELS = defineMessages(
     stagesIntroD: "shadow A/B",
     stagesIntroE:
       "toggle. A shadow runs a second judge call on a share of calls, so it doubles the cost on those — keep it on only while comparing. Unavailable models are listed disabled with their reason.",
-    subStages: "Stages",
-    subCatalog: "Catalog",
-    subShadow: "Shadow A/B",
-    subConnections: "Connections",
     // StageRouteEditor
     routeSaved: (stage: string) => `Route saved for ${stage}`,
     routeEditor: "Route editor",
@@ -103,11 +110,11 @@ export const MODELS = defineMessages(
     fallbacksLine: (list: string) => `Fallbacks: ${list}`,
     nonePrimaryOnly: "none (primary only)",
     secondCall: (pct: number) => ` — this runs a second judge call on ${pct}% of calls.`,
-    // CatalogTab
-    saved: (key: string) => `Saved ${key}`,
-    inMtok: "In/MTok",
-    outMtok: "Out/MTok",
-    priceSource: "price source",
+    // Models & trials tab: catalog (prices view-only, AA-1017) + shadow comparisons
+    modelsIntro: "Every model the platform can call, and how a shadow model compared with the primary on real calls.",
+    catalogTitle: "Model catalog",
+    shadowTitle: "Shadow comparisons",
+    pricesReadOnly: "Prices change only through a reviewed configuration change (a migration), not here.",
     toggled: (key: string, enabled: boolean) => `${key} ${enabled ? "enabled" : "disabled"}`,
     updateFailed: "update failed",
     colModel: "Model",
@@ -121,14 +128,12 @@ export const MODELS = defineMessages(
     toggle: (key: string) => `Toggle ${key}`,
     onTitle: "On",
     offTitle: "Off",
-    needsPriceTitle: "Set an input and output price before enabling",
+    needsPriceTitle: "A model needs an input and an output price before it can be switched on (prices change through a migration)",
     needsPrice: "needs price",
     colBlocked: "Blocked",
     colUpdated: "Updated",
-    editPrice: "Edit price",
     catalogIntro:
-      "Every model the platform can call. The admin dropdowns and all cost figures read these rows. Edit the per-MTok prices and provenance, and enable/disable a model — a model cannot be enabled without both an input and an output price.",
-    editPriceFor: "Edit price —",
+      "The admin dropdowns and every cost figure read these rows. Switch a model on or off here; a model cannot be switched on without both an input and an output price.",
     loadCatalogError: "Could not load catalog",
     searchModels: "Search models…",
     noModels: "No models in the catalog",
@@ -148,10 +153,20 @@ export const MODELS = defineMessages(
     loadShadowError: "Could not load the shadow report",
     searchStages: "Search stages…",
     noShadowTitle: "No shadow comparisons in this window",
-    noShadowBody: "Turn on a stage's shadow in the Stages sub-tab, then come back after it has run on some calls.",
+    noShadowBody: "Turn on a stage's shadow on the Routing tab, then come back after it has run on some calls.",
   },
   {
     route: "Tuyến:",
+    primaryFor: (stage: string) => `Model chính cho ${stage}`,
+    accountFor: (stage: string) => `Tài khoản AWS cho ${stage}`,
+    accountHidden: "Mọi bước đều chạy trong tài khoản LLM, nên không có tài khoản nào để chọn.",
+    colQuestion: "Câu hỏi",
+    colMode: "Chế độ",
+    colBands: "Đạt / loại",
+    colCalibration: "Hiệu chuẩn",
+    colVerdicts: "Phán quyết (7 ngày)",
+    colCost7d: "Chi phí (7 ngày)",
+    loadJevStagesError: "Không tải được các câu hỏi Jev.",
     shadowCompare: (pct: number) => `Chạy bóng (${pct}%, chỉ để so sánh):`,
     modelSaved: (stage: string) => `Đã lưu model cho ${stage}`,
     saveFailed: "Lưu thất bại",
@@ -210,10 +225,6 @@ export const MODELS = defineMessages(
     stagesIntroD: "chạy bóng A/B",
     stagesIntroE:
       ". Chạy bóng gọi thêm một lượt giám khảo trên một phần lượt gọi, nên chi phí ở các lượt đó tăng gấp đôi — chỉ bật khi đang so sánh. Model không dùng được được liệt kê ở trạng thái tắt kèm lý do.",
-    subStages: "Các bước",
-    subCatalog: "Danh mục",
-    subShadow: "Chạy bóng A/B",
-    subConnections: "Kết nối",
     routeSaved: (stage: string) => `Đã lưu tuyến cho ${stage}`,
     routeEditor: "Sửa tuyến",
     dataScope: "Dữ liệu:",
@@ -247,10 +258,6 @@ export const MODELS = defineMessages(
     fallbacksLine: (list: string) => `Dự phòng: ${list}`,
     nonePrimaryOnly: "không có (chỉ model chính)",
     secondCall: (pct: number) => ` — thao tác này gọi thêm một lượt giám khảo trên ${pct}% lượt gọi.`,
-    saved: (key: string) => `Đã lưu ${key}`,
-    inMtok: "Vào/MTok",
-    outMtok: "Ra/MTok",
-    priceSource: "nguồn giá",
     toggled: (key: string, enabled: boolean) => `${key} đã ${enabled ? "bật" : "tắt"}`,
     updateFailed: "cập nhật thất bại",
     colModel: "Model",
@@ -264,17 +271,19 @@ export const MODELS = defineMessages(
     toggle: (key: string) => `Bật/tắt ${key}`,
     onTitle: "Bật",
     offTitle: "Tắt",
-    needsPriceTitle: "Đặt giá đầu vào và đầu ra trước khi bật",
+    needsPriceTitle: "Model cần có giá đầu vào và đầu ra trước khi bật (giá đổi qua migration)",
     needsPrice: "cần có giá",
     colBlocked: "Bị chặn",
     colUpdated: "Cập nhật",
-    editPrice: "Sửa giá",
     catalogIntro:
-      "Mọi model nền tảng có thể gọi. Các danh sách chọn của quản trị và mọi số liệu chi phí đều đọc các dòng này. Sửa giá theo MTok và nguồn giá, và bật/tắt một model — không thể bật một model khi chưa có cả giá đầu vào lẫn đầu ra.",
-    editPriceFor: "Sửa giá —",
+      "Các danh sách chọn của quản trị và mọi số liệu chi phí đều đọc các dòng này. Bật hoặc tắt một model ở đây; không thể bật một model khi chưa có cả giá đầu vào lẫn đầu ra.",
     loadCatalogError: "Không tải được danh mục",
     searchModels: "Tìm model…",
     noModels: "Danh mục chưa có model nào",
+    modelsIntro: "Mọi model nền tảng gọi được, và model chạy bóng so với model chính trên các lượt gọi thật ra sao.",
+    catalogTitle: "Danh mục model",
+    shadowTitle: "So sánh chạy bóng",
+    pricesReadOnly: "Giá chỉ đổi qua một thay đổi cấu hình có duyệt (migration), không đổi ở đây.",
     colStage: "Bước",
     colPair: "Chính → Chạy bóng",
     colAgreement: "Mức đồng thuận",
@@ -290,6 +299,6 @@ export const MODELS = defineMessages(
     loadShadowError: "Không tải được báo cáo chạy bóng",
     searchStages: "Tìm bước…",
     noShadowTitle: "Không có so sánh chạy bóng nào trong khoảng này",
-    noShadowBody: "Bật chạy bóng cho một bước ở tab Các bước, rồi quay lại sau khi nó đã chạy trên một số lượt gọi.",
+    noShadowBody: "Bật chạy bóng cho một bước ở tab Điều hướng, rồi quay lại sau khi nó đã chạy trên một số lượt gọi.",
   },
 );

@@ -1,4 +1,4 @@
-// app/admin/settings/llmShared.vi.ts — AA-994: the Vietnamese twin of the stage labels and stage group labels in
+// app/admin/ai-gateway/llmShared.vi.ts — AA-994: the Vietnamese twin of the stage labels and stage group labels in
 // llmShared.ts (STAGE_LABELS, STAGE_GROUPS[].label), picked with useLocalized() through useStageText().
 // Same keys as the English side: a stage key, a group key. A missing key falls back to English.
 
