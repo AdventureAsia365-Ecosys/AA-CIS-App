@@ -867,9 +867,10 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     (`place_cards.relink_tour_place_cards`, `max_places=0`, result key `place_cards_relink`) before `place_extract`
     (AA-989). S262: a group the relink (or a build over its 40-place cap) leaves for a paid draft gets an
     `atom_place_card` row with `card_id` NULL and `miss_reason = 'needs_draft'` (`place_cards.NEEDS_DRAFT`, not a
-    `place_card_miss` row: the build and T8 still draft it); such an atom whose replaced predecessor of the same
-    source carried exactly one non-rejected card (same place, else same day + core name) is linked to that card for
-    free (`carried_over`).
+    `place_card_miss` row: the build and T8 still draft it); such an atom is linked for free (`carried_over`) only
+    when every replaced predecessor of the same source that competes for it carries the same non-rejected card:
+    same name (any day while they agree, else the same day; a generic name such as "City Palace" the same day only),
+    else same day + core name. A cardless predecessor (miss, needs_draft, no row, rejected card) competes too.
 - **Bedrock Batch for S1 (AA-606)**: `shared/llm_client/bedrock_batch.py` +
   `services/content_generation/s1_batch.py`, endpoints `POST /admin/s1-batch/submit` and
   `GET /admin/s1-batch/{job_id}`. Built and merged, but **never run for real**: AWS has not yet

@@ -21,11 +21,20 @@ predecessor of the same source linked to exactly one card. Infra companion PR: `
   atoms that still hold a `needs_draft` row, and the non-rejected cards of the replaced atoms of the same source
   (`COALESCE(raw_tours.source_group_id, tour_id)`, atoms not in `v_active_tour_atoms`). The pure
   `plan_carry_over` uses the atom_repoint narrowing:
-  1. Same `place_norm()`. If that gives several cards, keep only the same itinerary day.
-  2. If no predecessor has the same name, the same day and the same `core_key()`. This catches respellings
-     ("X Pass (3550m)" after "X Pass") and generic names linked by an earlier draft.
+  1. Same `place_norm()`. A distinctive name looks at every day while all those predecessors agree on one card. If
+     they disagree (two cards, or one of them cardless), only the same itinerary day counts; nothing on that day
+     means ambiguous, so no weaker rule is tried. A generic name (`is_generic_name`, "City Palace") only ever looks
+     at its own day: it names a different place in every city.
+  2. If no predecessor has the same name on the day(s) above, the same day and the same `core_key()`. This catches
+     respellings ("X Pass (3550m)" after "X Pass").
 
-  The atom is linked only when exactly one distinct card is left. New counter `carried_over`.
+  The atom is linked only when every predecessor left carries the same non-rejected card. New counter
+  `carried_over`.
+- **Every predecessor competes (review fix, S262).** `_REPLACED_CARDS_SQL` reads every replaced place atom of the
+  source with LEFT JOINs to `atom_place_card` / `place_card`. `card_id` is NULL for a miss row, a `needs_draft` row,
+  no row, or a rejected card, and such a row still counts as a competitor. The first version inner-joined the card,
+  so a cardless "City Palace" on day 8 was invisible and the day-3 card of another city was carried to it (and,
+  being a link, it would never be re-drafted).
 - **No alias row on a carry-over.** The evidence is this tour's own history, not a name that is safe as a
   country-wide alias. A paid draft still adds aliases as before.
 - **The carry-over soft-fails.** An error leaves the `needs_draft` rows and sets `carried_over = "failed: <Type>"`.
@@ -58,9 +67,12 @@ predecessor of the same source linked to exactly one card. Infra companion PR: `
   link), about 5 atoms on Dev.
 - **The carry-over is per atom, not per group.** Two atoms of one group on different days can end up in different
   states. That is the same per-atom rule atom_repoint uses.
-- **Known edge case.** A generic name on a tour whose days shifted, with two predecessor cards, narrows to the same
-  day number. That can pick the other city's card. atom_repoint has the same limit. Tours with one such card are
-  unaffected.
+- **Known edge case.** A generic name is matched on the same day number. On a tour whose days shifted, the same day
+  number can hold the other city's "City Palace", and its card is carried. atom_repoint has the same limit. The
+  harm is bounded: the predecessor on that day had that card, and an admin can rebuild. Never across days.
+- **Conservative on purpose.** Several tour versions that disagree (an older version cardless, a newer one with a
+  card) leave the atom for the paid draft. The cost is a draft that a looser rule would have saved; a wrong sticky
+  link costs more (writers get another place's facts and the link is never re-drafted).
 
 ## Should know
 

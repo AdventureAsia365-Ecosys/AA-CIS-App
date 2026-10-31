@@ -1483,8 +1483,10 @@ _TOUR_PLACE_ATOMS_SQL = """
 RELINK_MAX_ATOMS = 400   # = place_cards_build MAX_ATOMS (the largest tours have ~100 atoms)
 
 
-# S262 — the tour's atoms still waiting for a draft after the free pass, and the cards their REPLACED predecessors
-# (same source: every version of the tour, deleted or superseded atoms) were linked to. Rejected cards never count.
+# S262 — the tour's atoms still waiting for a draft after the free pass, and EVERY replaced predecessor place atom
+# (same source: every version of the tour, deleted or superseded atoms) with the card it was linked to. card_id is
+# NULL for a predecessor with a miss row, a needs_draft row, no row, or a rejected card: it still competes, so a
+# cardless 'City Palace' on another day blocks a carry instead of being invisible (review fix, S262).
 _WAITING_ATOMS_SQL = """
     SELECT k.atom_id, a.itinerary_day, btrim(a.place) AS place
       FROM acp_shared.atom_place_card k
@@ -1492,35 +1494,52 @@ _WAITING_ATOMS_SQL = """
      WHERE k.atom_id = ANY($1::text[]) AND k.card_id IS NULL AND k.miss_reason = 'needs_draft'
 """
 _REPLACED_CARDS_SQL = """
-    SELECT a.atom_id, a.itinerary_day, btrim(a.place) AS place, k.card_id::text AS card_id
+    SELECT a.atom_id, a.itinerary_day, btrim(a.place) AS place, pc.card_id::text AS card_id
       FROM acp_contract.tour_atoms a
       JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = a.tour_id
-      JOIN acp_shared.atom_place_card k ON k.atom_id = a.atom_id AND k.card_id IS NOT NULL
-      JOIN acp_shared.place_card pc ON pc.card_id = k.card_id AND pc.status <> 'rejected'
+      LEFT JOIN acp_shared.atom_place_card k ON k.atom_id = a.atom_id
+      LEFT JOIN acp_shared.place_card pc ON pc.card_id = k.card_id AND pc.status <> 'rejected'
      WHERE COALESCE(rt.source_group_id, rt.tour_id) = (
                SELECT COALESCE(t.source_group_id, t.tour_id) FROM silver_aa_internal.raw_tours t
                 WHERE t.tour_id = $1::uuid)
+       AND NOT a.is_empty_marker AND a.place IS NOT NULL AND btrim(a.place) <> ''
        AND NOT EXISTS (SELECT 1 FROM acp_contract.v_active_tour_atoms v WHERE v.atom_id = a.atom_id)
 """
 
 
+def _one_card(rows: list[dict]) -> Optional[str]:
+    """The card when every row carries the same non-rejected card; None when there is no row, a cardless row, or
+    two cards (a competing predecessor, never a guess)."""
+    cards = {r.get("card_id") for r in rows}
+    return next(iter(cards)) if len(cards) == 1 and None not in cards else None
+
+
 def plan_carry_over(waiting: list[dict], replaced: list[dict]) -> dict[str, str]:
-    """S262 — atom_id → card_id for waiting atoms whose replaced predecessor carried ONE card (atom_repoint's
-    narrowing, AA-990). Free, pure. Per waiting atom: the replaced atoms with the same place_norm(); several
-    cards → only those on the same itinerary day. No same-place predecessor → the same day and the same core_key()
-    (a respelling: 'X Pass (3550m)' after 'X Pass'; a generic 'City Palace' linked by an earlier draft).
-    Exactly one distinct card left → carried; none or several → left for a draft (never a guess)."""
+    """S262 — atom_id → card_id for waiting atoms whose replaced predecessors agree on ONE card (atom_repoint's
+    narrowing, AA-990). Free, pure. `replaced` holds every predecessor place atom; card_id None = no usable card,
+    and such a row still competes. Per waiting atom:
+      - a generic name ('City Palace', 'Night Market': a different place in every city) only looks at its own
+        itinerary day, never across days;
+      - a distinctive name looks at every predecessor with the same place_norm(); when they disagree (two cards, or
+        one cardless), only the same day counts, and nothing on that day → left for a draft (ambiguous, no weaker rule);
+      - no same-name predecessor → the same day and the same core_key() (a respelling: 'X Pass (3550m)' after
+        'X Pass').
+    Linked only when every predecessor left carries the same card; anything else stays for the paid draft."""
     out: dict[str, str] = {}
     for w in waiting:
         pn, ck, day = place_norm(w["place"]), core_key(w["place"]), w.get("itinerary_day")
         same = [r for r in replaced if place_norm(r["place"]) == pn]
-        if len({r["card_id"] for r in same}) > 1:
+        if is_generic_name(w["place"]):
             same = [r for r in same if r.get("itinerary_day") == day]
+        elif same and _one_card(same) is None:
+            same = [r for r in same if r.get("itinerary_day") == day]
+            if not same:
+                continue                       # same-name predecessors disagree and none is on this day
         if not same:
             same = [r for r in replaced if r.get("itinerary_day") == day and core_key(r["place"]) == ck]
-        cards = {r["card_id"] for r in same}
-        if len(cards) == 1:
-            out[w["atom_id"]] = cards.pop()
+        card = _one_card(same)
+        if card is not None:
+            out[w["atom_id"]] = card
     return out
 
 

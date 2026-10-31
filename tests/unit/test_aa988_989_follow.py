@@ -279,6 +279,18 @@ def test_relink_never_guesses_between_two_prior_cards():
     assert out["carried_over"] == 0 and db.links["n1"] == {"card_id": None, "miss_reason": "needs_draft"}
 
 
+def test_relink_never_carries_a_generic_card_to_a_day_whose_predecessor_had_none():
+    """Review fix (S262): 'City Palace' linked on day 3 (one city), a cardless 'City Palace' on day 8 (another city).
+    After a rerun only the day-3 atom gets the card; the day-8 atom stays NEEDS_DRAFT for the paid build."""
+    db = _TourDB([_day_atom("n3", "City Palace", 3), _day_atom("n8", "City Palace", 8)],
+                 replaced=[{"atom_id": "o3", "itinerary_day": 3, "place": "City Palace", "card_id": "c7"},
+                           {"atom_id": "o8", "itinerary_day": 8, "place": "City Palace", "card_id": None}])
+    out = _relink(db)
+    assert out["carried_over"] == 1
+    assert db.links["n3"] == {"card_id": "c7", "miss_reason": None}
+    assert db.links["n8"] == {"card_id": None, "miss_reason": "needs_draft"}
+
+
 def test_relink_with_no_waiting_atom_skips_the_predecessor_read():
     db = _TourDB([_atom("n4", "standard ger camp")],
                  replaced=[{"atom_id": "o1", "itinerary_day": 1, "place": "standard ger camp", "card_id": "c1"}])
@@ -318,6 +330,42 @@ def test_a_failed_carry_over_keeps_the_needs_draft_rows():
     # nothing alike → no link
     ({"place": "Lake Quellin", "itinerary_day": 1},
      [{"place": "Zorvan Pass", "itinerary_day": 1, "card_id": "c1"}], None),
+    # review fix: a generic name never carries across days, even with one card in the tour's history
+    ({"place": "City Palace", "itinerary_day": 7},
+     [{"place": "City Palace", "itinerary_day": 2, "card_id": "c1"}], None),
+    # review fix: a cardless same-name predecessor competes (a miss / needs_draft / no row / rejected card)
+    ({"place": "City Palace", "itinerary_day": 8},
+     [{"place": "City Palace", "itinerary_day": 3, "card_id": "c7"},
+      {"place": "City Palace", "itinerary_day": 8, "card_id": None}], None),
+    ({"place": "City Palace", "itinerary_day": 3},
+     [{"place": "City Palace", "itinerary_day": 3, "card_id": "c7"},
+      {"place": "City Palace", "itinerary_day": 8, "card_id": None}], "c7"),
+    ({"place": "Lake Quellin", "itinerary_day": 8},
+     [{"place": "Lake Quellin", "itinerary_day": 3, "card_id": "c7"},
+      {"place": "Lake Quellin", "itinerary_day": 8, "card_id": None}], None),
+    ({"place": "Lake Quellin", "itinerary_day": 3},
+     [{"place": "Lake Quellin", "itinerary_day": 3, "card_id": "c7"},
+      {"place": "Lake Quellin", "itinerary_day": 8, "card_id": None}], "c7"),
+    # same-name predecessors disagree and none is on this day → no fall back to the weaker core-name rule
+    ({"place": "Lake Quellin", "itinerary_day": 5},
+     [{"place": "Lake Quellin", "itinerary_day": 3, "card_id": "c7"},
+      {"place": "Lake Quellin", "itinerary_day": 8, "card_id": None},
+      {"place": "Quellin Lake", "itinerary_day": 5, "card_id": "c9"}], None),
+    # a cardless predecessor on the same day blocks a generic name too
+    ({"place": "City Palace", "itinerary_day": 3},
+     [{"place": "City Palace", "itinerary_day": 3, "card_id": "c7"},
+      {"place": "City Palace", "itinerary_day": 3, "card_id": None}], None),
+    # the only predecessor is cardless → nothing to carry
+    ({"place": "Lake Quellin", "itinerary_day": 2},
+     [{"place": "Lake Quellin", "itinerary_day": 2, "card_id": None}], None),
+    # several tour versions with the same card on the same day agree → carried
+    ({"place": "City Palace", "itinerary_day": 3},
+     [{"place": "City Palace", "itinerary_day": 3, "card_id": "c7"},
+      {"place": "City Palace", "itinerary_day": 3, "card_id": "c7"}], "c7"),
+    # a generic respelling on the same day (core name) still carries
+    ({"place": "City Palace", "itinerary_day": 3},
+     [{"place": "City Palace (Velmora)", "itinerary_day": 3, "card_id": "c7"},
+      {"place": "City Palace", "itinerary_day": 6, "card_id": "c8"}], "c7"),
 ])
 def test_plan_carry_over_narrows_like_atom_repoint(waiting, replaced, expected):
     plan = pc.plan_carry_over([dict(waiting, atom_id="n1")], replaced)
