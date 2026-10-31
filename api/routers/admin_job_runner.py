@@ -4,6 +4,8 @@
   GET  /admin/job-runner/jobs/{id}         one job (status, progress, result, cost, error)
   POST /admin/job-runner/jobs/{id}/cancel  queued -> cancelled; running -> flagged, worker stops it
   POST /admin/job-runner/jobs/{id}/retry   failed / stopped_budget / cancelled -> queued
+  POST /admin/job-runner/jobs/retry-llm-denied  re-queue the jobs an LLM account block failed (DRY RUN by default,
+                                           audited; AA-1018)
   GET  /admin/job-runner/summary           counts per kind and status, registered kinds
   GET  /admin/job-runner/jobs/{id}/llm-calls  LLM calls the job made (AA-687)
   GET  /admin/job-runner/workers           worker liveness, running per worker, queue depth (AA-687)
@@ -25,6 +27,7 @@ Not under /admin/jobs: that path serves the older shared.pipeline_jobs (AA-223, 
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Literal, Optional
 
@@ -113,6 +116,9 @@ async def list_jobs(request: Request, kind: Optional[str] = None,
                     until: Optional[str] = Query(None, description="created_at < this ISO datetime"),
                     created_by: Optional[str] = Query(None, description="exact created_by match"),
                     q: Optional[str] = Query(None, description="id prefix / kind / created_by search"),
+                    reason: Optional[str] = Query(None, max_length=64,
+                                                  description="AA-1018: the error starts with this text, e.g. "
+                                                              "llm_access_denied"),
                     fields: Optional[str] = Query(None, description="S241: full (default) | summary — summary "
                                                   "returns payload/result as null (read them from /jobs/{id})")):
     # `fields` is compared as a str: a direct call (unit tests) gets the Query default object.
@@ -127,11 +133,13 @@ async def list_jobs(request: Request, kind: Optional[str] = None,
     since_dt = _parse_dt(since, "since")
     until_dt = _parse_dt(until, "until")
     q_clean = q.strip() if q and q.strip() else None
+    # `reason` is compared as a str: a direct call (unit tests) gets the Query default object.
+    reason_clean = reason.strip() if isinstance(reason, str) and reason.strip() else None
     size = page_size or limit
     offset = (page - 1) * size
     pool = request.app.state.pool
     filters = dict(kind=kind, status=status, tour_id=tour_id, since=since_dt, until=until_dt,
-                   created_by=created_by, q=q_clean)
+                   created_by=created_by, q=q_clean, reason=reason_clean)
     rows = await queue.list_jobs(pool, limit=size, offset=offset, sort=sort, sort_dir=sort_dir,
                                  include_blobs=fields != "summary", **filters)
     total = await queue.count_jobs(pool, **filters)
@@ -262,6 +270,52 @@ async def retry_job(job_id: str, request: Request, x_admin_secret: str = Header(
         raise HTTPException(status_code=409, detail="only failed, stopped_budget or cancelled jobs can be retried")
     logger.info("admin_job_retry", job_id=job_id, admin_user=x_admin_user_id)
     return {"job_id": job_id, "status": "queued"}
+
+
+# ── AA-1018 — re-queue the jobs an LLM account block failed ──────────────────────────────────────────────────────
+
+RETRY_LLM_DENIED_DEFAULT_WINDOW = timedelta(days=14)
+
+
+class RetryLlmDeniedRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    dry_run: bool = True
+    # ISO-8601; default: 14 days ago (finished_at of the failed job).
+    since: Optional[str] = None
+    kinds: list[str] = Field(default_factory=list, max_length=50)
+    limit: int = Field(queue.RETRY_REASON_LIMIT, ge=1, le=queue.RETRY_REASON_MAX_LIMIT)
+
+
+@router.post("/jobs/retry-llm-denied", summary="Re-queue jobs an LLM account block failed (DRY RUN by default)")
+async def retry_llm_denied(body: RetryLlmDeniedRequest, request: Request, x_admin_secret: str = Header(None),
+                           x_admin_user_id: Optional[str] = Header(None)):
+    """AA-1018 — the `failed` jobs whose error starts with `llm_access_denied` (every model was refused at account
+    level, AA-900) get a fresh set of attempts, like the one-job retry. DRY RUN by default: lists the jobs an apply
+    would re-queue and the ones it would hold (a kind that refuses retries, or a job whose LLM connection is still
+    refused: shared/jobs/queue.py `retry_by_reason`). One audit row per call (`jobs_retry_llm_denied`)."""
+    verify_admin_secret(x_admin_secret)
+    since_dt = _parse_dt(body.since, "since") if body.since else None
+    if since_dt is None:
+        since_dt = datetime.now(timezone.utc) - RETRY_LLM_DENIED_DEFAULT_WINDOW
+    elif since_dt.tzinfo is None:
+        since_dt = since_dt.replace(tzinfo=timezone.utc)
+    kinds_clean = [k.strip() for k in body.kinds if k and k.strip()]
+    pool = request.app.state.pool
+    out = await queue.retry_by_reason(pool, queue.RETRY_REASON_DEFAULT, since=since_dt, kinds=kinds_clean,
+                                      dry_run=body.dry_run, limit=body.limit)
+    actor = f"admin:{x_admin_user_id}" if x_admin_user_id else "admin"
+    details = {k: out[k] for k in ("dry_run", "prefix", "since", "kinds", "limit", "matched", "eligible",
+                                   "held_count", "requeued")}
+    details["requeued_ids"] = out["requeued_ids"][:100]
+    details["blocked_connections"] = out["blocked_connections"]
+    async with pool.acquire() as db:
+        await db.execute(
+            "INSERT INTO acp_shared.audit_log (actor, action, resource_type, resource_id, details) "
+            "VALUES ($1, $2, $3, $4, $5::jsonb)",
+            actor[:64], "jobs_retry_llm_denied", "shared.job", queue.RETRY_REASON_DEFAULT, json.dumps(details))
+    logger.info("admin_jobs_retry_llm_denied", admin_user=x_admin_user_id, **{k: details[k] for k in (
+        "dry_run", "matched", "eligible", "held_count", "requeued")})
+    return out
 
 
 # ── AA-825 — retention kinds (services/jobs/retention_job.py) ─────────────────────────────────

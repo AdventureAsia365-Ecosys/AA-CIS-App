@@ -14,8 +14,9 @@ from shared.jobs.worker import in_api_enabled
 
 
 def test_backoff_doubles_and_is_capped():
-    assert [queue.backoff_seconds(n) for n in (1, 2, 3)] == [30, 60, 120]
-    assert queue.backoff_seconds(20) == queue.BACKOFF_MAX_SECONDS
+    # AA-1018: plus a random jitter of up to a quarter (tests/unit/test_aa1018_retry_by_reason.py); rand 0 = the curve
+    assert [queue.backoff_seconds(n, rand=lambda: 0.0) for n in (1, 2, 3)] == [30, 60, 120]
+    assert queue.backoff_seconds(20, rand=lambda: 0.0) == queue.BACKOFF_MAX_SECONDS
 
 
 @pytest.mark.parametrize("value,expected", [(None, False), ("true", True), ("1", True),
