@@ -103,6 +103,10 @@ const ADMIN_PAGES: PageSpec[] = [
   { id: 'ai-gateway-routing', label: 'AI providers · Routing', path: '/admin/ai-gateway?tab=routing', readySelector: '[data-testid="ai-gateway-routing-ready"]', viewerRefused: true },
   { id: 'ai-gateway-models', label: 'AI providers · Models & trials', path: '/admin/ai-gateway?tab=models', readySelector: '[data-testid="ai-gateway-models-ready"]', viewerRefused: true },
   { id: 'ai-gateway-budgets', label: 'AI providers · Budgets', path: '/admin/ai-gateway?tab=budgets', readySelector: '[data-testid="ai-gateway-budgets-ready"]', viewerRefused: true },
+  // AA-804 UI part 3: the Calls tab (every logged paid call; `ai-gateway-calls-ready` once the first page answered) and
+  // Cost Operations' merged "AI & data spend" tab with TripPlanner's stage caps (AA-1015; `cost-tp-caps` is the section).
+  { id: 'ai-gateway-calls', label: 'AI providers · Calls', path: '/admin/ai-gateway?tab=calls', readySelector: '[data-testid="ai-gateway-calls-ready"]', viewerRefused: true },
+  { id: 'cost-ops-spend', label: 'Cost Operations · AI & data spend', path: '/admin/cost-ops?tab=spend', readySelector: '[data-testid="cost-tp-caps"]', viewerRefused: true },
   { id: 'tenant-activity', label: 'Content Trace', path: '/admin/tenant-activity', readySelector: '[data-testid="admin-content-ready"]', viewerRefused: true },
   { id: 'tenants', label: 'Tenants', path: '/admin/tenants', viewerRefused: true },
   { id: 'upload', label: 'Upload', path: '/admin/upload', viewerRefused: true },

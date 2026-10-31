@@ -44,6 +44,8 @@ export {
   type ControlSize, type InputProps, type SelectProps, type SelectOption, type TextareaProps, type ChoiceProps,
 } from "./core/FormControls";
 export { Money } from "./core/Money";
+export { TraceTimeline, formatDuration, sinceStart, type TimelineEvent } from "./core/TraceTimeline";
+export { LatencyStrip, latencyStats, type LatencyPoint, type LatencyStats } from "./core/LatencyStrip";
 export { DateText, relativeTime } from "./core/DateText";
 export {
   formatMoney, minorUnits, formatDay, isIsoDay, parseDayInput, relativeParts, type RelativeParts,

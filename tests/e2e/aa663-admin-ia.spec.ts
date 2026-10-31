@@ -58,8 +58,13 @@ const REDIRECTS: [string, RegExp][] = [
   ['/admin/settings?tab=models', /\/admin\/ai-gateway\?tab=routing$/],
   ['/admin/settings?tab=jev-credit', /\/admin\/ai-gateway\?tab=providers&view=jev-credit$/],
   ['/admin/cost-ops?tab=budgets', /\/admin\/ai-gateway\?tab=budgets$/],
-  ['/admin/llm-usage', /\/admin\/cost-ops\?tab=llm$/],
+  ['/admin/llm-usage', /\/admin\/cost-ops\?tab=spend$/],
   ['/admin/llm-usage?tab=budgets', /\/admin\/ai-gateway\?tab=budgets$/],
+  // AA-804 UI part 3 — the LLM, DataForSEO and Jev tabs became views of Cost Operations › AI & data spend.
+  ['/admin/cost-ops?tab=llm', /\/admin\/cost-ops\?tab=spend$/],
+  ['/admin/cost-ops?tab=dfs', /\/admin\/cost-ops\?tab=spend&view=dfs$/],
+  ['/admin/cost-ops?tab=jev', /\/admin\/cost-ops\?tab=spend&view=jev$/],
+  ['/admin/llm-usage?tab=jev', /\/admin\/cost-ops\?tab=spend&view=jev$/],
 ];
 
 async function login(page: Page) {

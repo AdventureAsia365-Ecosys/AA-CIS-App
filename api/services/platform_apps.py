@@ -41,12 +41,14 @@ import httpx
 import structlog
 
 from api.core import readiness
-from api.core.app_registry import APPS, TP_DEFAULT_DAILY_CAP_USD, TP_ONLINE_STAGES
+from api.core.app_registry import (APPS, TP_DEFAULT_DAILY_CAP_USD, TP_NEAR_CAP_RATIO, TP_ONLINE_STAGES,
+                                   TP_STAGE_CAPS_USD)
 from api.services import app_health
 
 logger = structlog.get_logger()
 
-CACHE_KEY = "admin_platform_apps:v4"   # v2 (S243): probe / traffic / health; v3 (AA-936): + crm; v4 (AA-804): tp ai
+CACHE_KEY = "admin_platform_apps:v5"   # v2 (S243): probe / traffic / health; v3 (AA-936): + crm; v4 (AA-804): tp ai;
+#                                        v5 (AA-1015): tp stage caps + near_cap
 CACHE_TTL_S = 60
 HTTP_TIMEOUT_S = 2.0
 TP_WARN_PCT = 80.0
@@ -266,6 +268,14 @@ async def crm_jobs(authorization: Optional[str], client: Optional[httpx.AsyncCli
     return {"status": "ok", "generated_at": body.get("generated_at"), "kinds": kinds if isinstance(kinds, list) else []}
 
 
+async def crm_llm_calls(authorization: Optional[str], params: dict,
+                        client: Optional[httpx.AsyncClient] = None) -> tuple[Optional[dict], dict]:
+    """AA-804 (UI part 3) — one page of the CRM's LLM ledger rows (crm.ops.v1 1.6 GET /llm/calls: scrubbed fields
+    only, no text), with the staff member's own WORKFORCE token, for the AI providers Calls tab. ``(body, {})`` or
+    ``(None, problem)`` like ``_crm_ops_get``. Never raises; never cached (the answer depends on the caller)."""
+    return await _crm_ops_get(authorization, "/llm/calls", params, client)
+
+
 async def crm_llm_usage(authorization: Optional[str], start: date, end_exclusive: date,
                         client: Optional[httpx.AsyncClient] = None) -> dict:
     """AA-936 — the CRM's LLM usage for ``[start, end_exclusive)`` from its own gateway rollup (crm.ops.v1
@@ -296,6 +306,42 @@ async def crm_llm_usage(authorization: Optional[str], start: date, end_exclusive
             "cost_usd": round(sum(m["cost_usd"] for m in models), 6), "by_model": models}
 
 
+def _cap_level(pct: Optional[float]) -> str:
+    return "ok" if pct is None or pct < TP_WARN_PCT else ("warn" if pct < 100 else "cap_reached")
+
+
+def tp_spend_today(by_stage: list[dict], *, cap: float = TP_DEFAULT_DAILY_CAP_USD,
+                   stage_caps: Optional[dict[str, Optional[float]]] = None,
+                   near_ratio: float = TP_NEAR_CAP_RATIO) -> dict:
+    """The TripPlanner card's spend block: today's online-stage spend against the combined daily cap and, AA-1015,
+    each online stage against its own cap (None = no stage cap: only the combined cap applies, as in TP
+    ``budget_status``). ``near_cap`` follows TP's rule: at ``near_ratio`` of either cap. Pure (unit-tested)."""
+    stage_caps = TP_STAGE_CAPS_USD if stage_caps is None else stage_caps
+    spent = {s["stage"]: s for s in by_stage}
+    total = round(sum(s["cost_usd"] for s in by_stage), 6)
+    pct = round(100.0 * total / cap, 1) if cap else None
+    stages = []
+    for stage in TP_ONLINE_STAGES:
+        row = spent.get(stage, {"calls": 0, "cost_usd": 0.0})
+        stage_cap = stage_caps.get(stage)
+        s_pct = round(100.0 * row["cost_usd"] / stage_cap, 1) if stage_cap else None
+        stages.append({"stage": stage, "calls": row["calls"], "cost_usd": row["cost_usd"], "cap_usd": stage_cap,
+                       "pct_of_cap": s_pct, "near_cap": bool(stage_cap) and row["cost_usd"] >= stage_cap * near_ratio,
+                       "level": _cap_level(s_pct)})
+    near = (bool(cap) and total >= cap * near_ratio) or any(s["near_cap"] for s in stages)
+    return {
+        "cost_usd": total, "calls": sum(s["calls"] for s in by_stage), "by_stage": by_stage,
+        "cap_usd": cap, "pct_of_cap": pct,
+        "cap_label": f"default cap {cap:g} USD (TP env may differ)",
+        "level": _cap_level(pct),
+        "since": "UTC midnight", "stages": list(TP_ONLINE_STAGES),
+        # AA-1015: per-stage caps (mirrored TP env, unset today), the near-cap flag and its threshold.
+        "stage_caps": stages,
+        "stage_caps_set": any(s["cap_usd"] is not None for s in stages),
+        "near_cap": near, "near_cap_pct": round(near_ratio * 100),
+    }
+
+
 async def _tripplanner_card(pool: Any) -> dict:
     info = APPS["tripplanner"]
     card: dict[str, Any] = {"id": "tripplanner", "label": info.label, "repo_url": info.repo_url,
@@ -315,15 +361,7 @@ async def _tripplanner_card(pool: Any) -> dict:
         return card
     by_stage = [{"stage": r["stage"], "calls": r["calls"], "cost_usd": round(float(r["cost_usd"]), 6)}
                 for r in rows]
-    total = round(sum(s["cost_usd"] for s in by_stage), 6)
-    pct = round(100.0 * total / TP_DEFAULT_DAILY_CAP_USD, 1) if TP_DEFAULT_DAILY_CAP_USD else None
-    card["spend_today"] = {
-        "cost_usd": total, "calls": sum(s["calls"] for s in by_stage), "by_stage": by_stage,
-        "cap_usd": TP_DEFAULT_DAILY_CAP_USD, "pct_of_cap": pct,
-        "cap_label": f"default cap {TP_DEFAULT_DAILY_CAP_USD:g} USD (TP env may differ)",
-        "level": "ok" if pct is None or pct < TP_WARN_PCT else ("warn" if pct < 100 else "cap_reached"),
-        "since": "UTC midnight", "stages": list(TP_ONLINE_STAGES),
-    }
+    card["spend_today"] = tp_spend_today(by_stage)
     card["ai"] = {"paused": False, "reason": None}
     return card
 

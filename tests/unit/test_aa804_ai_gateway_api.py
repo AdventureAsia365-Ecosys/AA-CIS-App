@@ -59,7 +59,8 @@ class FakePool:
 # ── route policy ───────────────────────────────────────────────────────────────────────────────────────────────────
 
 def test_routes_are_spend_read_and_admin_only():
-    for path in ("/admin/ai-gateway/providers", "/admin/ai-gateway/trace", "/admin/ai-gateway/budgets"):
+    for path in ("/admin/ai-gateway/providers", "/admin/ai-gateway/trace", "/admin/ai-gateway/budgets",
+                 "/admin/ai-gateway/calls"):
         assert staff_authz.POLICY[("GET", path)] == staff_authz.SPEND_READ
     assert staff_authz.SPEND_READ in staff_authz.ROLE_PERMS["admin"]
     for role in ("reviewer", "content", "viewer"):
@@ -71,7 +72,7 @@ def test_routes_are_served_and_run_the_policy():
 
     found = {(m, p): (r, inh) for m, p, r, inh in _staff_routes() if p.startswith("/admin/ai-gateway")}
     assert set(found) == {("GET", "/admin/ai-gateway/providers"), ("GET", "/admin/ai-gateway/trace"),
-                          ("GET", "/admin/ai-gateway/budgets")}
+                          ("GET", "/admin/ai-gateway/budgets"), ("GET", "/admin/ai-gateway/calls")}
     for (_m, p), (r, inh) in found.items():
         assert r.path == p and _runs_policy(r, inh, p)
 
@@ -312,7 +313,9 @@ def _llm(at, cost, total_n=2, total_cost=0.3):
     return {"at": at, "stage": "invented_stage", "role": "writer", "model": "model-a", "provider": "bedrock-satellite",
             "account": "llm-main", "tokens_in": 10, "tokens_out": 20, "cache_read_tokens": None,
             "cache_write_tokens": None, "cost_usd": cost, "stop_reason": "end_turn", "fallback_used": False,
-            "pricing_mode": "catalog", "shadow": False, "total_n": total_n, "total_cost": total_cost}
+            "pricing_mode": "catalog", "shadow": False, "total_n": total_n, "total_cost": total_cost,
+            "status": "ok", "error_class": None, "latency_ms": 900, "attempt_no": 1, "connection_key": "llm-main",
+            "job_id": JOB, "tour_id": None, "app": "cis"}
 
 
 def _trace_pool(job, fail=()):
@@ -342,10 +345,12 @@ def test_trace_merges_the_ledgers_in_time_order():
                                      "error": None}
     assert out["sources"]["geocoder"]["events"] == 0 and out["sources"]["geocoder"]["read"] is True
     assert out["totals"] == {"events": 4, "cost_usd": 0.351}
-    assert out["notes"] == ["refused_calls_not_logged"]
-    # the two ledgers without a job index are bounded by the run window
+    # the DFS row has no status (written before ledger v2): the trace says older rows carry no outcome
+    assert out["notes"] == ["rows_before_ledger_v2"]
+    assert out["events"][0]["latency_ms"] == 900 and out["events"][0]["status"] == "ok"
+    # decision_log has a job index since 319; only the geocoder read is bounded by the run window
     window = (NOW - timedelta(hours=1), NOW - timedelta(minutes=29))
-    assert pool.ran("FROM shared.decision_log") == [(JOB, *window, gw.TRACE_LIMIT)]
+    assert pool.ran("FROM shared.decision_log") == [(JOB, gw.TRACE_LIMIT)]
     assert pool.ran("FROM geo.geocode_call") == [(JOB, *window, gw.TRACE_LIMIT)]
     assert out["window"] == {"from": window[0].isoformat(), "to": window[1].isoformat()}
 
@@ -379,11 +384,12 @@ def test_trace_flags_truncation():
     assert "truncated" in out["notes"] and "job_not_started" in out["notes"]
 
 
-def test_trace_of_a_job_that_never_started_skips_the_unindexed_ledgers():
+def test_trace_of_a_job_that_never_started_skips_the_unindexed_ledger():
     pool = _trace_pool(_job(started=False))
     out = asyncio.run(gw.trace_job(pool, JOB, now=NOW))
-    assert pool.ran("FROM shared.decision_log") == [] and pool.ran("FROM geo.geocode_call") == []
-    assert out["sources"]["jev"]["read"] is False and out["window"] is None
+    assert pool.ran("FROM geo.geocode_call") == [] and pool.ran("FROM shared.decision_log") == [(JOB, gw.TRACE_LIMIT)]
+    assert out["sources"]["geocoder"]["read"] is False and out["sources"]["jev"]["read"] is True
+    assert out["window"] is None
     assert "job_not_started" in out["notes"]
 
 
@@ -406,10 +412,10 @@ def _request(pool):
 
 def test_trace_route_answers_422_and_404():
     with pytest.raises(HTTPException) as e:
-        asyncio.run(router_mod.get_trace(_request(FakePool({})), job_id="not-a-uuid"))
+        asyncio.run(router_mod.get_trace(_request(FakePool({})), job_id="not-a-uuid", tour_id=None))
     assert e.value.status_code == 422
     with pytest.raises(HTTPException) as e:
-        asyncio.run(router_mod.get_trace(_request(FakePool({"FROM shared.job": None})), job_id=JOB))
+        asyncio.run(router_mod.get_trace(_request(FakePool({"FROM shared.job": None})), job_id=JOB, tour_id=None))
     assert e.value.status_code == 404
-    out = asyncio.run(router_mod.get_trace(_request(_trace_pool(_job())), job_id=JOB))
+    out = asyncio.run(router_mod.get_trace(_request(_trace_pool(_job())), job_id=JOB, tour_id=None))
     assert out["job"]["id"] == JOB

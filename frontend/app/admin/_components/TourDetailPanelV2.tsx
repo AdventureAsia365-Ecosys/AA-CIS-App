@@ -2,7 +2,8 @@
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { X, ChevronRight } from "lucide-react";
-import { K, Badge, alpha, mono, sans, serif, useFormat, useT } from "../../_kit";
+import { K, Badge, alpha, mono, sans, serif, useAdminIdentity, useFormat, useT } from "../../_kit";
+import { tourTraceHref } from "@/lib/aiGateway";
 import { M } from "./tour.messages";
 import { SCORE_BANDS } from "@/lib/quality-registry.generated";
 import { SubjectLabelSection } from "../content-quality/PieceLabel";
@@ -418,6 +419,7 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
   onClose: () => void;
 }) {
   const t = useT(M);
+  const { isAdmin } = useAdminIdentity();
   const rel = useRelTime();
   const [detail, setDetail] = useState<TourDetailFull | null>(null);
   const [loading, setLoading] = useState(true);
@@ -592,6 +594,11 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
               {/* Meta */}
               <div style={{ fontSize: 11, color: K.muted, display: "flex", gap: 12, flexWrap: "wrap" }}>
                 <span>{t("idShort", tourId.slice(0, 8))}</span>
+                {/* AA-804 UI part 3: every paid call of the tour (AI providers is admin only, so is the link). */}
+                {isAdmin && (
+                  <a href={tourTraceHref(tourId)} data-testid="tour-open-trace" title={t("openTraceTitle")}
+                    style={{ color: K.accent, textDecoration: "none" }}>{t("openTrace")}</a>
+                )}
                 {rewriteCount > 0 && <span>{t("rewritten", rewriteCount)}</span>}
                 {pub?.published_at && <span>{t("publishedWhen", rel(pub.published_at))}</span>}
               </div>

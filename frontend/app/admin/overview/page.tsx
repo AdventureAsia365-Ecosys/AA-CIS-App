@@ -6,9 +6,11 @@
 // AA-858 — a business view on top (apps health, TripPlanner customers, Booking funnel, cost per app) from
 // GET /api/admin/overview/ops (cached 5–15 min server-side, so no auto-refresh here); the AA-664 sections
 // follow under "CIS content & operations". Cards live in ./_components/.
-// S243 — Jobs: "Workers alive now" counts only live workers (the Apps page / deploy-gate rule); the provider cost
-// table reads month-to-date AI from the cost module (all bedrock* providers, rolled-up days included), so its AI
-// total equals the AI estimate on Cost per app; the per-country table keeps every column and scrolls on a phone.
+// S243 — Jobs: "Workers alive now" counts only live workers (the Apps page / deploy-gate rule); the cost section
+// reads month-to-date AI from the cost module (all bedrock* providers, rolled-up days included), so its AI total
+// equals the AI estimate on Cost per app; the per-country table keeps every column and scrolls on a phone.
+// AA-804 UI part 3 — the per-provider cost table became the "Paid sources" tile (three figures with their sources)
+// linking to AI providers, where each provider has its own row.
 // AA-858 (S243) — every number on the page names its source in a SourceHint (kit InfoTip); the wording, in plain
 // business words, is in ./_components/sources.ts.
 
@@ -275,15 +277,29 @@ const PIPELINE_COLS: { label: PipelineWord; source: keyof Sources["PIPELINE_SRC"
   { label: "atomized", source: "atomized" },
 ];
 
-// Rows of the provider cost table: the spend_budget providers, in plain words (a message key, or a product name
-// that stays as it is). "other" shows only when it has spend.
-const COST_PROVIDERS: { key: string; label: "bedrock" | "otherAi" | null; name?: string; ai: boolean }[] = [
-  { key: "bedrock", label: "bedrock", ai: true },
-  { key: "openai", label: null, name: "OpenAI", ai: true },
-  { key: "jev", label: null, name: "Jev", ai: true },
-  { key: "other", label: "otherAi", ai: true },
-  { key: "dfs", label: null, name: "DataForSEO", ai: false },
-];
+// AA-804 UI part 3: the "Paid sources" tile sums every provider the overview reports (spend_budget providers and the
+// DataForSEO / geocoder ledgers) and counts the providers at or past their daily cap's alert level; the per-provider
+// table moved to AI providers (Providers and Budgets tabs).
+const AI_PROVIDERS_HREF = "/admin/ai-gateway";
+const PROVIDER_NAMES: Record<string, string> = {
+  bedrock: "AWS Bedrock", openai: "OpenAI", anthropic: "Anthropic", azure_openai: "Azure OpenAI", jev: "Jev",
+  dfs: "DataForSEO", geocoder: "Geoapify",
+};
+function providerName(p: string): string {
+  return PROVIDER_NAMES[p] ?? p;
+}
+
+/** Today's and this month's spend over every provider, and the providers at or past their daily cap's alert level. */
+function paidSources(cost: Overview["cost"]) {
+  const sum = (m: Record<string, number>) => Object.values(m ?? {}).reduce((a, b) => a + (b ?? 0), 0);
+  const near = (cost.budgets ?? []).filter((b) => b.scope === "global" && b.per_day_usd != null
+    && (cost.spent_today_usd?.[b.provider] ?? 0) >= (b.per_day_usd as number) * (b.alert_pct / 100));
+  const providers = new Set([...Object.keys(cost.spent_today_usd ?? {}), ...Object.keys(cost.month_to_date_usd ?? {})]);
+  return {
+    today: sum(cost.spent_today_usd), month: sum(cost.month_to_date_usd), providers: providers.size,
+    nearCap: near.length, nearCapNames: near.map((b) => b.provider),
+  };
+}
 
 export default function OverviewPage() {
   const t = useT(OVERVIEW);
@@ -557,68 +573,31 @@ export default function OverviewPage() {
                 </div>
               </Section>
 
-              {/* ── Section 5: Cost ── */}
+              {/* ── Section 5: Paid sources (AA-804 UI part 3: a summary tile; the per-provider detail lives on
+                  Platform › AI & spend › AI providers) ── */}
               <Section
                 icon={<CircleDollarSign size={16} />}
-                title={t("providersTitle")}
-                href="/admin/cost-ops"
+                title={t("paidSourcesTitle")}
+                href={AI_PROVIDERS_HREF}
               >
-                <ScrollX testId="overview-provider-cost-table">
-                  <table style={{ width: "100%", minWidth: 480, borderCollapse: "collapse" }}>
-                    <thead>
-                      <tr>
-                        <th style={TH}>{t("provider")}</th>
-                        <th data-num-col="" style={{ ...TH, textAlign: "right" }}>
-                          {t("today")}
-                          <SourceHint source={PROVIDER_COST_SRC.today} size={11} />
-                        </th>
-                        <th data-num-col="" style={{ ...TH, textAlign: "right" }}>
-                          {t("monthToDate")}
-                          <SourceHint source={PROVIDER_COST_SRC.month} size={11} />
-                        </th>
-                        <th data-num-col="" style={{ ...TH, textAlign: "right" }}>
-                          {t("dailyBudget")}
-                          <SourceHint source={PROVIDER_COST_SRC.budget} size={11} />
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {COST_PROVIDERS.filter(
-                        (c) => c.key !== "other" || (data.cost.month_to_date_usd.other ?? 0) > 0,
-                      ).map(({ key: p, label, name }) => {
-                        const budget = data.cost.budgets.find(
-                          (b) => b.provider === p && b.scope === "global",
-                        );
-                        const today = data.cost.spent_today_usd[p];
-                        const over =
-                          budget?.per_day_usd != null &&
-                          today != null &&
-                          today >= budget.per_day_usd * (budget.alert_pct / 100);
-                        return (
-                          <tr key={p}>
-                            <td style={TD}>{label ? t(label) : name}</td>
-                            <td
-                              style={{
-                                ...TD,
-                                textAlign: "right",
-                                color: over ? K.danger : K.body,
-                                fontWeight: over ? 700 : 400,
-                              }}
-                            >
-                              {money(today)}
-                            </td>
-                            <td style={{ ...TD, textAlign: "right" }}>
-                              {money(data.cost.month_to_date_usd[p] ?? 0)}
-                            </td>
-                            <td style={{ ...TD, textAlign: "right", color: K.muted }}>
-                              {budget?.per_day_usd != null ? money(budget.per_day_usd) : "—"}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </ScrollX>
+                {(() => {
+                  const ps = paidSources(data.cost);
+                  return (
+                    <div data-testid="overview-paid-sources" style={{ display: "grid", gap: 10,
+                      gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 150px), 1fr))" }}>
+                      <Stat label={t("paidToday")} value={money(ps.today)} source={PROVIDER_COST_SRC.today}
+                        sub={t("paidProviders", ps.providers)} />
+                      <Stat label={t("paidMonth")} value={money(ps.month)} source={PROVIDER_COST_SRC.month} />
+                      <Stat label={t("paidNearCap")} value={ps.nearCap} source={PROVIDER_COST_SRC.budget}
+                        color={ps.nearCap ? K.danger : K.ink}
+                        sub={ps.nearCap ? ps.nearCapNames.map(providerName).join(", ") : t("paidNoneNearCap")} />
+                    </div>
+                  );
+                })()}
+                <div style={{ marginTop: 10, fontSize: 12 }}>
+                  <Link href={AI_PROVIDERS_HREF} data-testid="overview-paid-sources-link"
+                    style={{ color: K.accentDeep, fontWeight: 600 }}>{t("openAiProviders")}</Link>
+                </div>
                 {data.cost.ai_month_to_date_usd != null && (
                   <div data-testid="overview-ai-mtd-note" style={{ marginTop: 10, fontSize: 12, color: K.muted, lineHeight: 1.5 }}>
                     {t("aiThisMonth")} <b style={{ color: K.ink }}>{money(data.cost.ai_month_to_date_usd)}</b>

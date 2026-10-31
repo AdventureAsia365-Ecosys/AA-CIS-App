@@ -11,6 +11,7 @@ import { A, sans, mono, Card, SLabel, LoadingScreen, TH, TD, CHART_TOOLTIP } fro
 import { Button, PageFrame, PageFrameBody, PageFrameHeader, PageHeader, useFormat, useT } from "../../_kit";
 import { useChartColors } from "../../_kit/useTheme";
 import { stripIssueIds } from "@/lib/issueIds";
+import { traceHref } from "@/lib/aiGateway";
 import { DEC } from "./messages";
 
 // ── types ──────────────────────────────────────────────────────────────────────────────────────
@@ -563,6 +564,7 @@ export default function DecisionsPage() {
                     <SortTh label={t("colLatency")} k="latency_ms" sort={vSort} setSort={s => { setVSort(s); setVPage(0); }} />
                     <SortTh label={t("colCost")} k="cost_usd" sort={vSort} setSort={s => { setVSort(s); setVPage(0); }} />
                     <th style={STICKY_TH}>{t("colNote")}</th>
+                    <th style={STICKY_TH} title={t("colJobTitle")}>{t("colJob")}</th>
                   </tr></thead>
                   <tbody>
                     {log.rows.map(v => {
@@ -581,10 +583,17 @@ export default function DecisionsPage() {
                           <td style={{ ...TD, fontFamily: mono }}>{v.latency_ms != null ? `${v.latency_ms} ms` : "—"}</td>
                           <td style={{ ...TD, fontFamily: mono }}>{usd(v.cost_usd ?? 0)}</td>
                           <td style={{ ...TD, fontSize: 11.5, color: A.muted, maxWidth: 240 }}>{v.error ?? v.outcome ?? ""}</td>
+                          {/* AA-804 UI part 3: the job that asked, opened as its AI trace (every paid call of the job). */}
+                          <td style={{ ...TD, fontFamily: mono, whiteSpace: "nowrap" }}>
+                            {v.job_id ? (
+                              <a href={traceHref(v.job_id)} title={t("openTraceTitle")} data-testid="decision-open-trace"
+                                style={{ color: A.accent }}>{v.job_id.slice(0, 8)}</a>
+                            ) : <span style={{ color: A.muted }}>—</span>}
+                          </td>
                         </tr>
                       );
                     })}
-                    {!log.rows.length && <tr><td style={TD} colSpan={12}>{t("noVerdictsFilters")}</td></tr>}
+                    {!log.rows.length && <tr><td style={TD} colSpan={13}>{t("noVerdictsFilters")}</td></tr>}
                   </tbody>
                 </table>
               </div>

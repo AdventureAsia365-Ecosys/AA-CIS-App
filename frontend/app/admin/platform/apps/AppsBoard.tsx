@@ -59,6 +59,7 @@ import {
 } from "@/lib/platform";
 import { APP_STATUS_MESSAGES, BASIS_MESSAGES } from "@/lib/platform.messages";
 import { APPS } from "./messages";
+import { TpStageCaps } from "./TpStageCaps";
 
 /** The admin link label of a registered app in the UI language (lib/apps.messages.ts). */
 function useAdminLabel(): (id: PlatformAppId) => string {
@@ -525,17 +526,8 @@ function TripPlannerBody({ card }: { card: TripPlannerCard }) {
           <div style={noteStyle}>
             {t("callsSince", s.calls, s.since, s.stages.join(", "))} {capitalize(s.cap_label)}.
           </div>
-          {s.by_stage.length > 0 && (
-            <ul style={{ margin: 0, padding: 0, listStyle: "none", fontSize: 12, display: "flex", flexDirection: "column", gap: 3 }}>
-              {s.by_stage.map((b) => (
-                <li key={b.stage} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <span style={{ fontFamily: mono, color: K.ink2 }}>{b.stage}</span>
-                  <span style={{ color: K.muted }}>{t("calls", b.calls)}</span>
-                  <span>{usd(b.cost_usd)}</span>
-                </li>
-              ))}
-            </ul>
-          )}
+          {/* AA-1015: per-stage caps and the near-cap state (each stage with its spend today). */}
+          <TpStageCaps spend={s} testId="platform-tp-stage-caps" />
         </div>
       )}
     </>

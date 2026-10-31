@@ -55,6 +55,8 @@ export const COST = defineMessages(
     colStop: "Stop",
     // tabs
     tabOverview: "Overview",
+    tabSpend: "AI & data spend",
+    spendView: "Paid source",
     tabLlm: "LLM",
     tabDfs: "DataForSEO",
     tabAws: "AWS bill",
@@ -205,6 +207,8 @@ export const COST = defineMessages(
     colAccount: "Tài khoản",
     colStop: "Lý do dừng",
     tabOverview: "Tổng quan",
+    tabSpend: "Chi phí AI và dữ liệu",
+    spendView: "Nguồn trả phí",
     tabLlm: "LLM",
     tabDfs: "DataForSEO",
     tabAws: "Hoá đơn AWS",

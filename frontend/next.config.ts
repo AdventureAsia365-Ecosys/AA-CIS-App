@@ -42,12 +42,12 @@ const nextConfig: NextConfig = {
       { source: "/brand", destination: "/admin/settings?tab=brand", permanent: false },
       { source: "/admin/brand", destination: "/admin/settings?tab=brand", permanent: false },
       // AA-665 — External Spend became Cost Operations. 307 (not 308) so the old URL can be reused. AA-804 UI part 2:
-      // the old page was the LLM spend, so a bare link opens the LLM tab; a link that names a tab keeps its own
-      // (the query string carries over, so the destination adds no second `tab`; a retired one such as
-      // ?tab=budgets is then sent on by Cost Operations itself).
+      // the old page was the LLM spend, so a bare link opens the AI & data spend tab (its LLM view, UI part 3); a
+      // link that names a tab keeps its own (the query string carries over, so the destination adds no second `tab`;
+      // a retired one such as ?tab=budgets or ?tab=llm is then sent on by Cost Operations itself).
       { source: "/admin/llm-usage", has: [{ type: "query", key: "tab" }], destination: "/admin/cost-ops",
         permanent: false },
-      { source: "/admin/llm-usage", missing: [{ type: "query", key: "tab" }], destination: "/admin/cost-ops?tab=llm",
+      { source: "/admin/llm-usage", missing: [{ type: "query", key: "tab" }], destination: "/admin/cost-ops?tab=spend",
         permanent: false },
       // AA-885 / AA-979 — the tenant portal is its own app and host (AA-Partner portal/, Fargate). Old portal
       // URLs answer 308 to the same path there (the query string carries over); the admin app serves

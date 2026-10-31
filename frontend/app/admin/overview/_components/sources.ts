@@ -152,7 +152,7 @@ export const PROVIDER_COST_SRC = {
     "reaches the budget's alert level",
   month:
     "AI calls log, this month (the same AI estimate as Cost per app); DataForSEO: its calls log, this month",
-  budget: "Spend budgets set in CIS (Cost Operations), the daily limit per provider",
+  budget: "Spend budgets set in CIS (AI providers, Budgets), the daily limit per provider; counted when spend today reaches the alert level",
   aiMonth: "AI calls log, all AI providers, this month (UTC)",
   dfsBalance: "DataForSEO account balance from the last stored balance check (not a live call)",
 };

@@ -6,7 +6,8 @@
 // Vietnamese twin (same section ids). Change this file first, then the twin in the same PR.
 //
 // Facts come from the code at the time of writing: api/services/ai_gateway.py (sources, statuses, windows, caps),
-// ProvidersTab.tsx, RoutingTab.tsx, ModelsTab.tsx, BudgetsTab.tsx, TraceDrawer.tsx and the *.messages.ts files. Terms in `uiLabels` blocks are the page's own words, verbatim:
+// api/services/ai_gateway_calls.py, ProvidersTab.tsx, RoutingTab.tsx, ModelsTab.tsx, BudgetsTab.tsx, CallsTab.tsx,
+// TraceDrawer.tsx and the *.messages.ts files. Terms in `uiLabels` blocks are the page's own words, verbatim:
 // lib/guides.test.mjs fails when the page stops printing one. Public repo: no ids or account numbers.
 // Data only (the type import is erased), so node --test loads it directly.
 
@@ -25,11 +26,12 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
           + "Bedrock or a vendor API), Jev for yes / no decisions, DataForSEO for search data and Geoapify for place "
           + "coordinates. This page shows all of them side by side." },
         { kind: "paragraph", text: "Every number comes from our own logs and stored balance checks; opening the page "
-          + "calls no provider and costs nothing. The page has five tabs: Providers (health, spend and balance, plus "
+          + "calls no provider and costs nothing. The page has six tabs: Providers (health, spend and balance, plus "
           + "the connection settings and the Jev credit ledger), Routing (which model each stage uses), Models & "
-          + "trials (the model catalog and the shadow comparisons), Budgets (every spending cap) and this Guide. "
-          + "Settings › LLM Models, Settings › Jev Credit and Cost Operations › Budgets moved here; their old links "
-          + "open the right tab." },
+          + "trials (the model catalog and the shadow comparisons), Budgets (every spending cap), Calls (every "
+          + "logged call, one by one) and this Guide. Settings › LLM Models, Settings › Jev Credit and Cost "
+          + "Operations › Budgets moved here; their old links open the right tab. The spend totals by tenant, model "
+          + "and market stay on Cost Operations, in its AI & data spend tab." },
       ],
     },
     {
@@ -146,13 +148,37 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
       ],
     },
     {
+      id: "calls",
+      heading: "Calls: every logged call, one by one",
+      blocks: [
+        { kind: "paragraph", text: "The newest call first: each model attempt (a refused attempt too, at zero cost, "
+          + "with the reason class under its outcome), each Jev verdict, each DataForSEO and geocoder request, and "
+          + "the partner CRM's own AI calls. The CRM rows need your staff sign-in; when they cannot be read the tab "
+          + "says why and gives the CRM's totals instead, counted over whole UTC days (so they can reach "
+          + "further back than the period)." },
+        { kind: "terms", uiLabels: true, items: [
+          { term: "Period", text: "How far back the list reaches; the last 24 hours unless you pick another." },
+          { term: "Log", text: "Which log a row comes from: LLM, Jev, DataForSEO, Geocoder or CRM." },
+          { term: "Outcome", text: "answered, refused (the provider or our own guard said no, nothing billed), error, "
+            + "cut short (the answer hit its length limit) or billed, unusable." },
+          { term: "Latency of the listed calls", text: "One bar per call on screen, red when refused or failed, with "
+            + "the median, the slowest 5 % and the slowest call." },
+          { term: "Only this job", text: "Keeps the rows of that row's job; Clear removes the filter." },
+        ] },
+        { kind: "control", label: "Load older calls", does: "Adds the next 100 older rows of the period.",
+          cost: "Free: it reads our logs." },
+      ],
+    },
+    {
       id: "trace",
-      heading: "Follow one job's calls (Trace)",
+      heading: "Follow one job's or one tour's calls (Trace)",
       blocks: [
         { kind: "flow", steps: ["Jobs", "Click a job", "Open trace", "Read the calls in time order"] },
         { kind: "paragraph", text: "The trace lists every logged paid call of the job: model calls, Jev decisions, "
-          + "DataForSEO requests and geocoder requests, with when, what, the outcome, the cost and (for Jev) the "
-          + "answer time. The top line gives the totals per log." },
+          + "DataForSEO requests and geocoder requests, with when, what, the outcome, the cost and the answer time, "
+          + "as a Timeline (default) or a Table. The top line gives the totals per log. A tour's trace (Master "
+          + "Content › a tour › Open AI trace) gathers every job of that tour and every call marked with it; the "
+          + "Jev decisions page links each verdict's job the same way." },
         { kind: "control", label: "Open trace", does: "Opens this page with the job's trace drawer.",
           cost: "Free: it reads our logs.", when: "A job cost more than expected, or failed and you want to see which "
             + "call went wrong." },
@@ -163,11 +189,12 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
       id: "limits",
       heading: "What the page cannot show yet",
       blocks: [
-        { kind: "callout", tone: "warning", title: "Refused calls",
-          text: "A call the provider refused is not logged yet, so it does not appear in the trace or the spend. The "
-            + "Health column still shows the error. The new call log adds these rows at zero cost." },
+        { kind: "callout", tone: "warning", title: "Calls before 31 Oct 2026",
+          text: "Calls logged before 31 Oct 2026 have no outcome or answer time, and a refused attempt from before "
+            + "that date was not logged at all. Since then every attempt has its row, a refused one at zero cost." },
         { kind: "list", items: [
-          "Answer time per model call is not logged yet; only Jev has it.",
+          "TripPlanner's model calls show from the shared log; its per-stage caps are on Cost Operations › AI & data "
+            + "spend and the Apps board.",
           "Bedrock Guardrails and Mapbox write no log yet, so they have no row.",
           "Trial runs of new models (quick test, judge check, compare) are not on the Models & trials tab yet.",
           "Spend is what we logged at our prices. The AWS bill can differ slightly; Cost Operations shows the bill.",
