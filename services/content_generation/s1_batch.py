@@ -111,7 +111,7 @@ async def _load_prompt_state(conn, tour_id: str, tenant_uuid: str, *,
     _SEO_MODE_MAP = {"standard": "dataforseo", "aggressive": "dataforseo", "minimal": "disabled"}
     effective_seo_mode = _SEO_MODE_MAP.get(seo_mode, seo_mode)
     try:
-        from services.seo_intelligence.handler import process_seo
+        from services.seo_intelligence.handler import S1_REWRITE_BUDGET_KIND, process_seo
         from services.seo_intelligence.seed_builder import activity_terms, build_seed, idea_seeds, title_place_terms
         seed = build_seed(row.get("country"), row.get("activities"), row.get("src_name")) or row.get("src_name", "")
         if seed:
@@ -123,6 +123,8 @@ async def _load_prompt_state(conn, tour_id: str, tenant_uuid: str, *,
                 place_terms=title_place_terms(row.get("src_name"), row.get("country")),
                 activity_words=activity_terms(row.get("activities")),
                 country=row.get("country") or "",
+                # AA-642 (S0): the same per-tour DataForSEO cap as the S1 rewrite (dfs / job:s1_rewrite).
+                budget_kind=S1_REWRITE_BUDGET_KIND,
             )
             seo_data = seo_result.get("data", {})
             if "keywords" in seo_data and "top_keywords" not in seo_data:

@@ -534,6 +534,13 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   **alert-only** since 29/09/2026 (KAN-90: "control, not limit"), the per-run cap
   (`job:segment_research`, $5 DFS / $2 Bedrock) still stops a run. Edited via
   `PUT /admin/budgets/{provider}/{scope}` (no settings screen yet).
+  **AA-642 S0 (migration 318):** two more callers. Jev: `decide()` checks `jev/global` `per_day_usd` (5.00, hard) against
+  `cost_guard.day_spend('jev')` (llm_call_log provider `typesafe`) before every ask, re-read at most once a minute per
+  process; over the cap the questions get zone `error` / `budget_exceeded`, no TypeSafe call, the decision_log rows
+  are still written and the stage keeps its own rule. DataForSEO: every live `process_seo` fetch runs under a run
+  budget (the S1 rewrite / batch prep: `dfs/job:s1_rewrite`, 0.50 per tour; no kind = the `global` row); a budget
+  stop or a fatal DataForSEO error (401/402/403) skips the remaining sub-calls, the partial result is neither cached
+  nor persisted and S1 goes on without fresh SEO data. `s1_prefetch.prefetch()` needs a budgeted client.
   Alerts: `maybe_alert` writes a `spend_budget_alert` bell row (one unread per provider per 24 h)
   and, since AA-828, queues one `ops_alert_email` job that the worker sends through SES
   (`shared/ops_alerts.py`, `shared/aws_client/ses_mailer.py`; env `SES_FROM_ADDRESS`,

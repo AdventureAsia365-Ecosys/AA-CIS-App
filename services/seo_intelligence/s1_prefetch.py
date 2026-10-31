@@ -292,8 +292,12 @@ async def foreign_places(conn, country: str) -> frozenset[str]:
 
 async def prefetch(conn, rows: list[dict], *, tenant_id: str, location_code: int,
                    language_code: str, client=None, progress=None, pool=None, jev: bool = True) -> dict:
-    """Fill seo_context for every tour in `rows` that has no reusable one. Returns a summary."""
-    from .dataforseo_client import DataForSEOClient
+    """Fill seo_context for every tour in `rows` that has no reusable one. Returns a summary.
+
+    AA-642 (S0): `client` is required — the caller builds it with its run budget (the s1_seo_prefetch job:
+    load_run_budget(pool, 'dfs', 's1_seo_prefetch')). There is no unbudgeted fallback client any more."""
+    if client is None:
+        raise ValueError("prefetch() needs a DataForSEOClient built with a run budget (no unbudgeted fallback)")
 
     specs = [tour_spec(r) for r in rows]
     specs = [s for s in specs if s["seed"]]
@@ -322,8 +326,6 @@ async def prefetch(conn, rows: list[dict], *, tenant_id: str, location_code: int
             buy.append(s)
             if ideas:
                 cached[s["tour_id"]] = (ideas, paa)  # merged with bought ideas below
-
-    client = client or DataForSEOClient(tenant_id=tenant_id)
 
     # AA-747: process the tours IN THE ORDER GIVEN, in batches of 5, committing each batch's
     # seo_context rows before starting the next — so a running s1_rewrite job finds the early

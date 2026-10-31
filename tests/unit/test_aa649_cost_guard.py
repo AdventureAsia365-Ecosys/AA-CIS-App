@@ -80,6 +80,32 @@ async def test_load_falls_back_to_safe_defaults_when_table_missing():
     assert b.per_run_usd == 5.0 and b.per_day_usd == 10.0 and b.hard_stop
 
 
+@pytest.mark.asyncio
+async def test_jev_day_spend_is_read_from_the_typesafe_ledger_rows():
+    """AA-642 (S0): 'jev' was missing from _DAY_SPEND_SQL, so day_spend returned 0 and no Jev daily cap could act."""
+    conn = MagicMock()
+    conn.fetchval = AsyncMock(return_value=3.84)
+    assert await cg.day_spend(conn, "jev") == pytest.approx(3.84)
+    sql = conn.fetchval.await_args.args[0]
+    assert "FROM shared.llm_call_log" in sql and "'typesafe'" in sql
+
+
+@pytest.mark.asyncio
+async def test_load_jev_global_daily_cap_is_hard_and_counts_todays_spend():
+    conn = MagicMock()
+    conn.fetch = AsyncMock(return_value=[
+        {"scope": "global", "per_run_usd": None, "per_day_usd": 5.0, "hard_stop": True, "alert_pct": 80}])
+    conn.fetchval = AsyncMock(return_value=5.2)
+    b = await cg.load_run_budget(_pool(conn), "jev", "decide")
+    assert (b.per_day_usd, b.day_spent, b.day_is_hard) == (5.0, 5.2, True)
+    with pytest.raises(cg.BudgetExceeded):
+        b.check(0.0001)
+
+
+def test_every_provider_has_a_day_spend_query():
+    assert set(cg.PROVIDERS) == set(cg._DAY_SPEND_SQL)
+
+
 # ── DataForSEO client hook ─────────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio

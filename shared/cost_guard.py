@@ -68,6 +68,10 @@ _DAY_SPEND_SQL = {
                     "AND created_at >= date_trunc('day', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc'",
     "geocoder": "SELECT coalesce(sum(cost_usd), 0) FROM geo.geocode_call "
                 "WHERE called_at >= date_trunc('day', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc'",
+    # AA-642 (S0): Jev (TypeSafe) asks are logged in llm_call_log as provider 'typesafe' (decide.py). Same filter
+    # as the admin Overview's Jev figure (api/routers/admin_overview.py _JEV_DAY_SPEND_SQL), so the two agree.
+    "jev": "SELECT coalesce(sum(cost_usd), 0) FROM shared.llm_call_log WHERE lower(provider) IN ('typesafe', 'jev') "
+           "AND created_at >= date_trunc('day', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc'",
 }
 
 # AA-712: today's LLM spend of ONE job kind (its jobs' llm_call_log rows), for a kind whose daily
@@ -187,6 +191,24 @@ class RunBudget:
         }
 
 
+class ConnAsPool:
+    """AA-642 (S0): the `.acquire()` shape load_run_budget / maybe_alert use, over ONE asyncpg connection, for a
+    caller that holds a bare connection (process_seo, the sync S1 rewrite). Every acquisition yields the same
+    connection, so the caller must not run two acquisitions at once (both functions acquire sequentially)."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def acquire(self):
+        return self
+
+    async def __aenter__(self):
+        return self._conn
+
+    async def __aexit__(self, *exc):
+        return False
+
+
 def _round(v: Optional[float]) -> Optional[float]:
     return None if v is None else round(v, 4)
 
@@ -217,7 +239,7 @@ async def _read_rows(conn, provider: str, job_scope: str) -> dict[str, dict]:
 
 async def day_spend(conn, provider: str) -> float:
     sql = _DAY_SPEND_SQL.get(provider)
-    if sql is None:  # jev has no call log yet (AA-660)
+    if sql is None:  # a provider with no ledger query
         return 0.0
     if provider == "geocoder":  # geo.geocode_call exists only once migration 226 is applied
         try:

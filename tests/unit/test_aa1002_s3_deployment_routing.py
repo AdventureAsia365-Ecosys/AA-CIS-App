@@ -14,6 +14,7 @@ import pytest
 
 from shared.llm_client import bedrock_satellite as bs
 from shared.llm_client import catalog, connections, deployments, embed as embed_mod, vendor_route
+from shared.llm_client.call_log import _row_account, billed_fields
 from shared.llm_client.catalog import CatalogModel
 from shared.llm_client.client import BilledUnusableReply, LLMClient
 from shared.llm_client.connections import BUILTIN_CONNECTIONS, ProviderConnection
@@ -301,6 +302,18 @@ def test_a_task_role_deployment_runs_on_the_native_client(world):
     resp = world.generate(model_tier="gpt-6-luna")
     assert world.calls == [("converse", "native:acc2", "us.openai.gpt-6-luna")]
     assert resp.provider == "bedrock" and resp.model_used == "gpt-6-luna" and resp.satellite_account is None
+    # AA-642 (S0): the reply names its connection, so the ledger row stores account='acc2' (was NULL: the monthly
+    # connection budget and the reconcile never saw acc2 chat spend). satellite_account stays None (its CHECK).
+    assert resp.connection_key == "acc2"
+    assert billed_fields(resp)["connection_key"] == "acc2"
+    assert _row_account(resp.satellite_account, resp.connection_key) == "acc2"
+
+
+def test_a_satellite_converse_reply_keeps_its_account_and_no_connection_key(world):
+    world.reset()
+    resp = world.generate(model_tier="sonnet-5-5")
+    assert resp.satellite_account == "acc3" and resp.connection_key is None
+    assert _row_account(resp.satellite_account, resp.connection_key) == "acc3"
 
 
 # ── data scope with no stage policy (pre-S5 rule; per-stage scopes: test_aa1002_s5_data_scope.py) ──────────────

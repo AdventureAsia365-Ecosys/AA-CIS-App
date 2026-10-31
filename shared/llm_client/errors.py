@@ -63,6 +63,7 @@ _PATTERNS: tuple[tuple[str, re.Pattern], ...] = (
         r"|credit balance is too low"        # AA-1002 S2: Anthropic API 400, no prepaid credit left
         r"|\bapi usage limits?\b"            # AA-1002 S2: Anthropic API 400, workspace / org spend limit reached
         r"|\bspend(ing)? limit\b"
+        r"|\benforced_spend_limit_reached\b"  # AA-642 S0: Anthropic API 429, the usage tier's monthly spend cap
         r"|you have no credits remaining"   # S259: OpenAI 429 on a prepaid org with no credit (not a rate limit)
         r"|add credits to continue",
         re.IGNORECASE)),

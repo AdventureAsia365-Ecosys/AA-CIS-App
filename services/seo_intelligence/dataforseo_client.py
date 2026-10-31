@@ -1,6 +1,6 @@
 from shared.secrets import get_dataforseo_creds
 from shared.dfs_client.call_log import record_dfs_call_sync, extract_cost
-from shared.cost_guard import DFS_CALL_ESTIMATE_USD
+from shared.cost_guard import DFS_CALL_ESTIMATE_USD, BudgetExceeded
 import httpx
 import structlog
 
@@ -83,6 +83,9 @@ class DataForSEOClient:
         # the real DFS `cost` from the response; cache hits are logged by the caller instead.
         self.tenant_id = tenant_id
         self.tour_id   = tour_id
+        # AA-642 (S0): why the last fetch_all stopped before its last sub-call ({"reason": "budget" | "fatal",
+        # "error": ..., "at": <step>}), None when it ran every step. A stopped result is partial: never cache it.
+        self.last_stop: dict | None = None
 
     def _log_live(self, endpoint: str, response: dict, keyword: str = None,
                   location_code: int = None, keyword_count: int = None) -> None:
@@ -396,42 +399,59 @@ class DataForSEOClient:
         activity_words: list[str] | None = None,
         country: str = "",
     ) -> dict:
+        """The S1 / SEO bundle: search volume (single-seed callers only), one advanced SERP (PAA + related) and the
+        keyword ideas. A failed sub-call is skipped and the others still run, EXCEPT (AA-642 S0) after a
+        BudgetExceeded (the run's cap is reached) or a fatal DFSCallError (401 / 402 / 403: auth or no money, every
+        further call fails too): the remaining sub-calls are not sent, the partial result is returned and
+        ``self.last_stop`` says why. The caller must not cache or persist a stopped result."""
+        self.last_stop = None
+
+        async def step(name: str, call, default):
+            if self.last_stop is not None:
+                return default
+            try:
+                return await call()
+            except BudgetExceeded as e:
+                self.last_stop = {"reason": "budget", "error": str(e)[:300], "at": name}
+                logger.warning("dfs_budget_stop", step=name, tour_id=self.tour_id, error=str(e)[:200])
+            except Exception as e:
+                err = as_dfs_error(e)
+                if err.fatal:
+                    self.last_stop = {"reason": "fatal", "error": str(err)[:300], "at": name}
+                    logger.warning("dfs_fatal_stop", step=name, tour_id=self.tour_id, status_code=err.status_code,
+                                   error=str(err)[:200])
+                else:
+                    logger.warning(f"dfs_{name}_failed", error=str(e))
+            return default
+
         # AA-653: with extra_seeds the ideas task below returns volume for the seeds too, so the
         # separate search_volume task (a full $0.09 task for ONE keyword) is not bought.
         if extra_seeds is not None:
             keywords = {}
         else:
-            try:
-                keywords = await self.fetch_keywords(seed, location_code, location_name, language_code)
-            except Exception as e:
-                logger.warning("dfs_keywords_failed", error=str(e))
-                keywords = {}
+            keywords = await step(
+                "keywords", lambda: self.fetch_keywords(seed, location_code, location_name, language_code), {})
 
-        paa: list[str] = []
-        related: list[str] = []
-        try:
-            # Single SERP call → parse PAA + related (no second HTTP request).
-            serp = await self._serp_advanced(seed, location_code, language_code)
-            paa = self._parse_paa(serp)
-            related = self._parse_related(serp)
-        except Exception as e:
-            logger.warning("dfs_serp_failed", error=str(e))
+        # Single SERP call → parse PAA + related (no second HTTP request).
+        serp = await step("serp", lambda: self._serp_advanced(seed, location_code, language_code), None)
+        paa: list[str] = self._parse_paa(serp) if serp else []
+        related: list[str] = self._parse_related(serp) if serp else []
 
-        # AA-197: real keyword ideas (full dicts w/ volume/competition/cpc) — never raises.
+        # AA-197: real keyword ideas (full dicts w/ volume/competition/cpc).
         # AA-702: with extra_seeds, all seeds go in ONE keywords_for_keywords task (same price) and
         # the ideas are re-ranked: real volume first, tour-specific before generic.
         if extra_seeds is not None:
             seeds = [seed] + [x for x in extra_seeds if x and x.casefold() != seed.casefold()]
-            try:
-                keyword_ideas = await self.fetch_keyword_ideas_multi(
-                    seeds, location_code, language_code, limit=100)
-            except Exception as e:
-                logger.warning("dfs_ideas_multi_failed", error=str(e))
-                keyword_ideas = []
+            keyword_ideas = await step(
+                "ideas_multi", lambda: self.fetch_keyword_ideas_multi(seeds, location_code, language_code, limit=100),
+                [])
             keyword_ideas = rank_keyword_ideas(keyword_ideas, place_terms or [], activity_words=activity_words,
                                                country=country)
         else:
-            keyword_ideas = await self.fetch_keyword_ideas(seed, location_code, language_code)
+            # raise_on_error: a fatal status stops the run like the others; any other failure is still "no ideas".
+            keyword_ideas = await step(
+                "ideas", lambda: self.fetch_keyword_ideas(seed, location_code, language_code, raise_on_error=True),
+                [])
 
         keywords = keywords if isinstance(keywords, dict) else {}
         top_keywords = keywords.get("top_keywords", [])
