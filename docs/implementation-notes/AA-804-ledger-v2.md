@@ -66,6 +66,11 @@ Lane file: the AA-804 UI lane keeps `AA-804.md`; this file is the backend ledger
   `money_sources.py`, `planner.py`, `api/routers/admin_tenant360.py` (shadow), and `api/services/llm_availability.py`
   (answered calls only: `status` refused / error rows are left out, otherwise a refusal would read as an answer).
 - `services/places/shape_sources.py` (Place Details) counts failed requests too; Overpass (free) does not.
+- `geo.geocode_call` has a `tenant_id` now, so it is a tenant table for two CI guards: the erasure inventory
+  (`services/erasure/inventory.py`, `detach` like `dfs_call_log`) and the X2 RLS catalogue (allowlisted as a
+  platform cost log, cis_app only, like `llm_call_log` / `dfs_call_log`). Both ship in the migration-only PR (its own
+  integration run needs them); the rules file is byte-copied to AA-CIS-Infra `db/rls_catalogue_rules.py` in the copy
+  PR (Copy Guard compares it with CIS `main`, so the Infra PR merges after the CIS migration PR).
 - `CONTEXT.md` ledger paragraph rewritten (the "a refused call writes no row" sentence was no longer true).
 
 ## Tradeoffs

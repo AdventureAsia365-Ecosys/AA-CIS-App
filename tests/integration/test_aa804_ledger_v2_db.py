@@ -139,6 +139,13 @@ def test_dfs_and_geocode_v2_rows_land(cur, monkeypatch):
     cur.execute("SELECT status, error, stage, app FROM shared.dfs_call_log WHERE endpoint = %s", (STAGE,))
     assert tuple(cur.fetchone().values()) == ("refused", "budget: cap", "s1_rewrite", "cis")
 
+    # test_aa712_migration_226 (sorted before this file) drops schema geo and re-applies 226 only: put back the
+    # geocode_call columns of 255 (endpoint, credits) and 319 (tenant_id, failed_requests) first, as test_aa847 does.
+    migrations = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations")
+    for name in ("255_geo_place_shape.sql", "319_llm_ledger_v2.sql"):
+        with open(os.path.join(migrations, name), encoding="utf-8") as f:
+            cur.execute(f.read())
+
     async def geo():
         conn = await asyncpg.connect(DSN)
         try:
