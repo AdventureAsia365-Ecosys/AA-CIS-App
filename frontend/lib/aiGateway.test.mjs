@@ -6,9 +6,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  RETIRED_COST_OPS_TABS, RETIRED_SETTINGS_TABS, accountRouteMatters, aiGatewayHref, budgetBody, budgetDraftOf,
-  budgetProviderLabel, budgetPutPath, budgetTone, groupRows, needsLook, parseTab, parseTrace, parseView, pct,
-  retiredTabTarget, sameDraft, severity, statusTone, traceHref, tracePath, usd, validScope,
+  CALL_PARAM, RETIRED_COST_OPS_TABS, RETIRED_SETTINGS_TABS, accountRouteMatters, aiGatewayHref, budgetBody,
+  budgetDraftOf, budgetProviderLabel, budgetPutPath, budgetTone, callFiltersFrom, callTone, callsHref, callsPath,
+  costOpsSpendHref, groupRows, needsLook, parseSpendView, parseTab, parseTrace, parseTraceTarget, parseView, pct,
+  retiredTabTarget, sameDraft, severity, statusTone, tourTraceHref, traceHref, traceParam, tracePath, usd, validScope,
 } from "./aiGateway.ts";
 import { LLM_ACCOUNT, MAIN_ACCOUNT } from "./awsAccounts.ts";
 
@@ -75,7 +76,8 @@ const tabsOf = (href) => new URL(href, "https://admin.example").searchParams.get
 test("tabs and views parse strictly and default to the providers overview", () => {
   assert.equal(parseTab("routing"), "routing");
   assert.equal(parseTab("budgets"), "budgets");
-  assert.equal(parseTab("calls"), "providers");
+  assert.equal(parseTab("calls"), "calls");
+  assert.equal(parseTab("ledger"), "providers");
   assert.equal(parseTab(null), "providers");
   assert.equal(parseView("jev-credit"), "jev-credit");
   assert.equal(parseView("nope"), "overview");
@@ -96,11 +98,16 @@ test("retired Settings and Cost Operations tabs point to their new tab", () => {
   assert.equal(retiredTabTarget(RETIRED_SETTINGS_TABS, "jev-credit"),
     "/admin/ai-gateway?tab=providers&view=jev-credit");
   assert.equal(retiredTabTarget(RETIRED_COST_OPS_TABS, "budgets"), "/admin/ai-gateway?tab=budgets");
+  // UI part 3: the LLM, DataForSEO and Jev tabs are views of the merged "AI & data spend" tab
+  assert.equal(retiredTabTarget(RETIRED_COST_OPS_TABS, "llm"), "/admin/cost-ops?tab=spend");
+  assert.equal(retiredTabTarget(RETIRED_COST_OPS_TABS, "dfs"), "/admin/cost-ops?tab=spend&view=dfs");
+  assert.equal(retiredTabTarget(RETIRED_COST_OPS_TABS, "jev"), "/admin/cost-ops?tab=spend&view=jev");
   // tabs that stay where they are, no tab, and object keys are never a target
-  for (const v of ["brand", "pipeline", "llm", "", null, undefined, "toString", "__proto__"]) {
+  for (const v of ["brand", "pipeline", "", null, undefined, "toString", "__proto__"]) {
     assert.equal(retiredTabTarget(RETIRED_SETTINGS_TABS, v), null, String(v));
     assert.equal(retiredTabTarget(RETIRED_COST_OPS_TABS, v), null, String(v));
   }
+  for (const v of ["overview", "spend", "aws"]) assert.equal(retiredTabTarget(RETIRED_COST_OPS_TABS, v), null, v);
 });
 
 test("the account select shows only while a stage routes to another account than the LLM one", () => {
@@ -140,4 +147,53 @@ test("budget scopes, labels, tones and the PUT path", () => {
   assert.equal(budgetTone("no_budget"), "neutral");
   assert.equal(budgetTone(undefined), "neutral");
   assert.equal(budgetPutPath("dfs", "job:segment_research"), "/api/admin/budgets/dfs/job%3Asegment_research");
+});
+
+// ── UI part 3: tour trace, Calls tab, merged spend tab ─────────────────────────────────────────────────────────────
+
+test("trace targets: a job or a tour, parsed strictly, with their API paths", () => {
+  const href = tourTraceHref(ID);
+  assert.equal(href, `/admin/ai-gateway?trace=tour%3A${ID}`);
+  const value = new URL(href, "https://example.test").searchParams.get("trace");
+  assert.deepEqual(parseTraceTarget(value), { kind: "tour", id: ID });
+  assert.deepEqual(parseTraceTarget(`job:${ID.toUpperCase()}`), { kind: "job", id: ID });
+  for (const bad of ["tour:x", "job:", `trip:${ID}`, "", null, undefined]) assert.equal(parseTraceTarget(bad), null);
+  assert.equal(parseTrace(`tour:${ID}`), null, "parseTrace stays job-only");
+  assert.equal(tracePath({ kind: "tour", id: ID }), `/api/admin/ai-gateway/trace?tour_id=${ID}`);
+  assert.equal(tracePath({ kind: "job", id: ID }), `/api/admin/ai-gateway/trace?job_id=${ID}`);
+  assert.equal(traceParam({ kind: "tour", id: ID }), `tour:${ID}`);
+});
+
+test("calls: the API path carries only the filters that are set, then the cursor", () => {
+  assert.equal(callsPath({}), "/api/admin/ai-gateway/calls");
+  assert.equal(callsPath({ status: "refused", stage: " invented_stage ", app: "" }, "2026-03-14T10:00:00+00:00~llm:x", 100),
+    "/api/admin/ai-gateway/calls?status=refused&stage=invented_stage&cursor=2026-03-14T10%3A00%3A00%2B00%3A00%7Ellm%3Ax&limit=100");
+});
+
+test("calls: filters read from the address under their c_ keys; a bad job or tour id is dropped", () => {
+  const q = new URLSearchParams({ c_job: ID.toUpperCase(), c_tour: "nope", c_status: "error", c_window: "7d", tab: "calls" });
+  assert.deepEqual(callFiltersFrom((k) => q.get(k) ?? ""), { job_id: ID, status: "error", window: "7d" });
+  assert.equal(CALL_PARAM.job_id, "c_job");
+  const href = callsHref({ job_id: ID, source: "llm" });
+  assert.equal(href, `/admin/ai-gateway?tab=calls&c_job=${ID}&c_source=llm`);
+  assert.deepEqual(new URL(href, "https://x.test").searchParams.getAll("tab"), ["calls"]);
+});
+
+test("callTone: refused and errors red, partial outcomes amber, answers green", () => {
+  assert.equal(callTone("refused"), "danger");
+  assert.equal(callTone("error"), "danger");
+  assert.equal(callTone("truncated"), "warning");
+  assert.equal(callTone("billed_unusable"), "warning");
+  assert.equal(callTone("ok"), "success");
+  assert.equal(callTone("cache"), "info");
+  assert.equal(callTone(null), "neutral");
+});
+
+test("the merged spend tab: exactly one tab value, a view only when it is not the LLM view", () => {
+  assert.equal(costOpsSpendHref(), "/admin/cost-ops?tab=spend");
+  assert.equal(costOpsSpendHref("llm"), "/admin/cost-ops?tab=spend");
+  assert.equal(costOpsSpendHref("jev"), "/admin/cost-ops?tab=spend&view=jev");
+  assert.equal(parseSpendView("dfs"), "dfs");
+  assert.equal(parseSpendView("aws"), "llm");
+  assert.equal(parseSpendView(null), "llm");
 });

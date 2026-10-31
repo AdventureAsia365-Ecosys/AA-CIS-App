@@ -17,10 +17,11 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
           + "hoặc API của hãng), Jev cho các quyết định có / không, DataForSEO cho dữ liệu tìm kiếm và Geoapify cho "
           + "toạ độ địa điểm. Trang này đặt tất cả cạnh nhau." },
         { kind: "paragraph", text: "Mọi con số lấy từ sổ ghi của mình và các lần kiểm số dư đã lưu; mở trang không gọi "
-          + "nhà cung cấp nào và không tốn tiền. Trang có năm tab: Nhà cung cấp (sức khoẻ, chi tiêu, số dư, kèm cài "
+          + "nhà cung cấp nào và không tốn tiền. Trang có sáu tab: Nhà cung cấp (sức khoẻ, chi tiêu, số dư, kèm cài "
           + "đặt kết nối và sổ nạp Jev), Điều hướng (mỗi bước dùng model nào), Model và thử nghiệm (danh mục model và "
-          + "so sánh chạy bóng), Ngân sách (mọi mức trần) và Hướng dẫn này. Cài đặt › LLM Models, Cài đặt › Số dư Jev "
-          + "và Cost Operations › Ngân sách đã dời về đây; link cũ mở đúng tab mới." },
+          + "so sánh chạy bóng), Ngân sách (mọi mức trần), Lần gọi (từng lần gọi đã ghi) và Hướng dẫn này. Cài đặt › "
+          + "LLM Models, Cài đặt › Số dư Jev và Cost Operations › Ngân sách đã dời về đây; link cũ mở đúng tab mới. "
+          + "Tổng chi theo tenant, model và thị trường vẫn ở Cost Operations, tab Chi phí AI và dữ liệu." },
       ],
     },
     {
@@ -136,13 +137,36 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
       ],
     },
     {
+      id: "calls",
+      heading: "Lần gọi: từng lần gọi đã ghi",
+      blocks: [
+        { kind: "paragraph", text: "Lần gọi mới nhất ở trên: mỗi lần thử gọi model (cả lần bị từ chối, chi phí 0, có "
+          + "loại lý do dưới kết quả), mỗi phán quyết Jev, mỗi yêu cầu DataForSEO và geocode, và các lần gọi AI riêng "
+          + "của CRM đối tác. Dòng CRM cần đăng nhập nhân viên; khi không đọc được, tab nói lý do và hiện tổng của "
+          + "CRM trong khoảng đó." },
+        { kind: "terms", uiLabels: true, items: [
+          { term: "Khoảng", text: "Danh sách lùi xa tới đâu; mặc định 24 giờ qua." },
+          { term: "Sổ", text: "Dòng đến từ sổ nào: LLM, Jev, DataForSEO, Geocode hoặc CRM." },
+          { term: "Kết quả", text: "đã trả lời, bị từ chối (nhà cung cấp hoặc chốt chặn của mình từ chối, không tính "
+            + "tiền), lỗi, bị cắt (câu trả lời chạm giới hạn độ dài) hoặc tính tiền, không dùng được." },
+          { term: "Độ trễ của các lần gọi đang liệt kê", text: "Mỗi lần gọi trên màn hình một cột, đỏ khi bị từ chối "
+            + "hoặc lỗi, kèm trung vị, 5 % chậm nhất và lần chậm nhất." },
+          { term: "Chỉ job này", text: "Giữ các dòng của job của dòng đó; Bỏ lọc để xoá bộ lọc." },
+        ] },
+        { kind: "control", label: "Tải lần gọi cũ hơn", does: "Thêm 100 dòng cũ hơn trong khoảng.",
+          cost: "Miễn phí: chỉ đọc sổ ghi." },
+      ],
+    },
+    {
       id: "trace",
-      heading: "Xem các lần gọi của một job (Truy vết)",
+      heading: "Xem các lần gọi của một job hay một tour (Truy vết)",
       blocks: [
         { kind: "flow", steps: ["Jobs", "Bấm một job", "Mở truy vết", "Đọc các lần gọi theo thời gian"] },
         { kind: "paragraph", text: "Truy vết liệt kê mọi lần gọi trả phí đã ghi của job: gọi model, quyết định Jev, "
-          + "yêu cầu DataForSEO và yêu cầu geocode, kèm lúc nào, việc gì, kết quả, chi phí và (với Jev) thời gian trả "
-          + "lời. Dòng trên cùng là tổng theo từng sổ ghi." },
+          + "yêu cầu DataForSEO và yêu cầu geocode, kèm lúc nào, việc gì, kết quả, chi phí và thời gian trả lời, dạng "
+          + "Dòng thời gian (mặc định) hoặc Bảng. Dòng trên cùng là tổng theo từng sổ ghi. Truy vết của một tour "
+          + "(Master Content › một tour › Mở truy vết AI) gom mọi job của tour đó và mọi lần gọi gắn với tour; trang "
+          + "Jev decisions cũng nối job của từng phán quyết theo cách này." },
         { kind: "control", label: "Mở truy vết", does: "Mở trang này kèm ngăn truy vết của job.",
           cost: "Miễn phí: chỉ đọc sổ ghi.", when: "Một job tốn hơn dự kiến, hoặc lỗi và muốn biết lần gọi nào sai." },
         { kind: "control", label: "Làm mới", does: "Đọc lại mọi nguồn.", cost: "Miễn phí." },
@@ -152,11 +176,12 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
       id: "limits",
       heading: "Những gì trang chưa hiện được",
       blocks: [
-        { kind: "callout", tone: "warning", title: "Lần gọi bị từ chối",
-          text: "Lần gọi bị nhà cung cấp từ chối chưa được ghi, nên không hiện trong truy vết hay chi tiêu. Cột Sức "
-            + "khoẻ vẫn hiện lỗi. Sổ ghi mới sẽ thêm các dòng này với chi phí 0." },
+        { kind: "callout", tone: "warning", title: "Lần gọi trước 31/10/2026",
+          text: "Lần gọi ghi trước 31/10/2026 không có kết quả hay thời gian trả lời, và lần bị từ chối trước ngày đó "
+            + "không được ghi. Từ đó mọi lần thử đều có dòng, lần bị từ chối với chi phí 0." },
         { kind: "list", items: [
-          "Thời gian trả lời của từng lần gọi model chưa được ghi; chỉ Jev có.",
+          "Lần gọi model của TripPlanner hiện từ sổ ghi chung; trần theo stage của nó ở Cost Operations › Chi phí AI "
+            + "và dữ liệu và bảng Ứng dụng.",
           "Bedrock Guardrails và Mapbox chưa ghi sổ nên chưa có dòng.",
           "Các lần chạy thử model mới (thử nhanh, kiểm model chấm, so sánh) chưa có trên tab Model và thử nghiệm.",
           "Chi tiêu là số mình ghi theo giá của mình. Hoá đơn AWS có thể lệch chút; Cost Operations hiện hoá đơn.",
