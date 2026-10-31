@@ -51,6 +51,9 @@
     "LangSwitch.tsx": {
       "sha256": "0d7eaafd876984ba42766e124bf26145688b3f13031e753e771f183067687bba"
     },
+    "LatencyStrip.tsx": {
+      "sha256": "af487dedc10704c17e15aa53a9ab5a16253aa2e6e8fbba9f87e7fa383d22e4e9"
+    },
     "Modal.tsx": {
       "sha256": "a461fd3892dcbf7631e3cee12eaf56348200bbb7988d5fdf9ecb8299f498dc2c"
     },
@@ -71,6 +74,9 @@
     },
     "Toast.tsx": {
       "sha256": "0a8813902842ac63feba66873ad7d47e3a9162f27f5a43da33ba2b149eaaf4c5"
+    },
+    "TraceTimeline.tsx": {
+      "sha256": "260c5bf648b13241961d085880d2e8f63aff9da041a8ee5f2044c0da387ede12"
     },
     "brand.ts": {
       "sha256": "bc6773a9a5a69ae55496752779c9c2fc8ac49eb07ed832cc91edff70c21dda00"
@@ -94,7 +100,7 @@
       "sha256": "44abb6d5201474cbbd8a7eb449d535829bc3c77af044362385156ea88310d583"
     },
     "kit.messages.ts": {
-      "sha256": "8bba45273149716306c7c7e41a5caf5cef9f99a29fbe2b198c2a0ed1775dc016"
+      "sha256": "f0ac33de7ec10679d8cc020d6cbe6ad4c19d1b87f62ebf2ca27fa2608b12c933"
     },
     "kitGallery.messages.ts": {
       "sha256": "392b351fc0e698b7c4cc67bff8476fcc1f726eeeb4110a0abbab9f19fc8c807c"
