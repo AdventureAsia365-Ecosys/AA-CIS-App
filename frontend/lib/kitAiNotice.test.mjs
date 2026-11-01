@@ -133,3 +133,21 @@ test("language: the provider's, or the lang prop, which wins", () => {
   assert.ok(render(h(N.AiNotice, { variant: "publisher", lang: "vi" })).includes(AI_NOTICE_TEXT.vi.publisher));
   assert.ok(inVi(h(N.AiNotice, { lang: "en" })).includes(AI_NOTICE_TEXT.en.staff));
 });
+
+test("placements: every CIS admin screen where a reviewer acts on AI output renders the staff notice", () => {
+  const APP = join(FRONTEND, "app", "admin");
+  const src = (...p) => readFileSync(join(APP, ...p), "utf8");
+  // Review Queue editor and the S1 rewrite tab (also Master Content).
+  for (const file of [["review", "ReviewEditor.tsx"], ["_components", "TourDetailPanelV2.tsx"]]) {
+    const s = src(...file);
+    assert.match(s, /import \{[^}]*\bAiNotice\b[^}]*\} from "\.\.\/\.\.\/_kit"/, file.join("/"));
+    assert.match(s, /<AiNotice\b/, file.join("/"));
+  }
+  // Content quality: the model's rewrite of a flagged sentence, shared by the T9 piece drawer and the T2 version drawer.
+  const sa = src("content-quality", "SentenceActions.tsx");
+  assert.match(sa, /import \{[^}]*\bAiNotice\b[^}]*\} from "\.\.\/\.\.\/_kit"/);
+  const panel = sa.slice(sa.indexOf("export function RewritePanel"), sa.indexOf("export interface EditOwner"));
+  assert.match(panel, /\{sug && <AiNotice testId="cq-rewrite-ai-notice" \/>\}/);
+  assert.match(src("content-quality", "TourVersionDrawer.tsx"), /<RewritePanel\b/);
+  assert.match(sa, /<RewritePanel\b/, "the piece drawer's flagged sentences use the same panel");
+});

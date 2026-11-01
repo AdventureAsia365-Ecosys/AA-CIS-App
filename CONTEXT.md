@@ -145,8 +145,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     tab, aria-selected, counts, disabled tabs with a reason, arrow keys); the default track variant's markup is
     unchanged. Render-tested in `lib/kitButtons.test.mjs` (transpiles the core, react-dom/server).
     **AA-1033:** `AiNotice.tsx` — the one notice under AI-written text in every app (`<p role="note">`, muted 12px
-    line with an info icon), variants `staff` (default: CIS reviewer screens — Review Queue editor, S1 rewrite tab —
-    and CRM AI drafts), `publisher` (Content studio review / publish / export) and `traveller` (TripPlanner). Its
+    line with an info icon), variants `staff` (default: CIS reviewer screens — Review Queue editor, S1 rewrite tab,
+    the content-quality sentence rewrite panel when a model suggestion is loaded — and CRM AI drafts), `publisher` (Content studio review / publish / export) and `traveller` (TripPlanner). Its
     wording lives in `aiNotice.messages.ts` (`defineMessages`, EN + VI; says AI can make mistakes and that the
     confirmed quote and booking terms bind, never claims to exclude liability), which with `i18n.ts` is in the
     `tokens` profile so TripPlanner's own B2C notice renders the same sentence. Language: the I18nProvider's, or

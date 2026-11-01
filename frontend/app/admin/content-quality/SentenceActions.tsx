@@ -16,7 +16,7 @@ import { useState } from "react";
 import { ReasonTag, WritingReasonChips } from "../_components/WritingReasonChips";
 import { exemplarPath, preselect, toggledPref, type ExemplarPref, type ReasonCode } from "@/lib/writingReasons";
 import {
-  K, mono, ApiError, Badge, Button, ConfirmModal, Spinner, apiSend, useAdminIdentity, useT, useToast, Input, Textarea,
+  K, mono, AiNotice, ApiError, Badge, Button, ConfirmModal, Spinner, apiSend, useAdminIdentity, useT, useToast, Input, Textarea,
 } from "../../_kit";
 import {
   fmtTime, usd,
@@ -223,6 +223,8 @@ export function RewritePanel({ s, ed, busy, regenerating, onChange, onApply, onR
         onChange={(e) => onChange({ draft: e.target.value })}
         style={{ width: "100%", boxSizing: "border-box", fontSize: 12.5, lineHeight: 1.5, background: K.successSoft, color: K.ink, border: `1px solid ${K.line}`, borderRadius: 6, padding: "6px 8px", fontFamily: "inherit", resize: "vertical" }}
       />
+      {/* AA-1033: the replacement is a model's suggestion the admin applies to the tenant's copy (T2 and T9 drawers). */}
+      {sug && <AiNotice testId="cq-rewrite-ai-notice" />}
       {sug && !sug.replacement && (
         <div style={{ fontSize: 12, color: K.body }}>{t("nothingLeft")}</div>
       )}
