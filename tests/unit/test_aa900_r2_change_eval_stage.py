@@ -62,12 +62,20 @@ def test_run_with_pool_hands_run_r2_a_store_reading_the_run_label(monkeypatch, s
         return "outcome"
 
     monkeypatch.setattr(r2, "run_r2", fake_run_r2)
+    models = ["catalog rows"]
+
+    async def fake_family_check(writer):          # AA-1024 A4: checked before the run, rows handed to it
+        seen["family_writer"] = writer
+        return models
+
+    monkeypatch.setattr(r2, "check_judge_family", fake_family_check)
     pool = object()
     conf = r2.R2Config(writer="t9_blog", log_stage=stage)
     assert asyncio.run(r2.run_with_pool(pool, conf)) == "outcome"
     assert isinstance(seen["store"], r2.PgStore)
     assert seen["store"].stages == (stage,) and seen["store"].pool is pool
     assert seen["conf"] is conf and seen["kw"]["pool"] is pool
+    assert seen["family_writer"] == "t9_blog" and seen["kw"]["family_models"] is models
 
 
 def test_a_release_run_refuses_the_change_label():

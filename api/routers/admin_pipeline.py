@@ -17,9 +17,10 @@ import structlog
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, UploadFile
 from api.core.aa544_tenant_pool import BRAND_IDENTITY_FLAG, acquire_scoped_conn
 from api.core.error_ref import log_exception_ref, public_error
+from api.core.model_tier import refuse_model_tier
 from api.core.staff_authz import staff_policy_if_staff
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Awaitable, Callable, Optional, List, Literal
 
 from api.routers._billing import usage_row_to_dict
@@ -429,10 +430,10 @@ class TourRunRequest(BaseModel):
     validation_feedback: list = []
     seo_mode: str = "standard"
     rewrite_language: str = "en-US"
-    # AA-518: was "haiku" — None now means "no explicit per-request choice, defer to the admin's
-    # s1_generate stage config" (LLMClient.generate()'s own new fallback chain). An explicit
-    # value (including AA-237's "sonnet" auto-upgrade re-run below) still wins, unchanged.
-    model_tier: Optional[str] = None
+    # AA-1024 A2 (ADR 0009 decision 5): no model_tier. The run uses the s1_generate stage route; a body that sends a
+    # model_tier value gets a 422 (api/core/model_tier.py). The AA-237 / AA-736 one-shot "sonnet" re-run below is
+    # internal (_sonnet_upgrade), not a request field. A queued job payload that still carries the key is filtered by
+    # s1_rewrite_job (only model_fields are read).
     subtitle_focus: str = "standard"
     brand_rules_version: Optional[int] = None
     brand_name: Optional[str] = None
@@ -442,6 +443,11 @@ class TourRunRequest(BaseModel):
     # Not part of the job payload.
     review_id: Optional[str] = None
     reason_code: Optional[ReasonCode] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_model_tier(cls, data):          # AA-1024 A2 (api/core/model_tier.py)
+        return refuse_model_tier(data)
 
 
 class UploadUrlRequest(BaseModel):
@@ -460,11 +466,15 @@ class IngestS3Request(BaseModel):
     s3_key: str
     bucket: str = ""
     seo_mode: str = "dataforseo"
-    model_tier: Optional[str] = None  # AA-518 — see RewriteRequest's own comment above
     subtitle_focus: str = "standard"
     dry_run: bool = False
     tenant_id: str = "00000000-0000-0000-0000-000000000001"
     max_tours: int = 500
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_model_tier(cls, data):          # AA-1024 A2: the route picks the model
+        return refuse_model_tier(data)
 
 
 class BrandIdentityUpdate(BaseModel):
@@ -743,7 +753,6 @@ async def _execute_run_tour(
                 tour, idx=0, total=1,
                 brand_rules=brand_rules,
                 seo=seo_data,
-                model_tier=req.model_tier,
                 subtitle_focus=req.subtitle_focus,
                 seo_mode=effective_seo_mode,
                 on_stage=on_stage,
@@ -885,7 +894,7 @@ async def _execute_run_tour(
                     og_tags_val,
                     metadata_val,
                     brand_rule_version,
-                    req.model_tier,                          # AA-224: requested_tier
+                    None,                                    # AA-224 requested_tier; AA-1024 A2: never per request
                     bool(result.get("fallback_used", False)),  # AA-224: fallback_used
                     # AA-397: satellite_used (bool) giữ nguyên cho backward-compat, derive từ
                     # satellite_account is not None thay vì đọc field bool cũ (đã xoá khỏi LLMResponse).
@@ -1413,9 +1422,9 @@ async def run_tour_async(req: TourRunRequest, request: Request, x_admin_secret: 
     # tenant for every LLM log row and Jev decision of the job; the slug made each llm_call_log write fail.
     if str(payload.get("tenant_id") or "").strip().lower() == "aa_internal":
         payload["tenant_id"] = _MASTER_TENANT_ID
-    # Dedup key = the same triple find_active_duplicate used (tour + model_tier + batch), so a
-    # double-click or an overlapping wave reuses the in-flight job instead of writing a 2nd version.
-    idem = f"s1_rewrite:{payload.get('tour_id')}:{payload.get('model_tier')}:{payload.get('batch_id')}"
+    # Dedup key = tour + batch (AA-1024 A2: model_tier left the request, so it left the key), so a double-click or an
+    # overlapping wave reuses the in-flight job instead of writing a 2nd version.
+    idem = f"s1_rewrite:{payload.get('tour_id')}:{payload.get('batch_id')}"
     job_id, created = await enqueue(
         request.app.state.pool, "s1_rewrite", payload,
         idempotency_key=idem, created_by=f"admin:{x_admin_user_id or 'unknown'}")
@@ -1505,8 +1514,13 @@ class S1BatchSubmitRequest(BaseModel):
     # satellite account owning Batch perms (AA-399); AA-998: acc3 only, anything else is a 422
     account: Literal["acc3"] = "acc3"
     seo_mode: str = "standard"
-    model_tier: Optional[str] = "haiku"
     enforce_min: bool = True                   # reject sub-minimum batches (Bedrock rejects them)
+
+    # AA-1024 A2: no model_tier (it was "haiku"): a tour the batch could not write falls back to the s1_generate route.
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_model_tier(cls, data):
+        return refuse_model_tier(data)
 
 
 @router.post("/s1-batch/submit")
@@ -1540,7 +1554,7 @@ async def submit_s1_batch_endpoint(req: S1BatchSubmitRequest, request: Request,
         request.app.state.pool, "s1_batch_ingest",
         {"job_arn": submit["job_arn"], "output_uri": submit["output_uri"],
          "account": submit["account"], "tour_ids": submit["tour_ids"],
-         "batch_id": req.batch_id, "seo_mode": req.seo_mode, "model_tier": req.model_tier,
+         "batch_id": req.batch_id, "seo_mode": req.seo_mode,
          "record_count": submit["record_count"]},
         idempotency_key=f"s1_batch_ingest:{submit['job_arn']}",
         created_by="admin:s1-batch")

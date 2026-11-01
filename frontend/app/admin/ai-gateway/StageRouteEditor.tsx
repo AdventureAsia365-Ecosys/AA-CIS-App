@@ -7,6 +7,9 @@
 // (PATCH /llm-config/{stage}/route). A shadow doubles the judge cost, so the tech lead wants the ON/OFF
 // switch + sample % directly controllable here, with the current state readable at a glance.
 // AA-994: text in the UI language (models.messages.ts).
+// Route governance (S263, ADR 0009 decision 12): a new fallback chain of a writer / judge stage asks for the eval run
+// that backs it, or a break-glass reason (ChangeEvidenceFields in the confirm dialog). A shadow-only change does not
+// (the shadow never serves a reply). `warnings` of the save (the failure-domain rule, report only) show as a toast.
 
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -15,6 +18,10 @@ import {
   K, Badge, Button, ChipButton, ConfirmModal, IconButton, Input, Select, Switch, alpha, apiSend, mono, useT, useToast,
 } from "../../_kit";
 import { MODELS } from "./models.messages";
+import {
+  BREAK_GLASS_MIN_CHARS, ChangeEvidenceFields, EMPTY_EVIDENCE, evidenceBody, evidenceReady, needsEvidence,
+  type ChangeEvidence,
+} from "./ChangeEvidenceFields";
 import {
   type ModelOption,
   type StageConfigRow,
@@ -31,6 +38,8 @@ interface RoutePatchBody {
   fallback_model_ids?: string[];
   shadow_model_id?: string | null;
   shadow_sample_pct?: number;
+  eval_run_id?: string;
+  break_glass_reason?: string;
 }
 
 /** Options the primary + current fallbacks do not already occupy, available only. */
@@ -57,6 +66,8 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
   const [samplePct, setSamplePct] = useState<number>(row.shadow_sample_pct ?? 0);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");
+  const [evidence, setEvidence] = useState<ChangeEvidence>(EMPTY_EVIDENCE);
+  const [evidenceError, setEvidenceError] = useState<string | null>(null);
 
   const addable = addableOptions(row, fallbacks);
   const shadowOpts = shadowOptions(row);
@@ -68,6 +79,8 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
     fallbacks.length === origFallbacks.length && fallbacks.every((m, i) => m === origFallbacks[i]);
   const effShadow = shadowOn ? shadowModel : null;
   const effSample = shadowOn ? samplePct : 0;
+  // A new fallback chain of a writer / judge stage needs its evidence (a shadow-only change does not).
+  const askEvidence = needsEvidence(row.role) && !sameFallbacks;
   const dirty =
     !sameFallbacks ||
     effShadow !== (row.shadow_model_id ?? null) ||
@@ -75,14 +88,17 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
 
   const mut = useMutation({
     mutationFn: (body: RoutePatchBody) =>
-      apiSend<StageConfigRow>(`/api/admin/llm-config/${row.stage}/route`, {
+      apiSend<StageConfigRow & { warnings?: string[] }>(`/api/admin/llm-config/${row.stage}/route`, {
         method: "PATCH",
         body,
         admin: true,
       }),
-    onSuccess: () => {
-      toast.success(t("routeSaved", row.stage));
+    onSuccess: (data) => {
+      const warning = data?.warnings?.[0];
+      if (warning) toast.info(t("savedWithWarning", warning));
+      else toast.success(t("routeSaved", row.stage));
       setError("");
+      setEvidence(EMPTY_EVIDENCE);
       qc.invalidateQueries({ queryKey: LLM_CONFIG_QUERY });
     },
     onError: (e) => {
@@ -121,15 +137,23 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
     setShadowModel(row.shadow_model_id ?? "");
     setSamplePct(row.shadow_sample_pct ?? 0);
     setError("");
+    setEvidence(EMPTY_EVIDENCE);
+    setEvidenceError(null);
   }
 
   function confirmSave() {
+    if (askEvidence && !evidenceReady(evidence)) {
+      setEvidenceError(t("evidenceMissing", BREAK_GLASS_MIN_CHARS));
+      return;
+    }
     setConfirming(false);
+    setEvidenceError(null);
     // OFF clears the shadow (null) and sample % goes to 0; ON sends the picked model + sample.
     const body: RoutePatchBody = {
       fallback_model_ids: fallbacks,
       shadow_model_id: shadowOn ? shadowModel || null : null,
       shadow_sample_pct: effSample,
+      ...(askEvidence ? evidenceBody(evidence) : {}),
     };
     mut.mutate(body);
   }
@@ -332,7 +356,7 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
 
       <ConfirmModal
         open={confirming}
-        onClose={() => setConfirming(false)}
+        onClose={() => { setConfirming(false); setEvidenceError(null); }}
         onConfirm={confirmSave}
         title={t("changeRouteTitle", row.stage)}
         confirmLabel={t("confirmChange")}
@@ -350,6 +374,10 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
                 )}
               </div>
             </div>
+            {askEvidence && (
+              <ChangeEvidenceFields stage={row.stage} value={evidence} error={evidenceError}
+                onChange={(next) => { setEvidence(next); setEvidenceError(null); }} />
+            )}
           </div>
         }
       />

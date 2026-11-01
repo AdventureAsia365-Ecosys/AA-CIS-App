@@ -282,7 +282,7 @@ def test_writer_stage_offers_anthropic_converse_models_only():
     opts = _catalog_options("writer", "t9_write", ALL)
     assert _available(opts) == {"sonnet-5", "haiku"}
     reasons = {o["model_id"]: o.get("reason") for o in opts}
-    assert "vendor" in reasons["gpt-5.6-luna"]
+    assert "family" in reasons["gpt-5.6-luna"]          # AA-1024 A4: the family rule, English reason
     assert reasons["opus-5-5"] == "Price not verified yet"
     assert "cohere-embed-v4" not in reasons
 
@@ -294,7 +294,7 @@ def test_judge_stages_offer_non_anthropic_models(stage):
     opts = _catalog_options("judge", stage, ALL)
     assert _available(opts) == {"gpt-4.1", "gpt-5.6-luna"}
     sonnet5 = next(o for o in opts if o["model_id"] == "sonnet-5")
-    assert "vendor" in sonnet5["reason"]
+    assert "family" in sonnet5["reason"]
 
 
 def test_validate_stage_may_use_any_vendor():
@@ -303,7 +303,7 @@ def test_validate_stage_may_use_any_vendor():
     from api.routers.admin_llm_ops import _catalog_options
     opts = _catalog_options("validate", "s1_source_facts", ALL)
     assert {"haiku", "sonnet-5", "gpt-4.1", "gpt-5.6-luna"} <= _available(opts)
-    assert all("vendor" not in (o.get("reason") or "") for o in opts)
+    assert all("family" not in (o.get("reason") or "") for o in opts)
 
 
 def test_catalog_unreachable_falls_back_to_static_lists():

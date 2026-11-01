@@ -36,7 +36,7 @@ def _fake_conn():
 
 
 def _req(**over):
-    base = dict(tour_id=FAKE_UUID, batch_id="b-1", tenant_id="aa_internal", model_tier="haiku")
+    base = dict(tour_id=FAKE_UUID, batch_id="b-1", tenant_id="aa_internal")  # AA-1024 A2: no model_tier
     base.update(over)
     return admin_pipeline.TourRunRequest(**base)
 
@@ -49,11 +49,11 @@ async def test_find_active_duplicate_match():
     conn.fetchval.return_value = uuid.UUID(FAKE_UUID)
     with patch("api.routers.jobs_repo.asyncpg.connect", AsyncMock(return_value=conn)):
         res = await jobs_repo.find_active_duplicate(
-            {"tour_id": FAKE_UUID, "model_tier": "haiku", "batch_id": "b-1"}
+            {"tour_id": FAKE_UUID, "batch_id": "b-1"}
         )
     assert res == FAKE_UUID
-    # the 3 JSONB text keys are passed as params in order
-    assert conn.fetchval.call_args.args[1:] == (FAKE_UUID, "haiku", "b-1")
+    # the 2 JSONB text keys are passed as params in order (AA-1024 A2: model_tier left the key)
+    assert conn.fetchval.call_args.args[1:] == (FAKE_UUID, "b-1")
 
 
 @pytest.mark.asyncio
@@ -62,7 +62,7 @@ async def test_find_active_duplicate_none():
     conn.fetchval.return_value = None
     with patch("api.routers.jobs_repo.asyncpg.connect", AsyncMock(return_value=conn)):
         res = await jobs_repo.find_active_duplicate(
-            {"tour_id": FAKE_UUID, "model_tier": "sonnet", "batch_id": "b-2"}
+            {"tour_id": FAKE_UUID, "batch_id": "b-2"}
         )
     assert res is None
 
@@ -88,8 +88,8 @@ async def test_run_tour_async_endpoint_202_enqueues_s1_rewrite():
     assert body["status"] == "queued"
     assert body["poll_url"] == "/admin/jobs/job-uuid"
     assert enq.await_args.args[1] == "s1_rewrite"
-    # idempotency key = tour + model_tier + batch triple
-    assert enq.await_args.kwargs["idempotency_key"] == f"s1_rewrite:{FAKE_UUID}:haiku:b-1"
+    # idempotency key = tour + batch (AA-1024 A2: a request no longer picks its model)
+    assert enq.await_args.kwargs["idempotency_key"] == f"s1_rewrite:{FAKE_UUID}:b-1"
     # AA-993 follow-up: the "aa_internal" slug is enqueued as the platform tenant's UUID (the worker binds it)
     assert enq.await_args.args[2]["tenant_id"] == admin_pipeline._MASTER_TENANT_ID
 

@@ -70,6 +70,7 @@ import structlog
 
 from services.writing_memory import config as cfg
 from services.writing_memory import eval_checks as ec
+from shared.llm_client import family_rule
 
 logger = structlog.get_logger()
 
@@ -268,10 +269,15 @@ class _Stop(Exception):
 
 async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn: JudgeFn,
                  flush: Callable[[], Awaitable[None]], pool=None,
-                 progress: Optional[Callable[..., Awaitable[None]]] = None) -> Outcome:
+                 progress: Optional[Callable[..., Awaitable[None]]] = None,
+                 family_models: Optional[list] = None) -> Outcome:
     """The run. `writer_fn(writer, input, view=, shared_inputs=)` -> output dict; `judge_fn(pool, writer=,
     source_text=, output_text=, run_id=, item_id=, arm=)` -> eval_judge.Verdict; `flush()` waits for the background
-    llm_call_log writes, so `run_spend` sees the item just done."""
+    llm_call_log writes, so `run_spend` sees the item just done.
+
+    AA-1024 A4 (ADR 0009 decision 12): every regenerated output is judged only by a model of another family than the
+    models that wrote it (`_judge_family`; `family_models` = the catalog rows, None = the catalog cache). A same-family
+    verdict is an `error` row, never a verdict (a writer route may end on the judge's maker, migration 327)."""
     from services.writing_memory import eval_writers as ew
     from services.writing_memory.eval_judge import judge_source_text
     from shared.llm_client.call_log import bind_eval_stage
@@ -492,13 +498,14 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
                     if ctl_mode == "regenerate" and not it.get("trap"):
                         ctl = await _control_regenerate(it, writer_fn=writer_fn, writer=writer, view=control_view,
                                                         shared_inputs=shared_inputs, judge=judge,
-                                                        insert=store.insert_result, row=result_row)
+                                                        insert=store.insert_result, row=result_row,
+                                                        family_models=family_models)
                         if ctl is not None:
                             controls[it["item_id"]] = ctl
                     row, cmp = await _candidate(it, conf=conf, writer=writer, view=cand_view, writer_fn=writer_fn,
                                                 shared_inputs=shared_inputs, judge=judge, checks=checks,
                                                 control=controls.get(it["item_id"]), counts=out.judge_counts,
-                                                row=result_row)
+                                                row=result_row, family_models=family_models)
                     row["cost_usd"] = round(max(await spent() - before, 0.0), 6)
                     await store.insert_result(row)
                     if row["verdict"] == "error":
@@ -537,11 +544,29 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
     return out
 
 
-async def _control_regenerate(it, *, writer_fn, writer, view, shared_inputs, judge, insert, row):
+async def _judge_family(writer_labels: list[str], verdict, models: Optional[list]) -> None:
+    """AA-1024 A4: SameFamilyJudge when the model that judged an output shares a family with a model that wrote it.
+    The catalog lookup may read the database once (a thread, so the loop is never blocked)."""
+    judge_label = getattr(verdict, "model", None)
+    if not writer_labels or not judge_label:
+        return
+    await asyncio.to_thread(family_rule.check_pair, writer_labels, [judge_label], models=models,
+                            what="the R2 judge")
+
+
+async def _written(writer_fn, writer, inp, *, view, shared_inputs) -> tuple[dict, list[str]]:
+    """One write, with the writer-role models that served it (family_rule.trace_models)."""
+    with family_rule.trace_models() as seen:
+        output = await writer_fn(writer, inp, view=view, shared_inputs=shared_inputs)
+    return output, family_rule.labels(seen, "writer")
+
+
+async def _control_regenerate(it, *, writer_fn, writer, view, shared_inputs, judge, insert, row, family_models=None):
     """reverify only: a fresh control output with the active view (ec.control_mode allows nothing else)."""
     try:
-        output = await writer_fn(writer, it["input"], view=view, shared_inputs=shared_inputs)
+        output, wrote = await _written(writer_fn, writer, it["input"], view=view, shared_inputs=shared_inputs)
         v = await judge(it, output, "control")
+        await _judge_family(wrote, v, family_models)
     except Exception as e:  # noqa: BLE001
         logger.warning("aa919_r2_control_regenerate_failed", item_id=it["item_id"], error=str(e)[:200])
         return None
@@ -550,16 +575,18 @@ async def _control_regenerate(it, *, writer_fn, writer, view, shared_inputs, jud
     return {"verdict": v.verdict, "failure_codes": v.failure_codes, "output": output}
 
 
-async def _candidate(it, *, conf, writer, view, writer_fn, shared_inputs, judge, checks, control, counts, row):
+async def _candidate(it, *, conf, writer, view, writer_fn, shared_inputs, judge, checks, control, counts, row,
+                     family_models=None):
     """One candidate item: (the result row, the comparison). Errors become an `error` row, never a verdict."""
     trap = bool(it.get("trap"))
+    wrote: list[str] = []
     try:
         if conf.seed_fault:
             if control is None:
                 raise RuntimeError("seeded fault needs the item's control output")
             output = seed(control["output"], conf.seed_fault)
         else:
-            output = await writer_fn(writer, it["input"], view=view, shared_inputs=shared_inputs)
+            output, wrote = await _written(writer_fn, writer, it["input"], view=view, shared_inputs=shared_inputs)
     except Exception as e:  # noqa: BLE001
         logger.warning("aa919_r2_writer_failed", item_id=it["item_id"], error=f"{type(e).__name__}: {str(e)[:200]}")
         return (row(it, arm="candidate", mode="regenerate", verdict="error",
@@ -568,11 +595,14 @@ async def _candidate(it, *, conf, writer, view, writer_fn, shared_inputs, judge,
     det = checks(it, output)
     try:
         v = await judge(it, output, "candidate")
+        await _judge_family(wrote, v, family_models)      # AA-1024 A4: never a same-family verdict
         cand = {"verdict": v.verdict, "failure_codes": v.failure_codes, **det}
     except Exception as e:  # noqa: BLE001 — judge down: deterministic stops still apply, no verdict
         logger.warning("aa919_r2_judge_failed", item_id=it["item_id"], error=f"{type(e).__name__}: {str(e)[:200]}")
         v = None
         cand = {"verdict": "error", "failure_codes": [], **det}
+        if isinstance(e, family_rule.SameFamilyJudge):
+            det = {**det, "same_family": str(e)[:300]}
     cmp = ec.compare_item(control=control, candidate=cand, counts=counts, trap=trap)
     if v is None and (det["qa_artefacts"] or det["isolation"]["leak"] or (trap and det["injection"])):
         cmp = ec.compare_item(control=None, candidate={**cand, "verdict": "fail"}, counts=counts, trap=trap)
@@ -580,6 +610,8 @@ async def _candidate(it, *, conf, writer, view, writer_fn, shared_inputs, judge,
     info = {"qa_artefacts": det["qa_artefacts"][:20], "isolation": det["isolation"],
             "injection": det["injection"], "new_hard": cmp["new_hard"], "hard_stop": cmp["hard_stop"],
             "paired": cmp["paired"], "new_fail": cmp["new_fail"], "fixed": cmp["fixed"]}
+    if det.get("same_family"):
+        info["same_family"] = det["same_family"]
     if conf.seed_fault:
         info["seeded_fault"] = conf.seed_fault
     return (row(it, arm="candidate", mode="regenerate", verdict=verdict, output=output,
@@ -800,18 +832,43 @@ async def flush_call_log() -> None:
     await asyncio.to_thread(wait_for_pending_writes, 15.0)
 
 
+async def check_judge_family(writer: str) -> list:
+    """AA-1024 A4 (ADR 0009 decision 12), before any money is spent: R2Refused when a model of the judge route
+    (`writing_memory_eval`, primary and fallbacks) is of the writer stage's primary family. Returns the catalog rows
+    (the call-time check reuses them). An unreadable route or catalog refuses the run: it cannot be checked."""
+    from services.writing_memory.releases import WRITER_STAGES
+    from shared.llm_client.catalog import list_models
+    try:
+        models = await list_models()
+        conflicts = await family_rule.stage_pair_conflicts(WRITER_STAGES.get(writer), [cfg.EVAL_STAGE],
+                                                           models=models)
+    except Exception as e:  # noqa: BLE001
+        raise R2Refused(f"the judge / writer family rule could not be checked: {type(e).__name__}: {str(e)[:200]}")
+    if conflicts:
+        raise R2Refused("the judge route has a model of the writer's family (ADR 0009 decision 12): "
+                        + "; ".join(conflicts))
+    return models
+
+
 async def run_with_pool(pool, conf: R2Config, *, progress=None) -> Outcome:
     from services.writing_memory.eval_judge import judge_output
     from services.writing_memory.eval_writers import regenerate
+    conf.validate()
+    models = await check_judge_family(conf.writer)
     # AA-900: run_spend reads the run's own label, so the per-run cap holds under either stage
     return await run_r2(PgStore(pool, stages=(conf.log_stage,)), conf, writer_fn=regenerate, judge_fn=judge_output,
                         flush=flush_call_log,
-                        pool=pool, progress=progress)
+                        pool=pool, progress=progress, family_models=models)
 
 
 async def estimate(pool, conf: R2Config) -> dict:
     """The DRY RUN: the plan and its estimated cost, $0 (reads only)."""
     conf.validate()
+    try:                                        # AA-1024 A4: what the run would refuse, reported ($0, read only)
+        await check_judge_family(conf.writer)
+        family_check = "ok"
+    except R2Refused as e:
+        family_check = str(e)
     store = PgStore(pool)
     release = await store.get_release(conf.release_id) if conf.release_id else None
     owner = release["tenant_id"] if release and release["scope"] == "tenant" else None
@@ -835,7 +892,8 @@ async def estimate(pool, conf: R2Config) -> dict:
                                     and min(calib_labels.values()) >= cfg.MIN_KAPPA_PER_LABEL),
             "calibration_strata": ec.strata_label_counts(calib),
             "estimated_usd_max": round(judge_only + gen, 3), "cap_usd": conf.cap_usd, "log_stage": conf.log_stage,
-            "month_spend_usd": round(await store.month_spend(), 4), "month_cap_usd": cfg.MONTH_CAP_USD}
+            "month_spend_usd": round(await store.month_spend(), 4), "month_cap_usd": cfg.MONTH_CAP_USD,
+            "judge_family_check": family_check}
 
 
 def _parse(argv=None) -> tuple[R2Config, argparse.Namespace]:

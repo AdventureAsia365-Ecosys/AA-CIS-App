@@ -12,6 +12,9 @@
 // C4 (S262 wave 4, AA-1018 UI): each stage carries the failure-domain rule's answer (GET /api/admin/llm-availability
 // `invariant`, report only): "Fallback in another failure domain" or "No fallback in another failure domain" with why.
 // An API without the report shows no badge.
+// Route governance (S263, ADR 0009 decision 12): a new primary model of a writer / judge stage asks for the eval run
+// that backs it, or a break-glass reason (ChangeEvidenceFields in the confirm dialog); a save that breaks the
+// failure-domain rule comes back with `warnings` (report only), shown as an info toast.
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -31,6 +34,10 @@ import {
 import { STAGE_GROUP_LABELS_VI, STAGE_LABELS_VI } from "./llmShared.vi";
 import { LlmAvailabilityCard } from "./LlmAvailabilityCard";
 import { MODELS } from "./models.messages";
+import {
+  BREAK_GLASS_MIN_CHARS, ChangeEvidenceFields, EMPTY_EVIDENCE, evidenceBody, evidenceReady, needsEvidence,
+  type ChangeEvidence,
+} from "./ChangeEvidenceFields";
 import { StageRouteEditor } from "./StageRouteEditor";
 import { useDomainText } from "./useDomainText";
 
@@ -121,6 +128,8 @@ function ModelRow({ row, showAccount, domain }: {
   const [accountRoute, setAccountRoute] = useState(row.account_route ?? "");
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");
+  const [evidence, setEvidence] = useState<ChangeEvidence>(EMPTY_EVIDENCE);
+  const [evidenceError, setEvidenceError] = useState<string | null>(null);
   const awsAccounts = useAwsAccounts();
   const accountText = useAccountText();
 
@@ -134,12 +143,20 @@ function ModelRow({ row, showAccount, domain }: {
   const acctLabel = (v: string) =>
     row.account_route_options.find((o) => o.value === v)?.label ?? accountName(v, awsAccounts, accountText);
 
+  // A new primary model of a writer / judge stage needs its evidence (an account-only save does not).
+  const askEvidence = needsEvidence(row.role) && modelId !== row.model_id;
+
   const mut = useMutation({
-    mutationFn: (body: { model_id: string; account_route: string | null }) =>
-      apiSend<StageConfigRow>(`/api/admin/llm-config/${row.stage}`, { method: "PATCH", body, admin: true }),
-    onSuccess: () => {
-      toast.success(t("modelSaved", row.stage));
+    mutationFn: (body: { model_id: string; account_route: string | null; eval_run_id?: string;
+                         break_glass_reason?: string }) =>
+      apiSend<StageConfigRow & { warnings?: string[] }>(`/api/admin/llm-config/${row.stage}`,
+        { method: "PATCH", body, admin: true }),
+    onSuccess: (data) => {
+      const warning = data?.warnings?.[0];
+      if (warning) toast.info(t("savedWithWarning", warning));
+      else toast.success(t("modelSaved", row.stage));
       setError("");
+      setEvidence(EMPTY_EVIDENCE);
       qc.invalidateQueries({ queryKey: LLM_CONFIG_KEY });
     },
     onError: (e) => {
@@ -150,11 +167,16 @@ function ModelRow({ row, showAccount, domain }: {
   });
 
   function confirmSave() {
+    if (askEvidence && !evidenceReady(evidence)) {
+      setEvidenceError(t("evidenceMissing", BREAK_GLASS_MIN_CHARS));
+      return;
+    }
     setConfirming(false);
     setError("");
+    setEvidenceError(null);
     // Hidden select: send the row's own route back, so a model change never moves the stage to another account.
     const route = accountSelect ? accountRoute || null : row.account_route;
-    mut.mutate({ model_id: modelId, account_route: route });
+    mut.mutate({ model_id: modelId, account_route: route, ...(askEvidence ? evidenceBody(evidence) : {}) });
   }
 
   const saving = mut.isPending;
@@ -219,7 +241,7 @@ function ModelRow({ row, showAccount, domain }: {
 
       <ConfirmModal
         open={confirming}
-        onClose={() => setConfirming(false)}
+        onClose={() => { setConfirming(false); setEvidenceError(null); }}
         onConfirm={confirmSave}
         title={t("changeModelTitle", row.stage)}
         confirmLabel={t("confirmChange")}
@@ -234,6 +256,10 @@ function ModelRow({ row, showAccount, domain }: {
               {" → "}
               {modelLabel(modelId)}{nextRoute ? ` (${acctLabel(nextRoute)})` : ""}
             </div>
+            {askEvidence && (
+              <ChangeEvidenceFields stage={row.stage} value={evidence} error={evidenceError}
+                onChange={(next) => { setEvidence(next); setEvidenceError(null); }} />
+            )}
           </div>
         }
       />

@@ -8,13 +8,14 @@
 // modal right away. The screen never freezes.
 //
 // Supports a single tour (the row's Regenerate button) or a bulk set (DataTable "Regenerate
-// selected"). For bulk, one tier choice applies to every selected tour that has no recorded tier.
+// selected"). AA-1024 A2 (ADR 0009 decision 5): no model tier pick any more: every regenerate runs on the s1_generate
+// route (AI providers › Routing), the same model the rest of the pipeline uses; the API refuses a per-request model.
 // AA-916 WM-07: a reason chip row (preselected from the rows' failure codes) — every started job sends its review id
 // and the chip, so the regenerate is a writing signal too.
 
 import { RotateCcw } from "lucide-react";
 import { useState } from "react";
-import { K, mono, Button, Modal, useT, Spinner, SegmentedControl } from "../../_kit";
+import { K, Button, Modal, useT, Spinner } from "../../_kit";
 import { M } from "./messages";
 import { startRegenerate } from "./reviewApi";
 import { WritingReasonChips } from "../_components/WritingReasonChips";
@@ -35,9 +36,6 @@ export function RegenerateModal({
 }) {
   const t = useT(M);
   const bulk = items.length > 1;
-  // A tour's recorded tier, if any. For bulk we only need a chosen tier when some tour lacks one.
-  const anyMissingTier = items.some((it) => !it.raw?.requested_tier);
-  const [tier, setTier] = useState<string>("");
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // AA-916 — null = the preselection from the rows' codes (derived, so a new set of rows gets its own)
@@ -45,8 +43,7 @@ export function RegenerateModal({
   const suggested = commonReason(items.map((it) => it.codes));
   const reason = reasonPick ?? suggested;
 
-  // Each tour uses its own recorded tier if present, else the chosen fallback tier.
-  const canRun = !running && items.length > 0 && (!anyMissingTier || !!tier);
+  const canRun = !running && items.length > 0;
 
   async function run() {
     setRunning(true);
@@ -55,14 +52,9 @@ export function RegenerateModal({
     const startedReviews: string[] = [];
     const errors: string[] = [];
     for (const it of items) {
-      const effectiveTier = (it.raw?.requested_tier as string) || tier;
-      if (!effectiveTier) {
-        errors.push(t("noTier", it.name));
-        continue;
-      }
       try {
         await startRegenerate({
-          tourId: it.raw.tour_id, modelTier: effectiveTier, reviewId: it.id, reasonCode: reason,
+          tourId: it.raw.tour_id, reviewId: it.id, reasonCode: reason,
           failMessage: (s) => t("regenStartFailed", s),
         });
         startedTours.push(String(it.raw.tour_id));
@@ -106,8 +98,11 @@ export function RegenerateModal({
       <p style={{ fontSize: 13, color: K.body, lineHeight: 1.6, margin: "0 0 8px" }}>
         {t("costBefore")}<strong>{t("fullPipeline")}</strong>{t("costAfter")}
       </p>
-      <p style={{ fontSize: 12, color: K.muted, lineHeight: 1.6, margin: "0 0 14px" }}>
+      <p style={{ fontSize: 12, color: K.muted, lineHeight: 1.6, margin: "0 0 8px" }}>
         {t("regenExplain")}
+      </p>
+      <p data-testid="regen-route-note" style={{ fontSize: 12, color: K.muted, lineHeight: 1.6, margin: "0 0 14px" }}>
+        {t("regenRouteNote")}
       </p>
 
       {bulk ? (
@@ -115,9 +110,6 @@ export function RegenerateModal({
           {items.map((it) => (
             <li key={it.id} style={{ marginBottom: 2 }}>
               {it.name}
-              {it.raw?.requested_tier ? (
-                <span style={{ color: K.muted, fontFamily: mono }}> · {String(it.raw.requested_tier)}</span>
-              ) : null}
             </li>
           ))}
         </ul>
@@ -127,25 +119,6 @@ export function RegenerateModal({
         <WritingReasonChips value={reason} suggested={suggested} disabled={running} onChange={setReasonPick}
                             label={bulk ? t("whyAll") : t("why")} />
       </div>
-
-      {anyMissingTier ? (
-        <div style={{ marginBottom: 6 }}>
-          <div style={{ fontSize: 12, color: K.body, marginBottom: 6 }}>
-            {bulk
-              ? t("pickTierMany")
-              : t("pickTierOne")}
-          </div>
-          <SegmentedControl<"haiku" | "sonnet">
-            label={bulk ? t("pickTierMany") : t("pickTierOne")}
-            appearance="chips"
-            value={tier === "haiku" || tier === "sonnet" ? tier : null}
-            onChange={setTier}
-            options={(["haiku", "sonnet"] as const).map((opt) => ({
-              value: opt, label: <span style={{ textTransform: "capitalize" }}>{opt}</span>, disabled: running,
-            }))}
-          />
-        </div>
-      ) : null}
 
       {error && (
         <div

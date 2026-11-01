@@ -87,6 +87,9 @@ def _request_with_pool(conn):
 # ║ 1. PATCH /admin/llm-config/{stage}/route — validation                                          ║
 # ╚══════════════════════════════════════════════════════════════════════════════════════════════╝
 
+# AA-1026 D7: a fallback-chain change of a judge stage needs an eval run id or a break-glass reason.
+BREAK_GLASS = "acc3 refuses every model; restore a working fallback now"
+
 JUDGE_STAGE = {"stage": "t10_judge", "role": "judge", "model_id": "gpt-5.6-luna",
                "fallback_model_ids": [], "shadow_model_id": None, "shadow_sample_pct": 0}
 
@@ -178,8 +181,10 @@ async def test_route_valid_update_calls_setter():
 
     # S235: an OpenAI-API model (GPT41 here) may be the LAST fallback; the shadow is a Bedrock model.
     res = await _call_route({"fallback_model_ids": ["gpt-6-luna", "gpt-4.1"], "shadow_model_id": "gpt-6-luna",
-                             "shadow_sample_pct": 50}, stage_rows=[JUDGE_STAGE], setter=setter)
+                             "shadow_sample_pct": 50, "break_glass_reason": BREAK_GLASS},
+                            stage_rows=[JUDGE_STAGE], setter=setter)
     assert captured["fallback_model_ids"] == ["gpt-6-luna", "gpt-4.1"]
+    assert captured["evidence"] == {"break_glass_reason": BREAK_GLASS}       # AA-1026 D7: into the audit row
     assert captured["shadow_model_id"] == "gpt-6-luna"
     assert captured["shadow_sample_pct"] == 50
     assert captured["audit_actor"] == "admin:admin1"
@@ -199,7 +204,8 @@ async def test_route_explicit_null_clears_shadow_omitted_keeps_it():
     assert captured["shadow_model_id"] is None
     assert captured["shadow_sample_pct"] == 0  # no shadow -> nothing to sample
 
-    await _call_route({"fallback_model_ids": ["gpt-4.1"]}, stage_rows=[with_shadow], setter=setter)
+    await _call_route({"fallback_model_ids": ["gpt-4.1"], "break_glass_reason": BREAK_GLASS},
+                      stage_rows=[with_shadow], setter=setter)
     assert captured["shadow_model_id"] == "gpt-6-luna"
     assert captured["shadow_sample_pct"] == 20
 

@@ -104,7 +104,6 @@ export const M = defineMessages(
       + "add a new row.",
     cancel: "Cancel",
     // regenerate modal
-    noTier: (name: string) => `${name}: no model tier`,
     failed: "failed",
     regenMany: (n: number) => `Regenerate ${n} tours?`,
     regenOne: "Regenerate this version?",
@@ -115,8 +114,7 @@ export const M = defineMessages(
       + "version that passes publishes to Master Content and leaves this queue; one that fails replaces the current row.",
     whyAll: "Why (all rows)",
     why: "Why",
-    pickTierMany: "Some tours have no recorded model tier — pick one for them:",
-    pickTierOne: "No model tier was recorded for this tour — choose one:",
+    regenRouteNote: "The writer model comes from the s1_generate route (AI providers › Routing), as for every run.",
     // editor
     revalPassed: "Re-validation passed",
     revalFailed: "Re-validation failed",
@@ -229,7 +227,6 @@ export const M = defineMessages(
     dismissBody: "Gỡ phiên bản lỗi cũ này khỏi hàng chờ: không sửa, không xuất bản. Một lần chạy lại sau mà lỗi vẫn có "
       + "thể thêm dòng mới.",
     cancel: "Huỷ",
-    noTier: (name: string) => `${name}: chưa có mức model`,
     failed: "thất bại",
     regenMany: (n: number) => `Viết lại ${n} tour?`,
     regenOne: "Viết lại phiên bản này?",
@@ -240,8 +237,7 @@ export const M = defineMessages(
       + "Master Content và rời hàng chờ này; phiên bản không đạt sẽ thay dòng hiện tại.",
     whyAll: "Lý do (mọi dòng)",
     why: "Lý do",
-    pickTierMany: "Một số tour chưa ghi mức model — hãy chọn một mức cho chúng:",
-    pickTierOne: "Tour này chưa ghi mức model — hãy chọn một mức:",
+    regenRouteNote: "Model viết lấy từ tuyến s1_generate (AI providers › Routing), như mọi lần chạy.",
     revalPassed: "Kiểm tra lại đạt",
     revalFailed: "Kiểm tra lại không đạt",
     needsReval: "Cần kiểm tra lại",

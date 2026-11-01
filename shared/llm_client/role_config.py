@@ -25,7 +25,7 @@ import structlog
 
 from shared.secrets import get_database_url
 
-from . import data_scope
+from . import data_scope, route_evidence
 
 logger = structlog.get_logger()
 
@@ -45,10 +45,13 @@ _AUDIT_INSERT_SQL = """
 
 
 async def _insert_audit(conn, *, actor: str, action: str, resource_type: str,
-                        resource_id: str, before: Any, after: Any) -> None:
+                        resource_id: str, before: Any, after: Any, evidence: Optional[dict] = None) -> None:
+    details = {"before": before, "after": after}
+    if evidence:                      # AA-1026 D7: the eval run / break-glass reason of a route change
+        details["evidence"] = evidence
     await conn.execute(
         _AUDIT_INSERT_SQL, actor, action, resource_type, str(resource_id),
-        json.dumps({"before": before, "after": after}, default=str),
+        json.dumps(details, default=str),
     )
 
 
@@ -411,7 +414,7 @@ async def list_stage_configs() -> list[StageConfig]:
 
 async def set_stage_config(
     stage: str, model_id: str, account_route: Optional[str], updated_by: str,
-    audit_actor: Optional[str] = None,
+    audit_actor: Optional[str] = None, evidence: Optional[dict] = None,
 ) -> dict:
     """Admin UI write — role/provider are NOT editable here (they're a property of the call site,
     not a choice; changing role/provider for a stage is a code change, not a config change).
@@ -422,6 +425,9 @@ async def set_stage_config(
     AA-686: when `audit_actor` is given, the change is recorded in acp_shared.audit_log inside the
     same transaction as the UPDATE (action `llm_model_changed`), so a committed model change is
     always paired with its audit row.
+
+    AA-1026 D7: ``evidence`` (route_evidence.require) goes into that audit row; a break-glass change also writes the
+    admin bell in the same transaction.
     """
     conn = await asyncpg.connect(get_database_url(), ssl="require")
     try:
@@ -448,7 +454,11 @@ async def set_stage_config(
                     resource_type="llm_role_config", resource_id=stage,
                     before=dict(before) if before else None,
                     after={"model_id": model_id, "account_route": account_route},
+                    evidence=evidence,
                 )
+                await route_evidence.record_break_glass(
+                    conn, stage=stage, actor=audit_actor, evidence=evidence,
+                    change={"model_id": model_id, "before": dict(before) if before else None})
         out = dict(row)
         out["fallback_model_ids"] = list(out["fallback_model_ids"] or [])
         return out
@@ -459,13 +469,14 @@ async def set_stage_config(
 
 async def set_stage_route(
     stage: str, *, fallback_model_ids: list[str], shadow_model_id: Optional[str],
-    shadow_sample_pct: int, updated_by: str, audit_actor: str,
+    shadow_sample_pct: int, updated_by: str, audit_actor: str, evidence: Optional[dict] = None,
 ) -> dict:
     """AA-686 — set a stage's route (ordered fallback chain + optional shadow). Validation of the
     model keys (vendor rule, duplicate/primary-in-fallback, shadow == primary) belongs to the
     router, which has the catalog; this helper is the persistence + audit boundary. The UPDATE and
     the acp_shared.audit_log row (action `llm_route_changed`) share one transaction, and the stage
     cache is invalidated the same way set_stage_config does so the next LLM call sees the new route.
+    AA-1026 D7: ``evidence`` goes into the audit row; a break-glass change writes the admin bell in the transaction.
     """
     conn = await asyncpg.connect(get_database_url(), ssl="require")
     try:
@@ -496,7 +507,11 @@ async def set_stage_route(
                 before=before_d,
                 after={"fallback_model_ids": list(fallback_model_ids),
                        "shadow_model_id": shadow_model_id, "shadow_sample_pct": shadow_sample_pct},
+                evidence=evidence,
             )
+            await route_evidence.record_break_glass(
+                conn, stage=stage, actor=audit_actor, evidence=evidence,
+                change={"fallback_model_ids": list(fallback_model_ids), "before": before_d})
         out = dict(row)
         out["fallback_model_ids"] = list(out["fallback_model_ids"] or [])
         return out

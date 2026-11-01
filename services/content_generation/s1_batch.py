@@ -262,11 +262,13 @@ async def ingest_s1_batch(
     tour_ids: list[str],
     batch_id: str,
     seo_mode: str = "standard",
-    model_tier: Optional[str] = "haiku",
     poll: bool = True,
 ) -> dict:
     """Poll the batch job (optional), read its output, then run each tour through the existing
     persist path via _execute_run_tour(batch_text=...). Returns a per-tour summary.
+
+    AA-1024 A2 (ADR 0009 decision 5): no model_tier (it was "haiku"): the on-demand retries and a tour the batch could
+    not write run on the s1_generate stage route, like every other rewrite.
 
     Uses batch_id as TourRunRequest.batch_id so pipeline_runs accounting and generated_content
     metadata carry the same batch traceability the synchronous ingest already records."""
@@ -297,7 +299,7 @@ async def ingest_s1_batch(
             # still gets a version (the writer retry loop starts from generate, not the seed node).
             summary["batch_write_failed"] += 1
             req = TourRunRequest(tour_id=tid, batch_id=batch_id, tenant_id=_MASTER_TENANT_ID,
-                                 seo_mode=seo_mode, model_tier=model_tier)
+                                 seo_mode=seo_mode)
             try:
                 await _execute_run_tour(req)
                 summary["per_tour"].append({"tour_id": tid, "outcome": "batch_failed_fell_back_sync"})
@@ -306,7 +308,7 @@ async def ingest_s1_batch(
             continue
 
         req = TourRunRequest(tour_id=tid, batch_id=batch_id, tenant_id=_MASTER_TENANT_ID,
-                             seo_mode=seo_mode, model_tier=model_tier)
+                             seo_mode=seo_mode)
         try:
             result = await _execute_run_tour(
                 req,
