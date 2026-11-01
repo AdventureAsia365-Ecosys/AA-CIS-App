@@ -183,3 +183,15 @@ def embed(stage: str, texts: list[str], *, input_type: str = "search_document",
                         texts=len(texts), in_tokens=resp.input_tokens, cost_usd=resp.cost_usd)
             return resp
     raise RuntimeError(f"All models in the route failed for stage {stage!r}: " + "; ".join(errors))
+
+
+def probe(model: CatalogModel, conn: connections.ProviderConnection, wire_id: str, texts: list[str], *,
+          input_type: str = "search_query") -> EmbedResponse:
+    """AA-642 (S263 L2, B2): the daily probe of one embedding deployment — ``model`` on ``conn`` / ``wire_id`` only, no
+    stage route, no fallback. Like ``LLMClient.probe`` it is the operator's half-open probe: an open circuit is not in
+    the way and the outcome is counted on the deployment's circuit (a success closes it). Raises the provider's own
+    exception; the caller writes the ledger row (stage adhoc_conn_test, role embed)."""
+    if model.api_style != "embed" or conn.kind != "bedrock":
+        raise RuntimeError(f"{model.model_key!r} on {conn.connection_key!r} is not a Bedrock embedding deployment")
+    return breaker.guarded(conn, model.model_key, functools.partial(
+        _call, model, conn.connection_key, texts, input_type, None, wire_id), admit_call=False)

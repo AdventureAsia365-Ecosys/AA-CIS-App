@@ -203,6 +203,23 @@ def _install_log_redaction() -> None:
 # start (refresh_daily_credit_limit); a sync reader (daily_credit_limit) uses the last value read in this process.
 GEOAPIFY_CONNECTION_KEY = "geoapify"
 _registry_daily_limit: Optional[int] = None
+# AA-642 (S263 L2, B1): the row's ``enabled`` (the admin switch), read with the daily limit when a job starts. False =
+# every Geoapify request is refused before it is sent (GeocoderUnavailable: the run stops, names stay pending, no try
+# counted). None (no row read yet, no row, unreadable) = on. A switch flipped during a run applies from the next run.
+_registry_enabled: Optional[bool] = None
+
+
+def connection_switched_off() -> bool:
+    """True when the Geoapify connection row last read in this process says enabled = false."""
+    return _registry_enabled is False
+
+
+def check_switch() -> None:
+    """Raise GeocoderUnavailable when the Geoapify connection is switched off (nothing is sent)."""
+    if connection_switched_off():
+        from shared.llm_client import connections as conn_registry
+
+        raise GeocoderUnavailable(f"geoapify: {conn_registry.switched_off_reason(GEOAPIFY_CONNECTION_KEY)}")
 
 
 def daily_credit_limit() -> int:
@@ -215,15 +232,43 @@ def daily_credit_limit() -> int:
 
 async def refresh_daily_credit_limit(db) -> int:
     """Read the Geoapify connection row (``db``: asyncpg connection or pool) and return ``daily_credit_limit()``. A
-    missing row / column or a failed read keeps the last value (none = env / constant). Never raises."""
-    global _registry_daily_limit
+    missing row / column or a failed read keeps the last value (none = env / constant). AA-642 (S263 L2): the row's
+    switch too (``connection_switched_off``). Never raises."""
+    global _registry_daily_limit, _registry_enabled
     from shared.llm_client import connections as conn_registry
 
     row = await conn_registry.provider_connection(db, GEOAPIFY_CONNECTION_KEY)
     if row is not None:
         value = row.daily_credit_limit
         _registry_daily_limit = value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+        _registry_enabled = row.enabled if isinstance(row.enabled, bool) else None
     return daily_credit_limit()
+
+
+async def note_access(state: str) -> None:
+    """AA-642 (S263 L2, B1): the Geoapify row's access_state (written when it changes in this process). Never
+    raises."""
+    from shared.llm_client import connections as conn_registry
+
+    await conn_registry.note_provider_access(GEOAPIFY_CONNECTION_KEY, state)
+
+
+def _note_access(state: str) -> None:
+    """``note_access`` from sync code (a missing key is found in the sync ``_get_key``): scheduled on the running loop
+    when there is one, else skipped (the next async call writes the state). Never raises."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    try:
+        task = loop.create_task(note_access(state))
+        _pending_notes.add(task)
+        task.add_done_callback(_pending_notes.discard)
+    except Exception:  # noqa: BLE001 — a state write never breaks the geocoder
+        pass
+
+
+_pending_notes: set = set()
 
 
 def _env_float(name: str, default: float) -> float:
@@ -284,13 +329,16 @@ class GeoapifyGeocoder:
         return self._http
 
     def _get_key(self) -> str:
+        check_switch()                      # AA-642 (S263 L2): switched off in the admin = nothing is sent
         if not self._key:
             from shared.secrets import get_geoapify_key
             try:
                 key = get_geoapify_key()
             except Exception as e:  # noqa: BLE001 — the message may name the secret; keep the type only
+                _note_access("unconfigured")
                 raise GeocoderUnavailable(f"geoapify: API key unavailable ({type(e).__name__})") from None
             if not (key or "").strip():
+                _note_access("unconfigured")
                 raise GeocoderUnavailable("geoapify: API key is empty")
             self._key = key.strip()
         return self._key
@@ -337,12 +385,15 @@ class GeoapifyGeocoder:
                 status = getattr(resp, "status_code", 0)
                 if status == 200:
                     try:
-                        return resp.json()
+                        data = resp.json()
                     except Exception as e:  # noqa: BLE001
                         self.failed_requests += 1
                         raise GeocoderError(f"geoapify: invalid JSON ({type(e).__name__})") from None
+                    await note_access("ok")
+                    return data
                 self.failed_requests += 1
                 if status in (401, 403):
+                    await note_access("access_denied")
                     raise GeocoderUnavailable(f"geoapify: HTTP {status} (key rejected)")
                 if status != 429 and status < 500:
                     raise GeocoderError(f"geoapify: HTTP {status}")

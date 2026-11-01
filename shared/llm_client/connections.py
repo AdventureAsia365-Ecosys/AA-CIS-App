@@ -596,3 +596,115 @@ def resolve_usage_key(connection_key: str, usage_secret_name: Optional[str]) -> 
     if not key:
         raise ConnectionCredentialError(f"connection {connection_key!r}: usage secret holds no key")
     return key
+
+
+# ── AA-642 (S263 lane L2, B1): the provider switch and the access state of a decide / data provider ─────────────────
+#
+# Since migration 322 the typesafe / dataforseo / geoapify rows carry ``enabled``, but no client read it. Each client
+# now asks ``provider_enabled`` before it sends anything (Jev: decide.py reads its own row with its question config;
+# DataForSEO: dataforseo_client._request; Geoapify: geocoder / shape_sources, from the row read when the job starts).
+# Switched off = nothing is sent and the refusal is written to the client's own ledger at 0 USD. No row, a table before
+# 322 or an unreadable row = on (the built-in default, BUILTIN_PROVIDERS): a settings read never stops a provider.
+# ``note_provider_access`` writes the lasting outcome to ``access_state`` (cis_app has column UPDATE since 322): once
+# per change per process for a call, always (with ``last_probe_at``) for a probe.
+
+PROVIDER_SWITCH_KINDS = ("typesafe", "dataforseo", "geoapify")
+_PROVIDER_TTL_SECONDS = 30.0
+_PROVIDER_STATE_RETRY_SECONDS = 60.0
+_provider_rows: dict[str, tuple[float, Optional[ProviderConnection]]] = {}
+_provider_state_written: dict[str, str] = {}
+_provider_state_retry_at: dict[str, float] = {}
+
+_SET_PROVIDER_STATE_SQL = ("UPDATE shared.llm_provider_connection SET access_state = $2 "
+                           "WHERE connection_key = $1 AND access_state IS DISTINCT FROM $2")
+_STAMP_PROVIDER_PROBE_SQL = ("UPDATE shared.llm_provider_connection SET access_state = $2, last_probe_at = now() "
+                             "WHERE connection_key = $1")
+_STAMP_PROBE_ONLY_SQL = "UPDATE shared.llm_provider_connection SET last_probe_at = now() WHERE connection_key = $1"
+
+
+def switched_off_reason(connection_key: str) -> str:
+    """The refusal text of a call to a switched-off provider (ledger ``error``, job results, API answers)."""
+    return (f"connection {connection_key!r} is switched off (AI providers, Providers): nothing was sent to the "
+            "provider")
+
+
+async def _read_provider_row(connection_key: str) -> Optional[ProviderConnection]:
+    conn = await _connect()
+    try:
+        return await provider_connection(conn, connection_key)
+    finally:
+        await conn.close()
+
+
+# Tests replace these two (conftest: no database in unit tests).
+provider_row_loader = _read_provider_row
+
+
+async def _write_provider_state(connection_key: str, state: Optional[str], probed: bool) -> None:
+    conn = await _connect()
+    try:
+        if state is None:
+            await conn.execute(_STAMP_PROBE_ONLY_SQL, connection_key)
+        else:
+            await conn.execute(_STAMP_PROVIDER_PROBE_SQL if probed else _SET_PROVIDER_STATE_SQL, connection_key, state)
+    finally:
+        await conn.close()
+
+
+provider_state_writer = _write_provider_state
+
+
+async def provider_enabled(connection_key: str, db=None) -> bool:
+    """True unless the provider's connection row says ``enabled = false``. Read through ``db`` (asyncpg connection or
+    pool) when given, else its own connection; cached ``_PROVIDER_TTL_SECONDS`` per process (one reader at a time: the
+    others use the last value while it reads). No row / unreadable = the last row read, else on. Never raises."""
+    now = time.monotonic()
+    hit = _provider_rows.get(connection_key)
+    if hit is not None and now - hit[0] < _PROVIDER_TTL_SECONDS:
+        row = hit[1]
+    else:
+        last = hit[1] if hit is not None else None
+        _provider_rows[connection_key] = (now, last)
+        try:
+            row = await (provider_connection(db, connection_key) if db is not None
+                         else provider_row_loader(connection_key))
+        except Exception as e:  # noqa: BLE001 — a settings read never stops a provider
+            logger.warning("provider_switch_read_failed", connection=connection_key, error=str(e)[:200])
+            row = None
+        row = row if row is not None else last
+        _provider_rows[connection_key] = (now, row)
+    return row is None or bool(row.enabled)
+
+
+def invalidate_providers() -> None:
+    """Forget the cached provider rows (after an admin edit, in tests)."""
+    _provider_rows.clear()
+
+
+async def note_provider_access(connection_key: str, state: Optional[str], *, probed: bool = False) -> None:
+    """Write ``state`` (one of ACCESS_STATES) as the provider's access_state: for a call only when it changed in this
+    process (and not within ``_PROVIDER_STATE_RETRY_SECONDS`` of a failed write), for a probe always, with
+    ``last_probe_at = now()`` (a probe whose outcome says nothing lasting, ``state`` None, stamps the time only). Best
+    effort: never raises."""
+    if state not in ACCESS_STATES and not (probed and state is None):
+        return
+    now = time.monotonic()
+    if not probed and (_provider_state_written.get(connection_key) == state
+                       or now < _provider_state_retry_at.get(connection_key, float("-inf"))):
+        return
+    if state is not None:
+        _provider_state_written[connection_key] = state
+    try:
+        await provider_state_writer(connection_key, state, probed)
+        _provider_state_retry_at.pop(connection_key, None)
+    except Exception as e:  # noqa: BLE001 — before 322 (no column) or DB down: try again after the back-off
+        _provider_state_written.pop(connection_key, None)
+        _provider_state_retry_at[connection_key] = now + _PROVIDER_STATE_RETRY_SECONDS
+        logger.warning("provider_access_state_write_failed", connection=connection_key, error=str(e)[:200])
+
+
+def reset_provider_state() -> None:
+    """Tests: forget the cached rows and the access states written by this process."""
+    _provider_rows.clear()
+    _provider_state_written.clear()
+    _provider_state_retry_at.clear()

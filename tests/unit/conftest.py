@@ -189,3 +189,34 @@ def _empty_llm_connection_registry(monkeypatch):
     monkeypatch.setattr(connections, "run_sync", _empty)
     yield
     _reset()
+
+
+# AA-642 (S263 lane L2, B1): decide() writes Jev's access_state, the DataForSEO client asks
+# shared/llm_client/connections.provider_enabled before each call (a DB read through its own connection, cached in
+# process) and every provider client writes its access_state. Unit
+# tests have no DB: by default no provider row exists (= on) and the state writes go nowhere; a test that needs a row
+# or the writes patches `provider_row_loader` / `provider_state_writer` itself (its patch wins).
+@pytest.fixture(autouse=True)
+def _no_provider_row_reads(monkeypatch):
+    from shared.llm_client import connections
+
+    async def _no_row(connection_key):
+        return None
+
+    async def _no_write(connection_key, state, probed):
+        return None
+
+    async def _no_jev_write(db, state):
+        return None
+
+    from services.places import geocoder
+    from shared.llm_client import decide
+    monkeypatch.setattr(geocoder, "_registry_enabled", None)
+    connections.reset_provider_state()
+    decide.reset_jev_access()
+    monkeypatch.setattr(connections, "provider_row_loader", _no_row)
+    monkeypatch.setattr(connections, "provider_state_writer", _no_write)
+    monkeypatch.setattr(decide, "jev_access_writer", _no_jev_write)
+    yield
+    connections.reset_provider_state()
+    decide.reset_jev_access()

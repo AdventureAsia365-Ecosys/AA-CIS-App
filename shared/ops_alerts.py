@@ -490,3 +490,109 @@ def render_llm_circuit_open(payload: dict, *, to: Recipients, base_url: Optional
             f"<p><a href=\"{html.escape(link)}\">Open Settings / LLM Models</a></p>"
             f"<p style=\"color:#777;font-size:12px\">{html.escape(footer)}</p></div>")
     return Message(to=to, subject=subject, text=text, html=body)
+
+
+# ── AA-642 (S263 lane L2, B4) — DataForSEO low balance, and the nightly LLM cost reconcile mismatch ─────────────────
+# Both had an admin bell only (AA-627 /admin/dfs-balance/check; AA-1002 S10 llm_cost_reconcile). The e-mail is queued
+# by the caller only when it just wrote a new bell row (the bell's own 24 h throttle gates it), and at most once per
+# UTC day per template (the idempotency key).
+
+TEMPLATE_DFS_BALANCE_LOW = "dfs_balance_low"
+TEMPLATE_LLM_COST_MISMATCH = "llm_cost_mismatch"
+DFS_SPEND_PAGE_PATH = "/admin/cost-ops?tab=spend&view=dfs"
+LLM_CONNECTIONS_PAGE_PATH = "/admin/ai-gateway?tab=providers&view=connections"
+MISMATCH_ROWS_IN_MAIL = 10
+
+
+def daily_template_key(template: str, day: str) -> str:
+    return f"{KIND}:{template}:{day}"
+
+
+async def _enqueue_daily(conn, template: str, details: dict, created_by: str,
+                         now: Optional[datetime]) -> Optional[str]:
+    if sender_config() is None:
+        logger.info("ops_alert_email_not_configured", template=template)
+        return None
+    from shared.jobs import queue  # lazy: shared.jobs.worker imports shared.cost_guard
+
+    day = utc_day(now)
+    payload = {"template": template, "period": day, **details}
+    job_id, created = await queue.enqueue(conn, KIND, payload, max_attempts=MAX_ATTEMPTS,
+                                          idempotency_key=daily_template_key(template, day), created_by=created_by)
+    logger.info("ops_alert_email_queued" if created else "ops_alert_email_already_queued",
+                job_id=job_id, template=template, period=day)
+    return job_id if created else None
+
+
+async def enqueue_dfs_balance_low_email(conn, *, details: dict, now: Optional[datetime] = None) -> Optional[str]:
+    """Queue the operator e-mail for a DataForSEO low-balance bell that was just written (``details``: balance_usd,
+    threshold_usd, currency, fetched_at). None when e-mail is not configured or today's e-mail is queued already."""
+    return await _enqueue_daily(conn, TEMPLATE_DFS_BALANCE_LOW, details, "dfs_balance_check", now)
+
+
+async def enqueue_llm_cost_mismatch_email(conn, *, details: dict, now: Optional[datetime] = None) -> Optional[str]:
+    """Queue the operator e-mail for a reconcile mismatch bell that was just written (``details``: window, mismatches
+    = [{connection_key, day, logged_usd, provider_usd, diff_usd, source}], at most MISMATCH_ROWS_IN_MAIL kept). None
+    when e-mail is not configured or today's e-mail is queued already."""
+    rows = list(details.get("mismatches") or [])
+    details = {**details, "mismatches": rows[:MISMATCH_ROWS_IN_MAIL], "mismatch_count": len(rows)}
+    return await _enqueue_daily(conn, TEMPLATE_LLM_COST_MISMATCH, details, "llm_cost_reconcile", now)
+
+
+def render_dfs_balance_low(payload: dict, *, to: Recipients, base_url: Optional[str] = None,
+                           environment: Optional[str] = None) -> Message:
+    """AA-642 (S263 L2, B4): the DataForSEO balance is below its alert threshold."""
+    env = environment or os.environ.get("ENVIRONMENT", "dev")
+    link = f"{base_url or admin_base_url()}{DFS_SPEND_PAGE_PATH}"
+    subject = (f"[AA-CIS {env}] DataForSEO balance low: {_usd(payload.get('balance_usd'))} "
+               f"(alert below {_usd(payload.get('threshold_usd'))})")
+    rows = [("Balance", f"{_usd(payload.get('balance_usd'))} {payload.get('currency') or ''}".strip()),
+            ("Alert threshold", _usd(payload.get("threshold_usd"))),
+            ("Read at", str(payload.get("fetched_at") or "-")),
+            ("Day", f"{payload.get('period')} (UTC)")]
+    action = ("Top up the DataForSEO account before it runs out: an empty balance answers 402 and every SEO fetch "
+              "stops (the run keeps its existing keywords). The threshold is the DataForSEO connection's low-balance "
+              "value in AI providers.")
+    footer = "The same alert is in the admin notification bell. At most one e-mail per UTC day."
+    text = "\n".join(["The DataForSEO balance is below its alert threshold.", ""] + [f"{k}: {v}" for k, v in rows]
+                     + ["", action, "", f"DataForSEO spend: {link}", footer])
+    body = ("<div style=\"font-family:Arial,sans-serif;font-size:14px;color:#222\">"
+            "<p><strong>DataForSEO balance low</strong></p>"
+            f"<table style=\"border-collapse:collapse\">{_jev_rows_html(rows)}</table>"
+            f"<p>{html.escape(action)}</p>"
+            f"<p><a href=\"{html.escape(link)}\">Open Cost operations / DataForSEO</a></p>"
+            f"<p style=\"color:#777;font-size:12px\">{html.escape(footer)}</p></div>")
+    return Message(to=to, subject=subject, text=text, html=body)
+
+
+def render_llm_cost_mismatch(payload: dict, *, to: Recipients, base_url: Optional[str] = None,
+                             environment: Optional[str] = None) -> Message:
+    """AA-642 (S263 L2, B4): the nightly reconcile found logged LLM cost that differs from the provider's figure."""
+    env = environment or os.environ.get("ENVIRONMENT", "dev")
+    link = f"{base_url or admin_base_url()}{LLM_CONNECTIONS_PAGE_PATH}"
+    rows_in = payload.get("mismatches") or []
+    count = int(payload.get("mismatch_count") or len(rows_in))
+    keys = sorted({str(m.get("connection_key")) for m in rows_in})
+    subject = f"[AA-CIS {env}] LLM cost reconcile: {count} connection-day(s) differ ({', '.join(keys) or '-'})"
+    window = payload.get("window") or {}
+    rows = [(f"{m.get('connection_key')} {m.get('day')}",
+             f"logged {_usd(m.get('logged_usd'))}, provider {_usd(m.get('provider_usd'))}, "
+             f"difference {_usd(m.get('diff_usd'))}") for m in rows_in]
+    rows.append(("Window", f"{window.get('start', '-')} to {window.get('end', '-')} (UTC days)"))
+    more = count - len(rows_in)
+    action = ("Compare the connection's calls in the ledger with the provider's usage page: a missing ledger row is "
+              "unlogged spend, a provider figure above the ledger may be a call outside the gateway.")
+    footer = ("Settled days only (a day Cost Explorer may still revise is never mailed). The same alert is in the "
+              "admin notification bell. At most one e-mail per UTC day.")
+    text = "\n".join(["The logged LLM cost differs from the provider's own figure.", ""]
+                     + [f"{k}: {v}" for k, v in rows]
+                     + ([f"... and {more} more"] if more > 0 else [])
+                     + ["", action, "", f"LLM connections: {link}", footer])
+    body = ("<div style=\"font-family:Arial,sans-serif;font-size:14px;color:#222\">"
+            "<p><strong>LLM cost reconcile mismatch</strong></p>"
+            f"<table style=\"border-collapse:collapse\">{_jev_rows_html(rows)}</table>"
+            + (f"<p>... and {more} more</p>" if more > 0 else "")
+            + f"<p>{html.escape(action)}</p>"
+            f"<p><a href=\"{html.escape(link)}\">Open AI providers / Connections</a></p>"
+            f"<p style=\"color:#777;font-size:12px\">{html.escape(footer)}</p></div>")
+    return Message(to=to, subject=subject, text=text, html=body)

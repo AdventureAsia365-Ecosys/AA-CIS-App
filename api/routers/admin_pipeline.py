@@ -1520,6 +1520,10 @@ async def submit_s1_batch_endpoint(req: S1BatchSubmitRequest, request: Request,
     persisted by the existing _execute_run_tour path (gate misses fall to the on-demand retry loop).
     The submit step stays in the request (it returns the ARN); the long poll+ingest is the job."""
     verify_admin_secret(x_admin_secret)
+    # AA-642 (D4): 503 with the reason while the Batch kill switch is closed (the default; bedrock_batch.py).
+    from shared.llm_client.bedrock_batch import batch_submit_closed_reason
+    if (closed := batch_submit_closed_reason()) is not None:
+        raise HTTPException(status_code=503, detail=closed)
     from fastapi.responses import JSONResponse
     from shared.jobs.registry import enqueue
     from services.content_generation.s1_batch import submit_s1_batch

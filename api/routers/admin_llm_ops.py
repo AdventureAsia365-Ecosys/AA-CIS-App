@@ -1042,10 +1042,12 @@ _INSERT_LOW_ALERT_SQL = """
 """
 
 
-async def _maybe_alert_low_balance(conn, balance_usd: float, threshold: float) -> bool:
+async def _maybe_alert_low_balance(conn, balance_usd: float, threshold: float, *, currency: Optional[str] = None,
+                                   fetched_at: Optional[str] = None) -> bool:
     """Insert a low-balance notification unless one is already unread within 24h. Returns True
     if a new alert was inserted. Best-effort: a notification failure must not fail the check
-    (the snapshot + returned low flag are the source of truth; the bell is a bonus channel)."""
+    (the snapshot + returned low flag are the source of truth; the bell is a bonus channel).
+    AA-642 (S263 L2, B4): a new bell also queues the operator e-mail (at most one per UTC day)."""
     try:
         existing = await conn.fetchval(_RECENT_LOW_ALERT_SQL, _DFS_BALANCE_LOW_EVENT)
         if existing:
@@ -1057,23 +1059,44 @@ async def _maybe_alert_low_balance(conn, balance_usd: float, threshold: float) -
             "threshold_usd": threshold,
         })
         await conn.execute(_INSERT_LOW_ALERT_SQL, _PLATFORM_TENANT_ID, _DFS_BALANCE_LOW_EVENT, payload)
-        return True
     except Exception as e:
         logger.warning("dfs_balance_alert_insert_failed", error=str(e))
         return False
+    try:
+        from shared import ops_alerts
+        await ops_alerts.enqueue_dfs_balance_low_email(conn, details={
+            "balance_usd": balance_usd, "threshold_usd": threshold, "currency": currency, "fetched_at": fetched_at})
+    except Exception as e:  # noqa: BLE001 — the bell is written; a failed e-mail enqueue is logged only
+        logger.warning("dfs_balance_alert_email_failed", error=str(e)[:200])
+    return True
+
+
+def _iso_or_none(value) -> Optional[str]:
+    return value.isoformat() if hasattr(value, "isoformat") else (str(value) if value is not None else None)
 
 
 @router.post("/dfs-balance/check", summary="Daily DataForSEO balance read + low-balance alert")
 async def check_dfs_balance(request: Request, x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
-    from services.seo_intelligence.dataforseo_client import DataForSEOClient
+    from services.seo_intelligence.dataforseo_client import (
+        DFS_CONNECTION_KEY, DataForSEOClient, access_state_of, as_dfs_error)
+    from shared.llm_client import connections as conn_registry
 
     threshold = await dfs_balance_threshold(request.app.state.pool)
+    # AA-642 (S263 L2, B1): DataForSEO switched off in the admin = no call, not even the free balance read.
+    if not await conn_registry.provider_enabled(DFS_CONNECTION_KEY, db=request.app.state.pool):
+        logger.info("admin_dfs_balance_check_skipped", reason="switched_off")
+        return {"balance_usd": None, "currency": None, "threshold_usd": threshold, "below_threshold": False,
+                "alerted": False, "fetched_at": None,
+                "skipped": conn_registry.switched_off_reason(DFS_CONNECTION_KEY)}
     try:
         money = await DataForSEOClient().fetch_balance()
     except Exception as e:
         logger.error("dfs_balance_check_fetch_failed", error=str(e))
+        # the daily check is DataForSEO's probe: last_probe_at, and the state a 401 / 402 / 403 proves
+        await conn_registry.note_provider_access(DFS_CONNECTION_KEY, access_state_of(as_dfs_error(e)), probed=True)
         raise HTTPException(status_code=502, detail=f"DataForSEO balance read failed: {e}")
+    await conn_registry.note_provider_access(DFS_CONNECTION_KEY, "ok", probed=True)
 
     balance = money.get("balance")
     if balance is None:
@@ -1090,7 +1113,8 @@ async def check_dfs_balance(request: Request, x_admin_secret: str = Header(None)
     alerted = False
     if below:
         async with pool.acquire() as conn:
-            alerted = await _maybe_alert_low_balance(conn, balance, threshold)
+            alerted = await _maybe_alert_low_balance(conn, balance, threshold, currency=currency,
+                                                     fetched_at=_iso_or_none(snapshot.get("fetched_at")))
 
     logger.info("admin_dfs_balance_checked", balance=balance, threshold=threshold,
                 below=below, alerted=alerted)
@@ -1476,16 +1500,24 @@ async def _log_jev_canary_call(pool, data: dict) -> None:
     model, tokens, cost = decide_mod.jev_usage(data)
     await record_call_with_pool(pool, stage=JEV_CANARY_STAGE, role="validate", model=model, tokens_in=tokens,
                                 tokens_out=0, cost_usd=cost, provider="typesafe",
-                                quality_signal={"source": "jev_canary"})
+                                quality_signal={"source": "jev_canary"},
+                                connection_key=decide_mod.JEV_CONNECTION_KEY)   # AA-642 (S263 L2): account set
 
 
 @router.post("/jev-canary/check", summary="Daily Jev canary: one real decide-endpoint probe")
 async def check_jev_canary(request: Request, x_admin_secret: str = Header(None)):
     global _last_canary_ok_at
     verify_admin_secret(x_admin_secret)
+    from shared.llm_client import connections as conn_registry
     from shared.llm_client import decide as decide_mod
 
     pool = request.app.state.pool
+    # AA-642 (S263 L2, B1): Jev switched off in the admin = no canary call either (the switch means nothing is sent).
+    if not await decide_mod.jev_connection_enabled(pool):
+        logger.info("admin_jev_canary_skipped", reason="switched_off")
+        return {"credit_ok": None, "billing_error": False, "alerted": False, "skipped": decide_mod.JEV_SWITCHED_OFF,
+                "breaker_open": decide_mod.jev_breaker_open(), "detail": None,
+                "checked_at": datetime.now(timezone.utc).isoformat()}
     # A minimal, cheap probe. We do not care about the verdict content — only whether the call is
     # billable (credit present) or raises JevBillingError (402).
     probe_questions = {"canary": {"type": "noul", "instructions": "Reply true.",
@@ -1510,6 +1542,11 @@ async def check_jev_canary(request: Request, x_admin_secret: str = Header(None))
             alerted = await decide_mod.maybe_alert_jev_credit(conn, source="canary")
     else:
         _last_canary_ok_at = started          # AA-845: the sweep's cut (see _JEV_402_SWEEP_SQL)
+    # AA-642 (S263 L2, B1): the canary is Jev's probe: last_probe_at, and the access state its answer proves
+    # (credit present = ok, 402 = quota_exhausted; another failure proves nothing lasting: the time only).
+    await conn_registry.note_provider_access(
+        decide_mod.JEV_CONNECTION_KEY, "quota_exhausted" if billing_error else ("ok" if detail is None else None),
+        probed=True)
     logger.info("admin_jev_canary_checked", credit_ok=not billing_error, alerted=alerted,
                 breaker_open=decide_mod.jev_breaker_open())
     return {
