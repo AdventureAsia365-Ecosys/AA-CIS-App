@@ -83,11 +83,15 @@ def test_five_enabled_priced_catalog_rows_with_their_family(cur):
         assert r["price_in_per_mtok"] > 0 and r["price_out_per_mtok"] > 0
         assert set(r["bedrock_profile_ids"]) == {"acc2"}
         assert r["bedrock_profile_ids"]["acc2"].startswith("us.")    # an inference profile id, never an ARN
-        # CIS 333 (AA-1026) records that Llama 4 Scout refuses a forced tool choice (live contract smoke, S263); a test
-        # that sets 324's rows aside re-creates the row without it, so the key may be missing here
-        caps = {k: v for k, v in r["capabilities"].items() if not (key == "llama4-scout" and k == "forced_tool_choice")}
+        # CIS 333 (AA-1026) records that Llama 4 Scout refuses a forced tool choice (live contract smoke, S263), CIS 337
+        # (AA-1024 I6) the same for Maverick and the structured output mode of both; a test that sets 324's rows aside
+        # re-creates the rows without them, so the keys may be missing here
+        later = ("forced_tool_choice", "structured_output") if key.startswith("llama4-") else ()
+        caps = {k: v for k, v in r["capabilities"].items() if k not in later}
         assert caps == {}, key
-    assert rows["llama4-scout"]["capabilities"].get("forced_tool_choice") in (None, False)
+    for key in ("llama4-scout", "llama4-maverick"):
+        assert rows[key]["capabilities"].get("forced_tool_choice") in (None, False)
+        assert rows[key]["capabilities"].get("structured_output") in (None, "prompt")
     assert rows["kimi-k3"]["supports_temperature"] is False
 
 
