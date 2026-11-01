@@ -24,7 +24,7 @@ model key, ...} (optional override), "requested_by": "admin:<id>"}. A DRY RUN li
 source, whether the acc2 deployment is callable and the estimated cost, with no call. A live run refuses to start when
 the estimate exceeds ``COST_CAP_USD`` and stops between stages once the spent cost reaches it. Live cost on Dev: about
 0.01 USD for the twelve stages of 331 / 332 (Nova Lite 0.077 / 0.308 USD per 1M tokens; Llama 4 Scout 0.17 / 0.66);
-the estimate (prompt + the whole max_tokens) for all nineteen stages, the seven of migration 333 included, is about
+the estimate (prompt + the whole max_tokens) for all twenty stages, the eight of migration 333 included, is about
 0.02 USD. max_attempts 1 (a failed contract is the answer), background.
 """
 from __future__ import annotations
@@ -59,6 +59,7 @@ PLANNED = {
     "t9_faq_filter": "nova-lite",
     "s1_judge": "nova-lite", "t2_judge": "nova-lite", "t7_debate_judge": "nova-lite", "t10_judge": "nova-lite",
     "writing_memory_eval": "nova-lite", "writing_memory_mine": "nova-lite", "a3_place_dedupe": "llama4-scout",
+    "t10_adjudicate": "nova-lite",
 }
 
 
@@ -517,6 +518,23 @@ def _wm_mine(call) -> dict:
     return {"kind": draft["kind"], "match_phrases": len(draft["match_phrases"])}
 
 
+def _adjudicate_request():
+    from services.acp_content_writing.seed_align import adjudicate as adj
+    item = adj.Trigger(cls=adj.HYPE, sentence="The Varro hut has the most spectacular sunrise in the world.", start=0,
+                       seed_lines=("Walk 12 km along the Orvalen ridge (about 5 hours) to the Varro hut at 2,100 m.",))
+    return adj.build_request([item])
+
+
+def _t10_adjudicate(call) -> dict:
+    from services.acp_content_writing.seed_align.adjudicate import AdjudicateReplyError, parse_verdicts
+    resp = call(_adjudicate_request())
+    try:
+        verdicts = parse_verdicts(resp.content, 1)
+    except AdjudicateReplyError as e:
+        raise ContractError(f"adjudicate.parse_verdicts refused the reply: {e}") from e
+    return {"verdicts": [v["verdict"] for v in verdicts]}
+
+
 def _cases() -> dict[str, Case]:
     cases = [
         _brand_audit("s1_brand_audit"), _brand_audit("t2_brand_audit"),
@@ -537,6 +555,7 @@ def _cases() -> dict[str, Case]:
         Case("writing_memory_mine", "judge", _wm_mine, _wm_mine_request),
         Case("a3_place_dedupe", "validate", lambda call: _dedupe_check(call, "a3_place_dedupe"),
              lambda: _dedupe_request("a3_place_dedupe")),
+        Case("t10_adjudicate", "judge", _t10_adjudicate, _adjudicate_request),
     ]
     return {c.stage: c for c in cases}
 

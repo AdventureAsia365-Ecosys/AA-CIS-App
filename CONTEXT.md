@@ -523,9 +523,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   stage's own prompt pieces and parser, with the stage's acc2 model forced through `LLMClient.probe` on its acc2
   deployment (the override, else the route's acc2 model, else the planned one), ledger stage `adhoc_aa1026` with the
   stage's role, `quality_signal.contract_smoke` / `parser_ok`; refused over 0.10 USD estimated, about 0.01 USD for the
-  twelve stages of 331 / 332 (estimate 0.02 USD for all nineteen: the seven judge / validate stages whose route ends on
+  twelve stages of 331 / 332 (estimate 0.02 USD for all twenty: the eight judge / validate stages whose route ends on
   the OpenAI API have cases too, for migration 333, which puts an acc2 pick before that hop: `s1_judge`, `t2_judge`,
-  `t7_debate_judge`, `t10_judge`, `writing_memory_eval`, `writing_memory_mine`, `a3_place_dedupe`). It proves format
+  `t7_debate_judge`, `t10_judge`, `t10_adjudicate`, `writing_memory_eval`, `writing_memory_mine`, `a3_place_dedupe`). It proves format
   only (ladder rung 3). **Order gate:** 331 / 332 / 333 refuse to give a stage its acc2
   fallback unless the LATEST smoke row of that stage on that model (connection acc2) passed, so the smoke runs before
   the apply; a stage that fails is re-picked (smoke the next model with `models`, change the migration's pick) or
@@ -538,7 +538,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   smoke. **Reply parsing:** the stage parsers without a forced schema read the reply's FIRST complete JSON value
   through `shared/llm_client/json_reply.first_json_value` (prose or a fence before it, any text after it ignored, a
   cut-off reply never yields a nested value; the item / shape checks stay in each parser): `t9_faq_filter` and
-  `t9_faq_answer_fit` (which also take the bare items list: both acc2 models answered the S263 smoke that way),
+  `t9_faq_answer_fit` and `t10_adjudicate` (which also take the bare items list: both acc2 models answered the S263 smoke that way),
   `a3_place_days`, `a3_place_locate`, `a3_atomize` (`atom_extraction.atoms_from_reply`), the brand fit judges
   (`brand_fit._judge`: still no json_repair), and before their json_repair salvage `s1_source_facts`, the place card
   draft / check and the T10 F9 judge (`judge.parse_judge_json_checked`: a first value read as is is not "repaired").

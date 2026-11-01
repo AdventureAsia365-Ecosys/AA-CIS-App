@@ -70,9 +70,11 @@ GOOD.update({
     "writing_memory_mine": {"kind": "lexicon", "rule_text": "Never use the word breathtaking.", "replacement": "wide",
                             "match_phrases": ["breathtaking"]},
     "a3_place_dedupe": {"verdict": "different", "confidence": 0.9, "reason": "a lodge and a hut"},
+    "t10_adjudicate": {"items": [{"n": 1, "verdict": "VIOLATION", "piece_quote": "most spectacular sunrise",
+                                  "seed_quote": "", "action": "repair"}]},
 })
 NEW_333 = ("s1_judge", "t2_judge", "t7_debate_judge", "t10_judge", "writing_memory_eval", "writing_memory_mine",
-           "a3_place_dedupe")
+           "a3_place_dedupe", "t10_adjudicate")
 
 
 def _reply(content: str) -> LLMResponse:
@@ -168,6 +170,10 @@ def test_the_333_requests_are_the_stages_own_prompts():
     assert seen["writing_memory_eval"].json_schema == eval_judge.JUDGE_SCHEMA
     assert seen["writing_memory_mine"].json_schema == drafter.RULE_SCHEMA
     assert seen["a3_place_dedupe"].json_schema == dedupe.VERDICT_SCHEMA
+    from services.acp_content_writing.seed_align import adjudicate
+    assert seen["t10_adjudicate"].system_prompt == adjudicate.SYSTEM_PROMPT
+    assert seen["t10_adjudicate"].json_schema == adjudicate.SCHEMA
+    assert "CHECK: hype" in seen["t10_adjudicate"].user_prompt
 
 
 @pytest.mark.parametrize("stage", NEW_333)

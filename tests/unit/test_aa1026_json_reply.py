@@ -152,13 +152,21 @@ def test_repair_based_parsers_read_the_first_object_before_any_repair(parse):
     assert parse('{"display_name": "Varro hut", "facts": ["The hut')["display_name"] == "Varro hut"
 
 
+def test_the_t10_adjudicator_reads_the_bare_items_list_with_a_trailing_note():
+    from services.acp_content_writing.seed_align import adjudicate as adj
+    items = [{"n": 1, "verdict": "OK", "piece_quote": "", "seed_quote": "", "action": "repair"}]
+    assert adj.parse_verdicts(json.dumps(items) + "\nNo {issue} found.", 1)[0]["verdict"] == "OK"
+    with pytest.raises(adj.AdjudicateReplyError, match="bad verdict"):
+        adj.parse_verdicts(json.dumps([dict(items[0], verdict="MAYBE")]), 1)
+
+
 def test_the_t10_judge_reader_takes_the_first_value_unrepaired():
     from shared.llm_client.judge import parse_judge_json_checked
     verdict = {"status": "pass", "failure_codes": []}
     # json_repair alone turned "verdict + note holding an object" into a list, and the reader raised
     assert parse_judge_json_checked(json.dumps(verdict) + '\nNote: {"x": 1} was not checked.') == (verdict, False)
-    assert parse_judge_json_checked('{"status": "flagged", "failure_codes": [')[1] is True    # a cut-off one is
-                                                                                              # still salvaged
+    # a cut-off verdict is still salvaged by json_repair (and marked repaired)
+    assert parse_judge_json_checked('{"status": "flagged", "failure_codes": [')[1] is True
 
 
 def test_the_brand_fit_judge_reads_the_first_value_and_still_refuses_a_list():
