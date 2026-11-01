@@ -57,6 +57,13 @@
 // read-only. Calls the same untouched `POST /admin/a4/publish-log/{id}/unpublish` (AA-455).
 // `admin_a4.py::get_content_log()` now also returns `publish_id` (previously computed into
 // `publish_status` and discarded) so this button can address the right row.
+//
+// AA-1006 follow-up (S263 F3) — paged on the server (lib/contentTrace.ts): the page loaded only the newest 200 rows
+// and its "Total pieces" tile counted those (always 200); it now asks for one page (`limit` / `offset`, 50 a page by
+// default), and the header tiles read the API's own `total` / `by_channel` for the filters. A column sort orders the
+// rows of the page on screen. Seven columns instead of ten so the table fits its pane at 1440 (it scrolled sideways
+// from Status on, with Topic and Angle squeezed): Tenant / tour in one column, the publish state under Status, the
+// retries under Gates; Topic and Angle keep a readable minimum width and every text column wraps.
 import { useState, useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Radio } from "lucide-react";
@@ -68,6 +75,11 @@ import {
   sans, type Tone, Button, DataTable, Drawer, Input, Select, type ColumnDef,
 } from "../../_kit";
 import { CHANNEL, TRACE } from "./messages";
+import {
+  pageFor, traceFilterQuery, traceQuery, traceSortValue, traceStats, TRACE_DEFAULT_PAGE_SIZE, TRACE_PAGE_SIZES,
+  type TraceAnswer, type TracePage, type TraceSortKey,
+} from "@/lib/contentTrace";
+import { shownRange } from "@/lib/pageRange";
 
 // ── Types — match GET /api/admin/a4/content-log's response (AA-568 extension) ──────────────────
 
@@ -138,41 +150,9 @@ const selectStyle: React.CSSProperties = {
   fontSize: 12.5, fontFamily: sans, color: K.body, cursor: "pointer",
 };
 
-// AA-572 point 3 — sort state lives at the page level (not the table's) so it can be reset
-// alongside the filters if a future build wants that; for now it just persists across re-fetches.
-// AA-575 — extended from the original 3 (gate/retry/created_at) to every column, per Nghiệp's
-// explicit "TẤT CẢ cột" follow-up request; same mechanism, no per-column special-casing beyond
-// `sortValue()` below picking the right field/rank.
-type SortKey =
-  | "topic" | "tenant" | "tour" | "channel" | "angle" | "status"
-  | "gate" | "retry" | "published" | "created_at";
-
 const CHANNEL_LABEL: Record<string, string> = Object.fromEntries(
   CHANNEL_OPTIONS.filter(o => o.value).map(o => [o.value, o.label]),
 );
-
-// AA-575 — Published has no single obvious sort field (it's a 3-state enum, not free text or a
-// number): ranked in pipeline order (not published → pending → published) rather than
-// alphabetically, so ascending/descending reads as "progress toward live" instead of a meaningless
-// string sort ("n/a" vs "pending_publish" vs "published" alphabetically doesn't match reality).
-const PUBLISH_RANK: Record<ContentLogRow["publish_status"], number> = {
-  "n/a": 0, "pending_publish": 1, "published": 2,
-};
-
-function sortValue(r: ContentLogRow, key: SortKey): string | number {
-  switch (key) {
-    case "topic": return r.topic ?? "";
-    case "tenant": return r.tenant_name ?? "";
-    case "tour": return r.tour?.name ?? "";
-    case "channel": return CHANNEL_LABEL[r.channel] ?? r.channel;
-    case "angle": return r.angles.find(a => a.chosen)?.name ?? "";
-    case "status": return r.status ?? "";
-    case "gate": return r.gate_pass_count;
-    case "retry": return r.retry_count;
-    case "published": return PUBLISH_RANK[r.publish_status];
-    case "created_at": return new Date(r.created_at).getTime();
-  }
-}
 
 /** The channel filter label in the UI language ("" = all channels); an unknown code as it is. */
 function useChannelLabel(): (code: string) => string {
@@ -196,23 +176,30 @@ export default function ContentTracePage() {
   const [unpublishingId, setUnpublishingId] = useState<string | null>(null);
   const [unpublishError, setUnpublishError] = useState<string | null>(null);
 
-  const query = useMemo(() => {
-    const p = new URLSearchParams();
-    if (tenantId) p.set("tenant_id", tenantId);
-    if (channel) p.set("channel", channel);
-    if (status) p.set("status", status);
-    if (published) p.set("published", published);
-    if (dateFrom) p.set("date_from", dateFrom);
-    if (dateTo) p.set("date_to", dateTo);
-    return p.toString();
-  }, [tenantId, channel, status, published, dateFrom, dateTo]);
+  const filterQuery = useMemo(
+    () => traceFilterQuery({ tenantId, channel, status, published, dateFrom, dateTo }),
+    [tenantId, channel, status, published, dateFrom, dateTo],
+  );
+  // S263 F3: the page index belongs to the filters it was chosen under (a filter change starts at page 1 again).
+  const [page, setPage] = useState<TracePage>({ filterQuery: "", index: 0 });
+  const [pageSize, setPageSize] = useState<number>(TRACE_DEFAULT_PAGE_SIZE);
+  const pageIndex = pageFor(page, filterQuery);
+  const query = traceQuery(filterQuery, pageIndex, pageSize);
 
   const q = useQuery({
     queryKey: ["a4-content-log", query],
-    queryFn: () => fetchJson<{ data: ContentLogRow[]; total: number }>(`/api/admin/a4/content-log?${query}`).then(d => d.data),
+    queryFn: () => fetchJson<TraceAnswer<ContentLogRow>>(`/api/admin/a4/content-log?${query}`),
+    placeholderData: (prev) => prev,  // keep the page on screen while the next one loads
   });
-  const rows = q.data ?? null;
+  const answer = q.data ?? null;
+  const rows = answer?.data ?? null;
   const loading = q.isPending;
+  // The pager follows the page whose rows are on screen (lib/pageRange.ts), not the one being loaded.
+  const shown = shownRange(
+    answer ? { offset: answer.offset, limit: answer.limit, total: answer.total } : null,
+    { page: pageIndex + 1, pageSize },
+    rows?.length ?? 0,
+  );
   const error = q.isError ? String((q.error as Error).message || q.error) : null;
   const { refetch } = q;
   const load = useCallback(async () => { await refetch(); }, [refetch]);
@@ -243,20 +230,9 @@ export default function ContentTracePage() {
     }
   }, [load, t]);
 
-  // AA-572 point 2 — tenant stat header: total pieces + per-channel breakdown, computed
-  // client-side from the already-loaded (already tenant/channel/status/date-filtered) `rows` —
-  // no new endpoint, matches the issue's own "no backend change" scope. Reflects whatever the
-  // current filters (Tenant included) narrow the table down to, exactly like Social Content's
-  // 01-Atomize header stat bar already does for its own Tour/Market filters.
-  const stats = useMemo(() => {
-    const list = rows ?? [];
-    const byChannel: Record<string, number> = {};
-    for (const r of list) byChannel[r.channel] = (byChannel[r.channel] ?? 0) + 1;
-    return {
-      total: list.length,
-      byChannel: Object.entries(byChannel).sort((a, b) => b[1] - a[1]),
-    };
-  }, [rows]);
+  // AA-572 point 2 — tenant stat header: total pieces + per-channel breakdown for the current filters (Tenant
+  // included). S263 F3: from the API's own `total` / `by_channel` (every match), not the rows of the loaded page.
+  const stats = useMemo(() => traceStats(answer), [answer]);
 
   return (
     <PageFrame variant="split">
@@ -337,8 +313,21 @@ export default function ContentTracePage() {
                   />
                 </div>
               ) : (
-                <div data-testid="admin-content-ready">
-                  <ContentTraceTable rows={rows} onOpen={(r) => { setUnpublishError(null); setOpenRow(r); }} />
+                <div data-testid="admin-content-ready" aria-busy={q.isPlaceholderData || undefined}
+                  style={{ opacity: q.isPlaceholderData ? 0.6 : 1, transition: "opacity 120ms" }}>
+                  <ContentTraceTable
+                    rows={rows}
+                    onOpen={(r) => { setUnpublishError(null); setOpenRow(r); }}
+                    paging={{
+                      pageIndex: shown.page - 1,
+                      pageSize: shown.pageSize,
+                      total: stats.total,
+                      onChange: (index, size) => {
+                        if (size !== pageSize) { setPageSize(size); setPage({ filterQuery, index: 0 }); }
+                        else setPage({ filterQuery, index });
+                      },
+                    }}
+                  />
                 </div>
               )}
             </div>
@@ -389,40 +378,63 @@ function FilterField({ label, children }: { label: string; children: React.React
 // AA-564 SubjectRow pattern: one shared `expandedId` at the table level, at most one row open).
 // ══════════════════════════════════════════════════════════════════════════
 
-// AA-572 shipped only 3 sortable columns (Gate/Retry/Created at); AA-575 extends every column (Topic/Tenant/Tour/
-// Channel/Angle chosen/Status/Published) to the same mechanism. AA-1006: the kit DataTable sorts by `sortValue`.
-function ContentTraceTable({ rows, onOpen }: { rows: ContentLogRow[]; onOpen: (row: ContentLogRow) => void }) {
+// AA-572 shipped only 3 sortable columns (Gate/Retry/Created at); AA-575 extends every column to the same mechanism.
+// AA-1006: the kit DataTable sorts by `traceSortValue` (rows of the page on screen). S263 F3: seven columns with
+// readable widths, so the table fits its pane at 1440 (see the file header).
+type TracePaging = { pageIndex: number; pageSize: number; total: number; onChange: (pageIndex: number, pageSize: number) => void };
+
+/** A cell's text box: wraps between `min` and `max` px (a two-word Topic or Angle no longer squeezes to one word a line). */
+function textBox(min: number, max: number): React.CSSProperties {
+  return { display: "block", minWidth: min, maxWidth: max, whiteSpace: "normal", overflowWrap: "anywhere" };
+}
+
+function ContentTraceTable({ rows, onOpen, paging }: {
+  rows: ContentLogRow[]; onOpen: (row: ContentLogRow) => void; paging: TracePaging;
+}) {
   const t = useT(TRACE);
   const { formatDateTime } = useFormat();
   const columns = useMemo<ColumnDef<ContentLogRow, unknown>[]>(() => {
-    const col = (key: SortKey, label: string, cell: (r: ContentLogRow) => React.ReactNode, wrap = false): ColumnDef<ContentLogRow, unknown> => ({
-      id: key, header: label, accessorFn: (r) => sortValue(r, key), sortDescFirst: true,
-      cell: ({ row }) => <span style={{ whiteSpace: wrap ? "normal" : "nowrap", display: "inline-block", maxWidth: wrap ? 260 : undefined }}>{cell(row.original)}</span>,
+    const col = (key: TraceSortKey, label: string, cell: (r: ContentLogRow) => React.ReactNode): ColumnDef<ContentLogRow, unknown> => ({
+      id: key, header: label, accessorFn: (r) => traceSortValue(r, key, (c) => CHANNEL_LABEL[c] ?? c), sortDescFirst: true,
+      cell: ({ row }) => cell(row.original),
     });
+    const sub: React.CSSProperties = { display: "block", marginTop: 3, fontSize: 11.5, color: K.muted };
     return [
-      col("topic", t("colTopic"), (r) => r.topic, true),
-      col("tenant", t("colTenant"), (r) => <span title={r.tenant_id}>{r.tenant_name ?? "—"}</span>),
-      col("tour", t("colTour"), (r) => r.tour?.name ?? "—"),
-      col("channel", t("channel"), (r) => <Badge tone="neutral">{r.channel}</Badge>),
-      col("angle", t("colAngle"), (r) => r.angles.find(a => a.chosen)?.name ?? "—", true),
-      col("status", t("status"), (r) => <Badge tone={STATUS_COLOR[r.status] ?? "neutral"}>{r.status}</Badge>),
-      col("gate", t("colGate"), (r) => <span style={{ fontFamily: mono }}>{r.gate_pass_count}/{r.gate_total_count}</span>),
-      col("retry", t("colRetry"), (r) => (
-        <span style={{ fontFamily: mono }}>
-          {r.retry_count}{r.is_buffer_retry && <span title={t("bufferTitle")}>{t("buffer")}</span>}
+      col("topic", t("colTopic"), (r) => <span style={textBox(150, 220)}>{r.topic}</span>),
+      col("tenant", t("colTenantTour"), (r) => (
+        <span style={textBox(110, 170)}>
+          <span title={r.tenant_id} style={{ color: K.ink }}>{r.tenant_name ?? "—"}</span>
+          <span style={sub}>{r.tour?.name ?? "—"}</span>
         </span>
       )),
-      col("published", t("published"), (r) => (
-        r.publish_status === "published" ? (
-          r.publish_external_url ? (
-            <a href={r.publish_external_url} target="_blank" rel="noreferrer"
-              onClick={e => e.stopPropagation()} style={{ color: K.accent }}>{t("yesLink")}</a>
-          ) : <Badge tone="success">{t("yes")}</Badge>
-        ) : r.publish_status === "pending_publish" ? (
-          <Badge tone="warning">{t("notYet")}</Badge>
-        ) : <Badge tone="neutral">{t("no")}</Badge>
+      col("channel", t("channel"), (r) => <Badge tone="neutral">{r.channel}</Badge>),
+      col("angle", t("colAngle"), (r) => <span style={textBox(140, 200)}>{r.angles.find(a => a.chosen)?.name ?? "—"}</span>),
+      col("status", t("status"), (r) => (
+        <span style={{ display: "block", minWidth: 0 }}>
+          <Badge tone={STATUS_COLOR[r.status] ?? "neutral"}>{r.status}</Badge>
+          {r.publish_status === "published" ? (
+            r.publish_external_url ? (
+              <a href={r.publish_external_url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+                style={{ ...sub, color: K.accent }}>{t("publishedLink")}</a>
+            ) : <span style={sub}>{t("published")}</span>
+          ) : r.publish_status === "pending_publish" ? (
+            <span style={sub}>{t("notPublishedYet")}</span>
+          ) : null}
+        </span>
       )),
-      col("created_at", t("colCreated"), (r) => formatDateTime(r.created_at)),
+      col("gate", t("colGates"), (r) => (
+        <span style={{ display: "block", minWidth: 0 }}>
+          <span style={{ fontFamily: mono }}>{r.gate_pass_count}/{r.gate_total_count}</span>
+          <span style={sub}>
+            {t("retries", r.retry_count)}
+            {r.is_buffer_retry && <span title={t("bufferTitle")}>{t("buffer")}</span>}
+          </span>
+        </span>
+      )),
+      col("created_at", t("colCreated"), (r) => (
+        // "1 Nov 2026, 00:50" breaks after the comma: the date over the time.
+        <span style={{ ...textBox(72, 96), overflowWrap: "normal" }}>{formatDateTime(r.created_at)}</span>
+      )),
     ];
   }, [t, formatDateTime]);
   return (
@@ -433,7 +445,9 @@ function ContentTraceTable({ rows, onOpen }: { rows: ContentLogRow[]; onOpen: (r
       getRowId={(r) => r.piece_id}
       onRowClick={onOpen}
       searchable={false}
-      paginate={false}
+      serverPagination={paging}
+      pageSize={TRACE_DEFAULT_PAGE_SIZE}
+      pageSizeOptions={[...TRACE_PAGE_SIZES]}
       compact
     />
   );
