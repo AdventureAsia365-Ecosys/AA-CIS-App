@@ -553,7 +553,10 @@ function useTabStrip(activeKey: string) {
     const btn = el.querySelector<HTMLElement>('[data-kit-tab-active="true"]');
     if (!btn) return;
     const next = scrollToShow(el.scrollLeft, el.clientWidth, btn.offsetLeft - el.offsetLeft, btn.offsetWidth);
-    if (next !== null) el.scrollTo({ left: next });
+    // jsdom (the consumers' component tests) has no Element.scrollTo; set scrollLeft there instead of throwing.
+    if (next === null) return;
+    if (typeof el.scrollTo === "function") el.scrollTo({ left: next });
+    else el.scrollLeft = next;
   }, [el, activeKey]);
   const mask = tabStripMask(edges.left, edges.right);
   const fade: React.CSSProperties = mask === "none" ? {} : { maskImage: mask, WebkitMaskImage: mask };
