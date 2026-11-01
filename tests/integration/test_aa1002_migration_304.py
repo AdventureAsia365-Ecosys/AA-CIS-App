@@ -15,6 +15,7 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 sys.path.insert(0, os.path.dirname(__file__))
+from _acc2_routes import candidates_off_routes  # noqa: E402
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 
 from shared.llm_client import bedrock_satellite  # noqa: E402
@@ -58,7 +59,11 @@ LLM_KINDS = ("bedrock", "anthropic", "openai", "azure_openai", "mock")
 
 def _run_later(c):
     for path in LATER:
-        c.execute(open(path, encoding="utf-8").read())
+        if path.endswith("324_llm_acc2_candidate_models.sql"):
+            with candidates_off_routes(c):      # AA-1026 I6: 331 / 332 routes name 324's models; 324's guard refuses
+                c.execute(open(path, encoding="utf-8").read())
+        else:
+            c.execute(open(path, encoding="utf-8").read())
 
 
 @pytest.fixture
