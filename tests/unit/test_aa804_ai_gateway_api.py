@@ -206,14 +206,28 @@ def test_dfs_row():
     (False, 0, "disabled"), (True, 100, "ok"), (True, 2000, "low"), (True, 2500, "cap_reached")])
 def test_geo_row(configured, used, status):
     row = gw.geo_row(configured, {"credits_today": used, "month_requests": 7}, 2500, None, {})
+    # AA-1025 C1: enabled is the switch (the registry row lays it over); configured says whether the pipeline uses it
+    assert row["enabled"] is True and row["configured"] is configured
     assert row["status"] == status and row["credits"]["used_today"] == used and row["credits"]["daily_limit"] == 2500
     assert row["spend"]["month_calls"] == 7
 
 
 # ── read_providers ─────────────────────────────────────────────────────────────────────────────────────────────────
 
+# AA-1025 C1: the stats reads (matched before the spend reads of the same tables).
+LLM_STATS = [{"connection_key": "llm-main", "calls_24h": 20, "errors_24h": 1, "refused_24h": 2, "p50_24h": 812.4,
+              "p95_24h": 2400.0, "calls_7d": 90, "errors_7d": 3, "refused_7d": 5, "p50_7d": 790.0, "p95_7d": 2600.0},
+             {"connection_key": "typesafe", "calls_24h": 4, "errors_24h": 0, "refused_24h": 0, "p50_24h": 300.0,
+              "p95_24h": 450.0, "calls_7d": 9, "errors_7d": 1, "refused_7d": 0, "p50_7d": 310.0, "p95_7d": 470.0}]
+
+
 def _provider_pool(fail=()):
     return FakePool({
+        "coalesce(connection_key, account) AS connection_key": [dict(r) for r in LLM_STATS],
+        "NOT cache_hit": {"calls_24h": 2, "errors_24h": 1, "refused_24h": 0, "p50_24h": 1500.0, "p95_24h": 2900.0,
+                          "calls_7d": 2, "errors_7d": 1, "refused_7d": 0, "p50_7d": 1500.0, "p95_7d": 2900.0},
+        "failed_requests": {"calls_24h": 40, "errors_24h": 2, "refused_24h": 0, "p50_24h": None, "p95_24h": None,
+                            "calls_7d": 200, "errors_7d": 2, "refused_7d": 0, "p50_7d": None, "p95_7d": None},
         "FROM shared.llm_call_log": [dict(r) for r in LEDGER],
         "FROM shared.spend_budget": [{"provider": "bedrock", "per_day_usd": 10, "hard_stop": True, "alert_pct": 80},
                                      {"provider": "geocoder", "per_day_usd": 1, "hard_stop": True, "alert_pct": 80}],
@@ -257,12 +271,16 @@ def test_read_providers_lists_every_paid_source(stubs):
     pool = _provider_pool()
     out = asyncio.run(gw.read_providers(pool, now=NOW))
     keys = [p["key"] for p in out["providers"]]
-    assert keys == ["llm:llm-main", "llm:llm-spare", "llm:openai-direct", "llm:anthropic-direct", "jev",
-                    "dataforseo", "geoapify"]
+    assert keys == ["llm:llm-main", "llm:llm-spare", "llm:openai-direct", "llm:anthropic-direct", "crm:llm", "jev",
+                    "dataforseo", "geoapify", "mapbox", "guardrails"]
     assert out["errors"] == [] and out["day_start"] == DAY.isoformat() and out["month_start"] == MONTH.isoformat()
     # the month window is [first of month, now); today's spend from UTC midnight
-    assert pool.ran("FROM shared.llm_call_log") == [(DAY, MONTH, NOW)]
-    assert pool.ran("FROM geo.geocode_call") == [(DAY, MONTH, NOW, "geoapify")]
+    assert pool.ran("GROUP BY provider, account") == [(DAY, MONTH, NOW)]
+    assert pool.ran("max(called_at) AS last_call_at") == [(DAY, MONTH, NOW, "geoapify")]
+    # AA-1025 C1: the stats reads run on the last 24 h and 7 d
+    window = (NOW - timedelta(hours=24), NOW - timedelta(days=7), NOW)
+    assert pool.ran("coalesce(connection_key, account) AS connection_key") == [window]
+    assert pool.ran("NOT cache_hit") == [window] and pool.ran("failed_requests") == [window + ("geoapify",)]
     assert pool.ran("FROM shared.decision_log") == [(NOW - timedelta(hours=24), NOW)]
     by = {p["key"]: p for p in out["providers"]}
     assert by["jev"]["spend"]["month_usd"] == 0.9 and by["jev"]["balance"]["usd"] == 9.0
@@ -280,7 +298,10 @@ def test_one_failing_source_keeps_the_others(stubs):
     assert by["dataforseo"]["status"] == "unknown" and by["dataforseo"]["status_reason"] == "source_unreadable"
     assert "DataForSEO read failed (ref " in by["dataforseo"]["error"]
     assert by["jev"]["status"] == "ok" and by["geoapify"]["status"] == "ok"
-    assert [e["source"] for e in out["errors"]] == ["dataforseo"]
+    # the table is down for its stats read too; the other rows keep theirs (AA-1025 C1)
+    assert [e["source"] for e in out["errors"]] == ["dataforseo", "dataforseo_stats"]
+    assert by["dataforseo"]["stats"] is None and by["dataforseo"]["error_pct"] is None
+    assert by["jev"]["stats"]["24h"]["calls"] == 4 and by["geoapify"]["error_pct"] == 5.0
 
 
 def test_unreadable_ledger_blanks_spend_but_keeps_health(stubs):
@@ -288,7 +309,8 @@ def test_unreadable_ledger_blanks_spend_but_keeps_health(stubs):
     main = out["providers"][0]
     assert main["status"] == "open" and main["spend"] is None and "LLM ledger read failed" in main["error"]
     assert out["unattributed_llm"] is None
-    assert [e["source"] for e in out["errors"]] == ["llm_ledger"]
+    assert [e["source"] for e in out["errors"]] == ["llm_ledger", "llm_stats"]
+    assert main["stats"] is None
 
 
 def test_unreadable_registry_gives_one_placeholder_row(stubs, monkeypatch):
@@ -298,7 +320,8 @@ def test_unreadable_registry_gives_one_placeholder_row(stubs, monkeypatch):
     monkeypatch.setattr(gw, "_read_connections", boom)
     out = asyncio.run(gw.read_providers(_provider_pool(), now=NOW))
     assert out["providers"][0]["key"] == "llm" and out["providers"][0]["status"] == "unknown"
-    assert [p["key"] for p in out["providers"][1:]] == ["jev", "dataforseo", "geoapify"]
+    assert [p["key"] for p in out["providers"][1:]] == ["crm:llm", "jev", "dataforseo", "geoapify", "mapbox",
+                                                         "guardrails"]
 
 
 # ── trace ──────────────────────────────────────────────────────────────────────────────────────────────────────────

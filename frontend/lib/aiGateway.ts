@@ -9,8 +9,11 @@
 import { LLM_ACCOUNT, VENDOR_CONNECTION_LABELS } from "./awsAccounts.ts";
 
 export type ProviderStatus =
-  | "ok" | "degraded" | "open" | "low" | "cap_reached" | "disabled" | "unknown";
-export type ProviderGroup = "llm" | "decide" | "data";
+  | "ok" | "degraded" | "open" | "low" | "cap_reached" | "disabled" | "unknown"
+  // AA-1025 C1: a source we list but do not log (TripPlanner's Mapbox maps, free tier): never "Need a look"
+  | "untracked";
+/** AA-1025 C1: `guard` = the CRM's Bedrock Guardrails scrub. */
+export type ProviderGroup = "llm" | "decide" | "data" | "guard";
 export type Tone = "neutral" | "accent" | "success" | "warning" | "danger" | "info" | "purple";
 
 export interface Spend {
@@ -72,6 +75,20 @@ export interface ProviderHealth {
   last_at?: string | null;
 }
 
+/** AA-1025 C1: one window of a row's calls (backend ai_gateway.window_stats). `calls` reached the provider; `refused`
+ *  (our own guard or a switch said no, nothing sent) is counted apart and is not in the error rate. */
+export interface WindowStats {
+  calls: number;
+  errors: number;
+  refused: number;
+  error_pct: number | null;
+  latency_p50_ms: number | null;
+  latency_p95_ms: number | null;
+}
+
+export const STATS_WINDOWS = ["24h", "7d"] as const;
+export type StatsWindow = (typeof STATS_WINDOWS)[number];
+
 export interface ProviderRow {
   key: string;
   group: ProviderGroup;
@@ -97,6 +114,25 @@ export interface ProviderRow {
   failure_domain?: string | null;
   access_state?: string | null;
   last_probe_at?: string | null;
+  // AA-1025 C1 (absent on an older API: the cells say "—")
+  /** calls, errors and latency of the last 24 h and 7 d; null when the ledger could not be read */
+  stats?: Record<StatsWindow, WindowStats> | null;
+  latency_p50_ms?: number | null;
+  latency_p95_ms?: number | null;
+  error_pct?: number | null;
+  /** the page may switch this provider on / off (PATCH /admin/llm-connections/{connection_key}) */
+  switchable?: boolean;
+  /** `crm_settings`: switched in the CRM's own settings, not here */
+  switch?: string | null;
+  /** Geoapify: the place pipeline uses it as its geocoder */
+  configured?: boolean;
+  /** Mapbox: where its usage is read (the vendor's console) */
+  usage_url?: string | null;
+  /** the app whose calls the row counts when it is not CIS (crm, tripplanner) */
+  app?: string | null;
+  /** `utc_days`: the CRM rows, counted from the CRM's daily totals: "24h" is today (UTC) and "7d" the last seven UTC
+   *  days; failed calls include refusals and there is no latency */
+  stats_basis?: string | null;
 }
 
 export interface ProvidersResp {
@@ -170,7 +206,7 @@ export const TRACE_SOURCES: readonly TraceSource[] = ["llm", "jev", "dfs", "geoc
 
 const STATUS_TONE: Record<ProviderStatus, Tone> = {
   ok: "success", degraded: "warning", open: "danger", low: "warning", cap_reached: "danger",
-  disabled: "neutral", unknown: "neutral",
+  disabled: "neutral", unknown: "neutral", untracked: "info",
 };
 
 export function statusTone(status: string | null | undefined): Tone {
@@ -182,21 +218,44 @@ export function statusTone(status: string | null | undefined): Tone {
  *  DataForSEO row is "unknown" because no top-up or balance is known (its reason line says so), and an unreadable
  *  source stays "unknown". */
 export function statusWordKey(row: Pick<ProviderRow, "group" | "status" | "status_reason">): ProviderStatus | "no_recent_calls" {
-  return row.group === "llm" && row.status === "unknown" && !row.status_reason ? "no_recent_calls" : row.status;
+  // AA-1025 C1: the CRM rows (LLM section, Guardrails) read the same way
+  const quiet = (row.group === "llm" || row.group === "guard") && row.status === "unknown" && !row.status_reason;
+  return quiet ? "no_recent_calls" : row.status;
 }
 
 /** Worst first: what needs a look sits at the top of the summary tile. */
 const SEVERITY: Record<ProviderStatus, number> = {
-  open: 0, cap_reached: 1, degraded: 2, low: 3, unknown: 4, ok: 5, disabled: 6,
+  open: 0, cap_reached: 1, degraded: 2, low: 3, unknown: 4, ok: 5, untracked: 6, disabled: 7,
 };
 
 export function severity(status: string | null | undefined): number {
   return SEVERITY[(status ?? "unknown") as ProviderStatus] ?? 4;
 }
 
-/** How many providers need a look (not ok, not switched off). */
+/** How many providers need a look (not ok, not switched off, not a source we do not log). */
 export function needsLook(rows: readonly Pick<ProviderRow, "status">[]): number {
-  return rows.filter((r) => r.status !== "ok" && r.status !== "disabled").length;
+  return rows.filter((r) => r.status !== "ok" && r.status !== "disabled" && r.status !== "untracked").length;
+}
+
+/** A latency as people read it: whole milliseconds below one second, else seconds with one decimal. */
+export function latencyText(ms: number | null | undefined): string {
+  if (ms == null || Number.isNaN(ms)) return "—";
+  return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
+}
+
+/** Tone of an error rate: none or under 5 % fine, under 50 % a warning, else danger (most calls failed). */
+export function errorRateTone(pct: number | null | undefined): Tone {
+  if (pct == null || pct === 0) return "neutral";
+  return pct < 5 ? "neutral" : pct < 50 ? "warning" : "danger";
+}
+
+/** AA-1025 C1: the PATCH of a provider's switch (B1: Jev, DataForSEO and Geoapify read it), or null when the row
+ *  cannot be switched here (an LLM connection uses the Connections view; the CRM rows switch in the CRM). */
+export function providerSwitch(row: Pick<ProviderRow, "switchable" | "connection_key" | "enabled">):
+  { path: string; body: { enabled: boolean } } | null {
+  if (!row.switchable || !row.connection_key) return null;
+  return { path: `/api/admin/llm-connections/${encodeURIComponent(row.connection_key)}`,
+    body: { enabled: !row.enabled } };
 }
 
 /** A USD amount: two decimals from one dollar up, more below (a call costs fractions of a cent). */
@@ -257,9 +316,9 @@ export function traceParam(t: TraceTarget): string {
   return `${t.kind}:${t.id}`;
 }
 
-/** Rows grouped as the page lists them: LLM connections, then Jev, then the data providers. */
+/** Rows grouped as the page lists them: LLM connections, then Jev, then the data providers, then the guards. */
 export function groupRows<R extends Pick<ProviderRow, "group">>(rows: readonly R[]): Record<ProviderGroup, R[]> {
-  const out: Record<ProviderGroup, R[]> = { llm: [], decide: [], data: [] };
+  const out: Record<ProviderGroup, R[]> = { llm: [], decide: [], data: [], guard: [] };
   for (const r of rows) (out[r.group] ?? out.data).push(r);
   return out;
 }
