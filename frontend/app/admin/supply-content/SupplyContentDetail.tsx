@@ -38,6 +38,8 @@ import {
   useFormat,
   useT,
   useToast, PageFrame,
+  Checkbox, Textarea,
+  Pressable,
 } from "../../_kit";
 import { can } from "@/lib/rbac";
 import { BOOKING_ADMIN_URL } from "@/lib/apps";
@@ -424,8 +426,8 @@ function History({ versions, publishedId, media }: { versions: Version[]; publis
     <div data-testid="supply-history" style={{ ...card, padding: 0 }}>
       {versions.map((v, i) => (
         <div key={v.id} style={{ borderTop: i ? `1px solid ${K.line}` : "none", padding: "8px 14px" }}>
-          <button type="button" onClick={() => setOpen(open === v.id ? null : v.id)} aria-expanded={open === v.id}
-                  style={{ all: "unset", cursor: "pointer", display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", fontSize: 12.5, color: K.ink, width: "100%" }}>
+          <Pressable onClick={() => setOpen(open === v.id ? null : v.id)} aria-expanded={open === v.id}
+                  style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", fontSize: 12.5, color: K.ink }}>
             <b>v{v.content_version}</b>
             <Badge tone={VERSION_TONE[v.status]} dot={false}>{t("versionStatus", v.status)}</Badge>
             {v.id === publishedId && <Badge tone="success" dot={false}>{t("publishedBadge")}</Badge>}
@@ -433,7 +435,7 @@ function History({ versions, publishedId, media }: { versions: Version[]; publis
               {t("historyLine", v.origin === "llm" ? t("model") : v.created_by ?? t("staff"), v.supply_version, formatDateTime(v.created_at))}
               {v.reviewed_by ? t("reviewedByShort", v.reviewed_by) : ""}
             </span>
-          </button>
+          </Pressable>
           {open === v.id && (
             <div style={{ marginTop: 8 }}><VersionBody v={v} media={media} /></div>
           )}
@@ -494,7 +496,7 @@ function ActionModal({ pending, entityId, onClose, onDone, onError }: {
         {withNote && (
           <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: K.muted }}>
             {t("noteLabel")}
-            <textarea value={note} maxLength={1000} rows={3} onChange={(e) => setNote(e.target.value)} style={field} />
+            <Textarea value={note} maxLength={1000} rows={3} onChange={(e) => setNote(e.target.value)} style={field} />
           </label>
         )}
         {error && <div role="alert" style={{ color: K.danger, fontSize: 12.5 }}>{error}</div>}
@@ -545,13 +547,13 @@ function EditModal({ entityId, base, media, onClose, onSaved }: {
       <form data-testid="supply-edit" onSubmit={(e) => { e.preventDefault(); void save(); }} style={{ display: "flex", flexDirection: "column", gap: 12, fontSize: 12.5 }}>
         <div style={{ color: K.muted }}>{t("editIntro")}</div>
         <label style={lbl}>{t("description", form.description.trim().length, MAX_DESCRIPTION_CHARS)}
-          <textarea value={form.description} rows={6} maxLength={MAX_DESCRIPTION_CHARS + 200} onChange={(e) => set({ description: e.target.value })} style={field} />
+          <Textarea value={form.description} rows={6} maxLength={MAX_DESCRIPTION_CHARS + 200} onChange={(e) => set({ description: e.target.value })} style={field} />
         </label>
         <label style={lbl}>{t("highlightsLabel")}
-          <textarea value={form.highlights} rows={4} onChange={(e) => set({ highlights: e.target.value })} style={field} />
+          <Textarea value={form.highlights} rows={4} onChange={(e) => set({ highlights: e.target.value })} style={field} />
         </label>
         <label style={lbl}>{t("goodToKnowLabel")}
-          <textarea value={form.goodToKnow} rows={3} onChange={(e) => set({ goodToKnow: e.target.value })} style={field} />
+          <Textarea value={form.goodToKnow} rows={3} onChange={(e) => set({ goodToKnow: e.target.value })} style={field} />
         </label>
         {media.length > 0 && (
           <fieldset style={{ border: `1px solid ${K.line}`, borderRadius: 8, padding: "8px 10px", margin: 0, minWidth: 0 }}>
@@ -561,7 +563,7 @@ function EditModal({ entityId, base, media, onClose, onSaved }: {
                 const st = sx.photo(photoState(m));
                 return (
                   <label key={m.media_id} style={{ display: "flex", gap: 8, alignItems: "center", minWidth: 0 }}>
-                    <input type="checkbox" checked={form.photoIds.includes(m.media_id)} onChange={() => togglePhoto(m.media_id)} />
+                    <Checkbox checked={form.photoIds.includes(m.media_id)} onChange={() => togglePhoto(m.media_id)} />
                     <span style={{ width: 56, flexShrink: 0 }}><Thumb m={m} height={40} /></span>
                     <Badge tone={st.tone} dot={false}>{st.label}</Badge>
                     <span style={{ fontFamily: mono, fontSize: 10.5, color: K.muted, overflowWrap: "anywhere", minWidth: 0 }}>{m.media_id.slice(0, 8)}</span>

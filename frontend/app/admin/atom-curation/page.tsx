@@ -16,7 +16,7 @@
 //     TENANT's activity on a specific Tour, a different subject entirely (AA-550 point C.8: the
 //     original single page "lẫn lộn nội dung của tầng admin và tenant").
 //
-// 05 Slate is NOT part of the platform-wide fix (AA-550 A.3, confirmed real schema:
+// 05 Slate is NOT part of the platform-wide fix (AA-550 K.3, confirmed real schema:
 // `acp_shared.subject.tenant_id NOT NULL`) — it keeps requiring one selected Tour, unchanged
 // behavior, only its prompt copy is now English.
 //
@@ -44,14 +44,20 @@
 // exists, unreachable from any control here, see the AA-554 child issue for building that
 // button) — its header badge is shown for real (not hidden) with a "coming soon" note.
 import { Suspense, useState, useEffect, useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import {
   Trash2, ChevronDown, ChevronRight, Layers, Milestone,
 } from "lucide-react";
-import SocialContentSubNav, { type SectionKey } from "../_components/SocialContentSubNav";
-import { A, mono, sans, Card, Badge, LoadingScreen, TH, TD } from "../_components/adminUi";
+import SocialContentSubNav, { SocialContentSplit, type SectionKey } from "../_components/SocialContentSubNav";
 import { fetchJson, EmptyState, ErrorState, AuditTable, Col } from "../_components/auditPanels";
-import { Button, PageFrame, PageFrameBody, PageFrameHeader, PageHeader, useFormat, useT } from "../../_kit";
+import {
+  Button, PageFrame, PageFrameBody, PageFrameHeader, PageHeader, useFormat, useT, Checkbox, Input, Select,
+  K, mono, sans, Section, Badge, LoadingScreen,
+  type Tone,
+  DataTable, IconButton, KX, LinkButton, ListButton, Pressable, useIsPhone, type ColumnDef,
+} from "../../_kit";
+import { phoneCardColumns } from "@/lib/tableSort";
 import { SeedLine, type SeedInfo } from "../_components/SeedLine";
 import { TenantSelect } from "../_components/TenantSelect";
 import { AT } from "./messages";
@@ -69,9 +75,9 @@ const MARKET_NAMES: Record<string, "marketUS" | "marketUK" | "marketAU" | "marke
 function MarketLegend() {
   const t = useT(AT);
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 10, fontSize: 11, color: A.muted2, marginBottom: 10 }}>
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 10, fontSize: 11, color: K.muted2, marginBottom: 10 }}>
       {Object.entries(MARKET_NAMES).map(([code, name]) => (
-        <span key={code}><strong style={{ color: A.muted }}>{code}</strong> = {t(name)}</span>
+        <span key={code}><strong style={{ color: K.muted }}>{code}</strong> = {t(name)}</span>
       ))}
     </div>
   );
@@ -119,18 +125,18 @@ function fmtScore(n: number | null | undefined): string {
 
 const VALID_SECTIONS: Set<string> = new Set(["atomize", "segment", "score", "route_hub", "slate"]);
 
-const LIFECYCLE_COLOR: Record<string, "green" | "amber" | "gray"> = {
-  active: "green", phasing_out: "amber", retired: "gray",
+const LIFECYCLE_COLOR: Record<string, Tone> = {
+  active: "success", phasing_out: "warning", retired: "neutral",
 };
 
 const selectStyle: React.CSSProperties = {
-  padding: "8px 12px", background: A.card, border: `1px solid ${A.line}`, borderRadius: 8,
-  fontSize: 13, fontFamily: sans, color: A.body, cursor: "pointer",
+  padding: "8px 12px", background: K.card, border: `1px solid ${K.line}`, borderRadius: 8,
+  fontSize: 13, fontFamily: sans, color: K.body, cursor: "pointer",
 };
 
 const inputStyle: React.CSSProperties = {
-  padding: "7px 10px", background: A.card, border: `1px solid ${A.line}`, borderRadius: 8,
-  fontSize: 12.5, fontFamily: sans, color: A.body, width: 140,
+  padding: "7px 10px", background: K.card, border: `1px solid ${K.line}`, borderRadius: 8,
+  fontSize: 12.5, fontFamily: sans, color: K.body, width: 140,
 };
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -166,7 +172,7 @@ function isLegacyScope(scope: string): boolean { return scope !== "platform"; }
 
 function OwnerBadge({ scope }: { scope: string }) {
   const t = useT(AT);
-  return isLegacyScope(scope) ? <Badge color="amber">{t("legacyOwned")}</Badge> : <Badge color="gold">{t("platform")}</Badge>;
+  return isLegacyScope(scope) ? <Badge tone="warning">{t("legacyOwned")}</Badge> : <Badge tone="accent">{t("platform")}</Badge>;
 }
 
 function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, onSummaryChange }: {
@@ -175,12 +181,20 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
   onSummaryChange: () => void;
 }) {
   const t = useT(AT);
-  const [atoms, setAtoms] = useState<Atom[]>([]);
-  const [total, setTotal] = useState(0);
+  // < 768px the tour list stacks above the atoms (was the `.aa-curation-split` media query, AA-1006).
+  const phone = useIsPhone();
   const [unreviewedOnly, setUnreviewedOnly] = useState(false);
   const [lifecycleFilter, setLifecycleFilter] = useState("");
-  const [atomsLoading, setAtomsLoading] = useState(true);
-  const [atomsError, setAtomsError] = useState<string | null>(null);
+  // AA-1006: the loaded list remembers which filters (and retry) it belongs to; a new key shows the loader until its
+  // own first page arrives, so no effect sets state before the answer.
+  const [reloadTick, setReloadTick] = useState(0);
+  const listKey = JSON.stringify([unreviewedOnly, selectedTour, lifecycleFilter, reloadTick]);
+  const [list, setList] = useState<{ key: string; atoms: Atom[]; total: number; error: string | null } | null>(null);
+  const current = list?.key === listKey ? list : null;
+  const atoms = current?.atoms ?? [];
+  const total = current?.total ?? 0;
+  const atomsLoading = current == null;
+  const atomsError = current?.error ?? null;
   const [loadingMore, setLoadingMore] = useState(false);
   const [collapsedSegments, setCollapsedSegments] = useState<Set<string>>(new Set());
   // AA-554 B.6 — Tours sidebar "Load more" window (client-side; `summary.by_tour` already
@@ -239,27 +253,34 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
     }
   }
 
-  const loadAtoms = useCallback((offset: number, append: boolean) => {
-    if (append) setLoadingMore(true); else setAtomsLoading(true);
-    setAtomsError(null);
+  const fetchAtoms = useCallback((offset: number) => {
     const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(offset) });
     if (unreviewedOnly) params.set("unreviewed_only", "true");
     if (selectedTour) params.set("tour_id", selectedTour);
     if (lifecycleFilter) params.set("lifecycle_stage", lifecycleFilter);
-    fetchJson<{ atoms: Atom[]; total: number }>(`/api/admin/atoms?${params}`)
-      .then(d => {
-        setAtoms(prev => (append ? [...prev, ...d.atoms] : d.atoms));
-        setTotal(d.total ?? 0);
-      })
-      .catch(e => setAtomsError(String(e.message || e)))
-      .finally(() => { setAtomsLoading(false); setLoadingMore(false); });
+    return fetchJson<{ atoms: Atom[]; total: number }>(`/api/admin/atoms?${params}`);
   }, [unreviewedOnly, selectedTour, lifecycleFilter]);
 
-  useEffect(() => { loadAtoms(0, false); }, [loadAtoms]);
+  useEffect(() => {
+    let alive = true;
+    fetchAtoms(0)
+      .then(d => { if (alive) setList({ key: listKey, atoms: d.atoms, total: d.total ?? 0, error: null }); })
+      .catch(e => { if (alive) setList({ key: listKey, atoms: [], total: 0, error: String(e.message || e) }); });
+    return () => { alive = false; };
+  }, [fetchAtoms, listKey]);
+
+  function loadMore() {
+    setLoadingMore(true);
+    fetchAtoms(atoms.length)
+      .then(d => setList(prev => (prev && prev.key === listKey
+        ? { ...prev, atoms: [...prev.atoms, ...d.atoms], total: d.total ?? prev.total } : prev)))
+      .catch(e => setList(prev => (prev && prev.key === listKey ? { ...prev, error: String(e.message || e) } : prev)))
+      .finally(() => setLoadingMore(false));
+  }
 
   async function deleteAtom(atom: Atom) {
     if (!confirm(t("confirmDelete"))) return;
-    setAtoms(prev => prev.filter(a => a.atom_id !== atom.atom_id));
+    setList(prev => (prev ? { ...prev, atoms: prev.atoms.filter(a => a.atom_id !== atom.atom_id) } : prev));
     await fetch(`/api/admin/atoms/${atom.atom_id}`, {
       method: "PATCH", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ deleted: true }),
@@ -280,23 +301,23 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
 
   return (
     <>
-      {summaryLoading ? <LoadingScreen msg={t("loadingDashboard")} /> : (
+      {summaryLoading ? <LoadingScreen message={t("loadingDashboard")} /> : (
         <>
           {/* AA-601 — "content rendered" signal for the UI smoke: present only once the curation
               summary has loaded (never on the LoadingScreen), so a blank/broken page still fails. */}
-          <div data-testid="admin-content-ready" className="aa-kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14, marginBottom: 6 }}>
+          <div data-testid="admin-content-ready" style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14, marginBottom: 6 }}>
             {[
-              [t("totalAtoms"), totalAtoms, A.gold],
-              [t("reviewed"), reviewedAtoms, A.green],
+              [t("totalAtoms"), totalAtoms, K.accent],
+              [t("reviewed"), reviewedAtoms, K.success],
               // AA-754 — no distinctiveness KPI here: the signal was removed end-to-end.
             ].map(([label, value, accent]) => (
-              <Card key={label as string} style={{ padding: "14px 16px" }}>
-                <div style={{ fontSize: 11.5, color: A.muted, marginBottom: 6 }}>{label}</div>
+              <Section bodyStyle={{ padding: "14px 16px" }} key={label as string}>
+                <div style={{ fontSize: 11.5, color: K.muted, marginBottom: 6 }}>{label}</div>
                 <div style={{ fontFamily: sans, fontVariantNumeric: "tabular-nums", fontSize: 24, fontWeight: 600, color: accent as string }}>{value}</div>
-              </Card>
+              </Section>
             ))}
           </div>
-          <div style={{ fontSize: 10.5, color: A.muted2, marginBottom: 14 }}>
+          <div style={{ fontSize: 10.5, color: K.muted2, marginBottom: 14 }}>
             {selectedTourMeta
               ? t("forSelectedTour")
               : t("platformWide")}
@@ -306,8 +327,8 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
               fresh publish, AA-526) — this is the only way an OLDER Master Content tour ever
               gets atomized. */}
           {unatomizedTours.length > 0 && (
-            <Card style={{ padding: "14px 16px", marginBottom: 16, borderColor: A.gold }}>
-              <div style={{ fontSize: 13, color: A.body, marginBottom: 10 }}>
+            <Section style={{ marginBottom: 16, borderColor: K.accent }} bodyStyle={{ padding: "14px 16px" }}>
+              <div style={{ fontSize: 13, color: K.body, marginBottom: 10 }}>
                 ⚠ <strong>{t("unatomizedCount", unatomizedTours.length)}</strong>{t("unatomizedBody", unatomizedTours.length)}
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -325,79 +346,74 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
                 >
                   {t("atomizeAll", unatomizedTours.length)}
                 </Button>
-                {atomizeRunning && <span style={{ fontSize: 12, color: A.muted }}>{atomizeRunning}</span>}
+                {atomizeRunning && <span style={{ fontSize: 12, color: K.muted }}>{atomizeRunning}</span>}
                 {atomizeJobIds.length > 0 && (
                   <a href={atomizeJobIds.length === 1 ? `/admin/jobs?job=${atomizeJobIds[0]}` : "/admin/jobs?kind=a3_atomize"}
-                     style={{ fontSize: 12, color: A.accent }}>
+                     style={{ fontSize: 12, color: K.accent }}>
                     {atomizeJobIds.length === 1 ? t("viewJob") : t("viewJobs", atomizeJobIds.length)}
                   </a>
                 )}
               </div>
-            </Card>
+            </Section>
           )}
 
-          <div className="aa-curation-split" style={{ display: "grid", gridTemplateColumns: "280px minmax(0, 1fr)", gap: 18, alignItems: "start" }}>
+          <div style={{ display: "grid", gridTemplateColumns: phone ? "minmax(0, 1fr)" : "280px minmax(0, 1fr)", gap: 18, alignItems: "start" }}>
             {/* AA-554 B.4/B.5 — sticky (same `position: sticky, top: 0` pattern AA-551 already
                 proved works for the 01-05 section-nav, within this same page's outer scroll
                 container — see that inner-nav below for the identical mechanism) + taller
                 viewport-relative maxHeight (was a fixed 640px, too small for 74+ tours) with its
                 own internal scroll for the list itself. */}
-            <Card style={{ padding: 0, overflow: "hidden", position: "sticky", top: 0 }}>
-              <div style={{ padding: "12px 16px", borderBottom: `1px solid ${A.line}`, fontSize: 12, fontWeight: 600, color: A.ink3, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+            <Section padded={false} style={{ overflow: "hidden", position: "sticky", top: 0 }}>
+              <div style={{ padding: "12px 16px", borderBottom: `1px solid ${K.line}`, fontSize: 12, fontWeight: 600, color: K.ink3, textTransform: "uppercase", letterSpacing: "0.06em" }}>
                 {t("toursHeader", summary?.by_tour.length ?? 0)}
               </div>
               <div style={{ maxHeight: "calc(100vh - 260px)", overflowY: "auto" }}>
-                <button onClick={() => onTourChange(null)} style={{
-                  display: "block", width: "100%", textAlign: "left", padding: "10px 16px",
-                  background: selectedTour === null ? A.bg : "transparent", border: "none",
-                  borderBottom: `1px solid ${A.line2}`, cursor: "pointer", fontFamily: sans,
-                  fontSize: 12.5, fontWeight: selectedTour === null ? 700 : 500, color: A.ink,
+                <ListButton selected={selectedTour === null} aria-current={selectedTour === null ? "true" : undefined} onClick={() => onTourChange(null)} style={{
+                  padding: "10px 16px", borderRadius: 0, borderBottom: `1px solid ${K.line2}`,
+                  fontSize: 12.5, fontWeight: selectedTour === null ? 700 : 500,
                 }}>
                   {t("allTours")}
-                </button>
+                </ListButton>
                 {(summary?.by_tour ?? []).slice(0, toursShown).map(tr => (
-                  <button key={tr.tour_id} onClick={() => onTourChange(tr.tour_id)} style={{
-                    display: "block", width: "100%", textAlign: "left", padding: "10px 16px",
-                    background: selectedTour === tr.tour_id ? A.bg : "transparent", border: "none",
-                    borderBottom: `1px solid ${A.line2}`, cursor: "pointer", fontFamily: sans,
+                  <ListButton selected={selectedTour === tr.tour_id} aria-current={selectedTour === tr.tour_id ? "true" : undefined} key={tr.tour_id} onClick={() => onTourChange(tr.tour_id)} style={{
+                    display: "block", padding: "10px 16px", borderRadius: 0, borderBottom: `1px solid ${K.line2}`,
                   }}>
-                    <div style={{ fontSize: 12.5, fontWeight: selectedTour === tr.tour_id ? 700 : 500, color: A.ink, marginBottom: 3 }}>
+                    <div style={{ fontSize: 12.5, fontWeight: selectedTour === tr.tour_id ? 700 : 500, color: K.ink, marginBottom: 3 }}>
                       {tr.tour_name}
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                      <span style={{ fontSize: 11, color: A.muted }}>{t("atomsN", tr.atom_count)}</span>
-                      {tr.is_thin && <Badge color="red">{t("thin")}</Badge>}
-                      {tr.unreviewed_count > 0 && <Badge color="blue">{t("newN", tr.unreviewed_count)}</Badge>}
-                      {tr.lifecycle_stage !== "active" && <Badge color={LIFECYCLE_COLOR[tr.lifecycle_stage]}>{tr.lifecycle_stage}</Badge>}
+                      <span style={{ fontSize: 11, color: K.muted }}>{t("atomsN", tr.atom_count)}</span>
+                      {tr.is_thin && <Badge tone="danger">{t("thin")}</Badge>}
+                      {tr.unreviewed_count > 0 && <Badge tone="info">{t("newN", tr.unreviewed_count)}</Badge>}
+                      {tr.lifecycle_stage !== "active" && <Badge tone={LIFECYCLE_COLOR[tr.lifecycle_stage]}>{tr.lifecycle_stage}</Badge>}
                       {tr.owner_scopes.map(s => <OwnerBadge key={s} scope={s} />)}
                     </div>
-                    <div style={{ fontSize: 10.5, color: A.muted2, marginTop: 3 }}>
+                    <div style={{ fontSize: 10.5, color: K.muted2, marginTop: 3 }}>
                       {t("usedInContent", tr.used_atom_count, tr.atom_count)}
                     </div>
-                  </button>
+                  </ListButton>
                 ))}
                 {(summary?.by_tour.length ?? 0) > toursShown && (
-                  <button onClick={() => setToursShown(n => n + TOURS_PAGE_SIZE)} style={{
-                    display: "block", width: "100%", textAlign: "center", padding: "10px 16px",
-                    background: "none", border: "none", borderTop: `1px solid ${A.line2}`,
-                    cursor: "pointer", fontFamily: sans, fontSize: 12, fontWeight: 600, color: A.gold,
+                  <LinkButton size="sm" onClick={() => setToursShown(n => n + TOURS_PAGE_SIZE)} style={{
+                    display: "flex", width: "100%", justifyContent: "center", padding: "10px 16px",
+                    borderTop: `1px solid ${K.line2}`, borderRadius: 0,
                   }}>
                     {t("loadMoreTours", Math.min(toursShown, summary?.by_tour.length ?? 0), summary?.by_tour.length ?? 0)}
-                  </button>
+                  </LinkButton>
                 )}
               </div>
-            </Card>
+            </Section>
 
             <div>
               <div style={{ display: "flex", gap: 10, marginBottom: 14, alignItems: "center", flexWrap: "wrap" }}>
-                <select value={lifecycleFilter} onChange={e => setLifecycleFilter(e.target.value)} style={selectStyle}>
+                <Select value={lifecycleFilter} onChange={e => setLifecycleFilter(e.target.value)} style={selectStyle}>
                   <option value="">{t("allLifecycle")}</option>
                   <option value="active">{t("lifecycleActive")}</option>
                   <option value="phasing_out">{t("lifecyclePhasingOut")}</option>
                   <option value="retired">{t("lifecycleRetired")}</option>
-                </select>
-                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: A.body, cursor: "pointer" }}>
-                  <input type="checkbox" checked={unreviewedOnly} onChange={e => setUnreviewedOnly(e.target.checked)} />
+                </Select>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: K.body, cursor: "pointer" }}>
+                  <Checkbox checked={unreviewedOnly} onChange={e => setUnreviewedOnly(e.target.checked)} />
                   {t("unreviewedOnly")}
                 </label>
               </div>
@@ -405,13 +421,13 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
                   is "active" — this note is computed from the real, currently-loaded Tours list
                   (not hardcoded), so it disappears on its own the day a non-active tour exists. */}
               {(summary?.by_tour.length ?? 0) > 0 && (summary?.by_tour ?? []).every(x => x.lifecycle_stage === "active") && (
-                <div style={{ fontSize: 11, color: A.muted2, marginTop: -8, marginBottom: 14 }}>
+                <div style={{ fontSize: 11, color: K.muted2, marginTop: -8, marginBottom: 14 }}>
                   {t("allActive", summary?.by_tour.length ?? 0)}
                 </div>
               )}
 
-              {atomsError ? <ErrorState message={atomsError} onRetry={() => loadAtoms(0, false)} /> :
-                atomsLoading ? <LoadingScreen msg={t("loadingAtoms")} /> : atoms.length === 0 ? (
+              {atomsError ? <ErrorState message={atomsError} onRetry={() => setReloadTick(n => n + 1)} /> :
+                atomsLoading ? <LoadingScreen message={t("loadingAtoms")} /> : atoms.length === 0 ? (
                 <EmptyState title={t("noAtoms")} body={t("noAtomsBody")} />
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -435,7 +451,7 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
 
               {atoms.length < total && !atomsError && (
                 <div style={{ textAlign: "center", marginTop: 16 }}>
-                  <Button variant="secondary" disabled={loadingMore} onClick={() => loadAtoms(atoms.length, true)}>
+                  <Button variant="secondary" disabled={loadingMore} onClick={loadMore}>
                     {loadingMore ? t("loading") : t("loadMore", atoms.length, total)}
                   </Button>
                 </div>
@@ -485,34 +501,33 @@ function AtomCard({ atom, showTour, onDelete }: {
 }) {
   const t = useT(AT);
   return (
-    <Card style={{ padding: "14px 18px" }}>
+    <Section bodyStyle={{ padding: "14px 18px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          {showTour && <div style={{ fontSize: 11, color: A.muted2, marginBottom: 4, fontFamily: mono }}>{atom.tour_name}</div>}
-          <div style={{ fontSize: 13.5, color: A.body, lineHeight: 1.5 }}>{atom.text}</div>
+          {showTour && <div style={{ fontSize: 11, color: K.muted2, marginBottom: 4, fontFamily: mono }}>{atom.tour_name}</div>}
+          <div style={{ fontSize: 13.5, color: K.body, lineHeight: 1.5 }}>{atom.text}</div>
           <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
-            {atom.activity_type && <Badge color="gray">{atom.activity_type}</Badge>}
-            {atom.unreviewed && <Badge color="blue">{t("new")}</Badge>}
+            {atom.activity_type && <Badge tone="neutral">{atom.activity_type}</Badge>}
+            {atom.unreviewed && <Badge tone="info">{t("new")}</Badge>}
             <OwnerBadge scope={atom.owner_scope} />
-            {atom.lifecycle_stage !== "active" && <Badge color={LIFECYCLE_COLOR[atom.lifecycle_stage]}>{atom.lifecycle_stage}</Badge>}
+            {atom.lifecycle_stage !== "active" && <Badge tone={LIFECYCLE_COLOR[atom.lifecycle_stage]}>{atom.lifecycle_stage}</Badge>}
             {atom.recurrence != null && atom.recurrence > 0 && (
-              <span style={{ fontSize: 10.5, fontFamily: mono, color: A.muted }}>{t("itineraries", atom.recurrence)}</span>
+              <span style={{ fontSize: 10.5, fontFamily: mono, color: K.muted }}>{t("itineraries", atom.recurrence)}</span>
             )}
             {/* AA-554 D.10 — tooltip explaining what "used" counts. */}
-            <span style={{ fontSize: 10.5, fontFamily: mono, color: atom.usage_count > 0 ? A.ink3 : A.muted2 }}
+            <span style={{ fontSize: 10.5, fontFamily: mono, color: atom.usage_count > 0 ? K.ink3 : K.muted2 }}
               title={t("usedTitle")}>
               {atom.usage_count > 0 ? t("usedN", atom.usage_count) : t("notUsed")}
             </span>
           </div>
         </div>
         <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-          <button onClick={() => onDelete(atom)} title={t("remove")}
-            style={{ background: "none", border: `1px solid ${A.line}`, borderRadius: 6, padding: 6, cursor: "pointer", color: A.red, display: "flex" }}>
+          <IconButton tone="danger" onClick={() => onDelete(atom)} label={t("remove")} style={{ color: K.danger }}>
             <Trash2 size={14} />
-          </button>
+          </IconButton>
         </div>
       </div>
-    </Card>
+    </Section>
   );
 }
 
@@ -522,28 +537,28 @@ function SegmentGroup({ place, action, atoms, score, routeHubName, showTour, col
 }) {
   const t = useT(AT);
   return (
-    <div style={{ border: `1px solid ${A.line}`, borderRadius: 10, overflow: "hidden" }}>
-      <button onClick={onToggle} style={{
+    <div style={{ border: `1px solid ${K.line}`, borderRadius: 10, overflow: "hidden" }}>
+      <Pressable aria-expanded={!collapsed} onClick={onToggle} style={{
         width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "10px 14px",
-        background: A.goldTint, border: "none", cursor: "pointer", textAlign: "left", flexWrap: "wrap",
+        background: K.accentTint, border: "none", cursor: "pointer", textAlign: "left", flexWrap: "wrap",
       }}>
-        {collapsed ? <ChevronRight size={14} color={A.muted} /> : <ChevronDown size={14} color={A.muted} />}
-        <Layers size={13} color={A.gold} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: A.body, fontFamily: sans }}>
+        {collapsed ? <ChevronRight size={14} color={K.muted} /> : <ChevronDown size={14} color={K.muted} />}
+        <Layers size={13} color={K.accent} />
+        <span style={{ fontSize: 13, fontWeight: 600, color: K.body, fontFamily: sans }}>
           {place}{action ? ` — ${action}` : ""}
         </span>
         {score != null && (
-          <span style={{ fontFamily: mono, fontSize: 11, color: A.ink3, background: A.card, border: `1px solid ${A.line}`, borderRadius: 6, padding: "2px 7px" }} title={t("rankSumTitle")}>
+          <span style={{ fontFamily: mono, fontSize: 11, color: K.ink3, background: K.card, border: `1px solid ${K.line}`, borderRadius: 6, padding: "2px 7px" }} title={t("rankSumTitle")}>
             {t("scoreN", fmtScore(score))}
           </span>
         )}
         {routeHubName && (
-          <Badge color="gold"><Milestone size={11} style={{ verticalAlign: -2, marginRight: 3 }} />{t("partOfRoute", routeHubName)}</Badge>
+          <Badge tone="accent"><Milestone size={11} style={{ verticalAlign: -2, marginRight: 3 }} />{t("partOfRoute", routeHubName)}</Badge>
         )}
-        <span style={{ fontSize: 11.5, color: A.muted2, marginLeft: "auto" }}>{t("sameMoment", atoms.length)}</span>
-      </button>
+        <span style={{ fontSize: 11.5, color: K.muted2, marginLeft: "auto" }}>{t("sameMoment", atoms.length)}</span>
+      </Pressable>
       {!collapsed && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: 8, background: A.card }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: 8, background: K.card }}>
           {atoms.map(atom => <AtomCard key={atom.atom_id} atom={atom} showTour={showTour} onDelete={onDelete} />)}
         </div>
       )}
@@ -558,33 +573,40 @@ function SegmentGroup({ place, action, atoms, score, routeHubName, showTour, col
 
 // `enabled` (default true) guards the actual fetch — Segment/Score/Route pass no guard (they
 // support `tour_id` omitted, "All tours" mode, AA-551's whole point); Slate passes
-// `enabled: !!tourId` since its backend endpoint still hard-requires `tour_id` (AA-550 A.3, real
+// `enabled: !!tourId` since its backend endpoint still hard-requires `tour_id` (AA-550 K.3, real
 // per-tenant exception, not touched by this task) — without this guard, deselecting the Tour
 // filter would fire a request Slate's own API 422s on (found live during this task's own
 // Playwright verify, fixed before merge).
+/** A page offset that starts again at 0 whenever `deps` change (AA-1006: derived from the filter key, no effect
+ *  that sets state). */
+function useOffset(deps: unknown[]): [number, (n: number) => void] {
+  const key = JSON.stringify(deps);
+  const [state, setState] = useState({ key, offset: 0 });
+  return [state.key === key ? state.offset : 0, (offset: number) => setState({ key, offset })];
+}
+
 function usePlatformFetch<T>(
   endpoint: string, params: Record<string, string | number | undefined>, enabled = true,
 ) {
-  const [data, setData] = useState<T | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  // Stable dep key — `params` is a fresh object every render otherwise.
+  // Stable key — `params` is a fresh object every render otherwise. AA-1006: react-query owns the load state.
   const key = JSON.stringify(params);
-
-  const load = useCallback(() => {
-    if (!enabled) { setData(null); setLoading(false); setError(null); return; }
-    setLoading(true); setError(null);
-    const qs = new URLSearchParams();
-    Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== "") qs.set(k, String(v)); });
-    fetchJson<T>(`${endpoint}?${qs}`)
-      .then(setData)
-      .catch(e => setError(String(e.message || e)))
-      .finally(() => setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [endpoint, key, enabled]);
-
-  useEffect(() => { load(); }, [load]);
-  return { data, loading, error, reload: load };
+  const q = useQuery({
+    queryKey: ["atom-curation", endpoint, key],
+    enabled,
+    queryFn: () => {
+      const qs = new URLSearchParams();
+      Object.entries(JSON.parse(key) as Record<string, string | number | null>).forEach(([k, v]) => {
+        if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
+      });
+      return fetchJson<T>(`${endpoint}?${qs}`);
+    },
+  });
+  const data = enabled ? (q.data ?? null) : null;
+  const loading = enabled && q.isPending;
+  const error = enabled && q.isError ? String((q.error as Error).message || q.error) : null;
+  const { refetch } = q;
+  const reload = useCallback(() => { refetch(); }, [refetch]);
+  return { data, loading, error, reload };
 }
 
 const filterBarStyle: React.CSSProperties = {
@@ -592,16 +614,16 @@ const filterBarStyle: React.CSSProperties = {
 };
 
 // AA-557 D.3/E.7/F.9 — live Playwright confirmed the previous sticky filter row (plain
-// `position:sticky, background:A.bg`, no border) visually merges with whatever content scrolls
+// `position:sticky, background:K.bg`, no border) visually merges with whatever content scrolls
 // up beneath it once stuck — the next Segment/Route group's own header sits flush against it with
 // no visible seam (tests/e2e/results/aa557/D-00-segment-after-scroll-PREFIX.png). A bottom
 // border + drop shadow gives it a real visual edge (the standard "elevated sticky bar" pattern)
 // so scrolled content reads as passing UNDER it, not merging into it; extra paddingBottom widens
 // the gap before the next card.
 const stickyFilterBarStyle: React.CSSProperties = {
-  ...filterBarStyle, position: "sticky", top: 0, background: A.bg, zIndex: 5,
+  ...filterBarStyle, position: "sticky", top: 0, background: K.bg, zIndex: 5,
   paddingTop: 8, paddingBottom: 14, marginBottom: 10,
-  borderBottom: `1px solid ${A.line}`, boxShadow: "0 4px 10px -6px rgba(0,0,0,0.18)",
+  borderBottom: `1px solid ${K.line}`, boxShadow: KX.shadowSm,
 };
 
 interface SegmentRow {
@@ -613,6 +635,9 @@ interface SegmentRow {
 
 // AA-554 E.11 — one card per distinct segment_id (was one flat AuditTable row per
 // (Segment, Tour, Market)); numbered in display order within the current page.
+/** One line of the Segment table: a row of a Segment group, with its group and their positions. */
+type SegmentLine = { g: SegmentGroupDisplay; r: SegmentRow; i: number; j: number; id: string };
+
 interface SegmentGroupDisplay {
   segmentId: string; place: string; action: string; rows: SegmentRow[];
   routeId: string | null; routeHubName: string | null;
@@ -641,10 +666,11 @@ function SegmentSection({ tourId, market, focusRouteId, focusSegmentId, onClearF
 }) {
   const t = useT(AT);
   const marketTitle = useMarketTitle();
+  // A phone shows a card per row (no rows grouped under one segment cell): each card carries its own segment.
+  const phone = useIsPhone();
   const [placeSearch, setPlaceSearch] = useState("");
   const [minRecurrence, setMinRecurrence] = useState("");
-  const [offset, setOffset] = useState(0);
-  useEffect(() => { setOffset(0); }, [tourId, market, placeSearch, minRecurrence, focusRouteId, focusSegmentId]);
+  const [offset, setOffset] = useOffset([tourId, market, placeSearch, minRecurrence, focusRouteId, focusSegmentId]);
 
   // AA-554 — a cross-filter (focusRouteId/focusSegmentId) narrows AFTER fetch, client-side (see
   // below); real data has up to 138 raw Segment rows, well past PAGE_SIZE=50, so the target row
@@ -670,9 +696,9 @@ function SegmentSection({ tourId, market, focusRouteId, focusSegmentId, onClearF
     <>
       {/* AA-557 D.3 — sticky filter row, now with a real visual edge (see stickyFilterBarStyle). */}
       <div style={stickyFilterBarStyle}>
-        <input style={inputStyle} placeholder={t("searchPlaceVerb")} value={placeSearch}
+        <Input style={inputStyle} placeholder={t("searchPlaceVerb")} value={placeSearch}
           onChange={e => setPlaceSearch(e.target.value)} />
-        <input style={{ ...inputStyle, width: 110 }} type="number" min={0} placeholder={t("minRecurrence")}
+        <Input style={{ ...inputStyle, width: 110 }} type="number" min={0} placeholder={t("minRecurrence")}
           value={minRecurrence} onChange={e => setMinRecurrence(e.target.value)} />
         {(focusRouteId || focusSegmentId) && (
           <Button variant="ghost" size="sm" onClick={onClearFocus}>{t("clearCross")}</Button>
@@ -693,59 +719,47 @@ function SegmentSection({ tourId, market, focusRouteId, focusSegmentId, onClearF
           Segment, each becomes its own row here rather than being hidden by a merge that assumes
           1 Segment = 1 Tour. See docs/implementation-notes/AA-561.md for the full trace. */}
       {error ? <ErrorState message={error} onRetry={reload} /> :
-        loading ? <LoadingScreen msg={t("loadingSegments")} /> :
+        loading ? <LoadingScreen message={t("loadingSegments")} /> :
         (!data || data.total === 0 || groups.length === 0) ? (
           <EmptyState title={t("noSegments")} body={t("noSegmentsBody")} />
         ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <div style={{ overflowX: "auto", border: `1px solid ${A.line}`, borderRadius: 10 }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: sans }}>
-              <thead>
-                <tr>
-                  {["#", t("colSegment"), t("colRouteHub"), t("colTour"), t("colMarket"), t("colAtoms"), t("colTotalRank"),
-                    t("colRecurrence")].map(label => (
-                    <th key={label} style={TH}>{label}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {groups.map((g, i) => g.rows.map((r, j) => (
-                  <tr key={`${g.segmentId}-${r.tour_id}-${r.market ?? "none"}`}
-                    style={{ borderTop: j === 0 ? `1px solid ${A.line}` : "none" }}>
-                    {j === 0 && (
-                      <>
-                        <td style={{ ...TD, verticalAlign: "top" }} rowSpan={g.rows.length}>
-                          <span style={{ fontFamily: mono, fontSize: 11, color: A.muted2 }}>{offset + i + 1}</span>
-                        </td>
-                        <td style={{ ...TD, verticalAlign: "top" }} rowSpan={g.rows.length}>
-                          <span style={{ fontSize: 13, fontWeight: 600, color: A.body }}>
-                            {g.place}{g.action ? ` — ${g.action}` : ""}
-                          </span>
-                          <div style={{ fontSize: 10.5, color: A.muted2, marginTop: 3 }}>
-                            {t("marketTourRows", g.rows.length)}
-                          </div>
-                        </td>
-                        <td style={{ ...TD, verticalAlign: "top" }} rowSpan={g.rows.length}>
-                          {g.routeHubName && g.routeId ? (
-                            <button onClick={() => onNavigateToRoute(g.routeId!)}
-                              style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }}
-                              title={t("viewRoute")}>
-                              <Badge color="gold"><Milestone size={11} style={{ verticalAlign: -2, marginRight: 3 }} />{g.routeHubName}</Badge>
-                            </button>
-                          ) : "—"}
-                        </td>
-                      </>
-                    )}
-                    <td style={TD}>{r.tour_name ?? "—"}</td>
-                    <td style={TD}>{r.market ? <span title={marketTitle(r.market)}>{r.market}</span> : "—"}</td>
-                    <td style={TD}>{r.member_count}</td>
-                    <td style={TD}>{r.excluded_reason ? <Badge color="gray">{r.excluded_reason}</Badge> : (r.total_rank ?? "—")}</td>
-                    <td style={TD}>{r.recurrence ?? "—"}</td>
-                  </tr>
-                )))}
-              </tbody>
-            </table>
-          </div>
+          {/* AA-1006: a kit DataTable; the Segment and Route/Hub cells show on the first row of their group only (the
+              table cannot merge cells, the old rowSpan). Tour stays its own per-row column (AA-561 above). */}
+          <DataTable<SegmentLine>
+            tableId="atom-curation-segments"
+            data={groups.flatMap((g, i) => g.rows.map((r, j) => ({ g, r, i, j, id: `${g.segmentId}-${r.tour_id}-${r.market ?? "none"}` })))}
+            getRowId={(l) => l.id}
+            searchable={false}
+            paginate={false}
+            compact
+            // On a phone the tour is the card title and every card shows its segment, route / hub and number.
+            columns={phoneCardColumns<ColumnDef<SegmentLine, unknown>>([
+              { id: "n", header: "#", enableSorting: false, cell: ({ row: { original: l } }) => phone || l.j === 0
+                ? <span style={{ fontFamily: mono, fontSize: 11, color: K.muted2 }}>{offset + l.i + 1}</span> : null },
+              { id: "segment", header: t("colSegment"), enableSorting: false, cell: ({ row: { original: l } }) => phone || l.j === 0 ? (
+                <div>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: K.body }}>
+                    {l.g.place}{l.g.action ? ` — ${l.g.action}` : ""}
+                  </span>
+                  <div style={{ fontSize: 10.5, color: K.muted2, marginTop: 3 }}>{t("marketTourRows", l.g.rows.length)}</div>
+                </div>
+              ) : null },
+              { id: "routeHub", header: t("colRouteHub"), enableSorting: false, cell: ({ row: { original: l } }) => !phone && l.j !== 0 ? null
+                : l.g.routeHubName && l.g.routeId ? (
+                  <Pressable display="inline" onClick={() => onNavigateToRoute(l.g.routeId!)} title={t("viewRoute")}>
+                    <Badge tone="accent"><Milestone size={11} style={{ verticalAlign: -2, marginRight: 3 }} />{l.g.routeHubName}</Badge>
+                  </Pressable>
+                ) : "—" },
+              { id: "tour", header: t("colTour"), enableSorting: false, cell: ({ row: { original: l } }) => l.r.tour_name ?? "—" },
+              { id: "market", header: t("colMarket"), enableSorting: false, cell: ({ row: { original: l } }) =>
+                l.r.market ? <span title={marketTitle(l.r.market)}>{l.r.market}</span> : "—" },
+              { id: "atoms", header: t("colAtoms"), enableSorting: false, cell: ({ row: { original: l } }) => l.r.member_count },
+              { id: "rank", header: t("colTotalRank"), enableSorting: false, cell: ({ row: { original: l } }) =>
+                l.r.excluded_reason ? <Badge tone="neutral">{l.r.excluded_reason}</Badge> : (l.r.total_rank ?? "—") },
+              { id: "recurrence", header: t("colRecurrence"), enableSorting: false, cell: ({ row: { original: l } }) => l.r.recurrence ?? "—" },
+            ], "tour", phone)}
+          />
           {!hasFocus && <PageFooter total={data.total} offset={offset} pageSize={PAGE_SIZE} onOffset={setOffset} />}
         </div>
       )}
@@ -768,8 +782,7 @@ function ScoreSection({ tourId, market, onNavigateToSegment }: {
   const marketTitle = useMarketTitle();
   const [minRank, setMinRank] = useState("");
   const [maxRank, setMaxRank] = useState("");
-  const [offset, setOffset] = useState(0);
-  useEffect(() => { setOffset(0); }, [tourId, market, minRank, maxRank]);
+  const [offset, setOffset] = useOffset([tourId, market, minRank, maxRank]);
 
   const { data, loading, error, reload } = usePlatformFetch<{ data: ScoreRow[]; total: number }>(
     "/api/admin/dashboard/score",
@@ -785,23 +798,23 @@ function ScoreSection({ tourId, market, onNavigateToSegment }: {
       {/* AA-554 F.15 — formula explainer. Issue text said "see ADR-0014"; the repo's highest ADR
           is 0003 (docs/adr/0003-segment-score-route-hub-will-become-platform-wide.md, the actual
           doc covering this design) — pointing at a real doc instead of a nonexistent number. */}
-      <div style={{ fontSize: 12, color: A.muted, marginBottom: 10 }}>
+      <div style={{ fontSize: 12, color: K.muted, marginBottom: 10 }}>
         {t("scoreIntro")}{" "}
         <span
           title={t("totalRankTitle")}
-          style={{ borderBottom: `1px dotted ${A.muted2}`, cursor: "help" }}
+          style={{ borderBottom: `1px dotted ${K.muted2}`, cursor: "help" }}
         >
           {t("totalRankMeaning")}
         </span>
       </div>
       {/* AA-557 E.7 — sticky filter row, now with a real visual edge. */}
       <div style={stickyFilterBarStyle}>
-        <input style={{ ...inputStyle, width: 110 }} type="number" placeholder={t("minTotalRank")} value={minRank} onChange={e => setMinRank(e.target.value)} />
-        <input style={{ ...inputStyle, width: 110 }} type="number" placeholder={t("maxTotalRank")} value={maxRank} onChange={e => setMaxRank(e.target.value)} />
+        <Input style={{ ...inputStyle, width: 110 }} type="number" placeholder={t("minTotalRank")} value={minRank} onChange={e => setMinRank(e.target.value)} />
+        <Input style={{ ...inputStyle, width: 110 }} type="number" placeholder={t("maxTotalRank")} value={maxRank} onChange={e => setMaxRank(e.target.value)} />
       </div>
       <MarketLegend />
       {error ? <ErrorState message={error} onRetry={reload} /> :
-        loading ? <LoadingScreen msg={t("loadingScore")} /> :
+        loading ? <LoadingScreen message={t("loadingScore")} /> :
         (!data || data.total === 0) ? <EmptyState title={t("noScore")} body={t("noScoreBody")} /> : (
         <>
           {/* AA-557 E.8 — real table: sortable + per-column filter. */}
@@ -812,18 +825,17 @@ function ScoreSection({ tourId, market, onNavigateToSegment }: {
             {
               key: "place", label: t("colSegment"), render: r => r.canonical_place ? (
                 // AA-554 F.17 — link into Segment, filtered to this segment_id.
-                <button onClick={() => onNavigateToSegment(r.segment_id)}
-                  style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: A.gold, textAlign: "left", font: "inherit" }}
-                  title={t("viewSegment")}>
+                <LinkButton tone="inherit" size="inherit" weight="regular" onClick={() => onNavigateToSegment(r.segment_id)}
+                  style={{ color: K.accent }} title={t("viewSegment")}>
                   {r.canonical_place} — {r.canonical_action} ↗
-                </button>
+                </LinkButton>
               ) : "—",
               sortValue: r => r.canonical_place ?? "",
               filterValue: r => `${r.canonical_place ?? ""} ${r.canonical_action ?? ""}`,
             },
             { key: "market", label: t("colMarket"), render: r => r.market ? <span title={marketTitle(r.market)}>{r.market}</span> : "—",
               sortValue: r => r.market ?? "", filterValue: r => r.market ?? "" },
-            { key: "total", label: t("colTotalRank"), render: r => r.excluded_reason ? <Badge color="gray">{r.excluded_reason}</Badge> : (r.total_rank ?? "—"),
+            { key: "total", label: t("colTotalRank"), render: r => r.excluded_reason ? <Badge tone="neutral">{r.excluded_reason}</Badge> : (r.total_rank ?? "—"),
               sortValue: r => r.total_rank ?? (r.excluded_reason ? Number.MAX_SAFE_INTEGER : null) },
             {
               key: "demand", label: t("colDemand"), render: r => r.demand_rank != null ? (
@@ -874,8 +886,7 @@ function RouteHubSection({ tourId, market, focusRouteId, onClearFocus, onNavigat
   const [minDays, setMinDays] = useState("");
   const [maxDays, setMaxDays] = useState("");
   const [hubSearch, setHubSearch] = useState("");
-  const [offset, setOffset] = useState(0);
-  useEffect(() => { setOffset(0); }, [tourId, market, minDays, maxDays, hubSearch]);
+  const [offset, setOffset] = useOffset([tourId, market, minDays, maxDays, hubSearch]);
 
   // Same fix as Segment's identical bug (found live via this task's own Playwright verify): fetch
   // a much larger page when a focus filter is active, so the cross-nav target isn't missed just
@@ -887,8 +898,7 @@ function RouteHubSection({ tourId, market, focusRouteId, onClearFocus, onNavigat
       max_days: maxDays || undefined, hub_name_search: hubSearch || undefined,
       limit: hasFocus ? 200 : PAGE_SIZE, offset: hasFocus ? 0 : offset },
   );
-  const [hubOffset, setHubOffset] = useState(0);
-  useEffect(() => { setHubOffset(0); }, [tourId, market]);
+  const [hubOffset, setHubOffset] = useOffset([tourId, market]);
   const hubFetch = usePlatformFetch<{ data: HubRow[]; total: number }>(
     "/api/admin/dashboard/hubs",
     { tour_id: tourId ?? undefined, market: market || undefined, limit: PAGE_SIZE, offset: hubOffset },
@@ -899,22 +909,22 @@ function RouteHubSection({ tourId, market, focusRouteId, onClearFocus, onNavigat
 
   return (
     <>
-      <div style={{ fontSize: 13, fontWeight: 600, color: A.body, marginBottom: 6 }}>{t("route")}</div>
-      <div style={{ fontSize: 11.5, color: A.muted2, marginBottom: 10 }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: K.body, marginBottom: 6 }}>{t("route")}</div>
+      <div style={{ fontSize: 11.5, color: K.muted2, marginBottom: 10 }}>
         {t("routeIntro")}
       </div>
       {/* AA-557 F.11 — Nghiệp confirmed this reading directly; noted so admins don't need to ask. */}
-      <div style={{ fontSize: 11.5, color: A.muted, marginBottom: 10, fontStyle: "italic" }}>
+      <div style={{ fontSize: 11.5, color: K.muted, marginBottom: 10, fontStyle: "italic" }}>
         {t("routeRow")}
       </div>
       {/* AA-557 F.9 — sticky filter row, now with a real visual edge. */}
       <div style={stickyFilterBarStyle}>
-        <input style={{ ...inputStyle, width: 100 }} type="number" min={1} placeholder={t("minDays")} value={minDays} onChange={e => setMinDays(e.target.value)} />
-        <input style={{ ...inputStyle, width: 100 }} type="number" min={1} placeholder={t("maxDays")} value={maxDays} onChange={e => setMaxDays(e.target.value)} />
-        <input style={inputStyle} placeholder={t("searchRoute")} value={hubSearch} onChange={e => setHubSearch(e.target.value)} />
+        <Input style={{ ...inputStyle, width: 100 }} type="number" min={1} placeholder={t("minDays")} value={minDays} onChange={e => setMinDays(e.target.value)} />
+        <Input style={{ ...inputStyle, width: 100 }} type="number" min={1} placeholder={t("maxDays")} value={maxDays} onChange={e => setMaxDays(e.target.value)} />
+        <Input style={inputStyle} placeholder={t("searchRoute")} value={hubSearch} onChange={e => setHubSearch(e.target.value)} />
         {focusRouteId && <Button variant="ghost" size="sm" onClick={onClearFocus}>{t("clearFromSegment")}</Button>}
         {!tourId && (
-          <span style={{ fontSize: 11.5, color: A.muted2, fontStyle: "italic" }}>
+          <span style={{ fontSize: 11.5, color: K.muted2, fontStyle: "italic" }}>
             {t("currentOnly")}
           </span>
         )}
@@ -922,7 +932,7 @@ function RouteHubSection({ tourId, market, focusRouteId, onClearFocus, onNavigat
       {/* AA-554 G.21 — shared market legend (same one Segment/Score already render). */}
       <MarketLegend />
       {error ? <ErrorState message={error} onRetry={reload} /> :
-        loading ? <LoadingScreen msg={t("loadingRoutes")} /> :
+        loading ? <LoadingScreen message={t("loadingRoutes")} /> :
         (!data || data.total === 0 || (focusRouteId != null && filteredRows.length === 0)) ? (
           <EmptyState title={t("noRoutes")} body={t("noRoutesBody")} />
         ) : (
@@ -933,9 +943,9 @@ function RouteHubSection({ tourId, market, focusRouteId, onClearFocus, onNavigat
             { key: "status", label: t("colStatus"), render: r => r.superseded_at
               // AA-564 1.4 — SUPERSEDED had no explanation for anyone not reading route_detection.py.
               ? <span title={t("supersededTitle")}>
-                  <Badge color="gray">{t("supersededV", r.version)}</Badge>
+                  <Badge tone="neutral">{t("supersededV", r.version)}</Badge>
                 </span>
-              : <Badge color="green">{t("current", r.version > 1 ? ` v${r.version}` : "")}</Badge>,
+              : <Badge tone="success">{t("current", r.version > 1 ? ` v${r.version}` : "")}</Badge>,
               sortValue: r => r.superseded_at ? 1 : 0 },
             { key: "tour", label: t("colTour"), render: r => r.tour_name ?? "—",
               sortValue: r => r.tour_name ?? "", filterValue: r => r.tour_name ?? "" },
@@ -947,11 +957,10 @@ function RouteHubSection({ tourId, market, focusRouteId, onClearFocus, onNavigat
               sortValue: r => r.market ?? "", filterValue: r => r.market ?? "" },
             {
               key: "days", label: t("colDays"), render: r => (
-                <button onClick={() => setExpandedRouteId(id => id === r.route_id ? null : r.route_id)}
-                  style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: A.gold, font: "inherit" }}
-                  title={t("dayBreakdownTitle")}>
+                <LinkButton tone="inherit" size="inherit" weight="regular" onClick={() => setExpandedRouteId(id => id === r.route_id ? null : r.route_id)}
+                  style={{ color: K.accent }} title={t("dayBreakdownTitle")} aria-expanded={expandedRouteId === r.route_id}>
                   {r.first_day}–{r.last_day} {expandedRouteId === r.route_id ? "▲" : "▼"}
-                </button>
+                </LinkButton>
               ),
               sortValue: r => r.first_day,
             },
@@ -962,11 +971,10 @@ function RouteHubSection({ tourId, market, focusRouteId, onClearFocus, onNavigat
                 // (via the same focusRouteId cross-filter SegmentSection's route_id column already
                 // narrows by — reused, not a new filter mechanism).
                 return n > 0 ? (
-                  <button onClick={() => onNavigateToSegment(r.route_id)}
-                    style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: A.gold, textAlign: "left", font: "inherit" }}
-                    title={t("memberSegmentsTitle")}>
+                  <LinkButton tone="inherit" size="inherit" weight="regular" onClick={() => onNavigateToSegment(r.route_id)}
+                    style={{ color: K.accent }} title={t("memberSegmentsTitle")}>
                     {t("segmentsN", n)}
-                  </button>
+                  </LinkButton>
                 ) : 0;
               },
               sortValue: r => (r.ordered_segment_ids || []).length,
@@ -979,12 +987,12 @@ function RouteHubSection({ tourId, market, focusRouteId, onClearFocus, onNavigat
         </>
       )}
 
-      <div style={{ fontSize: 13, fontWeight: 600, color: A.body, marginTop: 28, marginBottom: 6 }}>{t("hub")}</div>
-      <div style={{ fontSize: 11.5, color: A.muted2, marginBottom: 10 }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: K.body, marginTop: 28, marginBottom: 6 }}>{t("hub")}</div>
+      <div style={{ fontSize: 11.5, color: K.muted2, marginBottom: 10 }}>
         {t("hubIntro")}
       </div>
       {hubFetch.error ? <ErrorState message={hubFetch.error} onRetry={hubFetch.reload} /> :
-        hubFetch.loading ? <LoadingScreen msg={t("loadingHubs")} /> :
+        hubFetch.loading ? <LoadingScreen message={t("loadingHubs")} /> :
         (!hubFetch.data || hubFetch.data.total === 0) ? (
           <EmptyState title={t("noHub")} body={t("noHubBody")} />
         ) : (
@@ -1010,38 +1018,34 @@ interface RouteDayRow { day: number | null; segments: { segment_id: string; cano
 // has to be re-derived from acp_contract.tour_atoms.itinerary_day).
 function RouteDayBreakdown({ routeId }: { routeId: string }) {
   const t = useT(AT);
-  const [data, setData] = useState<{ days: RouteDayRow[]; found: boolean } | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setLoading(true); setError(null); setData(null);
-    fetchJson<{ days: RouteDayRow[]; found: boolean }>(`/api/admin/dashboard/routes/${encodeURIComponent(routeId)}/days`)
-      .then(setData)
-      .catch(e => setError(String(e.message || e)))
-      .finally(() => setLoading(false));
-  }, [routeId]);
+  const q = useQuery({
+    queryKey: ["atom-curation", "route-days", routeId],
+    queryFn: () => fetchJson<{ days: RouteDayRow[]; found: boolean }>(`/api/admin/dashboard/routes/${encodeURIComponent(routeId)}/days`),
+  });
+  const data = q.data ?? null;
+  const loading = q.isPending;
+  const error = q.isError ? String((q.error as Error).message || q.error) : null;
 
   return (
-    <Card style={{ marginTop: -1, borderTop: "none", borderTopLeftRadius: 0, borderTopRightRadius: 0, padding: "14px 18px" }}>
-      {loading ? <div style={{ fontSize: 12, color: A.muted2 }}>{t("loadingDays")}</div> :
-        error ? <div style={{ fontSize: 12, color: A.red }}>{t("daysError", error)}</div> :
+    <Section style={{ marginTop: -1, borderTop: "none" }} bodyStyle={{ borderTopLeftRadius: 0, borderTopRightRadius: 0, padding: "14px 18px" }}>
+      {loading ? <div style={{ fontSize: 12, color: K.muted2 }}>{t("loadingDays")}</div> :
+        error ? <div style={{ fontSize: 12, color: K.danger }}>{t("daysError", error)}</div> :
         (!data || !data.found || data.days.length === 0) ? (
-          <div style={{ fontSize: 12, color: A.muted2 }}>{t("noDays")}</div>
+          <div style={{ fontSize: 12, color: K.muted2 }}>{t("noDays")}</div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {data.days.map((d, i) => (
               <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
                 <div style={{
                   flexShrink: 0, width: 62, fontSize: 11, fontFamily: mono, fontWeight: 600,
-                  color: A.gold, background: A.goldTint, borderRadius: 6, padding: "4px 8px", textAlign: "center",
+                  color: K.accent, background: K.accentTint, borderRadius: 6, padding: "4px 8px", textAlign: "center",
                 }}>
                   {t("dayN", d.day != null ? String(d.day) : "—")}
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                   {d.segments.map(s => (
                     <span key={s.segment_id} style={{
-                      fontSize: 12, color: A.body, background: A.card, border: `1px solid ${A.line}`,
+                      fontSize: 12, color: K.body, background: K.card, border: `1px solid ${K.line}`,
                       borderRadius: 6, padding: "3px 9px",
                     }}>
                       {s.canonical_place ?? "—"}{s.canonical_action ? ` — ${s.canonical_action}` : ""}
@@ -1052,7 +1056,7 @@ function RouteDayBreakdown({ routeId }: { routeId: string }) {
             ))}
           </div>
         )}
-    </Card>
+    </Section>
   );
 }
 
@@ -1066,14 +1070,14 @@ function PageFooter({ total, offset, pageSize, onOffset }: {
   return (
     <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 12, marginTop: 16 }}>
       <Button variant="secondary" size="sm" disabled={offset === 0} onClick={() => onOffset(Math.max(0, offset - pageSize))}>{t("previous")}</Button>
-      <span style={{ fontSize: 12, color: A.muted, fontFamily: mono }}>{t("pageOf", page, pages, total)}</span>
+      <span style={{ fontSize: 12, color: K.muted, fontFamily: mono }}>{t("pageOf", page, pages, total)}</span>
       <Button variant="secondary" size="sm" disabled={offset + pageSize >= total} onClick={() => onOffset(offset + pageSize)}>{t("next")}</Button>
     </div>
   );
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// Section 05 — Slate: UNCHANGED, still per-Tour (AA-550 A.3 — real per-tenant exception)
+// Section 05 — Slate: UNCHANGED, still per-Tour (AA-550 K.3 — real per-tenant exception)
 // ══════════════════════════════════════════════════════════════════════════
 
 interface SlateRow {
@@ -1087,8 +1091,8 @@ interface SlateRow {
   seed?: SeedInfo | null;
 }
 
-const SLATE_STATE_COLOR: Record<string, "gray" | "blue" | "green" | "red"> = {
-  proposed: "gray", picked: "blue", used: "green", cut: "red",
+const SLATE_STATE_COLOR: Record<string, Tone> = {
+  proposed: "neutral", picked: "info", used: "success", cut: "danger",
 };
 
 // AA-554 H.24 — explains all 4 states via a tooltip on each stat-bar badge. `used` text reflects
@@ -1112,25 +1116,25 @@ const SLATE_STATE_ORDER = ["proposed", "picked", "used", "cut"] as const;
 function SlateExplainerNote() {
   const t = useT(AT);
   return (
-    <Card style={{ padding: "14px 18px", marginBottom: 14, background: A.card }}>
-      <div style={{ fontSize: 13, color: A.body, lineHeight: 1.55, marginBottom: 10 }}>
+    <Section style={{ marginBottom: 14, background: K.card }} bodyStyle={{ padding: "14px 18px" }}>
+      <div style={{ fontSize: 13, color: K.body, lineHeight: 1.55, marginBottom: 10 }}>
         <strong>{t("whatIsSlate")}</strong> {t("slateIntro")}{" "}
         (<code style={{ fontFamily: mono }}>/portal/t7-planning</code>).
       </div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 18px", fontSize: 11.5, color: A.muted }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 18px", fontSize: 11.5, color: K.muted }}>
         <span><strong>proposed</strong> {t("legendProposed")}</span>
         <span><strong>picked</strong> {t("legendPicked")}</span>
         <span><strong>used</strong> {t("legendUsed")}</span>
         <span><strong>cut</strong> {t("legendCut")}</span>
-        <span style={{ borderLeft: `1px solid ${A.line}`, paddingLeft: 18 }}>
+        <span style={{ borderLeft: `1px solid ${K.line}`, paddingLeft: 18 }}>
           <strong>{t("kindSegment")}</strong> {t("legendKindSegment")}
         </span>
         <span><strong>{t("kindRoute")}</strong> {t("legendKindRoute")}</span>
-        <span style={{ borderLeft: `1px solid ${A.line}`, paddingLeft: 18 }}>
+        <span style={{ borderLeft: `1px solid ${K.line}`, paddingLeft: 18 }}>
           <strong>{t("seed")}</strong> {t("legendSeed")}
         </span>
       </div>
-    </Card>
+    </Section>
   );
 }
 
@@ -1161,11 +1165,11 @@ function SlateSection() {
       {/* AA-919 S254: the shared admin tenant picker (active tenants, by name). */}
       <TenantSelect inline value={selectedTenant ?? ""} onChange={id => setSelectedTenant(id || null)}
         placeholder={t("chooseTenant")} />
-      <span style={{ fontSize: 12, color: A.muted }}>{t("channel")}</span>
-      <select value={selectedChannel} onChange={e => setSelectedChannel(e.target.value)} style={selectStyle}>
+      <span style={{ fontSize: 12, color: K.muted }}>{t("channel")}</span>
+      <Select value={selectedChannel} onChange={e => setSelectedChannel(e.target.value)} style={selectStyle}>
         <option value="">{t("allChannels")}</option>
         {CHANNELS.map(c => <option key={c} value={c}>{c}</option>)}
-      </select>
+      </Select>
     </div>
   );
 
@@ -1173,7 +1177,7 @@ function SlateSection() {
     return <><SlateExplainerNote />{tenantPicker}<EmptyState title={t("selectTenant")} body={t("selectTenantBody")} /></>;
   }
   if (error) return <><SlateExplainerNote />{tenantPicker}<ErrorState message={error} onRetry={reload} /></>;
-  if (loading) return <><SlateExplainerNote />{tenantPicker}<LoadingScreen msg={t("loadingSlate")} /></>;
+  if (loading) return <><SlateExplainerNote />{tenantPicker}<LoadingScreen message={t("loadingSlate")} /></>;
   if (!data || data.total === 0) {
     return <><SlateExplainerNote />{tenantPicker}<EmptyState title={t("noSlate")} body={t("noSlateBody")} /></>;
   }
@@ -1185,18 +1189,18 @@ function SlateSection() {
           H.3 — CUT badge is NOT hidden (shows the real count). AA-556 removed the "coming soon"
           note that used to sit under it, now that the tenant-facing Cut button is real. */}
       <div style={{ display: "flex", gap: 14, marginBottom: 14, flexWrap: "wrap", alignItems: "flex-start",
-        position: "sticky", top: 0, background: A.bg, zIndex: 5, paddingTop: 4, paddingBottom: 10 }}>
+        position: "sticky", top: 0, background: K.bg, zIndex: 5, paddingTop: 4, paddingBottom: 10 }}>
         {SLATE_STATE_ORDER.map(state => (
           <div key={state}>
             <span title={t(SLATE_STATE_TOOLTIP[state])} style={{ cursor: "help" }}>
-              <Badge color={SLATE_STATE_COLOR[state] ?? "gray"}>{state}: {data.by_state[state] ?? 0}</Badge>
+              <Badge tone={SLATE_STATE_COLOR[state] ?? "neutral"}>{state}: {data.by_state[state] ?? 0}</Badge>
             </span>
           </div>
         ))}
       </div>
       {/* AA-554 H.25 — Score here is copied as-is from Segment's total_rank / Route's score at
           proposal time, never recomputed by Slate itself. */}
-      <div style={{ fontSize: 12, color: A.muted, marginBottom: 10 }}>
+      <div style={{ fontSize: 12, color: K.muted, marginBottom: 10 }}>
         {t("scoreCopied")}
       </div>
       {/* AA-557 G.13 — real table: sortable + per-column filter. */}
@@ -1206,7 +1210,7 @@ function SlateSection() {
         {
           key: "state", label: t("colState"), render: r => (
             <span title={SLATE_STATE_TOOLTIP[r.state] ? t(SLATE_STATE_TOOLTIP[r.state]) : undefined} style={{ cursor: "help" }}>
-              <Badge color={SLATE_STATE_COLOR[r.state] ?? "gray"}>{r.state}</Badge>
+              <Badge tone={SLATE_STATE_COLOR[r.state] ?? "neutral"}>{r.state}</Badge>
             </span>
           ),
           sortValue: r => r.state, filterValue: r => r.state,
@@ -1227,8 +1231,8 @@ function SlateSection() {
           // (and segment count for Route-based ideas), instead of a generic "Segment"/"Route" label.
           key: "topic", label: t("colTopic"), render: r => (
             <div>
-              <div style={{ fontWeight: 600, color: A.ink }}>{slateTopicTitle(r, untitled)}</div>
-              <div style={{ fontSize: 11, color: A.muted2, marginTop: 2 }}>
+              <div style={{ fontWeight: 600, color: K.ink }}>{slateTopicTitle(r, untitled)}</div>
+              <div style={{ fontSize: 11, color: K.muted2, marginTop: 2 }}>
                 {t("topicTour", r.tour_name || "—", r.segment_count != null ? t("topicSegments", r.segment_count) : "")}
               </div>
             </div>
@@ -1241,7 +1245,7 @@ function SlateSection() {
           // the seed is not the Subject's place (seed rule) or not in the Segment's country.
           key: "seed", label: t("colSeed"), render: r => (
             <div style={{ maxWidth: 280, minWidth: 0 }}>
-              {r.seed ? <SeedLine seed={r.seed} /> : <span style={{ color: A.muted2 }}>—</span>}
+              {r.seed ? <SeedLine seed={r.seed} /> : <span style={{ color: K.muted2 }}>—</span>}
             </div>
           ),
           sortValue: r => (r.seed?.mismatch ? "0" : "1") + (r.seed?.place ?? ""),
@@ -1271,6 +1275,8 @@ export default function AtomCurationDashboardPage() {
 
 function AtomCurationDashboard() {
   const t = useT(AT);
+  // < 768px the six stat tiles wrap two a row (was the `.aa-kpi-grid` media query, AA-1006).
+  const phone = useIsPhone();
   const searchParams = useSearchParams();
   // S241 UI verify (AA-863) / S252 — the header band and body are the kit PageFrameHeader / PageFrameBody inside a
   // split PageFrame: 36px side inset on desktop, 16px on a phone (globals.css), never stacked.
@@ -1278,13 +1284,11 @@ function AtomCurationDashboard() {
   const initialSection: SectionKey =
     sectionParam && VALID_SECTIONS.has(sectionParam) ? (sectionParam as SectionKey) : "atomize";
 
-  const [summary, setSummary] = useState<Summary | null>(null);
-  const [summaryLoading, setSummaryLoading] = useState(true);
+
   const [selectedTour, setSelectedTour] = useState<string | null>(null);
   const [selectedMarket, setSelectedMarket] = useState("");
   const [activeSection, setActiveSection] = useState<SectionKey>(initialSection);
-  const [stats, setStats] = useState<DashboardSummary | null>(null);
-  const [statsLoading, setStatsLoading] = useState(true);
+
   // AA-554 E.12/F.17 — cross-navigation between sections: Segment's Route badge sets
   // `focusRouteId` and jumps to Route/Hub; Score's row link sets `focusSegmentId` and jumps to
   // Segment. Both sections filter their already-fetched page client-side (no new backend
@@ -1298,27 +1302,29 @@ function AtomCurationDashboard() {
     setFocusSegmentId(null);
   }
 
-  const loadSummary = useCallback(() => {
-    setSummaryLoading(true);
-    fetchJson<Summary>("/api/admin/atoms/summary")
-      .then(setSummary)
-      .catch(() => {})
-      .finally(() => setSummaryLoading(false));
-  }, []);
-  useEffect(() => { loadSummary(); }, [loadSummary]);
+  const summaryQ = useQuery({
+    queryKey: ["atom-curation", "atoms-summary"],
+    queryFn: () => fetchJson<Summary>("/api/admin/atoms/summary"),
+  });
+  const summary = summaryQ.data ?? null;
+  const summaryLoading = summaryQ.isPending;
+  const refetchSummary = summaryQ.refetch;
+  const loadSummary = useCallback(() => { refetchSummary(); }, [refetchSummary]);
 
   // AA-551 — header stat bar, re-fetched whenever the common Tour/Market filter changes,
   // independent of which section tab is open (GET /admin/dashboard/summary).
-  useEffect(() => {
-    setStatsLoading(true);
-    const qs = new URLSearchParams();
-    if (selectedTour) qs.set("tour_id", selectedTour);
-    if (selectedMarket) qs.set("market", selectedMarket);
-    fetchJson<DashboardSummary>(`/api/admin/dashboard/summary?${qs}`)
-      .then(setStats)
-      .catch(() => {})
-      .finally(() => setStatsLoading(false));
-  }, [selectedTour, selectedMarket]);
+  const statsQ = useQuery({
+    queryKey: ["atom-curation", "dashboard-summary", selectedTour, selectedMarket],
+    queryFn: () => {
+      const qs = new URLSearchParams();
+      if (selectedTour) qs.set("tour_id", selectedTour);
+      if (selectedMarket) qs.set("market", selectedMarket);
+      return fetchJson<DashboardSummary>(`/api/admin/dashboard/summary?${qs}`);
+    },
+  });
+  // Keeps the last numbers on screen while a new filter loads (the old page did the same).
+  const stats = statsQ.data ?? null;
+  const statsLoading = statsQ.isFetching;
 
   const selectedTourMeta = summary?.by_tour.find(x => x.tour_id === selectedTour) ?? null;
 
@@ -1330,14 +1336,14 @@ function AtomCurationDashboard() {
             description={
               <>
                 {t("descLead")}{" "}
-                <a href="/admin/tenant-activity" style={{ color: A.gold }}>{t("contentTrace")}</a>.
+                <a href="/admin/tenant-activity" style={{ color: K.accent }}>{t("contentTrace")}</a>.
               </>
             }
           />
           <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "flex-end", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 12, color: A.muted }}>{t("tourLabel")}</span>
-              <select
+              <span style={{ fontSize: 12, color: K.muted }}>{t("tourLabel")}</span>
+              <Select
                 value={selectedTour ?? ""}
                 onChange={e => setSelectedTour(e.target.value || null)}
                 // AA-601 (feedback 2) — a <select> sizes to its LONGEST option (full tour names,
@@ -1346,27 +1352,27 @@ function AtomCurationDashboard() {
                 // makes a form control's min-content contribution 0, so it shrinks to its container.
                 style={{ ...selectStyle, flex: "1 1 220px", width: "100%", minWidth: 0, maxWidth: "100%", fontWeight: 600 }}
               >
-                {/* AA-554 A.3 — copy reflects the real behavior of this filter (narrows the view;
+                {/* AA-554 K.3 — copy reflects the real behavior of this filter (narrows the view;
                     it's never required to see data, unlike Slate below) instead of implying a
                     Tour must be picked. */}
                 <option value="">{t("allToursNarrow")}</option>
                 {(summary?.by_tour ?? []).map(tr => (
                   <option key={tr.tour_id} value={tr.tour_id}>{tr.tour_name}</option>
                 ))}
-              </select>
-              <span style={{ fontSize: 12, color: A.muted }}>{t("marketLabel")}</span>
-              <select value={selectedMarket} onChange={e => setSelectedMarket(e.target.value)} style={{ ...selectStyle, flex: "0 1 130px", width: "100%", minWidth: 0, maxWidth: "100%" }}>
+              </Select>
+              <span style={{ fontSize: 12, color: K.muted }}>{t("marketLabel")}</span>
+              <Select value={selectedMarket} onChange={e => setSelectedMarket(e.target.value)} style={{ ...selectStyle, flex: "0 1 130px", width: "100%", minWidth: 0, maxWidth: "100%" }}>
                 <option value="">{t("allMarkets")}</option>
                 {MARKETS.map(m => <option key={m} value={m}>{m}</option>)}
-              </select>
+              </Select>
               {selectedTourMeta && selectedTourMeta.lifecycle_stage !== "active" && (
-                <Badge color={LIFECYCLE_COLOR[selectedTourMeta.lifecycle_stage]}>{selectedTourMeta.lifecycle_stage}</Badge>
+                <Badge tone={LIFECYCLE_COLOR[selectedTourMeta.lifecycle_stage]}>{selectedTourMeta.lifecycle_stage}</Badge>
               )}
             </div>
           </div>
 
           {/* Header stat bar — AA-551, AA-550 mục F point 3/4: auto-updates with the filter above. */}
-          <div className="aa-kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(0, 1fr))", gap: 10 }}>
+          <div style={{ display: "grid", gridTemplateColumns: phone ? "repeat(2, minmax(0, 1fr))" : "repeat(6, minmax(0, 1fr))", gap: 10 }}>
             {([
               [t("statTours"), stats?.tour_count],
               [t("statAtoms"), stats?.atom_count],
@@ -1376,10 +1382,10 @@ function AtomCurationDashboard() {
               [t("statHubs"), stats?.hub_count],
             ] as [string, number | undefined][]).map(([label, value]) => (
               <div key={label} style={{
-                background: A.card, border: `1px solid ${A.line}`, borderRadius: 8, padding: "8px 12px",
+                background: K.card, border: `1px solid ${K.line}`, borderRadius: 8, padding: "8px 12px",
               }}>
-                <div style={{ fontSize: 10.5, color: A.muted, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
-                <div style={{ fontFamily: mono, fontSize: 17, fontWeight: 600, color: A.ink }}>
+                <div style={{ fontSize: 10.5, color: K.muted, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
+                <div style={{ fontFamily: mono, fontSize: 17, fontWeight: 600, color: K.ink }}>
                   {statsLoading ? "…" : (value ?? "—")}
                 </div>
               </div>
@@ -1394,7 +1400,7 @@ function AtomCurationDashboard() {
             relies on being outside this scroll region, not on `position:sticky`) off-screen on a
             real full-page scroll. This is the actual root cause AA-554/AA-557 both missed. */}
         <PageFrameBody scroll>
-          <div className="a527-dash-body" style={{ display: "flex", gap: 20, alignItems: "flex-start" }}>
+          <SocialContentSplit>
             {/* AA-575 — inner-sidebar extracted into a shared component (was JSX embedded only
                 in this page, which is exactly why Content Trace (06) had no sub-nav at all: it's
                 a genuinely separate route/page with its own render tree, never this page's inline
@@ -1433,7 +1439,7 @@ function AtomCurationDashboard() {
               )}
               {activeSection === "slate" && <SlateSection />}
             </div>
-          </div>
+          </SocialContentSplit>
         </PageFrameBody>
       </PageFrame>
   );

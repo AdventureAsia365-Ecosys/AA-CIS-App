@@ -12,9 +12,9 @@
 // AA-916 WM-07: a reason chip row (preselected from the rows' failure codes) — every started job sends its review id
 // and the chip, so the regenerate is a writing signal too.
 
-import { Loader2, RotateCcw } from "lucide-react";
+import { RotateCcw } from "lucide-react";
 import { useState } from "react";
-import { K, mono, sans, Button, Modal, useT } from "../../_kit";
+import { K, mono, Button, Modal, useT, Spinner, SegmentedControl } from "../../_kit";
 import { M } from "./messages";
 import { startRegenerate } from "./reviewApi";
 import { WritingReasonChips } from "../_components/WritingReasonChips";
@@ -98,7 +98,7 @@ export function RegenerateModal({
             {t("cancel")}
           </Button>
           <Button variant="primary" size="sm" onClick={run} disabled={!canRun}>
-            {running ? <Loader2 size={12} className="spin" /> : <RotateCcw size={12} />} {t("regenerate")}
+            {running ? <Spinner size={12} color="currentColor" /> : <RotateCcw size={12} />} {t("regenerate")}
           </Button>
         </>
       }
@@ -135,29 +135,15 @@ export function RegenerateModal({
               ? t("pickTierMany")
               : t("pickTierOne")}
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            {(["haiku", "sonnet"] as const).map((opt) => (
-              <button
-                key={opt}
-                onClick={() => setTier(opt)}
-                disabled={running}
-                style={{
-                  flex: 1,
-                  padding: "8px 10px",
-                  borderRadius: 8,
-                  cursor: running ? "not-allowed" : "pointer",
-                  fontSize: 13,
-                  fontFamily: sans,
-                  textTransform: "capitalize",
-                  border: `1px solid ${tier === opt ? K.accent : K.line}`,
-                  background: tier === opt ? K.accent : K.card,
-                  color: tier === opt ? "var(--aa-on-solid)" : K.body,
-                }}
-              >
-                {opt}
-              </button>
-            ))}
-          </div>
+          <SegmentedControl<"haiku" | "sonnet">
+            label={bulk ? t("pickTierMany") : t("pickTierOne")}
+            appearance="chips"
+            value={tier === "haiku" || tier === "sonnet" ? tier : null}
+            onChange={setTier}
+            options={(["haiku", "sonnet"] as const).map((opt) => ({
+              value: opt, label: <span style={{ textTransform: "capitalize" }}>{opt}</span>, disabled: running,
+            }))}
+          />
         </div>
       ) : null}
 

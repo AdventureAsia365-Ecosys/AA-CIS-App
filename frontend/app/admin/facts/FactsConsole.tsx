@@ -34,6 +34,7 @@ import {
   useToast,
   type ColumnDef,
   type Translator,
+  Checkbox, Input, Select, Textarea,
 } from "../../_kit";
 import { can } from "@/lib/rbac";
 import {
@@ -126,17 +127,17 @@ export default function FactsConsole() {
 
   const filterBar = (
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", minWidth: 0 }}>
-      <select aria-label={t("colKind")} value={filters.kind}
+      <Select aria-label={t("colKind")} value={filters.kind}
         onChange={(e) => setFilters((f) => ({ ...f, kind: e.target.value as FactKind | "" }))}
         style={{ ...fieldStyle, width: "auto", maxWidth: "100%", minHeight: 32, padding: "5px 8px", fontSize: 12.5 }}>
         <option value="">{t("allKinds")}</option>
         {FACT_KINDS.map((k) => <option key={k} value={k}>{kindLabel(t, k)}</option>)}
-      </select>
-      <input type="search" aria-label={t("search")} placeholder={t("search")} value={filters.q} maxLength={200}
+      </Select>
+      <Input type="search" aria-label={t("search")} placeholder={t("search")} value={filters.q} maxLength={200}
         onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
         style={{ ...fieldStyle, width: 240, maxWidth: "100%", minHeight: 32, padding: "5px 8px", fontSize: 12.5 }} />
       <label style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: 12.5, color: K.ink3 }}>
-        <input type="checkbox" checked={filters.includeExpired}
+        <Checkbox checked={filters.includeExpired}
           onChange={(e) => setFilters((f) => ({ ...f, includeExpired: e.target.checked }))} />
         {t("showExpired")}
       </label>
@@ -202,37 +203,37 @@ function FactFormFields({ form, setForm, disabled, idPrefix }: {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <Field label={t("kind")} htmlFor={id("kind")}>
-        <select id={id("kind")} value={form.kind} disabled={disabled} style={fieldStyle}
+        <Select id={id("kind")} value={form.kind} disabled={disabled} style={fieldStyle}
           onChange={(e) => set("kind", e.target.value as FactKind)}>
           {FACT_KINDS.map((k) => <option key={k} value={k}>{kindLabel(t, k)}</option>)}
-        </select>
+        </Select>
       </Field>
       <Field label={t("subject")} htmlFor={id("title")} hint={t("subjectHint")}>
-        <input id={id("title")} type="text" autoComplete="off" maxLength={MAX_TITLE} value={form.title}
+        <Input id={id("title")} type="text" autoComplete="off" maxLength={MAX_TITLE} value={form.title}
           disabled={disabled} onChange={(e) => set("title", e.target.value)} style={fieldStyle} />
       </Field>
       <Field label={t("fact")} htmlFor={id("body")} hint={t("factHint")}>
-        <textarea id={id("body")} rows={4} maxLength={MAX_BODY} value={form.body} disabled={disabled}
+        <Textarea id={id("body")} rows={4} maxLength={MAX_BODY} value={form.body} disabled={disabled}
           onChange={(e) => set("body", e.target.value)} style={{ ...fieldStyle, resize: "vertical" }} />
       </Field>
       <Field label={t("source")} htmlFor={id("provenance")} hint={t("sourceHint")}>
-        <input id={id("provenance")} type="text" autoComplete="off" maxLength={MAX_SOURCE} value={form.provenance}
+        <Input id={id("provenance")} type="text" autoComplete="off" maxLength={MAX_SOURCE} value={form.provenance}
           disabled={disabled} onChange={(e) => set("provenance", e.target.value)} style={fieldStyle} />
       </Field>
       <Field label={t("country")} htmlFor={id("country")} hint={t("countryHint")}>
-        <input id={id("country")} type="text" autoComplete="off" maxLength={MAX_COUNTRY} value={form.country}
+        <Input id={id("country")} type="text" autoComplete="off" maxLength={MAX_COUNTRY} value={form.country}
           disabled={disabled} onChange={(e) => set("country", e.target.value)} style={fieldStyle} />
       </Field>
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
         <div style={{ flex: "1 1 160px", minWidth: 0 }}>
           <Field label={t("statedOn")} htmlFor={id("stated")} hint={t("statedOnHint")}>
-            <input id={id("stated")} type="date" value={form.stated_on} disabled={disabled}
+            <Input id={id("stated")} type="date" value={form.stated_on} disabled={disabled}
               onChange={(e) => set("stated_on", e.target.value)} style={fieldStyle} />
           </Field>
         </div>
         <div style={{ flex: "1 1 160px", minWidth: 0 }}>
           <Field label={t("validUntil")} htmlFor={id("until")} hint={t("validUntilHint")}>
-            <input id={id("until")} type="date" value={form.valid_until} disabled={disabled}
+            <Input id={id("until")} type="date" value={form.valid_until} disabled={disabled}
               onChange={(e) => set("valid_until", e.target.value)} style={fieldStyle} />
           </Field>
         </div>

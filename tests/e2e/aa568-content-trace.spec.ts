@@ -25,7 +25,7 @@ test.beforeEach(async ({ page }) => {
 test('01 - sidebar: Content Trace sits as an equal peer of 01-05, not a demoted link', async ({ page }) => {
   await page.goto('/admin/atom-curation');
   await page.waitForTimeout(1200);
-  const innerNav = page.locator('.a527-inner-sidebar, div:has(> button:has-text("01 · Atomize"))').first();
+  const innerNav = page.getByTestId('social-content-subnav');
   await expect(page.getByText('06 · Content Trace', { exact: true })).toBeVisible();
   // The old "06-08" label must be gone.
   await expect(page.getByText('06-08 · Content Trace')).toHaveCount(0);
@@ -64,7 +64,7 @@ test('03 - tenant filter narrows the table', async ({ page }) => {
   const rowsAfterTenant = await page.locator('tbody tr').count();
   expect(rowsAfterTenant).toBeGreaterThan(0);
   // Every visible row's Tenant cell must now read WanderLux Travel (no other tenant leaking through).
-  const tenantCells = await page.locator('tbody tr td:nth-child(3)').allTextContents();
+  const tenantCells = await page.locator('tbody tr td:nth-child(2)').allTextContents();
   expect(tenantCells.length).toBeGreaterThan(0);
   for (const t of tenantCells) expect(t.trim()).toBe('WanderLux Travel');
 
@@ -84,7 +84,7 @@ test('04 - status filter narrows to Held only', async ({ page }) => {
   await filteredResponse;
   await waitLoaded(page);
 
-  const statusCells = await page.locator('tbody tr td:nth-child(7)').allTextContents();
+  const statusCells = await page.locator('tbody tr td:nth-child(6)').allTextContents();
   expect(statusCells.length).toBeGreaterThan(0);
   for (const s of statusCells) expect(s.trim().toLowerCase()).toBe('held');
 

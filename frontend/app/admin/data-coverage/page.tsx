@@ -35,6 +35,7 @@ import {
   useLang,
   useT,
   type Translator,
+  useIsPhone,
 } from "../../_kit";
 import {
   DATA_COVERAGE_PATH,
@@ -159,8 +160,14 @@ function AsOf({ data }: { data: DataCoverageResponse }) {
   );
 }
 
+/** Four tiles a row; two on a phone (was the `.aa-kpi-grid` media query, AA-1006). */
+function useKpiColumns(): string {
+  return useIsPhone() ? "repeat(2, minmax(0, 1fr))" : "repeat(4, minmax(0, 1fr))";
+}
+
 function SummaryStrip({ data }: { data: DataCoverageResponse }) {
   const t = useT(DC);
+  const kpiColumns = useKpiColumns();
   const tiles: { label: string; value: string; color: string; testId: string }[] = [
     { label: t("tileLive"), value: formatCount(data.live_tours), color: K.ink, testId: "dc-live" },
     { label: t("tileGaps"), value: formatCount(data.summary.gaps), color: data.summary.gaps ? K.danger : K.ink, testId: "dc-gaps" },
@@ -168,7 +175,7 @@ function SummaryStrip({ data }: { data: DataCoverageResponse }) {
     { label: t("tileNa"), value: formatCount(data.summary.na), color: K.ink3, testId: "dc-na" },
   ];
   return (
-    <div className="aa-kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 22 }}>
+    <div style={{ display: "grid", gridTemplateColumns: kpiColumns, gap: 12, marginBottom: 22 }}>
       {tiles.map((tile) => (
         <div key={tile.testId} data-testid={tile.testId} style={tileStyle}>
           <div style={{ fontSize: 11, color: K.muted, textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 600 }}>{tile.label}</div>
@@ -291,9 +298,10 @@ const buildColumns = (t: T, w: DcWords): ColumnDef<CoverageRow, unknown>[] => [
 ];
 
 function PageSkeleton() {
+  const kpiColumns = useKpiColumns();
   return (
     <div aria-busy="true">
-      <div className="aa-kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 22 }}>
+      <div style={{ display: "grid", gridTemplateColumns: kpiColumns, gap: 12, marginBottom: 22 }}>
         {[0, 1, 2, 3].map((i) => <div key={i} style={tileStyle}><SkeletonBar w="60%" /><SkeletonBar w="40%" h={22} style={{ marginTop: 8 }} /></div>)}
       </div>
       {[0, 1, 2].map((i) => (

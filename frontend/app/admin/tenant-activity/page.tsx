@@ -57,14 +57,15 @@
 // read-only. Calls the same untouched `POST /admin/a4/publish-log/{id}/unpublish` (AA-455).
 // `admin_a4.py::get_content_log()` now also returns `publish_id` (previously computed into
 // `publish_status` and discarded) so this button can address the right row.
-import { Fragment, useState, useEffect, useCallback, useMemo } from "react";
-import { ChevronDown, ChevronRight, ChevronUp, Radio } from "lucide-react";
-import SocialContentSubNav from "../_components/SocialContentSubNav";
+import { useState, useCallback, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Radio } from "lucide-react";
+import SocialContentSubNav, { SocialContentSplit } from "../_components/SocialContentSubNav";
 import { fetchJson, EmptyState, ErrorState } from "../_components/auditPanels";
 import { TenantSelect } from "../_components/TenantSelect";
 import {
   PageFrame, PageFrameBody, PageFrameHeader, PageHeader, useFormat, useT, Badge, K, LoadingScreen, Section, mono,
-  sans, type Tone,
+  sans, type Tone, Button, DataTable, Drawer, Input, Select, type ColumnDef,
 } from "../../_kit";
 import { CHANNEL, TRACE } from "./messages";
 
@@ -145,7 +146,6 @@ const selectStyle: React.CSSProperties = {
 type SortKey =
   | "topic" | "tenant" | "tour" | "channel" | "angle" | "status"
   | "gate" | "retry" | "published" | "created_at";
-type Sort = { key: SortKey; dir: "asc" | "desc" };
 
 const CHANNEL_LABEL: Record<string, string> = Object.fromEntries(
   CHANNEL_OPTIONS.filter(o => o.value).map(o => [o.value, o.label]),
@@ -190,11 +190,8 @@ export default function ContentTracePage() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
 
-  const [rows, setRows] = useState<ContentLogRow[] | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [sort, setSort] = useState<Sort | null>(null);
+  // AA-1006: the row detail opens in a kit Drawer (the table row used to expand in place); sorting is the kit table's.
+  const [openRow, setOpenRow] = useState<ContentLogRow | null>(null);
   // AA-560 — Force unpublish state, same shape a4-oversight/page.tsx's own PublishLogSection used.
   const [unpublishingId, setUnpublishingId] = useState<string | null>(null);
   const [unpublishError, setUnpublishError] = useState<string | null>(null);
@@ -210,16 +207,15 @@ export default function ContentTracePage() {
     return p.toString();
   }, [tenantId, channel, status, published, dateFrom, dateTo]);
 
-  const load = useCallback(() => {
-    setLoading(true);
-    setError(null);
-    fetchJson<{ data: ContentLogRow[]; total: number }>(`/api/admin/a4/content-log?${query}`)
-      .then(d => setRows(d.data))
-      .catch(e => setError(String(e.message || e)))
-      .finally(() => setLoading(false));
-  }, [query]);
-
-  useEffect(() => { load(); }, [load]);
+  const q = useQuery({
+    queryKey: ["a4-content-log", query],
+    queryFn: () => fetchJson<{ data: ContentLogRow[]; total: number }>(`/api/admin/a4/content-log?${query}`).then(d => d.data),
+  });
+  const rows = q.data ?? null;
+  const loading = q.isPending;
+  const error = q.isError ? String((q.error as Error).message || q.error) : null;
+  const { refetch } = q;
+  const load = useCallback(async () => { await refetch(); }, [refetch]);
 
   // AA-560 — same confirm-dialog + re-fetch-after-success shape as the old a4-oversight page's
   // handleForceUnpublish(). AA-986 L3 (ADR 0015 Q3): the backend changes AA's record only; the post stays live on
@@ -262,27 +258,6 @@ export default function ContentTracePage() {
     };
   }, [rows]);
 
-  // AA-572 point 3 / AA-575 — sort applied client-side to the already-loaded rows (same "no
-  // backend change" scope as the stat header above); the endpoint has no `sort` param and
-  // doesn't need one for a page-sized result set (`limit` caps at 500). `sortValue()` returns
-  // either a string (free-text/categorical columns) or a number (counts, the Published rank,
-  // and the Created-at timestamp) — compared with `localeCompare` or subtraction accordingly.
-  const sortedRows = useMemo(() => {
-    if (!rows || !sort) return rows;
-    const withKey = rows.map(r => ({ r, k: sortValue(r, sort.key) }));
-    withKey.sort((a, b) => {
-      const cmp = typeof a.k === "string" && typeof b.k === "string"
-        ? a.k.localeCompare(b.k)
-        : (a.k as number) - (b.k as number);
-      return sort.dir === "asc" ? cmp : -cmp;
-    });
-    return withKey.map(x => x.r);
-  }, [rows, sort]);
-
-  const toggleSort = useCallback((key: SortKey) => {
-    setSort(prev => prev?.key === key ? { key, dir: prev.dir === "desc" ? "asc" : "desc" } : { key, dir: "desc" });
-  }, []);
-
   return (
     <PageFrame variant="split">
         <PageFrameHeader>
@@ -297,31 +272,30 @@ export default function ContentTracePage() {
             {/* AA-919 S254: the shared admin tenant picker (active tenants, by name; "" = All tenants). */}
             <TenantSelect inline value={tenantId} onChange={setTenantId} placeholder={t("allTenants")} />
             <FilterField label={t("channel")}>
-              <select value={channel} onChange={e => setChannel(e.target.value)} style={{ ...selectStyle, minWidth: 140 }}>
+              <Select value={channel} onChange={e => setChannel(e.target.value)} style={{ ...selectStyle, minWidth: 140 }}>
                 {CHANNEL_OPTIONS.map(o => <option key={o.value} value={o.value}>{channelLabel(o.value)}</option>)}
-              </select>
+              </Select>
             </FilterField>
             <FilterField label={t("status")}>
-              <select value={status} onChange={e => setStatus(e.target.value)} style={{ ...selectStyle, minWidth: 140 }}>
+              <Select value={status} onChange={e => setStatus(e.target.value)} style={{ ...selectStyle, minWidth: 140 }}>
                 {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{t(o.label)}</option>)}
-              </select>
+              </Select>
             </FilterField>
             <FilterField label={t("published")}>
-              <select value={published} onChange={e => setPublished(e.target.value)} style={{ ...selectStyle, minWidth: 130 }}>
+              <Select value={published} onChange={e => setPublished(e.target.value)} style={{ ...selectStyle, minWidth: 130 }}>
                 {PUBLISHED_OPTIONS.map(o => <option key={o.value} value={o.value}>{t(o.label)}</option>)}
-              </select>
+              </Select>
             </FilterField>
             <FilterField label={t("from")}>
-              <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ ...selectStyle, cursor: "text" }} />
+              <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ ...selectStyle, cursor: "text" }} />
             </FilterField>
             <FilterField label={t("to")}>
-              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ ...selectStyle, cursor: "text" }} />
+              <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ ...selectStyle, cursor: "text" }} />
             </FilterField>
           </div>
 
           {/* AA-572 point 2 — tenant stat header, same tile shape 01-Atomize's own header stat
-              bar uses (adminUi.tsx has no shared StatTile export yet, so this mirrors it inline
-              rather than inventing a differently-shaped one). */}
+              bar uses (mirrored inline rather than inventing a differently-shaped one). */}
           {!loading && !error && rows && (
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 14 }}>
               <StatTile label={t("totalPieces")} value={stats.total} />
@@ -341,7 +315,7 @@ export default function ContentTracePage() {
             it doesn't reintroduce that bug: this outer div stays the only scrolling ancestor, and
             the table's `<th position:sticky>` still resolves against it unchanged. */}
         <PageFrameBody scroll style={{ overflowX: "auto" }}>
-          <div className="a527-dash-body" style={{ display: "flex", gap: 20, alignItems: "flex-start" }}>
+          <SocialContentSplit>
             {/* AA-575 — Content Trace is a genuinely separate Next.js route/page from
                 atom-curation/page.tsx (01-05's tab-state owner), which is exactly why it never
                 had this sub-nav before: there was no shared layout, just one page's own inline
@@ -349,11 +323,6 @@ export default function ContentTracePage() {
                 `/admin/atom-curation?section=<key>` (see SocialContentSubNav.tsx). */}
             <SocialContentSubNav active="content_trace" />
             <div style={{ flex: 1, minWidth: 0 }}>
-              {unpublishError && (
-                <div style={{ padding: "8px 12px", marginBottom: 12, borderRadius: 6, background: K.dangerTint, color: K.danger, fontSize: 12 }}>
-                  {unpublishError}
-                </div>
-              )}
               {loading ? (
                 <LoadingScreen message={t("loading")} />
               ) : error ? (
@@ -369,14 +338,29 @@ export default function ContentTracePage() {
                 </div>
               ) : (
                 <div data-testid="admin-content-ready">
-                  <ContentTraceTable rows={sortedRows ?? rows} expandedId={expandedId} sort={sort} onSort={toggleSort}
-                    onToggle={id => setExpandedId(prev => prev === id ? null : id)}
-                    onForceUnpublish={handleForceUnpublish} unpublishingId={unpublishingId} />
+                  <ContentTraceTable rows={rows} onOpen={(r) => { setUnpublishError(null); setOpenRow(r); }} />
                 </div>
               )}
             </div>
-          </div>
+          </SocialContentSplit>
         </PageFrameBody>
+        <Drawer open={openRow != null} onClose={() => { setOpenRow(null); setUnpublishError(null); }} width={760}
+          title={openRow?.topic}>
+          {/* Force unpublish starts in this Drawer, so its failure shows here (the page behind sits under the scrim). */}
+          {openRow && unpublishError && (
+            <div role="alert" data-testid="content-trace-unpublish-error"
+              style={{ padding: "8px 12px", marginBottom: 12, borderRadius: 6, background: K.dangerTint, color: K.danger, fontSize: 12 }}>
+              {unpublishError}
+            </div>
+          )}
+          {openRow && (
+            <ContentTraceAccordion
+              row={rows?.find(r => r.piece_id === openRow.piece_id) ?? openRow}
+              onForceUnpublish={handleForceUnpublish}
+              unpublishingId={unpublishingId}
+            />
+          )}
+        </Drawer>
     </PageFrame>
   );
 }
@@ -405,117 +389,55 @@ function FilterField({ label, children }: { label: string; children: React.React
 // AA-564 SubjectRow pattern: one shared `expandedId` at the table level, at most one row open).
 // ══════════════════════════════════════════════════════════════════════════
 
-const COLS = 10;
-
-// AA-572 shipped only 3 sortable columns (Gate/Retry/Created at); AA-575 extends every remaining
-// column (Topic/Tenant/Tour/Channel/Angle chosen/Status/Published) to the same mechanism, per
-// Nghiệp's explicit follow-up — only the leading expand-chevron column has no `sortKey`.
-type HeaderWord = "colTopic" | "colTenant" | "colTour" | "channel" | "colAngle" | "status" | "colGate" | "colRetry"
-  | "published" | "colCreated";
-const HEADERS: { label: HeaderWord | null; sortKey?: SortKey }[] = [
-  { label: null },
-  { label: "colTopic", sortKey: "topic" },
-  { label: "colTenant", sortKey: "tenant" },
-  { label: "colTour", sortKey: "tour" },
-  { label: "channel", sortKey: "channel" },
-  { label: "colAngle", sortKey: "angle" },
-  { label: "status", sortKey: "status" },
-  { label: "colGate", sortKey: "gate" },
-  { label: "colRetry", sortKey: "retry" },
-  { label: "published", sortKey: "published" },
-  { label: "colCreated", sortKey: "created_at" },
-];
-
-function ContentTraceTable({ rows, expandedId, sort, onSort, onToggle, onForceUnpublish, unpublishingId }: {
-  rows: ContentLogRow[]; expandedId: string | null; sort: Sort | null; onSort: (key: SortKey) => void;
-  onToggle: (id: string) => void;
-  onForceUnpublish: (publishId: string) => void; unpublishingId: string | null;
-}) {
+// AA-572 shipped only 3 sortable columns (Gate/Retry/Created at); AA-575 extends every column (Topic/Tenant/Tour/
+// Channel/Angle chosen/Status/Published) to the same mechanism. AA-1006: the kit DataTable sorts by `sortValue`.
+function ContentTraceTable({ rows, onOpen }: { rows: ContentLogRow[]; onOpen: (row: ContentLogRow) => void }) {
   const t = useT(TRACE);
   const { formatDateTime } = useFormat();
+  const columns = useMemo<ColumnDef<ContentLogRow, unknown>[]>(() => {
+    const col = (key: SortKey, label: string, cell: (r: ContentLogRow) => React.ReactNode, wrap = false): ColumnDef<ContentLogRow, unknown> => ({
+      id: key, header: label, accessorFn: (r) => sortValue(r, key), sortDescFirst: true,
+      cell: ({ row }) => <span style={{ whiteSpace: wrap ? "normal" : "nowrap", display: "inline-block", maxWidth: wrap ? 260 : undefined }}>{cell(row.original)}</span>,
+    });
+    return [
+      col("topic", t("colTopic"), (r) => r.topic, true),
+      col("tenant", t("colTenant"), (r) => <span title={r.tenant_id}>{r.tenant_name ?? "—"}</span>),
+      col("tour", t("colTour"), (r) => r.tour?.name ?? "—"),
+      col("channel", t("channel"), (r) => <Badge tone="neutral">{r.channel}</Badge>),
+      col("angle", t("colAngle"), (r) => r.angles.find(a => a.chosen)?.name ?? "—", true),
+      col("status", t("status"), (r) => <Badge tone={STATUS_COLOR[r.status] ?? "neutral"}>{r.status}</Badge>),
+      col("gate", t("colGate"), (r) => <span style={{ fontFamily: mono }}>{r.gate_pass_count}/{r.gate_total_count}</span>),
+      col("retry", t("colRetry"), (r) => (
+        <span style={{ fontFamily: mono }}>
+          {r.retry_count}{r.is_buffer_retry && <span title={t("bufferTitle")}>{t("buffer")}</span>}
+        </span>
+      )),
+      col("published", t("published"), (r) => (
+        r.publish_status === "published" ? (
+          r.publish_external_url ? (
+            <a href={r.publish_external_url} target="_blank" rel="noreferrer"
+              onClick={e => e.stopPropagation()} style={{ color: K.accent }}>{t("yesLink")}</a>
+          ) : <Badge tone="success">{t("yes")}</Badge>
+        ) : r.publish_status === "pending_publish" ? (
+          <Badge tone="warning">{t("notYet")}</Badge>
+        ) : <Badge tone="neutral">{t("no")}</Badge>
+      )),
+      col("created_at", t("colCreated"), (r) => formatDateTime(r.created_at)),
+    ];
+  }, [t, formatDateTime]);
   return (
-    // AA-572 point 6 — deliberately NO `overflowX` here (default `visible`): the outer page
-    // scroll container now owns horizontal scroll too, so this div isn't its own overflow
-    // context and doesn't hijack `<th>`'s `position: sticky` — see file header comment.
-    <div style={{ border: `1px solid ${K.line}`, borderRadius: 10 }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: sans }}>
-        <thead>
-          <tr>
-            {HEADERS.map((h, i) => {
-              const active = h.sortKey && sort?.key === h.sortKey;
-              return (
-                <th key={i} onClick={h.sortKey ? () => onSort(h.sortKey as SortKey) : undefined} style={{
-                  padding: "10px 14px", fontSize: 11, fontWeight: 600, textTransform: "uppercase",
-                  letterSpacing: "0.08em", color: active ? K.accent : K.muted, textAlign: "left",
-                  background: K.bg, borderBottom: `1px solid ${K.line}`, whiteSpace: "nowrap",
-                  position: "sticky", top: 0, zIndex: 2, cursor: h.sortKey ? "pointer" : "default",
-                  userSelect: "none",
-                }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-                    {h.label ? t(h.label) : ""}
-                    {h.sortKey && (
-                      active ? (
-                        sort!.dir === "asc" ? <ChevronUp size={12} /> : <ChevronDown size={12} />
-                      ) : <ChevronDown size={12} style={{ opacity: 0.25 }} />
-                    )}
-                  </span>
-                </th>
-              );
-            })}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(r => {
-            const expanded = expandedId === r.piece_id;
-            const chosenAngle = r.angles.find(a => a.chosen);
-            return (
-              <Fragment key={r.piece_id}>
-                <tr onClick={() => onToggle(r.piece_id)} style={{
-                  cursor: "pointer", background: expanded ? K.accentTint : "transparent",
-                }}>
-                  <td style={rowTd}>{expanded ? <ChevronDown size={14} color={K.accent} /> : <ChevronRight size={14} color={K.muted2} />}</td>
-                  <td style={{ ...rowTd, maxWidth: 260, whiteSpace: "normal" }}>{r.topic}</td>
-                  <td style={rowTd} title={r.tenant_id}>{r.tenant_name ?? "—"}</td>
-                  <td style={rowTd}>{r.tour?.name ?? "—"}</td>
-                  <td style={rowTd}><Badge tone="neutral">{r.channel}</Badge></td>
-                  <td style={{ ...rowTd, maxWidth: 200, whiteSpace: "normal" }}>{chosenAngle?.name ?? "—"}</td>
-                  <td style={rowTd}><Badge tone={STATUS_COLOR[r.status] ?? "neutral"}>{r.status}</Badge></td>
-                  <td style={{ ...rowTd, fontFamily: mono }}>{r.gate_pass_count}/{r.gate_total_count}</td>
-                  <td style={{ ...rowTd, fontFamily: mono }}>
-                    {r.retry_count}{r.is_buffer_retry && <span title={t("bufferTitle")}>{t("buffer")}</span>}
-                  </td>
-                  <td style={rowTd}>
-                    {r.publish_status === "published" ? (
-                      r.publish_external_url ? (
-                        <a href={r.publish_external_url} target="_blank" rel="noreferrer"
-                          onClick={e => e.stopPropagation()} style={{ color: K.accent }}>{t("yesLink")}</a>
-                      ) : <Badge tone="success">{t("yes")}</Badge>
-                    ) : r.publish_status === "pending_publish" ? (
-                      <Badge tone="warning">{t("notYet")}</Badge>
-                    ) : <Badge tone="neutral">{t("no")}</Badge>}
-                  </td>
-                  <td style={rowTd}>{formatDateTime(r.created_at)}</td>
-                </tr>
-                {expanded && (
-                  <tr>
-                    <td colSpan={COLS} style={{ padding: "0 14px 18px", background: K.bg, borderBottom: `1px solid ${K.line}` }}>
-                      <ContentTraceAccordion row={r} onForceUnpublish={onForceUnpublish} unpublishingId={unpublishingId} />
-                    </td>
-                  </tr>
-                )}
-              </Fragment>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+    <DataTable<ContentLogRow>
+      tableId="a4-content-trace"
+      data={rows}
+      columns={columns}
+      getRowId={(r) => r.piece_id}
+      onRowClick={onOpen}
+      searchable={false}
+      paginate={false}
+      compact
+    />
   );
 }
-
-const rowTd: React.CSSProperties = {
-  padding: "11px 14px", fontSize: 12.5, color: K.body, borderBottom: `1px solid ${K.line2}`,
-  whiteSpace: "nowrap",
-};
 
 // ══════════════════════════════════════════════════════════════════════════
 // Accordion — full lineage + all 3 angles (chosen marked) + content + gate detail + retry
@@ -669,18 +591,13 @@ function ContentTraceAccordion({ row: p, onForceUnpublish, unpublishingId }: {
             confirm-then-call shape. Only a published row with a real publish_id can be
             unpublished — a pending/n/a row has no publish_log row to act on. */}
         {p.publish_status === "published" && p.publish_id && (
-          <button
+          // AA-986 L3: the record only, never the channel (see handleForceUnpublish)
+          <Button size="sm" variant="danger"
             onClick={() => onForceUnpublish(p.publish_id as string)}
             disabled={unpublishingId === p.publish_id}
-            style={{
-              padding: "5px 10px", borderRadius: 6, border: `1px solid ${K.danger}`,
-              // AA-986 L3: the record only, never the channel (see handleForceUnpublish)
-              background: "transparent", color: K.danger, fontSize: 11.5, cursor: "pointer",
-              opacity: unpublishingId === p.publish_id ? 0.5 : 1,
-            }}
           >
             {unpublishingId === p.publish_id ? t("marking") : t("markUnpublished")}
-          </button>
+          </Button>
         )}
       </div>
     </Section>

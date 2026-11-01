@@ -7,6 +7,7 @@ export const UP = defineMessages(
   {
     // relative time
     justNow: "Just now",
+    removeFile: (name: string) => `Remove ${name}`,
     minutesAgo: (n: number) => `${n} minutes ago`,
     hoursAgo: (n: number) => `${n} hours ago`,
     // steps
@@ -172,6 +173,7 @@ export const UP = defineMessages(
   },
   {
     justNow: "Vừa xong",
+    removeFile: (name: string) => `Bỏ ${name}`,
     minutesAgo: (n: number) => `${n} phút trước`,
     hoursAgo: (n: number) => `${n} giờ trước`,
     stepSelect: "Chọn tệp",

@@ -14,6 +14,8 @@ import SettingsKitTab from "../_components/SettingsKitTab";
 import {
   Button, Tabs, PageFrame, PageHeader, apiGet, useAdminIdentity, useFormat, useT, Badge, Eyebrow, K, LoadingScreen,
   Section, Spinner, alpha, mono, sans, serif, type Tone,
+  Input, Textarea,
+  IconButton,
 } from "../../_kit";
 import { RETIRED_SETTINGS_TABS, retiredTabTarget } from "@/lib/aiGateway";
 import { can, staffErrorMessage, type Capability } from "@/lib/rbac";
@@ -217,12 +219,10 @@ function SeoConfigTab({ seo: initialSeo, canEdit }: { seo: SettingsData["seo_con
             }}>
               {kw}
               {canEdit && (
-                <button onClick={() => removeKeyword(kw)} style={{
-                  background: "none", border: "none", cursor: "pointer",
-                  color: K.accentDeep, display: "flex", padding: 0,
-                }}>
+                <IconButton variant="plain" size="xs" label={t("removeKeyword", kw)} onClick={() => removeKeyword(kw)}
+                  style={{ color: K.accentDeep, width: 16, height: 16 }}>
                   <X size={11} />
-                </button>
+                </IconButton>
               )}
             </span>
           ))}
@@ -231,7 +231,7 @@ function SeoConfigTab({ seo: initialSeo, canEdit }: { seo: SettingsData["seo_con
           )}
         </div>
         {canEdit && <div style={{ display: "flex", gap: 8 }}>
-          <input
+          <Input
             value={kwInput}
             onChange={e => setKwInput(e.target.value)}
             onKeyDown={e => e.key === "Enter" && (e.preventDefault(), addKeyword())}
@@ -250,7 +250,7 @@ function SeoConfigTab({ seo: initialSeo, canEdit }: { seo: SettingsData["seo_con
 
       <Section>
         <Eyebrow>{t("targetMarket")}</Eyebrow>
-        <textarea
+        <Textarea
           value={targetJson}
           onChange={e => setTargetJson(e.target.value)}
           readOnly={!canEdit}

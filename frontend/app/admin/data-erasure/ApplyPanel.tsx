@@ -8,7 +8,7 @@
 
 import { ShieldAlert } from "lucide-react";
 import { useState } from "react";
-import { Button, K, mono, useT } from "../../_kit";
+import { Button, K, mono, useT, Checkbox, Input } from "../../_kit";
 import {
   FINGERPRINT_CONFIRM_CHARS, applyBody, applyFormProblems, applyGate, jobSubject, suggestedSnapshotId,
   totalsSentence, type ApplyForm, type ErasureJob, type ErasureSettings,
@@ -82,7 +82,7 @@ export default function ApplyPanel({ job, settings, now, history, subjectName, s
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
             <label style={labelStyle}>
               {t("firstChars", FINGERPRINT_CONFIRM_CHARS)}
-              <input
+              <Input
                 data-testid="erasure-apply-fp"
                 value={form.fingerprintPrefix}
                 onChange={(e) => set({ fingerprintPrefix: e.target.value })}
@@ -95,7 +95,7 @@ export default function ApplyPanel({ job, settings, now, history, subjectName, s
             </label>
             <label style={labelStyle}>
               {t("snapshotId")}
-              <input
+              <Input
                 data-testid="erasure-apply-snapshot"
                 value={form.snapshotId}
                 onChange={(e) => set({ snapshotId: e.target.value })}
@@ -108,7 +108,7 @@ export default function ApplyPanel({ job, settings, now, history, subjectName, s
             </label>
             <label style={labelStyle}>
               {t("approvedBy")}
-              <input
+              <Input
                 data-testid="erasure-apply-approver"
                 value={form.approvedBy}
                 onChange={(e) => set({ approvedBy: e.target.value })}
@@ -121,9 +121,9 @@ export default function ApplyPanel({ job, settings, now, history, subjectName, s
             </label>
           </div>
           <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13, color: K.ink, lineHeight: 1.5 }}>
-            <input
+            <Checkbox
               data-testid="erasure-apply-confirm"
-              type="checkbox"
+             
               checked={form.confirmed}
               onChange={(e) => set({ confirmed: e.target.checked })}
               style={{ marginTop: 3 }}

@@ -6,17 +6,18 @@
 // top AWS services, because it is most of the bill while the App tags are new (since 16/10/2026).
 // S243 — one presentation with /admin/platform/cost: row labels and hints come from the backend cost module, both pages
 // show AWS bill + AI outside the AWS bill = Total, and the AI already on the bill is named under the table. Every
-// column stays on a phone (the table scrolls in its own box, kit ScrollX).
+// column stays on a phone (the kit DataTable: a card per line on a phone, AA-1006).
 import { useState } from "react";
+import type { ColumnDef } from "@tanstack/react-table";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { K, useIsPhone, useLang, useT } from "../../../_kit";
+import { DataTable, K, LinkButton, useLang, useT } from "../../../_kit";
 import type { Lang } from "../../../_kit/core/i18n";
 import { aiOnBillNote, shownSum } from "../../../../lib/costWording";
 import { COST_WORDING } from "../../../../lib/costWording.messages";
 import { OPS } from "./ops.messages";
 import { SourceHint } from "./SourceHint";
 import { useSources } from "./sources";
-import { fmtUsd, OpsCard, PHONE_CELL, TableWrap, TD as TD_BASE, TH as TH_BASE, UnavailableNote } from "./opsUi";
+import { fmtUsd, hintColumn, OpsCard, UnavailableNote } from "./opsUi";
 import type { CostData, CostRow, Section } from "./opsTypes";
 
 
@@ -40,71 +41,11 @@ function ShareBar({ value, max }: { value: number; max: number }) {
   );
 }
 
-interface Cells {
-  TH: React.CSSProperties;
-  TD: React.CSSProperties;
-}
-
-function Row({ r, max, cells }: { r: CostRow; max: number; cells: Cells }) {
-  const { TD } = cells;
-  const [open, setOpen] = useState(false);
-  const canOpen = r.top_services.length > 0;
-  const isUntagged = r.kind === "untagged";
-  return (
-    <>
-      <tr data-testid={`ops-cost-row-${r.key}`}>
-        <td style={{ ...TD, color: K.ink, fontWeight: r.kind === "app" ? 600 : 500 }}>
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
-            {canOpen ? (
-              <button
-                type="button"
-                onClick={() => setOpen((v) => !v)}
-                aria-expanded={open}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 2,
-                  padding: 0,
-                  border: "none",
-                  background: "transparent",
-                  color: isUntagged ? K.amber : K.ink,
-                  font: "inherit",
-                  cursor: "pointer",
-                  textAlign: "left",
-                }}
-              >
-                {open ? <ChevronDown size={13} aria-hidden /> : <ChevronRight size={13} aria-hidden />}
-                {r.label}
-              </button>
-            ) : (
-              r.label
-            )}
-            {r.hint && <SourceHint source={r.hint} size={11} />}
-          </span>
-          <ShareBar value={r.total_usd} max={max} />
-        </td>
-        <td style={{ ...TD, textAlign: "right" }}>{fmtUsd(shownSum(r.aws_usd))}</td>
-        <td style={{ ...TD, textAlign: "right", color: r.ai_outside_aws_usd ? K.body : K.muted2 }}>
-          {fmtUsd(shownSum(r.ai_outside_aws_usd))}
-        </td>
-        <td style={{ ...TD, textAlign: "right", color: K.ink, fontWeight: 600 }}>
-          {fmtUsd(shownSum(r.aws_usd, r.ai_outside_aws_usd))}
-        </td>
-        <td style={{ ...TD, textAlign: "right", color: K.muted }}>{fmtUsd(r.prev_total_usd)}</td>
-      </tr>
-      {open &&
-        r.top_services.map((s) => (
-          <tr key={s.service}>
-            <td style={{ ...TD, paddingLeft: 26, fontSize: 12, color: K.muted, overflowWrap: "anywhere" }}>{s.service}</td>
-            <td style={{ ...TD, textAlign: "right", fontSize: 12, color: K.muted }}>{fmtUsd(s.amount_usd)}</td>
-            <td style={TD} />
-            <td style={TD} />
-            <td style={TD} />
-          </tr>
-        ))}
-    </>
-  );
-}
+/** One line of the cost table: an app row, one of its top AWS services (shown when the row is open) or the total. */
+type CostLine =
+  | { id: string; kind: "row"; r: CostRow }
+  | { id: string; kind: "service"; service: string; amount: number | null }
+  | { id: string; kind: "total" };
 
 export function CostByAppCard({ section }: { section: Section<CostData> | undefined }) {
   const t = useT(OPS);
@@ -132,16 +73,93 @@ function CostBody({ data }: { data: CostData }) {
   const cw = useT(COST_WORDING);
   const lang = useLang();
   const { COST_SRC } = useSources();
-  const phone = useIsPhone();
-  const TH: React.CSSProperties = phone ? { ...TH_BASE, ...PHONE_CELL, fontSize: 11 } : TH_BASE;
-  const TD: React.CSSProperties = phone ? { ...TD_BASE, ...PHONE_CELL } : TD_BASE;
-  const cells: Cells = { TH, TD };
+  const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
+  const toggle = (key: string) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   const max = Math.max(0, ...data.rows.map((r) => r.total_usd));
   // The totals add up on screen and match the Cost page: AI outside = AI estimate − AI on the AWS bill, from cents.
   const totalsAiOutside =
     data.totals.ai_usd != null
       ? shownSum(data.totals.ai_usd, -(data.totals.ai_in_aws_usd ?? 0))
       : shownSum(data.totals.ai_outside_aws_usd);
+
+  const lines: CostLine[] = [];
+  for (const r of data.rows) {
+    lines.push({ id: `row:${r.key}`, kind: "row", r });
+    if (open.has(r.key)) {
+      for (const s of r.top_services) lines.push({ id: `svc:${r.key}:${s.service}`, kind: "service", service: s.service, amount: s.amount_usd });
+    }
+  }
+  lines.push({ id: "total", kind: "total" });
+
+  const money = (v: number | null | undefined, style: React.CSSProperties = {}) => (
+    <span style={{ fontVariantNumeric: "tabular-nums", ...style }}>{fmtUsd(v ?? null)}</span>
+  );
+  const columns: ColumnDef<CostLine, unknown>[] = [
+    {
+      id: t("colApp"),
+      header: t("colApp"),
+      enableSorting: false,
+      cell: ({ row: { original: l } }) => {
+        if (l.kind === "total") {
+          return <span data-testid="ops-cost-total" style={{ fontWeight: 700, color: K.ink }}>{t("allApps")}</span>;
+        }
+        if (l.kind === "service") {
+          return <span style={{ paddingLeft: 16, fontSize: 12, color: K.muted, overflowWrap: "anywhere" }}>{l.service}</span>;
+        }
+        const r = l.r;
+        const isOpen = open.has(r.key);
+        return (
+          <span data-testid={`ops-cost-row-${r.key}`} style={{ display: "block", color: K.ink, fontWeight: r.kind === "app" ? 600 : 500 }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+              {r.top_services.length > 0 ? (
+                <LinkButton tone="inherit" size="inherit" aria-expanded={isOpen} onClick={() => toggle(r.key)}
+                  style={{ gap: 2, color: r.kind === "untagged" ? K.amber : K.ink, fontWeight: "inherit" }}>
+                  {isOpen ? <ChevronDown size={13} aria-hidden /> : <ChevronRight size={13} aria-hidden />}
+                  {r.label}
+                </LinkButton>
+              ) : (
+                r.label
+              )}
+              {r.hint && <SourceHint source={r.hint} size={11} />}
+            </span>
+            <ShareBar value={r.total_usd} max={max} />
+          </span>
+        );
+      },
+    },
+    {
+      ...hintColumn(cw("awsBill"), cw("awsBillSrc")),
+      cell: ({ row: { original: l } }) =>
+        l.kind === "row" ? money(shownSum(l.r.aws_usd))
+          : l.kind === "service" ? money(l.amount, { fontSize: 12, color: K.muted })
+            : money(shownSum(data.totals.aws_usd), { fontWeight: 600 }),
+    },
+    {
+      ...hintColumn(cw("aiOutside"), cw("aiOutsideSrc")),
+      cell: ({ row: { original: l } }) =>
+        l.kind === "row" ? money(shownSum(l.r.ai_outside_aws_usd), { color: l.r.ai_outside_aws_usd ? K.body : K.muted2 })
+          : l.kind === "total" ? money(totalsAiOutside, { fontWeight: 600 }) : null,
+    },
+    {
+      ...hintColumn(t("colTotal"), COST_SRC.total),
+      cell: ({ row: { original: l } }) =>
+        l.kind === "row" ? money(shownSum(l.r.aws_usd, l.r.ai_outside_aws_usd), { color: K.ink, fontWeight: 600 })
+          : l.kind === "total" ? money(shownSum(data.totals.aws_usd, totalsAiOutside), { color: K.ink, fontWeight: 700 })
+            : null,
+    },
+    {
+      ...hintColumn(monthOnly(data.prev_month, lang), COST_SRC.prevMonth(monthName(data.prev_month, lang))),
+      cell: ({ row: { original: l } }) =>
+        l.kind === "row" ? money(l.r.prev_total_usd, { color: K.muted })
+          : l.kind === "total" ? money(data.totals.prev_total_usd, { color: K.muted }) : null,
+    },
+  ];
   return (
     <>
       {!data.has_aws_data && (
@@ -149,51 +167,18 @@ function CostBody({ data }: { data: CostData }) {
           {t("noAwsYet")}
         </div>
       )}
-      <TableWrap testId="ops-cost-table">
-        <table style={{ width: "100%", minWidth: 520, borderCollapse: "collapse" }}>
-          <thead>
-            <tr>
-              <th style={{ ...TH, whiteSpace: "normal" }}>{t("colApp")}</th>
-              <th data-num-col="" style={{ ...TH, textAlign: "right", whiteSpace: "normal" }}>
-                {cw("awsBill")}
-                <SourceHint source={cw("awsBillSrc")} size={11} />
-              </th>
-              <th data-num-col="" style={{ ...TH, textAlign: "right", whiteSpace: "normal" }}>
-                {cw("aiOutside")}
-                <SourceHint source={cw("aiOutsideSrc")} size={11} />
-              </th>
-              <th data-num-col="" style={{ ...TH, textAlign: "right", whiteSpace: "normal" }}>
-                {t("colTotal")}
-                <SourceHint source={COST_SRC.total} size={11} />
-              </th>
-              <th data-num-col="" style={{ ...TH, textAlign: "right", whiteSpace: "normal" }}>
-                {monthOnly(data.prev_month, lang)}
-                <SourceHint source={COST_SRC.prevMonth(monthName(data.prev_month, lang))} size={11} />
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.rows.map((r) => (
-              <Row key={r.key} r={r} max={max} cells={cells} />
-            ))}
-            <tr data-testid="ops-cost-total">
-              <td style={{ ...TD, fontWeight: 700, color: K.ink, borderBottom: "none" }}>{t("allApps")}</td>
-              <td style={{ ...TD, textAlign: "right", fontWeight: 600, borderBottom: "none" }}>
-                {fmtUsd(shownSum(data.totals.aws_usd))}
-              </td>
-              <td style={{ ...TD, textAlign: "right", fontWeight: 600, borderBottom: "none" }}>
-                {fmtUsd(totalsAiOutside)}
-              </td>
-              <td style={{ ...TD, textAlign: "right", fontWeight: 700, color: K.ink, borderBottom: "none" }}>
-                {fmtUsd(shownSum(data.totals.aws_usd, totalsAiOutside))}
-              </td>
-              <td style={{ ...TD, textAlign: "right", color: K.muted, borderBottom: "none" }}>
-                {fmtUsd(data.totals.prev_total_usd)}
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </TableWrap>
+      <div data-testid="ops-cost-table">
+        <DataTable<CostLine>
+          tableId="ops-cost-by-app"
+          data={lines}
+          columns={columns}
+          getRowId={(l) => l.id}
+          searchable={false}
+          paginate={false}
+          compact
+          tableMinWidth={520}
+        />
+      </div>
       <ul style={{ margin: "10px 0 0", paddingLeft: 16, fontSize: 11, color: K.muted, display: "grid", gap: 2 }}>
         {data.notes.map((n) => (
           <li key={n}>{n}</li>

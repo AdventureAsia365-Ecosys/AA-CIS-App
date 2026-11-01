@@ -26,7 +26,7 @@ import Link from "next/link";
 import { Puzzle, Layers, TrendingUp, GitBranch, FileStack, Radio, BarChart3, ShieldCheck } from "lucide-react";
 import { useT } from "../../_kit/core/useI18n";
 import { M } from "./components.messages";
-import { K, sans } from "../../_kit";
+import { K, ListButton, sans, useMediaQuery } from "../../_kit";
 
 export type SectionKey = "atomize" | "segment" | "score" | "route_hub" | "slate";
 export type SubNavKey = SectionKey | "content_trace" | "platform_stats" | "content_quality";
@@ -44,77 +44,68 @@ export default function SocialContentSubNav({ active, onSelectSection }: {
   onSelectSection?: (key: SectionKey) => void;
 }) {
   const t = useT(M);
+  // < 980px the sub-nav is a sideways-scrolling row above the content (it was a `<style>` media query on a class,
+  // AA-1006: the kit inline preset has no className, so the breakpoint is a hook).
+  const narrow = useMediaQuery(SPLIT_QUERY);
+  const itemStyle = (on: boolean): React.CSSProperties => ({
+    display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 7,
+    background: on ? K.accentTint : "transparent",
+    color: on ? K.accent : K.body, cursor: "pointer", fontFamily: sans,
+    fontSize: 12.5, fontWeight: on ? 700 : 500, textAlign: "left",
+    textDecoration: "none", whiteSpace: narrow ? "nowrap" : undefined, flexShrink: 0, width: narrow ? "auto" : undefined,
+  });
   return (
-    <>
-      {/* Media query shared across every page that mounts this component — <style> tags are
-          global (not scoped to this subtree), so defining it once here covers atom-curation's
-          own ".a527-dash-body" wrapper too without duplicating the block per-page.
-          S241 UI verify (AA-863) — stacked, the wrappers' `align-items: flex-start` sized each
-          child to its fit-content width; a table's min-content (the overflow-x wrapper does not
-          cap it) then pushed the body column wider than the page. `stretch` gives every stacked
-          child exactly the container width on all four pages that use this split. */}
-      <style>{`
-        @media (max-width: 980px) {
-          .a527-inner-sidebar { flex-direction: row !important; overflow-x: auto !important; width: 100% !important; border-right: none !important; border-bottom: 1px solid ${K.line}; position: static !important; }
-          .a527-inner-sidebar button, .a527-inner-sidebar a { white-space: nowrap; }
-          .a527-dash-body { flex-direction: column !important; align-items: stretch !important; }
-        }
-      `}</style>
-      <div className="a527-inner-sidebar" style={{
-        width: 200, flexShrink: 0, display: "flex", flexDirection: "column", gap: 2,
-        background: K.card, border: `1px solid ${K.line}`, borderRadius: 10, padding: 6,
-        position: "sticky", top: 0,
-      }}>
+    <nav data-testid="social-content-subnav" aria-label={t("subNavLabel")} style={{
+      width: narrow ? "100%" : 200, flexShrink: 0, display: "flex", flexDirection: narrow ? "row" : "column", gap: 2,
+      background: K.card, border: `1px solid ${K.line}`, borderRadius: 10, padding: 6, boxSizing: "border-box",
+      position: narrow ? "static" : "sticky", top: 0, overflowX: narrow ? "auto" : undefined,
+    }}>
         {SECTIONS.map(s => {
           const isActive = active === s.key;
-          const itemStyle: React.CSSProperties = {
-            display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 7,
-            border: "none", background: isActive ? K.accentTint : "transparent",
-            color: isActive ? K.accent : K.body, cursor: "pointer", fontFamily: sans,
-            fontSize: 12.5, fontWeight: isActive ? 700 : 500, textAlign: "left",
-            textDecoration: "none",
-          };
           return onSelectSection ? (
-            <button key={s.key} onClick={() => onSelectSection(s.key)} style={itemStyle}>
+            <ListButton key={s.key} onClick={() => onSelectSection(s.key)} aria-current={isActive ? "page" : undefined}
+              style={itemStyle(isActive)}>
               {s.icon}
               <span style={{ flex: 1 }}>{t(s.label)}</span>
-            </button>
+            </ListButton>
           ) : (
-            <Link key={s.key} href={`/admin/atom-curation?section=${s.key}`} style={itemStyle}>
+            <Link key={s.key} href={`/admin/atom-curation?section=${s.key}`} style={itemStyle(isActive)}>
               {s.icon}
               <span style={{ flex: 1 }}>{t(s.label)}</span>
             </Link>
           );
         })}
-        <Link href="/admin/tenant-activity" style={{
-          display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 7,
-          background: active === "content_trace" ? K.accentTint : "transparent",
-          color: active === "content_trace" ? K.accent : K.body, cursor: "pointer", fontFamily: sans,
-          textDecoration: "none", fontSize: 12.5, fontWeight: active === "content_trace" ? 700 : 500,
-        }}>
+        <Link href="/admin/tenant-activity" aria-current={active === "content_trace" ? "page" : undefined}
+          style={itemStyle(active === "content_trace")}>
           <Radio size={15} />
           <span style={{ flex: 1 }}>{t("navContentTrace")}</span>
         </Link>
-        <Link href="/admin/platform-stats" style={{
-          display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 7,
-          background: active === "platform_stats" ? K.accentTint : "transparent",
-          color: active === "platform_stats" ? K.accent : K.body, cursor: "pointer", fontFamily: sans,
-          textDecoration: "none", fontSize: 12.5, fontWeight: active === "platform_stats" ? 700 : 500,
-        }}>
+        <Link href="/admin/platform-stats" aria-current={active === "platform_stats" ? "page" : undefined}
+          style={itemStyle(active === "platform_stats")}>
           <BarChart3 size={15} />
           <span style={{ flex: 1 }}>{t("navA4Quality")}</span>
         </Link>
         {/* AA-769 — every quality signal tenants no longer see (AA-770), for every tenant. */}
-        <Link href="/admin/content-quality" style={{
-          display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 7,
-          background: active === "content_quality" ? K.accentTint : "transparent",
-          color: active === "content_quality" ? K.accent : K.body, cursor: "pointer", fontFamily: sans,
-          textDecoration: "none", fontSize: 12.5, fontWeight: active === "content_quality" ? 700 : 500,
-        }}>
+        <Link href="/admin/content-quality" aria-current={active === "content_quality" ? "page" : undefined}
+          style={itemStyle(active === "content_quality")}>
           <ShieldCheck size={15} />
           <span style={{ flex: 1 }}>{t("navContentQuality")}</span>
         </Link>
-      </div>
-    </>
+    </nav>
+  );
+}
+
+/** Where the Social Content pages stack the sub-nav above the content. */
+const SPLIT_QUERY = "(max-width: 980px)";
+
+/** The sub-nav + content split of the Social Content pages (atom-curation, Content Trace, platform stats, content
+ *  quality): a row on desktop; < 980px a column whose children take the full width (S241 AA-863: a child sized to its
+ *  fit-content width let a table's min-content push the column wider than the page). */
+export function SocialContentSplit({ gap = 20, children }: { gap?: number; children: React.ReactNode }) {
+  const narrow = useMediaQuery(SPLIT_QUERY);
+  return (
+    <div style={{ display: "flex", gap, flexDirection: narrow ? "column" : "row", alignItems: narrow ? "stretch" : "flex-start" }}>
+      {children}
+    </div>
   );
 }

@@ -34,6 +34,7 @@ import {
   useT,
   useToast,
   type ColumnDef,
+  Checkbox, Input, Select,
 } from "../../../_kit";
 import {
   CRM_API,
@@ -284,9 +285,9 @@ function AccessSection({ agency, canWrite, base, onDone }: { agency: TenantSumma
         onDone={(r) => { setOpen(null); onDone(t("locked"), r.body); }}>
         <div style={noteStyle}>{t("lockNote")}</div>
         <Field label={t("reason")} htmlFor="crm-lock-reason">
-          <select id="crm-lock-reason" value={reason} onChange={(e) => setReason(e.target.value)} style={fieldStyle}>
+          <Select id="crm-lock-reason" value={reason} onChange={(e) => setReason(e.target.value)} style={fieldStyle}>
             {crm.lockReasons.map((r) => <option key={r.code} value={r.code}>{r.label}</option>)}
-          </select>
+          </Select>
         </Field>
       </WriteModal>
       <WriteModal<TenantSummary> open={open === "unlock"} onClose={() => setOpen(null)}
@@ -337,7 +338,7 @@ function FirstOwnerSection({ agency, canWrite, base, onDone }: { agency: TenantS
         }}>
         <Field label={t("ownerEmail")} htmlFor="crm-owner-email"
           hint={email && !emailOk ? t("emailBad") : t("emailHint")}>
-          <input id="crm-owner-email" type="email" autoComplete="off" value={email} maxLength={254}
+          <Input id="crm-owner-email" type="email" autoComplete="off" value={email} maxLength={254}
             onChange={(e) => setEmail(e.target.value)} style={fieldStyle} />
         </Field>
       </WriteModal>
@@ -371,7 +372,7 @@ function FeaturesSection({ q, canWrite, base, onDone }: { q: Q<AgencyEntitlement
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 200px), 1fr))", gap: 6 }}>
             {crm.features.map((f) => (
               <label key={f.code} style={{ display: "inline-flex", gap: 8, alignItems: "center", fontSize: 13 }}>
-                <input type="checkbox" checked={chosen.includes(f.code)} disabled={!canWrite}
+                <Checkbox checked={chosen.includes(f.code)} disabled={!canWrite}
                   onChange={() => toggle(f.code)} />
                 {f.label}
               </label>
@@ -473,9 +474,9 @@ function DataRequestsSection({ q, canWrite, active, base, onDone }: {
         submit={(ticket) => crm.write<DataRequestRaised>("POST", `${path}/data-requests`, { kind, ticket_ref: ticket })}
         onDone={() => { setOpen(false); onDone(t("raised")); }}>
         <Field label={t("request")} htmlFor="crm-dr-kind">
-          <select id="crm-dr-kind" value={kind} onChange={(e) => setKind(e.target.value as DataRequestKind)} style={fieldStyle}>
+          <Select id="crm-dr-kind" value={kind} onChange={(e) => setKind(e.target.value as DataRequestKind)} style={fieldStyle}>
             {crm.dataKinds.map((k) => <option key={k.code} value={k.code}>{k.label}</option>)}
-          </select>
+          </Select>
         </Field>
         <div style={noteStyle}>{t("raiseNote")}</div>
       </WriteModal>
@@ -565,14 +566,14 @@ function RecoverySection({ q, canWrite, active, base, onDone }: {
           onDone(t("recoveryStarted", when));
         }}>
         <Field label={t("promote")} htmlFor="crm-rec-candidate">
-          <select id="crm-rec-candidate" value={candidate} onChange={(e) => setCandidate(e.target.value)} style={fieldStyle}>
+          <Select id="crm-rec-candidate" value={candidate} onChange={(e) => setCandidate(e.target.value)} style={fieldStyle}>
             {candidates.map((m) => <option key={m.member_id} value={m.member_id}>{shortId(m.member_id)} ({m.role})</option>)}
-          </select>
+          </Select>
         </Field>
         <Field label={t("reason")} htmlFor="crm-rec-reason">
-          <select id="crm-rec-reason" value={reason} onChange={(e) => setReason(e.target.value)} style={fieldStyle}>
+          <Select id="crm-rec-reason" value={reason} onChange={(e) => setReason(e.target.value)} style={fieldStyle}>
             {crm.recoveryReasons.map((r) => <option key={r.code} value={r.code}>{r.label}</option>)}
-          </select>
+          </Select>
         </Field>
       </WriteModal>
       <WriteModal open={openComplete} onClose={() => setOpenComplete(false)} title={t("completeTitle")}

@@ -4,14 +4,19 @@
 import React, { Suspense, useState, useEffect, useCallback, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { RefreshCw, ChevronDown, ChevronRight, Download, X, Trash2, RotateCcw } from "lucide-react";
-import { A, alpha, serif, sans, mono, SLabel, Badge, LoadingScreen, StatCard, Card, TH, TD } from "../_components/adminUi";
+import { RefreshCw, ChevronRight, Download, X, Trash2, RotateCcw } from "lucide-react";
 import {
   Button,
   PageFrame, PageFrameHeader, PageHeader, useFormat, useIsPhone, useAdminIdentity, useT, type Translator,
+  Checkbox, Input, Select,
+  K, alpha, serif, sans, mono, Eyebrow, Badge, LoadingScreen, KpiTile, Section,
+  KX, type Tone,
+  ButtonGroup, DataTable, Drawer, IconButton, LinkButton, type ColumnDef,
+  Tabs, ToastProvider, useToast,
 } from "../../_kit";
 import { can, staffErrorMessage } from "@/lib/rbac";
 import { RBAC_MESSAGES } from "@/lib/rbac.messages";
+import { pageSortProps, phoneCardColumns } from "@/lib/tableSort";
 import { M } from "./messages";
 
 type T = Translator<typeof M.en>;
@@ -160,26 +165,34 @@ interface VersionDetail {
 }
 
 function scoreColor(s: number | null | undefined): string {
-  if (s == null) return A.muted2;
-  if (s >= SCORE_BANDS.top) return A.green;
-  if (s >= SCORE_BANDS.pass) return A.amber;
-  return A.red;
+  if (s == null) return K.muted2;
+  if (s >= SCORE_BANDS.top) return K.success;
+  if (s >= SCORE_BANDS.pass) return K.amber;
+  return K.danger;
+}
+
+/** The kit tone of a score (the KpiTile value colour), same bands as scoreColor. */
+function scoreTone(s: number | null | undefined): Tone | undefined {
+  if (s == null) return undefined;
+  if (s >= SCORE_BANDS.top) return "success";
+  if (s >= SCORE_BANDS.pass) return "warning";
+  return "danger";
 }
 
 function statusBadge(status: string, t: T) {
-  const color = status === "published" ? "green" : status === "active" ? "blue" : "gray";
+  const color: Tone = status === "published" ? "success" : status === "active" ? "info" : "neutral";
   const text = status === "published" ? t("statusPublished") : status === "active" ? t("statusActive") : status;
-  return <Badge color={color}>{text}</Badge>;
+  return <Badge tone={color}>{text}</Badge>;
 }
 
 function masterStatusBadge(ms: string, t: T) {
   if (ms === "trashed") return (
-    <span style={{ padding: "2px 7px", borderRadius: 10, background: A.redSoft, color: A.red, fontSize: 11, fontWeight: 700 }}>
+    <span style={{ padding: "2px 7px", borderRadius: 10, background: K.dangerSoft, color: K.danger, fontSize: 11, fontWeight: 700 }}>
       {t("trashedBadge")}
     </span>
   );
   if (ms === "inactive") return (
-    <span style={{ padding: "2px 7px", borderRadius: 10, background: "var(--aa-neutral-bg)", color: "var(--aa-neutral-fg2)", fontSize: 11, fontWeight: 600 }}>
+    <span style={{ padding: "2px 7px", borderRadius: 10, background: K.neutralBg, color: K.neutralFg, fontSize: 11, fontWeight: 600 }}>
       {t("inactiveBadge")}
     </span>
   );
@@ -188,20 +201,20 @@ function masterStatusBadge(ms: string, t: T) {
 
 function BrandAuditBadge({ status, fixPassApplied, codes }: { status: string | null; fixPassApplied: boolean; codes?: string[] }) {
   const t = useT(M);
-  if (!status) return <span style={{ color: A.muted2, fontSize: 11 }}>—</span>;
+  if (!status) return <span style={{ color: K.muted2, fontSize: 11 }}>—</span>;
   if (status === "pass") return (
-    <span style={{ padding: "2px 7px", borderRadius: 10, background: A.greenSoft, color: A.green, fontSize: 11, fontWeight: 600 }}>{t("auditPass")}</span>
+    <span style={{ padding: "2px 7px", borderRadius: 10, background: K.successSoft, color: K.success, fontSize: 11, fontWeight: 600 }}>{t("auditPass")}</span>
   );
   if (status === "flagged" && fixPassApplied) return (
-    <span title={codes?.join(", ")} style={{ padding: "2px 7px", borderRadius: 10, background: "var(--aa-amber-bg2)", color: "var(--aa-amber-strong)", fontSize: 11, fontWeight: 600, cursor: codes?.length ? "help" : "default" }}>{t("auditFixed")}</span>
+    <span title={codes?.join(", ")} style={{ padding: "2px 7px", borderRadius: 10, background: K.amberSoft, color: K.amber, fontSize: 11, fontWeight: 600, cursor: codes?.length ? "help" : "default" }}>{t("auditFixed")}</span>
   );
   if (status === "flagged") return (
-    <span title={codes?.join(", ")} style={{ padding: "2px 7px", borderRadius: 10, background: A.redSoft, color: A.red, fontSize: 11, fontWeight: 600, cursor: codes?.length ? "help" : "default" }}>{t("auditFlagged")}</span>
+    <span title={codes?.join(", ")} style={{ padding: "2px 7px", borderRadius: 10, background: K.dangerSoft, color: K.danger, fontSize: 11, fontWeight: 600, cursor: codes?.length ? "help" : "default" }}>{t("auditFlagged")}</span>
   );
   if (status === "manual_check") return (
-    <span style={{ padding: "2px 7px", borderRadius: 10, background: "var(--aa-amber-bg3)", color: "var(--aa-amber-orange)", fontSize: 11, fontWeight: 600 }}>{t("auditManual")}</span>
+    <span style={{ padding: "2px 7px", borderRadius: 10, background: K.amberSoft, color: K.amber, fontSize: 11, fontWeight: 600 }}>{t("auditManual")}</span>
   );
-  return <span style={{ color: A.muted2, fontSize: 11 }}>—</span>;
+  return <span style={{ color: K.muted2, fontSize: 11 }}>—</span>;
 }
 
 // ── Score Bar ─────────────────────────────────────────────────────────────────
@@ -213,14 +226,14 @@ function ScoreBar({ label, value, tooltip }: { label: string; value: number | nu
     <div style={{ marginBottom: 6 }}>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
         <span
-          style={{ fontSize: 11, color: A.muted, cursor: tooltip ? "help" : undefined }}
+          style={{ fontSize: 11, color: K.muted, cursor: tooltip ? "help" : undefined }}
           title={tooltip}
         >{label}</span>
         <span style={{ fontSize: 11, fontWeight: 700, color, fontFamily: mono }}>
           {value != null ? value.toFixed(1) : "—"}
         </span>
       </div>
-      <div style={{ height: 4, background: A.line, borderRadius: 2 }}>
+      <div style={{ height: 4, background: K.line, borderRadius: 2 }}>
         <div style={{ height: 4, width: `${pct}%`, background: color, borderRadius: 2, transition: "width .3s" }} />
       </div>
     </div>
@@ -250,10 +263,9 @@ function DfsCompareSection({ seed, ideas: ideasRaw, paa: paaRaw, related: relate
   const t = useT(M);
   const [sortKey, setSortKey] = useState<DfsSortKey>("volume");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
-  function onSort(k: DfsSortKey) {
-    if (k === sortKey) setSortDir(d => (d === "asc" ? "desc" : "asc"));
-    else { setSortKey(k); setSortDir(k === "keyword" ? "asc" : "desc"); }
-  }
+  // A header click: the sorted column flips, another one starts ascending (keyword) or descending (numbers).
+  const sortProps = pageSortProps<DfsSortKey>({ key: sortKey, dir: sortDir },
+    (s) => { setSortKey(s.key); setSortDir(s.dir); }, (k) => (k === "keyword" ? "asc" : "desc"));
   const sorted = useMemo(() => {
     const arr = [...ideas];
     const dir = sortDir === "asc" ? 1 : -1;
@@ -273,54 +285,47 @@ function DfsCompareSection({ seed, ideas: ideasRaw, paa: paaRaw, related: relate
 
   if (ideas.length === 0 && paa.length === 0 && related.length === 0) return null;
 
-  const arrow = (k: DfsSortKey) => (sortKey === k ? (sortDir === "asc" ? " ▲" : " ▼") : "");
-  const th = (k: DfsSortKey, align: "left" | "right"): React.CSSProperties => ({
-    padding: "4px 8px", textAlign: align, cursor: "pointer", userSelect: "none",
-    fontSize: 9, fontWeight: 700, color: sortKey === k ? A.ink : A.muted,
-    textTransform: "uppercase" as const, letterSpacing: "0.08em",
-  });
-
   return (
-    <div style={{ borderBottom: `1px solid ${A.line}` }}>
-      <div style={{ padding: "5px 20px", background: A.line2, fontSize: 10, fontWeight: 700, textTransform: "uppercase" as const, letterSpacing: "0.12em", color: A.muted }}>
-        DataForSEO <span style={{ textTransform: "none" as const, fontWeight: 400, color: A.muted2 }}>{t("sharedPerSeed")}</span>
+    <div style={{ borderBottom: `1px solid ${K.line}` }}>
+      <div style={{ padding: "5px 20px", background: K.line2, fontSize: 10, fontWeight: 700, textTransform: "uppercase" as const, letterSpacing: "0.12em", color: K.muted }}>
+        DataForSEO <span style={{ textTransform: "none" as const, fontWeight: 400, color: K.muted2 }}>{t("sharedPerSeed")}</span>
       </div>
       <div style={{ padding: "8px 20px", fontSize: 12 }}>
-        <div style={{ marginBottom: 6, color: A.muted }}>{t("seed")} <strong style={{ color: A.ink }}>{seed || "—"}</strong></div>
+        <div style={{ marginBottom: 6, color: K.muted }}>{t("seed")} <strong style={{ color: K.ink }}>{seed || "—"}</strong></div>
         {ideas.length > 0 && (
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, marginBottom: 8 }}>
-            <thead>
-              <tr style={{ background: A.line2 }}>
-                <th style={th("keyword", "left")} onClick={() => onSort("keyword")}>{t("colKeyword")}{arrow("keyword")}</th>
-                <th style={th("volume", "right")} onClick={() => onSort("volume")}>{t("colVol")}{arrow("volume")}</th>
-                <th style={th("competition", "right")} onClick={() => onSort("competition")}>{t("colComp")}{arrow("competition")}</th>
-                <th style={th("cpc", "right")} onClick={() => onSort("cpc")}>{t("colCpc")}{arrow("cpc")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((k, i) => (
-                <tr key={`${k.keyword}-${i}`} style={{ borderTop: `1px solid ${A.line}`, background: i % 2 === 0 ? A.card : A.bg }}>
-                  <td style={{ padding: "4px 8px", color: A.ink }}>{k.keyword}</td>
-                  <td style={{ padding: "4px 8px", textAlign: "right", fontFamily: mono, color: A.body }}>{fmtVol(k.search_volume)}</td>
-                  <td style={{ padding: "4px 8px", textAlign: "right", color: A.muted }}>
-                    {(k.competition || "—")}{k.competition_index != null ? ` (${k.competition_index})` : ""}
-                  </td>
-                  <td style={{ padding: "4px 8px", textAlign: "right", fontFamily: mono, color: A.gold }}>{fmtCpcVal(k.cpc)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div style={{ marginBottom: 8 }}>
+            {/* AA-1006: a kit DataTable on the panel's own sort (each sortable column needs an accessor to be clickable). */}
+            <DataTable<KeywordIdea & { rowId: string }>
+              tableId="master-dfs-ideas"
+              data={sorted.map((k, i) => ({ ...k, rowId: `${k.keyword}-${i}` }))}
+              getRowId={(k) => k.rowId}
+              searchable={false}
+              paginate={false}
+              compact
+              {...sortProps}
+              columns={[
+                { id: "keyword", header: t("colKeyword"), accessorFn: (k) => k.keyword, cell: ({ row: { original: k } }) => <span style={{ color: K.ink }}>{k.keyword}</span> },
+                { id: "volume", header: t("colVol"), meta: { align: "right" }, accessorFn: (k) => k.search_volume ?? -1,
+                  cell: ({ row: { original: k } }) => <span style={{ fontFamily: mono, color: K.body }}>{fmtVol(k.search_volume)}</span> },
+                { id: "competition", header: t("colComp"), meta: { align: "right" }, accessorFn: (k) => k.competition_index ?? -1, cell: ({ row: { original: k } }) => (
+                  <span style={{ color: K.muted }}>{(k.competition || "—")}{k.competition_index != null ? ` (${k.competition_index})` : ""}</span>
+                ) },
+                { id: "cpc", header: t("colCpc"), meta: { align: "right" }, accessorFn: (k) => k.cpc ?? -1,
+                  cell: ({ row: { original: k } }) => <span style={{ fontFamily: mono, color: K.accent }}>{fmtCpcVal(k.cpc)}</span> },
+              ]}
+            />
+          </div>
         )}
         {paa.length > 0 && (
           <div style={{ marginBottom: 6 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase" as const, letterSpacing: "0.08em", color: A.muted, marginBottom: 2 }}>{t("peopleAlsoAsk")}</div>
-            {paa.map((q, i) => <div key={i} style={{ color: A.body, lineHeight: 1.5 }}>• {q}</div>)}
+            <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase" as const, letterSpacing: "0.08em", color: K.muted, marginBottom: 2 }}>{t("peopleAlsoAsk")}</div>
+            {paa.map((q, i) => <div key={i} style={{ color: K.body, lineHeight: 1.5 }}>• {q}</div>)}
           </div>
         )}
         {related.length > 0 && (
           <div>
-            <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase" as const, letterSpacing: "0.08em", color: A.muted, marginBottom: 2 }}>{t("relatedKeywords")}</div>
-            <div style={{ color: A.body, lineHeight: 1.6 }}>{related.join(", ")}</div>
+            <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase" as const, letterSpacing: "0.08em", color: K.muted, marginBottom: 2 }}>{t("relatedKeywords")}</div>
+            <div style={{ color: K.body, lineHeight: 1.6 }}>{related.join(", ")}</div>
           </div>
         )}
       </div>
@@ -336,8 +341,9 @@ interface PanelState {
   loading: boolean;
 }
 
-const PANEL_COLORS = [A.gold, "var(--aa-blue)", "var(--aa-green-strong)", "var(--aa-purple-strong)"];
-const PANEL_BG     = ["var(--aa-panel-bg0)", "var(--aa-panel-bg1)", "var(--aa-panel-bg2)", "var(--aa-panel-bg3)"];
+const PANEL_COLORS = [K.accent, K.info, K.success, K.purple];
+// AA-1006: each compare panel is tinted with its own colour (were four fixed panel-bg tokens).
+const PANEL_BG     = PANEL_COLORS.map((c) => alpha(c, 6));
 
 // [field, its label key in messages.ts]
 const CONTENT_FIELDS: [keyof VersionDetail, keyof typeof M.en][] = [
@@ -477,9 +483,9 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
   }
 
   function cellVal(panel: PanelState, key: keyof VersionDetail): React.ReactNode {
-    if (panel.loading) return <div style={{ padding: "10px 20px", fontSize: 12, color: A.muted2 }}>{t("loading")}</div>;
+    if (panel.loading) return <div style={{ padding: "10px 20px", fontSize: 12, color: K.muted2 }}>{t("loading")}</div>;
     const v = panel.data;
-    if (!v) return <div style={{ padding: "10px 20px", fontSize: 12, color: A.muted2 }}>—</div>;
+    if (!v) return <div style={{ padding: "10px 20px", fontSize: 12, color: K.muted2 }}>—</div>;
     const raw: unknown = v[key];
     let display: React.ReactNode;
 
@@ -491,17 +497,17 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
       );
     } else if (key === "seo_title") {
       const len = typeof raw === "string" ? raw.length : 0;
-      display = <><span>{(raw as string) || "—"}</span>{typeof raw === "string" && <span style={{ marginLeft: 6, fontSize: 10, color: A.muted2 }}>{t("chars", len)}</span>}</>;
+      display = <><span>{(raw as string) || "—"}</span>{typeof raw === "string" && <span style={{ marginLeft: 6, fontSize: 10, color: K.muted2 }}>{t("chars", len)}</span>}</>;
     } else if (key === "seo_meta") {
       const len = typeof raw === "string" ? raw.length : 0;
       const over = len > 170;
-      display = <><span style={{ color: over ? A.red : "inherit" }}>{(raw as string) || "—"}</span>{typeof raw === "string" && <span style={{ marginLeft: 6, fontSize: 10, color: over ? A.red : A.muted2 }}>{t("chars", len)}{over ? " (>170)" : ""}</span>}</>;
+      display = <><span style={{ color: over ? K.danger : "inherit" }}>{(raw as string) || "—"}</span>{typeof raw === "string" && <span style={{ marginLeft: 6, fontSize: 10, color: over ? K.danger : K.muted2 }}>{t("chars", len)}{over ? " (>170)" : ""}</span>}</>;
     } else {
       display = <span>{typeof raw === "string" ? raw : raw == null ? "—" : String(raw)}</span>;
     }
 
     return (
-      <div style={{ padding: "10px 20px", fontSize: 13, color: raw ? A.body : A.muted2, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
+      <div style={{ padding: "10px 20px", fontSize: 13, color: raw ? K.body : K.muted2, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
         {display}
       </div>
     );
@@ -512,71 +518,43 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
   return (
     <div style={{
       position: "fixed", top: 0, left: 240, width: "calc(100vw - 240px)", height: "100vh",
-      background: A.card, zIndex: 300, display: "flex", flexDirection: "column",
-      boxShadow: "-4px 0 24px rgba(0,0,0,0.12)",
+      background: K.card, zIndex: 300, display: "flex", flexDirection: "column",
+      boxShadow: KX.shadowLg,
     }}>
       {/* Modal header */}
       <div style={{
-        padding: "14px 24px", borderBottom: `1px solid ${A.line}`,
+        padding: "14px 24px", borderBottom: `1px solid ${K.line}`,
         display: "flex", alignItems: "center", justifyContent: "space-between",
-        flexShrink: 0, background: A.card, zIndex: 10,
+        flexShrink: 0, background: K.card, zIndex: 10,
       }}>
         <div>
-          <div style={{ fontFamily: serif, fontSize: 16, fontWeight: 500, color: A.ink }}>
+          <div style={{ fontFamily: serif, fontSize: 16, fontWeight: 500, color: K.ink }}>
             {t("compareTitle", tourName)}
           </div>
-          <div style={{ fontSize: 12, color: A.muted, marginTop: 2 }}>
+          <div style={{ fontSize: 12, color: K.muted, marginTop: 2 }}>
             {t("compareHint", n)}
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <button
-            onClick={() => exportComparison("xlsx")}
-            disabled={exporting}
-            style={{
-              padding: "6px 12px", fontSize: 12, fontWeight: 600,
-              border: `1px solid ${A.line}`, borderRadius: 6,
-              background: A.card, color: A.body, cursor: exporting ? "not-allowed" : "pointer",
-              opacity: exporting ? 0.5 : 1,
-            }}
-          >
+          <Button size="sm" variant="ghost" onClick={() => exportComparison("xlsx")} disabled={exporting}>
             {exporting ? "…" : t("exportComparisonXlsx")}
-          </button>
-          <button
-            onClick={() => exportComparison("csv")}
-            disabled={exporting}
-            style={{
-              padding: "6px 12px", fontSize: 12, fontWeight: 600,
-              border: `1px solid ${A.line}`, borderRadius: 6,
-              background: A.card, color: A.body, cursor: exporting ? "not-allowed" : "pointer",
-              opacity: exporting ? 0.5 : 1,
-            }}
-          >
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => exportComparison("csv")} disabled={exporting}>
             CSV
-          </button>
+          </Button>
           {n < 4 && (
-            <button
-              onClick={addPanel}
-              disabled={allVersions.length === 0}
-              style={{
-                padding: "6px 12px", fontSize: 12, fontWeight: 600,
-                border: `1px solid ${A.gold}`, borderRadius: 6,
-                background: A.goldTint, color: A.gold,
-                cursor: allVersions.length === 0 ? "not-allowed" : "pointer",
-                opacity: allVersions.length === 0 ? 0.5 : 1,
-              }}
-            >
+            <Button size="sm" variant="dashed" onClick={addPanel} disabled={allVersions.length === 0}>
               {t("addPanel")}
-            </button>
+            </Button>
           )}
-          <button onClick={onClose} aria-label={t("close")} style={{ background: "none", border: "none", cursor: "pointer", color: A.muted2, padding: 6 }}>
+          <IconButton variant="plain" size="lg" onClick={onClose} label={t("close")}>
             <X size={20} />
-          </button>
+          </IconButton>
         </div>
       </div>
 
       {error && (
-        <div style={{ padding: "8px 24px", background: A.redSoft, color: A.red, fontSize: 12, flexShrink: 0 }}>
+        <div style={{ padding: "8px 24px", background: K.dangerSoft, color: K.danger, fontSize: 12, flexShrink: 0 }}>
           {error}
         </div>
       )}
@@ -590,18 +568,18 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
           return (
             <div key={idx} style={{
               display: "flex", flexDirection: "column", overflow: "hidden",
-              borderRight: idx < n - 1 ? `1px solid ${A.line}` : undefined,
+              borderRight: idx < n - 1 ? `1px solid ${K.line}` : undefined,
             }}>
               <div style={{ overflowY: "auto", flex: 1, minHeight: 0 }}>
                 {/* Sticky column header */}
-                <div style={{ padding: "12px 20px", background: panelBg, position: "sticky", top: 0, zIndex: 5, borderBottom: `1px solid ${A.line}` }}>
+                <div style={{ padding: "12px 20px", background: panelBg, position: "sticky", top: 0, zIndex: 5, borderBottom: `1px solid ${K.line}` }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                    <select
+                    <Select
                       value={panel.versionNum}
                       onChange={e => changePanel(idx, parseInt(e.target.value))}
                       style={{
                         padding: "3px 8px", fontSize: 12, fontWeight: 700,
-                        background: color, color: "var(--aa-on-solid)",
+                        background: color, color: KX.onSolid,
                         border: "none", borderRadius: 10, cursor: "pointer",
                       }}
                     >
@@ -609,73 +587,60 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
                       {allVersions.map(av => (
                         <option key={av.version_num} value={av.version_num}>v{av.version_num}</option>
                       ))}
-                    </select>
+                    </Select>
                     {v && (
-                      <span style={{ fontSize: 12, color: A.muted }}>{modelLabel(v.model_id)}</span>
+                      <span style={{ fontSize: 12, color: K.muted }}>{modelLabel(v.model_id)}</span>
                     )}
                     {Number(panel.versionNum) > 0 && (
-                      <button
-                        onClick={() => exportVersionDocx(tourId, Number(panel.versionNum))}
-                        disabled={exporting}
-                        title={t("exportDocx")}
-                        style={{
-                          padding: "2px 8px", fontSize: 11, fontWeight: 600,
-                          border: `1px solid ${A.line}`, borderRadius: 6,
-                          background: A.card, color: A.body,
-                          cursor: exporting ? "not-allowed" : "pointer",
-                        }}
-                      >DOCX</button>
+                      <Button size="sm" variant="ghost" onClick={() => exportVersionDocx(tourId, Number(panel.versionNum))}
+                        disabled={exporting} title={t("exportDocx")} style={{ padding: "2px 8px" }}>
+                        DOCX
+                      </Button>
                     )}
                     {v?.created_at && (
-                      <span style={{ fontSize: 11, color: A.muted2, marginLeft: "auto" }}>{formatDate(v.created_at)}</span>
+                      <span style={{ fontSize: 11, color: K.muted2, marginLeft: "auto" }}>{formatDate(v.created_at)}</span>
                     )}
                     {n > 2 && (
-                      <button
-                        onClick={() => removePanel(idx)}
-                        title={t("removePanel")}
-                        aria-label={t("removePanel")}
-                        style={{
-                          marginLeft: v?.created_at ? 0 : "auto",
-                          background: "none", border: "none", cursor: "pointer",
-                          color: A.muted, padding: "0 4px", fontSize: 16, lineHeight: 1,
-                        }}
-                      >×</button>
+                      <IconButton variant="plain" size="xs" onClick={() => removePanel(idx)} label={t("removePanel")}
+                        style={{ marginLeft: v?.created_at ? 0 : "auto" }}>
+                        <X size={14} />
+                      </IconButton>
                     )}
                   </div>
 
                   {/* Score bars */}
                   {v ? (
-                    <div style={{ padding: "8px 0", borderTop: `1px solid ${A.line}`, marginTop: 4 }}>
+                    <div style={{ padding: "8px 0", borderTop: `1px solid ${K.line}`, marginTop: 4 }}>
                       <ScoreBar label={t("overallGate")} value={v.quality_score} tooltip={t("overallGateTip")} />
                       <ScoreBar label={t("brand")} value={v.score_brand} />
                       <ScoreBar label={t("seo")} value={v.score_seo} />
                       <ScoreBar label={t("structure")} value={v.score_structure} />
                       <ScoreBar label={t("qualityValidate")} value={v.score_quality} tooltip={t("qualityValidateTip")} />
                       {/* AA-220 (G2): clarify gate vs sub-score so they're not read as the same metric */}
-                      <div style={{ fontSize: 10, color: A.muted2, lineHeight: 1.5, marginTop: 4 }}>
+                      <div style={{ fontSize: 10, color: K.muted2, lineHeight: 1.5, marginTop: 4 }}>
                         {t("gateNote")}
                       </div>
                     </div>
                   ) : (
-                    <div style={{ fontSize: 12, color: A.muted2, padding: "8px 0" }}>
+                    <div style={{ fontSize: 12, color: K.muted2, padding: "8px 0" }}>
                       {panel.loading ? t("loading") : t("noData")}
                     </div>
                   )}
 
                   {/* Rewrite config */}
                   {v && (
-                    <div style={{ padding: "8px 0", borderTop: `1px solid ${A.line}`, marginTop: 4, fontSize: 11 }}>
-                      <div style={{ fontWeight: 600, color: A.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{t("rewriteConfig")}</div>
-                      <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "3px 8px", color: A.body }}>
-                        <span style={{ color: A.muted }}>{t("model")}</span>
+                    <div style={{ padding: "8px 0", borderTop: `1px solid ${K.line}`, marginTop: 4, fontSize: 11 }}>
+                      <div style={{ fontWeight: 600, color: K.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{t("rewriteConfig")}</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "3px 8px", color: K.body }}>
+                        <span style={{ color: K.muted }}>{t("model")}</span>
                         <span style={{ fontFamily: mono }}>{modelLabel(v.model_id)}</span>
-                        <span style={{ color: A.muted }}>{t("brand")}</span>
+                        <span style={{ color: K.muted }}>{t("brand")}</span>
                         <span>{v.brand_name || t("brandDefault")}</span>
-                        <span style={{ color: A.muted }}>{t("seoMode")}</span>
+                        <span style={{ color: K.muted }}>{t("seoMode")}</span>
                         <span>{v.seo_mode || t("seoStandard")}</span>
-                        <span style={{ color: A.muted }}>DataForSEO</span>
-                        <span style={{ color: v.dataforseo_used ? A.green : A.muted2 }}>{v.dataforseo_used ? t("live") : t("mock")}</span>
-                        <span style={{ color: A.muted }}>{t("cost")}</span>
+                        <span style={{ color: K.muted }}>DataForSEO</span>
+                        <span style={{ color: v.dataforseo_used ? K.success : K.muted2 }}>{v.dataforseo_used ? t("live") : t("mock")}</span>
+                        <span style={{ color: K.muted }}>{t("cost")}</span>
                         <span style={{ fontFamily: mono }}>{v.llm_cost_usd != null ? `$${v.llm_cost_usd.toFixed(4)}` : "—"}</span>
                       </div>
                     </div>
@@ -683,8 +648,8 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
 
                   {/* Brand Audit */}
                   {v && v.brand_audit_status && (
-                    <div style={{ padding: "8px 0", borderTop: `1px solid ${A.line}`, marginTop: 4, fontSize: 11 }}>
-                      <div style={{ fontWeight: 600, color: A.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{t("brandAudit")}</div>
+                    <div style={{ padding: "8px 0", borderTop: `1px solid ${K.line}`, marginTop: 4, fontSize: 11 }}>
+                      <div style={{ fontWeight: 600, color: K.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{t("brandAudit")}</div>
                       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
                         <BrandAuditBadge
                           status={v.brand_audit_status}
@@ -693,14 +658,14 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
                         />
                       </div>
                       {v.brand_audit_codes && v.brand_audit_codes.length > 0 && (
-                        <div style={{ color: A.muted, lineHeight: 1.6 }}>
+                        <div style={{ color: K.muted, lineHeight: 1.6 }}>
                           {v.brand_audit_codes.map(code => (
                             <div key={code} style={{ fontFamily: mono }}>• {code}</div>
                           ))}
                         </div>
                       )}
                       {v.fix_pass_applied && v.fix_pass_fields && v.fix_pass_fields.length > 0 && (
-                        <div style={{ color: "var(--aa-blue)", marginTop: 4 }}>
+                        <div style={{ color: K.info, marginTop: 4 }}>
                           {t("fixed", v.fix_pass_fields.join(", "))}
                         </div>
                       )}
@@ -709,37 +674,37 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
 
                   {/* AA-219: Judge (metadata.judge) */}
                   {v && v.judge && (
-                    <div style={{ padding: "8px 0", borderTop: `1px solid ${A.line}`, marginTop: 4, fontSize: 11 }}>
-                      <div style={{ fontWeight: 600, color: A.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{t("judge")}</div>
+                    <div style={{ padding: "8px 0", borderTop: `1px solid ${K.line}`, marginTop: 4, fontSize: 11 }}>
+                      <div style={{ fontWeight: 600, color: K.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{t("judge")}</div>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 4 }}>
-                        {v.judge.brand_fit != null && <Badge color="gold">{t("judgeFit", v.judge.brand_fit.toFixed(1))}</Badge>}
-                        {v.judge.distinct != null && <Badge color="gold">{t("judgeDistinct", v.judge.distinct.toFixed(1))}</Badge>}
+                        {v.judge.brand_fit != null && <Badge tone="accent">{t("judgeFit", v.judge.brand_fit.toFixed(1))}</Badge>}
+                        {v.judge.distinct != null && <Badge tone="accent">{t("judgeDistinct", v.judge.distinct.toFixed(1))}</Badge>}
                         {v.judge.mission_present != null && (
-                          <Badge color={v.judge.mission_present ? "green" : "red"}>
+                          <Badge tone={v.judge.mission_present ? "success" : "danger"}>
                             {v.judge.mission_present ? t("missionYes") : t("missionNo")}
                           </Badge>
                         )}
-                        {v.judge.judge_score != null && <Badge color="blue">{t("judgeScore", v.judge.judge_score.toFixed(1))}</Badge>}
+                        {v.judge.judge_score != null && <Badge tone="info">{t("judgeScore", v.judge.judge_score.toFixed(1))}</Badge>}
                       </div>
-                      {v.judge.feedback && <div style={{ color: A.body, lineHeight: 1.5 }}>{v.judge.feedback}</div>}
+                      {v.judge.feedback && <div style={{ color: K.body, lineHeight: 1.5 }}>{v.judge.feedback}</div>}
                     </div>
                   )}
 
                   {/* AA-219: failure codes + revalidate */}
                   {v && (v.failure_codes.length > 0 || v.revalidate_ran) && (
-                    <div style={{ padding: "8px 0", borderTop: `1px solid ${A.line}`, marginTop: 4, fontSize: 11 }}>
-                      <div style={{ fontWeight: 600, color: A.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{t("validation")}</div>
+                    <div style={{ padding: "8px 0", borderTop: `1px solid ${K.line}`, marginTop: 4, fontSize: 11 }}>
+                      <div style={{ fontWeight: 600, color: K.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{t("validation")}</div>
                       {v.failure_codes.length > 0 && (
-                        <div style={{ color: A.red, lineHeight: 1.6, marginBottom: 4 }}>
+                        <div style={{ color: K.danger, lineHeight: 1.6, marginBottom: 4 }}>
                           {v.failure_codes.map(c => <div key={c} style={{ fontFamily: mono }}>• {c}</div>)}
                         </div>
                       )}
                       {v.revalidate_ran ? (
-                        <Badge color={v.revalidate_passed ? "green" : "red"}>
+                        <Badge tone={v.revalidate_passed ? "success" : "danger"}>
                           {v.revalidate_passed ? t("revalidated") : t("revalFailed")}
                         </Badge>
                       ) : (
-                        <span style={{ color: A.muted2 }}>—</span>
+                        <span style={{ color: K.muted2 }}>—</span>
                       )}
                     </div>
                   )}
@@ -747,11 +712,11 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
 
                 {/* Keywords */}
                 {v && v.top_keywords.length > 0 && (
-                  <div style={{ borderBottom: `1px solid ${A.line}` }}>
-                    <div style={{ padding: "5px 20px", background: A.line2, fontSize: 10, fontWeight: 700, textTransform: "uppercase" as const, letterSpacing: "0.12em", color: A.muted }}>
+                  <div style={{ borderBottom: `1px solid ${K.line}` }}>
+                    <div style={{ padding: "5px 20px", background: K.line2, fontSize: 10, fontWeight: 700, textTransform: "uppercase" as const, letterSpacing: "0.12em", color: K.muted }}>
                       {t("keywords")}
                     </div>
-                    <div style={{ padding: "8px 20px", fontSize: 12, color: A.body }}>
+                    <div style={{ padding: "8px 20px", fontSize: 12, color: K.body }}>
                       {v.top_keywords.slice(0, 15).join(", ")}
                     </div>
                   </div>
@@ -771,16 +736,16 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
                 {CONTENT_FIELDS.map(([key, label]) => {
                   const diff = isFieldDiff(idx, key);
                   return (
-                    <div key={key} style={{ borderBottom: `1px solid ${A.line}`, background: diff ? "var(--aa-amber-bg7)" : "transparent" }}>
+                    <div key={key} style={{ borderBottom: `1px solid ${K.line}`, background: diff ? K.amberSoft : "transparent" }}>
                       <div style={{
                         padding: "5px 20px",
-                        background: diff ? "var(--aa-amber-bg8)" : A.line2,
+                        background: diff ? K.amberSoft : K.line2,
                         fontSize: 10, fontWeight: 700,
-                        textTransform: "uppercase" as const, letterSpacing: "0.12em", color: A.muted,
+                        textTransform: "uppercase" as const, letterSpacing: "0.12em", color: K.muted,
                         display: "flex", alignItems: "center", gap: 6,
                       }}>
                         {t(label)}
-                        {diff && <span style={{ color: "var(--aa-amber-orange)", fontSize: 9 }}>{t("diff")}</span>}
+                        {diff && <span style={{ color: K.amber, fontSize: 9 }}>{t("diff")}</span>}
                       </div>
                       {cellVal(panel, key)}
                     </div>
@@ -801,7 +766,10 @@ export default function MasterContentPage() {
   // useSearchParams() needs a Suspense boundary in the App Router.
   return (
     <Suspense fallback={null}>
-      <MasterContentPageInner />
+      {/* AA-1006: the page's confirmations are kit toasts (painted above the versions Drawer). */}
+      <ToastProvider>
+        <MasterContentPageInner />
+      </ToastProvider>
     </Suspense>
   );
 }
@@ -827,6 +795,8 @@ function MasterContentPageInner() {
   const [compareOpen, setCompareOpen]   = useState(false);
   const isPhone = useIsPhone();
   const [expandedTours, setExpandedTours] = useState<Set<string>>(new Set());
+  // AA-1006: the tour whose versions are open in the Drawer (the table row used to expand in place).
+  const [versionsTour, setVersionsTour] = useState<{ tourId: string; tourName: string } | null>(null);
   const [tourVersions, setTourVersions] = useState<Record<string, TourVersion[]>>({});
   const [versionLoading, setVersionLoading] = useState<Record<string, boolean>>({});
   const [promoting, setPromoting]       = useState<string | null>(null);
@@ -845,7 +815,7 @@ function MasterContentPageInner() {
   const [restoring, setRestoring]       = useState<string | null>(null);
   const [toggling, setToggling]         = useState<string | null>(null);
   const [masterStatusFilter, setMasterStatusFilter] = useState<string>("");
-  const [toast, setToast]               = useState("");
+  const toast = useToast();
 
   const [compareVersionSel, setCompareVersionSel] = useState<Record<string, Set<number>>>({});
   const [compareVersionOpen, setCompareVersionOpen] = useState<{ tourId: string; tourName: string; vNums: [number, number] } | null>(null);
@@ -898,11 +868,10 @@ function MasterContentPageInner() {
 
   function refresh() { refetch(); }
 
-  function toggleSort(key: typeof sortKey) {
-    if (sortKey === key) setSortDir(d => (d === "asc" ? "desc" : "asc"));
-    else { setSortKey(key); setSortDir(key === "quality_score" ? "desc" : "asc"); }
-    setPage(1);
-  }
+  // AA-718 server sort on a header click: the sorted column flips, another one starts ascending (the score
+  // descending); back to page 1.
+  const sortProps = pageSortProps<typeof sortKey>({ key: sortKey, dir: sortDir },
+    (s) => { setSortKey(s.key); setSortDir(s.dir); setPage(1); }, (k) => (k === "quality_score" ? "desc" : "asc"));
 
   const tours = data?.rewritten_tours ?? [];
   const summary = data?.summary;
@@ -920,6 +889,115 @@ function MasterContentPageInner() {
 
   // The page IS the server page now — no client slice.
   const paginated = filtered;
+  type MasterRow = (typeof paginated)[number];
+
+  /** The lifecycle and view actions of one tour (the same buttons in the table row and on a phone card). */
+  const rowActions = (row: MasterRow) => (
+    <ButtonGroup label={tr("actionsFor", row.tour_name)} gap="sm">
+      <Button size="sm" variant="ghost" onClick={() => { if (row.tour_id) { setDetailTourId(row.tour_id); setDetailTourName(row.tour_name); } }}>
+        {tr("view")}
+      </Button>
+      {row.tour_id && row.master_status !== "trashed" && (
+        <Button size="sm" variant="secondary" aria-expanded={versionsTour?.tourId === row.tour_id}
+          onClick={() => openVersions(row.tour_id!, row.tour_name)}>
+          <ChevronRight size={11} /> {tr("versions")}
+        </Button>
+      )}
+      {canLifecycle && row.tour_id && row.master_status === "active" && (
+        <Button size="sm" variant="ghost" onClick={() => toggleMasterStatus(row.tour_id!, row.tour_name, "inactive")}
+          disabled={toggling === row.tour_id} title={tr("setInactiveTip")} style={{ color: K.amber }}>
+          {toggling === row.tour_id ? "…" : tr("setInactive")}
+        </Button>
+      )}
+      {canLifecycle && row.tour_id && row.master_status === "inactive" && (
+        <Button size="sm" variant="ghost" onClick={() => toggleMasterStatus(row.tour_id!, row.tour_name, "active")}
+          disabled={toggling === row.tour_id} title={tr("setActiveTip")} style={{ color: K.success }}>
+          {toggling === row.tour_id ? "…" : tr("setActive")}
+        </Button>
+      )}
+      {canLifecycle && row.tour_id && row.master_status !== "trashed" && (
+        <Button size="sm" variant="danger" onClick={() => retireTour(row.tour_id!, row.tour_name)} title={tr("retireTip")}>
+          {tr("retire")}
+        </Button>
+      )}
+      {canLifecycle && row.tour_id && row.master_status !== "trashed" && (
+        <Button size="sm" variant="danger" onClick={() => trashMaster(row.tour_id!, row.tour_name)}
+          disabled={trashing === row.tour_id} title={tr("trashTip")}>
+          <Trash2 size={11} />{trashing === row.tour_id ? "…" : tr("trash")}
+        </Button>
+      )}
+      {canLifecycle && row.tour_id && row.master_status === "trashed" && (
+        <Button size="sm" variant="secondary" onClick={() => restoreMaster(row.tour_id!, row.tour_name)}
+          disabled={restoring === row.tour_id} title={tr("restoreTip")}>
+          <RotateCcw size={11} />{restoring === row.tour_id ? "…" : tr("restore")}
+        </Button>
+      )}
+    </ButtonGroup>
+  );
+
+  const pageIds = paginated.filter(x => x.tour_id).map(x => x.tour_id!);
+  const masterColumns: ColumnDef<MasterRow, unknown>[] = [
+    {
+      id: "select", enableSorting: false, enableHiding: false, meta: { hideLabelOnCard: true },
+      header: () => (
+        <Checkbox
+          aria-label={tr("selectPage")}
+          checked={pageIds.length > 0 && pageIds.every(id => selectedIds.has(id))}
+          onChange={e => {
+            if (e.target.checked) setSelectedIds(new Set([...selectedIds, ...pageIds]));
+            else setSelectedIds(new Set([...selectedIds].filter(id => !pageIds.includes(id))));
+          }}
+        />
+      ),
+      cell: ({ row: { original: row } }) => row.tour_id
+        ? <Checkbox aria-label={row.tour_name} checked={selectedIds.has(row.tour_id)} onChange={() => toggleSelect(row.tour_id!)} />
+        : null,
+    },
+    { id: "n", header: "#", enableSorting: false, meta: { hideLabelOnCard: true },
+      cell: ({ row }) => <span style={{ color: K.muted2 }}>{(page - 1) * pageSize + row.index + 1}</span> },
+    // The sortable columns carry an accessor (TanStack wires a header click only then); the server sorts.
+    { id: "tour_name", header: tr("colTourName"), accessorFn: (row) => row.tour_name,
+      cell: ({ row: { original: row } }) => (
+        <span style={{ fontWeight: 600, color: K.ink, fontFamily: serif, opacity: row.master_status === "trashed" ? 0.7 : 1 }}>{row.tour_name}</span>
+      ) },
+    { id: "country", header: tr("colCountry"), accessorFn: (row) => row.country ?? "", cell: ({ row: { original: row } }) => row.country || "—" },
+    { id: "quality_score", header: tr("colScore"), accessorFn: (row) => row.quality_score ?? -1, cell: ({ row: { original: row } }) => (
+      <span style={{ fontFamily: mono, fontWeight: 700, fontSize: 15, color: scoreColor(row.quality_score) }}>
+        {row.quality_score != null ? row.quality_score.toFixed(1) : "—"}
+      </span>
+    ) },
+    { id: "versions", header: tr("colVersions"), enableSorting: false, cell: ({ row: { original: row } }) => (
+      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+        {row.version_number != null
+          ? <Badge tone="info">v{row.version_number}</Badge>
+          : <span style={{ color: K.muted2, fontSize: 12 }}>—</span>}
+        {/* AA-626: this tour still has failed version(s) sitting in the review queue — link over so the admin can
+            dismiss the stale ones. */}
+        {(row.pending_review_count ?? 0) > 0 && row.tour_id && (
+          <a
+            href={`/admin/review?tour_id=${row.tour_id}`}
+            onClick={e => e.stopPropagation()}
+            title={tr("failedPendingClick", row.pending_review_count ?? 0)}
+            style={{
+              fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 20,
+              background: K.amberSoft, color: KX.amberDeep, border: `1px solid ${KX.amberBorder}`,
+              textDecoration: "none", whiteSpace: "nowrap",
+            }}
+          >
+            {tr("failedBadge", row.pending_review_count ?? 0)}
+          </a>
+        )}
+      </div>
+    ) },
+    { id: "status", header: tr("colStatus"), enableSorting: false, cell: ({ row: { original: row } }) => (
+      <span style={{ display: "inline-flex", gap: 4, flexWrap: "wrap" }}>
+        {statusBadge(row.status, tr)}
+        {masterStatusBadge(row.master_status, tr)}
+      </span>
+    ) },
+    { id: "actions", header: tr("colActions"), enableSorting: false, enableHiding: false, meta: { hideLabelOnCard: true },
+      cell: ({ row: { original: row } }) => rowActions(row) },
+  ];
 
   // AA-739: the full country list comes from the server facets; the page's own countries are only a
   // fallback for an older API.
@@ -999,6 +1077,18 @@ function MasterContentPageInner() {
     }
   }, [tourVersions]);
 
+  function openVersions(tourId: string, tourName: string) {
+    setVersionsTour({ tourId, tourName });
+    if (!expandedTours.has(tourId)) toggleExpand(tourId);
+  }
+  function closeVersions() {
+    if (versionsTour) {
+      const id = versionsTour.tourId;
+      setExpandedTours(prev => { const next = new Set(prev); next.delete(id); return next; });
+    }
+    setVersionsTour(null);
+  }
+
   async function promoteVersion(tourId: string, tourName: string, versionNum: number) {
     if (!confirm(t("promoteConfirm", versionNum, tourName))) return;
     setPromoting(`${tourId}-${versionNum}`);
@@ -1035,8 +1125,7 @@ function MasterContentPageInner() {
   }
 
   function showToast(msg: string) {
-    setToast(msg);
-    setTimeout(() => setToast(""), 3000);
+    toast.success(msg, 3000);
   }
 
   async function toggleMasterStatus(tourId: string, tourName: string, newStatus: "active" | "inactive") {
@@ -1087,24 +1176,13 @@ function MasterContentPageInner() {
   if (loading) {
     return (
         <PageFrame>
-          <LoadingScreen msg={t("loadingPage")} />
+          <LoadingScreen message={t("loadingPage")} />
         </PageFrame>
     );
   }
 
   return (
     <>
-      {toast && (
-        <div style={{
-          position: "fixed", bottom: 24, right: 24, zIndex: 9999,
-          background: "var(--aa-toast-bg)", color: "var(--aa-on-dark)", padding: "10px 20px",
-          borderRadius: 8, fontSize: 13, fontWeight: 500,
-          boxShadow: "0 4px 20px rgba(0,0,0,0.25)",
-        }}>
-          {toast}
-        </div>
-      )}
-
       {/* AA-718: define the spin keyframe (used by Refresh icon + kit StatusBadge running state). */}
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
 
@@ -1125,7 +1203,7 @@ function MasterContentPageInner() {
           />
 
           {error && (
-            <div style={{ padding: "10px 14px", background: A.redSoft, color: A.red, borderRadius: 7, fontSize: 13, marginBottom: 12 }}>
+            <div style={{ padding: "10px 14px", background: K.dangerSoft, color: K.danger, borderRadius: 7, fontSize: 13, marginBottom: 12 }}>
               {error}
             </div>
           )}
@@ -1134,90 +1212,76 @@ function MasterContentPageInner() {
               labelled 30-day window reconciled with Cost Operations, with the all-time figure as
               context. */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 160px), 1fr))", gap: 12 }}>
-            <StatCard icon={<BarChart2 size={16} />}    label={t("toursFiltered")}
+            <KpiTile icon={<BarChart2 size={16} />}    label={t("toursFiltered")}
               value={String(summary?.catalog_total ?? serverTotal)}
-              sub={anyFilterActive ? t("matchingFilters") : t("wholeCatalog")} />
-            <StatCard icon={<Star size={16} />}          label={t("avgQuality")}
+              hint={anyFilterActive ? t("matchingFilters") : t("wholeCatalog")} />
+            <KpiTile icon={<Star size={16} />}          label={t("avgQuality")}
               value={summary?.avg_quality != null ? summary.avg_quality.toFixed(1) : "—"}
-              sub={t("avgFiltered")} accent={scoreColor(summary?.avg_quality ?? null)} />
-            <StatCard icon={<DollarSign size={16} />}   label={t("llmCost")}
+              hint={t("avgFiltered")} valueTone={scoreTone(summary?.avg_quality ?? null)} />
+            <KpiTile icon={<DollarSign size={16} />}   label={t("llmCost")}
               value={`$${(summary?.llm_cost_window_usd ?? summary?.total_llm_cost_usd ?? 0).toFixed(2)}`}
-              sub={t("costSub", summary?.llm_cost_window_label ?? t("last30"), (summary?.total_llm_cost_usd ?? 0).toFixed(2))} />
+              hint={t("costSub", summary?.llm_cost_window_label ?? t("last30"), (summary?.total_llm_cost_usd ?? 0).toFixed(2))} />
             {/* AA-722: Score distribution of the master pool (was the stale "Pipeline Runs" card,
                 fed by shared.pipeline_runs). Compact bar list — same data the retired Dashboard's
                 Content Library tab showed (GET /admin/metrics/library · score_distribution). */}
-            <Card>
+            <Section>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-                <div style={{ padding: 8, borderRadius: 8, background: alpha(A.gold, 8), color: A.gold }}>
+                <div style={{ padding: 8, borderRadius: 8, background: alpha(K.accent, 8), color: K.accent }}>
                   <BarChart2 size={16} />
                 </div>
-                <span style={{ fontSize: 12, color: A.muted }}>{t("scoreDistribution")}</span>
+                <span style={{ fontSize: 12, color: K.muted }}>{t("scoreDistribution")}</span>
               </div>
               {scoreDistribution.length === 0 ? (
-                <div style={{ fontSize: 12, color: A.muted2 }}>{t("noDistribution")}</div>
+                <div style={{ fontSize: 12, color: K.muted2 }}>{t("noDistribution")}</div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
                   {scoreDistribution.map(b => (
                     <div key={b.range} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11 }}>
-                      <span style={{ width: 34, color: A.muted2, fontFamily: mono, flexShrink: 0 }}>{b.range}</span>
-                      <div style={{ flex: 1, minWidth: 0, height: 8, borderRadius: 4, background: A.line2 }}>
+                      <span style={{ width: 34, color: K.muted2, fontFamily: mono, flexShrink: 0 }}>{b.range}</span>
+                      <div style={{ flex: 1, minWidth: 0, height: 8, borderRadius: 4, background: K.line2 }}>
                         <div style={{
                           width: `${scoreDistMax > 0 ? Math.round((b.count / scoreDistMax) * 100) : 0}%`,
-                          height: "100%", borderRadius: 4, background: A.gold,
+                          height: "100%", borderRadius: 4, background: K.accent,
                         }} />
                       </div>
-                      <span style={{ width: 32, textAlign: "right", color: A.ink, fontWeight: 600, fontVariantNumeric: "tabular-nums" as const, flexShrink: 0 }}>{b.count}</span>
+                      <span style={{ width: 32, textAlign: "right", color: K.ink, fontWeight: 600, fontVariantNumeric: "tabular-nums" as const, flexShrink: 0 }}>{b.count}</span>
                     </div>
                   ))}
                 </div>
               )}
-            </Card>
+            </Section>
           </div>
         </PageFrameHeader>
 
         {/* ── Section 2: Rewritten Tours (flex, scrollable) ───────────────── */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", borderBottom: `2px solid ${A.line}` }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", borderBottom: `2px solid ${K.line}` }}>
           {/* Master status tabs */}
-          <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${A.line}`, background: A.card, flexShrink: 0 }}>
-            {[
-              { label: t("tabActive"), value: "active" },
-              { label: t("tabInactive"), value: "inactive" },
-              { label: t("tabTrashed"), value: "trashed" },
-              { label: t("tabAll"), value: "" },
-            ].map(tab => (
-              <button
-                key={tab.value}
-                onClick={() => { setMasterStatusFilter(tab.value); setPage(1); }}
-                style={{
-                  padding: "8px 18px",
-                  fontSize: 12, fontWeight: masterStatusFilter === tab.value ? 700 : 500,
-                  border: "none", borderBottom: masterStatusFilter === tab.value ? `2px solid ${tab.value === "trashed" ? A.red : A.gold}` : "2px solid transparent",
-                  background: "none", cursor: "pointer",
-                  color: masterStatusFilter === tab.value
-                    ? (tab.value === "trashed" ? A.red : A.gold)
-                    : A.muted,
-                  marginBottom: -1,
-                }}
-              >
-                {tab.label}
-                {tab.value === "trashed" && tours.filter(t => t.master_status === "trashed").length > 0 && (
-                  <span style={{ marginLeft: 6, padding: "1px 5px", borderRadius: 8, background: A.redSoft, color: A.red, fontSize: 10, fontWeight: 700 }}>
-                    {tours.filter(t => t.master_status === "trashed").length}
-                  </span>
-                )}
-              </button>
-            ))}
+          <div style={{ borderBottom: `1px solid ${K.line}`, background: K.card, flexShrink: 0, padding: isPhone ? "0 16px" : "0 36px" }}>
+            <Tabs
+              variant="underline"
+              ariaLabel={t("rewrittenTours")}
+              style={{ marginBottom: -1 }}
+              active={masterStatusFilter}
+              onChange={(k) => { setMasterStatusFilter(k); setPage(1); }}
+              tabs={[
+                { key: "active", label: t("tabActive") },
+                { key: "inactive", label: t("tabInactive") },
+                { key: "trashed", label: t("tabTrashed"),
+                  count: tours.filter(x => x.master_status === "trashed").length || undefined },
+                { key: "", label: t("tabAll") },
+              ]}
+            />
           </div>
 
           {/* Sticky inner header */}
-          <div className="aa-admin-pane-x" style={{
-            position: "sticky", top: 0, zIndex: 5, background: A.card,
-            padding: "10px 36px 8px", borderBottom: `1px solid ${A.line}`,
+          <div style={{
+            position: "sticky", top: 0, zIndex: 5, background: K.card,
+            padding: isPhone ? "10px 16px 8px" : "10px 36px 8px", borderBottom: `1px solid ${K.line}`,
             display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexShrink: 0,
           }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <SLabel style={{ margin: 0 }}>{t("rewrittenTours")}</SLabel>
-              <span style={{ fontSize: 12, color: A.muted2 }}>
+              <Eyebrow style={{ margin: 0 }}>{t("rewrittenTours")}</Eyebrow>
+              <span style={{ fontSize: 12, color: K.muted2 }}>
                 {/* AA-718: true server total, not the length of a capped page. */}
                 {t("toursCount", serverTotal, anyFilterActive)}
               </span>
@@ -1225,28 +1289,28 @@ function MasterContentPageInner() {
 
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               {/* Inline filters */}
-              <input
+              <Input
                 value={search}
                 onChange={e => handleSearch(e.target.value)}
                 placeholder={t("searchPlaceholder")}
                 aria-label={t("searchPlaceholder")}
-                style={{ padding: "5px 10px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, width: 180, background: A.card, color: A.ink, outline: "none" }}
+                style={{ padding: "5px 10px", border: `1px solid ${K.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, width: 180, background: K.card, color: K.ink, outline: "none" }}
               />
-              <select value={countryFilter} onChange={e => { setCountryFilter(e.target.value); setPage(1); }}
-                style={{ padding: "5px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: A.card, color: A.ink }}>
+              <Select value={countryFilter} onChange={e => { setCountryFilter(e.target.value); setPage(1); }}
+                style={{ padding: "5px 8px", border: `1px solid ${K.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: K.card, color: K.ink }}>
                 <option value="">{t("allCountries")}</option>
                 {countryOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-              <select value={scoreFilter} onChange={e => { setScoreFilter(e.target.value); setPage(1); }}
-                style={{ padding: "5px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: A.card, color: A.ink }}>
+              </Select>
+              <Select value={scoreFilter} onChange={e => { setScoreFilter(e.target.value); setPage(1); }}
+                style={{ padding: "5px 8px", border: `1px solid ${K.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: K.card, color: K.ink }}>
                 <option value="">{t("allScores")}</option>
                 {scoreOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-              <select value={versionFilter} onChange={e => { setVersionFilter(e.target.value); setPage(1); }}
-                style={{ padding: "5px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: A.card, color: A.ink }}>
+              </Select>
+              <Select value={versionFilter} onChange={e => { setVersionFilter(e.target.value); setPage(1); }}
+                style={{ padding: "5px 8px", border: `1px solid ${K.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: K.card, color: K.ink }}>
                 <option value="">{t("allVersions")}</option>
                 {versionOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
+              </Select>
 
               {/* Compare + export */}
               {selectedIds.size >= 2 && selectedIds.size <= 4 && (
@@ -1255,10 +1319,9 @@ function MasterContentPageInner() {
                 </Button>
               )}
               {selectedIds.size > 0 && (
-                <button onClick={() => setSelectedIds(new Set())}
-                  style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, color: A.muted, padding: "4px 8px" }}>
+                <LinkButton tone="muted" weight="regular" onClick={() => setSelectedIds(new Set())} style={{ padding: "4px 8px" }}>
                   {t("clearN", selectedIds.size)}
-                </button>
+                </LinkButton>
               )}
               <Button variant="secondary" size="sm" disabled={exporting} onClick={exportAuditCsv}>
                 <Download size={12} /> {exporting ? "…" : t("exportAudit")}
@@ -1279,419 +1342,36 @@ function MasterContentPageInner() {
           {/* Scrollable table area */}
           <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
             {filtered.length === 0 ? (
-              <div style={{ padding: 40, textAlign: "center" as const, color: A.muted, fontSize: 13 }}>
+              <div style={{ padding: 40, textAlign: "center" as const, color: K.muted, fontSize: 13 }}>
                 {search || countryFilter || scoreFilter || versionFilter
                   ? t("noMatch")
                   : t("noTours")}
               </div>
-            ) : isPhone ? (
-              // AA-752 — phone card list (< 768px). Each tour becomes a card (name as title, the
-              // rest as label/value rows) with the same View / Versions / status / trash actions as
-              // the table row, so the wide table never forces page-level horizontal scroll.
-              <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: 12 }}>
-                {paginated.map((t, i) => {
-                  const absIdx = (page - 1) * pageSize + i;
-                  const isExpanded = t.tour_id ? expandedTours.has(t.tour_id) : false;
-                  const isSelected = t.tour_id ? selectedIds.has(t.tour_id) : false;
-                  return (
-                    <div
-                      key={t.version_id}
-                      style={{
-                        border: `1px solid ${isSelected ? A.accentBorder : A.line}`,
-                        borderRadius: 12,
-                        background: t.master_status === "trashed" ? A.redTint : A.card,
-                        padding: "12px 14px",
-                        opacity: t.master_status === "trashed" ? 0.75 : 1,
-                      }}
-                    >
-                      <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
-                        {t.tour_id && (
-                          <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(t.tour_id!)} style={{ accentColor: A.gold, marginTop: 3 }} />
-                        )}
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontWeight: 600, color: A.ink, fontFamily: serif, fontSize: 14 }}>{t.tour_name}</div>
-                          <div style={{ fontSize: 11, color: A.muted2, marginTop: 2 }}>#{absIdx + 1} · {t.country || "—"}</div>
-                        </div>
-                        <span style={{ fontFamily: mono, fontWeight: 700, fontSize: 16, color: scoreColor(t.quality_score), flexShrink: 0 }}>
-                          {t.quality_score != null ? t.quality_score.toFixed(1) : "—"}
-                        </span>
-                      </div>
-
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-                        {t.version_number != null
-                          ? <Badge color="blue">v{t.version_number}</Badge>
-                          : <span style={{ color: A.muted2, fontSize: 12 }}>—</span>}
-                        {(t.pending_review_count ?? 0) > 0 && t.tour_id && (
-                          <a href={`/admin/review?tour_id=${t.tour_id}`}
-                            title={tr("failedPending", t.pending_review_count ?? 0)}
-                            style={{ fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 20, background: "var(--aa-amber-bg)", color: "var(--aa-amber-deep)", border: "1px solid var(--aa-amber-border)", textDecoration: "none", whiteSpace: "nowrap" }}>
-                            {tr("failedBadge", t.pending_review_count ?? 0)}
-                          </a>
-                        )}
-                        {statusBadge(t.status, tr)}
-                        {masterStatusBadge(t.master_status, tr)}
-                      </div>
-
-                      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 12 }}>
-                        <button
-                          onClick={() => { if (t.tour_id) { setDetailTourId(t.tour_id); setDetailTourName(t.tour_name); } }}
-                          style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 5, background: A.card, cursor: "pointer", color: A.body }}
-                        >{tr("view")}</button>
-                        {t.tour_id && t.master_status !== "trashed" && (
-                          <button onClick={() => toggleExpand(t.tour_id!)}
-                            style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 5, background: isExpanded ? alpha(A.gold, 13) : A.card, cursor: "pointer", color: A.gold, display: "flex", alignItems: "center", gap: 3 }}>
-                            {isExpanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />} {tr("versions")}
-                          </button>
-                        )}
-                        {canLifecycle && t.tour_id && t.master_status === "active" && (
-                          <button onClick={() => toggleMasterStatus(t.tour_id!, t.tour_name, "inactive")} disabled={toggling === t.tour_id} title={tr("setInactiveTip")}
-                            style={{ padding: "3px 8px", fontSize: 11, border: "1px solid var(--aa-amber-border)", borderRadius: 5, background: "var(--aa-amber-bg5)", cursor: "pointer", color: "var(--aa-amber-orange2)", fontWeight: 600 }}>
-                            {toggling === t.tour_id ? "…" : tr("setInactive")}
-                          </button>
-                        )}
-                        {canLifecycle && t.tour_id && t.master_status === "inactive" && (
-                          <button onClick={() => toggleMasterStatus(t.tour_id!, t.tour_name, "active")} disabled={toggling === t.tour_id} title={tr("setActiveTip")}
-                            style={{ padding: "3px 8px", fontSize: 11, border: "1px solid var(--aa-green-border2)", borderRadius: 5, background: "var(--aa-green-bg2)", cursor: "pointer", color: A.green, fontWeight: 600 }}>
-                            {toggling === t.tour_id ? "…" : tr("setActive")}
-                          </button>
-                        )}
-                        {canLifecycle && t.tour_id && t.master_status !== "trashed" && (
-                          <button onClick={() => retireTour(t.tour_id!, t.tour_name)} title={tr("retireTip")}
-                            style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${A.redBorder}`, borderRadius: 5, background: A.card, cursor: "pointer", color: A.red, fontWeight: 600 }}>
-                            {tr("retire")}
-                          </button>
-                        )}
-                        {canLifecycle && t.tour_id && t.master_status !== "trashed" && (
-                          <button onClick={() => trashMaster(t.tour_id!, t.tour_name)} disabled={trashing === t.tour_id} title={tr("trashTip")}
-                            style={{ padding: "3px 6px", fontSize: 11, border: `1px solid ${A.redBorder}`, borderRadius: 5, background: A.redTint, cursor: "pointer", color: A.red, display: "flex", alignItems: "center", gap: 3 }}>
-                            <Trash2 size={11} />{trashing === t.tour_id ? "…" : tr("trash")}
-                          </button>
-                        )}
-                        {canLifecycle && t.tour_id && t.master_status === "trashed" && (
-                          <button onClick={() => restoreMaster(t.tour_id!, t.tour_name)} disabled={restoring === t.tour_id} title={tr("restoreTip")}
-                            style={{ padding: "3px 6px", fontSize: 11, border: `1px solid var(--aa-green-border2)`, borderRadius: 5, background: "var(--aa-green-bg2)", cursor: "pointer", color: A.green, display: "flex", alignItems: "center", gap: 3 }}>
-                            <RotateCcw size={11} />{restoring === t.tour_id ? "…" : tr("restore")}
-                          </button>
-                        )}
-                      </div>
-
-                      {isExpanded && t.tour_id && (
-                        <div style={{ marginTop: 10, fontSize: 12 }}>
-                          <a href={`/admin/jobs?tour_id=${t.tour_id}`} style={{ color: A.accent }}>
-                            {tr("jobsLink")}
-                          </a>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
             ) : (
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead style={{ position: "sticky", top: 0, zIndex: 2, background: A.bg }}>
-                  <tr>
-                    <th style={{ ...TH, width: 36, paddingLeft: 16 }}>
-                      <input
-                        type="checkbox"
-                        checked={paginated.length > 0 && paginated.filter(t => t.tour_id).every(t => selectedIds.has(t.tour_id!))}
-                        onChange={e => {
-                          if (e.target.checked) {
-                            setSelectedIds(new Set([...selectedIds, ...paginated.filter(t => t.tour_id).map(t => t.tour_id!)]));
-                          } else {
-                            setSelectedIds(new Set([...selectedIds].filter(id => !paginated.some(t => t.tour_id === id))));
-                          }
-                        }}
-                        style={{ accentColor: A.gold }}
-                      />
-                    </th>
-                    <th style={TH}>#</th>
-                    <th style={{ ...TH, cursor: "pointer" }} onClick={() => toggleSort("tour_name")}>
-                      {t("colTourName")}{sortKey === "tour_name" ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
-                    </th>
-                    <th style={{ ...TH, cursor: "pointer" }} onClick={() => toggleSort("country")}>
-                      {t("colCountry")}{sortKey === "country" ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
-                    </th>
-                    <th style={{ ...TH, cursor: "pointer" }} onClick={() => toggleSort("quality_score")}>
-                      {t("colScore")}{sortKey === "quality_score" ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
-                    </th>
-                    <th style={TH}>{t("colVersions")}</th>
-                    <th style={TH}>{t("colStatus")}</th>
-                    <th style={TH}>{t("colActions")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {paginated.map((t, i) => {
-                    const absIdx = (page - 1) * pageSize + i;
-                    const isExpanded = t.tour_id ? expandedTours.has(t.tour_id) : false;
-                    const isSelected = t.tour_id ? selectedIds.has(t.tour_id) : false;
-                    const versions   = t.tour_id ? (tourVersions[t.tour_id] ?? []) : [];
-                    const vLoading   = t.tour_id ? (versionLoading[t.tour_id] ?? false) : false;
-                    const vSel       = t.tour_id ? (compareVersionSel[t.tour_id] ?? new Set<number>()) : new Set<number>();
-                    return (
-                      <React.Fragment key={t.version_id}>
-                        <tr style={{
-                          background: t.master_status === "trashed" ? A.redTint
-                            : isExpanded ? alpha(A.gold, 8) : isSelected ? alpha(A.gold, 6)
-                            : absIdx % 2 === 0 ? A.card : A.bg,
-                          borderBottom: isExpanded ? "none" : undefined,
-                          opacity: t.master_status === "trashed" ? 0.7 : 1,
-                        }}>
-                          <td style={{ ...TD, paddingLeft: 16 }} onClick={e => e.stopPropagation()}>
-                            {t.tour_id && (
-                              <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(t.tour_id!)} style={{ accentColor: A.gold }} />
-                            )}
-                          </td>
-                          <td style={{ ...TD, color: A.muted2 }}>{absIdx + 1}</td>
-                          <td style={{ ...TD, fontWeight: 600, color: A.ink, fontFamily: serif }}>{t.tour_name}</td>
-                          <td style={TD}>{t.country || "—"}</td>
-                          <td style={TD}>
-                            <span style={{ fontFamily: mono, fontWeight: 700, fontSize: 15, color: scoreColor(t.quality_score) }}>
-                              {t.quality_score != null ? t.quality_score.toFixed(1) : "—"}
-                            </span>
-                          </td>
-                          <td style={TD}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                              {t.version_number != null
-                                ? <Badge color="blue">v{t.version_number}</Badge>
-                                : <span style={{ color: A.muted2, fontSize: 12 }}>—</span>}
-                              {/* AA-626: this tour still has failed version(s) sitting in the review
-                                  queue — link over so the admin can dismiss the stale ones. */}
-                              {(t.pending_review_count ?? 0) > 0 && t.tour_id && (
-                                <a
-                                  href={`/admin/review?tour_id=${t.tour_id}`}
-                                  onClick={e => e.stopPropagation()}
-                                  title={tr("failedPendingClick", t.pending_review_count ?? 0)}
-                                  style={{
-                                    fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 20,
-                                    background: "var(--aa-amber-bg)", color: "var(--aa-amber-deep)", border: "1px solid var(--aa-amber-border)",
-                                    textDecoration: "none", whiteSpace: "nowrap",
-                                  }}
-                                >
-                                  {tr("failedBadge", t.pending_review_count ?? 0)}
-                                </a>
-                              )}
-                            </div>
-                          </td>
-                          <td style={TD}>
-                            {statusBadge(t.status, tr)}
-                            {masterStatusBadge(t.master_status, tr)}
-                          </td>
-                          <td style={TD}>
-                            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                              <button
-                                onClick={() => { if (t.tour_id) { setDetailTourId(t.tour_id); setDetailTourName(t.tour_name); } }}
-                                style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 5, background: A.card, cursor: "pointer", color: A.body }}
-                              >{tr("view")}</button>
-                              {t.tour_id && t.master_status !== "trashed" && (
-                                <button
-                                  onClick={() => toggleExpand(t.tour_id!)}
-                                  style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 5, background: isExpanded ? alpha(A.gold, 13) : A.card, cursor: "pointer", color: A.gold, display: "flex", alignItems: "center", gap: 3 }}
-                                >
-                                  {isExpanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />} {tr("versions")}
-                                </button>
-                              )}
-                              {canLifecycle && t.tour_id && t.master_status === "active" && (
-                                <button
-                                  onClick={() => toggleMasterStatus(t.tour_id!, t.tour_name, "inactive")}
-                                  disabled={toggling === t.tour_id}
-                                  title={tr("setInactiveTip")}
-                                  style={{ padding: "3px 8px", fontSize: 11, border: "1px solid var(--aa-amber-border)", borderRadius: 5, background: "var(--aa-amber-bg5)", cursor: "pointer", color: "var(--aa-amber-orange2)", fontWeight: 600 }}
-                                >
-                                  {toggling === t.tour_id ? "…" : tr("setInactive")}
-                                </button>
-                              )}
-                              {canLifecycle && t.tour_id && t.master_status === "inactive" && (
-                                <button
-                                  onClick={() => toggleMasterStatus(t.tour_id!, t.tour_name, "active")}
-                                  disabled={toggling === t.tour_id}
-                                  title={tr("setActiveTip")}
-                                  style={{ padding: "3px 8px", fontSize: 11, border: "1px solid var(--aa-green-border2)", borderRadius: 5, background: "var(--aa-green-bg2)", cursor: "pointer", color: A.green, fontWeight: 600 }}
-                                >
-                                  {toggling === t.tour_id ? "…" : tr("setActive")}
-                                </button>
-                              )}
-                              {canLifecycle && t.tour_id && t.master_status !== "trashed" && (
-                                <button
-                                  onClick={() => retireTour(t.tour_id!, t.tour_name)}
-                                  title={tr("retireTip")}
-                                  style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${A.redBorder}`, borderRadius: 5, background: A.card, cursor: "pointer", color: A.red, fontWeight: 600 }}
-                                >
-                                  {tr("retire")}
-                                </button>
-                              )}
-                              {canLifecycle && t.tour_id && t.master_status !== "trashed" && (
-                                <button
-                                  onClick={() => trashMaster(t.tour_id!, t.tour_name)}
-                                  disabled={trashing === t.tour_id}
-                                  title={tr("trashTip")}
-                                  style={{ padding: "3px 6px", fontSize: 11, border: `1px solid ${A.redBorder}`, borderRadius: 5, background: A.redTint, cursor: "pointer", color: A.red, display: "flex", alignItems: "center", gap: 3 }}
-                                >
-                                  <Trash2 size={11} />
-                                  {trashing === t.tour_id ? "…" : tr("trash")}
-                                </button>
-                              )}
-                              {canLifecycle && t.tour_id && t.master_status === "trashed" && (
-                                <button
-                                  onClick={() => restoreMaster(t.tour_id!, t.tour_name)}
-                                  disabled={restoring === t.tour_id}
-                                  title={tr("restoreTip")}
-                                  style={{ padding: "3px 6px", fontSize: 11, border: `1px solid var(--aa-green-border2)`, borderRadius: 5, background: "var(--aa-green-bg2)", cursor: "pointer", color: A.green, display: "flex", alignItems: "center", gap: 3 }}
-                                >
-                                  <RotateCcw size={11} />
-                                  {restoring === t.tour_id ? "…" : tr("restore")}
-                                </button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                        {isExpanded && (
-                          <tr style={{ background: alpha(A.gold, 3) }}>
-                            <td colSpan={9} style={{ padding: "0 0 0 48px", borderBottom: `1px solid ${A.line}` }}>
-                              {/* AA-687 — the background jobs for this tour (atomize, tenant rewrites). */}
-                              {t.tour_id && (
-                                <div style={{ padding: "8px 16px 0", fontSize: 12 }}>
-                                  <a href={`/admin/jobs?tour_id=${t.tour_id}`} style={{ color: A.accent }}>
-                                    {tr("jobsLink")}
-                                  </a>
-                                </div>
-                              )}
-                              {vLoading ? (
-                                <div style={{ padding: "12px 16px", fontSize: 12, color: A.muted }}>{tr("loadingVersions")}</div>
-                              ) : versions.length === 0 ? (
-                                <div style={{ padding: "12px 16px", fontSize: 12, color: A.muted }}>{tr("noVersions")}</div>
-                              ) : (
-                                <>
-                                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                                    <thead>
-                                      <tr style={{ background: A.line2 }}>
-                                        {["", tr("vVersion"), tr("vModel"), tr("vOverall"), tr("vBrand"), tr("vSeo"), tr("vStruct"), tr("vQuality"),
-                                          tr("vJudge"), tr("vAudit"), tr("vDate"), ""].map((h, hi) => (
-                                          <th key={hi} style={{ padding: "6px 10px", textAlign: "left" as const, fontSize: 10, fontWeight: 600, color: A.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>{h}</th>
-                                        ))}
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {versions.map(v => (
-                                        <tr key={v.id} style={{ borderTop: `1px solid ${A.line}`, background: v.is_current ? "var(--aa-amber-bg4)" : "transparent" }}>
-                                          <td style={{ padding: "6px 10px", width: 32 }}>
-                                            <input
-                                              type="checkbox"
-                                              checked={vSel.has(v.version_num)}
-                                              onChange={() => t.tour_id && toggleVersionSel(t.tour_id, v.version_num)}
-                                              disabled={!vSel.has(v.version_num) && vSel.size >= 2}
-                                              style={{ accentColor: A.gold }}
-                                            />
-                                          </td>
-                                          <td style={{ padding: "6px 10px" }}>
-                                            <span style={{ padding: "2px 7px", borderRadius: 10, background: v.is_current ? A.gold : A.goldTint, color: v.is_current ? "var(--aa-on-solid)" : A.gold, fontSize: 11, fontWeight: 600 }}>
-                                              v{v.version_num}
-                                            </span>
-                                            {v.is_current && <span style={{ marginLeft: 6, fontSize: 10, color: A.gold }}>{tr("current")}</span>}
-                                          </td>
-                                          <td style={{ padding: "6px 10px", fontFamily: mono, fontSize: 11, color: A.muted2 }}>
-                                            {modelLabel(v.model_id)}
-                                          </td>
-                                          <td style={{ padding: "6px 10px", fontWeight: 700, color: scoreColor(v.quality_score) }}>
-                                            {v.quality_score != null ? v.quality_score.toFixed(1) : "—"}
-                                          </td>
-                                          {/* AA-220 (H1): validate sub-scores + judge from list endpoint */}
-                                          <td style={{ padding: "6px 10px", color: v.score_brand != null ? scoreColor(v.score_brand) : A.muted2 }}>
-                                            {v.score_brand != null ? v.score_brand.toFixed(1) : "—"}
-                                          </td>
-                                          <td style={{ padding: "6px 10px", color: v.score_seo != null ? scoreColor(v.score_seo) : A.muted2 }}>
-                                            {v.score_seo != null ? v.score_seo.toFixed(1) : "—"}
-                                          </td>
-                                          <td style={{ padding: "6px 10px", color: v.score_structure != null ? scoreColor(v.score_structure) : A.muted2 }}>
-                                            {v.score_structure != null ? v.score_structure.toFixed(1) : "—"}
-                                          </td>
-                                          <td style={{ padding: "6px 10px", color: v.score_quality != null ? scoreColor(v.score_quality) : A.muted2 }}>
-                                            {v.score_quality != null ? v.score_quality.toFixed(1) : "—"}
-                                          </td>
-                                          <td style={{ padding: "6px 10px", color: v.judge_score != null ? scoreColor(v.judge_score) : A.muted2 }}>
-                                            {v.judge_score != null ? v.judge_score.toFixed(1) : "—"}
-                                          </td>
-                                          <td style={{ padding: "6px 10px" }}>
-                                            <BrandAuditBadge
-                                              status={v.brand_audit_status ?? null}
-                                              fixPassApplied={v.fix_pass_applied ?? false}
-                                              codes={v.brand_audit_codes ?? []}
-                                            />
-                                          </td>
-                                          <td style={{ padding: "6px 10px", color: A.muted2 }}>
-                                            {v.created_at ? formatDate(v.created_at) : "—"}
-                                          </td>
-                                          <td style={{ padding: "6px 10px" }}>
-                                            <div style={{ display: "flex", gap: 5 }}>
-                                              <button
-                                                onClick={() => { if (t.tour_id) { setDetailTourId(t.tour_id); setDetailTourName(t.tour_name); } }}
-                                                style={{ padding: "2px 7px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 4, background: A.card, cursor: "pointer", color: A.body }}
-                                              >{tr("view")}</button>
-                                              {/* AA-220 (H3): per-version DOCX export (shared page-scope helper) */}
-                                              {v.version_num > 0 && (
-                                                <button
-                                                  onClick={() => t.tour_id && exportVersionDocx(t.tour_id, Number(v.version_num))}
-                                                  title={tr("exportDocx")}
-                                                  style={{ padding: "2px 7px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 4, background: A.card, cursor: "pointer", color: A.body }}
-                                                >DOCX</button>
-                                              )}
-                                              {!v.is_current && canPromote && (
-                                                <button
-                                                  onClick={() => t.tour_id && promoteVersion(t.tour_id, t.tour_name, v.version_num)}
-                                                  disabled={promoting === `${t.tour_id}-${v.version_num}`}
-                                                  style={{ padding: "2px 7px", fontSize: 11, border: `1px solid ${A.gold}`, borderRadius: 4, background: A.goldTint, cursor: "pointer", color: A.gold, fontWeight: 600 }}
-                                                >
-                                                  {promoting === `${t.tour_id}-${v.version_num}` ? "…" : tr("promote")}
-                                                </button>
-                                              )}
-                                            </div>
-                                          </td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                  {vSel.size === 2 && t.tour_id && (
-                                    <div style={{ padding: "8px 12px", borderTop: `1px solid ${A.line}`, display: "flex", alignItems: "center", gap: 10 }}>
-                                      <span style={{ fontSize: 12, color: A.muted }}>
-                                        {tr("selectedPair", `v${[...vSel].sort((a, b) => a - b).join(" vs v")}`)}
-                                      </span>
-                                      <button
-                                        onClick={() => {
-                                          const nums = [...vSel].sort((a,b)=>a-b) as [number, number];
-                                          setCompareVersionOpen({ tourId: t.tour_id!, tourName: t.tour_name, vNums: nums });
-                                        }}
-                                        style={{ padding: "4px 12px", fontSize: 12, fontWeight: 600, border: `1px solid ${A.gold}`, borderRadius: 6, background: A.goldTint, cursor: "pointer", color: A.gold }}
-                                      >
-                                        {tr("compareVersions")}
-                                      </button>
-                                      <button
-                                        onClick={() => t.tour_id && setCompareVersionSel(p => ({ ...p, [t.tour_id!]: new Set() }))}
-                                        style={{ fontSize: 11, color: A.muted2, background: "none", border: "none", cursor: "pointer" }}
-                                      >{tr("clear")}</button>
-                                    </div>
-                                  )}
-                                </>
-                              )}
-                            </td>
-                          </tr>
-                        )}
-                      </React.Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
+              // AA-1006: a kit DataTable (a card per tour on a phone, was a hand-made card list); sorting and paging stay on
+              // the server (the page's sortKey / sortDir and its own pager below). Versions open in a kit Drawer.
+              <DataTable<MasterRow>
+                tableId="master-content-tours"
+                data={paginated}
+                getRowId={(row) => row.version_id}
+                searchable={false}
+                paginate={false}
+                {...sortProps}
+                columns={phoneCardColumns(masterColumns, "tour_name", isPhone)}
+              />
             )}
             {serverTotal > 0 && (
-              <div style={{ padding: "12px 20px", borderTop: `1px solid ${A.line}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ padding: "12px 20px", borderTop: `1px solid ${K.line}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                 {/* AA-739: choose rows per page; AA-718: paginate against the real server total. */}
-                <label style={{ fontSize: 12, color: A.muted, display: "inline-flex", alignItems: "center", gap: 8 }}>
+                <label style={{ fontSize: 12, color: K.muted, display: "inline-flex", alignItems: "center", gap: 8 }}>
                   {t("range", (page - 1) * pageSize + 1, Math.min(page * pageSize, serverTotal), serverTotal)}
-                  <select
+                  <Select
                     value={pageSize}
                     onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }}
-                    style={{ padding: "4px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: A.card, color: A.ink }}
+                    style={{ padding: "4px 8px", border: `1px solid ${K.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: K.card, color: K.ink }}
                   >
                     {[20, 50, 100, 200].map(n => <option key={n} value={n}>{t("perPage", n)}</option>)}
-                  </select>
+                  </Select>
                 </label>
                 {serverTotal > pageSize && (
                   <Pagination page={page} total={serverTotal} pageSize={pageSize} onPage={setPage} />
@@ -1714,6 +1394,116 @@ function MasterContentPageInner() {
           onClose={() => setDetailTourId(null)}
         />
       )}
+
+      {/* AA-1006: a tour's versions (scores, brand audit, DOCX, promote, pick two to compare) in a kit Drawer. */}
+      <Drawer open={versionsTour != null} onClose={closeVersions} width={1040}
+        title={versionsTour ? `${versionsTour.tourName} · ${t("versions")}` : undefined}>
+        {versionsTour && (() => {
+          const tourId = versionsTour.tourId;
+          const tourName = versionsTour.tourName;
+          const versions = tourVersions[tourId] ?? [];
+          const vLoading = versionLoading[tourId] ?? false;
+          const vSel = compareVersionSel[tourId] ?? new Set<number>();
+          const score = (v: number | null | undefined) => (
+            <span style={{ color: v != null ? scoreColor(v) : K.muted2 }}>{v != null ? v.toFixed(1) : "—"}</span>
+          );
+          return (
+            <div>
+              {/* AA-687 — the background jobs for this tour (atomize, tenant rewrites). */}
+              <div style={{ padding: "0 0 10px", fontSize: 12 }}>
+                <a href={`/admin/jobs?tour_id=${tourId}`} style={{ color: K.accent }}>{t("jobsLink")}</a>
+              </div>
+              {vLoading ? (
+                <div style={{ padding: "12px 0", fontSize: 12, color: K.muted }}>{t("loadingVersions")}</div>
+              ) : versions.length === 0 ? (
+                <div style={{ padding: "12px 0", fontSize: 12, color: K.muted }}>{t("noVersions")}</div>
+              ) : (
+                <>
+                  <DataTable<TourVersion>
+                    tableId="master-content-versions"
+                    data={versions}
+                    getRowId={(v) => v.id}
+                    searchable={false}
+                    paginate={false}
+                    compact
+                    // On a phone the version pill is the card title (the pick checkbox stays first on a desktop).
+                    columns={phoneCardColumns<ColumnDef<TourVersion, unknown>>([
+                      { id: "pick", header: "", enableSorting: false, enableHiding: false, meta: { hideLabelOnCard: true },
+                        cell: ({ row: { original: v } }) => (
+                          <Checkbox
+                            aria-label={`v${v.version_num}`}
+                            checked={vSel.has(v.version_num)}
+                            onChange={() => toggleVersionSel(tourId, v.version_num)}
+                            disabled={!vSel.has(v.version_num) && vSel.size >= 2}
+                          />
+                        ) },
+                      { id: "version", header: t("vVersion"), accessorKey: "version_num", cell: ({ row: { original: v } }) => (
+                        <span>
+                          <span style={{ padding: "2px 7px", borderRadius: 10, background: v.is_current ? K.accent : K.accentTint, color: v.is_current ? KX.onSolid : K.accent, fontSize: 11, fontWeight: 600 }}>
+                            v{v.version_num}
+                          </span>
+                          {v.is_current && <span style={{ marginLeft: 6, fontSize: 10, color: K.accent }}>{t("current")}</span>}
+                        </span>
+                      ) },
+                      { id: "model", header: t("vModel"), enableSorting: false,
+                        cell: ({ row: { original: v } }) => <span style={{ fontFamily: mono, fontSize: 11, color: K.muted2 }}>{modelLabel(v.model_id)}</span> },
+                      { id: "overall", header: t("vOverall"), accessorFn: (v) => v.quality_score ?? -1,
+                        cell: ({ row: { original: v } }) => <span style={{ fontWeight: 700, color: scoreColor(v.quality_score) }}>{v.quality_score != null ? v.quality_score.toFixed(1) : "—"}</span> },
+                      // AA-220 (H1): validate sub-scores + judge from the list endpoint.
+                      { id: "brand", header: t("vBrand"), enableSorting: false, cell: ({ row: { original: v } }) => score(v.score_brand) },
+                      { id: "seo", header: t("vSeo"), enableSorting: false, cell: ({ row: { original: v } }) => score(v.score_seo) },
+                      { id: "struct", header: t("vStruct"), enableSorting: false, cell: ({ row: { original: v } }) => score(v.score_structure) },
+                      { id: "quality", header: t("vQuality"), enableSorting: false, cell: ({ row: { original: v } }) => score(v.score_quality) },
+                      { id: "judge", header: t("vJudge"), enableSorting: false, cell: ({ row: { original: v } }) => score(v.judge_score) },
+                      { id: "audit", header: t("vAudit"), enableSorting: false, cell: ({ row: { original: v } }) => (
+                        <BrandAuditBadge status={v.brand_audit_status ?? null} fixPassApplied={v.fix_pass_applied ?? false} codes={v.brand_audit_codes ?? []} />
+                      ) },
+                      { id: "date", header: t("vDate"), accessorFn: (v) => v.created_at ?? "",
+                        cell: ({ row: { original: v } }) => <span style={{ color: K.muted2 }}>{v.created_at ? formatDate(v.created_at) : "—"}</span> },
+                      { id: "actions", header: "", enableSorting: false, enableHiding: false, meta: { hideLabelOnCard: true },
+                        cell: ({ row: { original: v } }) => (
+                          <ButtonGroup label={t("versionActions", v.version_num)} gap="sm">
+                            <Button size="sm" variant="ghost" onClick={() => { closeVersions(); setDetailTourId(tourId); setDetailTourName(tourName); }}>{t("view")}</Button>
+                            {/* AA-220 (H3): per-version DOCX export (shared page-scope helper) */}
+                            {v.version_num > 0 && (
+                              <Button size="sm" variant="ghost" onClick={() => exportVersionDocx(tourId, Number(v.version_num))} title={t("exportDocx")}>DOCX</Button>
+                            )}
+                            {!v.is_current && canPromote && (
+                              <Button size="sm" variant="secondary" onClick={() => promoteVersion(tourId, tourName, v.version_num)}
+                                disabled={promoting === `${tourId}-${v.version_num}`}>
+                                {promoting === `${tourId}-${v.version_num}` ? "…" : t("promote")}
+                              </Button>
+                            )}
+                          </ButtonGroup>
+                        ) },
+                    ], "version", isPhone)}
+                  />
+                  {vSel.size === 2 && (
+                    <div style={{ padding: "8px 0", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 12, color: K.muted }}>
+                        {t("selectedPair", `v${[...vSel].sort((a, b) => a - b).join(" vs v")}`)}
+                      </span>
+                      <Button size="sm" variant="secondary" onClick={() => {
+                        const nums = [...vSel].sort((a, b) => a - b) as [number, number];
+                        // The tour detail panel and the compare view draw under a kit Drawer: close it first (the
+                        // picked pair stays, so Versions reopens with it).
+                        closeVersions();
+                        setCompareVersionOpen({ tourId, tourName, vNums: nums });
+                      }}>
+                        {t("compareVersions")}
+                      </Button>
+                      <LinkButton tone="muted" size="sm" weight="regular"
+                        onClick={() => setCompareVersionSel(p => ({ ...p, [tourId]: new Set() }))}>
+                        {t("clear")}
+                      </LinkButton>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          );
+        })()}
+      </Drawer>
 
       {/* AA-986 L2 — retire / trash confirm with the dry run (Q8) */}
       {retireTarget && (

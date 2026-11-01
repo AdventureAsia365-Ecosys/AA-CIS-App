@@ -172,8 +172,11 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `useReviewPendingCount.ts`, `chart.ts` (`CHART_TOOLTIP`, the recharts tooltip style, moved out of `adminUi.tsx`
     in AA-994 S6b), and `theme.ts` / `useTheme.ts` (the core store and hooks bound to `cis_theme`; the
     root layout's restore script is `themeStore.restoreScript`). Pages import the barrel `app/_kit` (which re-exports
-    core), never `core/` directly; only the root layout, the login form and the legacy `adminUi.tsx` import core
-    files directly (server layout, light login bundle, and no import cycle through the barrel's `Sidebar`).
+    core), never `core/` directly; only the root layout and the login form import core files directly (server
+    layout, light login bundle); a `messages.ts` may import `defineMessages` from `core/i18n`. `KX`
+    (`app/_kit/adminTokens.ts`, AA-1006) names the few `--aa-*` colours the admin draws that core `K` does not
+    (on-solid / on-dark text, the dark side surface, toast, scrim, shadows); it moves into core `K` when a second app
+    needs one.
   - **UI language (AA-994, S255 decision)**: one language at a time — English by default, Vietnamese only when the
     user picks it in the one switch (`core/LangSwitch.tsx`, EN | VI, in the admin `Topbar`). Kit core
     `i18n.ts` (no React: `defineMessages(en, vi)` typed catalogues where a message is a string or a function of typed
@@ -236,10 +239,10 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `app/admin/**/page.tsx` renders it once together with the kit `PageHeader`, and no admin file hand-writes a
     `<main>` or the frame classes — guarded by `frontend/lib/adminFrame.test.mjs`), and `apiGet`/`apiSend` fetch
     helpers. New pages import
-    from `app/_kit`. The legacy primitives (`admin/_components/adminUi.tsx`,
-    `auditPanels.tsx`, `FilterBar.tsx`, `Pagination.tsx`, portal `_components/ui.tsx`,
-    `Skeleton.tsx`) still stand — pages are migrated to the kit one at a time (Review Queue and My
-    Content first). Living reference: the **UI Kit tab in admin Settings** (`/admin/settings?tab=ui-kit`,
+    from `app/_kit`. Every CIS admin page is on the kit (AA-1006, S263): the legacy `admin/_components/adminUi.tsx`
+    is deleted and `frontend/eslint-suppressions.json` is empty, so any new kit-rule violation fails CI. The admin
+    `_components` that remain (`auditPanels.tsx`, `FilterBar.tsx`, `Pagination.tsx`, …) are page parts built from
+    kit components, not a second primitive layer. Living reference: the **UI Kit tab in admin Settings** (`/admin/settings?tab=ui-kit`,
     `app/admin/_components/SettingsKitTab.tsx`) — renders every primitive with static data.
   - **Data fetching (AA-662)**: `@tanstack/react-query` is the standard for UI v2, wired app-wide
     via a single `QueryClientProvider` in `app/_kit/core/Providers.tsx`, mounted from the server root

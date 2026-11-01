@@ -39,7 +39,8 @@ import {
   useFormat,
   useLang,
   useT,
-  type Tone, PageFrame, ScrollX,
+  type Tone, PageFrame,
+  DataTable,
 } from "../../../_kit";
 import { APP_REGISTRY, PLATFORM_APP_IDS, isPlatformAppId, type PlatformAppId } from "@/lib/apps";
 import { APP_MESSAGES } from "@/lib/apps.messages";
@@ -461,30 +462,24 @@ function CrmJobs() {
       )}
       {data && data.status === "ok" && data.kinds.length === 0 && <div style={noteStyle}>{t("noJobs")}</div>}
       {data && data.status === "ok" && data.kinds.length > 0 && (
-        <ScrollX>
-        <table style={{ borderCollapse: "collapse", fontSize: 12.5, fontFamily: sans }}>
-          <thead>
-            <tr style={{ color: K.muted, textAlign: "left" }}>
-              <th style={{ padding: "2px 8px 2px 0" }}>{t("colKind")}</th>
-              <th style={{ padding: "2px 8px" }}>{t("colQueued")}</th>
-              <th style={{ padding: "2px 8px" }}>{t("colRunning")}</th>
-              <th style={{ padding: "2px 8px" }}>{t("colFailed")}</th>
-              <th style={{ padding: "2px 8px" }}>{t("colOldest")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.kinds.map((k) => (
-              <tr key={k.kind}>
-                <td style={{ padding: "2px 8px 2px 0", fontFamily: mono }}>{k.kind}</td>
-                <td style={{ padding: "2px 8px" }}>{k.queued}</td>
-                <td style={{ padding: "2px 8px" }}>{k.running}</td>
-                <td style={{ padding: "2px 8px", color: k.failed_24h > 0 ? K.danger : K.body }}>{k.failed_24h}</td>
-                <td style={{ padding: "2px 8px" }}>{k.oldest_queued_age_s == null ? "—" : `${k.oldest_queued_age_s} s`}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        </ScrollX>
+        <DataTable<CrmJobKind>
+          tableId="platform-crm-jobs"
+          data={data.kinds}
+          getRowId={(k) => k.kind}
+          searchable={false}
+          paginate={false}
+          compact
+          columns={[
+            { id: "kind", header: t("colKind"), accessorKey: "kind",
+              cell: ({ row }) => <span style={{ fontFamily: mono }}>{row.original.kind}</span> },
+            { id: "queued", header: t("colQueued"), accessorKey: "queued" },
+            { id: "running", header: t("colRunning"), accessorKey: "running" },
+            { id: "failed", header: t("colFailed"), accessorKey: "failed_24h",
+              cell: ({ row }) => <span style={{ color: row.original.failed_24h > 0 ? K.danger : K.body }}>{row.original.failed_24h}</span> },
+            { id: "oldest", header: t("colOldest"), accessorFn: (k) => k.oldest_queued_age_s ?? -1,
+              cell: ({ row }) => row.original.oldest_queued_age_s == null ? "—" : `${row.original.oldest_queued_age_s} s` },
+          ]}
+        />
       )}
     </div>
   );
@@ -495,6 +490,8 @@ const LEVEL: Record<string, { tone: Tone; color: string; label: "levelOk" | "lev
   warn: { tone: "warning", color: K.amber, label: "levelWarn" },
   cap_reached: { tone: "danger", color: K.danger, label: "levelCap" },
 };
+
+type CrmJobKind = CrmJobsResp["kinds"][number];
 
 function TripPlannerBody({ card }: { card: TripPlannerCard }) {
   const t = useT(APPS);

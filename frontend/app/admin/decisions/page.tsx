@@ -5,13 +5,18 @@
 // AA-994: text in the UI language (messages.ts); stage / question keys, question texts and API text stay as sent.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { BookOpen, ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
+import { BookOpen, RefreshCw } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { A, sans, mono, Card, SLabel, LoadingScreen, TH, TD, CHART_TOOLTIP } from "../_components/adminUi";
-import { Button, PageFrame, PageFrameBody, PageFrameHeader, PageHeader, useFormat, useT } from "../../_kit";
+import {
+  Button, PageFrame, PageFrameBody, PageFrameHeader, PageHeader, useFormat, useT, Input, Select,
+  K, sans, mono, Section, Eyebrow, LoadingScreen, CHART_TOOLTIP,
+  DataTable, Tabs, TONE, type Tone, type ColumnDef,
+  Badge,
+} from "../../_kit";
 import { useChartColors } from "../../_kit/useTheme";
 import { stripIssueIds } from "@/lib/issueIds";
 import { traceHref } from "@/lib/aiGateway";
+import { pageSortProps } from "@/lib/tableSort";
 import { DEC } from "./messages";
 
 // ── types ──────────────────────────────────────────────────────────────────────────────────────
@@ -48,18 +53,22 @@ interface Verdict {
 // ── meaning of every status, shown in the Guide and as tooltips ────────────────────────────────
 const ZONES: Zone[] = ["accept", "grey", "reject", "error", "skipped"];
 // Labels and help texts are message keys (messages.ts DEC): `${label}` and `${label}Help`.
-const ZONE_META: Record<Zone, { label: "zoneAccept" | "zoneGrey" | "zoneReject" | "zoneError" | "zoneSkipped"; color: string; cssVar: string }> = {
-  accept:  { label: "zoneAccept",  color: "var(--aa-green-deep)",  cssVar: "--aa-green-deep" },
-  grey:    { label: "zoneGrey",    color: "var(--aa-neutral-fg2)", cssVar: "--aa-neutral-fg2" },
-  reject:  { label: "zoneReject",  color: "var(--aa-red-strong)",  cssVar: "--aa-red-strong" },
-  error:   { label: "zoneError",   color: "var(--aa-amber-strong)",cssVar: "--aa-amber-strong" },
-  skipped: { label: "zoneSkipped", color: "var(--aa-blue-link)",   cssVar: "--aa-blue-link" },
+// AA-1006: each status is a kit tone (Badge pill, text colour from the same tone); `cssVar` stays for the chart, which
+// resolves the variable to a concrete colour for its SVG fills.
+const ZONE_META: Record<Zone, { label: "zoneAccept" | "zoneGrey" | "zoneReject" | "zoneError" | "zoneSkipped"; tone: Tone; cssVar: string }> = {
+  accept:  { label: "zoneAccept",  tone: "success", cssVar: "--aa-green-deep" },
+  grey:    { label: "zoneGrey",    tone: "neutral", cssVar: "--aa-neutral-fg2" },
+  reject:  { label: "zoneReject",  tone: "danger",  cssVar: "--aa-red-strong" },
+  error:   { label: "zoneError",   tone: "warning", cssVar: "--aa-amber-strong" },
+  skipped: { label: "zoneSkipped", tone: "info",    cssVar: "--aa-blue-link" },
 };
-const MODE_META: Record<Mode, { label: "modeOff" | "modeShadow" | "modeEnforce"; color: string }> = {
-  off:     { label: "modeOff",     color: "var(--aa-neutral-fg)" },
-  shadow:  { label: "modeShadow",  color: "var(--aa-blue-link)" },
-  enforce: { label: "modeEnforce", color: "var(--aa-amber-strong)" },
+const MODE_META: Record<Mode, { label: "modeOff" | "modeShadow" | "modeEnforce"; tone: Tone }> = {
+  off:     { label: "modeOff",     tone: "neutral" },
+  shadow:  { label: "modeShadow",  tone: "info" },
+  enforce: { label: "modeEnforce", tone: "warning" },
 };
+/** The text colour of a tone (the Badge foreground). */
+const toneText = (tone: Tone) => TONE[tone].fg;
 const KIND_HELP: Record<string, "kindNoul" | "kindChoice" | "kindScore"> = {
   noul: "kindNoul",
   choice: "kindChoice",
@@ -76,66 +85,71 @@ const n0 = (v: number | null | undefined): number => (typeof v === "number" && N
 const num = (v: number | null | undefined, d = 2) => (v == null ? "—" : v.toFixed(d));
 const pct = (a: number, b: number) => (b ? `${Math.round((a / b) * 100)}%` : "—");
 
-function Pill({ color, children, title }: { color: string; children: React.ReactNode; title?: string }) {
+function Pill({ tone, children, title }: { tone: Tone; children: React.ReactNode; title?: string }) {
   return (
-    <span title={title} style={{
-      display: "inline-block", padding: "3px 10px", borderRadius: 999, background: color, color: "var(--aa-on-solid)",
-      fontSize: 11, fontWeight: 700, letterSpacing: "0.03em", whiteSpace: "nowrap", cursor: title ? "help" : "default",
-    }}>{children}</span>
+    <span title={title} style={{ display: "inline-flex", whiteSpace: "nowrap", cursor: title ? "help" : "default" }}>
+      <Badge tone={tone} dot={false}>{children}</Badge>
+    </span>
   );
 }
 function ZonePill({ z }: { z: Zone }) {
   const t = useT(DEC);
   const k = ZONE_META[z].label;
-  return <Pill color={ZONE_META[z].color} title={t(`${k}Help`)}>{t(k)}</Pill>;
+  return <Pill tone={ZONE_META[z].tone} title={t(`${k}Help`)}>{t(k)}</Pill>;
 }
 function ModePill({ m }: { m: Mode }) {
   const t = useT(DEC);
   const k = MODE_META[m].label;
-  return <Pill color={MODE_META[m].color} title={t(`${k}Help`)}>{t(k)}</Pill>;
+  return <Pill tone={MODE_META[m].tone} title={t(`${k}Help`)}>{t(k)}</Pill>;
 }
 
-function Kpi({ label, value, sub, color = A.ink }: { label: string; value: string; sub?: string; color?: string }) {
+function Kpi({ label, value, sub, color = K.ink }: { label: string; value: string; sub?: string; color?: string }) {
   return (
-    <div style={{ background: A.card, border: `1px solid ${A.line}`, borderRadius: 10, padding: "14px 16px" }}>
-      <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: A.muted }}>{label}</div>
+    <div style={{ background: K.card, border: `1px solid ${K.line}`, borderRadius: 10, padding: "14px 16px" }}>
+      <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: K.muted }}>{label}</div>
       <div style={{ fontSize: 26, fontWeight: 700, color, marginTop: 4, fontVariantNumeric: "tabular-nums" }}>{value}</div>
-      {sub && <div style={{ fontSize: 11.5, color: A.muted, marginTop: 2 }}>{sub}</div>}
+      {sub && <div style={{ fontSize: 11.5, color: K.muted, marginTop: 2 }}>{sub}</div>}
     </div>
   );
 }
 
-const STICKY_TH: React.CSSProperties = { ...TH, position: "sticky", top: 0, zIndex: 2, background: "var(--aa-bg)", whiteSpace: "nowrap" };
-const TABLE_BOX: React.CSSProperties = { overflow: "auto", maxHeight: "62vh", border: `1px solid ${A.line}`, borderRadius: 10, background: A.card };
-const input: React.CSSProperties = { padding: "7px 9px", border: `1px solid ${A.line}`, borderRadius: 7, fontSize: 12.5, fontFamily: sans, background: A.card };
+const TABLE_BOX_HEIGHT = "62vh";
+const input: React.CSSProperties = { padding: "7px 9px", border: `1px solid ${K.line}`, borderRadius: 7, fontSize: 12.5, fontFamily: sans, background: K.card };
 
-function SortTh<K extends string>({ label, k, sort, setSort, title }: {
-  label: string; k: K; sort: { key: K; dir: "asc" | "desc" }; setSort: (s: { key: K; dir: "asc" | "desc" }) => void; title?: string;
-}) {
-  const active = sort.key === k;
-  return (
-    <th title={title} style={{ ...STICKY_TH, cursor: "pointer", color: active ? A.ink : undefined }}
-      onClick={() => setSort({ key: k, dir: active && sort.dir === "desc" ? "asc" : "desc" })}>
-      {label}{active ? (sort.dir === "desc" ? " ▼" : " ▲") : ""}
-    </th>
-  );
+/** The page's own sort as a kit DataTable controlled sort (the page sorts, or asks the server to). As the old sort
+ * headers did: a click on the sorted column flips it, a click on another column sorts it descending first. */
+function tableSort<K extends string>(sort: { key: K; dir: "asc" | "desc" }, set: (s: { key: K; dir: "asc" | "desc" }) => void) {
+  return pageSortProps(sort, set, () => "desc");
+}
+
+/** A column with a head tooltip; `sortable` when the page's sort knows the key. */
+function dcol<T>(id: string, header: string, cell: (r: T) => React.ReactNode,
+  opts: { sortable?: boolean; title?: string; style?: (r: T) => React.CSSProperties } = {}): ColumnDef<T, unknown> {
+  return {
+    id,
+    header: opts.title ? () => <span title={opts.title}>{header}</span> : header,
+    enableSorting: !!opts.sortable,
+    // TanStack enables a header only for a column with an accessor; the page sorts the rows itself (manualSorting).
+    ...(opts.sortable ? { accessorFn: (r: T) => (r as Record<string, unknown>)[id] } : {}),
+    cell: ({ row }) => <span style={opts.style?.(row.original)}>{cell(row.original)}</span>,
+  };
 }
 
 function ZoneBar({ counts }: { counts: Record<Zone, number> }) {
   const t = useT(DEC);
   const total = ZONES.reduce((n, z) => n + counts[z], 0);
-  if (!total) return <span style={{ color: A.muted2, fontSize: 12 }}>{t("noVerdictsYet")}</span>;
+  if (!total) return <span style={{ color: K.muted2, fontSize: 12 }}>{t("noVerdictsYet")}</span>;
   return (
     <div>
-      <div style={{ display: "flex", height: 12, borderRadius: 6, overflow: "hidden", background: A.line }}>
+      <div style={{ display: "flex", height: 12, borderRadius: 6, overflow: "hidden", background: K.line }}>
         {ZONES.map(z => counts[z] ? <div key={z} title={`${t(ZONE_META[z].label)}: ${counts[z]}`}
-          style={{ width: `${(counts[z] / total) * 100}%`, background: ZONE_META[z].color }} /> : null)}
+          style={{ width: `${(counts[z] / total) * 100}%`, background: toneText(ZONE_META[z].tone) }} /> : null)}
       </div>
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 6, fontSize: 12 }}>
         {ZONES.map(z => (
           <span key={z} style={{ display: "inline-flex", alignItems: "center", gap: 5 }} title={t(`${ZONE_META[z].label}Help`)}>
-            <span style={{ width: 10, height: 10, borderRadius: 3, background: ZONE_META[z].color }} />
-            {t(ZONE_META[z].label)} <b>{counts[z]}</b> <span style={{ color: A.muted }}>({pct(counts[z], total)})</span>
+            <span style={{ width: 10, height: 10, borderRadius: 3, background: toneText(ZONE_META[z].tone) }} />
+            {t(ZONE_META[z].label)} <b>{counts[z]}</b> <span style={{ color: K.muted }}>({pct(counts[z], total)})</span>
           </span>
         ))}
       </div>
@@ -147,34 +161,34 @@ function ZoneBar({ counts }: { counts: Record<Zone, number> }) {
 function Guide() {
   const t = useT(DEC);
   const term = (name: string, d: React.ReactNode) => (
-    <div style={{ padding: "10px 0", borderTop: `1px solid ${A.line}` }}>
-      <div style={{ fontWeight: 700, color: A.ink, fontSize: 13 }}>{name}</div>
-      <div style={{ fontSize: 12.5, color: A.body, marginTop: 3, lineHeight: 1.55 }}>{d}</div>
+    <div style={{ padding: "10px 0", borderTop: `1px solid ${K.line}` }}>
+      <div style={{ fontWeight: 700, color: K.ink, fontSize: 13 }}>{name}</div>
+      <div style={{ fontSize: 12.5, color: K.body, marginTop: 3, lineHeight: 1.55 }}>{d}</div>
     </div>
   );
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))", gap: 16 }}>
-      <Card>
-        <SLabel>{t("whatThisPageIs")}</SLabel>
+      <Section>
+        <Eyebrow>{t("whatThisPageIs")}</Eyebrow>
         <p style={{ fontSize: 13, lineHeight: 1.6, margin: 0 }}>
           <b>Jev</b> {t("g1a")} <i>{t("g1q")}</i> {t("g1b")} <b>{t("g1c")}</b>{t("g1d")} <b>{t("g1e")}</b>{t("g1f")}
         </p>
-        <SLabel style={{ marginTop: 14 }}>{t("howAction")}</SLabel>
+        <Eyebrow style={{ marginTop: 14 }}>{t("howAction")}</Eyebrow>
         <ol style={{ fontSize: 12.5, lineHeight: 1.7, margin: 0, paddingLeft: 18 }}>
           <li>{t("li1")}</li>
           <li>{t("li2a")} <b>{t("li2b")}</b> {t("li2c")} <ZonePill z="accept" />{t("li2d")} <ZonePill z="reject" />{t("li2e")} <ZonePill z="grey" />.</li>
           <li>{t("li3a")} <ModePill m="enforce" /> {t("li3b")} {t("li3d")}</li>
         </ol>
-      </Card>
-      <Card>
-        <SLabel>{t("terms")}</SLabel>
+      </Section>
+      <Section>
+        <Eyebrow>{t("terms")}</Eyebrow>
         {term(t("termStage"), t("termStageHelp"))}
         {term(t("termQuestion"), t("termQuestionHelp"))}
         {term(t("termType"), Object.entries(KIND_HELP).map(([k, v]) => <div key={k}><b>{k}</b>: {t(v)}</div>))}
         {term(t("termMode"), (["off", "shadow", "enforce"] as Mode[]).map(m => <div key={m} style={{ marginTop: 3 }}><ModePill m={m} /> {t(`${MODE_META[m].label}Help`)}</div>))}
-      </Card>
-      <Card>
-        <SLabel>{t("zonesTitle")}</SLabel>
+      </Section>
+      <Section>
+        <Eyebrow>{t("zonesTitle")}</Eyebrow>
         {ZONES.map(z => <div key={z} style={{ padding: "6px 0" }}><ZonePill z={z} /> <span style={{ fontSize: 12.5 }}>{t(`${ZONE_META[z].label}Help`)}</span></div>)}
         {term(t("termFloors"), t("termFloorsHelp"))}
         {term(t("termCalibration"), t("termCalibrationHelp"))}
@@ -182,7 +196,7 @@ function Guide() {
         {term(t("termCached"), t("termCachedHelp"))}
         {term(t("termActed"), t("termActedHelp"))}
         {term(t("termCost"), t("termCostHelp"))}
-      </Card>
+      </Section>
     </div>
   );
 }
@@ -211,18 +225,18 @@ function QuestionEditor({ q, onSaved }: { q: Question; onSaved: () => void }) {
   }
   return (
     <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
-      <label style={{ fontSize: 11.5, color: A.muted }}>{t("mode")}<br />
-        <select value={mode} onChange={e => setMode(e.target.value as Mode)} style={input}>
+      <label style={{ fontSize: 11.5, color: K.muted }}>{t("mode")}<br />
+        <Select value={mode} onChange={e => setMode(e.target.value as Mode)} style={input}>
           <option value="off">{t("modeOff")}</option><option value="shadow">{t("modeShadow")}</option><option value="enforce">{t("modeEnforce")}</option>
-        </select>
+        </Select>
       </label>
-      <label style={{ fontSize: 11.5, color: A.muted }}>{t("acceptFloor")}<br /><input value={accept} onChange={e => setAccept(e.target.value)} placeholder="0.95" style={{ ...input, width: 90 }} /></label>
-      <label style={{ fontSize: 11.5, color: A.muted }}>{t("rejectCeiling")}<br /><input value={reject} onChange={e => setReject(e.target.value)} placeholder="0.30" style={{ ...input, width: 90 }} /></label>
-      <label style={{ fontSize: 11.5, color: A.muted, flex: 1, minWidth: 240 }}>{t("calibrationRecord")}<br />
-        <input value={calib} onChange={e => setCalib(e.target.value)} placeholder="docs/calibration/<question>.md" style={{ ...input, width: "100%" }} />
+      <label style={{ fontSize: 11.5, color: K.muted }}>{t("acceptFloor")}<br /><Input value={accept} onChange={e => setAccept(e.target.value)} placeholder="0.95" style={{ ...input, width: 90 }} /></label>
+      <label style={{ fontSize: 11.5, color: K.muted }}>{t("rejectCeiling")}<br /><Input value={reject} onChange={e => setReject(e.target.value)} placeholder="0.30" style={{ ...input, width: 90 }} /></label>
+      <label style={{ fontSize: 11.5, color: K.muted, flex: 1, minWidth: 240 }}>{t("calibrationRecord")}<br />
+        <Input value={calib} onChange={e => setCalib(e.target.value)} placeholder="docs/calibration/<question>.md" style={{ ...input, width: "100%" }} />
       </label>
       <Button variant="primary" onClick={save} disabled={saving}>{saving ? t("saving") : t("save")}</Button>
-      {err && <div style={{ width: "100%", color: A.red, fontSize: 12 }}>{err}</div>}
+      {err && <div style={{ width: "100%", color: K.danger, fontSize: 12 }}>{err}</div>}
     </div>
   );
 }
@@ -315,13 +329,7 @@ export default function DecisionsPage() {
     });
   }, [data, sSort]);
 
-  const tabBtn = (key: Tab, label: string) => (
-    <button onClick={() => setTab(key)} style={{
-      padding: "9px 16px", border: "none", borderBottom: `3px solid ${tab === key ? A.accent : "transparent"}`,
-      background: "none", fontFamily: sans, fontSize: 13.5, fontWeight: tab === key ? 700 : 500,
-      color: tab === key ? A.ink : A.muted, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
-    }}>{label}</button>
-  );
+
   const resetPage = <T,>(set: (v: T) => void) => (v: T) => { set(v); setVPage(0); };
 
   return (
@@ -333,26 +341,36 @@ export default function DecisionsPage() {
             description={
               <>
                 {t("description")} {t("newHere")}{" "}
-                <a onClick={() => setTab("guide")} style={{ color: A.accentDeep, fontWeight: 600, cursor: "pointer" }}>{t("guide")}</a>.
+                <a onClick={() => setTab("guide")} style={{ color: K.accentDeep, fontWeight: 600, cursor: "pointer" }}>{t("guide")}</a>.
               </>
             }
             actions={
               <>
-                <select value={days} onChange={e => { setDays(Number(e.target.value)); setVPage(0); }} style={input} title={t("windowTitle")}>
+                <Select value={days} onChange={e => { setDays(Number(e.target.value)); setVPage(0); }} style={input} title={t("windowTitle")}>
                   <option value={1}>{t("last24h")}</option><option value={7}>{t("last7")}</option><option value={30}>{t("last30")}</option><option value={90}>{t("last90")}</option>
-                </select>
+                </Select>
                 <Button onClick={() => { loadSummary(); if (tab === "verdicts") loadLog(); }}><RefreshCw size={13} /> {t("refresh")}</Button>
               </>
             }
           />
-          <div style={{ display: "flex", gap: 4, marginTop: 12, maxWidth: "100%", overflowX: "auto" }}>
-            {tabBtn("overview", t("tabOverview"))}{tabBtn("questions", t("tabQuestions", qs.length))}{tabBtn("verdicts", t("tabVerdicts"))}{tabBtn("guide", t("guide"))}
-          </div>
+          <Tabs
+            variant="underline"
+            ariaLabel={t("title")}
+            style={{ marginTop: 12 }}
+            active={tab}
+            onChange={(k) => setTab(k as Tab)}
+            tabs={[
+              { key: "overview", label: t("tabOverview") },
+              { key: "questions", label: t("tabQuestions", qs.length) },
+              { key: "verdicts", label: t("tabVerdicts") },
+              { key: "guide", label: t("guide") },
+            ]}
+          />
         </PageFrameHeader>
 
         <PageFrameBody>
-          {error && <Card style={{ color: A.red, marginBottom: 16 }}>{error}</Card>}
-          {!data && !error && tab !== "guide" && <LoadingScreen msg={t("loading")} />}
+          {error && <Section style={{ marginBottom: 16 }} bodyStyle={{ color: K.danger }}>{error}</Section>}
+          {!data && !error && tab !== "guide" && <LoadingScreen message={t("loading")} />}
 
           {tab === "guide" && <Guide />}
 
@@ -362,21 +380,21 @@ export default function DecisionsPage() {
                 <Kpi label={t("kpiCalls", data.days)} value={data.total_calls.toLocaleString()} sub={t("kpiCallsSub")} />
                 <Kpi label={t("kpiCost", data.days)} value={usd(data.total_cost_usd)} sub={t("kpiCostSub")} />
                 <Kpi label={t("kpiVerdicts")} value={verdictTotal.toLocaleString()} sub={t("kpiVerdictsSub", (data.stages ?? []).reduce((n, s) => n + (s.cached ?? 0), 0))} />
-                <Kpi label={t("kpiActed")} value={acted.toLocaleString()} sub={t("kpiActedSub", pct(acted, verdictTotal))} color={acted ? MODE_META.enforce.color : A.ink} />
-                <Kpi label={t("kpiErrors")} value={totals.error.toLocaleString()} sub={t("kpiErrorsSub", pct(totals.error, verdictTotal))} color={totals.error ? ZONE_META.error.color : A.ink} />
+                <Kpi label={t("kpiActed")} value={acted.toLocaleString()} sub={t("kpiActedSub", pct(acted, verdictTotal))} color={acted ? toneText(MODE_META.enforce.tone) : K.ink} />
+                <Kpi label={t("kpiErrors")} value={totals.error.toLocaleString()} sub={t("kpiErrorsSub", pct(totals.error, verdictTotal))} color={totals.error ? toneText(ZONE_META.error.tone) : K.ink} />
                 <Kpi label={t("kpiLatency")} value={avgLatency != null ? `${Math.round(avgLatency)} ms` : "—"} sub={t("kpiLatencySub")} />
                 <Kpi label={t("kpiQuestions")} value={`${qs.length}`} sub={t("kpiQuestionsSub", qs.filter(q => q.mode === "enforce").length, qs.filter(q => q.mode === "shadow").length, qs.filter(q => q.mode === "off").length)} />
                 <Kpi label={t("kpiAllowlist")} value={`${data.tenant_allowlist.length}`} sub={data.tenant_allowlist.map(a => a.slug).join(", ") || t("platformOnly")} />
               </div>
 
-              <Card style={{ marginBottom: 18 }}>
-                <SLabel>{t("howFell", data.days)}</SLabel>
+              <Section style={{ marginBottom: 18 }}>
+                <Eyebrow>{t("howFell", data.days)}</Eyebrow>
                 <ZoneBar counts={totals} />
-              </Card>
+              </Section>
 
-              <Card style={{ marginBottom: 18 }}>
-                <SLabel>{t("perDay")}</SLabel>
-                {(data.daily ?? []).length === 0 ? <div style={{ fontSize: 12.5, color: A.muted }}>{t("noVerdictsWindow")}</div> : (
+              <Section style={{ marginBottom: 18 }}>
+                <Eyebrow>{t("perDay")}</Eyebrow>
+                {(data.daily ?? []).length === 0 ? <div style={{ fontSize: 12.5, color: K.muted }}>{t("noVerdictsWindow")}</div> : (
                   <div style={{ height: 240 }}>
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={data.daily ?? []}>
@@ -389,46 +407,39 @@ export default function DecisionsPage() {
                     </ResponsiveContainer>
                   </div>
                 )}
-              </Card>
+              </Section>
 
-              <SLabel>{t("byStage")}</SLabel>
-              <div style={{ ...TABLE_BOX, maxHeight: "none", marginBottom: 12 }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-                  <thead><tr>
-                    <SortTh label={t("colStage")} k="stage" sort={sSort} setSort={setSSort} title={t("colStageTitle")} />
-                    <th style={STICKY_TH} title={t("colQuestionsTitle")}>{t("colQuestions")}</th>
-                    <SortTh label={t("colVerdicts")} k="verdicts" sort={sSort} setSort={setSSort} />
-                    <SortTh label={t("colActed")} k="acted" sort={sSort} setSort={setSSort} title={t("colActedTitle")} />
-                    <SortTh label={t("colErrors")} k="errors" sort={sSort} setSort={setSSort} />
-                    <th style={STICKY_TH}>{t("colSkipped")}</th>
-                    <th style={STICKY_TH} title={t("colCallsTitle")}>{t("colCalls")}</th>
-                    <SortTh label={t("colCost")} k="cost_usd" sort={sSort} setSort={setSSort} />
-                    <SortTh label={t("colAvgLatency")} k="avg_latency_ms" sort={sSort} setSort={setSSort} />
-                    <SortTh label={t("colLastUsed")} k="last_used_at" sort={sSort} setSort={setSSort} />
-                  </tr></thead>
-                  <tbody>
-                    {stageRows.map(s => {
-                      const calls = (data.calls_by_stage ?? []).find(c => c.stage === s.stage);
-                      return (
-                        <tr key={s.stage}>
-                          <td style={{ ...TD, fontFamily: mono, fontWeight: 700 }}>{s.stage}</td>
-                          <td style={TD}>{n0(s.questions)}</td>
-                          <td style={TD}>{n0(s.verdicts).toLocaleString()}</td>
-                          <td style={{ ...TD, fontWeight: 700, color: s.acted ? MODE_META.enforce.color : A.muted }}>{n0(s.acted)}</td>
-                          <td style={{ ...TD, color: s.errors ? ZONE_META.error.color : A.muted }}>{n0(s.errors)} <span style={{ color: A.muted }}>({pct(n0(s.errors), n0(s.verdicts))})</span></td>
-                          <td style={TD}>{n0(s.skipped)}</td>
-                          <td style={TD}>{calls?.calls ?? "—"}</td>
-                          <td style={{ ...TD, fontFamily: mono }}>{usd(calls?.cost_usd ?? s.cost_usd)}</td>
-                          <td style={{ ...TD, fontFamily: mono }}>{s.avg_latency_ms != null ? `${Math.round(s.avg_latency_ms)} ms` : "—"}</td>
-                          <td style={{ ...TD, whiteSpace: "nowrap" }}>{when(s.last_used_at)}</td>
-                        </tr>
-                      );
-                    })}
-                    {!stageRows.length && <tr><td style={TD} colSpan={10}>{t("noStage")}</td></tr>}
-                  </tbody>
-                </table>
+              <Eyebrow>{t("byStage")}</Eyebrow>
+              <div style={{ marginBottom: 12 }}>
+                <DataTable<StageRow>
+                  tableId="decisions-by-stage"
+                  data={stageRows}
+                  getRowId={(r) => r.stage}
+                  searchable={false}
+                  paginate={false}
+                  compact
+                  emptyTitle={t("noStage")}
+                  {...tableSort(sSort, setSSort)}
+                  columns={[
+                    dcol<StageRow>("stage", t("colStage"), (r) => r.stage, { sortable: true, title: t("colStageTitle"), style: () => ({ fontFamily: mono, fontWeight: 700 }) }),
+                    dcol<StageRow>("questions", t("colQuestions"), (r) => n0(r.questions), { title: t("colQuestionsTitle") }),
+                    dcol<StageRow>("verdicts", t("colVerdicts"), (r) => n0(r.verdicts).toLocaleString(), { sortable: true }),
+                    dcol<StageRow>("acted", t("colActed"), (r) => n0(r.acted), { sortable: true, title: t("colActedTitle"),
+                      style: (r) => ({ fontWeight: 700, color: r.acted ? toneText(MODE_META.enforce.tone) : K.muted }) }),
+                    dcol<StageRow>("errors", t("colErrors"), (r) => (
+                      <>{n0(r.errors)} <span style={{ color: K.muted }}>({pct(n0(r.errors), n0(r.verdicts))})</span></>
+                    ), { sortable: true, style: (r) => ({ color: r.errors ? toneText(ZONE_META.error.tone) : K.muted }) }),
+                    dcol<StageRow>("skipped", t("colSkipped"), (r) => n0(r.skipped)),
+                    dcol<StageRow>("calls", t("colCalls"), (r) => (data.calls_by_stage ?? []).find(c => c.stage === r.stage)?.calls ?? "—", { title: t("colCallsTitle") }),
+                    dcol<StageRow>("cost_usd", t("colCost"), (r) => usd((data.calls_by_stage ?? []).find(c => c.stage === r.stage)?.cost_usd ?? r.cost_usd),
+                      { sortable: true, style: () => ({ fontFamily: mono }) }),
+                    dcol<StageRow>("avg_latency_ms", t("colAvgLatency"), (r) => (r.avg_latency_ms != null ? `${Math.round(r.avg_latency_ms)} ms` : "—"),
+                      { sortable: true, style: () => ({ fontFamily: mono }) }),
+                    dcol<StageRow>("last_used_at", t("colLastUsed"), (r) => when(r.last_used_at), { sortable: true, style: () => ({ whiteSpace: "nowrap" }) }),
+                  ]}
+                />
               </div>
-              <div style={{ fontSize: 11.5, color: A.muted }}>
+              <div style={{ fontSize: 11.5, color: K.muted }}>
                 {t("adhocA")} <span style={{ fontFamily: mono }}>adhoc_</span> {t("adhocB")}
               </div>
             </>
@@ -437,101 +448,83 @@ export default function DecisionsPage() {
           {data && tab === "questions" && (
             <>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
-                <input value={qSearch} onChange={e => setQSearch(e.target.value)} placeholder={t("searchQuestion")} style={{ ...input, width: 220 }} />
-                <select value={qStage} onChange={e => setQStage(e.target.value)} style={input}><option value="">{t("allStages")}</option>{stagesAll.map(s => <option key={s} value={s}>{s}</option>)}</select>
-                <select value={qMode} onChange={e => setQMode(e.target.value)} style={input}><option value="">{t("allModes")}</option><option value="off">{t("modeOff")}</option><option value="shadow">{t("modeShadow")}</option><option value="enforce">{t("modeEnforce")}</option></select>
-                <span style={{ fontSize: 12, color: A.muted, alignSelf: "center" }}>{t("qShown", filteredQs.length, qs.length)}</span>
+                <Input value={qSearch} onChange={e => setQSearch(e.target.value)} placeholder={t("searchQuestion")} style={{ ...input, width: 220 }} />
+                <Select value={qStage} onChange={e => setQStage(e.target.value)} style={input}><option value="">{t("allStages")}</option>{stagesAll.map(s => <option key={s} value={s}>{s}</option>)}</Select>
+                <Select value={qMode} onChange={e => setQMode(e.target.value)} style={input}><option value="">{t("allModes")}</option><option value="off">{t("modeOff")}</option><option value="shadow">{t("modeShadow")}</option><option value="enforce">{t("modeEnforce")}</option></Select>
+                <span style={{ fontSize: 12, color: K.muted, alignSelf: "center" }}>{t("qShown", filteredQs.length, qs.length)}</span>
               </div>
-              <div style={TABLE_BOX}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-                  <thead><tr>
-                    <th style={STICKY_TH} />
-                    <SortTh label={t("colStage")} k="stage" sort={qSort} setSort={setQSort} />
-                    <SortTh label={t("colQuestion")} k="question_key" sort={qSort} setSort={setQSort} />
-                    <th style={STICKY_TH} title={t("colTypeTitle")}>{t("colType")}</th>
-                    <SortTh label={t("mode")} k="mode" sort={qSort} setSort={setQSort} title={t("colModeTitle")} />
-                    <th style={STICKY_TH} title={t("colAcceptAtTitle")}>{t("colAcceptAt")}</th>
-                    <th style={STICKY_TH} title={t("colRejectAtTitle")}>{t("colRejectAt")}</th>
-                    <th style={STICKY_TH}>{t("colCalibrated")}</th>
-                    <SortTh label={t("colVerdicts")} k="verdicts" sort={qSort} setSort={setQSort} />
-                    <th style={STICKY_TH} title={t("colCachedTitle")}>{t("colCached")}</th>
-                    <th style={{ ...STICKY_TH, color: ZONE_META.accept.color }}>{t("zoneAccept")}</th>
-                    <th style={STICKY_TH}>{t("zoneGrey")}</th>
-                    <SortTh label={t("zoneReject")} k="reject" sort={qSort} setSort={setQSort} />
-                    <SortTh label={t("colError")} k="error" sort={qSort} setSort={setQSort} />
-                    <th style={STICKY_TH}>{t("colSkipped")}</th>
-                    <SortTh label={t("colActed")} k="acted" sort={qSort} setSort={setQSort} />
-                    <th style={STICKY_TH} title={t("colAvgPTitle")}>{t("colAvgP")}</th>
-                    <SortTh label={t("colLatencyP")} k="avg_latency_ms" sort={qSort} setSort={setQSort} />
-                    <SortTh label={t("colCost")} k="cost_usd" sort={qSort} setSort={setQSort} />
-                    <SortTh label={t("colLastUsed")} k="last_used_at" sort={qSort} setSort={setQSort} />
-                  </tr></thead>
-                  <tbody>
-                    {filteredQs.map(q => {
-                      const isOpen = open === q.question_key;
-                      return (
-                        <tr key={q.question_key} onClick={() => setOpen(isOpen ? null : q.question_key)} style={{ cursor: "pointer", background: isOpen ? A.accentTint : undefined }}>
-                          <td style={TD}>{isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
-                          <td style={{ ...TD, fontFamily: mono }}>{q.stage}</td>
-                          <td style={{ ...TD, fontFamily: mono, fontWeight: 700 }} title={q.instructions}>{q.question_key}</td>
-                          <td style={TD} title={KIND_HELP[q.kind] ? t(KIND_HELP[q.kind]) : undefined}>{q.kind}</td>
-                          <td style={TD}><ModePill m={q.mode} /></td>
-                          <td style={{ ...TD, fontFamily: mono }}>{num(q.accept_floor)}</td>
-                          <td style={{ ...TD, fontFamily: mono }}>{num(q.reject_ceiling)}</td>
-                          <td style={TD}>{q.calibration_ref ? <Pill color="var(--aa-green-deep)">{t("yes")}</Pill> : <Pill color="var(--aa-muted2)">{t("no")}</Pill>}</td>
-                          <td style={{ ...TD, fontWeight: 700 }}>{q.verdicts}</td>
-                          <td style={TD}>{q.cached ?? 0}</td>
-                          <td style={{ ...TD, color: ZONE_META.accept.color, fontWeight: 600 }}>{q.accept}</td>
-                          <td style={TD}>{q.grey}</td>
-                          <td style={{ ...TD, color: ZONE_META.reject.color, fontWeight: 600 }}>{q.reject}</td>
-                          <td style={{ ...TD, color: q.error ? ZONE_META.error.color : undefined }}>{q.error}</td>
-                          <td style={TD}>{q.skipped}</td>
-                          <td style={{ ...TD, fontWeight: 700, color: q.acted ? MODE_META.enforce.color : A.muted }}>{q.acted}</td>
-                          <td style={{ ...TD, fontFamily: mono }}>{num(q.avg_probability)}</td>
-                          <td style={{ ...TD, fontFamily: mono, whiteSpace: "nowrap" }}>{q.p50_latency_ms != null ? `${Math.round(q.p50_latency_ms)} / ${Math.round(q.p95_latency_ms ?? 0)} ms` : "—"}</td>
-                          <td style={{ ...TD, fontFamily: mono }}>{usd(q.cost_usd)}</td>
-                          <td style={{ ...TD, whiteSpace: "nowrap" }}>{when(q.last_used_at)}</td>
-                        </tr>
-                      );
-                    })}
-                    {!filteredQs.length && <tr><td style={TD} colSpan={20}>{t("noQuestions")}</td></tr>}
-                  </tbody>
-                </table>
-              </div>
+              <DataTable<Question>
+                tableId="decisions-questions"
+                data={filteredQs}
+                getRowId={(q) => q.question_key}
+                onRowClick={(q) => setOpen(open === q.question_key ? null : q.question_key)}
+                searchable={false}
+                paginate={false}
+                compact
+                maxBodyHeight={TABLE_BOX_HEIGHT}
+                emptyTitle={t("noQuestions")}
+                {...tableSort(qSort, setQSort)}
+                columns={[
+                  dcol<Question>("stage", t("colStage"), (q) => q.stage, { sortable: true, style: () => ({ fontFamily: mono }) }),
+                  { ...dcol<Question>("question_key", t("colQuestion"), (q) => <span title={q.instructions}>{q.question_key}</span>,
+                    { sortable: true, style: () => ({ fontFamily: mono, fontWeight: 700 }) }) },
+                  dcol<Question>("kind", t("colType"), (q) => <span title={KIND_HELP[q.kind] ? t(KIND_HELP[q.kind]) : undefined}>{q.kind}</span>, { title: t("colTypeTitle") }),
+                  dcol<Question>("mode", t("mode"), (q) => <ModePill m={q.mode} />, { sortable: true, title: t("colModeTitle") }),
+                  dcol<Question>("accept_floor", t("colAcceptAt"), (q) => num(q.accept_floor), { title: t("colAcceptAtTitle"), style: () => ({ fontFamily: mono }) }),
+                  dcol<Question>("reject_ceiling", t("colRejectAt"), (q) => num(q.reject_ceiling), { title: t("colRejectAtTitle"), style: () => ({ fontFamily: mono }) }),
+                  dcol<Question>("calibrated", t("colCalibrated"), (q) => (q.calibration_ref
+                    ? <Pill tone="success">{t("yes")}</Pill> : <Pill tone="neutral">{t("no")}</Pill>)),
+                  dcol<Question>("verdicts", t("colVerdicts"), (q) => q.verdicts, { sortable: true, style: () => ({ fontWeight: 700 }) }),
+                  dcol<Question>("cached", t("colCached"), (q) => q.cached ?? 0, { title: t("colCachedTitle") }),
+                  dcol<Question>("accept", t("zoneAccept"), (q) => q.accept, { style: () => ({ color: toneText("success"), fontWeight: 600 }) }),
+                  dcol<Question>("grey", t("zoneGrey"), (q) => q.grey),
+                  dcol<Question>("reject", t("zoneReject"), (q) => q.reject, { sortable: true, style: () => ({ color: toneText("danger"), fontWeight: 600 }) }),
+                  dcol<Question>("error", t("colError"), (q) => q.error, { sortable: true, style: (q) => ({ color: q.error ? toneText("warning") : undefined }) }),
+                  dcol<Question>("skipped", t("colSkipped"), (q) => q.skipped),
+                  dcol<Question>("acted", t("colActed"), (q) => q.acted, { sortable: true,
+                    style: (q) => ({ fontWeight: 700, color: q.acted ? toneText(MODE_META.enforce.tone) : K.muted }) }),
+                  dcol<Question>("avg_probability", t("colAvgP"), (q) => num(q.avg_probability), { title: t("colAvgPTitle"), style: () => ({ fontFamily: mono }) }),
+                  dcol<Question>("avg_latency_ms", t("colLatencyP"), (q) => (q.p50_latency_ms != null
+                    ? `${Math.round(q.p50_latency_ms)} / ${Math.round(q.p95_latency_ms ?? 0)} ms` : "—"),
+                    { sortable: true, style: () => ({ fontFamily: mono, whiteSpace: "nowrap" }) }),
+                  dcol<Question>("cost_usd", t("colCost"), (q) => usd(q.cost_usd), { sortable: true, style: () => ({ fontFamily: mono }) }),
+                  dcol<Question>("last_used_at", t("colLastUsed"), (q) => when(q.last_used_at), { sortable: true, style: () => ({ whiteSpace: "nowrap" }) }),
+                ]}
+              />
               {openQ && (() => { const q = openQ; return (
-                <Card style={{ marginTop: 14, borderLeft: `4px solid ${A.accent}` }}>
+                <Section style={{ marginTop: 14, borderLeft: `4px solid ${K.accent}` }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
                     <span style={{ fontFamily: mono, fontWeight: 700, fontSize: 14 }}>{q.question_key}</span>
-                    <ModePill m={q.mode} /><span style={{ fontSize: 12, color: A.muted }}>{t("stage", q.stage)}</span>
+                    <ModePill m={q.mode} /><span style={{ fontSize: 12, color: K.muted }}>{t("stage", q.stage)}</span>
                     <span style={{ flex: 1 }} /><Button size="sm" onClick={() => setOpen(null)}>{t("close")}</Button>
                   </div>
 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: 18 }}>
                               <div>
-                                <SLabel>{t("questionAsked")}</SLabel>
-                                <div style={{ fontSize: 13.5, fontWeight: 600, color: A.ink }}>{q.instructions}</div>
-                                <div style={{ fontSize: 12, color: A.muted, marginTop: 4 }}>{KIND_HELP[q.kind] ? t(KIND_HELP[q.kind]) : null}</div>
+                                <Eyebrow>{t("questionAsked")}</Eyebrow>
+                                <div style={{ fontSize: 13.5, fontWeight: 600, color: K.ink }}>{q.instructions}</div>
+                                <div style={{ fontSize: 12, color: K.muted, marginTop: 4 }}>{KIND_HELP[q.kind] ? t(KIND_HELP[q.kind]) : null}</div>
                                 {q.criteria != null && (
                                   <>
-                                    <SLabel style={{ marginTop: 12 }}>{q.kind === "noul" ? t("meaningYesNo") : t("options")}</SLabel>
+                                    <Eyebrow style={{ marginTop: 12 }}>{q.kind === "noul" ? t("meaningYesNo") : t("options")}</Eyebrow>
                                     <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5 }}>
                                       {Object.entries(q.criteria as Record<string, unknown>).map(([k, v]) => <li key={k}><b>{k}</b>{v ? ` — ${String(v)}` : ""}</li>)}
                                     </ul>
                                   </>
                                 )}
                                 {/* AA-994: the seeded notes (migrations 181-211) open with their issue reference; it is taken out here. */}
-                                {q.notes && <div style={{ fontSize: 12, color: A.muted, marginTop: 10 }}>{stripIssueIds(q.notes)}</div>}
+                                {q.notes && <div style={{ fontSize: 12, color: K.muted, marginTop: 10 }}>{stripIssueIds(q.notes)}</div>}
                               </div>
                               <div>
-                                <SLabel>{t("verdictsDays", data.days)}</SLabel>
+                                <Eyebrow>{t("verdictsDays", data.days)}</Eyebrow>
                                 <ZoneBar counts={{ accept: q.accept, grey: q.grey, reject: q.reject, error: q.error, skipped: q.skipped }} />
-                                <div style={{ fontSize: 12, color: A.muted, marginTop: 10 }}>
+                                <div style={{ fontSize: 12, color: K.muted, marginTop: 10 }}>
                                   {t("floorsLine", q.threshold_version, q.calibration_ref ?? t("noCalibration"), when(q.first_used_at), when(q.updated_at), q.updated_by)}
                                 </div>
                                 <Button size="sm" style={{ marginTop: 10 }} onClick={() => { setVQuestion(q.question_key); setVPage(0); setTab("verdicts"); }}>{t("seeVerdicts")}</Button>
                               </div>
                             </div>
-                            <div style={{ marginTop: 16 }}><SLabel>{t("settings")}</SLabel><QuestionEditor q={q} onSaved={() => { setOpen(null); loadSummary(); }} /></div>
-                                          </Card>
+                            <div style={{ marginTop: 16 }}><Eyebrow>{t("settings")}</Eyebrow><QuestionEditor q={q} onSaved={() => { setOpen(null); loadSummary(); }} /></div>
+                                          </Section>
               ); })()}
             </>
           )}
@@ -539,66 +532,52 @@ export default function DecisionsPage() {
           {data && tab === "verdicts" && (
             <>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
-                <select value={vStage} onChange={e => resetPage(setVStage)(e.target.value)} style={input}><option value="">{t("allStages")}</option>{stagesAll.map(s => <option key={s} value={s}>{s}</option>)}</select>
-                <select value={vQuestion} onChange={e => resetPage(setVQuestion)(e.target.value)} style={input}><option value="">{t("allQuestions")}</option>{qs.map(q => <option key={q.question_key} value={q.question_key}>{q.question_key}</option>)}</select>
-                <select value={vZone} onChange={e => resetPage(setVZone)(e.target.value)} style={input}><option value="">{t("allZones")}</option>{ZONES.map(z => <option key={z} value={z}>{t(ZONE_META[z].label)}</option>)}</select>
-                <select value={vMode} onChange={e => resetPage(setVMode)(e.target.value)} style={input}><option value="">{t("allModes")}</option><option value="off">{t("modeOff")}</option><option value="shadow">{t("modeShadow")}</option><option value="enforce">{t("modeEnforce")}</option></select>
-                <select value={vTenant} onChange={e => resetPage(setVTenant)(e.target.value)} style={input}>
+                <Select value={vStage} onChange={e => resetPage(setVStage)(e.target.value)} style={input}><option value="">{t("allStages")}</option>{stagesAll.map(s => <option key={s} value={s}>{s}</option>)}</Select>
+                <Select value={vQuestion} onChange={e => resetPage(setVQuestion)(e.target.value)} style={input}><option value="">{t("allQuestions")}</option>{qs.map(q => <option key={q.question_key} value={q.question_key}>{q.question_key}</option>)}</Select>
+                <Select value={vZone} onChange={e => resetPage(setVZone)(e.target.value)} style={input}><option value="">{t("allZones")}</option>{ZONES.map(z => <option key={z} value={z}>{t(ZONE_META[z].label)}</option>)}</Select>
+                <Select value={vMode} onChange={e => resetPage(setVMode)(e.target.value)} style={input}><option value="">{t("allModes")}</option><option value="off">{t("modeOff")}</option><option value="shadow">{t("modeShadow")}</option><option value="enforce">{t("modeEnforce")}</option></Select>
+                <Select value={vTenant} onChange={e => resetPage(setVTenant)(e.target.value)} style={input}>
                   <option value="">{t("allContent")}</option><option value="platform">{t("platform")}</option>
                   {data.tenant_allowlist.map(a => <option key={a.slug} value={a.slug}>{a.slug}</option>)}
-                </select>
-                <input value={vSubject} onChange={e => resetPage(setVSubject)(e.target.value)} placeholder={t("subjectContains")} style={{ ...input, width: 200 }} />
+                </Select>
+                <Input value={vSubject} onChange={e => resetPage(setVSubject)(e.target.value)} placeholder={t("subjectContains")} style={{ ...input, width: 200 }} />
               </div>
-              <div style={TABLE_BOX}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-                  <thead><tr>
-                    <SortTh label={t("colTime")} k="created_at" sort={vSort} setSort={s => { setVSort(s); setVPage(0); }} />
-                    <th style={STICKY_TH}>{t("colStage")}</th>
-                    <th style={STICKY_TH}>{t("colQuestion")}</th>
-                    <th style={STICKY_TH} title={t("colSubjectTitle")}>{t("colSubject")}</th>
-                    <th style={STICKY_TH} title={t("colContentTitle")}>{t("colContent")}</th>
-                    <th style={STICKY_TH}>{t("mode")}</th>
-                    <th style={STICKY_TH}>{t("colZone")}</th>
-                    <SortTh label={t("colProbability")} k="probability" sort={vSort} setSort={s => { setVSort(s); setVPage(0); }} />
-                    <th style={STICKY_TH} title={t("colActedVTitle")}>{t("colActed")}</th>
-                    <SortTh label={t("colLatency")} k="latency_ms" sort={vSort} setSort={s => { setVSort(s); setVPage(0); }} />
-                    <SortTh label={t("colCost")} k="cost_usd" sort={vSort} setSort={s => { setVSort(s); setVPage(0); }} />
-                    <th style={STICKY_TH}>{t("colNote")}</th>
-                    <th style={STICKY_TH} title={t("colJobTitle")}>{t("colJob")}</th>
-                  </tr></thead>
-                  <tbody>
-                    {log.rows.map(v => {
-                      const actedOn = v.mode === "enforce" && (v.zone === "accept" || v.zone === "reject");
-                      return (
-                        <tr key={v.id}>
-                          <td style={{ ...TD, whiteSpace: "nowrap" }}>{when(v.created_at)}</td>
-                          <td style={{ ...TD, fontFamily: mono }}>{v.stage}</td>
-                          <td style={{ ...TD, fontFamily: mono }}>{v.question_key}</td>
-                          <td style={{ ...TD, maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={v.subject_key}>{v.subject_key}</td>
-                          <td style={TD}>{v.tenant_slug ?? t("platformLower")}</td>
-                          <td style={TD}><ModePill m={v.mode} /></td>
-                          <td style={TD}><ZonePill z={v.zone} /></td>
-                          <td style={{ ...TD, fontFamily: mono, fontWeight: 700 }}>{v.choice ? `${v.choice} (${num(v.probability)})` : num(v.probability, 3)}</td>
-                          <td style={{ ...TD, fontWeight: 700, color: actedOn ? MODE_META.enforce.color : A.muted }}>{actedOn ? t("yes") : t("no")}</td>
-                          <td style={{ ...TD, fontFamily: mono }}>{v.latency_ms != null ? `${v.latency_ms} ms` : "—"}</td>
-                          <td style={{ ...TD, fontFamily: mono }}>{usd(v.cost_usd ?? 0)}</td>
-                          <td style={{ ...TD, fontSize: 11.5, color: A.muted, maxWidth: 240 }}>{v.error ?? v.outcome ?? ""}</td>
-                          {/* AA-804 UI part 3: the job that asked, opened as its AI trace (every paid call of the job). */}
-                          <td style={{ ...TD, fontFamily: mono, whiteSpace: "nowrap" }}>
-                            {v.job_id ? (
-                              <a href={traceHref(v.job_id)} title={t("openTraceTitle")} data-testid="decision-open-trace"
-                                style={{ color: A.accent }}>{v.job_id.slice(0, 8)}</a>
-                            ) : <span style={{ color: A.muted }}>—</span>}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    {!log.rows.length && <tr><td style={TD} colSpan={13}>{t("noVerdictsFilters")}</td></tr>}
-                  </tbody>
-                </table>
-              </div>
+              <DataTable<Verdict>
+                tableId="decisions-verdicts"
+                data={log.rows}
+                getRowId={(v) => String(v.id)}
+                searchable={false}
+                paginate={false}
+                compact
+                maxBodyHeight={TABLE_BOX_HEIGHT}
+                emptyTitle={t("noVerdictsFilters")}
+                {...tableSort(vSort, (next) => { setVSort(next); setVPage(0); })}
+                columns={[
+                  dcol<Verdict>("created_at", t("colTime"), (v) => when(v.created_at), { sortable: true, style: () => ({ whiteSpace: "nowrap" }) }),
+                  dcol<Verdict>("stage", t("colStage"), (v) => v.stage, { style: () => ({ fontFamily: mono }) }),
+                  dcol<Verdict>("question", t("colQuestion"), (v) => v.question_key, { style: () => ({ fontFamily: mono }) }),
+                  dcol<Verdict>("subject", t("colSubject"), (v) => <span title={v.subject_key}>{v.subject_key}</span>, { title: t("colSubjectTitle"),
+                    style: () => ({ display: "inline-block", maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", verticalAlign: "bottom" }) }),
+                  dcol<Verdict>("content", t("colContent"), (v) => v.tenant_slug ?? t("platformLower"), { title: t("colContentTitle") }),
+                  dcol<Verdict>("mode", t("mode"), (v) => <ModePill m={v.mode} />),
+                  dcol<Verdict>("zone", t("colZone"), (v) => <ZonePill z={v.zone} />),
+                  dcol<Verdict>("probability", t("colProbability"), (v) => (v.choice ? `${v.choice} (${num(v.probability)})` : num(v.probability, 3)),
+                    { sortable: true, style: () => ({ fontFamily: mono, fontWeight: 700 }) }),
+                  dcol<Verdict>("acted", t("colActed"), (v) => (v.mode === "enforce" && (v.zone === "accept" || v.zone === "reject") ? t("yes") : t("no")),
+                    { title: t("colActedVTitle"), style: (v) => ({ fontWeight: 700,
+                      color: v.mode === "enforce" && (v.zone === "accept" || v.zone === "reject") ? toneText(MODE_META.enforce.tone) : K.muted }) }),
+                  dcol<Verdict>("latency_ms", t("colLatency"), (v) => (v.latency_ms != null ? `${v.latency_ms} ms` : "—"), { sortable: true, style: () => ({ fontFamily: mono }) }),
+                  dcol<Verdict>("cost_usd", t("colCost"), (v) => usd(v.cost_usd ?? 0), { sortable: true, style: () => ({ fontFamily: mono }) }),
+                  dcol<Verdict>("note", t("colNote"), (v) => v.error ?? v.outcome ?? "", { style: () => ({ fontSize: 11.5, color: K.muted }) }),
+                  // AA-804 UI part 3: the job that asked, opened as its AI trace (every paid call of the job).
+                  dcol<Verdict>("job", t("colJob"), (v) => (v.job_id ? (
+                    <a href={traceHref(v.job_id)} title={t("openTraceTitle")} data-testid="decision-open-trace"
+                      style={{ color: K.accent }}>{v.job_id.slice(0, 8)}</a>
+                  ) : <span style={{ color: K.muted }}>—</span>), { title: t("colJobTitle"), style: () => ({ fontFamily: mono, whiteSpace: "nowrap" }) }),
+                ]}
+              />
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10, fontSize: 12.5 }}>
-                <span style={{ color: A.muted }}>
+                <span style={{ color: K.muted }}>
                   {log.total ? t("range", vPage * PAGE + 1, Math.min((vPage + 1) * PAGE, log.total), log.total.toLocaleString()) : t("zeroVerdicts")}
                 </span>
                 <Button size="sm" disabled={vPage === 0} onClick={() => setVPage(p => p - 1)}>{t("prev")}</Button>
@@ -608,7 +587,7 @@ export default function DecisionsPage() {
           )}
 
           {tab !== "guide" && (
-            <div style={{ marginTop: 22, fontSize: 12, color: A.muted, display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ marginTop: 22, fontSize: 12, color: K.muted, display: "flex", alignItems: "center", gap: 6 }}>
               <BookOpen size={13} /> {t("colours")} {ZONES.map(z => <ZonePill key={z} z={z} />)} {t("modes")} {(["off", "shadow", "enforce"] as Mode[]).map(m => <ModePill key={m} m={m} />)}
             </div>
           )}

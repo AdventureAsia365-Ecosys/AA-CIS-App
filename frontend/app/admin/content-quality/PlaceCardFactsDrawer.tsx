@@ -7,7 +7,9 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { K, ApiError, Badge, Button, Drawer, apiGet, apiSend, useAdminIdentity, useT, useToast } from "../../_kit";
+import {
+  K, ApiError, Badge, Button, Drawer, apiGet, apiSend, useAdminIdentity, useT, useToast, Input, Select, Textarea,
+} from "../../_kit";
 import type { FactEdit, PlaceCardDetail, PlaceCardFactRow } from "./shared";
 import { D } from "./drawer.messages";
 
@@ -72,10 +74,10 @@ function FactsForm({ card, onSaved }: { card: PlaceCardDetail; onSaved: (c: Plac
                                       display: "flex", flexDirection: "column", gap: 6, opacity: d.drop ? 0.55 : 1 }}>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <span style={{ fontSize: 11.5, color: K.muted }}>#{r.index + 1}</span>
-              <select value={d.kind} disabled={d.drop || !isAdmin} onChange={(e) => set(r, { kind: e.target.value })}
+              <Select value={d.kind} disabled={d.drop || !isAdmin} onChange={(e) => set(r, { kind: e.target.value })}
                       aria-label={t("kindAria", r.index + 1)} style={{ ...fieldStyle, width: "auto" }}>
                 {card.fact_kinds.map((k) => <option key={k} value={k}>{k}</option>)}
-              </select>
+              </Select>
               <Badge tone={r.in_writer_seed ? "success" : "neutral"} dot={false}>
                 {r.in_writer_seed ? t("inWriterSeed") : t("adminOnly")}
               </Badge>
@@ -83,7 +85,7 @@ function FactsForm({ card, onSaved }: { card: PlaceCardDetail; onSaved: (c: Plac
               <Button size="sm" variant={d.drop ? "secondary" : "danger"} disabled={!isAdmin}
                       onClick={() => set(r, { drop: !d.drop })}>{d.drop ? t("keep") : t("drop")}</Button>
             </div>
-            <textarea value={d.text} disabled={d.drop || !isAdmin} rows={Math.min(8, Math.max(3, Math.ceil(d.text.length / 60)))} maxLength={600}
+            <Textarea value={d.text} disabled={d.drop || !isAdmin} rows={Math.min(8, Math.max(3, Math.ceil(d.text.length / 60)))} maxLength={600}
                       onChange={(e) => set(r, { text: e.target.value })} aria-label={t("textAria", r.index + 1)}
                       style={{ ...fieldStyle, resize: "vertical", textDecoration: d.drop ? "line-through" : "none" }} />
           </div>
@@ -91,7 +93,7 @@ function FactsForm({ card, onSaved }: { card: PlaceCardDetail; onSaved: (c: Plac
       })}
       <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: K.ink3 }}>
         {t("factReason")}
-        <input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} disabled={!isAdmin}
+        <Input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} disabled={!isAdmin}
                placeholder={t("factReasonPlaceholder")} style={fieldStyle} />
       </label>
       {emptyText && <div role="alert" style={{ fontSize: 12, color: K.danger }}>{t("factEmpty")}</div>}

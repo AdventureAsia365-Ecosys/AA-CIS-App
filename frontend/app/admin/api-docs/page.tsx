@@ -32,6 +32,8 @@ import {
   PageFrame,
   useT,
   type Tone,
+  Input,
+  IconButton, Pressable,
 } from "../../_kit";
 import { M } from "./messages";
 import {
@@ -250,8 +252,7 @@ function OpRow({
   const t = useT(M);
   return (
     <div style={{ borderTop: `1px solid ${K.line}` }}>
-      <button
-        type="button"
+      <Pressable
         onClick={onToggle}
         aria-expanded={open}
         style={{
@@ -294,7 +295,7 @@ function OpRow({
             {op.summary}
           </span>
         )}
-      </button>
+      </Pressable>
       {open && <OpDetails op={op} spec={spec} />}
     </div>
   );
@@ -325,8 +326,7 @@ function GroupCard({
         minWidth: 0,
       }}
     >
-      <button
-        type="button"
+      <Pressable
         onClick={onToggle}
         aria-expanded={open}
         style={{
@@ -349,7 +349,7 @@ function GroupCard({
           {group.tag}
         </span>
         <Badge tone="neutral" dot={false}>{group.ops.length}</Badge>
-      </button>
+      </Pressable>
       {group.description && open && (
         <div style={{ padding: "0 14px 10px", fontSize: 12, color: K.muted }}>{group.description}</div>
       )}
@@ -449,7 +449,7 @@ export default function ApiDocsPage() {
               }}
             >
               <Search size={14} style={{ color: K.muted2, flexShrink: 0 }} />
-              <input
+              <Input
                 // type="text", not "search": the browser's own clear button would sit next to ours.
                 type="text"
                 value={query}
@@ -471,14 +471,9 @@ export default function ApiDocsPage() {
                 }}
               />
               {searching && (
-                <button
-                  type="button"
-                  onClick={() => setQuery("")}
-                  aria-label={t("clearSearch")}
-                  style={{ display: "inline-flex", background: "none", border: "none", padding: 0, cursor: "pointer", color: K.muted }}
-                >
+                <IconButton variant="plain" size="xs" onClick={() => setQuery("")} label={t("clearSearch")}>
                   <X size={14} />
-                </button>
+                </IconButton>
               )}
             </label>
             <span style={{ fontSize: 12, color: K.muted }}>

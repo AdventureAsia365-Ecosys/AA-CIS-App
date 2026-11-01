@@ -21,8 +21,11 @@ import {
 import DfsRunsPanel from "./DfsRunsPanel";
 import ForecastPanel from "./ForecastPanel";
 import JevPanel from "./JevPanel";
-import { A, serif, sans, mono, Card, SLabel, Badge, LoadingScreen, StatCard, TH, TD, CHART_TOOLTIP } from "../_components/adminUi";
-import { Button, SegmentedControl, Tabs, ScrollX, PageFrame, PageHeader, useFormat, useT } from "../../_kit";
+import {
+  Button, SegmentedControl, Tabs, PageFrame, PageHeader, useFormat, useT, Input, Select,
+  K, serif, sans, mono, Section, Eyebrow, Badge, LoadingScreen, KpiTile, CHART_TOOLTIP,
+  DataTable, KX, LinkButton, Modal, Pressable, type ColumnDef, type Tone,
+} from "../../_kit";
 import { useChartColors } from "../../_kit/useTheme";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import {
@@ -107,13 +110,13 @@ interface CallRow {  // AA-622 fallback drill-down — GET /admin/llm-usage/call
   stop_reason: string | null; created_at: string | null;
 }
 
-const ROLE_COLOR: Record<string, "gray" | "gold" | "green"> = { writer: "gold", judge: "green", validate: "gray" };
+const ROLE_COLOR: Record<string, Tone> = { writer: "accent", judge: "success", validate: "neutral" };
 // AA-998: one LLM account. "retired" groups the older llm_call_log rows of the former fallback account (history
 // only, shown without an ID). AWS accounts are named by their account ID (lib/awsAccounts.ts), never by the key.
 const ACCOUNTS = [LLM_ACCOUNT, MAIN_ACCOUNT, "openai", "anthropic", "typesafe", RETIRED_ACCOUNT, "unknown"] as const;
 const ACCOUNT_COLOR: Record<string, string> = {
-  [LLM_ACCOUNT]: A.slate, [MAIN_ACCOUNT]: A.green, openai: A.ink3, anthropic: A.ink3, typesafe: A.accent,
-  [RETIRED_ACCOUNT]: A.gold, unknown: A.muted,
+  [LLM_ACCOUNT]: K.slate, [MAIN_ACCOUNT]: K.success, openai: K.ink3, anthropic: K.ink3, typesafe: K.accent,
+  [RETIRED_ACCOUNT]: K.accent, unknown: K.muted,
 };
 // Buckets that are not an AWS account (message keys of messages.ts COST).
 const OTHER_ACCOUNT_META: Record<
@@ -184,8 +187,8 @@ function tenantKey(b: { tenant_id: string | null; tenant_label: string }): strin
 
 const DAY_OPTIONS = [7, 30, 90];
 const DATE_INPUT: CSSProperties = {
-  fontSize: 12.5, padding: "4px 6px", borderRadius: 7, border: `1px solid ${A.line}`,
-  background: A.card, color: A.ink2, fontFamily: sans,
+  fontSize: 12.5, padding: "4px 6px", borderRadius: 7, border: `1px solid ${K.line}`,
+  background: K.card, color: K.ink2, fontFamily: sans,
 };
 
 // ── Shared quality cell ──────────────────────────────────────────────────────
@@ -194,26 +197,39 @@ function QualityCell({ b }: { b: Branch }) {
   const t = useT(COST);
   if (b.ok_eligible_count > 0) {
     const p = Math.round((b.ok_rate ?? 0) * 100);
-    const color = p >= 80 ? A.green : p >= 50 ? A.amber : A.red;
+    const color = p >= 80 ? K.success : p >= 50 ? K.amber : K.danger;
     return (
       <span style={{ color, fontWeight: 600 }}>
-        {p}% <span style={{ color: A.muted2, fontWeight: 400 }}>({b.ok_count}/{b.ok_eligible_count})</span>
+        {p}% <span style={{ color: K.muted2, fontWeight: 400 }}>({b.ok_count}/{b.ok_eligible_count})</span>
       </span>
     );
   }
-  if (b.avg_atoms_extracted != null) return <span style={{ color: A.ink3 }}>{t("atomsPerCall", b.avg_atoms_extracted.toFixed(1))}</span>;
-  if (b.avg_output_len_chars != null) return <span style={{ color: A.ink3 }}>{t("charsPerCall", Math.round(b.avg_output_len_chars))}</span>;
-  return <span style={{ color: A.muted2 }}>—</span>;
+  if (b.avg_atoms_extracted != null) return <span style={{ color: K.ink3 }}>{t("atomsPerCall", b.avg_atoms_extracted.toFixed(1))}</span>;
+  if (b.avg_output_len_chars != null) return <span style={{ color: K.ink3 }}>{t("charsPerCall", Math.round(b.avg_output_len_chars))}</span>;
+  return <span style={{ color: K.muted2 }}>—</span>;
 }
 
 function AcctDot({ account }: { account: string }) {
   const names = useAcctNames();
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, color: A.muted }}>
-      <span style={{ width: 7, height: 7, borderRadius: "50%", background: ACCOUNT_COLOR[account] ?? A.muted, flexShrink: 0 }} />
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, color: K.muted }}>
+      <span style={{ width: 7, height: 7, borderRadius: "50%", background: ACCOUNT_COLOR[account] ?? K.muted, flexShrink: 0 }} />
       {names.short(account)}
     </span>
   );
+}
+
+// AA-1006: the cost tables are kit DataTables; `cc` is a column helper (right-aligned numbers, optional mono and colour).
+function cc<T>(id: string, header: string, value: (r: T) => string | number, render: (r: T) => React.ReactNode,
+  opts: { right?: boolean; mono?: boolean; color?: (r: T) => string | undefined; weight?: number } = {}): ColumnDef<T, unknown> {
+  return {
+    id, header, accessorFn: value, meta: opts.right ? { align: "right" } : undefined,
+    cell: ({ row }) => (
+      <span style={{ fontFamily: opts.mono ? mono : undefined, color: opts.color?.(row.original), fontWeight: opts.weight }}>
+        {render(row.original)}
+      </span>
+    ),
+  };
 }
 
 // ── Spend-by-tenant table (LLM) — the primary per-tenant view ──────────────
@@ -255,54 +271,41 @@ function TenantSpendTable({ branches, onFallbackClick }: {
   const names = useAcctNames();
   const rows = useMemo(() => buildTenantRows(branches), [branches]);
   const accountsPresent = useMemo(() => ACCOUNTS.filter(a => branches.some(b => acctKey(b) === a)), [branches]);
-  if (rows.length === 0) return <div style={{ color: A.muted2, fontSize: 13, padding: "8px 0" }}>{t("noLlmInRange")}</div>;
+  if (rows.length === 0) return <div style={{ color: K.muted2, fontSize: 13, padding: "8px 0" }}>{t("noLlmInRange")}</div>;
   return (
-    <ScrollX>
-    <table style={{ width: "100%", borderCollapse: "collapse" }}>
-      <thead><tr>
-        <th style={TH}>{t("colTenant")}</th>
-        <th style={{ ...TH, textAlign: "right" }}>{t("colCost")}</th>
-        <th style={{ ...TH, textAlign: "right" }}>{t("colCalls")}</th>
-        <th style={{ ...TH, textAlign: "right" }}>{t("colTokens")}</th>
-        <th style={{ ...TH, textAlign: "right" }}>{t("colPerKTok")}</th>
-        <th style={{ ...TH, textAlign: "right" }}>{t("colPass")}</th>
-        <th style={{ ...TH, textAlign: "right" }}>{t("colFallback")}</th>
-        {accountsPresent.map(a => <th key={a} style={{ ...TH, textAlign: "right" }}>{names.short(a)}</th>)}
-      </tr></thead>
-      <tbody>
-        {rows.map(r => (
-          <tr key={r.key}>
-            <td style={{ ...TD }}>
-              <span style={{ fontWeight: 600, color: A.ink2 }}>{r.label}</span>
-              <span style={{ color: A.muted2, fontSize: 11, marginLeft: 6 }}>{t("models", r.models.size)}</span>
-            </td>
-            <td style={{ ...TD, textAlign: "right", fontFamily: mono, fontWeight: 600 }}>{fmtUsd(r.cost)}</td>
-            <td style={{ ...TD, textAlign: "right" }}>{fmtInt(r.calls)}</td>
-            <td style={{ ...TD, textAlign: "right" }}>{fmtInt(r.tokens)}</td>
-            <td style={{ ...TD, textAlign: "right", fontFamily: mono, color: A.muted }}>
-              {r.tokens > 0 ? fmtUsd((r.cost / r.tokens) * 1000) : "—"}
-            </td>
-            <td style={{ ...TD, textAlign: "right" }}>{r.okElig > 0 ? pct(r.okCount / r.okElig) : "—"}</td>
-            <td style={{ ...TD, textAlign: "right" }}>
-              {r.fallback > 0 ? (
-                <button onClick={() => onFallbackClick(r.tenantId, r.label)} style={{
-                  background: "none", border: "none", cursor: "pointer", color: A.amber,
-                  fontFamily: sans, fontSize: 13, fontWeight: 600, textDecoration: "underline", padding: 0,
-                }} title={t("viewFallback")}>
-                  {pct(r.fallback / r.calls)}
-                </button>
-              ) : <span style={{ color: A.muted2 }}>{r.calls > 0 ? "0%" : "—"}</span>}
-            </td>
-            {accountsPresent.map(a => (
-              <td key={a} style={{ ...TD, textAlign: "right", fontFamily: mono, color: r.byAccount[a] ? A.ink3 : A.muted2 }}>
-                {r.byAccount[a] ? fmtUsd(r.byAccount[a]) : "—"}
-              </td>
-            ))}
-          </tr>
-        ))}
-      </tbody>
-    </table>
-    </ScrollX>
+    <DataTable<TenantRow>
+      tableId="cost-llm-by-tenant"
+      data={rows}
+      getRowId={(r) => r.key}
+      searchable={false}
+      paginate={false}
+      compact
+      columns={[
+        { id: "tenant", header: t("colTenant"), accessorKey: "label", cell: ({ row: { original: r } }) => (
+          <span>
+            <span style={{ fontWeight: 600, color: K.ink2 }}>{r.label}</span>
+            <span style={{ color: K.muted2, fontSize: 11, marginLeft: 6 }}>{t("models", r.models.size)}</span>
+          </span>
+        ) },
+        cc<TenantRow>("cost", t("colCost"), (r) => r.cost, (r) => fmtUsd(r.cost), { right: true, mono: true, weight: 600 }),
+        cc<TenantRow>("calls", t("colCalls"), (r) => r.calls, (r) => fmtInt(r.calls), { right: true }),
+        cc<TenantRow>("tokens", t("colTokens"), (r) => r.tokens, (r) => fmtInt(r.tokens), { right: true }),
+        cc<TenantRow>("perK", t("colPerKTok"), (r) => (r.tokens > 0 ? r.cost / r.tokens : 0),
+          (r) => (r.tokens > 0 ? fmtUsd((r.cost / r.tokens) * 1000) : "—"), { right: true, mono: true, color: () => K.muted }),
+        cc<TenantRow>("pass", t("colPass"), (r) => (r.okElig > 0 ? r.okCount / r.okElig : -1),
+          (r) => (r.okElig > 0 ? pct(r.okCount / r.okElig) : "—"), { right: true }),
+        { id: "fallback", header: t("colFallback"), accessorFn: (r) => (r.calls > 0 ? r.fallback / r.calls : -1), meta: { align: "right" },
+          cell: ({ row: { original: r } }) => r.fallback > 0 ? (
+            <LinkButton tone="inherit" onClick={() => onFallbackClick(r.tenantId, r.label)} title={t("viewFallback")}
+              style={{ color: K.amber, textDecoration: "underline" }}>
+              {pct(r.fallback / r.calls)}
+            </LinkButton>
+          ) : <span style={{ color: K.muted2 }}>{r.calls > 0 ? "0%" : "—"}</span> },
+        ...accountsPresent.map((a) => cc<TenantRow>(`acct:${a}`, names.short(a), (r) => r.byAccount[a] ?? 0,
+          (r) => (r.byAccount[a] ? fmtUsd(r.byAccount[a]) : "—"),
+          { right: true, mono: true, color: (r) => (r.byAccount[a] ? K.ink3 : K.muted2) })),
+      ]}
+    />
   );
 }
 
@@ -321,20 +324,20 @@ function StageLeaf({ b }: { b: Branch }) {
   return (
     <div style={{
       display: "flex", flexWrap: "wrap", alignItems: "center", columnGap: 10, rowGap: 4,
-      padding: "8px 0 8px min(60px, 8vw)", borderBottom: `1px solid ${A.line2}`,
+      padding: "8px 0 8px min(60px, 8vw)", borderBottom: `1px solid ${K.line2}`,
     }}>
-      <span style={{ fontFamily: mono, fontSize: 12, color: A.ink, minWidth: "min(150px, 100%)", overflowWrap: "anywhere" }}>
+      <span style={{ fontFamily: mono, fontSize: 12, color: K.ink, minWidth: "min(150px, 100%)", overflowWrap: "anywhere" }}>
         {b.stage}</span>
-      <Badge color={ROLE_COLOR[b.role] ?? "gray"}>{b.role}</Badge>
+      <Badge tone={ROLE_COLOR[b.role] ?? "neutral"}>{b.role}</Badge>
       <AcctDot account={acctKey(b)} />
-      <span style={{ fontSize: 12, color: A.muted2, minWidth: 110 }}>{b.tenant_label}</span>
-      <span style={{ fontSize: 12, color: A.muted, minWidth: 60 }}>{fmtInt(b.call_count)}</span>
-      <span style={{ fontSize: 12, color: A.ink2, minWidth: 84, fontFamily: mono, whiteSpace: "nowrap" }}>
+      <span style={{ fontSize: 12, color: K.muted2, minWidth: 110 }}>{b.tenant_label}</span>
+      <span style={{ fontSize: 12, color: K.muted, minWidth: 60 }}>{fmtInt(b.call_count)}</span>
+      <span style={{ fontSize: 12, color: K.ink2, minWidth: 84, fontFamily: mono, whiteSpace: "nowrap" }}>
         {fmtUsd(b.total_cost_usd)}</span>
       <span style={{ fontSize: 12, minWidth: 120 }}><QualityCell b={b} /></span>
-      {b.fallback_count > 0 && <Badge color="amber">{t("fbBadge", Math.round(fbPct * 100))}</Badge>}
-      {b.truncated_count > 0 && <Badge color="red">{t("truncBadge", b.truncated_count)}</Badge>}
-      <span style={{ fontSize: 11, color: A.muted2, marginLeft: "auto" }}>
+      {b.fallback_count > 0 && <Badge tone="warning">{t("fbBadge", Math.round(fbPct * 100))}</Badge>}
+      {b.truncated_count > 0 && <Badge tone="danger">{t("truncBadge", b.truncated_count)}</Badge>}
+      <span style={{ fontSize: 11, color: K.muted2, marginLeft: "auto" }}>
         {formatDateTime(b.last_call_at)}
       </span>
     </div>
@@ -353,26 +356,26 @@ function SubNode({ label, sublabel, branches, indent, dotColor }: {
   const perK = tok > 0 ? (cost / tok) * 1000 : 0;
   return (
     <div>
-      <button onClick={() => setOpen(o => !o)} style={{
+      <Pressable aria-expanded={open} onClick={() => setOpen(o => !o)} style={{
         display: "flex", alignItems: "center", gap: 8, width: "100%", minWidth: 0,
         padding: `8px 0 8px min(${indent}px, 4vw)`, background: "none", border: "none", cursor: "pointer",
-        borderBottom: `1px solid ${A.line2}`, textAlign: "left",
+        borderBottom: `1px solid ${K.line2}`, textAlign: "left",
       }}>
-        {open ? <ChevronDown size={14} color={A.muted} style={{ flexShrink: 0 }} />
-          : <ChevronRight size={14} color={A.muted} style={{ flexShrink: 0 }} />}
+        {open ? <ChevronDown size={14} color={K.muted} style={{ flexShrink: 0 }} />
+          : <ChevronRight size={14} color={K.muted} style={{ flexShrink: 0 }} />}
         {dotColor && <span style={{ width: 8, height: 8, borderRadius: "50%", background: dotColor, flexShrink: 0 }} />}
         <span style={TREE_MID}>
-          <span style={{ fontFamily: mono, fontSize: 12.5, color: A.ink2, fontWeight: 600, overflowWrap: "anywhere" }}>
+          <span style={{ fontFamily: mono, fontSize: 12.5, color: K.ink2, fontWeight: 600, overflowWrap: "anywhere" }}>
             {label}</span>
-          {sublabel && <span style={{ fontSize: 11, color: A.muted2 }}>{sublabel}</span>}
-          <span style={{ fontSize: 11.5, color: A.muted2, whiteSpace: "nowrap" }}>{t("calls", fmtInt(calls))}</span>
+          {sublabel && <span style={{ fontSize: 11, color: K.muted2 }}>{sublabel}</span>}
+          <span style={{ fontSize: 11.5, color: K.muted2, whiteSpace: "nowrap" }}>{t("calls", fmtInt(calls))}</span>
           {tok > 0 && (
-            <span style={{ fontSize: 11, color: A.muted2, fontFamily: mono, whiteSpace: "nowrap" }}>
+            <span style={{ fontSize: 11, color: K.muted2, fontFamily: mono, whiteSpace: "nowrap" }}>
               {t("perK", fmtUsd(perK))}</span>
           )}
         </span>
-        <span data-testid="cost-tree-node-cost" style={{ ...TREE_COST, fontSize: 11.5, color: A.ink3 }}>{fmtUsd(cost)}</span>
-      </button>
+        <span data-testid="cost-tree-node-cost" style={{ ...TREE_COST, fontSize: 11.5, color: K.ink3 }}>{fmtUsd(cost)}</span>
+      </Pressable>
       {open && branches.map((b, i) => <StageLeaf key={`${b.stage}-${b.tenant_label}-${b.account}-${i}`} b={b} />)}
     </div>
   );
@@ -399,23 +402,23 @@ function TopGroup({ label, sublabel, dotColor, branches, groupBy }: {
     return m;
   }, [branches, groupBy]);
   return (
-    <Card style={{ padding: 0, overflow: "hidden" }}>
-      <button onClick={() => setOpen(o => !o)} style={{
+    <Section padded={false} style={{ overflow: "hidden" }}>
+      <Pressable aria-expanded={open} onClick={() => setOpen(o => !o)} style={{
         display: "flex", alignItems: "center", gap: 10, width: "100%", minWidth: 0,
         padding: "14px min(18px, 4vw)", background: "none", border: "none", cursor: "pointer", textAlign: "left",
       }}>
-        {open ? <ChevronDown size={15} color={A.ink} style={{ flexShrink: 0 }} />
-          : <ChevronRight size={15} color={A.ink} style={{ flexShrink: 0 }} />}
+        {open ? <ChevronDown size={15} color={K.ink} style={{ flexShrink: 0 }} />
+          : <ChevronRight size={15} color={K.ink} style={{ flexShrink: 0 }} />}
         {dotColor && <span style={{ width: 9, height: 9, borderRadius: "50%", background: dotColor, flexShrink: 0 }} />}
         <span style={TREE_MID}>
-          <span style={{ fontFamily: serif, fontSize: 14.5, color: A.ink, fontWeight: 500, overflowWrap: "anywhere" }}>
+          <span style={{ fontFamily: serif, fontSize: 14.5, color: K.ink, fontWeight: 500, overflowWrap: "anywhere" }}>
             {label}</span>
-          <span style={{ fontSize: 12, color: A.muted2 }}>
+          <span style={{ fontSize: 12, color: K.muted2 }}>
             {t("groupSub", sublabel, fmtInt(calls), sub.size, groupBy === "account")}</span>
         </span>
-        <span data-testid="cost-tree-group-cost" style={{ ...TREE_COST, fontSize: 13, color: A.ink2, fontWeight: 600 }}>
+        <span data-testid="cost-tree-group-cost" style={{ ...TREE_COST, fontSize: 13, color: K.ink2, fontWeight: 600 }}>
           {fmtUsd(cost)}</span>
-      </button>
+      </Pressable>
       {open && (
         <div style={{ padding: "0 min(18px, 4vw) 10px" }}>
           {[...sub.entries()].map(([k, bs]) => (
@@ -429,7 +432,7 @@ function TopGroup({ label, sublabel, dotColor, branches, groupBy }: {
           ))}
         </div>
       )}
-    </Card>
+    </Section>
   );
 }
 
@@ -439,7 +442,7 @@ function Bar({ rows, total, colorOf }: {
   rows: { key: string; label: string; cost: number }[]; total: number; colorOf: (k: string) => string;
 }) {
   const t = useT(COST);
-  if (rows.length === 0) return <div style={{ color: A.muted2, fontSize: 13 }}>{t("noSpendYet")}</div>;
+  if (rows.length === 0) return <div style={{ color: K.muted2, fontSize: 13 }}>{t("noSpendYet")}</div>;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       {rows.map(r => {
@@ -447,10 +450,10 @@ function Bar({ rows, total, colorOf }: {
         return (
           <div key={r.key}>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
-              <span style={{ color: A.ink2 }}>{r.label}</span>
-              <span style={{ fontFamily: mono, color: A.ink3 }}>{fmtUsd(r.cost)} <span style={{ color: A.muted2 }}>({Math.round(w)}%)</span></span>
+              <span style={{ color: K.ink2 }}>{r.label}</span>
+              <span style={{ fontFamily: mono, color: K.ink3 }}>{fmtUsd(r.cost)} <span style={{ color: K.muted2 }}>({Math.round(w)}%)</span></span>
             </div>
-            <div style={{ height: 8, background: A.line2, borderRadius: 999, overflow: "hidden" }}>
+            <div style={{ height: 8, background: K.line2, borderRadius: 999, overflow: "hidden" }}>
               <div style={{ width: `${w}%`, height: "100%", background: colorOf(r.key), borderRadius: 999 }} />
             </div>
           </div>
@@ -483,52 +486,47 @@ function FallbackModal({ tenantId, tenantLabel, rangeQs, rangeLabel, onClose }: 
       .catch(() => setErr(t("loadFallbackError")));
   }, [tenantId, rangeQs, t]);
   return (
-    <div onClick={onClose} style={{
-      position: "fixed", inset: 0, background: "rgba(31,41,51,0.45)", zIndex: 1000,
-      display: "flex", alignItems: "center", justifyContent: "center", padding: 24,
-    }}>
-      <div onClick={e => e.stopPropagation()} style={{
-        background: A.card, borderRadius: 12, width: "min(920px, 100%)", maxHeight: "80vh",
-        overflow: "auto", boxShadow: "0 12px 40px rgba(0,0,0,0.2)",
-      }}>
-        <div style={{ display: "flex", alignItems: "center", padding: "16px 20px", borderBottom: `1px solid ${A.line}`, position: "sticky", top: 0, background: A.card }}>
-          <div>
-            <div style={{ fontFamily: serif, fontSize: 16, color: A.ink, fontWeight: 500 }}>{t("fallbackCalls")}</div>
-            <div style={{ fontSize: 11.5, color: A.muted2 }}>
-              {tenantLabel ? t("tenantIs", tenantLabel) : t("allTenants")} · {rangeLabel} · {t("fallbackSub")}
-            </div>
+    <Modal
+      open
+      onClose={onClose}
+      width={920}
+      title={
+        <div>
+          <div style={{ fontFamily: serif, fontSize: 16, color: K.ink, fontWeight: 500 }}>{t("fallbackCalls")}</div>
+          <div style={{ fontSize: 11.5, color: K.muted2, fontWeight: 400 }}>
+            {tenantLabel ? t("tenantIs", tenantLabel) : t("allTenants")} · {rangeLabel} · {t("fallbackSub")}
           </div>
-          <Button size="sm" variant="ghost" onClick={onClose} style={{ marginLeft: "auto" }}>{t("close")}</Button>
         </div>
-        <div style={{ padding: "0 4px" }}>
-          {err && <div style={{ color: A.red, fontSize: 13, padding: 24 }}>{err}</div>}
-          {!err && calls == null && <LoadingScreen msg={t("loadingFallback")} />}
-          {!err && calls != null && calls.length === 0 && (
-            <div style={{ color: A.muted, fontSize: 13, padding: 32, textAlign: "center" }}>{t("noFallback")}</div>
-          )}
-          {!err && calls != null && calls.length > 0 && (
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead><tr>
-                <th style={TH}>{t("colWhen")}</th><th style={TH}>{t("colStage")}</th><th style={TH}>{t("colModel")}</th>
-                <th style={TH}>{t("colAccount")}</th><th style={{ ...TH, textAlign: "right" }}>{t("colCost")}</th><th style={TH}>{t("colStop")}</th>
-              </tr></thead>
-              <tbody>
-                {calls.map(c => (
-                  <tr key={c.id}>
-                    <td style={{ ...TD, fontSize: 12, color: A.muted }}>{formatDateTime(c.created_at)}</td>
-                    <td style={{ ...TD, fontFamily: mono, fontSize: 12 }}>{c.stage}</td>
-                    <td style={{ ...TD, fontFamily: mono, fontSize: 12 }}>{c.model}</td>
-                    <td style={{ ...TD }}><AcctDot account={acctKey({ account: c.account ?? "unknown", provider: c.provider ?? "" })} /></td>
-                    <td style={{ ...TD, textAlign: "right", fontFamily: mono }}>{fmtUsd(c.cost_usd)}</td>
-                    <td style={{ ...TD, fontSize: 12, color: A.muted2 }}>{c.stop_reason ?? "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
-    </div>
+      }
+      ariaLabel={t("fallbackCalls")}
+      footer={<Button size="sm" variant="ghost" onClick={onClose}>{t("close")}</Button>}
+    >
+      {err && <div style={{ color: K.danger, fontSize: 13, padding: 24 }}>{err}</div>}
+      {!err && calls == null && <LoadingScreen message={t("loadingFallback")} />}
+      {!err && calls != null && calls.length === 0 && (
+        <div style={{ color: K.muted, fontSize: 13, padding: 32, textAlign: "center" }}>{t("noFallback")}</div>
+      )}
+      {!err && calls != null && calls.length > 0 && (
+        <DataTable<CallRow>
+          tableId="cost-fallback-calls"
+          data={calls}
+          getRowId={(c) => c.id}
+          searchable={false}
+          paginate={false}
+          compact
+          maxBodyHeight="60vh"
+          columns={[
+            cc<CallRow>("when", t("colWhen"), (c) => c.created_at ?? "", (c) => formatDateTime(c.created_at), { color: () => K.muted }),
+            cc<CallRow>("stage", t("colStage"), (c) => c.stage, (c) => c.stage, { mono: true }),
+            cc<CallRow>("model", t("colModel"), (c) => c.model, (c) => c.model, { mono: true }),
+            { id: "account", header: t("colAccount"), accessorFn: (c) => c.account ?? "",
+              cell: ({ row: { original: c } }) => <AcctDot account={acctKey({ account: c.account ?? "unknown", provider: c.provider ?? "" })} /> },
+            cc<CallRow>("cost", t("colCost"), (c) => c.cost_usd ?? 0, (c) => fmtUsd(c.cost_usd), { right: true, mono: true }),
+            cc<CallRow>("stop", t("colStop"), (c) => c.stop_reason ?? "", (c) => c.stop_reason ?? "—", { color: () => K.muted2 }),
+          ]}
+        />
+      )}
+    </Modal>
   );
 }
 
@@ -818,12 +816,12 @@ function CostOperationsInner() {
                 <Button key={d} size="sm" variant={!custom && days === d ? "primary" : "secondary"}
                      onClick={() => { setCustom(null); setDays(d); }}>{t("days", d)}</Button>
               ))}
-              <span style={{ width: 1, height: 20, background: A.line, margin: "0 4px" }} />
-              <input type="date" value={draftStart} onChange={e => setDraftStart(e.target.value)} aria-label={t("fromUtc")}
-                     style={{ ...DATE_INPUT, borderColor: custom ? A.ink3 : A.line }} />
-              <span style={{ fontSize: 12, color: A.muted }}>→</span>
-              <input type="date" value={draftEnd} onChange={e => setDraftEnd(e.target.value)} aria-label={t("toUtc")}
-                     style={{ ...DATE_INPUT, borderColor: custom ? A.ink3 : A.line }} />
+              <span style={{ width: 1, height: 20, background: K.line, margin: "0 4px" }} />
+              <Input type="date" value={draftStart} onChange={e => setDraftStart(e.target.value)} aria-label={t("fromUtc")}
+                     style={{ ...DATE_INPUT, borderColor: custom ? K.ink3 : K.line }} />
+              <span style={{ fontSize: 12, color: K.muted }}>→</span>
+              <Input type="date" value={draftEnd} onChange={e => setDraftEnd(e.target.value)} aria-label={t("toUtc")}
+                     style={{ ...DATE_INPUT, borderColor: custom ? K.ink3 : K.line }} />
               <Button size="sm" variant={custom ? "primary" : "secondary"} onClick={applyCustom}
                    disabled={!draftStart || (!!draftEnd && draftStart > draftEnd)}>{t("apply")}</Button>
             </>
@@ -831,22 +829,22 @@ function CostOperationsInner() {
         />
 
         {/* Filters — tenant + account, apply to all tabs */}
-        <Card style={{ marginBottom: 16, padding: "12px 16px" }}>
+        <Section style={{ marginBottom: 16 }} bodyStyle={{ padding: "12px 16px" }}>
           {/* S262 C4 (live finding F1): every part may wrap and shrink, so the account chips never push the page
               sideways on a phone (the row measured 747 px at 390). */}
           <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "center", minWidth: 0 }}>
             <div style={{ display: "flex", gap: 6, alignItems: "center", minWidth: 0, maxWidth: "100%" }}>
-              <Building2 size={14} color={A.muted} style={{ flexShrink: 0 }} />
-              <span style={{ fontSize: 12, color: A.muted, marginRight: 4 }}>{t("tenant")}</span>
-              <select value={tenantFilter ?? ""} onChange={e => setTenantFilter(e.target.value || null)}
-                style={{ fontSize: 12.5, padding: "5px 8px", borderRadius: 7, border: `1px solid ${A.line}`, background: A.card, color: A.ink2, fontFamily: sans, cursor: "pointer", minWidth: 0, maxWidth: "100%" }}>
+              <Building2 size={14} color={K.muted} style={{ flexShrink: 0 }} />
+              <span style={{ fontSize: 12, color: K.muted, marginRight: 4 }}>{t("tenant")}</span>
+              <Select value={tenantFilter ?? ""} onChange={e => setTenantFilter(e.target.value || null)}
+                style={{ fontSize: 12.5, padding: "5px 8px", borderRadius: 7, border: `1px solid ${K.line}`, background: K.card, color: K.ink2, fontFamily: sans, cursor: "pointer", minWidth: 0, maxWidth: "100%" }}>
                 <option value="">{t("allTenants")}</option>
                 {tenantOptions.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
-              </select>
+              </Select>
             </div>
             <div data-testid="cost-ops-account-filter"
               style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", minWidth: 0, maxWidth: "100%" }}>
-              <span style={{ fontSize: 12, color: A.muted, marginRight: 2 }}>{t("account")}</span>
+              <span style={{ fontSize: 12, color: K.muted, marginRight: 2 }}>{t("account")}</span>
               <Button size="sm" variant={acctFilter === null ? "primary" : "secondary"} onClick={() => setAcctFilter(null)}>{t("all")}</Button>
               {acctOptions.map(a => (
                 <Button key={a} size="sm" variant={acctFilter === a ? "primary" : "secondary"} onClick={() => setAcctFilter(a)}>{names.short(a)}</Button>
@@ -856,7 +854,7 @@ function CostOperationsInner() {
               <Button size="sm" variant="ghost" onClick={() => { setTenantFilter(null); setAcctFilter(null); }}>{t("clear")}</Button>
             )}
           </div>
-        </Card>
+        </Section>
 
         <div style={{ marginBottom: 20 }}>
           <Tabs tabs={tabs} active={tab} onChange={setTab} />
@@ -865,19 +863,19 @@ function CostOperationsInner() {
         {/* AA-627 — low DFS balance banner (all tabs). The daily check writes the snapshot; this
             reflects the latest stored value, not a live call. */}
         {dfsBalance?.has_data && dfsBalance.below_threshold && (
-          <Card style={{ marginBottom: 16, padding: "12px 16px", background: A.redTint, border: `1px solid ${A.red}` }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, color: A.red, fontSize: 13.5, fontWeight: 600 }}>
+          <Section style={{ marginBottom: 16, background: K.dangerTint, border: `1px solid ${K.danger}` }} bodyStyle={{ padding: "12px 16px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, color: K.danger, fontSize: 13.5, fontWeight: 600 }}>
               <AlertTriangle size={16} style={{ flexShrink: 0 }} />
               <span>
                 {t("dfsLowA", fmtUsd2(dfsBalance.balance_usd ?? 0), fmtUsd2(dfsBalance.threshold_usd))}
                 {dfsBalance.fetched_at && (
-                  <span style={{ fontWeight: 400, color: A.muted, marginLeft: 6 }}>
+                  <span style={{ fontWeight: 400, color: K.muted, marginLeft: 6 }}>
                     {t("asOf", formatDateTime(dfsBalance.fetched_at))}
                   </span>
                 )}
               </span>
             </div>
-          </Card>
+          </Section>
         )}
 
         {/* AA-804 UI part 3 — AI & data spend: TripPlanner's caps (AA-1015), then one view per paid source. */}
@@ -893,12 +891,12 @@ function CostOperationsInner() {
         {/* AA-665 C1 — Jev spend and credit from the Jev Decisions endpoints; the page's window (max 90 days) applies. */}
         {selfLoading && <JevPanel days={windowDays} />}
 
-        {!selfLoading && loading && <LoadingScreen msg={t("loadingSpend")} />}
+        {!selfLoading && loading && <LoadingScreen message={t("loadingSpend")} />}
         {!selfLoading && !loading && error && (
-          <Card style={{ textAlign: "center", padding: 40 }}>
-            <div style={{ color: A.red, marginBottom: 12 }}>{error}</div>
+          <Section bodyStyle={{ textAlign: "center", padding: 40 }}>
+            <div style={{ color: K.danger, marginBottom: 12 }}>{error}</div>
             <Button variant="secondary" onClick={() => load(rangeQs)}>{t("retry")}</Button>
-          </Card>
+          </Section>
         )}
 
         {!selfLoading && !loading && !error && (
@@ -909,16 +907,16 @@ function CostOperationsInner() {
                 {/* AA-665 C3 — this month's forecast vs budget (its own fetch; the date window does not apply). */}
                 <ForecastPanel />
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))", gap: 14, marginBottom: 20 }}>
-                  <StatCard label={t("totalSpend")} value={fmtUsd2(totalSpend)} sub={t("totalSpendSub", rangeLabel, !!filterActive)} icon={<Wallet size={16} />} />
-                  <StatCard label={t("llmCost")} value={fmtUsd2(llmCost)} sub={t("callsTok", fmtInt(llmCalls), fmtInt(llmTokens))} accent={A.gold} icon={<Cpu size={16} />} />
-                  <StatCard label={t("dfsCostLong")} value={fmtUsd2(dfsCost)} sub={t("callsCache", fmtInt(dfsCalls), pct(dfsCacheRate))} accent={A.green} icon={<Search size={16} />} />
-                  <StatCard label={t("tenantsActive")} value={fmtInt(spendByTenant.length)} sub={t("fbTrunc", fmtInt(llmFallback), fmtInt(llmTruncated))} accent={A.accent} icon={<Building2 size={16} />} />
+                  <KpiTile label={t("totalSpend")} value={fmtUsd2(totalSpend)} hint={t("totalSpendSub", rangeLabel, !!filterActive)} icon={<Wallet size={16} />} />
+                  <KpiTile label={t("llmCost")} value={fmtUsd2(llmCost)} hint={t("callsTok", fmtInt(llmCalls), fmtInt(llmTokens))} icon={<Cpu size={16} />} />
+                  <KpiTile label={t("dfsCostLong")} value={fmtUsd2(dfsCost)} hint={t("callsCache", fmtInt(dfsCalls), pct(dfsCacheRate))} hintTone="success" icon={<Search size={16} />} />
+                  <KpiTile label={t("tenantsActive")} value={fmtInt(spendByTenant.length)} hint={t("fbTrunc", fmtInt(llmFallback), fmtInt(llmTruncated))} icon={<Building2 size={16} />} />
                 </div>
 
-                <Card style={{ marginBottom: 20 }}>
-                  <SLabel>{t("trend")}</SLabel>
+                <Section style={{ marginBottom: 20 }}>
+                  <Eyebrow>{t("trend")}</Eyebrow>
                   {trend.length === 0 ? (
-                    <div style={{ color: A.muted2, fontSize: 13, padding: "30px 0", textAlign: "center" }}>{t("noSpendIn", rangeLabel)}</div>
+                    <div style={{ color: K.muted2, fontSize: 13, padding: "30px 0", textAlign: "center" }}>{t("noSpendIn", rangeLabel)}</div>
                   ) : (
                     <ResponsiveContainer width="100%" height={240}>
                       <AreaChart data={trend} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
@@ -932,44 +930,44 @@ function CostOperationsInner() {
                       </AreaChart>
                     </ResponsiveContainer>
                   )}
-                  <div style={{ fontSize: 11, color: A.muted2, marginTop: 6 }}>{t("trendNote")}</div>
-                </Card>
+                  <div style={{ fontSize: 11, color: K.muted2, marginTop: 6 }}>{t("trendNote")}</div>
+                </Section>
 
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))", gap: 20, marginBottom: 20 }}>
-                  <Card>
-                    <SLabel>{t("spendByTenant")}</SLabel>
-                    <Bar rows={spendByTenant} total={spendByTenant.reduce((s, r) => s + r.cost, 0)} colorOf={() => A.accent} />
-                  </Card>
-                  <Card>
-                    <SLabel>{t("spendByAccount")}</SLabel>
-                    <Bar rows={spendByAccount} total={totalSpend} colorOf={(k) => k === "dfs" ? A.green : (ACCOUNT_COLOR[k] ?? A.muted)} />
-                  </Card>
+                  <Section>
+                    <Eyebrow>{t("spendByTenant")}</Eyebrow>
+                    <Bar rows={spendByTenant} total={spendByTenant.reduce((s, r) => s + r.cost, 0)} colorOf={() => K.accent} />
+                  </Section>
+                  <Section>
+                    <Eyebrow>{t("spendByAccount")}</Eyebrow>
+                    <Bar rows={spendByAccount} total={totalSpend} colorOf={(k) => k === "dfs" ? K.success : (ACCOUNT_COLOR[k] ?? K.muted)} />
+                  </Section>
                 </div>
 
-                <Card style={{ marginBottom: 20 }}>
-                  <SLabel>{t("topStages")}</SLabel>
+                <Section style={{ marginBottom: 20 }}>
+                  <Eyebrow>{t("topStages")}</Eyebrow>
                   {stageRanking.length === 0 ? (
-                    <div style={{ color: A.muted2, fontSize: 13 }}>{t("noLlmYet")}</div>
+                    <div style={{ color: K.muted2, fontSize: 13 }}>{t("noLlmYet")}</div>
                   ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                       {stageRanking.map(s => (
                         <div key={s.stage} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
-                          <span style={{ fontFamily: mono, color: A.ink2, minWidth: 160 }}>{s.stage}</span>
-                          <span style={{ color: A.muted2 }}>{t("calls", fmtInt(s.calls))}</span>
-                          <span style={{ marginLeft: "auto", fontFamily: mono, color: A.ink3 }}>{fmtUsd(s.cost)}</span>
+                          <span style={{ fontFamily: mono, color: K.ink2, minWidth: 160 }}>{s.stage}</span>
+                          <span style={{ color: K.muted2 }}>{t("calls", fmtInt(s.calls))}</span>
+                          <span style={{ marginLeft: "auto", fontFamily: mono, color: K.ink3 }}>{fmtUsd(s.cost)}</span>
                         </div>
                       ))}
                     </div>
                   )}
-                </Card>
+                </Section>
 
-                <Card dark>
-                  <SLabel light>{t("reconcile")}</SLabel>
-                  <div style={{ fontSize: 12.5, color: "rgba(255,255,255,0.75)", lineHeight: 1.6 }}>
+                <Section style={{ background: KX.sideBg, borderColor: KX.sidePanel }}>
+                  <Eyebrow tone="onDark">{t("reconcile")}</Eyebrow>
+                  <div style={{ fontSize: 12.5, color: KX.onDark, opacity: 0.75, lineHeight: 1.6 }}>
                     {t("reconcileA")} <code style={{ fontFamily: mono }}>llm_call_log</code> + <code style={{ fontFamily: mono }}>dfs_call_log</code>{" "}
                     {t("reconcileB")}<b>{names.name(LLM_ACCOUNT)}</b>{t("reconcileC")}{names.name(MAIN_ACCOUNT)}{t("reconcileD")}
                   </div>
-                </Card>
+                </Section>
               </>
             )}
 
@@ -979,11 +977,11 @@ function CostOperationsInner() {
                 {/* AA-623 — AWS actual (Cost Explorer) vs estimated (token) reconciliation. Reads
                     the latest stored snapshot only (never a live CE call on page load — CE pricing
                     itself costs ~$0.01/request); "Refresh from AWS" triggers a fresh fetch on demand. */}
-                <Card style={{ marginBottom: 20 }}>
+                <Section style={{ marginBottom: 20 }}>
                   <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 10 }}>
-                    <SLabel style={{ marginBottom: 0 }}>{t("awsVsEst")}</SLabel>
+                    <Eyebrow style={{ marginBottom: 0 }}>{t("awsVsEst")}</Eyebrow>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      {ceCheckMsg && <span style={{ fontSize: 11.5, color: A.muted2 }}>{ceCheckMsg}</span>}
+                      {ceCheckMsg && <span style={{ fontSize: 11.5, color: K.muted2 }}>{ceCheckMsg}</span>}
                       <Button size="sm" variant="secondary" onClick={runCostExplorerCheck} disabled={ceChecking}>
                         {ceChecking ? t("refreshing") : t("refreshAws")}
                       </Button>
@@ -991,78 +989,69 @@ function CostOperationsInner() {
                   </div>
 
                   {!costExplorer?.has_data ? (
-                    <div style={{ color: A.muted2, fontSize: 13, padding: "16px 0", textAlign: "center" }}>
+                    <div style={{ color: K.muted2, fontSize: 13, padding: "16px 0", textAlign: "center" }}>
                       {t("noCeData", rangeLabel)}
                     </div>
                   ) : (
                     <>
                       {ceGap && (
-                        <div style={{ fontSize: 12, color: A.amber, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
+                        <div style={{ fontSize: 12, color: K.amber, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
                           <AlertTriangle size={13} style={{ flexShrink: 0 }} /> {t("ceGap", ceGap)}
                         </div>
                       )}
                       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14, marginBottom: 14 }}>
-                        <StatCard
+                        <KpiTile
                           label={t("bedrockActual")}
                           value={fmtUsd2(costExplorer.bedrock_usd ?? 0)}
-                          sub={costExplorer.fetched_at ? t("ceAsOf", formatDateTime(costExplorer.fetched_at)) : "CE"}
-                          accent={A.gold}
+                          hint={costExplorer.fetched_at ? t("ceAsOf", formatDateTime(costExplorer.fetched_at)) : "CE"}
+                         
                         />
-                        <StatCard
+                        <KpiTile
                           label={t("bedrockEstimated")}
                           value={fmtUsd2(bedrockEstimated)}
-                          sub={t("bedrockEstSub", rangeLabel)}
-                          accent={A.ink3}
+                          hint={t("bedrockEstSub", rangeLabel)}
                         />
-                        <StatCard
+                        <KpiTile
                           label={t("awsInfra")}
                           value={fmtUsd2((costExplorer.total_usd ?? 0) - (costExplorer.bedrock_usd ?? 0))}
-                          sub={t("awsInfraSub", fmtUsd2(costExplorer.total_usd ?? 0))}
-                          accent={A.muted}
+                          hint={t("awsInfraSub", fmtUsd2(costExplorer.total_usd ?? 0))}
                         />
                       </div>
-                      <div style={{ overflowX: "auto" }}>
-                        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                          <thead><tr>
-                            <th style={TH}>{t("colAccount")}</th>
-                            <th style={{ ...TH, textAlign: "right" }}>{t("colBedrockActual")}</th>
-                            <th style={{ ...TH, textAlign: "right" }}>{t("colBedrockEst")}</th>
-                            <th style={{ ...TH, textAlign: "right" }}>{t("colInfra")}</th>
-                            <th style={{ ...TH, textAlign: "right" }}>{t("colAccountTotal")}</th>
-                          </tr></thead>
-                          <tbody>
-                            {ceByAccount.map(r => (
-                              <tr key={r.key}>
-                                <td style={TD}>{r.label}</td>
-                                <td style={{ ...TD, textAlign: "right", fontFamily: mono }}>{fmtUsd2(r.bedrock_usd)}</td>
-                                <td style={{ ...TD, textAlign: "right", fontFamily: mono, color: A.muted }}>{fmtUsd2(r.estimated)}</td>
-                                <td style={{ ...TD, textAlign: "right", fontFamily: mono, color: A.muted }}>{fmtUsd2(r.other_usd)}</td>
-                                <td style={{ ...TD, textAlign: "right", fontFamily: mono }}>{fmtUsd2(r.total_usd)}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
+                      <DataTable<(typeof ceByAccount)[number]>
+                        tableId="cost-ce-by-account"
+                        data={ceByAccount}
+                        getRowId={(r) => r.key}
+                        searchable={false}
+                        paginate={false}
+                        compact
+                        columns={[
+                          cc("account", t("colAccount"), (r) => r.label, (r) => r.label),
+                          cc("bedrock", t("colBedrockActual"), (r) => r.bedrock_usd ?? 0, (r) => fmtUsd2(r.bedrock_usd), { right: true, mono: true }),
+                          cc("estimated", t("colBedrockEst"), (r) => r.estimated, (r) => fmtUsd2(r.estimated), { right: true, mono: true, color: () => K.muted }),
+                          cc("infra", t("colInfra"), (r) => r.other_usd ?? 0, (r) => fmtUsd2(r.other_usd), { right: true, mono: true, color: () => K.muted }),
+                          cc("total", t("colAccountTotal"), (r) => r.total_usd ?? 0, (r) => fmtUsd2(r.total_usd), { right: true, mono: true }),
+                        ]}
+                      />
                       {ceTopServices.length > 0 && (
                         <details style={{ marginTop: 10 }}>
-                          <summary style={{ fontSize: 12, color: A.muted, cursor: "pointer" }}>{t("topServices")}</summary>
+                          <summary style={{ fontSize: 12, color: K.muted, cursor: "pointer" }}>{t("topServices")}</summary>
                           <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 8 }}>
                             {ceTopServices.map(s => (
                               <div key={`${s.account_id}-${s.service}`} style={{ display: "flex", gap: 8, fontSize: 12 }}>
-                                <span style={{ color: A.muted2, minWidth: 44, fontFamily: mono }}>{ceName(s, names.name)}</span>
-                                <span style={{ color: s.is_bedrock ? A.gold : A.ink2 }}>{s.service}</span>
-                                <span style={{ marginLeft: "auto", fontFamily: mono, color: A.ink3 }}>{fmtUsd2(s.amount_usd)}</span>
+                                <span style={{ color: K.muted2, minWidth: 44, fontFamily: mono }}>{ceName(s, names.name)}</span>
+                                <span style={{ color: s.is_bedrock ? K.accent : K.ink2 }}>{s.service}</span>
+                                <span style={{ marginLeft: "auto", fontFamily: mono, color: K.ink3 }}>{fmtUsd2(s.amount_usd)}</span>
                               </div>
                             ))}
                           </div>
                         </details>
                       )}
-                      <div style={{ fontSize: 11, color: A.muted2, marginTop: 8 }}>
+                      <div style={{ fontSize: 11, color: K.muted2, marginTop: 8 }}>
                         {t("ceNoteA")}{names.name(MAIN_ACCOUNT)}{t("ceNoteB")}
                       </div>
                     </>
                   )}
-                </Card>
+                </Section>
 
               </>
             )}
@@ -1071,55 +1060,55 @@ function CostOperationsInner() {
             {tab === SPEND_TAB && view === "llm" && (
               <>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 160px), 1fr))", gap: 14, marginBottom: 18 }}>
-                  <StatCard label={t("llmCost")} value={fmtUsd2(llmCost)} sub={filterActive ? t("filtered") : rangeLabel} accent={A.gold} />
-                  <StatCard label={t("colCalls")} value={fmtInt(llmCalls)} sub={t("tokens", fmtInt(llmTokens))} />
-                  <StatCard label={t("passRate")} value={okElig > 0 ? pct(okCount / okElig) : "—"} sub={okElig > 0 ? `${okCount}/${okElig}` : t("noSignal")} />
+                  <KpiTile label={t("llmCost")} value={fmtUsd2(llmCost)} hint={filterActive ? t("filtered") : rangeLabel} />
+                  <KpiTile label={t("colCalls")} value={fmtInt(llmCalls)} hint={t("tokens", fmtInt(llmTokens))} />
+                  <KpiTile label={t("passRate")} value={okElig > 0 ? pct(okCount / okElig) : "—"} hint={okElig > 0 ? `${okCount}/${okElig}` : t("noSignal")} />
                   <div onClick={() => llmFallback > 0 && setFbModal({ tenantId: tenantFilter, label: tenantLabelOf(tenantFilter) })}
                        style={{ cursor: llmFallback > 0 ? "pointer" : "default" }} title={llmFallback > 0 ? t("viewFallbackCalls") : undefined}>
-                    <StatCard label={t("fallbackStat")} value={llmCalls > 0 ? pct(llmFallback / llmCalls) : "—"} sub={t("fallbackSubStat", fmtInt(llmFallback))} accent={A.amber} />
+                    <KpiTile label={t("fallbackStat")} value={llmCalls > 0 ? pct(llmFallback / llmCalls) : "—"} hint={t("fallbackSubStat", fmtInt(llmFallback))} hintTone="warning" />
                   </div>
-                  <StatCard label={t("truncated")} value={llmCalls > 0 ? pct(llmTruncated / llmCalls) : "—"} sub={t("truncatedSub", fmtInt(llmTruncated))} accent={A.red} />
+                  <KpiTile label={t("truncated")} value={llmCalls > 0 ? pct(llmTruncated / llmCalls) : "—"} hint={t("truncatedSub", fmtInt(llmTruncated))} hintTone="danger" />
                 </div>
 
-                <Card style={{ marginBottom: 18, padding: 0, overflow: "hidden" }}>
-                  <div style={{ padding: "14px 18px" }}><SLabel style={{ marginBottom: 0 }}>{t("spendByTenant")}{acctFilter ? ` · ${names.short(acctFilter)}` : ""}</SLabel></div>
+                <Section padded={false} style={{ marginBottom: 18, overflow: "hidden" }}>
+                  <div style={{ padding: "14px 18px" }}><Eyebrow style={{ marginBottom: 0 }}>{t("spendByTenant")}{acctFilter ? ` · ${names.short(acctFilter)}` : ""}</Eyebrow></div>
                   <div style={{ padding: "0 18px 16px" }}>
                     <TenantSpendTable branches={llm} onFallbackClick={(tid, label) => setFbModal({ tenantId: tid, label })} />
                   </div>
-                </Card>
+                </Section>
 
                 <div style={{ display: "flex", gap: 6, marginBottom: 12, alignItems: "center" }}>
-                  <span style={{ fontSize: 12, color: A.muted }}>{t("groupBy")}</span>
+                  <span style={{ fontSize: 12, color: K.muted }}>{t("groupBy")}</span>
                   <Button size="sm" variant={groupBy === "tenant" ? "primary" : "secondary"} onClick={() => setGroupBy("tenant")}>{t("groupTenant")}</Button>
                   <Button size="sm" variant={groupBy === "account" ? "primary" : "secondary"} onClick={() => setGroupBy("account")}>{t("groupAccount")}</Button>
                 </div>
 
                 {llmTree.length === 0 ? (
-                  <Card style={{ textAlign: "center", padding: 40 }}><div style={{ color: A.muted, fontSize: 13 }}>{t("noLlmFilter")}</div></Card>
+                  <Section bodyStyle={{ textAlign: "center", padding: 40 }}><div style={{ color: K.muted, fontSize: 13 }}>{t("noLlmFilter")}</div></Section>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                     {llmTree.map(([k, bs]) => {
                       const isAcct = groupBy === "account";
                       const label = isAcct ? names.long(k) : (bs[0]?.tenant_label ?? k);
-                      const dot = isAcct ? (ACCOUNT_COLOR[k] ?? A.muted) : A.accent;
+                      const dot = isAcct ? (ACCOUNT_COLOR[k] ?? K.muted) : K.accent;
                       const sublabel = isAcct ? t("subAccount") : t("subTenant");
                       return <TopGroup key={k} label={label} sublabel={sublabel} dotColor={dot} branches={bs} groupBy={groupBy} />;
                     })}
                   </div>
                 )}
 
-                <Card style={{ marginTop: 20 }}>
-                  <SLabel>{t("modelConfig")}</SLabel>
+                <Section style={{ marginTop: 20 }}>
+                  <Eyebrow>{t("modelConfig")}</Eyebrow>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))", gap: "6px 24px" }}>
                     {(configs ?? []).map(c => (
-                      <div key={c.stage} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, padding: "5px 0", borderBottom: `1px solid ${A.line2}` }}>
-                        <span style={{ fontFamily: mono, color: A.ink2, minWidth: 150 }}>{c.stage}</span>
-                        <Badge color={ROLE_COLOR[c.role] ?? "gray"}>{c.role}</Badge>
-                        <span style={{ marginLeft: "auto", fontFamily: mono, color: A.ink3 }}>{c.model_id}{c.account_route ? ` · ${names.name(c.account_route)}` : ""}</span>
+                      <div key={c.stage} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, padding: "5px 0", borderBottom: `1px solid ${K.line2}` }}>
+                        <span style={{ fontFamily: mono, color: K.ink2, minWidth: 150 }}>{c.stage}</span>
+                        <Badge tone={ROLE_COLOR[c.role] ?? "neutral"}>{c.role}</Badge>
+                        <span style={{ marginLeft: "auto", fontFamily: mono, color: K.ink3 }}>{c.model_id}{c.account_route ? ` · ${names.name(c.account_route)}` : ""}</span>
                       </div>
                     ))}
                   </div>
-                </Card>
+                </Section>
               </>
             )}
 
@@ -1128,125 +1117,101 @@ function CostOperationsInner() {
               <>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 150px), 1fr))", gap: 14, marginBottom: 18 }}>
                   {/* AA-627 — account balance (remaining), distinct from cost (spent). Latest daily snapshot. */}
-                  <StatCard
+                  <KpiTile
                     label={t("accountBalance")}
                     value={dfsBalance?.has_data ? fmtUsd2(dfsBalance.balance_usd ?? 0) : "—"}
-                    sub={dfsBalance?.has_data && dfsBalance.fetched_at
+                    hint={dfsBalance?.has_data && dfsBalance.fetched_at
                       ? t("asOfDay", formatDate(dfsBalance.fetched_at))
                       : t("noReading")}
-                    accent={dfsBalance?.below_threshold ? A.red : A.green}
+                    hintTone={dfsBalance?.below_threshold ? "danger" : "success"}
                   />
-                  <StatCard label={t("dfsCost")} value={fmtUsd2(dfsCost)} sub={filterActive ? t("filtered") : rangeLabel} accent={A.green} />
-                  <StatCard label={t("totalCalls")} value={fmtInt(dfsCalls)} />
-                  <StatCard label={t("liveCalls")} value={fmtInt(dfsLive)} sub={t("realHttp")} accent={A.amber} />
-                  <StatCard label={t("cacheHits")} value={fmtInt(dfsCacheHits)} accent={A.gold} />
-                  <StatCard label={t("cacheHitRate")} value={pct(dfsCacheRate)} sub={t("dfsAttributable")} />
+                  <KpiTile label={t("dfsCost")} value={fmtUsd2(dfsCost)} hint={filterActive ? t("filtered") : rangeLabel} hintTone="success" />
+                  <KpiTile label={t("totalCalls")} value={fmtInt(dfsCalls)} />
+                  <KpiTile label={t("liveCalls")} value={fmtInt(dfsLive)} hint={t("realHttp")} hintTone="warning" />
+                  <KpiTile label={t("cacheHits")} value={fmtInt(dfsCacheHits)} />
+                  <KpiTile label={t("cacheHitRate")} value={pct(dfsCacheRate)} hint={t("dfsAttributable")} />
                 </div>
 
                 {/* AA-665 C2 — DataForSEO spend by the job that made the calls (not tenant-filtered). */}
                 <DfsRunsPanel rangeQs={rangeQs} rangeLabel={rangeLabel} windowDays={windowSpanDays} />
 
-                <Card style={{ padding: 0, overflow: "hidden", marginBottom: 20 }}>
-                  <div style={{ padding: "14px 18px" }}><SLabel style={{ marginBottom: 0 }}>{t("spendByTenant")}</SLabel></div>
+                <Section padded={false} style={{ overflow: "hidden", marginBottom: 20 }}>
+                  <div style={{ padding: "14px 18px" }}><Eyebrow style={{ marginBottom: 0 }}>{t("spendByTenant")}</Eyebrow></div>
                   {dfsByTenant.length === 0 ? (
-                    <div style={{ color: A.muted2, fontSize: 13, padding: "0 18px 24px" }}>{t("noDfsFilter")}</div>
+                    <div style={{ color: K.muted2, fontSize: 13, padding: "0 18px 24px" }}>{t("noDfsFilter")}</div>
                   ) : (
-                    <ScrollX>
-                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                      <thead><tr>
-                        <th style={TH}>{t("colTenant")}</th>
-                        <th style={{ ...TH, textAlign: "right" }}>{t("colCost")}</th>
-                        <th style={{ ...TH, textAlign: "right" }}>{t("colCalls")}</th>
-                        <th style={{ ...TH, textAlign: "right" }}>{t("colLive")}</th>
-                        <th style={{ ...TH, textAlign: "right" }}>{t("colCache")}</th>
-                        <th style={{ ...TH, textAlign: "right" }}>{t("colCachePct")}</th>
-                        <th style={{ ...TH, textAlign: "right" }}>{t("colKeywords")}</th>
-                        <th style={{ ...TH, textAlign: "right" }}>{t("colPerKeyword")}</th>
-                      </tr></thead>
-                      <tbody>
-                        {dfsByTenant.map((r, i) => (
-                          <tr key={i}>
-                            <td style={{ ...TD, fontWeight: 600, color: A.ink2 }}>{r.label}</td>
-                            <td style={{ ...TD, textAlign: "right", fontFamily: mono, fontWeight: 600 }}>{fmtUsd(r.cost)}</td>
-                            <td style={{ ...TD, textAlign: "right" }}>{fmtInt(r.calls)}</td>
-                            <td style={{ ...TD, textAlign: "right" }}>{fmtInt(r.live)}</td>
-                            <td style={{ ...TD, textAlign: "right", color: A.muted }}>{fmtInt(r.cache)}</td>
-                            <td style={{ ...TD, textAlign: "right" }}>{pct(r.calls > 0 ? r.cache / r.calls : null)}</td>
-                            <td style={{ ...TD, textAlign: "right" }}>{fmtInt(r.kw)}</td>
-                            <td style={{ ...TD, textAlign: "right", fontFamily: mono, color: A.muted }}>{r.kw > 0 ? fmtUsd(r.cost / r.kw) : "—"}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    </ScrollX>
+                    <DataTable<(typeof dfsByTenant)[number] & { rowId: string }>
+                      tableId="cost-dfs-by-tenant"
+                      data={dfsByTenant.map((r, i) => ({ ...r, rowId: String(i) }))}
+                      getRowId={(r) => r.rowId}
+                      searchable={false}
+                      paginate={false}
+                      compact
+                      columns={[
+                        cc("tenant", t("colTenant"), (r) => r.label, (r) => r.label, { color: () => K.ink2, weight: 600 }),
+                        cc("cost", t("colCost"), (r) => r.cost, (r) => fmtUsd(r.cost), { right: true, mono: true, weight: 600 }),
+                        cc("calls", t("colCalls"), (r) => r.calls, (r) => fmtInt(r.calls), { right: true }),
+                        cc("live", t("colLive"), (r) => r.live, (r) => fmtInt(r.live), { right: true }),
+                        cc("cache", t("colCache"), (r) => r.cache, (r) => fmtInt(r.cache), { right: true, color: () => K.muted }),
+                        cc("cachePct", t("colCachePct"), (r) => (r.calls > 0 ? r.cache / r.calls : -1),
+                          (r) => pct(r.calls > 0 ? r.cache / r.calls : null), { right: true }),
+                        cc("kw", t("colKeywords"), (r) => r.kw, (r) => fmtInt(r.kw), { right: true }),
+                        cc("perKw", t("colPerKeyword"), (r) => (r.kw > 0 ? r.cost / r.kw : -1),
+                          (r) => (r.kw > 0 ? fmtUsd(r.cost / r.kw) : "—"), { right: true, mono: true, color: () => K.muted }),
+                      ]}
+                    />
                   )}
-                </Card>
+                </Section>
 
-                <Card style={{ padding: 0, overflow: "hidden", marginBottom: 20 }}>
-                  <div style={{ padding: "14px 18px" }}><SLabel style={{ marginBottom: 0 }}>{t("spendByEndpoint")}</SLabel></div>
+                <Section padded={false} style={{ overflow: "hidden", marginBottom: 20 }}>
+                  <div style={{ padding: "14px 18px" }}><Eyebrow style={{ marginBottom: 0 }}>{t("spendByEndpoint")}</Eyebrow></div>
                   {dfsRows.length === 0 ? (
-                    <div style={{ color: A.muted2, fontSize: 13, padding: "0 18px 24px" }}>{t("noDfsFilter")}</div>
+                    <div style={{ color: K.muted2, fontSize: 13, padding: "0 18px 24px" }}>{t("noDfsFilter")}</div>
                   ) : (
-                    <ScrollX>
-                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                      <thead><tr>
-                        <th style={TH}>{t("colEndpoint")}</th><th style={TH}>{t("colTenant")}</th>
-                        <th style={{ ...TH, textAlign: "right" }}>{t("colCost")}</th>
-                        <th style={{ ...TH, textAlign: "right" }}>{t("colLive")}</th>
-                        <th style={{ ...TH, textAlign: "right" }}>{t("colCache")}</th>
-                        <th style={{ ...TH, textAlign: "right" }}>{t("colCachePct")}</th>
-                        <th style={{ ...TH, textAlign: "right" }}>{t("colKeywords")}</th>
-                      </tr></thead>
-                      <tbody>
-                        {dfsRows.map((b, i) => (
-                          <tr key={i}>
-                            <td style={{ ...TD, fontFamily: mono, fontSize: 12 }}>{b.endpoint}</td>
-                            <td style={{ ...TD, color: A.muted }}>{b.tenant_label}</td>
-                            <td style={{ ...TD, textAlign: "right", fontFamily: mono }}>{fmtUsd(b.total_cost_usd)}</td>
-                            <td style={{ ...TD, textAlign: "right" }}>{fmtInt(b.live_count)}</td>
-                            <td style={{ ...TD, textAlign: "right", color: A.muted }}>{fmtInt(b.cache_hit_count)}</td>
-                            <td style={{ ...TD, textAlign: "right" }}>{pct(b.cache_hit_rate)}</td>
-                            <td style={{ ...TD, textAlign: "right" }}>{fmtInt(b.keywords_total)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    </ScrollX>
+                    <DataTable<DfsBranch & { rowId: string }>
+                      tableId="cost-dfs-by-endpoint"
+                      data={dfsRows.map((b, i) => ({ ...b, rowId: String(i) }))}
+                      getRowId={(b) => b.rowId}
+                      searchable={false}
+                      paginate={false}
+                      compact
+                      columns={[
+                        cc("endpoint", t("colEndpoint"), (b) => b.endpoint, (b) => b.endpoint, { mono: true }),
+                        cc("tenant", t("colTenant"), (b) => b.tenant_label, (b) => b.tenant_label, { color: () => K.muted }),
+                        cc("cost", t("colCost"), (b) => b.total_cost_usd, (b) => fmtUsd(b.total_cost_usd), { right: true, mono: true }),
+                        cc("live", t("colLive"), (b) => b.live_count, (b) => fmtInt(b.live_count), { right: true }),
+                        cc("cache", t("colCache"), (b) => b.cache_hit_count, (b) => fmtInt(b.cache_hit_count), { right: true, color: () => K.muted }),
+                        cc("cachePct", t("colCachePct"), (b) => b.cache_hit_rate ?? -1, (b) => pct(b.cache_hit_rate), { right: true }),
+                        cc("kw", t("colKeywords"), (b) => b.keywords_total, (b) => fmtInt(b.keywords_total), { right: true }),
+                      ]}
+                    />
                   )}
-                </Card>
+                </Section>
 
-                <Card style={{ padding: 0, overflow: "hidden" }}>
-                  <div style={{ padding: "14px 18px" }}><SLabel style={{ marginBottom: 0 }}>{t("spendByMarket")}</SLabel></div>
+                <Section padded={false} style={{ overflow: "hidden" }}>
+                  <div style={{ padding: "14px 18px" }}><Eyebrow style={{ marginBottom: 0 }}>{t("spendByMarket")}</Eyebrow></div>
                   {(countries?.length ?? 0) === 0 ? (
-                    <div style={{ color: A.muted2, fontSize: 13, padding: "0 18px 24px" }}>{t("noMarket")}</div>
+                    <div style={{ color: K.muted2, fontSize: 13, padding: "0 18px 24px" }}>{t("noMarket")}</div>
                   ) : (
-                    <ScrollX>
-                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                      <thead><tr>
-                        <th style={TH}>{t("colMarket")}</th>
-                        <th style={{ ...TH, textAlign: "right" }}>{t("colCost")}</th>
-                        <th style={{ ...TH, textAlign: "right" }}>{t("colCalls")}</th>
-                        <th style={{ ...TH, textAlign: "right" }}>{t("colLive")}</th>
-                        <th style={{ ...TH, textAlign: "right" }}>{t("colCachePct")}</th>
-                        <th style={{ ...TH, textAlign: "right" }}>{t("colKeywords")}</th>
-                      </tr></thead>
-                      <tbody>
-                        {countries!.map((c, i) => (
-                          <tr key={i}>
-                            <td style={{ ...TD }}>{c.country}</td>
-                            <td style={{ ...TD, textAlign: "right", fontFamily: mono }}>{fmtUsd(c.total_cost_usd)}</td>
-                            <td style={{ ...TD, textAlign: "right" }}>{fmtInt(c.call_count)}</td>
-                            <td style={{ ...TD, textAlign: "right" }}>{fmtInt(c.live_count)}</td>
-                            <td style={{ ...TD, textAlign: "right" }}>{pct(c.cache_hit_rate)}</td>
-                            <td style={{ ...TD, textAlign: "right" }}>{fmtInt(c.keywords_total)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    </ScrollX>
+                    <DataTable<DfsCountry & { rowId: string }>
+                      tableId="cost-dfs-by-market"
+                      data={(countries ?? []).map((c, i) => ({ ...c, rowId: String(i) }))}
+                      getRowId={(c) => c.rowId}
+                      searchable={false}
+                      paginate={false}
+                      compact
+                      columns={[
+                        cc("market", t("colMarket"), (c) => c.country ?? "", (c) => c.country),
+                        cc("cost", t("colCost"), (c) => c.total_cost_usd, (c) => fmtUsd(c.total_cost_usd), { right: true, mono: true }),
+                        cc("calls", t("colCalls"), (c) => c.call_count, (c) => fmtInt(c.call_count), { right: true }),
+                        cc("live", t("colLive"), (c) => c.live_count, (c) => fmtInt(c.live_count), { right: true }),
+                        cc("cachePct", t("colCachePct"), (c) => c.cache_hit_rate ?? -1, (c) => pct(c.cache_hit_rate), { right: true }),
+                        cc("kw", t("colKeywords"), (c) => c.keywords_total, (c) => fmtInt(c.keywords_total), { right: true }),
+                      ]}
+                    />
                   )}
-                  <div style={{ fontSize: 11, color: A.muted2, padding: "0 18px 14px" }}>{t("marketNote")}</div>
-                </Card>
+                  <div style={{ fontSize: 11, color: K.muted2, padding: "0 18px 14px" }}>{t("marketNote")}</div>
+                </Section>
               </>
             )}
           </>

@@ -35,6 +35,7 @@ import {
   useT,
   type ColumnDef,
   type Tone, PageFrame,
+  Checkbox,
 } from "../../../_kit";
 import { canWriteStaff, type StaffViewer } from "@/lib/rbac";
 import { BOOKING_ADMIN_URL, bookingStaffUrl } from "@/lib/apps";
@@ -236,7 +237,7 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
       {disabledCount > 0 && (
         <label data-testid="staff-show-disabled"
           style={{ display: "inline-flex", alignItems: "center", gap: 8, margin: "4px 0 10px", fontSize: 13, color: K.ink, cursor: "pointer", fontFamily: sans }}>
-          <input type="checkbox" checked={showDisabled} onChange={(e) => setShowDisabled(e.target.checked)} />
+          <Checkbox checked={showDisabled} onChange={(e) => setShowDisabled(e.target.checked)} />
           {t("showDisabled", disabledCount)}
         </label>
       )}

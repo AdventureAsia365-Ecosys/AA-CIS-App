@@ -13,9 +13,9 @@
      - no stored choice  → follow `prefers-color-scheme`
      - 'light' | 'dark'  → that explicit choice wins
    The resolved value is written to <html data-theme="light|dark"> before paint,
-   so there is no flash of the wrong theme. The admin token object `A`
-   (admin/_components/adminUi.tsx) and the kit object `K` (_kit/core/tokens.ts)
-   read the `--aa-*` variables of _kit/core/tokens.css via `var()`.
+   so there is no flash of the wrong theme. The kit object `K` (_kit/core/tokens.ts)
+   and the CIS-local `KX` (_kit/adminTokens.ts) read the `--aa-*` variables of
+   _kit/core/tokens.css via `var()`.
    ────────────────────────────────────────────────────────────────────────── */
 
 /* ──────────────────────────────────────────────────────────────────────────

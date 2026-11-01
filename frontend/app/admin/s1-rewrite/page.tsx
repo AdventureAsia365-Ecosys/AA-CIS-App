@@ -8,8 +8,12 @@
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Play, RefreshCw, ArrowRight, Search, CheckCircle, XCircle, Loader2, ChevronRight } from "lucide-react";
-import { A, alpha, serif, sans, mono, Card, SLabel, Badge, LoadingScreen, TH, TD } from "../_components/adminUi";
-import { Button, PageFrame, PageFrameBody, PageFrameHeader, PageHeader, useFormat, useT, type Translator } from "../../_kit";
+import {
+  Button, PageFrame, PageFrameBody, PageFrameHeader, PageHeader, useFormat, useT, type Translator, Checkbox, Input, Select,
+  K, sans, mono, Section, Badge, LoadingScreen,
+  DataTable, Drawer, LinkButton, Modal, type ColumnDef, ToastProvider, useToast, useIsPhone,
+} from "../../_kit";
+import { phoneCardColumns } from "@/lib/tableSort";
 import { TourDetailPanelV2 } from "../_components/TourDetailPanelV2";
 import { CompareModal } from "../_components/CompareModal";
 import { Pagination } from "../_components/Pagination";
@@ -109,18 +113,18 @@ function StageProgressBar({ stage, isRetry }: { stage: string | null | undefined
             title={t(s.label)}
             style={{
               width: 7, height: 7, borderRadius: "50%", flexShrink: 0,
-              background: step > s.step ? A.green : step === s.step ? A.amber : A.line,
+              background: step > s.step ? K.success : step === s.step ? K.amber : K.line,
             }}
           />
           {i < STAGE_STEPS.length - 1 && (
-            <div style={{ width: 12, height: 2, background: step > s.step ? A.green : A.line, flexShrink: 0 }} />
+            <div style={{ width: 12, height: 2, background: step > s.step ? K.success : K.line, flexShrink: 0 }} />
           )}
         </React.Fragment>
       ))}
-      <span style={{ fontSize: 11, color: A.muted, marginLeft: 5, whiteSpace: "nowrap" as const }}>
+      <span style={{ fontSize: 11, color: K.muted, marginLeft: 5, whiteSpace: "nowrap" as const }}>
         {step > 0 ? t(STAGE_STEPS[step - 1].label) : t("queued")}
       </span>
-      {isRetry && step === 2 && <Badge color="amber">{t("retry")}</Badge>}
+      {isRetry && step === 2 && <Badge tone="warning">{t("retry")}</Badge>}
     </div>
   );
 }
@@ -138,7 +142,7 @@ function PipelineStatusBadge({ tour, runStatus, result, stage, isRetry }: {
   if (runStatus === "running") {
     return (
       <div>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, color: A.amber }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, color: K.amber }}>
           <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> {t("processingEllipsis")}
         </span>
         <StageProgressBar stage={stage} isRetry={!!isRetry} />
@@ -148,14 +152,14 @@ function PipelineStatusBadge({ tour, runStatus, result, stage, isRetry }: {
   if (runStatus === "done") {
     const score = result?.quality_score;
     return (
-      <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, color: A.green }}>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, color: K.success }}>
         <CheckCircle size={12} /> {t("done")}{score != null ? ` · ${score.toFixed(1)}` : ""}
       </span>
     );
   }
   if (runStatus === "failed") {
     return (
-      <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, color: A.red }} title={result?.error}>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, color: K.danger }} title={result?.error}>
         <XCircle size={12} /> {t("failed")}
       </span>
     );
@@ -164,28 +168,37 @@ function PipelineStatusBadge({ tour, runStatus, result, stage, isRetry }: {
   const { pipeline_status, rewrite_count } = tour;
   if (pipeline_status === "processing") {
     return (
-      <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, color: A.amber }}>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, color: K.amber }}>
         <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> {t("processing")}
       </span>
     );
   }
   if (pipeline_status === "published") {
-    return <Badge color="green">{t("published")}</Badge>;
+    return <Badge tone="success">{t("published")}</Badge>;
   }
   // S218: every other status used to fall through to "Ready" (hitl_rejected tours with a Master).
-  if (pipeline_status === "hitl_rejected") return <Badge color="red">{t("rejected")}</Badge>;
-  if (pipeline_status === "failed") return <Badge color="red">{t("failed")}</Badge>;
-  if (tour.in_review) return <Badge color="amber">{t("inReview", rewrite_count)}</Badge>;
+  if (pipeline_status === "hitl_rejected") return <Badge tone="danger">{t("rejected")}</Badge>;
+  if (pipeline_status === "failed") return <Badge tone="danger">{t("failed")}</Badge>;
+  if (tour.in_review) return <Badge tone="warning">{t("inReview", rewrite_count)}</Badge>;
   if (pipeline_status === "ingested" && rewrite_count > 0) {
-    return <Badge color="green">{t("readyRewritten", rewrite_count)}</Badge>;
+    return <Badge tone="success">{t("readyRewritten", rewrite_count)}</Badge>;
   }
-  if (pipeline_status !== "ingested") return <Badge color="gray">{pipeline_status}</Badge>;
-  return <Badge color="gray">{t("ready")}</Badge>;
+  if (pipeline_status !== "ingested") return <Badge tone="neutral">{pipeline_status}</Badge>;
+  return <Badge tone="neutral">{t("ready")}</Badge>;
 }
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function S1RewritePage() {
+  // AA-1006: the "rewrite complete" note is a kit toast, painted above the live writer Drawer.
+  return (
+    <ToastProvider>
+      <S1RewritePageInner />
+    </ToastProvider>
+  );
+}
+
+function S1RewritePageInner() {
   const t = useT(M);
   const tr = t; // the tour table's rows are `t` (the tour), so the table reads the translator as `tr`
   const { formatDate } = useFormat();
@@ -193,6 +206,8 @@ export default function S1RewritePage() {
   // language's translator through this ref, like the other refs of this page.
   const tRef = useRef(t);
   useEffect(() => { tRef.current = t; }, [t]);
+  const toast = useToast();
+  const isPhone = useIsPhone();
   const [tours, setTours]                   = useState<Tour[]>([]);
   const [loading, setLoading]               = useState(true);
   const [selectedIds, setSelectedIds]       = useState<Set<string>>(new Set());
@@ -220,7 +235,6 @@ export default function S1RewritePage() {
   const [jobIds, setJobIds]                 = useState<Record<string, string>>({}); // tour_id -> job_id
   // AA-667: tour whose live writing panel is open ({tourId, jobId, name}).
   const [liveTour, setLiveTour]             = useState<{ tourId: string; jobId: string; name: string } | null>(null);
-  const [toast, setToast]                   = useState<string | null>(null);
   // AA-250 B2: tour_id -> last-seen current_stage from GET /admin/jobs/{id}, and whether that
   // job has looped back into "generate" more than once (validate-retry loop indicator).
   const [tourStages, setTourStages]         = useState<Record<string, string | null>>({});
@@ -259,25 +273,28 @@ export default function S1RewritePage() {
     fetch("/api/admin/llm-config")
       .then(r => (r.ok ? r.json() : null))
       .then(d => {
-        const row = (d?.stages ?? []).find((x: any) => x.stage === "s1_generate");
+        type StageRow = { stage: string; model_id: string; options?: { model_id: string; label?: string }[] };
+        const row = ((d?.stages ?? []) as StageRow[]).find((x) => x.stage === "s1_generate");
         if (!row) return;
-        const cur = (row.options ?? []).find((o: any) => o.model_id === row.model_id);
+        const cur = (row.options ?? []).find((o) => o.model_id === row.model_id);
         setS1Model(cur?.label ?? row.model_id);
       })
       .catch(() => {});
   }, []);
 
+  // The fetch alone (no state set before the first await), so the mount effect can call it; `loading` starts true.
+  const fetchTours = useCallback(() =>
+    fetch("/api/admin/tours")
+      .then(async (res) => {
+        if (!res.ok) throw new Error(await res.text());
+        return res.json();
+      })
+      .then((data) => setTours(data.tours || []))
+      .finally(() => setLoading(false)), []);
   const loadTours = useCallback(async () => {
     setLoading(true);
-    try {
-      const res = await fetch("/api/admin/tours");
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
-      setTours(data.tours || []);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    await fetchTours();
+  }, [fetchTours]);
 
   const handleRefresh = useCallback(async () => {
     if (running) return;
@@ -287,19 +304,19 @@ export default function S1RewritePage() {
     await loadTours();
   }, [loadTours, running]);
 
-  const loadBrandList = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/admin/brand-rules?tenant_id=${TENANT_ID}`);
-      if (!res.ok) return;
-      const data = await res.json();
-      const list: BrandSummary[] = Array.isArray(data) ? data : [];
-      setBrandList(list);
-      const active = list.find(b => b.is_active) ?? list[0];
-      if (active) { setBrandId(active.id); setBrandName(active.brand_name); }
-    } catch {}
-  }, []);
+  const loadBrandList = useCallback(() =>
+    fetch(`/api/admin/brand-rules?tenant_id=${TENANT_ID}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data == null) return;
+        const list: BrandSummary[] = Array.isArray(data) ? data : [];
+        setBrandList(list);
+        const active = list.find(b => b.is_active) ?? list[0];
+        if (active) { setBrandId(active.id); setBrandName(active.brand_name); }
+      })
+      .catch(() => {}), []);
 
-  useEffect(() => { loadTours(); loadBrandList(); }, [loadTours, loadBrandList]);
+  useEffect(() => { fetchTours(); loadBrandList(); }, [fetchTours, loadBrandList]);
 
   const uniqueCountries = Array.from(new Set(
     tours.map(t => t.country).filter((c): c is string => Boolean(c))
@@ -325,17 +342,71 @@ export default function S1RewritePage() {
     setPage(1);
   }
 
-  function toggleTour(id: string, e: React.MouseEvent) {
-    e.stopPropagation();
-    setSelectedIds(prev => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-  }
-
   function selectAll()   { setSelectedIds(new Set(filteredTours.map(t => t.tour_id))); }
   function deselectAll() { setSelectedIds(new Set()); }
+  const toggleSelected = (tourId: string) =>
+    setSelectedIds(prev => { const next = new Set(prev); if (next.has(tourId)) next.delete(tourId); else next.add(tourId); return next; });
+
+  // AA-1006: the tour list is a kit DataTable (the page keeps its own selection, filters and pager).
+  const tourColumns: ColumnDef<Tour, unknown>[] = [
+    {
+      id: "select", enableSorting: false, enableHiding: false, meta: { hideLabelOnCard: true },
+      header: () => (
+        <Checkbox
+          aria-label={tr("selectAll", filteredTours.length)}
+          checked={filteredTours.length > 0 && filteredTours.every(x => selectedIds.has(x.tour_id))}
+          onChange={e => e.target.checked ? selectAll() : deselectAll()}
+        />
+      ),
+      cell: ({ row }) => (
+        <span onClick={e => e.stopPropagation()}>
+          <Checkbox
+            aria-label={row.original.src_name}
+            checked={selectedIds.has(row.original.tour_id)}
+            onChange={() => toggleSelected(row.original.tour_id)}
+            disabled={running}
+          />
+        </span>
+      ),
+    },
+    { id: "name", header: tr("colTourName"), accessorKey: "src_name",
+      cell: ({ row }) => <span style={{ fontWeight: 500, color: K.ink }}>{row.original.src_name}</span> },
+    { id: "country", header: tr("colCountry"), accessorFn: (x) => x.country ?? "",
+      cell: ({ row }) => <span style={{ color: row.original.country ? K.body : K.muted2 }}>{row.original.country || "—"}</span> },
+    { id: "file", header: tr("colSourceFile"), accessorFn: (x) => x.filename ?? "",
+      cell: ({ row }) => <span style={{ fontFamily: mono, fontSize: 11, color: K.muted }}>{stripUuidPrefix(row.original.filename)}</span> },
+    { id: "rewrites", header: tr("colRewrites"), accessorKey: "rewrite_count", meta: { align: "right" },
+      cell: ({ row }) => row.original.rewrite_count > 0
+        ? <span style={{ fontFamily: mono, fontSize: 13, fontWeight: 600, color: K.ink }}>{row.original.rewrite_count}</span>
+        : <span style={{ color: K.muted2 }}>—</span> },
+    { id: "lastRewritten", header: tr("colLastRewritten"), accessorFn: (x) => x.last_rewritten_at ?? "",
+      cell: ({ row }) => <span style={{ color: K.muted2, fontSize: 12 }}>{relativeTime(row.original.last_rewritten_at, tr, formatDate)}</span> },
+    { id: "ingested", header: tr("colIngested"), accessorFn: (x) => x.ingest_at ?? "",
+      cell: ({ row }) => <span style={{ color: K.muted2, fontSize: 12 }}>{relativeTime(row.original.ingest_at, tr, formatDate)}</span> },
+    { id: "status", header: tr("colStatus"), enableSorting: false, cell: ({ row: { original: x } }) => {
+      const runStatus = tourStatuses[x.tour_id] || "idle";
+      return (
+        <div>
+          <PipelineStatusBadge
+            tour={x} runStatus={runStatus} result={runResults[x.tour_id]}
+            stage={tourStages[x.tour_id]} isRetry={!!tourRetryFlags[x.tour_id]}
+          />
+          {/* AA-667: open the live writing panel while this tour is running */}
+          {runStatus === "running" && jobIds[x.tour_id] && (
+            <LinkButton size="sm" style={{ marginTop: 4, fontSize: 11 }}
+              onClick={(e) => {
+                e.stopPropagation();
+                setLiveTour({ tourId: x.tour_id, jobId: jobIds[x.tour_id], name: x.src_name });
+              }}>
+              {tr("liveView")}
+            </LinkButton>
+          )}
+        </div>
+      );
+    } },
+    { id: "open", header: "", enableSorting: false, enableHiding: false, meta: { hideLabelOnCard: true },
+      cell: () => <ChevronRight size={14} color={K.muted2} /> },
+  ];
 
   const selectedTours = tours.filter(t => selectedIds.has(t.tour_id));
 
@@ -553,8 +624,7 @@ export default function S1RewritePage() {
             }));
             setTourStatuses(prev => ({ ...prev, [tourId]: "done" }));
             const tourName = toursRef.current.find(x => x.tour_id === tourId)?.src_name ?? tRef.current("tour");
-            setToast(tRef.current("rewriteComplete", tourName));
-            setTimeout(() => setToast(null), 5000);
+            toast.success(tRef.current("rewriteComplete", tourName), 5000);
             resolveWaiter(tourId);
           } else if (job.status === "failed" || job.status === "interrupted") {
             setRunResults(prev => ({
@@ -568,7 +638,7 @@ export default function S1RewritePage() {
         } catch {}
       }));
     }, 5000);
-  }, [tourStatuses]);
+  }, [tourStatuses, toast]);
 
   // Cleanup polling on unmount
   useEffect(() => () => {
@@ -591,7 +661,7 @@ export default function S1RewritePage() {
   if (loading) {
     return (
         <PageFrame>
-          <LoadingScreen msg={t("loadingTours")} />
+          <LoadingScreen message={t("loadingTours")} />
         </PageFrame>
     );
   }
@@ -602,14 +672,14 @@ export default function S1RewritePage() {
 
         {/* ── Sticky Config Panel ─────────────────────────────────────────── */}
         <PageFrameHeader style={{
-          position: "sticky", top: 0, zIndex: 20, background: A.card,
+          position: "sticky", top: 0, zIndex: 20, background: K.card,
           padding: "12px 36px",
         }}>
           {/* S252 — flex-wrap, not a fixed 4-column grid: at phone width the three selects and the buttons stack. */}
           <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
             <div style={{ flex: "1 1 200px", minWidth: 0 }}>
-              <label style={{ fontSize: 11, color: A.muted, display: "block", marginBottom: 4 }}>{t("brandIdentity")}</label>
-              <select
+              <label style={{ fontSize: 11, color: K.muted, display: "block", marginBottom: 4 }}>{t("brandIdentity")}</label>
+              <Select
                 value={brandId ?? ""}
                 onChange={e => {
                   const id = e.target.value || null;
@@ -618,7 +688,7 @@ export default function S1RewritePage() {
                   setBrandName(picked ? picked.brand_name : null);
                 }}
                 disabled={running}
-                style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 13, fontFamily: sans, background: A.card }}
+                style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: `1px solid ${K.line}`, fontSize: 13, fontFamily: sans, background: K.card }}
               >
                 {brandList.length === 0 && <option value="">{t("noBrand")}</option>}
                 {brandList.map(b => (
@@ -626,27 +696,27 @@ export default function S1RewritePage() {
                     {b.brand_name} · v{b.version}{b.is_active ? t("active") : ""}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
             <div style={{ flex: "1 1 200px", minWidth: 0 }}>
-              <label style={{ fontSize: 11, color: A.muted, display: "block", marginBottom: 4 }}>{t("seoMode")}</label>
-              <select
+              <label style={{ fontSize: 11, color: K.muted, display: "block", marginBottom: 4 }}>{t("seoMode")}</label>
+              <Select
                 value={seoMode}
                 onChange={e => setSeoMode(e.target.value)}
                 disabled={running}
-                style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 13, fontFamily: sans, background: A.card }}
+                style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: `1px solid ${K.line}`, fontSize: 13, fontFamily: sans, background: K.card }}
               >
                 <option value="standard">{t("seoStandardOption")}</option>
                 <option value="aggressive">{t("seoAggressiveOption")}</option>
                 <option value="minimal">{t("seoMinimalOption")}</option>
-              </select>
+              </Select>
             </div>
             <div style={{ flex: "1 1 200px", minWidth: 0 }}>
-              <label style={{ fontSize: 11, color: A.muted, display: "block", marginBottom: 4 }}>{t("model")}</label>
+              <label style={{ fontSize: 11, color: K.muted, display: "block", marginBottom: 4 }}>{t("model")}</label>
               <div data-testid="s1-route-model"
-                style={{ padding: "7px 0", fontSize: 13, color: A.ink, fontFamily: sans, overflowWrap: "anywhere" }}>
+                style={{ padding: "7px 0", fontSize: 13, color: K.ink, fontFamily: sans, overflowWrap: "anywhere" }}>
                 {s1Model || "—"}{" "}
-                <a href="/admin/ai-gateway?tab=routing" style={{ fontSize: 12, color: A.gold }}>{t("routeLink")}</a>
+                <a href="/admin/ai-gateway?tab=routing" style={{ fontSize: 12, color: K.accent }}>{t("routeLink")}</a>
               </div>
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
@@ -667,8 +737,8 @@ export default function S1RewritePage() {
                 disabled={running || selectedIds.size === 0}
                 onClick={() => { setTourStatuses({}); setRunResults({}); setRunComplete(false); setShowConfirm(true); }}
                 style={{
-                  background: (running || selectedIds.size === 0) ? A.muted : A.gold,
-                  border: `1px solid ${(running || selectedIds.size === 0) ? A.muted : A.gold}`,
+                  background: (running || selectedIds.size === 0) ? K.muted : K.accent,
+                  border: `1px solid ${(running || selectedIds.size === 0) ? K.muted : K.accent}`,
                   display: "flex", alignItems: "center", gap: 8,
                   whiteSpace: "nowrap" as const,
                   opacity: selectedIds.size === 0 ? 0.5 : 1,
@@ -692,7 +762,7 @@ export default function S1RewritePage() {
                 <span style={{ display: "block" }}>{t("toursTotal", tours.length)}</span>
                 {seoPrefetch && (
                   <span style={{ display: "block", fontSize: 12, marginTop: 6,
-                    color: seoPrefetch.state === "failed" ? A.red : seoPrefetch.state === "done" ? A.green : A.gold }}>
+                    color: seoPrefetch.state === "failed" ? K.danger : seoPrefetch.state === "done" ? K.success : K.accent }}>
                     {seoPrefetch.text}
                   </span>
                 )}
@@ -706,40 +776,40 @@ export default function S1RewritePage() {
           />
 
           {/* Filter bar */}
-          <Card style={{ marginBottom: 16, padding: "12px 16px" }}>
+          <Section style={{ marginBottom: 16 }} bodyStyle={{ padding: "12px 16px" }}>
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-              <select
+              <Select
                 value={filterCountry}
                 onChange={e => handleFilterChange(setFilterCountry, e.target.value)}
-                style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 13, fontFamily: sans, background: A.card, minWidth: 140 }}
+                style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${K.line}`, fontSize: 13, fontFamily: sans, background: K.card, minWidth: 140 }}
               >
                 <option value="">{t("allCountries")}</option>
                 {uniqueCountries.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
+              </Select>
 
-              <select
+              <Select
                 value={filterFile}
                 onChange={e => handleFilterChange(setFilterFile, e.target.value)}
-                style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 13, fontFamily: sans, background: A.card, minWidth: 180 }}
+                style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${K.line}`, fontSize: 13, fontFamily: sans, background: K.card, minWidth: 180 }}
               >
                 <option value="">{t("allFiles")}</option>
                 {uniqueFiles.map(f => <option key={f} value={f}>{stripUuidPrefix(f)}</option>)}
-              </select>
+              </Select>
 
-              <select
+              <Select
                 value={filterStatus}
                 onChange={e => handleFilterChange(setFilterStatus, e.target.value)}
-                style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 13, fontFamily: sans, background: A.card, minWidth: 130 }}
+                style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${K.line}`, fontSize: 13, fontFamily: sans, background: K.card, minWidth: 130 }}
               >
                 <option value="">{t("allStatus")}</option>
                 <option value="published">{t("filterPublished")}</option>
                 <option value="ready">{t("filterReady")}</option>
                 <option value="review">{t("filterReview")}</option>
-              </select>
+              </Select>
 
-              <div style={{ display: "flex", alignItems: "center", gap: 6, border: `1px solid ${A.line}`, borderRadius: 6, padding: "6px 10px", background: A.card, flex: 1, minWidth: 200 }}>
-                <Search size={13} style={{ color: A.muted2, flexShrink: 0 }} />
-                <input
+              <div style={{ display: "flex", alignItems: "center", gap: 6, border: `1px solid ${K.line}`, borderRadius: 6, padding: "6px 10px", background: K.card, flex: 1, minWidth: 200 }}>
+                <Search size={13} style={{ color: K.muted2, flexShrink: 0 }} />
+                <Input
                   placeholder={t("searchTour")}
                   value={filterSearch}
                   onChange={e => handleFilterChange(setFilterSearch, e.target.value)}
@@ -750,219 +820,100 @@ export default function S1RewritePage() {
               <Button size="sm" variant="ghost" onClick={selectAll}>{t("selectAll", filteredTours.length)}</Button>
               <Button size="sm" variant="ghost" onClick={deselectAll} disabled={selectedIds.size === 0}>{t("deselectAll")}</Button>
             </div>
-          </Card>
+          </Section>
 
           {/* Tours table */}
           {tours.length === 0 ? (
-            <Card style={{ textAlign: "center", padding: "48px 24px" }}>
-              <div style={{ fontSize: 15, color: A.muted, marginBottom: 14 }}>{t("noTours")}</div>
-              <div style={{ fontSize: 13, color: A.muted2, marginBottom: 20 }}>{t("uploadFirst")}</div>
+            <Section bodyStyle={{ textAlign: "center", padding: "48px 24px" }}>
+              <div style={{ fontSize: 15, color: K.muted, marginBottom: 14 }}>{t("noTours")}</div>
+              <div style={{ fontSize: 13, color: K.muted2, marginBottom: 20 }}>{t("uploadFirst")}</div>
               <Button size="sm" variant="secondary" onClick={() => window.location.href = "/admin/upload"}
                 style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                 {t("goToUpload")} <ArrowRight size={12} />
               </Button>
-            </Card>
+            </Section>
           ) : (
-            <Card style={{ marginBottom: 20, padding: 0, overflow: "hidden" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead style={{ position: "sticky", top: 0, zIndex: 2 }}>
-                  <tr style={{ background: A.line2 }}>
-                    <th style={{ ...TH, width: 36, paddingLeft: 16 }}>
-                      <input
-                        type="checkbox"
-                        checked={filteredTours.length > 0 && filteredTours.every(t => selectedIds.has(t.tour_id))}
-                        onChange={e => e.target.checked ? selectAll() : deselectAll()}
-                        style={{ accentColor: A.gold }}
-                      />
-                    </th>
-                    <th style={TH}>{t("colTourName")}</th>
-                    <th style={TH}>{t("colCountry")}</th>
-                    <th style={TH}>{t("colSourceFile")}</th>
-                    <th style={TH}>{t("colRewrites")}</th>
-                    <th style={TH}>{t("colLastRewritten")}</th>
-                    <th style={TH}>{t("colIngested")}</th>
-                    <th style={TH}>{t("colStatus")}</th>
-                    <th style={{ ...TH, width: 28 }}></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {paginatedTours.map((t, i) => {
-                    const runStatus = tourStatuses[t.tour_id] || "idle";
-                    const result = runResults[t.tour_id];
-                    const isSelected = selectedIds.has(t.tour_id);
-                    const isDetail = detailTour?.tour_id === t.tour_id;
-                    return (
-                      <tr
-                        key={t.tour_id}
-                        onClick={() => setDetailTour(isDetail ? null : t)}
-                        style={{
-                          borderTop: i > 0 ? `1px solid ${A.line}` : undefined,
-                          background: isDetail ? alpha(A.gold, 9) : isSelected ? alpha(A.gold, 6) : "transparent",
-                          cursor: "pointer",
-                          transition: "background .12s",
-                        }}
-                      >
-                        <td style={{ ...TD, paddingLeft: 16 }} onClick={e => e.stopPropagation()}>
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => {}}
-                            onClick={e => { e.stopPropagation(); setSelectedIds(prev => { const next = new Set(prev); next.has(t.tour_id) ? next.delete(t.tour_id) : next.add(t.tour_id); return next; }); }}
-                            disabled={running}
-                            style={{ accentColor: A.gold }}
-                          />
-                        </td>
-                        <td style={{ ...TD, fontWeight: 500, color: A.ink }}>{t.src_name}</td>
-                        <td style={TD}>
-                          <span style={{ color: t.country ? A.body : A.muted2 }}>{t.country || "—"}</span>
-                        </td>
-                        <td style={TD}>
-                          <span style={{ fontFamily: mono, fontSize: 11, color: A.muted }}>
-                            {stripUuidPrefix(t.filename)}
-                          </span>
-                        </td>
-                        <td style={{ ...TD, textAlign: "center" as const }}>
-                          {t.rewrite_count > 0
-                            ? <span style={{ fontFamily: mono, fontSize: 13, fontWeight: 600, color: A.ink }}>{t.rewrite_count}</span>
-                            : <span style={{ color: A.muted2 }}>—</span>}
-                        </td>
-                        <td style={{ ...TD, color: A.muted2, fontSize: 12 }}>{relativeTime(t.last_rewritten_at, tr, formatDate)}</td>
-                        <td style={{ ...TD, color: A.muted2, fontSize: 12 }}>{relativeTime(t.ingest_at, tr, formatDate)}</td>
-                        <td style={TD}>
-                          <PipelineStatusBadge
-                            tour={t} runStatus={runStatus} result={result}
-                            stage={tourStages[t.tour_id]} isRetry={!!tourRetryFlags[t.tour_id]}
-                          />
-                          {/* AA-667: open the live writing panel while this tour is running */}
-                          {runStatus === "running" && jobIds[t.tour_id] && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setLiveTour({ tourId: t.tour_id, jobId: jobIds[t.tour_id], name: t.src_name });
-                              }}
-                              style={{
-                                marginTop: 4, fontSize: 11, fontWeight: 600, color: A.gold,
-                                background: "none", border: "none", cursor: "pointer", padding: 0,
-                              }}
-                            >
-                              {tr("liveView")}
-                            </button>
-                          )}
-                        </td>
-                        <td style={{ ...TD, color: A.muted2 }}><ChevronRight size={14} /></td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+            <Section padded={false} style={{ marginBottom: 20, overflow: "hidden" }}>
+              <DataTable<Tour>
+                tableId="s1-rewrite-tours"
+                data={paginatedTours}
+                getRowId={(row) => row.tour_id}
+                onRowClick={(row) => setDetailTour(detailTour?.tour_id === row.tour_id ? null : row)}
+                searchable={false}
+                paginate={false}
+                columns={phoneCardColumns(tourColumns, "name", isPhone)}
+              />
               {filteredTours.length > PAGE_SIZE && (
-                <div style={{ padding: "12px 20px", borderTop: `1px solid ${A.line}`, display: "flex", justifyContent: "flex-end" }}>
+                <div style={{ padding: "12px 20px", borderTop: `1px solid ${K.line}`, display: "flex", justifyContent: "flex-end" }}>
                   <Pagination page={page} total={filteredTours.length} pageSize={PAGE_SIZE} onPage={setPage} />
                 </div>
               )}
-            </Card>
+            </Section>
           )}
 
           {/* Confirm dialog */}
-          {showConfirm && (
-            <div style={{
-              position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)",
-              display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100,
-            }}>
-              <Card style={{ maxWidth: 420, width: "90%", padding: 28 }}>
-                <div style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: A.ink, marginBottom: 12 }}>
-                  {t("confirmTitle")}
-                </div>
-                <div style={{ fontSize: 14, color: A.body, marginBottom: 20, lineHeight: 1.6 }}>
-                  {t("confirmLead")}{" "}
-                  <strong>{t("toursCount", selectedIds.size)}</strong>{" "}
-                  {t("using")} <strong>{t("seoModeName", seoModeLabel(seoMode))}</strong> {t("modeWith")}{" "}
-                  <strong>{modelLabel()}</strong>
-                  {brandName ? t("brandSuffix", brandName) : ""}{t("continueQ")}
-                </div>
-                <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-                  <Button size="sm" variant="ghost" onClick={() => setShowConfirm(false)}>{t("cancel")}</Button>
-                  <Button
-                    size="sm"
-                    variant="primary"
-                    onClick={startRun}
-                    style={{ background: A.gold, border: `1px solid ${A.gold}` }}
-                  >
-                    {t("yesRun")}
-                  </Button>
-                </div>
-              </Card>
+          <Modal
+            open={showConfirm}
+            onClose={() => setShowConfirm(false)}
+            title={t("confirmTitle")}
+            width={420}
+            footer={
+              <>
+                <Button size="sm" variant="ghost" onClick={() => setShowConfirm(false)}>{t("cancel")}</Button>
+                <Button size="sm" variant="primary" onClick={startRun}>{t("yesRun")}</Button>
+              </>
+            }
+          >
+            <div style={{ fontSize: 14, color: K.body, lineHeight: 1.6 }}>
+              {t("confirmLead")}{" "}
+              <strong>{t("toursCount", selectedIds.size)}</strong>{" "}
+              {t("using")} <strong>{t("seoModeName", seoModeLabel(seoMode))}</strong> {t("modeWith")}{" "}
+              <strong>{modelLabel()}</strong>
+              {brandName ? t("brandSuffix", brandName) : ""}{t("continueQ")}
             </div>
-          )}
+          </Modal>
 
           {/* AA-667: live writing panel (steps + streamed tour fields) for one running tour */}
-          {liveTour && (
-            <div
-              onClick={() => setLiveTour(null)}
-              style={{
-                position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)",
-                display: "flex", justifyContent: "flex-end", zIndex: 120,
-              }}
-            >
-              <div
-                onClick={(e) => e.stopPropagation()}
-                style={{
-                  width: 480, maxWidth: "90vw", height: "100%", background: A.bg,
-                  borderLeft: `1px solid ${A.line}`, padding: "22px 24px", overflowY: "auto",
-                  boxShadow: "-8px 0 24px rgba(0,0,0,0.12)",
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                  <div style={{ fontFamily: serif, fontSize: 16, fontWeight: 500, color: A.ink, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {liveTour.name}
-                  </div>
-                  <button
-                    onClick={() => setLiveTour(null)}
-                    style={{ background: "none", border: "none", cursor: "pointer", color: A.muted, fontSize: 20, lineHeight: 1 }}
-                    aria-label={t("close")}
-                  >
-                    ×
-                  </button>
-                </div>
-                <AdminLiveWriter
-                  jobId={liveTour.jobId}
-                  active={tourStatuses[liveTour.tourId] === "running"}
-                  title={t("title")}
-                />
-              </div>
-            </div>
-          )}
+          <Drawer open={liveTour != null} onClose={() => setLiveTour(null)} title={liveTour?.name}>
+            {liveTour && (
+              <AdminLiveWriter
+                jobId={liveTour.jobId}
+                active={tourStatuses[liveTour.tourId] === "running"}
+                title={t("title")}
+              />
+            )}
+          </Drawer>
 
           {/* Progress summary */}
           {(running || runComplete) && (Object.keys(tourStatuses).length > 0 || runComplete) && (
-            <Card style={{ marginBottom: 20 }}>
+            <Section style={{ marginBottom: 20 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-                <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: A.muted }}>
+                <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: K.muted }}>
                   {t("progress")}
                 </div>
                 {Object.keys(tourStatuses).length > 0 && (
-                  <span style={{ fontSize: 13, color: A.muted }}>
+                  <span style={{ fontSize: 13, color: K.muted }}>
                     {t("complete", (statusCounts.done || 0) + (statusCounts.failed || 0), Object.keys(tourStatuses).length)}
                   </span>
                 )}
                 {(statusCounts.done || 0) > 0 && (
-                  <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13, color: A.green }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13, color: K.success }}>
                     <CheckCircle size={13} /> {t("doneCount", statusCounts.done)}
                   </span>
                 )}
                 {(statusCounts.failed || 0) > 0 && (
-                  <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13, color: A.red }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13, color: K.danger }}>
                     <XCircle size={13} /> {t("failedCount", statusCounts.failed)}
                   </span>
                 )}
-                {running && <span style={{ fontSize: 13, color: A.amber }}>{t("processingEllipsis")}</span>}
+                {running && <span style={{ fontSize: 13, color: K.amber }}>{t("processingEllipsis")}</span>}
                 {runComplete && (
                   <Button
                     size="sm"
                     variant="primary"
                     onClick={() => window.location.href = "/admin/master-content"}
                     style={{
-                      background: A.gold, border: `1px solid ${A.gold}`,
+                      background: K.accent, border: `1px solid ${K.accent}`,
                       display: "flex", alignItems: "center", gap: 6, marginLeft: "auto",
                     }}
                   >
@@ -970,7 +921,7 @@ export default function S1RewritePage() {
                   </Button>
                 )}
               </div>
-            </Card>
+            </Section>
           )}
         </PageFrameBody>
       </PageFrame>
@@ -993,20 +944,6 @@ export default function S1RewritePage() {
         />
       )}
 
-      {/* Toast — bottom-right, auto-dismiss after 5s (AA-248) */}
-      {toast && (
-        <div style={{
-          position: "fixed", bottom: 24, right: 28, zIndex: 9999,
-          display: "flex", alignItems: "center", gap: 8,
-          padding: "12px 18px", borderRadius: 10,
-          background: A.card, border: `1px solid ${A.green}`,
-          boxShadow: "0 4px 20px rgba(0,0,0,0.15)",
-          fontSize: 13, fontWeight: 600, color: A.ink, fontFamily: sans,
-          maxWidth: 380,
-        }}>
-          {toast}
-        </div>
-      )}
     </>
   );
 }

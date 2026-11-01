@@ -1,5 +1,5 @@
 // app/admin/cost-ops/costOpsUi.tsx — AA-665: small kit-styled pieces shared by the Cost Operations panels that are
-// built on the kit (Forecast, DataForSEO runs, Jev). The older tabs of page.tsx still use the legacy adminUi cards.
+// built on the kit (Forecast, DataForSEO runs, Jev). The other tabs of page.tsx are on the kit too since AA-1006.
 
 import type React from "react";
 import { K, RADIUS, sans, type Tone } from "../../_kit";

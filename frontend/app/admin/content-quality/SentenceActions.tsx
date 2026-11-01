@@ -15,7 +15,9 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { ReasonTag, WritingReasonChips } from "../_components/WritingReasonChips";
 import { exemplarPath, preselect, toggledPref, type ExemplarPref, type ReasonCode } from "@/lib/writingReasons";
-import { K, mono, ApiError, Badge, Button, ConfirmModal, Spinner, apiSend, useAdminIdentity, useT, useToast } from "../../_kit";
+import {
+  K, mono, ApiError, Badge, Button, ConfirmModal, Spinner, apiSend, useAdminIdentity, useT, useToast, Input, Textarea,
+} from "../../_kit";
 import {
   fmtTime, usd,
   type AdminEdit, type ApplyBody, type CheckFailure, type FlaggedSentence, type PieceDetail, type SuggestResponse,
@@ -216,7 +218,7 @@ export function RewritePanel({ s, ed, busy, regenerating, onChange, onApply, onR
       <div style={{ fontSize: 11, fontWeight: 600, color: K.muted }}>
         {t("after")}{sug ? t("suggestedBy", sug.model ?? t("theModel"), usd(sug.cost_usd)) : t("yourText")}
       </div>
-      <textarea
+      <Textarea
         aria-label={t("replacementAria")} value={ed.draft} rows={3} maxLength={3000}
         onChange={(e) => onChange({ draft: e.target.value })}
         style={{ width: "100%", boxSizing: "border-box", fontSize: 12.5, lineHeight: 1.5, background: K.successSoft, color: K.ink, border: `1px solid ${K.line}`, borderRadius: 6, padding: "6px 8px", fontFamily: "inherit", resize: "vertical" }}
@@ -239,7 +241,7 @@ export function RewritePanel({ s, ed, busy, regenerating, onChange, onApply, onR
         </div>
       )}
       {onRegenerate && (
-        <input
+        <Input
           aria-label={t("noteAria")} placeholder={t("notePlaceholder")}
           value={ed.note} maxLength={200} onChange={(e) => onChange({ note: e.target.value })}
           style={{ width: "100%", boxSizing: "border-box", fontSize: 12, background: K.card, color: K.ink, border: `1px solid ${K.line}`, borderRadius: 6, padding: "5px 8px" }}

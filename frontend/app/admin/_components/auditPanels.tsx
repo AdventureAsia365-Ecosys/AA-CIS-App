@@ -8,12 +8,12 @@
 // old tabs read the exact same `/admin/a4/content-log` dataset twice (AA-558's confirmed
 // finding) and are now ONE merged table + row-accordion, built directly in
 // `tenant-activity/page.tsx` (its own types/component, no longer generic enough to share).
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { AlertTriangle, ClipboardList, RotateCw } from "lucide-react";
-import { A, sans, Card, TH, TD } from "./adminUi";
+import type { ColumnDef } from "@tanstack/react-table";
 import { useT } from "../../_kit/core/useI18n";
 import { M } from "./components.messages";
-import { Button } from "../../_kit";
+import { Button, DataTable, Field, Input, K, Section } from "../../_kit";
 
 export async function fetchJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
@@ -23,27 +23,27 @@ export async function fetchJson<T>(url: string): Promise<T> {
 
 export function EmptyState({ title, body }: { title: string; body: string }) {
   return (
-    <Card>
+    <Section>
       <div style={{ textAlign: "center", padding: "40px 20px" }}>
-        <ClipboardList size={30} color={A.accent} style={{ marginBottom: 10 }} />
-        <div style={{ fontSize: 15, fontWeight: 600, color: A.ink, marginBottom: 6 }}>{title}</div>
-        <div style={{ fontSize: 13, color: A.muted }}>{body}</div>
+        <ClipboardList size={30} color={K.accent} style={{ marginBottom: 10 }} />
+        <div style={{ fontSize: 15, fontWeight: 600, color: K.ink, marginBottom: 6 }}>{title}</div>
+        <div style={{ fontSize: 13, color: K.muted }}>{body}</div>
       </div>
-    </Card>
+    </Section>
   );
 }
 
 export function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
   const t = useT(M);
   return (
-    <Card style={{ borderColor: A.redBorder }}>
+    <Section style={{ borderColor: K.dangerBorder }}>
       <div style={{ textAlign: "center", padding: "32px 20px" }}>
-        <AlertTriangle size={26} color={A.red} style={{ marginBottom: 10 }} />
-        <div style={{ fontSize: 14, fontWeight: 600, color: A.ink, marginBottom: 6 }}>{t("panelFailed")}</div>
-        <div style={{ fontSize: 12.5, color: A.muted, marginBottom: 14 }}>{message}</div>
+        <AlertTriangle size={26} color={K.danger} style={{ marginBottom: 10 }} />
+        <div style={{ fontSize: 14, fontWeight: 600, color: K.ink, marginBottom: 6 }}>{t("panelFailed")}</div>
+        <div style={{ fontSize: 12.5, color: K.muted, marginBottom: 14 }}>{message}</div>
         <Button variant="secondary" size="sm" onClick={onRetry}><RotateCw size={13} /> {t("retry")}</Button>
       </div>
-    </Card>
+    </Section>
   );
 }
 
@@ -63,98 +63,68 @@ export interface Col<T> {
 // counts here (Segment 138, Score ~138, Route handful) fit in 1-3 pages at PAGE_SIZE=50, so a
 // per-page sort/filter is legible; it does NOT re-sort/filter across page boundaries — the
 // existing pagination footer is unaffected.
-export function AuditTable<T>({ rows, columns, rowKey, sortable = false }: {
+//
+// AA-1006: drawn by the kit DataTable (header sort with aria-sort, phone card mode). The per-column filters are kit
+// Inputs in the table's toolbar (they were a second header row); a sortable column sorts by its `sortValue`, empty
+// values last in both directions as before. No global search and no pager: the rows are the page already loaded.
+export function AuditTable<T>({ rows, columns, rowKey, sortable = false, tableId }: {
   rows: T[]; columns: Col<T>[]; rowKey: (row: T) => string; sortable?: boolean;
+  /** Namespaces the DataTable's column-visibility memory; defaults to the column keys. */
+  tableId?: string;
 }) {
   const t = useT(M);
-  const [sortKey, setSortKey] = useState<string | null>(null);
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [colFilters, setColFilters] = useState<Record<string, string>>({});
 
-  let displayRows = rows;
-  if (sortable) {
-    displayRows = rows.filter(r => columns.every(c => {
-      const f = colFilters[c.key];
-      if (!f || !c.filterValue) return true;
-      return c.filterValue(r).toLowerCase().includes(f.toLowerCase());
-    }));
-    const sortCol = sortKey ? columns.find(c => c.key === sortKey) : undefined;
-    if (sortCol?.sortValue) {
-      const sv = sortCol.sortValue;
-      displayRows = [...displayRows].sort((a, b) => {
-        const av = sv(a), bv = sv(b);
-        if (av == null && bv == null) return 0;
-        if (av == null) return 1;
-        if (bv == null) return -1;
-        const cmp = typeof av === "number" && typeof bv === "number" ? av - bv : String(av).localeCompare(String(bv));
-        return sortDir === "asc" ? cmp : -cmp;
-      });
-    }
-  }
+  const displayRows = useMemo(() => !sortable ? rows : rows.filter(r => columns.every(c => {
+    const f = colFilters[c.key];
+    if (!f || !c.filterValue) return true;
+    return c.filterValue(r).toLowerCase().includes(f.toLowerCase());
+  })), [rows, columns, colFilters, sortable]);
 
-  function toggleSort(key: string) {
-    if (sortKey !== key) { setSortKey(key); setSortDir("asc"); }
-    else if (sortDir === "asc") setSortDir("desc");
-    else { setSortKey(null); setSortDir("asc"); }
-  }
+  const defs = useMemo<ColumnDef<T, unknown>[]>(() => columns.map((c) => {
+    const sv = sortable ? c.sortValue : undefined;
+    return {
+      id: c.key,
+      header: c.label,
+      // null → undefined, so `sortUndefined: "last"` keeps empty values last in both directions.
+      accessorFn: sv ? (row: T) => sv(row) ?? undefined : () => undefined,
+      cell: (info) => c.render(info.row.original),
+      enableSorting: !!sv,
+      sortUndefined: "last",
+      sortingFn: (a, b, id) => {
+        const av = a.getValue(id) as string | number, bv = b.getValue(id) as string | number;
+        return typeof av === "number" && typeof bv === "number" ? av - bv : String(av).localeCompare(String(bv));
+      },
+    } satisfies ColumnDef<T, unknown>;
+  }), [columns, sortable]);
 
-  const hasFilterRow = sortable && columns.some(c => c.filterValue);
+  const filterCols = sortable ? columns.filter(c => c.filterValue) : [];
+  const filters = filterCols.length > 0 ? (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "flex-end" }}>
+      {filterCols.map(c => (
+        <Field key={c.key} label={c.label} style={{ width: 160 }}>
+          <Input
+            size="sm"
+            value={colFilters[c.key] ?? ""}
+            onChange={e => setColFilters(prev => ({ ...prev, [c.key]: e.target.value }))}
+            placeholder={t("filter")}
+            style={{ width: "100%" }}
+          />
+        </Field>
+      ))}
+    </div>
+  ) : undefined;
 
   return (
-    <div style={{ overflowX: "auto", border: `1px solid ${A.line}`, borderRadius: 10 }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: sans }}>
-        <thead>
-          <tr>
-            {columns.map(c => (
-              <th key={c.key} style={TH}>
-                {sortable && c.sortValue ? (
-                  <button onClick={() => toggleSort(c.key)} style={{
-                    background: "none", border: "none", padding: 0, cursor: "pointer",
-                    font: "inherit", color: sortKey === c.key ? A.gold : "inherit",
-                    display: "flex", alignItems: "center", gap: 4,
-                  }}>
-                    {c.label}
-                    <span style={{ fontSize: 9, opacity: sortKey === c.key ? 1 : 0.35 }}>
-                      {sortKey === c.key ? (sortDir === "asc" ? "▲" : "▼") : "▲▼"}
-                    </span>
-                  </button>
-                ) : c.label}
-              </th>
-            ))}
-          </tr>
-          {hasFilterRow && (
-            <tr>
-              {columns.map(c => (
-                <th key={`${c.key}-filter`} style={{ ...TH, padding: "4px 16px 8px", textTransform: "none", fontWeight: 400 }}>
-                  {c.filterValue && (
-                    <input
-                      value={colFilters[c.key] ?? ""}
-                      onChange={e => setColFilters(prev => ({ ...prev, [c.key]: e.target.value }))}
-                      placeholder={t("filter")}
-                      style={{
-                        width: "100%", fontSize: 11.5, padding: "4px 7px", boxSizing: "border-box",
-                        border: `1px solid ${A.line}`, borderRadius: 5, background: A.card, color: A.body,
-                      }}
-                    />
-                  )}
-                </th>
-              ))}
-            </tr>
-          )}
-        </thead>
-        <tbody>
-          {displayRows.map(row => (
-            <tr key={rowKey(row)}>
-              {columns.map(c => <td key={c.key} style={TD}>{c.render(row)}</td>)}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {sortable && displayRows.length === 0 && rows.length > 0 && (
-        <div style={{ padding: "16px", textAlign: "center", fontSize: 12.5, color: A.muted2 }}>
-          {t("noRowsMatch")}
-        </div>
-      )}
-    </div>
+    <DataTable<T>
+      tableId={tableId ?? `audit:${columns.map(c => c.key).join(",")}`}
+      data={displayRows}
+      columns={defs}
+      getRowId={rowKey}
+      searchable={false}
+      paginate={false}
+      toolbarExtra={filters}
+      emptyTitle={rows.length > 0 ? t("noRowsMatch") : undefined}
+    />
   );
 }
