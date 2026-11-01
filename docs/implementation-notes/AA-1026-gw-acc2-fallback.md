@@ -67,6 +67,14 @@ Tech lead approval S263 (01/11): "thêm đường dự phòng acc2". Three CIS P
   `tests/unit/snapshots/aa1026_routes_after_331.json`, `tests/unit/test_aa1026_contract_smoke.py`,
   `tests/unit/test_aa737_worker_throughput.py` (background kind list), and for 332
   `tests/integration/test_aa1026_migration_332.py`.
+- Older integration tests that re-apply migration 324 (`test_aa1017_migration_324.py`, `_320_321.py`,
+  `test_aa1002_migration_304.py`) now take the acc2 candidates off the routes around the re-run
+  (`tests/integration/_acc2_routes.py`): 324's guard ("no stage routes to a candidate") describes the state before any
+  route change and refuses a re-run once 331 is in the replay. The replay expectations of 286 (place card routes) and
+  259 (rows naming the Converse keys) include the 331 / 332 rows. Full integration suite on the 332 branch, local
+  Postgres 16: 2031 passed; the only errors are `test_007_rls_isolation.py` (needs the CI `aa_cis_admin` password),
+  and `test_aa1018_p2_db.py::test_cis_app_writes_access_state_and_the_probe_stamp` fails on origin/main too when run
+  after the 322 / 311 modules in a partial batch (order dependence, not this change; it passes in the full run).
 - `SAFE_DEFAULTS` (role_config.py) not changed: without the DB the catalog is unreadable and a catalog key like
   `nova-lite` is skipped anyway (lesson S222 #617), so adding it there would change nothing.
 
