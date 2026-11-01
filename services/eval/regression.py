@@ -178,7 +178,8 @@ async def run_s1_old_eval() -> dict:
     for idx, tour in enumerate(tours):
         with family_rule.trace_models() as seen:
             result = await _rewrite_tour(
-                tour, idx=idx, total=len(tours), brand_rules={}, seo={}, model_tier=S1_OLD_WRITER_MODEL,
+                # the literal stays here for the model_tier ratchet (test_aa642_model_tier_allowlist)
+                tour, idx=idx, total=len(tours), brand_rules={}, seo={}, model_tier="haiku",
             )
         same = family_rule.shared_families(family_rule.labels(seen, "writer"), family_rule.labels(seen, "judge"),
                                            models)

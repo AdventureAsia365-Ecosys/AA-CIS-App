@@ -88,7 +88,7 @@ async def read_eval_run(run_id: str) -> Optional[dict]:
 
 
 async def require(role: Optional[str], *, eval_run_id: Optional[str], break_glass_reason: Optional[str],
-                  read_run=read_eval_run) -> Optional[dict]:
+                  read_run=None) -> Optional[dict]:
     """The evidence of one change as stored in its audit row, or None when the stage needs none (a validate / embed
     stage). Raises EvidenceRefused when the change needs evidence and has none usable. An eval run id, when given,
     must be valid even next to a break-glass reason (a wrong id is never waved through)."""
@@ -99,7 +99,7 @@ async def require(role: Optional[str], *, eval_run_id: Optional[str], break_glas
     evidence: dict = {}
     if run_id:
         run_id = _uuid(run_id)
-        row = await read_run(run_id)
+        row = await (read_run or read_eval_run)(run_id)
         problem = eval_run_problem(run_id, row)
         if problem:
             raise EvidenceRefused(f"{problem}: a {role} route change needs a finished eval run that did not fail")

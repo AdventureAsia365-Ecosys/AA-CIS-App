@@ -3182,17 +3182,6 @@
             "title": "Max Tours",
             "type": "integer"
           },
-          "model_tier": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Model Tier"
-          },
           "s3_key": {
             "title": "S3 Key",
             "type": "string"
@@ -3403,6 +3392,30 @@
               }
             ],
             "title": "Account Route"
+          },
+          "break_glass_reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Break Glass Reason"
+          },
+          "eval_run_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eval Run Id"
           },
           "model_id": {
             "title": "Model Id",
@@ -3730,6 +3743,30 @@
       },
       "LlmRoutePatch": {
         "properties": {
+          "break_glass_reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Break Glass Reason"
+          },
+          "eval_run_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eval Run Id"
+          },
           "fallback_model_ids": {
             "anyOf": [
               {
@@ -5473,18 +5510,6 @@
             "title": "Enforce Min",
             "type": "boolean"
           },
-          "model_tier": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": "haiku",
-            "title": "Model Tier"
-          },
           "seo_mode": {
             "default": "standard",
             "title": "Seo Mode",
@@ -6622,17 +6647,6 @@
               }
             ],
             "title": "Brand Rules Version"
-          },
-          "model_tier": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Model Tier"
           },
           "reason_code": {
             "anyOf": [

@@ -182,6 +182,16 @@ export const MODELS = defineMessages(
     searchStages: "Search stages…",
     noShadowTitle: "No shadow comparisons in this window",
     noShadowBody: "Turn on a stage's shadow on the Routing tab, then come back after it has run on some calls.",
+    // ChangeEvidenceFields (route governance: a writer / judge model change needs evidence)
+    evidenceTitle: "Evidence for this change",
+    evidenceHint:
+      "A writer or judge model change needs the eval run that backs it. When no eval can run (an outage), give a break-glass reason instead: it is kept in the audit log and raises an admin alert.",
+    evalRunId: "Eval run id",
+    evalRunPlaceholder: "ID of a finished eval run",
+    breakGlass: "Break-glass reason",
+    breakGlassPlaceholder: "Why this change cannot wait for an eval run",
+    evidenceMissing: (min: number) => `Give an eval run id, or a break-glass reason of at least ${min} characters.`,
+    savedWithWarning: (warning: string) => `Saved. ${warning}`,
   },
   {
     route: "Tuyến:",
@@ -356,5 +366,14 @@ export const MODELS = defineMessages(
     searchStages: "Tìm bước…",
     noShadowTitle: "Không có so sánh chạy bóng nào trong khoảng này",
     noShadowBody: "Bật chạy bóng cho một bước ở tab Điều hướng, rồi quay lại sau khi nó đã chạy trên một số lượt gọi.",
+    evidenceTitle: "Bằng chứng cho thay đổi này",
+    evidenceHint:
+      "Đổi model của một bước viết hoặc chấm cần lượt đánh giá (eval run) làm căn cứ. Khi không chạy được đánh giá (sự cố), hãy ghi lý do khẩn cấp: lý do được lưu trong nhật ký kiểm tra và tạo một cảnh báo cho quản trị.",
+    evalRunId: "Mã lượt đánh giá",
+    evalRunPlaceholder: "Mã của một lượt đánh giá đã xong",
+    breakGlass: "Lý do khẩn cấp",
+    breakGlassPlaceholder: "Vì sao thay đổi này không chờ được lượt đánh giá",
+    evidenceMissing: (min: number) => `Nhập mã lượt đánh giá, hoặc lý do khẩn cấp dài ít nhất ${min} ký tự.`,
+    savedWithWarning: (warning: string) => `Đã lưu. ${warning}`,
   },
 );
