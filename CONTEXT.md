@@ -518,7 +518,11 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
 - **Every model call goes through the gateway** (`shared/llm_client/`, AA-685): text through
   `LLMClient.generate(stage=...)`, embeddings through `shared.llm_client.embed.embed(stage, texts)`
   (catalog `api_style='embed'`, stage role `embed`). `tests/unit/test_aa685_no_raw_model_calls.py` fails
-  on any raw Bedrock/OpenAI call outside `shared/llm_client/` (no exceptions since AA-757).
+  on any raw model call outside `shared/llm_client/` in `api/`, `services/`, `shared/`, `worker/` and `scripts/`
+  (AA-642 L6): Bedrock `invoke_model*` / `converse*` / `apply_guardrail` / `create_model_invocation_job`, vendor SDK
+  `.completions|.messages|.responses|.embeddings .create|.stream|.parse`, importing `openai` / `anthropic` or a
+  gateway internal, and a vendor endpoint string (`api.anthropic.com`, `api.openai.com`, `bedrock-runtime`). Its
+  `ALLOWED` list (path + hit, with a reason, ratcheted) holds only the cost reconcile's billing API URLs.
   **One `llm_call_log` row per billed call** (AA-927):
   - one row per `generate()` / `embed()` response returned to a caller, written by the caller, also when
     the reply then turns out unusable. Canonical pattern: write the row right after `generate()` returns
