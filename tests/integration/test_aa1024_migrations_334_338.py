@@ -1,5 +1,5 @@
 """AA-1024 lane gw-core (S263) — migrations 334 (route deadline per role), 335 (segment research stages), 336 (retire
-three dead routes), 337 (Llama 4 structured output in the prompt) and 338 (ledger class role_not_served) against real
+two dead routes; tp_extract kept), 337 (Llama 4 structured output in the prompt) and 338 (ledger class role_not_served) against real
 Postgres.
 
 conftest applies every migration, these five included. Other modules re-run earlier files (320, 324) or load route
@@ -28,7 +28,7 @@ M337 = MIGRATIONS / "337_llm_llama4_structured_prompt_mode.sql"
 M338 = MIGRATIONS / "338_llm_ledger_role_not_served.sql"
 DEADLINE = {"writer": 1200, "judge": 900, "validate": 600, "embed": 120}
 SEGMENT = ("segment_research", "segment_research_batch")
-DEAD = ("s1_atom_writer", "tp_component_embed", "tp_extract")
+DEAD = ("s1_atom_writer", "tp_component_embed")  # tp_extract kept: live traffic on 11/10 (S263 first apply)
 LLAMA = ("llama4-maverick", "llama4-scout")
 
 
@@ -132,7 +132,7 @@ def test_335_guard_refuses_without_an_acc3_haiku_5_5_deployment(cur):
         cur.execute(_body(M335))
 
 
-# ── 336: retire three dead routes ────────────────────────────────────────────────────────────────────────────────
+# ── 336: retire two dead routes ──────────────────────────────────────────────────────────────────────────────────
 
 def _switches(c) -> dict:
     c.execute("SELECT stage, is_active, disabled_reason AS reason FROM shared.llm_role_config")
@@ -145,7 +145,7 @@ def _ledger(c, stage: str, days_ago: int) -> None:
               (stage, days_ago))
 
 
-def test_336_the_three_dead_routes_are_off_with_a_reason(cur):
+def test_336_the_two_dead_routes_are_off_with_a_reason(cur):
     assert _registered(cur, "336")
     t10_before = _switches(cur).get("t10_claims")
     cur.execute(_body(M336))
@@ -160,14 +160,14 @@ def test_336_replay_switches_off_and_leaves_every_other_stage(cur):
     cur.execute("UPDATE shared.llm_role_config SET is_active = true, disabled_reason = NULL WHERE stage = ANY (%s)",
                 (list(DEAD),))
     before = _switches(cur)
-    _ledger(cur, "tp_extract", 45)                            # older than 30 days: history, not a caller
+    _ledger(cur, "tp_component_embed", 45)                    # older than 30 days: history, not a caller
     cur.execute(_body(M336))
     after = _switches(cur)
     assert {s: v for s, v in after.items() if s not in DEAD} == {s: v for s, v in before.items() if s not in DEAD}
     assert all(after[s][0] is False for s in DEAD)
     cur.execute("SELECT count(*) AS n FROM shared.llm_role_config WHERE stage = ANY (%s) "
                 "AND updated_by = 'migration-336-aa1024'", (list(DEAD),))
-    assert cur.fetchone()["n"] == 3
+    assert cur.fetchone()["n"] == 2
 
 
 def test_336_refuses_a_stage_with_recent_ledger_traffic(cur):
@@ -179,12 +179,12 @@ def test_336_refuses_a_stage_with_recent_ledger_traffic(cur):
 
 
 def test_336_a_missing_row_is_not_an_error(cur):
-    cur.execute("DELETE FROM shared.llm_role_config WHERE stage = 'tp_extract'")
+    cur.execute("DELETE FROM shared.llm_role_config WHERE stage = 'tp_component_embed'")
     cur.execute("UPDATE shared.llm_role_config SET is_active = true, disabled_reason = NULL WHERE stage = ANY (%s)",
                 (list(DEAD),))
     cur.execute(_body(M336))
     rows = _switches(cur)
-    assert "tp_extract" not in rows and rows["s1_atom_writer"][0] is False
+    assert "tp_component_embed" not in rows and rows["s1_atom_writer"][0] is False
 
 
 # ── 337: Llama 4 asked in the prompt ─────────────────────────────────────────────────────────────────────────────
