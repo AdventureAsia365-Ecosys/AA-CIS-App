@@ -149,6 +149,20 @@ def test_tripplanner_view_shows_only_its_search_column(adm):
     assert _one(a, "SELECT has_table_privilege('cis_app', 'catalog.v_embedding_space_v1', 'SELECT')") is False
 
 
+def test_329_restates_the_328_comments_that_named_owner_functions(adm):
+    # 328 is immutable (copied to AA-CIS-Infra) and its COMMENT ON texts named functions 329 never created.
+    comments = [
+        _one(adm, "SELECT obj_description('shared.embedding_column'::regclass, 'pg_class')"),
+        *(_one(adm, "SELECT col_description('shared.embedding_column'::regclass, a.attnum) FROM pg_attribute a "
+                    "WHERE a.attrelid = 'shared.embedding_column'::regclass AND a.attname = %s", col)
+          for col in ("shadow_column", "previous_column")),
+    ]
+    for text in comments:
+        assert "owner run-script" in text, text
+        for gone in ("embedding_swap", "embedding_prepare_shadow", "embedding_drop_previous"):
+            assert gone not in text, text
+
+
 # ── the shadow reset trigger, installed as the Infra run-script installs it ──────────────────────────────────────
 
 def test_329_creates_no_owner_step_function(adm):

@@ -93,7 +93,10 @@ orchestrator, not this lane).
   recipe), like 323. The swap / rollback / view rebuild tests moved to AA-CIS-Infra
   `db/tests/test_aa1026_embedding_shadow_script_pg.py` (real PostgreSQL, local only).
 - `services/embeddings/reembed.py`: the dry run's `next_steps` name the Infra script's actions instead of SQL calls.
-- Migration 328's comments name the run-script instead of the 329 functions (328 is not copied to Infra yet).
+- 328 stays byte-identical to main and its AA-CIS-Infra copy (#590 copied it before the owner steps moved; a copied
+  migration is immutable, the preflight refuses an edit). Its source comments still name "329 functions"; 329
+  restates the three database comments that did (`shared.embedding_column` table, `shadow_column`,
+  `previous_column`), tested in unit + integration.
 - TripPlanner (separate PR): search embeds only in the space of `geo.tour_place.embedding`
   (`catalog.v_embedding_space_v1`).
 
@@ -115,9 +118,11 @@ orchestrator, not this lane).
 - The reset trigger compares vectors with `IS DISTINCT FROM` (pgvector's `=` operator); CI has no pgvector, so the
   integration test runs it on `real[]`. First live check: the T-15 prepare on Dev (script dry run, then apply), then
   `drop_shadow`. The script needs CIS 329 applied (prepare refuses without `shared._embedding_shadow_reset()`).
-- 329 must be reviewed (RISKY: catalog grant, routing rows); the Infra script with it (DDL on live vector columns). Migration numbers 328/329 are placeholders
-  above the S263 lanes (325-327): renumber at merge to main max + 1 (`git grep '328_'`, `git grep '329_'`, the
-  conftest skip, tests, CONTEXT, root runbook).
+- 329 must be reviewed (RISKY: catalog grant, routing rows); the Infra script with it (DDL on live vector columns).
+- PR #1225 merged the FIRST 329 (owner functions with a dynamic `SET LOCAL ROLE`, preflight red) to main before
+  the fix; this follow-up PR (branch `fix/aa-1026-migration-329-owner-script`, cut from main) replaces it. 329
+  was never applied (Dev at 327) and not copied: the bot's Infra copy PR of the old 329 (#591) must be closed or
+  re-synced from the new main bytes, never merged, and no DB Migrate apply of 329 before that.
 - cis_app's default privileges in `shared` grant DML on new tables and EXECUTE on new functions; 329 revokes both
   (SELECT stays).
 - Titan is not usable until the runbook switches connection `acc2-usw2` on (one audited admin PATCH) — the T-15

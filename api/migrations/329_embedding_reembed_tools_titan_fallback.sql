@@ -24,7 +24,9 @@
 --      CONFLICT DO UPDATE, e.g. a T9 piece rewritten) empties that row's shadow vector, so the fill re-reads it like a
 --      new row and the swap never promotes a vector of text that is gone. A trigger needs a function object, so this
 --      one function is a migration; it has no dynamic SQL. The same default privileges gave cis_app DML on the two
---      328 tables: revoked (SELECT stays).
+--      328 tables: revoked (SELECT stays). 328's source comments and three of its COMMENT ON texts still name
+--      owner functions "in 329" (328 was copied to AA-CIS-Infra before the owner steps moved, so it stays as it is):
+--      this file restates those three database comments; the 328 file text is history.
 --   2. Coverage guard: every vector column of a base table in the CIS schemas is registered (except __shadow /
 --      __prev), every registered column exists with the dimension of its space, and the columns of a swap group share
 --      a space. Checked only where pgvector exists (the CI integration Postgres has none).
@@ -113,6 +115,19 @@ COMMENT ON FUNCTION shared._embedding_shadow_reset() IS
 -- The registry is changed by migrations and the owner run-script only: the schema's default privileges gave cis_app
 -- DML on the two 328 tables and EXECUTE on the function above.
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON shared.embedding_space, shared.embedding_column FROM cis_app;
+
+-- 328 (already copied to AA-CIS-Infra, so immutable) was written when the owner steps were planned as functions of
+-- this migration; its comments in the database name functions that never existed. Restate them here.
+COMMENT ON TABLE shared.embedding_column IS
+    'AA-1026 D5 (CIS 328): the space of every vector column. Writers and searches read it (one space per column, one '
+    'space per query); the re-embed job fills shadow_column; the owner run-script (AA-CIS-Infra db/scripts/'
+    'aa1026_embedding_shadow.py, DB Migrate run-script) swaps a whole swap_group.';
+COMMENT ON COLUMN shared.embedding_column.shadow_column IS
+    'AA-1026 (328, 329): <column>__shadow while a re-embed into shadow_space_key runs (set by the owner run-script '
+    'at prepare).';
+COMMENT ON COLUMN shared.embedding_column.previous_column IS
+    'AA-1026 (328, 329): <column>__prev after a swap, the old vectors kept for a rollback until the owner run-script '
+    'drops them.';
 
 -- ── 2. coverage guard (only where pgvector exists) ──────────────────────────────────────────────────────────────
 

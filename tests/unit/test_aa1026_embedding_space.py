@@ -141,6 +141,17 @@ def test_329_has_no_dynamic_sql_and_only_the_trigger_function():
         assert gone not in code, gone
 
 
+def test_328_stays_as_copied_and_329_restates_its_stale_comments():
+    # 328 is in AA-CIS-Infra already (immutable copy): its comments still name the planned 329 owner functions, and
+    # 329 rewrites those three database comments instead of editing 328.
+    assert "shared.embedding_swap (329)" in M328
+    code = _sql_code(M329)
+    for target in ("COMMENT ON TABLE shared.embedding_column IS",
+                   "COMMENT ON COLUMN shared.embedding_column.shadow_column IS",
+                   "COMMENT ON COLUMN shared.embedding_column.previous_column IS"):
+        assert target in code, target
+
+
 # ── registry read ────────────────────────────────────────────────────────────────────────────────────────────────
 
 @pytest.fixture(autouse=True)
