@@ -304,10 +304,13 @@ jobs:
 
   # AA-1032 (faster CI): the integration suite runs as INTEGRATION_SHARDS parallel jobs ("Integration shard i/N"), each
   # with its OWN Postgres and Redis service, so each shard's conftest replays every migration on an empty database
-  # (the session fixture) exactly as the single job did. Split by test file, balanced on
-  # .github/test-durations/integration.json; inside a shard the files run in path order, as before. The required check
-  # keeps its name: "Integration Tests" below passes only when every shard passed. Before (10 main runs, 01/11/2026):
-  # one job, ~4-4.5 min.
+  # (the session fixture) exactly as the single job did. Each shard is one CONSECUTIVE range of the path-ordered files
+  # (--contiguous, balanced on .github/test-durations/integration.json): the modules are not independent (e.g.
+  # test_aa712_migration_226 drops schema catalog and test_aa712_migration_228, next in order, re-creates it for every
+  # later module), so a file keeps the predecessors it had in the single job; a longest-first split by file broke 9
+  # modules that way (AA-1032 notes). A shard red on main at its FIRST files means a module leans on an earlier one's
+  # leftovers: fix that module's setup. The required check keeps its name: "Integration Tests" below passes only when
+  # every shard passed. Before (10 main runs, 01/11/2026): one job, ~4-4.5 min.
   test-integration-shard:
     name: Integration shard ${{ matrix.shard }}/4
     runs-on: ubuntu-latest
@@ -390,7 +393,7 @@ jobs:
         # test_007_rls_isolation.py stays out, as before (--ignore then, --exclude now).
         run: |
           set -euo pipefail
-          mapfile -t FILES < <(python3 .github/scripts/ci_shards.py files --shards "$INTEGRATION_SHARDS" \
+          mapfile -t FILES < <(python3 .github/scripts/ci_shards.py files --contiguous --shards "$INTEGRATION_SHARDS" \
             --index "$SHARD" --durations .github/test-durations/integration.json \
             --exclude tests/integration/test_007_rls_isolation.py tests/integration)
           echo "Integration shard $SHARD/$INTEGRATION_SHARDS: ${#FILES[@]} test files"

@@ -87,6 +87,29 @@ def test_workers_divide_the_test_seconds_and_the_overhead_counts_per_file():
         shards.plan(["t/test_a.py"], {}, 0)
 
 
+@pytest.mark.parametrize("n", [1, 2, 3, 4, 6, 9])
+def test_contiguous_ranges_keep_the_path_order_and_cover_every_file(n):
+    files = [f"t/test_{i:02d}.py" for i in range(9)]
+    durations = {f: float(1 + (i * 5) % 7) for i, f in enumerate(files)}
+    buckets = shards.plan_contiguous(list(reversed(files)), durations, n)
+    assert len(buckets) == n and all(buckets)
+    assert [f for b in buckets for f in b] == files  # concatenated = the unsharded order
+    shards.check_partition(files, buckets)
+
+
+def test_contiguous_ranges_minimise_the_largest_shard():
+    files = ["t/test_a.py", "t/test_b.py", "t/test_c.py", "t/test_d.py", "t/test_e.py"]
+    durations = {"t/test_a.py": 1, "t/test_b.py": 1, "t/test_c.py": 6, "t/test_d.py": 1, "t/test_e.py": 1}
+    # Best largest range is 6 (c alone); ties keep the earliest cut.
+    assert shards.plan_contiguous(files, durations, 3) == [
+        ["t/test_a.py", "t/test_b.py"], ["t/test_c.py"], ["t/test_d.py", "t/test_e.py"]]
+    # Two ranges: a+b | c+d+e and a+b+c | d+e both peak at 8; the earliest cut wins.
+    assert shards.plan_contiguous(files, durations, 2) == [
+        ["t/test_a.py", "t/test_b.py"], ["t/test_c.py", "t/test_d.py", "t/test_e.py"]]
+    # More shards than files: the extra shards are empty (the CLI refuses to run an empty one).
+    assert shards.plan_contiguous(files[:2], durations, 3) == [["t/test_a.py"], ["t/test_b.py"], []]
+
+
 def test_check_partition_refuses_a_lost_or_doubled_file():
     with pytest.raises(SystemExit):
         shards.check_partition(["a", "b"], [["a"], []])
@@ -149,9 +172,10 @@ def test_the_real_suites_split_into_a_partition(roots, exclude, durations, monke
     known = shards.load_durations(durations)
     assert known, f"{durations} is empty"
     for n in (3, 4):
-        buckets = shards.plan(files, known, n)
-        shards.check_partition(files, buckets)
-        assert all(buckets)
+        for split in (shards.plan, shards.plan_contiguous):
+            buckets = split(files, known, n)
+            shards.check_partition(files, buckets)
+            assert all(buckets)
 
 
 def _ci() -> dict:
@@ -181,9 +205,12 @@ def test_required_check_names_are_aggregates_of_their_shards(aggregate, shard_jo
     assert "Tests" not in shard["name"]
 
 
-def test_integration_shards_keep_test_007_out_and_own_their_database():
+def test_integration_shards_keep_test_007_out_run_consecutive_ranges_and_own_their_database():
     shard = _ci()["jobs"]["test-integration-shard"]
-    assert "--exclude tests/integration/test_007_rls_isolation.py" in _suite_args(shard)
+    run = _suite_args(shard)
+    assert "--exclude tests/integration/test_007_rls_isolation.py" in run
+    # The integration modules are not independent: each shard must be a stretch of the single job's order.
+    assert "files --contiguous" in run
     assert set(shard["services"]) == {"postgres", "redis"}
 
 

@@ -20,7 +20,9 @@ Rules:
   shard collects (imports) all of the shard's files while the tests themselves are spread over the workers, so a shard
   of many small files is slower than its test seconds say (unit suite: ~0.07 s of collection per file on a CI runner).
 - A shard lists its files in path order, so within a shard pytest runs them in the same relative order as the
-  unsharded run did (an integration file that depends on an earlier file's replay state keeps its predecessor order).
+  unsharded run did. ``--contiguous`` goes further for a suite whose files are not independent: each shard is one
+  consecutive range of the path order (an exact linear partition on the same weights), so a file keeps every
+  neighbour of the unsharded run except at the start of a shard.
 - The durations file is advisory: a stale one only unbalances the shards, never drops a file. Refresh it from the
   shards' junit reports (``durations``; the aggregate job uploads the merged file as an artifact).
 
@@ -87,6 +89,44 @@ def plan(
     return [sorted(b) for b in buckets]
 
 
+def plan_contiguous(
+    files: list[str], durations: dict[str, float], shards: int, workers: int = 1, overhead: float = 0.0
+) -> list[list[str]]:
+    """Cut the path-ordered list into ``shards`` consecutive ranges with the smallest possible largest range (linear
+    partition, exact). For a suite whose files are not independent (the CIS integration suite: a migration module
+    drops and re-creates a schema that the next module relies on), each shard then runs a stretch of the unsharded
+    order, so a file keeps its neighbours and only the first file of a shard starts from the fresh replay."""
+    if shards < 1:
+        raise ValueError("shards must be >= 1")
+    ordered = sorted(files)
+    weight = weights(ordered, durations, workers, overhead)
+    n = len(ordered)
+    k_max = min(shards, n)
+    prefix = [0.0]
+    for f in ordered:
+        prefix.append(prefix[-1] + weight[f])
+    inf = float("inf")
+    # best[k][i]: the smallest largest range of the first i files cut into k non-empty ranges;
+    # cut[k][i]: where the k-th range starts.
+    best = [[inf] * (n + 1) for _ in range(k_max + 1)]
+    cut = [[0] * (n + 1) for _ in range(k_max + 1)]
+    best[0][0] = 0.0
+    for k in range(1, k_max + 1):
+        for i in range(k, n + 1):
+            for j in range(k - 1, i):
+                cost = max(best[k - 1][j], prefix[i] - prefix[j])
+                if cost < best[k][i] - 1e-9:
+                    best[k][i], cut[k][i] = cost, j
+    buckets: list[list[str]] = []
+    i = n
+    for k in range(k_max, 0, -1):
+        j = cut[k][i]
+        buckets.append(ordered[j:i])
+        i = j
+    buckets.reverse()
+    return buckets + [[] for _ in range(shards - k_max)]
+
+
 def estimate(bucket: list[str], weight: dict[str, float]) -> float:
     return sum(weight[f] for f in bucket)
 
@@ -125,6 +165,8 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--exclude", action="append", default=[])
         p.add_argument("--workers", type=int, default=1, help="pytest-xdist workers per shard (-n)")
         p.add_argument("--file-overhead", type=float, default=0.0, help="seconds of collection per file and worker")
+        p.add_argument("--contiguous", action="store_true",
+                       help="consecutive ranges of the path order (suites whose files depend on their predecessors)")
         p.add_argument("roots", nargs="+")
         if name == "files":
             p.add_argument("--index", type=int, required=True, help="1-based shard index")
@@ -150,7 +192,8 @@ def main(argv: list[str] | None = None) -> int:
     if not files:
         raise SystemExit("no test files found")
     durations = load_durations(args.durations)
-    buckets = plan(files, durations, args.shards, args.workers, args.file_overhead)
+    split = plan_contiguous if args.contiguous else plan
+    buckets = split(files, durations, args.shards, args.workers, args.file_overhead)
     check_partition(files, buckets)
     if args.cmd == "files":
         if not 1 <= args.index <= args.shards:
