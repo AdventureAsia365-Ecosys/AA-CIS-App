@@ -1946,7 +1946,8 @@ entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
 - `/admin/platform/crm/*` (AA-941, CRM-13a S-01; GET `tenant.read`, writes `tenant.write`) —
   `api/routers/admin_crm_console.py` + `api/services/crm_console.py`: the partner CRM's AA L1 console (agency list and
   meters, create agency, lock / unlock, first-owner invite, allowed features, insights opt-out, AA-raised data
-  requests, owner recovery, member disable, failed-job retry). A relay only: each route mirrors one `crm.ops.v1` route
+  requests, owner recovery, member disable, failed-job retry; S263 crm.ops.v1 1.8: withdraw the first-owner invitation,
+  delete a synthetic test agency with no member or traveller, typed name + ticket). A relay only: each route mirrors one `crm.ops.v1` route
   with the staff member's own Cognito token, inside a path allow-list (`ALLOWED`); the CRM's status and body pass
   through (it decides crm-platform-admin writes and filters L1 keys); bodies are never logged (the owner invite
   carries an e-mail). Page `/admin/platform/agencies` (nav Platform › Tenants › Agencies (CRM)).

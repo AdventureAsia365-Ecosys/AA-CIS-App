@@ -412,6 +412,8 @@ POLICY: dict[tuple[str, str], str] = {
     ("POST", "/admin/platform/crm/agencies/{tenant_id}/lock"): TENANT_WRITE,
     ("POST", "/admin/platform/crm/agencies/{tenant_id}/unlock"): TENANT_WRITE,
     ("POST", "/admin/platform/crm/agencies/{tenant_id}/owner-invite"): TENANT_WRITE,
+    ("POST", "/admin/platform/crm/agencies/{tenant_id}/owner-invite/withdraw"): TENANT_WRITE,  # S263
+    ("POST", "/admin/platform/crm/agencies/{tenant_id}/delete"): TENANT_WRITE,  # S263: synthetic agencies only
     ("POST", "/admin/platform/crm/agencies/{tenant_id}/data-requests"): TENANT_WRITE,
     ("POST", "/admin/platform/crm/agencies/{tenant_id}/owner-recovery"): TENANT_WRITE,
     ("POST", "/admin/platform/crm/agencies/{tenant_id}/owner-recovery/{request_id}/complete"): TENANT_WRITE,

@@ -13,6 +13,9 @@
 // export or deletion request the owner must confirm in the CRM (AA never confirms or runs it); start an owner recovery
 // (members can cancel it for 14 days, then AA completes it); disable a member; retry a failed job. Never trips,
 // pipeline, revenue or traveller data.
+// S263 (crm.ops.v1 1.8): withdraw the first-owner invitation AA sent (pending, or claimed and never accepted), so a new
+// one can go; delete a TEST (synthetic) agency with no member and no traveller (typed name + ticket; the section is
+// shown for synthetic agencies only and says why it is disabled). A real agency is deleted only by its owner.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Lock, RefreshCw, Unlock } from "lucide-react";
@@ -40,12 +43,15 @@ import {
   CRM_API,
   LOCK_REASONS,
   RECOVERY_REASONS,
+  agencyNameMatches,
   formatBytes,
   formatUsd,
   pct,
   recoveryDue,
   shortId,
+  testAgencyDeleteBlock,
   usdPct,
+  type AgencyDeleted,
   type AgencyEntitlements,
   type AgencyMember,
   type AgencyMembers,
@@ -61,6 +67,7 @@ import {
   type JobRetried,
   type MemberDeactivated,
   type OwnerInviteAccepted,
+  type OwnerInviteWithdrawn,
   type RecoveryCompleted,
   type RecoveryOpened,
   type TenantSummary,
@@ -172,6 +179,10 @@ export default function AgencyDrawer({ agency, canWrite, onClose, onChanged }: P
         <DataRequestsSection q={requests} canWrite={canWrite} active={active} base={base} onDone={done} />
         <RecoverySection q={members} canWrite={canWrite} active={active} base={base} onDone={done} />
         <JobsSection q={jobs} canWrite={canWrite} locked={a.state === "locked"} base={base} onDone={done} />
+        {a.is_synthetic && (
+          <DeleteTestAgencySection agency={a} members={members.data?.members} canWrite={canWrite} base={base}
+            onDeleted={(message) => { toast.success(message); onChanged(); onClose(); }} />
+        )}
       </div>
     </Drawer>
   );
@@ -318,16 +329,30 @@ function FirstOwnerSection({ agency, canWrite, base, onDone }: { agency: TenantS
         : null;
   const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
   const close = () => { setEmail(""); setOpen(false); };
+  const [withdrawing, setWithdrawing] = useState(false);
+  // S263: an invitation sent but never accepted blocks a new one (owner_invite_pending); AA withdraws it first.
+  const canWithdraw = !agency.has_owner && (agency.state === "active" || agency.state === "locked");
   return (
     <Section title={t("firstOwner")} testId="crm-first-owner">
       <div style={noteStyle}>{t("firstOwnerNote")}</div>
       {blocked && <div style={{ ...noteStyle, color: K.ink3 }}>{blocked}</div>}
       {canWrite && (
-        <div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <Button size="sm" variant="secondary" disabled={!!blocked} onClick={() => setOpen(true)}
             title={blocked ?? undefined}>{t("inviteFirst")}</Button>
+          {canWithdraw && (
+            <Button size="sm" variant="ghost" testId="crm-withdraw-owner-invite" onClick={() => setWithdrawing(true)}>
+              {t("withdrawInvite")}
+            </Button>
+          )}
         </div>
       )}
+      <WriteModal open={withdrawing} onClose={() => setWithdrawing(false)} title={t("withdrawTitle")}
+        confirmLabel={t("withdrawConfirm")} destructive
+        submit={(ticket) => crm.write<OwnerInviteWithdrawn>("POST", `${path}/owner-invite/withdraw`, { ticket_ref: ticket })}
+        onDone={() => { setWithdrawing(false); onDone(t("withdrawn")); }}>
+        <div style={noteStyle}>{t("withdrawNote")}</div>
+      </WriteModal>
       <WriteModal open={open} onClose={close} title={t("inviteTitle")} confirmLabel={t("sendInvite")}
         canSubmit={emailOk}
         submit={(ticket) => crm.write<OwnerInviteAccepted>("POST", `${path}/owner-invite`, { owner_email: email.trim(), ticket_ref: ticket })}
@@ -340,6 +365,49 @@ function FirstOwnerSection({ agency, canWrite, base, onDone }: { agency: TenantS
           hint={email && !emailOk ? t("emailBad") : t("emailHint")}>
           <Input id="crm-owner-email" type="email" autoComplete="off" value={email} maxLength={254}
             onChange={(e) => setEmail(e.target.value)} style={fieldStyle} />
+        </Field>
+      </WriteModal>
+    </Section>
+  );
+}
+
+// ── 3b. Delete a test agency (S263, synthetic agencies only) ──────────────────────────────────────
+
+function DeleteTestAgencySection({ agency, members, canWrite, base, onDeleted }: {
+  agency: TenantSummary;
+  members: AgencyMember[] | undefined;
+  canWrite: boolean;
+  base: string;
+  onDeleted: (message: string) => void;
+}) {
+  const t = useT(DRAWER);
+  const crm = useCrmText();
+  const [open, setOpen] = useState(false);
+  const [typed, setTyped] = useState("");
+  const path = base.slice(CRM_API.length);
+  const block = testAgencyDeleteBlock(agency, members);
+  const why = block ? t(`deleteBlocked_${block}`) : null;
+  const close = () => { setTyped(""); setOpen(false); };
+  const nameOk = agencyNameMatches(typed, agency.agency_name);
+  return (
+    <Section title={t("deleteSection")} testId="crm-delete-test-agency">
+      <div style={noteStyle}>{t("deleteNote")}</div>
+      {why && <div style={{ ...noteStyle, color: K.ink3 }}>{why}</div>}
+      {canWrite && (
+        <div>
+          <Button size="sm" variant="danger" disabled={!!block} title={why ?? undefined}
+            testId="crm-delete-test-agency-open" onClick={() => setOpen(true)}>{t("deleteButton")}</Button>
+        </div>
+      )}
+      <WriteModal open={open} onClose={close} title={t("deleteTitle", agency.agency_name)} confirmLabel={t("deleteConfirm")}
+        destructive canSubmit={nameOk}
+        submit={(ticket) => crm.write<AgencyDeleted>("POST", `${path}/delete`, { agency_name: typed, ticket_ref: ticket })}
+        onDone={() => { const name = agency.agency_name; close(); onDeleted(t("deleted", name)); }}>
+        <div style={noteStyle}>{t("deleteNote")}</div>
+        <Field label={t("deleteName")} htmlFor="crm-delete-name"
+          hint={typed && !nameOk ? t("deleteNameBad") : t("deleteNameHint", agency.agency_name)}>
+          <Input id="crm-delete-name" data-testid="crm-delete-name" type="text" autoComplete="off" value={typed}
+            maxLength={200} onChange={(e) => setTyped(e.target.value)} style={fieldStyle} aria-invalid={!!typed && !nameOk} />
         </Field>
       </WriteModal>
     </Section>
