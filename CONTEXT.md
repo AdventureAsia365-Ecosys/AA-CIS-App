@@ -7,7 +7,7 @@ status: active
 owner: nghiep
 audience: [engineer, agent]
 applies_to: [aa-cis-api, aa-cis-worker, aa-cis-frontend]
-last_reviewed: 2026-10-25
+last_reviewed: 2026-11-01
 review_every_days: 90
 related: [ARCH-01, ARCH-05, ARCH-08, docs/adr/README.md]
 ---
@@ -67,11 +67,14 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     server-side filter/sort/paginate + filter-aware stat cards + windowed cost + derived pipeline
     status, via react-query — see A3 note below), `atom-curation` (Social Content tabs
     01-05), `tenant-activity` (tabs 06-08), `platform-stats` (includes gate telemetry per tenant
-    and channel, AA-615), `cost-ops` (the **Cost Operations** page, AA-622/623/665; the old `/admin/llm-usage` redirects to its LLM tab),
-    `ai-gateway` (**AI providers**, AA-804: tabs Providers (+ views Connections, Jev credit), Routing, Models & trials,
-    Budgets, Guide, and the job Trace drawer; Settings › LLM Models / Jev Credit and Cost Operations › Budgets moved
+    and channel, AA-615), `cost-ops` (the **Cost Operations** page, AA-622/623/665: tabs Overview, **AI & data spend** (views LLM, DataForSEO, Jev, from the ledger) and AWS bill; the old `/admin/llm-usage` redirects to it),
+    `ai-gateway` (**AI providers**, AA-804: tabs Providers (+ views Connections, Jev credit; warm-path labels, the
+    "Re-queue refused jobs" card), Routing (with the LLM availability card), Models & trials (families, shadow report,
+    the read-only Experiments section: prompt versions and eval runs), Budgets (every cap layer and the tenant AI
+    budgets of AA-1016, also shown as a tile on Tenant 360), Calls (ledger v2 search), Guide, and the Trace drawer
+    opened from a Calls row, the job drawer, tour detail and decisions; Settings › LLM Models / Jev Credit and Cost Operations › Budgets moved
     there in UI part 2 and their old `?tab=` links are sent on in the browser), `tenants`,
-    `jobs`, `decisions` (**Jev Decisions**, AA-660), `photos` (**Photos**, AA-708 — Drive photo sync, unmatched queue), `api-docs` (**API Docs**,
+    `jobs`, `decisions` (**Jev Decisions**, AA-660), `facts` (**Facts**, AA-814: platform Facts Entries the T9 writer cites; every staff role reads, `quality.write` edits), `photos` (**Photos**, AA-708 — Drive photo sync, unmatched queue), `api-docs` (**API Docs**,
     admin-only read-only OpenAPI reader built on the kit: `GET /admin/openapi.json` through the BFF, since the
     AA-577 `/docs`, `/redoc`, `/openapi.json` need the X-Admin-Secret header on ECS), `settings` (pipeline gates, **Brand
     Identity** editor, SEO config, LLM model per stage + read-only Jev questions per stage). `run-health` was removed with N7/N8 (AA-603).
@@ -244,16 +247,20 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     stale. Pages that poll opt in per-query with `refetchInterval` (replaces the old hand-rolled
     `useState`/`useEffect`/`setInterval` fetch). Older pages keep their hand-rolled fetch until
     migrated.
-- **AI/Bedrock**: LLM calls (rewrite, research, gates) route through the ecosystem Bedrock path
-  on the acc3 satellite only (AA-998, S255: acc1, the former cross-account fallback, left the ecosystem;
-  an acc3 failure falls to a same-account model or the job retry); the cross-account trust is provisioned in
-  AA-CIS-Infra.
+- **AI/Bedrock** (root ADR 0009, as built: root `docs/architecture/ai-gateway.md`): every paid AI and data call goes
+  through the gateway in `shared/llm_client/`, whose control plane (registry v2, routes, scopes, budgets, circuit
+  state, ledger v2) this repo owns. Chat models run on Bedrock in **acc3**, the main chat account (refusing every model
+  since 2026-10-29, Error 002); acc2 serves embeddings and five candidate chat models catalogued with no route (324,
+  ADR 0009 decision 14: eval, judge and validate only, after the qualification ladder). Outside AWS: the OpenAI API
+  (`openai-direct`, last resort of the judge routes) and the Anthropic API (`anthropic-direct`, deployments seeded
+  behind acc3 by 306, no key yet), plus Jev, DataForSEO and Geoapify as registry rows (322). acc1 left the ecosystem
+  (AA-998). The cross-account trust is provisioned in AA-CIS-Infra.
   Embeddings (Cohere Embed v4) run natively on acc2, through the GLOBAL cross-region profile
   `global.cohere.embed-v4:0` since migration 238 (AA-856: the `us.` quota is fixed at 20 rpm, the global
   one is adjustable; one quota shared by f10_embed, a3_place_embed and TripPlanner search). Claude cannot be invoked from a local shell — the satellite roles only trust the
   ECS task role, so real LLM measurements run inside the `api` container via ECS exec.
 - **Model per stage is DB-driven**: `shared.llm_role_config` (20s cache; `SAFE_DEFAULTS` in
-  `shared/llm_client/role_config.py` are only a fallback), editable in admin Settings.
+  `shared/llm_client/role_config.py` are only a fallback), editable in admin AI providers › Routing.
 - **Model Catalog** (`shared.llm_model_catalog`, AA-658, ADR 0005): the admin dropdown options and
   LLM prices come from it (`pricing.py` is the fallback). Non-legacy Model Keys (e.g. `sonnet-5`)
   are called with the Bedrock Converse API on the acc3 satellite.
@@ -428,7 +435,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   migration 321), in `GET /admin/llm-availability` (`invariant`, and per connection `circuit` + `failure_domain`) and
   the OPS-12 digest provider section. Job kind `llm_connection_probe` (`services/jobs/llm_probe_job.py`: one Test
   connection per enabled text deployment of every enabled, configured connection, at most 30; max_attempts 1,
-  background, deploy-gate exempt): daily from 05:00 UTC only with `LLM_DAILY_PROBE=on` (default off);
+  background, deploy-gate exempt): daily from 05:00 UTC only with `LLM_DAILY_PROBE=on` (default off; **on** on Dev
+  since AA-CIS-Infra #574, set on the api and worker task definitions);
   `POST /admin/job-runner/llm-probe/run` (ai.admin) queues a DRY RUN by default (deployments + estimated cost, no
   call). Bedrock runtime clients take the connection's `timeout_s` / `max_retries` only when set (NULL = unchanged).
 - **Reliability part 2** (AA-1018 / AA-1016 / AA-900, no migration; reads 320 / 321 / 322): **route deadline**
@@ -460,6 +468,24 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   was reached" is `truncated` (never counted on a circuit); an adhoc stage logs `LLMRequest.role`. Ratchets:
   `test_aa642_model_tier_allowlist.py` (fixed / passed-through `model_tier` sites), `test_aa642_s11_alias_equivalence.py`
   (the 17 legacy stages send the same wire ids through aliases; the switch stays off).
+- **Shared core `aa_llm`** (AA-642 S8, root ADR 0009 decision 13): `shared/aa_llm/` is the pure, standard-library
+  core of the gateway (error classes, `quote` with the catalog passed in, the ledger v2 row and INSERT, the budget
+  decision, the 323 contract SELECTs) that TripPlanner (`backend/aa_llm/`) and AA-Partner (`app/aa_llm/`) vendor byte
+  for byte; `check_copy.py` + `MANIFEST.json` pin each copy. Never edit a copy: change it here, run
+  `python3 shared/aa_llm/check_copy.py --write`, merge, and the **Llm Core Sync** workflow (`llm-core-sync.yml`, bot
+  branch `bot/llm-core-sync`, never merges) opens the consumer PRs; `llm-core-consumers.yml` runs each consumer's tests
+  on a CIS PR that touches the core. `tests/unit/test_aa642_s8_aa_llm_parity.py` pins `shared/llm_client` and the core
+  to the same results until the CIS modules import from the core.
+- **Contract views for TripPlanner** (migration 323, contract class): `catalog.v_llm_gateway_config_v1` (routes,
+  models, prices and deployments of the `tp_*` stages only) and `catalog.v_llm_app_spend_today_v1` (today's ledger
+  spend of `app = 'tripplanner'` per stage), owned by `catalog_owner` with column-level SELECT on the four gateway
+  tables they read, SELECT to `tripplanner` only. The grandfathered SELECT of CIS 173 on `llm_role_config` /
+  `llm_model_catalog` stays until a later migration revokes it.
+- **acc2 candidate models** (migration 324, contract class, AA-1017 w4a): Amazon Nova Lite, Nova 2 Lite, Meta Llama 4
+  Maverick, Llama 4 Scout and Moonshot Kimi K3 as catalog rows with prices from the AWS price list and one enabled acc2
+  deployment each (priority 20); no role config or alias names them, and the file refuses one that does. They answer
+  the probe and `POST /admin/llm-connections/acc2/test` (body `max_tokens` up to 512 for the reasoning model). "Add a
+  model" = one migration PR like this one.
 - **Structured output (`LLMRequest.json_schema`) per path**: Converse = one tool whose input is the schema, reply
   conformed (`_checked_json`, AA-659/714); OpenAI = strict `response_format`. The legacy `haiku` / `sonnet` keys
   (Anthropic Messages API, `invoke_claude`) have neither: since S251 (AA-835) the gateway appends a "one JSON object
@@ -484,7 +510,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `shared/llm_client/judge.py` (`call_judge`; it also holds the judge JSON parsers). It writes no
     `llm_call_log` row: the callers (judge_node, debate, quality_gates) do, once they have the verdict.
   - `s1_brand_audit`, `t2_brand_audit`: GPT-5.6 Luna → GPT-6 Luna (no OpenAI last resort).
-  - acc3 is the only satellite account (AA-998). The legacy Haiku/Sonnet chain is acc3 Sonnet → acc3 Haiku
+  - acc3 is the only chat account a route uses today (AA-998; the acc2 candidates of 324 have no route). The legacy Haiku/Sonnet chain is acc3 Sonnet → acc3 Haiku
     (no cross-account tier); `account_route` is CHECKed to acc3 / NULL (migration 295) and the gateway ignores any
     other value. `CatalogModel.account_for` only picks acc3 or acc2. They no longer try acc2-native Bedrock first (AA-843:
     acc2 is a channel-program account and always refuses Anthropic models); the env var
@@ -1205,6 +1231,15 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
 - **Backend (ECS)**: shipped via CI; a new task definition rolls out on the `aa-cis-dev-api`
   service. This repo has **branch protection with 5 required CI jobs** — merge PRs with
   `gh pr merge --auto` (auto-merge once checks pass). Agents must not push to `main` directly.
+- **Migrations in the app PR (root ADR 0017, AA-993):** CI job **Migration preflight** (`ci.yml`,
+  `.github/scripts/migration_preflight.py`, pull_request and merge_group) says whether a new migration is **expand**
+  (header `-- migrate: expand`, auto-applied on Dev) or **contract** (manual DB Migrate apply, MIG-4), and refuses a
+  number other than `main` max + 1, an edit of a file already copied to AA-CIS-Infra, or a readiness raise to a
+  non-expand file. After a push to `main` that touches `api/migrations/`, `migration-sync-wake.yml` rings the
+  AA-CIS-Infra **Migration Sync** doorbell (one ci-bot comment on its wake-up issue), so the byte copy opens at once.
+  Deploy Dev's **Schema gate** job (`.github/scripts/schema_gate.py`) then waits, before the roll, until `/health/ready`
+  `registered_keys` holds every key the commit needs and the last Infra Migration Apply run is green
+  (`SCHEMA_GATE_TIMEOUT_S`, default 2400 s).
 - **Post-deploy verify (AA-993 V1, ADR 0016 D3)**: `deploy-dev.yml` calls `post-deploy-verify.yml` after `deploy`
   (also dispatchable with `expected_sha`; its own concurrency group, never `deploy-dev-cis`). Script
   `.github/scripts/post_deploy_verify.sh`, HTTP rows in `.github/verify/cis.rows` (a PR that adds an endpoint worth
@@ -1421,7 +1456,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   goes into `OUT_OF_ORDER_CIS`: while it is not registered the reported version is capped just below it. Since AA-993
   M4a it also requires every key of `REQUIRED_CIS_KEYS` (each number from `LEGACY_CIS_BASELINE` + 1 = 264 up to
   `REQUIRED_CIS_SCHEMA`; a gap is `schema_behind` with `missing_schema_versions`) and lists `registered_keys` (every
-  numeric key above the baseline, for the coming Deploy Dev `schema-gate`; omitted if that read fails). Deploy Dev's
+  numeric key above the baseline, read by the Deploy Dev `schema-gate` job; omitted if that read fails). Deploy Dev's
   smoke asserts both, and that a live worker reports the same SHA (`shared.job_worker.git_sha`, written at worker
   start).
 - **Release version (AA-891)**: release-please (manifest mode, `release-please-config.json`,
@@ -1509,8 +1544,9 @@ Booking bk-023 grants the four `booking.v_supply_*` views to `cis_app`). `servic
   history; Publish / Reject / Unpublish for review.act, Edit / Regenerate for content.write). Every staff role reads.
 
 Platform services other apps may reuse (already used by TripPlanner where noted): the Model Gateway
-and `llm_call_log` (TripPlanner), the durable job runner `shared.job` (CIS only for now — a second
-enqueuing repo is AA-751), the cost guard `shared.spend_budget`, the Jev decision layer, and rerun
+and `llm_call_log` (TripPlanner, through the shared core and the 323 views; the CRM vendors the core with its own
+ledger), the job table template of `shared.job` (each app has its own table from it: `booking.job`, `crm.job`,
+`tripplanner.job`; ADR 0003a), the cost guard `shared.spend_budget`, the Jev decision layer, and rerun
 waves (`/admin/waves`, AA-727).
 
 LLM operations (AA-900): `docs/llm/prompt-register.md` maps every gateway prompt to its stage, file and symbol, version
