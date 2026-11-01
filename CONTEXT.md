@@ -517,7 +517,12 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   `a3_place_card_check` (draft and check stay on two makers). The primary, earlier fallbacks, shadow and scopes are
   unchanged; writers never name an acc2 model. The tenant judge / validate stages (`t2_brand_audit`, `t10_claims`,
   `t9_faq_answer_fit`, `t9_faq_filter`) wait for migration 332 and the tech lead's yes: ADR 0009 decision 14 keeps acc2
-  off tenant stages until decision 10 and AA-820 are done. **Contract smoke** (job kind `llm_contract_smoke`,
+  off tenant stages until decision 10 and AA-820 are done. **Migration 333** ("AWS first, outside last", tech lead
+  S263): every judge / validate route that ends on the OpenAI API hop (`gpt-6-luna-openai`) gets an acc2 pick right
+  BEFORE it, so the OpenAI API stays the last rung: `s1_judge`, `t2_judge`, `t7_debate_judge`, `t10_judge`,
+  `t10_adjudicate`, `writing_memory_eval`, `writing_memory_mine` on `nova-lite`, `a3_place_dedupe` on `llama4-scout`
+  (its check stage falls back to Nova Lite). These judges' acc2 verdicts are not held by code (only the brand audits'
+  `pass` is); the revert is the admin route PATCH. **Contract smoke** (job kind `llm_contract_smoke`,
   `services/jobs/llm_contract_smoke_job.py`; `POST /admin/job-runner/llm-contract-smoke/run`, ai.admin, DRY RUN by
   default, optional `stages` and `models` = stage -> model key override): per stage one invented fixture through the
   stage's own prompt pieces and parser, with the stage's acc2 model forced through `LLMClient.probe` on its acc2
