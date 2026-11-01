@@ -14,6 +14,9 @@ Decision table: root `AA-Ecosys/docs/audits/2026-11-01-S263-alerting-cost/diet.m
   replaces, and a starved queue (the worker itself down) is still mailed from the api. Bell + e-mail dedupe in one
   advisory-locked transaction: a bell at most every 6 h per check, an e-mail only for the first bell of the UTC day.
   A failed publish deletes its bell so the next tick retries.
+- **Evaluation time is a parameter** of `raise_alert` (`now=`, default the task clock) and of the last-bell query, so
+  the 6-hour throttle and the UTC-day e-mail rule are tested at any hour (the integration tests no longer skip before
+  06:00 UTC).
 - **Thresholds unchanged** from the alarms (900 s, > 0 overdue, > 80 %, > 1e9).
 - **XID age moved in-app**: `SELECT max(age(datfrozenxid))::bigint FROM pg_database` on the tick (readable by
   `cis_app`).

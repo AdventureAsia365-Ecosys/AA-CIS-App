@@ -9,6 +9,7 @@ SNS is a recording stub.
 import json
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 
 import asyncpg
 import pytest
@@ -66,26 +67,22 @@ async def test_first_alert_bell_and_email_then_quiet(pool):
 async def test_a_later_bell_the_same_day_does_not_mail_again(pool):
     sns = StubSns()
     await ops_checks.raise_alert(pool, FINDING, sns)
-    # age the first bell past the 6-hour throttle but keep it inside today (UTC) when possible
-    await pool.execute("UPDATE shared.notifications SET created_at = greatest(now() - interval '7 hours', "
-                       "date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') WHERE event_type = $1", EVENT)
-    aged = await pool.fetchval("SELECT created_at <= now() - interval '6 hours' FROM shared.notifications "
-                               "WHERE event_type = $1", EVENT)
-    if not aged:
-        pytest.skip("less than 6 hours into the UTC day: the same-day case cannot be built")
-    assert await ops_checks.raise_alert(pool, FINDING, sns) == {"bell": True, "email": "already_today"}
+    # the first bell at 01:00 UTC yesterday, evaluated at 08:00 UTC the same day: past the 6-hour throttle, same day
+    day = (datetime.now(timezone.utc) - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    await pool.execute("UPDATE shared.notifications SET created_at = $2 WHERE event_type = $1",
+                       EVENT, day + timedelta(hours=1))
+    out = await ops_checks.raise_alert(pool, FINDING, sns, now=day + timedelta(hours=8))
+    assert out == {"bell": True, "email": "already_today"}
     assert len(await _bells(pool)) == 2 and len(sns.calls) == 1
 
 
 async def test_yesterdays_bell_lets_todays_first_one_mail(pool):
     sns = StubSns()
     await ops_checks.raise_alert(pool, FINDING, sns)
-    await pool.execute("UPDATE shared.notifications SET created_at = "
-                       "(date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') - interval '1 minute' "
-                       "WHERE event_type = $1", EVENT)
-    stale = await pool.fetchval("SELECT created_at <= now() - interval '6 hours' FROM shared.notifications "
-                                "WHERE event_type = $1", EVENT)
-    if not stale:
-        pytest.skip("less than 6 hours into the UTC day: yesterday's bell is still inside the throttle")
-    assert await ops_checks.raise_alert(pool, FINDING, sns) == {"bell": True, "email": "sent"}
+    # the first bell at 23:59 UTC the day before, evaluated at 06:30 UTC: past the throttle, a new UTC day
+    day = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    await pool.execute("UPDATE shared.notifications SET created_at = $2 WHERE event_type = $1",
+                       EVENT, day - timedelta(minutes=1))
+    out = await ops_checks.raise_alert(pool, FINDING, sns, now=day + timedelta(hours=6, minutes=30))
+    assert out == {"bell": True, "email": "sent"}
     assert len(sns.calls) == 2

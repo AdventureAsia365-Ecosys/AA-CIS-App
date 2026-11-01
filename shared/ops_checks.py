@@ -252,12 +252,13 @@ def event_findings(items: dict[str, dict]) -> list[Finding]:
 
 # ── alerting: bell + SNS ───────────────────────────────────────────────────────────────────────
 
+# $2 = the evaluation time (the caller's clock; a parameter so the day boundary is testable at any hour).
 LAST_BELL_SQL = """
     SELECT max(created_at) AS last,
-           coalesce(bool_or(created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'), false)
-               AS mailed_today
+           coalesce(bool_or(created_at >= date_trunc('day', $2::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'),
+                    false) AS mailed_today
       FROM shared.notifications
-     WHERE event_type = $1 AND created_at >= now() - interval '24 hours'
+     WHERE event_type = $1 AND created_at >= $2::timestamptz - interval '24 hours'
 """
 BELL_SQL = """
     INSERT INTO shared.notifications (tenant_id, actor_type, event_type, entity_type, entity_id, payload, target_roles)
@@ -303,9 +304,10 @@ def render(finding: Finding, environment: Optional[str] = None) -> tuple[str, st
 
 
 async def raise_alert(pool, finding: Finding, client: Any = None, *,
-                      client_factory: Callable[[], Any] = sns_client) -> dict:
+                      client_factory: Callable[[], Any] = sns_client, now: Optional[datetime] = None) -> dict:
     """Bell (at most one per check per BELL_EVERY) and, for the first bell of the UTC day, one SNS e-mail.
-    Returns what was done. Raises only on a database error (the caller logs it)."""
+    Returns what was done. Raises only on a database error (the caller logs it). ``now`` is for tests."""
+    now = now or datetime.now(timezone.utc)
     chk = CHECKS[finding.check]
     event_type = EVENT_TYPE_PREFIX + finding.check
     payload = json.dumps({"title": chk.title, "message": f"{finding.summary}. {chk.action}", "check": finding.check,
@@ -313,9 +315,9 @@ async def raise_alert(pool, finding: Finding, client: Any = None, *,
     async with pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute("SELECT pg_advisory_xact_lock($1)", _LOCK_KEY)
-            row = await conn.fetchrow(LAST_BELL_SQL, event_type)
+            row = await conn.fetchrow(LAST_BELL_SQL, event_type, now)
             last = row["last"] if row else None
-            if last is not None and last >= datetime.now(timezone.utc) - BELL_EVERY:
+            if last is not None and last >= now - BELL_EVERY:
                 return {"bell": False}
             bell_id = await conn.fetchval(BELL_SQL, PLATFORM_TENANT_ID, event_type, finding.check, payload,
                                           BELL_ROLES)

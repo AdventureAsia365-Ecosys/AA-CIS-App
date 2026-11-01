@@ -187,6 +187,16 @@ async def test_a_bell_in_the_last_six_hours_skips_everything(topic):
 
 
 @pytest.mark.asyncio
+async def test_the_throttle_and_the_day_use_the_evaluation_time(topic):
+    at = datetime(2026, 1, 2, 3, 0, tzinfo=timezone.utc)
+    pool, sns = _pool(last=at - timedelta(hours=5)), MagicMock()
+    assert await ops_checks.raise_alert(pool, FINDING, sns, now=at) == {"bell": False}
+    assert pool.conn.fetchrow.await_args.args[1:] == ("platform.ops_check.jobs_starved", at)
+    pool = _pool(last=at - timedelta(hours=7))
+    assert await ops_checks.raise_alert(pool, FINDING, sns, now=at) == {"bell": True, "email": "sent"}
+
+
+@pytest.mark.asyncio
 async def test_second_bell_of_the_day_does_not_mail(topic):
     pool, sns = _pool(last=NOW - timedelta(hours=7), mailed_today=True), MagicMock()
     assert await ops_checks.raise_alert(pool, FINDING, sns) == {"bell": True, "email": "already_today"}
