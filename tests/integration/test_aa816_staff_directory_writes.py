@@ -10,6 +10,7 @@ import json
 import os
 import sys
 import uuid
+from pathlib import Path
 
 import asyncpg
 import pytest
@@ -178,8 +179,10 @@ async def test_crm_roles_and_the_platform_owner_preset_against_postgres(env):
 
     async with pool.acquire() as conn:
         assert await sd.crm_grants_available(conn) is True
-    assert await pool.fetchval("SELECT has_table_privilege('cis_app', 'shared.staff_crm_grant', 'INSERT') "
-                               "AND has_table_privilege('cis_app', 'shared.staff_crm_grant', 'DELETE') AS ok")
+    # The CI database does not carry the Dev role grants, so the grant is checked in the migration text instead.
+    migrations = Path(__file__).resolve().parents[2] / "api" / "migrations"
+    m330 = next(migrations.glob("330_*.sql")).read_text(encoding="utf-8")
+    assert "GRANT SELECT, INSERT, DELETE ON shared.staff_crm_grant TO cis_app" in m330
 
     res = await sd.create_staff(pool, cognito, actor_id=owner, email=email, display_name="CRM Person",
                                 role="content", crm_roles=["support", "ops"])
