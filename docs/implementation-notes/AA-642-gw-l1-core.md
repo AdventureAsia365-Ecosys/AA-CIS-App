@@ -30,3 +30,25 @@ Lane order: D1 (migration 325) → A1 (migration 326) → A9 → A8. Migration n
 - The test of the migration (`tests/integration/test_aa642_migration_325.py`) and the gate test ship in the same PR
   as the file (lesson S258: a migration PR carries its own tests and imports no later code).
 - After apply, a new ledger row of a manifest stage has `prompt_version = 'v1'` within 10 minutes (registry cache).
+
+## A1 — stage kill switch + declared degrade mode (gaps CIS-2, CIS-4, OPS-11 stage part)
+
+### Decisions
+- **The kill switch is `llm_role_config.is_active`**, not a new column. TripPlanner already reads `is_active = false`
+  as "AI paused" (its fail-closed route read, TP #198), while the CIS gateway fell back to its built-in SAFE_DEFAULTS
+  route for an inactive row, i.e. ran the stage anyway (gap CIS-2). One meaning for both apps, no new grant (cis_app
+  already updates `is_active`), and the TP contract view v1 already carries it, so switching `tp_compose` off in the
+  CIS admin also pauses TripPlanner.
+- Migration 326 stops on its first apply when any row is inactive under the old meaning (it would silently stop its
+  stage after the code PR); a re-run after an admin used the switch passes (schema_versions has 326).
+- `degrade_mode` (closed CHECK: `queue_retry`, `basic_narration`, `last_saved_text`, `manual_reply_needed`, from tech
+  lead answer T-21) is migration-only: a product decision, not an admin toggle. `disabled_reason` is the admin's
+  text (cis_app column UPDATE).
+- Declared in 326: `t2_generate`, `t9_write` = `queue_retry`, `tp_compose` = `basic_narration` (the three the plan's
+  Done-when names). The other T-series writer stages (`t2_flag_fix`, `t2_itinerary_nudge`, `t8_angle_gen`, `t9_repair`)
+  have the same aws_only + Anthropic constraint and will show as breaches until a later migration declares theirs:
+  left out on purpose, the plan lists only these three (follow-up).
+- New ledger class `disabled` (error_class CHECK in 326) instead of reusing `other`: a switched-off stage must be
+  countable apart from outages. The CHECK is replaced NOT VALID + VALIDATE (writers keep writing).
+- Class: contract (constraints, column ACL, UPDATE, hot ledger table). MIG-4: 326 applied before the A1 code PR,
+  because the code writes `error_class = 'disabled'`.
