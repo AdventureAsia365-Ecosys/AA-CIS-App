@@ -129,6 +129,13 @@ def failure_outcome(exc: BaseException) -> tuple[str, bool, Optional[str]]:
     return f"{type(exc).__name__}: {str(exc)[:900]}", not isinstance(exc, NonRetryable), None
 
 
+OPS_FLUSH_EVERY_S = 300.0     # S263: same cadence as the api ops sampler
+OPS_FLUSH_TIMEOUT_S = 20.0
+# S263 review: the last flush on shutdown. The events of the last minutes (a lost cost-log write, a cis_app refused
+# connection) would otherwise die with the task. Short: it runs inside RELEASE_MARGIN_SECONDS, after the release.
+OPS_FLUSH_ON_STOP_TIMEOUT_S = 5.0
+
+
 class Worker:
     def __init__(self, pool, *, worker_id: Optional[str] = None, poll_seconds: float = 5.0,
                  lease_seconds: int = 90, heartbeat_seconds: float = 20.0,
@@ -148,6 +155,9 @@ class Worker:
         self._running_kinds: dict[str, str] = {}   # job id -> kind (background group cap, AA-712)
         # AA-687: how often this worker writes its shared.job_worker row (liveness for the Jobs page).
         self.beat_every_seconds = 15.0
+        # S263 (AA-1025): how often this worker turns the ops log events it counted (lost cost-log writes, cis_app
+        # refused connections; shared/ops_checks.py) into the admin bell + alert e-mail. The api does it on its tick.
+        self.ops_flush_every_seconds = OPS_FLUSH_EVERY_S
         # AA-711: a worker on a draining (older) task stops claiming once a newer one is live.
         self.task_revision = ecs_task_revision()
         self.yielding = False
@@ -175,6 +185,7 @@ class Worker:
                              self.max_parallel, self.caps(), self.task_revision, release())
         last_reap = last_beat = 0.0
         loop = asyncio.get_running_loop()
+        last_ops_flush = loop.time()
         while not self._stopping.is_set():
             reaped = None
             try:
@@ -194,12 +205,26 @@ class Worker:
                 await self._liveness(queue.worker_beat, self.pool, self.worker_id,
                                      len(self._running), reaped)
                 last_beat = loop.time()
+            if loop.time() - last_ops_flush >= self.ops_flush_every_seconds:
+                await self._flush_ops_events()
+                last_ops_flush = loop.time()
             if not claimed:
                 try:
                     await asyncio.wait_for(self._stopping.wait(), timeout=self.poll_seconds)
                 except asyncio.TimeoutError:
                     pass
         logger.info("job_worker_loop_stopped", worker_id=self.worker_id)
+
+    async def _flush_ops_events(self, timeout_s: float = OPS_FLUSH_TIMEOUT_S) -> None:
+        """S263: alert on the ops log events this process counted. Bounded and never fails the loop."""
+        from shared import ops_checks
+
+        try:
+            results = await asyncio.wait_for(ops_checks.flush_events(self.pool), timeout=timeout_s)
+            if results:
+                logger.warning("job_worker_ops_checks", worker_id=self.worker_id, ops_checks=results)
+        except Exception as e:  # noqa: BLE001 — the events stay counted until a flush succeeds
+            logger.warning("job_worker_ops_checks_failed", error=f"{type(e).__name__}: {str(e)[:200]}")
 
     async def _liveness(self, fn, *args) -> None:
         """AA-687: shared.job_worker writes are for the Jobs page only — never fail the loop."""
@@ -351,11 +376,13 @@ class Worker:
 
     # ── shutdown ──────────────────────────────────────────────────────────────────────────────
     async def shutdown(self) -> None:
-        """Stop claiming, give running jobs `grace_seconds` to finish, release the rest."""
+        """Stop claiming, give running jobs `grace_seconds` to finish, release the rest, then flush the ops events
+        counted since the last flush (S263; bounded by OPS_FLUSH_ON_STOP_TIMEOUT_S, inside the release margin)."""
         self._stopping.set()
         tasks = list(self._running.values())
         if not tasks:
             await self._liveness(queue.worker_stopped, self.pool, self.worker_id)
+            await self._flush_ops_events(OPS_FLUSH_ON_STOP_TIMEOUT_S)
             return
         logger.info("job_worker_draining", worker_id=self.worker_id, running=len(tasks),
                     kinds=sorted(set(self._running_kinds.values())), grace_seconds=self.grace_seconds,
@@ -368,6 +395,7 @@ class Worker:
         logger.info("job_worker_drained", worker_id=self.worker_id, finished=len(tasks) - len(pending),
                     released=len(pending))
         await self._liveness(queue.worker_stopped, self.pool, self.worker_id)
+        await self._flush_ops_events(OPS_FLUSH_ON_STOP_TIMEOUT_S)
 
 
 # AA-737: slot budget of the standalone worker service. S217 Nepal wave: with 4 slots, s1_rewrite

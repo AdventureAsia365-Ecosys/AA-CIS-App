@@ -1,9 +1,10 @@
-"""AA-751 / AA-832 — the api's in-process ops metrics sampler (api/core/ops_metrics_sampler.py) and the
-capacity-aware backlog sample it publishes (shared/jobs/backlog.py).
+"""AA-751 / AA-832 / S263 — the api's in-process ops sampler (api/core/ops_metrics_sampler.py) and the
+capacity-aware backlog sample it reads (shared/jobs/backlog.py).
 
-- AA/RDS per-role connections (moved from the removed ops_rds_role_connections job, names unchanged so
-  the AA-832 alarms keep working) and AA/Jobs/CIS OldestQueuedAgeSeconds + OverdueRunningJobs;
-- one PutMetricData per namespace per tick, boto3 timeouts, one part failing never blocks the other;
+- per-role connections (moved from the removed ops_rds_role_connections job), XID age and the shared.job backlog;
+  S263 (AA-1025): no CloudWatch PutMetricData any more, the tick hands its values to the in-app ops checks
+  (shared/ops_checks.py, own tests in tests/unit/test_s263_ops_checks.py);
+- one part failing never blocks the others;
 - the loop never raises, is off in ENVIRONMENT=test and is cancelled before the main pool closes;
 - the old schedule endpoint and job kind are gone; the deploy_gate_exempt flag still works.
 
@@ -20,6 +21,7 @@ import pytest
 from structlog.testing import capture_logs
 
 from api.core import ops_metrics_sampler as sampler
+from shared import ops_checks
 from shared.jobs import backlog, queue, registry, worker
 
 
@@ -28,6 +30,12 @@ def _no_jev_credit_check(monkeypatch):
     """AA-845: the loop also runs the Jev low-credit check; these tests are about the metrics tick, so it is
     stubbed (its own tests: tests/unit/test_aa845_jev_credit_alerts.py)."""
     monkeypatch.setattr(sampler, "jev_credit_tick", AsyncMock(return_value=None))
+
+
+@pytest.fixture(autouse=True)
+def _no_ops_event_flush(monkeypatch):
+    """S263: the per-process log-event buffer is shared by every test; the tick's flush is stubbed here."""
+    monkeypatch.setattr(ops_checks, "flush_events", AsyncMock(return_value={}))
 
 NOW = datetime(2026, 10, 16, 10, 0, tzinfo=timezone.utc)
 _TEST_SECRET = "test-admin-secret"
@@ -272,52 +280,32 @@ def test_role_samples_pct():
     assert sampler.role_samples([{"rolname": "x", "rolconnlimit": 3, "connections": 1}])[0]["pct"] == 33.33
 
 
-def test_rds_metric_data_two_datums_per_role():
-    data = sampler.metric_data(sampler.role_samples(_role_rows()), NOW)
-    assert len(data) == 6
-    booking = [d for d in data if d["Dimensions"] == [{"Name": "Role", "Value": "booking"}]]
-    assert {(d["MetricName"], d["Unit"], d["Value"]) for d in booking} == {
-        ("RoleConnections", "Count", 12.0), ("RoleConnectionLimitPct", "Percent", 80.0)}
-    assert all(d["Timestamp"] == NOW for d in data)
-    assert sampler.NAMESPACE_RDS == "AA/RDS"
-
-
-def test_jobs_metric_data_no_dimensions():
-    data = sampler.jobs_metric_data({"oldest_queued_age_seconds": 1200.0, "overdue_running_jobs": 2}, NOW)
-    assert data == [
-        {"MetricName": "OldestQueuedAgeSeconds", "Timestamp": NOW, "Value": 1200.0, "Unit": "Seconds"},
-        {"MetricName": "OverdueRunningJobs", "Timestamp": NOW, "Value": 2.0, "Unit": "Count"},
-    ]
-    assert sampler.NAMESPACE_JOBS == "AA/Jobs/CIS"
-
-
-def test_cloudwatch_client_timeouts_and_region(monkeypatch):
+def test_alerts_client_is_sns_with_short_timeouts(monkeypatch):
     monkeypatch.delenv("AWS_REGION", raising=False)
     monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
     with patch("boto3.client", return_value=MagicMock()) as make:
-        sampler.cloudwatch_client()
+        sampler.alerts_client()
     args, kw = make.call_args
-    assert args == ("cloudwatch",) and kw["region_name"] == "us-west-1"
+    assert args == ("sns",) and kw["region_name"] == "us-west-1"
     cfg = kw["config"]
     assert cfg.connect_timeout == 3 and cfg.read_timeout == 5 and cfg.retries == {"max_attempts": 1}
-    monkeypatch.setenv("AWS_REGION", "ap-southeast-1")
-    with patch("boto3.client", return_value=MagicMock()) as make:
-        sampler.cloudwatch_client()
-    assert make.call_args.kwargs["region_name"] == "ap-southeast-1"
+
+
+def test_no_cloudwatch_metrics_left():
+    """S263: the AA/RDS and AA/Jobs/CIS custom metrics and their alarms are gone (in-app checks instead)."""
+    for name in ("metric_data", "jobs_metric_data", "cloudwatch_client", "NAMESPACE_RDS", "NAMESPACE_JOBS"):
+        assert not hasattr(sampler, name)
 
 
 # ── sample_once ─────────────────────────────────────────────────────────────────────────────────
 
-class StubCloudWatch:
-    def __init__(self, fail_on=()):
+class StubSns:
+    def __init__(self):
         self.calls = []
-        self.fail_on = set(fail_on)
 
-    def put_metric_data(self, **kw):
+    def publish(self, **kw):
         self.calls.append(kw)
-        if kw["Namespace"] in self.fail_on:
-            raise RuntimeError(f"AccessDenied on {kw['Namespace']}")
-        return {}
+        return {"MessageId": "m-1"}
 
 
 _SAMPLE = {"oldest_queued_age_seconds": 0.0, "overdue_running_jobs": 0, "starved": {}, "overdue": [],
@@ -361,59 +349,67 @@ async def _hang(*a, **kw):
 
 
 @pytest.mark.asyncio
-async def test_sample_once_one_call_per_namespace():
-    cw = StubCloudWatch()
+async def test_sample_once_reads_roles_xid_and_backlog():
+    pool = _pool()
     with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)) as bs:
-        out = await sampler.sample_once(_pool(), cw, kinds=KINDS)
+        out = await sampler.sample_once(pool, StubSns(), kinds=KINDS)
     bs.assert_awaited_once()
-    assert [c["Namespace"] for c in cw.calls] == ["AA/RDS", "AA/Jobs/CIS"]
-    assert len(cw.calls[0]["MetricData"]) == 6 and len(cw.calls[1]["MetricData"]) == 2
-    assert out["rds_published"] == 6 and out["jobs_published"] == 2
     assert out["roles"]["booking"] == {"connections": 12, "limit": 15, "pct": 80.0}
+    assert out["xid_age"] == 0
+    assert any("datfrozenxid" in c.args[0] for c in pool.fetchval.await_args_list)
     assert out["oldest_queued_age_seconds"] == 0.0 and out["overdue_running_jobs"] == 0
-    assert "rds_error" not in out and "jobs_error" not in out
+    assert not {"rds_error", "jobs_error", "ops_checks_error", "ops_checks"} & set(out)   # healthy: no alert
+
+
+@pytest.mark.asyncio
+async def test_findings_of_the_tick_go_to_the_ops_checks():
+    """A starved queue and a role over 80 % become findings; the SNS client of the tick is handed on."""
+    sns = StubSns()
+    starved = dict(_SAMPLE, oldest_queued_age_seconds=1200.0, starved={"a3_atomize": 1200})
+    rows = _role_rows() + [{"rolname": "crm_app", "rolconnlimit": 6, "connections": 6}]
+    alert = AsyncMock(return_value={"jobs_starved": {"bell": True, "email": "sent"}})
+    with patch.object(backlog, "sample", AsyncMock(return_value=starved)), \
+            patch.object(ops_checks, "alert_all", alert):
+        out = await sampler.sample_once(_pool(rows=rows), sns, kinds=KINDS)
+    findings, client = alert.await_args.args[1], alert.await_args.args[2]
+    assert [f.check for f in findings] == ["jobs_starved", "rds_role_connections"] and client is sns
+    assert out["ops_checks"] == {"jobs_starved": {"bell": True, "email": "sent"}}
+
+
+@pytest.mark.asyncio
+async def test_ops_checks_failure_is_its_own_field():
+    with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)), \
+            patch.object(ops_checks, "alert_all", AsyncMock(side_effect=RuntimeError("pool closed"))):
+        out = await sampler.sample_once(_pool(), StubSns(), kinds=KINDS)
+    assert "pool closed" in out["ops_checks_error"] and out["roles"]
 
 
 @pytest.mark.asyncio
 async def test_rds_failure_does_not_block_jobs():
-    cw = StubCloudWatch()
     with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
-        out = await sampler.sample_once(_pool(error=RuntimeError("pool closing")), cw, kinds=KINDS)
+        out = await sampler.sample_once(_pool(error=RuntimeError("pool closing")), StubSns(), kinds=KINDS)
     assert "pool closing" in out["rds_error"]
-    assert [c["Namespace"] for c in cw.calls] == ["AA/Jobs/CIS"]
+    assert out["oldest_queued_age_seconds"] == 0.0 and "roles" not in out
 
 
 @pytest.mark.asyncio
-async def test_jobs_put_denied_is_reported_rds_still_published():
-    """Until AA-CIS-Infra adds AA/Jobs/CIS to the task role, that put is AccessDenied: logged only."""
-    cw = StubCloudWatch(fail_on={"AA/Jobs/CIS"})
-    with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
-        out = await sampler.sample_once(_pool(), cw, kinds=KINDS)
-    assert out["rds_published"] == 6 and "AccessDenied" in out["jobs_error"]
-    assert "jobs_published" not in out
-
-
-@pytest.mark.asyncio
-async def test_backlog_failure_publishes_no_jobs_datapoint():
-    cw = StubCloudWatch()
+async def test_backlog_failure_keeps_the_role_sample():
     with patch.object(backlog, "sample", AsyncMock(side_effect=RuntimeError("timeout"))):
-        out = await sampler.sample_once(_pool(), cw, kinds=KINDS)
-    assert "timeout" in out["jobs_error"] and [c["Namespace"] for c in cw.calls] == ["AA/RDS"]
+        out = await sampler.sample_once(_pool(), StubSns(), kinds=KINDS)
+    assert "timeout" in out["jobs_error"] and out["roles"]["booking"]["pct"] == 80.0
 
 
 @pytest.mark.asyncio
-async def test_no_limited_roles_skips_the_rds_put():
-    cw = StubCloudWatch()
+async def test_no_limited_roles():
     with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
-        out = await sampler.sample_once(_pool(rows=[]), cw, kinds=KINDS)
-    assert out["roles"] == {} and out["rds_published"] == 0
-    assert [c["Namespace"] for c in cw.calls] == ["AA/Jobs/CIS"]
+        out = await sampler.sample_once(_pool(rows=[]), StubSns(), kinds=KINDS)
+    assert out["roles"] == {} and "oldest_queued_age_seconds" in out
 
 
 @pytest.mark.asyncio
 async def test_sample_once_loads_the_registry_when_not_given():
     with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)) as bs:
-        await sampler.sample_once(_pool(), StubCloudWatch())
+        await sampler.sample_once(_pool(), StubSns())
     kinds = bs.call_args[0][1]
     assert "a3_atomize" in kinds and "ops_rds_role_connections" not in kinds
 
@@ -421,23 +417,19 @@ async def test_sample_once_loads_the_registry_when_not_given():
 # ── per-part timeout (a hung acquire/query never stalls the loop) ──────────────────────────────
 
 @pytest.mark.asyncio
-async def test_hung_rds_query_times_out_jobs_still_published():
+async def test_hung_rds_query_times_out_jobs_still_sampled():
     pool = _pool()
     pool.fetch = AsyncMock(side_effect=_hang)
-    cw = StubCloudWatch()
     with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
-        out = await asyncio.wait_for(sampler.sample_once(pool, cw, kinds=KINDS, part_timeout_s=0.05), 2)
-    assert out["rds_error"].startswith("TimeoutError")
-    assert [c["Namespace"] for c in cw.calls] == ["AA/Jobs/CIS"] and out["jobs_published"] == 2
+        out = await asyncio.wait_for(sampler.sample_once(pool, StubSns(), kinds=KINDS, part_timeout_s=0.05), 2)
+    assert out["rds_error"].startswith("TimeoutError") and out["oldest_queued_age_seconds"] == 0.0
 
 
 @pytest.mark.asyncio
-async def test_hung_backlog_sample_times_out_rds_still_published():
-    cw = StubCloudWatch()
+async def test_hung_backlog_sample_times_out_roles_still_read():
     with patch.object(backlog, "sample", AsyncMock(side_effect=_hang)):
-        out = await asyncio.wait_for(sampler.sample_once(_pool(), cw, kinds=KINDS, part_timeout_s=0.05), 2)
-    assert out["jobs_error"].startswith("TimeoutError") and out["rds_published"] == 6
-    assert [c["Namespace"] for c in cw.calls] == ["AA/RDS"]
+        out = await asyncio.wait_for(sampler.sample_once(_pool(), StubSns(), kinds=KINDS, part_timeout_s=0.05), 2)
+    assert out["jobs_error"].startswith("TimeoutError") and out["roles"]
 
 
 @pytest.mark.asyncio
@@ -448,7 +440,7 @@ async def test_loop_keeps_ticking_with_a_pool_that_never_answers():
     app = SimpleNamespace(state=SimpleNamespace(pool=pool))
     with capture_logs() as logs, patch.object(backlog, "sample", AsyncMock(side_effect=_hang)):
         task = asyncio.create_task(sampler.run_ops_metrics_sampler(
-            app, 0.01, 0, client_factory=StubCloudWatch, part_timeout_s=0.02))
+            app, 0.01, 0, client_factory=StubSns, part_timeout_s=0.02))
         await _wait_for(logs, "ops_metrics_sampled", count=2)
         await sampler.stop_ops_metrics_sampler(task)
     lines = [e for e in logs if e["event"] == "ops_metrics_sampled"][:2]
@@ -471,7 +463,7 @@ def test_ops_rds_role_connections_is_retired():
 async def test_retired_rows_are_cancelled_before_the_backlog_sample():
     pool = _pool(execute="UPDATE 2")
     with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
-        out = await sampler.sample_once(pool, StubCloudWatch(), kinds=KINDS)
+        out = await sampler.sample_once(pool, StubSns(), kinds=KINDS)
     pool.execute.assert_awaited_once()
     sql, kinds_arg, reasons = pool.execute.call_args[0]
     assert "status IN ('queued', 'running')" in sql and "locked_by = NULL" in sql
@@ -482,7 +474,7 @@ async def test_retired_rows_are_cancelled_before_the_backlog_sample():
 @pytest.mark.asyncio
 async def test_nothing_to_cancel_adds_no_field():
     with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
-        out = await sampler.sample_once(_pool(), StubCloudWatch(), kinds=KINDS)
+        out = await sampler.sample_once(_pool(), StubSns(), kinds=KINDS)
     assert "retired_cancelled" not in out
 
 
@@ -491,7 +483,7 @@ async def test_a_registered_kind_is_never_swept():
     pool = _pool()
     kinds = dict(KINDS, ops_rds_role_connections=K())
     with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
-        await sampler.sample_once(pool, StubCloudWatch(), kinds=kinds)
+        await sampler.sample_once(pool, StubSns(), kinds=kinds)
     pool.execute.assert_not_awaited()
 
 
@@ -499,10 +491,10 @@ async def test_a_registered_kind_is_never_swept():
 async def test_sweep_failure_does_not_block_jobs():
     pool = _pool()
     pool.execute = AsyncMock(side_effect=RuntimeError("permission denied"))
-    cw = StubCloudWatch()
+    cw = StubSns()
     with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
         out = await sampler.sample_once(pool, cw, kinds=KINDS)
-    assert "permission denied" in out["retired_error"] and out["jobs_published"] == 2
+    assert "permission denied" in out["retired_error"] and "oldest_queued_age_seconds" in out
 
 
 @pytest.mark.asyncio
@@ -511,16 +503,16 @@ async def test_tripplanner_purge_sweep_runs_each_tick_and_its_failure_blocks_not
     pool = _pool()
     pool.fetchval = AsyncMock(return_value=2)
     with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
-        out = await sampler.sample_once(pool, StubCloudWatch(), kinds=KINDS)
-    pool.fetchval.assert_not_awaited()                    # kind not registered: no row a worker cannot run
+        out = await sampler.sample_once(pool, StubSns(), kinds=KINDS)
+    assert not any("tripplanner_purge" in c.args[0] for c in pool.fetchval.await_args_list)   # kind not registered
     with_kind = dict(KINDS, tripplanner_purge=K())
     with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
-        out = await sampler.sample_once(pool, StubCloudWatch(), kinds=with_kind)
+        out = await sampler.sample_once(pool, StubSns(), kinds=with_kind)
     assert "tripplanner_purge" in pool.fetchval.call_args[0][0] and out["tripplanner_purge_swept"] == 2
     pool.fetchval = AsyncMock(side_effect=RuntimeError("permission denied"))
     with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
-        out = await sampler.sample_once(pool, StubCloudWatch(), kinds=with_kind)
-    assert "permission denied" in out["tripplanner_purge_error"] and out["jobs_published"] == 2
+        out = await sampler.sample_once(pool, StubSns(), kinds=with_kind)
+    assert "permission denied" in out["tripplanner_purge_error"] and "oldest_queued_age_seconds" in out
 
 
 @pytest.mark.asyncio
@@ -529,23 +521,23 @@ async def test_supply_pull_runs_only_with_its_kind_and_its_failure_blocks_nothin
     monkeypatch.delenv("SUPPLY_FEED_PULL", raising=False)
     pool = _pool()
     with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
-        out = await sampler.sample_once(pool, StubCloudWatch(), kinds=KINDS)
+        out = await sampler.sample_once(pool, StubSns(), kinds=KINDS)
     pool.acquire.assert_not_called()                      # kind not registered
     with_kind = dict(KINDS, supply_content_draft=K(background=True))
     pool.feed_conn = _feed_conn(cursor=5)
     with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
-        out = await sampler.sample_once(pool, StubCloudWatch(), kinds=with_kind)
+        out = await sampler.sample_once(pool, StubSns(), kinds=with_kind)
     assert "booking.v_supply_outbox" in pool.feed_conn.fetch.call_args[0][0]
     assert "supply_pull_applied" not in out and "supply_pull_error" not in out   # no events: no field
     pool.feed_conn.fetch = AsyncMock(side_effect=RuntimeError("relation booking.v_supply_outbox does not exist"))
     with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
-        out = await sampler.sample_once(pool, StubCloudWatch(), kinds=with_kind)
-    assert "v_supply_outbox" in out["supply_pull_error"] and out["jobs_published"] == 2
+        out = await sampler.sample_once(pool, StubSns(), kinds=with_kind)
+    assert "v_supply_outbox" in out["supply_pull_error"] and "oldest_queued_age_seconds" in out
     assert "shared.supply_feed_cursor" in pool.feed_conn.execute.call_args[0][0]     # last_error recorded
     monkeypatch.setenv("SUPPLY_FEED_PULL", "off")
     pool = _pool()
     with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
-        await sampler.sample_once(pool, StubCloudWatch(), kinds=with_kind)
+        await sampler.sample_once(pool, StubSns(), kinds=with_kind)
     pool.acquire.assert_not_called()
 
 
@@ -566,7 +558,7 @@ def test_defaults():
 @pytest.mark.asyncio
 async def test_loop_ticks_logs_and_cancels():
     app = SimpleNamespace(state=SimpleNamespace(pool=_pool()))
-    cw = StubCloudWatch()
+    cw = StubSns()
     with capture_logs() as logs, patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
         task = asyncio.create_task(sampler.run_ops_metrics_sampler(app, 0.01, 0, client_factory=lambda: cw))
         await _wait_for(logs, "ops_metrics_sampled", count=2)
@@ -580,7 +572,7 @@ async def test_loop_ticks_logs_and_cancels():
 @pytest.mark.asyncio
 async def test_loop_survives_client_factory_failure_and_retries():
     app = SimpleNamespace(state=SimpleNamespace(pool=_pool()))
-    cw = StubCloudWatch()
+    cw = StubSns()
     factory = MagicMock(side_effect=[RuntimeError("no credentials"), cw])
     with capture_logs() as logs, patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
         task = asyncio.create_task(sampler.run_ops_metrics_sampler(app, 0.01, 0, client_factory=factory))
@@ -588,14 +580,15 @@ async def test_loop_survives_client_factory_failure_and_retries():
         await sampler.stop_ops_metrics_sampler(task)
     first, second = [e for e in logs if e["event"] == "ops_metrics_sampled"][:2]
     assert first["log_level"] == "warning" and "no credentials" in first["error"]
-    assert second["log_level"] == "info" and cw.calls
+    assert second["log_level"] == "info"
 
 
 @pytest.mark.asyncio
 async def test_part_errors_log_a_warning_line():
     app = SimpleNamespace(state=SimpleNamespace(pool=_pool()))
-    cw = StubCloudWatch(fail_on={"AA/RDS", "AA/Jobs/CIS"})
-    with capture_logs() as logs, patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
+    cw = StubSns()
+    app.state.pool.fetch = AsyncMock(side_effect=RuntimeError("pool closing"))
+    with capture_logs() as logs, patch.object(backlog, "sample", AsyncMock(side_effect=RuntimeError("timeout"))):
         task = asyncio.create_task(sampler.run_ops_metrics_sampler(app, 0.01, 0, client_factory=lambda: cw))
         await _wait_for(logs, "ops_metrics_sampled")
         await sampler.stop_ops_metrics_sampler(task)
@@ -636,6 +629,41 @@ async def test_off_in_test_environment(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_stop_flushes_the_ops_events_once_more_with_the_pool(monkeypatch):
+    """S263 review: the events counted since the last tick go out on a normal stop (deploy, scale-in)."""
+    pool, seen = _pool(), []
+
+    async def flush(p):
+        seen.append(p)
+        return {"tenant_pool_unavailable": {"bell": True, "email": "sent"}}
+
+    monkeypatch.setattr(ops_checks, "flush_events", flush)
+    task = asyncio.create_task(asyncio.sleep(3600))
+    with capture_logs() as logs:
+        await sampler.stop_ops_metrics_sampler(task, pool=pool)
+    assert task.cancelled() and seen == [pool]
+    assert any(e["event"] == "ops_checks_flushed_on_stop" for e in logs)
+    await sampler.stop_ops_metrics_sampler(None, pool=pool)   # no sampler ran (test env): no flush
+    assert seen == [pool]
+
+
+@pytest.mark.asyncio
+async def test_stop_flush_is_bounded_and_never_raises(monkeypatch):
+    async def hang(p):
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr(ops_checks, "flush_events", hang)
+    task = asyncio.create_task(asyncio.sleep(3600))
+    with capture_logs() as logs:
+        await asyncio.wait_for(sampler.stop_ops_metrics_sampler(task, pool=_pool(), flush_timeout_s=0.05), 2)
+    assert any(e["event"] == "ops_checks_flush_on_stop_failed" for e in logs)
+
+    monkeypatch.setattr(ops_checks, "flush_events", AsyncMock(side_effect=RuntimeError("pool closed")))
+    task = asyncio.create_task(asyncio.sleep(3600))
+    await sampler.stop_ops_metrics_sampler(task, pool=_pool())
+
+
+@pytest.mark.asyncio
 async def test_api_lifespan_starts_the_sampler_and_cancels_it_before_the_pool_closes(monkeypatch):
     from api import main
 
@@ -647,8 +675,9 @@ async def test_api_lifespan_starts_the_sampler_and_cancels_it_before_the_pool_cl
     redis.aclose = AsyncMock()
     real_stop = sampler.stop_ops_metrics_sampler
 
-    async def stop(task):
+    async def stop(task, pool=None):
         order.append("sampler.stop")
+        assert pool is not None   # S263 review: the stop flushes the ops events with the main pool
         await real_stop(task)
 
     def sampler_tasks():

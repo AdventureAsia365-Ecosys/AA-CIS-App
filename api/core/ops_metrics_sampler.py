@@ -1,34 +1,33 @@
 """
-AA-751 / AA-832 — in-process ops metrics sampler of the api task.
+AA-751 / AA-832 / S263 (AA-1025) — in-process ops sampler of the api task.
 
-Every OPS_METRICS_INTERVAL_S (300 s) the api publishes two CloudWatch namespaces, one PutMetricData
-call each, and logs one line `ops_metrics_sampled` with the values:
+Every OPS_METRICS_INTERVAL_S (300 s) the api reads, and logs in one line `ops_metrics_sampled`:
 
-  AA/RDS, dimension Role=<rolname>, per LOGIN role with a CONNECTION LIMIT (AA-832):
-    RoleConnections         Count    sessions of the role in pg_stat_activity
-    RoleConnectionLimitPct  Percent  100 * RoleConnections / rolconnlimit
-  AA/Jobs/CIS, no dimensions (AA-751, shared/jobs/backlog.py):
-    OldestQueuedAgeSeconds  Seconds  capacity-aware: only starved due queued rows count
-    OverdueRunningJobs      Count    running rows past 2 x their kind's expected_seconds
+  per LOGIN role with a CONNECTION LIMIT (AA-832): sessions in pg_stat_activity and the % of the limit (`roles`);
+  max(age(datfrozenxid)) over the databases (`xid_age`, S263);
+  the shared.job backlog (AA-751, shared/jobs/backlog.py): the capacity-aware age of the oldest starved due queued
+  row and the running rows past 2 x their kind's expected_seconds.
 
-It replaces the AA-832 chain (EventBridge every 5 min -> ops-probe Lambda -> POST
-/admin/job-runner/rds-role-connections/schedule -> a shared.job row -> CIS worker -> PutMetricData):
-no API Gateway / WAF / Lambda traffic, no 288 job rows a day, and the job metrics do not depend on
-the worker they measure. AA-CIS-Infra alarms on both namespaces (observability_ecosys.tf); missing
-samples fire the `*-sampling-stopped` alarms, so a dead api (or a dead loop) is still visible.
+S263 alert diet: these values are no longer published to CloudWatch (they were AA/RDS and AA/Jobs/CIS custom metrics
+with eleven alarms). The tick evaluates them itself (shared/ops_checks.py state checks: jobs_starved, jobs_overdue,
+rds_role_connections, rds_xid_age) and flushes the log events the api process counted (lost cost-log writes,
+tenant-pool fail-closed states, cis_app refused connections); a finding raises the admin bell and at most one e-mail
+a day per check on the alerts SNS topic (field `ops_checks`, or `ops_checks_error`). A dead api is CloudWatch's
+`aa-cis-dev-api-no-healthy-task`; a starved queue (dead worker included) is mailed from here, not through the worker.
+The AA-832 chain (EventBridge -> ops-probe Lambda -> admin POST -> shared.job -> worker) is long gone.
 
 - RDS roles are discovered on every tick (`rolcanlogin AND rolconnlimit > 0`), so a new app role or a
   changed limit needs no code change. `usename` is the session user, the one CONNECTION LIMIT counts.
   The main pool runs as aa_cis_admin, which sees other roles' rows (verified live 16/10/2026).
-- boto3 runs in asyncio.to_thread with short timeouts and no retries, so a CloudWatch outage costs one
-  thread for at most ~8 s per call, never the event loop. Each part of a tick (AA/RDS, retired-kind
-  sweep, AA/Jobs/CIS) also runs under asyncio.wait_for(PART_TIMEOUT_S): the main pool has no
+- boto3 (SNS publish of an alert) runs in asyncio.to_thread with short timeouts and no retries, so an SNS outage
+  costs one thread for at most ~8 s per call, never the event loop. Each part of a tick (roles, retired-kind
+  sweep, backlog, ops checks) also runs under asyncio.wait_for(PART_TIMEOUT_S): the main pool has no
   command_timeout, so a hung acquire/query (half-open TCP to RDS) lands as a `*_error` TimeoutError
   and the next tick tries again instead of stalling the loop until the task restarts.
 - Retired kinds (shared/jobs/registry.RETIRED_KINDS, kinds whose handler was removed): every tick
   cancels their queued/running rows before the backlog sample. No live worker can claim them, so a
-  row left over from a rolling deploy (the old api enqueueing during the roll) would otherwise page
-  `*-jobs-queue-age` as starved `unregistered` and block every later Deploy Dev. A kind is swept only
+  row left over from a rolling deploy (the old api enqueueing during the roll) would otherwise show as starved
+  `unregistered` (the jobs_starved check) and block every later Deploy Dev. A kind is swept only
   while it is NOT registered.
 - AA-987: each tick also sweeps the TripPlanner purge deliveries (services/jobs/tripplanner_purge_job.sweep): every
   tour lifecycle event of the last 2 h without a `tripplanner_purge` job gets one (one idempotent INSERT ... SELECT),
@@ -71,8 +70,8 @@ samples fire the `*-sampling-stopped` alarms, so a dead api (or a dead loop) is 
   so there is no module state to reset; the first check runs on the first tick.
 - api only (not the worker service); started from api/main.py's lifespan after the main pool,
   cancelled before the pool closes. Off when ENVIRONMENT == "test". Never raises: a failing part is
-  logged in the tick's line (`*_error`) and the loop goes on. With two api tasks (rolling deploy)
-  both publish; the alarms use Maximum / SampleCount, so a duplicate datapoint changes nothing.
+  logged in the tick's line (`*_error`) and the loop goes on. With two api tasks (rolling deploy) both evaluate;
+  the bell + e-mail dedupe is one advisory-locked transaction (shared/ops_checks.py), so an alert goes out once.
 """
 from __future__ import annotations
 
@@ -89,14 +88,7 @@ logger = structlog.get_logger()
 OPS_METRICS_INTERVAL_S = 300.0
 OPS_METRICS_FIRST_DELAY_S = 30.0   # let the app finish starting before the first sample
 PART_TIMEOUT_S = 50.0              # bound on each part of a tick (6 parts -> <= 300 s, then the interval sleep)
-
-NAMESPACE_RDS = "AA/RDS"
-METRIC_CONNECTIONS = "RoleConnections"
-METRIC_LIMIT_PCT = "RoleConnectionLimitPct"
-
-NAMESPACE_JOBS = "AA/Jobs/CIS"
-METRIC_OLDEST_QUEUED_AGE = "OldestQueuedAgeSeconds"
-METRIC_OVERDUE_RUNNING = "OverdueRunningJobs"
+OPS_FLUSH_ON_STOP_TIMEOUT_S = 5.0  # S263 review: the last ops-event flush on shutdown (api stopTimeout is 90 s)
 
 ROLE_CONNECTIONS_SQL = """
     SELECT r.rolname, r.rolconnlimit, count(a.pid)::int AS connections
@@ -112,20 +104,14 @@ def sampler_enabled() -> bool:
     return os.environ.get("ENVIRONMENT", "").lower() != "test"
 
 
-def cloudwatch_region() -> str:
-    return os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-west-1"
+def alerts_client():
+    """The SNS client the ops-check alerts are published with (shared/ops_checks.sns_client)."""
+    from shared import ops_checks
+
+    return ops_checks.sns_client()
 
 
-def cloudwatch_client(region: Optional[str] = None):
-    """boto3 CloudWatch client: connect 3 s, read 5 s, one attempt (the next tick is the retry)."""
-    import boto3  # lazy: tests and the worker never need it
-    from botocore.config import Config
-
-    cfg = Config(connect_timeout=3, read_timeout=5, retries={"max_attempts": 1})
-    return boto3.client("cloudwatch", region_name=region or cloudwatch_region(), config=cfg)
-
-
-# ── AA/RDS (moved from the removed services/jobs/ops_rds_role_connections_job.py) ──────────────
+# ── roles (moved from the removed services/jobs/ops_rds_role_connections_job.py) ───────────────
 
 def role_samples(rows) -> list[dict]:
     """[{role, limit, connections, pct}] from the query rows. Pure, unit-tested."""
@@ -138,30 +124,6 @@ def role_samples(rows) -> list[dict]:
     return out
 
 
-def metric_data(samples: list[dict], timestamp: datetime) -> list[dict]:
-    """The AA/RDS PutMetricData `MetricData` list: two datums per role. Pure, unit-tested."""
-    data = []
-    for s in samples:
-        dims = [{"Name": "Role", "Value": s["role"]}]
-        data.append({"MetricName": METRIC_CONNECTIONS, "Dimensions": dims, "Timestamp": timestamp,
-                     "Value": float(s["connections"]), "Unit": "Count"})
-        data.append({"MetricName": METRIC_LIMIT_PCT, "Dimensions": dims, "Timestamp": timestamp,
-                     "Value": float(s["pct"]), "Unit": "Percent"})
-    return data
-
-
-# ── AA/Jobs/CIS ─────────────────────────────────────────────────────────────────────────────────
-
-def jobs_metric_data(sample: dict, timestamp: datetime) -> list[dict]:
-    """The AA/Jobs/CIS `MetricData`: two datums, no dimensions. Pure, unit-tested."""
-    return [
-        {"MetricName": METRIC_OLDEST_QUEUED_AGE, "Timestamp": timestamp,
-         "Value": float(sample["oldest_queued_age_seconds"]), "Unit": "Seconds"},
-        {"MetricName": METRIC_OVERDUE_RUNNING, "Timestamp": timestamp,
-         "Value": float(sample["overdue_running_jobs"]), "Unit": "Count"},
-    ]
-
-
 def _registry() -> dict:
     """Every registered kind (expected_seconds, background). Importing services.jobs registers them."""
     from shared.jobs.registry import kinds
@@ -171,17 +133,15 @@ def _registry() -> dict:
     return kinds()
 
 
-async def _put(client, namespace: str, data: list[dict]) -> None:
-    await asyncio.to_thread(client.put_metric_data, Namespace=namespace, MetricData=data)
+async def _rds_part(pool, out: dict) -> None:
+    from shared.ops_checks import XID_AGE_SQL
 
-
-async def _rds_part(pool, client, ts: datetime, out: dict) -> None:
     samples = role_samples(await pool.fetch(ROLE_CONNECTIONS_SQL))
     out["roles"] = {s["role"]: {"connections": s["connections"], "limit": s["limit"], "pct": s["pct"]}
                     for s in samples}
-    if samples:   # no limited role: nothing to publish (sampling-stopped will say so)
-        await _put(client, NAMESPACE_RDS, metric_data(samples, ts))
-    out["rds_published"] = 2 * len(samples)
+    xid = await pool.fetchval(XID_AGE_SQL)
+    if xid is not None:
+        out["xid_age"] = int(xid)
 
 
 async def _retired_part(pool, kinds: dict, out: dict) -> None:
@@ -195,15 +155,23 @@ async def _retired_part(pool, kinds: dict, out: dict) -> None:
             out["retired_cancelled"] = n
 
 
-async def _jobs_part(pool, client, kinds: dict, ts: datetime, out: dict) -> None:
+async def _jobs_part(pool, kinds: dict, out: dict) -> None:
     from shared.jobs import backlog
 
     b = await backlog.sample(pool, kinds)
     out.update(oldest_queued_age_seconds=b["oldest_queued_age_seconds"],
                overdue_running_jobs=b["overdue_running_jobs"], starved=b["starved"], overdue=b["overdue"],
                queued_due=b["queued_due"], running=b["running"], live_workers=b["live_workers"])
-    await _put(client, NAMESPACE_JOBS, jobs_metric_data(b, ts))
-    out["jobs_published"] = 2
+
+
+async def _ops_checks_part(pool, client, out: dict) -> None:
+    """S263: the state checks of this tick plus the log events this process counted -> bell + e-mail."""
+    from shared import ops_checks
+
+    results = await ops_checks.alert_all(pool, ops_checks.state_findings(out), client)
+    results.update(await ops_checks.flush_events(pool, client))
+    if results:
+        out["ops_checks"] = results
 
 
 async def _tripplanner_purge_part(pool, kinds: dict, out: dict) -> None:
@@ -356,15 +324,16 @@ def _err(e: BaseException) -> str:
 
 async def sample_once(pool, client, kinds: Optional[dict] = None,
                       part_timeout_s: float = PART_TIMEOUT_S, redis: Any = None) -> dict:
-    """One tick: AA/RDS, the alert-recipient reconcile (AA-913), the retired-kind sweep, the TripPlanner purge sweep
-    (AA-987), the Booking supply feed pull (AA-835), the daily writing-memory fact filter (AA-917), then
-    AA/Jobs/CIS, each part on its own and under part_timeout_s (one failing or hanging never blocks the others).
-    Returns the fields of the `ops_metrics_sampled` line. Never raises (except CancelledError)."""
+    """One tick: the role connections and XID age, the alert-recipient reconcile (AA-913), the retired-kind sweep,
+    the TripPlanner purge sweep (AA-987), the Booking supply feed pull (AA-835), the daily writing-memory fact filter
+    (AA-917), the shared.job backlog, then the S263 ops checks, each part on its own and under part_timeout_s (one
+    failing or hanging never blocks the others). `client` is the SNS client of the alerts topic (None: made on the
+    first alert). Returns the fields of the `ops_metrics_sampled` line. Never raises (except CancelledError)."""
     ts = datetime.now(timezone.utc)
     out: dict[str, Any] = {"sampled_at": ts.isoformat()}
 
     try:
-        await asyncio.wait_for(_rds_part(pool, client, ts, out), timeout=part_timeout_s)
+        await asyncio.wait_for(_rds_part(pool, out), timeout=part_timeout_s)
     except Exception as e:   # asyncio.TimeoutError included
         out["rds_error"] = _err(e)
 
@@ -429,9 +398,15 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
         out["llm_connection_probe_error"] = _err(e)
 
     try:
-        await asyncio.wait_for(_jobs_part(pool, client, kinds, ts, out), timeout=part_timeout_s)
+        await asyncio.wait_for(_jobs_part(pool, kinds, out), timeout=part_timeout_s)
     except Exception as e:
         out["jobs_error"] = _err(e)
+
+    # S263: after the backlog, so the job checks see this tick's sample (a failed part simply checks nothing)
+    try:
+        await asyncio.wait_for(_ops_checks_part(pool, client, out), timeout=part_timeout_s)
+    except Exception as e:
+        out["ops_checks_error"] = _err(e)
     return out
 
 
@@ -452,7 +427,7 @@ def _log(out: dict) -> None:
     if any(k in out for k in ("rds_error", "retired_error", "jobs_error", "alert_recipients_error",
                               "tripplanner_purge_error", "supply_pull_error", "writing_memory_error",
                               "writing_memory_kpi_weekly_error",
-                              "reports_error")):
+                              "reports_error", "ops_checks_error")) or out.get("ops_checks"):
         logger.warning("ops_metrics_sampled", **out)
     else:
         logger.info("ops_metrics_sampled", **out)
@@ -460,11 +435,11 @@ def _log(out: dict) -> None:
 
 async def run_ops_metrics_sampler(app, interval_s: float = OPS_METRICS_INTERVAL_S,
                                   first_delay_s: float = OPS_METRICS_FIRST_DELAY_S,
-                                  client_factory: Callable[[], Any] = cloudwatch_client,
+                                  client_factory: Callable[[], Any] = alerts_client,
                                   part_timeout_s: float = PART_TIMEOUT_S,
                                   jev_check_every_s: Optional[float] = None) -> None:
     """Loops until cancelled. Reads app.state.pool on every tick, so it never holds a stale pool; the
-    CloudWatch client is made once (in a thread), and again on the next tick if making it failed."""
+    SNS client of the ops-check alerts is made once (in a thread), and again on the next tick if making it failed."""
     if jev_check_every_s is None:
         from shared.jev_credit import JEV_CREDIT_CHECK_EVERY_S
 
@@ -496,9 +471,25 @@ def start_ops_metrics_sampler(app, interval_s: float = OPS_METRICS_INTERVAL_S) -
     return asyncio.create_task(run_ops_metrics_sampler(app, interval_s), name="aa751-ops-metrics-sampler")
 
 
-async def stop_ops_metrics_sampler(task: Optional[asyncio.Task]) -> None:
-    """Cancel and wait; swallows the CancelledError (and anything else) so shutdown goes on."""
+async def stop_ops_metrics_sampler(task: Optional[asyncio.Task], pool: Any = None,
+                                   flush_timeout_s: float = OPS_FLUSH_ON_STOP_TIMEOUT_S) -> None:
+    """Cancel and wait; swallows the CancelledError (and anything else) so shutdown goes on.
+
+    S263 review: then, with the main pool, one last flush of the ops log events this process counted since the last
+    tick (a lost cost-log write, a tenant-pool fail-closed state): without it a deploy or scale-in within 5 minutes of
+    the event loses its alert. A flush cancelled mid-tick put its events back (shared/ops_checks.flush_events), so
+    they go out here. Bounded by flush_timeout_s; never raises."""
     if task is None:
         return
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
+    if pool is None:
+        return
+    from shared import ops_checks
+
+    try:
+        results = await asyncio.wait_for(ops_checks.flush_events(pool), timeout=flush_timeout_s)
+        if results:
+            logger.warning("ops_checks_flushed_on_stop", ops_checks=results)
+    except Exception as e:  # noqa: BLE001 — asyncio.TimeoutError included; shutdown goes on
+        logger.warning("ops_checks_flush_on_stop_failed", error=_err(e))
