@@ -54,7 +54,9 @@ CALL_PATH = ("client.py", "embed.py", "decide.py", "judge.py", "shadow.py", "bed
              "tenant_budget.py",  # AA-1016: tenant AI budget check (no budget row = nothing read beyond the tenant set)
              "prompt_registry.py",  # AA-900: prompt version lookup (no registered row = None on the ledger)
              "embedding_space.py",  # AA-1026: embedding space registry (unreadable = the built-in 328 mirror)
-             "json_reply.py")  # AA-1026: reads the JSON value out of a reply text (pure, no I/O)
+             "json_reply.py",  # AA-1026: reads the JSON value out of a reply text (pure, no I/O)
+             "family_rule.py",  # AA-1024 A4: judge / writer model-family rule (catalog read only)
+             "route_evidence.py")  # AA-1026 D7: route change evidence (reads shared.prompt_eval_runs by SQL)
 
 
 def _imported_modules(path: Path) -> set[str]:
