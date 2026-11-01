@@ -107,3 +107,11 @@ class Directory:
         self.sql.append(sql)
         return [{k: r[k] for k in ("id", "username", "role", "is_active")} | {"created_at": None, "updated_at": None}
                 for r in self.rows]
+
+    async def fetchval(self, sql: str, *args: Any) -> Any:
+        # AA-1031: the staff list first asks whether shared.staff_crm_grant exists (migration 330); this directory
+        # plays a database without it, so the list reads the plain SELECT.
+        if sql == "SELECT to_regclass('shared.staff_crm_grant') IS NOT NULL AS ok":
+            self.sql.append(sql)
+            return False
+        raise AssertionError(f"unexpected fetchval SQL: {sql}")
