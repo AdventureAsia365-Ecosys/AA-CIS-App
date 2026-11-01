@@ -60,6 +60,19 @@ GOOD = {
                                 {"n": 3, "label": "DROP", "reason_code": "word_meaning", "confidence": "high"}]},
 }
 GOOD["s1_brand_audit"] = GOOD["t2_brand_audit"] = GOOD.pop("brand_audit")
+# migration 333: the judge / validate stages whose route ends on the OpenAI API
+FIT = {"brand_fit_score": 8, "cross_brand_distinct": 7, "mission_present": True, "feedback": "Calm and specific."}
+GOOD.update({
+    "s1_judge": dict(FIT, unsupported_specifics=[]), "t2_judge": FIT, "t7_debate_judge": FIT,
+    "t10_judge": {"status": "pass", "failure_codes": [], "flagged_phrases": [], "broken_sentences": [], "notes": "",
+                  "unsupported_claims": []},
+    "writing_memory_eval": {"verdict": "pass", "score": 8, "failure_classes": [], "unsupported_claims": []},
+    "writing_memory_mine": {"kind": "lexicon", "rule_text": "Never use the word breathtaking.", "replacement": "wide",
+                            "match_phrases": ["breathtaking"]},
+    "a3_place_dedupe": {"verdict": "different", "confidence": 0.9, "reason": "a lodge and a hut"},
+})
+NEW_333 = ("s1_judge", "t2_judge", "t7_debate_judge", "t10_judge", "writing_memory_eval", "writing_memory_mine",
+           "a3_place_dedupe")
 
 
 def _reply(content: str) -> LLMResponse:
@@ -135,6 +148,64 @@ def test_the_requests_are_the_stages_own_prompts():
     assert seen["t10_claims"].system_prompt == EXTRACTION_SYSTEM and seen["t10_claims"].json_schema
     assert "Varro hut" in seen["a3_place_card"].user_prompt                 # draft_card's own user prompt
     assert "FACTS:\n1. The Varro hut stands" in seen["a3_place_card_check"].user_prompt
+
+
+def test_the_333_requests_are_the_stages_own_prompts():
+    from services.acp_content_writing.quality_gates import _F9_MAX_TOKENS, _JUDGE_SYSTEM_PROMPT
+    from services.content_generation import brand_fit, brand_fit_v2
+    from services.places import dedupe
+    from services.writing_memory import drafter, eval_judge
+
+    seen = {stage: _run(stage, GOOD[stage])[1].requests[0][0] for stage in NEW_333}
+    assert seen["s1_judge"].system_prompt == brand_fit_v2.SYSTEM_V2               # the A1 default rubric (v2)
+    assert seen["t2_judge"].system_prompt == brand_fit.JUDGE_SYSTEM
+    assert "Slow walking holidays" in seen["t2_judge"].user_prompt                # the tenant mission is named
+    assert seen["t7_debate_judge"].system_prompt == brand_fit.CANDIDATE_JUDGE_SYSTEM
+    for stage in ("s1_judge", "t2_judge", "t7_debate_judge"):
+        assert seen[stage].temperature == 0.1 and seen[stage].seed == 42
+    assert seen["t10_judge"].system_prompt == _JUDGE_SYSTEM_PROMPT and seen["t10_judge"].max_tokens == _F9_MAX_TOKENS
+    assert "REQUIRED CALL TO ACTION FOR THIS PIECE" in seen["t10_judge"].user_prompt
+    assert seen["writing_memory_eval"].json_schema == eval_judge.JUDGE_SCHEMA
+    assert seen["writing_memory_mine"].json_schema == drafter.RULE_SCHEMA
+    assert seen["a3_place_dedupe"].json_schema == dedupe.VERDICT_SCHEMA
+
+
+@pytest.mark.parametrize("stage", NEW_333)
+def test_the_plan_request_of_a_333_stage_makes_no_call(stage):
+    request = smoke.CASES[stage].request()
+    assert request.system_prompt and request.user_prompt
+    assert smoke.estimate_usd(NOVA, request) < 0.01
+
+
+@pytest.mark.parametrize("stage", ["s1_judge", "t2_judge", "t7_debate_judge", "t10_judge"])
+def test_a_judge_note_after_the_verdict_still_passes(stage):
+    result, _ = _run(stage, json.dumps(GOOD[stage]) + "\nNote: the {page} reads calmly.")
+    assert result["contract_ok"] is True, result
+
+
+@pytest.mark.parametrize("stage", ["s1_judge", "t2_judge", "t7_debate_judge"])
+def test_a_brand_fit_verdict_without_its_scores_fails(stage):
+    result, _ = _run(stage, {"feedback": "fine"})
+    assert result["contract_ok"] is False and "brand_fit_score" in result["error"], result
+
+
+def test_a_refused_brand_fit_call_is_the_stage_answer_not_a_contract_failure():
+    class Refused(FakeClient):
+        def probe(self, request, model, target):
+            raise RuntimeError("AccessDeniedException: not allowed")
+    result = smoke.run_case(smoke.CASES["t2_judge"], NOVA, _target(NOVA), client=Refused({}))
+    assert result["error_class"] == "access_denied" and result["called"] is False
+
+
+def test_a_salvaged_f9_verdict_fails_the_contract():
+    result, _ = _run("t10_judge", '{"status": "pass", "failure_codes": [')
+    assert result["contract_ok"] is False and "json_repair" in result["error"], result
+
+
+def test_the_333_smoke_picks():
+    assert {smoke.PLANNED[s] for s in NEW_333 if s != "a3_place_dedupe"} == {"nova-lite"}
+    # dedupe and its check stay on two makers: the check falls back to Nova Lite (Amazon), dedupe to Llama 4 Scout
+    assert smoke.PLANNED["a3_place_dedupe"] == "llama4-scout" and smoke.PLANNED["a3_place_dedupe_check"] == "nova-lite"
 
 
 def test_a_check_reply_with_the_wrong_number_of_verdicts_fails():

@@ -1055,73 +1055,11 @@ def _f9_carry_keys(old_text: str, new_text: str, passed: set[str]) -> set[str]:
     return out
 
 
-def gate_brand_voice(
-    content_text: str, cta: str, brand_rubric_text: str, source_text: Optional[str] = None,
-    voice: Optional[list[str]] = None, seo_title: Optional[str] = None,
-    meta_description: Optional[str] = None, passed_sentences: Optional[set[str]] = None,
-) -> list[GateResultLite]:
-    """F9 (see `_gate_brand_voice`). AA-927: when the judge reply came back (billed) and the verdict code
-    then raised, its llm_call_log row is written here (billed_unusable) before the error propagates."""
-    ledger: dict = {"raw": None, "logged": False}
-    try:
-        return _gate_brand_voice(content_text, cta, brand_rubric_text, source_text=source_text, voice=voice,
-                                 seo_title=seo_title, meta_description=meta_description,
-                                 passed_sentences=passed_sentences, _ledger=ledger)
-    except Exception as e:
-        if ledger["raw"] is not None and not ledger["logged"]:
-            _log_t10_billed_unusable(ledger["raw"], error=f"{type(e).__name__}: {e}")
-        raise
-
-
-def _gate_brand_voice(
-    content_text: str, cta: str, brand_rubric_text: str, source_text: Optional[str] = None,
-    voice: Optional[list[str]] = None, seo_title: Optional[str] = None,
-    meta_description: Optional[str] = None, passed_sentences: Optional[set[str]] = None,
-    _ledger: Optional[dict] = None,
-) -> list[GateResultLite]:
-    """AA-450-02 gate map, F9 row — see module docstring for the rubric-field/failure-code
-    choices. `cta_clear` also absorbs N7's dropped F6 literal-CTA-substring check (semantic
-    judgment, since T9's CTA is a free-text tenant value, not N7's one fixed brand phrase — no
-    hardcoded-phrase false-positive carve-out ports as-is for this reason).
-
-    AA-613 — returns a LIST of two results from ONE judge call (Nghiệp's 3-tier severity split):
-    `F9_cta_fact` (blocking, product-truth: CTA/FACT_CHECK/TEXT_INTEGRITY) and `F9_brand_style`
-    (non-blocking warn: off-brand voice / generic AI wording). See the split logic below.
-
-    AA-768 — `source_text` (the writer's own source: seed + Facts + audience/trip lines, the same
-    text gate_grounding() checks against) is shown to the judge. Before this the judge saw only
-    the piece and was told "when uncertain about a factual claim: manual_check" — with nothing to
-    check against, every fact-bearing piece came back FACT_CHECK_MANUAL_CHECK and no rewrite
-    could fix it (S231 pilot: 5/5 held). The judge must now quote the claim it flags, so the
-    repair round gets a sentence to fix instead of a bare code. `None` keeps the old prompt for
-    any caller without a source.
-
-    AA-786 (F9 v1.1, S234 gate evaluation):
-    - the piece is judged WITHOUT citation tags (the judge flagged "visible citation markers" the
-      tenant never sees — r1#9, r3#4);
-    - TEXT_INTEGRITY quotes each broken sentence (`broken_sentences`) → "TEXT_INTEGRITY: '<sentence>'",
-      repairable by sentence_repair.plan instead of the full rewrite that fixed F9 0/6 times;
-    - a non-pass verdict with no code: a sentence quoted in the notes that exists in the piece
-      becomes TEXT_INTEGRITY; with no locatable quote the F9 result is a NON-blocking warn
-      (F9_NO_REASON) — a verdict without a reason is not a hold (Gate-1 policy, AA-770 precedent);
-    - `seo_title` / `meta_description` (blog) are shown to the judge; an unsupported claim in them is
-      a 'title …' / 'meta …' violation that never blocks on its own (F17's body_blocking rule).
-
-    AA-777 (sticky pass) — `passed_sentences` is the job's set of body sentences (keyed with
-    `_f9_key`: the sentence plus the one before it) an earlier F9 verdict of the same piece judged
-    without a flag. An unsupported claim whose sentence is in that set is dropped (S234: in 10/15
-    reverted pieces the judge flagged a sentence it had passed one attempt earlier, unchanged); dropped
-    sentences are logged (`F9_sticky_pass`) and listed as `sticky_pass` on the F9_cta_fact result. After the verdict the
-    sentences it passed are ADDED to the set (the caller owns it, one per job). A verdict with no
-    checkable reason, no verdict (judge unavailable), a truncated / json_repair-salvaged verdict, or
-    one with a claim or broken-sentence quote that locates in no body sentence adds nothing. A sticky
-    sentence quoted in the notes never becomes TEXT_INTEGRITY.
-
-    AA-865 — when `passed_sentences` is an `F9PassMemory`, the passes of the text the last verdict judged are first
-    carried through this attempt's repair edit (`_f9_carry_keys`: deletion-only edits, and unchanged sentences whose
-    referent opener kept its antecedent), so a retry does not judge again what an earlier verdict passed and the
-    repair did not change. A plain set, and attempt 1, behave as before."""
-    content_text = strip_citation_tags(content_text)  # AA-786 — defence in depth; the caller strips too
+def f9_user_prompt(content_text: str, cta: str, brand_rubric_text: str, source_text: Optional[str] = None,
+                   voice: Optional[list[str]] = None, seo_title: Optional[str] = None,
+                   meta_description: Optional[str] = None) -> str:
+    """The F9 judge's user prompt for a piece already stripped of citation tags (`_gate_brand_voice` below; the
+    acc2 contract smoke, AA-1026, sends the same prompt). Moved out of `_gate_brand_voice` unchanged."""
     has_seo = bool((seo_title or "").strip() or (meta_description or "").strip())
     contract = json.dumps({
         "status": "pass|flagged|manual_check",
@@ -1198,6 +1136,78 @@ def _gate_brand_voice(
         f"on its own — do not flag it. {fact_rule}\n{integrity_rule}\n\n"
         f"Output ONLY JSON matching this contract:\n{contract}"
     )
+    return user_prompt
+
+
+def gate_brand_voice(
+    content_text: str, cta: str, brand_rubric_text: str, source_text: Optional[str] = None,
+    voice: Optional[list[str]] = None, seo_title: Optional[str] = None,
+    meta_description: Optional[str] = None, passed_sentences: Optional[set[str]] = None,
+) -> list[GateResultLite]:
+    """F9 (see `_gate_brand_voice`). AA-927: when the judge reply came back (billed) and the verdict code
+    then raised, its llm_call_log row is written here (billed_unusable) before the error propagates."""
+    ledger: dict = {"raw": None, "logged": False}
+    try:
+        return _gate_brand_voice(content_text, cta, brand_rubric_text, source_text=source_text, voice=voice,
+                                 seo_title=seo_title, meta_description=meta_description,
+                                 passed_sentences=passed_sentences, _ledger=ledger)
+    except Exception as e:
+        if ledger["raw"] is not None and not ledger["logged"]:
+            _log_t10_billed_unusable(ledger["raw"], error=f"{type(e).__name__}: {e}")
+        raise
+
+
+def _gate_brand_voice(
+    content_text: str, cta: str, brand_rubric_text: str, source_text: Optional[str] = None,
+    voice: Optional[list[str]] = None, seo_title: Optional[str] = None,
+    meta_description: Optional[str] = None, passed_sentences: Optional[set[str]] = None,
+    _ledger: Optional[dict] = None,
+) -> list[GateResultLite]:
+    """AA-450-02 gate map, F9 row — see module docstring for the rubric-field/failure-code
+    choices. `cta_clear` also absorbs N7's dropped F6 literal-CTA-substring check (semantic
+    judgment, since T9's CTA is a free-text tenant value, not N7's one fixed brand phrase — no
+    hardcoded-phrase false-positive carve-out ports as-is for this reason).
+
+    AA-613 — returns a LIST of two results from ONE judge call (Nghiệp's 3-tier severity split):
+    `F9_cta_fact` (blocking, product-truth: CTA/FACT_CHECK/TEXT_INTEGRITY) and `F9_brand_style`
+    (non-blocking warn: off-brand voice / generic AI wording). See the split logic below.
+
+    AA-768 — `source_text` (the writer's own source: seed + Facts + audience/trip lines, the same
+    text gate_grounding() checks against) is shown to the judge. Before this the judge saw only
+    the piece and was told "when uncertain about a factual claim: manual_check" — with nothing to
+    check against, every fact-bearing piece came back FACT_CHECK_MANUAL_CHECK and no rewrite
+    could fix it (S231 pilot: 5/5 held). The judge must now quote the claim it flags, so the
+    repair round gets a sentence to fix instead of a bare code. `None` keeps the old prompt for
+    any caller without a source.
+
+    AA-786 (F9 v1.1, S234 gate evaluation):
+    - the piece is judged WITHOUT citation tags (the judge flagged "visible citation markers" the
+      tenant never sees — r1#9, r3#4);
+    - TEXT_INTEGRITY quotes each broken sentence (`broken_sentences`) → "TEXT_INTEGRITY: '<sentence>'",
+      repairable by sentence_repair.plan instead of the full rewrite that fixed F9 0/6 times;
+    - a non-pass verdict with no code: a sentence quoted in the notes that exists in the piece
+      becomes TEXT_INTEGRITY; with no locatable quote the F9 result is a NON-blocking warn
+      (F9_NO_REASON) — a verdict without a reason is not a hold (Gate-1 policy, AA-770 precedent);
+    - `seo_title` / `meta_description` (blog) are shown to the judge; an unsupported claim in them is
+      a 'title …' / 'meta …' violation that never blocks on its own (F17's body_blocking rule).
+
+    AA-777 (sticky pass) — `passed_sentences` is the job's set of body sentences (keyed with
+    `_f9_key`: the sentence plus the one before it) an earlier F9 verdict of the same piece judged
+    without a flag. An unsupported claim whose sentence is in that set is dropped (S234: in 10/15
+    reverted pieces the judge flagged a sentence it had passed one attempt earlier, unchanged); dropped
+    sentences are logged (`F9_sticky_pass`) and listed as `sticky_pass` on the F9_cta_fact result. After the verdict the
+    sentences it passed are ADDED to the set (the caller owns it, one per job). A verdict with no
+    checkable reason, no verdict (judge unavailable), a truncated / json_repair-salvaged verdict, or
+    one with a claim or broken-sentence quote that locates in no body sentence adds nothing. A sticky
+    sentence quoted in the notes never becomes TEXT_INTEGRITY.
+
+    AA-865 — when `passed_sentences` is an `F9PassMemory`, the passes of the text the last verdict judged are first
+    carried through this attempt's repair edit (`_f9_carry_keys`: deletion-only edits, and unchanged sentences whose
+    referent opener kept its antecedent), so a retry does not judge again what an earlier verdict passed and the
+    repair did not change. A plain set, and attempt 1, behave as before."""
+    content_text = strip_citation_tags(content_text)  # AA-786 — defence in depth; the caller strips too
+    user_prompt = f9_user_prompt(content_text, cta, brand_rubric_text, source_text=source_text, voice=voice,
+                                 seo_title=seo_title, meta_description=meta_description)
     try:
         raw = invoke_judge(_JUDGE_SYSTEM_PROMPT, user_prompt, max_tokens=_F9_MAX_TOKENS, stage="t10_judge")
         _ledger = _ledger if _ledger is not None else {}

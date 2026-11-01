@@ -23,8 +23,9 @@ Payload: {"dry_run": bool (default true), "stages": [stage, ...] (default every 
 model key, ...} (optional override), "requested_by": "admin:<id>"}. A DRY RUN lists the stages, the model and its
 source, whether the acc2 deployment is callable and the estimated cost, with no call. A live run refuses to start when
 the estimate exceeds ``COST_CAP_USD`` and stops between stages once the spent cost reaches it. Live cost on Dev: about
-0.01 USD for the twelve stages (Nova Lite 0.077 / 0.308 USD per 1M tokens; Llama 4 Scout 0.17 / 0.66). max_attempts 1
-(a failed contract is the answer), background.
+0.01 USD for the twelve stages of 331 / 332 (Nova Lite 0.077 / 0.308 USD per 1M tokens; Llama 4 Scout 0.17 / 0.66);
+the estimate (prompt + the whole max_tokens) for all nineteen stages, the seven of migration 333 included, is about
+0.02 USD. max_attempts 1 (a failed contract is the answer), background.
 """
 from __future__ import annotations
 
@@ -48,12 +49,16 @@ COST_CAP_USD = 0.10           # ADR 0009 decision 12: a contract smoke costs und
 CHARS_PER_TOKEN = 4
 
 # Migration 331 (platform) and 332 (tenant, held for the tech lead's yes): the acc2 model each stage falls back to.
+# Migration 333 (S263 "AWS first, outside last"): the judge / validate stages whose route ends on the OpenAI API get
+# an acc2 model BEFORE that hop (a3_place_dedupe on Llama 4 Scout: its check stage falls back to Nova Lite).
 PLANNED = {
     "s1_brand_audit": "nova-lite", "s1_source_facts": "nova-lite", "a3_atomize": "nova-lite",
     "a3_place_card": "nova-lite", "a3_place_card_check": "llama4-scout", "a3_place_days": "nova-lite",
     "a3_place_locate": "nova-lite", "a3_place_dedupe_check": "nova-lite",
     "t2_brand_audit": "nova-lite", "t10_claims": "nova-lite", "t9_faq_answer_fit": "nova-lite",
     "t9_faq_filter": "nova-lite",
+    "s1_judge": "nova-lite", "t2_judge": "nova-lite", "t7_debate_judge": "nova-lite", "t10_judge": "nova-lite",
+    "writing_memory_eval": "nova-lite", "writing_memory_mine": "nova-lite", "a3_place_dedupe": "llama4-scout",
 }
 
 
@@ -170,16 +175,46 @@ def _atomize(call) -> dict:
 
 
 class _Pinned:
-    """A client for the code paths that build their request themselves (place cards): ``generate`` is the smoke's
-    pinned call."""
+    """A client for the code paths that build their request themselves (place cards, brand fit): ``generate`` is the
+    smoke's pinned call. ``failed``: the call itself raised (a refused or failed provider call, not a parser error)."""
 
     def __init__(self, call):
         self._call = call
         self.last = None
+        self.failed = False
 
     def generate(self, request):
-        self.last = self._call(request)
+        try:
+            self.last = self._call(request)
+        except Exception:
+            self.failed = True
+            raise
         return self.last
+
+
+class _Captured(Exception):
+    pass
+
+
+class _Capture:
+    """A client that records the first request and stops the code path there (no call): the request a stage's own
+    code would send, for the plan's cost estimate."""
+
+    def __init__(self):
+        self.request = None
+
+    def generate(self, request):
+        self.request = request
+        raise _Captured()
+
+
+def _captured_request(run_with_client):
+    capture = _Capture()
+    try:
+        run_with_client(capture)
+    except _Captured:
+        return capture.request
+    raise RuntimeError("the stage's code path made no model call")
 
 
 def _card_request():
@@ -263,7 +298,7 @@ def _place_locate(call) -> dict:
     return {"located": sum(1 for v in answer.values() if not isinstance(v, str)), "names": len(answer)}
 
 
-def _dedupe_request():
+def _dedupe_request(stage: str = "a3_place_dedupe_check"):
     from services.places.dedupe import MAX_TOKENS, SYSTEM_PROMPT, VERDICT_SCHEMA
     from shared.llm_client.models import LLMRequest
 
@@ -274,12 +309,13 @@ def _dedupe_request():
     user = {"country": "Orvalia", "distance_km": 0.3, "shared": [],
             "a": side("Tamsin Lodge", [12.3456, 98.7654]), "b": side("Tamsin Mountain Lodge", [12.3471, 98.7660])}
     return LLMRequest(system_prompt=SYSTEM_PROMPT, user_prompt=json.dumps(user, ensure_ascii=False),
-                      stage="a3_place_dedupe_check", max_tokens=MAX_TOKENS, temperature=0.0, json_schema=VERDICT_SCHEMA)
+                      stage=stage, max_tokens=MAX_TOKENS, temperature=0.0, json_schema=VERDICT_SCHEMA)
 
 
-def _dedupe_check(call) -> dict:
+def _dedupe_check(call, stage: str = "a3_place_dedupe_check") -> dict:
+    """a3_place_dedupe_check and (migration 333) a3_place_dedupe: the same prompt, schema and verdict reader."""
     from services.places.dedupe import VERDICTS, parse_verdict
-    resp = call(_dedupe_request())
+    resp = call(_dedupe_request(stage))
     try:
         obj = json.loads(resp.content)
     except ValueError as e:
@@ -361,6 +397,126 @@ def _faq_filter(call) -> dict:
     return {"labels": [v["label"] for v in verdicts]}
 
 
+# ── migration 333: the judge / validate stages whose route ends on the OpenAI API ───────────────────────────────
+
+_PROFILE = {"brand_core_idea": "Slow walking holidays with time for the people who live along the way",
+            "brand_customer_segment": "Couples over fifty who walk most weekends",
+            "brand_customer_mindset": "Quiet trails, local food, no rush",
+            "brand_voice_examples": ["unhurried", "warm", "plain"],
+            "brand_good_examples": "On the second morning you leave Tamsin Lodge after a long breakfast and follow "
+                                   "the ridge at your own pace."}
+_SOURCE_TOUR = {"tour_id": "smoke-orvalen", "name": _TOUR_NAME, "country": "Orvalia", "duration": "6 days",
+                "description": "A guided walk from Kestrel Bay over the Orvalen ridge, sleeping in lodges and huts.",
+                "highlights": "Sunrise from the Varro hut; the ridge path above Kestrel Bay",
+                "itineraries": "\n".join(f"Day {d}: {t}" for d, t in sorted(_DAYS.items()))}
+_CANDIDATE = {"place": "Varro hut", "action": "watch the sunrise from the ridge", "evidence": [_DAYS[2]]}
+
+
+def _numeric(content: str, keys: tuple) -> dict:
+    """The reply's first JSON object, each of ``keys`` a number (the brand fit reader coerces a missing score to 0)."""
+    from shared.llm_client.json_reply import first_json_value
+    reply = first_json_value(content)
+    for key in keys:
+        try:
+            float(reply[key])
+        except (KeyError, TypeError, ValueError) as e:
+            raise ContractError(f"the verdict has no numeric {key}") from e
+    return reply
+
+
+def _brand_fit(stage: str, kind: str) -> Case:
+    """s1_judge (rubric v2, the A1 default since the writer v2), t2_judge (v1 with the tenant's mission),
+    t7_debate_judge (a candidate topic): brand_fit's own prompt, request and reply reader, on the pinned client."""
+    def score(client):
+        from services.content_generation import brand_fit as bf
+        if kind == "candidate":
+            return bf.score_candidate_fit(_PROFILE, _CANDIDATE, stage=stage, client=client)
+        if kind == "v2":
+            return bf.score_brand_fit(_PROFILE, _GENERATED, stage=stage, rubric="v2", source=_SOURCE_TOUR,
+                                      client=client)
+        return bf.score_brand_fit(_PROFILE, _GENERATED, stage=stage, mission=_PROFILE["brand_core_idea"],
+                                  client=client)
+
+    def run(call) -> dict:
+        pinned = _Pinned(call)
+        try:
+            result = score(pinned)
+        except Exception as e:
+            if pinned.failed or pinned.last is None:
+                raise
+            raise ContractError(f"brand_fit refused the reply: {e}") from e
+        _numeric(pinned.last.content, ("brand_fit_score", "cross_brand_distinct"))
+        return {"brand_fit": result.brand_fit_score, "distinct": result.cross_brand_distinct}
+    return Case(stage, "judge", run, lambda: _captured_request(score))
+
+
+_PIECE = ("The Orvalen ridge walk climbs from Kestrel Bay to the Varro hut at 2,100 m. The day covers 12 km and "
+          "takes about five hours. Ask us about a place on the next departure.")
+_CTA = "Ask us about a place on the next departure."
+
+
+def _f9_request():
+    from services.acp_content_writing.quality_gates import _F9_MAX_TOKENS, _JUDGE_SYSTEM_PROMPT, f9_user_prompt
+    from shared.llm_client.judge import judge_request
+    user = f9_user_prompt(_PIECE, _CTA, "Plain, warm, unhurried. No superlatives.", source_text=_DAYS[2])
+    return judge_request(_JUDGE_SYSTEM_PROMPT, user, stage="t10_judge", temperature=0, max_tokens=_F9_MAX_TOKENS)
+
+
+def _t10_judge(call) -> dict:
+    from shared.llm_client.judge import parse_judge_json_checked
+    resp = call(_f9_request())
+    try:
+        data, repaired = parse_judge_json_checked(resp.content)
+    except ValueError as e:
+        raise ContractError(f"the F9 judge parser refused the reply: {e}") from e
+    if not isinstance(data, dict) or data.get("status") not in ("pass", "flagged", "manual_check"):
+        raise ContractError("the F9 verdict has no status of pass / flagged / manual_check")
+    if repaired:
+        raise ContractError("the F9 verdict only parsed after json_repair (a salvaged verdict is not trusted)")
+    return {"status": data["status"], "failure_codes": len(data.get("failure_codes") or [])}
+
+
+def _wm_eval_request():
+    from services.writing_memory import eval_judge as ej
+    from shared.llm_client.models import LLMRequest
+    user = ej.build_user_prompt(writer="t9_blog", source_text=_DAYS[2], output_text=_PIECE)
+    return LLMRequest(system_prompt=ej.system_prompt(), user_prompt=user, stage="writing_memory_eval",
+                      max_tokens=ej.MAX_TOKENS, temperature=0.0, json_schema=ej.JUDGE_SCHEMA)
+
+
+def _wm_eval(call) -> dict:
+    from services.writing_memory.eval_judge import parse_verdict
+    resp = call(_wm_eval_request())
+    try:
+        verdict = parse_verdict(resp.content)
+    except ValueError as e:
+        raise ContractError(f"eval_judge.parse_verdict refused the reply: {e}") from e
+    return {"verdict": verdict["verdict"], "classes": len(verdict["failure_classes"])}
+
+
+def _wm_mine_request():
+    from services.writing_memory import drafter
+    from shared.llm_client.models import LLMRequest
+    user = drafter.build_user_prompt(
+        writer="t9_blog", channels=["blog"], label="FORBIDDEN_WORD", label_meaning="a word the brand never uses",
+        scope="tenant", examples=[{"before": "A breathtaking walk along the ridge.", "after": "A long walk along the "
+                                   "ridge.", "problem": "FORBIDDEN_WORD: breathtaking"},
+                                  {"before": "Breathtaking views from the hut.", "after": "Wide views from the hut.",
+                                   "problem": "FORBIDDEN_WORD: breathtaking"}])
+    return LLMRequest(system_prompt=drafter.SYSTEM_PROMPT, user_prompt=user, stage="writing_memory_mine",
+                      max_tokens=drafter.MAX_TOKENS, temperature=0.0, json_schema=drafter.RULE_SCHEMA)
+
+
+def _wm_mine(call) -> dict:
+    from services.writing_memory.drafter import parse_draft
+    resp = call(_wm_mine_request())
+    try:
+        draft = parse_draft(resp.content)
+    except ValueError as e:
+        raise ContractError(f"drafter.parse_draft refused the reply: {e}") from e
+    return {"kind": draft["kind"], "match_phrases": len(draft["match_phrases"])}
+
+
 def _cases() -> dict[str, Case]:
     cases = [
         _brand_audit("s1_brand_audit"), _brand_audit("t2_brand_audit"),
@@ -374,6 +530,13 @@ def _cases() -> dict[str, Case]:
         Case("t10_claims", "validate", _t10_claims, _claims_request),
         Case("t9_faq_answer_fit", "validate", _faq_answer_fit, _fit_request),
         Case("t9_faq_filter", "validate", _faq_filter, _filter_request),
+        # migration 333
+        _brand_fit("s1_judge", "v2"), _brand_fit("t2_judge", "v1"), _brand_fit("t7_debate_judge", "candidate"),
+        Case("t10_judge", "judge", _t10_judge, _f9_request),
+        Case("writing_memory_eval", "judge", _wm_eval, _wm_eval_request),
+        Case("writing_memory_mine", "judge", _wm_mine, _wm_mine_request),
+        Case("a3_place_dedupe", "validate", lambda call: _dedupe_check(call, "a3_place_dedupe"),
+             lambda: _dedupe_request("a3_place_dedupe")),
     ]
     return {c.stage: c for c in cases}
 

@@ -89,11 +89,20 @@ def strip_json_fence(raw: str) -> str:
 def parse_judge_json_checked(raw: str) -> tuple[dict, bool]:
     """(verdict, repaired): `repaired` is True when the reply was not valid JSON and json_repair
     salvaged it (a truncated reply keeps only the entries before the cut — AA-777 trusts such a
-    verdict for its flags but never for what it passed)."""
+    verdict for its flags but never for what it passed).
+
+    AA-1026: the reply's first complete JSON value is read as is (text after it ignored: json_repair turned
+    "verdict + note" into a list, which raised); only a reply whose first value does not decode is repaired."""
+    from shared.llm_client.json_reply import JsonReplyError, first_json_value
+
     raw = strip_json_fence(raw)
     try:
         return json.loads(raw), False
     except json.JSONDecodeError:
+        try:
+            return first_json_value(raw, kinds=(dict, list), scan=False), False
+        except JsonReplyError:
+            pass
         salvaged = repair_json(raw, return_objects=True)
         if isinstance(salvaged, dict):
             return salvaged, True

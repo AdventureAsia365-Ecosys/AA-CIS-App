@@ -28,7 +28,8 @@ import structlog
 
 from shared.llm_client.call_log import BILLED_FIELD_KEYS, V2_BILLED_KEYS, billed_fields, billed_record
 from shared.llm_client.client import LLMClient
-from shared.llm_client.judge import call_judge, strip_json_fence
+from shared.llm_client.judge import call_judge
+from shared.llm_client.json_reply import first_json_value
 from services.quality.registry import threshold
 
 logger = structlog.get_logger()
@@ -574,21 +575,22 @@ Return JSON ONLY, no markdown, exactly:
 {{"brand_fit_score": <int>, "cross_brand_distinct": <int>, "feedback": "<string>"}}"""
 
 
-def score_candidate_fit(brand_profile: dict, candidate: dict, *, stage: str = "s1_judge") -> BrandFitResult:
+def score_candidate_fit(brand_profile: dict, candidate: dict, *, stage: str = "s1_judge",
+                        client=None) -> BrandFitResult:
     """Debate's brand-fit call (AA-631): same stage route, temperature/seed and result shape as
     `score_brand_fit()`, but scores a candidate topic from raw evidence instead of finished copy.
     `candidate` = {"place", "action", "evidence": [str, ...]}. There is no mission axis — nothing
     has been written yet — so `mission_present` is always True and never caps the score.
-    Raises on any failure, like `score_brand_fit()`."""
+    Raises on any failure, like `score_brand_fit()`. `client`: as `score_brand_fit`."""
     return _judge(CANDIDATE_JUDGE_SYSTEM, _build_candidate_prompt(brand_profile, candidate),
-                  mission_absent_cap=None, stage=stage)
+                  mission_absent_cap=None, stage=stage, client=client)
 
 
 def score_brand_fit(
     brand_profile: dict, generated: dict, *, mission_absent_cap: float = 6.0, stage: str = "s1_judge",
     mission: Optional[str] = None, repeat: int = 1, anchors: bool = False,
     model_override: Optional[str] = None, rubric: str = "v1", source: Optional[dict] = None,
-    tour_agency: Optional[dict] = None,
+    tour_agency: Optional[dict] = None, client=None,
 ) -> BrandFitResult:
     """The brand-fit call itself — extracted verbatim from judge_node.py's try block (same
     system prompt, same temperature/seed, same score-combining rule); the model is the `stage`
@@ -629,6 +631,9 @@ def score_brand_fit(
     same result shape (`rubric`, `unsupported`, `leaks`, `caps`, `raw_brand_fit` filled). The brand profile, the
     mission and the anchors are not part of a v2 prompt: passing `mission` or `anchors` with v2 is a ValueError, and
     so is v2 without a source. "v1" (default — T2, T7 Debate and every other caller) is unchanged byte for byte.
+
+    AA-1026: `client` — an object with `generate(LLMRequest)` used instead of a new LLMClient (the acc2 contract
+    smoke pins its model with it); None (every production caller) changes nothing.
     """
     if model_override and not (stage or "").startswith("adhoc_"):
         raise ValueError(f"model_override is for adhoc_* measurement stages only, not {stage!r}; "
@@ -654,6 +659,8 @@ def score_brand_fit(
         extra["evidence_source"] = itinerary_digest(generated.get("itineraries"))
     if model_override:
         extra["model_tier"] = model_override
+    if client is not None:
+        extra["client"] = client
 
     if repeat > 1:
         return _judge_parallel(system_prompt, user_prompt, n=repeat,
@@ -742,7 +749,7 @@ def _seeded_model(model_used: Optional[str]) -> bool:
 
 def _judge(system_prompt: str, user_prompt: str, *, mission_absent_cap: float | None,
            stage: str = "s1_judge", require_evidence: bool = False, evidence_source: Optional[str] = None,
-           model_tier: Optional[str] = None, v2_context: Optional[tuple] = None) -> BrandFitResult:
+           model_tier: Optional[str] = None, v2_context: Optional[tuple] = None, client=None) -> BrandFitResult:
     """One judge call. AA-801: `require_evidence` (anchored mission test) counts mission_present only
     when the reply quotes a non-empty `mission_evidence` that, when `evidence_source` is given, is
     found verbatim in it (`evidence_in_source`); `model_tier` is the gateway's per-request model
@@ -755,11 +762,12 @@ def _judge(system_prompt: str, user_prompt: str, *, mission_absent_cap: float | 
     # comes from the `stage` route (AA-659 / ADR 0006): "s1_judge", T2 "t2_judge", Debate "t7_debate_judge"
     # (AA-763). LLMClient stays this module's own name so callers and tests reach the gateway through it.
     resp = call_judge(system_prompt, user_prompt, stage=stage, temperature=_JUDGE_TEMPERATURE, seed=_JUDGE_SEED,
-                      model_tier=model_tier, client=LLMClient())
+                      model_tier=model_tier, client=client or LLMClient())
 
     try:
-        # Strict JSON (no json_repair here, unlike T10): a salvaged brand-fit verdict is not trusted.
-        result = json.loads(strip_json_fence(resp.content))
+        # Strict JSON (no json_repair here, unlike T10): a salvaged brand-fit verdict is not trusted. AA-1026: the
+        # reply's first complete JSON value is read as is (a note after it is ignored), never a repaired one.
+        result = first_json_value(resp.content, kinds=(dict, list))
         if not isinstance(result, dict):   # a JSON list / scalar is no verdict
             raise ValueError(f"judge reply is a JSON {type(result).__name__}, not an object")
 

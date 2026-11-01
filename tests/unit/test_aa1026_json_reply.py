@@ -152,6 +152,32 @@ def test_repair_based_parsers_read_the_first_object_before_any_repair(parse):
     assert parse('{"display_name": "Varro hut", "facts": ["The hut')["display_name"] == "Varro hut"
 
 
+def test_the_t10_judge_reader_takes_the_first_value_unrepaired():
+    from shared.llm_client.judge import parse_judge_json_checked
+    verdict = {"status": "pass", "failure_codes": []}
+    # json_repair alone turned "verdict + note holding an object" into a list, and the reader raised
+    assert parse_judge_json_checked(json.dumps(verdict) + '\nNote: {"x": 1} was not checked.') == (verdict, False)
+    assert parse_judge_json_checked('{"status": "flagged", "failure_codes": [')[1] is True    # a cut-off one is
+                                                                                              # still salvaged
+
+
+def test_the_brand_fit_judge_reads_the_first_value_and_still_refuses_a_list():
+    from unittest.mock import MagicMock
+
+    from services.content_generation import brand_fit
+    from shared.llm_client.models import LLMResponse
+
+    def client(content):
+        c = MagicMock()
+        c.generate.return_value = LLMResponse(content=content, model_used="nova-lite", provider="bedrock-native")
+        return c
+    reply = '{"brand_fit_score": 8, "cross_brand_distinct": 7, "feedback": "calm"}\nI scored {two} axes.'
+    out = brand_fit.score_candidate_fit({}, {"place": "Varro hut"}, client=client(reply))
+    assert (out.brand_fit_score, out.cross_brand_distinct) == (8.0, 7.0)
+    with pytest.raises(ValueError, match="not an object"):
+        brand_fit.score_candidate_fit({}, {"place": "Varro hut"}, client=client("[8, 7]"))
+
+
 # ── the helper ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("raw,kinds,expected", [
