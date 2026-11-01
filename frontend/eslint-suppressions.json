@@ -29,28 +29,5 @@
     "aa-kit/no-raw-table": {
       "count": 3
     }
-  },
-  "app/admin/tenants/page.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 12
-    },
-    "aa-kit/no-hex-colour": {
-      "count": 3
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    },
-    "aa-kit/no-raw-aa-var": {
-      "count": 14
-    },
-    "aa-kit/no-raw-table": {
-      "count": 5
-    },
-    "react-hooks/set-state-in-effect": {
-      "count": 3
-    },
-    "react-hooks/static-components": {
-      "count": 6
-    }
   }
 }
