@@ -69,7 +69,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     01-05), `tenant-activity` (tabs 06-08), `platform-stats` (includes gate telemetry per tenant
     and channel, AA-615), `cost-ops` (the **Cost Operations** page, AA-622/623/665: tabs Overview, **AI & data spend** (views LLM, DataForSEO, Jev, from the ledger) and AWS bill; the old `/admin/llm-usage` redirects to it),
     `ai-gateway` (**AI providers**, AA-804: tabs Providers (+ views Connections, Jev credit; warm-path labels, the
-    "Re-queue refused jobs" card), Routing (with the LLM availability card), Models & trials (families, shadow report,
+    "Re-queue refused jobs" card; AA-1025 C1: errors and p50 / p95 latency per row over 24 h / 7 d from the ledgers,
+    the Jev / DataForSEO / Geoapify switch (PATCH /admin/llm-connections/{key}), the partner CRM AI and Bedrock
+    Guardrails rows read through crm.ops.v1 with the staff member's own token, a static Mapbox row), Routing (with the LLM availability card), Models & trials (families, shadow report,
     the read-only Experiments section: prompt versions and eval runs), Budgets (every cap layer and the tenant AI
     budgets of AA-1016, also shown as a tile on Tenant 360), Calls (ledger v2 search), Guide, and the Trace drawer
     opened from a Calls row, the job drawer, tour detail and decisions; Settings › LLM Models / Jev Credit and Cost Operations › Budgets moved
