@@ -2,10 +2,14 @@
 
 - .github/scripts/ci_shards.py: a partition of the discovered files (real suites and synthetic ones), deterministic,
   longest-first balanced, a file without a recorded duration weighs the median, path order inside a shard, junit
-  durations (xunit1 ``file`` attribute and the xunit2 classname fallback), the CLI refusals.
+  durations (xunit1 ``file`` attribute and the xunit2 classname fallback), ``--prefix`` for a suite whose own
+  pytest.ini makes it the rootdir (CIS tests/integration), the CLI refusals.
 - .github/workflows/ci.yml: "Unit Tests" and "Integration Tests" are aggregate jobs that need their shard matrix, run
   when a shard failed (never "skipped", which a required check counts as passed) and fail unless every shard passed;
-  the matrix size equals the shard count each shard splits by; test_007 stays out of the integration run.
+  the matrix size equals the shard count each shard splits by; test_007 stays out of the integration run; the
+  integration durations refresh is written under the names ``discover`` returns.
+- .github/test-durations/*.json: the committed keys are real test files (a refresh under the wrong names would turn
+  the split into a file count).
 """
 import importlib.util
 import json
@@ -156,6 +160,42 @@ def test_cli_durations_writes_the_merged_file_and_tolerates_a_missing_report(tmp
     assert _cli("durations", "--out", str(out_file), str(tmp_path / "none.xml")).returncode == 0
 
 
+
+def test_junit_durations_prefix_restores_paths_of_a_suite_with_its_own_rootdir(tmp_path):
+    rep = tmp_path / "junit.xml"
+    rep.write_text('<testsuites><testsuite name="pytest">'
+                   '<testcase classname="test_a" file="test_a.py" name="t1" time="1"/>'
+                   '<testcase classname="sub.test_c" file="sub/test_c.py" name="t" time="2"/>'
+                   '<testcase classname="x" file="tests/integration/test_d.py" name="t" time="4"/>'
+                   '<testcase classname="test_b.TestK" name="t" time="3"/>'
+                   '</testsuite></testsuites>')
+    expected = {"tests/integration/sub/test_c.py": 2.0, "tests/integration/test_a.py": 1.0,
+                "tests/integration/test_b.py": 3.0, "tests/integration/test_d.py": 4.0}
+    assert shards.junit_durations([str(rep)], "tests/integration/") == expected
+    # The trailing slash is optional.
+    assert shards.junit_durations([str(rep)], "tests/integration") == expected
+    assert "test_a.py" in shards.junit_durations([str(rep)])
+
+
+def test_cli_durations_prefix_matches_discover_when_the_suite_has_its_own_pytest_ini(tmp_path, monkeypatch):
+    """End to end: pytest run from the repo root on a folder with its own pytest.ini writes rootdir-relative paths."""
+    root = _tree(tmp_path, ["tests/integration/test_one.py", "tests/integration/sub/test_two.py"])
+    (root / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
+    (root / "tests/integration/pytest.ini").write_text("[pytest]\n")
+    files = [str(f) for f in sorted((root / "tests/integration").rglob("test_*.py"))]
+    run = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:xdist",
+                          "-p", "no:randomly", "--junitxml=junit.xml", "-o", "junit_family=xunit1", *files],
+                         cwd=root, capture_output=True, text=True)
+    assert run.returncode == 0, run.stdout + run.stderr
+    bare = _cli("durations", "--out", "bare.json", "junit.xml", cwd=root)
+    fixed = _cli("durations", "--prefix", "tests/integration/", "--out", "fixed.json", "junit.xml", cwd=root)
+    assert bare.returncode == 0 and fixed.returncode == 0, bare.stderr + fixed.stderr
+    monkeypatch.chdir(root)
+    discovered = shards.discover(["tests/integration"], [])
+    # Without the prefix no key names a discovered file (the bug the flag fixes); with it every file is covered.
+    assert not set(json.loads((root / "bare.json").read_text())) & set(discovered)
+    assert sorted(json.loads((root / "fixed.json").read_text())) == discovered
+
 def _suite_args(job: dict) -> list[str]:
     run = next(s["run"] for s in job["steps"] if "ci_shards.py files" in s.get("run", ""))
     return run
@@ -223,3 +263,20 @@ def test_unit_shards_measure_the_same_coverage_and_the_aggregate_ratchets_it():
     for step in ("Combine coverage of the shards", "Coverage ratchet", "Q0 red on base"):
         assert step in names, step
     assert names.index("Combine coverage of the shards") < names.index("Coverage ratchet")
+
+
+
+def test_the_integration_durations_refresh_uses_the_names_discover_returns():
+    # tests/integration/pytest.ini makes that folder pytest's rootdir: the junit paths lack "tests/integration/".
+    assert (REPO / "tests" / "integration" / "pytest.ini").is_file()
+    steps = _ci()["jobs"]["test-integration"]["steps"]
+    run = next(s["run"] for s in steps if "ci_shards.py durations" in s.get("run", ""))
+    assert "--prefix tests/integration/" in run
+
+
+@pytest.mark.parametrize("durations", [".github/test-durations/unit.json", ".github/test-durations/integration.json"])
+def test_committed_durations_name_real_test_files(durations):
+    keys = list(shards.load_durations(str(REPO / durations)))
+    real = [k for k in keys if (REPO / k).is_file()]
+    # A few stale keys (deleted tests) are harmless; a refresh written under other names matches almost none.
+    assert keys and len(real) >= 0.8 * len(keys), f"{durations}: {len(real)}/{len(keys)} keys are test files"

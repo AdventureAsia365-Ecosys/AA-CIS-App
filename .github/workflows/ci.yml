@@ -435,10 +435,12 @@ jobs:
           path: shards
 
       # Report only, as for the unit shards: real seconds per shard and the per-file durations of this run.
+      # tests/integration/pytest.ini makes that folder pytest's rootdir, so the junit paths lack it: --prefix puts it
+      # back, or the refreshed file would match no discovered file and the split would fall back to file counts.
       - name: Shard balance (report)
         run: |
-          python3 .github/scripts/ci_shards.py durations --out integration-durations.json \
-            shards/junit-integration-*.xml | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 .github/scripts/ci_shards.py durations --prefix tests/integration/ \
+            --out integration-durations.json shards/junit-integration-*.xml | tee -a "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
         with:

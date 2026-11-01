@@ -60,5 +60,12 @@ both suites are sharded.
   an earlier module's leftovers: fix that module's setup (create what it needs), do not regroup files by hand.
 - To rebalance: download `test-durations-unit` / `test-durations-integration` from a green main run and commit them
   over `.github/test-durations/`.
+- `tests/integration/pytest.ini` makes `tests/integration` pytest's rootdir for that suite, so its junit `file`
+  attribute is `test_x.py`, not `tests/integration/test_x.py`. The integration aggregate therefore runs
+  `ci_shards.py durations --prefix tests/integration/`; without it the refreshed file would match no discovered file
+  and the split would quietly become a count split with moved boundaries (review finding, fix pass). Guards:
+  `test_the_integration_durations_refresh_uses_the_names_discover_returns` and
+  `test_committed_durations_name_real_test_files` (>= 80% of committed keys must be real files). The rootdir itself
+  is left as it is.
 - To change a shard count: the matrix list, `UNIT_SHARDS` / `INTEGRATION_SHARDS` (both jobs for unit) and the `/N` in
   the job name together; `test_aa1032_ci_shards.py` checks they agree.

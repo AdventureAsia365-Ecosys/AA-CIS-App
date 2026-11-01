@@ -10,6 +10,7 @@ so the split is a pure function of (files on disk, durations file, N): no shard 
         tests/integration
     python3 .github/scripts/ci_shards.py plan --shards 4 --durations ... tests/integration      # every shard
     python3 .github/scripts/ci_shards.py durations --out new.json junit-1.xml junit-2.xml ...    # refresh weights
+    python3 .github/scripts/ci_shards.py durations --prefix tests/integration/ --out new.json ...  # suite's own rootdir
 
 Rules:
 - Files are those pytest collects by default (``test_*.py`` / ``*_test.py``) under the given roots, minus
@@ -25,6 +26,9 @@ Rules:
   neighbour of the unsharded run except at the start of a shard.
 - The durations file is advisory: a stale one only unbalances the shards, never drops a file. Refresh it from the
   shards' junit reports (``durations``; the aggregate job uploads the merged file as an artifact).
+- junit paths are relative to pytest's rootdir, which is the nearest ini file above the test files: a suite with its
+  own ``pytest.ini`` (CIS ``tests/integration``) writes ``file="test_x.py"``. ``durations --prefix tests/integration/``
+  puts such paths back under the cwd-relative names ``discover`` returns (a path that already has it is kept).
 
 Standard library only (runs before any install).
 """
@@ -137,8 +141,12 @@ def check_partition(files: list[str], buckets: list[list[str]]) -> None:
         raise SystemExit("shard split is not a partition of the test files")
 
 
-def junit_durations(reports: list[str]) -> dict[str, float]:
-    """Seconds per test file from pytest junit XML (``-o junit_family=xunit1`` writes the ``file`` attribute)."""
+def junit_durations(reports: list[str], prefix: str = "") -> dict[str, float]:
+    """Seconds per test file from pytest junit XML (``-o junit_family=xunit1`` writes the ``file`` attribute).
+
+    ``prefix`` is prepended to a path that does not already start with it (a suite whose rootdir is its own folder)."""
+    if prefix and not prefix.endswith("/"):
+        prefix += "/"
     out: dict[str, float] = {}
     for report in reports:
         for case in ET.parse(report).getroot().iter("testcase"):
@@ -151,6 +159,8 @@ def junit_durations(reports: list[str]) -> dict[str, float]:
                 if not parts:
                     continue
                 path = "/".join(parts) + ".py"
+            if prefix and not path.startswith(prefix):
+                path = prefix + path
             out[path] = round(out.get(path, 0.0) + float(case.get("time") or 0.0), 2)
     return dict(sorted(out.items()))
 
@@ -172,6 +182,8 @@ def main(argv: list[str] | None = None) -> int:
             p.add_argument("--index", type=int, required=True, help="1-based shard index")
     d = sub.add_parser("durations")
     d.add_argument("--out", required=True)
+    d.add_argument("--prefix", default="",
+                   help="folder prepended to junit paths that lack it (the suite's pytest rootdir, e.g. tests/integration/)")
     d.add_argument("reports", nargs="+")
     args = ap.parse_args(argv)
 
@@ -181,9 +193,9 @@ def main(argv: list[str] | None = None) -> int:
             print("no junit report found (a shard failed before writing one)")
             return 0
         for report in reports:
-            per_file = junit_durations([report])
+            per_file = junit_durations([report], args.prefix)
             print(f"- {Path(report).name}: {len(per_file)} files, {sum(per_file.values()):.0f}s of tests")
-        merged = junit_durations(reports)
+        merged = junit_durations(reports, args.prefix)
         Path(args.out).write_text(json.dumps(merged, indent=1, sort_keys=True) + "\n", encoding="utf-8")
         print(f"- all: {len(merged)} files, {sum(merged.values()):.0f}s -> {args.out}")
         return 0
