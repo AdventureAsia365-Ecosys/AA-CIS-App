@@ -506,6 +506,7 @@ a1_codes:
   # S1-first code checks, writer-v2 brand audit, the meta cut signature).
   BRAND_AUDIT_FLAGGED: {classes: [other.v1], note: "writer-v2 brand audit, report-only (quality_shadow)"}
   BRAND_AUDIT_UNAVAILABLE: {classes: [other.degraded_detector]}
+  BRAND_AUDIT_UNCALIBRATED_JUDGE: {classes: [other.degraded_detector], note: "AA-1026 I6: a pass from an uncalibrated fallback judge (acc2) is held as manual_check"}
   DAY_CHECK_SKIPPED: {classes: [other.degraded_detector], note: "day oracle degraded marker, never enforced"}
   DAY_COUNT_VS_DURATION: {classes: [struct.day_structure]}
   DAY_DEPARTURE_MIDTRIP: {classes: [struct.day_structure]}

@@ -1023,6 +1023,10 @@
     "capability": "ops.write",
     "module": "api.routers.admin_job_runner"
   },
+  "POST /admin/job-runner/llm-contract-smoke/run": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_job_runner"
+  },
   "POST /admin/job-runner/llm-probe/run": {
     "capability": "ai.admin",
     "module": "api.routers.admin_job_runner"

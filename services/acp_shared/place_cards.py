@@ -850,15 +850,16 @@ def drop_unverifiable(facts: list[dict], country: Optional[str] = None, card_nam
     return out
 
 
-def draft_card(atom: dict) -> tuple[dict, float, object]:
-    """One `a3_place_card` call. Returns (card dict, cost, response)."""
+def draft_card(atom: dict, client=None) -> tuple[dict, float, object]:
+    """One `a3_place_card` call. Returns (card dict, cost, response). `client`: an LLMClient-like object (AA-1026 I6:
+    the contract smoke passes one that forces the acc2 fallback model); None = a new LLMClient."""
     user = (f"PLACE AS THE ITINERARY NAMES IT: {atom['place']}\n"
             f"COUNTRY THE TOUR IS SOLD AS: {atom.get('country') or 'unknown'} "
             f"(the route may cross into a neighbouring country)\n"
             f"TOUR: {atom.get('tour_name') or 'unknown'}\n"
             f"ITINERARY SENTENCE: {_trim(atom.get('evidence'))}")
-    resp = LLMClient().generate(LLMRequest(system_prompt=_CARD_SYSTEM, user_prompt=user,
-                                           stage="a3_place_card", max_tokens=DRAFT_MAX_TOKENS))
+    resp = (client or LLMClient()).generate(LLMRequest(system_prompt=_CARD_SYSTEM, user_prompt=user,
+                                                       stage="a3_place_card", max_tokens=DRAFT_MAX_TOKENS))
     return _parse_json(resp.content), resp.cost_usd, resp
 
 
@@ -867,7 +868,7 @@ def _flag_false(value) -> bool:
     return value is False or (isinstance(value, str) and value.strip().lower() == "false")
 
 
-def check_card(card: dict, atom: dict) -> tuple[bool, list[str], float, object, dict]:
+def check_card(card: dict, atom: dict, client=None) -> tuple[bool, list[str], float, object, dict]:
     """One `a3_place_card_check` call. Returns (identity_ok, verdict per fact, cost, response, placement) where
     placement = {"locality_ok", "region_ok"} (AA-784: a wrong locality / region is cleared, not a rejected card)."""
     facts = card.get("facts") or []
@@ -878,8 +879,8 @@ def check_card(card: dict, atom: dict) -> tuple[bool, list[str], float, object, 
             f"CARD IDENTITY: {card.get('display_name')} — locality: {card.get('locality') or '-'}, "
             f"region: {card.get('region') or '-'}, country: {card.get('country')}\n"
             f"FACTS:\n{numbered}")
-    resp = LLMClient().generate(LLMRequest(system_prompt=_CHECK_SYSTEM, user_prompt=user,
-                                           stage="a3_place_card_check", max_tokens=CHECK_MAX_TOKENS))
+    resp = (client or LLMClient()).generate(LLMRequest(system_prompt=_CHECK_SYSTEM, user_prompt=user,
+                                                       stage="a3_place_card_check", max_tokens=CHECK_MAX_TOKENS))
     data = _parse_json(resp.content)
     verdicts = data.get("verdicts") if isinstance(data.get("verdicts"), list) else []
     verdicts = [str(v).strip().lower() for v in verdicts]

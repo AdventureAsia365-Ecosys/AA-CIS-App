@@ -352,6 +352,40 @@ async def llm_probe_run(body: LlmProbeRunRequest, request: Request, x_admin_secr
             "switch_on": llm_probe_job.schedule_enabled()}
 
 
+# ── AA-1026 I6 — the contract smoke of the acc2 fallback models (services/jobs/llm_contract_smoke_job.py) ───────────
+
+class LlmContractSmokeRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    dry_run: bool = True
+    stages: Optional[list[str]] = Field(None, max_length=50,
+                                        description="judge / validate stages to smoke (default: every known stage)")
+    models: Optional[dict[str, str]] = Field(None, max_length=50,
+                                             description="stage -> model key to smoke instead of the route's acc2 "
+                                                         "model or the planned one (a re-pick before it is applied)")
+
+
+@router.post("/llm-contract-smoke/run", summary="Enqueue the acc2 fallback contract smoke (DRY RUN by default)")
+async def llm_contract_smoke_run(body: LlmContractSmokeRunRequest, request: Request,
+                                 x_admin_secret: str = Header(None), x_admin_user_id: Optional[str] = Header(None)):
+    """AA-1026 I6 — one `llm_contract_smoke` job: per stage, one fixture through the stage's own prompt and parser on
+    its acc2 fallback model (or the model named in `models` for that stage). DRY RUN by default (stages, model,
+    deployment state and estimated cost, no call); a live run makes one small paid call per stage (about 0.01 USD for
+    all of them, refused over 0.10 USD). Migration 331 / 332 gives a stage its acc2 fallback only after this smoke
+    passed for it. 422 for an unknown stage name or an override for a stage the run leaves out."""
+    verify_admin_secret(x_admin_secret)
+    from services.jobs import llm_contract_smoke_job
+    actor = f"admin:{x_admin_user_id}" if x_admin_user_id else "admin"
+    try:
+        job_id, _ = await llm_contract_smoke_job.enqueue_manual(request.app.state.pool, dry_run=body.dry_run,
+                                                                stages=body.stages, actor=actor, models=body.models)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    logger.info("admin_llm_contract_smoke_run", job_id=job_id, dry_run=body.dry_run, stages=body.stages,
+                models=body.models, admin_user=x_admin_user_id)
+    return {"job_id": job_id, "kind": llm_contract_smoke_job.KIND, "dry_run": body.dry_run, "stages": body.stages,
+            "models": body.models}
+
+
 # ── AA-1026 D5 — embedding spaces and the re-embed job (services/jobs/embedding_reembed_job.py) ───────────────────
 
 class EmbeddingReembedRunRequest(BaseModel):

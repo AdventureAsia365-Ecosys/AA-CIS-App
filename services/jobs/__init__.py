@@ -34,4 +34,5 @@ from . import report_ops_jobs  # noqa: F401  AA-1003 R2 (inquiry_handoff_check, 
 from . import llm_cost_reconcile_job  # noqa: F401  AA-1002 S10 (LLM cost ledger vs the provider, nightly)
 from . import llm_probe_job  # noqa: F401  AA-1018 (daily LLM connection probe; off unless LLM_DAILY_PROBE=on)
 from . import embedding_reembed_job  # noqa: F401  AA-1026 D5 (re-embed a vector column into another space)
+from . import llm_contract_smoke_job  # noqa: F401  AA-1026 I6 (acc2 fallback contract smoke; dry run $0)
 from . import noop_sleep_job  # noqa: F401  AA-993 G1 (test-only kind, registered only when JOB_TEST_KINDS=1)

@@ -3645,6 +3645,50 @@
         "title": "LlmConnectionTest",
         "type": "object"
       },
+      "LlmContractSmokeRunRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "dry_run": {
+            "default": true,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "models": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "maxProperties": 50,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "stage -> model key to smoke instead of the route's acc2 model or the planned one (a re-pick before it is applied)",
+            "title": "Models"
+          },
+          "stages": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 50,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "judge / validate stages to smoke (default: every known stage)",
+            "title": "Stages"
+          }
+        },
+        "title": "LlmContractSmokeRunRequest",
+        "type": "object"
+      },
       "LlmCostReconcileRun": {
         "additionalProperties": false,
         "description": "AA-1002 (S10): the window of a manual reconcile run (complete UTC days ending with end_day, default\nyesterday).",
@@ -18960,6 +19004,96 @@
           }
         },
         "summary": "Re-queue a failed/stopped/cancelled job",
+        "tags": [
+          "admin-job-runner"
+        ]
+      }
+    },
+    "/admin/job-runner/llm-contract-smoke/run": {
+      "post": {
+        "description": "AA-1026 I6 — one `llm_contract_smoke` job: per stage, one fixture through the stage's own prompt and parser on\nits acc2 fallback model (or the model named in `models` for that stage). DRY RUN by default (stages, model,\ndeployment state and estimated cost, no call); a live run makes one small paid call per stage (about 0.01 USD for\nall of them, refused over 0.10 USD). Migration 331 / 332 gives a stage its acc2 fallback only after this smoke\npassed for it. 422 for an unknown stage name or an override for a stage the run leaves out.",
+        "operationId": "llm_contract_smoke_run_admin_job_runner_llm_contract_smoke_run_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LlmContractSmokeRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Enqueue the acc2 fallback contract smoke (DRY RUN by default)",
         "tags": [
           "admin-job-runner"
         ]
