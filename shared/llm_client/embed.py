@@ -20,12 +20,21 @@ is unchanged.
 
 AA-1002 (S4): each call on a registry deployment goes through the circuit breaker and the connection's limiter
 (breaker.guarded); a deployment whose circuit is open is not in the plan.
+
+AA-642 A9 (gap OPS-02, ledger v2 for embeddings): like ``LLMClient._attempt``, every provider attempt is timed and
+numbered. A success carries ``connection_key``, ``latency_ms``, ``attempt_no``, ``deployment_wire_id`` and
+``pricing_mode`` on the EmbedResponse (the caller's row takes them through ``call_log.billed_fields``). An attempt that
+fails gets the gateway's own 0 USD llm_call_log row (role ``embed``, status refused | error and its class from
+``client.attempt_outcome``, the connection, latency and attempt number), and so does a model of the route that is not
+tried at all (not in the catalog, disabled, every deployment behind an open circuit or none usable: latency 0, no
+attempt number). The rows are written on a background thread (``call_log._in_background``) and never raise.
 """
 from __future__ import annotations
 
 import functools
 import json
 import os
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -60,6 +69,12 @@ class EmbedResponse:
     tokens_estimated: bool
     cost_usd: float
     fallback_used: bool = False
+    # AA-642 A9: the attempt facts (call_log.billed_fields reads them; None on a test double / older object).
+    connection_key: Optional[str] = None
+    latency_ms: Optional[int] = None
+    attempt_no: Optional[int] = None
+    deployment_wire_id: Optional[str] = None
+    pricing_mode: Optional[str] = None
 
 
 def _runtime_for(connection_key: str):
@@ -142,6 +157,37 @@ def _call(model: CatalogModel, account: str, texts: list[str], input_type: str,
     )
 
 
+class _RouteSkip(RuntimeError):
+    """A route model the gateway did not try (its ledger row; never raised to a caller)."""
+
+
+def _provider(account: str, conn) -> str:
+    """The llm_call_log provider of an embed call on ``account`` (the label the callers write for a success)."""
+    if conn is not None:
+        return "bedrock-native" if conn.auth_mode == "task_role" else "bedrock-satellite"
+    return "bedrock-native" if account == "acc2" else "bedrock-satellite"
+
+
+def _log_failure(stage: str, model_key: str, exc: BaseException, *, connection_key: Optional[str] = None,
+                 wire_id: Optional[str] = None, provider: Optional[str] = None, latency_ms: Optional[int] = 0,
+                 attempt_no: Optional[int] = None, position: int = 0) -> None:
+    """AA-642 A9: the gateway's 0 USD llm_call_log row of one embed attempt that failed, or of a route model that was
+    not tried (module docstring). Never raises."""
+    from . import call_log
+    try:
+        from .client import attempt_outcome
+        # A route model not tried was refused by the gateway itself (catalog / deployment state), not an outage.
+        status, error_class = ("refused", "other") if isinstance(exc, _RouteSkip) else attempt_outcome(exc)
+        row = call_log.gateway_failure_row(
+            stage=stage, role="embed", model=model_key, status=status, error_class=error_class,
+            error=f"{type(exc).__name__}: {exc}", provider=provider, connection_key=connection_key,
+            latency_ms=latency_ms, attempt_no=attempt_no, deployment_wire_id=wire_id,
+            quality_signal_extra={"position": position})
+        call_log._in_background(call_log.record_calls, {"rows": [row]})
+    except Exception as e:  # noqa: BLE001 — a log write never breaks the call it records
+        logger.warning("llm_embed_failed_attempt_log_failed", stage=stage, error=str(e)[:200])
+
+
 def embed(stage: str, texts: list[str], *, input_type: str = "search_document",
           dimensions: Optional[int] = None) -> EmbedResponse:
     """Embeds `texts` with the stage's route. `input_type` is Cohere's: "search_document" for
@@ -151,6 +197,7 @@ def embed(stage: str, texts: list[str], *, input_type: str = "search_document",
     cfg = get_stage_config_sync(stage)
     chain = [cfg.model_id, *cfg.fallback_model_ids]
     errors = []
+    attempts = 0
     for position, key in enumerate(chain):
         model = _resolve(key)
         if model is None or not model.enabled or model.api_style != "embed":
@@ -159,14 +206,19 @@ def embed(stage: str, texts: list[str], *, input_type: str = "search_document",
                       model.blocked_reason or "disabled")
             logger.info("llm_route_skip", stage=stage, model=key, reason=reason)
             errors.append(f"{key}: skipped ({reason})")
+            _log_failure(stage, key, _RouteSkip(f"{key}: skipped ({reason})"), position=position)
             continue
         targets, skips = _plan_targets(model, cfg.account_route,
                                        data_scope.normalize(getattr(cfg, "allowed_scopes", None)))
         if not targets:
-            errors.append(f"{key}: " + (str(breaker.circuit_error(key, skips)) if skips else
-                                        "no Bedrock profile or usable deployment"))
+            refusal = (breaker.circuit_error(key, skips) if skips else
+                       _RouteSkip(f"{key}: no Bedrock profile or usable deployment"))
+            errors.append(f"{key}: " + (str(refusal) if skips else "no Bedrock profile or usable deployment"))
+            _log_failure(stage, key, refusal, position=position)
             continue
         for account, wire_id, conn in targets:    # AA-1002 (S3): same model on each deployment first
+            attempts += 1
+            started = time.monotonic()
             try:
                 if conn is None:
                     resp = _call(model, account, texts, input_type, dimensions, wire_id)
@@ -177,8 +229,17 @@ def embed(stage: str, texts: list[str], *, input_type: str = "search_document",
                 logger.warning("llm_route_attempt_failed", stage=stage, model=key, account=account,
                                position=position, error=str(e)[:300])
                 errors.append(f"{key}@{account}: {str(e)[:200]}" if len(targets) > 1 else f"{key}: {str(e)[:200]}")
+                _log_failure(stage, key, e, connection_key=account, wire_id=wire_id,
+                             provider=_provider(account, conn), latency_ms=int((time.monotonic() - started) * 1000),
+                             attempt_no=attempts, position=position)
                 continue
             resp.fallback_used = position > 0
+            # AA-642 A9: the attempt facts for the caller's row (call_log.billed_fields).
+            resp.connection_key = account
+            resp.latency_ms = int((time.monotonic() - started) * 1000)
+            resp.attempt_no = attempts
+            resp.deployment_wire_id = wire_id or model.bedrock_profile_ids.get(account)
+            resp.pricing_mode = "code_table" if model is _CATALOG_FALLBACK.get(key) else "catalog"
             logger.info("llm_embed_success", stage=stage, model=key, account=account,
                         texts=len(texts), in_tokens=resp.input_tokens, cost_usd=resp.cost_usd)
             return resp
