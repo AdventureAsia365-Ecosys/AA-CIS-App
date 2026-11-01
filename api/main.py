@@ -183,7 +183,8 @@ async def lifespan(app: FastAPI):
         if job_worker_task is not None:
             await asyncio.gather(job_worker_task, return_exceptions=True)
 
-    await stop_ops_metrics_sampler(ops_metrics_task)
+    # S263 review: the stop also flushes the ops log events counted since the last tick (bounded, 5 s).
+    await stop_ops_metrics_sampler(ops_metrics_task, pool=pool)
     await stop_cis_staff_jwks_prefetch(identity_prefetch_task)
     await stop_m2m_jwks_prefetch(m2m_prefetch_task)
     await stop_partner_jwks_prefetch(partner_prefetch_task)

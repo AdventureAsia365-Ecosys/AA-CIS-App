@@ -629,6 +629,41 @@ async def test_off_in_test_environment(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_stop_flushes_the_ops_events_once_more_with_the_pool(monkeypatch):
+    """S263 review: the events counted since the last tick go out on a normal stop (deploy, scale-in)."""
+    pool, seen = _pool(), []
+
+    async def flush(p):
+        seen.append(p)
+        return {"tenant_pool_unavailable": {"bell": True, "email": "sent"}}
+
+    monkeypatch.setattr(ops_checks, "flush_events", flush)
+    task = asyncio.create_task(asyncio.sleep(3600))
+    with capture_logs() as logs:
+        await sampler.stop_ops_metrics_sampler(task, pool=pool)
+    assert task.cancelled() and seen == [pool]
+    assert any(e["event"] == "ops_checks_flushed_on_stop" for e in logs)
+    await sampler.stop_ops_metrics_sampler(None, pool=pool)   # no sampler ran (test env): no flush
+    assert seen == [pool]
+
+
+@pytest.mark.asyncio
+async def test_stop_flush_is_bounded_and_never_raises(monkeypatch):
+    async def hang(p):
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr(ops_checks, "flush_events", hang)
+    task = asyncio.create_task(asyncio.sleep(3600))
+    with capture_logs() as logs:
+        await asyncio.wait_for(sampler.stop_ops_metrics_sampler(task, pool=_pool(), flush_timeout_s=0.05), 2)
+    assert any(e["event"] == "ops_checks_flush_on_stop_failed" for e in logs)
+
+    monkeypatch.setattr(ops_checks, "flush_events", AsyncMock(side_effect=RuntimeError("pool closed")))
+    task = asyncio.create_task(asyncio.sleep(3600))
+    await sampler.stop_ops_metrics_sampler(task, pool=_pool())
+
+
+@pytest.mark.asyncio
 async def test_api_lifespan_starts_the_sampler_and_cancels_it_before_the_pool_closes(monkeypatch):
     from api import main
 
@@ -640,8 +675,9 @@ async def test_api_lifespan_starts_the_sampler_and_cancels_it_before_the_pool_cl
     redis.aclose = AsyncMock()
     real_stop = sampler.stop_ops_metrics_sampler
 
-    async def stop(task):
+    async def stop(task, pool=None):
         order.append("sampler.stop")
+        assert pool is not None   # S263 review: the stop flushes the ops events with the main pool
         await real_stop(task)
 
     def sampler_tasks():

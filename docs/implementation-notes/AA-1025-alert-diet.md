@@ -33,11 +33,19 @@ Decision table: root `AA-Ecosys/docs/audits/2026-11-01-S263-alerting-cost/diet.m
   (after the backlog); line fields `ops_checks` / `ops_checks_error`.
 - Admin bell list: `platform.ops_check.*` rows take their title from the payload ("Job queue starved").
 - `shared/jobs/worker.py`: `_flush_ops_events` every `OPS_FLUSH_EVERY_S` (300 s), bounded at 20 s, never fails the loop.
+- Review pass: one last flush on shutdown, so a deploy, a scale-in or a task replacement within 5 minutes of an event
+  no longer drops its alert. The api flushes in `stop_ops_metrics_sampler(task, pool=...)` after the sampler is
+  cancelled (a flush cancelled mid-way had put its events back); the worker at the end of `Worker.shutdown()`, after
+  the release (both bounded at `5 s`: the worker's release margin is 15 s of the 120 s stopTimeout, the api's
+  stopTimeout is 90 s).
 
 ## Tradeoffs
 
-- The log-event buffer is per process and in memory: an event counted in the last few minutes before a task is killed
-  is lost (the log line stays in CloudWatch Logs). The old metric filter did not have that gap; accepted for $0.
+- The log-event buffer is per process and in memory. A normal stop (deploy, scale-in, task replacement) flushes it
+  (review pass); only a hard kill (OOM, SIGKILL after the stopTimeout, a host failure) loses the events counted since
+  the last flush (the log line stays in CloudWatch Logs). The old metric filter did not have that gap; accepted for
+  $0. A durable row per event at write time was weighed and rejected: the events are logged from sync code and from
+  the cost-log write paths themselves (a DB write there would fail for the same reason the event fired).
 - No "sampling stopped" heartbeat: the api down is Infra's `aa-cis-dev-api-no-healthy-task`.
 - `services/quality/thresholds.yaml` still names the deleted script in a comment; left untouched because that file is
   on the quality path (hashed by CI).

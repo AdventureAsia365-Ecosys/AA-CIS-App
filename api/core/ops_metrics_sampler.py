@@ -88,6 +88,7 @@ logger = structlog.get_logger()
 OPS_METRICS_INTERVAL_S = 300.0
 OPS_METRICS_FIRST_DELAY_S = 30.0   # let the app finish starting before the first sample
 PART_TIMEOUT_S = 50.0              # bound on each part of a tick (6 parts -> <= 300 s, then the interval sleep)
+OPS_FLUSH_ON_STOP_TIMEOUT_S = 5.0  # S263 review: the last ops-event flush on shutdown (api stopTimeout is 90 s)
 
 ROLE_CONNECTIONS_SQL = """
     SELECT r.rolname, r.rolconnlimit, count(a.pid)::int AS connections
@@ -470,9 +471,25 @@ def start_ops_metrics_sampler(app, interval_s: float = OPS_METRICS_INTERVAL_S) -
     return asyncio.create_task(run_ops_metrics_sampler(app, interval_s), name="aa751-ops-metrics-sampler")
 
 
-async def stop_ops_metrics_sampler(task: Optional[asyncio.Task]) -> None:
-    """Cancel and wait; swallows the CancelledError (and anything else) so shutdown goes on."""
+async def stop_ops_metrics_sampler(task: Optional[asyncio.Task], pool: Any = None,
+                                   flush_timeout_s: float = OPS_FLUSH_ON_STOP_TIMEOUT_S) -> None:
+    """Cancel and wait; swallows the CancelledError (and anything else) so shutdown goes on.
+
+    S263 review: then, with the main pool, one last flush of the ops log events this process counted since the last
+    tick (a lost cost-log write, a tenant-pool fail-closed state): without it a deploy or scale-in within 5 minutes of
+    the event loses its alert. A flush cancelled mid-tick put its events back (shared/ops_checks.flush_events), so
+    they go out here. Bounded by flush_timeout_s; never raises."""
     if task is None:
         return
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
+    if pool is None:
+        return
+    from shared import ops_checks
+
+    try:
+        results = await asyncio.wait_for(ops_checks.flush_events(pool), timeout=flush_timeout_s)
+        if results:
+            logger.warning("ops_checks_flushed_on_stop", ops_checks=results)
+    except Exception as e:  # noqa: BLE001 — asyncio.TimeoutError included; shutdown goes on
+        logger.warning("ops_checks_flush_on_stop_failed", error=_err(e))

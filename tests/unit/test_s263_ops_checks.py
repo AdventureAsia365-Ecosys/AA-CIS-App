@@ -266,3 +266,32 @@ async def test_worker_flush_never_raises(monkeypatch):
     monkeypatch.setattr(ops_checks, "flush_events", AsyncMock(return_value={"x": {"bell": True}}))
     await w._flush_ops_events()
     assert w.ops_flush_every_seconds == 300.0
+
+
+@pytest.mark.asyncio
+async def test_worker_shutdown_flushes_the_events_counted_since_the_last_flush(monkeypatch):
+    """S263 review: a deploy or scale-in right after an event must not drop its alert."""
+    w = worker_mod.Worker(MagicMock())
+    monkeypatch.setattr(worker_mod.queue, "worker_stopped", AsyncMock())
+    seen = []
+
+    async def flush(pool):
+        seen.append(pool)
+        return {"llm_call_log_write_failed": {"bell": True, "email": "sent"}}
+
+    monkeypatch.setattr(ops_checks, "flush_events", flush)
+    await w.shutdown()
+    assert seen == [w.pool]
+
+
+@pytest.mark.asyncio
+async def test_worker_shutdown_flush_is_bounded(monkeypatch):
+    w = worker_mod.Worker(MagicMock())
+    monkeypatch.setattr(worker_mod.queue, "worker_stopped", AsyncMock())
+    monkeypatch.setattr(worker_mod, "OPS_FLUSH_ON_STOP_TIMEOUT_S", 0.05)
+
+    async def hang(pool):
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr(ops_checks, "flush_events", hang)
+    await asyncio.wait_for(w.shutdown(), 2)   # returns: the flush timed out, shutdown went on
