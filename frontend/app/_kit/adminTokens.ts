@@ -24,4 +24,10 @@ export const KX = {
   amberBorder: "var(--aa-amber-border)",
   /** Green border of a success note. */
   successBorder: "var(--aa-green-border)",
+  /** The flat scrim under a slide-over panel or a full-screen overlay. */
+  scrim: "var(--aa-scrim)",
+  /** Elevation shadows (both themes). */
+  shadowSm: "var(--aa-shadow-sm)",
+  shadowMd: "var(--aa-shadow-md)",
+  shadowLg: "var(--aa-shadow-lg)",
 } as const;

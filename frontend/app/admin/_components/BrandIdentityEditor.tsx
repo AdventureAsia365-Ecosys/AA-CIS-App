@@ -10,12 +10,14 @@
 // DELETE /api/admin/brands/{name} → soft delete
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Plus, Trash2, ChevronDown, ChevronUp, RefreshCw, Upload } from "lucide-react";
+import { Plus, Trash2, ChevronDown, ChevronUp, RefreshCw, Upload, X } from "lucide-react";
 import { useAdminIdentity } from "../../_kit/useAdminIdentity";
 import { can } from "@/lib/rbac";
 import { useT } from "../../_kit/core/useI18n";
 import { M } from "./BrandIdentityEditor.messages";
-import { Button, Eyebrow, K, Section, alpha, sans, serif, Input, Textarea } from "../../_kit";
+import {
+  Badge, Button, IconButton, K, KX, LinkButton, Pressable, Section, alpha, sans, serif, Input, Textarea,
+} from "../../_kit";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -89,10 +91,10 @@ function TagsInput({ value, onChange, placeholder, readOnly }: {
           }}>
             {tag}
             {!readOnly && (
-              <button onClick={() => onChange(value.filter(x => x !== tag))} aria-label={t("remove", tag)} style={{
-                background: "none", border: "none", cursor: "pointer", padding: 0,
-                color: K.accent, lineHeight: 1, fontSize: 13,
-              }}>×</button>
+              <IconButton variant="plain" size="xs" onClick={() => onChange(value.filter(x => x !== tag))}
+                label={t("remove", tag)} style={{ color: K.accent, width: 16, height: 16 }}>
+                <X size={11} />
+              </IconButton>
             )}
           </span>
         ))}
@@ -390,7 +392,15 @@ export default function BrandIdentityEditor() {
     } finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { loadBrands(); }, [loadBrands]);
+  // First load: the state starts as loading, so the effect only sets state once the answer arrives.
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/admin/brands")
+      .then(async (r) => { if (alive && r.ok) setBrands((await r.json()).brands ?? []); })
+      .catch(() => {})
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, []);
 
   async function selectBrand(name: string) {
     setSelected(name); setIsNew(false); setMsg(null); setHistoryOpen(false);
@@ -539,30 +549,23 @@ export default function BrandIdentityEditor() {
             <div style={{ padding: "16px 16px 10px", borderBottom: `1px solid ${K.line}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span style={{ fontSize: 12, fontWeight: 600, color: K.muted, textTransform: "uppercase", letterSpacing: "0.08em" }}>{t("brands")}</span>
               <div style={{ display: "flex", gap: 4 }}>
-                <button onClick={loadBrands} aria-label={t("reload")} style={{ background: "none", border: "none", cursor: "pointer", color: K.muted, padding: 4 }}>
+                <IconButton variant="plain" size="sm" onClick={loadBrands} label={t("reload")}>
                   <RefreshCw size={13} />
-                </button>
+                </IconButton>
                 {canEdit && (<>
-                <button
+                <Button
+                  size="sm"
+                  variant="ghost"
                   onClick={() => { startNew(); docxRef.current?.click(); }}
                   disabled={parsing}
                   title={t("uploadDocx")}
-                  style={{
-                    background: "var(--aa-purple-bg)", border: "none", borderRadius: 5, color: "var(--aa-purple-deep)",
-                    cursor: "pointer", padding: "4px 8px", fontSize: 12, fontWeight: 600,
-                    display: "flex", alignItems: "center", gap: 3, opacity: parsing ? 0.6 : 1,
-                  }}
                 >
                   <Upload size={11} /> {parsing ? "…" : "DOCX"}
-                </button>
+                </Button>
                 <input ref={docxRef} type="file" accept=".docx" style={{ display: "none" }} onChange={handleDocx} />
-                <button onClick={startNew} style={{
-                  background: K.accent, border: "none", borderRadius: 5, color: "var(--aa-on-solid)",
-                  cursor: "pointer", padding: "4px 8px", fontSize: 12, fontWeight: 600,
-                  display: "flex", alignItems: "center", gap: 3,
-                }}>
+                <Button size="sm" variant="primary" onClick={startNew}>
                   <Plus size={11} /> {t("new")}
-                </button>
+                </Button>
                 </>)}
               </div>
             </div>
@@ -615,18 +618,16 @@ export default function BrandIdentityEditor() {
                 {viewingOld && (
                   <div style={{
                     marginBottom: 16, padding: "10px 16px", borderRadius: 8,
-                    background: "var(--aa-amber-bg6)", border: "1px solid var(--aa-amber-border2)",
+                    background: K.amberSoft, border: `1px solid ${KX.amberBorder}`,
                     display: "flex", justifyContent: "space-between", alignItems: "center",
                   }}>
-                    <span style={{ fontSize: 13, color: "var(--aa-amber-orange)", fontWeight: 500 }}>
+                    <span style={{ fontSize: 13, color: K.amber, fontWeight: 500 }}>
                       {t("readOnlyVersion", viewingVersion ?? 0)}
                     </span>
-                    <button onClick={exitVersionView} style={{
-                      background: "none", border: "none", cursor: "pointer",
-                      fontSize: 12, color: "var(--aa-amber-orange)", fontWeight: 600, textDecoration: "underline",
-                    }}>
+                    <LinkButton tone="inherit" size="sm" onClick={exitVersionView}
+                      style={{ color: K.amber, textDecoration: "underline" }}>
                       {t("backToCurrent")}
-                    </button>
+                    </LinkButton>
                   </div>
                 )}
 
@@ -645,13 +646,9 @@ export default function BrandIdentityEditor() {
                     )}
                   </div>
                   {!isNew && selected && !isReadOnly && (
-                    <button onClick={deleteBrand} disabled={deleting} style={{
-                      background: "none", border: `1px solid ${K.line}`, borderRadius: 6,
-                      cursor: "pointer", color: K.danger, padding: "6px 10px",
-                      display: "flex", alignItems: "center", gap: 4, fontSize: 12,
-                    }}>
+                    <Button size="sm" variant="danger" onClick={deleteBrand} disabled={deleting}>
                       <Trash2 size={12} /> {deleting ? t("deleting") : t("delete")}
-                    </button>
+                    </Button>
                   )}
                 </div>
 
@@ -808,17 +805,14 @@ export default function BrandIdentityEditor() {
                 {/* Version history */}
                 {!isNew && detail && detail.history.length > 1 && (
                   <Section>
-                    <button
+                    <Pressable
                       onClick={() => setHistoryOpen(!historyOpen)}
-                      style={{
-                        width: "100%", background: "none", border: "none", cursor: "pointer",
-                        display: "flex", justifyContent: "space-between", alignItems: "center",
-                        padding: 0, fontFamily: sans,
-                      }}
+                      aria-expanded={historyOpen}
+                      style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
                     >
                       <span style={{ fontSize: 11, fontWeight: 600, color: K.muted, textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>{t("history", detail.history.length)}</span>
                       {historyOpen ? <ChevronUp size={14} color={K.muted} /> : <ChevronDown size={14} color={K.muted} />}
-                    </button>
+                    </Pressable>
                     {historyOpen && (
                       <div style={{ marginTop: 12 }}>
                         {detail.history.map(v => (
@@ -830,33 +824,17 @@ export default function BrandIdentityEditor() {
                               <span style={{ fontSize: 13, fontWeight: 500 }}>v{v.version}</span>
                               <span style={{ fontSize: 11, color: K.muted }}>{v.updated_at?.slice(0, 10) || "—"}</span>
                               {v.is_active && (
-                                <span style={{ fontSize: 10, background: K.accent, color: "var(--aa-on-solid)", borderRadius: 4, padding: "1px 6px" }}>{t("active")}</span>
+                                <Badge tone="accent" dot={false}>{t("active")}</Badge>
                               )}
                             </div>
                             <div style={{ display: "flex", gap: 6 }}>
-                              <button
-                                onClick={() => viewVersion(v)}
-                                style={{
-                                  background: "var(--aa-purple-bg)", border: "none", borderRadius: 5,
-                                  color: "var(--aa-purple-deep)", cursor: "pointer", padding: "3px 10px",
-                                  fontSize: 12, fontWeight: 600,
-                                }}
-                              >
+                              <Button size="sm" variant="ghost" onClick={() => viewVersion(v)}>
                                 {t("view")}
-                              </button>
+                              </Button>
                               {canEdit && !v.is_active && (
-                                <button
-                                  onClick={() => activateVersion(v.version)}
-                                  disabled={activating}
-                                  style={{
-                                    background: K.accentTint, border: `1px solid ${K.accent}`,
-                                    borderRadius: 5, color: K.accent, cursor: "pointer",
-                                    padding: "3px 10px", fontSize: 12, fontWeight: 600,
-                                    opacity: activating ? 0.6 : 1,
-                                  }}
-                                >
+                                <Button size="sm" variant="secondary" onClick={() => activateVersion(v.version)} disabled={activating}>
                                   {t("setActive")}
-                                </button>
+                                </Button>
                               )}
                             </div>
                           </div>

@@ -1,37 +1,4 @@
 {
-  "app/admin/_components/BrandIdentityEditor.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 9
-    },
-    "aa-kit/no-raw-aa-var": {
-      "count": 10
-    },
-    "react-hooks/set-state-in-effect": {
-      "count": 1
-    }
-  },
-  "app/admin/_components/SettingsKitTab.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    }
-  },
-  "app/admin/_components/TourDetailPanelV2.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 10
-    },
-    "aa-kit/no-hex-colour": {
-      "count": 3
-    },
-    "aa-kit/no-raw-aa-var": {
-      "count": 6
-    },
-    "aa-kit/no-raw-table": {
-      "count": 2
-    },
-    "react-hooks/set-state-in-effect": {
-      "count": 4
-    }
-  },
   "app/admin/_components/adminUi.tsx": {
     "aa-kit/no-hand-styled-button": {
       "count": 1

@@ -1,8 +1,11 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { X, ChevronRight } from "lucide-react";
-import { K, Badge, alpha, mono, sans, serif, useAdminIdentity, useFormat, useT, Input, Textarea } from "../../_kit";
+import {
+  K, KX, Badge, Button, ButtonGroup, DataTable, IconButton, Tabs, ToastProvider, mono, sans, serif,
+  useAdminIdentity, useFormat, useT, useToast, Input, Textarea, type ColumnDef,
+} from "../../_kit";
 import { tourTraceHref } from "@/lib/aiGateway";
 import { M } from "./tour.messages";
 import { SCORE_BANDS } from "@/lib/quality-registry.generated";
@@ -144,21 +147,6 @@ function commaToArray(text: string): string[] {
   return text.split(",").map(s => s.trim()).filter(Boolean);
 }
 
-// ── Toast ─────────────────────────────────────────────────────────────────────
-
-function Toast({ msg, type }: { msg: string; type: "success" | "error" }) {
-  return (
-    <div style={{
-      position: "fixed", bottom: 24, right: 24, zIndex: 999,
-      background: type === "success" ? K.success : K.danger,
-      color: "var(--aa-on-solid)", padding: "11px 18px", borderRadius: 8,
-      fontSize: 13, fontWeight: 500, boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
-    }}>
-      {msg}
-    </div>
-  );
-}
-
 // ── EditableField ─────────────────────────────────────────────────────────────
 
 function EditableField({ label, initialValue, onSave, onChange, rows, charLimit, placeholder }: {
@@ -173,19 +161,22 @@ function EditableField({ label, initialValue, onSave, onChange, rows, charLimit,
   const t = useT(M);
   const [value, setValue] = useState(initialValue);
   const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const lastSavedRef = useRef(initialValue);
-
-  useEffect(() => {
+  const [lastSaved, setLastSaved] = useState(initialValue);
+  // A new initialValue (the tour reloaded) resets the box while rendering (React's "adjust state on a prop change";
+  // was an effect, AA-1006).
+  const [prevInitial, setPrevInitial] = useState(initialValue);
+  if (initialValue !== prevInitial) {
+    setPrevInitial(initialValue);
     setValue(initialValue);
-    lastSavedRef.current = initialValue;
-  }, [initialValue]);
+    setLastSaved(initialValue);
+  }
 
   async function handleBlur() {
-    if (value === lastSavedRef.current || state === "saving") return;
+    if (value === lastSaved || state === "saving") return;
     setState("saving");
     try {
       await onSave(value);
-      lastSavedRef.current = value;
+      setLastSaved(value);
       setState("saved");
       setTimeout(() => setState("idle"), 2000);
     } catch {
@@ -273,7 +264,6 @@ interface SeoContextResponse {
   notes?: string;
 }
 
-type SeoSortKey = "keyword" | "volume" | "competition" | "cpc";
 
 function compNumeric(k: KeywordIdea): number {
   if (k.competition_index != null) return k.competition_index;
@@ -298,50 +288,40 @@ function fmtCpc(v: number | null): string {
 function SeoKeywordsPanel({ tourId }: { tourId: string }) {
   const t = useT(M);
   const rel = useRelTime();
-  const [data, setData] = useState<SeoContextResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
-  const [sortKey, setSortKey] = useState<SeoSortKey>("volume");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  // The answer for the tour it was fetched for: another tour shows the loader until its own answer arrives.
+  const [res, setRes] = useState<{ tourId: string; data: SeoContextResponse | null; error: boolean } | null>(null);
+  const loading = res?.tourId !== tourId;
+  const data = loading ? null : res.data;
+  const error = !loading && res.error;
 
   useEffect(() => {
     let alive = true;
-    setLoading(true);
-    setError(false);
     fetch(`/api/admin/tours/${tourId}/seo-context`)
       .then(r => r.json())
-      .then(d => { if (alive) setData(d); })
-      .catch(() => { if (alive) setError(true); })
-      .finally(() => { if (alive) setLoading(false); });
+      .then(d => { if (alive) setRes({ tourId, data: d, error: false }); })
+      .catch(() => { if (alive) setRes({ tourId, data: null, error: true }); });
     return () => { alive = false; };
   }, [tourId]);
 
-  function onSort(key: SeoSortKey) {
-    if (key === sortKey) {
-      setSortDir(d => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortKey(key);
-      setSortDir(key === "keyword" ? "asc" : "desc");
-    }
-  }
-
-  const sorted = useMemo(() => {
-    const arr = [...(data?.keyword_ideas || [])];
-    const dir = sortDir === "asc" ? 1 : -1;
-    arr.sort((a, b) => {
-      if (sortKey === "keyword") {
-        const av = (a.keyword || "").toLowerCase();
-        const bv = (b.keyword || "").toLowerCase();
-        return av < bv ? -dir : av > bv ? dir : 0;
-      }
-      let av: number; let bv: number;
-      if (sortKey === "volume") { av = a.search_volume ?? -1; bv = b.search_volume ?? -1; }
-      else if (sortKey === "competition") { av = compNumeric(a); bv = compNumeric(b); }
-      else { av = a.cpc ?? -1; bv = b.cpc ?? -1; }
-      return (av - bv) * dir;
-    });
-    return arr;
-  }, [data, sortKey, sortDir]);
+  // Highest search volume first; a header click re-sorts in the kit table (keyword A–Z, numbers high to low).
+  const sorted = useMemo(
+    () => [...(data?.keyword_ideas || [])]
+      .sort((a, b) => (b.search_volume ?? -1) - (a.search_volume ?? -1))
+      .map((k, i) => ({ ...k, rowId: `${k.keyword}-${i}` })),
+    [data],
+  );
+  const columns = useMemo<ColumnDef<KeywordIdea & { rowId: string }, unknown>[]>(() => [
+    { id: "keyword", header: t("colKeyword"), accessorFn: (k) => (k.keyword || "").toLowerCase(),
+      cell: ({ row }) => <span style={{ color: K.ink }}>{row.original.keyword}</span> },
+    { id: "volume", header: t("colVolume"), accessorFn: (k) => k.search_volume ?? -1, sortDescFirst: true,
+      meta: { align: "right" },
+      cell: ({ row }) => <span style={{ fontFamily: mono, color: K.body }}>{fmtVolume(row.original.search_volume)}</span> },
+    { id: "competition", header: t("colCompetition"), accessorFn: (k) => compNumeric(k), sortDescFirst: true,
+      meta: { align: "right" },
+      cell: ({ row }) => <span style={{ color: K.muted }}>{compDisplay(row.original)}</span> },
+    { id: "cpc", header: t("colCpc"), accessorFn: (k) => k.cpc ?? -1, sortDescFirst: true, meta: { align: "right" },
+      cell: ({ row }) => <span style={{ fontFamily: mono, color: K.accent }}>{fmtCpc(row.original.cpc)}</span> },
+  ], [t]);
 
   if (loading) {
     return <div style={{ textAlign: "center", padding: 40, color: K.muted }}>{t("loadingSeo")}</div>;
@@ -356,13 +336,6 @@ function SeoKeywordsPanel({ tourId }: { tourId: string }) {
       </div>
     );
   }
-
-  const arrow = (key: SeoSortKey) => (sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : "");
-  const th = (key: SeoSortKey, label: string, align: "left" | "right"): React.CSSProperties => ({
-    padding: "8px 12px", textAlign: align, cursor: "pointer", userSelect: "none",
-    fontSize: 11, fontWeight: 600, color: sortKey === key ? K.ink : K.muted,
-    textTransform: "uppercase" as const, letterSpacing: "0.1em",
-  });
 
   return (
     <div>
@@ -387,46 +360,49 @@ function SeoKeywordsPanel({ tourId }: { tourId: string }) {
           {t("noIdeas")}
         </div>
       ) : (
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-          <thead>
-            <tr style={{ background: K.line2 }}>
-              <th style={th("keyword", "Keyword", "left")} onClick={() => onSort("keyword")}>{t("colKeyword")}{arrow("keyword")}</th>
-              <th style={th("volume", "Volume", "right")} onClick={() => onSort("volume")}>{t("colVolume")}{arrow("volume")}</th>
-              <th style={th("competition", "Competition", "right")} onClick={() => onSort("competition")}>{t("colCompetition")}{arrow("competition")}</th>
-              <th style={th("cpc", "CPC", "right")} onClick={() => onSort("cpc")}>{t("colCpc")}{arrow("cpc")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((k, i) => (
-              <tr key={`${k.keyword}-${i}`} style={{ borderTop: `1px solid ${K.line}`, background: i % 2 === 0 ? K.card : K.bg }}>
-                <td style={{ padding: "8px 12px", color: K.ink }}>{k.keyword}</td>
-                <td style={{ padding: "8px 12px", textAlign: "right", fontFamily: mono, color: K.body }}>{fmtVolume(k.search_volume)}</td>
-                <td style={{ padding: "8px 12px", textAlign: "right", color: K.muted }}>{compDisplay(k)}</td>
-                <td style={{ padding: "8px 12px", textAlign: "right", fontFamily: mono, color: K.accent }}>{fmtCpc(k.cpc)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <DataTable<KeywordIdea & { rowId: string }>
+          tableId="tour-seo-keywords"
+          data={sorted}
+          columns={columns}
+          getRowId={(k) => k.rowId}
+          searchable={false}
+          paginate={false}
+          compact
+        />
       )}
     </div>
   );
 }
 
-export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose }: {
+type PanelProps = {
   tourId: string;
   tourName: string;
   rewriteCount?: number;
   onClose: () => void;
-}) {
+};
+
+/** The tour detail slide-over. A new tour remounts the panel (fresh state, its own load), and the kit toasts of the
+ *  panel's saves show in its own provider. */
+export function TourDetailPanelV2(props: PanelProps) {
+  return (
+    <ToastProvider>
+      <TourDetailPanel key={props.tourId} {...props} />
+    </ToastProvider>
+  );
+}
+
+function TourDetailPanel({ tourId, tourName, rewriteCount = 0, onClose }: PanelProps) {
   const t = useT(M);
+  const toast = useToast();
   const { isAdmin } = useAdminIdentity();
   const rel = useRelTime();
   const [detail, setDetail] = useState<TourDetailFull | null>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<"original" | "rewrite" | "history" | "seo" | "published">("original");
-  const [history, setHistory] = useState<HistoryRow[]>([]);
-  const [loadingHistory, setLoadingHistory] = useState(false);
-  const [toast, setToast] = useState<{ msg: string; type: "success" | "error" } | null>(null);
+  // null = not loaded: opening the History tab clears it, so the tab always shows fresh rows.
+  const [historyRows, setHistoryRows] = useState<HistoryRow[] | null>(null);
+  const history = historyRows ?? [];
+  const loadingHistory = tab === "history" && historyRows === null;
   const [selectedVersion, setSelectedVersion] = useState<VersionContent | null>(null);
   const [loadingVersion, setLoadingVersion] = useState(false);
   const [promoting, setPromoting] = useState(false);
@@ -434,8 +410,6 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
   const [savingAll, setSavingAll] = useState(false);
 
   useEffect(() => {
-    setLoading(true);
-    setDetail(null);
     fetch(`/api/admin/tours/${tourId}/detail`)
       .then(r => r.json())
       .then(d => {
@@ -462,18 +436,23 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
   }, [tourId]);
 
   useEffect(() => {
-    if (tab !== "history") return;
-    setLoadingHistory(true);
+    if (tab !== "history" || historyRows !== null) return;
+    let alive = true;
     fetch(`/api/admin/tours/${tourId}/history`)
       .then(r => r.json())
-      .then(d => setHistory(d.history || []))
-      .catch(() => {})
-      .finally(() => setLoadingHistory(false));
-  }, [tab, tourId]);
+      .then(d => { if (alive) setHistoryRows(d.history || []); })
+      .catch(() => { if (alive) setHistoryRows([]); });
+    return () => { alive = false; };
+  }, [tab, tourId, historyRows]);
+
+  function openTab(next: typeof tab) {
+    if (next === "history") setHistoryRows(null);
+    setTab(next);
+  }
 
   function showToast(msg: string, type: "success" | "error") {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 3000);
+    if (type === "success") toast.success(msg, 3000);
+    else toast.error(msg, 3000);
   }
 
   async function loadVersion(versionNum: number) {
@@ -492,7 +471,7 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
       const r = await fetch(`/api/admin/tours/${tourId}/versions/${versionNum}/promote`, { method: "POST" });
       if (r.ok) {
         showToast(t("promoted", versionNum), "success");
-        setHistory(prev => prev.map(h => ({ ...h })));
+        setHistoryRows(prev => prev && prev.map(h => ({ ...h })));
       } else {
         // AA-645: 409 = version not approved / source not live; the API says which.
         const err = await r.json().catch(() => ({}));
@@ -538,16 +517,61 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
     showToast(t("savedToast"), "success");
   }
 
-  const tabBtn = (active: boolean, disabled = false): React.CSSProperties => ({
-    padding: "8px 16px", fontSize: 13,
-    fontWeight: active ? 600 : 400,
-    color: active ? K.ink : K.muted,
-    cursor: disabled ? "default" : "pointer",
-    background: "none", border: "none",
-    borderBottom: active ? `2px solid ${K.accent}` : "2px solid transparent",
-    fontFamily: sans,
-    opacity: disabled ? 0.4 : 1,
-  });
+  const historyColumns: ColumnDef<HistoryRow, unknown>[] = [
+    { id: "version", header: t("hVersion"), accessorFn: (h) => h.version_num, cell: ({ row: { original: h } }) => {
+      const isActive = selectedVersion?.version_num === h.version_num;
+      return (
+        <span style={{ fontSize: 12, padding: "2px 8px", borderRadius: 10, background: isActive ? K.accent : K.accentTint, color: isActive ? KX.onAccent : K.accent, fontWeight: 600 }}>
+          v{h.version_num}
+        </span>
+      );
+    } },
+    { id: "model", header: t("hModel"), accessorFn: (h) => modelShort(h.model_editorial),
+      cell: ({ getValue }) => <span style={{ fontFamily: mono, fontSize: 11, color: K.muted }}>{String(getValue())}</span> },
+    // AA-318: the prompt version (sha256[:8], AA-289) as a mono pill; a change between rows is the regression signal.
+    { id: "prompt", header: t("hPrompt"), accessorFn: (h) => h.prompt_version ?? "", cell: ({ row: { original: h } }) => (
+      h.prompt_version ? (
+        <span style={{ fontFamily: mono, fontSize: 10.5, padding: "1px 6px", borderRadius: 8, background: K.line2, color: K.ink2 }} title={`prompt_version ${h.prompt_version}`}>
+          {h.prompt_version}
+        </span>
+      ) : <span style={{ color: K.muted2 }}>—</span>
+    ) },
+    { id: "brandV", header: t("hBrandV"), enableSorting: false, cell: ({ row: { original: h } }) => (
+      h.brand_rules_version != null
+        ? <span style={{ padding: "1px 6px", borderRadius: 8, background: K.accentTint, color: K.accent, fontWeight: 600, fontSize: 10 }}>{h.brand_name ? `${h.brand_name} · v${h.brand_rules_version}` : `v${h.brand_rules_version}`}</span>
+        : <span style={{ fontSize: 11, color: K.muted2 }}>—</span>
+    ) },
+    { id: "overall", header: t("hOverall"), accessorFn: (h) => h.score_overall ?? undefined, sortUndefined: "last", cell: ({ row: { original: h } }) => (
+      <span style={{ fontWeight: 700, color: scoreColor(h.score_overall) }}>{h.score_overall != null ? h.score_overall.toFixed(1) : "—"}</span>
+    ) },
+    { id: "brand", header: t("hBrand"), accessorFn: (h) => h.score_brand ?? undefined, sortUndefined: "last", cell: ({ row: { original: h } }) => (
+      <span style={{ color: scoreColor(h.score_brand) }}>{h.score_brand != null ? h.score_brand.toFixed(1) : "—"}</span>
+    ) },
+    { id: "seo", header: t("hSeo"), accessorFn: (h) => h.score_seo ?? undefined, sortUndefined: "last", cell: ({ row: { original: h } }) => (
+      <span style={{ color: scoreColor(h.score_seo) }}>{h.score_seo != null ? h.score_seo.toFixed(1) : "—"}</span>
+    ) },
+    { id: "cost", header: t("hCost"), accessorFn: (h) => h.cost_usd ?? undefined, sortUndefined: "last", cell: ({ row: { original: h } }) => (
+      <span style={{ color: K.accent }}>{h.cost_usd != null ? `$${h.cost_usd.toFixed(4)}` : "—"}</span>
+    ) },
+    { id: "date", header: t("hDate"), accessorFn: (h) => h.created_at ?? "", cell: ({ row: { original: h } }) => (
+      <span style={{ color: K.muted2, fontSize: 12 }}>{rel(h.created_at)}</span>
+    ) },
+    { id: "actions", header: "", enableSorting: false, meta: { hideLabelOnCard: true }, cell: ({ row: { original: h } }) => {
+      const isActive = selectedVersion?.version_num === h.version_num;
+      return (
+        <ButtonGroup label={t("versionActions", h.version_num)} gap="sm">
+          <Button size="sm" variant="ghost" disabled={loadingVersion}
+            onClick={e => { e.stopPropagation(); loadVersion(h.version_num); }}>
+            {loadingVersion && isActive ? "…" : t("viewContent")}
+          </Button>
+          <Button size="sm" variant="secondary" disabled={promoting}
+            onClick={e => { e.stopPropagation(); promoteVersion(h.version_num); }}>
+            {promoting ? "…" : t("makeCurrent")}
+          </Button>
+        </ButtonGroup>
+      );
+    } },
+  ];
 
   const raw = detail?.raw;
   const gen = detail?.generated;
@@ -558,14 +582,14 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
       {/* Backdrop */}
       <div
         onClick={onClose}
-        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 199 }}
+        style={{ position: "fixed", inset: 0, background: KX.scrim, zIndex: 199 }}
       />
 
       {/* Panel */}
       <div style={{
         position: "fixed", top: 0, right: 0, bottom: 0,
         width: "70vw", background: K.card,
-        boxShadow: "-4px 0 32px rgba(0,0,0,0.14)",
+        boxShadow: KX.shadowLg,
         zIndex: 200, display: "flex", flexDirection: "column",
         fontFamily: sans,
       }}>
@@ -603,18 +627,26 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                 {pub?.published_at && <span>{t("publishedWhen", rel(pub.published_at))}</span>}
               </div>
             </div>
-            <button onClick={onClose} aria-label={t("close")} style={{ background: "none", border: "none", cursor: "pointer", color: K.muted, padding: 4 }}>
+            <IconButton variant="plain" onClick={onClose} label={t("close")}>
               <X size={18} />
-            </button>
+            </IconButton>
           </div>
           {/* Tabs */}
-          <div style={{ display: "flex" }}>
-            <button style={tabBtn(tab === "original")} onClick={() => setTab("original")}>{t("tabOriginal")}</button>
-            <button style={tabBtn(tab === "rewrite", !gen)} onClick={() => gen && setTab("rewrite")}>{t("tabRewrite")}</button>
-            <button style={tabBtn(tab === "history")} onClick={() => setTab("history")}>{t("tabHistory")}</button>
-            <button style={tabBtn(tab === "seo")} onClick={() => setTab("seo")}>{t("tabSeo")}</button>
-            <button style={tabBtn(tab === "published", !pub)} onClick={() => pub && setTab("published")}>{t("tabPublished")}</button>
-          </div>
+          <Tabs
+            variant="underline"
+            ariaLabel={t("tabsLabel")}
+            gap={8}
+            style={{ marginBottom: -1 }}
+            active={tab}
+            onChange={(k) => openTab(k as typeof tab)}
+            tabs={[
+              { key: "original", label: t("tabOriginal") },
+              { key: "rewrite", label: t("tabRewrite"), disabled: !gen },
+              { key: "history", label: t("tabHistory") },
+              { key: "seo", label: t("tabSeo") },
+              { key: "published", label: t("tabPublished"), disabled: !pub },
+            ]}
+          />
         </div>
 
         {/* Body */}
@@ -648,18 +680,9 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
               <EditableField label={t("fInclusions")} initialValue={raw?.inclusions || ""} onSave={v => saveRaw("inclusions", v)} onChange={v => setRawDraft(d => ({ ...d, inclusions: v }))} rows={4} />
               <EditableField label={t("fExclusions")} initialValue={raw?.exclusions || ""} onSave={v => saveRaw("exclusions", v)} onChange={v => setRawDraft(d => ({ ...d, exclusions: v }))} rows={4} />
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
-                <button
-                  onClick={saveAllRaw}
-                  disabled={savingAll}
-                  style={{
-                    padding: "9px 22px", borderRadius: 7, border: "none", cursor: savingAll ? "not-allowed" : "pointer",
-                    // AA-994 S1b: --aa-on-accent is dark ink in both themes now (gold buttons); on this blue fill the
-                    // label takes the card colour: white in light (5.2:1 on #2563EB), dark slate in dark (6.3:1).
-                    background: "var(--aa-blue-deep)", color: "var(--aa-card)", fontSize: 13, fontWeight: 600, opacity: savingAll ? 0.6 : 1,
-                  }}
-                >
+                <Button variant="primary" onClick={saveAllRaw} disabled={savingAll}>
                   {savingAll ? t("saving") : t("saveAll")}
-                </button>
+                </Button>
               </div>
             </div>
           ) : tab === "rewrite" ? (
@@ -763,80 +786,16 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
               <div style={{ textAlign: "center", padding: 40, color: K.muted, fontSize: 13 }}>{t("noRewrites")}</div>
             ) : (
               <div>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                  <thead>
-                    <tr style={{ background: K.line2 }}>
-                      {[t("hVersion"), t("hModel"), t("hPrompt"), t("hBrandV"), t("hOverall"), t("hBrand"), t("hSeo"), t("hCost"), t("hDate"), ""].map((h, hi) => (
-                        <th key={hi} style={{
-                          padding: "8px 12px", textAlign: "left" as const,
-                          fontSize: 11, fontWeight: 600, color: K.muted,
-                          textTransform: "uppercase" as const, letterSpacing: "0.1em",
-                        }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {history.map((h, i) => {
-                      const isActive = selectedVersion?.version_num === h.version_num;
-                      return (
-                        <tr
-                          key={h.id}
-                          onClick={() => loadVersion(h.version_num)}
-                          style={{
-                            borderTop: `1px solid ${K.line}`,
-                            background: isActive ? alpha(K.accent, 9) : i % 2 === 0 ? K.card : K.bg,
-                            cursor: "pointer",
-                          }}
-                        >
-                          <td style={{ padding: "8px 12px" }}>
-                            <span style={{ fontSize: 12, padding: "2px 8px", borderRadius: 10, background: isActive ? K.accent : K.accentTint, color: isActive ? "var(--aa-on-solid)" : K.accent, fontWeight: 600 }}>
-                              v{h.version_num}
-                            </span>
-                          </td>
-                          <td style={{ padding: "8px 12px", fontFamily: mono, fontSize: 11, color: K.muted }}>{modelShort(h.model_editorial)}</td>
-                          {/* AA-318: prompt_version was already typed on HistoryRow but never
-                              rendered — the exact "no way to observe/compare prompt over time"
-                              gap this issue is about. Short hash (sha256[:8], AA-289) as a
-                              mono pill; a version's own change vs. the row above/below it is
-                              the actual regression signal an admin scans this column for. */}
-                          <td style={{ padding: "8px 12px" }}>
-                            {h.prompt_version ? (
-                              <span style={{ fontFamily: mono, fontSize: 10.5, padding: "1px 6px", borderRadius: 8, background: K.line2, color: K.ink2 }} title={`prompt_version ${h.prompt_version}`}>
-                                {h.prompt_version}
-                              </span>
-                            ) : <span style={{ color: K.muted2 }}>—</span>}
-                          </td>
-                          <td style={{ padding: "8px 12px", fontSize: 11, color: K.muted2 }}>
-                            {h.brand_rules_version != null ? <span style={{ padding: "1px 6px", borderRadius: 8, background: K.accentTint, color: K.accent, fontWeight: 600, fontSize: 10 }}>{h.brand_name ? `${h.brand_name} · v${h.brand_rules_version}` : `v${h.brand_rules_version}`}</span> : "—"}
-                          </td>
-                          <td style={{ padding: "8px 12px", fontWeight: 700, color: scoreColor(h.score_overall) }}>{h.score_overall != null ? h.score_overall.toFixed(1) : "—"}</td>
-                          <td style={{ padding: "8px 12px", color: scoreColor(h.score_brand) }}>{h.score_brand != null ? h.score_brand.toFixed(1) : "—"}</td>
-                          <td style={{ padding: "8px 12px", color: scoreColor(h.score_seo) }}>{h.score_seo != null ? h.score_seo.toFixed(1) : "—"}</td>
-                          <td style={{ padding: "8px 12px", color: K.accent }}>{h.cost_usd != null ? `$${h.cost_usd.toFixed(4)}` : "—"}</td>
-                          <td style={{ padding: "8px 12px", color: K.muted2, fontSize: 12 }}>{rel(h.created_at)}</td>
-                          <td style={{ padding: "8px 12px" }}>
-                            <div style={{ display: "flex", gap: 6 }}>
-                              <button
-                                onClick={e => { e.stopPropagation(); loadVersion(h.version_num); }}
-                                disabled={loadingVersion}
-                                style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${K.line}`, borderRadius: 4, background: K.card, cursor: "pointer", color: K.muted, fontWeight: 600 }}
-                              >
-                                {loadingVersion && isActive ? "…" : t("viewContent")}
-                              </button>
-                              <button
-                                onClick={e => { e.stopPropagation(); promoteVersion(h.version_num); }}
-                                disabled={promoting}
-                                style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${K.accent}`, borderRadius: 4, background: K.accentTint, cursor: "pointer", color: K.accent, fontWeight: 600 }}
-                              >
-                                {promoting ? "…" : t("makeCurrent")}
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                <DataTable<HistoryRow>
+                  tableId="tour-rewrite-history"
+                  data={history}
+                  columns={historyColumns}
+                  getRowId={(h) => h.id}
+                  onRowClick={(h) => loadVersion(h.version_num)}
+                  searchable={false}
+                  paginate={false}
+                  compact
+                />
 
                 {/* Version content preview */}
                 {loadingVersion && (
@@ -853,13 +812,9 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                           </span>
                         )}
                       </div>
-                      <button
-                        onClick={() => promoteVersion(selectedVersion.version_num)}
-                        disabled={promoting}
-                        style={{ padding: "5px 12px", fontSize: 12, border: `1px solid ${K.accent}`, borderRadius: 6, background: K.accent, cursor: "pointer", color: "var(--aa-on-solid)", fontWeight: 600 }}
-                      >
+                      <Button size="sm" variant="primary" onClick={() => promoteVersion(selectedVersion.version_num)} disabled={promoting}>
                         {promoting ? t("promoting") : t("makeCurrent")}
-                      </button>
+                      </Button>
                     </div>
                     {[
                       { label: t("vName"),        val: selectedVersion.aa_name },
@@ -919,7 +874,7 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                       display: "inline-flex", alignItems: "center", gap: 6,
                       padding: "9px 18px", borderRadius: 8,
                       background: K.accent, border: `1px solid ${K.accent}`,
-                      fontSize: 13, fontWeight: 600, color: "var(--aa-on-solid)", textDecoration: "none",
+                      fontSize: 13, fontWeight: 600, color: KX.onAccent, textDecoration: "none",
                     }}
                   >
                     {t("rerun")} <ChevronRight size={13} />
@@ -933,7 +888,6 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
         </div>
       </div>
 
-      {toast && <Toast msg={toast.msg} type={toast.type} />}
     </>
   );
 }
