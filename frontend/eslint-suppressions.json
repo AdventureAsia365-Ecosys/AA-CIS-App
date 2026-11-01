@@ -10,26 +10,6 @@
       "count": 42
     }
   },
-  "app/admin/atom-curation/page.tsx": {
-    "aa-kit/no-class-name": {
-      "count": 4
-    },
-    "aa-kit/no-hand-styled-button": {
-      "count": 9
-    },
-    "aa-kit/no-hex-colour": {
-      "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    },
-    "aa-kit/no-raw-table": {
-      "count": 1
-    },
-    "react-hooks/set-state-in-effect": {
-      "count": 9
-    }
-  },
   "app/admin/master-content/page.tsx": {
     "aa-kit/no-class-name": {
       "count": 1
