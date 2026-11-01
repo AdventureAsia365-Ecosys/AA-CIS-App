@@ -25,14 +25,13 @@
 // `acp_deliver.packets.publish_mode` model; the live T11 publish flow (v1_publish.py) has no
 // ramp/publish-mode concept at all. This FE call site was missed at the time, causing a live
 // HTTP 404 on this page. Removed here rather than restored, per the same AA-603 assessment.
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { ChevronDown, ChevronUp } from "lucide-react";
-import SocialContentSubNav from "../_components/SocialContentSubNav";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import SocialContentSubNav, { SocialContentSplit } from "../_components/SocialContentSubNav";
 import { TenantSelect } from "../_components/TenantSelect";
 import {
   PageFrame, PageFrameBody, PageFrameHeader, PageHeader, useFormat, useT, Badge, K, Section, mono,
-  sans, serif,
-  Input,
+  serif, Button, ChipButton, DataTable, Drawer, Input, type ColumnDef,
 } from "../../_kit";
 import { STATS } from "./messages";
 import { fetchJson, EmptyState, ErrorState } from "../_components/auditPanels";
@@ -98,16 +97,6 @@ interface GateTelemetry {
 // ── Sort — same mechanism as Content Trace (06), AA-572/575 ─────────────────────
 
 type ReviewSortKey = "tenant" | "failure" | "checks" | "status" | "created_at";
-type Sort<K extends string> = { key: K; dir: "asc" | "desc" };
-
-function useToggleSort<K extends string>() {
-  const [sort, setSort] = useState<Sort<K> | null>(null);
-  const toggle = useCallback((key: K) => {
-    setSort(prev => prev?.key === key ? { key, dir: prev.dir === "desc" ? "asc" : "desc" } : { key, dir: "desc" });
-  }, []);
-  return { sort, toggle };
-}
-
 function reviewSortValue(r: ReviewLogRow, key: ReviewSortKey): string | number {
   switch (key) {
     case "tenant": return r.tenant_name ?? r.tenant_slug ?? "";
@@ -135,63 +124,27 @@ function telemetrySortValue(r: GateTelemetryTenantChannel, key: TelemetrySortKey
   }
 }
 
-function sortRows<T, K extends string>(rows: T[], sort: Sort<K> | null, valueOf: (r: T, k: K) => string | number): T[] {
-  if (!sort) return rows;
-  const withKey = rows.map(r => ({ r, k: valueOf(r, sort.key) }));
-  withKey.sort((a, b) => {
-    const cmp = typeof a.k === "string" && typeof b.k === "string"
-      ? a.k.localeCompare(b.k)
-      : (a.k as number) - (b.k as number);
-    return sort.dir === "asc" ? cmp : -cmp;
-  });
-  return withKey.map(x => x.r);
-}
-
-function SortableTh<K extends string>({ label, sortKey, sort, onSort, style }: {
-  label: string; sortKey?: K; sort: Sort<K> | null; onSort: (key: K) => void; style?: React.CSSProperties;
-}) {
-  const active = sortKey && sort?.key === sortKey;
-  return (
-    <th onClick={sortKey ? () => onSort(sortKey) : undefined} style={{
-      padding: "8px 12px", textAlign: "left", fontSize: 10.5, fontWeight: 600,
-      letterSpacing: "0.08em", textTransform: "uppercase", color: active ? K.accent : K.muted,
-      borderBottom: `1px solid ${K.line}`, whiteSpace: "nowrap",
-      cursor: sortKey ? "pointer" : "default", userSelect: "none", ...style,
-    }}>
-      <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-        {label}
-        {sortKey && (
-          active ? (sort!.dir === "asc" ? <ChevronUp size={12} /> : <ChevronDown size={12} />)
-            : <ChevronDown size={12} style={{ opacity: 0.25 }} />
-        )}
-      </span>
-    </th>
-  );
-}
-
 // ── Review Log section — moved verbatim from a4-oversight/page.tsx, sort added ──────────────────
 
 function ReviewLogSection() {
   const t = useT(STATS);
-  const [rows, setRows] = useState<ReviewLogRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { formatDateTime } = useFormat();
   const [tenantFilter, setTenantFilter] = useState("");
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const { sort, toggle } = useToggleSort<ReviewSortKey>();
-
-  const fetchData = useCallback(() => {
-    setLoading(true);
-    const params = new URLSearchParams({ limit: "200" });
-    if (tenantFilter) params.set("tenant_id", tenantFilter);
-    fetch(`/api/admin/a4/review-log?${params}`)
-      .then(r => (r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`)))
-      .then(d => { setRows(d.data || []); setError(null); })
-      .catch(e => setError(String(e)))
-      .finally(() => setLoading(false));
-  }, [tenantFilter]);
-
-  useEffect(() => { fetchData(); }, [fetchData]);
+  // AA-1006: the escalation detail opens in a kit Drawer (the table row used to expand in place).
+  const [open, setOpen] = useState<ReviewLogRow | null>(null);
+  const q = useQuery({
+    queryKey: ["a4-review-log", tenantFilter],
+    queryFn: () => {
+      const params = new URLSearchParams({ limit: "200" });
+      if (tenantFilter) params.set("tenant_id", tenantFilter);
+      return fetch(`/api/admin/a4/review-log?${params}`)
+        .then(r => (r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`)))
+        .then(d => (d.data || []) as ReviewLogRow[]);
+    },
+  });
+  const rows = useMemo(() => q.data ?? [], [q.data]);
+  const loading = q.isPending;
+  const error = q.isError ? String(q.error) : null;
 
   // Client-side check_id pattern rollup — unchanged from the old page (this is a small, already-
   // loaded set of T3/T5 escalation rows, not the platform-wide gate-failure aggregate below, which
@@ -206,7 +159,26 @@ function ReviewLogSection() {
     return Object.entries(counts).sort((a, b) => b[1] - a[1]);
   }, [rows]);
 
-  const sortedRows = useMemo(() => sortRows(rows, sort, reviewSortValue), [rows, sort]);
+  const columns = useMemo<ColumnDef<ReviewLogRow, unknown>[]>(() => [
+    { id: "tenant", header: t("colTenant"), accessorFn: (r) => reviewSortValue(r, "tenant"), cell: ({ row: { original: r } }) => (
+      <div>
+        <div style={{ fontWeight: 600 }}>{r.tenant_name || "—"}</div>
+        <div title={r.tenant_id} style={{ fontFamily: mono, fontSize: 10.5, color: K.muted2 }}>{r.tenant_slug || r.tenant_id.slice(0, 8)}</div>
+      </div>
+    ) },
+    { id: "failure", header: t("colFailure"), accessorFn: (r) => reviewSortValue(r, "failure"),
+      cell: ({ row: { original: r } }) => r.failure_summary || "—" },
+    { id: "checks", header: t("colChecks"), accessorFn: (r) => reviewSortValue(r, "checks"), cell: ({ row: { original: r } }) => (
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+        {(r.escalate_detail || []).map((item, i) => <Badge key={i} tone="neutral">{item.check_id}</Badge>)}
+      </div>
+    ) },
+    { id: "status", header: t("colStatus"), accessorFn: (r) => reviewSortValue(r, "status"), cell: ({ row: { original: r } }) => (
+      <Badge tone={r.review_status === "pending" ? "warning" : "neutral"}>{r.review_status}</Badge>
+    ) },
+    { id: "created_at", header: t("colCreated"), accessorFn: (r) => reviewSortValue(r, "created_at"), sortDescFirst: true,
+      cell: ({ row: { original: r } }) => <span style={{ fontFamily: mono, fontSize: 11, color: K.muted }}>{formatDateTime(r.created_at)}</span> },
+  ], [t, formatDateTime]);
 
   return (
     <Section style={{ marginBottom: 24 }}>
@@ -243,77 +215,37 @@ function ReviewLogSection() {
         // review-log load resolves (never on the Loading… state), so a blank/broken page still fails.
         <div data-testid="admin-content-ready" style={{ padding: 24, textAlign: "center", color: K.muted2 }}>{t("noEscalations")}</div>
       ) : (
-        <div data-testid="admin-content-ready" style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr style={{ background: K.bg }}>
-                <SortableTh label={t("colTenant")} sortKey="tenant" sort={sort} onSort={toggle} />
-                <SortableTh label={t("colFailure")} sortKey="failure" sort={sort} onSort={toggle} />
-                <SortableTh label={t("colChecks")} sortKey="checks" sort={sort} onSort={toggle} />
-                <SortableTh label={t("colStatus")} sortKey="status" sort={sort} onSort={toggle} />
-                <SortableTh label={t("colCreated")} sortKey="created_at" sort={sort} onSort={toggle} />
-                <SortableTh label="" sort={sort} onSort={toggle} />
-              </tr>
-            </thead>
-            <tbody>
-              {sortedRows.map(row => (
-                <RowLine key={row.id} row={row}
-                  expanded={expanded === row.id}
-                  onToggle={() => setExpanded(expanded === row.id ? null : row.id)} />
-              ))}
-            </tbody>
-          </table>
+        <div data-testid="admin-content-ready">
+          <DataTable<ReviewLogRow>
+            tableId="a4-review-log"
+            data={rows}
+            columns={columns}
+            getRowId={(r) => r.id}
+            onRowClick={setOpen}
+            searchable={false}
+            paginate={false}
+            compact
+          />
         </div>
       )}
-    </Section>
-  );
-}
-
-function RowLine({ row, expanded, onToggle }: {
-  row: ReviewLogRow; expanded: boolean; onToggle: () => void;
-}) {
-  const t = useT(STATS);
-  const { formatDateTime } = useFormat();
-  const td: React.CSSProperties = { padding: "10px 12px", borderBottom: `1px solid ${K.line}`, fontSize: 12.5, color: K.body, verticalAlign: "top" };
-  return (
-    <>
-      <tr onClick={onToggle} style={{ cursor: "pointer" }}>
-        <td style={td}>
-          <div style={{ fontWeight: 600 }}>{row.tenant_name || "—"}</div>
-          <div title={row.tenant_id} style={{ fontFamily: mono, fontSize: 10.5, color: K.muted2 }}>{row.tenant_slug || row.tenant_id.slice(0, 8)}</div>
-        </td>
-        <td style={td}>{row.failure_summary || "—"}</td>
-        <td style={td}>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-            {(row.escalate_detail || []).map((item, i) => (
-              <Badge key={i} tone="neutral">{item.check_id}</Badge>
+      <Drawer open={open != null} onClose={() => setOpen(null)} title={open?.tenant_name || open?.tenant_slug || "—"}>
+        {open && (
+          <div style={{ background: K.bg, borderRadius: 8, padding: 12, fontFamily: mono, fontSize: 11, color: K.body }}>
+            <div style={{ marginBottom: 6, color: K.muted2 }}>
+              tour_id: {open.tour_id} · version_id: {open.tenant_tour_version_id}
+            </div>
+            {(open.escalate_detail || []).map((item, i) => (
+              <div key={i} style={{ marginBottom: 4 }}>
+                <strong>{item.check_id}</strong>
+                {item.field && <> · {t("field")} {item.field}</>}
+                {item.description && <> — {item.description}</>}
+                {item.source_span && <div style={{ color: K.muted2, marginTop: 2 }}>“{item.source_span}”</div>}
+              </div>
             ))}
           </div>
-        </td>
-        <td style={td}><Badge tone={row.review_status === "pending" ? "warning" : "neutral"}>{row.review_status}</Badge></td>
-        <td style={{ ...td, fontFamily: mono, fontSize: 11, color: K.muted }}>{formatDateTime(row.created_at)}</td>
-        <td style={{ ...td, textAlign: "center" }}>{expanded ? "▲" : "▼"}</td>
-      </tr>
-      {expanded && (
-        <tr>
-          <td colSpan={6} style={{ padding: "0 12px 14px", borderBottom: `1px solid ${K.line}` }}>
-            <div style={{ background: K.bg, borderRadius: 8, padding: 12, fontFamily: mono, fontSize: 11, color: K.body }}>
-              <div style={{ marginBottom: 6, color: K.muted2 }}>
-                tour_id: {row.tour_id} · version_id: {row.tenant_tour_version_id}
-              </div>
-              {(row.escalate_detail || []).map((item, i) => (
-                <div key={i} style={{ marginBottom: 4 }}>
-                  <strong>{item.check_id}</strong>
-                  {item.field && <> · {t("field")} {item.field}</>}
-                  {item.description && <> — {item.description}</>}
-                  {item.source_span && <div style={{ color: K.muted2, marginTop: 2 }}>“{item.source_span}”</div>}
-                </div>
-              ))}
-            </div>
-          </td>
-        </tr>
-      )}
-    </>
+        )}
+      </Drawer>
+    </Section>
   );
 }
 
@@ -321,19 +253,14 @@ function RowLine({ row, expanded, onToggle }: {
 
 function PlatformStatsSection() {
   const t = useT(STATS);
-  const [stats, setStats] = useState<PlatformStats | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(() => {
-    setLoading(true);
-    fetchJson<{ data: PlatformStats }>("/api/admin/a4/platform-stats")
-      .then(d => { setStats(d.data); setError(null); })
-      .catch(e => setError(String(e.message || e)))
-      .finally(() => setLoading(false));
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
+  const q = useQuery({
+    queryKey: ["a4-platform-stats"],
+    queryFn: () => fetchJson<{ data: PlatformStats }>("/api/admin/a4/platform-stats").then(d => d.data),
+  });
+  const stats = q.data ?? null;
+  const loading = q.isPending;
+  const error = q.isError ? String((q.error as Error).message || q.error) : null;
+  const load = () => { q.refetch(); };
 
   const maxGateCount = useMemo(
     () => Math.max(1, ...(stats?.top_gate_failures.map(g => g.fail_count) ?? [1])),
@@ -426,27 +353,23 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 function GateTelemetrySection() {
   const t = useT(STATS);
-  const [data, setData] = useState<GateTelemetry | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [channelFilter, setChannelFilter] = useState("all");
-  const { sort, toggle } = useToggleSort<TelemetrySortKey>();
-
-  const load = useCallback(() => {
-    setLoading(true);
-    const params = new URLSearchParams();
-    if (dateFrom) params.set("date_from", dateFrom);
-    if (dateTo) params.set("date_to", dateTo);
-    const qs = params.toString();
-    fetchJson<{ data: GateTelemetry }>(`/api/admin/a4/gate-telemetry${qs ? `?${qs}` : ""}`)
-      .then(d => { setData(d.data); setError(null); })
-      .catch(e => setError(String(e.message || e)))
-      .finally(() => setLoading(false));
-  }, [dateFrom, dateTo]);
-
-  useEffect(() => { load(); }, [load]);
+  const q = useQuery({
+    queryKey: ["a4-gate-telemetry", dateFrom, dateTo],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (dateFrom) params.set("date_from", dateFrom);
+      if (dateTo) params.set("date_to", dateTo);
+      const qs = params.toString();
+      return fetchJson<{ data: GateTelemetry }>(`/api/admin/a4/gate-telemetry${qs ? `?${qs}` : ""}`).then(d => d.data);
+    },
+  });
+  const data = q.data ?? null;
+  const loading = q.isPending;
+  const error = q.isError ? String((q.error as Error).message || q.error) : null;
+  const load = () => { q.refetch(); };
 
   // Channel list for the filter pills — union of both aggregates so a channel that only has
   // publishes/exports (no content_piece rows in the window) still appears.
@@ -460,9 +383,8 @@ function GateTelemetrySection() {
 
   const visibleRows = useMemo(() => {
     const rows = data?.by_tenant_channel ?? [];
-    const filtered = channelFilter === "all" ? rows : rows.filter(r => r.channel === channelFilter);
-    return sortRows(filtered, sort, telemetrySortValue);
-  }, [data, channelFilter, sort]);
+    return channelFilter === "all" ? rows : rows.filter(r => r.channel === channelFilter);
+  }, [data, channelFilter]);
 
   const visibleGates = useMemo(() => {
     const gates = data?.top_gate_failures_by_channel ?? [];
@@ -474,10 +396,29 @@ function GateTelemetrySection() {
     [visibleGates],
   );
 
-  const td: React.CSSProperties = {
-    padding: "8px 12px", borderBottom: `1px solid ${K.line}`, fontSize: 12.5, color: K.body,
-  };
-  const num: React.CSSProperties = { ...td, textAlign: "right", fontFamily: mono };
+  const numCol = (key: TelemetrySortKey, label: string, color?: (r: GateTelemetryTenantChannel) => string | undefined): ColumnDef<GateTelemetryTenantChannel, unknown> => ({
+    id: key, header: label, accessorFn: (r) => telemetrySortValue(r, key), sortDescFirst: true, meta: { align: "right" },
+    cell: ({ row: { original: r } }) => (
+      <span style={{ fontFamily: mono, color: color?.(r) }}>{telemetrySortValue(r, key)}</span>
+    ),
+  });
+  const columns: ColumnDef<GateTelemetryTenantChannel, unknown>[] = [
+    { id: "tenant", header: t("colTenant"), accessorFn: (r) => telemetrySortValue(r, "tenant"), cell: ({ row: { original: r } }) => (
+      <div>
+        <div style={{ fontWeight: 600 }}>{r.tenant_name || "—"}</div>
+        <div title={r.tenant_id} style={{ fontFamily: mono, fontSize: 10.5, color: K.muted2 }}>{r.tenant_id.slice(0, 8)}</div>
+      </div>
+    ) },
+    { id: "channel", header: t("colChannel"), accessorFn: (r) => telemetrySortValue(r, "channel"),
+      cell: ({ row: { original: r } }) => <Badge tone="neutral">{r.channel || "—"}</Badge> },
+    numCol("total", t("colTotal")),
+    numCol("warn", t("warn"), (r) => (r.warn_count > 0 ? K.amber : K.muted2)),
+    numCol("held", t("held"), (r) => (r.held_count > 0 ? K.danger : K.muted2)),
+    numCol("failed", t("colFailed"), (r) => (r.failed_count > 0 ? K.danger : K.muted2)),
+    numCol("retry", t("retry")),
+    numCol("publish", t("colPublish")),
+    numCol("export", t("colExport")),
+  ];
 
   return (
     <Section style={{ marginBottom: 24 }}>
@@ -496,21 +437,18 @@ function GateTelemetrySection() {
           <Input
             type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
             aria-label={t("fromDate")}
-            style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${K.line}`, fontSize: 12, fontFamily: mono, outline: "none" }}
+            size="sm" style={{ fontFamily: mono, fontSize: 12 }}
           />
           <span style={{ fontSize: 12, color: K.muted2 }}>→</span>
           <Input
             type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
             aria-label={t("toDate")}
-            style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${K.line}`, fontSize: 12, fontFamily: mono, outline: "none" }}
+            size="sm" style={{ fontFamily: mono, fontSize: 12 }}
           />
           {(dateFrom || dateTo) && (
-            <button
-              onClick={() => { setDateFrom(""); setDateTo(""); }}
-              style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${K.line}`, background: "transparent", color: K.muted, fontSize: 11, cursor: "pointer" }}
-            >
+            <Button size="sm" variant="ghost" onClick={() => { setDateFrom(""); setDateTo(""); }}>
               {t("clear")}
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -532,40 +470,16 @@ function GateTelemetrySection() {
         <EmptyState title={t("noTelemetry")} body={t("noPieces")} />
       ) : (
         <>
-          <div style={{ overflowX: "auto", marginBottom: 24 }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr style={{ background: K.bg }}>
-                  <SortableTh label={t("colTenant")} sortKey="tenant" sort={sort} onSort={toggle} />
-                  <SortableTh label={t("colChannel")} sortKey="channel" sort={sort} onSort={toggle} />
-                  <SortableTh label={t("colTotal")} sortKey="total" sort={sort} onSort={toggle} style={{ textAlign: "right" }} />
-                  <SortableTh label={t("warn")} sortKey="warn" sort={sort} onSort={toggle} style={{ textAlign: "right" }} />
-                  <SortableTh label={t("held")} sortKey="held" sort={sort} onSort={toggle} style={{ textAlign: "right" }} />
-                  <SortableTh label={t("colFailed")} sortKey="failed" sort={sort} onSort={toggle} style={{ textAlign: "right" }} />
-                  <SortableTh label={t("retry")} sortKey="retry" sort={sort} onSort={toggle} style={{ textAlign: "right" }} />
-                  <SortableTh label={t("colPublish")} sortKey="publish" sort={sort} onSort={toggle} style={{ textAlign: "right" }} />
-                  <SortableTh label={t("colExport")} sortKey="export" sort={sort} onSort={toggle} style={{ textAlign: "right" }} />
-                </tr>
-              </thead>
-              <tbody>
-                {visibleRows.map(r => (
-                  <tr key={`${r.tenant_id}:${r.channel ?? ""}`}>
-                    <td style={td}>
-                      <div style={{ fontWeight: 600 }}>{r.tenant_name || "—"}</div>
-                      <div title={r.tenant_id} style={{ fontFamily: mono, fontSize: 10.5, color: K.muted2 }}>{r.tenant_id.slice(0, 8)}</div>
-                    </td>
-                    <td style={td}><Badge tone="neutral">{r.channel || "—"}</Badge></td>
-                    <td style={num}>{r.total}</td>
-                    <td style={{ ...num, color: r.warn_count > 0 ? K.amber : K.muted2 }}>{r.warn_count}</td>
-                    <td style={{ ...num, color: r.held_count > 0 ? K.danger : K.muted2 }}>{r.held_count}</td>
-                    <td style={{ ...num, color: r.failed_count > 0 ? K.danger : K.muted2 }}>{r.failed_count}</td>
-                    <td style={num}>{r.retry_count}</td>
-                    <td style={num}>{r.publish_count}</td>
-                    <td style={num}>{r.export_count}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div style={{ marginBottom: 24 }}>
+            <DataTable<GateTelemetryTenantChannel>
+              tableId="a4-gate-telemetry"
+              data={visibleRows}
+              columns={columns}
+              getRowId={(r) => `${r.tenant_id}:${r.channel ?? ""}`}
+              searchable={false}
+              paginate={false}
+              compact
+            />
           </div>
 
           <SectionLabel>{channelFilter !== "all" ? t("topGatesFor", channelFilter) : t("topGatesByChannel")}</SectionLabel>
@@ -599,17 +513,9 @@ function GateTelemetrySection() {
   );
 }
 
-// AA-615 — small channel filter pill (self-contained; the tenant-portal ReviewList has its own).
+// AA-615 — the channel filter pill: one kit chip (AA-1006).
 function FilterPill({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
-  return (
-    <button onClick={onClick} style={{
-      padding: "5px 12px", borderRadius: 999, border: `1px solid ${active ? K.accent : K.line}`,
-      background: active ? K.card : "transparent", color: active ? K.ink : K.muted,
-      fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: sans,
-    }}>
-      {label}
-    </button>
-  );
+  return <ChipButton size="sm" selected={active} onClick={onClick}>{label}</ChipButton>;
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
@@ -626,14 +532,14 @@ export default function PlatformStatsPage() {
         </PageFrameHeader>
 
         <PageFrameBody scroll style={{ overflowX: "auto" }}>
-          <div className="a527-dash-body" style={{ display: "flex", gap: 20, alignItems: "flex-start" }}>
+          <SocialContentSplit>
             <SocialContentSubNav active="platform_stats" />
             <div style={{ flex: 1, minWidth: 0 }}>
               <ReviewLogSection />
               <PlatformStatsSection />
               <GateTelemetrySection />
             </div>
-          </div>
+          </SocialContentSplit>
         </PageFrameBody>
     </PageFrame>
   );

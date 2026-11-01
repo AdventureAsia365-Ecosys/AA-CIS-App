@@ -16,7 +16,7 @@ import { I18nProvider, useT } from "../_kit/core/useI18n";
 import type { Lang } from "../_kit/core/i18n";
 import { langStore } from "../_kit/i18n";
 import { M, LOGIN_ERRORS } from "./messages";
-import { Input } from "../_kit";
+import { Button, Input, K } from "../_kit";
 
 interface LoginFormProps {
   legacyEnabled: boolean;
@@ -125,10 +125,9 @@ function LoginFormBody({ legacyEnabled, cognitoAvailable, signInHost, initialErr
           </a>
         ) : (
           <div>
-            <button type="button" disabled
-              style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, width:"100%", padding:12, background:"var(--bg-primary)", border:"1px solid var(--border)", borderRadius:BTN_RADIUS, color:"var(--text-muted)", fontSize:13, fontWeight:600, fontFamily: FONT_SANS, cursor:"not-allowed" }}>
+            <Button variant="ghost" size="lg" disabled style={{ width:"100%", gap:8 }}>
               <Mail size={14} /> {t("companySignIn")}
-            </button>
+            </Button>
             <div style={{ fontSize:11, color:"var(--text-muted)", marginTop:6, textAlign:"center" as const }}>
               {t("companyOnlyHere")}
             </div>
@@ -140,7 +139,7 @@ function LoginFormBody({ legacyEnabled, cognitoAvailable, signInHost, initialErr
             {t("codeByEmail", signInHost)}
           </div>
         )}
-        {initialError && !error && <div role="alert" style={{ fontSize:12, color:"var(--aa-red)", marginTop:10 }}>{t(initialError)}</div>}
+        {initialError && !error && <div role="alert" style={{ fontSize:12, color: K.danger, marginTop:10 }}>{t(initialError)}</div>}
 
         {legacyEnabled && (
           <>
@@ -156,7 +155,7 @@ function LoginFormBody({ legacyEnabled, cognitoAvailable, signInHost, initialErr
                 <Input type="text" value={username} onChange={e => { setUsername(e.target.value); setError(""); }}
                   placeholder={t("username")}
                   onKeyDown={e => e.key === "Enter" && !loading && login()}
-                  style={{ width:"100%", padding:"10px 12px 10px 34px", background:"var(--bg-primary)", border:`1px solid ${error ? "var(--aa-red)" : "var(--border)"}`, borderRadius:8, color:"var(--text-primary)", fontSize:13, outline:"none" }} />
+                  invalid={!!error} style={{ width:"100%", padding:"0 12px 0 34px" }} />
               </div>
             </div>
 
@@ -167,15 +166,14 @@ function LoginFormBody({ legacyEnabled, cognitoAvailable, signInHost, initialErr
                 <Input type="password" value={password} onChange={e => { setPassword(e.target.value); setError(""); }}
                   placeholder="••••••••"
                   onKeyDown={e => e.key === "Enter" && !loading && login()}
-                  style={{ width:"100%", padding:"10px 12px 10px 34px", background:"var(--bg-primary)", border:`1px solid ${error ? "var(--aa-red)" : "var(--border)"}`, borderRadius:8, color:"var(--text-primary)", fontSize:13, outline:"none" }} />
+                  invalid={!!error} style={{ width:"100%", padding:"0 12px 0 34px" }} />
               </div>
-              {error && <div style={{ fontSize:12, color:"var(--aa-red)", marginTop:6 }}>{error}</div>}
+              {error && <div style={{ fontSize:12, color: K.danger, marginTop:6 }}>{error}</div>}
             </div>
 
-            <button onClick={login} disabled={loading}
-              style={{ width:"100%", padding:12, background:"var(--brand-gold)", border:"none", borderRadius:BTN_RADIUS, color:"white", fontSize:13, fontWeight:600, fontFamily: FONT_SANS, ...BTN_PRIMARY_TEXT, cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.7 : 1 }}>
+            <Button variant="primary" size="lg" onClick={login} disabled={loading} style={{ width:"100%", padding:12 }}>
               {loading ? t("connecting") : t("login")}
-            </button>
+            </Button>
           </>
         )}
 
