@@ -23,8 +23,8 @@ from .schema_check import SchemaMismatch, conform
 from .errors import (DEADLINE, DISABLED, OTHER, THROTTLED, TRUNCATED, LLMAccessDenied, LLMStageDisabled,
                      RouteDeadlineExceeded,
                      account_level_class, classify)
-from . import (breaker, connection_budget, connections, data_scope, prompt_registry, stage_params, stream_sink,
-               tenant_budget)
+from . import (breaker, connection_budget, connections, data_scope, family_rule, prompt_registry, stage_params,
+               stream_sink, tenant_budget)
 from .vendor_route import (VendorDeployment, deployment_plan, pinned_deployment, split_pin,
                            vendor_deployment_for)
 from .deployments import alias_targets_sync
@@ -946,6 +946,9 @@ class LLMClient:
             if deadline_token is not None:
                 _DEADLINE.reset(deadline_token)
             _ATTEMPT_SCOPE.reset(scope_token)
+
+        # AA-1024 A4: an eval runner's call-time family check (family_rule.trace_models; no-op without a trace).
+        family_rule.note_model(role, getattr(resp, "model_used", None))
 
         # AA-919: no A/B shadow call inside a writing-memory eval run (call_log.bind_eval_stage): it would add spend
         # and llm_shadow_log rows for an eval, not production traffic (cost-cuts K2, "shadow_sample_pct = 0").

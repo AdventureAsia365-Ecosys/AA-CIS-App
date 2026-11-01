@@ -35,6 +35,7 @@ import openpyxl
 import structlog
 
 from shared.aws_client.bronze import bronze_bucket
+from shared.llm_client import family_rule
 from shared.secrets import get_database_url  # AA-838 D9: default application_name
 
 logger = structlog.get_logger()
@@ -58,6 +59,12 @@ S1_OLD_REGRESSION_THRESHOLD = 1.0
 # never confirmed. Rather than invent a new boundary, this uses 2 buckets only: "long"
 # (AA-339-sourced) and "other" — see docs/implementation-notes/AA-353.md "Should know".
 ITINERARY_LONG_TOUR_DAY_THRESHOLD = 9
+
+# AA-1024 A4 (ADR 0009 decision 12): the S1-old eval writes with this model (an eval may name its model, ADR 0009
+# decision 5) and is scored by these judge stages; a judge of the writer's family makes the run refuse to start, and a
+# tour whose real writer and judge models share a family (a writer fallback onto the judge's maker) makes it INVALID.
+S1_OLD_WRITER_MODEL = "haiku"
+S1_OLD_JUDGE_STAGES = ("s1_judge", "s1_brand_audit")
 
 ITINERARY_BASELINE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "baselines", "itinerary_compression_baseline.json",
@@ -162,13 +169,21 @@ async def run_s1_old_eval() -> dict:
     runs its own audit call for legacy/no-profile brands, per its own docstring), seo={}
     (skip DataForSEO — an eval run scores writing quality, not live keyword data)."""
     from api.routers.v1_pipeline import _rewrite_tour
+    from shared.llm_client.catalog import list_models
 
+    models = await list_models()
+    await check_judge_family(models)              # AA-1024 A4: before any paid call
     tours = _download_golden_tours()
     results = []
     for idx, tour in enumerate(tours):
-        result = await _rewrite_tour(
-            tour, idx=idx, total=len(tours), brand_rules={}, seo={}, model_tier="haiku",
-        )
+        with family_rule.trace_models() as seen:
+            result = await _rewrite_tour(
+                tour, idx=idx, total=len(tours), brand_rules={}, seo={}, model_tier=S1_OLD_WRITER_MODEL,
+            )
+        same = family_rule.shared_families(family_rule.labels(seen, "writer"), family_rule.labels(seen, "judge"),
+                                           models)
+        if same:
+            result["same_family"] = same
         results.append(result)
         logger.info("eval_s1_old_tour_done", idx=idx, name=tour["name"],
                     quality_score=result.get("quality_score"), status=result.get("status"))
@@ -181,6 +196,7 @@ async def run_s1_old_eval() -> dict:
     avg_score = round(sum(r["quality_score"] for r in scored) / len(scored), 3) if scored else None
     total_cost = round(sum(r.get("cost_usd", 0.0) for r in results), 4)
     deg = degraded_summary(results)
+    same_family_tours = [r.get("src_name") for r in results if r.get("same_family")]
     return {
         "pipeline": "s1_old",
         "prompt_version": next(iter(prompt_versions), None) or "",
@@ -203,10 +219,23 @@ async def run_s1_old_eval() -> dict:
             # AA-925 (design §6.3): a hard detector that failed open makes the run INVALID — never a regression
             # signal and never a pass.
             "degraded": deg["counts"],
-            "invalid": deg["invalid"],
+            # AA-1024 A4: a tour judged by a model of its writer's family measures nothing either (ADR 0009 d12)
+            "invalid": deg["invalid"] or bool(same_family_tours),
             "invalid_tours": deg["invalid_tours"],
+            "same_family_tours": same_family_tours,
         },
     }
+
+
+async def check_judge_family(models: list) -> None:
+    """AA-1024 A4: SameFamilyJudge before the run when a judge stage's route (primary or fallback) has a model of the
+    writer model's family. An unreadable route raises too (the run cannot be checked, so it does not start)."""
+    conflicts = await family_rule.stage_pair_conflicts(None, S1_OLD_JUDGE_STAGES, writer_model=S1_OLD_WRITER_MODEL,
+                                                       models=models)
+    if conflicts:
+        raise family_rule.SameFamilyJudge(
+            f"the S1-old eval writes with {S1_OLD_WRITER_MODEL} and a judge route has a model of its family "
+            f"(ADR 0009 decision 12): {'; '.join(conflicts)}")
 
 
 def degraded_summary(results: list[dict]) -> dict:

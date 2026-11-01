@@ -51,6 +51,7 @@ from shared.llm_client.catalog import (
 from shared.llm_client import connections as llm_connections
 from shared.llm_client import data_scope
 from shared.llm_client import deployments as llm_deployments
+from shared.llm_client import family_rule, invariant, route_evidence
 from shared.llm_client.client import legacy_acc2_native_enabled
 from shared.llm_client.role_config import (
     list_stage_configs,
@@ -169,12 +170,22 @@ def _route_view(row: dict, models: Optional[list]) -> dict:
     }
 
 
+# AA-1024 A4: the refusal reasons the admin shows next to an unavailable model (English UI copy).
+_REASON_NOT_ENABLED = "Not enabled in the model catalog"
+_REASON_NOT_CALLABLE = "This model cannot be called through the gateway"
+_REASON_JUDGE_FAMILY = ("A judge must be of another model family than the writers it scores "
+                        f"(writers are {family_rule.WRITER_FAMILY} models, ADR 0009 decision 12)")
+_REASON_WRITER_FAMILY = (f"Writer stages stay on {family_rule.WRITER_FAMILY} models until the qualification ladder "
+                         "passes (ADR 0009 decision 12); the judge that scores them is of another family")
+
+
 def _catalog_options(role: str, stage: str, models: list, scopes: Optional[tuple] = None,
                      reach: Optional[dict] = None) -> list[dict]:
     """AA-659: every stage now runs through the gateway route, so availability depends only on
-    the catalog row and the writer/judge vendor rule (ADR-2026-014/027): writers are Anthropic,
-    judges are never Anthropic. ADR 0008: `validate` stages (extraction/checks the judge never
-    scores, e.g. s1_source_facts) may use any vendor. AA-1002 (S5): and on the stage's data scopes
+    the catalog row and the writer/judge rule. AA-1024 A4 (ADR 0009 decision 12): the rule reads the model FAMILY
+    (``CatalogModel.family_key``, migration 320), not the vendor: writers are of ``family_rule.WRITER_FAMILY``
+    (Anthropic), judges never are. ADR 0008: `validate` stages (extraction/checks the judge never
+    scores, e.g. s1_source_facts) may use any family. AA-1002 (S5): and on the stage's data scopes
     (`scopes`, None = no stage policy): a model none of whose connections (`reach`, `_reach_scopes`)
     the stage allows cannot be selected."""
     options = []
@@ -184,15 +195,15 @@ def _catalog_options(role: str, stage: str, models: list, scopes: Optional[tuple
             continue
         reason = None
         if not m.enabled:
-            reason = m.blocked_reason or "Chưa bật trong model catalog"
+            reason = m.blocked_reason or _REASON_NOT_ENABLED
         elif role == "embed":
             pass
         elif "llm_client" not in m.callable_via:
-            reason = "Model này không gọi được qua gateway"
-        elif role == "judge" and m.vendor == "anthropic":
-            reason = "Judge phải khác vendor với writer (writer là Anthropic)"
-        elif role == "writer" and m.vendor != "anthropic":
-            reason = "Writer và judge phải khác vendor (judge là OpenAI)"
+            reason = _REASON_NOT_CALLABLE
+        elif role == "judge" and m.family_key == family_rule.WRITER_FAMILY:
+            reason = _REASON_JUDGE_FAMILY
+        elif role == "writer" and m.family_key != family_rule.WRITER_FAMILY:
+            reason = _REASON_WRITER_FAMILY
         elif not _scope_reaches(scopes, reach, m.model_key):
             reason = _SCOPE_REASON.format(scopes=", ".join(scopes or ()))
         opt = {"model_id": m.model_key, "label": m.label, "via": model_via(m),
@@ -299,7 +310,7 @@ def _writer_last_resort(role: str, scopes: Optional[tuple], models: Optional[lis
                         model_key: str) -> bool:
     """AA-1026 (S263, tech lead T-3): a writer stage a migration opened to vendor_direct may END its route on a model
     of another maker that is reached only outside AWS (today GPT-6 Luna on the OpenAI API, migration 327): the last
-    resort when every AWS path is blocked. The writer / judge vendor rule still decides the primary, every other
+    resort when every AWS path is blocked. The writer / judge family rule still decides the primary, every other
     fallback and the shadow. The caller checks the position (the last fallback only)."""
     if role != "writer" or model_key not in outside:
         return False
@@ -318,9 +329,64 @@ def _options_for(role: str, stage: str, models: Optional[list], scopes: Optional
     return _catalog_options(role, stage, models, scopes, reach)
 
 
-class LlmConfigPatch(BaseModel):
+class _ChangeEvidence(BaseModel):
+    """AA-1026 D7 (ADR 0009 decision 12, T-19): what backs a change of a writer / judge stage's models: the eval run
+    (shared.prompt_eval_runs.id) or, when no eval can run, a break-glass reason (audited, raises an admin bell)."""
+    eval_run_id: Optional[str] = Field(None, max_length=64)
+    break_glass_reason: Optional[str] = Field(None, max_length=route_evidence.BREAK_GLASS_MAX_CHARS)
+
+
+class LlmConfigPatch(_ChangeEvidence):
     model_id: str
     account_route: Optional[str] = None
+
+
+async def _change_evidence(role: str, body: _ChangeEvidence) -> Optional[dict]:
+    """422 when a writer / judge model change carries no usable evidence; the evidence for the audit row otherwise
+    (None for a stage that needs none)."""
+    try:
+        return await route_evidence.require(role, eval_run_id=body.eval_run_id,
+                                            break_glass_reason=body.break_glass_reason)
+    except route_evidence.EvidenceRefused as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:  # noqa: BLE001 — the eval run table could not be read: refuse, never wave through
+        logger.warning("llm_route_evidence_unreadable", error=str(e)[:200])
+        raise HTTPException(status_code=503, detail="the eval run could not be checked; try again")
+
+
+# ── AA-1024 A6 — the failure-domain rule on a saved route (report only) ─────────────────────────────────────────────
+
+def route_warnings(report: dict, stage: str) -> list[str]:
+    """The warnings of one stage from the failure-domain report (invariant.read; pure): a breach only (a stage with a
+    second domain or a declared degrade mode passes). Report only: the change is saved either way (blocking waits for
+    prod go-live, ADR 0009 decision 5)."""
+    if not report or not report.get("ready"):
+        return []
+    result = next((s for s in report.get("stages") or [] if s.get("stage") == stage), None)
+    if result is None or result.get("status") != "breach":
+        return []
+    why = result.get("reason") or "no enabled, funded deployment on the route"
+    return [f"Failure-domain rule (report only): stage {stage!r} has no enabled, funded fallback in another failure "
+            f"domain and no declared degrade mode ({why}). The change is saved; add a fallback on another connection "
+            "or declare a degrade mode."]
+
+
+async def _route_warnings(request: Optional[Request], stage: str) -> list[str]:
+    """The rule the nightly digest and /admin/llm-availability run (invariant.read with the connections whose circuit
+    refuses now), on the route just saved. Never fails the change: an unreadable registry gives no warning."""
+    from api.services import llm_availability
+    pool = getattr(getattr(getattr(request, "app", None), "state", None), "pool", None)
+    if pool is None:
+        return []
+    try:
+        async with pool.acquire() as conn:
+            now = datetime.now(timezone.utc)
+            _ready, conns = await llm_availability.read_connections(conn, now=now)
+            report = await invariant.read(conn, blocked=llm_availability.blocked_from(conns), now=now)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("llm_route_invariant_check_failed", stage=stage, error=str(e)[:200])
+        return []
+    return route_warnings(report, stage)
 
 
 @router.get("/llm-config", summary="Việc C — list all 16 per-stage LLM configs + option metadata")
@@ -370,29 +436,33 @@ async def patch_llm_config(
     if body.account_route is not None and body.account_route not in _ACCOUNT_ROUTE_VALUES:
         raise HTTPException(status_code=422,
                             detail="This account route is not allowed: models run on the LLM account only")
+    # AA-1026 D7: a new primary model of a writer / judge stage needs its eval run or a break-glass reason.
+    evidence = (await _change_evidence(current["role"], body)) if body.model_id != current["model_id"] else None
     try:
         updated = await set_stage_config(
             stage, body.model_id, body.account_route, updated_by=f"admin:{admin_actor}",
-            audit_actor=f"admin:{admin_actor}",
+            audit_actor=f"admin:{admin_actor}", evidence=evidence,
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     updated["updated_at"] = updated["updated_at"].isoformat() if updated["updated_at"] else None
     updated["route"] = _route_view(updated, await _load_catalog())
     logger.info("admin_llm_config_changed", stage=stage, model_id=body.model_id,
-                account_route=body.account_route, admin_actor=admin_actor)
+                account_route=body.account_route, admin_actor=admin_actor,
+                evidence=sorted(evidence) if evidence else None)
     await _wm_reverify(request, stage, admin_actor)
+    updated["warnings"] = await _route_warnings(request, stage)   # AA-1024 A6 (report only)
     return updated
 
 
 # ── AA-686 — PATCH a stage route (fallback chain + shadow) ─────────────────────────────────────
 # Separate from PATCH /llm-config/{stage} (which sets the primary model): the route is the ordered
 # fallbacks + optional shadow (ADR 0006). Every model named must be a catalog model that
-# _options_for() marks `available` for the stage — the same vendor + enabled rule as the model
+# _options_for() marks `available` for the stage — the same family + enabled rule as the model
 # PATCH — so the UI can never save a route the gateway would refuse to run.
 
 
-class LlmRoutePatch(BaseModel):
+class LlmRoutePatch(_ChangeEvidence):
     fallback_model_ids: Optional[list[str]] = None
     shadow_model_id: Optional[str] = None
     shadow_sample_pct: Optional[int] = None
@@ -461,20 +531,27 @@ async def patch_llm_route(
                                 detail=f"shadow model {shadow!r} is not selectable for stage {stage!r}")
     # AA-1026 review: T-3 (outside AWS only when the AWS paths are blocked) holds for the whole route.
     _check_aws_before_vendor(stage, scopes, reach, [primary, *fallbacks])
+    # AA-1026 D7: a new fallback chain of a writer / judge stage needs its eval run or a break-glass reason. A
+    # shadow-only change does not (the shadow never serves a reply; it is how the evidence is gathered).
+    chain_changed = list(fallbacks) != list(current.get("fallback_model_ids") or [])
+    evidence = (await _change_evidence(current["role"], body)) if chain_changed else None
 
     try:
         updated = await set_stage_route(
             stage, fallback_model_ids=fallbacks, shadow_model_id=shadow,
             shadow_sample_pct=sample_pct, updated_by=f"admin:{admin_actor}",
-            audit_actor=f"admin:{admin_actor}",
+            audit_actor=f"admin:{admin_actor}", evidence=evidence,
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     updated["updated_at"] = updated["updated_at"].isoformat() if updated["updated_at"] else None
     updated["route"] = _route_view(updated, await _load_catalog())
     logger.info("admin_llm_route_changed", stage=stage, fallback_model_ids=fallbacks,
-                shadow_model_id=shadow, shadow_sample_pct=sample_pct, admin_actor=admin_actor)
+                shadow_model_id=shadow, shadow_sample_pct=sample_pct, admin_actor=admin_actor,
+                evidence=sorted(evidence) if evidence else None)
     await _wm_reverify(request, stage, admin_actor)
+    # AA-1024 A6: the failure-domain rule on the saved route, as the nightly digest reports it (200 + warnings[]).
+    updated["warnings"] = await _route_warnings(request, stage)
     return updated
 
 

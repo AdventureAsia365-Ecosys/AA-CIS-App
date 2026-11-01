@@ -25,7 +25,9 @@ from shared.tour_liveness import (
 from services.content_generation.graph import build_graph
 from shared.llm_client.errors import is_llm_access_denied
 from shared.llm_client.tenant_budget import approval_stop_in, counter_unavailable_in
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
+
+from api.core.model_tier import refuse_model_tier
 import asyncpg
 import boto3 as _boto3
 from fastapi.security import HTTPBearer as _HTTPBearer, HTTPAuthorizationCredentials as _Creds
@@ -438,8 +440,13 @@ class TourRunRequest(BaseModel):
     validation_feedback: list = []
     seo_mode: str = "dataforseo"
     rewrite_language: str = "en-US"
-    model_tier: Optional[str] = None  # AA-518 — dead-stub class (see comment above), kept consistent
     subtitle_focus: str = "standard"
+
+    # AA-1024 A2: no model_tier, kept consistent with admin_pipeline.TourRunRequest (dead-stub class, see above)
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_model_tier(cls, data):
+        return refuse_model_tier(data)
 
 
 # ── Step Functions Execution Status ──────────────────────────────────────────

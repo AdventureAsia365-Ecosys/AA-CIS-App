@@ -4,7 +4,8 @@ Moved out of `api/routers/admin_pipeline.py::_s1_batch_ingest_task` (in-process 
 shared.pipeline_jobs). The submit step stays in the request (it returns the batch ARN); this job
 owns the long poll + ingest, so it survives an API deploy and shows on /admin/job-runner.
 
-Payload: {"job_arn", "output_uri", "account", "tour_ids", "batch_id", "seo_mode", "model_tier"}.
+Payload: {"job_arn", "output_uri", "account", "tour_ids", "batch_id", "seo_mode"} (a "model_tier" of an older job is
+ignored, AA-1024 A2).
 
 NOTE (AA-624): Bedrock Batch is currently blocked on acc3, so this kind cannot be verified live
 yet. It is moved for consistency (so no background task is left in the API process); the ingest
@@ -42,8 +43,7 @@ async def run(ctx: JobContext) -> dict:
         tour_ids=p["tour_ids"],
         batch_id=p["batch_id"],
         seo_mode=p.get("seo_mode", "standard"),
-        model_tier=p.get("model_tier"),
-        poll=True,
+        poll=True,                              # AA-1024 A2: a payload's model_tier (older jobs) is ignored
     )
     await ctx.progress(phase="done", ingested=summary.get("ingested"))
     # AA-642 S7: ingest_s1_batch wrote one llm_call_log row per record (bound to this job id by the worker).

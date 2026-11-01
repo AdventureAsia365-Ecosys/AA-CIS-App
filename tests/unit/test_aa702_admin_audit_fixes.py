@@ -153,10 +153,10 @@ def test_tenant_detail_cost_query_reads_llm_call_log():
     assert "WHERE tenant_id = $1 OR ($2 AND tenant_id IS NULL)" in src
 
 
-# ── 8. job dedup matches a NULL model_tier (S1 "Settings default") ──────────────────────────────
+# ── 8. job dedup matches a NULL batch (AA-1024 A2: model_tier left the key) ─────────────────────────────
 
 @pytest.mark.asyncio
-async def test_find_active_duplicate_is_null_safe_on_model_tier():
+async def test_find_active_duplicate_is_null_safe_on_batch_and_ignores_model_tier():
     seen = {}
 
     class _C:
@@ -173,5 +173,6 @@ async def test_find_active_duplicate_is_null_safe_on_model_tier():
     with patch.dict("os.environ", {"DATABASE_URL": "postgres://x"}), \
          patch("api.routers.jobs_repo.asyncpg.connect", _connect):
         await jobs_repo.find_active_duplicate({"tour_id": "t1", "model_tier": None, "batch_id": None})
-    assert "request->>'model_tier' IS NOT DISTINCT FROM $2" in seen["sql"]
-    assert seen["args"] == ("t1", None, None)
+    assert "model_tier" not in seen["sql"]
+    assert "request->>'batch_id'   IS NOT DISTINCT FROM $2" in seen["sql"]
+    assert seen["args"] == ("t1", None)
