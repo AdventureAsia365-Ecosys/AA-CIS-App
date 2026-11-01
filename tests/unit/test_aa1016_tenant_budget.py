@@ -118,15 +118,23 @@ def test_other_tenants_are_unaffected(state):
         assert tenant_budget.check("t9_write").state == "ok"
 
 
-def test_an_unreadable_state_fails_open(state, monkeypatch):
+def test_an_unreadable_state_fails_closed_for_t_stages_only(state, monkeypatch):
+    """AA-642 A8 (was: fails open): the tenant has a budget, its spend counter read errors -> T-stage calls refused."""
     budgets, _ = state
-    budgets[TENANT] = _budget(spent=16.0)
+    budgets[TENANT] = _budget(spent=1.0)
 
     def boom(tid):
         raise RuntimeError("db down")
     monkeypatch.setattr(tenant_budget, "loader_state", boom)
     with bind_tenant(TENANT):
-        assert tenant_budget.check("t9_write") is None
+        with pytest.raises(tenant_budget.TenantBudgetUnavailable) as info:
+            tenant_budget.check("t9_write")
+        assert tenant_budget.check("a3_atomize") is None                 # platform stages fail open
+        with pytest.raises(tenant_budget.TenantBudgetUnavailable):       # still closed inside FAILURE_TTL_SECONDS
+            tenant_budget.check("t2_generate")
+    err = info.value
+    assert str(err).startswith("tenant_ai_budget_unreadable: Tenant " + TENANT) and err.tenant_id == TENANT
+    assert not isinstance(err, cost_guard.BudgetExceeded)                # the job retries, never stopped_budget
 
 
 def test_the_switch_turns_it_off(state, monkeypatch):
@@ -302,3 +310,95 @@ def test_the_route_accepts_only_the_two_reasons():
     assert RetryLlmDeniedRequest(reason="tenant_ai_budget_approval").reason == "tenant_ai_budget_approval"
     with pytest.raises(ValidationError):
         RetryLlmDeniedRequest(reason="anything")
+
+
+# ── AA-642 A8: fail closed when the counter cannot be read ───────────────────────────────────────────────────────
+
+def _boom(tid):
+    raise RuntimeError("counter read failed")
+
+
+def test_a_tenant_without_a_budget_is_never_refused_by_an_unreadable_counter(state, monkeypatch):
+    budgets, reads = state
+    budgets[OTHER] = _budget(tenant=OTHER)
+    monkeypatch.setattr(tenant_budget, "loader_state", _boom)
+    with bind_tenant(TENANT):
+        assert tenant_budget.check("t9_write") is None
+    assert reads["tenants"] == 1
+
+
+def test_an_unreadable_counter_after_a_hard_stop_off_read_fails_open(state, monkeypatch):
+    budgets, _ = state
+    budgets[TENANT] = _budget(spent=1.0, hard=False)
+    with bind_tenant(TENANT):
+        assert tenant_budget.check("t9_write").hard_stop is False        # one good read: hard stop off
+        monkeypatch.setattr(tenant_budget, "CACHE_TTL_SECONDS", 0.0)
+        monkeypatch.setattr(tenant_budget, "loader_state", _boom)
+        assert tenant_budget.check("t9_write") is None                   # alert-only budget: fail open
+
+
+def test_an_unreadable_counter_after_a_hard_stop_on_read_fails_closed(state, monkeypatch):
+    budgets, _ = state
+    budgets[TENANT] = _budget(spent=1.0, hard=True)
+    with bind_tenant(TENANT):
+        assert tenant_budget.check("t9_write").state == "ok"
+        monkeypatch.setattr(tenant_budget, "CACHE_TTL_SECONDS", 0.0)
+        monkeypatch.setattr(tenant_budget, "loader_state", _boom)
+        with pytest.raises(tenant_budget.TenantBudgetUnavailable):
+            tenant_budget.check("t9_write")
+
+
+def test_the_counter_is_read_again_after_the_failure_window(state, monkeypatch):
+    budgets, _ = state
+    budgets[TENANT] = _budget(spent=1.0)
+    real = tenant_budget.loader_state
+    monkeypatch.setattr(tenant_budget, "loader_state", _boom)
+    with bind_tenant(TENANT):
+        with pytest.raises(tenant_budget.TenantBudgetUnavailable):
+            tenant_budget.check("t9_write")
+        monkeypatch.setattr(tenant_budget, "FAILURE_TTL_SECONDS", 0.0)
+        monkeypatch.setattr(tenant_budget, "loader_state", real)
+        assert tenant_budget.check("t9_write").state == "ok"
+
+
+def test_an_unreadable_tenant_set_knows_nothing_and_fails_open(state, monkeypatch):
+    def no_db():
+        raise RuntimeError("db down")
+    monkeypatch.setattr(tenant_budget, "loader_tenants", no_db)
+    monkeypatch.setattr(tenant_budget, "loader_state", _boom)
+    with bind_tenant(TENANT):
+        assert tenant_budget.check("t9_write") is None
+
+
+def test_the_switch_off_also_turns_the_fail_closed_off(state, monkeypatch):
+    budgets, _ = state
+    budgets[TENANT] = _budget(spent=1.0)
+    monkeypatch.setattr(tenant_budget, "loader_state", _boom)
+    monkeypatch.setenv(tenant_budget.SWITCH_ENV, "off")
+    with bind_tenant(TENANT):
+        assert tenant_budget.check("t9_write") is None
+
+
+def test_the_gateway_refuses_before_any_attempt_with_a_budget_row(world, monkeypatch, state):
+    budgets, _ = state
+    budgets[TENANT] = _budget(spent=1.0)
+    monkeypatch.setattr(tenant_budget, "loader_state", _boom)
+    rows: list = []
+
+    async def record_calls(rows_):
+        rows.extend(rows_)
+    monkeypatch.setattr(call_log, "record_calls", lambda rows: record_calls(rows))
+    _stage(monkeypatch, "t9_write")
+    with bind_tenant(TENANT):
+        with pytest.raises(tenant_budget.TenantBudgetUnavailable):
+            world.generate(stage="t9_write")
+    assert world.calls == []
+    call_log.wait_for_pending_writes()
+    assert [(r["status"], r["error_class"], r["cost_usd"], r["latency_ms"]) for r in rows] == [
+        ("refused", "budget", 0.0, 0)]
+
+
+def test_a_new_tenant_budget_holds_jobs_by_default():
+    from api.routers.admin_ai_gateway import TenantBudgetBody
+    assert TenantBudgetBody(monthly_usd=5).hard_stop is True
+    assert TenantBudgetBody(monthly_usd=5, hard_stop=False).hard_stop is False

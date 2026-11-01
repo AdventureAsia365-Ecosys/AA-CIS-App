@@ -74,3 +74,32 @@ Lane order: D1 (migration 325) → A1 (migration 326) → A9 → A8. Migration n
 - The success row is still the caller's (one row per success); the gateway never writes it.
 - Live check needs no paid call: switch the acc2 `cohere-embed-v4` deployment off in Providers, trigger one embed
   (any f10 / a3 embed job), then read the refused / error rows; switch it back on.
+
+## A8 — tenant budget fails closed when the counter cannot be read (gap CIS-3)
+
+### Decisions
+- Fail closed only where something is known: the tenant is in the budgeted-tenant set (that read worked) and its
+  spend read failed less than `FAILURE_TTL_SECONDS` ago. Then a **T-stage** call raises `TenantBudgetUnavailable`
+  (message prefix `tenant_ai_budget_unreadable`); platform A-stages keep failing open (a tenant budget never stops
+  them). If the last good read said the tenant's `hard_stop` is off (alert-only) or it has no amount, fail open: an
+  alert-only budget would never have stopped the call anyway.
+- `TenantBudgetUnavailable` is a plain RuntimeError, not a BudgetExceeded: a counter outage is transient, so the job
+  retries with its normal backoff instead of ending `stopped_budget` and waiting for staff approval.
+- Ledger: the gateway writes its 0 USD row before any attempt, `refused / budget` (`client.attempt_outcome` now treats
+  `TenantBudgetUnavailable` like a budget refusal).
+- "hard_stop on by default" (plan A8) done in code, not by migration: the PUT body default (`TenantBudgetBody`) and
+  the admin form's empty draft are now `true`. The table has no rows and every write goes through that PUT, so the
+  column default would change nothing (and would be a contract migration).
+
+### Changed
+- `test_an_unreadable_state_fails_open` became `..._fails_closed_for_t_stages_only` (the old behaviour is the gap).
+
+### Tradeoffs
+- When even the tenant set was never readable (no database at all), the check still fails open: nothing says the
+  tenant has a budget, and the T-stage call itself needs the same database, so it fails on its own.
+
+### Should know
+- No Dev budget row is seeded (brief: do not). The live proof of the fail-closed path is unit-level; the refused row
+  of an approval stop is already live-tested by AA-1016.
+- `docs/api/openapi.json` regenerated with fastapi 0.161.1 / pydantic 2.14.1 (requirements.txt pins): one line
+  (`hard_stop` default).

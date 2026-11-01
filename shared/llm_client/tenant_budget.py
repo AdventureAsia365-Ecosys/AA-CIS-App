@@ -17,8 +17,13 @@
   the bulk re-queue keeps a job held while its tenant still needs approval (``shared/jobs/queue.py``). No silent
   cut-off: the stop always comes with the bell naming the tenant and its spend. Platform (A-stage) calls are never
   stopped by a tenant budget.
-- Never raises anything else. The state of a budgeted tenant is cached ``CACHE_TTL_SECONDS``; when it cannot be read
-  (DB down) the budget is not enforced for ``FAILURE_TTL_SECONDS`` (fail open, logged), like the connection budgets.
+- The state of a budgeted tenant is cached ``CACHE_TTL_SECONDS``. AA-642 A8 (gap CIS-3): when the tenant is known to
+  have a budget (the budgeted-tenant set was read) but its spend counter cannot be read, a **T-stage** call fails
+  closed for ``FAILURE_TTL_SECONDS``: ``TenantBudgetUnavailable`` (a 0 USD ledger row, status refused, class budget;
+  a plain RuntimeError, so the job retries with its normal backoff, never ``stopped_budget``). Exception: the last
+  state read for that tenant had ``hard_stop`` off (the budget only rings a bell): then it fails open, logged. When the
+  budgeted-tenant set itself was never readable (no database at all), nothing is known and the check fails open as
+  before. Platform (A-stage) calls always fail open. Nothing else is raised.
 - ``LLM_TENANT_BUDGETS=off`` (ECS env, read per call) switches the check off.
 """
 from __future__ import annotations
@@ -63,6 +68,24 @@ class TenantBudgetApprovalRequired(cost_guard.BudgetExceeded, RuntimeError):
 
     tenant_id: Optional[str] = None
     budget: Optional[cost_guard.TenantAIBudget] = None
+
+
+UNREADABLE_REASON = "tenant_ai_budget_unreadable"
+
+
+class TenantBudgetUnavailable(RuntimeError):
+    """AA-642 A8: a T-stage call of a budgeted tenant whose spend counter cannot be read (fail closed, module
+    docstring). Not a BudgetExceeded: the job retries with its normal backoff instead of waiting for staff approval.
+    The message starts with UNREADABLE_REASON and names the tenant."""
+
+    tenant_id: Optional[str] = None
+
+
+def counter_unavailable(tenant_id: str) -> TenantBudgetUnavailable:
+    exc = TenantBudgetUnavailable(f"{UNREADABLE_REASON}: Tenant {tenant_id} has an AI budget but its spend this month "
+                                  "could not be read; T-stage AI calls wait until it can (the job retries)")
+    exc.tenant_id = tenant_id
+    return exc
 
 
 def approval_required(budget: cost_guard.TenantAIBudget) -> TenantBudgetApprovalRequired:
@@ -188,17 +211,38 @@ def budget_of(tenant_id: str) -> Optional[cost_guard.TenantAIBudget]:
         return None
 
 
+def counter_unreadable(tenant_id: str) -> bool:
+    """AA-642 A8: True when ``tenant_id`` is known to have a budget and its last state read failed less than
+    FAILURE_TTL_SECONDS ago, unless the last state read before that said its hard stop is off (or it has no amount).
+    Reads nothing (the caches only)."""
+    if not enabled() or not (_tenants and tenant_id in _tenants):
+        return False
+    failed = _failed_at.get(tenant_id)
+    if not failed or time.monotonic() - failed >= FAILURE_TTL_SECONDS:
+        return False
+    last = _state.get(tenant_id)
+    if last is not None and (last[0] is None or not last[0].hard_stop):
+        return False
+    return True
+
+
 def check(stage: Optional[str]) -> Optional[cost_guard.TenantAIBudget]:
     """The gateway's check before any attempt (module docstring). Returns the tenant's budget state (None without a
-    budget); raises TenantBudgetApprovalRequired for a T-stage call of a tenant waiting for approval."""
+    budget); raises TenantBudgetApprovalRequired for a T-stage call of a tenant waiting for approval, and
+    TenantBudgetUnavailable for a T-stage call of a budgeted tenant whose spend cannot be read (AA-642 A8)."""
+    unreadable = False
     try:
         tenant_id = _bound_tenant()
         if tenant_id is None:
             return None
         budget = budget_of(tenant_id)
+        unreadable = budget is None and counter_unreadable(tenant_id)
     except Exception as e:  # noqa: BLE001 — never on the call path
         logger.warning("tenant_ai_budget_check_failed", stage=stage, error=str(e)[:200])
         return None
+    if unreadable and is_t_stage(stage):
+        logger.warning("tenant_ai_budget_unreadable_fail_closed", stage=stage, tenant_id=tenant_id)
+        raise counter_unavailable(tenant_id)
     if budget is not None and budget.needs_approval and is_t_stage(stage):
         logger.warning("tenant_ai_budget_approval_wait", stage=stage, **budget.summary())
         raise approval_required(budget)

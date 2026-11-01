@@ -727,7 +727,8 @@ def attempt_outcome(exc: BaseException) -> tuple[str, str]:
     error_class = the breaker class (a request error counts as 'other'), or 'budget'. AA-1018 part 2: a route deadline
     is ('error', 'deadline'); a refusal to return a reply cut at its token limit is ('truncated', 'truncated')."""
     from shared.cost_guard import BudgetExceeded
-    if isinstance(exc, BudgetExceeded) or any(isinstance(link, BudgetExceeded) for link in _causes(exc)):
+    budget_refusals = (BudgetExceeded, tenant_budget.TenantBudgetUnavailable)   # AA-642 A8: unreadable = refused
+    if any(isinstance(link, budget_refusals) for link in _causes(exc)):
         return "refused", "budget"
     if any(isinstance(link, RouteDeadlineExceeded) for link in _causes(exc)):
         return "error", DEADLINE                       # AA-1018 part 2: the route's time ran out, nothing was sent
@@ -951,10 +952,11 @@ class LLMClient:
     def _tenant_budget_gate(self, request: LLMRequest, first_key: str) -> None:
         """AA-1016: ``tenant_budget.check`` for the tenant bound to this call (the job's tenant). A refusal (a T-stage
         call of a tenant past its approval threshold with hard_stop on) gets its 0 USD 'refused' / 'budget' ledger row
-        and is raised as is: the job ends ``stopped_budget`` and waits for staff (``tenant_budget`` module)."""
+        and is raised as is: the job ends ``stopped_budget`` and waits for staff (``tenant_budget`` module). AA-642 A8:
+        so does ``TenantBudgetUnavailable`` (the tenant's spend could not be read: fail closed, the job retries)."""
         try:
             tenant_budget.check(request.stage)
-        except tenant_budget.TenantBudgetApprovalRequired as e:
+        except (tenant_budget.TenantBudgetApprovalRequired, tenant_budget.TenantBudgetUnavailable) as e:
             pin = split_pin(first_key)
             log_gateway_failed_attempt(request, e, model=pin[0] if pin else first_key, latency_ms=0)
             raise

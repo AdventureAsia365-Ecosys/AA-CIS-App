@@ -219,7 +219,7 @@ def test_spend_budget_row_names_its_actor():
 
 def test_body_defaults_and_rounding():
     b = router_mod.TenantBudgetBody(monthly_usd=12.345, notes="  ")
-    assert b.model_dump() == {"monthly_usd": 12.35, "alert_pct": 100, "approval_pct": 150, "hard_stop": False,
+    assert b.model_dump() == {"monthly_usd": 12.35, "alert_pct": 100, "approval_pct": 150, "hard_stop": True,
                               "notes": None}
 
 
