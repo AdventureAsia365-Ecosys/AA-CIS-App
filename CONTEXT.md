@@ -514,6 +514,14 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `shared/llm_client/judge.py` (`call_judge`; it also holds the judge JSON parsers). It writes no
     `llm_call_log` row: the callers (judge_node, debate, quality_gates) do, once they have the verdict.
   - `s1_brand_audit`, `t2_brand_audit`: GPT-5.6 Luna → GPT-6 Luna (no OpenAI last resort).
+  - **A-series writers** (AA-1026, migration 335, tech lead T-3 in S263): `s1_generate`, `s1_flag_fix`,
+    `s1_itinerary_nudge`, `a0_column_map`, `supply_content_writer` have `allowed_scopes = {aws_only, vendor_direct}`
+    and end on GPT-6 Luna (OpenAI API) as the LAST fallback, behind every AWS deployment (and, per model, behind the
+    acc3 deployment the Anthropic API deployment once its key exists). The admin route PATCH accepts that one
+    other-maker last fallback on a vendor_direct writer (`_writer_last_resort`); the writer / judge vendor rule holds
+    for the primary, every other fallback and the shadow. A draft written by that last resort is judged by a GPT judge
+    (same maker): its ledger row says `provider = 'openai'`, `fallback_used = true`. T-stages, `tp_*` and the CRM stay
+    `aws_only`.
   - acc3 is the only chat account a route uses today (AA-998; the acc2 candidates of 324 have no route). The legacy Haiku/Sonnet chain is acc3 Sonnet → acc3 Haiku
     (no cross-account tier); `account_route` is CHECKed to acc3 / NULL (migration 295) and the gateway ignores any
     other value. `CatalogModel.account_for` only picks acc3 or acc2. They no longer try acc2-native Bedrock first (AA-843:
@@ -591,6 +599,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   new LLM call site that is not registered with the function writing its row. Stages added: `a0_column_map`, `f10_embed`, and `tp_compose` /
   `tp_search_embed` for AA-TripPlanner-Web, which reads the same tables (migration 172).
   Current choices, each decided from a real A/B run:
+  - AA-1026 (migration 335, tech lead T-4 in S263): no route names the legacy `haiku` / `sonnet` keys any more; each
+    moved to the Converse key of the same tier (`haiku-5-5`, `sonnet-5-5`; a CIS `sonnet` became `sonnet-5-5` →
+    `haiku-5-5`, the legacy chain's degrade; `tp_*` one to one). The model names below are the history of each choice.
   - `s1_generate` (A1 admin rewrite) = Haiku 4.5; `s1_flag_fix` / `s1_itinerary_nudge` = Haiku.
   - `t2_generate` (T2 tenant rewrite, AA-620) = Sonnet — follows a tenant's brand style guide
     noticeably better, at ~11-13x Haiku's cost per call.

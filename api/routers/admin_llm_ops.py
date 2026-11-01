@@ -272,6 +272,20 @@ def _check_scopes(stage: str, scopes: Optional[tuple], reach: dict, keys: list) 
             "migration (shared.llm_role_config.allowed_scopes), not an admin setting"))
 
 
+def _writer_last_resort(role: str, scopes: Optional[tuple], models: Optional[list], outside: frozenset,
+                        model_key: str) -> bool:
+    """AA-1026 (S263, tech lead T-3): a writer stage a migration opened to vendor_direct may END its route on a model
+    of another maker that is reached only outside AWS (today GPT-6 Luna on the OpenAI API, migration 335): the last
+    resort when every AWS path is blocked. The writer / judge vendor rule still decides the primary, every other
+    fallback and the shadow. The caller checks the position (the last fallback only)."""
+    if role != "writer" or model_key not in outside:
+        return False
+    if scopes is None or data_scope.VENDOR_DIRECT not in scopes:
+        return False
+    m = next((m for m in models or [] if m.model_key == model_key), None)
+    return m is not None and m.enabled and "llm_client" in m.callable_via and m.api_style != "embed"
+
+
 def _options_for(role: str, stage: str, models: Optional[list], scopes: Optional[tuple] = None,
                  reach: Optional[dict] = None) -> list[dict]:
     if models is None:
@@ -407,8 +421,9 @@ async def patch_llm_route(
     if primary in fallbacks:
         raise HTTPException(status_code=422,
                             detail=f"fallback_model_ids must not contain the primary model {primary!r}")
-    for m in fallbacks:
-        if m not in allowed:
+    for i, m in enumerate(fallbacks):
+        if m not in allowed and not (i == len(fallbacks) - 1
+                                     and _writer_last_resort(current["role"], scopes, models, outside, m)):
             raise HTTPException(status_code=422,
                                 detail=f"fallback model {m!r} is not selectable for stage {stage!r}")
 

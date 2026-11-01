@@ -40,8 +40,8 @@
 --
 -- Guards (RAISE rolls the whole file back):
 --   before: the registry tables (304, 317) and allowed_scopes (311) exist; haiku-5-5 and sonnet-5-5 are enabled
---           Anthropic Converse rows with an enabled acc3 deployment; gpt-6-luna-openai is an enabled OpenAI API row with
---           an openai-direct deployment; openai-direct is a vendor_direct connection.
+--           Anthropic Converse rows with an enabled acc3 deployment; gpt-6-luna-openai is an enabled OpenAI API row
+--           with an openai-direct deployment; openai-direct is a vendor_direct connection.
 --   after:  no route names a legacy key; every route this file changed names catalog keys only, without duplicates,
 --           its primary not among its fallbacks, its shadow not its primary; each writer of item 2 ends on
 --           gpt-6-luna-openai with both scopes and an Anthropic primary; every stage allowed vendor_direct is one of
@@ -50,16 +50,20 @@
 --
 -- Behaviour on Dev. acc3 refuses every model (Error 002), so before and after this file the moved stages make no
 -- successful call through acc3; after it, the five writers can reach GPT-6 Luna on the OpenAI API (inside the
--- 10 USD budget), and every moved stage can reach the Anthropic API as soon as the anthropic-direct key is plugged in
--- (the writers by data scope; the aws_only stages never). Prices drop (haiku 1 / 5 -> 0.1 / 0.5, sonnet 3 / 15 ->
+-- 10 USD budget) and, once the anthropic-direct key is plugged in, the Anthropic API ahead of it; the aws_only
+-- stages (T-stages, tp_*, the checks) still never leave AWS. Prices drop (haiku 1 / 5 -> 0.1 / 0.5, sonnet 3 / 15 ->
 -- 2 / 10 USD per 1M tokens). Converse rows have supports_temperature = false: a call site's temperature is dropped.
 -- The SAFE_DEFAULTS of shared/llm_client/role_config.py keep the legacy keys on purpose: they serve a process that
 -- cannot read the database, where only the hard-coded legacy chain works without the catalog.
 --
 -- Class: contract (root ADR 0017 d3: UPDATE of existing routing rows), so no "-- migrate: expand" header and MIG-4
--- order: (1) this migration-only PR merges to AA-CIS-App main; (2) the byte copy in AA-CIS-Infra db/migrations/cis/
--- merges (Copy Guard green); (3) a manual DB Migrate apply (check, then apply) with the job tables idle (DM-11.4);
--- (4) the bot/db-schema-reference PR merges. No code PR depends on it. Number: 325-334 are held by other S263 lanes.
+-- order: (1) this PR (the migration plus an admin change that works with or without it) merges to AA-CIS-App main;
+-- (2) the byte copy in AA-CIS-Infra db/migrations/cis/ merges (Copy Guard green); (3) a manual DB Migrate apply
+-- (check, then apply) with the job tables idle (DM-11.4); (4) the bot/db-schema-reference PR merges. No code depends
+-- on it. Number: 325-334 are held by other S263 lanes. After apply: POST /admin/writing-memory/releases/reverify-scan
+-- (the routes of s1_generate / t2_generate / t9_write changed outside the admin PATCH that triggers it). Do not re-run
+-- the AA-CIS-Infra run-script aa1002_dev_anthropic_road.py in apply mode afterwards: it opens every stage that reaches
+-- an Anthropic Converse model, which now includes the T-stages.
 --
 -- Rollback (a NEW forward migration): set each stage's model_id / fallback_model_ids / allowed_scopes back from the
 -- route snapshot taken before the apply (root docs/generated/llm-routes.snapshot.json, captured 29/10), and
