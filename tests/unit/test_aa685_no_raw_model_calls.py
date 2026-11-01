@@ -4,8 +4,8 @@ Bedrock / Anthropic / OpenAI call appears anywhere else in the app code or in sc
 calls AA-685 moved had stayed invisible on External Spend.
 
 What counts as a bypass (AA-642 L6, S263):
-- a Bedrock runtime or batch method: invoke_model(_with_response_stream), converse(_stream), apply_guardrail,
-  create_model_invocation_job;
+- a Bedrock runtime or batch method, called or passed uncalled (asyncio.to_thread(rt.converse, ...)):
+  invoke_model(_with_response_stream), converse(_stream), apply_guardrail, create_model_invocation_job;
 - a vendor SDK call: <x>.completions / .messages / .responses / .embeddings .create/.stream/.parse
   (OpenAI chat, Anthropic Messages, OpenAI Responses, OpenAI embeddings);
 - importing the vendor SDK (`openai`, `anthropic`) or a gateway internal (invoke_claude, get_satellite_client);
@@ -74,12 +74,12 @@ def _hits(source: str) -> list[tuple[int, str]]:
             name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else None
             if name in GATEWAY_INTERNALS:
                 hits.append((node.lineno, f"{name}()"))
-            elif isinstance(func, ast.Attribute):
-                if func.attr in RAW_BEDROCK_METHODS:
-                    hits.append((node.lineno, f".{func.attr}()"))
-                elif (func.attr in SDK_VERBS and isinstance(func.value, ast.Attribute)
-                      and func.value.attr in SDK_RESOURCES):
-                    hits.append((node.lineno, f".{func.value.attr}.{func.attr}()"))
+        elif isinstance(node, ast.Attribute):
+            # The attribute, not only the call: `asyncio.to_thread(rt.converse, ...)` passes the method uncalled.
+            if node.attr in RAW_BEDROCK_METHODS:
+                hits.append((node.lineno, f".{node.attr}"))
+            elif node.attr in SDK_VERBS and isinstance(node.value, ast.Attribute) and node.value.attr in SDK_RESOURCES:
+                hits.append((node.lineno, f".{node.value.attr}.{node.attr}"))
         elif isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docstrings:
             for host in VENDOR_HOSTS:
                 if host in node.value:
@@ -121,16 +121,17 @@ def test_scanned_roots_exist():
 
 # The detector itself, on invented snippets (so a refactor of _hits cannot silently stop catching a pattern).
 _BYPASSES = {
-    "rt.converse(modelId=m, messages=[])": ".converse()",
-    "rt.converse_stream(modelId=m)": ".converse_stream()",
-    "rt.invoke_model(body=b, modelId=m)": ".invoke_model()",
-    "rt.apply_guardrail(guardrailIdentifier=g, source='INPUT', content=[])": ".apply_guardrail()",
-    "bedrock.create_model_invocation_job(jobName=j)": ".create_model_invocation_job()",
-    "client.chat.completions.create(model=m, messages=[])": ".completions.create()",
-    "client.messages.create(model=m, max_tokens=5, messages=[])": ".messages.create()",
-    "client.beta.messages.stream(model=m, messages=[])": ".messages.stream()",
-    "client.responses.create(model=m, input='hi')": ".responses.create()",
-    "client.embeddings.create(model=m, input=['hi'])": ".embeddings.create()",
+    "rt.converse(modelId=m, messages=[])": ".converse",
+    "asyncio.to_thread(rt.converse, modelId=m, messages=[])": ".converse",
+    "rt.converse_stream(modelId=m)": ".converse_stream",
+    "rt.invoke_model(body=b, modelId=m)": ".invoke_model",
+    "rt.apply_guardrail(guardrailIdentifier=g, source='INPUT', content=[])": ".apply_guardrail",
+    "bedrock.create_model_invocation_job(jobName=j)": ".create_model_invocation_job",
+    "client.chat.completions.create(model=m, messages=[])": ".completions.create",
+    "client.messages.create(model=m, max_tokens=5, messages=[])": ".messages.create",
+    "client.beta.messages.stream(model=m, messages=[])": ".messages.stream",
+    "client.responses.create(model=m, input='hi')": ".responses.create",
+    "client.embeddings.create(model=m, input=['hi'])": ".embeddings.create",
     "import openai": "import openai",
     "from anthropic import Anthropic": "import anthropic",
     "from shared.llm_client.bedrock_satellite import get_satellite_client": "import get_satellite_client",
