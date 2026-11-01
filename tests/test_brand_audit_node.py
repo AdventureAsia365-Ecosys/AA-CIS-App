@@ -222,3 +222,67 @@ def test_brand_audit_node_skips_empty_generated():
     }
     result = brand_audit_node(state)
     assert result["brand_audit_status"] == "pass"
+
+
+# ── AA-1026 I6: an uncalibrated fallback judge (acc2) can hold or flag a tour, never pass it ─────────────────────
+
+_FIXTURE_STATE = {
+    "generated": {"name": "Orvalen Ridge Days", "subtitle": "Quiet walks above Kestrel Bay",
+                  "summary": "Calm walking days on the Orvalen ridge.",
+                  "highlights": ["Varro hut sunrise", "Tamsin Lodge dinner", "Ridge path", "Pine descent"],
+                  "itineraries": "Day 1 — Arrive Kestrel Bay.", "seo_title": "Orvalen Ridge Walking Tour",
+                  "seo_meta": "A calm walking tour of the Orvalen ridge."},
+    "tour": {"duration": "3 days", "country": "Orvalia"}, "seo": {}, "cost_usd": 0.0,
+}
+
+
+def _audit_with(payload: dict, **resp_fields):
+    from shared.llm_client.models import LLMResponse
+    fake = MagicMock()
+    fake.generate.return_value = LLMResponse(content=json.dumps({"brand_audit": payload}), cost_usd=0.0001,
+                                             **resp_fields)
+    with patch("services.content_generation.brand_audit_node.LLMClient", return_value=fake), \
+            patch("services.content_generation.brand_audit_node.record_call_sync") as rec, \
+            patch("services.content_generation.brand_audit_node._is_v2_draft", return_value=False):
+        out = brand_audit_node(dict(_FIXTURE_STATE))
+    return out, rec
+
+
+_CLEAN = {"status": "pass", "publish_ready": True, "fields_to_fix": [], "failure_codes": [], "issues": [],
+          "scores": {}, "notes": "", "lessons_extracted": []}
+
+
+def test_a_pass_answered_on_acc2_is_held_for_a_human():
+    out, rec = _audit_with(_CLEAN, model_used="nova-lite", provider="bedrock", connection_key="acc2",
+                           fallback_used=True)
+    assert out["brand_audit_status"] == "manual_check"
+    assert out["brand_audit_codes"] == ["BRAND_AUDIT_UNCALIBRATED_JUDGE"]
+    assert "not calibrated" in out["brand_audit_issues"][-1]
+    assert rec.call_args.kwargs["quality_signal"]["status"] == "manual_check"   # the ledger row says what was decided
+
+
+def test_a_flag_answered_on_acc2_is_kept():
+    flagged = {**_CLEAN, "status": "flagged", "publish_ready": False, "failure_codes": ["SUBTITLE_GENERIC"]}
+    out, _ = _audit_with(flagged, model_used="nova-lite", provider="bedrock", connection_key="acc2",
+                         fallback_used=True)
+    assert out["brand_audit_status"] == "flagged"
+    assert "BRAND_AUDIT_UNCALIBRATED_JUDGE" not in out["brand_audit_codes"]
+
+
+def test_a_pass_from_the_acc3_primary_or_the_openai_api_still_passes():
+    for fields in ({"model_used": "satellite-gpt-6-luna", "provider": "bedrock-satellite",
+                    "satellite_account": "acc3"},
+                   {"model_used": "gpt-6-luna-openai", "provider": "openai", "connection_key": "openai-direct",
+                    "fallback_used": True}):
+        out, _ = _audit_with(_CLEAN, **fields)
+        assert out["brand_audit_status"] == "pass", fields
+        assert out["brand_audit_codes"] == []
+
+
+def test_hold_uncalibrated_pass_reads_a_test_double_defensively():
+    from services.content_generation.brand_audit_node import hold_uncalibrated_pass
+    assert hold_uncalibrated_pass("pass", [], MagicMock()) == ("pass", [], None)
+    status, codes, note = hold_uncalibrated_pass("pass", ["X"], MagicMock(connection_key="acc2"))
+    assert (status, codes) == ("manual_check", ["X", "BRAND_AUDIT_UNCALIBRATED_JUDGE"]) and note
+    assert hold_uncalibrated_pass("manual_check", ["Y"], MagicMock(connection_key="acc2")) == \
+        ("manual_check", ["Y"], None)

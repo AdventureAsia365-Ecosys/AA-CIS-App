@@ -473,6 +473,33 @@ BRAND_AUDIT_UNAVAILABLE = "BRAND_AUDIT_UNAVAILABLE"
 # A code that always means "a human must look", regardless of how many codes there are.
 _MANUAL_CHECK_CODES = {"FACT_CHECK_MANUAL_CHECK", "PRODUCT_TRUTH_RISK"}
 
+# AA-1026 I6: a brand audit answered on one of these connections may flag or hold a tour, never pass it. Since CIS
+# migrations 331 / 332 the brand audit routes (s1_brand_audit, t2_brand_audit) end on an acc2 Bedrock model (Nova
+# Lite) that has not passed the judge calibration of root ADR 0009 decision 12 (40 labelled items): a lenient but
+# well-formed "pass" from it would publish a tour (_is_publishable). Its "pass" becomes manual_check with this code,
+# so the tour goes to the Review Queue. Drop a connection from the set once the models it serves for this stage are
+# calibrated (and say so in the ADR).
+UNCALIBRATED_JUDGE_CONNECTIONS = frozenset({"acc2"})
+BRAND_AUDIT_UNCALIBRATED_JUDGE = "BRAND_AUDIT_UNCALIBRATED_JUDGE"
+
+
+def uncalibrated_judge(resp) -> str | None:
+    """The connection key when ``resp`` was answered on a connection whose brand-audit verdicts are not calibrated,
+    else None. Read defensively (a test double may carry anything)."""
+    conn = getattr(resp, "connection_key", None)
+    return conn if isinstance(conn, str) and conn in UNCALIBRATED_JUDGE_CONNECTIONS else None
+
+
+def hold_uncalibrated_pass(status: str, codes: list[str], resp) -> tuple[str, list[str], str | None]:
+    """(status, codes, issue): a ``pass`` from an uncalibrated judge becomes ``manual_check`` with
+    BRAND_AUDIT_UNCALIBRATED_JUDGE and a reviewer note; any other verdict (flagged, manual_check) is kept as it is."""
+    conn = uncalibrated_judge(resp)
+    if status != "pass" or conn is None:
+        return status, codes, None
+    issue = (f"The brand audit was answered by a fallback model on {conn} whose verdicts are not calibrated yet, "
+             "so its pass is held for a human check.")
+    return "manual_check", list(dict.fromkeys([*codes, BRAND_AUDIT_UNCALIBRATED_JUDGE])), issue
+
 
 def derive_status(failure_codes: list[str], publish_ready, model_status=None) -> str:
     """AA-714: compute brand_audit status from the evidence, not from a key the model may omit.
@@ -678,6 +705,12 @@ Return JSON only per schema."""
         if _is_v2_draft(state):
             all_codes, status, voice_report = _v2_report_only_voice(all_codes, pre_codes, model_status,
                                                                     result.get("publish_ready"))
+        # AA-1026 I6: an uncalibrated fallback judge (acc2) can hold or flag a tour, never pass it.
+        status, all_codes, held_note = hold_uncalibrated_pass(status, all_codes, resp)
+        if held_note:
+            result["issues"] = [*(result.get("issues") or []), held_note]
+            logger.warning("brand_audit_uncalibrated_pass_held", model=resp.model_used,
+                           connection=uncalibrated_judge(resp))
         result["failure_codes"] = all_codes
         result["status"] = status
 
