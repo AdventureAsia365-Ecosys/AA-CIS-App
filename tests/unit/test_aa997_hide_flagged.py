@@ -172,12 +172,16 @@ async def test_confirm_hides_each_unchanged_row_with_a_stamp_and_an_audit_row(no
     assert out["dropped_ids"] == [ROWS[1]["id"]] and out["new_since_report"] == 0
     hides = conn.of("UPDATE shared.destinations SET geo_status = 'suspect'")
     assert len(hides) == 5
-    rid, stamp, reason, outcome, located_by = hides[0]
+    rid, stamp, reason, outcome, located_by, stamp_v, accept_rule, stamp_at, country = hides[0]
     stamp = json.loads(stamp)
     assert stamp["by"] == relocate.HIDE_FLAGGED_STAMP and stamp["job"] == "job-9" and stamp["actor"] == "admin:u1"
     assert stamp["reason"] == reason == ROWS[0]["review_reason"] and stamp["outcome"] == outcome == "llm_point"
     assert stamp["stamp_v"] == "aa997.2" and located_by == "llm" and stamp["report"] == "rep-1"
-    assert len(conn.of("UPDATE geo.place_name SET status = 'suspect'")) == 4      # only the rows hidden
+    assert stamp["prev_geo_status"] == "ok"
+    # P15: the stamp version / accept rule / time and the country the confirm read are re-checked by the UPDATE
+    assert (stamp_v, accept_rule, stamp_at, country) == ("aa997.2", "aa997.3", None, "Nepal")
+    names = [a for s, a in conn.sql if s.startswith("WITH n AS ( UPDATE geo.place_name SET status = 'suspect'")]
+    assert len(names) == 4      # only the rows hidden; the keys it changed go into the hide stamp
     audit = [a for s, a in conn.sql if "acp_shared.audit_log" in s]
     assert len(audit) == 1
     details = json.loads(next(x for x in audit[0] if isinstance(x, str) and x.startswith("{")))
@@ -360,12 +364,14 @@ async def test_a_confirmed_relocate_shows_a_policy_hidden_row_again(no_lock, mon
     monkeypatch.setattr(locate, "_confirmed", lambda item, res, country: res)
     r = await relocate.apply_row(conn, _llm_row(), (), _Geo(hit), hide_unconfirmed=False)
     assert r["outcome"] == "confirmed" and bool(r.get("unhidden")) is shown
-    reveal = [a for s, a in conn.sql if s.startswith("UPDATE shared.destinations SET geo_status = 'ok'")]
+    reveal = [a for s, a in conn.sql
+              if s.startswith("UPDATE shared.destinations SET geo_status = coalesce($2::jsonb ->> 'prev_geo_status'")]
     assert len(reveal) == (1 if shown else 0)
     if shown:
         stamp = json.loads(reveal[0][1])
         assert stamp["by"] == hidden["by"] and stamp["unhidden_by"] == "relocate:confirmed" and stamp["unhidden_at"]
-        assert conn.of("UPDATE geo.place_name SET status = 'resolved'")
+        assert conn.of("UPDATE geo.place_name pn SET status = 'resolved'")
+        assert r["hidden_by"] == hidden["by"]
 
 
 @pytest.mark.asyncio

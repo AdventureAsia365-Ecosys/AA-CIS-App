@@ -70,6 +70,9 @@ AA-997 (S254 geocode audit, fix plan step 1: coordinates come from the geocoder 
        unchanged (id | reason | outcome | located_by), never a row new since; one audit row per batch.
        unhide {by?, destination_ids?}: the policy stamps to revert (default all), only these rows (≤ 500; the
        single-row restore of the review list, which later hide runs respect; a bulk unhide does not), audited.
+       AA-997 P15: a reversal sets back only the names its hide changed and never shows a row the outlier rule
+       hides (kept_outlier); a hide_flagged confirm drops a row re-judged (stamp version / accept rule / time,
+       country) after its read; a relocate run audits the hidden rows it shows again or whose hide reason moves.
 
 Every response that shows coordinates carries the Geoapify / OpenStreetMap attribution (ADR 0007).
 """
