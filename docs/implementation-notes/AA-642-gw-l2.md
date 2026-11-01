@@ -63,6 +63,26 @@ is mocked in the tests.
   mismatches of the last 3 days. Stored rows only: no provider is called by the digest. Attention lines: a balance
   under its threshold, a provider switched off or refusing, the Geoapify limit reached, a mismatch.
 
+### B2 — the daily probe also covers the embedding deployments and one Geoapify search
+
+- **Same job, same switch, same dry run.** `llm_connection_probe` (`LLM_DAILY_PROBE`) plans three probe kinds:
+  `text` (as before), `embed` (every enabled Cohere embedding deployment on an enabled Bedrock connection with an
+  enabled catalog row: cohere-embed-v4 on acc2 and acc3 today) and `geocode` (one Geoapify search). Each plan entry
+  carries `probe`; the dry run lists all three with their estimate and calls nothing.
+- **Embedding probe = the deployment's half-open probe.** `embed.probe(model, conn, wire_id, texts)` calls that one
+  deployment through `breaker.guarded(..., admit_call=False)` (like `LLMClient.probe`): an open circuit does not stop
+  it and the outcome counts on the circuit. No stage route, no fallback. Ledger: one `shared.llm_call_log` row, stage
+  `adhoc_conn_test`, role `embed` (the role CHECK allows it), `account` = the connection; answered = its cost with
+  `**billed_fields(resp)`, refused / failed = `gateway_failure_row` at 0 USD. One `acp_shared.audit_log` row per probe,
+  like the text probe. The connection gets `last_probe_at` (existing `stamp_probed`).
+- **Geoapify probe = one search, no retry**, under the Geoapify advisory lock (a place job that holds it is not
+  disturbed: the probe answers `skipped` and is not counted as probed or failed). Logged in `geo.geocode_call` (so the
+  daily credit guard counts it), `access_state` + `last_probe_at` written with `note_provider_access(probed=True)`
+  (ok / access_denied / unconfigured; a 429, 5xx or a switched-off refusal stamps the time only). Skipped in the plan
+  when Geoapify is not the configured geocoder, is switched off, or has no credit left today.
+- **Cost.** Two embeddings of a few tokens a day (about 1e-6 USD each) and one free-plan Geoapify credit a day
+  (cost 0 on the Free plan): inside the approved probe budget (< 0.01 USD a month).
+
 ## Changed
 
 - `shared/llm_client/bedrock_batch.py`: `BATCH_SWITCH_ENV`, `BATCH_CLOSED_REASON`, `batch_submit_closed_reason()`,
@@ -84,6 +104,10 @@ is mocked in the tests.
   (`_mismatch_bell` → e-mail), `services/reports/digest.py` (`load_balances`, `balance_attention`,
   `render_balances`); `tests/unit/test_aa1003_r2_digest_email.py` patches the new loader in the isolation test.
 
+- `shared/llm_client/embed.py` (`probe`), `services/jobs/llm_probe_job.py` (`_embeddable`, `estimate_embed_usd`,
+  `load_geoapify_state`, `probe_embedding`, `probe_geoapify`, the dispatch in `run_probes`, skipped results left out
+  of the counts); tests `tests/unit/test_aa642_l2_probe_more.py`.
+
 ## Tradeoffs
 
 - Geoapify reads the switch at job start, not per request: a switch flipped during a 30-minute run applies from the
@@ -102,4 +126,7 @@ is mocked in the tests.
   for the live check, mark the old bell read first.
 
 - The T-BATCH trigger row for the root backlog / `plan.json` goes with lane L7's root PR (plan §2), not here.
+- `LLM_DAILY_PROBE` is on for the CIS api and worker since S262 (Infra `llm_daily_probe`): after this deploy the
+  next scheduled run (from `SCHEDULE_HOUR_UTC`) already includes the two embedding probes and the Geoapify search.
+- The Geoapify probe query is a plain public city name; the answer is not stored, only whether the call worked.
 - ⚠️ `BATCH_SUBMIT_SWITCH` is an underscore env name: set it by hand in the task definition only when opening Batch.

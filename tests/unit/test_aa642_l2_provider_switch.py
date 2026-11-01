@@ -375,6 +375,7 @@ def _geo_resp(status=200):
 @pytest.mark.asyncio
 async def test_refresh_reads_the_geoapify_switch(monkeypatch):
     monkeypatch.setattr(gc, "_registry_daily_limit", None)          # restored after the test (refresh sets it)
+
     async def provider_connection(db, key):
         return _row("geoapify", False)
     monkeypatch.setattr(connections, "provider_connection", provider_connection)

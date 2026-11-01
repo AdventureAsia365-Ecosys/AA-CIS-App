@@ -191,8 +191,9 @@ def _empty_llm_connection_registry(monkeypatch):
     _reset()
 
 
-# AA-642 (S263 lane L2, B1): decide() writes Jev's access_state, the DataForSEO client asks shared/llm_client/connections.provider_enabled before each call
-# (a DB read through its own connection, cached in process) and every provider client writes its access_state. Unit
+# AA-642 (S263 lane L2, B1): decide() writes Jev's access_state, the DataForSEO client asks
+# shared/llm_client/connections.provider_enabled before each call (a DB read through its own connection, cached in
+# process) and every provider client writes its access_state. Unit
 # tests have no DB: by default no provider row exists (= on) and the state writes go nowhere; a test that needs a row
 # or the writes patches `provider_row_loader` / `provider_state_writer` itself (its patch wins).
 @pytest.fixture(autouse=True)
