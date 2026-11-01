@@ -20,6 +20,7 @@ from services.acp_shared.writing_progress import (
 )
 from shared.jobs.registry import JobContext, NonRetryable, job_kind
 from shared.llm_client import stream_sink
+from shared.llm_client.errors import is_stage_switch_hold, stage_disabled_in
 from shared.llm_client.tenant_budget import ON_HOLD_MESSAGE, approval_stop_in, is_approval_stop
 from services.quality.registry import threshold
 
@@ -393,12 +394,17 @@ async def mark_version_failed(pool, job_row: dict) -> None:
     """on_terminal: the job ended without success, so the version must not stay 'pending'. Except a job that waits
     for staff approval of its tenant's AI budget (AA-1016, review S262): the version stays 'pending' so the approval
     re-queue writes it (a 'failed' version would make the re-run skip it); a Cancel of that job (decline) marks it
-    failed."""
+    failed. AA-642 A1 (review S263): the same for a job the stage kill switch failed (declared degrade mode
+    queue_retry): the version stays 'pending' until "Re-queue refused jobs" runs it once the stage is on."""
     version_id = (job_row.get("payload") or {}).get("version_id")
     if not version_id:
         return
     if is_approval_stop(job_row):
         logger.warning("tenant_rewrite_job_waits_for_approval", version_id=version_id, job_id=job_row.get("id"),
+                       error=(job_row.get("error") or "")[:300])
+        return
+    if is_stage_switch_hold(job_row):   # AA-642 A1 (review S263): queue_retry, re-queued once the stage is on
+        logger.warning("tenant_rewrite_job_waits_for_stage_switch", version_id=version_id, job_id=job_row.get("id"),
                        error=(job_row.get("error") or "")[:300])
         return
     async with pool.acquire() as conn:
@@ -456,7 +462,8 @@ async def run(ctx: JobContext) -> dict:
                                            published_tour_id)
     except Exception as e:
         progress.fail()
-        on_hold = approval_stop_in(e) is not None  # AA-1016: waits for staff approval, resumes on its own
+        # AA-1016: waits for staff approval; AA-642 A1: waits for its stage to be switched on (then re-queued).
+        on_hold = approval_stop_in(e) is not None or stage_disabled_in(e) is not None
         raise
     finally:
         await progress.finish(not progress.failed,

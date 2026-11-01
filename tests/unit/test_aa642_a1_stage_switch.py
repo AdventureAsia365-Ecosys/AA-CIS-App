@@ -265,16 +265,28 @@ def _status(report, stage):
 
 def test_a_declared_degrade_mode_is_not_a_breach():
     report = invariant.check([_route("t_one", degrade="queue_retry"), _route("t_two"),
-                              _route("t_three", model="nothing-here", degrade="basic_narration"),
                               _route("t_off", active=False)], [], DEPS, CONNS)
-    one, two, three = _status(report, "t_one"), _status(report, "t_two"), _status(report, "t_three")
+    one, two = _status(report, "t_one"), _status(report, "t_two")
     assert (one["status"], one["ok"], one["degrade_mode"]) == ("degrade", True, "queue_retry")
     assert (two["status"], two["ok"], two["degrade_mode"]) == ("breach", False, None)
-    assert (three["status"], three["ok"]) == ("degrade", True)
-    assert report["breaches"] == 1 and report["declared_degrade"] == 2 and report["stages_checked"] == 3
+    assert report["breaches"] == 1 and report["declared_degrade"] == 1 and report["stages_checked"] == 2
     assert report["disabled"] == ["t_off"]
     writer = report["classes"][0]
-    assert writer["breaches"] == ["t_two"] and writer["degrade"] == ["t_one", "t_three"]
+    assert writer["breaches"] == ["t_two"] and writer["degrade"] == ["t_one"]
+
+
+def test_a_degrade_mode_never_excuses_a_stage_that_cannot_run_at_all():
+    """Review S263: ADR 0009 d5 lets a degrade mode stand in for the SECOND failure domain only. A stage with no usable
+    deployment (route model missing, or its only connection unfunded) is a breach whatever it declares."""
+    blocked_conn = {"acc3": "quota_exhausted"}
+    for routes, blocked in (([_route("t_three", model="nothing-here", degrade="basic_narration")], {}),
+                            ([_route("t_three", degrade="queue_retry")], blocked_conn)):
+        report = invariant.check(routes, [], DEPS, CONNS, blocked)
+        three = _status(report, "t_three")
+        assert (three["status"], three["ok"], three["primary"]) == ("breach", False, None)
+        assert three["degrade_mode"] is not None                         # still shown, but not as a pass
+        assert report["breaches"] == 1 and report["declared_degrade"] == 0 and report["ok"] is False
+        assert report["classes"][0]["breaches"] == ["t_three"] and report["classes"][0]["degrade"] == []
 
 
 def test_the_report_reads_degrade_modes_and_falls_back_before_migration_326():

@@ -31,7 +31,7 @@ import structlog
 
 from shared.cost_guard import BudgetExceeded
 from shared.llm_client import call_log
-from shared.llm_client.errors import LLM_ACCESS_DENIED_REASON, LLMAccessDenied, is_llm_access_denied
+from shared.llm_client.errors import LLM_ACCESS_DENIED_REASON, LLMAccessDenied, is_llm_access_denied, stage_disabled_in
 from shared.llm_client.tenant_budget import approval_stop_in
 from shared.sentry_init import release  # AA-884: APP_GIT_SHA of this image, written to shared.job_worker
 
@@ -116,8 +116,12 @@ def failure_outcome(exc: BaseException) -> tuple[str, bool, Optional[str]]:
     anywhere in the cause chain: Bedrock "Error 002", AccessDenied, no OpenAI credit), a retry minutes later is
     refused the same way, so the job fails at once and its error starts with ``llm_access_denied`` (the admin LLM
     availability card and the Jobs page read that prefix). Any other exception keeps the old rule: retry unless
-    NonRetryable."""
+    NonRetryable. AA-642 A1 (review S263): a stage kill switch refusal wrapped by a pipeline is written as the refusal
+    itself, so the error names the stage (the T2 / T9 on_terminal hooks and the bulk re-queue hold read it)."""
     if is_llm_access_denied(exc):
+        switched_off = stage_disabled_in(exc)
+        if switched_off is not None:
+            exc = switched_off
         body = str(exc) if isinstance(exc, LLMAccessDenied) else f"{type(exc).__name__}: {exc}"
         if not body.startswith(LLM_ACCESS_DENIED_REASON):
             body = f"{LLM_ACCESS_DENIED_REASON}: {body}"

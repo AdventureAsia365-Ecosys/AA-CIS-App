@@ -131,9 +131,12 @@ class LLMStageDisabled(LLMAccessDenied):
     """AA-642 A1: the stage is switched off (``llm_role_config.is_active = false``, the admin kill switch), so the
     gateway refused the call before any provider attempt (ledger: status refused, error_class ``disabled``, 0 USD).
     An LLMAccessDenied on purpose: a retry cannot help until someone switches the stage on, so the job runner fails
-    the job at once (``llm_access_denied: stage '<stage>' is switched off ...``) and every pipeline that already
-    re-raises an account refusal re-raises this one; the bulk re-queue holds such a job while its stage is still off
-    (``shared/jobs/queue.llm_hold``). That is the declared degrade mode ``queue_retry``."""
+    the job at once (``llm_access_denied: stage '<stage>' is switched off ...``). The T2 graph / rewrite re-raise it as
+    an account refusal; the T9 write re-raises it by ``stage_disabled_in`` (review S263: it used to mark the piece
+    failed). The T2 / T9 ``on_terminal`` hooks leave the version / piece to do for such a job
+    (``is_stage_switch_hold``), and the bulk re-queue ("Re-queue refused jobs", prefix ``llm_access_denied``) holds
+    it while its stage is still off (``shared/jobs/queue.llm_hold``), then writes it. That is the declared degrade
+    mode ``queue_retry``."""
 
     def __init__(self, stage: str, reason: Optional[str] = None):
         why = f": {reason.strip()[:300]}" if isinstance(reason, str) and reason.strip() else ""
@@ -145,6 +148,26 @@ def disabled_stage_of(text: Optional[str]) -> Optional[str]:
     """The stage a stored refusal of the kill switch names (``LLMStageDisabled``'s message), else None. Pure."""
     m = _STAGE_DISABLED.search(text or "")
     return m.group(1) if m else None
+
+
+def stage_disabled_in(exc: Optional[BaseException]) -> Optional[LLMStageDisabled]:
+    """The ``LLMStageDisabled`` in ``exc`` or its explicit cause chain, else None (review S263: the T-stage pipelines
+    re-raise it instead of turning it into a failed piece)."""
+    if exc is None:
+        return None
+    for link in _chain(exc, implicit=False):
+        if isinstance(link, LLMStageDisabled):
+            return link
+    return None
+
+
+def is_stage_switch_hold(job_row: Optional[dict]) -> bool:
+    """True for a job the stage kill switch failed (status ``failed``, its error names a switched-off stage). The T2 /
+    T9 ``on_terminal`` hooks leave its version / piece pending so the re-queue after the stage is switched on writes
+    it; an admin Cancel ends it ``cancelled`` and the hook marks it failed as for any other stop. Pure."""
+    if not job_row or job_row.get("status") != "failed":
+        return False
+    return disabled_stage_of(job_row.get("error")) is not None
 
 
 def is_truncated(stop_reason: Optional[str]) -> bool:

@@ -23,8 +23,10 @@ is in a different domain. Stages are grouped by stage class (the role: writer, j
 AA-642 A1 (migration 326): ADR 0009 decision 5 accepts a **declared degrade mode** instead of a second domain
 (``llm_role_config.degrade_mode``: queue_retry, basic_narration, ...). A stage without another usable domain but with
 a degrade mode passes with ``status`` ``degrade`` (counted in ``declared_degrade``, never in ``breaches``); one with a
-second domain is ``ok``; any other is ``breach``. A switched-off stage (``is_active`` false, the kill switch) is not
-checked: it is listed in ``disabled``.
+second domain is ``ok``; any other is ``breach``. A degrade mode stands in for the second domain only, never for the
+first (review S263): a stage with no usable deployment at all is a ``breach`` whatever it declares, so a total outage
+(e.g. every T-stage writer while its only account is blocked) is never shown as a calm declared degrade. A
+switched-off stage (``is_active`` false, the kill switch) is not checked: it is listed in ``disabled``.
 """
 from __future__ import annotations
 
@@ -59,11 +61,11 @@ class StageResult:
 
     @property
     def status(self) -> str:
-        """``ok`` (a usable deployment in another domain), ``degrade`` (none, but a declared degrade mode) or
-        ``breach``."""
+        """``ok`` (a usable deployment in another domain), ``degrade`` (one usable domain only, and a declared degrade
+        mode) or ``breach`` (no second domain and no degrade mode, or no usable deployment at all)."""
         if self.other_domains:
             return "ok"
-        return "degrade" if self.degrade_mode else "breach"
+        return "degrade" if self.degrade_mode and self.primary_domain else "breach"
 
     def as_dict(self) -> dict:
         return {"stage": self.stage, "role": self.role, "ok": self.ok, "status": self.status, "primary": self.primary,
@@ -103,7 +105,8 @@ def check_stage(route: dict, aliases: dict[str, list[str]], deployments: dict[st
                 continue
             usable.append((conn["connection_key"], failure_domain(conn)))
     if not usable:
-        return StageResult(stage, role, bool(degrade), None, None, reason="no enabled, funded deployment on the route",
+        # A degrade mode never excuses the first domain (review S263): the stage cannot run at all.
+        return StageResult(stage, role, False, None, None, reason="no enabled, funded deployment on the route",
                            degrade_mode=degrade)
     key, domain = usable[0]
     others = sorted({d for _, d in usable if d != domain})

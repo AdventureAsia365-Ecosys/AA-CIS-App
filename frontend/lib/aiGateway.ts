@@ -840,7 +840,7 @@ export interface InvariantStage {
   primary_domain: string | null;
   other_domains: string[];
   reason: string | null;
-  /** AA-642 A1: ok (another failure domain), degrade (none, but a declared degrade mode) or breach; absent before. */
+  /** AA-642 A1: ok (another failure domain), degrade (one domain only, declared degrade mode) or breach; absent before. */
   status?: "ok" | "degrade" | "breach";
   degrade_mode?: string | null;
 }
