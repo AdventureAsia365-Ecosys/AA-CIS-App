@@ -20,7 +20,8 @@ Two kinds of checks:
   deliberate rollback), or a line that says ``too many connections for role "cis_app"`` is counted in a per-process
   buffer. :func:`flush_events` turns the buffer into alerts; the api flushes it on every sampler tick, the worker
   from its loop (shared/jobs/worker.py), and both once more on shutdown (bounded at 5 s), so a deploy or a scale-in
-  does not drop the events of the last tick. Only a hard kill (OOM, SIGKILL) loses them; the log line stays. Renaming one of these events in the code silently drops its check: the names
+  does not drop the events of the last tick. Only a hard kill (OOM, SIGKILL) loses them; the log line stays.
+  Renaming one of these events in the code silently drops its check: the names
   are tested against the code (tests/unit/test_s263_ops_checks.py).
 
 Dedupe (one advisory-locked transaction, so two api tasks never double up): a check writes a bell only when it has
