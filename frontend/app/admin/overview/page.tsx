@@ -13,6 +13,8 @@
 // linking to AI providers, where each provider has its own row.
 // AA-858 (S243) — every number on the page names its source in a SourceHint (kit InfoTip); the wording, in plain
 // business words, is in ./_components/sources.ts.
+// AA-1006 follow-up (S263 F1) — the Alerts rows are ./_components/AlertList.tsx: a long alert key wraps and the row
+// stacks on a phone (it pushed the page 65 px past a 390 px screen).
 
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -24,6 +26,7 @@ import {
   Users,
 } from "lucide-react";
 import Link from "next/link";
+import { AlertList } from "./_components/AlertList";
 import { AppHealthStrip } from "./_components/AppHealthStrip";
 import { BookingFunnelCard } from "./_components/BookingFunnelCard";
 import { CostByAppCard } from "./_components/CostByAppCard";
@@ -44,8 +47,7 @@ import {
   SkeletonStyle,
   Spinner,
   StatusBadge,
-  type Tone, PageFrame,
-  useFormat,
+  PageFrame,
   useT,
   Button, DataTable,
 } from "../../_kit";
@@ -146,6 +148,7 @@ function Section({
         border: `1px solid ${K.line}`,
         borderRadius: 12,
         padding: "18px 20px",
+        minWidth: 0,
       }}
     >
       <div
@@ -281,7 +284,6 @@ function paidSources(cost: Overview["cost"]) {
 
 export default function OverviewPage() {
   const t = useT(OVERVIEW);
-  const { formatDateTime } = useFormat();
   const { INTEL_SRC, JOBS_SRC, PIPELINE_SRC, PROVIDER_COST_SRC, TENANT_SRC } = useSources();
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ["admin-overview"],
@@ -568,40 +570,7 @@ export default function OverviewPage() {
                 {data.alerts.length === 0 ? (
                   <div style={{ fontSize: 13, color: K.muted }}>{t("noAlerts")}</div>
                 ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {data.alerts.map((a, i) => {
-                      const tone: Tone = a.event_type.includes("exhausted")
-                        ? "danger"
-                        : a.event_type.includes("low") || a.event_type.includes("budget")
-                          ? "warning"
-                          : "neutral";
-                      return (
-                        <div
-                          key={i}
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 10,
-                            padding: "8px 12px",
-                            background: K.bg,
-                            border: `1px solid ${K.line}`,
-                            borderRadius: 8,
-                          }}
-                        >
-                          <Badge tone={tone} dot>
-                            {a.event_type}
-                          </Badge>
-                          <span style={{ fontSize: 12, color: K.body }}>
-                            {a.entity_type}
-                            {a.entity_id ? ` · ${a.entity_id}` : ""}
-                          </span>
-                          <span style={{ marginLeft: "auto", fontSize: 11, color: K.muted2 }}>
-                            {formatDateTime(a.created_at)}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
+                  <AlertList alerts={data.alerts} />
                 )}
               </Section>
 

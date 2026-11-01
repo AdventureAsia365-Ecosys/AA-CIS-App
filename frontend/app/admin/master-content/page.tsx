@@ -25,6 +25,7 @@ import { TourDetailPanelV2 } from "../_components/TourDetailPanelV2";
 import { CompareModal } from "../_components/CompareModal";
 import { RetireTourDialog, type RetireAction } from "../_components/RetireTourDialog";
 import { Pagination } from "../_components/Pagination";
+import { shownRange } from "@/lib/pageRange";
 import { SCORE_BANDS } from "@/lib/quality-registry.generated";
 
 const AA_INTERNAL_ID = "00000000-0000-0000-0000-000000000001";
@@ -825,7 +826,7 @@ function MasterContentPageInner() {
   // (AA-662) owns the fetch; the query key carries the filter/sort/page state so changing any of
   // them refetches the matching page + a filter-aware summary + pagination.total. No fetch-in-
   // effect (React Compiler rule, frontend/AGENTS.md).
-  const { data, isLoading, isFetching, error: qError, refetch } = useQuery({
+  const { data, isLoading, isFetching, isPlaceholderData, error: qError, refetch } = useQuery({
     queryKey: ["master-content", page, pageSize, sortKey, sortDir, search, countryFilter, scoreFilter, versionFilter, masterStatusFilter],
     queryFn: async () => {
       const qs = new URLSearchParams({
@@ -876,6 +877,10 @@ function MasterContentPageInner() {
   const tours = data?.rewritten_tours ?? [];
   const summary = data?.summary;
   const serverTotal = data?.pagination?.total ?? tours.length;
+  // AA-1006 follow-up (S263 F4): while the next page loads, the previous page's rows stay on screen
+  // (placeholderData), so the row numbers, the range and the pager follow the page those rows came with (the
+  // answer's own pagination), never the page just asked for.
+  const shown = shownRange(data?.pagination, { page, pageSize }, tours.length);
 
   // AA-722: master-pool score distribution (replaces the stale pipeline_runs widgets). Empty while
   // loading or when the metrics endpoint has no data yet.
@@ -954,7 +959,7 @@ function MasterContentPageInner() {
         : null,
     },
     { id: "n", header: "#", enableSorting: false, meta: { hideLabelOnCard: true },
-      cell: ({ row }) => <span style={{ color: K.muted2 }}>{(page - 1) * pageSize + row.index + 1}</span> },
+      cell: ({ row }) => <span style={{ color: K.muted2 }}>{shown.offset + row.index + 1}</span> },
     // The sortable columns carry an accessor (TanStack wires a header click only then); the server sorts.
     { id: "tour_name", header: tr("colTourName"), accessorFn: (row) => row.tour_name,
       cell: ({ row: { original: row } }) => (
@@ -1350,21 +1355,27 @@ function MasterContentPageInner() {
             ) : (
               // AA-1006: a kit DataTable (a card per tour on a phone, was a hand-made card list); sorting and paging stay on
               // the server (the page's sortKey / sortDir and its own pager below). Versions open in a kit Drawer.
-              <DataTable<MasterRow>
-                tableId="master-content-tours"
-                data={paginated}
-                getRowId={(row) => row.version_id}
-                searchable={false}
-                paginate={false}
-                {...sortProps}
-                columns={phoneCardColumns(masterColumns, "tour_name", isPhone)}
-              />
+              // S263 F2: the table (its toolbar and its own bordered box) sits at the same inset as the header above
+              // (36 px, 16 px on a phone): full-bleed, the Columns button touched the right edge of the frame.
+              // F4: the previous page's rows are dimmed while the next page loads.
+              <div data-testid="master-content-table" aria-busy={isPlaceholderData || undefined}
+                style={{ padding: isPhone ? "12px 16px" : "14px 36px", opacity: isPlaceholderData ? 0.6 : 1, transition: "opacity 120ms" }}>
+                <DataTable<MasterRow>
+                  tableId="master-content-tours"
+                  data={paginated}
+                  getRowId={(row) => row.version_id}
+                  searchable={false}
+                  paginate={false}
+                  {...sortProps}
+                  columns={phoneCardColumns(masterColumns, "tour_name", isPhone)}
+                />
+              </div>
             )}
             {serverTotal > 0 && (
-              <div style={{ padding: "12px 20px", borderTop: `1px solid ${K.line}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ padding: isPhone ? "12px 16px" : "12px 36px", borderTop: `1px solid ${K.line}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                 {/* AA-739: choose rows per page; AA-718: paginate against the real server total. */}
                 <label style={{ fontSize: 12, color: K.muted, display: "inline-flex", alignItems: "center", gap: 8 }}>
-                  {t("range", (page - 1) * pageSize + 1, Math.min(page * pageSize, serverTotal), serverTotal)}
+                  {t("range", shown.from, shown.to, serverTotal)}
                   <Select
                     value={pageSize}
                     onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }}
@@ -1373,8 +1384,8 @@ function MasterContentPageInner() {
                     {[20, 50, 100, 200].map(n => <option key={n} value={n}>{t("perPage", n)}</option>)}
                   </Select>
                 </label>
-                {serverTotal > pageSize && (
-                  <Pagination page={page} total={serverTotal} pageSize={pageSize} onPage={setPage} />
+                {serverTotal > shown.pageSize && (
+                  <Pagination page={shown.page} total={serverTotal} pageSize={shown.pageSize} onPage={setPage} />
                 )}
               </div>
             )}
