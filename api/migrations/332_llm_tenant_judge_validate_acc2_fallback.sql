@@ -17,16 +17,25 @@
 --   t9_faq_filter       validate  text JSON items (faq_filter.parse_verdicts)                 nova-lite
 --
 --   Nova Lite is the cheapest acc2 model that meets each contract (the reasons are in migration 331's header); none of
---   these stages is half of a two-maker pair. The contract smoke (job kind llm_contract_smoke) covers all four, also
---   before this file is applied (it falls back to the planned model).
+--   these stages is half of a two-maker pair. The contract smoke (job kind llm_contract_smoke) covers all four, and
+--   must pass BEFORE this file is applied (it falls back to the planned model): the order gate below refuses a stage
+--   whose latest smoke on its pick did not pass. t2_brand_audit is a judge whose pass publishes a tenant rewrite: like
+--   s1_brand_audit (331), its acc2 pass is held as manual_check + BRAND_AUDIT_UNCALIBRATED_JUDGE by
+--   brand_audit_node.hold_uncalibrated_pass (same node), so an uncalibrated acc2 judge never publishes; the three
+--   validate stages go live on the contract smoke alone (ladder rungs calibration / A/B / shadow skipped knowingly, as
+--   for 331).
 --
 -- Guards (RAISE rolls the whole file back): the before-guards of 331, plus 331 registered; after: every row this file
 -- changed is one of the four stages above, its model_id / shadow / allowed_scopes unchanged and its fallbacks the old
 -- ones plus the pick at the end (once); it now reaches two failure domains; no writer route names an acc2-only chat
--- model; no TripPlanner stage was changed. NOTICE: stages changed and judge / validate stages still in one domain.
+-- model; no TripPlanner stage was changed. Order gate (as 331): every stage changed has a passing contract smoke on its
+-- pick (the LATEST shared.llm_call_log row with stage 'adhoc_aa1026', quality_signal->>'contract_smoke' = the stage,
+-- model = the pick, connection acc2 says parser_ok = true); an empty llm_call_log (a replay) skips it with a NOTICE.
+-- NOTICE: stages changed and judge / validate stages still in one domain.
 --
--- Class: contract (UPDATE of existing routing rows), no expand header, MIG-4 order like 331 (migration-only PR, Infra
--- copy, manual DB Migrate apply with the job tables idle, bot/db-schema-reference PR). No code depends on it.
+-- Class: contract (UPDATE of existing routing rows), no expand header, order like 331 (the code PR deployed and the
+-- smoke run live first, then this migration-only PR, Infra copy, manual DB Migrate apply with the job tables idle,
+-- bot/db-schema-reference PR). No code depends on it.
 -- Rollback (a NEW forward migration): array_remove(fallback_model_ids, 'nova-lite') on the rows updated_by
 -- 'migration-332-aa1026', or the admin route PATCH per stage. Keep the AA-CIS-Infra copy byte-identical.
 -- X1. One BEGIN … COMMIT block, no role switch (DB Migrate runs cis/ files as cis_owner). Grants: none.
@@ -186,6 +195,27 @@ BEGIN
      WHERE updated_by = actor AND stage LIKE 'tp\_%';
     IF bad IS NOT NULL THEN
         RAISE EXCEPTION 'migration 332: TripPlanner stages changed by this file: %', bad;
+    END IF;
+
+    -- ── 3. Order gate: the contract smoke passed for every stage changed here, on its pick, before the apply ─────────
+    IF EXISTS (SELECT 1 FROM shared.llm_call_log) THEN
+        SELECT string_agg(s.stage || ' (' || s.pick || ')', ', ' ORDER BY s.stage) INTO bad
+          FROM unnest(stages, picks) AS s (stage, pick)
+         WHERE s.stage = ANY (changed)
+           AND NOT coalesce((SELECT (l.quality_signal ->> 'parser_ok')::boolean
+                               FROM shared.llm_call_log l
+                              WHERE l.stage = 'adhoc_aa1026'
+                                AND l.quality_signal ->> 'contract_smoke' = s.stage
+                                AND l.model = s.pick
+                                AND coalesce(l.connection_key, l.account) = 'acc2'
+                              ORDER BY l.created_at DESC, l.id DESC
+                              LIMIT 1), false);
+        IF bad IS NOT NULL THEN
+            RAISE EXCEPTION 'migration 332: no passing contract smoke on the acc2 pick (run the llm_contract_smoke job '
+                            'live first, re-pick or drop a failing stage): %', bad;
+        END IF;
+    ELSE
+        RAISE NOTICE 'migration 332: shared.llm_call_log is empty (a replay): the contract smoke order gate is skipped';
     END IF;
 
     RAISE NOTICE 'migration 332: stages given an acc2 fallback: %',

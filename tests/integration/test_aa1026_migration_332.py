@@ -45,7 +45,19 @@ def cur():
         conn.close()
 
 
-def _load_routes(c) -> None:
+def _smoke(c, stage: str, ok: bool, at: str = "2026-11-01 09:00+00", model: str = "nova-lite") -> None:
+    """One contract smoke ledger row, as services/jobs/llm_contract_smoke_job.py writes it."""
+    c.execute("INSERT INTO shared.llm_call_log (stage, role, model, quality_signal, account, connection_key, "
+              "created_at) VALUES ('adhoc_aa1026', 'validate', %s, %s::jsonb, 'acc2', 'acc2', %s::timestamptz)",
+              (model, json.dumps({"contract_smoke": stage, "parser_ok": ok, "actor": "job:llm_contract_smoke"}), at))
+
+
+def _load_routes(c, smoked: bool = True) -> None:
+    """The routes after 331, and (``smoked``) a passing contract smoke of each tenant stage on Nova Lite (the order
+    gate of the file needs them)."""
+    if smoked:
+        for stage in TENANT:
+            _smoke(c, stage, True)
     c.execute("UPDATE shared.llm_provider_connection SET enabled = true WHERE connection_key IN ('acc2', 'acc3')")
     c.execute("UPDATE shared.llm_model_deployment SET enabled = true WHERE connection_key = 'acc2' "
               "AND model_key = 'nova-lite'")
@@ -106,3 +118,28 @@ def test_guard_refuses_a_tripplanner_stage(cur):
     assert body != _body()
     with pytest.raises(psycopg2.errors.RaiseException, match="TripPlanner stages changed"):
         cur.execute(body)
+
+
+# ── the order gate: the contract smoke before the apply (review fix pass) ───────────────────────────────────────────
+
+def test_the_order_gate_refuses_a_stage_whose_latest_smoke_failed(cur):
+    _load_routes(cur)
+    _smoke(cur, "t9_faq_filter", False, at="2026-11-01 10:00+00")
+    with pytest.raises(psycopg2.errors.RaiseException,
+                       match=r"no passing contract smoke .*t9_faq_filter \(nova-lite\)"):
+        cur.execute(_body())
+
+
+def test_the_order_gate_refuses_a_stage_with_no_smoke(cur):
+    _load_routes(cur)
+    cur.execute("DELETE FROM shared.llm_call_log WHERE stage = 'adhoc_aa1026' "
+                "AND quality_signal ->> 'contract_smoke' = 't2_brand_audit'")
+    with pytest.raises(psycopg2.errors.RaiseException, match=r"t2_brand_audit \(nova-lite\)"):
+        cur.execute(_body())
+
+
+def test_an_empty_ledger_is_a_replay_and_skips_the_gate(cur):
+    _load_routes(cur, smoked=False)
+    cur.execute("DELETE FROM shared.llm_call_log")
+    cur.execute(_body())
+    assert _routes(cur) == _expected()
