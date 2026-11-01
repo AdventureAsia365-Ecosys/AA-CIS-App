@@ -9,6 +9,8 @@ directly — moved here so T5 doesn't reach into a deleted router module.
 import hashlib
 import re
 
+from shared.llm_client.json_reply import first_json_value
+
 SYSTEM_PROMPT = """You extract content atoms from a tour's source material for a travel \
 marketing platform. An atom is one concrete, place-and-activity pair from the trip — not a \
 summary, not a paraphrase, not an invented detail.
@@ -285,3 +287,13 @@ def strip_json_fence(text: str) -> str:
     test) — strip it before json.loads()."""
     match = re.match(r"^```(?:json)?\s*\n(.*)\n```\s*$", text.strip(), re.DOTALL)
     return match.group(1) if match else text
+
+
+def atoms_from_reply(text: str) -> list:
+    """The `atoms` list of an atomize reply: the reply's first complete JSON object, so a fence, prose before it or a
+    note after it is ignored (AA-1026: the acc2 fallback models add text after the JSON). Raises ValueError (no JSON
+    object / invalid JSON), KeyError (no `atoms`) or TypeError (`atoms` is not a list)."""
+    atoms = first_json_value(text)["atoms"]
+    if not isinstance(atoms, list):
+        raise TypeError(f"'atoms' is {type(atoms).__name__}, not a list")
+    return atoms

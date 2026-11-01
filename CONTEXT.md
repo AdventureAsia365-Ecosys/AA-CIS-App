@@ -532,7 +532,13 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   **an acc2 brand-audit `pass` is held**: `brand_audit_node.hold_uncalibrated_pass` turns it into `manual_check` +
   `BRAND_AUDIT_UNCALIBRATED_JUDGE` (connections in `UNCALIBRATED_JUDGE_CONNECTIONS`), so an uncalibrated judge can flag
   or hold a tour but never publish one. `draft_card` / `check_card` (place cards) take an optional `client` for the
-  smoke.
+  smoke. **Reply parsing:** the stage parsers without a forced schema read the reply's FIRST complete JSON value
+  through `shared/llm_client/json_reply.first_json_value` (prose or a fence before it, any text after it ignored, a
+  cut-off reply never yields a nested value; the item / shape checks stay in each parser): `t9_faq_filter` and
+  `t9_faq_answer_fit` (which also take the bare items list: both acc2 models answered the S263 smoke that way),
+  `a3_place_days`, `a3_place_locate`, `a3_atomize` (`atom_extraction.atoms_from_reply`), and before their
+  json_repair salvage `s1_source_facts` and the place card draft / check. The schema-forced judges / validators
+  (brand audit, `t10_claims`, `a3_place_dedupe_check`) keep `json.loads`.
 - **Structured output (`LLMRequest.json_schema`) per path**: Converse = one tool whose input is the schema, reply
   conformed (`_checked_json`, AA-659/714); OpenAI = strict `response_format`. The legacy `haiku` / `sonnet` keys
   (Anthropic Messages API, `invoke_claude`) have neither: since S251 (AA-835) the gateway appends a "one JSON object

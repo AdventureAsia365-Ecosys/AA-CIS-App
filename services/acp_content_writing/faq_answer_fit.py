@@ -29,8 +29,6 @@ from __future__ import annotations
 import asyncio
 import collections
 import contextvars
-import json
-import re
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import wait as futures_wait
 from dataclasses import dataclass, field
@@ -43,6 +41,7 @@ from services.acp_content_writing.quality_gates import (FAQ_MIN_PAIRS, drop_faq_
                                                         strip_citation_tags)
 from shared.llm_client.call_log import billed_fields, record_call_sync, record_unusable_sync
 from shared.llm_client.client import LLMClient
+from shared.llm_client.json_reply import JsonReplyError, first_json_value
 from shared.llm_client.models import LLMRequest
 
 logger = structlog.get_logger()
@@ -155,16 +154,15 @@ def build_request(sent: Sequence[tuple[str, str]], *, fit_mode: str = FIT_MODE_B
 
 
 def parse_fit_verdicts(content: str, n: int) -> list[dict]:
-    """One {verdict, reason} per pair 1..n, or FitReplyError. A missing answer or an unknown verdict is an
-    error (never guessed)."""
-    m = re.search(r"\{.*\}", (content or "").strip(), re.S)
-    if not m:
-        raise FitReplyError("no JSON object in the reply")
+    """One {verdict, reason} per pair 1..n, or FitReplyError. The reply's first complete JSON value is read (text
+    before and after it is ignored): the {"items": [...]} object, or the bare items list (AA-1026, the reply shape
+    the acc2 models gave the sibling t9_faq_filter stage). A missing answer or an unknown verdict is an error (never
+    guessed)."""
     try:
-        obj = json.loads(m.group(0))
-    except json.JSONDecodeError as e:
-        raise FitReplyError(f"invalid JSON: {e}") from e
-    items = obj.get("items") if isinstance(obj, dict) else None
+        obj = first_json_value(content, kinds=(dict, list))
+    except JsonReplyError as e:
+        raise FitReplyError(str(e)) from e
+    items = obj.get("items") if isinstance(obj, dict) else obj
     if not isinstance(items, list):
         raise FitReplyError("no items list")
     by_n: dict[int, dict] = {}

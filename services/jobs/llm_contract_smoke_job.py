@@ -160,14 +160,12 @@ def _atomize_request():
 
 
 def _atomize(call) -> dict:
-    from services.acp_shared.atom_extraction import strip_json_fence
+    from services.acp_shared.atom_extraction import atoms_from_reply
     resp = call(_atomize_request())
     try:
-        atoms = json.loads(strip_json_fence(resp.content))["atoms"]
+        atoms = atoms_from_reply(resp.content)
     except (ValueError, KeyError, TypeError) as e:
         raise ContractError(f"a3_atomize parser refused the reply: {e}") from e
-    if not isinstance(atoms, list):
-        raise ContractError(f"'atoms' is {type(atoms).__name__}, not a list")
     return {"atoms": len(atoms)}
 
 
