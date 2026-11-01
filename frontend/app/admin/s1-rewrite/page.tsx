@@ -11,8 +11,9 @@ import { Play, RefreshCw, ArrowRight, Search, CheckCircle, XCircle, Loader2, Che
 import {
   Button, PageFrame, PageFrameBody, PageFrameHeader, PageHeader, useFormat, useT, type Translator, Checkbox, Input, Select,
   K, sans, mono, Section, Badge, LoadingScreen,
-  DataTable, Drawer, KX, LinkButton, Modal, type ColumnDef,
+  DataTable, Drawer, LinkButton, Modal, type ColumnDef, ToastProvider, useToast, useIsPhone,
 } from "../../_kit";
+import { phoneCardColumns } from "@/lib/tableSort";
 import { TourDetailPanelV2 } from "../_components/TourDetailPanelV2";
 import { CompareModal } from "../_components/CompareModal";
 import { Pagination } from "../_components/Pagination";
@@ -189,6 +190,15 @@ function PipelineStatusBadge({ tour, runStatus, result, stage, isRetry }: {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function S1RewritePage() {
+  // AA-1006: the "rewrite complete" note is a kit toast, painted above the live writer Drawer.
+  return (
+    <ToastProvider>
+      <S1RewritePageInner />
+    </ToastProvider>
+  );
+}
+
+function S1RewritePageInner() {
   const t = useT(M);
   const tr = t; // the tour table's rows are `t` (the tour), so the table reads the translator as `tr`
   const { formatDate } = useFormat();
@@ -196,6 +206,8 @@ export default function S1RewritePage() {
   // language's translator through this ref, like the other refs of this page.
   const tRef = useRef(t);
   useEffect(() => { tRef.current = t; }, [t]);
+  const toast = useToast();
+  const isPhone = useIsPhone();
   const [tours, setTours]                   = useState<Tour[]>([]);
   const [loading, setLoading]               = useState(true);
   const [selectedIds, setSelectedIds]       = useState<Set<string>>(new Set());
@@ -223,7 +235,6 @@ export default function S1RewritePage() {
   const [jobIds, setJobIds]                 = useState<Record<string, string>>({}); // tour_id -> job_id
   // AA-667: tour whose live writing panel is open ({tourId, jobId, name}).
   const [liveTour, setLiveTour]             = useState<{ tourId: string; jobId: string; name: string } | null>(null);
-  const [toast, setToast]                   = useState<string | null>(null);
   // AA-250 B2: tour_id -> last-seen current_stage from GET /admin/jobs/{id}, and whether that
   // job has looped back into "generate" more than once (validate-retry loop indicator).
   const [tourStages, setTourStages]         = useState<Record<string, string | null>>({});
@@ -613,8 +624,7 @@ export default function S1RewritePage() {
             }));
             setTourStatuses(prev => ({ ...prev, [tourId]: "done" }));
             const tourName = toursRef.current.find(x => x.tour_id === tourId)?.src_name ?? tRef.current("tour");
-            setToast(tRef.current("rewriteComplete", tourName));
-            setTimeout(() => setToast(null), 5000);
+            toast.success(tRef.current("rewriteComplete", tourName), 5000);
             resolveWaiter(tourId);
           } else if (job.status === "failed" || job.status === "interrupted") {
             setRunResults(prev => ({
@@ -628,7 +638,7 @@ export default function S1RewritePage() {
         } catch {}
       }));
     }, 5000);
-  }, [tourStatuses]);
+  }, [tourStatuses, toast]);
 
   // Cleanup polling on unmount
   useEffect(() => () => {
@@ -831,7 +841,7 @@ export default function S1RewritePage() {
                 onRowClick={(row) => setDetailTour(detailTour?.tour_id === row.tour_id ? null : row)}
                 searchable={false}
                 paginate={false}
-                columns={tourColumns}
+                columns={phoneCardColumns(tourColumns, "name", isPhone)}
               />
               {filteredTours.length > PAGE_SIZE && (
                 <div style={{ padding: "12px 20px", borderTop: `1px solid ${K.line}`, display: "flex", justifyContent: "flex-end" }}>
@@ -934,20 +944,6 @@ export default function S1RewritePage() {
         />
       )}
 
-      {/* Toast — bottom-right, auto-dismiss after 5s (AA-248) */}
-      {toast && (
-        <div style={{
-          position: "fixed", bottom: 24, right: 28, zIndex: 9999,
-          display: "flex", alignItems: "center", gap: 8,
-          padding: "12px 18px", borderRadius: 10,
-          background: K.card, border: `1px solid ${K.success}`,
-          boxShadow: KX.shadowMd,
-          fontSize: 13, fontWeight: 600, color: K.ink, fontFamily: sans,
-          maxWidth: 380,
-        }}>
-          {toast}
-        </div>
-      )}
     </>
   );
 }

@@ -9,8 +9,9 @@ import {
 import { Pagination } from "../_components/Pagination";
 import {
   Button, PageFrame, PageHeader, useFormat, useT, Input, Select, K, serif, sans, mono, Section, Eyebrow, Badge,
-  DataTable, IconButton, KX, LinkButton,
+  DataTable, IconButton, KX, LinkButton, useIsPhone, type ColumnDef,
 } from "../../_kit";
+import { phoneCardColumns } from "@/lib/tableSort";
 import { UP } from "./messages";
 
 const TENANT_ID = "00000000-0000-0000-0000-000000000001";
@@ -229,6 +230,7 @@ function ReadyToursTable({ tours, expanded, onToggle }: {
   const open = tours.find(x => x.tour_id === expanded) ?? null;
   const rows = tours.map((tour, i) => ({ tour, idx: i + 1 }));
   const text = (v: string | null | undefined) => v || "—";
+  const isPhone = useIsPhone();
   return (
     <>
       <DataTable<{ tour: TourPreview; idx: number }>
@@ -239,7 +241,8 @@ function ReadyToursTable({ tours, expanded, onToggle }: {
         searchable={false}
         paginate={false}
         compact
-        columns={[
+        // On a phone the tour name is the card title (the row number stays first on a desktop).
+        columns={phoneCardColumns<ColumnDef<{ tour: TourPreview; idx: number }, unknown>>([
           { id: "idx", header: "#", enableSorting: false, cell: ({ row }) => <span style={{ color: K.muted2 }}>{row.original.idx}</span> },
           { id: "name", header: t("colTourName"), enableSorting: false, cell: ({ row: { original: { tour } } }) => (
             <span style={{ fontWeight: 600, color: K.ink }}>
@@ -264,7 +267,7 @@ function ReadyToursTable({ tours, expanded, onToggle }: {
                 : <ChevronDown size={13} style={{ color: K.muted2 }} />}
             </div>
           ) },
-        ]}
+        ], "name", isPhone)}
       />
       {open && <TourDetail tour={open} />}
     </>

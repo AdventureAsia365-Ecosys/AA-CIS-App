@@ -323,11 +323,6 @@ export default function ContentTracePage() {
                 `/admin/atom-curation?section=<key>` (see SocialContentSubNav.tsx). */}
             <SocialContentSubNav active="content_trace" />
             <div style={{ flex: 1, minWidth: 0 }}>
-              {unpublishError && (
-                <div style={{ padding: "8px 12px", marginBottom: 12, borderRadius: 6, background: K.dangerTint, color: K.danger, fontSize: 12 }}>
-                  {unpublishError}
-                </div>
-              )}
               {loading ? (
                 <LoadingScreen message={t("loading")} />
               ) : error ? (
@@ -343,13 +338,21 @@ export default function ContentTracePage() {
                 </div>
               ) : (
                 <div data-testid="admin-content-ready">
-                  <ContentTraceTable rows={rows} onOpen={setOpenRow} />
+                  <ContentTraceTable rows={rows} onOpen={(r) => { setUnpublishError(null); setOpenRow(r); }} />
                 </div>
               )}
             </div>
           </SocialContentSplit>
         </PageFrameBody>
-        <Drawer open={openRow != null} onClose={() => setOpenRow(null)} width={760} title={openRow?.topic}>
+        <Drawer open={openRow != null} onClose={() => { setOpenRow(null); setUnpublishError(null); }} width={760}
+          title={openRow?.topic}>
+          {/* Force unpublish starts in this Drawer, so its failure shows here (the page behind sits under the scrim). */}
+          {openRow && unpublishError && (
+            <div role="alert" data-testid="content-trace-unpublish-error"
+              style={{ padding: "8px 12px", marginBottom: 12, borderRadius: 6, background: K.dangerTint, color: K.danger, fontSize: 12 }}>
+              {unpublishError}
+            </div>
+          )}
           {openRow && (
             <ContentTraceAccordion
               row={rows?.find(r => r.piece_id === openRow.piece_id) ?? openRow}

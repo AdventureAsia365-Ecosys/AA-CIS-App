@@ -55,8 +55,9 @@ import {
   Button, PageFrame, PageFrameBody, PageFrameHeader, PageHeader, useFormat, useT, Checkbox, Input, Select,
   K, mono, sans, Section, Badge, LoadingScreen,
   type Tone,
-  DataTable, IconButton, KX, LinkButton, ListButton, Pressable, useIsPhone,
+  DataTable, IconButton, KX, LinkButton, ListButton, Pressable, useIsPhone, type ColumnDef,
 } from "../../_kit";
+import { phoneCardColumns } from "@/lib/tableSort";
 import { SeedLine, type SeedInfo } from "../_components/SeedLine";
 import { TenantSelect } from "../_components/TenantSelect";
 import { AT } from "./messages";
@@ -665,6 +666,8 @@ function SegmentSection({ tourId, market, focusRouteId, focusSegmentId, onClearF
 }) {
   const t = useT(AT);
   const marketTitle = useMarketTitle();
+  // A phone shows a card per row (no rows grouped under one segment cell): each card carries its own segment.
+  const phone = useIsPhone();
   const [placeSearch, setPlaceSearch] = useState("");
   const [minRecurrence, setMinRecurrence] = useState("");
   const [offset, setOffset] = useOffset([tourId, market, placeSearch, minRecurrence, focusRouteId, focusSegmentId]);
@@ -730,10 +733,11 @@ function SegmentSection({ tourId, market, focusRouteId, focusSegmentId, onClearF
             searchable={false}
             paginate={false}
             compact
-            columns={[
-              { id: "n", header: "#", enableSorting: false, cell: ({ row: { original: l } }) => l.j === 0
+            // On a phone the tour is the card title and every card shows its segment, route / hub and number.
+            columns={phoneCardColumns<ColumnDef<SegmentLine, unknown>>([
+              { id: "n", header: "#", enableSorting: false, cell: ({ row: { original: l } }) => phone || l.j === 0
                 ? <span style={{ fontFamily: mono, fontSize: 11, color: K.muted2 }}>{offset + l.i + 1}</span> : null },
-              { id: "segment", header: t("colSegment"), enableSorting: false, cell: ({ row: { original: l } }) => l.j === 0 ? (
+              { id: "segment", header: t("colSegment"), enableSorting: false, cell: ({ row: { original: l } }) => phone || l.j === 0 ? (
                 <div>
                   <span style={{ fontSize: 13, fontWeight: 600, color: K.body }}>
                     {l.g.place}{l.g.action ? ` — ${l.g.action}` : ""}
@@ -741,7 +745,7 @@ function SegmentSection({ tourId, market, focusRouteId, focusSegmentId, onClearF
                   <div style={{ fontSize: 10.5, color: K.muted2, marginTop: 3 }}>{t("marketTourRows", l.g.rows.length)}</div>
                 </div>
               ) : null },
-              { id: "routeHub", header: t("colRouteHub"), enableSorting: false, cell: ({ row: { original: l } }) => l.j !== 0 ? null
+              { id: "routeHub", header: t("colRouteHub"), enableSorting: false, cell: ({ row: { original: l } }) => !phone && l.j !== 0 ? null
                 : l.g.routeHubName && l.g.routeId ? (
                   <Pressable display="inline" onClick={() => onNavigateToRoute(l.g.routeId!)} title={t("viewRoute")}>
                     <Badge tone="accent"><Milestone size={11} style={{ verticalAlign: -2, marginRight: 3 }} />{l.g.routeHubName}</Badge>
@@ -754,7 +758,7 @@ function SegmentSection({ tourId, market, focusRouteId, focusSegmentId, onClearF
               { id: "rank", header: t("colTotalRank"), enableSorting: false, cell: ({ row: { original: l } }) =>
                 l.r.excluded_reason ? <Badge tone="neutral">{l.r.excluded_reason}</Badge> : (l.r.total_rank ?? "—") },
               { id: "recurrence", header: t("colRecurrence"), enableSorting: false, cell: ({ row: { original: l } }) => l.r.recurrence ?? "—" },
-            ]}
+            ], "tour", phone)}
           />
           {!hasFocus && <PageFooter total={data.total} offset={offset} pageSize={PAGE_SIZE} onOffset={setOffset} />}
         </div>
