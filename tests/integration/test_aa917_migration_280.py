@@ -128,8 +128,9 @@ async def test_280_stage_and_budget_rows(conn):
     row = await conn.fetchrow("SELECT role, provider, model_id, account_route, fallback_model_ids, shadow_model_id, "
                               "shadow_sample_pct, is_active FROM shared.llm_role_config "
                               "WHERE stage = 'writing_memory_mine'")
+    # 280's route, as 327 left it (OpenAI API last) and 333 (AA-1026) gave it an acc2 pick before that hop
     assert dict(row) == {"role": "judge", "provider": "openai", "model_id": "gpt-5.6-luna", "account_route": "acc3",
-                         "fallback_model_ids": ["gpt-6-luna", "gpt-6-luna-openai"], "shadow_model_id": None,
+                         "fallback_model_ids": ["gpt-6-luna", "nova-lite", "gpt-6-luna-openai"], "shadow_model_id": None,
                          "shadow_sample_pct": 0, "is_active": True}
     budget = await conn.fetchrow("SELECT per_run_usd, per_day_usd, hard_stop FROM shared.spend_budget "
                                  "WHERE provider = 'bedrock' AND scope = 'job:writing_memory_mine'")
