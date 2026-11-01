@@ -11,21 +11,32 @@ the acc2 connection (migration 331 / 332 put it there); when the route has none 
 which (route / planned / override). Migration 331 / 332 refuses to give a stage its acc2 fallback until the latest
 smoke row of that stage on that model passed (the order gate: smoke first, apply second).
 
+What the stage needs. A stage whose request carries a JSON schema is asked with a FORCED tool choice on Converse
+(``toolChoice.tool``; ``Case.requires`` = ``forced_tool_choice``). When the model's catalog row states that it refuses
+one (``capabilities.forced_tool_choice = false``, AA-1017), the plan marks the stage not callable on that model
+(``why_not``), so a re-pick onto such a model is caught by the plan, not by Bedrock. An unstated capability is allowed
+(the live call is the proof).
+
 How. ``LLMClient.probe`` on that model's acc2 deployment (the admin's Test connection path: the gateway's own Converse
 adapter on the acc2 task role, structured output as a Converse tool, its outcome counted on the deployment's circuit,
 no route, no fallback, no shadow), with the request's stage set to ``adhoc_aa1026`` and its role to the stage's role
 (judge / validate), so the ledger keeps these calls apart from the stage's own traffic. Every answered call writes one
 ``shared.llm_call_log`` row (stage ``adhoc_aa1026``, ``quality_signal.contract_smoke`` = the stage, ``parser_ok``);
 a billed but unusable reply (schema mismatch) is logged by the gateway and counts as a contract failure with its cost.
-One ``acp_shared.audit_log`` row per live run. Fixtures are invented (no catalogue, tenant or prompt text).
+A stage that got no usable reply (a refused or failed provider call, e.g. Bedrock's ValidationException for a tool
+choice the model does not take, or a billed unusable reply) is FAILED in the summary and writes one 0 USD smoke row
+(``parser_ok`` false, ``status`` error, ``quality_signal.error_class`` / ``error``), so the latest smoke row of that
+stage and model is the failure the migrations' order gate must see. One ``acp_shared.audit_log`` row per live run.
+Fixtures are invented (no catalogue, tenant or prompt text).
 
 Payload: {"dry_run": bool (default true), "stages": [stage, ...] (default every stage of ``CASES``), "models": {stage:
 model key, ...} (optional override), "requested_by": "admin:<id>"}. A DRY RUN lists the stages, the model and its
 source, whether the acc2 deployment is callable and the estimated cost, with no call. A live run refuses to start when
 the estimate exceeds ``COST_CAP_USD`` and stops between stages once the spent cost reaches it. Live cost on Dev: about
 0.01 USD for the twelve stages of 331 / 332 (Nova Lite 0.077 / 0.308 USD per 1M tokens; Llama 4 Scout 0.17 / 0.66);
-the estimate (prompt + the whole max_tokens) for all twenty stages, the eight of migration 333 included, is about
-0.02 USD. max_attempts 1 (a failed contract is the answer), background.
+the estimate (prompt + the whole max_tokens) for all twenty cases (the eight judge / validate stages whose route ends on
+the OpenAI API included; seven are planned for migration 333) is about 0.02 USD. max_attempts 1 (a failed contract is
+the answer), background.
 """
 from __future__ import annotations
 
@@ -50,7 +61,9 @@ CHARS_PER_TOKEN = 4
 
 # Migration 331 (platform) and 332 (tenant, held for the tech lead's yes): the acc2 model each stage falls back to.
 # Migration 333 (S263 "AWS first, outside last"): the judge / validate stages whose route ends on the OpenAI API get
-# an acc2 model BEFORE that hop (a3_place_dedupe on Llama 4 Scout: its check stage falls back to Nova Lite).
+# an acc2 model BEFORE that hop. a3_place_dedupe has a case but no planned model (open): it forces a tool choice, its
+# check stage falls back to Nova Lite (Amazon), and Llama 4 Scout refused toolChoice.tool live (S263); no other acc2
+# model of another maker is known to take one. Smoke a candidate with the payload's ``models`` override.
 PLANNED = {
     "s1_brand_audit": "nova-lite", "s1_source_facts": "nova-lite", "a3_atomize": "nova-lite",
     "a3_place_card": "nova-lite", "a3_place_card_check": "llama4-scout", "a3_place_days": "nova-lite",
@@ -58,9 +71,12 @@ PLANNED = {
     "t2_brand_audit": "nova-lite", "t10_claims": "nova-lite", "t9_faq_answer_fit": "nova-lite",
     "t9_faq_filter": "nova-lite",
     "s1_judge": "nova-lite", "t2_judge": "nova-lite", "t7_debate_judge": "nova-lite", "t10_judge": "nova-lite",
-    "writing_memory_eval": "nova-lite", "writing_memory_mine": "nova-lite", "a3_place_dedupe": "llama4-scout",
-    "t10_adjudicate": "nova-lite",
+    "writing_memory_eval": "nova-lite", "writing_memory_mine": "nova-lite", "t10_adjudicate": "nova-lite",
 }
+
+# What a stage's request needs from the model, read from the request: a JSON schema = a forced tool choice on Converse
+# (shared/llm_client/client.py sends toolChoice.tool), the catalog capability "forced_tool_choice" (AA-1017).
+FORCED_TOOL_CHOICE = "forced_tool_choice"
 
 
 class ContractError(ValueError):
@@ -561,7 +577,18 @@ def _cases() -> dict[str, Case]:
 
 
 CASES = _cases()
-assert set(CASES) == set(PLANNED)
+assert set(PLANNED) <= set(CASES)
+
+
+def requires(request) -> tuple[str, ...]:
+    """The catalog capabilities the stage's request needs (``FORCED_TOOL_CHOICE`` for a structured request)."""
+    return (FORCED_TOOL_CHOICE,) if getattr(request, "json_schema", None) else ()
+
+
+def refused_capabilities(model, needed: tuple[str, ...]) -> list[str]:
+    """The needed capabilities the model's catalog row states it does NOT have (false). Unstated = not refused."""
+    from shared.llm_client.catalog import capability
+    return [c for c in needed if capability(model, c) is False]
 
 
 # ── plan: which model, on which deployment, at what estimated cost ───────────────────────────────────────────────
@@ -615,21 +642,29 @@ def estimate_usd(model, request) -> Optional[float]:
 def build_plan(stages: Optional[list[str]] = None, models: Optional[dict[str, str]] = None) -> dict:
     """The smoke plan (sync: reads the route, catalog and registry caches). Unknown stage names are listed in
     ``unknown`` and never run. ``models`` overrides the model of a stage (``model_source`` 'override'); the override
-    goes through the same checks (catalog row, not Anthropic, enabled acc2 deployment)."""
+    goes through the same checks (catalog row, not Anthropic, enabled acc2 deployment, and no capability the stage's
+    request needs stated as missing: ``requires``)."""
     wanted = list(stages) if stages else sorted(CASES)
     models = models or {}
     entries, unknown = [], [s for s in wanted if s not in CASES]
     for stage in [s for s in wanted if s in CASES]:
         key, source = (models[stage], "override") if models.get(stage) else acc2_model_of(stage)
+        request = CASES[stage].request()
+        needed = requires(request)
         entry = {"stage": stage, "role": CASES[stage].role, "model_key": key, "model_source": source,
-                 "connection_key": CONNECTION, "callable": False, "why_not": None, "estimated_usd": None}
+                 "connection_key": CONNECTION, "requires": list(needed), "callable": False, "why_not": None,
+                 "estimated_usd": None}
         if key is None:
             entry["why_not"] = "no acc2 model on the route and none planned"
         else:
             model, target, why = _target(key)
+            refused = refused_capabilities(model, needed) if target is not None else []
+            if refused:
+                target, why = None, (f"the stage needs {', '.join(refused)} (a structured request forces a tool "
+                                     f"choice) and the catalog row of {key} says it has not")
             entry.update(callable=target is not None, why_not=why)
             if model is not None:
-                entry["estimated_usd"] = estimate_usd(model, CASES[stage].request())
+                entry["estimated_usd"] = estimate_usd(model, request)
         entries.append(entry)
     known = [e["estimated_usd"] for e in entries if e["callable"] and e["estimated_usd"] is not None]
     return {"stages": entries, "unknown": unknown, "estimated_usd": round(sum(known), 6),
@@ -657,9 +692,11 @@ def _pinned_call(client, model, target, role: str, spent: list):
 
 def run_case(case: Case, model, target, *, client=None) -> dict:
     """One stage (sync). Returns the stage result; never raises. ``replies`` holds the answered LLMResponses (each gets
-    its llm_call_log row from the caller)."""
+    its llm_call_log row from the caller). ``called`` is True: the stage ran and sent its request, so a refused or
+    failed provider call is a FAILED contract (``contract_ok`` false), never a skipped stage; ``billed`` says whether
+    any reply came back."""
     from shared.llm_client.client import LLMClient, UnusableReply
-    from shared.llm_client.errors import classify
+    from shared.llm_client.errors import classify, redact_ids
 
     client = client or LLMClient()
     spent: list = []
@@ -672,9 +709,9 @@ def run_case(case: Case, model, target, *, client=None) -> dict:
         out.update(error_class="contract", error=str(e)[:300])
     except UnusableReply as e:
         out.update(error_class="unusable_reply", error=str(e)[:300])
-    except Exception as e:  # noqa: BLE001 — a refused or failed provider call is the stage's answer
-        out.update(error_class=classify(e), error=f"{type(e).__name__}: {e}"[:300])
-        out["called"] = bool(spent)
+    except Exception as e:  # noqa: BLE001 — a refused or failed provider call is the stage's answer: failed
+        out.update(error_class=classify(e), error=redact_ids(f"{type(e).__name__}: {e}")[:300])
+    out["billed"] = bool(spent)
     out["latency_ms"] = int((time.monotonic() - started) * 1000)
     out["replies"] = [r for kind, r in spent if kind == "reply"]
     out["cost_usd"] = round(sum(float(getattr(r, "cost_usd", 0.0) or 0.0) for r in out["replies"])
@@ -683,7 +720,10 @@ def run_case(case: Case, model, target, *, client=None) -> dict:
 
 
 async def _log_replies(pool, case: Case, result: dict) -> None:
-    from shared.llm_client.call_log import billed_fields, record_call_with_pool
+    """One ledger row per answered call; a stage with no usable reply (refused / failed call, billed unusable reply)
+    gets one 0 USD row with ``parser_ok`` false and the error, so the latest smoke row says the stage failed (the
+    gateway's own attempt or billed_unusable row carries the cost, not the stage)."""
+    from shared.llm_client.call_log import ERROR_CLASSES, STATUS_ERROR, billed_fields, record_call_with_pool
     for resp in result["replies"]:
         await record_call_with_pool(
             pool, stage=LEDGER_STAGE, role=case.role, model=resp.model_used, tokens_in=resp.input_tokens,
@@ -691,6 +731,15 @@ async def _log_replies(pool, case: Case, result: dict) -> None:
             quality_signal={"contract_smoke": case.stage, "parser_ok": result["contract_ok"], "actor": ACTOR,
                             "error_class": result.get("error_class")},
             stop_reason=resp.stop_reason, account=CONNECTION, fallback_used=False, **billed_fields(resp))
+    if result["replies"] or result.get("contract_ok"):
+        return
+    error_class = result.get("error_class")
+    await record_call_with_pool(
+        pool, stage=LEDGER_STAGE, role=case.role, model=result["model_key"], tokens_in=0, tokens_out=0, cost_usd=0.0,
+        quality_signal={"contract_smoke": case.stage, "parser_ok": False, "actor": ACTOR, "error_class": error_class,
+                        "error": result.get("error"), "no_reply": True},
+        account=CONNECTION, connection_key=CONNECTION, fallback_used=False, status=STATUS_ERROR,
+        error_class=error_class if error_class in ERROR_CLASSES else "other")
 
 
 async def run_smoke(pool, plan: dict, *, client=None, cap_usd: float = COST_CAP_USD) -> list[dict]:
@@ -726,6 +775,8 @@ async def run_smoke(pool, plan: dict, *, client=None, cap_usd: float = COST_CAP_
 
 
 def summarize(results: list[dict]) -> dict:
+    """``failed``: every stage that ran without a passing contract, a refused or failed provider call included (a
+    stage is never silently absent: it is passed, failed or skipped)."""
     ran = [r for r in results if r.get("called")]
     return {"stages_run": len(ran), "passed": sum(1 for r in ran if r.get("contract_ok")),
             "failed": sorted(r["stage"] for r in ran if not r.get("contract_ok")),
