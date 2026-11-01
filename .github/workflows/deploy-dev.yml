@@ -58,7 +58,7 @@ jobs:
       contents: read
       actions: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           sparse-checkout: |
             .github/scripts
@@ -87,7 +87,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: dev
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       # Fails closed (AA-868): a missing secret or an unreachable gate blocks the roll; an
       # override reason lets it through (also the way out when the API itself is down).
       - name: Check for an open wave or a running deploy-blocking job
@@ -109,7 +109,7 @@ jobs:
       # rebuilds the full image from its own ECR_REGISTRY/ECR_REPOSITORY env.
       tag: ${{ steps.build.outputs.tag }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -146,7 +146,7 @@ jobs:
     environment: dev
     needs: [build-and-push, preflight, schema-gate]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v6
         with:

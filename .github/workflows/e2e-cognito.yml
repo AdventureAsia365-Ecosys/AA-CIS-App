@@ -58,7 +58,7 @@ jobs:
       # Opt-in switch the sign-in spec checks (no underscore by design).
       E2ECOGNITO: "1"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Configure AWS credentials (OIDC, read-only mailbox role)
         uses: aws-actions/configure-aws-credentials@v6
@@ -68,7 +68,7 @@ jobs:
           role-session-name: cis-e2e-cognito-${{ github.run_id }}
 
       - name: Set up Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -90,7 +90,7 @@ jobs:
       # names the typed text), i.e. the sign-in code. The spec never screenshots a filled code field.
       - name: Upload screenshots
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-cognito-${{ github.run_id }}
           path: tests/e2e/results/cognito/*.png

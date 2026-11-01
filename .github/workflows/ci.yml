@@ -27,10 +27,10 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: "pip"
@@ -82,12 +82,12 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -104,10 +104,10 @@ jobs:
     name: Security Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -136,16 +136,16 @@ jobs:
       UNIT_SHARDS: 3
       SHARD: ${{ matrix.shard }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
       # AA-993 (CIS-3): uv installs the same requirements faster than pip; its cache replaces setup-python's pip cache.
       - name: Set up uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
 
@@ -191,7 +191,7 @@ jobs:
 
       - name: Upload the shard's coverage data and junit report
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: unit-shard-${{ matrix.shard }}
           path: |
@@ -220,18 +220,18 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           # AA-925: the Q0 red-on-base step needs the PR merge commit's first parent (the base tip).
           fetch-depth: 2
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
 
@@ -240,7 +240,7 @@ jobs:
         run: |
           uv pip install --system -r requirements.txt -r requirements-dev.txt
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: unit-shard-*
           merge-multiple: true
@@ -296,7 +296,7 @@ jobs:
           python3 .github/scripts/ci_shards.py durations --out unit-durations.json shards/junit-unit-*.xml \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
           name: test-durations-unit
@@ -349,16 +349,16 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
       # AA-993 (CIS-3): same uv install as Unit Tests, two installs in the same order as before.
       - name: Set up uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
 
@@ -404,7 +404,7 @@ jobs:
 
       - name: Upload the shard's junit report
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: integration-shard-${{ matrix.shard }}
           path: junit-integration-${{ matrix.shard }}.xml
@@ -428,9 +428,9 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: integration-shard-*
           merge-multiple: true
@@ -444,7 +444,7 @@ jobs:
           python3 .github/scripts/ci_shards.py durations --prefix tests/integration/ \
             --out integration-durations.json shards/junit-integration-*.xml | tee -a "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: test-durations-integration
           path: integration-durations.json
@@ -611,7 +611,7 @@ jobs:
     name: Docker Build Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Build Docker image
         run: |
@@ -647,7 +647,7 @@ jobs:
       # in a GHA workflow (its documented default behavior) -- artifact-name below controls
       # that upload's name directly, no separate actions/upload-artifact step needed.
       - name: Generate SBOM (syft, CycloneDX)
-        uses: anchore/sbom-action@v0.24.2
+        uses: anchore/sbom-action@v0.24.3
         with:
           image: "aa-cis-api:ci-${{ github.sha }}"
           format: cyclonedx-json
@@ -676,10 +676,10 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Set up Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: "npm"
@@ -757,10 +757,10 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Set up Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: "npm"
