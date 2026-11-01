@@ -81,7 +81,8 @@ fix pass: the code PR now goes FIRST, so the contract smoke runs before any rout
   OpenAI API hop (`gpt-6-luna-openai`, 327) gets an acc2 pick right BEFORE that hop; the OpenAI API stays the last
   rung. After 331 / 332 no route has an acc2 hop after the OpenAI API hop, and eight have none: `s1_judge`, `t2_judge`,
   `t7_debate_judge`, `t10_judge`, `writing_memory_eval`, `writing_memory_mine` (Nova Lite), `a3_place_dedupe` (Llama 4
-  Scout: its check stage falls back to Nova Lite, two makers) from the Dev route snapshot, and `t10_adjudicate` (Nova
+  Scout: its check stage falls back to Nova Lite, two makers; DROPPED from 333 after the S263 live smoke, Scout refuses
+  a forced tool choice: `AA-1026-gw-333-dedupe.md`) from the Dev route snapshot, and `t10_adjudicate` (Nova
   Lite), which the 29/10 snapshot predates (migration 308 seeds it ending on the OpenAI API; the S260 Dev evidence lists
   it with `vendor_direct`). The file is generic over the listed stages: it finds the first OpenAI API hop (a key whose
   deployments are all on kind `openai` vendor_direct connections), requires the route to END on such hops, removes the

@@ -1,6 +1,7 @@
 """AA-1026 I6 — the acc2 fallback contract smoke (services/jobs/llm_contract_smoke_job.py): each judge / validate stage
 sends its own prompt through a forced acc2 model and its own parser judges the reply. No provider, AWS or database is
 reached: the gateway's ``probe`` is a fake that answers canned replies (invented text only)."""
+import dataclasses
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -26,7 +27,13 @@ SCOUT = CatalogModel(model_key="llama4-scout", label="Meta Llama 4 Scout", vendo
 HAIKU = CatalogModel(model_key="haiku-5-5", label="Claude Haiku 5.5", vendor="anthropic", provider="bedrock",
                      api_style="converse", bedrock_profile_ids={"acc3": "global.anthropic.claude-haiku-5-5"},
                      callable_via=("llm_client",), price_in_per_mtok=0.1, price_out_per_mtok=0.5, enabled=True)
+# Llama 4 Scout as migration 333 records it: Bedrock refused its forced tool choice in the S263 live smoke
+SCOUT_NO_FORCED_TOOL = dataclasses.replace(SCOUT, capabilities={"forced_tool_choice": False})
 MODELS = {m.model_key: m for m in (NOVA, SCOUT, HAIKU)}
+# Bedrock's answer to a3_place_dedupe on Llama 4 Scout in the S263 live smoke
+TOOL_CHOICE_REFUSED = ("An error occurred (ValidationException) when calling the Converse operation: This model "
+                       "doesn't support the toolConfig.toolChoice.tool field. Remove toolConfig.toolChoice.tool and "
+                       "try again.")
 ACC2 = ProviderConnection(connection_key="acc2", kind="bedrock", auth_mode="task_role", label="acc2",
                           data_scope="aws_only", enabled=True, region="us-west-1")
 DEPS = {"nova-lite": [ModelDeployment("nova-lite", "acc2", "us.amazon.nova-lite-v1:0", 20, True, "bedrock_profile")],
@@ -100,29 +107,35 @@ def _target(model):
 def _run(stage: str, content) -> tuple[dict, FakeClient]:
     client = FakeClient({stage: content if isinstance(content, str) else json.dumps(content)})
     client.stage = stage
-    model = MODELS[smoke.PLANNED[stage]]
+    model = MODELS[_model_of(stage)]
     return smoke.run_case(smoke.CASES[stage], model, _target(model), client=client), client
 
 
+def _model_of(stage: str) -> str:
+    """The planned acc2 model; Nova Lite for a case with none planned (a3_place_dedupe: an override run only)."""
+    return smoke.PLANNED.get(stage, "nova-lite")
+
+
 def test_every_planned_stage_has_a_case_and_no_writer_or_anthropic_pick():
-    assert set(smoke.CASES) == set(smoke.PLANNED)
+    assert set(smoke.PLANNED) <= set(smoke.CASES)
+    assert set(smoke.CASES) - set(smoke.PLANNED) == {"a3_place_dedupe"}     # open: no acc2 pick takes its forced tool
     assert {c.role for c in smoke.CASES.values()} == {"judge", "validate"}
     assert set(smoke.PLANNED.values()) == {"nova-lite", "llama4-scout"}
     # the place card's draft and check are smoked on two different makers (S234 rule, migration 331)
     assert smoke.PLANNED["a3_place_card"] != smoke.PLANNED["a3_place_card_check"]
 
 
-@pytest.mark.parametrize("stage", sorted(smoke.PLANNED))
+@pytest.mark.parametrize("stage", sorted(smoke.CASES))
 def test_a_reply_the_stage_parser_accepts_passes(stage):
     result, client = _run(stage, GOOD[stage])
     assert result["contract_ok"] is True, result
     assert result["called"] and result["cost_usd"] == pytest.approx(0.00002)
     request, model, target = client.requests[0]
     assert request.stage == smoke.LEDGER_STAGE and request.role == smoke.CASES[stage].role
-    assert target.connection.connection_key == "acc2" and model.model_key == smoke.PLANNED[stage]
+    assert target.connection.connection_key == "acc2" and model.model_key == _model_of(stage)
 
 
-@pytest.mark.parametrize("stage", sorted(smoke.PLANNED))
+@pytest.mark.parametrize("stage", sorted(smoke.CASES))
 def test_prose_instead_of_json_fails_the_contract(stage):
     result, _ = _run(stage, "I am sorry, I cannot help with that.")
     assert result["contract_ok"] is False and result["error_class"] == "contract", result
@@ -200,7 +213,8 @@ def test_a_refused_brand_fit_call_is_the_stage_answer_not_a_contract_failure():
         def probe(self, request, model, target):
             raise RuntimeError("AccessDeniedException: not allowed")
     result = smoke.run_case(smoke.CASES["t2_judge"], NOVA, _target(NOVA), client=Refused({}))
-    assert result["error_class"] == "access_denied" and result["called"] is False
+    assert result["error_class"] == "access_denied" and result["contract_ok"] is False
+    assert result["called"] is True and result["billed"] is False
 
 
 def test_a_salvaged_f9_verdict_fails_the_contract():
@@ -210,8 +224,10 @@ def test_a_salvaged_f9_verdict_fails_the_contract():
 
 def test_the_333_smoke_picks():
     assert {smoke.PLANNED[s] for s in NEW_333 if s != "a3_place_dedupe"} == {"nova-lite"}
-    # dedupe and its check stay on two makers: the check falls back to Nova Lite (Amazon), dedupe to Llama 4 Scout
-    assert smoke.PLANNED["a3_place_dedupe"] == "llama4-scout" and smoke.PLANNED["a3_place_dedupe_check"] == "nova-lite"
+    # a3_place_dedupe has no planned pick (left out of 333): its check stage falls back to Nova Lite (Amazon), and the
+    # other maker's model tried (Llama 4 Scout) refused its forced tool choice on Bedrock (S263)
+    assert "a3_place_dedupe" not in smoke.PLANNED and smoke.PLANNED["a3_place_dedupe_check"] == "nova-lite"
+    assert smoke.requires(smoke.CASES["a3_place_dedupe"].request()) == ("forced_tool_choice",)
 
 
 def test_a_check_reply_with_the_wrong_number_of_verdicts_fails():
@@ -231,8 +247,23 @@ def test_a_refused_call_is_the_stage_answer_not_a_crash():
     client = Refused({})
     model = NOVA
     result = smoke.run_case(smoke.CASES["a3_atomize"], model, _target(model), client=client)
-    assert result["contract_ok"] is False and result["called"] is False and result["cost_usd"] == 0
-    assert result["error_class"] == "access_denied"
+    assert result["contract_ok"] is False and result["called"] is True and result["cost_usd"] == 0
+    assert result["error_class"] == "access_denied" and result["billed"] is False
+
+
+def test_a_tool_choice_refusal_is_a_failed_stage_in_the_summary():
+    """S263: a3_place_dedupe on Llama 4 Scout got Bedrock's ValidationException and the summary said failed: [] and
+    passed: 19 (the stage was counted as not run). It is a FAILED contract now."""
+    class Refused(FakeClient):
+        def probe(self, request, model, target):
+            raise RuntimeError(TOOL_CHOICE_REFUSED)
+    result = smoke.run_case(smoke.CASES["a3_place_dedupe"], SCOUT, _target(SCOUT), client=Refused({}))
+    assert result["contract_ok"] is False and result["called"] is True and result["billed"] is False
+    assert "toolChoice" in result["error"]
+    ok, _ = _run("a3_place_dedupe_check", GOOD["a3_place_dedupe_check"])
+    summary = smoke.summarize([{k: v for k, v in r.items() if k != "replies"} for r in (result, ok)])
+    assert summary["failed"] == ["a3_place_dedupe"] and summary["passed"] == 1 and summary["stages_run"] == 2
+    assert summary["skipped"] == []
 
 
 def test_an_unusable_reply_counts_its_billed_cost():
@@ -243,6 +274,8 @@ def test_an_unusable_reply_counts_its_billed_cost():
             raise _billed_unusable("schema mismatch", [{"model": "nova-lite", "cost_usd": 0.0003}])
     result = smoke.run_case(smoke.CASES["s1_source_facts"], NOVA, _target(NOVA), client=Unusable({}))
     assert result["error_class"] == "unusable_reply" and result["cost_usd"] == pytest.approx(0.0003)
+    assert result["called"] is True and result["billed"] is True and smoke.summarize([result])["failed"] == [
+        "s1_source_facts"]
 
 
 # ── the plan ─────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -275,7 +308,8 @@ def test_the_plan_reads_the_route_then_falls_back_to_the_planned_model():
     assert (by["a3_place_card_check"]["model_key"], by["a3_place_card_check"]["model_source"]) == ("nova-lite",
                                                                                                     "route")
     assert (by["a3_atomize"]["model_key"], by["a3_atomize"]["model_source"]) == ("nova-lite", "planned")
-    assert all(e["callable"] for e in plan["stages"])
+    assert all(e["callable"] for e in plan["stages"] if e["stage"] != "a3_place_dedupe")
+    assert by["a3_place_dedupe"]["model_key"] is None and "none planned" in by["a3_place_dedupe"]["why_not"]
     # every stage, max_tokens fully spent: still far under the 0.10 USD cap of ADR 0009 decision 12
     assert 0 < plan["estimated_usd"] < smoke.COST_CAP_USD / 2 and plan["unpriced"] == 0
 
@@ -307,6 +341,46 @@ def test_an_override_replaces_the_route_and_the_planned_model_and_is_checked_lik
     assert by["a3_place_card_check"]["callable"]
     assert by["a3_atomize"]["model_source"] == "override" and not by["a3_atomize"]["callable"]   # Anthropic: never
     assert (by["a3_place_days"]["model_key"], by["a3_place_days"]["model_source"]) == ("nova-lite", "planned")
+
+
+def _plan_with(models: dict, stages=None, overrides=None, route=None) -> dict:
+    ps = _registry(route or {})
+    ps[3] = patch("shared.llm_client.catalog.get_model_sync", side_effect=models.get)
+    for p in ps:
+        p.start()
+    try:
+        return smoke.build_plan(stages, overrides)
+    finally:
+        for p in ps:
+            p.stop()
+
+
+def test_a_structured_stage_is_not_routed_to_a_model_that_refuses_a_forced_tool_choice():
+    """The plan, not Bedrock, catches a re-pick onto a model whose catalog row says it takes no forced tool choice."""
+    models = {**MODELS, "llama4-scout": SCOUT_NO_FORCED_TOOL}
+    plan = _plan_with(models, ["a3_place_dedupe", "a3_place_card_check", "a3_place_dedupe_check"],
+                      {"a3_place_dedupe": "llama4-scout", "a3_place_dedupe_check": "llama4-scout"})
+    by = {e["stage"]: e for e in plan["stages"]}
+    for stage in ("a3_place_dedupe", "a3_place_dedupe_check"):              # VERDICT_SCHEMA: a forced tool choice
+        assert by[stage]["requires"] == ["forced_tool_choice"]
+        assert not by[stage]["callable"] and "forced_tool_choice" in by[stage]["why_not"], by[stage]
+        assert by[stage]["estimated_usd"] is not None                       # still priced: the DRY RUN shows it
+    # the place card check sends no tool: Llama 4 Scout stays its acc2 model (331)
+    assert by["a3_place_card_check"]["requires"] == [] and by["a3_place_card_check"]["callable"]
+    assert plan["estimated_usd"] == by["a3_place_card_check"]["estimated_usd"]
+
+
+def test_an_unstated_or_true_capability_lets_the_structured_stage_run():
+    for scout in (SCOUT, dataclasses.replace(SCOUT, capabilities={"forced_tool_choice": True})):
+        plan = _plan_with({**MODELS, "llama4-scout": scout}, ["a3_place_dedupe"], {"a3_place_dedupe": "llama4-scout"})
+        assert plan["stages"][0]["callable"] and plan["stages"][0]["why_not"] is None
+
+
+def test_requires_reads_the_request():
+    assert smoke.requires(smoke.CASES["writing_memory_eval"].request()) == ("forced_tool_choice",)
+    assert smoke.requires(smoke.CASES["a3_atomize"].request()) == ()
+    assert smoke.refused_capabilities(SCOUT_NO_FORCED_TOOL, ("forced_tool_choice",)) == ["forced_tool_choice"]
+    assert smoke.refused_capabilities(SCOUT, ("forced_tool_choice",)) == []
 
 
 def test_the_planned_anthropic_model_is_never_called():
@@ -383,6 +457,54 @@ async def test_a_live_run_logs_each_reply_with_its_billing_fields_and_audits_onc
     assert {"cache_read_tokens", "pricing_mode", "connection_key"} <= set(kw)      # **billed_fields(resp)
     assert smoke.summarize(results) == {"stages_run": 1, "passed": 1, "failed": [],
                                         "skipped": ["a3_place_card_check"], "cost_usd": pytest.approx(0.00002)}
+
+
+@pytest.mark.asyncio
+async def test_a_refused_stage_is_failed_and_writes_its_failing_smoke_row():
+    """The order gate of 331 / 332 / 333 reads the LATEST smoke row of the stage on the model: a refused call must
+    write one (parser_ok false, 0 USD), or an older passing row would still open the gate."""
+    stage = "a3_place_dedupe"
+    plan = {"stages": [{"stage": stage, "role": "validate", "model_key": "llama4-scout", "model_source": "override",
+                        "callable": True, "why_not": None, "estimated_usd": 0.001}],
+            "unknown": [], "estimated_usd": 0.001, "unpriced": 0}
+
+    class Refused(FakeClient):
+        def probe(self, request, model, target):
+            raise RuntimeError(TOOL_CHOICE_REFUSED)
+    with patch("shared.llm_client.catalog.get_model_sync", side_effect=MODELS.get), \
+            patch.object(smoke, "_target", return_value=(SCOUT, _target(SCOUT), None)), \
+            patch("shared.llm_client.call_log.record_call_with_pool", AsyncMock()) as rec:
+        results = await smoke.run_smoke(MagicMock(), plan, client=Refused({}))
+    assert results[0]["contract_ok"] is False and results[0]["called"] is True
+    assert smoke.summarize(results)["failed"] == [stage] and smoke.summarize(results)["passed"] == 0
+    assert rec.await_count == 1
+    kw = rec.await_args.kwargs
+    assert kw["stage"] == "adhoc_aa1026" and kw["role"] == "validate" and kw["model"] == "llama4-scout"
+    assert (kw["account"], kw["connection_key"], kw["cost_usd"], kw["tokens_in"]) == ("acc2", "acc2", 0.0, 0)
+    assert kw["status"] == "error" and kw["error_class"] in ("other", "access_denied")
+    qs = kw["quality_signal"]
+    assert qs["contract_smoke"] == stage and qs["parser_ok"] is False and qs["no_reply"] is True
+    assert "toolChoice" in qs["error"]
+
+
+@pytest.mark.asyncio
+async def test_a_billed_unusable_reply_writes_its_failing_smoke_row_without_its_cost():
+    from shared.llm_client.client import _billed_unusable
+
+    class Unusable(FakeClient):
+        def probe(self, request, model, target):
+            raise _billed_unusable("schema mismatch", [{"model": "nova-lite", "cost_usd": 0.0003}])
+    plan = {"stages": [{"stage": "t10_claims", "role": "validate", "model_key": "nova-lite", "model_source": "planned",
+                        "callable": True, "why_not": None, "estimated_usd": 0.001}],
+            "unknown": [], "estimated_usd": 0.001, "unpriced": 0}
+    with patch("shared.llm_client.catalog.get_model_sync", side_effect=MODELS.get), \
+            patch.object(smoke, "_target", return_value=(NOVA, _target(NOVA), None)), \
+            patch("shared.llm_client.call_log.record_call_with_pool", AsyncMock()) as rec:
+        results = await smoke.run_smoke(MagicMock(), plan, client=Unusable({}))
+    assert smoke.summarize(results)["failed"] == ["t10_claims"]
+    assert results[0]["cost_usd"] == pytest.approx(0.0003)         # the gateway's billed_unusable row carries it
+    kw = rec.await_args.kwargs
+    assert kw["cost_usd"] == 0.0 and kw["quality_signal"]["parser_ok"] is False and kw["error_class"] == "other"
 
 
 @pytest.mark.asyncio
