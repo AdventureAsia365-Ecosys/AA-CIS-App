@@ -78,7 +78,7 @@ def test_the_jev_provider_query_runs():
     from shared.llm_client import decide
 
     row = _adb(lambda c: c.fetchrow(decide._PROVIDER_SQL, decide.JEV_CONNECTION_KEY))
-    assert dict(row) == {"base_url": "https://api.typesafe.ai", "timeout_s": 3, "max_retries": 2}
+    assert dict(row) == {"base_url": "https://api.typesafe.ai", "timeout_s": 3, "max_retries": 2, "enabled": True}
 
 
 def test_the_stage_params_read_runs_on_the_empty_table():
