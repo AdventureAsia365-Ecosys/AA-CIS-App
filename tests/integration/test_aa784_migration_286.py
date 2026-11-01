@@ -21,8 +21,10 @@ MIGRATION = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migratio
                          "286_place_card_draft_gpt6_luna.sql")
 STAGE = "a3_place_card"
 POST_286 = ("gpt-6-luna", ["gpt-5.6-luna"], "validate", "openai", "acc3", True, None, 0)
-# The check route after the replay: 222 set haiku -> sonnet, AA-1026 (migration 327) moved it to the Converse keys.
-CHECK_ROUTE = ("haiku-5-5", ["sonnet-5-5"], "validate", "claude", "acc3", True, None, 0)
+# The check route after the replay: 222 set haiku -> sonnet, AA-1026 (migration 327) moved it to the Converse keys and
+# migration 331 (AA-1026 I6) appended the acc2 fallback of each place card stage (another maker for each).
+CHECK_ROUTE = ("haiku-5-5", ["sonnet-5-5", "llama4-scout"], "validate", "claude", "acc3", True, None, 0)
+REPLAY_286 = ("gpt-6-luna", ["gpt-5.6-luna", "nova-lite"], "validate", "openai", "acc3", True, None, 0)
 
 
 @pytest.fixture
@@ -86,7 +88,7 @@ def _gpt6_enabled(c):
 
 
 def test_replay_state_is_post_286(cur):
-    assert _row(cur) == POST_286
+    assert _row(cur) == REPLAY_286                              # 286's route, plus 331's acc2 fallback last
     assert _row(cur, "a3_place_card_check") == CHECK_ROUTE
     assert _gpt6_enabled(cur) == (True, None)
     assert _registered(cur) == 1
