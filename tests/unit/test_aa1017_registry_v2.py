@@ -553,8 +553,12 @@ def test_provider_rows_take_the_registry_facts():
     off = ProviderConnection(connection_key="typesafe", kind="typesafe", auth_mode="api_key", label="Jev",
                              data_scope="vendor_direct", enabled=False)
     assert gw._with_registry(base, off)["status"] == "disabled"
-    geo = {"key": "geoapify", "enabled": False, "status": "disabled"}                  # not the configured geocoder
-    assert gw._with_registry(geo, connections.BUILTIN_PROVIDERS["geoapify"])["enabled"] is False
+    # AA-1025 C1: Geoapify's enabled is the switch too; not being the configured geocoder keeps its own reason
+    geo = {"key": "geoapify", "enabled": True, "configured": False, "status": "disabled",
+           "status_reason": "not_the_configured_geocoder"}
+    out = gw._with_registry(geo, connections.BUILTIN_PROVIDERS["geoapify"])
+    assert out["enabled"] is True and out["switchable"] is True
+    assert (out["status"], out["status_reason"]) == ("disabled", "not_the_configured_geocoder")
 
 
 # ── readiness ────────────────────────────────────────────────────────────────────────────────────────────────────

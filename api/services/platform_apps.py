@@ -276,6 +276,15 @@ async def crm_llm_calls(authorization: Optional[str], params: dict,
     return await _crm_ops_get(authorization, "/llm/calls", params, client)
 
 
+async def crm_llm_usage_rows(authorization: Optional[str], start: date, end: date,
+                             client: Optional[httpx.AsyncClient] = None) -> tuple[Optional[dict], dict]:
+    """AA-1025 C1 — the CRM's daily usage rows ``[start, end]`` as crm.ops.v1 GET /llm/usage sends them (day, stage,
+    model, calls, failed_calls, cost_usd; summed over every agency, no personal data), for the AI providers page's CRM
+    and Guardrails rows. ``(body, {})`` or ``(None, problem)`` like ``_crm_ops_get``. Never raises; never cached."""
+    return await _crm_ops_get(authorization, "/llm/usage", {"from": start.isoformat(), "to": end.isoformat()},
+                              client)
+
+
 async def crm_llm_usage(authorization: Optional[str], start: date, end_exclusive: date,
                         client: Optional[httpx.AsyncClient] = None) -> dict:
     """AA-936 — the CRM's LLM usage for ``[start, end_exclusive)`` from its own gateway rollup (crm.ops.v1

@@ -7,6 +7,7 @@
   wrote; list_calls: every ledger's page SQL (filters, keyset) runs on the real schema, a refused attempt is a row.
 - read_providers: every source query runs on the real schema (no error row), the month ledger attributes a row to
   its account, and Jev / DataForSEO / Geoapify rows are always listed.
+- AA-1025 C1: the 24 h / 7 d stats queries (calls, errors, refused, p50 / p95) on the real schema.
 - read_budgets (UI part 2): the spend_budget read, the guard's day spend and the connection budget reads run on the
   real schema; a probe job-scope row lands in the job tier with its kind.
 
@@ -260,7 +261,7 @@ async def test_providers_queries_run_on_the_real_schema(pool):
     out = await gw.read_providers(pool, now=now)
     assert out["errors"] == [], out["errors"]
     keys = [p["key"] for p in out["providers"]]
-    assert keys[-3:] == ["jev", "dataforseo", "geoapify"]
+    assert keys[-6:] == ["crm:llm", "jev", "dataforseo", "geoapify", "mapbox", "guardrails"]
     assert any(k.startswith("llm:") for k in keys), "the seeded connections are listed"
     # the probe account names no connection: its spend is the unattributed line
     assert out["unattributed_llm"]["month_usd"] >= 1.4
@@ -268,6 +269,64 @@ async def test_providers_queries_run_on_the_real_schema(pool):
     assert by["jev"]["spend"]["month_usd"] >= 0.02
     assert by["dataforseo"]["spend"]["today_usd"] >= 0.3
     assert out["month_start"] == month.isoformat() == _utc(2024, 7, 1).isoformat()
+    # AA-1025 C1: every row carries its 24 h / 7 d stats; the CRM rows say they were not asked (no token here)
+    assert all("stats" in p for p in out["providers"])
+    assert by["crm:llm"]["status_reason"] == "crm_unreachable" and by["mapbox"]["status"] == "untracked"
+
+
+@pytest.mark.asyncio
+async def test_stats_queries_count_attempts_errors_and_latency(pool):
+    """AA-1025 C1: LLM_STATS_SQL / DFS_STATS_SQL / GEO_STATS_SQL on the real schema: refused rows are counted apart and
+    stay out of the error rate and the latency, failed statuses are errors, the 24 h window is inside the 7 d one,
+    rows before ledger v2 (status NULL) and cache hits are left out."""
+    now = _utc(2024, 7, 20, 12)
+    day_ago, week_ago = _utc(2024, 7, 19, 12), _utc(2024, 7, 13, 12)
+    conn = "aa1025-probe-conn"
+    rows = [  # (at, status, latency_ms)
+        (_utc(2024, 7, 20, 9), "ok", 100), (_utc(2024, 7, 20, 10), "ok", 200), (_utc(2024, 7, 20, 11), "error", 900),
+        (_utc(2024, 7, 20, 11), "refused", 0), (_utc(2024, 7, 15, 9), "truncated", 400),
+        (_utc(2024, 7, 15, 9), "ok", 300), (_utc(2024, 7, 15, 9), None, 5000),          # before ledger v2: left out
+        (_utc(2024, 7, 1, 9), "error", 50),                                            # older than 7 d
+    ]
+    async with pool.acquire() as c:
+        for at, status, ms in rows:
+            await c.execute(
+                """INSERT INTO shared.llm_call_log (stage, role, model, cost_usd, quality_signal, provider,
+                                                    connection_key, created_at, status, latency_ms)
+                   VALUES ($1, 'writer', 'probe-model', 0, '{}'::jsonb, 'openai', $2, $3, $4, $5)""",
+                STAGE, conn, at, status, ms)
+        await _dfs(c, _utc(2024, 7, 20, 7), 0.1, None, status="ok")
+        await _dfs(c, _utc(2024, 7, 20, 8), 0.0, None, status="error")
+        await c.execute(
+            """INSERT INTO shared.dfs_call_log (endpoint, cost_usd, cache_hit, fetched_live, created_at, status)
+               VALUES ($1, 0, true, false, $2, 'ok')""", EP, _utc(2024, 7, 20, 9))        # cache hit: no call
+        await c.execute(
+            """INSERT INTO geo.geocode_call (called_at, provider, requests, cost_usd, endpoint, failed_requests)
+               VALUES ($1, $2, 10, 0, 'search', 2), ($3, $2, 5, 0, 'search', NULL)""",
+            _utc(2024, 7, 20, 6), GEO, _utc(2024, 7, 16, 6))
+
+    llm = {r["connection_key"]: dict(r) for r in await pool.fetch(gw.LLM_STATS_SQL, day_ago, week_ago, now)}
+    r = llm[conn]
+    assert (r["calls_24h"], r["errors_24h"], r["refused_24h"]) == (3, 1, 1)
+    assert (r["calls_7d"], r["errors_7d"], r["refused_7d"]) == (5, 2, 1)
+    assert r["p50_24h"] == pytest.approx(200.0) and r["p95_24h"] == pytest.approx(830.0)
+    assert r["p50_7d"] == pytest.approx(300.0)
+    row = gw.with_stats({"key": "x"}, r)
+    assert row["error_pct"] == 33.3 and row["latency_p50_ms"] == 200 and row["stats"]["7d"]["error_pct"] == 40.0
+
+    # the CRM's rows get the same figures from the same rules (crm_call_stats mirrors percentile_cont)
+    crm = gw.crm_call_stats([{"at": at.isoformat(), "stage": "crm_draft", "status": st, "latency_ms": ms}
+                             for at, st, ms in rows if st is not None], now)["llm"]
+    for k in ("calls_24h", "errors_24h", "refused_24h", "calls_7d", "errors_7d", "refused_7d"):
+        assert crm[k] == r[k], k
+    assert crm["p95_24h"] == pytest.approx(r["p95_24h"]) and crm["p50_7d"] == pytest.approx(r["p50_7d"])
+
+    dfs = dict(await pool.fetchrow(gw.DFS_STATS_SQL.replace("AND NOT cache_hit", "AND NOT cache_hit AND endpoint = $4"),
+                                   day_ago, week_ago, now, EP))
+    assert (dfs["calls_24h"], dfs["errors_24h"]) == (2, 1) and dfs["p50_24h"] == pytest.approx(700.0)
+    geo = dict(await pool.fetchrow(gw.GEO_STATS_SQL, day_ago, week_ago, now, GEO))
+    assert (geo["calls_24h"], geo["errors_24h"], geo["calls_7d"], geo["errors_7d"]) == (10, 2, 15, 2)
+    assert geo["p50_24h"] is None
 
 
 @pytest.mark.asyncio
