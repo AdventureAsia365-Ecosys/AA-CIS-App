@@ -112,6 +112,18 @@ class RouteDeadlineExceeded(RuntimeError):
     llm_error_class = DEADLINE
 
 
+# AA-642 A3 (root ADR 0009 decision 5, gap RW-11): "the gateway owns retries (SDK retries off, at most six attempts per
+# chain)". The attempts of one gateway request (every model of the route, every deployment of a model, every legacy
+# tier) are counted; the seventh is never started.
+MAX_CHAIN_ATTEMPTS = 6
+
+
+class RouteAttemptCapReached(RouteDeadlineExceeded):
+    """AA-642 A3: the request already made ``MAX_CHAIN_ATTEMPTS`` provider attempts, so the gateway starts no other
+    one. A route bound like the deadline (same handling, ledger error_class 'deadline', 0 USD, no provider call), so
+    every path that stops on a passed deadline stops here too."""
+
+
 class LLMAccessDenied(RuntimeError):
     """Every model a request tried was refused at account level (access denied / no credit). A RuntimeError, so a
     caller that already catches RuntimeError behaves as before; the job runner fails the job without a retry.

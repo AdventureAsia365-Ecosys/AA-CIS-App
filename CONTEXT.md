@@ -339,7 +339,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   also holds the paid providers that are not LLMs (`typesafe` = Jev, role decide; `dataforseo` and `geoapify`, role
   data; `bedrock_guardrails`, role guard, seeded off), with a secret guard per kind (LLM kinds `aa-llm/<env>/<name>`,
   each provider kind only `aa-cis/<env>/<kind>`) and a host per kind, both in code (`connections.check_secret_name`,
-  `BASE_URL_ALLOWLIST`) and as CHECKs; plus `failure_domain`, `served_roles` (not read for routing yet), `access_state`,
+  `BASE_URL_ALLOWLIST`) and as CHECKs; plus `failure_domain`, `served_roles` (routing reads it since AA-1024 A5: a
+  connection that does not serve the stage's role is not in the plan; NULL = every role), `access_state`,
   `last_probe_at`, `balance_source`, `daily_credit_limit`, `low_balance_usd`. The LLM dispatch never sees a provider
   kind (`connections.fetch_connections` / `registry_rows_sync` return `LLM_KINDS` only; `resolve_api_key` refuses
   them). Jev's base URL / timeout / retries (`decide.jev_endpoint`), the Jev and DataForSEO low-balance thresholds and
@@ -419,10 +420,10 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   allowlisted credential env (openai-direct's `OPENAI_API_KEY`, a fallback until `secret_name` is set on the
   Connections tab); endpoint from `base_url` on the kind's host allowlist (openai default `https://api.openai.com/v1`;
   Azure `https://<resource>.openai.azure.com` + `api_version` from `request_defaults.api_version`, default
-  `AZURE_API_VERSION`; wire id = the Azure deployment name); per-connection timeout / retries (NULL = 300 s / 1, never
-  the SDK's 600 s / 2); a 401 drops the cached key and client. An `azure_openai` connection serves `openai_chat` rows of
-  an OpenAI model (S235 gate keyed on the catalog row; the stage scope reads the called connection's data scope); its
-  reply is labelled `azure-openai-<key>` (llm_call_log provider `azure_openai`, account = the connection). A client set
+  `AZURE_API_VERSION`; wire id = the Azure deployment name); per-connection timeout (NULL = 300 s, never the SDK's
+  600 s; SDK retries off since AA-1024 A3); a 401 drops the cached key and client. An `azure_openai` connection
+  serves `openai_chat` rows of an OpenAI model (S235 gate keyed on the catalog row; the stage scope reads the called
+  connection's data scope); its reply is labelled `azure-openai-<key>` (llm_call_log provider `azure_openai`, account = the connection). A client set
   on `LLMClient._openai` (tests, scripts) is used for every OpenAI-format call.
 - **Budget per connection + nightly cost reconciliation** (AA-1002 slice S10, migration 317 expand):
   `llm_provider_connection.monthly_budget_usd` is enforced per connection, independent of the job budgets
@@ -472,12 +473,17 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   background, deploy-gate exempt): daily from 05:00 UTC only with `LLM_DAILY_PROBE=on` (default off; **on** on Dev
   since AA-CIS-Infra #574, set on the api and worker task definitions);
   `POST /admin/job-runner/llm-probe/run` (ai.admin) queues a DRY RUN by default (deployments + estimated cost, no
-  call). Bedrock runtime clients take the connection's `timeout_s` / `max_retries` only when set (NULL = unchanged).
+  call). Bedrock runtime clients take the connection's `timeout_s` when set; since AA-1024 A3 every runtime client makes
+  one attempt per request (botocore `total_max_attempts` 1, SDK `max_retries` 0: the gateway owns retries, at most
+  `errors.MAX_CHAIN_ATTEMPTS` = 6 provider attempts per request, the 7th refused as a 0 USD `deadline` row).
 - **Reliability part 2** (AA-1018 / AA-1016 / AA-900, no migration; reads 320 / 321 / 322): **route deadline**
-  `llm_role_config.route_deadline_s` (NULL on every row = nothing bound, requests byte-identical): checked before every
+  `llm_role_config.route_deadline_s` (set on every row by migration 334: writer 1200, judge 900, validate 600, embed
+  120 s; NULL = nothing bound): checked before every
   attempt after the first (route position, plan deployment, alias step, legacy tier), `RouteDeadlineExceeded` (ledger
   `error` / `deadline`, 0 USD); the OpenAI and Anthropic API adapters get the remaining time as their per-request
-  timeout (Bedrock keeps its client read timeout). The paths that bypass the plan (`_legacy_chain` tiers on the catalog
+  timeout, never more than the connection's own (Bedrock keeps its client read timeout). Structured output on Converse
+  follows the catalog capability `structured_output` (tool / any / auto / prompt, AA-1024 I6; unstated = tool, or auto
+  for a model that refuses a forced tool choice). The paths that bypass the plan (`_legacy_chain` tiers on the catalog
   key they call, the S2 `vendor_deployment_for` path, the catalog-fallback Converse / OpenAI calls) run inside
   `breaker.guarded` and log `llm_deprecated_path_used` once per path and stage (`client.DEPRECATED_PATHS`: since
   2026-10-31, proposed removal 2026-12-31 after S11). **Tenant AI budget** (`shared/llm_client/tenant_budget.py`,

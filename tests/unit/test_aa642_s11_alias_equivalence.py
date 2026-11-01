@@ -28,7 +28,10 @@ LEGACY_STAGES = sorted(k for k, c in SAFE_DEFAULTS.items() if c.model_id in LEGA
 
 
 def test_the_legacy_stage_set_is_the_seventeen_of_the_plan():
-    assert len(LEGACY_STAGES) == 17, LEGACY_STAGES
+    # AA-1024 A2 (migration 335): + segment_research / segment_research_batch, which called the legacy haiku through
+    # model_tier before they had a stage (same calls; S11 now covers them too).
+    assert len(LEGACY_STAGES) == 19, LEGACY_STAGES
+    assert {"segment_research", "segment_research_batch"} <= set(LEGACY_STAGES)
 
 
 def test_the_switch_is_off_by_default(monkeypatch):

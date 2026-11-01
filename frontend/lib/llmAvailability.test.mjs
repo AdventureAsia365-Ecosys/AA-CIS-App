@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { jobLink, sortProviders, statusTone } from "./llmAvailability.ts";
+import { jobLink, roleSkips, sortProviders, statusTone } from "./llmAvailability.ts";
 
 test("statusTone maps every status and falls back to neutral", () => {
   assert.equal(statusTone("ok"), "success");
@@ -33,4 +33,18 @@ test("jobLink searches the Jobs page by id", () => {
   assert.equal(jobLink("abc-123"), "/admin/jobs?q=abc-123");
   assert.equal(jobLink(undefined), null);
   assert.equal(jobLink(""), null);
+});
+
+test("roleSkips lists the stages whose route models the role filter left out (AA-642 A5)", () => {
+  const stages = [
+    { stage: "s1_writer_demo", role: "writer", role_skipped: ["nova-lite@acc2", "llama4-scout@acc2"] },
+    { stage: "s1_judge_demo", role: "judge", role_skipped: [] },
+    { stage: "t2_check_demo", role: "validate" },
+    { role: "writer", role_skipped: ["nova-lite@acc2"] },
+    null,
+  ];
+  assert.deepEqual(roleSkips(stages), [
+    { stage: "s1_writer_demo", role: "writer", skipped: ["nova-lite@acc2", "llama4-scout@acc2"] },
+  ]);
+  assert.deepEqual(roleSkips(undefined), []);
 });

@@ -197,18 +197,20 @@ def get_satellite_client(service_name: str = "bedrock-runtime", account: str = D
     return session.client(service_name, region_name=satellite_region(account), config=config)
 
 
+# AA-642 A3: botocore makes ONE attempt per request on every runtime client the gateway builds.
+SDK_MAX_ATTEMPTS = 1
+
+
 def connection_config(conn: connections.ProviderConnection):
-    """AA-1018: a botocore Config from the connection's ``timeout_s`` (read timeout) and ``max_retries`` (+1 = total
-    attempts, standard mode), only for the columns that are set; None when both are NULL (every Dev row today), so
-    the client is built exactly as before (no Config). Runtime clients only, never the Batch control plane."""
-    kw: dict = {}
+    """AA-1018: a botocore Config from the connection's ``timeout_s`` (read timeout). AA-642 A3 (root ADR 0009 decision
+    5, "the gateway owns retries"): ONE attempt per request (``total_max_attempts`` 1, standard mode) whatever the
+    connection's ``max_retries`` says: a throttle or an outage moves on to the route's next deployment / model at once
+    (the gateway's own attempt count, ``errors.MAX_CHAIN_ATTEMPTS``), it is never repeated inside botocore. Runtime
+    clients only, never the Batch control plane."""
+    from botocore.config import Config
+    kw: dict = {"retries": {"total_max_attempts": SDK_MAX_ATTEMPTS, "mode": "standard"}}
     if conn.timeout_s is not None:
         kw["read_timeout"] = int(conn.timeout_s)
-    if conn.max_retries is not None:
-        kw["retries"] = {"total_max_attempts": int(conn.max_retries) + 1, "mode": "standard"}
-    if not kw:
-        return None
-    from botocore.config import Config
     return Config(**kw)
 
 
@@ -216,17 +218,18 @@ _native_runtimes: dict[tuple, object] = {}
 _native_lock = threading.Lock()
 
 
-def native_runtime(conn: connections.ProviderConnection, *, read_timeout: int = 300, max_attempts: int = 2):
+def native_runtime(conn: connections.ProviderConnection, *, read_timeout: int = 300,
+                   max_attempts: Optional[int] = None):
     """AA-1002 (S3): a bedrock-runtime client on the task role (a ``task_role`` Bedrock connection, acc2), one per
-    (connection, region, timeout, attempts). The default config is LLMClient._bedrock's (read 300 s, 2 attempts).
-    AA-1018: the connection's ``timeout_s`` / ``max_retries`` (+1 = attempts) replace the caller's values when the
-    column is set; NULL (every Dev row today) keeps them, so the client and its cache key are unchanged."""
+    (connection, region, timeout, attempts). The default read timeout is LLMClient._bedrock's (300 s). AA-1018: the
+    connection's ``timeout_s`` replaces the caller's value when the column is set. AA-642 A3: one attempt per request
+    (``SDK_MAX_ATTEMPTS``; the gateway owns retries), the connection's ``max_retries`` is not read; ``max_attempts``
+    is accepted for old callers and capped at that one attempt."""
     if conn.kind != "bedrock" or conn.auth_mode != "task_role":
         raise ValueError(f"connection {conn.connection_key!r} is not a task-role Bedrock connection")
     if conn.timeout_s is not None:
         read_timeout = int(conn.timeout_s)
-    if conn.max_retries is not None:
-        max_attempts = int(conn.max_retries) + 1
+    max_attempts = SDK_MAX_ATTEMPTS
     region = conn.region or os.environ.get("BEDROCK_REGION", "us-west-1")
     key = (conn.connection_key, region, read_timeout, max_attempts)
     with _native_lock:

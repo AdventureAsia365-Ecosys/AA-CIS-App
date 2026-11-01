@@ -19,6 +19,7 @@ import {
   type LlmAvailability,
   type ProviderRow,
   jobLink,
+  roleSkips,
   sortProviders,
   statusTone,
 } from "@/lib/llmAvailability";
@@ -108,6 +109,8 @@ export function LlmAvailabilityCard() {
   const openCircuits = (data.connections ?? []).filter((c) => c.enabled !== false && c.status === "open").length;
   const inv = data.invariant && data.invariant.ready !== false && Array.isArray(data.invariant.stages)
     ? data.invariant : null;
+  // AA-642 A5: route models the role filter (connection served_roles) leaves out, per stage.
+  const skips = inv ? roleSkips(inv.stages) : [];
   const statusBadge = data.status === "ok" && openCircuits > 0
     ? <Badge tone="warning">{t("availOkSomeOpen", openCircuits)}</Badge>
     : <Badge tone={statusTone(data.status)}>{t(STATUS_KEY[data.status] ?? "availUnknown")}</Badge>;
@@ -129,6 +132,17 @@ export function LlmAvailabilityCard() {
             {t("invariantSummary",
               (inv.stages_checked ?? 0) - (inv.breaches ?? 0) - (inv.declared_degrade ?? 0), inv.stages_checked ?? 0)}
             {inv.declared_degrade ? ` ${t("invariantDegrade", inv.declared_degrade)}` : ""}
+          </div>
+        )}
+        {skips.length > 0 && (
+          <div style={{ fontSize: 12.5, color: K.muted, minWidth: 0 }} data-testid="llm-invariant-role-skipped">
+            {t("invariantRoleSkipped", skips.length)}{" "}
+            {skips.map((s, i) => (
+              <span key={s.stage} style={{ overflowWrap: "anywhere" }}>
+                {i > 0 && " · "}
+                <span style={num}>{s.stage}</span> ({s.role}): <span style={num}>{s.skipped.join(", ")}</span>
+              </span>
+            ))}
           </div>
         )}
 

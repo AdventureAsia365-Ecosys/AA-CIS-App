@@ -15,7 +15,9 @@ What the stage needs. A stage whose request carries a JSON schema is asked with 
 (``toolChoice.tool``; ``Case.requires`` = ``forced_tool_choice``). When the model's catalog row states that it refuses
 one (``capabilities.forced_tool_choice = false``, AA-1017), the plan marks the stage not callable on that model
 (``why_not``), so a re-pick onto such a model is caught by the plan, not by Bedrock. An unstated capability is allowed
-(the live call is the proof).
+(the live call is the proof). AA-642 I6: unless the row also states a non-forced way to ask for the object
+(``capabilities.structured_output`` any / auto / prompt, ``client.structured_mode``): the stage then runs on that
+model in that mode and its parser is the proof, as for any other model.
 
 How. ``LLMClient.probe`` on that model's acc2 deployment (the admin's Test connection path: the gateway's own Converse
 adapter on the acc2 task role, structured output as a Converse tool, its outcome counted on the deployment's circuit,
@@ -585,10 +587,19 @@ def requires(request) -> tuple[str, ...]:
     return (FORCED_TOOL_CHOICE,) if getattr(request, "json_schema", None) else ()
 
 
+# AA-642 I6: the catalog's non-forced ways to ask a model for a structured object (client.STRUCTURED_MODES).
+NON_FORCED_STRUCTURED_MODES = ("any", "auto", "prompt")
+
+
 def refused_capabilities(model, needed: tuple[str, ...]) -> list[str]:
-    """The needed capabilities the model's catalog row states it does NOT have (false). Unstated = not refused."""
+    """The needed capabilities the model's catalog row states it does NOT have (false). Unstated = not refused.
+    AA-642 I6: a refused forced tool choice is not a refusal when the row states a non-forced ``structured_output``
+    mode (the gateway asks the model that way)."""
     from shared.llm_client.catalog import capability
-    return [c for c in needed if capability(model, c) is False]
+    out = [c for c in needed if capability(model, c) is False]
+    if FORCED_TOOL_CHOICE in out and capability(model, "structured_output") in NON_FORCED_STRUCTURED_MODES:
+        out.remove(FORCED_TOOL_CHOICE)
+    return out
 
 
 # ── plan: which model, on which deployment, at what estimated cost ───────────────────────────────────────────────
@@ -663,6 +674,10 @@ def build_plan(stages: Optional[list[str]] = None, models: Optional[dict[str, st
                 target, why = None, (f"the stage needs {', '.join(refused)} (a structured request forces a tool "
                                      f"choice) and the catalog row of {key} says it has not")
             entry.update(callable=target is not None, why_not=why)
+            if target is not None and needed:
+                # AA-642 I6: how the gateway will ask this model for the object (tool / any / auto / prompt).
+                from shared.llm_client.client import structured_mode
+                entry["structured_mode"] = structured_mode(model, target.deployment.wire_id)
             if model is not None:
                 entry["estimated_usd"] = estimate_usd(model, request)
         entries.append(entry)

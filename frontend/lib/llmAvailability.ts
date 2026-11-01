@@ -42,6 +42,28 @@ export interface LlmAvailability {
     declared_degrade?: number; stages?: unknown[] };
 }
 
+/** AA-642 A5: one stage of the invariant report, as far as the role filter goes (other fields not read here). */
+export interface RoleSkipStage {
+  stage?: string;
+  role?: string;
+  /** "<model>@<connection>": a route model on a connection whose served roles leave the stage's role out. */
+  role_skipped?: string[];
+}
+
+/** AA-642 A5: every stage whose route names a model on a connection that does not serve the stage's role, with what
+ *  the filter left out (stage order kept). An older API (no role_skipped) or a malformed row gives nothing. */
+export function roleSkips(stages: readonly unknown[] | undefined): { stage: string; role: string; skipped: string[] }[] {
+  const out: { stage: string; role: string; skipped: string[] }[] = [];
+  for (const raw of stages ?? []) {
+    const s = (raw ?? {}) as RoleSkipStage;
+    const skipped = Array.isArray(s.role_skipped) ? s.role_skipped.filter((x) => typeof x === "string") : [];
+    if (typeof s.stage === "string" && skipped.length > 0) {
+      out.push({ stage: s.stage, role: typeof s.role === "string" ? s.role : "", skipped });
+    }
+  }
+  return out;
+}
+
 export type StatusTone = "success" | "warning" | "danger" | "neutral";
 
 export const STATUS_TONE: Record<AvailabilityStatus, StatusTone> = {

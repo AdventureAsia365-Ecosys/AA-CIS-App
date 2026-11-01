@@ -27,6 +27,11 @@ second domain is ``ok``; any other is ``breach``. A degrade mode stands in for t
 first (review S263): a stage with no usable deployment at all is a ``breach`` whatever it declares, so a total outage
 (e.g. every T-stage writer while its only account is blocked) is never shown as a calm declared degrade. A
 switched-off stage (``is_active`` false, the kill switch) is not checked: it is listed in ``disabled``.
+
+AA-642 A5 (gap RW-09): a deployment counts only when its connection serves the stage's role
+(``llm_provider_connection.served_roles``, migration 322; NULL = every role), as ``vendor_route.deployment_plan`` now
+routes. A stage whose route names a model on such a connection lists it in ``role_skipped`` ("<model>@<connection>"),
+so the availability card shows what the role filter left out (e.g. an acc2 model on a writer route).
 """
 from __future__ import annotations
 
@@ -58,6 +63,7 @@ class StageResult:
     other_domains: list[str] = field(default_factory=list)
     reason: Optional[str] = None
     degrade_mode: Optional[str] = None      # AA-642 A1: the declared degrade mode (None = none declared)
+    role_skipped: list[str] = field(default_factory=list)   # AA-642 A5: "<model>@<connection>" not serving the role
 
     @property
     def status(self) -> str:
@@ -70,7 +76,7 @@ class StageResult:
     def as_dict(self) -> dict:
         return {"stage": self.stage, "role": self.role, "ok": self.ok, "status": self.status, "primary": self.primary,
                 "primary_domain": self.primary_domain, "other_domains": self.other_domains, "reason": self.reason,
-                "degrade_mode": self.degrade_mode}
+                "degrade_mode": self.degrade_mode, "role_skipped": self.role_skipped}
 
 
 def _keys(route: dict, aliases: dict[str, list[str]]) -> list[str]:
@@ -88,16 +94,26 @@ def _allowed(scopes: Optional[Iterable[str]], scope: str, first: bool) -> bool:
     return scope in set(scopes)
 
 
+def serves(conn: dict, role: Optional[str]) -> bool:
+    """AA-642 A5: the connection row serves ``role`` (NULL / missing served_roles = every role)."""
+    roles = conn.get("served_roles")
+    return not role or roles is None or role in roles
+
+
 def check_stage(route: dict, aliases: dict[str, list[str]], deployments: dict[str, list[dict]],
                 connections: dict[str, dict], blocked: dict[str, str]) -> StageResult:
     """One stage (pure)."""
     stage, role = route["stage"], route["role"]
     degrade = route.get("degrade_mode") or None
     usable: list[tuple[str, str]] = []           # (connection_key, domain), in route order
+    role_skipped: list[str] = []
     for model_key in _keys(route, aliases):
         for dep in deployments.get(model_key, []):
             conn = connections.get(dep["connection_key"])
             if conn is None or not dep.get("enabled") or not conn.get("enabled"):
+                continue
+            if not serves(conn, role):
+                role_skipped.append(f"{model_key}@{conn['connection_key']}")
                 continue
             if blocked.get(conn["connection_key"]) in UNFUNDED_CLASSES:
                 continue
@@ -107,12 +123,12 @@ def check_stage(route: dict, aliases: dict[str, list[str]], deployments: dict[st
     if not usable:
         # A degrade mode never excuses the first domain (review S263): the stage cannot run at all.
         return StageResult(stage, role, False, None, None, reason="no enabled, funded deployment on the route",
-                           degrade_mode=degrade)
+                           degrade_mode=degrade, role_skipped=role_skipped)
     key, domain = usable[0]
     others = sorted({d for _, d in usable if d != domain})
     reason = None if others else f"every usable deployment is in {domain}"
     return StageResult(stage, role, bool(others) or bool(degrade), f"{key} ({domain})", domain, others, reason,
-                       degrade_mode=degrade)
+                       degrade_mode=degrade, role_skipped=role_skipped)
 
 
 def check(routes: Iterable[dict], aliases: Iterable[dict], deployments: Iterable[dict], connections: Iterable[dict],
@@ -158,7 +174,7 @@ CONNECTIONS_SQL = ("SELECT connection_key, kind, enabled, data_scope, account_id
                    "FROM shared.llm_provider_connection "
                    "WHERE kind IN ('bedrock', 'anthropic', 'openai', 'azure_openai', 'mock')")
 # AA-1018 part 2: with migration 322's failure_domain (the stored domain wins over the derivation).
-CONNECTIONS_V2_SQL = CONNECTIONS_SQL.replace("account_id_env ", "account_id_env, failure_domain ")
+CONNECTIONS_V2_SQL = CONNECTIONS_SQL.replace("account_id_env ", "account_id_env, failure_domain, served_roles ")
 
 
 async def read(conn, *, blocked: Optional[dict[str, str]] = None, now: Optional[datetime] = None) -> dict:
