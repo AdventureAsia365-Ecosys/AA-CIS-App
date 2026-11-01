@@ -35,7 +35,7 @@ class StubSns:
 
 @pytest_asyncio.fixture
 async def pool(monkeypatch):
-    monkeypatch.setenv("ALERTS_TOPIC_ARN", "arn:aws:sns:us-west-1:000000000000:alerts-test")
+    monkeypatch.setenv("ALERTS_TOPIC_ARN", "topic-placeholder")
     p = await asyncpg.create_pool(DSN, min_size=1, max_size=2)
     await p.execute("DELETE FROM shared.notifications WHERE event_type LIKE 'platform.ops_check.%'")
     yield p

@@ -161,7 +161,7 @@ FINDING = ops_checks.Finding("jobs_starved", "oldest starved queued job waited 1
 
 @pytest.fixture
 def topic(monkeypatch):
-    monkeypatch.setenv("ALERTS_TOPIC_ARN", "arn:aws:sns:us-west-1:000000000000:alerts-test")
+    monkeypatch.setenv("ALERTS_TOPIC_ARN", "topic-placeholder")
 
 
 @pytest.mark.asyncio
@@ -176,7 +176,7 @@ async def test_first_alert_writes_a_bell_and_mails(topic):
     lock = pool.conn.execute.await_args_list[0].args
     assert "pg_advisory_xact_lock" in lock[0]
     kw = sns.publish.call_args.kwargs
-    assert kw["TopicArn"].endswith(":alerts-test") and "Job queue starved" in kw["Subject"]
+    assert kw["TopicArn"] == "topic-placeholder" and "Job queue starved" in kw["Subject"]
 
 
 @pytest.mark.asyncio
