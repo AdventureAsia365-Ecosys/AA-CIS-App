@@ -459,8 +459,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   marks it failed). `LLM_TENANT_BUDGETS=off` switches it off. **Prompt register**:
   `prompt_hash` = sha256 of the system prompt; `prompt_version` = `prompt_registry.version_for(stage)` (the manifest
   `shared/llm_client/prompt_versions.json` hashes the prompt symbols' source with `ast`; the version counts only when
-  `shared.prompt_version` holds the same hash; no rows today = NULL), on every reply and attempt row; CI gate
-  `tests/unit/test_aa900_prompt_registry_gate.py` / `scripts/prompt_registry_check.py` (`--bump`, `--sql`). The
+  `shared.prompt_version` holds the same hash; migration 325 registered the 32 v1 rows), on every reply and attempt
+  row; CI gate `tests/unit/test_aa900_prompt_registry_gate.py` / `scripts/prompt_registry_check.py` (`--bump`,
+  `--sql --unregistered`; it also fails when no file in `api/migrations/` inserts a manifest entry). The
   breaker writes `llm_provider_connection.access_state` (open connection circuit → `access_denied` /
   `quota_exhausted` / `unconfigured`; any answer → `ok`; once per change and process, one write per connection at a
   time, none during the breaker's DB back-off, `DB_RETRY_S` back-off after a failed write); the probe stamps
