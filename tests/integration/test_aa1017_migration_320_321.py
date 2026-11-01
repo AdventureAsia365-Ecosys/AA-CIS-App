@@ -77,7 +77,9 @@ def cur():
 def _set_324_aside(c):
     """Migration 324's rows out (they need the 320 families); the fixture applies 324 again at teardown."""
     c.execute("DELETE FROM shared.llm_model_deployment WHERE updated_by = 'migration-324-aa1017'")
-    c.execute("DELETE FROM shared.llm_model_catalog WHERE updated_by = 'migration-324-aa1017'")
+    # 333 (AA-1026) re-signs the llama4-scout row when it records the model's forced tool choice
+    c.execute("DELETE FROM shared.llm_model_catalog "
+              "WHERE updated_by IN ('migration-324-aa1017', 'migration-333-aa1026')")
     c.execute("DELETE FROM shared.schema_versions WHERE version = '324'")
 
 
