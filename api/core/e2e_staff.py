@@ -45,6 +45,10 @@ E2E_CIS_ADMIN_TEST_STAFF_ROLE = "admin"
 # A10a: the Booking staff admin E2E account, never in the CIS directory.
 E2E_REVIEWER_TEST_STAFF_EMAIL = "e2e@e2e-mail.lumiguides.it.com"
 E2E_BOOKING_TEST_STAFF_EMAIL = "e2e-booking@e2e-mail.lumiguides.it.com"
+# A10c (AA-1019, S262; named here for the reconcile by AA-1031): the Dev-only AA-Partner staff E2E account, groups
+# exactly crm-ops + crm-support, never in the CIS directory (same address as AA-CIS-Infra workforce.py
+# E2E_CRM_STAFF_TEST_STAFF_EMAIL and AA-Partner e2e_staff.E2E_CRM_STAFF_EMAIL).
+E2E_CRM_STAFF_TEST_STAFF_EMAIL = "e2e-crm-staff@e2e-mail.lumiguides.it.com"
 
 # The one ENVIRONMENT value under which the account may exist (compared exactly).
 DEV_ONLY_ENVIRONMENT = "dev"

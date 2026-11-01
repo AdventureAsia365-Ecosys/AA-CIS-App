@@ -2,8 +2,8 @@
 
 Report only. It reads the WORKFORCE pool with the two calls the CIS task role may make for reading
 (ListUsers, ListUsersInGroup; AA-CIS-Infra identity_iam.tf, plan step I3) and the directory
-(shared.admin_users + shared.staff_app_grant), and returns what disagrees. It never writes Cognito or the
-DB: no Admin* call is made here, and the SQL is two SELECTs.
+(shared.admin_users + shared.staff_app_grant + shared.staff_crm_grant), and returns what disagrees. It never writes
+Cognito or the DB: no Admin* call is made here, and the SQL is SELECTs only.
 
 What it reports (the `result` of a `staff_directory_reconcile` job, services/jobs/staff_reconcile_job.py):
 
@@ -16,7 +16,9 @@ What it reports (the `result` of a `staff_directory_reconcile` job, services/job
                                not in the pool, or the issuer is another pool's.
   (c) group_drift              for each active row matched to a Cognito user: the CIS role vs the highest
                                cis-* group (the C3 sign-in rule, staff_identity.role_from_groups), the Booking
-                               grant (staff_app_grant app='booking') vs the booking-* groups, the email (row
+                               grant (staff_app_grant app='booking') vs the booking-* groups, the CRM roles
+                               (staff_crm_grant, AA-1031) vs the crm-* groups (skipped, with a note, while
+                               migration 330 is not applied), the email (row
                                matched by sub, emails differ), and an active row whose Cognito user is disabled.
   (d) status_findings          enabled Cognito users matched to an active row (except break-glass) whose
                                UserStatus is not CONFIRMED and not pending: RESET_REQUIRED = an admin forced a
@@ -30,11 +32,12 @@ What it reports (the `result` of a `staff_directory_reconcile` job, services/job
   breakglass                   the break-glass user: present, CONFIRMED, disabled at rest, in cis-admin and
                                booking-admin. Each deviation is an issue.
   known_e2e_exceptions         Dev only (ENVIRONMENT exactly "dev", api/core/e2e_staff.dev_only_e2e_environment):
-                               the E2E staff identities root ADR 0006a A10 / A10a / A10b allows, each with its ADR
-                               clause, listed apart and NOT counted in drift_total. Only the exact address with its
-                               exact staff group set (and, for A10 / A10b, its directory row with the expected role)
-                               is listed; an E2E address with any other group set, a missing or wrong row, or on any
-                               other environment goes through the categories above like every user (AA-816 S253).
+                               the E2E staff identities root ADR 0006a A10 / A10a / A10b / A10c allows, each with
+                               its ADR clause, listed apart and NOT counted in drift_total. Only the exact address
+                               with its exact staff group set (and, for A10 / A10b, its directory row with the
+                               expected role) is listed; an E2E address with any other group set, a missing or
+                               wrong row, or on any other environment goes through the categories above like every
+                               user (AA-816 S253).
 
 ListUsers cannot tell whether a user has a password (no attribute says so, and AdminGetUser is denied), so
 (d) is status based; `notes` in the result says so.
@@ -68,7 +71,15 @@ BOOKING_GROUP_ROLES: tuple[tuple[str, str], ...] = (
     ("booking-content_creator", "content_creator"),
 )
 BOOKING_GROUPS: tuple[str, ...] = tuple(g for g, _ in BOOKING_GROUP_ROLES)
-STAFF_GROUPS: tuple[str, ...] = CIS_GROUPS + BOOKING_GROUPS
+# AA-1031: the AA-Partner staff groups (root ADR 0006b decision 6) and their staff_crm_grant role codes; a person may
+# hold several. Same pairs as api/services/staff_directory.CRM_ROLE_GROUPS (a test keeps them equal).
+CRM_GROUP_ROLES: tuple[tuple[str, str], ...] = (
+    ("crm-platform-admin", "platform_admin"),
+    ("crm-ops", "ops"),
+    ("crm-support", "support"),
+)
+CRM_GROUPS: tuple[str, ...] = tuple(g for g, _ in CRM_GROUP_ROLES)
+STAFF_GROUPS: tuple[str, ...] = CIS_GROUPS + BOOKING_GROUPS + CRM_GROUPS
 
 PAGE_LIMIT = 60          # ListUsers / ListUsersInGroup maximum page size
 MAX_PAGES = 100          # 6 000 users per listing: far above a staff pool; stops a token loop
@@ -84,6 +95,10 @@ ROWS_SQL = """
      ORDER BY lower(username)
 """
 GRANTS_SQL = "SELECT admin_user_id::text AS admin_user_id, app, role FROM shared.staff_app_grant"
+# AA-1031 (migration 330): the CRM roles, as grants of app 'crm' (several per person). Read only when the table exists.
+CRM_TABLE_SQL = "SELECT to_regclass('shared.staff_crm_grant') IS NOT NULL AS ok"
+CRM_GRANTS_SQL = "SELECT admin_user_id::text AS admin_user_id, 'crm' AS app, role FROM shared.staff_crm_grant"
+APP_CRM = "crm"
 
 NOTES = (
     "ListUsers does not say whether a user has a password; (d) flags any status other than CONFIRMED.",
@@ -91,8 +106,10 @@ NOTES = (
     "as drift: staff sign in with an email code, which may leave that status as it is.",
     "Report only: nothing in Cognito or shared.admin_users was changed.",
 )
-KNOWN_E2E_NOTE = ("Dev: the E2E staff accounts root ADR 0006a allows (A10, A10a, A10b) are listed under "
+KNOWN_E2E_NOTE = ("Dev: the E2E staff accounts root ADR 0006a allows (A10, A10a, A10b, A10c) are listed under "
                   "known_e2e_exceptions and not counted as drift, only with their exact address and staff groups.")
+CRM_NOT_COMPARED_NOTE = ("CRM roles were not compared: the directory table for them (CIS migration 330) is not applied "
+                         "yet, so the crm-* groups are neither checked nor reported.")
 
 
 @dataclass(frozen=True)
@@ -120,6 +137,11 @@ KNOWN_E2E_STAFF: "MappingProxyType[str, KnownE2E]" = MappingProxyType({
         clause="ADR 0006a A10b",
         reason="Dev-only CIS admin E2E account: read-only session, no Booking access.",
         groups=frozenset({"cis-admin"}), directory_role=e2e_staff.E2E_CIS_ADMIN_TEST_STAFF_ROLE),
+    # AA-1031: A10c (AA-1019, S262) is in the pool with crm-ops + crm-support only; never in the CIS directory.
+    e2e_staff.E2E_CRM_STAFF_TEST_STAFF_EMAIL: KnownE2E(
+        clause="ADR 0006a A10c",
+        reason="Dev-only AA-Partner staff E2E account (synthetic agencies only); never in the CIS staff directory.",
+        groups=frozenset({"crm-ops", "crm-support"}), directory_role=None),
 })
 
 
@@ -292,13 +314,20 @@ def known_e2e_spec(u: CognitoUser) -> Optional[KnownE2E]:
 
 
 def reconcile(raw_users: list[dict], raw_groups: dict[str, Optional[list[dict]]], rows: list[dict],
-              grants: list[dict], *, issuer: str, breakglass: str, known_e2e: bool = False) -> dict:
+              grants: list[dict], *, issuer: str, breakglass: str, known_e2e: bool = False,
+              crm_directory: bool = True) -> dict:
     """The report. Pure: no I/O, so every category is unit-tested with plain dicts.
 
-    ``known_e2e`` switches on the known E2E exceptions block; the job passes :func:`known_e2e_enabled` (Dev only)."""
+    ``known_e2e`` switches on the known E2E exceptions block; the job passes :func:`known_e2e_enabled` (Dev only).
+    ``crm_directory`` (AA-1031): the directory holds CRM roles (grants of app ``crm``); False while migration 330 is
+    not applied, and then the crm-* groups are not compared."""
     users = parse_users(raw_users, raw_groups)
     breakglass = breakglass.lower()
     booking_grant = {g["admin_user_id"]: g["role"] for g in grants if g.get("app") == "booking"}
+    crm_grant: dict[str, set[str]] = {}
+    for g in grants:
+        if g.get("app") == APP_CRM:
+            crm_grant.setdefault(g["admin_user_id"], set()).add(g["role"])
 
     by_identity = {(r.get("cognito_iss"), r.get("cognito_sub")): r for r in rows if r.get("cognito_sub")}
     by_email = {_norm_email(r.get("email")): r for r in rows if _norm_email(r.get("email"))}
@@ -349,7 +378,8 @@ def reconcile(raw_users: list[dict], raw_groups: dict[str, Optional[list[dict]]]
                                 "status": u.status, "groups": _sorted_groups(u.groups), "reason": reason,
                                 "row_username": row.get("username") if row else None})
             continue
-        row_drift = _row_drift(row, u, booking_grant.get(row["id"]))
+        row_drift = _row_drift(row, u, booking_grant.get(row["id"]),
+                               crm_grant.get(row["id"], set()) if crm_directory else None)
         drift.extend(row_drift)
         if (spec is not None and spec.directory_role is not None and not row_drift
                 and u.groups == set(spec.groups) and row.get("role") == spec.directory_role):
@@ -416,11 +446,20 @@ def reconcile(raw_users: list[dict], raw_groups: dict[str, Optional[list[dict]]]
         # Not counted in drift_total (AA-816 S253); empty and switched off outside Dev.
         "known_e2e_enabled": known_e2e,
         "known_e2e_exceptions": known,
-        "notes": list(NOTES) + ([KNOWN_E2E_NOTE] if known_e2e else []),
+        "crm_compared": crm_directory,
+        "notes": list(NOTES) + ([KNOWN_E2E_NOTE] if known_e2e else [])
+        + ([] if crm_directory else [CRM_NOT_COMPARED_NOTE]),
     }
 
 
-def _row_drift(row: dict, u: CognitoUser, grant_role: Optional[str]) -> list[dict]:
+def _crm_roles_from_groups(groups: Iterable[str]) -> list[str]:
+    held = set(groups)
+    return [role for group, role in CRM_GROUP_ROLES if group in held]
+
+
+def _row_drift(row: dict, u: CognitoUser, grant_role: Optional[str],
+               crm_roles: Optional[set[str]] = None) -> list[dict]:
+    """``crm_roles``: the row's CRM roles, or None when they are not compared (migration 330 not applied)."""
     out: list[dict] = []
     base = {"username": row["username"], "email": u.email or row.get("email")}
     cis_groups = [g for g in _sorted_groups(u.groups) if g in CIS_GROUPS]
@@ -434,6 +473,13 @@ def _row_drift(row: dict, u: CognitoUser, grant_role: Optional[str]) -> list[dic
         out.append({**base, "kind": "booking_role", "directory": grant_role,
                     "cognito": booking_roles[0] if len(booking_roles) == 1 else (booking_roles or None),
                     "cognito_groups": booking_groups})
+    if crm_roles is not None:
+        wanted = [r for _, r in CRM_GROUP_ROLES if r in crm_roles]
+        held = _crm_roles_from_groups(u.groups)
+        if held != wanted:
+            out.append({**base, "kind": "crm_role", "directory": ", ".join(wanted) or None,
+                        "cognito": ", ".join(held) or None,
+                        "cognito_groups": [g for g in _sorted_groups(u.groups) if g in CRM_GROUPS]})
     row_email = _norm_email(row.get("email"))
     if u.email and row_email and u.email != row_email:
         # Matched by (iss, sub): the email was changed on one side only (e.g. in the Cognito console).
@@ -485,10 +531,20 @@ def summary_fields(report: dict) -> dict:
     return {**report["counts"], "ready": report["readiness"]["ready"]}
 
 
-async def load_directory(pool) -> tuple[list[dict], list[dict]]:
+async def load_directory_with_crm(pool) -> tuple[list[dict], list[dict], bool]:
+    """The rows, the grants (Booking, plus CRM roles as app ``crm`` once migration 330 is applied) and whether the CRM
+    roles were read (AA-1031)."""
     async with pool.acquire() as conn:
         rows = [dict(r) for r in await conn.fetch(ROWS_SQL)]
         grants = [dict(r) for r in await conn.fetch(GRANTS_SQL)]
+        crm = bool(await conn.fetchval(CRM_TABLE_SQL))
+        if crm:
+            grants += [dict(r) for r in await conn.fetch(CRM_GRANTS_SQL)]
+    return rows, grants, crm
+
+
+async def load_directory(pool) -> tuple[list[dict], list[dict]]:
+    rows, grants, _ = await load_directory_with_crm(pool)
     return rows, grants
 
 

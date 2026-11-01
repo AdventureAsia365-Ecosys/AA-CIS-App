@@ -1664,7 +1664,7 @@
       },
       "ChangeRolesBody": {
         "additionalProperties": false,
-        "description": "Only the fields sent are changed; ``\"booking_role\": null`` removes the Booking grant.",
+        "description": "Only the fields sent are changed; ``\"booking_role\": null`` removes the Booking grant, ``\"crm_roles\": []``\n(or null) removes every CRM role. ``\"preset\": \"platform_owner\"`` (AA-1031) is sent alone and sets CIS admin +\nBooking admin + CRM Agency admin.",
         "properties": {
           "booking_role": {
             "anyOf": [
@@ -1682,6 +1682,38 @@
               }
             ],
             "title": "Booking Role"
+          },
+          "crm_roles": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "platform_admin",
+                    "ops",
+                    "support"
+                  ],
+                  "type": "string"
+                },
+                "maxItems": 3,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Crm Roles"
+          },
+          "preset": {
+            "anyOf": [
+              {
+                "const": "platform_owner",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preset"
           },
           "role": {
             "anyOf": [
@@ -2103,6 +2135,26 @@
               }
             ],
             "title": "Booking Role"
+          },
+          "crm_roles": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "platform_admin",
+                    "ops",
+                    "support"
+                  ],
+                  "type": "string"
+                },
+                "maxItems": 3,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Crm Roles"
           },
           "display_name": {
             "maxLength": 120,
@@ -27583,7 +27635,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Change the CIS role and/or the Booking grant",
+        "summary": "Change the CIS role, the Booking grant and/or the CRM roles",
         "tags": [
           "admin-platform"
         ]
