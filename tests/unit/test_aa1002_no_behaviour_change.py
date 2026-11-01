@@ -53,7 +53,8 @@ CALL_PATH = ("client.py", "embed.py", "decide.py", "judge.py", "shadow.py", "bed
              "stage_params.py",   # AA-1017: stage x model parameters (its own table; empty = the same request object)
              "tenant_budget.py",  # AA-1016: tenant AI budget check (no budget row = nothing read beyond the tenant set)
              "prompt_registry.py",  # AA-900: prompt version lookup (no registered row = None on the ledger)
-             "embedding_space.py")  # AA-1026: embedding space registry (unreadable = the built-in 328 mirror)
+             "embedding_space.py",  # AA-1026: embedding space registry (unreadable = the built-in 328 mirror)
+             "json_reply.py")  # AA-1026: reads the JSON value out of a reply text (pure, no I/O)
 
 
 def _imported_modules(path: Path) -> set[str]:

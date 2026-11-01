@@ -525,13 +525,21 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   `a3_place_card_check` (draft and check stay on two makers). The primary, earlier fallbacks, shadow and scopes are
   unchanged; writers never name an acc2 model. The tenant judge / validate stages (`t2_brand_audit`, `t10_claims`,
   `t9_faq_answer_fit`, `t9_faq_filter`) wait for migration 332 and the tech lead's yes: ADR 0009 decision 14 keeps acc2
-  off tenant stages until decision 10 and AA-820 are done. **Contract smoke** (job kind `llm_contract_smoke`,
+  off tenant stages until decision 10 and AA-820 are done. **Migration 333** ("AWS first, outside last", tech lead
+  S263): every judge / validate route that ends on the OpenAI API hop (`gpt-6-luna-openai`) gets an acc2 pick right
+  BEFORE it, so the OpenAI API stays the last rung: `s1_judge`, `t2_judge`, `t7_debate_judge`, `t10_judge`,
+  `t10_adjudicate`, `writing_memory_eval`, `writing_memory_mine` on `nova-lite`, `a3_place_dedupe` on `llama4-scout`
+  (its check stage falls back to Nova Lite). These judges' acc2 verdicts are not held by code (only the brand audits'
+  `pass` is); the revert is the admin route PATCH. **Contract smoke** (job kind `llm_contract_smoke`,
   `services/jobs/llm_contract_smoke_job.py`; `POST /admin/job-runner/llm-contract-smoke/run`, ai.admin, DRY RUN by
   default, optional `stages` and `models` = stage -> model key override): per stage one invented fixture through the
   stage's own prompt pieces and parser, with the stage's acc2 model forced through `LLMClient.probe` on its acc2
   deployment (the override, else the route's acc2 model, else the planned one), ledger stage `adhoc_aa1026` with the
-  stage's role, `quality_signal.contract_smoke` / `parser_ok`; refused over 0.10 USD estimated, about 0.01 USD for all
-  twelve stages. It proves format only (ladder rung 3). **Order gate:** 331 / 332 refuse to give a stage its acc2
+  stage's role, `quality_signal.contract_smoke` / `parser_ok`; refused over 0.10 USD estimated, about 0.01 USD for the
+  twelve stages of 331 / 332 (estimate 0.02 USD for all twenty: the eight judge / validate stages whose route ends on
+  the OpenAI API have cases too, for migration 333, which puts an acc2 pick before that hop: `s1_judge`, `t2_judge`,
+  `t7_debate_judge`, `t10_judge`, `t10_adjudicate`, `writing_memory_eval`, `writing_memory_mine`, `a3_place_dedupe`). It proves format
+  only (ladder rung 3). **Order gate:** 331 / 332 / 333 refuse to give a stage its acc2
   fallback unless the LATEST smoke row of that stage on that model (connection acc2) passed, so the smoke runs before
   the apply; a stage that fails is re-picked (smoke the next model with `models`, change the migration's pick) or
   dropped before the apply, and after the apply re-pointed with the admin route PATCH. (A database that never logged
@@ -540,7 +548,15 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   **an acc2 brand-audit `pass` is held**: `brand_audit_node.hold_uncalibrated_pass` turns it into `manual_check` +
   `BRAND_AUDIT_UNCALIBRATED_JUDGE` (connections in `UNCALIBRATED_JUDGE_CONNECTIONS`), so an uncalibrated judge can flag
   or hold a tour but never publish one. `draft_card` / `check_card` (place cards) take an optional `client` for the
-  smoke.
+  smoke. **Reply parsing:** the stage parsers without a forced schema read the reply's FIRST complete JSON value
+  through `shared/llm_client/json_reply.first_json_value` (prose or a fence before it, any text after it ignored, a
+  cut-off reply never yields a nested value; the item / shape checks stay in each parser): `t9_faq_filter` and
+  `t9_faq_answer_fit` and `t10_adjudicate` (which also take the bare items list: both acc2 models answered the S263 smoke that way),
+  `a3_place_days`, `a3_place_locate`, `a3_atomize` (`atom_extraction.atoms_from_reply`), the brand fit judges
+  (`brand_fit._judge`: still no json_repair), and before their json_repair salvage `s1_source_facts`, the place card
+  draft / check and the T10 F9 judge (`judge.parse_judge_json_checked`: a first value read as is is not "repaired").
+  The schema-forced judges / validators (brand audit, `t10_claims`, `a3_place_dedupe(_check)`, the writing memory
+  judges) keep `json.loads`.
 - **Structured output (`LLMRequest.json_schema`) per path**: Converse = one tool whose input is the schema, reply
   conformed (`_checked_json`, AA-659/714); OpenAI = strict `response_format`. The legacy `haiku` / `sonnet` keys
   (Anthropic Messages API, `invoke_claude`) have neither: since S251 (AA-835) the gateway appends a "one JSON object

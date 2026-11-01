@@ -33,7 +33,6 @@ Imports nothing from quality_gates (invariant I1): this layer cannot build a gat
 from __future__ import annotations
 
 import contextvars
-import json
 import os
 import re
 import time
@@ -49,6 +48,7 @@ from services.acp_content_writing.seed_align import modes as sa_modes
 from services.acp_content_writing.seed_align import seed_graph
 from services.quality import registry as qr
 from shared.llm_client.call_log import billed_fields, record_call_sync, record_unusable_sync
+from shared.llm_client.json_reply import JsonReplyError, first_json_value
 from shared.llm_client.models import LLMRequest
 
 logger = structlog.get_logger()
@@ -375,15 +375,14 @@ def build_request(items: Sequence[Trigger], *, stage: str = STAGE, model_tier: O
 
 
 def parse_verdicts(content: str, n: int) -> list[dict]:
-    """One {verdict, piece_quote, seed_quote, action} per item 1..n, or AdjudicateReplyError (never guessed)."""
-    m = re.search(r"\{.*\}", (content or "").strip(), re.S)
-    if not m:
-        raise AdjudicateReplyError("no JSON object in the reply")
+    """One {verdict, piece_quote, seed_quote, action} per item 1..n, or AdjudicateReplyError (never guessed). The
+    reply's first complete JSON value is read (text after it ignored), the {"items": [...]} object or the bare items
+    list (AA-1026, as faq_filter.parse_verdicts)."""
     try:
-        obj = json.loads(m.group(0))
-    except json.JSONDecodeError as e:
-        raise AdjudicateReplyError(f"invalid JSON: {e}") from e
-    items = obj.get("items") if isinstance(obj, dict) else None
+        obj = first_json_value(content, kinds=(dict, list))
+    except JsonReplyError as e:
+        raise AdjudicateReplyError(str(e)) from e
+    items = obj.get("items") if isinstance(obj, dict) else obj
     if not isinstance(items, list):
         raise AdjudicateReplyError("no items list")
     by_n: dict[int, dict] = {}

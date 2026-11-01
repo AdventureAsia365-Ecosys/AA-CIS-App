@@ -56,6 +56,7 @@ from services.acp_contract.ranking_reference import PLACE_KINDS, names_somewhere
 from shared import countries as _countries
 from shared.llm_client.call_log import billed_fields, record_call_with_pool
 from shared.llm_client.client import LLMClient
+from shared.llm_client.json_reply import JsonReplyError, first_json_value
 from shared.llm_client.models import LLMRequest
 
 logger = structlog.get_logger()
@@ -378,9 +379,9 @@ def _parse_json(raw: str) -> dict:
     if text.startswith("```"):
         text = text.strip("`")
         text = text.split("\n", 1)[1] if "\n" in text else text
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
+    try:   # the first complete object; a note after it is ignored (AA-1026: json_repair made it a list -> {})
+        data = first_json_value(text, scan=False)
+    except JsonReplyError:
         data = repair_json(text, return_objects=True)
     return data if isinstance(data, dict) else {}
 

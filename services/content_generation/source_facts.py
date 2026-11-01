@@ -20,7 +20,6 @@ Design contract (AA-748, S224):
 """
 from __future__ import annotations
 
-import json
 import os
 from typing import Optional
 
@@ -206,8 +205,11 @@ def _raw_source_text(tour: dict) -> str:
 
 def _parse_json(raw: str) -> Optional[dict]:
     """Decode the extractor output, with the same fence-strip + json-repair salvage the writer path
-    uses. Returns None when nothing usable can be parsed."""
+    uses. The reply's first complete JSON object is read as is, text after it ignored (AA-1026: json_repair
+    turns "object + note" into a list, which read as no facts). Returns None when nothing usable can be parsed."""
     from json_repair import repair_json
+
+    from shared.llm_client.json_reply import JsonReplyError, first_json_value
 
     text = (raw or "").strip()
     if text.startswith("```"):
@@ -216,8 +218,8 @@ def _parse_json(raw: str) -> Optional[dict]:
             text = text[4:]
         text = text.strip()
     try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
+        parsed = first_json_value(text, scan=False)
+    except JsonReplyError:
         parsed = repair_json(text, return_objects=True)
     return parsed if isinstance(parsed, dict) else None
 

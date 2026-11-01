@@ -77,6 +77,17 @@ fix pass: the code PR now goes FIRST, so the contract smoke runs before any rout
 - **Ladder rungs skipped knowingly.** The tech lead's S263 yes puts the seven validate stages live on the format smoke
   alone (no calibration, A/B or shadow rung); the brand audit judge goes live only with its `pass` held. Recorded in
   331's header and in the root ADR 0009 decision 14.
+- **Migration 333 — "AWS first, outside last" (tech lead, S263).** Every judge / validate route that ends on the
+  OpenAI API hop (`gpt-6-luna-openai`, 327) gets an acc2 pick right BEFORE that hop; the OpenAI API stays the last
+  rung. After 331 / 332 no route has an acc2 hop after the OpenAI API hop, and eight have none: `s1_judge`, `t2_judge`,
+  `t7_debate_judge`, `t10_judge`, `writing_memory_eval`, `writing_memory_mine` (Nova Lite), `a3_place_dedupe` (Llama 4
+  Scout: its check stage falls back to Nova Lite, two makers) from the Dev route snapshot, and `t10_adjudicate` (Nova
+  Lite), which the 29/10 snapshot predates (migration 308 seeds it ending on the OpenAI API; the S260 Dev evidence lists
+  it with `vendor_direct`). The file is generic over the listed stages: it finds the first OpenAI API hop (a key whose
+  deployments are all on kind `openai` vendor_direct connections), requires the route to END on such hops, removes the
+  pick wherever it is and inserts it right before that hop (so an acc2 hop an admin put after the OpenAI API moves
+  too). Same guards as 331 / 332 plus "only the pick moved"; same order gate. Its smoke cases ship in the code PR
+  "stage parsers read the first complete JSON value" (deployed first).
 
 ## Changed
 
@@ -120,6 +131,12 @@ fix pass: the code PR now goes FIRST, so the contract smoke runs before any rout
 - **No env switch on the live smoke.** Its cost is a cent; the guard is ai.admin + an explicit `dry_run: false` + a
   0.10 USD estimate cap + a spent cap between stages.
 
+- **333 changes judges with no code hold.** Unlike the brand audits (an acc2 `pass` is held as manual_check), the
+  brand fit judges (`s1_judge` / `t2_judge`: part of the quality score), `t7_debate_judge`, the F9 judge `t10_judge`
+  (blocking side: CTA / fact / integrity), `t10_adjudicate` (off by default) and the writing memory judges answer on
+  Nova Lite while acc3 refuses, instead of GPT-6 Luna on the OpenAI API, with no calibration. That is the tech lead's
+  call; the revert is one admin route PATCH per stage (drop the acc2 hop; the OpenAI API hop is still there).
+
 ## Should know
 
 - **Numbering:** 330 belongs to AA-1031 (`330_staff_crm_grant.sql`). The CIS preflight refuses 331 until 330 is on main;
@@ -134,6 +151,10 @@ fix pass: the code PR now goes FIRST, so the contract smoke runs before any rout
   and change that stage's pick in 331 (and its snapshot / tests) before merging PR 2, or drop the stage from 331.
   After the apply, re-point with `PATCH /admin/llm-config/{stage}/route` (no new migration).
 - The smoke counts on the acc2 deployment circuit (it is a probe): a refused call can open it like the daily probe.
-- Not done here (follow-ups): ADR 0009 decision 14 also says the OpenAI API is the judges' warm path "ahead of acc2";
-  the judge routes that end on the OpenAI API have no acc2 entry yet, so with the OpenAI API unfunded they stay in one
-  usable domain. Adding acc2 after the OpenAI API needs an order decision (S235 "OpenAI API last") from the tech lead.
+- ADR 0009 decision 14 says the OpenAI API is the judges' warm path "ahead of acc2"; the tech lead's S263 order
+  ("AWS first, outside last") reverses that for the judge / validate routes: migration 333 puts acc2 before the
+  OpenAI API hop. The root ADR text needs the matching amendment (root repo, not this PR).
+- 333 apply order: the code PR deployed, the smoke DRY RUN then live for the eight 333 stages (each must pass on its
+  planned pick: `model_source` is `planned` because their routes name no acc2 model yet), then 331 -> 332 -> 333 (333
+  refuses without 332 registered). After the apply, `GET /admin/llm-availability`, and a smoke re-run of the eight
+  shows `model_source: route` with the same picks.

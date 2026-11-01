@@ -42,7 +42,7 @@ from services.acp_shared.atom_extraction import (
     day_fingerprint as _day_fingerprint,
     derive_atom_text as _derive_atom_text,
     source_hash as _source_hash,
-    strip_json_fence as _strip_json_fence,
+    atoms_from_reply as _atoms_from_reply,
 )
 from services.content_generation.itinerary_utils import parse_canonical_itinerary_days
 from shared.llm_client.client import LLMClient
@@ -152,11 +152,9 @@ async def _ask_atoms(prompt: str, role: str, *, event: str, log_fields: dict, si
                          error_type=type(e).__name__, error=str(e))
             continue
         try:
-            atoms = json.loads(_strip_json_fence(llm_result.content))["atoms"]
-            if not isinstance(atoms, list):
-                raise TypeError(f"'atoms' is {type(atoms).__name__}, not a list")
+            atoms = _atoms_from_reply(llm_result.content)
             return atoms, llm_result, attempt, None
-        except (json.JSONDecodeError, KeyError, TypeError) as e:
+        except (ValueError, KeyError, TypeError) as e:
             error = f"invalid atom JSON from model: {e}"
             logger.error(f"{event}_parse_failed", **log_fields, attempt=attempt,
                          stop_reason=llm_result.stop_reason, max_tokens=max_tokens, error=str(e))
@@ -176,7 +174,7 @@ async def run_a3_atomize(
 ) -> dict:
     """A3 atomize — decompose atoms from a published Master Content tour, owner_scope="platform".
     Reuses AA-299's proven prompt/parse pipeline (services/acp_shared/atom_extraction.py:
-    _build_user_prompt, _SYSTEM_PROMPT, _strip_json_fence) and the gateway (LLMClient.generate).
+    _build_user_prompt, _SYSTEM_PROMPT, _atoms_from_reply) and the gateway (LLMClient.generate).
 
     tour_id MUST be silver_aa_internal.raw_tours.tour_id (acp_contract.tour_atoms.tour_id's FK
     target) — the caller passes published_tours.tour_id (same value), not tenant_tour_versions.id

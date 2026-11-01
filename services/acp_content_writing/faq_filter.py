@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import asyncio
 import collections
-import json
 import os
 import re
 from dataclasses import dataclass, field
@@ -38,6 +37,7 @@ from services.acp_content_writing.hygiene import fold, names_place
 from services.acp_content_writing.quality_gates import PAA_MAX_QUESTIONS, normalize_paa_question, paa_for_scope
 from shared.llm_client.call_log import billed_fields, record_call_sync, record_unusable_sync
 from shared.llm_client.client import LLMClient
+from shared.llm_client.json_reply import JsonReplyError, first_json_value
 from shared.llm_client.models import LLMRequest
 
 logger = structlog.get_logger()
@@ -219,16 +219,16 @@ def build_user_prompt(scope: FaqScope, questions: Sequence[str]) -> str:
 
 
 def parse_verdicts(content: str, n: int) -> list[dict]:
-    """One verdict per question 1..n, or FaqFilterReplyError. An unknown reason code reads as 'other', an
-    unknown confidence as 'low'; a missing answer or label is an error (never guessed)."""
-    m = re.search(r"\{.*\}", (content or "").strip(), re.S)
-    if not m:
-        raise FaqFilterReplyError("no JSON object in the reply")
+    """One verdict per question 1..n, or FaqFilterReplyError. The reply's first complete JSON value is read (prose
+    or a fence before it and any text after it are ignored): the {"items": [...]} object the prompt asks for, or the
+    bare items list (AA-1026: both acc2 models answered with the list alone, which the old first-"{"-to-last-"}"
+    slice read as one item followed by "Extra data"). Each item is checked as before: an unknown reason code reads
+    as 'other', an unknown confidence as 'low'; a missing answer or label is an error (never guessed)."""
     try:
-        obj = json.loads(m.group(0))
-    except json.JSONDecodeError as e:
-        raise FaqFilterReplyError(f"invalid JSON: {e}") from e
-    items = obj.get("items") if isinstance(obj, dict) else None
+        obj = first_json_value(content, kinds=(dict, list))
+    except JsonReplyError as e:
+        raise FaqFilterReplyError(str(e)) from e
+    items = obj.get("items") if isinstance(obj, dict) else obj
     if not isinstance(items, list):
         raise FaqFilterReplyError("no items list")
     by_n: dict[int, dict] = {}
