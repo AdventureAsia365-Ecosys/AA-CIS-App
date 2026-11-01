@@ -221,6 +221,12 @@ function DetailField({ label, value }: { label: string; value: string | null | u
   );
 }
 
+/** AA-1006 follow-up (S263 F2): a kit DataTable inside a flush card (`Section padded={false}`) sits at the card's
+ * 20 px inset, the same as the header and filter rows: flush, its toolbar's Columns button touched the card border. */
+function TableInset({ children }: { children: React.ReactNode }) {
+  return <div data-testid="upload-table-inset" style={{ padding: "10px 20px 16px", minWidth: 0 }}>{children}</div>;
+}
+
 // AA-1006: the parsed tours are a kit DataTable (`ReadyToursTable`); a click on a row shows that tour's source fields
 // under the table (was an extra table row under the clicked one).
 function ReadyToursTable({ tours, expanded, onToggle }: {
@@ -449,7 +455,7 @@ function ToursReadySection({ tours, loading, onRefresh }: {
 
       {/* Filters */}
       {!loading && localTours.length > 0 && (
-        <div style={{ padding: "10px 16px", borderBottom: `1px solid ${K.line}`, display: "flex", gap: 10 }}>
+        <div style={{ padding: "10px 20px", borderBottom: `1px solid ${K.line}`, display: "flex", gap: 10 }}>
           <Select value={filterCountry} onChange={e => handleCountry(e.target.value)}
             style={{ padding: "5px 8px", borderRadius: 6, border: `1px solid ${K.line}`, fontSize: 12, fontFamily: sans, background: K.card }}>
             <option value="">{t("allCountries")}</option>
@@ -478,35 +484,37 @@ function ToursReadySection({ tours, loading, onRefresh }: {
         </div>
       ) : (
         <>
-          <DataTable<TourReadyItem>
-            tableId="upload-tours-ready"
-            data={paginated}
-            getRowId={(tr) => tr.tour_id}
-            searchable={false}
-            paginate={false}
-            compact
-            columns={[
-              { id: "name", header: t("colTourName"), enableSorting: false, cell: ({ row: { original: tr } }) => <span style={{ fontWeight: 600, color: K.ink }}>{tr.src_name || "—"}</span> },
-              { id: "country", header: t("colCountry"), enableSorting: false, cell: ({ row: { original: tr } }) => tr.country || "—" },
-              { id: "file", header: t("colSourceFile"), enableSorting: false, cell: ({ row: { original: tr } }) => <span style={{ color: K.muted, fontSize: 12 }}>{tr.filename ? stripUuidPrefix(tr.filename) : "—"}</span> },
-              { id: "ingested", header: t("colIngestedAt"), enableSorting: false, cell: ({ row: { original: tr } }) => <span style={{ color: K.muted, fontSize: 12 }}>{relativeTime(tr.ingest_at)}</span> },
-              { id: "action", header: t("colAction"), enableSorting: false, cell: ({ row: { original: tr } }) => <><a href={`/admin/s1-rewrite?tour_id=${tr.tour_id}`} style={{
-                        fontSize: 12, fontWeight: 600, color: K.accent,
-                        textDecoration: "none", display: "flex", alignItems: "center", gap: 4,
-                      }}>
-                        {t("rewrite")} <ArrowRight size={11} />
-                      </a></> },
-              { id: "trash", header: "", enableSorting: false, cell: ({ row: { original: tr } }) => (
-                      <Button size="sm" variant="danger"
-                        onClick={() => trashTour(tr.tour_id, tr.src_name || t("thisTour"))}
-                        disabled={trashing === tr.tour_id}
-                        title={t("trashTitle")}
-                      >
-                        <Trash2 size={11} />
-                        {trashing === tr.tour_id ? "…" : t("trash")}
-                      </Button>) },
-            ]}
-          />
+          <TableInset>
+            <DataTable<TourReadyItem>
+              tableId="upload-tours-ready"
+              data={paginated}
+              getRowId={(tr) => tr.tour_id}
+              searchable={false}
+              paginate={false}
+              compact
+              columns={[
+                { id: "name", header: t("colTourName"), enableSorting: false, cell: ({ row: { original: tr } }) => <span style={{ fontWeight: 600, color: K.ink }}>{tr.src_name || "—"}</span> },
+                { id: "country", header: t("colCountry"), enableSorting: false, cell: ({ row: { original: tr } }) => tr.country || "—" },
+                { id: "file", header: t("colSourceFile"), enableSorting: false, cell: ({ row: { original: tr } }) => <span style={{ color: K.muted, fontSize: 12 }}>{tr.filename ? stripUuidPrefix(tr.filename) : "—"}</span> },
+                { id: "ingested", header: t("colIngestedAt"), enableSorting: false, cell: ({ row: { original: tr } }) => <span style={{ color: K.muted, fontSize: 12 }}>{relativeTime(tr.ingest_at)}</span> },
+                { id: "action", header: t("colAction"), enableSorting: false, cell: ({ row: { original: tr } }) => <><a href={`/admin/s1-rewrite?tour_id=${tr.tour_id}`} style={{
+                          fontSize: 12, fontWeight: 600, color: K.accent,
+                          textDecoration: "none", display: "flex", alignItems: "center", gap: 4,
+                        }}>
+                          {t("rewrite")} <ArrowRight size={11} />
+                        </a></> },
+                { id: "trash", header: "", enableSorting: false, cell: ({ row: { original: tr } }) => (
+                        <Button size="sm" variant="danger"
+                          onClick={() => trashTour(tr.tour_id, tr.src_name || t("thisTour"))}
+                          disabled={trashing === tr.tour_id}
+                          title={t("trashTitle")}
+                        >
+                          <Trash2 size={11} />
+                          {trashing === tr.tour_id ? "…" : t("trash")}
+                        </Button>) },
+              ]}
+            />
+          </TableInset>
           {filtered.length > READY_PAGE_SIZE && (
             <div style={{ padding: "12px 20px", borderTop: `1px solid ${K.line}`, display: "flex", justifyContent: "flex-end" }}>
               <Pagination page={page} total={filtered.length} pageSize={READY_PAGE_SIZE} onPage={setPage} />
@@ -531,27 +539,29 @@ function ToursReadySection({ tours, loading, onRefresh }: {
           ) : trashedTours.length === 0 ? (
             <div style={{ padding: 20, textAlign: "center", color: K.muted, fontSize: 13 }}>{t("noTrashed")}</div>
           ) : (
-            <DataTable<TourReadyItem>
-              tableId="upload-trashed"
-              data={trashedTours}
-              getRowId={(tr) => tr.tour_id}
-              searchable={false}
-              paginate={false}
-              compact
-              columns={[
-                { id: "name", header: t("colTourName"), enableSorting: false, cell: ({ row: { original: tr } }) => <span style={{ color: K.danger, fontWeight: 500 }}>{tr.src_name || "—"}</span> },
-                { id: "country", header: t("colCountry"), enableSorting: false, cell: ({ row: { original: tr } }) => tr.country || "—" },
-                { id: "trashedAt", header: t("colTrashedAt"), enableSorting: false, cell: ({ row: { original: tr } }) => <span style={{ color: K.muted }}>{tr.deleted_at ? relativeTime(tr.deleted_at) : "—"}</span> },
-                { id: "restore", header: "", enableSorting: false, cell: ({ row: { original: tr } }) => <><Button size="sm" variant="ghost"
-                        onClick={() => restoreTour(tr.tour_id, tr.src_name || t("thisTour"))}
-                        disabled={restoring === tr.tour_id}
-                        title={t("restoreTitle")}
-                      >
-                        <RotateCcw size={11} />
-                        {restoring === tr.tour_id ? "…" : t("restore")}
-                      </Button></> },
-              ]}
-            />
+            <TableInset>
+              <DataTable<TourReadyItem>
+                tableId="upload-trashed"
+                data={trashedTours}
+                getRowId={(tr) => tr.tour_id}
+                searchable={false}
+                paginate={false}
+                compact
+                columns={[
+                  { id: "name", header: t("colTourName"), enableSorting: false, cell: ({ row: { original: tr } }) => <span style={{ color: K.danger, fontWeight: 500 }}>{tr.src_name || "—"}</span> },
+                  { id: "country", header: t("colCountry"), enableSorting: false, cell: ({ row: { original: tr } }) => tr.country || "—" },
+                  { id: "trashedAt", header: t("colTrashedAt"), enableSorting: false, cell: ({ row: { original: tr } }) => <span style={{ color: K.muted }}>{tr.deleted_at ? relativeTime(tr.deleted_at) : "—"}</span> },
+                  { id: "restore", header: "", enableSorting: false, cell: ({ row: { original: tr } }) => <><Button size="sm" variant="ghost"
+                          onClick={() => restoreTour(tr.tour_id, tr.src_name || t("thisTour"))}
+                          disabled={restoring === tr.tour_id}
+                          title={t("restoreTitle")}
+                        >
+                          <RotateCcw size={11} />
+                          {restoring === tr.tour_id ? "…" : t("restore")}
+                        </Button></> },
+                ]}
+              />
+            </TableInset>
           )}
         </div>
       )}
@@ -608,7 +618,7 @@ function UploadHistorySection({ history, loading, onRefresh }: {
 
       {/* Filters */}
       {!loading && history.length > 0 && (
-        <div style={{ padding: "10px 16px", borderBottom: `1px solid ${K.line}`, display: "flex", gap: 10, alignItems: "center" }}>
+        <div style={{ padding: "10px 20px", borderBottom: `1px solid ${K.line}`, display: "flex", gap: 10, alignItems: "center" }}>
           <Select value={dateFilter} onChange={e => handleDate(e.target.value)}
             style={{ padding: "5px 8px", borderRadius: 6, border: `1px solid ${K.line}`, fontSize: 12, fontFamily: sans, background: K.card }}>
             <option value="all">{t("allTime")}</option>
@@ -642,44 +652,46 @@ function UploadHistorySection({ history, loading, onRefresh }: {
         </div>
       ) : (
         <>
-          <DataTable<UploadHistoryItem>
-            tableId="upload-history"
-            data={paginated}
-            getRowId={(h) => h.id}
-            searchable={false}
-            paginate={false}
-            compact
-            columns={[
-              { id: "file", header: t("colFileName"), enableSorting: false, cell: ({ row: { original: h } }) => <span style={{ maxWidth: 240, overflow: "hidden",
-                      textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>{stripUuidPrefix(h.filename)}</span> },
-              { id: "size", header: t("colFileSize"), enableSorting: false, meta: { align: "right" }, cell: ({ row: { original: h } }) => <span style={{ color: K.muted }}>{h.file_size_kb ? `${h.file_size_kb.toFixed(0)} KB` : "—"}</span> },
-              { id: "parsed", header: t("colParsedLanded"), enableSorting: false, meta: { align: "right" }, cell: ({ row: { original: h } }) => <>{/* AA-344: row_count is PARSED only — rows_landed (from
-                          pipeline_runs.ingest_details) is what actually landed in raw_tours.
-                          null rows_landed = pre-migration-091 source, show parsed count alone. */}
-                      {h.rows_landed !== null
-                        ? `${h.row_count ?? "—"} / ${h.rows_landed}`
-                        : (h.row_count ?? "—")}</> },
-              { id: "dropped", header: t("colDropped"), enableSorting: false, meta: { align: "right" }, cell: ({ row: { original: h } }) => <>{h.rows_dropped !== null && h.rows_dropped > 0
-                        ? <Badge tone="danger">{t("droppedN", h.rows_dropped)}</Badge>
-                        : <span style={{ color: K.muted2, fontSize: 12 }}>
-                            {h.rows_dropped === 0 ? "0" : "—"}
-                          </span>}</> },
-              { id: "errors", header: t("colParseErrors"), enableSorting: false, meta: { align: "right" }, cell: ({ row: { original: h } }) => <>{h.parse_error_count > 0
-                        ? <Badge tone="danger">{t("errorsN", h.parse_error_count)}</Badge>
-                        : <span style={{ color: K.muted2, fontSize: 12 }}>0</span>}</> },
-              { id: "uploaded", header: t("colUploadedAt"), enableSorting: false, meta: { align: "right" }, cell: ({ row: { original: h } }) => <span style={{ color: K.muted, fontSize: 12 }}>{relativeTime(h.parsed_at)}</span> },
-              { id: "batch", header: t("colBatchId"), enableSorting: false, meta: { align: "right" }, cell: ({ row: { original: h } }) => <>{h.batch_id ? (
-                        <LinkButton tone="inherit" size="sm" weight="regular"
-                          onClick={() => copyBatchId(h.batch_id!)}
-                          title={t("copyBatch")}
-                          style={{ gap: 4, fontFamily: mono, fontSize: 11, color: copied === h.batch_id ? K.success : K.muted2 }}
-                        >
-                          {h.batch_id.slice(0, 8)}…
-                          <Copy size={10} />
-                        </LinkButton>
-                      ) : "—"}</> },
-            ]}
-          />
+          <TableInset>
+            <DataTable<UploadHistoryItem>
+              tableId="upload-history"
+              data={paginated}
+              getRowId={(h) => h.id}
+              searchable={false}
+              paginate={false}
+              compact
+              columns={[
+                { id: "file", header: t("colFileName"), enableSorting: false, cell: ({ row: { original: h } }) => <span style={{ maxWidth: 240, overflow: "hidden",
+                        textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>{stripUuidPrefix(h.filename)}</span> },
+                { id: "size", header: t("colFileSize"), enableSorting: false, meta: { align: "right" }, cell: ({ row: { original: h } }) => <span style={{ color: K.muted }}>{h.file_size_kb ? `${h.file_size_kb.toFixed(0)} KB` : "—"}</span> },
+                { id: "parsed", header: t("colParsedLanded"), enableSorting: false, meta: { align: "right" }, cell: ({ row: { original: h } }) => <>{/* AA-344: row_count is PARSED only — rows_landed (from
+                            pipeline_runs.ingest_details) is what actually landed in raw_tours.
+                            null rows_landed = pre-migration-091 source, show parsed count alone. */}
+                        {h.rows_landed !== null
+                          ? `${h.row_count ?? "—"} / ${h.rows_landed}`
+                          : (h.row_count ?? "—")}</> },
+                { id: "dropped", header: t("colDropped"), enableSorting: false, meta: { align: "right" }, cell: ({ row: { original: h } }) => <>{h.rows_dropped !== null && h.rows_dropped > 0
+                          ? <Badge tone="danger">{t("droppedN", h.rows_dropped)}</Badge>
+                          : <span style={{ color: K.muted2, fontSize: 12 }}>
+                              {h.rows_dropped === 0 ? "0" : "—"}
+                            </span>}</> },
+                { id: "errors", header: t("colParseErrors"), enableSorting: false, meta: { align: "right" }, cell: ({ row: { original: h } }) => <>{h.parse_error_count > 0
+                          ? <Badge tone="danger">{t("errorsN", h.parse_error_count)}</Badge>
+                          : <span style={{ color: K.muted2, fontSize: 12 }}>0</span>}</> },
+                { id: "uploaded", header: t("colUploadedAt"), enableSorting: false, meta: { align: "right" }, cell: ({ row: { original: h } }) => <span style={{ color: K.muted, fontSize: 12 }}>{relativeTime(h.parsed_at)}</span> },
+                { id: "batch", header: t("colBatchId"), enableSorting: false, meta: { align: "right" }, cell: ({ row: { original: h } }) => <>{h.batch_id ? (
+                          <LinkButton tone="inherit" size="sm" weight="regular"
+                            onClick={() => copyBatchId(h.batch_id!)}
+                            title={t("copyBatch")}
+                            style={{ gap: 4, fontFamily: mono, fontSize: 11, color: copied === h.batch_id ? K.success : K.muted2 }}
+                          >
+                            {h.batch_id.slice(0, 8)}…
+                            <Copy size={10} />
+                          </LinkButton>
+                        ) : "—"}</> },
+              ]}
+            />
+          </TableInset>
           {filtered.length > HISTORY_PAGE_SIZE && (
             <div style={{ padding: "12px 20px", borderTop: `1px solid ${K.line}`, display: "flex", justifyContent: "flex-end" }}>
               <Pagination page={page} total={filtered.length} pageSize={HISTORY_PAGE_SIZE} onPage={setPage} />
@@ -1414,11 +1426,13 @@ function TourContentTab() {
                         textTransform: "uppercase", letterSpacing: "0.12em", color: K.muted }}>
                         {t("readyTours")}
                       </div>
-                      <ReadyToursTable
-                        tours={fs.parseResult?.tours ?? []}
-                        expanded={expandedRow}
-                        onToggle={(id) => setExpandedRow(prev => prev === id ? null : id)}
-                      />
+                      <TableInset>
+                        <ReadyToursTable
+                          tours={fs.parseResult?.tours ?? []}
+                          expanded={expandedRow}
+                          onToggle={(id) => setExpandedRow(prev => prev === id ? null : id)}
+                        />
+                      </TableInset>
                     </div>
                   )}
 
@@ -1429,42 +1443,44 @@ function TourContentTab() {
                         textTransform: "uppercase", letterSpacing: "0.12em", color: K.danger }}>
                         {t("blockedTours")}
                       </div>
-                      <DataTable<BlockedTour & { rowId: string }>
-                        tableId="upload-parsed-blocked"
-                        data={(fs.parseResult?.blocked_tours ?? []).map((bt, i) => ({ ...bt, rowId: String(i) }))}
-                        getRowId={(bt) => bt.rowId}
-                        searchable={false}
-                        paginate={false}
-                        compact
-                        columns={[
-                          { id: "name", header: t("colTourName"), enableSorting: false, cell: ({ row: { original: bt } }) => <span style={{ fontWeight: 600 }}>{bt.src_name}</span> },
-                          { id: "country", header: t("colCountry"), enableSorting: false, cell: ({ row: { original: bt } }) => bt.country || "—" },
-                          { id: "reason", header: t("colReason"), enableSorting: false, cell: ({ row: { original: bt } }) => <>{/* AA-490: duplicate_in_file (two rows in THIS upload sharing
-                                    name+provider, mirrors the real Commit-time drop from
-                                    AA-488 Gap 1) is now distinguished from duplicate_tour
-                                    (already in the DB catalog) — was silently absent from
-                                    preview before this fix. */}
-                                <Badge tone={
-                                  bt.reason === "duplicate_tour"    ? "info"  :
-                                  bt.reason === "duplicate_of_existing" ? "info" :
-                                  bt.reason === "empty_itinerary"   ? "danger"   :
-                                  bt.reason === "duplicate_in_file" ? "warning" : "warning"
-                                }>
-                                  {bt.reason === "duplicate_tour"    ? t("rDuplicate") :
-                                   bt.reason === "duplicate_in_file" ? t("rDuplicateInFile") :
-                                   /* AA-604: no itinerary body → cannot be rewritten (POI/activity
-                                      or source file lacking itinerary content) */
-                                   bt.reason === "empty_itinerary"   ? t("rNoItinerary") :
-                                   bt.reason === "duplicate_of_existing" ? t("rNearDuplicate") :
-                                   bt.reason === "not_a_tour"        ? t("rNotATour") :
-                                   bt.reason === "thin_itinerary"    ? t("rThinItinerary") :
-                                                                       t("rMissingFields")}
-                                </Badge></> },
-                          { id: "details", header: t("colDetails"), enableSorting: false, cell: ({ row: { original: bt } }) => <span style={{ fontSize: 12, color: K.muted }}>{bt.reason === "missing_fields"
-                                  ? (bt.missing_fields ?? []).join(", ")
-                                  : bt.message || t("alreadyInCatalog")}</span> },
-                        ]}
-                      />
+                      <TableInset>
+                        <DataTable<BlockedTour & { rowId: string }>
+                          tableId="upload-parsed-blocked"
+                          data={(fs.parseResult?.blocked_tours ?? []).map((bt, i) => ({ ...bt, rowId: String(i) }))}
+                          getRowId={(bt) => bt.rowId}
+                          searchable={false}
+                          paginate={false}
+                          compact
+                          columns={[
+                            { id: "name", header: t("colTourName"), enableSorting: false, cell: ({ row: { original: bt } }) => <span style={{ fontWeight: 600 }}>{bt.src_name}</span> },
+                            { id: "country", header: t("colCountry"), enableSorting: false, cell: ({ row: { original: bt } }) => bt.country || "—" },
+                            { id: "reason", header: t("colReason"), enableSorting: false, cell: ({ row: { original: bt } }) => <>{/* AA-490: duplicate_in_file (two rows in THIS upload sharing
+                                      name+provider, mirrors the real Commit-time drop from
+                                      AA-488 Gap 1) is now distinguished from duplicate_tour
+                                      (already in the DB catalog) — was silently absent from
+                                      preview before this fix. */}
+                                  <Badge tone={
+                                    bt.reason === "duplicate_tour"    ? "info"  :
+                                    bt.reason === "duplicate_of_existing" ? "info" :
+                                    bt.reason === "empty_itinerary"   ? "danger"   :
+                                    bt.reason === "duplicate_in_file" ? "warning" : "warning"
+                                  }>
+                                    {bt.reason === "duplicate_tour"    ? t("rDuplicate") :
+                                     bt.reason === "duplicate_in_file" ? t("rDuplicateInFile") :
+                                     /* AA-604: no itinerary body → cannot be rewritten (POI/activity
+                                        or source file lacking itinerary content) */
+                                     bt.reason === "empty_itinerary"   ? t("rNoItinerary") :
+                                     bt.reason === "duplicate_of_existing" ? t("rNearDuplicate") :
+                                     bt.reason === "not_a_tour"        ? t("rNotATour") :
+                                     bt.reason === "thin_itinerary"    ? t("rThinItinerary") :
+                                                                         t("rMissingFields")}
+                                  </Badge></> },
+                            { id: "details", header: t("colDetails"), enableSorting: false, cell: ({ row: { original: bt } }) => <span style={{ fontSize: 12, color: K.muted }}>{bt.reason === "missing_fields"
+                                    ? (bt.missing_fields ?? []).join(", ")
+                                    : bt.message || t("alreadyInCatalog")}</span> },
+                          ]}
+                        />
+                      </TableInset>
                     </div>
                   )}
                 </div>
