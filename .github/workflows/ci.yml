@@ -257,8 +257,10 @@ jobs:
             exit 1
           fi
           coverage combine --keep shards/coverage-shards
-          coverage report --show-missing
-          coverage xml -o coverage.xml
+          # -i as pytest-cov reports (ignore_errors): a unit test builds a throwaway "services" package under /tmp
+          # (test_collection_error_on_base); --cov=services measures it and its source is gone by now.
+          coverage report -i --show-missing
+          coverage xml -i -o coverage.xml
 
       # AA-879: coverage ratchet (replaces --cov-fail-under=30; the real total was ~86%). Fails below the
       # floor in .github/coverage-ratchet.json, or when a PR lowers that floor against the base tip (HEAD^1
