@@ -233,6 +233,52 @@ async def test_confirm_hides_only_the_reported_rows_same_count_different_rows(no
     assert out["dropped_ids"] == [_row(1)["id"], _row(3)["id"]] and out["changed_since_report"] == 2
 
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field, value", [("stamp_at", "2026-11-01T02:00:00+00:00"), ("stamp_v", "aa997.9")])
+async def test_a_row_rejudged_since_the_report_is_changed_since_report(no_lock, field, value):
+    """S262 Q2: the digest carries the relocate stamp's `at` and `v`, so a row a relocate run re-judged between the
+    report and the confirm (same reason / outcome / located_by, new stamp) is dropped, not hidden on the old report."""
+    from services.places import relocate
+    at = "2026-10-31T01:00:00+00:00"
+    reported = [{**_row(1), "stamp_at": at}, {**_row(2), "stamp_at": at}]
+    now = [reported[0], {**reported[1], field: value}]
+    assert relocate._row_digest(now[1]) != relocate._row_digest(reported[1])
+    conn = _Conn(now, report=await _report_of(reported))
+    out = await relocate.hide_flagged(_Pool(conn), outcomes=["llm_point", "off_route"], confirm=True,
+                                      dry_run_job="rep-1", max_rows=2)
+    assert [h[0] for h in conn.of("UPDATE shared.destinations SET geo_status = 'suspect'")] == [_row(1)["id"]]
+    assert out["hidden"] == 1 and out["dropped_ids"] == [_row(2)["id"]] and out["changed_since_report"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_failing_audit_flush_never_replaces_the_runs_own_exception(monkeypatch):
+    """S262 Q3: apply() flushes its pending reveal audit rows when the row loop raises; a flush that fails too (a new
+    pool connection) is logged and the run's own exception propagates. Without a run exception the flush error is
+    raised (an audit row is never lost silently)."""
+    from services.places import relocate
+    monkeypatch.setattr(relocate, "candidates", AsyncMock(return_value=[]))
+    monkeypatch.setattr(relocate, "routes_by_destination", AsyncMock(return_value={}))
+    monkeypatch.setattr(relocate, "count_candidates", AsyncMock(return_value=0))
+    write = AsyncMock(side_effect=ConnectionError("pool gone"))
+    monkeypatch.setattr(relocate, "_audit_batch", write)
+
+    def rows_then(exc):
+        async def run(pool, geocoder, rows, routes, towns, out, audit, **kw):
+            await audit.add("d-1", {"outcome": "confirmed", "unhidden": True, "hidden_by": "hide_flagged"})
+            if exc:
+                raise exc
+        return run
+
+    monkeypatch.setattr(relocate, "_apply_rows", rows_then(ValueError("row loop broke")))
+    with pytest.raises(ValueError, match="row loop broke"):
+        await relocate.apply(_Pool(_Conn()), None, located_by=["llm"], country="Nepal", limit=5)
+    assert write.await_count == 1          # the flush was tried
+    monkeypatch.setattr(relocate, "_apply_rows", rows_then(None))
+    with pytest.raises(ConnectionError):
+        await relocate.apply(_Pool(_Conn()), None, located_by=["llm"], country="Nepal", limit=5)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kw, report_kw, status", [
     ({"dry_run_job": None, "max_rows": 5}, {}, "refused_no_report"),

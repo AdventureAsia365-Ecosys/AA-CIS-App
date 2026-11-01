@@ -6,6 +6,7 @@
    acp_shared.audit_log rows (one per HIDE_BATCH rows), like a hide;
 3. the confirm's per-row UPDATE re-checks the stamp version / accept rule / time and the country it read, so a row
    re-judged between the confirm's read and its write is dropped, not hidden.
+S262 fix pass: a stamped name matches its exact [name, country, locality] key (Q1).
 
 Each test fails on the code before P15. Invented names and places only; rows tagged and removed at the end; no call."""
 import json
@@ -45,12 +46,12 @@ async def env():
             f"{key} {tag}", ctry or country, located_by, reason, json.dumps({"relocate": stamp}))
         return ids[key]
 
-    async def name(key, suffix, status):
+    async def name(key, suffix, status, locality=""):
         await pool.execute(
             """INSERT INTO geo.place_name (name_norm, country_norm, locality_norm, display_name, country,
                                            destination_id, status, tries, next_retry_at)
-               VALUES ($1, lower($2), '', $1, $2, $3::uuid, $4, 0, now())""",
-            f"{key} {suffix} {tag}", country, ids[key], status)
+               VALUES ($1, lower($2), $5, $1, $2, $3::uuid, $4, 0, now())""",
+            f"{key} {suffix} {tag}", country, ids[key], status, locality)
 
     yield {"pool": pool, "tag": tag, "country": country, "ids": ids, "jobs": jobs, "dest": dest, "name": name}
     try:
@@ -59,7 +60,11 @@ async def env():
         await pool.execute("DELETE FROM geo.place_outlier WHERE destination_id = ANY($1::uuid[])", all_ids)
         await pool.execute("DELETE FROM geo.place_name WHERE destination_id = ANY($1::uuid[])", all_ids)
         await pool.execute("DELETE FROM shared.destinations WHERE id = ANY($1::uuid[])", all_ids)
-        await delete_audit_rows(pool, "resource_type = $1 AND resource_id LIKE $2", R.AUDIT_RESOURCE, f"%{tag}%")
+        # every audit row of the test: tagged by its resource id (country / job carry the tag) or naming its rows
+        await delete_audit_rows(pool, "resource_type = $1 AND (resource_id LIKE $2 "
+                                      "OR (details -> 'destination_ids') ?| $3::text[] "
+                                      "OR (details -> 'kept_outlier_ids') ?| $3::text[])",
+                                R.AUDIT_RESOURCE, f"%{tag}%", all_ids)
     finally:
         await pool.close()
 
@@ -119,6 +124,29 @@ async def test_unhide_restores_only_the_names_the_hide_changed(env):
 
 
 @pytest.mark.asyncio
+async def test_a_stamped_name_matches_its_exact_key_not_a_permutation(env):
+    """S262 Q1: the hide stamps ("main", country, "") only; a second name of the row, ("main", country, country),
+    suspect for another reason, holds the same values in another order with one repeated. JSONB containment
+    (`names @> [[name, country, locality]]`) ignores order and duplicates and set it resolved too; the exact key
+    match leaves it suspect."""
+    pool, tag = env["pool"], env["tag"]
+    a = await env["dest"]("aspen")
+    ctry = env["country"].lower()
+    await env["name"]("aspen", "main", "resolved")
+    await pool.execute(
+        """INSERT INTO geo.place_name (name_norm, country_norm, locality_norm, display_name, country,
+                                       destination_id, status, tries, next_retry_at)
+           VALUES ($1, $2, $2, $1, $3, $4::uuid, 'suspect', 0, now())""",
+        f"aspen main {tag}", ctry, env["country"], a)
+    assert (await _confirm(env))["hidden"] == 1
+    assert (await _status(pool, a))[1]["hidden"]["names"] == [[f"aspen main {tag}", ctry, ""]]
+    un = await R.unhide(pool, country=env["country"], by=[R.HIDE_FLAGGED_STAMP], actor="admin:test",
+                        job_id=f"job-{tag}")
+    assert un["unhidden"] == 1
+    rows = await pool.fetch("SELECT locality_norm, status FROM geo.place_name WHERE destination_id = $1::uuid", a)
+    assert {r["locality_norm"]: r["status"] for r in rows} == {"": "resolved", ctry: "suspect"}
+
+@pytest.mark.asyncio
 async def test_restore_by_id_and_plain_hide_restore_only_their_names(env):
     pool = env["pool"]
     b = await env["dest"]("birch")
@@ -127,7 +155,7 @@ async def test_restore_by_id_and_plain_hide_restore_only_their_names(env):
     out = await R.hide(pool, reasons=["llm_point"], country=env["country"], confirm=True, actor="admin:test",
                        job_id=f"job-{env['tag']}")
     assert out["hidden"] == 1
-    one = await R.unhide(pool, country=None, destination_ids=[b], actor="admin:test")
+    one = await R.unhide(pool, country=None, destination_ids=[b], actor="admin:test", job_id=f"job-{env['tag']}")
     assert one["unhidden"] == 1
     assert await _names(pool, b) == {"main": "resolved", "other": "suspect"}
 
@@ -152,7 +180,7 @@ async def test_unhide_never_shows_a_row_the_outlier_rule_hides(env):
     details = await _audit(pool, R.AUDIT_UNHIDE, f"unhide:{env['country']}:job-{env['tag']}")
     assert details[0]["kept_outlier_ids"] == [c] and details[0]["destination_ids"] == []
     # nothing left for a second unhide: the policy no longer holds the row
-    again = await R.unhide(pool, country=env["country"], by=[R.HIDE_FLAGGED_STAMP])
+    again = await R.unhide(pool, country=env["country"], by=[R.HIDE_FLAGGED_STAMP], job_id=f"job-{env['tag']}")
     assert again["rows"] == 0
 
 

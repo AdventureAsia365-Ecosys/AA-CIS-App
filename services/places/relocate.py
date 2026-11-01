@@ -63,9 +63,10 @@ HIDE_FLAGGED_OUTCOMES, default llm_point / off_route; optionally one stamp versi
 `located_by`, default llm; weak_confirm: geoapify), geo_status 'ok' — the `_FLAG_SQL` hide of `hide_unconfirmed`,
 applied after the fact. Rows the chain has not reached yet (no stamp) are never taken. Report first (counts per
 country / outcome / reason / stamp version, how many are linked to a tour, a sample spread over countries, and the
-sorted `ids` with a digest each of id | review_reason | outcome | located_by); `confirm` names that report
-(`dry_run_job`, its row count `max_rows`; refused without them, or when the report is not a finished report of the same
-selection younger than REPORT_MAX_AGE_S) and hides only the rows of the report still selected with the same digest
+sorted `ids` with a digest each of id | review_reason | outcome | located_by | the relocate stamp's v and at);
+`confirm` names that report (`dry_run_job`, its row count `max_rows`; refused without them, or when the report is not
+a finished report of the same selection younger than REPORT_MAX_AGE_S) and hides only the rows of the report still
+selected with the same digest
 (`dropped_ids` = the others; rows new since the report are never hidden), in batches of HIDE_BATCH under the
 destinations lock, stamped `hidden = {by: HIDE_FLAGGED_STAMP, reason, outcome, stamp_v, at, job, report, actor}`, one
 `acp_shared.audit_log` row per batch (ids hidden). Reverted by `unhide` (`by` = the stamps to revert,
@@ -403,14 +404,16 @@ _HIDE_POLICY_NAMES_SQL = """
 """
 # a policy-hidden row shown again: back to 'resolved' only the names its hide stamp recorded (a name suspect for
 # another reason — the outlier rule, an earlier hide_unconfirmed — stays); a stamp written before P15 has no `names`:
-# every suspect name of the row (the old behaviour). Never while the row itself is still 'suspect'.
+# every suspect name of the row (the old behaviour). Never while the row itself is still 'suspect'. A stamped key
+# matches by exact triple equality, not JSONB containment (`@>` on nested arrays ignores order and duplicates:
+# [["x","c",""]] @> [["x","c","c"]] is true).
 _UNHIDE_NAMES_SQL = """
     UPDATE geo.place_name pn SET status = 'resolved', updated_at = now()
       FROM shared.destinations d
      WHERE d.id = $1::uuid AND pn.destination_id = d.id AND pn.status = 'suspect' AND d.geo_status <> 'suspect'
        AND (NOT coalesce(d.geocoder_meta -> 'hidden' ? 'names', false)
-            OR (d.geocoder_meta -> 'hidden' -> 'names')
-               @> jsonb_build_array(jsonb_build_array(pn.name_norm, pn.country_norm, pn.locality_norm)))
+            OR EXISTS (SELECT 1 FROM jsonb_array_elements(d.geocoder_meta -> 'hidden' -> 'names') AS k(key)
+                        WHERE k.key = jsonb_build_array(pn.name_norm, pn.country_norm, pn.locality_norm)))
 """
 
 
@@ -978,8 +981,16 @@ async def apply(pool, geocoder, *, located_by: list[str], country: Optional[str]
     try:
         await _apply_rows(pool, geocoder, rows, routes, towns, out, audit, hide_unconfirmed=hide_unconfirmed,
                           strategy=strategy, max_requests=max_requests, accept_rule=accept_rule, progress=progress)
-    finally:
-        await audit.flush()
+    except BaseException:
+        # the run's own exception is what the job reports: a flush that fails too (a new pool connection) is logged,
+        # never raised in its place
+        try:
+            await audit.flush()
+        except Exception as e:  # noqa: BLE001
+            logger.error("place_relocate_audit_flush_failed", job_id=job_id, pending=audit.pending_rows(),
+                         error=str(e)[:200])
+        raise
+    await audit.flush()
     async with pool.acquire() as conn:
         out["remaining"] = await count_candidates(conn, located_by=located_by, country=country, recheck=recheck)
     return out
@@ -1004,6 +1015,9 @@ class _RunAudit:
         for action, items in self.pending.items():
             if len(items) >= HIDE_BATCH:
                 await self._write(action)
+
+    def pending_rows(self) -> int:
+        return sum(len(items) for items in self.pending.values())
 
     async def flush(self) -> None:
         for action in self.pending:
@@ -1183,9 +1197,13 @@ def _json_obj(v) -> dict:
     return v if isinstance(v, dict) else {}
 
 
+_DIGEST_KEYS = ("id", "review_reason", "outcome", "located_by", "stamp_v", "stamp_at")
+
+
 def _row_digest(r: dict) -> str:
-    """The fields a confirm re-checks against its report: id | review_reason | outcome | located_by."""
-    key = "|".join(str(r.get(k) or "") for k in ("id", "review_reason", "outcome", "located_by"))
+    """The fields a confirm re-checks against its report: id | review_reason | outcome | located_by | the relocate
+    stamp's v | its at — a row re-judged since the report (new stamp time or version) no longer matches."""
+    key = "|".join(str(r.get(k) or "") for k in _DIGEST_KEYS)
     return hashlib.sha256(key.encode()).hexdigest()[:16]
 
 
@@ -1229,9 +1247,10 @@ async def hide_flagged(pool, *, outcomes: list[str], stamp_versions: Optional[li
     """Rows a relocate run stamped with one of `outcomes` and left on the model's point (module docstring): the report
     (no write; it stores the sorted `ids` and a `row_digests` entry each) or, with `confirm`, hidden in batches with an
     audit row each — only rows of the report `dry_run_job` (≤ `max_rows` of them) still selected with the same
-    digest (id | review_reason | outcome | located_by); the others are `dropped_ids`, rows new since the report are
-    counted (`new_since_report`) and never hidden. A confirm without its report, or with a report that is not a
-    finished report of the same selection younger than REPORT_MAX_AGE_S, is refused. No call."""
+    digest (_row_digest: id | review_reason | outcome | located_by | stamp v | stamp at); the others are
+    `dropped_ids`, rows new since the report are counted (`new_since_report`) and never hidden. A confirm without its
+    report, or with a report that is not a finished report of the same selection younger than REPORT_MAX_AGE_S, is
+    refused. No call."""
     sel = hide_flagged_selection(outcomes=outcomes, stamp_versions=stamp_versions, stamp_accept=stamp_accept,
                                  located_by=located_by, country=country)
     async with pool.acquire() as conn:
