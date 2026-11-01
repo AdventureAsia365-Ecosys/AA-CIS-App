@@ -3,6 +3,7 @@ import time
 from shared.secrets import get_dataforseo_creds
 from shared.dfs_client.call_log import record_dfs_call_sync, extract_cost
 from shared.cost_guard import DFS_CALL_ESTIMATE_USD, BudgetExceeded
+from shared.llm_client import connections as conn_registry
 import httpx
 import structlog
 
@@ -25,6 +26,9 @@ SERP_PAA_DEEP_ENDPOINT = "serp_advanced_paa_deep"
 # (auth or payment). Anything else is a failure of this one call only.
 _FATAL_HTTP = {401, 402, 403}
 _FATAL_DFS_PREFIXES = ("401", "402")
+# AA-642 (S263 L2, B1): DataForSEO's row in shared.llm_provider_connection. Its ``enabled`` is the admin switch (read
+# before every live call, cached 30 s, connections.provider_enabled); the outcome of a call goes to its access_state.
+DFS_CONNECTION_KEY = "dataforseo"
 
 
 class DFSCallError(Exception):
@@ -58,6 +62,14 @@ def _dfs_status_error(data: dict) -> DFSCallError | None:
             return DFSCallError(f"DataForSEO status {code}: {message}",
                                 fatal=str(code).startswith(_FATAL_DFS_PREFIXES), status_code=code)
     return None
+
+
+def access_state_of(err: DFSCallError) -> str | None:
+    """The lasting access_state a failed call proves: payment (HTTP 402 / DFS 402xx) = quota_exhausted, auth (401 / 403
+    / DFS 401xx) = access_denied; any other failure proves nothing lasting (None)."""
+    if not err.fatal or err.status_code is None:
+        return None
+    return "quota_exhausted" if str(err.status_code).startswith("402") else "access_denied"
 
 
 def as_dfs_error(exc: Exception) -> DFSCallError:
@@ -109,7 +121,8 @@ class DataForSEOClient:
         )
 
     def _log_failed(self, endpoint: str, *, status: str, error: str, keyword: str = None,
-                    location_code: int = None, keyword_count: int = None, latency_ms: int = None) -> None:
+                    location_code: int = None, keyword_count: int = None, latency_ms: int = None,
+                    meta: dict = None) -> None:
         """AA-804 (ledger v2): the 0 USD row of a call that was refused before it was sent (the run's budget) or did
         not answer (HTTP / transport error). Nothing is charged to the budget. Never raises."""
         try:
@@ -117,7 +130,7 @@ class DataForSEOClient:
                 endpoint=endpoint, fetched_live=False, cost_usd=0.0,
                 tenant_id=self.tenant_id, tour_id=self.tour_id, keyword=keyword,
                 location_code=location_code, keyword_count=keyword_count,
-                status=status, latency_ms=latency_ms, error=error, stage=self.stage,
+                status=status, latency_ms=latency_ms, error=error, stage=self.stage, meta=meta,
             )
         except Exception as e:  # noqa: BLE001 — a log write never breaks the fetch path
             logger.warning("dfs_failed_call_log_failed", endpoint=endpoint, error=str(e)[:200])
@@ -138,7 +151,17 @@ class DataForSEOClient:
                        location_code: int = None, keyword_count: int = None) -> tuple[dict, int]:
         """AA-804: one live HTTP call (POST with ``payload``, else GET), timed: (JSON body, latency ms). A failure
         (transport, HTTP status, a body that is not JSON) writes its 0 USD row — refused for 401 / 402 / 403, else
-        error — and re-raises the exception unchanged, so every caller keeps its own handling."""
+        error — and re-raises the exception unchanged, so every caller keeps its own handling.
+
+        AA-642 (S263 L2, B1): switched off in the admin (the dataforseo row's ``enabled``) = nothing is sent: a 0 USD
+        refused row (meta.connection_key) and a fatal DFSCallError, so a run stops like on an auth failure. The outcome
+        of a sent call goes to the row's access_state (ok, or the class a 401 / 402 / 403 proves)."""
+        if not await conn_registry.provider_enabled(DFS_CONNECTION_KEY):
+            reason = conn_registry.switched_off_reason(DFS_CONNECTION_KEY)
+            self._log_failed(endpoint, status="refused", error=reason, keyword=keyword, location_code=location_code,
+                             keyword_count=keyword_count,
+                             meta={"connection_key": DFS_CONNECTION_KEY, "refused": "switched_off"})
+            raise DFSCallError(reason, fatal=True)
         started = time.monotonic()
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
@@ -153,8 +176,13 @@ class DataForSEOClient:
             self._log_failed(endpoint, status="refused" if err.fatal else "error", error=str(err)[:500],
                              keyword=keyword, location_code=location_code, keyword_count=keyword_count,
                              latency_ms=int((time.monotonic() - started) * 1000))
+            await conn_registry.note_provider_access(DFS_CONNECTION_KEY, access_state_of(err))
             raise
-        return data, int((time.monotonic() - started) * 1000)
+        latency_ms = int((time.monotonic() - started) * 1000)
+        status_err = _dfs_status_error(data)
+        await conn_registry.note_provider_access(
+            DFS_CONNECTION_KEY, "ok" if status_err is None else access_state_of(status_err))
+        return data, latency_ms
 
     def _auth(self) -> tuple[str, str]:
         return (self.login, self.password)

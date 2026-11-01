@@ -124,6 +124,7 @@ class GeoapifyDetails:
         return self._http
 
     def _get_key(self) -> str:
+        geocoder_mod.check_switch()         # AA-642 (S263 L2): switched off in the admin = nothing is sent
         if not self._key:
             from shared.secrets import get_geoapify_key
             try:

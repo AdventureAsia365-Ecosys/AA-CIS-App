@@ -1476,16 +1476,24 @@ async def _log_jev_canary_call(pool, data: dict) -> None:
     model, tokens, cost = decide_mod.jev_usage(data)
     await record_call_with_pool(pool, stage=JEV_CANARY_STAGE, role="validate", model=model, tokens_in=tokens,
                                 tokens_out=0, cost_usd=cost, provider="typesafe",
-                                quality_signal={"source": "jev_canary"})
+                                quality_signal={"source": "jev_canary"},
+                                connection_key=decide_mod.JEV_CONNECTION_KEY)   # AA-642 (S263 L2): account set
 
 
 @router.post("/jev-canary/check", summary="Daily Jev canary: one real decide-endpoint probe")
 async def check_jev_canary(request: Request, x_admin_secret: str = Header(None)):
     global _last_canary_ok_at
     verify_admin_secret(x_admin_secret)
+    from shared.llm_client import connections as conn_registry
     from shared.llm_client import decide as decide_mod
 
     pool = request.app.state.pool
+    # AA-642 (S263 L2, B1): Jev switched off in the admin = no canary call either (the switch means nothing is sent).
+    if not await decide_mod.jev_connection_enabled(pool):
+        logger.info("admin_jev_canary_skipped", reason="switched_off")
+        return {"credit_ok": None, "billing_error": False, "alerted": False, "skipped": decide_mod.JEV_SWITCHED_OFF,
+                "breaker_open": decide_mod.jev_breaker_open(), "detail": None,
+                "checked_at": datetime.now(timezone.utc).isoformat()}
     # A minimal, cheap probe. We do not care about the verdict content — only whether the call is
     # billable (credit present) or raises JevBillingError (402).
     probe_questions = {"canary": {"type": "noul", "instructions": "Reply true.",
@@ -1510,6 +1518,11 @@ async def check_jev_canary(request: Request, x_admin_secret: str = Header(None))
             alerted = await decide_mod.maybe_alert_jev_credit(conn, source="canary")
     else:
         _last_canary_ok_at = started          # AA-845: the sweep's cut (see _JEV_402_SWEEP_SQL)
+    # AA-642 (S263 L2, B1): the canary is Jev's probe: last_probe_at, and the access state its answer proves
+    # (credit present = ok, 402 = quota_exhausted; another failure proves nothing lasting: the time only).
+    await conn_registry.note_provider_access(
+        decide_mod.JEV_CONNECTION_KEY, "quota_exhausted" if billing_error else ("ok" if detail is None else None),
+        probed=True)
     logger.info("admin_jev_canary_checked", credit_ok=not billing_error, alerted=alerted,
                 breaker_open=decide_mod.jev_breaker_open())
     return {

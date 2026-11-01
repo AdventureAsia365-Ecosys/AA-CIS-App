@@ -399,7 +399,7 @@ def test_secret_name_and_base_url_left_the_editable_list():
     assert {"daily_credit_limit", "low_balance_usd"} <= set(llm_connections.EDITABLE)
 
 
-def test_a_provider_row_takes_its_limits_but_no_switch():
+def test_a_provider_row_takes_its_limits_and_since_aa642_l2_its_switch():
     jev = _conn_row(connection_key="typesafe", kind="typesafe", auth_mode="api_key", label="Jev",
                     secret_name="aa-cis/dev/typesafe", base_url="https://api.typesafe.ai", enabled=True)
     db = FakeDB(jev)
@@ -407,9 +407,11 @@ def test_a_provider_row_takes_its_limits_but_no_switch():
     assert out["changed_fields"] == ["timeout_s", "low_balance_usd"]
     (upd, args), _audit = db.executed
     assert "low_balance_usd = $3" in upd and str(args[2]) == "5"
-    for changes in ({"enabled": False}, {"rpm_limit": 10}, {"monthly_budget_usd": 1}):
+    for changes in ({"rpm_limit": 10}, {"monthly_budget_usd": 1}):
         with pytest.raises(llm_connections.ConnectionToggleRefused, match="provider"):
             _update(FakeDB(jev), "typesafe", changes)
+    # AA-642 (S263 L2, B1): the Jev client reads the switch now (tests/unit/test_aa642_l2_provider_switch.py)
+    assert _update(FakeDB(jev), "typesafe", {"enabled": False})["changed_fields"] == ["enabled"]
 
 
 class _ColumnDB(FakeDB):
