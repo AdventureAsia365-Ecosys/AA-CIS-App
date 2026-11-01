@@ -1,7 +1,8 @@
 """AA-1024 lane gw-core (S263) — migrations 334 (route deadline per role), 335 (segment research stages), 336 (retire
-three dead routes) and 337 (Llama 4 structured output in the prompt) against real Postgres.
+three dead routes), 337 (Llama 4 structured output in the prompt) and 338 (ledger class role_not_served) against real
+Postgres.
 
-conftest applies every migration, these four included. Other modules re-run earlier files (320, 324) or load route
+conftest applies every migration, these five included. Other modules re-run earlier files (320, 324) or load route
 snapshots, so a test never trusts the applied state: it sets up the state the file expects, replays the file's body
 (BEGIN / COMMIT stripped) inside the fixture's transaction and checks the result. Every test rolls back what it
 wrote. The traffic tests use the real stage keys (route names, not data).
@@ -24,6 +25,7 @@ M334 = MIGRATIONS / "334_llm_route_deadlines.sql"
 M335 = MIGRATIONS / "335_llm_segment_research_stages.sql"
 M336 = MIGRATIONS / "336_llm_retire_dead_routes.sql"
 M337 = MIGRATIONS / "337_llm_llama4_structured_prompt_mode.sql"
+M338 = MIGRATIONS / "338_llm_ledger_role_not_served.sql"
 DEADLINE = {"writer": 1200, "judge": 900, "validate": 600, "embed": 120}
 SEGMENT = ("segment_research", "segment_research_batch")
 DEAD = ("s1_atom_writer", "tp_component_embed", "tp_extract")
@@ -101,7 +103,7 @@ def test_335_creates_the_two_writer_stages(cur):
     rows = _segment(cur)
     assert set(rows) == set(SEGMENT)
     for stage, row in rows.items():
-        assert row == {"stage": stage, "role": "writer", "provider": "claude", "model_id": "haiku",
+        assert row == {"stage": stage, "role": "writer", "provider": "claude", "model_id": "haiku-5-5",
                        "account_route": "acc3", "is_active": True, "fallbacks": [], "shadow": 0,
                        "scopes": ["aws_only"], "deadline": 1200, "degrade": "queue_retry"}
 
@@ -111,8 +113,23 @@ def test_335_replay_recreates_a_missing_row_and_keeps_an_edited_one(cur):
     cur.execute("UPDATE shared.llm_role_config SET model_id = 'sonnet' WHERE stage = 'segment_research'")
     cur.execute(_body(M335))
     rows = _segment(cur)
-    assert rows["segment_research_batch"]["model_id"] == "haiku"
+    assert rows["segment_research_batch"]["model_id"] == "haiku-5-5"
     assert rows["segment_research"]["model_id"] == "sonnet"
+
+
+def test_335_names_no_legacy_key(cur):
+    """Review S263: 327 took every route off the legacy keys; 335 must not bring one back."""
+    cur.execute("DELETE FROM shared.llm_role_config WHERE stage = ANY (%s)", (list(SEGMENT),))
+    cur.execute(_body(M335))
+    for row in _segment(cur).values():
+        assert row["model_id"] not in ("haiku", "sonnet") and not set(row["fallbacks"]) & {"haiku", "sonnet"}
+
+
+def test_335_guard_refuses_without_an_acc3_haiku_5_5_deployment(cur):
+    cur.execute("UPDATE shared.llm_model_deployment SET enabled = false "
+                "WHERE model_key = 'haiku-5-5' AND connection_key = 'acc3'")
+    with pytest.raises(psycopg2.errors.RaiseException, match="haiku-5-5"):
+        cur.execute(_body(M335))
 
 
 # ── 336: retire three dead routes ────────────────────────────────────────────────────────────────────────────────
@@ -210,3 +227,54 @@ def test_337_guard_refuses_an_unknown_stated_mode(cur):
                 "WHERE model_key = 'llama4-scout'")
     with pytest.raises(psycopg2.errors.RaiseException, match="known structured_output"):
         cur.execute(_body(M337))
+
+
+# ── 338: ledger class role_not_served ───────────────────────────────────────────────────────────────────────────
+
+def _check_def(c) -> str:
+    c.execute("SELECT pg_get_constraintdef(oid) AS def, convalidated AS ok FROM pg_constraint "
+              "WHERE conname = 'llm_call_log_error_class_check' AND conrelid = 'shared.llm_call_log'::regclass")
+    row = c.fetchone()
+    assert row["ok"] is True
+    return row["def"]
+
+
+def _log_row(c, error_class: str) -> None:
+    c.execute("INSERT INTO shared.llm_call_log (stage, role, model, account, quality_signal, status, error_class) "
+              "VALUES ('adhoc_role_test', 'writer', 'haiku-5-5', 'acc2', '{}'::jsonb, 'refused', %s)",
+              (error_class,))
+
+
+def test_338_the_ledger_accepts_role_not_served_and_keeps_every_older_class(cur):
+    assert _registered(cur, "338")
+    definition = _check_def(cur)
+    for cls in ("access_denied", "quota_exhausted", "throttled", "credential", "other", "deadline", "budget",
+                "truncated", "disabled", "role_not_served"):
+        assert f"'{cls}'" in definition
+    _log_row(cur, "role_not_served")
+    with pytest.raises(psycopg2.errors.CheckViolation):
+        _log_row(cur, "not_a_class")
+
+
+def test_338_replay_from_the_326_check_and_a_second_run_change_nothing(cur):
+    cur.execute("ALTER TABLE shared.llm_call_log DROP CONSTRAINT llm_call_log_error_class_check")
+    cur.execute("ALTER TABLE shared.llm_call_log ADD CONSTRAINT llm_call_log_error_class_check CHECK ("
+                "error_class IS NULL OR error_class IN ('access_denied', 'quota_exhausted', 'throttled', 'credential', "
+                "'other', 'deadline', 'budget', 'truncated', 'disabled'))")
+    with pytest.raises(psycopg2.errors.CheckViolation):
+        cur.execute("SAVEPOINT s")
+        try:
+            _log_row(cur, "role_not_served")
+        finally:
+            cur.execute("ROLLBACK TO SAVEPOINT s")
+    cur.execute(_body(M338))
+    first = _check_def(cur)
+    assert "'role_not_served'" in first
+    cur.execute(_body(M338))
+    assert _check_def(cur) == first
+
+
+def test_338_guard_refuses_before_326(cur):
+    cur.execute("ALTER TABLE shared.llm_call_log DROP CONSTRAINT llm_call_log_error_class_check")
+    with pytest.raises(psycopg2.errors.RaiseException, match="apply 326 first"):
+        cur.execute(_body(M338))

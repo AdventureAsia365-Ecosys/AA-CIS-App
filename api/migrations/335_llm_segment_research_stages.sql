@@ -15,12 +15,23 @@
 --   segment_research_batch    services/acp_contract/segment_research_batch.py (the   PROPOSE_SYSTEM
 --                             batch proposer, max_tokens 4096)
 --
---   Both: role writer (they phrase keywords; the caller logs role writer today), provider claude, model_id 'haiku'
---   (the legacy key the calls use today, so the provider calls do not change: the legacy chain, or the haiku alias
---   when LLM_LEGACY_ALIASES is on; S11 moves them with the other legacy stages), account_route acc3, no fallback, no
---   shadow (shadow_sample_pct 0), allowed_scopes {aws_only}, route_deadline_s 1200 (the writer value of 334),
---   degrade_mode 'queue_retry' (the job is re-queued when the stage cannot run: tech lead T-21's CIS mode), active.
---   SAFE_DEFAULTS (shared/llm_client/role_config.py) mirrors the rows in the code PR.
+--   Both: role writer (they phrase keywords; the caller logs role writer today), provider claude, model_id
+--   'haiku-5-5', account_route acc3, no fallback, no shadow (shadow_sample_pct 0), allowed_scopes {aws_only},
+--   route_deadline_s 1200 (the writer value of 334), degrade_mode 'queue_retry' (the job is re-queued when the stage
+--   cannot run: tech lead T-21's CIS mode), active.
+--
+--   Why haiku-5-5 and not the legacy 'haiku' the calls use today (review S263): migration 327 (T-4, S11, approved by
+--   the tech lead in S263) took every route off the legacy keys, because a legacy key reaches only Bedrock acc3
+--   through the hard-coded InvokeModel chain (no breaker, no deployment registry, no second way in) and the
+--   _legacy_chain path is to be removed once it has had 30 days with no traffic. 327 has already run, so no later
+--   file would move these rows; seeding 'haiku' would add new traffic to that deprecated path. 'haiku-5-5' is 327's
+--   own mapping of 'haiku' (same tier, the Converse key of migration 259): its deployments (acc3 priority 10, the
+--   Anthropic API priority 100, migrations 304 / 306) with the breaker and the per-stage data scope. aws_only keeps
+--   the stage inside AWS (only the five A-series writers of 327 item 2 may leave it), so while acc3 refuses every
+--   model (Error 002) the stage has no path, like every other aws_only Anthropic stage, and degrades by its mode.
+--   Converse rows drop a call site's temperature (supports_temperature false); the calls set none.
+--   SAFE_DEFAULTS (shared/llm_client/role_config.py) keep the legacy key on purpose, as 327 says for every stage:
+--   they serve a process that cannot read the database, where only the hard-coded chain works without the catalog.
 --
 -- Idempotent: ON CONFLICT (stage) DO NOTHING keeps a row an admin already edited; the guard checks the rows exist as
 -- writer stages. Prompt register: the stages' prompt_version rows come with the A2 code PR (prompt_versions.json and
@@ -49,8 +60,12 @@ BEGIN
             RAISE EXCEPTION 'migration 335: shared.llm_role_config.% is missing (apply 311, 320 and 326 first)', col;
         END IF;
     END LOOP;
-    IF NOT EXISTS (SELECT 1 FROM shared.llm_model_catalog WHERE model_key = 'haiku') THEN
-        RAISE EXCEPTION 'migration 335: shared.llm_model_catalog has no haiku row (migration 169)';
+    IF NOT EXISTS (SELECT 1 FROM shared.llm_model_catalog c
+                    WHERE c.model_key = 'haiku-5-5' AND c.enabled AND c.api_style = 'converse'
+                      AND EXISTS (SELECT 1 FROM shared.llm_model_deployment d
+                                   WHERE d.model_key = c.model_key AND d.connection_key = 'acc3' AND d.enabled)) THEN
+        RAISE EXCEPTION 'migration 335: haiku-5-5 is not an enabled Converse row with an enabled acc3 deployment '
+                        '(migrations 259, 304)';
     END IF;
 END $$;
 
@@ -58,9 +73,9 @@ INSERT INTO shared.llm_role_config
     (stage, role, provider, model_id, account_route, is_active, fallback_model_ids, shadow_model_id,
      shadow_sample_pct, allowed_scopes, route_deadline_s, degrade_mode, updated_by)
 VALUES
-    ('segment_research',       'writer', 'claude', 'haiku', 'acc3', true, ARRAY[]::text[], NULL, 0,
+    ('segment_research',       'writer', 'claude', 'haiku-5-5', 'acc3', true, ARRAY[]::text[], NULL, 0,
      ARRAY['aws_only']::text[], 1200, 'queue_retry', 'migration-335-aa1024'),
-    ('segment_research_batch', 'writer', 'claude', 'haiku', 'acc3', true, ARRAY[]::text[], NULL, 0,
+    ('segment_research_batch', 'writer', 'claude', 'haiku-5-5', 'acc3', true, ARRAY[]::text[], NULL, 0,
      ARRAY['aws_only']::text[], 1200, 'queue_retry', 'migration-335-aa1024')
 ON CONFLICT (stage) DO NOTHING;
 
@@ -77,8 +92,8 @@ BEGIN
 END $$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('335', now(), 'AA-1024 A2: Model Gateway stages segment_research and segment_research_batch (writer, legacy '
-                      'haiku as today, aws_only, deadline 1200 s, degrade queue_retry)')
+VALUES ('335', now(), 'AA-1024 A2: Model Gateway stages segment_research and segment_research_batch (writer, '
+                      'haiku-5-5, aws_only, deadline 1200 s, degrade queue_retry)')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

@@ -206,7 +206,7 @@ def test_health_takes_truncated(cur):
 
 def test_route_deadline_is_bounded_and_set_by_334_only(cur):
     # 320 adds the column with no value; 334 (AA-1024 A3) gives every row the deadline of its role
-    # (tests/integration/test_aa1024_migrations_334_337.py), so no row is NULL after the full chain.
+    # (tests/integration/test_aa1024_migrations_334_338.py), so no row is NULL after the full chain.
     cur.execute("SELECT count(*) AS n FROM shared.llm_role_config WHERE route_deadline_s IS NULL")
     assert cur.fetchone()["n"] == 0
     _refused(cur, "UPDATE shared.llm_role_config SET route_deadline_s = 0")
