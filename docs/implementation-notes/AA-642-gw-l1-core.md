@@ -52,3 +52,25 @@ Lane order: D1 (migration 325) → A1 (migration 326) → A9 → A8. Migration n
   countable apart from outages. The CHECK is replaced NOT VALID + VALIDATE (writers keep writing).
 - Class: contract (constraints, column ACL, UPDATE, hot ledger table). MIG-4: 326 applied before the A1 code PR,
   because the code writes `error_class = 'disabled'`.
+
+## A9 — ledger v2 for embeddings (gap OPS-02)
+
+### Decisions
+- `embed()` mirrors `LLMClient._attempt`: each provider attempt is timed and numbered; a success carries
+  `connection_key`, `latency_ms`, `attempt_no`, `deployment_wire_id`, `pricing_mode` on `EmbedResponse`, so the two
+  callers (`content_embedding.compute_embeddings`, `places.llm.embed_texts`) need no change: they already pass
+  `**billed_fields(resp)`.
+- A failed attempt writes the gateway's own 0 USD row (role `embed`; status / class from `client.attempt_outcome`, so
+  an account refusal is `refused/access_denied`, an outage `error/other`, an open circuit `refused`). A route model
+  not tried at all (not in the catalog, disabled, no usable deployment) writes a `refused` row with latency 0 and no
+  attempt number, like the chat gateway's net row.
+- `pricing_mode`: `catalog` for a catalog row, `code_table` when the built-in fallback row priced it (catalog
+  unreadable).
+
+### Changed
+- Before A9 an embed failure left no ledger trace at all (lesson S239: a broken embed profile was silent).
+
+### Should know
+- The success row is still the caller's (one row per success); the gateway never writes it.
+- Live check needs no paid call: switch the acc2 `cohere-embed-v4` deployment off in Providers, trigger one embed
+  (any f10 / a3 embed job), then read the refused / error rows; switch it back on.
