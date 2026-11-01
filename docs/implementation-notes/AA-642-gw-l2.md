@@ -48,6 +48,21 @@ is mocked in the tests.
   (`shared/secrets.py`), which the api task role may not hold, and a denied read raises the "Denied secret access"
   alarm. A key that cannot be read shows on the first call (`unconfigured`).
 
+### B4 — e-mail for the DataForSEO low balance and the reconcile mismatch, digest balances section
+
+- **Same gate as every ops e-mail.** The caller queues the e-mail only when it just wrote a new bell row (the bell's
+  own 24 h unread throttle), and the job key allows one e-mail per template per UTC day
+  (`ops_alert_email:<template>:<day>`). Templates `dfs_balance_low` (from `POST /admin/dfs-balance/check`) and
+  `llm_cost_mismatch` (from the nightly `llm_cost_reconcile`, settled days only, at most 10 rows in the mail with the
+  full count).
+- **The DataForSEO balance check is DataForSEO's probe**: it stamps `last_probe_at` with the state the read proves, and
+  answers `skipped` (200, no call) while the connection is switched off. The Jev canary does the same for Jev.
+- **Digest section "Balances and paid providers"** (OPS-12): DataForSEO balance (latest stored snapshot) and Jev credit
+  estimate through `money_sources.balances()` (the money reports' reader), Geoapify credits used today vs the daily
+  limit, the hand-set credits, each provider row's switch / access_state / last probe, and the settled reconcile
+  mismatches of the last 3 days. Stored rows only: no provider is called by the digest. Attention lines: a balance
+  under its threshold, a provider switched off or refusing, the Geoapify limit reached, a mismatch.
+
 ## Changed
 
 - `shared/llm_client/bedrock_batch.py`: `BATCH_SWITCH_ENV`, `BATCH_CLOSED_REASON`, `batch_submit_closed_reason()`,
@@ -64,6 +79,11 @@ is mocked in the tests.
 - `tests/unit/test_aa1017_registry_v2.py`: the old "a provider row takes no switch" case now expects the switch.
 - `tests/unit/conftest.py`: no provider row read / state write in unit tests by default.
 
+- `shared/ops_alerts.py` (two templates + enqueue), `services/jobs/ops_alert_email_job.py` (renderers),
+  `api/routers/admin_llm_ops.py` (`_maybe_alert_low_balance`, `check_dfs_balance`), `services/llm_cost/reconcile.py`
+  (`_mismatch_bell` → e-mail), `services/reports/digest.py` (`load_balances`, `balance_attention`,
+  `render_balances`); `tests/unit/test_aa1003_r2_digest_email.py` patches the new loader in the isolation test.
+
 ## Tradeoffs
 
 - Geoapify reads the switch at job start, not per request: a switch flipped during a 30-minute run applies from the
@@ -75,6 +95,11 @@ is mocked in the tests.
   opens it; the reason says how.
 
 ## Should know
+
+- Tenant AI budgets are not in the digest balances section yet: `shared/llm_client/tenant_budget.py` has no read-all
+  helper and lane L1 owns that module this session. Follow-up once L1 lands.
+- A DataForSEO bell already unread within 24 h means no e-mail on the next check (the bell throttle gates the mail):
+  for the live check, mark the old bell read first.
 
 - The T-BATCH trigger row for the root backlog / `plan.json` goes with lane L7's root PR (plan §2), not here.
 - ⚠️ `BATCH_SUBMIT_SWITCH` is an underscore env name: set it by hand in the task definition only when opening Batch.

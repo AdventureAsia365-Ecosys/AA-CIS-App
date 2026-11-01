@@ -27,6 +27,13 @@ for in docs/implementation-notes/AA-1003.md, "R2 follow-up requests"):
               before the digest.
   handoff     TP-03: K-TP-HANDOFFGAP / K-BK-PARKED of day D and the latest hourly check.
   waves       open shared.rerun_wave rows (information: a wave is planned work).
+  balances    AA-642 (S263 L2, B4): the paid providers that are not LLMs and the money left: the DataForSEO balance
+              (latest stored snapshot) and the Jev credit estimate (money_sources.balances, the same reader as the
+              money reports), Geoapify credits used today against the daily limit (geo.geocode_call), each provider
+              connection's switch / access_state / last probe (shared.llm_provider_connection), the hand-set credits,
+              and the settled LLM cost reconcile mismatches of the last RECONCILE_DAYS days
+              (shared.llm_cost_reconcile). A balance under its threshold, a refusing or switched-off provider, the
+              Geoapify daily limit reached or a mismatch is an attention line.
   reports     the register's overdue reports and failed runs (EX-06 rule).
 
 Every section is read on its own: one that fails becomes a "section unavailable" line and an attention item, never a
@@ -53,6 +60,9 @@ SPEND_FLAG_MIN_USD = 1.0         # ... and above 1 USD (Dev runs are bursty; cen
 FALLBACK_RED = 0.05              # K-LLM-FALLBACK-24H threshold (< 5 %)
 OVERDUE_QUEUED_AFTER = timedelta(minutes=30)
 HTTP_TIMEOUT_S = 2.0
+RECONCILE_DAYS = 3               # AA-642 (S263 L2): the reconcile's own default window
+BALANCE_PROVIDERS = ("typesafe", "dataforseo", "geoapify")
+REFUSING_STATES = ("access_denied", "quota_exhausted", "unconfigured")
 DIGEST_KPIS = ("K-LLM-COST-DAY", "K-LLM-FALLBACK-24H", "K-JOB-FAIL", "K-JOB-QUEUEAGE", "K-TP-HANDOFFGAP",
                "K-BK-PARKED", "K-DATA-PROBES", "K-DATA-STALE", "K-DATA-LIVENESS")
 
@@ -252,6 +262,42 @@ async def load_reports(conn, reg: Registry, now: datetime) -> dict:
     return {"flagged": flagged}
 
 
+async def load_balances(conn, now: datetime) -> dict:
+    """AA-642 (S263 L2, B4): the balances section (stored rows only: no provider is called)."""
+    from services.llm_cost import reconcile
+    from services.places import geocoder
+    from services.places import store as place_store
+    from services.reports import money_sources
+    from shared.llm_client import connections as conn_registry
+
+    money = await money_sources.balances(conn)
+    rows = {k: await conn_registry.provider_connection(conn, k) for k in BALANCE_PROVIDERS}
+
+    def threshold(key: str) -> Optional[float]:
+        row = rows.get(key)
+        value = row.low_balance_usd if row is not None else None
+        return value if value is not None else conn_registry.BUILTIN_PROVIDERS[key].low_balance_usd
+
+    geo = rows.get("geoapify")
+    limit = geo.daily_credit_limit if geo is not None and geo.daily_credit_limit is not None \
+        else geocoder.daily_credit_limit()
+    recent = await reconcile.read_recent(conn, days=RECONCILE_DAYS, today=now.date())
+    mismatches = [{"connection_key": key, "day": r["day"], "logged_usd": r["logged_usd"],
+                   "provider_usd": r["provider_usd"], "diff_usd": r["diff_usd"]}
+                  for key, days in sorted((recent or {}).items()) for r in days
+                  if r["status"] == "mismatch" and not (r.get("details") or {}).get("provisional")]
+    return {"dfs": money.get("dfs"), "dfs_threshold_usd": threshold("dataforseo"),
+            "jev": money.get("jev"), "jev_threshold_usd": threshold("typesafe"),
+            "geoapify": {"credits_used_today": await place_store.geocoder_requests_today(conn, "geoapify"),
+                         "daily_credit_limit": limit},
+            "credits": money.get("credits") or {},
+            "providers": [{"connection_key": k, "enabled": r.enabled if r is not None else None,
+                           "access_state": r.access_state if r is not None else None,
+                           "last_probe_at": r.last_probe_at if r is not None else None}
+                          for k, r in rows.items()],
+            "reconcile": {"ready": recent is not None, "days": RECONCILE_DAYS, "mismatches": mismatches}}
+
+
 async def collect(conn, reg: Registry, day: date, now: datetime) -> dict:
     """Every section, each isolated: a failure becomes facts['errors'][section]."""
     sections: dict[str, Callable[[], Awaitable[dict]]] = {
@@ -264,6 +310,7 @@ async def collect(conn, reg: Registry, day: date, now: datetime) -> dict:
         "waves": lambda: load_waves(conn),
         "handoff": lambda: load_handoff(conn),
         "reports": lambda: load_reports(conn, reg, now),
+        "balances": lambda: load_balances(conn, now),
     }
     facts: dict[str, Any] = {"errors": {}}
     for name, load in sections.items():   # one connection: sequential reads
@@ -367,6 +414,41 @@ def attention(facts: dict, series: dict, day: date) -> list[str]:
         items.append(f"{parked:.0f} inquiries parked or failed in the Booking inbox")
     for r in (facts.get("reports") or {}).get("flagged", []):
         items.append(f"Report {r['id']} {r['name']}: {r['due']}, {r['failed_7d']} failed run(s) in 7 days")
+    items += balance_attention(facts.get("balances"))
+    return items
+
+
+def _below(value, threshold) -> bool:
+    return value is not None and threshold is not None and float(value) < float(threshold)
+
+
+def balance_attention(b: Optional[dict]) -> list[str]:
+    """AA-642 (S263 L2, B4): attention lines of the balances section (pure). Absent section: none."""
+    if not b:
+        return []
+    items = []
+    dfs = b.get("dfs") or {}
+    if _below(dfs.get("balance_usd"), b.get("dfs_threshold_usd")):
+        items.append(f"DataForSEO balance {fmt(dfs['balance_usd'], 'usd')} is below its "
+                     f"{fmt(b['dfs_threshold_usd'], 'usd')} alert threshold (read {dfs.get('fetched_at')})")
+    jev = b.get("jev") or {}
+    if _below(jev.get("estimated_left_usd"), b.get("jev_threshold_usd")):
+        items.append(f"Jev credit about {fmt(jev['estimated_left_usd'], 'usd')} left, below its "
+                     f"{fmt(b['jev_threshold_usd'], 'usd')} alert threshold (estimate)")
+    geo = b.get("geoapify") or {}
+    if geo.get("daily_credit_limit") is not None and (geo.get("credits_used_today") or 0) >= geo["daily_credit_limit"]:
+        items.append(f"Geoapify daily credits used up ({geo['credits_used_today']} of {geo['daily_credit_limit']}); "
+                     "place geocoding resumes after 00:00 UTC")
+    for p in b.get("providers") or []:
+        if p.get("enabled") is False:
+            items.append(f"Provider {p['connection_key']} is switched off: its stages run without it")
+        elif p.get("access_state") in REFUSING_STATES:
+            items.append(f"Provider {p['connection_key']} refuses ({p['access_state']})")
+    rec = b.get("reconcile") or {}
+    if rec.get("mismatches"):
+        keys = sorted({m["connection_key"] for m in rec["mismatches"]})
+        items.append(f"LLM cost reconcile: {len(rec['mismatches'])} settled connection-day(s) differ from the "
+                     f"provider's figure ({', '.join(keys)})")
     return items
 
 
@@ -504,11 +586,56 @@ def render_digest(reg: Registry, report: Report, day: date, facts: dict, kpi_row
     waves = (facts.get("waves") or {}).get("open") or []
     md += ["## Open waves", ""] + ([f"- {w['name']} ({w['country'] or 'all'}, {w['tours']} tours) since "
                                      f"{w['created_at']}" for w in waves] or ["- None."]) + [""]
+    md += render_balances(facts.get("balances"))
     flagged = (facts.get("reports") or {}).get("flagged") or []
     md += ["## Reports", ""] + ([f"- {r['id']} {r['name']}: {r['due']}, {r['failed_7d']} failed in 7 days"
                                  for r in flagged] or ["- No report overdue or failed."]) + [""]
     summary = headline[:1000]
     return Rendered(summary, output, "\n".join(md))
+
+
+def render_balances(b: Optional[dict]) -> list[str]:
+    """AA-642 (S263 L2, B4): the balances section (Markdown lines, pure). Absent from a digest written before it."""
+    if not b:
+        return []
+    dfs = b.get("dfs") or {}
+    jev = b.get("jev") or {}
+    geo = b.get("geoapify") or {}
+    md = ["## Balances and paid providers", "",
+          "| Source | Left | Alert below | Note |", "|---|---|---|---|",
+          f"| DataForSEO | {fmt(dfs.get('balance_usd'), 'usd')} | {fmt(b.get('dfs_threshold_usd'), 'usd')} | "
+          f"read {dfs.get('fetched_at') or 'never'} (daily balance check) |",
+          f"| Jev (TypeSafe) | {fmt(jev.get('estimated_left_usd'), 'usd')} | {fmt(b.get('jev_threshold_usd'), 'usd')} "
+          f"| estimate: top-ups minus logged spend |",
+          f"| Geoapify | {fmt(_left(geo), 'count')} credits today | — | {geo.get('credits_used_today', '—')} of "
+          f"{geo.get('daily_credit_limit', '—')} used (UTC day) |"]
+    for key, c in sorted((b.get("credits") or {}).items()):
+        md.append(f"| Credit {key} | {fmt(c.get('remaining_usd'), 'usd')} | — | hand-set, expires "
+                  f"{c.get('expires_on') or '—'} |")
+    md += ["", "| Provider | On | Access | Last probe |", "|---|---|---|---|"]
+    md += [f"| {p['connection_key']} | {_on(p.get('enabled'))} | {p.get('access_state') or '—'} | "
+           f"{p.get('last_probe_at') or '—'} |" for p in b.get("providers") or []]
+    rec = b.get("reconcile") or {}
+    md.append("")
+    if not rec.get("ready"):
+        md.append("LLM cost reconcile: not available (migration 317 not applied).")
+    elif rec.get("mismatches"):
+        md.append(f"LLM cost reconcile, last {rec.get('days')} days: " + "; ".join(
+            f"{m['connection_key']} {m['day']} logged {fmt(m['logged_usd'], 'usd')} vs provider "
+            f"{fmt(m['provider_usd'], 'usd')}" for m in rec["mismatches"][:10]) + ".")
+    else:
+        md.append(f"LLM cost reconcile, last {rec.get('days')} days: no settled mismatch.")
+    return md + [""]
+
+
+def _left(geo: dict) -> Optional[float]:
+    if geo.get("daily_credit_limit") is None:
+        return None
+    return max(0, geo["daily_credit_limit"] - (geo.get("credits_used_today") or 0))
+
+
+def _on(enabled: Optional[bool]) -> str:
+    return {True: "yes", False: "no"}.get(enabled, "no row (on)")
 
 
 def render_providers(llm: dict) -> list[str]:
