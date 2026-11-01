@@ -402,3 +402,49 @@ def test_a_new_tenant_budget_holds_jobs_by_default():
     from api.routers.admin_ai_gateway import TenantBudgetBody
     assert TenantBudgetBody(monthly_usd=5).hard_stop is True
     assert TenantBudgetBody(monthly_usd=5, hard_stop=False).hard_stop is False
+
+
+def test_a_t_stage_call_reads_a_failed_counter_again_before_the_job_retries(state, monkeypatch):
+    """Review S263: the retry attempt (first backoff 30 s) must read the counter again, not fail on the cached failure
+    of the attempt before it (FAILURE_TTL_SECONDS is 60 s, max_attempts 2 for the T-stage kinds)."""
+    budgets, reads = state
+    budgets[TENANT] = _budget(spent=1.0)
+    real = tenant_budget.loader_state
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(tenant_budget.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(tenant_budget, "loader_state", _boom)
+    with bind_tenant(TENANT):
+        with pytest.raises(tenant_budget.TenantBudgetUnavailable):
+            tenant_budget.check("t9_write")
+        clock["now"] += 5.0                                               # same attempt: the cached failure
+        monkeypatch.setattr(tenant_budget, "loader_state", real)
+        with pytest.raises(tenant_budget.TenantBudgetUnavailable):
+            tenant_budget.check("t9_write")
+        assert tenant_budget.check("a3_atomize") is None                 # A-stage: fails open, keeps the 60 s cache
+        clock["now"] += queue.BACKOFF_BASE_SECONDS                        # the job runner's first retry
+        assert tenant_budget.check("t9_write").state == "ok"              # read again: the blip is over
+
+
+def test_the_recheck_window_is_shorter_than_the_first_retry_backoff():
+    assert tenant_budget.UNREADABLE_RECHECK_SECONDS < queue.BACKOFF_BASE_SECONDS
+    assert tenant_budget.UNREADABLE_RECHECK_SECONDS <= tenant_budget.FAILURE_TTL_SECONDS
+
+
+def test_the_unavailable_refusal_is_found_in_the_explicit_cause_chain_only():
+    exc = tenant_budget.counter_unavailable(TENANT)
+    assert tenant_budget.counter_unavailable_in(exc) is exc
+    try:
+        try:
+            raise exc
+        except Exception as inner:
+            raise RuntimeError("node failed") from inner
+    except RuntimeError as wrapped:
+        assert tenant_budget.counter_unavailable_in(wrapped) is exc
+    try:
+        try:
+            raise exc
+        except Exception:
+            raise ValueError("cleanup failed")
+    except ValueError as unrelated:
+        assert tenant_budget.counter_unavailable_in(unrelated) is None
+    assert tenant_budget.counter_unavailable_in(None) is None

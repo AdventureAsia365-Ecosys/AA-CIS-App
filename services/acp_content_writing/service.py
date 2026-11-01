@@ -36,7 +36,7 @@ from services.acp_shared.writing_progress import progress_show, progress_step
 import structlog
 
 from shared import tour_liveness as _tl
-from shared.llm_client.tenant_budget import approval_stop_in
+from shared.llm_client.tenant_budget import approval_stop_in, counter_unavailable_in
 from fastapi import Request
 
 from services.acp_angle_gate import service as angle_gate_service
@@ -2504,6 +2504,13 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             logger.warning("t9_write_waits_for_budget_approval", request_id=str(request_id),
                            piece_id=str(piece_id), attempt=attempt, error=str(stop)[:300])
             raise stop
+        unavailable = counter_unavailable_in(exc)
+        if unavailable is not None:
+            # AA-642 A8 (review S263): the tenant's AI budget counter could not be read (fail closed). The piece stays
+            # 'processing' and the t9_write job retries with its backoff (a 'failed' piece would end it for good).
+            logger.warning("t9_write_waits_for_budget_counter", request_id=str(request_id),
+                           piece_id=str(piece_id), attempt=attempt, error=str(unavailable)[:300])
+            raise unavailable
         logger.error(
             "t9_write_background_failed", request_id=str(request_id), piece_id=str(piece_id),
             attempt=attempt, error_type=type(exc).__name__, error=str(exc),

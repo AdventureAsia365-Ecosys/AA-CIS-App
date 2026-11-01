@@ -91,10 +91,22 @@ Lane order: D1 (migration 325) → A1 (migration 326) → A9 → A8. Migration n
   the admin form's empty draft are now `true`. The table has no rows and every write goes through that PUT, so the
   column default would change nothing (and would be a contract migration).
 
+- Review S263 (fix pass): the T-stage pipelines swallowed the refusal (the T2 generate node made it a failed draft,
+  the T9 write marked the piece `failed` and the job ended "succeeded"), so the promised retry never happened. Now the
+  T2 generate node, `_rewrite_tour` and `run_write_background` re-raise it (`tenant_budget.counter_unavailable_in`,
+  explicit cause chain, like `approval_stop_in`): the job fails retryable and the piece / version stays
+  `processing` / `pending` for the retry.
+- Review S263: a T-stage call re-reads a failed counter after `UNREADABLE_RECHECK_SECONDS` (15 s), shorter than the
+  first retry backoff (30 s, pinned by a test). Before, the retry landed inside the 60 s failure cache, failed closed
+  again without a read, and burned the last attempt (max_attempts 2). A-stage calls keep the 60 s cache.
+
 ### Changed
 - `test_an_unreadable_state_fails_open` became `..._fails_closed_for_t_stages_only` (the old behaviour is the gap).
 
 ### Tradeoffs
+- A counter outage longer than both attempts (about 30-45 s between them) still ends the job failed and marks the
+  piece / version failed (the tenant's Retry shows). Not held like the approval stop: nothing would re-queue it, and
+  the write itself needs the same database.
 - When even the tenant set was never readable (no database at all), the check still fails open: nothing says the
   tenant has a budget, and the T-stage call itself needs the same database, so it fails on its own.
 

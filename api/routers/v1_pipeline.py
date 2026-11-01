@@ -24,7 +24,7 @@ from shared.tour_liveness import (
 )
 from services.content_generation.graph import build_graph
 from shared.llm_client.errors import is_llm_access_denied
-from shared.llm_client.tenant_budget import approval_stop_in
+from shared.llm_client.tenant_budget import approval_stop_in, counter_unavailable_in
 from pydantic import BaseModel
 import asyncpg
 import boto3 as _boto3
@@ -412,6 +412,11 @@ async def _rewrite_tour(
             # a "failed" dict would end the job failed (retried into the same stop) instead of stopped_budget.
             logger.warning("rewrite_tenant_budget_approval", idx=idx, error=str(stop)[:300])
             raise stop  # the typed stop itself: the worker ends the job stopped_budget
+        unavailable = counter_unavailable_in(e)
+        if unavailable is not None:
+            # AA-642 A8 (review S263): the tenant's AI budget counter could not be read (fail closed): the job retries.
+            logger.warning("rewrite_tenant_budget_unreadable", idx=idx, error=str(unavailable)[:300])
+            raise unavailable
         logger.error("rewrite_failed", idx=idx, error=str(e))
         return {
             "idx": idx,
