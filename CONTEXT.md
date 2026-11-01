@@ -110,7 +110,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     login pages (AA-605; the AA-Partner portal and CRM web vendor them through the kit core). New pages should reuse them.
   - **UI kit core (AA-994 S1a, root ADR 0016)**: the portable part of the kit lives in `frontend/app/_kit/core/`,
     the **canonical copy** for all five frontends (AA-Partner portal and CRM web, AA-Booking admin vendor it byte for
-    byte; AA-TripPlanner-Web takes the `tokens` profile). It holds `tokens.ts`, `brand.ts`, `primitives.tsx`,
+    byte; AA-TripPlanner-Web takes the `tokens` profile, which since AA-1033 also carries `i18n.ts` and
+    `aiNotice.messages.ts`). It holds `tokens.ts`, `brand.ts`, `primitives.tsx`,
     `DataTable.tsx`, `csv.ts`, `savedViews.ts`, `Drawer.tsx`, `Modal.tsx`, `Toast.tsx`, `Providers.tsx`,
     `PageFrame.tsx` (the S252 `AdminMain`, which stays an alias, as do `AdminPaneHeader` / `AdminPaneBody`, for
     consumers that have not migrated; CIS admin code uses the `PageFrame*` names since AA-994 S6b, guarded by
@@ -143,6 +144,13 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     focus-visible / disabled states from one hoisted stylesheet. `Tabs` gains `variant="underline"` (role tablist /
     tab, aria-selected, counts, disabled tabs with a reason, arrow keys); the default track variant's markup is
     unchanged. Render-tested in `lib/kitButtons.test.mjs` (transpiles the core, react-dom/server).
+    **AA-1033:** `AiNotice.tsx` — the one notice under AI-written text in every app (`<p role="note">`, muted 12px
+    line with an info icon), variants `staff` (default: CIS reviewer screens — Review Queue editor, S1 rewrite tab —
+    and CRM AI drafts), `publisher` (Content studio review / publish / export) and `traveller` (TripPlanner). Its
+    wording lives in `aiNotice.messages.ts` (`defineMessages`, EN + VI; says AI can make mistakes and that the
+    confirmed quote and booking terms bind, never claims to exclude liability), which with `i18n.ts` is in the
+    `tokens` profile so TripPlanner's own B2C notice renders the same sentence. Language: the I18nProvider's, or
+    the `lang` prop (CRM web). Tested in `lib/kitAiNotice.test.mjs`; shown in the kit gallery.
     `check-kit-copy.mjs`, **`eslint-kit.mjs`** (AA-994 S1c, see "Kit lint" below), `MANIFEST.json` and **`tokens.css`** (AA-994 S1b: the one `--aa-*` token set of every
     frontend — light and dark palettes, `--aa-scrim` / `--aa-hero-bg`, shadows, `--aa-font-*` as
     `var(--font-*, "<family>")`, and the type / radius / space / z / motion scales from TripPlanner AA-995;

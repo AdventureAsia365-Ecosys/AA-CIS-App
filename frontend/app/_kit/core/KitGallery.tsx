@@ -8,7 +8,7 @@
 // FilterBar, RowMenu, ConfirmModal, Money, DateText); S6a adds the form controls (Field, Input, Select, Textarea,
 // Checkbox, Radio, DateField in a Field); the button variants (core Buttons.tsx: Button incl. dashed, LinkButton,
 // IconButton, ButtonGroup, SegmentedControl, ChipButton, Switch, underline Tabs, ListButton, Pressable) have their
-// own entry; S6b adds the Eyebrow (the section entry); the older
+// own entry; S6b adds the Eyebrow (the section entry); AA-1033 the AI notice (its three variants); the older
 // core components join it with S1d.
 //
 // Demo dates are fixed values and the relative examples use a fixed "now" (no clock read during render), so the
@@ -23,6 +23,7 @@ import {
   Button, ButtonGroup, ChipButton, IconButton, LinkButton, ListButton, Pressable, SegmentedControl, Switch,
 } from "./Buttons";
 import { ConfirmModal } from "./Modal";
+import { AiNotice } from "./AiNotice";
 import { Section } from "./Section";
 import { KpiTile } from "./KpiTile";
 import { FilterBar } from "./FilterBar";
@@ -339,6 +340,14 @@ export function KitGallery() {
         <ConfirmModal open={confirm === "busy"} onClose={close} onConfirm={close} destructive busy
           title={t("confirmDangerTitle")} body={t("confirmDangerBody")} confirmLabel={t("confirmDangerAction")}
           error={t("confirmError")} />
+      </Entry>
+
+      <Entry id="ai-notice" title={t("aiNoticeTitle")}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 640 }}>
+          <AiNotice testId="kit-gallery-ai-staff" />
+          <AiNotice variant="publisher" testId="kit-gallery-ai-publisher" />
+          <AiNotice variant="traveller" testId="kit-gallery-ai-traveller" />
+        </div>
       </Entry>
 
       <Entry id="formats" title={t("formatTitle")}>

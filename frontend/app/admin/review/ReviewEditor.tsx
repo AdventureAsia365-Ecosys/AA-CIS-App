@@ -6,7 +6,7 @@
 
 import { AlertTriangle, Edit3, Save, ShieldCheck, XCircle } from "lucide-react";
 import { useState } from "react";
-import { K, mono, sans, Button, useFormat, useT, Input, Textarea, Spinner, KX } from "../../_kit";
+import { K, mono, sans, AiNotice, Button, useFormat, useT, Input, Textarea, Spinner, KX } from "../../_kit";
 import { FIELD, M } from "./messages";
 import { ClaimChecks } from "./ClaimChecks";
 import {
@@ -275,6 +275,9 @@ export function ReviewEditor({
           {msg.text}
         </div>
       )}
+
+      {/* AA-1033: the reviewer edits AI-written text here; the kit staff notice sits above it. */}
+      <AiNotice style={{ marginBottom: 14 }} />
 
       <ClaimChecks reviewId={item.id} canLabel={canLabel} />
 

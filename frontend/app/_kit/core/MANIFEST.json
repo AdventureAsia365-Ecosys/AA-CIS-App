@@ -12,12 +12,17 @@
       "tokens.ts",
       "brand.ts",
       "theme.ts",
+      "i18n.ts",
+      "aiNotice.messages.ts",
       "check-kit-copy.mjs",
       "eslint-kit.mjs",
       "MANIFEST.json"
     ]
   },
   "files": {
+    "AiNotice.tsx": {
+      "sha256": "74e4179613b0f9a5dc60dfb49dabf7bec132995ea0d369396c3a837b48711f01"
+    },
     "Buttons.tsx": {
       "sha256": "6ca183d8c2baa3747a8e58cfc1bb7a8d94e26e454640af9c96e724a72764e8a4"
     },
@@ -43,7 +48,7 @@
       "sha256": "8dd928920b5dc760b7b80433011f8b482ae6592c91456557542cb45df59142a5"
     },
     "KitGallery.tsx": {
-      "sha256": "e2da39f1fe65b65f7907a8fdedded398611724d4dfbaea655c1c2904969aac19"
+      "sha256": "2cc3b84f6eff8199cd1cc50cfb72b1ac09ffa49919df00d0acdca55dfca6695b"
     },
     "KpiTile.tsx": {
       "sha256": "f421219ad2f1fb24806aad077199fe950aaadbc0c192989e424e96fe338f827f"
@@ -78,11 +83,14 @@
     "TraceTimeline.tsx": {
       "sha256": "260c5bf648b13241961d085880d2e8f63aff9da041a8ee5f2044c0da387ede12"
     },
+    "aiNotice.messages.ts": {
+      "sha256": "3cc9b1fd5458509c18c2594097f12d5d24665d441939d6510134ab45abd10b2c"
+    },
     "brand.ts": {
       "sha256": "bc6773a9a5a69ae55496752779c9c2fc8ac49eb07ed832cc91edff70c21dda00"
     },
     "check-kit-copy.mjs": {
-      "sha256": "8d717c8c83bcf0be7e982f69c64261f0313e04689ab290342b02938b1f31eee0"
+      "sha256": "87710459d94a7947dc5a539cfbaa4b1cf5af05138598dd396cfbac6f2be96a2d"
     },
     "csv.ts": {
       "sha256": "3609313353164f3d0089b9e5675248d6a825c8826808b2f6b968ddb750c5189f"
@@ -103,7 +111,7 @@
       "sha256": "f0ac33de7ec10679d8cc020d6cbe6ad4c19d1b87f62ebf2ca27fa2608b12c933"
     },
     "kitGallery.messages.ts": {
-      "sha256": "392b351fc0e698b7c4cc67bff8476fcc1f726eeeb4110a0abbab9f19fc8c807c"
+      "sha256": "e007b7cda558a621d1fe918f62f50e826f56f533c792282428256fc8eea7cc09"
     },
     "primitives.tsx": {
       "sha256": "b6e46b4ba04232e61925a79c92ce574c03c6d3a7654ebb8fc113a652b97df4ad"

@@ -45,9 +45,12 @@ export const HEADER =
   "byte for byte (kit.lock.json).";
 export const CANONICAL = { repo: "AdventureAsia365-Ecosys/AA-CIS-App", path: "frontend/app/_kit/core" };
 export const MANIFEST = "MANIFEST.json";
-/** ADR 0016 decision 2: the files of the `tokens` profile (TripPlanner), when they exist in core. */
+/** ADR 0016 decision 2: the files of the `tokens` profile (TripPlanner), when they exist in core. AA-1033 adds
+ * `aiNotice.messages.ts` and the one file it imports, `i18n.ts` (no React), so TripPlanner's B2C notice says the same
+ * sentence as the kit. */
 export const TOKENS_PROFILE = [
-  "tokens.css", "tokens.ts", "brand.ts", "theme.ts", "check-kit-copy.mjs", "eslint-kit.mjs", MANIFEST,
+  "tokens.css", "tokens.ts", "brand.ts", "theme.ts", "i18n.ts", "aiNotice.messages.ts", "check-kit-copy.mjs",
+  "eslint-kit.mjs", MANIFEST,
 ];
 /** ADR 0016 decision 1: the only packages a core file may import (plus `next/*` and, in .mjs scripts, `node:*`). */
 export const ALLOWED_PACKAGES = [
