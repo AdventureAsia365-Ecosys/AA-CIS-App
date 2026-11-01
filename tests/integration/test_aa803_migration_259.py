@@ -108,7 +108,7 @@ def test_new_rows_are_on_no_route(cur):
     assert "supply_content_writer" in {r[0] for r in rows}
     # Rows a test admin switched (the AA-642 A1 stage-switch tests sign as admin:zz-*) are not migrations.
     migrated = {r[1] for r in rows if not str(r[1]).startswith("admin:zz-")}
-    assert migrated <= {"migration-282-aa835", "migration-327-aa1026", "migration-331-aa1026"}
+    assert migrated <= {"migration-282-aa835", "migration-327-aa1026", "migration-331-aa1026", "migration-332-aa1026"}
 
 
 def test_sonnet_drops_the_legacy_acc2_profile_only(cur):
