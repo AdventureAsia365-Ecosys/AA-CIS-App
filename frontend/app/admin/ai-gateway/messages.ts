@@ -9,9 +9,9 @@ import { defineMessages } from "../../_kit/core/i18n";
 /** Status of a provider row (lib/aiGateway.ts ProviderStatus). */
 export const STATUS = defineMessages(
   { ok: "OK", degraded: "Degraded", open: "Circuit open", low: "Low", cap_reached: "Cap reached", disabled: "Off",
-    unknown: "Unknown", no_recent_calls: "No recent calls" },
+    unknown: "Unknown", no_recent_calls: "No recent calls", untracked: "Not logged" },
   { ok: "Ổn", degraded: "Suy giảm", open: "Đang ngắt", low: "Sắp hết", cap_reached: "Chạm trần", disabled: "Tắt",
-    unknown: "Chưa rõ", no_recent_calls: "Chưa có lượt gọi gần đây" },
+    unknown: "Chưa rõ", no_recent_calls: "Chưa có lượt gọi gần đây", untracked: "Không ghi sổ" },
 );
 
 /** Access state of a registry row (CIS migration 322; lib/aiGateway.ts ACCESS_STATES). */
@@ -36,6 +36,12 @@ export const REASON = defineMessages(
     daily_credits_used: "Today's credits are used up; geocoding waits for the next UTC day.",
     daily_credits_low: "Over 80 % of today's credits are used.",
     source_unreadable: "This source could not be read.",
+    switched_off_in_registry: "Switched off on this page: nothing is sent to it until it is switched back on.",
+    crm_sign_in_needed: "The partner CRM is read with your staff sign-in; this session has none.",
+    crm_refused: "The partner CRM refused this read for your staff account.",
+    crm_unreachable: "The partner CRM did not answer.",
+    free_tier_not_logged: "TripPlanner's maps run on the free tier and no call is logged; check usage on the "
+      + "Mapbox console.",
   },
   {
     circuit_open: "Các lần gọi gần đây lỗi nên cổng tạm bỏ qua kết nối này.",
@@ -49,6 +55,12 @@ export const REASON = defineMessages(
     daily_credits_used: "Đã dùng hết credit hôm nay; geocode chờ sang ngày UTC mới.",
     daily_credits_low: "Đã dùng quá 80 % credit hôm nay.",
     source_unreadable: "Không đọc được nguồn này.",
+    switched_off_in_registry: "Đã tắt trên trang này: không gửi gì tới nhà cung cấp cho tới khi bật lại.",
+    crm_sign_in_needed: "CRM đối tác được đọc bằng đăng nhập nhân viên của bạn; phiên này không có.",
+    crm_refused: "CRM đối tác từ chối lần đọc này với tài khoản nhân viên của bạn.",
+    crm_unreachable: "CRM đối tác không trả lời.",
+    free_tier_not_logged: "Bản đồ TripPlanner chạy trên gói miễn phí và không ghi lần gọi nào; xem mức dùng trên "
+      + "Mapbox console.",
   },
 );
 
@@ -111,12 +123,17 @@ export const M = defineMessages(
     tileAllOk: "all fine",
     // sections
     groupLlm: "LLM connections",
-    groupLlmHelp: "Each way the platform reaches a model. Spend counts the calls logged on that connection.",
+    groupLlmHelp: "Each way the platform reaches a model. Spend counts the calls logged on that connection. The "
+      + "partner CRM's own AI calls have their own row, read with your staff sign-in.",
     groupDecide: "Decisions (Jev)",
     groupDecideHelp: "Jev answers yes / no questions in the pipeline. Its balance is an estimate: recorded top-ups "
       + "minus the logged spend.",
     groupData: "Data providers",
-    groupDataHelp: "Search data (DataForSEO) and place coordinates (Geoapify).",
+    groupDataHelp: "Search data (DataForSEO), place coordinates (Geoapify) and TripPlanner's maps (Mapbox, not "
+      + "logged).",
+    groupGuard: "Guards",
+    groupGuardHelp: "Bedrock Guardrails finds personal data in the partner CRM's text before any model sees it. "
+      + "Its calls are logged by the CRM and read with your staff sign-in.",
     // columns
     colProvider: "Provider",
     colStatus: "Status",
@@ -125,6 +142,7 @@ export const M = defineMessages(
     colMonth: "This month",
     colBudget: "Budget",
     colBalance: "Balance / credits",
+    colCalls: "Errors · latency",
     // cells
     off: "switched off",
     scopeAws: "AWS only",
@@ -150,6 +168,31 @@ export const M = defineMessages(
     asOf: "read",
     creditsToday: (used: number, limit: number) => `${used} / ${limit} credits today`,
     notRead: "not read yet",
+    // AA-1025 C1: errors and latency per row, the provider switch, the CRM and Mapbox rows
+    windowLabel: (w: string) => (w === "24h" ? "24 h" : "7 d"),
+    statsLine: (calls: number, errPct: string) => `${calls} call${calls === 1 ? "" : "s"} · ${errPct} errors`,
+    latencyLine: (p50: string, p95: string) => `p50 ${p50} · p95 ${p95}`,
+    refusedLine: (n: number) => `${n} refused before sending`,
+    noStatsCalls: "no call",
+    statsSampled: "newest calls only",
+    statsNotLogged: "not logged",
+    switchOff: "Switch off",
+    switchOn: "Switch on",
+    switchLabel: (name: string) => `Switch ${name} on or off`,
+    switchOffTitle: (name: string) => `Switch ${name} off?`,
+    switchOnTitle: (name: string) => `Switch ${name} on?`,
+    switchOffBody: "Nothing is sent to this provider until it is switched back on. Each refused call is logged at "
+      + "zero cost, and the step that needed it follows its own rule (Jev answers as if it were down; a DataForSEO "
+      + "or geocoding run stops). Jev and DataForSEO see the change within a minute; a geocoding job reads it when "
+      + "it starts.",
+    switchOnBody: "Calls go to this provider again from the next request, at its usual price.",
+    switchOffConfirm: "Switch off",
+    switchOnConfirm: "Switch on",
+    switchDone: (name: string, on: boolean) => `${name} switched ${on ? "on" : "off"}`,
+    switchReadOnly: "This is a read-only session: it cannot switch a provider. Sign in with your own staff account.",
+    crmSettings: "switched in the partner CRM's own settings",
+    notConfigured: "not the geocoder in use",
+    mapboxUsage: "Usage on the Mapbox console",
     unattributed: "Other LLM calls (no connection)",
     unattributedHelp: "Logged calls whose account names no connection (older rows, or a call made before the "
       + "connection existed). Counted in the totals.",
@@ -269,12 +312,17 @@ export const M = defineMessages(
     tileLookHint: (n: number) => `trên ${n} nhà cung cấp`,
     tileAllOk: "tất cả ổn",
     groupLlm: "Kết nối LLM",
-    groupLlmHelp: "Mỗi đường nền tảng gọi tới model. Chi tiêu tính các lần gọi ghi trên kết nối đó.",
+    groupLlmHelp: "Mỗi đường nền tảng gọi tới model. Chi tiêu tính các lần gọi ghi trên kết nối đó. Lần gọi AI "
+      + "riêng của CRM đối tác có dòng riêng, đọc bằng đăng nhập nhân viên của bạn.",
     groupDecide: "Quyết định (Jev)",
     groupDecideHelp: "Jev trả lời các câu hỏi có / không trong pipeline. Số dư là ước tính: tổng nạp đã ghi trừ chi "
       + "tiêu đã ghi.",
     groupData: "Nhà cung cấp dữ liệu",
-    groupDataHelp: "Dữ liệu tìm kiếm (DataForSEO) và toạ độ địa điểm (Geoapify).",
+    groupDataHelp: "Dữ liệu tìm kiếm (DataForSEO), toạ độ địa điểm (Geoapify) và bản đồ TripPlanner (Mapbox, không "
+      + "ghi sổ).",
+    groupGuard: "Lớp bảo vệ",
+    groupGuardHelp: "Bedrock Guardrails tìm dữ liệu cá nhân trong văn bản của CRM đối tác trước khi model nào đọc. "
+      + "Lần gọi do CRM ghi và được đọc bằng đăng nhập nhân viên của bạn.",
     colProvider: "Nhà cung cấp",
     colStatus: "Trạng thái",
     colHealth: "Sức khoẻ",
@@ -282,6 +330,7 @@ export const M = defineMessages(
     colMonth: "Tháng này",
     colBudget: "Ngân sách",
     colBalance: "Số dư / credit",
+    colCalls: "Lỗi · độ trễ",
     off: "đang tắt",
     scopeAws: "Chỉ AWS",
     scopeVendor: "API nhà cung cấp",
@@ -306,6 +355,30 @@ export const M = defineMessages(
     asOf: "đọc lúc",
     creditsToday: (used: number, limit: number) => `${used} / ${limit} credit hôm nay`,
     notRead: "chưa đọc",
+    windowLabel: (w: string) => (w === "24h" ? "24 giờ" : "7 ngày"),
+    statsLine: (calls: number, errPct: string) => `${calls} lần gọi · ${errPct} lỗi`,
+    latencyLine: (p50: string, p95: string) => `p50 ${p50} · p95 ${p95}`,
+    refusedLine: (n: number) => `${n} lần bị từ chối trước khi gửi`,
+    noStatsCalls: "chưa gọi",
+    statsSampled: "chỉ các lần gọi mới nhất",
+    statsNotLogged: "không ghi sổ",
+    switchOff: "Tắt",
+    switchOn: "Bật",
+    switchLabel: (name: string) => `Bật hoặc tắt ${name}`,
+    switchOffTitle: (name: string) => `Tắt ${name}?`,
+    switchOnTitle: (name: string) => `Bật ${name}?`,
+    switchOffBody: "Không gửi gì tới nhà cung cấp này cho tới khi bật lại. Mỗi lần gọi bị từ chối được ghi với chi "
+      + "phí 0, và bước cần nó làm theo luật riêng (Jev trả lời như khi đang sập; lượt chạy DataForSEO hay geocode "
+      + "dừng lại). Jev và DataForSEO nhận thay đổi trong vòng một phút; job geocode đọc nó lúc bắt đầu.",
+    switchOnBody: "Lần gọi tới nhà cung cấp này chạy lại từ yêu cầu kế tiếp, với giá thường.",
+    switchOffConfirm: "Tắt",
+    switchOnConfirm: "Bật",
+    switchDone: (name: string, on: boolean) => `Đã ${on ? "bật" : "tắt"} ${name}`,
+    switchReadOnly: "Phiên này chỉ được xem: không bật tắt nhà cung cấp được. Đăng nhập bằng tài khoản nhân viên của "
+      + "bạn.",
+    crmSettings: "bật tắt trong cài đặt riêng của CRM đối tác",
+    notConfigured: "không phải bộ geocode đang dùng",
+    mapboxUsage: "Mức dùng trên Mapbox console",
     unattributed: "Lần gọi LLM khác (không có kết nối)",
     unattributedHelp: "Các lần gọi đã ghi mà tài khoản không trùng kết nối nào (dòng cũ, hoặc gọi trước khi có kết "
       + "nối). Có tính vào tổng.",

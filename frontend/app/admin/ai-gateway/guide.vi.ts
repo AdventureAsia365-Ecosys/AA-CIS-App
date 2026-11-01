@@ -15,7 +15,9 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
       blocks: [
         { kind: "paragraph", text: "Nền tảng trả tiền cho vài dịch vụ bên ngoài: các model ngôn ngữ (qua AWS Bedrock "
           + "hoặc API của hãng), Jev cho các quyết định có / không, DataForSEO cho dữ liệu tìm kiếm và Geoapify cho "
-          + "toạ độ địa điểm. Trang này đặt tất cả cạnh nhau." },
+          + "toạ độ địa điểm. Lần gọi AI riêng của CRM đối tác và bước kiểm dữ liệu cá nhân của nó (Bedrock "
+          + "Guardrails) cũng có ở đây, cùng bản đồ của TripPlanner (Mapbox) chạy trên gói miễn phí. Trang này đặt "
+          + "tất cả cạnh nhau." },
         { kind: "paragraph", text: "Mọi con số lấy từ sổ ghi của mình và các lần kiểm số dư đã lưu; mở trang không gọi "
           + "nhà cung cấp nào và không tốn tiền. Trang có sáu tab: Nhà cung cấp (sức khoẻ, chi tiêu, số dư, kèm cài "
           + "đặt kết nối và sổ nạp Jev), Điều hướng (mỗi bước dùng model nào), Model và thử nghiệm (danh mục model và "
@@ -41,11 +43,19 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
       blocks: [
         { kind: "terms", uiLabels: true, items: [
           { term: "Kết nối LLM", text: "Mỗi dòng là một đường nền tảng gọi tới model, ví dụ Bedrock trong một tài "
-            + "khoản AWS (hiện bằng số tài khoản) hoặc API của OpenAI." },
+            + "khoản AWS (hiện bằng số tài khoản) hoặc API của OpenAI. Lần gọi AI của CRM đối tác có một dòng riêng, "
+            + "đọc từ CRM bằng đăng nhập nhân viên của bạn; bật tắt chúng ở CRM, không phải ở đây." },
           { term: "Quyết định (Jev)", text: "Dòng của Jev. Số dư là ước tính: tổng nạp đã ghi ở Số dư Jev trừ chi tiêu "
             + "đã ghi, vì Jev không có dịch vụ xem số dư." },
-          { term: "Nhà cung cấp dữ liệu", text: "DataForSEO (số dư từ lần kiểm hằng ngày) và Geoapify (credit đã dùng "
-            + "hôm nay so với giới hạn ngày; giới hạn đặt lại mỗi ngày UTC)." },
+          { term: "Nhà cung cấp dữ liệu", text: "DataForSEO (số dư từ lần kiểm hằng ngày), Geoapify (credit đã dùng "
+            + "hôm nay so với giới hạn ngày; giới hạn đặt lại mỗi ngày UTC) và Mapbox cho bản đồ TripPlanner (gói "
+            + "miễn phí, không ghi sổ: dòng của nó dẫn tới Mapbox console)." },
+          { term: "Lớp bảo vệ", text: "Bedrock Guardrails, tìm dữ liệu cá nhân trong văn bản của CRM đối tác trước khi "
+            + "model đọc. Số lần gọi và chi phí lấy từ sổ ghi của CRM." },
+          { term: "Lỗi · độ trễ", text: "Trong 24 giờ và 7 ngày qua: bao nhiêu lần gọi tới được nhà cung cấp, phần trăm "
+            + "bị lỗi (lỗi, câu trả lời bị cắt, hoặc tính tiền mà không dùng được), và thời gian trả lời: p50 là lần gọi "
+            + "thường gặp, p95 là lần chậm nhất trong hai mươi lần. Lần gọi bị cổng của mình hoặc công tắc từ chối "
+            + "trước khi gửi được đếm riêng, không tính là lỗi. Geoapify không lưu thời gian trả lời." },
           { term: "Sức khoẻ", text: "Với kết nối: lần trả lời gần nhất và loại lỗi gần nhất. Với Jev: số lần gọi và "
             + "lỗi trong 24 giờ qua, thời gian trả lời trung bình." },
           { term: "Ngân sách", text: "Ngân sách tháng của kết nối và trần ngày của nhà cung cấp, kèm phần đã dùng. "
@@ -76,10 +86,12 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
           { term: "Chạm trần", text: "Ngân sách, số dư hoặc credit hôm nay đã hết. Lần gọi dừng hoặc chuyển đường dự "
             + "phòng cho tới khi nâng trần hoặc hết kỳ." },
           { term: "Tắt", text: "Cố ý tắt. Không tính là có vấn đề." },
-          { term: "Chưa có lượt gọi gần đây", text: "Kết nối LLM không có lượt gọi được trả lời trong 24 giờ qua. "
+          { term: "Chưa có lượt gọi gần đây", text: "Kết nối LLM, hoặc dòng của CRM đối tác, không có lượt gọi được "
+            + "trả lời trong 24 giờ qua. "
             + "Chưa thấy gì sai; tab Điều hướng dùng cùng chữ này." },
           { term: "Chưa rõ", text: "Không đọc được nguồn, hoặc chưa biết số dư hay lần nạp nào (Jev, DataForSEO). "
             + "Dòng đó ghi rõ lý do." },
+          { term: "Không ghi sổ", text: "Nguồn được liệt kê nhưng không ghi sổ (Mapbox). Không tính là có vấn đề." },
         ] },
       ],
     },
@@ -95,6 +107,12 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
           { term: "Số dư Jev", text: "Ghi tay từng lần nạp Jev (Jev không có dịch vụ xem số dư), xem số dư ước tính "
             + "và gửi cảnh báo thử." },
         ] },
+        { kind: "control", label: "Tắt", does: "Tắt Jev, DataForSEO hoặc Geoapify (hoặc bật lại bằng nút Bật), sau "
+          + "một bước xác nhận. Khi đang tắt, không gửi gì tới nhà cung cấp: mỗi lần gọi bị từ chối được ghi với chi phí "
+          + "0, Jev trả lời như khi đang sập, còn lượt chạy DataForSEO hay geocode dừng lại. Jev và DataForSEO nhận "
+          + "thay đổi trong vòng một phút; job geocode đọc nó lúc bắt đầu.",
+          cost: "Miễn phí. Tắt thì đỡ các lần gọi; bật lại thì các lần gọi tính giá như thường.",
+          when: "Nhà cung cấp chạy sai, không được tiêu credit của nó, hoặc một bài thử cần tắt nó." },
         { kind: "control", label: "Đưa lại job bị từ chối", does: "Kiểm trước những job lỗi trong 14 ngày qua đã dừng vì "
           + "nhà cung cấp từ chối một tài khoản, hiện các con số, và chỉ sau khi bạn xác nhận mới đưa chúng về hàng đợi "
           + "với lượt thử mới, mỗi đợt 50 job (bấm Kiểm đợt tiếp cho phần còn lại). Job mà kết nối vẫn bị từ chối thì "
@@ -212,7 +230,9 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
         { kind: "list", items: [
           "Lần gọi model của TripPlanner hiện từ sổ ghi chung; trần theo stage của nó ở Cost Operations › Chi phí AI "
             + "và dữ liệu và bảng Ứng dụng.",
-          "Bedrock Guardrails và Mapbox chưa ghi sổ nên chưa có dòng.",
+          "Mapbox không ghi sổ: dòng của nó không có chi tiêu hay thời gian trả lời; xem mức dùng trên Mapbox console.",
+          "Các dòng của CRM đối tác cần đăng nhập nhân viên của bạn. Số liệu 7 ngày chỉ tính 500 lần gọi mới nhất của "
+            + "CRM (dòng ghi rõ khi có nhiều hơn).",
           "Các lần chạy thử model mới (thử nhanh, kiểm model chấm, so sánh) chưa có trên tab Model và thử nghiệm.",
           "Chi tiêu là số mình ghi theo giá của mình. Hoá đơn AWS có thể lệch chút; Cost Operations hiện hoá đơn.",
         ] },

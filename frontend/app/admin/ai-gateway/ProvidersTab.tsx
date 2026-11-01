@@ -15,18 +15,23 @@
 // "warm path" label (root ADR 0009 decision 2). Below the LLM connections: "Re-queue refused jobs" (POST
 // /api/admin/job-runner/jobs/retry-llm-denied, ops.write): a dry run first, its numbers in a confirm dialog, then
 // the real re-queue, one batch of 50 at a time (the server's apply cap), with "Check the next batch" after it.
+// AA-1025 C1 (S263 gateway plan): an "Errors · latency" column (calls, error %, p50 / p95 of the last 24 h and 7 d,
+// from the API's `stats`), the access state as a badge, a Switch off / Switch on button for Jev, DataForSEO and
+// Geoapify (the B1 switch their clients read; confirm dialog, then PATCH /api/admin/llm-connections/{key}), the
+// partner CRM's AI row (LLM section) and its Bedrock Guardrails row (Guards section), and the static Mapbox row
+// (Data providers, link to the vendor console).
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { RotateCcw } from "lucide-react";
-import { useMemo, useState } from "react";
+import { ExternalLink, Power, RotateCcw } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
 import {
   Badge, Button, ConfirmModal, DataTable, DateText, ErrorState, K, KpiTile, Section, Tabs, apiGet, apiSend, mono,
   useT, useToast, type ColumnDef,
 } from "../../_kit";
 import {
-  ERROR_CLASSES, PROVIDERS_API, PROVIDER_VIEWS, RETRY_LLM_DENIED_API, accessTone, groupRows, heldGroups,
-  isAccessState, isReadOnlyRefusal, needsLook, nextRequeueSince, pct, registryFacts, requeueBody, statusTone,
-  statusWordKey, usd, warmPathOf,
+  ERROR_CLASSES, PROVIDERS_API, PROVIDER_VIEWS, RETRY_LLM_DENIED_API, STATS_WINDOWS, accessTone, errorRateTone,
+  groupRows, heldGroups, isAccessState, isReadOnlyRefusal, latencyText, needsLook, nextRequeueSince, pct,
+  providerSwitch, registryFacts, requeueBody, statusTone, statusWordKey, usd, warmPathOf,
   type HeldGroup, type ProviderRow, type ProviderView, type ProvidersResp, type RegistryFacts,
   type RetryLlmDeniedResp,
 } from "@/lib/aiGateway";
@@ -71,7 +76,15 @@ function ProviderCell({ row }: { row: Row }) {
       <span style={small}>
         {row.data_scope === "aws_only" ? t("scopeAws") : row.data_scope === "vendor_direct" ? t("scopeVendor") : ""}
         {!row.enabled ? `${row.data_scope ? " · " : ""}${t("off")}` : ""}
+        {row.configured === false ? ` · ${t("notConfigured")}` : ""}
       </span>
+      {row.switch === "crm_settings" && <span style={small}>{t("crmSettings")}</span>}
+      {row.usage_url && (
+        <a href={row.usage_url} target="_blank" rel="noopener noreferrer" data-testid={`ai-gateway-usage-${row.key}`}
+          style={{ ...small, color: K.accent, display: "inline-flex", alignItems: "center", gap: 4 }}>
+          {t("mapboxUsage")} <ExternalLink size={11} aria-hidden />
+        </a>
+      )}
       {warm && (
         <span data-testid={`ai-gateway-warm-${row.key}`} title={t(warm === "anthropic" ? "warmAnthropicHelp" : "warmOpenaiHelp")}
           style={{ display: "inline-flex", marginTop: 2 }}>
@@ -85,7 +98,7 @@ function ProviderCell({ row }: { row: Row }) {
   );
 }
 
-function StatusCell({ row }: { row: Row }) {
+function StatusCell({ row, onSwitch, switching }: { row: Row; onSwitch?: (r: Row) => void; switching?: boolean }) {
   const t = useT(M);
   const ts = useT(STATUS);
   const tr = useT(REASON);
@@ -101,12 +114,23 @@ function StatusCell({ row }: { row: Row }) {
         <span style={small}>{tr(row.status_reason as keyof typeof REASON.en)}</span>
       )}
       {access !== undefined && (
-        <span style={{ ...small, color: accessTone(access) === "danger" ? K.danger : K.muted }}
+        <span style={{ ...small, display: "inline-flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}
           data-testid={`ai-gateway-access-${row.key}`}>
-          {t("accessLabel")} {isAccessState(access) ? ta(access) : (access ?? ta("unknown"))}
+          {t("accessLabel")}{" "}
+          <Badge tone={accessTone(access)} dot={false} style={{ whiteSpace: "nowrap" }}>
+            {isAccessState(access) ? ta(access) : (access ?? ta("unknown"))}
+          </Badge>
         </span>
       )}
       {row.error && <span style={{ ...small, color: K.danger }}>{row.error}</span>}
+      {onSwitch && providerSwitch(row) && (
+        <span data-testid={`ai-gateway-switch-${row.key}`} style={{ display: "inline-flex", marginTop: 4 }}>
+          <Button size="sm" variant="secondary" disabled={switching} onClick={() => onSwitch(row)}
+            ariaLabel={t("switchLabel", row.label)} title={t("switchLabel", row.label)}>
+            <Power size={12} /> {row.enabled ? t("switchOff") : t("switchOn")}
+          </Button>
+        </span>
+      )}
     </Lines>
   );
 }
@@ -146,6 +170,41 @@ function HealthCell({ row }: { row: Row }) {
       {!h.open_models && !!h.failing_models && (
         <span style={{ ...small, color: K.amber }}>{t("failingModels", h.failing_models)}</span>
       )}
+    </Lines>
+  );
+}
+
+/** AA-1025 C1: calls, error rate and latency of the last 24 h and 7 d (API `stats`). */
+function CallsCell({ row }: { row: Row }) {
+  const t = useT(M);
+  const st = row.stats;
+  if (row.status === "untracked") return <span style={small}>{t("statsNotLogged")}</span>;
+  if (!st) return <span style={small}>—</span>;
+  return (
+    <Lines>
+      {STATS_WINDOWS.map((w) => {
+        const s = st[w];
+        if (!s) return null;
+        return (
+          <span key={w} style={small} data-testid={`ai-gateway-stats-${row.key}-${w}`}>
+            <strong style={{ color: K.ink }}>{t("windowLabel", w)}</strong>{" "}
+            {s.calls === 0 && s.refused === 0
+              ? t("noStatsCalls")
+              : (
+                <>
+                  {t("statsLine", s.calls, pct(s.error_pct ?? 0))}
+                  {errorRateTone(s.error_pct) !== "neutral" && (
+                    <>{" "}<Badge tone={errorRateTone(s.error_pct)} dot={false}>{pct(s.error_pct)}</Badge></>
+                  )}
+                  {s.latency_p50_ms != null && <><br />{t("latencyLine", latencyText(s.latency_p50_ms),
+                    latencyText(s.latency_p95_ms))}</>}
+                  {s.refused > 0 && <><br />{t("refusedLine", s.refused)}</>}
+                  {s.sampled && <><br />{t("statsSampled")}</>}
+                </>
+              )}
+          </span>
+        );
+      })}
     </Lines>
   );
 }
@@ -213,25 +272,28 @@ function SpendCell({ row, which }: { row: Row; which: "today" | "month" }) {
   );
 }
 
-function ProviderTable({ id, rows, loading, empty }: {
-  id: string; rows: Row[]; loading: boolean; empty?: string;
+function ProviderTable({ id, rows, loading, empty, onSwitch, switching }: {
+  id: string; rows: Row[]; loading: boolean; empty?: string; onSwitch?: (r: Row) => void; switching?: boolean;
 }) {
   const t = useT(M);
   const columns = useMemo<ColumnDef<Row, unknown>[]>(() => [
     { id: "provider", header: t("colProvider"), accessorKey: "label", cell: ({ row }) => <ProviderCell row={row.original} /> },
-    { id: "status", header: t("colStatus"), accessorKey: "status", cell: ({ row }) => <StatusCell row={row.original} /> },
+    { id: "status", header: t("colStatus"), accessorKey: "status",
+      cell: ({ row }) => <StatusCell row={row.original} onSwitch={onSwitch} switching={switching} /> },
     { id: "health", header: t("colHealth"), enableSorting: false, cell: ({ row }) => <HealthCell row={row.original} /> },
+    { id: "calls", header: t("colCalls"), accessorFn: (r) => r.error_pct ?? -1,
+      cell: ({ row }) => <CallsCell row={row.original} /> },
     { id: "today", header: t("colToday"), accessorFn: (r) => r.spend?.today_usd ?? 0, meta: { align: "right" },
       cell: ({ row }) => <SpendCell row={row.original} which="today" /> },
     { id: "month", header: t("colMonth"), accessorFn: (r) => r.spend?.month_usd ?? 0, meta: { align: "right" },
       cell: ({ row }) => <SpendCell row={row.original} which="month" /> },
     { id: "budget", header: t("colBudget"), enableSorting: false, cell: ({ row }) => <BudgetCell row={row.original} /> },
     { id: "balance", header: t("colBalance"), enableSorting: false, cell: ({ row }) => <BalanceCell row={row.original} /> },
-  ], [t]);
+  ], [t, onSwitch, switching]);
   return (
     <DataTable<Row>
       tableId={id} data={rows} columns={columns} getRowId={(r) => r.key} loading={loading}
-      searchable={false} paginate={false} stickyHeader={false} tableMinWidth={980}
+      searchable={false} paginate={false} stickyHeader={false} tableMinWidth={1160}
       emptyTitle={empty ?? "—"}
     />
   );
@@ -239,6 +301,28 @@ function ProviderTable({ id, rows, loading, empty }: {
 
 function ProvidersOverview() {
   const t = useT(M);
+  const toast = useToast();
+  const qc = useQueryClient();
+  // AA-1025 C1: the provider switch (Jev, DataForSEO, Geoapify): confirm, then the B1 PATCH
+  const [pending, setPending] = useState<Row | null>(null);
+  const [switchError, setSwitchError] = useState("");
+  const switchMut = useMutation({
+    mutationFn: (row: Row) => {
+      const sw = providerSwitch(row);
+      if (!sw) throw new Error("not switchable");
+      return apiSend(sw.path, { method: "PATCH", body: sw.body, admin: true });
+    },
+    onSuccess: (_r, row) => {
+      toast.success(t("switchDone", row.label, !row.enabled));
+      setPending(null);
+      setSwitchError("");
+      qc.invalidateQueries({ queryKey: [...PROVIDERS_KEY] });
+      qc.invalidateQueries({ queryKey: ["llm-connections"] });
+    },
+    onError: (e) => setSwitchError(isReadOnlyRefusal(e) ? t("switchReadOnly")
+      : e instanceof Error ? e.message : String(e)),
+  });
+  const askSwitch = useCallback((row: Row) => { setSwitchError(""); setPending(row); }, []);
   const q = useQuery({
     queryKey: PROVIDERS_KEY,
     queryFn: () => apiGet<ProvidersResp>(PROVIDERS_API, { admin: true }),
@@ -304,12 +388,26 @@ function ProvidersOverview() {
       </Section>
       <RequeueRefusedJobs />
       <Section title={t("groupDecide")} description={t("groupDecideHelp")} padded={false}>
-        <ProviderTable id="ai-gateway-decide" rows={groups.decide} loading={!data} />
+        <ProviderTable id="ai-gateway-decide" rows={groups.decide} loading={!data} onSwitch={askSwitch}
+          switching={switchMut.isPending} />
       </Section>
       <Section title={t("groupData")} description={t("groupDataHelp")} padded={false}>
-        <ProviderTable id="ai-gateway-data" rows={groups.data} loading={!data} />
+        <ProviderTable id="ai-gateway-data" rows={groups.data} loading={!data} onSwitch={askSwitch}
+          switching={switchMut.isPending} />
       </Section>
+      {(!data || groups.guard.length > 0) && (
+        <Section title={t("groupGuard")} description={t("groupGuardHelp")} padded={false}>
+          <ProviderTable id="ai-gateway-guard" rows={groups.guard} loading={!data} />
+        </Section>
+      )}
       <div style={small}>{t("traceHint")}</div>
+      <ConfirmModal open={pending !== null} onClose={() => { setPending(null); setSwitchError(""); }}
+        onConfirm={() => pending && switchMut.mutate(pending)}
+        title={pending ? (pending.enabled ? t("switchOffTitle", pending.label) : t("switchOnTitle", pending.label)) : ""}
+        body={pending?.enabled ? t("switchOffBody") : t("switchOnBody")}
+        confirmLabel={pending?.enabled ? t("switchOffConfirm") : t("switchOnConfirm")}
+        destructive={!!pending?.enabled} busy={switchMut.isPending} error={switchError || null}
+        testId="ai-gateway-switch-confirm" />
     </div>
   );
 }

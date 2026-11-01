@@ -24,7 +24,9 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
       blocks: [
         { kind: "paragraph", text: "The platform pays several outside services: the language models (through AWS "
           + "Bedrock or a vendor API), Jev for yes / no decisions, DataForSEO for search data and Geoapify for place "
-          + "coordinates. This page shows all of them side by side." },
+          + "coordinates. The partner CRM's own AI calls and its personal-data check (Bedrock Guardrails) are listed "
+          + "too, and so are TripPlanner's maps (Mapbox), which run on a free tier. This page shows all of them side "
+          + "by side." },
         { kind: "paragraph", text: "Every number comes from our own logs and stored balance checks; opening the page "
           + "calls no provider and costs nothing. The page has six tabs: Providers (health, spend and balance, plus "
           + "the connection settings and the Jev credit ledger), Routing (which model each stage uses), Models & "
@@ -52,11 +54,19 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
       blocks: [
         { kind: "terms", uiLabels: true, items: [
           { term: "LLM connections", text: "One row per way the platform reaches a model, for example Bedrock in an "
-            + "AWS account (shown by its account number) or the OpenAI API." },
+            + "AWS account (shown by its account number) or the OpenAI API. The partner CRM's AI calls have one row "
+            + "of their own, read from the CRM with your staff sign-in; they are switched in the CRM, not here." },
           { term: "Decisions (Jev)", text: "Jev's row. Its balance is an estimate: the top-ups recorded in Jev credit "
             + "minus the spend we logged, because Jev has no balance service." },
-          { term: "Data providers", text: "DataForSEO (balance from the daily check) and Geoapify (credits used "
-            + "today against the daily limit; the limit resets each UTC day)." },
+          { term: "Data providers", text: "DataForSEO (balance from the daily check), Geoapify (credits used "
+            + "today against the daily limit; the limit resets each UTC day) and Mapbox for TripPlanner's maps (free "
+            + "tier, nothing logged: its row links to the Mapbox console)." },
+          { term: "Guards", text: "Bedrock Guardrails, which finds personal data in the partner CRM's text before a "
+            + "model sees it. Its calls and cost come from the CRM's log." },
+          { term: "Errors · latency", text: "For the last 24 hours and the last 7 days: how many calls reached the "
+            + "provider, the share that failed (an error, an answer cut short or a billed but unusable answer), and "
+            + "the answer time: p50 is the typical call, p95 the slowest one in twenty. Calls our own guard or a switch "
+            + "refused before sending are counted apart and are not errors. Geoapify stores no answer time." },
           { term: "Health", text: "For a connection: when it last answered and the last error type. For Jev: calls "
             + "and errors of the last 24 hours and the mean answer time." },
           { term: "Budget", text: "The monthly budget of a connection and the daily cap of its provider, with how "
@@ -87,10 +97,11 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
           { term: "Cap reached", text: "A budget, the balance or today's credits are used up. Calls stop or fall back "
             + "until the cap is raised or the period ends." },
           { term: "Off", text: "Switched off on purpose. Not counted as a problem." },
-          { term: "No recent calls", text: "An LLM connection with no answered call in the last 24 hours. Nothing is "
-            + "known to be wrong; the Routing tab uses the same words." },
+          { term: "No recent calls", text: "An LLM connection, or a partner CRM row, with no answered call in the last "
+            + "24 hours. Nothing is known to be wrong; the Routing tab uses the same words." },
           { term: "Unknown", text: "The source could not be read, or no balance or top-up is known yet (Jev, "
             + "DataForSEO). The row says why." },
+          { term: "Not logged", text: "A source we list but do not log (Mapbox). Not counted as a problem." },
         ] },
       ],
     },
@@ -106,6 +117,12 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
           { term: "Jev credit", text: "Record each Jev top-up by hand (Jev has no balance service), see the "
             + "estimated credit left, and send test alerts." },
         ] },
+        { kind: "control", label: "Switch off", does: "Switches Jev, DataForSEO or Geoapify off (or back on with "
+          + "Switch on), after a confirm. While off, nothing is sent to it: each refused call is logged at zero cost, "
+          + "Jev answers as if it were down and a DataForSEO or geocoding run stops. Jev and DataForSEO see the "
+          + "change within a minute; a geocoding job reads it when it starts.",
+          cost: "Free. Switching off saves the calls; switching on brings back their usual price.",
+          when: "The provider misbehaves, its credit must not be spent, or a test needs it off." },
         { kind: "control", label: "Re-queue refused jobs", does: "Checks first which failed jobs of the last 14 days "
           + "stopped because a provider refused an account, shows the numbers, and only after you confirm puts them "
           + "back in the queue with a fresh set of attempts, one batch of 50 at a time (Check the next batch for the rest). "
@@ -225,7 +242,9 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
         { kind: "list", items: [
           "TripPlanner's model calls show from the shared log; its per-stage caps are on Cost Operations › AI & data "
             + "spend and the Apps board.",
-          "Bedrock Guardrails and Mapbox write no log yet, so they have no row.",
+          "Mapbox writes no log: its row has no spend or answer times; read its usage on the Mapbox console.",
+          "The partner CRM's rows need your staff sign-in. Their 7-day figures cover the CRM's newest 500 calls (the "
+            + "row says so when there were more).",
           "Trial runs of new models (quick test, judge check, compare) are not on the Models & trials tab yet.",
           "Spend is what we logged at our prices. The AWS bill can differ slightly; Cost Operations shows the bill.",
         ] },
