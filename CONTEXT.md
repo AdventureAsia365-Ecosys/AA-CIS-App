@@ -340,7 +340,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   data; `bedrock_guardrails`, role guard, seeded off), with a secret guard per kind (LLM kinds `aa-llm/<env>/<name>`,
   each provider kind only `aa-cis/<env>/<kind>`) and a host per kind, both in code (`connections.check_secret_name`,
   `BASE_URL_ALLOWLIST`) and as CHECKs; plus `failure_domain`, `served_roles` (routing reads it since AA-1024 A5: a
-  connection that does not serve the stage's role is not in the plan; NULL = every role), `access_state`,
+  connection that does not serve the stage's role is not in the plan; NULL = every role; a model left with no
+  deployment only for that reason is refused with ledger class `role_not_served`, migration 338), `access_state`,
   `last_probe_at`, `balance_source`, `daily_credit_limit`, `low_balance_usd`. The LLM dispatch never sees a provider
   kind (`connections.fetch_connections` / `registry_rows_sync` return `LLM_KINDS` only; `resolve_api_key` refuses
   them). Jev's base URL / timeout / retries (`decide.jev_endpoint`), the Jev and DataForSEO low-balance thresholds and

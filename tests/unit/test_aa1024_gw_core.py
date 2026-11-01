@@ -6,7 +6,10 @@
 - A3: the SDKs and botocore never retry (tests in the adapter / satellite modules); a gateway request makes at most
   MAX_CHAIN_ATTEMPTS provider attempts (LLMClient and embed); every stage has a route deadline by role in
   SAFE_DEFAULTS; an API adapter's per-request timeout is never longer than the connection's.
-- A5: a connection whose served_roles leave the stage's role out is not in the plan (and the invariant says so).
+- A5: a connection whose served_roles leave the stage's role out is not in the plan (and the invariant says so); a
+  model left with no deployment only because of that is refused with the reason (review S263): plan, alias and embed
+  paths, ledger class role_not_served.
+- A3 (review S263): the acc3 InvokeModel client of invoke_claude makes one attempt too.
 - I6: the catalog capability structured_output (tool / any / auto / prompt) shapes a structured Converse request; the
   contract smoke runs a model that refuses a forced tool when it states a non-forced mode.
 Fixtures are invented.
@@ -22,7 +25,9 @@ import pytest
 from shared.llm_client import call_log, client as client_mod, embed as embed_mod, invariant, vendor_route
 from shared.llm_client.catalog import CatalogModel
 from shared.llm_client.connections import BUILTIN_CONNECTIONS
-from shared.llm_client.errors import MAX_CHAIN_ATTEMPTS, RouteAttemptCapReached, RouteDeadlineExceeded
+from shared.llm_client import bedrock_satellite as bs
+from shared.llm_client.errors import (MAX_CHAIN_ATTEMPTS, ROLE_NOT_SERVED, LLMAccessDenied, RouteAttemptCapReached,
+                                      RouteDeadlineExceeded, RouteRoleNotServed, account_level_class, classify)
 from shared.llm_client.models import LLMRequest
 from shared.llm_client.role_config import ROUTE_DEADLINE_S, SAFE_DEFAULTS, StageConfig
 from tests.unit.test_aa1002_s3_deployment_routing import HAIKU, _dep, _org, world  # noqa: F401
@@ -119,7 +124,7 @@ def test_embed_stops_after_the_attempt_cap(rows, monkeypatch):
     def failing(model, account, *a, **kw):
         tried.append(account)
         raise RuntimeError("outage")
-    monkeypatch.setattr(embed_mod, "_plan_targets", lambda *a, **kw: (targets, []))
+    monkeypatch.setattr(embed_mod, "_plan_targets", lambda *a, **kw: (targets, [], None))
     monkeypatch.setattr(embed_mod, "_call", failing)
     with patch.object(embed_mod, "get_stage_config_sync", return_value=SAFE_DEFAULTS["f10_embed"]), \
          patch.object(embed_mod, "get_model_sync", return_value=_embed_model()):
@@ -141,7 +146,8 @@ def test_embed_starts_no_attempt_after_the_route_deadline(rows, monkeypatch):
     def slow_outage(*a, **kw):
         now[0] += 10                                   # the first attempt takes 10 s, past the 5 s deadline
         raise RuntimeError("slow outage")
-    monkeypatch.setattr(embed_mod, "_plan_targets", lambda *a, **kw: ([("a", "w1", None), ("b", "w2", None)], []))
+    monkeypatch.setattr(embed_mod, "_plan_targets",
+                        lambda *a, **kw: ([("a", "w1", None), ("b", "w2", None)], [], None))
     monkeypatch.setattr(embed_mod, "_call", MagicMock(side_effect=slow_outage))
     with patch.object(embed_mod, "get_stage_config_sync", return_value=cfg), \
          patch.object(embed_mod, "get_model_sync", return_value=_embed_model()):
@@ -254,6 +260,121 @@ def test_the_invariant_counts_only_connections_that_serve_the_role():
     judge = dict(route, stage="s1_judge", role="judge")
     assert invariant.check([judge], [], deps, conns)["stages"][0]["status"] == "ok"
     assert "served_roles" in invariant.CONNECTIONS_V2_SQL
+
+
+# ── A5 (review S263): a route emptied by served_roles is refused with that reason ─────────────────────────────────
+
+def _writer_cfg(monkeypatch, model_id):
+    cfg = StageConfig(stage="adhoc_role", role="writer", provider="claude", model_id=model_id, account_route="acc3")
+    monkeypatch.setattr("shared.llm_client.client.get_stage_config_sync", lambda stage: cfg)
+
+
+def _logged(monkeypatch):
+    seen: list = []
+    monkeypatch.setattr(client_mod, "log_gateway_failed_attempt",
+                        lambda request, exc, **kw: seen.append((client_mod.attempt_outcome(exc), str(exc))))
+    return seen
+
+
+def test_the_plan_records_role_skips_and_role_refusal_types_them(world):
+    world.conns["acc3"] = dataclasses.replace(BUILTIN_CONNECTIONS["acc3"], served_roles=("embed", "judge"))
+    world.reset()
+    plan = vendor_route.deployment_plan(world_model("gpt-6-luna"), role="writer")
+    assert plan == [] and plan.role_skips == [("acc3", "writer")]
+    refusal = vendor_route.role_refusal("gpt-6-luna", plan)
+    assert isinstance(refusal, RouteRoleNotServed) and classify(refusal) == ROLE_NOT_SERVED
+    assert "acc3" in str(refusal) and "'writer'" in str(refusal)
+    assert vendor_route.role_refusal("gpt-6-luna", vendor_route.DeploymentPlan([], [("acc3", "throttled")], [],
+                                                                               [("acc3", "writer")])) is None
+    assert vendor_route.role_refusal("gpt-6-luna", None) is None
+
+
+def world_model(key):
+    from shared.llm_client.catalog import get_model_sync
+    return get_model_sync(key)
+
+
+def test_a_plan_emptied_by_served_roles_is_refused_with_the_reason(world, monkeypatch):
+    world.conns["acc3"] = dataclasses.replace(BUILTIN_CONNECTIONS["acc3"], served_roles=("embed", "judge"))
+    world.reset()
+    _writer_cfg(monkeypatch, "gpt-6-luna")
+    seen = _logged(monkeypatch)
+    with pytest.raises(LLMAccessDenied) as e:
+        world.generate(stage="adhoc_role")
+    assert e.value.llm_error_class == ROLE_NOT_SERVED and "does not serve" in str(e.value.__cause__)
+    assert world.calls == []                                           # nothing sent
+    assert seen and seen[0][0] == ("refused", ROLE_NOT_SERVED)
+
+
+def test_a_route_moves_on_past_a_role_refused_model(world, monkeypatch):
+    world.conns["acc3"] = dataclasses.replace(BUILTIN_CONNECTIONS["acc3"], served_roles=("embed", "judge"))
+    world.conns["bedrock-llm-org"] = _org(served_roles=("writer",))
+    world.deps.append(_dep("sonnet-5-5", "bedrock-llm-org", "us.anthropic.claude-sonnet-5-5", 20))
+    world.reset()
+    cfg = StageConfig(stage="adhoc_role", role="writer", provider="claude", model_id="gpt-6-luna",
+                      account_route="acc3", fallback_model_ids=("sonnet-5-5",))
+    monkeypatch.setattr("shared.llm_client.client.get_stage_config_sync", lambda stage: cfg)
+    seen = _logged(monkeypatch)
+    resp = world.generate(stage="adhoc_role")
+    assert resp.fallback_used and [c[1] for c in world.calls] == ["bedrock-llm-org"]
+    assert seen[0][0] == ("refused", ROLE_NOT_SERVED)
+
+
+def test_an_alias_emptied_by_served_roles_names_the_cause(world, monkeypatch):
+    world.conns["acc3"] = dataclasses.replace(BUILTIN_CONNECTIONS["acc3"], served_roles=("embed", "judge"))
+    _acc2_haiku(world, ("embed", "judge", "validate"))
+    _writer_cfg(monkeypatch, "haiku")
+    seen = _logged(monkeypatch)
+    with patch.dict("os.environ", {"LLM_LEGACY_ALIASES": "on"}):
+        with pytest.raises(LLMAccessDenied) as e:
+            world.generate(stage="adhoc_role")
+    assert e.value.llm_error_class == ROLE_NOT_SERVED
+    assert "Bedrock tiers down" not in str(e.value) and "does not serve" in str(e.value)
+    assert world.calls == []
+    assert seen[-1][0] == ("refused", ROLE_NOT_SERVED)
+
+
+def test_embed_emptied_by_served_roles_is_refused_with_the_reason(world, rows, monkeypatch):
+    world.conns["acc2"] = dataclasses.replace(BUILTIN_CONNECTIONS["acc2"], served_roles=("judge", "validate"))
+    world.reset()
+    cfg = StageConfig(stage="f10_embed", role="embed", provider="bedrock", model_id="cohere-embed-v4",
+                      account_route=None)
+    monkeypatch.setattr(embed_mod, "get_stage_config_sync", lambda stage: cfg)
+    with pytest.raises(LLMAccessDenied) as e:
+        embed_mod.embed("f10_embed", ["a still pond"])
+    call_log.wait_for_pending_writes()
+    assert e.value.llm_error_class == ROLE_NOT_SERVED and "does not serve" in str(e.value)
+    assert world.calls == []
+    assert [(r["status"], r["error_class"]) for r in rows] == [("refused", ROLE_NOT_SERVED)]
+
+
+def test_a_role_refusal_beside_an_outage_keeps_the_retry():
+    assert account_level_class([ROLE_NOT_SERVED]) == ROLE_NOT_SERVED
+    assert account_level_class([ROLE_NOT_SERVED, "access_denied"]) == "access_denied"
+    assert account_level_class([ROLE_NOT_SERVED, "other"]) is None
+    assert account_level_class(["throttled"]) is None
+
+
+# ── A3 (review S263): the acc3 InvokeModel client makes one attempt ───────────────────────────────────────────
+
+def test_invoke_claude_builds_a_one_attempt_client():
+    rt = MagicMock()
+    rt.invoke_model.return_value = {"body": io.BytesIO(json.dumps(
+        {"content": [{"text": "ok"}], "usage": {"input_tokens": 1, "output_tokens": 1},
+         "stop_reason": "end_turn"}).encode())}
+    session = MagicMock()
+    session.client.return_value = rt
+    with patch.object(bs, "_get_satellite_session", return_value=session):
+        bs.invoke_claude("a short hello", model="haiku", account="acc3")
+    config = session.client.call_args.kwargs["config"]
+    assert config.retries == {"total_max_attempts": 1, "mode": "standard"}
+    assert config.read_timeout == bs.INVOKE_READ_TIMEOUT_S == 300 and config.connect_timeout == 10
+
+
+def test_a_connection_timeout_wins_over_the_invoke_default():
+    conn = dataclasses.replace(BUILTIN_CONNECTIONS["acc3"], timeout_s=45)
+    config = bs.connection_config(conn, default_read_timeout=300, connect_timeout=10)
+    assert config.read_timeout == 45 and config.retries["total_max_attempts"] == 1
 
 
 # ── I6: structured output modes on Converse ───────────────────────────────────────────────────────────────────

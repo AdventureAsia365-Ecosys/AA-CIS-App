@@ -93,8 +93,10 @@ APP = "cis"
 STATUS_OK, STATUS_REFUSED, STATUS_ERROR = "ok", "refused", "error"
 STATUS_BILLED_UNUSABLE, STATUS_TRUNCATED = "billed_unusable", "truncated"
 STATUSES = (STATUS_OK, STATUS_REFUSED, STATUS_ERROR, STATUS_BILLED_UNUSABLE, STATUS_TRUNCATED)
+# AA-642 A1: 'disabled' = the stage kill switch, CHECK of migration 326. AA-642 A5: 'role_not_served' = no connection
+# serves the stage's role, CHECK of migration 338. (frontend/lib/aiGatewayPolish.test.mjs parses this tuple.)
 ERROR_CLASSES = ("access_denied", "quota_exhausted", "throttled", "credential", "other", "deadline", "budget",
-                 "truncated", "disabled")    # AA-642 A1: 'disabled' = the stage kill switch (CHECK of migration 326)
+                 "truncated", "disabled", "role_not_served")
 # A billed answer cut at its token limit (Anthropic / Bedrock max_tokens, OpenAI length): status 'truncated'. AA-1017:
 # the class and its stop reasons live in errors.py (TRUNCATED, TRUNCATED_STOP_REASONS, imported above), the one place
 # the gateway classifies outcomes.

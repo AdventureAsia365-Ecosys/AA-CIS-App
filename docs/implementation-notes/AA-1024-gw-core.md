@@ -28,6 +28,11 @@ plan's slice ids); commits say `Refs AA-1024`.
 - SDK retries off: Anthropic / OpenAI adapters `max_retries=0` (`SDK_MAX_RETRIES`), botocore
   `total_max_attempts=1` on every runtime client (`bedrock_satellite.connection_config` / `native_runtime`, the
   client's acc3 runtime). The connection's `max_retries` column is no longer read.
+- Review S263 (fix pass): `invoke_claude` (the acc3 InvokeModel body: legacy chain T1.5 / T2.5, alias steps, every
+  `anthropic_native` deployment on an assume-role connection) built its client with no Config, so botocore's legacy
+  defaults applied (up to 5 attempts, 60 s read). It now uses `connection_config(...)` too, with read timeout
+  `INVOKE_READ_TIMEOUT_S` 300 (LLMClient._bedrock's) when the connection's `timeout_s` is NULL and connect 10 s. The
+  Converse / embed satellite clients (`get_satellite_client`) keep botocore's read timeout unless `timeout_s` is set.
 - At most `errors.MAX_CHAIN_ATTEMPTS` (6) provider attempts per gateway request, counted in the request's attempt
   scope (`LLMClient._attempt`) and in `embed()`. The 7th is not started: a 0 USD `deadline` ledger row and
   `RouteAttemptCapReached` (a subclass of `RouteDeadlineExceeded`, so every path that stops on a passed deadline stops
@@ -50,14 +55,32 @@ plan's slice ids); commits say `Refs AA-1024`.
 - `embed()` asks with role `embed`. The legacy alias path (`_alias_steps`) passes the role too.
 - `/admin/llm-availability`: `invariant.check_stage` counts only connections that serve the role and lists the left-out
   route models in `role_skipped`; the availability card shows one line per stage with skips.
+- Review S263 (fix pass): the filter never empties a route silently. `DeploymentPlan.role_skips` names each
+  (connection, role) left out; `vendor_route.role_refusal` turns an empty plan with only role skips (no circuit or
+  budget skip, which keep their own errors) into `errors.RouteRoleNotServed` ("Model X not called: no usable
+  deployment serves the role writer (connection acc2 does not serve it)"). Raised in `_call_plan`, appended to the
+  alias steps' failures in `_alias_steps` (the last-resort message names it instead of "Bedrock tiers down"), and in
+  `embed()`. Ledger: status `refused`, new error_class `role_not_served` (`attempt_outcome`, CHECK of migration 338,
+  admin label "no connection serves this kind of call"). A route whose every tried model was refused that way raises
+  `LLMAccessDenied` with that class (`account_level_class`): a retry cannot help until an admin changes the route or
+  the connection, so the job fails at once and its error names the cause; mixed with an outage it keeps the retry.
 
 ## A2 rows — segment research stages (gaps CIS-7, RW-11 part 4)
 
 ### Decisions
 - Migration 335 creates `segment_research` (the loop, `services/acp_contract/segment_research.py`) and
-  `segment_research_batch` (the batch proposer): role writer, the legacy `haiku` key (the same calls as today), acc3,
-  `aws_only`, deadline 1200, degrade `queue_retry`. `SAFE_DEFAULTS` mirrors them; the prompt register gets their
-  rows (the `a3_search_demand` row stays until the A2 code lane moves the callers).
+  `segment_research_batch` (the batch proposer): role writer, `haiku-5-5`, acc3, `aws_only`, deadline 1200, degrade
+  `queue_retry`. The prompt register gets their rows (the `a3_search_demand` row stays until the A2 code lane moves
+  the callers).
+- Review S263 (fix pass): first drafted on the legacy `haiku` key "as today". Changed to `haiku-5-5`, 327's own
+  mapping of `haiku`: 327 (T-4, approved) took every route off the legacy keys and has already run, so nothing later
+  would move these rows, and seeding `haiku` would add new traffic to the deprecated `_legacy_chain` (removal after
+  30 days with no traffic). The 335 guard now checks `haiku-5-5` is an enabled Converse row with an enabled acc3
+  deployment.
+- `SAFE_DEFAULTS` for the two stages keep `haiku` (reviewer asked to change them; rejected): 327 keeps every
+  SAFE_DEFAULTS entry on the legacy keys on purpose, because they serve a process that cannot read the database,
+  where only the hard-coded chain works without the catalog. They are not a route and add no traffic while the DB
+  is readable.
 
 ## D8 — dead routes (gap CIS-10)
 
@@ -96,8 +119,11 @@ plan's slice ids); commits say `Refs AA-1024`.
 - Rounding an embedding UP to 1 micro-dollar over-states sub-micro-dollar calls (a probe), never a real batch.
 
 ## Should know
-- The code PR does not need the migrations (NULL deadline = none; unstated capability = today's rule; missing segment
-  research rows = SAFE_DEFAULTS), so code and migrations may deploy in any order.
+- Merge the migration PR (334-338) before this code PR: `test_every_ledger_error_class_is_allowed_by_the_newest_check`
+  reads the newest error_class CHECK and fails until 338 is on main. At runtime the code does not need the
+  migrations (NULL deadline = none; unstated capability = today's rule; missing segment research rows =
+  SAFE_DEFAULTS; a `role_not_served` row the old CHECK refuses falls back to the plain ledger statement), so the
+  deploy order is free.
 - `SAFE_DEFAULTS` still has `s1_atom_writer` (only used when the table is unreadable).
 - TripPlanner's Route table (`backend/shared/llm_gateway.py`) still lists `tp_extract` / `tp_component_embed`: a
   follow-up in AA-TripPlanner-Web.

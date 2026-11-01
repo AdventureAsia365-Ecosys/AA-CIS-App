@@ -20,12 +20,12 @@ from .role_config import get_stage_config_sync
 from .bedrock_satellite import DEFAULT_SATELLITE_ACCOUNT
 from .catalog import LEGACY_KEYS, CatalogModel, capability, get_model_sync
 from .schema_check import SchemaMismatch, conform
-from .errors import (DEADLINE, DISABLED, MAX_CHAIN_ATTEMPTS, OTHER, THROTTLED, TRUNCATED, LLMAccessDenied,
-                     LLMStageDisabled, RouteAttemptCapReached, RouteDeadlineExceeded,
-                     account_level_class, classify)
+from .errors import (DEADLINE, DISABLED, MAX_CHAIN_ATTEMPTS, OTHER, ROLE_NOT_SERVED, THROTTLED, TRUNCATED,
+                     LLMAccessDenied, LLMStageDisabled, RouteAttemptCapReached, RouteDeadlineExceeded,
+                     RouteRoleNotServed, account_level_class, classify)
 from . import (breaker, connection_budget, connections, data_scope, family_rule, prompt_registry, stage_params,
                stream_sink, tenant_budget)
-from .vendor_route import (VendorDeployment, deployment_plan, pinned_deployment, split_pin,
+from .vendor_route import (VendorDeployment, deployment_plan, pinned_deployment, role_refusal, split_pin,
                            vendor_deployment_for)
 from .deployments import alias_targets_sync
 
@@ -811,6 +811,10 @@ def attempt_outcome(exc: BaseException) -> tuple[str, str]:
     from shared.cost_guard import BudgetExceeded
     if any(isinstance(link, LLMStageDisabled) for link in _causes(exc)):
         return "refused", DISABLED                     # AA-642 A1: the stage kill switch, nothing was sent
+    if classify(exc) == ROLE_NOT_SERVED:
+        # AA-642 A5 (review S263): the model (or every model of the request) was left out because no connection may
+        # serve the stage's role; nothing was sent. A mixed failure keeps the class _all_failed decided.
+        return "refused", ROLE_NOT_SERVED
     budget_refusals = (BudgetExceeded, tenant_budget.TenantBudgetUnavailable)   # AA-642 A8: unreadable = refused
     if any(isinstance(link, budget_refusals) for link in _causes(exc)):
         return "refused", "budget"
@@ -1133,6 +1137,12 @@ class LLMClient:
                 # AA-1002 (S10): every connection of this target reached its hard monthly budget.
                 logger.info("llm_alias_target_skip", alias=tier, target=key, reason="monthly budget reached")
                 steps.circuit_errors.append(connection_budget.budget_error(model.model_key, plan.budget_skips))
+            elif (refusal := role_refusal(model.model_key, plan)) is not None:
+                # AA-642 A5 (review S263): the served_roles filter emptied this target. Kept as its failure, so the
+                # alias's final error names the cause and, when every target ended so, is LLMAccessDenied
+                # 'role_not_served' (ledger row 'refused' / 'role_not_served') instead of "Bedrock tiers down".
+                logger.info("llm_alias_target_skip", alias=tier, target=key, reason=str(refusal))
+                steps.circuit_errors.append(refusal)
             steps += [(model, target) for target in plan]
         return steps
 
@@ -1441,7 +1451,13 @@ class LLMClient:
         if not (openai_platform_allowed("gpt-4.1") and openai_scope_allowed(stage_scopes(request))):
             logger.error("t3_skipped_gpt41_retired", tier=tier,
                          reason="GPT-4.1 retired (S235); no OpenAI last resort for legacy tiers")
-            raise _all_failed("All LLM providers failed (Bedrock tiers down; GPT-4.1 retired)", failures)
+            message = "All LLM providers failed (Bedrock tiers down; GPT-4.1 retired)"
+            roles = [str(f) for f in failures if isinstance(f, RouteRoleNotServed)]
+            if roles:
+                # AA-642 A5 (review S263): say why a target was not called (served_roles), not only "tiers down".
+                message = (f"Legacy key {tier!r} has no usable path: " if len(roles) == len(failures)
+                           else f"{message}; ") + "; ".join(roles)
+            raise _all_failed(message, failures)
         try:
             resp = self._legacy_tier(request, "gpt-4.1", OPENAI_CONNECTION_KEY, "gpt-4.1",
                                      lambda: self._call_openai(request, model="gpt-4.1"))     # AA-1002 (S10) budget
@@ -1704,6 +1720,11 @@ class LLMClient:
             if budget_skips:
                 # AA-1002 (S10): every usable connection reached its hard monthly budget (a BudgetExceeded).
                 raise connection_budget.budget_error(model.model_key, budget_skips)
+            refusal = role_refusal(model.model_key, plan)
+            if refusal is not None:
+                # AA-642 A5 (review S263): emptied by the served_roles filter: refused with that reason (ledger
+                # 'refused' / 'role_not_served' via attempt_outcome; the route moves on to its next model).
+                raise refusal
             raise RuntimeError(f"Model {model.model_key!r} has no usable deployment (every deployment or its "
                                "connection is disabled, cannot serve it, or its circuit is open)")
         if len(plan) == 1:

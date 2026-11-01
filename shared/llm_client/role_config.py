@@ -199,8 +199,10 @@ SAFE_DEFAULTS: dict[str, StageConfig] = {
                                        fallback_model_ids=_JUDGE_ROUTE_DEFAULT),
     # AA-642 A2 (migration 335): the demand-research loop (services/acp_contract/segment_research.py, one keyword step
     # per call) and the batch proposer (segment_research_batch.py). Both were model_tier="haiku" requests with no
-    # stage; the rows keep that very route (the legacy key: the same calls), writer (they phrase keywords), and the
-    # declared degrade mode queue_retry (the job is re-queued, tech lead T-21's CIS mode).
+    # stage: writer (they phrase keywords), degrade mode queue_retry (the job is re-queued, tech lead T-21's CIS mode).
+    # The database rows route on haiku-5-5 (327's mapping of haiku: no new traffic on the deprecated legacy chain);
+    # these fallbacks keep the legacy key on purpose, like every SAFE_DEFAULTS entry (migration 327): they serve a
+    # process that cannot read the database, where only the hard-coded legacy chain works without the catalog.
     "segment_research":       StageConfig("segment_research", "writer", "claude", "haiku", "acc3",
                                           degrade_mode="queue_retry"),
     "segment_research_batch": StageConfig("segment_research_batch", "writer", "claude", "haiku", "acc3",

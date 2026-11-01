@@ -62,9 +62,10 @@ import structlog
 
 from . import breaker, connections, data_scope
 from .catalog import CatalogModel, get_model_sync
-from .errors import MAX_CHAIN_ATTEMPTS, RouteAttemptCapReached, RouteDeadlineExceeded
+from .errors import (MAX_CHAIN_ATTEMPTS, ROLE_NOT_SERVED, LLMAccessDenied, RouteAttemptCapReached,
+                     RouteDeadlineExceeded)
 from .role_config import get_stage_config_sync
-from .vendor_route import deployment_plan
+from .vendor_route import deployment_plan, role_refusal
 
 logger = structlog.get_logger()
 
@@ -125,15 +126,17 @@ def _targets(model: CatalogModel, account_route: Optional[str],
 
 
 def _plan_targets(model: CatalogModel, account_route: Optional[str], allowed_scopes: Optional[tuple] = None):
-    """([(connection_key, wire id, connection or None)], circuit skips). The connection is None on the no-registry
-    path (today's path, no breaker); circuit skips name the deployments the S4 breaker left out. AA-1002 (S5): only
-    deployments on connections whose data scope the stage's ``allowed_scopes`` allow (None = no stage policy)."""
+    """([(connection_key, wire id, connection or None)], circuit skips, role refusal or None). The connection is None
+    on the no-registry path (today's path, no breaker); circuit skips name the deployments the S4 breaker left out.
+    AA-1002 (S5): only deployments on connections whose data scope the stage's ``allowed_scopes`` allow (None = no
+    stage policy). AA-642 A5 (review S263): the refusal (errors.RouteRoleNotServed) when the plan is empty only because
+    no connection serves the embed role."""
     plan = deployment_plan(model, allowed_scopes, role=EMBED_ROLE)
     if plan is None:
         account = model.account_for(account_route)
-        return ([(account, model.bedrock_profile_ids[account], None)] if account else []), []
+        return ([(account, model.bedrock_profile_ids[account], None)] if account else []), [], None
     return ([(t.connection.connection_key, t.deployment.wire_id, t.connection) for t in plan],
-            list(getattr(plan, "circuit_skips", [])))
+            list(getattr(plan, "circuit_skips", [])), role_refusal(model.model_key, plan))
 
 
 def _resolve(key: str) -> Optional[CatalogModel]:
@@ -334,6 +337,8 @@ def embed(stage: str, texts: list[str], *, input_type: Optional[str] = "search_d
         if dimensions is None:
             dimensions = space.dimension
     errors = []
+    role_refusals: list = []                    # AA-642 A5: models refused because no connection serves embed
+    others_failed = False                       # any other failure (an attempt, an empty plan for another reason)
     attempts = 0
     deadline_s = getattr(cfg, "route_deadline_s", None)
     if not isinstance(deadline_s, int) or isinstance(deadline_s, bool) or deadline_s <= 0:
@@ -349,13 +354,20 @@ def embed(stage: str, texts: list[str], *, input_type: Optional[str] = "search_d
             errors.append(f"{key}: skipped ({reason})")
             _log_failure(stage, key, _RouteSkip(f"{key}: skipped ({reason})"), position=position)
             continue
-        targets, skips = _plan_targets(model, cfg.account_route,
-                                       data_scope.normalize(getattr(cfg, "allowed_scopes", None)))
+        targets, skips, role_refused = _plan_targets(model, cfg.account_route,
+                                                     data_scope.normalize(getattr(cfg, "allowed_scopes", None)))
         if not targets:
-            refusal = (breaker.circuit_error(key, skips) if skips else
+            # AA-642 A5 (review S263): a plan emptied by the served_roles filter is refused with that reason (ledger
+            # 'refused' / 'role_not_served'), not "no Bedrock profile".
+            refusal = (breaker.circuit_error(key, skips) if skips else role_refused if role_refused is not None else
                        _RouteSkip(f"{key}: no Bedrock profile or usable deployment"))
-            errors.append(f"{key}: " + (str(refusal) if skips else "no Bedrock profile or usable deployment"))
+            errors.append(f"{key}: " + (str(refusal) if skips or role_refused is not None
+                                        else "no Bedrock profile or usable deployment"))
             _log_failure(stage, key, refusal, position=position)
+            if role_refused is not None:
+                role_refusals.append(role_refused)
+            else:
+                others_failed = True
             continue
         for account, wire_id, conn in targets:    # AA-1002 (S3): same model on each deployment first
             _route_bound(stage, key, account, attempts, ends_at, deadline_s, errors, position)   # AA-642 A3
@@ -371,6 +383,7 @@ def embed(stage: str, texts: list[str], *, input_type: Optional[str] = "search_d
                 logger.warning("llm_route_attempt_failed", stage=stage, model=key, account=account,
                                position=position, error=str(e)[:300])
                 errors.append(f"{key}@{account}: {str(e)[:200]}" if len(targets) > 1 else f"{key}: {str(e)[:200]}")
+                others_failed = True
                 _log_failure(stage, key, e, connection_key=account, wire_id=wire_id,
                              provider=_provider(account, conn), latency_ms=int((time.monotonic() - started) * 1000),
                              attempt_no=attempts, position=position)
@@ -387,7 +400,12 @@ def embed(stage: str, texts: list[str], *, input_type: Optional[str] = "search_d
             logger.info("llm_embed_success", stage=stage, model=key, account=account,
                         texts=len(texts), in_tokens=resp.input_tokens, cost_usd=resp.cost_usd)
             return resp
-    raise RuntimeError(f"All models in the route failed for stage {stage!r}: " + "; ".join(errors))
+    message = f"All models in the route failed for stage {stage!r}: " + "; ".join(errors)
+    if role_refusals and not others_failed:
+        # AA-642 A5 (review S263): every model was refused because no connection serves the embed role: a retry cannot
+        # help until an admin changes the route or a connection, so the job fails at once and its error says why.
+        raise LLMAccessDenied(message, ROLE_NOT_SERVED) from role_refusals[-1]
+    raise RuntimeError(message)
 
 
 def probe(model: CatalogModel, conn: connections.ProviderConnection, wire_id: str, texts: list[str], *,

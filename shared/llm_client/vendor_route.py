@@ -52,6 +52,7 @@ import structlog
 
 from . import breaker, connection_budget, connections, data_scope, deployments
 from .catalog import LEGACY_KEYS, CatalogModel
+from .errors import RouteRoleNotServed
 
 logger = structlog.get_logger()
 
@@ -181,12 +182,29 @@ class DeploymentPlan(list):
 
     AA-1002 (S10): ``budget_skips``: the (connection_key, cost_guard.ConnectionBudget) of each deployment left out
     because its connection reached its hard monthly budget. An empty plan with only budget skips is
-    ``connection_budget.budget_error`` (a BudgetExceeded: the job stops as a budget stop)."""
+    ``connection_budget.budget_error`` (a BudgetExceeded: the job stops as a budget stop).
 
-    def __init__(self, items=(), circuit_skips=(), budget_skips=()):
+    AA-642 A5 (review S263): ``role_skips``: the (connection_key, role) of each enabled deployment left out because its
+    connection does not serve the stage's role. An empty plan with role skips and no circuit / budget skip is
+    ``role_refusal`` (errors.RouteRoleNotServed): the gateway refuses the model with that reason instead of a generic
+    "no usable deployment"."""
+
+    def __init__(self, items=(), circuit_skips=(), budget_skips=(), role_skips=()):
         super().__init__(items)
         self.circuit_skips: list[tuple[str, Optional[str]]] = list(circuit_skips)
         self.budget_skips: list[tuple[str, object]] = list(budget_skips)
+        self.role_skips: list[tuple[str, Optional[str]]] = list(role_skips)
+
+
+def role_refusal(model_key: str, plan) -> Optional[RouteRoleNotServed]:
+    """AA-642 A5 (review S263): the typed refusal of an EMPTY plan that is empty because of the served_roles filter
+    (role skips, no circuit or budget skip: those keep their own error), else None."""
+    if plan is None or len(plan) or getattr(plan, "circuit_skips", None) or getattr(plan, "budget_skips", None):
+        return None
+    skips = getattr(plan, "role_skips", None)
+    if not skips:
+        return None
+    return RouteRoleNotServed(model_key, skips[0][1], skips)
 
 
 def _skip(model: CatalogModel, d: deployments.ModelDeployment, reason: str) -> None:
@@ -284,11 +302,13 @@ def deployment_plan(model: CatalogModel, allowed_scopes: Optional[tuple] = None,
         if not callable_rows:
             return None
         candidates: list[VendorDeployment] = []
+        role_skips: list[tuple[str, Optional[str]]] = []
         for c in callable_rows:
             if not (c.deployment.enabled and c.connection.enabled):
                 continue
             if not serves_role(c.connection, role):
                 _skip(model, c.deployment, f"the connection does not serve the role {role}")
+                role_skips.append((c.connection.connection_key, role))
                 continue
             scope = c.connection.data_scope
             if allowed_scopes is not None:
@@ -320,7 +340,7 @@ def deployment_plan(model: CatalogModel, allowed_scopes: Optional[tuple] = None,
                 budget_skips.append((c.connection.connection_key, over))
                 continue
             plan.append(c)
-        return DeploymentPlan(plan, skips, budget_skips)
+        return DeploymentPlan(plan, skips, budget_skips, role_skips)
     except Exception as e:  # noqa: BLE001 — a registry problem must never break today's path
         logger.warning("llm_deployment_plan_failed", model=model.model_key, error=str(e)[:200])
         return None

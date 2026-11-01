@@ -85,11 +85,11 @@ export const ERROR_CLASS = defineMessages(
   { access_denied: "access denied", quota_exhausted: "no credit or quota left", throttled: "rate-limited",
     credential: "key or sign-in problem", other: "other error", deadline: "timed out",
     budget: "stopped by a spending cap", truncated: "answer cut off at its length limit",
-    disabled: "stage switched off by an admin" },
+    disabled: "stage switched off by an admin", role_not_served: "no connection serves this kind of call" },
   { access_denied: "bị từ chối truy cập", quota_exhausted: "hết credit hoặc hạn mức", throttled: "bị giới hạn tần suất",
     credential: "lỗi khoá hoặc đăng nhập", other: "lỗi khác", deadline: "quá thời gian",
     budget: "bị trần chi phí chặn", truncated: "câu trả lời bị cắt ở giới hạn độ dài",
-    disabled: "stage bị quản trị viên tắt" },
+    disabled: "stage bị quản trị viên tắt", role_not_served: "không kết nối nào phục vụ loại lệnh gọi này" },
 );
 
 export const M = defineMessages(

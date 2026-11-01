@@ -201,16 +201,28 @@ def get_satellite_client(service_name: str = "bedrock-runtime", account: str = D
 SDK_MAX_ATTEMPTS = 1
 
 
-def connection_config(conn: connections.ProviderConnection):
-    """AA-1018: a botocore Config from the connection's ``timeout_s`` (read timeout). AA-642 A3 (root ADR 0009 decision
-    5, "the gateway owns retries"): ONE attempt per request (``total_max_attempts`` 1, standard mode) whatever the
-    connection's ``max_retries`` says: a throttle or an outage moves on to the route's next deployment / model at once
-    (the gateway's own attempt count, ``errors.MAX_CHAIN_ATTEMPTS``), it is never repeated inside botocore. Runtime
-    clients only, never the Batch control plane."""
+# AA-642 A3 (review S263): the read timeout of the acc3 InvokeModel client (invoke_claude) when the connection's
+# ``timeout_s`` is NULL: LLMClient._bedrock's 300 s, so one long non-streamed reply is not cut at botocore's 60 s
+# default (which, with one attempt, would fail it outright). Connect timeout 10 s, as native_runtime.
+INVOKE_READ_TIMEOUT_S = 300
+INVOKE_CONNECT_TIMEOUT_S = 10
+
+
+def connection_config(conn: connections.ProviderConnection, *, default_read_timeout: Optional[int] = None,
+                      connect_timeout: Optional[int] = None):
+    """AA-1018: a botocore Config from the connection's ``timeout_s`` (read timeout; ``default_read_timeout`` when the
+    column is NULL, botocore's own when that is None too). AA-642 A3 (root ADR 0009 decision 5, "the gateway owns
+    retries"): ONE attempt per request (``total_max_attempts`` 1, standard mode) whatever the connection's
+    ``max_retries`` says: a throttle or an outage moves on to the route's next deployment / model at once (the
+    gateway's own attempt count, ``errors.MAX_CHAIN_ATTEMPTS``), it is never repeated inside botocore. Runtime clients
+    only, never the Batch control plane."""
     from botocore.config import Config
     kw: dict = {"retries": {"total_max_attempts": SDK_MAX_ATTEMPTS, "mode": "standard"}}
-    if conn.timeout_s is not None:
-        kw["read_timeout"] = int(conn.timeout_s)
+    read_timeout = conn.timeout_s if conn.timeout_s is not None else default_read_timeout
+    if read_timeout is not None:
+        kw["read_timeout"] = int(read_timeout)
+    if connect_timeout is not None:
+        kw["connect_timeout"] = int(connect_timeout)
     return Config(**kw)
 
 
@@ -312,7 +324,13 @@ def invoke_claude(
     t0 = time.time()
     try:
         session = _get_satellite_session(account)
-        bedrock_rt = session.client("bedrock-runtime", region_name=region)
+        # AA-642 A3 (review S263): the same one-attempt Config as every other runtime client the gateway builds
+        # (connection_config). Without it botocore's legacy defaults applied (up to 5 attempts per InvokeModel), so
+        # one gateway attempt on the legacy chain, an S3 alias step or an anthropic_native acc3 deployment could be
+        # five provider calls.
+        bedrock_rt = session.client("bedrock-runtime", region_name=region, config=connection_config(
+            satellite_connection(account), default_read_timeout=INVOKE_READ_TIMEOUT_S,
+            connect_timeout=INVOKE_CONNECT_TIMEOUT_S))
 
         body_dict = {
             "anthropic_version": ANTHROPIC_VERSION,
