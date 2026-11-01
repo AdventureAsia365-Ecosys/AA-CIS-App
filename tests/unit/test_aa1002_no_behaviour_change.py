@@ -43,6 +43,7 @@ REGISTRY_READERS = {
                             "policy reads through connections.run_sync / _connect",
     "tenant_budget.py": "AA-1016: the tenant budget and month-spend reads through connections.run_sync / _connect",
     "prompt_registry.py": "AA-900: the shared.prompt_version read through connections.run_sync / _connect",
+    "embedding_space.py": "AA-1026: the embedding space registry read through connections.run_sync / _connect",
 }
 CALL_PATH = ("client.py", "embed.py", "decide.py", "judge.py", "shadow.py", "bedrock_satellite.py",
              "bedrock_batch.py", "call_log.py", "catalog.py", "role_config.py", "pricing.py", "errors.py",
@@ -51,7 +52,8 @@ CALL_PATH = ("client.py", "embed.py", "decide.py", "judge.py", "shadow.py", "bed
              "invariant.py",      # AA-1018: report-only failure-domain rule (reads the tables by SQL, not the registry)
              "stage_params.py",   # AA-1017: stage x model parameters (its own table; empty = the same request object)
              "tenant_budget.py",  # AA-1016: tenant AI budget check (no budget row = nothing read beyond the tenant set)
-             "prompt_registry.py")  # AA-900: prompt version lookup (no registered row = None on the ledger)
+             "prompt_registry.py",  # AA-900: prompt version lookup (no registered row = None on the ledger)
+             "embedding_space.py")  # AA-1026: embedding space registry (unreadable = the built-in 328 mirror)
 
 
 def _imported_modules(path: Path) -> set[str]:

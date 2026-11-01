@@ -146,13 +146,15 @@ def _embeddable(conn, deployments: list) -> list:
     """(deployment, catalog model) pairs of ``conn`` the embedding probe can call: Bedrock, an enabled catalog row with
     api_style embed, a Cohere request shape (the only one embed.py builds)."""
     from shared.llm_client.catalog import get_model_sync
+    from shared.llm_client.embed import EMBED_VENDORS
 
     if conn.kind != "bedrock":
         return []
     out = []
     for d in deployments:
         model = get_model_sync(d.model_key)
-        if model is not None and model.enabled and model.api_style == "embed" and model.vendor == "cohere":
+        # AA-1026: Amazon (Titan V2, the fallback embedding model) has a request shape too (embed.EMBED_VENDORS).
+        if model is not None and model.enabled and model.api_style == "embed" and model.vendor in EMBED_VENDORS:
             out.append((d, model))
     return out
 

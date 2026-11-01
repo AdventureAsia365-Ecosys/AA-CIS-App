@@ -295,6 +295,10 @@
     "capability": null,
     "module": "api.routers.admin_job_runner"
   },
+  "GET /admin/job-runner/embedding-spaces": {
+    "capability": null,
+    "module": "api.routers.admin_job_runner"
+  },
   "GET /admin/job-runner/erasure": {
     "capability": "tenant.read",
     "module": "api.routers.admin_job_runner"
@@ -998,6 +1002,10 @@
   "POST /admin/jev/402-sweep": {
     "capability": "ops.write",
     "module": "api.routers.admin_llm_ops"
+  },
+  "POST /admin/job-runner/embedding-reembed/run": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_job_runner"
   },
   "POST /admin/job-runner/erasure/run": {
     "capability": "tenant.write",

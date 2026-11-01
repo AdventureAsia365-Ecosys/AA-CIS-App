@@ -55,15 +55,18 @@ def make_generate(pool, stage: str, max_tokens: int, budget=None, quality_signal
 
 async def embed_texts(pool, texts: list[str], budget=None, spent: Optional[dict] = None) -> list[list[float]]:
     """One vector per text (96 per call). Raises when a call fails (the job retries)."""
+    from shared.llm_client import embedding_space
     from shared.llm_client.embed import embed
 
+    # AA-1026 D5: the space of geo.tour_place.embedding decides model and dimension (one space per column).
+    space = embedding_space.space_for(embedding_space.TOUR_PLACE_EMBEDDING)
     out: list[list[float]] = []
     for i in range(0, len(texts), EMBED_BATCH):
         batch = texts[i:i + EMBED_BATCH]
         if budget is not None:
             budget.check(ESTIMATE_USD[EMBED_STAGE])
-        resp = await asyncio.to_thread(embed, EMBED_STAGE, batch, input_type="search_document",
-                                       dimensions=EMBED_DIMENSIONS)
+        resp = await asyncio.to_thread(embed, EMBED_STAGE, batch, input_type=space.input_type("document"),
+                                       dimensions=space.dimension, space=space)
         if budget is not None:
             budget.charge(resp.cost_usd)
         if spent is not None:
@@ -72,7 +75,8 @@ async def embed_texts(pool, texts: list[str], budget=None, spent: Optional[dict]
             pool, stage=EMBED_STAGE, role="embed", model=resp.model_used, tokens_in=resp.input_tokens,
             tokens_out=0, cost_usd=resp.cost_usd,
             quality_signal={"app": "cis", "issue": "AA-712", "texts": len(batch),
-                            "dimensions": len(resp.vectors[0]), "tokens_estimated": resp.tokens_estimated},
+                            "dimensions": len(resp.vectors[0]), "tokens_estimated": resp.tokens_estimated,
+                           **embedding_space.ledger_signal(resp)},
             account=resp.account, fallback_used=resp.fallback_used,
             provider="bedrock-native" if resp.account == "acc2" else "bedrock-satellite", **billed_fields(resp))
         out.extend(resp.vectors)
