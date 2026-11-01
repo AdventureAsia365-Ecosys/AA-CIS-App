@@ -52,28 +52,5 @@
     "react-hooks/static-components": {
       "count": 6
     }
-  },
-  "app/admin/upload/page.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 7
-    },
-    "aa-kit/no-hex-colour": {
-      "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    },
-    "aa-kit/no-raw-aa-var": {
-      "count": 16
-    },
-    "aa-kit/no-raw-table": {
-      "count": 5
-    },
-    "react-hooks/purity": {
-      "count": 1
-    },
-    "react-hooks/set-state-in-effect": {
-      "count": 2
-    }
   }
 }

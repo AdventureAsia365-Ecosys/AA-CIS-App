@@ -6,9 +6,11 @@ import {
   ChevronDown, ChevronUp, FileText, Copy, RefreshCw, Search,
   Trash2, RotateCcw,
 } from "lucide-react";
-import { A, serif, sans, mono, Card, SLabel, TH, TD, Badge } from "../_components/adminUi";
 import { Pagination } from "../_components/Pagination";
-import { Button, ScrollX, PageFrame, PageHeader, useFormat, useT, Input, Select } from "../../_kit";
+import {
+  Button, PageFrame, PageHeader, useFormat, useT, Input, Select, K, serif, sans, mono, Section, Eyebrow, Badge,
+  DataTable, IconButton, KX, LinkButton,
+} from "../../_kit";
 import { UP } from "./messages";
 
 const TENANT_ID = "00000000-0000-0000-0000-000000000001";
@@ -173,23 +175,23 @@ function StepIndicator({ step }: { step: 1 | 2 | 3 | 4 | 5 }) {
             <div style={{
               display: "flex", alignItems: "center", gap: 8,
               padding: "7px 14px", borderRadius: 20,
-              background: active ? A.gold : done ? A.greenSoft : A.line2,
+              background: active ? K.accent : done ? K.successSoft : K.line2,
             }}>
               <div style={{
                 width: 20, height: 20, borderRadius: "50%", flexShrink: 0,
                 display: "flex", alignItems: "center", justifyContent: "center",
-                background: active ? "var(--aa-on-solid)" : done ? A.green : A.muted2,
-                color: active ? A.gold : "var(--aa-on-solid)", fontSize: 11, fontWeight: 700,
+                background: active ? KX.onSolid : done ? K.success : K.muted2,
+                color: active ? K.accent : KX.onSolid, fontSize: 11, fontWeight: 700,
               }}>
                 {done ? "✓" : s.n}
               </div>
               <span style={{ fontSize: 12, fontWeight: 600, whiteSpace: "nowrap",
-                color: active ? "var(--aa-on-solid)" : done ? A.green : A.muted }}>
+                color: active ? KX.onSolid : done ? K.success : K.muted }}>
                 {s.label}
               </span>
             </div>
             {i < STEPS.length - 1 && (
-              <div style={{ width: 20, height: 1, background: A.line }} />
+              <div style={{ width: 20, height: 1, background: K.line }} />
             )}
           </React.Fragment>
         );
@@ -202,10 +204,10 @@ function StepIndicator({ step }: { step: 1 | 2 | 3 | 4 | 5 }) {
 
 const DL_LABEL: React.CSSProperties = {
   fontSize: 10, fontWeight: 700, textTransform: "uppercase",
-  letterSpacing: "0.12em", color: A.muted, marginBottom: 2,
+  letterSpacing: "0.12em", color: K.muted, marginBottom: 2,
 };
 const DL_VAL: React.CSSProperties = {
-  fontSize: 12, color: A.body, lineHeight: 1.6, marginBottom: 10,
+  fontSize: 12, color: K.body, lineHeight: 1.6, marginBottom: 10,
 };
 
 function DetailField({ label, value }: { label: string; value: string | null | undefined }) {
@@ -218,71 +220,85 @@ function DetailField({ label, value }: { label: string; value: string | null | u
   );
 }
 
-function TourRow({ tour, idx, isExpanded, onToggle }: {
-  tour: TourPreview; idx: number; isExpanded: boolean; onToggle: () => void;
+// AA-1006: the parsed tours are a kit DataTable (`ReadyToursTable`); a click on a row shows that tour's source fields
+// under the table (was an extra table row under the clicked one).
+function ReadyToursTable({ tours, expanded, onToggle }: {
+  tours: TourPreview[]; expanded: string | null; onToggle: (tourId: string) => void;
 }) {
+  const t = useT(UP);
+  const open = tours.find(x => x.tour_id === expanded) ?? null;
+  const rows = tours.map((tour, i) => ({ tour, idx: i + 1 }));
+  const text = (v: string | null | undefined) => v || "—";
+  return (
+    <>
+      <DataTable<{ tour: TourPreview; idx: number }>
+        tableId="upload-parsed-ready"
+        data={rows}
+        getRowId={(r) => r.tour.tour_id}
+        onRowClick={(r) => onToggle(r.tour.tour_id)}
+        searchable={false}
+        paginate={false}
+        compact
+        columns={[
+          { id: "idx", header: "#", enableSorting: false, cell: ({ row }) => <span style={{ color: K.muted2 }}>{row.original.idx}</span> },
+          { id: "name", header: t("colTourName"), enableSorting: false, cell: ({ row: { original: { tour } } }) => (
+            <span style={{ fontWeight: 600, color: K.ink }}>
+              {tour.src_name || "—"}
+              {(tour.jev_notes ?? []).map(n => (
+                <span key={n} style={{ display: "block", fontSize: 11, fontWeight: 400, color: K.amber, marginTop: 2 }}>{n}</span>
+              ))}
+            </span>
+          ) },
+          { id: "country", header: t("colCountry"), enableSorting: false, cell: ({ row }) => text(row.original.tour.country) },
+          { id: "duration", header: t("colDuration"), enableSorting: false, cell: ({ row }) => text(row.original.tour.duration) },
+          { id: "price", header: t("colPrice"), enableSorting: false, cell: ({ row }) => text(row.original.tour.price_raw) },
+          { id: "group", header: t("colGroupSize"), enableSorting: false, cell: ({ row }) => text(row.original.tour.group_size) },
+          { id: "period", header: t("colPeriod"), enableSorting: false, cell: ({ row }) => text(row.original.tour.period) },
+          { id: "provider", header: t("colProvider"), enableSorting: false, cell: ({ row }) => text(row.original.tour.provider) },
+          { id: "sku", header: t("colSku"), enableSorting: false, cell: ({ row }) => text(row.original.tour.sku) },
+          { id: "status", header: t("colStatus"), enableSorting: false, cell: ({ row }) => (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Badge tone="success">{t("ready")}</Badge>
+              {expanded === row.original.tour.tour_id
+                ? <ChevronUp size={13} style={{ color: K.muted2 }} />
+                : <ChevronDown size={13} style={{ color: K.muted2 }} />}
+            </div>
+          ) },
+        ]}
+      />
+      {open && <TourDetail tour={open} />}
+    </>
+  );
+}
+
+function TourDetail({ tour }: { tour: TourPreview }) {
   const t = useT(UP);
   const itinPreview = tour.src_itineraries
     ? (tour.src_itineraries.length > 200
         ? tour.src_itineraries.slice(0, 200) + "..."
         : tour.src_itineraries)
     : null;
-
   return (
-    <>
-      <tr
-        style={{ cursor: "pointer", background: idx % 2 === 1 ? A.bg : "transparent" }}
-        onClick={onToggle}
-      >
-        <td style={{ ...TD, textAlign: "center" as const, color: A.muted2 }}>{idx}</td>
-        <td style={{ ...TD, fontWeight: 600, color: A.ink }}>
-          {tour.src_name || "—"}
-          {(tour.jev_notes ?? []).map(n => (
-            <div key={n} style={{ fontSize: 11, fontWeight: 400, color: A.amber, marginTop: 2 }}>{n}</div>
-          ))}
-        </td>
-        <td style={TD}>{tour.country || "—"}</td>
-        <td style={TD}>{tour.duration || "—"}</td>
-        <td style={TD}>{tour.price_raw || "—"}</td>
-        <td style={TD}>{tour.group_size || "—"}</td>
-        <td style={TD}>{tour.period || "—"}</td>
-        <td style={TD}>{tour.provider || "—"}</td>
-        <td style={TD}>{tour.sku || "—"}</td>
-        <td style={TD}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <Badge color="green">{t("ready")}</Badge>
-            {isExpanded
-              ? <ChevronUp size={13} style={{ color: A.muted2 }} />
-              : <ChevronDown size={13} style={{ color: A.muted2 }} />}
-          </div>
-        </td>
-      </tr>
-      {isExpanded && (
-        <tr>
-          <td colSpan={10} style={{ padding: 0, background: A.bg }}>
-            <div style={{ padding: "16px 20px 18px", borderBottom: `1px solid ${A.line}` }}>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: "0 32px" }}>
-                <div>
-                  <DetailField label={t("fSubtitle")}    value={tour.src_subtitle} />
-                  <DetailField label={t("fSummary")}     value={tour.src_summary} />
-                  <DetailField label={t("fDescription")} value={tour.src_description} />
-                  <DetailField label={t("fBestTime")}    value={tour.best_time_to_go} />
-                  <DetailField label={t("fFeature")}     value={tour.feature} />
-                </div>
-                <div>
-                  <DetailField label={t("fHighlights")} value={tour.src_highlights} />
-                  <DetailField label={t("fActivities")} value={tour.activities} />
-                  <DetailField label={t("fIncludes")}   value={tour.inclusions} />
-                  <DetailField label={t("fExcludes")}   value={tour.exclusions} />
-                  <DetailField label={t("fItinerary")}  value={itinPreview} />
-                  <DetailField label={t("fLinks")}      value={tour.links} />
-                </div>
-              </div>
-            </div>
-          </td>
-        </tr>
-      )}
-    </>
+    <div style={{ padding: "16px 20px 18px", background: K.bg, borderTop: `1px solid ${K.line}`, borderBottom: `1px solid ${K.line}` }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: K.ink, marginBottom: 10 }}>{tour.src_name || "—"}</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: "0 32px" }}>
+        <div>
+          <DetailField label={t("fSubtitle")}    value={tour.src_subtitle} />
+          <DetailField label={t("fSummary")}     value={tour.src_summary} />
+          <DetailField label={t("fDescription")} value={tour.src_description} />
+          <DetailField label={t("fBestTime")}    value={tour.best_time_to_go} />
+          <DetailField label={t("fFeature")}     value={tour.feature} />
+        </div>
+        <div>
+          <DetailField label={t("fHighlights")} value={tour.src_highlights} />
+          <DetailField label={t("fActivities")} value={tour.activities} />
+          <DetailField label={t("fIncludes")}   value={tour.inclusions} />
+          <DetailField label={t("fExcludes")}   value={tour.exclusions} />
+          <DetailField label={t("fItinerary")}  value={itinPreview} />
+          <DetailField label={t("fLinks")}      value={tour.links} />
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -292,9 +308,9 @@ function Toast({ msg, type }: { msg: string; type: "success" | "error" }) {
   return (
     <div style={{
       position: "fixed", bottom: 24, right: 24, zIndex: 999,
-      background: type === "success" ? A.green : A.red,
-      color: "var(--aa-on-solid)", padding: "12px 20px", borderRadius: 8,
-      fontSize: 13, fontWeight: 500, boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
+      background: type === "success" ? K.success : K.danger,
+      color: KX.onSolid, padding: "12px 20px", borderRadius: 8,
+      fontSize: 13, fontWeight: 500, boxShadow: KX.shadowMd,
       display: "flex", alignItems: "center", gap: 8,
     }}>
       {type === "success" ? <CheckCircle size={14} /> : <XCircle size={14} />}
@@ -322,7 +338,12 @@ function ToursReadySection({ tours, loading, onRefresh }: {
   const [trashedLoading, setTrashedLoading] = useState(false);
   const [localTours, setLocalTours]   = useState<TourReadyItem[]>(tours);
 
-  useEffect(() => { setLocalTours(tours); }, [tours]);
+  // A new `tours` prop (a refresh) replaces the local copy while rendering (was an effect, AA-1006).
+  const [prevTours, setPrevTours] = useState(tours);
+  if (tours !== prevTours) {
+    setPrevTours(tours);
+    setLocalTours(tours);
+  }
 
   const uniqueCountries = Array.from(new Set(
     localTours.map(x => x.country).filter((c): c is string => Boolean(c))
@@ -391,33 +412,31 @@ function ToursReadySection({ tours, loading, onRefresh }: {
   }
 
   return (
-    <Card style={{ padding: 0, marginTop: 32 }}>
+    <Section padded={false} style={{ marginTop: 32 }}>
       <div style={{
-        padding: "14px 20px", borderBottom: `1px solid ${A.line}`,
+        padding: "14px 20px", borderBottom: `1px solid ${K.line}`,
         display: "flex", alignItems: "center", justifyContent: "space-between",
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontFamily: serif, fontSize: 16, fontWeight: 500, color: A.ink }}>
+          <span style={{ fontFamily: serif, fontSize: 16, fontWeight: 500, color: K.ink }}>
             {t("toursReady")}
           </span>
           {!loading && (
             <span style={{
-              fontSize: 12, background: A.goldTint, color: A.gold,
+              fontSize: 12, background: K.accentTint, color: K.accent,
               padding: "2px 10px", borderRadius: 10, fontWeight: 700,
             }}>{filtered.length}</span>
           )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <button onClick={toggleShowTrashed}
-            style={{ fontSize: 11, fontWeight: 600, background: "none", border: `1px solid ${A.line}`, borderRadius: 5, padding: "3px 8px", cursor: "pointer", color: showTrashed ? A.red : A.muted }}>
+          <Button size="sm" variant={showTrashed ? "danger" : "ghost"} aria-pressed={showTrashed} onClick={toggleShowTrashed}>
             {showTrashed ? t("hideTrashed") : t("showTrashed")}
-          </button>
-          <button onClick={onRefresh} title={t("refresh")}
-            style={{ background: "none", border: "none", cursor: "pointer", color: A.muted2, padding: 4 }}>
+          </Button>
+          <IconButton variant="plain" size="sm" onClick={onRefresh} label={t("refresh")}>
             <RefreshCw size={14} />
-          </button>
+          </IconButton>
           <a href="/admin/s1-rewrite" style={{
-            fontSize: 12, fontWeight: 600, color: A.gold,
+            fontSize: 12, fontWeight: 600, color: K.accent,
             textDecoration: "none", display: "flex", alignItems: "center", gap: 4,
           }}>
             {t("goToS1")} <ArrowRight size={12} />
@@ -427,14 +446,14 @@ function ToursReadySection({ tours, loading, onRefresh }: {
 
       {/* Filters */}
       {!loading && localTours.length > 0 && (
-        <div style={{ padding: "10px 16px", borderBottom: `1px solid ${A.line}`, display: "flex", gap: 10 }}>
+        <div style={{ padding: "10px 16px", borderBottom: `1px solid ${K.line}`, display: "flex", gap: 10 }}>
           <Select value={filterCountry} onChange={e => handleCountry(e.target.value)}
-            style={{ padding: "5px 8px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 12, fontFamily: sans, background: A.card }}>
+            style={{ padding: "5px 8px", borderRadius: 6, border: `1px solid ${K.line}`, fontSize: 12, fontFamily: sans, background: K.card }}>
             <option value="">{t("allCountries")}</option>
             {uniqueCountries.map(c => <option key={c} value={c}>{c}</option>)}
           </Select>
           <Select value={filterFile} onChange={e => handleFile(e.target.value)}
-            style={{ padding: "5px 8px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 12, fontFamily: sans, background: A.card, maxWidth: 220 }}>
+            style={{ padding: "5px 8px", borderRadius: 6, border: `1px solid ${K.line}`, fontSize: 12, fontFamily: sans, background: K.card, maxWidth: 220 }}>
             <option value="">{t("allFiles")}</option>
             {uniqueFiles.map(f => <option key={f} value={f}>{stripUuidPrefix(f)}</option>)}
           </Select>
@@ -442,64 +461,51 @@ function ToursReadySection({ tours, loading, onRefresh }: {
       )}
 
       {loading ? (
-        <div style={{ padding: 28, textAlign: "center", color: A.muted, fontSize: 13 }}>
+        <div style={{ padding: 28, textAlign: "center", color: K.muted, fontSize: 13 }}>
           <Loader2 size={16} style={{ animation: "spin 1s linear infinite", marginRight: 8 }} />
           {t("loading")}
         </div>
       ) : localTours.length === 0 ? (
-        <div style={{ padding: 28, textAlign: "center", color: A.muted, fontSize: 13 }}>
+        <div style={{ padding: 28, textAlign: "center", color: K.muted, fontSize: 13 }}>
           {t("noToursReady")}
         </div>
       ) : filtered.length === 0 ? (
-        <div style={{ padding: 28, textAlign: "center", color: A.muted, fontSize: 13 }}>
+        <div style={{ padding: 28, textAlign: "center", color: K.muted, fontSize: 13 }}>
           {t("noToursMatch")}
         </div>
       ) : (
         <>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr>
-                  {[t("colTourName"), t("colCountry"), t("colSourceFile"), t("colIngestedAt"), t("colAction"), ""].map(h => (
-                    <th key={h} style={{ ...TH, textAlign: "left" }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {paginated.map((tr, i) => (
-                  <tr key={tr.tour_id} style={{ background: i % 2 === 1 ? A.bg : "transparent" }}>
-                    <td style={{ ...TD, fontWeight: 600, color: A.ink }}>{tr.src_name || "—"}</td>
-                    <td style={TD}>{tr.country || "—"}</td>
-                    <td style={{ ...TD, color: A.muted, fontSize: 12 }}>
-                      {tr.filename ? stripUuidPrefix(tr.filename) : "—"}
-                    </td>
-                    <td style={{ ...TD, color: A.muted, fontSize: 12 }}>{relativeTime(tr.ingest_at)}</td>
-                    <td style={TD}>
-                      <a href={`/admin/s1-rewrite?tour_id=${tr.tour_id}`} style={{
-                        fontSize: 12, fontWeight: 600, color: A.gold,
+          <DataTable<TourReadyItem>
+            tableId="upload-tours-ready"
+            data={paginated}
+            getRowId={(tr) => tr.tour_id}
+            searchable={false}
+            paginate={false}
+            compact
+            columns={[
+              { id: "name", header: t("colTourName"), enableSorting: false, cell: ({ row: { original: tr } }) => <span style={{ fontWeight: 600, color: K.ink }}>{tr.src_name || "—"}</span> },
+              { id: "country", header: t("colCountry"), enableSorting: false, cell: ({ row: { original: tr } }) => tr.country || "—" },
+              { id: "file", header: t("colSourceFile"), enableSorting: false, cell: ({ row: { original: tr } }) => <span style={{ color: K.muted, fontSize: 12 }}>{tr.filename ? stripUuidPrefix(tr.filename) : "—"}</span> },
+              { id: "ingested", header: t("colIngestedAt"), enableSorting: false, cell: ({ row: { original: tr } }) => <span style={{ color: K.muted, fontSize: 12 }}>{relativeTime(tr.ingest_at)}</span> },
+              { id: "action", header: t("colAction"), enableSorting: false, cell: ({ row: { original: tr } }) => <><a href={`/admin/s1-rewrite?tour_id=${tr.tour_id}`} style={{
+                        fontSize: 12, fontWeight: 600, color: K.accent,
                         textDecoration: "none", display: "flex", alignItems: "center", gap: 4,
                       }}>
                         {t("rewrite")} <ArrowRight size={11} />
-                      </a>
-                    </td>
-                    <td style={TD}>
-                      <button
+                      </a></> },
+              { id: "trash", header: "", enableSorting: false, cell: ({ row: { original: tr } }) => (
+                      <Button size="sm" variant="danger"
                         onClick={() => trashTour(tr.tour_id, tr.src_name || t("thisTour"))}
                         disabled={trashing === tr.tour_id}
                         title={t("trashTitle")}
-                        style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 7px", fontSize: 11, border: `1px solid ${A.redBorder}`, borderRadius: 5, background: A.redTint, cursor: "pointer", color: A.red }}
                       >
                         <Trash2 size={11} />
                         {trashing === tr.tour_id ? "…" : t("trash")}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                      </Button>) },
+            ]}
+          />
           {filtered.length > READY_PAGE_SIZE && (
-            <div style={{ padding: "12px 20px", borderTop: `1px solid ${A.line}`, display: "flex", justifyContent: "flex-end" }}>
+            <div style={{ padding: "12px 20px", borderTop: `1px solid ${K.line}`, display: "flex", justifyContent: "flex-end" }}>
               <Pagination page={page} total={filtered.length} pageSize={READY_PAGE_SIZE} onPage={setPage} />
             </div>
           )}
@@ -508,57 +514,45 @@ function ToursReadySection({ tours, loading, onRefresh }: {
 
       {/* Trashed tours section */}
       {showTrashed && (
-        <div style={{ borderTop: `2px dashed ${A.redBorder}`, marginTop: 0 }}>
-          <div style={{ padding: "10px 20px", background: A.redTint, display: "flex", alignItems: "center", gap: 8 }}>
-            <Trash2 size={13} style={{ color: A.red }} />
-            <span style={{ fontSize: 12, fontWeight: 600, color: A.red }}>
+        <div style={{ borderTop: `2px dashed ${K.dangerBorder}`, marginTop: 0 }}>
+          <div style={{ padding: "10px 20px", background: K.dangerTint, display: "flex", alignItems: "center", gap: 8 }}>
+            <Trash2 size={13} style={{ color: K.danger }} />
+            <span style={{ fontSize: 12, fontWeight: 600, color: K.danger }}>
               {t("trashedTours")} {!trashedLoading && `(${trashedTours.length})`}
             </span>
           </div>
           {trashedLoading ? (
-            <div style={{ padding: 20, textAlign: "center", color: A.muted, fontSize: 13 }}>
+            <div style={{ padding: 20, textAlign: "center", color: K.muted, fontSize: 13 }}>
               <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> {t("loading")}
             </div>
           ) : trashedTours.length === 0 ? (
-            <div style={{ padding: 20, textAlign: "center", color: A.muted, fontSize: 13 }}>{t("noTrashed")}</div>
+            <div style={{ padding: 20, textAlign: "center", color: K.muted, fontSize: 13 }}>{t("noTrashed")}</div>
           ) : (
-            <ScrollX>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead>
-                <tr>
-                  {[t("colTourName"), t("colCountry"), t("colTrashedAt"), ""].map(h => (
-                    <th key={h} style={{ ...TH, textAlign: "left", background: A.redTint }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {trashedTours.map((tr, i) => (
-                  <tr key={tr.tour_id} style={{ background: i % 2 === 1 ? A.redTint : "var(--aa-red-tint2)", opacity: 0.85 }}>
-                    <td style={{ ...TD, color: A.red, fontWeight: 500 }}>{tr.src_name || "—"}</td>
-                    <td style={TD}>{tr.country || "—"}</td>
-                    <td style={{ ...TD, color: A.muted }}>
-                      {tr.deleted_at ? relativeTime(tr.deleted_at) : "—"}
-                    </td>
-                    <td style={TD}>
-                      <button
+            <DataTable<TourReadyItem>
+              tableId="upload-trashed"
+              data={trashedTours}
+              getRowId={(tr) => tr.tour_id}
+              searchable={false}
+              paginate={false}
+              compact
+              columns={[
+                { id: "name", header: t("colTourName"), enableSorting: false, cell: ({ row: { original: tr } }) => <span style={{ color: K.danger, fontWeight: 500 }}>{tr.src_name || "—"}</span> },
+                { id: "country", header: t("colCountry"), enableSorting: false, cell: ({ row: { original: tr } }) => tr.country || "—" },
+                { id: "trashedAt", header: t("colTrashedAt"), enableSorting: false, cell: ({ row: { original: tr } }) => <span style={{ color: K.muted }}>{tr.deleted_at ? relativeTime(tr.deleted_at) : "—"}</span> },
+                { id: "restore", header: "", enableSorting: false, cell: ({ row: { original: tr } }) => <><Button size="sm" variant="ghost"
                         onClick={() => restoreTour(tr.tour_id, tr.src_name || t("thisTour"))}
                         disabled={restoring === tr.tour_id}
                         title={t("restoreTitle")}
-                        style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 7px", fontSize: 11, border: "1px solid var(--aa-green-border2)", borderRadius: 5, background: "var(--aa-green-bg2)", cursor: "pointer", color: A.green }}
                       >
                         <RotateCcw size={11} />
                         {restoring === tr.tour_id ? "…" : t("restore")}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            </ScrollX>
+                      </Button></> },
+              ]}
+            />
           )}
         </div>
       )}
-    </Card>
+    </Section>
   );
 }
 
@@ -582,7 +576,8 @@ function UploadHistorySection({ history, loading, onRefresh }: {
     setTimeout(() => setCopied(null), 1500);
   }
 
-  const now = Date.now();
+  // The time the filter compares against: read once (an impure call is not allowed while rendering).
+  const [now] = useState(() => Date.now());
   const filtered = history.filter(h => {
     if (search && !stripUuidPrefix(h.filename).toLowerCase().includes(search.toLowerCase())) return false;
     if (dateFilter === "today" && (!h.parsed_at || now - new Date(h.parsed_at).getTime() > 86400000)) return false;
@@ -595,31 +590,30 @@ function UploadHistorySection({ history, loading, onRefresh }: {
   function handleDate(v: string)     { setDateFilter(v);  setPage(1); }
 
   return (
-    <Card style={{ padding: 0, marginTop: 20 }}>
+    <Section padded={false} style={{ marginTop: 20 }}>
       <div style={{
-        padding: "14px 20px", borderBottom: `1px solid ${A.line}`,
+        padding: "14px 20px", borderBottom: `1px solid ${K.line}`,
         display: "flex", alignItems: "center", justifyContent: "space-between",
       }}>
-        <span style={{ fontFamily: serif, fontSize: 16, fontWeight: 500, color: A.ink }}>
+        <span style={{ fontFamily: serif, fontSize: 16, fontWeight: 500, color: K.ink }}>
           {t("uploadHistory")}
         </span>
-        <button onClick={onRefresh} title={t("refresh")}
-          style={{ background: "none", border: "none", cursor: "pointer", color: A.muted2, padding: 4 }}>
+        <IconButton variant="plain" size="sm" onClick={onRefresh} label={t("refresh")}>
           <RefreshCw size={14} />
-        </button>
+        </IconButton>
       </div>
 
       {/* Filters */}
       {!loading && history.length > 0 && (
-        <div style={{ padding: "10px 16px", borderBottom: `1px solid ${A.line}`, display: "flex", gap: 10, alignItems: "center" }}>
+        <div style={{ padding: "10px 16px", borderBottom: `1px solid ${K.line}`, display: "flex", gap: 10, alignItems: "center" }}>
           <Select value={dateFilter} onChange={e => handleDate(e.target.value)}
-            style={{ padding: "5px 8px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 12, fontFamily: sans, background: A.card }}>
+            style={{ padding: "5px 8px", borderRadius: 6, border: `1px solid ${K.line}`, fontSize: 12, fontFamily: sans, background: K.card }}>
             <option value="all">{t("allTime")}</option>
             <option value="today">{t("today")}</option>
             <option value="week">{t("last7")}</option>
           </Select>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, border: `1px solid ${A.line}`, borderRadius: 6, padding: "5px 8px", background: A.card, flex: 1, maxWidth: 260 }}>
-            <Search size={12} style={{ color: A.muted2, flexShrink: 0 }} />
+          <div style={{ display: "flex", alignItems: "center", gap: 6, border: `1px solid ${K.line}`, borderRadius: 6, padding: "5px 8px", background: K.card, flex: 1, maxWidth: 260 }}>
+            <Search size={12} style={{ color: K.muted2, flexShrink: 0 }} />
             <Input
               placeholder={t("searchFilename")}
               value={search}
@@ -631,92 +625,66 @@ function UploadHistorySection({ history, loading, onRefresh }: {
       )}
 
       {loading ? (
-        <div style={{ padding: 28, textAlign: "center", color: A.muted, fontSize: 13 }}>
+        <div style={{ padding: 28, textAlign: "center", color: K.muted, fontSize: 13 }}>
           <Loader2 size={16} style={{ animation: "spin 1s linear infinite", marginRight: 8 }} />
           {t("loading")}
         </div>
       ) : history.length === 0 ? (
-        <div style={{ padding: 28, textAlign: "center", color: A.muted, fontSize: 13 }}>
+        <div style={{ padding: 28, textAlign: "center", color: K.muted, fontSize: 13 }}>
           {t("noUploads")}
         </div>
       ) : filtered.length === 0 ? (
-        <div style={{ padding: 28, textAlign: "center", color: A.muted, fontSize: 13 }}>
+        <div style={{ padding: 28, textAlign: "center", color: K.muted, fontSize: 13 }}>
           {t("noUploadsMatch")}
         </div>
       ) : (
         <>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr>
-                  {[t("colFileName"), t("colFileSize"), t("colParsedLanded"), t("colDropped"), t("colParseErrors"),
-                    t("colUploadedAt"), t("colBatchId")].map((h, i) => (
-                    <th key={h} style={{ ...TH, textAlign: i > 0 ? "right" : "left" }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {paginated.map((h, i) => (
-                  <tr key={h.id} style={{ background: i % 2 === 1 ? A.bg : "transparent" }}>
-                    <td style={{ ...TD, maxWidth: 240, overflow: "hidden",
-                      textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>
-                      {stripUuidPrefix(h.filename)}
-                    </td>
-                    <td style={{ ...TD, textAlign: "right", color: A.muted }}>
-                      {h.file_size_kb ? `${h.file_size_kb.toFixed(0)} KB` : "—"}
-                    </td>
-                    <td style={{ ...TD, textAlign: "right" }}>
-                      {/* AA-344: row_count is PARSED only — rows_landed (from
+          <DataTable<UploadHistoryItem>
+            tableId="upload-history"
+            data={paginated}
+            getRowId={(h) => h.id}
+            searchable={false}
+            paginate={false}
+            compact
+            columns={[
+              { id: "file", header: t("colFileName"), enableSorting: false, cell: ({ row: { original: h } }) => <span style={{ maxWidth: 240, overflow: "hidden",
+                      textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>{stripUuidPrefix(h.filename)}</span> },
+              { id: "size", header: t("colFileSize"), enableSorting: false, meta: { align: "right" }, cell: ({ row: { original: h } }) => <span style={{ color: K.muted }}>{h.file_size_kb ? `${h.file_size_kb.toFixed(0)} KB` : "—"}</span> },
+              { id: "parsed", header: t("colParsedLanded"), enableSorting: false, meta: { align: "right" }, cell: ({ row: { original: h } }) => <>{/* AA-344: row_count is PARSED only — rows_landed (from
                           pipeline_runs.ingest_details) is what actually landed in raw_tours.
                           null rows_landed = pre-migration-091 source, show parsed count alone. */}
                       {h.rows_landed !== null
                         ? `${h.row_count ?? "—"} / ${h.rows_landed}`
-                        : (h.row_count ?? "—")}
-                    </td>
-                    <td style={{ ...TD, textAlign: "right" }}>
-                      {h.rows_dropped !== null && h.rows_dropped > 0
-                        ? <Badge color="red">{t("droppedN", h.rows_dropped)}</Badge>
-                        : <span style={{ color: A.muted2, fontSize: 12 }}>
+                        : (h.row_count ?? "—")}</> },
+              { id: "dropped", header: t("colDropped"), enableSorting: false, meta: { align: "right" }, cell: ({ row: { original: h } }) => <>{h.rows_dropped !== null && h.rows_dropped > 0
+                        ? <Badge tone="danger">{t("droppedN", h.rows_dropped)}</Badge>
+                        : <span style={{ color: K.muted2, fontSize: 12 }}>
                             {h.rows_dropped === 0 ? "0" : "—"}
-                          </span>}
-                    </td>
-                    <td style={{ ...TD, textAlign: "right" }}>
-                      {h.parse_error_count > 0
-                        ? <Badge color="red">{t("errorsN", h.parse_error_count)}</Badge>
-                        : <span style={{ color: A.muted2, fontSize: 12 }}>0</span>}
-                    </td>
-                    <td style={{ ...TD, textAlign: "right", color: A.muted, fontSize: 12 }}>
-                      {relativeTime(h.parsed_at)}
-                    </td>
-                    <td style={{ ...TD, textAlign: "right" }}>
-                      {h.batch_id ? (
-                        <button
+                          </span>}</> },
+              { id: "errors", header: t("colParseErrors"), enableSorting: false, meta: { align: "right" }, cell: ({ row: { original: h } }) => <>{h.parse_error_count > 0
+                        ? <Badge tone="danger">{t("errorsN", h.parse_error_count)}</Badge>
+                        : <span style={{ color: K.muted2, fontSize: 12 }}>0</span>}</> },
+              { id: "uploaded", header: t("colUploadedAt"), enableSorting: false, meta: { align: "right" }, cell: ({ row: { original: h } }) => <span style={{ color: K.muted, fontSize: 12 }}>{relativeTime(h.parsed_at)}</span> },
+              { id: "batch", header: t("colBatchId"), enableSorting: false, meta: { align: "right" }, cell: ({ row: { original: h } }) => <>{h.batch_id ? (
+                        <LinkButton tone="inherit" size="sm" weight="regular"
                           onClick={() => copyBatchId(h.batch_id!)}
                           title={t("copyBatch")}
-                          style={{
-                            display: "inline-flex", alignItems: "center", gap: 4,
-                            fontFamily: mono, fontSize: 11, color: copied === h.batch_id ? A.green : A.muted2,
-                            background: "none", border: "none", cursor: "pointer", padding: 0,
-                          }}
+                          style={{ gap: 4, fontFamily: mono, fontSize: 11, color: copied === h.batch_id ? K.success : K.muted2 }}
                         >
                           {h.batch_id.slice(0, 8)}…
                           <Copy size={10} />
-                        </button>
-                      ) : "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                        </LinkButton>
+                      ) : "—"}</> },
+            ]}
+          />
           {filtered.length > HISTORY_PAGE_SIZE && (
-            <div style={{ padding: "12px 20px", borderTop: `1px solid ${A.line}`, display: "flex", justifyContent: "flex-end" }}>
+            <div style={{ padding: "12px 20px", borderTop: `1px solid ${K.line}`, display: "flex", justifyContent: "flex-end" }}>
               <Pagination page={page} total={filtered.length} pageSize={HISTORY_PAGE_SIZE} onPage={setPage} />
             </div>
           )}
         </>
       )}
-    </Card>
+    </Section>
   );
 }
 
@@ -815,23 +783,23 @@ function DuplicateReviewStep({
 
   if (loading) {
     return (
-      <Card>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, color: A.muted, fontSize: 13 }}>
+      <Section>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, color: K.muted, fontSize: 13 }}>
           <Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} />
           {t("loadingDups")}
         </div>
-      </Card>
+      </Section>
     );
   }
 
   if (items.length === 0) {
     return (
-      <Card>
-        <div style={{ color: A.green, fontSize: 14, fontWeight: 600, marginBottom: 16 }}>
+      <Section>
+        <div style={{ color: K.success, fontSize: 14, fontWeight: 600, marginBottom: 16 }}>
           {t("noDups")}
         </div>
         <Button variant="secondary" onClick={onDone}>{t("backToUpload")}</Button>
-      </Card>
+      </Section>
     );
   }
 
@@ -839,40 +807,40 @@ function DuplicateReviewStep({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <Card>
-        <SLabel>{t("dupTitle", items.length)}</SLabel>
-        <p style={{ fontSize: 12, color: A.muted, margin: "0 0 16px" }}>
+      <Section>
+        <Eyebrow>{t("dupTitle", items.length)}</Eyebrow>
+        <p style={{ fontSize: 12, color: K.muted, margin: "0 0 16px" }}>
           {t("dupIntro")}
         </p>
 
         {error && (
-          <div style={{ color: A.red, fontSize: 12, marginBottom: 12 }}>{error}</div>
+          <div style={{ color: K.danger, fontSize: 12, marginBottom: 12 }}>{error}</div>
         )}
 
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
           {items.map(item => (
             <div key={item.staging_id} style={{
-              border: `1px solid ${submitted[item.staging_id] ? A.green : A.line}`,
+              border: `1px solid ${submitted[item.staging_id] ? K.success : K.line}`,
               borderRadius: 10, overflow: "hidden",
             }}>
               {/* Header */}
               <div style={{
-                padding: "10px 16px", background: A.bg,
-                borderBottom: `1px solid ${A.line}`,
+                padding: "10px 16px", background: K.bg,
+                borderBottom: `1px solid ${K.line}`,
                 display: "flex", alignItems: "center", justifyContent: "space-between",
               }}>
-                <span style={{ fontWeight: 600, fontSize: 13, color: A.ink }}>
+                <span style={{ fontWeight: 600, fontSize: 13, color: K.ink }}>
                   {item.incoming.src_name || "—"}
                 </span>
                 {submitted[item.staging_id] && (
-                  <Badge color="green">{t("done")}</Badge>
+                  <Badge tone="success">{t("done")}</Badge>
                 )}
               </div>
 
               {item.matched_deleted && (
                 <div style={{
-                  padding: "8px 16px", background: A.redTint, borderBottom: `1px solid ${A.line}`,
-                  fontSize: 12, color: A.red, fontWeight: 600,
+                  padding: "8px 16px", background: K.dangerTint, borderBottom: `1px solid ${K.line}`,
+                  fontSize: 12, color: K.danger, fontWeight: 600,
                 }}>
                   {t("deletedOn", item.matched_deleted_at ? item.matched_deleted_at.slice(0, 10) : t("earlierDate"))}
                 </div>
@@ -881,10 +849,10 @@ function DuplicateReviewStep({
               {/* Side-by-side */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
                 {/* Incoming */}
-                <div style={{ padding: "12px 16px", borderRight: `1px solid ${A.line}` }}>
+                <div style={{ padding: "12px 16px", borderRight: `1px solid ${K.line}` }}>
                   <div style={{
                     fontSize: 10, fontWeight: 700, textTransform: "uppercase",
-                    letterSpacing: "0.12em", color: A.gold, marginBottom: 8,
+                    letterSpacing: "0.12em", color: K.accent, marginBottom: 8,
                   }}>
                     {t("incoming")}
                   </div>
@@ -902,8 +870,8 @@ function DuplicateReviewStep({
                     value ? (
                       <div key={String(label)} style={{ marginBottom: 6 }}>
                         <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase",
-                          letterSpacing: "0.1em", color: A.muted, marginBottom: 1 }}>{label}</div>
-                        <div style={{ fontSize: 12, color: A.body }}>{value}</div>
+                          letterSpacing: "0.1em", color: K.muted, marginBottom: 1 }}>{label}</div>
+                        <div style={{ fontSize: 12, color: K.body }}>{value}</div>
                       </div>
                     ) : null
                   ))}
@@ -913,7 +881,7 @@ function DuplicateReviewStep({
                 <div style={{ padding: "12px 16px" }}>
                   <div style={{
                     fontSize: 10, fontWeight: 700, textTransform: "uppercase",
-                    letterSpacing: "0.12em", color: A.muted, marginBottom: 8,
+                    letterSpacing: "0.12em", color: K.muted, marginBottom: 8,
                   }}>
                     {t("existing")}
                   </div>
@@ -933,8 +901,8 @@ function DuplicateReviewStep({
                     value ? (
                       <div key={String(label)} style={{ marginBottom: 6 }}>
                         <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase",
-                          letterSpacing: "0.1em", color: A.muted, marginBottom: 1 }}>{label}</div>
-                        <div style={{ fontSize: 12, color: A.body }}>{value}</div>
+                          letterSpacing: "0.1em", color: K.muted, marginBottom: 1 }}>{label}</div>
+                        <div style={{ fontSize: 12, color: K.body }}>{value}</div>
                       </div>
                     ) : null
                   ))}
@@ -944,10 +912,10 @@ function DuplicateReviewStep({
               {/* Decision */}
               {!submitted[item.staging_id] && (
                 <div style={{
-                  padding: "10px 16px", borderTop: `1px solid ${A.line}`,
+                  padding: "10px 16px", borderTop: `1px solid ${K.line}`,
                   display: "flex", alignItems: "center", gap: 12,
                 }}>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: A.muted, flexShrink: 0 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: K.muted, flexShrink: 0 }}>
                     {t("decision")}
                   </span>
                   <Select
@@ -957,8 +925,8 @@ function DuplicateReviewStep({
                     }))}
                     style={{
                       padding: "5px 8px", borderRadius: 6,
-                      border: `1px solid ${A.line}`, fontSize: 12,
-                      fontFamily: sans, background: A.card, flex: 1,
+                      border: `1px solid ${K.line}`, fontSize: 12,
+                      fontFamily: sans, background: K.card, flex: 1,
                     }}
                   >
                     {(Object.entries(decisionLabels(item)) as [Decision, ReturnType<typeof decisionLabels>[string]][]).map(([val, label]) => (
@@ -970,7 +938,7 @@ function DuplicateReviewStep({
             </div>
           ))}
         </div>
-      </Card>
+      </Section>
 
       {!allDecided && (
         <div style={{ display: "flex", gap: 12 }}>
@@ -980,7 +948,7 @@ function DuplicateReviewStep({
             disabled={submitting}
             onClick={confirmAll}
             style={{
-              background: A.gold, border: `1px solid ${A.gold}`,
+              background: K.accent, border: `1px solid ${K.accent}`,
               display: "flex", alignItems: "center", gap: 8,
               opacity: submitting ? 0.6 : 1,
             }}
@@ -993,8 +961,8 @@ function DuplicateReviewStep({
       )}
 
       {allDecided && (
-        <Card>
-          <div style={{ color: A.green, fontSize: 14, fontWeight: 600, marginBottom: 16,
+        <Section>
+          <div style={{ color: K.success, fontSize: 14, fontWeight: 600, marginBottom: 16,
             display: "flex", alignItems: "center", gap: 8 }}>
             <CheckCircle size={16} /> {t("allApplied")}
           </div>
@@ -1003,13 +971,13 @@ function DuplicateReviewStep({
             <a href="/admin/s1-rewrite" style={{
               display: "inline-flex", alignItems: "center", gap: 8,
               padding: "9px 18px", borderRadius: 8,
-              background: A.gold, border: `1px solid ${A.gold}`,
-              fontSize: 13, fontWeight: 600, color: "var(--aa-on-solid)", textDecoration: "none",
+              background: K.accent, border: `1px solid ${K.accent}`,
+              fontSize: 13, fontWeight: 600, color: KX.onSolid, textDecoration: "none",
             }}>
               {t("goToS1")} <ArrowRight size={14} />
             </a>
           </div>
-        </Card>
+        </Section>
       )}
     </div>
   );
@@ -1033,26 +1001,28 @@ function TourContentTab() {
 
   const [uploadHistory, setUploadHistory] = useState<UploadHistoryItem[]>([]);
   const [toursReady, setToursReady]       = useState<TourReadyItem[]>([]);
-  const [historyLoading, setHistoryLoading] = useState(true);
-  const [toursLoading, setToursLoading]     = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
+  // Which refresh each list was loaded for: a new refreshKey shows the loaders until its answers arrive (AA-1006, no
+  // setState in the effect body).
+  const [historyFor, setHistoryFor] = useState<number | null>(null);
+  const [toursFor, setToursFor] = useState<number | null>(null);
+  const historyLoading = historyFor !== refreshKey;
+  const toursLoading = toursFor !== refreshKey;
 
   const [toast, setToast] = useState<{ msg: string; type: "success" | "error" } | null>(null);
 
   useEffect(() => {
-    setHistoryLoading(true);
-    setToursLoading(true);
     fetch("/api/admin/upload-history")
       .then(r => r.ok ? r.json() : { sources: [] })
       .then(d => setUploadHistory(d.sources || []))
       .catch(() => setUploadHistory([]))
-      .finally(() => setHistoryLoading(false));
+      .finally(() => setHistoryFor(refreshKey));
 
     fetch("/api/admin/tours-ready")
       .then(r => r.ok ? r.json() : { tours: [] })
       .then(d => setToursReady(d.tours || []))
       .catch(() => setToursReady([]))
-      .finally(() => setToursLoading(false));
+      .finally(() => setToursFor(refreshKey));
   }, [refreshKey]);
 
   function showToast(msg: string, type: "success" | "error") {
@@ -1233,8 +1203,8 @@ function TourContentTab() {
   const allDoneFilesHaveNoNewTours = doneFiles.length > 0 && doneFiles.every(fileHasNoNewTours);
 
   const fileStatusColor: Record<FileState["status"], string> = {
-    pending: A.muted2, uploading: A.gold, parsing: A.gold,
-    parsed: A.green, "blocked-file": A.red, committing: A.gold, done: A.green, error: A.red,
+    pending: K.muted2, uploading: K.accent, parsing: K.accent,
+    parsed: K.success, "blocked-file": K.danger, committing: K.accent, done: K.success, error: K.danger,
   };
   const fileStatusLabel: Record<FileState["status"], string> = {
     pending: t("stPending"), uploading: t("stUploading"), parsing: t("stParsing"),
@@ -1248,33 +1218,33 @@ function TourContentTab() {
       {/* ── Step 1: Select Files ── */}
       {step === 1 && (
         <div style={{ maxWidth: 620 }}>
-          <Card>
-            <SLabel>{t("sourceFiles")}</SLabel>
+          <Section>
+            <Eyebrow>{t("sourceFiles")}</Eyebrow>
             <div
               onDragOver={e => { e.preventDefault(); setDragging(true); }}
               onDragLeave={() => setDragging(false)}
               onDrop={onDrop}
               onClick={() => fileInputRef.current?.click()}
               style={{
-                border: `2px dashed ${dragging ? A.gold : A.line}`,
+                border: `2px dashed ${dragging ? K.accent : K.line}`,
                 borderRadius: 10, padding: "32px 24px", textAlign: "center",
                 cursor: "pointer", transition: "all .15s", marginBottom: 16,
-                background: dragging ? A.goldTint : A.bg,
+                background: dragging ? K.accentTint : K.bg,
               }}
             >
               <input ref={fileInputRef} type="file" accept=".xlsx" multiple style={{ display: "none" }}
                 onChange={e => { if (e.target.files) addFiles(Array.from(e.target.files)); }} />
-              <Upload size={26} style={{ color: A.muted2, marginBottom: 10 }} />
-              <div style={{ fontSize: 14, fontWeight: 600, color: A.ink }}>
+              <Upload size={26} style={{ color: K.muted2, marginBottom: 10 }} />
+              <div style={{ fontSize: 14, fontWeight: 600, color: K.ink }}>
                 {t("dropHere")}
               </div>
-              <div style={{ fontSize: 12, color: A.muted2, marginTop: 4 }}>
+              <div style={{ fontSize: 12, color: K.muted2, marginTop: 4 }}>
                 {t("supported")}
               </div>
             </div>
 
             {fileError && (
-              <div style={{ display: "flex", alignItems: "center", gap: 8, color: A.red, fontSize: 13, marginBottom: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, color: K.danger, fontSize: 13, marginBottom: 12 }}>
                 <XCircle size={14} />{fileError}
               </div>
             )}
@@ -1285,22 +1255,20 @@ function TourContentTab() {
                 {fileStates.map(fs => (
                   <div key={fs.id} style={{
                     display: "flex", alignItems: "center", gap: 10,
-                    background: A.bg, borderRadius: 8, padding: "8px 12px",
-                    border: `1px solid ${A.line}`,
+                    background: K.bg, borderRadius: 8, padding: "8px 12px",
+                    border: `1px solid ${K.line}`,
                   }}>
-                    <FileText size={14} style={{ color: A.muted2, flexShrink: 0 }} />
-                    <span style={{ fontSize: 13, color: A.ink, flex: 1, minWidth: 0,
+                    <FileText size={14} style={{ color: K.muted2, flexShrink: 0 }} />
+                    <span style={{ fontSize: 13, color: K.ink, flex: 1, minWidth: 0,
                       overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {fs.file.name}
                     </span>
-                    <span style={{ fontSize: 11, color: A.muted2, flexShrink: 0 }}>
+                    <span style={{ fontSize: 11, color: K.muted2, flexShrink: 0 }}>
                       {(fs.file.size / 1024).toFixed(0)} KB
                     </span>
-                    <button onClick={() => removeFile(fs.id)}
-                      style={{ background: "none", border: "none", cursor: "pointer",
-                        color: A.muted2, padding: 0, display: "flex" }}>
+                    <IconButton variant="plain" size="xs" onClick={() => removeFile(fs.id)} label={t("removeFile", fs.file.name)}>
                       <XCircle size={14} />
-                    </button>
+                    </IconButton>
                   </div>
                 ))}
               </div>
@@ -1308,55 +1276,55 @@ function TourContentTab() {
 
             <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
               <div>
-                <label style={{ fontSize: 12, fontWeight: 600, color: A.muted, display: "block", marginBottom: 5 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: K.muted, display: "block", marginBottom: 5 }}>
                   {t("maxTours")}
                 </label>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <Input type="number" min={1} max={500} value={maxTours}
                     onChange={e => setMaxTours(Math.min(500, Math.max(1, Number(e.target.value))))}
                     style={{ width: 90, padding: "7px 10px", borderRadius: 7,
-                      border: `1px solid ${A.line}`, background: A.card,
-                      fontSize: 13, color: A.ink, fontFamily: sans }} />
-                  <span style={{ fontSize: 11, color: A.muted2 }}>{t("minMax")}</span>
+                      border: `1px solid ${K.line}`, background: K.card,
+                      fontSize: 13, color: K.ink, fontFamily: sans }} />
+                  <span style={{ fontSize: 11, color: K.muted2 }}>{t("minMax")}</span>
                 </div>
               </div>
             </div>
 
             <Button variant="primary" disabled={fileStates.length === 0} onClick={doUploadAndParse}
               style={{
-                background: fileStates.length > 0 ? A.gold : A.muted,
-                border: `1px solid ${fileStates.length > 0 ? A.gold : A.muted}`,
+                background: fileStates.length > 0 ? K.accent : K.muted,
+                border: `1px solid ${fileStates.length > 0 ? K.accent : K.muted}`,
                 display: "flex", alignItems: "center", gap: 8,
               }}>
               {t("uploadFiles")} <ArrowRight size={14} />
             </Button>
-          </Card>
+          </Section>
         </div>
       )}
 
       {/* ── Step 2: Uploading ── */}
       {step === 2 && (
         <div style={{ maxWidth: 560 }}>
-          <Card>
-            <SLabel>{t("stepUpload")}</SLabel>
+          <Section>
+            <Eyebrow>{t("stepUpload")}</Eyebrow>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {fileStates.map(fs => (
                 <div key={fs.id} style={{ display: "flex", alignItems: "center", gap: 12 }}>
                   <div style={{
                     width: 22, height: 22, borderRadius: "50%", flexShrink: 0,
                     display: "flex", alignItems: "center", justifyContent: "center",
-                    background: fs.status === "done" || fs.status === "parsed" ? A.green
-                      : fs.status === "error" ? A.red : A.gold,
+                    background: fs.status === "done" || fs.status === "parsed" ? K.success
+                      : fs.status === "error" ? K.danger : K.accent,
                   }}>
                     {fs.status === "uploading" || fs.status === "parsing"
-                      ? <Loader2 size={12} style={{ color: "var(--aa-on-solid)", animation: "spin 1s linear infinite" }} />
+                      ? <Loader2 size={12} style={{ color: KX.onSolid, animation: "spin 1s linear infinite" }} />
                       : fs.status === "error"
-                        ? <XCircle size={12} style={{ color: "var(--aa-on-solid)" }} />
-                        : <CheckCircle size={12} style={{ color: "var(--aa-on-solid)" }} />}
+                        ? <XCircle size={12} style={{ color: KX.onSolid }} />
+                        : <CheckCircle size={12} style={{ color: KX.onSolid }} />}
                   </div>
                   <span style={{ fontSize: 13, flex: 1, minWidth: 0,
                     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                    color: fs.status === "error" ? A.red : A.body }}>
+                    color: fs.status === "error" ? K.danger : K.body }}>
                     {fs.file.name}
                   </span>
                   <span style={{ fontSize: 12, fontWeight: 500, color: fileStatusColor[fs.status], flexShrink: 0 }}>
@@ -1366,11 +1334,11 @@ function TourContentTab() {
               ))}
             </div>
             {allUploading && (
-              <div style={{ marginTop: 16, color: A.muted, fontSize: 12 }}>
+              <div style={{ marginTop: 16, color: K.muted, fontSize: 12 }}>
                 {t("uploadingParallel")}
               </div>
             )}
-          </Card>
+          </Section>
         </div>
       )}
 
@@ -1380,125 +1348,104 @@ function TourContentTab() {
           {/* Summary cards */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 200px), 1fr))", gap: 14 }}>
             {[
-              { label: t("toursReadyCard"),   value: totalReady,   color: A.green },
-              { label: t("toursBlockedCard"), value: totalBlocked, color: totalBlocked > 0 ? A.red : A.muted2 },
-              { label: t("filesCard"),         value: fileStates.length, color: A.gold },
+              { label: t("toursReadyCard"),   value: totalReady,   color: K.success },
+              { label: t("toursBlockedCard"), value: totalBlocked, color: totalBlocked > 0 ? K.danger : K.muted2 },
+              { label: t("filesCard"),         value: fileStates.length, color: K.accent },
             ].map(c => (
-              <Card key={c.label}>
-                <SLabel>{c.label}</SLabel>
+              <Section key={c.label}>
+                <Eyebrow>{c.label}</Eyebrow>
                 <div style={{ fontFamily: sans, fontVariantNumeric: "tabular-nums", fontSize: 28, fontWeight: 600,
                   color: c.color, letterSpacing: "-0.02em" }}>{c.value}</div>
-              </Card>
+              </Section>
             ))}
           </div>
 
           {/* Per-file results */}
           {fileStates.map(fs => (
-            <Card key={fs.id} style={{ padding: 0,
-              border: fs.status === "error" || fs.status === "blocked-file"
-                ? `1px solid ${A.red}` : undefined }}>
+            <Section padded={false} style={{ border: fs.status === "error" || fs.status === "blocked-file"
+                ? `1px solid ${K.danger}` : undefined }} key={fs.id}>
               <div
                 style={{
-                  padding: "14px 20px", borderBottom: `1px solid ${A.line}`,
+                  padding: "14px 20px", borderBottom: `1px solid ${K.line}`,
                   display: "flex", alignItems: "center", gap: 10,
                   cursor: "pointer",
                 }}
                 onClick={() => updateFile(fs.id, { expanded: !fs.expanded })}
               >
                 {fs.status === "error" || fs.status === "blocked-file"
-                  ? <XCircle size={14} style={{ color: A.red }} />
-                  : <CheckCircle size={14} style={{ color: A.green }} />}
-                <span style={{ flex: 1, fontWeight: 600, fontSize: 14, color: A.ink }}>
+                  ? <XCircle size={14} style={{ color: K.danger }} />
+                  : <CheckCircle size={14} style={{ color: K.success }} />}
+                <span style={{ flex: 1, fontWeight: 600, fontSize: 14, color: K.ink }}>
                   {fs.file.name}
                 </span>
                 {fs.status === "parsed" && (
                   <>
-                    <Badge color="green">{t("readyN", fs.parseResult?.ready_count ?? 0)}</Badge>
+                    <Badge tone="success">{t("readyN", fs.parseResult?.ready_count ?? 0)}</Badge>
                     {(fs.parseResult?.blocked_count ?? 0) > 0 && (
-                      <Badge color="red">{t("blockedN", fs.parseResult?.blocked_count ?? 0)}</Badge>
+                      <Badge tone="danger">{t("blockedN", fs.parseResult?.blocked_count ?? 0)}</Badge>
                     )}
                   </>
                 )}
                 {fs.status === "blocked-file" && (
-                  <Badge color="red">{t("fileBlocked")}</Badge>
+                  <Badge tone="danger">{t("fileBlocked")}</Badge>
                 )}
                 {fs.status === "error" && (
-                  <Badge color="red">{t("error")}</Badge>
+                  <Badge tone="danger">{t("error")}</Badge>
                 )}
-                {fs.expanded ? <ChevronUp size={14} style={{ color: A.muted2 }} /> : <ChevronDown size={14} style={{ color: A.muted2 }} />}
+                {fs.expanded ? <ChevronUp size={14} style={{ color: K.muted2 }} /> : <ChevronDown size={14} style={{ color: K.muted2 }} />}
               </div>
 
               {fs.expanded && (
                 <div style={{ padding: "0" }}>
                   {/* Error state */}
                   {(fs.status === "error" || fs.status === "blocked-file") && (
-                    <div style={{ padding: "16px 20px", color: A.red, fontSize: 13 }}>
+                    <div style={{ padding: "16px 20px", color: K.danger, fontSize: 13 }}>
                       {fs.parseError || fs.parseResult?.message || t("uploadFailed")}
                     </div>
                   )}
 
                   {/* Ready tours table */}
                   {fs.status === "parsed" && (fs.parseResult?.ready_count ?? 0) > 0 && (
-                    <div style={{ overflowX: "auto" }}>
+                    <div>
                       <div style={{ padding: "10px 20px 4px", fontSize: 11, fontWeight: 700,
-                        textTransform: "uppercase", letterSpacing: "0.12em", color: A.muted }}>
+                        textTransform: "uppercase", letterSpacing: "0.12em", color: K.muted }}>
                         {t("readyTours")}
                       </div>
-                      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                        <thead>
-                          <tr>
-                            {["#", t("colTourName"), t("colCountry"), t("colDuration"), t("colPrice"), t("colGroupSize"),
-                              t("colPeriod"), t("colProvider"), t("colSku"), t("colStatus")].map((h, i) => (
-                              <th key={h} style={{ ...TH, textAlign: i === 0 ? "center" : "left" }}>{h}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(fs.parseResult?.tours ?? []).map((tour, i) => (
-                            <TourRow
-                              key={tour.tour_id}
-                              tour={tour}
-                              idx={i + 1}
-                              isExpanded={expandedRow === tour.tour_id}
-                              onToggle={() => setExpandedRow(prev => prev === tour.tour_id ? null : tour.tour_id)}
-                            />
-                          ))}
-                        </tbody>
-                      </table>
+                      <ReadyToursTable
+                        tours={fs.parseResult?.tours ?? []}
+                        expanded={expandedRow}
+                        onToggle={(id) => setExpandedRow(prev => prev === id ? null : id)}
+                      />
                     </div>
                   )}
 
                   {/* Blocked tours table */}
                   {fs.status === "parsed" && (fs.parseResult?.blocked_count ?? 0) > 0 && (
-                    <div style={{ overflowX: "auto" }}>
+                    <div>
                       <div style={{ padding: "10px 20px 4px", fontSize: 11, fontWeight: 700,
-                        textTransform: "uppercase", letterSpacing: "0.12em", color: A.red }}>
+                        textTransform: "uppercase", letterSpacing: "0.12em", color: K.danger }}>
                         {t("blockedTours")}
                       </div>
-                      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                        <thead>
-                          <tr>
-                            {[t("colTourName"), t("colCountry"), t("colReason"), t("colDetails")].map(h => (
-                              <th key={h} style={{ ...TH, textAlign: "left" }}>{h}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(fs.parseResult?.blocked_tours ?? []).map((bt, i) => (
-                            <tr key={i} style={{ background: i % 2 === 1 ? A.bg : "transparent" }}>
-                              <td style={{ ...TD, fontWeight: 600 }}>{bt.src_name}</td>
-                              <td style={TD}>{bt.country || "—"}</td>
-                              <td style={TD}>
-                                {/* AA-490: duplicate_in_file (two rows in THIS upload sharing
+                      <DataTable<BlockedTour & { rowId: string }>
+                        tableId="upload-parsed-blocked"
+                        data={(fs.parseResult?.blocked_tours ?? []).map((bt, i) => ({ ...bt, rowId: String(i) }))}
+                        getRowId={(bt) => bt.rowId}
+                        searchable={false}
+                        paginate={false}
+                        compact
+                        columns={[
+                          { id: "name", header: t("colTourName"), enableSorting: false, cell: ({ row: { original: bt } }) => <span style={{ fontWeight: 600 }}>{bt.src_name}</span> },
+                          { id: "country", header: t("colCountry"), enableSorting: false, cell: ({ row: { original: bt } }) => bt.country || "—" },
+                          { id: "reason", header: t("colReason"), enableSorting: false, cell: ({ row: { original: bt } }) => <>{/* AA-490: duplicate_in_file (two rows in THIS upload sharing
                                     name+provider, mirrors the real Commit-time drop from
                                     AA-488 Gap 1) is now distinguished from duplicate_tour
                                     (already in the DB catalog) — was silently absent from
                                     preview before this fix. */}
-                                <Badge color={
-                                  bt.reason === "duplicate_tour"    ? "blue"  :
-                                  bt.reason === "duplicate_of_existing" ? "blue" :
-                                  bt.reason === "empty_itinerary"   ? "red"   :
-                                  bt.reason === "duplicate_in_file" ? "amber" : "amber"
+                                <Badge tone={
+                                  bt.reason === "duplicate_tour"    ? "info"  :
+                                  bt.reason === "duplicate_of_existing" ? "info" :
+                                  bt.reason === "empty_itinerary"   ? "danger"   :
+                                  bt.reason === "duplicate_in_file" ? "warning" : "warning"
                                 }>
                                   {bt.reason === "duplicate_tour"    ? t("rDuplicate") :
                                    bt.reason === "duplicate_in_file" ? t("rDuplicateInFile") :
@@ -1509,22 +1456,17 @@ function TourContentTab() {
                                    bt.reason === "not_a_tour"        ? t("rNotATour") :
                                    bt.reason === "thin_itinerary"    ? t("rThinItinerary") :
                                                                        t("rMissingFields")}
-                                </Badge>
-                              </td>
-                              <td style={{ ...TD, fontSize: 12, color: A.muted }}>
-                                {bt.reason === "missing_fields"
+                                </Badge></> },
+                          { id: "details", header: t("colDetails"), enableSorting: false, cell: ({ row: { original: bt } }) => <span style={{ fontSize: 12, color: K.muted }}>{bt.reason === "missing_fields"
                                   ? (bt.missing_fields ?? []).join(", ")
-                                  : bt.message || t("alreadyInCatalog")}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                                  : bt.message || t("alreadyInCatalog")}</span> },
+                        ]}
+                      />
                     </div>
                   )}
                 </div>
               )}
-            </Card>
+            </Section>
           ))}
 
           {/* Action buttons */}
@@ -1535,8 +1477,8 @@ function TourContentTab() {
               disabled={!hasFilesToCommit}
               onClick={doCommit}
               style={{
-                background: hasFilesToCommit ? A.gold : A.muted,
-                border: `1px solid ${hasFilesToCommit ? A.gold : A.muted}`,
+                background: hasFilesToCommit ? K.accent : K.muted,
+                border: `1px solid ${hasFilesToCommit ? K.accent : K.muted}`,
                 display: "flex", alignItems: "center", gap: 8,
                 opacity: hasFilesToCommit ? 1 : 0.5,
                 cursor: hasFilesToCommit ? "pointer" : "not-allowed",
@@ -1551,8 +1493,8 @@ function TourContentTab() {
       {/* ── Step 4: Commit ── */}
       {step === 4 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          <Card>
-            <SLabel>{t("savingDb")}</SLabel>
+          <Section>
+            <Eyebrow>{t("savingDb")}</Eyebrow>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {fileStates.filter(f => f.status !== "blocked-file").map(fs => {
                 const noNewTours = fs.status === "done" && fileHasNoNewTours(fs);
@@ -1561,20 +1503,20 @@ function TourContentTab() {
                   <div style={{
                     width: 22, height: 22, borderRadius: "50%", flexShrink: 0,
                     display: "flex", alignItems: "center", justifyContent: "center",
-                    background: fs.status === "done" ? (noNewTours ? A.gold : A.green)
-                      : fs.status === "error" ? A.red : A.gold,
+                    background: fs.status === "done" ? (noNewTours ? K.accent : K.success)
+                      : fs.status === "error" ? K.danger : K.accent,
                   }}>
                     {fs.status === "committing"
-                      ? <Loader2 size={12} style={{ color: "var(--aa-on-solid)", animation: "spin 1s linear infinite" }} />
+                      ? <Loader2 size={12} style={{ color: KX.onSolid, animation: "spin 1s linear infinite" }} />
                       : fs.status === "error"
-                        ? <XCircle size={12} style={{ color: "var(--aa-on-solid)" }} />
+                        ? <XCircle size={12} style={{ color: KX.onSolid }} />
                         : noNewTours
-                          ? <AlertCircle size={12} style={{ color: "var(--aa-on-solid)" }} />
-                          : <CheckCircle size={12} style={{ color: "var(--aa-on-solid)" }} />}
+                          ? <AlertCircle size={12} style={{ color: KX.onSolid }} />
+                          : <CheckCircle size={12} style={{ color: KX.onSolid }} />}
                   </div>
-                  <span style={{ fontSize: 13, flex: 1, color: A.body }}>{fs.file.name}</span>
+                  <span style={{ fontSize: 13, flex: 1, color: K.body }}>{fs.file.name}</span>
                   <span style={{ fontSize: 12, fontWeight: 600,
-                    color: fs.status === "done" && noNewTours ? A.gold : fileStatusColor[fs.status] }}>
+                    color: fs.status === "done" && noNewTours ? K.accent : fileStatusColor[fs.status] }}>
                     {fs.status === "done"
                       ? (() => {
                           const written = fs.commitResult?.tours_written ?? fs.commitResult?.tour_count ?? 0;
@@ -1586,7 +1528,7 @@ function TourContentTab() {
                       : fileStatusLabel[fs.status]}
                   </span>
                   {fs.commitError && (
-                    <span style={{ fontSize: 11, color: A.red }}>{fs.commitError}</span>
+                    <span style={{ fontSize: 11, color: K.danger }}>{fs.commitError}</span>
                   )}
                 </div>
                 );
@@ -1596,7 +1538,7 @@ function TourContentTab() {
             {allDone && dupBatchIds.length === 0 && allDoneFilesHaveNoNewTours && (
               <div style={{ marginTop: 20 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8,
-                  color: A.gold, fontSize: 14, fontWeight: 600, marginBottom: 16 }}>
+                  color: K.accent, fontSize: 14, fontWeight: 600, marginBottom: 16 }}>
                   <AlertCircle size={16} />
                   {t("toastNoNew")}
                 </div>
@@ -1609,7 +1551,7 @@ function TourContentTab() {
             {allDone && dupBatchIds.length === 0 && !allDoneFilesHaveNoNewTours && (
               <div style={{ marginTop: 20 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8,
-                  color: A.green, fontSize: 14, fontWeight: 600, marginBottom: 16 }}>
+                  color: K.success, fontSize: 14, fontWeight: 600, marginBottom: 16 }}>
                   <CheckCircle size={16} />
                   {t("doneReady")}
                 </div>
@@ -1618,15 +1560,15 @@ function TourContentTab() {
                   <a href="/admin/s1-rewrite" style={{
                     display: "inline-flex", alignItems: "center", gap: 8,
                     padding: "9px 18px", borderRadius: 8,
-                    background: A.gold, border: `1px solid ${A.gold}`,
-                    fontSize: 13, fontWeight: 600, color: "var(--aa-on-solid)", textDecoration: "none",
+                    background: K.accent, border: `1px solid ${K.accent}`,
+                    fontSize: 13, fontWeight: 600, color: KX.onSolid, textDecoration: "none",
                   }}>
                     {t("goToS1")} <ArrowRight size={14} />
                   </a>
                 </div>
               </div>
             )}
-          </Card>
+          </Section>
         </div>
       )}
 
@@ -1666,9 +1608,9 @@ export default function UploadPage() {
             description={
               <>
                 <span style={{ display: "block", marginBottom: 4 }}>{t("subtitle")}</span>
-                <span style={{ display: "block", fontSize: 12, color: A.muted2 }}>
+                <span style={{ display: "block", fontSize: 12, color: K.muted2 }}>
                   {t("brandLead")}{" "}
-                  <a href="/admin/settings?tab=brand" style={{ color: A.gold, textDecoration: "none", fontWeight: 500 }}>
+                  <a href="/admin/settings?tab=brand" style={{ color: K.accent, textDecoration: "none", fontWeight: 500 }}>
                     {t("brandLink")}
                   </a>
                 </span>
