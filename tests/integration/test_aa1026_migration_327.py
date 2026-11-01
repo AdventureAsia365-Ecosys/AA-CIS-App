@@ -175,9 +175,14 @@ def test_a_legacy_shadow_maps_and_is_cleared_when_it_becomes_the_primary(cur):
 
 
 def test_openai_budget_and_policy_set_once_an_admin_value_is_kept(cur):
+    # Start from the pre-327 state (no budget, no policy row): other modules may have changed the connection.
+    cur.execute("UPDATE shared.llm_provider_connection SET monthly_budget_usd = NULL "
+                "WHERE connection_key = 'openai-direct'")
+    cur.execute("DELETE FROM shared.llm_connection_cost_policy WHERE connection_key = 'openai-direct'")
+    cur.execute(_body())
     cur.execute("SELECT monthly_budget_usd AS b FROM shared.llm_provider_connection "
                 "WHERE connection_key = 'openai-direct'")
-    assert float(cur.fetchone()["b"]) == 10.0                                 # conftest applied 327
+    assert float(cur.fetchone()["b"]) == 10.0
     cur.execute("SELECT alert_pct, hard_stop FROM shared.llm_connection_cost_policy "
                 "WHERE connection_key = 'openai-direct'")
     assert tuple(cur.fetchone().values()) == (80, True)

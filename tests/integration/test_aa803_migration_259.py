@@ -105,7 +105,9 @@ def test_new_rows_are_on_no_route(cur):
     # 259 routes no stage; the later migrations that route one are listed here: 282 (S251, supply_content_writer) and
     # 327 (AA-1026, every route that named the legacy haiku / sonnet keys, supply_content_writer included).
     assert "supply_content_writer" in {r[0] for r in rows}
-    assert {r[1] for r in rows} <= {"migration-282-aa835", "migration-327-aa1026"}
+    # Rows a test admin switched (the AA-642 A1 stage-switch tests sign as admin:zz-*) are not migrations.
+    migrated = {r[1] for r in rows if not str(r[1]).startswith("admin:zz-")}
+    assert migrated <= {"migration-282-aa835", "migration-327-aa1026"}
 
 
 def test_sonnet_drops_the_legacy_acc2_profile_only(cur):
