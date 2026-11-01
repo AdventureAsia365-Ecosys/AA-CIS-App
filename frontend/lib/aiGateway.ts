@@ -822,6 +822,7 @@ export function isAccessState(state: string | null | undefined): state is Access
 export const ERROR_CLASSES = [
   "access_denied", "quota_exhausted", "throttled", "credential", "other", "deadline", "budget", "truncated",
   "disabled",                     // AA-642 A1 (migration 326): the stage kill switch refused the call
+  "role_not_served",              // AA-642 A5 (migration 338): no connection may serve the stage's role
 ] as const;
 export type ErrorClass = (typeof ERROR_CLASSES)[number];
 

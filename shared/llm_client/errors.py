@@ -55,6 +55,9 @@ DEADLINE = "deadline"
 LLM_ACCESS_DENIED_REASON = "llm_access_denied"
 # AA-642 A1 (migration 326): the ledger class of a call the stage kill switch refused (llm_role_config.is_active false).
 DISABLED = "disabled"
+# AA-642 A5 (review S263): the ledger class of a model the gateway did not call because no deployment it may use is on a
+# connection that serves the stage's role (llm_provider_connection.served_roles, migration 322; CHECK of migration 338).
+ROLE_NOT_SERVED = "role_not_served"
 _STAGE_DISABLED = re.compile(r"\bstage '([a-z0-9][a-z0-9_]*)' is switched off\b")
 
 ACCOUNT_LEVEL = frozenset({ACCESS_DENIED, QUOTA_EXHAUSTED})
@@ -110,6 +113,41 @@ class RouteDeadlineExceeded(RuntimeError):
     error_class 'deadline', status 'error'). Not account-level: a job retries it with its normal backoff."""
 
     llm_error_class = DEADLINE
+
+
+# AA-642 A3 (root ADR 0009 decision 5, gap RW-11): "the gateway owns retries (SDK retries off, at most six attempts per
+# chain)". The attempts of one gateway request (every model of the route, every deployment of a model, every legacy
+# tier) are counted; the seventh is never started.
+MAX_CHAIN_ATTEMPTS = 6
+
+
+class RouteAttemptCapReached(RouteDeadlineExceeded):
+    """AA-642 A3: the request already made ``MAX_CHAIN_ATTEMPTS`` provider attempts, so the gateway starts no other
+    one. A route bound like the deadline (same handling, ledger error_class 'deadline', 0 USD, no provider call), so
+    every path that stops on a passed deadline stops here too."""
+
+
+class RouteRoleNotServed(RuntimeError):
+    """AA-642 A5 (review S263): ``model_key`` was not called because the only deployments left for it are on connections
+    whose ``served_roles`` do not include the stage's ``role`` (``role_skips``: the connection keys). Raised by the
+    gateway without a provider call (ledger: status refused, error_class ``role_not_served``, 0 USD). A route whose
+    every tried model ended this way raises LLMAccessDenied with that class (``account_level_class``): a retry cannot
+    help until an admin changes the route or the connection, so the job runner fails the job at once and the job error
+    names the cause."""
+
+    llm_error_class = ROLE_NOT_SERVED
+
+    def __init__(self, model_key: str, role: Optional[str], role_skips):
+        role_skips = tuple(role_skips)
+        super().__init__(model_key, role, role_skips)    # every arg, so pickle / copy rebuild it (B042)
+        self.model_key = model_key
+        self.role = role
+        self.connection_keys = tuple(dict.fromkeys(k for k, _ in role_skips))
+
+    def __str__(self) -> str:
+        conns = ", ".join(self.connection_keys) or "none"
+        return (f"Model {self.model_key!r} not called: no usable deployment serves the role {self.role!r} "
+                f"(connection {conns} does not serve it; see llm_provider_connection.served_roles)")
 
 
 class LLMAccessDenied(RuntimeError):
@@ -263,7 +301,15 @@ def is_llm_access_denied(error: Optional[BaseException]) -> bool:
 
 def account_level_class(classes: list[str]) -> Optional[str]:
     """The class to raise LLMAccessDenied with when EVERY attempt (``classes``, one per model tried) was refused at
-    account level; None when the list is empty or any attempt failed another way (that model may answer on retry)."""
-    if not classes or any(c not in ACCOUNT_LEVEL for c in classes):
+    account level; None when the list is empty or any attempt failed another way (that model may answer on retry).
+    AA-642 A5 (review S263): a model left out because no connection serves the stage's role (``ROLE_NOT_SERVED``) is
+    a refusal no retry can fix either: every model refused that way -> ``ROLE_NOT_SERVED``; mixed with account-level
+    refusals only -> the account-level class."""
+    if not classes:
         return None
-    return QUOTA_EXHAUSTED if all(c == QUOTA_EXHAUSTED for c in classes) else ACCESS_DENIED
+    rest = [c for c in classes if c != ROLE_NOT_SERVED]
+    if not rest:
+        return ROLE_NOT_SERVED
+    if any(c not in ACCOUNT_LEVEL for c in rest):
+        return None
+    return QUOTA_EXHAUSTED if all(c == QUOTA_EXHAUSTED for c in rest) else ACCESS_DENIED

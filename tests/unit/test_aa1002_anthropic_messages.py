@@ -177,20 +177,22 @@ def test_base_url_check_runs_in_the_adapter_too(monkeypatch, fake):
 
 # ── timeout and retries per connection ─────────────────────────────────────────────────────────────────────────────
 
-def test_timeout_and_retries_come_from_the_connection_never_the_sdk_default(fake):
+def test_the_timeout_comes_from_the_connection_and_the_sdk_never_retries(fake):
     _send(anthropic_connection(timeout_s=45, max_retries=0))
     client = next(iter(am._clients.values()))[1]   # (key, client)
     assert client.timeout.read == 45.0 and client.timeout.connect == 10.0 and client.max_retries == 0
     am._clients.clear()
     _send(anthropic_connection(timeout_s=None, max_retries=None))
     client = next(iter(am._clients.values()))[1]   # (key, client)
-    assert client.timeout.read == am.DEFAULT_TIMEOUT_S == 300 and client.max_retries == am.DEFAULT_MAX_RETRIES == 1
+    assert client.timeout.read == am.DEFAULT_TIMEOUT_S == 300 and client.max_retries == am.SDK_MAX_RETRIES == 0
 
 
-def test_a_429_is_retried_per_connection_and_honours_retry_after(fake):
+def test_a_429_is_not_retried_by_the_sdk_even_when_the_connection_asks(fake):
+    """AA-642 A3: the gateway owns retries; the connection's max_retries is not sent to the SDK."""
     fake.replies += [error_reply(429, "rate_limit_error", headers={"retry-after-ms": "1"}), stream_reply("ok")]
-    out = _send(anthropic_connection(max_retries=1))
-    assert out.text == "ok" and len(fake.requests) == 2
+    with pytest.raises(am.AnthropicAPIError):
+        _send(anthropic_connection(max_retries=1))
+    assert len(fake.requests) == 1
 
 
 def test_no_retry_when_the_connection_says_zero(fake):

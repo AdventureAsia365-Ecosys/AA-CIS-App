@@ -197,6 +197,16 @@ SAFE_DEFAULTS: dict[str, StageConfig] = {
     # ADR 0010 decision 5); no shadow (cost-cuts K2: an eval stage is seeded with shadow_sample_pct = 0).
     "writing_memory_eval": StageConfig("writing_memory_eval", "judge", "openai", "gpt-5.6-luna", "acc3",
                                        fallback_model_ids=_JUDGE_ROUTE_DEFAULT),
+    # AA-642 A2 (migration 335): the demand-research loop (services/acp_contract/segment_research.py, one keyword step
+    # per call) and the batch proposer (segment_research_batch.py). Both were model_tier="haiku" requests with no
+    # stage: writer (they phrase keywords), degrade mode queue_retry (the job is re-queued, tech lead T-21's CIS mode).
+    # The database rows route on haiku-5-5 (327's mapping of haiku: no new traffic on the deprecated legacy chain);
+    # these fallbacks keep the legacy key on purpose, like every SAFE_DEFAULTS entry (migration 327): they serve a
+    # process that cannot read the database, where only the hard-coded legacy chain works without the catalog.
+    "segment_research":       StageConfig("segment_research", "writer", "claude", "haiku", "acc3",
+                                          degrade_mode="queue_retry"),
+    "segment_research_batch": StageConfig("segment_research_batch", "writer", "claude", "haiku", "acc3",
+                                          degrade_mode="queue_retry"),
 }
 
 # AA-1002 (S5): migration 311's backfill for these rows — the stages whose route names a model reached only outside
@@ -206,9 +216,16 @@ _VENDOR_DIRECT_STAGES = frozenset({
     "s1_judge", "s1_brand_audit", "t2_judge", "t2_brand_audit", "t7_debate_judge", "t10_judge", "t10_adjudicate",
     "a3_place_dedupe", "writing_memory_mine", "writing_memory_eval",
 })
+# AA-642 A3 (migration 334, root ADR 0009 decision 5 "one deadline per route"): the route deadline of every stage, by
+# role. The first attempt always runs; no later attempt starts once the deadline has passed. Each value is above the
+# longest single attempt of the role (Bedrock read timeout 300 s; an acc2 embedding 30 s), so a timed-out first
+# attempt still leaves room for a fallback, and caps a whole chain (at most errors.MAX_CHAIN_ATTEMPTS attempts) well
+# below the 6 x 300 s it could take before.
+ROUTE_DEADLINE_S = {"writer": 1200, "judge": 900, "validate": 600, "embed": 120}
 for _stage, _cfg in list(SAFE_DEFAULTS.items()):
     SAFE_DEFAULTS[_stage] = dataclasses.replace(
-        _cfg, allowed_scopes=data_scope.ALL_SCOPES if _stage in _VENDOR_DIRECT_STAGES else data_scope.AWS_ONLY_SCOPES)
+        _cfg, allowed_scopes=data_scope.ALL_SCOPES if _stage in _VENDOR_DIRECT_STAGES else data_scope.AWS_ONLY_SCOPES,
+        route_deadline_s=ROUTE_DEADLINE_S.get(_cfg.role))
 del _stage, _cfg
 
 # A stage with no row and no SAFE_DEFAULTS entry (an adhoc_* script, a connection test): no stage policy (None).

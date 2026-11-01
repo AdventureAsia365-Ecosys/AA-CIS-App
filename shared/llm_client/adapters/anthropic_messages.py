@@ -13,9 +13,10 @@ What the adapter guarantees, whatever the row says:
   a ``credential_env`` is refused before anything is read.
 - **Endpoint**: ``base_url`` must pass ``connections.check_base_url`` (host allowlist per kind, a code constant), and
   it is always passed to the SDK explicitly, so ``ANTHROPIC_BASE_URL`` in the environment cannot redirect a key.
-- **Timeout / retries**: per connection (``timeout_s``, ``max_retries``); a NULL column means ``DEFAULT_TIMEOUT_S`` /
-  ``DEFAULT_MAX_RETRIES``, never the SDK's 600 s and 2 retries. The SDK honours ``retry-after`` on the retries it
-  makes; the error the gateway sees carries ``retry_after_s`` for the breaker of slice S4.
+- **Timeout / retries**: the timeout per connection (``timeout_s``; NULL means ``DEFAULT_TIMEOUT_S``, never the SDK's
+  600 s). AA-642 A3 (root ADR 0009 decision 5): the SDK never retries (``SDK_MAX_RETRIES`` 0, the connection's
+  ``max_retries`` is not read); the gateway owns retries (the route's next deployment / model). The error the
+  gateway sees carries ``retry_after_s`` for the breaker of slice S4.
 - **Request shape** (``build_params``): no ``temperature`` / ``top_p`` / ``top_k`` (refused on API version 2026-10-21
   and by Sonnet / Opus 5.5), no ``tools`` / ``tool_choice`` (Sonnet / Opus 5.5 refuse a forced tool), no ``thinking``
   field (the model's default), no server-side ``fallbacks`` (it would switch the model unseen, ADR 0005 §4), no beta
@@ -48,7 +49,7 @@ logger = structlog.get_logger()
 
 DEFAULT_BASE_URL = "https://api.anthropic.com"
 DEFAULT_TIMEOUT_S = 300            # the Bedrock client's read timeout (client.py)
-DEFAULT_MAX_RETRIES = 1            # the Bedrock client's max_attempts=2
+SDK_MAX_RETRIES = 0                # AA-642 A3: the gateway owns retries
 CONNECT_TIMEOUT_S = 10.0
 
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
@@ -263,8 +264,9 @@ _clients_lock = threading.Lock()
 
 def _settings(conn: connections.ProviderConnection) -> tuple[int, int]:
     timeout_s = int(conn.timeout_s) if conn.timeout_s else DEFAULT_TIMEOUT_S
-    retries = int(conn.max_retries) if conn.max_retries is not None else DEFAULT_MAX_RETRIES
-    return timeout_s, retries
+    # AA-642 A3 (root ADR 0009 decision 5): the SDK never retries; the gateway owns retries (the route's next
+    # deployment / model, at most errors.MAX_CHAIN_ATTEMPTS attempts). The connection's max_retries is not read.
+    return timeout_s, SDK_MAX_RETRIES
 
 
 def _client_for(conn: connections.ProviderConnection, api_key: str, base_url: str):

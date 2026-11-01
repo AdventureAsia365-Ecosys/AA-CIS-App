@@ -34,6 +34,11 @@ account-wide refusal on a connection leaves out every deployment of it, includin
 Slice S9 adds Azure OpenAI connections (kind ``azure_openai``) for ``openai_chat`` rows of an OpenAI model; the client
 of every OpenAI-format connection is built per connection (``adapters/openai_chat.py``).
 
+AA-642 A5 (gap RW-09, root ADR 0009 decision 5): ``deployment_plan`` / ``vendor_deployment_for`` take the stage's
+role and leave out a deployment whose connection's ``served_roles`` (migration 322) do not include it (acc2 serves
+embed / judge / validate, never a writer: ADR 0009 decision 14). NULL ``served_roles`` (a row before 322, the built-in
+mirror) or no role (a call without a stage role) = no filter.
+
 Slice S10 adds the monthly budget per connection (``connection_budget.py``): a connection that reached its hard budget
 is left out like an open circuit (named in ``DeploymentPlan.budget_skips``). A connection without a budget (every seed
 row) is never read for it, so the plan is unchanged.
@@ -47,6 +52,7 @@ import structlog
 
 from . import breaker, connection_budget, connections, data_scope, deployments
 from .catalog import LEGACY_KEYS, CatalogModel
+from .errors import RouteRoleNotServed
 
 logger = structlog.get_logger()
 
@@ -80,15 +86,27 @@ def _usable(model: CatalogModel, found: Optional[VendorDeployment]) -> Optional[
     return found
 
 
+def serves_role(conn: connections.ProviderConnection, role: Optional[str]) -> bool:
+    """AA-642 A5: may ``conn`` serve a call of ``role``? True when the role is unknown (None) or the connection states
+    no ``served_roles`` (NULL); else the role must be listed."""
+    roles = getattr(conn, "served_roles", None)
+    return not role or roles is None or role in roles
+
+
 def vendor_deployment_for(model: CatalogModel, allowed_scopes: Optional[tuple] = None,
-                          budget_skips: Optional[list] = None) -> Optional[VendorDeployment]:
+                          budget_skips: Optional[list] = None,
+                          role: Optional[str] = None) -> Optional[VendorDeployment]:
     """The Anthropic deployment to call for ``model``, or None for today's path. AA-1002 (S5): None as well when the
     stage's ``allowed_scopes`` (None = no stage policy) do not allow that connection's data scope. AA-1002 (S10): None
     when its connection reached its hard monthly budget, and then (connection_key, budget) is appended to
     ``budget_skips`` when the caller passes a list, so a model only that connection serves stops as a budget stop.
-    Never raises."""
+    AA-642 A5: None as well when that connection does not serve the stage's ``role``. Never raises."""
     try:
         found = _usable(model, _first_enabled(model.model_key))
+        if found is not None and not serves_role(found.connection, role):
+            logger.info("llm_deployment_skip", model=model.model_key, connection=found.connection.connection_key,
+                        reason=f"the connection does not serve the role {role}")
+            return None
         if found is not None and not data_scope.allows(allowed_scopes, found.connection.data_scope):
             logger.info("llm_deployment_skip", model=model.model_key, connection=found.connection.connection_key,
                         reason=f"data scope {found.connection.data_scope} is not allowed for the stage")
@@ -164,12 +182,29 @@ class DeploymentPlan(list):
 
     AA-1002 (S10): ``budget_skips``: the (connection_key, cost_guard.ConnectionBudget) of each deployment left out
     because its connection reached its hard monthly budget. An empty plan with only budget skips is
-    ``connection_budget.budget_error`` (a BudgetExceeded: the job stops as a budget stop)."""
+    ``connection_budget.budget_error`` (a BudgetExceeded: the job stops as a budget stop).
 
-    def __init__(self, items=(), circuit_skips=(), budget_skips=()):
+    AA-642 A5 (review S263): ``role_skips``: the (connection_key, role) of each enabled deployment left out because its
+    connection does not serve the stage's role. An empty plan with role skips and no circuit / budget skip is
+    ``role_refusal`` (errors.RouteRoleNotServed): the gateway refuses the model with that reason instead of a generic
+    "no usable deployment"."""
+
+    def __init__(self, items=(), circuit_skips=(), budget_skips=(), role_skips=()):
         super().__init__(items)
         self.circuit_skips: list[tuple[str, Optional[str]]] = list(circuit_skips)
         self.budget_skips: list[tuple[str, object]] = list(budget_skips)
+        self.role_skips: list[tuple[str, Optional[str]]] = list(role_skips)
+
+
+def role_refusal(model_key: str, plan) -> Optional[RouteRoleNotServed]:
+    """AA-642 A5 (review S263): the typed refusal of an EMPTY plan that is empty because of the served_roles filter
+    (role skips, no circuit or budget skip: those keep their own error), else None."""
+    if plan is None or len(plan) or getattr(plan, "circuit_skips", None) or getattr(plan, "budget_skips", None):
+        return None
+    skips = getattr(plan, "role_skips", None)
+    if not skips:
+        return None
+    return RouteRoleNotServed(model_key, skips[0][1], skips)
 
 
 def _skip(model: CatalogModel, d: deployments.ModelDeployment, reason: str) -> None:
@@ -216,7 +251,8 @@ def _callable(model: CatalogModel, conn: connections.ProviderConnection) -> Opti
     return None
 
 
-def deployment_plan(model: CatalogModel, allowed_scopes: Optional[tuple] = None) -> Optional[list[VendorDeployment]]:
+def deployment_plan(model: CatalogModel, allowed_scopes: Optional[tuple] = None, *,
+                    role: Optional[str] = None) -> Optional[list[VendorDeployment]]:
     """AA-1002 (S3) — where ``model`` is called, in order. The model's deployment rows (``shared.llm_model_deployment``,
     lowest ``priority`` first, ``connection_key`` breaks ties) that the gateway can call — a Bedrock connection
     (assume_role / task_role) for converse / anthropic_native / embed rows, an Anthropic connection for Anthropic
@@ -224,6 +260,9 @@ def deployment_plan(model: CatalogModel, allowed_scopes: Optional[tuple] = None)
     row), an API-key connection without a policy problem — are its CALLABLE rows. Of those, the plan keeps
 
     - an enabled deployment on an enabled connection;
+    - role (AA-642 A5, ``serves_role``): a connection whose ``served_roles`` include the stage's ``role`` (None = no
+      filter; NULL served_roles = serves every role). Checked first, so a connection that may not serve the role
+      never counts as the first row of the S3 vendor rule nor as a circuit / budget skip;
     - data scope (slice S5, ``data_scope.py``): with the stage's ``allowed_scopes``, a connection whose ``data_scope``
       is in them (an ``aws_only`` stage never leaves AWS, whatever the priorities; a stage that allows
       ``vendor_direct`` may fall back to a vendor API behind acc3). With no stage policy (``allowed_scopes`` None: the
@@ -263,8 +302,13 @@ def deployment_plan(model: CatalogModel, allowed_scopes: Optional[tuple] = None)
         if not callable_rows:
             return None
         candidates: list[VendorDeployment] = []
+        role_skips: list[tuple[str, Optional[str]]] = []
         for c in callable_rows:
             if not (c.deployment.enabled and c.connection.enabled):
+                continue
+            if not serves_role(c.connection, role):
+                _skip(model, c.deployment, f"the connection does not serve the role {role}")
+                role_skips.append((c.connection.connection_key, role))
                 continue
             scope = c.connection.data_scope
             if allowed_scopes is not None:
@@ -296,7 +340,7 @@ def deployment_plan(model: CatalogModel, allowed_scopes: Optional[tuple] = None)
                 budget_skips.append((c.connection.connection_key, over))
                 continue
             plan.append(c)
-        return DeploymentPlan(plan, skips, budget_skips)
+        return DeploymentPlan(plan, skips, budget_skips, role_skips)
     except Exception as e:  # noqa: BLE001 — a registry problem must never break today's path
         logger.warning("llm_deployment_plan_failed", model=model.model_key, error=str(e)[:200])
         return None

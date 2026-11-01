@@ -213,7 +213,7 @@ def test_ledger_signal():
 
 # ── the space-bound embed path ───────────────────────────────────────────────────────────────────────────────────
 
-def _plan(model, allowed_scopes=None):
+def _plan(model, allowed_scopes=None, role=None):
     """One registry deployment per model (acc2-usw2 for Titan, as once the runbook enables it)."""
     account = next(iter(model.bedrock_profile_ids))
     return [SimpleNamespace(connection=None if account != "acc2-usw2" else SimpleNamespace(connection_key=account,

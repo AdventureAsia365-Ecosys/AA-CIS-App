@@ -397,8 +397,20 @@ def test_the_store_refuses_an_unknown_stage():
 
 # ── the ledger class and its CHECK ──────────────────────────────────────────────────────────────────────────────────
 
-def test_every_ledger_error_class_is_allowed_by_migration_326():
-    sql = MIGRATION_326.read_text()
+def _newest_error_class_check() -> Path:
+    """The newest migration that (re)defines shared.llm_call_log's error_class CHECK (326, then 338 for AA-642 A5)."""
+    files = sorted((p for p in (REPO / "api" / "migrations").glob("[0-9]*.sql")
+                    if "llm_call_log_error_class_check CHECK" in p.read_text()),
+                   key=lambda p: int(p.name.split("_", 1)[0]))
+    assert files and int(files[0].name.split("_", 1)[0]) <= 326
+    return files[-1]
+
+
+def test_every_ledger_error_class_is_allowed_by_the_newest_check():
+    """Review S263: the code writes 'role_not_served' (AA-642 A5), so the code PR merges after migration 338 (MIG-4
+    order); this test fails until that file is on main."""
+    sql = _newest_error_class_check().read_text()
     check = re.search(r"error_class IN \(([^)]*)\)", sql, re.S).group(1)
     allowed = set(re.findall(r"'([a-z_]+)'", check))
     assert set(call_log.ERROR_CLASSES) <= allowed and DISABLED in allowed
+    assert "disabled" in set(re.findall(r"'([a-z_]+)'", MIGRATION_326.read_text()))

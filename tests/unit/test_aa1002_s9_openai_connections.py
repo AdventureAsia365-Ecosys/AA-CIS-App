@@ -101,7 +101,7 @@ def test_the_openai_connection_takes_the_env_key_only_as_a_fallback(sdk, monkeyp
     client = openai_chat.client_for(BUILTIN_CONNECTIONS["openai-direct"])
     name, kw = FakeSDK.built[-1]
     assert name == "FakeOpenAI" and kw["api_key"] == "env-test-key" and kw["base_url"] == "https://api.openai.com/v1"
-    assert kw["max_retries"] == openai_chat.DEFAULT_MAX_RETRIES and kw["timeout"].read == 300.0
+    assert kw["max_retries"] == openai_chat.SDK_MAX_RETRIES == 0 and kw["timeout"].read == 300.0
     sdk.assert_not_called()                       # no secret named: the env fallback
     assert openai_chat.client_for(BUILTIN_CONNECTIONS["openai-direct"]) is client     # cached
     secret_row = dataclasses.replace(BUILTIN_CONNECTIONS["openai-direct"], secret_name="aa-llm/dev/openai-direct")

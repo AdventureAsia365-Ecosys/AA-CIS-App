@@ -181,7 +181,8 @@ def test_pricing_constants_match_cis():
 
 # ── ledger v2 ──────────────────────────────────────────────────────────────────────────────────────────────────────
 
-CIS_ONLY_ERROR_CLASSES = ("disabled",)
+# AA-642 A5 (review S263): 'role_not_served' (migration 338) is CIS-only too: only the CIS planner reads served_roles.
+CIS_ONLY_ERROR_CLASSES = ("disabled", "role_not_served")
 
 
 def test_the_kill_switch_refusal_is_the_one_text_the_core_does_not_classify_alike():

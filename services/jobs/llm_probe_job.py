@@ -249,8 +249,8 @@ async def probe_embedding(pool, connection_key: str, model_key: str, wire_id: st
             stage=svc.TEST_STAGE, role="embed", model=model_key,
             status="refused" if ledger_class in ("access_denied", "quota_exhausted", "throttled") else "error",
             error_class=ledger_class, error=out["error"], provider=_bedrock_provider(conn),
-            connection_key=connection_key, latency_ms=latency, deployment_wire_id=wire_id,
-            quality_signal_extra=signal)
+            connection_key=connection_key, latency_ms=latency, attempt_no=1, deployment_wire_id=wire_id,
+            quality_signal_extra=signal)       # AA-642 A9: one attempt, numbered like every gateway attempt row
         await record_call_with_pool(pool, **row)
     else:
         out.update(ok=True, error_class=None, error=None, cost_usd=round(resp.cost_usd, 6),

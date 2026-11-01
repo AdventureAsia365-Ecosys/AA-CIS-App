@@ -84,6 +84,8 @@ longer matches its source. To change a prompt:
 | `a3_place_locate` | `a3_place_locate` | validate | `services/places/locate.py` · `SYSTEM_PROMPT`, `build_prompt` | git | none |
 | `a3_place_dedupe` | `a3_place_dedupe`, `a3_place_dedupe_check` | validate | `services/places/dedupe.py` · `SYSTEM_PROMPT`, `PROMPT_VERSION` | `PROMPT_VERSION` constant (with `RULE_VERSION`) | none |
 | `a3_search_demand` | `a3_search_demand` | validate | `services/acp_contract/segment_research.py` · `SYSTEM_PROMPT`, `USER_PROMPT` | git | none |
+| `segment_research` | `segment_research` | writer | `services/acp_contract/segment_research.py` · `SYSTEM_PROMPT`, `USER_PROMPT` | git | none |
+| `segment_research_batch` | `segment_research_batch` | writer | `services/acp_contract/segment_research_batch.py` · `PROPOSE_SYSTEM` | git | none |
 | `t8_angle_gen` | `t8_angle_gen` | writer | `services/acp_angle_gate/prompts.py` · `SYSTEM_PROMPT`, `SYSTEM_PROMPT_R8`, `system_prompt`, `build_user_prompt` | git | none |
 | `t9_write` | `t9_write` | writer | `services/acp_content_writing/prompts.py` · `SYSTEM_PROMPT`, `build_user_prompt` | sha8 in `generation_meta.writer_prompt_version` (`service.py` `WRITER_PROMPT_VERSION`) | R2 `t9_blog`, R2 `t9_social` (first draft only); Q0, Q3 |
 | `t9_repair` | `t9_repair` | writer | `services/acp_content_writing/generate.py` · `_REPAIR_SYSTEM` | git | Q0, R0, Q3 (T9 repair replay) |
@@ -102,8 +104,8 @@ longer matches its source. To change a prompt:
 Not in the register:
 
 - Embedding stages (`f10_embed`, `a3_place_embed`): no prompt.
-- `s1_atom_writer`: retired stage (the S1-from-atom pipeline was removed, AA-611); its route row stays in
-  `shared.llm_role_config` until a migration drops it.
+- `s1_atom_writer`: retired stage (the S1-from-atom pipeline was removed, AA-611); migration 336 switches its route
+  row off (history kept).
 - Jev questions (TypeSafe `decide()`, for example `a1_promise_unsupported`): questions, not gateway prompts. They are
   listed on the admin Jev Decisions page and in `shared.decision_log`.
 - TripPlanner stages (`tp_*`): their prompts live in AA-TripPlanner-Web. Their routes appear in the generated route

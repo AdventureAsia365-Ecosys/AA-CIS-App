@@ -40,6 +40,8 @@ export const MODELS = defineMessages(
     invariantSummary: (ok: number, total: number) =>
       `Failure-domain rule (report only): ${ok} of ${total} stages can fall back to another failure domain.`,
     invariantDegrade: (n: number) => `${n} more declare a degrade mode instead (no breach).`,
+    invariantRoleSkipped: (n: number) =>
+      `${n} stage${n === 1 ? " names" : "s name"} a model on a connection that does not serve the stage's role; the gateway never calls it there:`,
     staffMember: "a staff member",
     staffLogin: (ref: string) => `staff (${ref})`,
     domainOk: "Fallback in another failure domain",
@@ -226,6 +228,8 @@ export const MODELS = defineMessages(
     invariantSummary: (ok: number, total: number) =>
       `Quy tắc miền lỗi (chỉ báo cáo): ${ok} trên ${total} stage có đường dự phòng ở miền lỗi khác.`,
     invariantDegrade: (n: number) => `${n} stage khác khai báo chế độ suy giảm thay thế (không tính là vi phạm).`,
+    invariantRoleSkipped: (n: number) =>
+      `${n} stage có model nằm trên kết nối không phục vụ vai trò của stage; gateway không bao giờ gọi model đó ở kết nối này:`,
     staffMember: "một nhân viên",
     staffLogin: (ref: string) => `nhân viên (${ref})`,
     domainOk: "Có dự phòng ở miền lỗi khác",
