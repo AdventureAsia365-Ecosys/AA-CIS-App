@@ -26,6 +26,10 @@ M321 = os.path.join(MIGRATIONS, "321_tenant_ai_budget_prompt_registry.sql")
 # AA-1017 (324): the five acc2 candidate models are catalogued under the 320 families (vendor amazon / meta / moonshot),
 # which the pre-320 vendor CHECK refuses. The fixture sets them aside for the test and applies 324 again afterwards.
 M324 = os.path.join(MIGRATIONS, "324_llm_acc2_candidate_models.sql")
+# AA-1024: 334 fills the route_deadline_s that a 320 re-run from the pre-320 shape leaves NULL, and 337 records the
+# Llama 4 capabilities on the rows 324 re-creates; the teardown applies both again so later modules see the full chain.
+M334 = os.path.join(MIGRATIONS, "334_llm_route_deadlines.sql")
+M337 = os.path.join(MIGRATIONS, "337_llm_llama4_structured_prompt_mode.sql")
 FAMILIES = {"anthropic", "openai", "cohere", "typesafe", "amazon", "meta", "moonshot"}
 OLD_HEALTH_CLASSES = "('access_denied', 'quota_exhausted', 'throttled', 'credential', 'other')"
 OLD_VENDORS = "('anthropic', 'openai', 'cohere', 'typesafe')"
@@ -71,15 +75,18 @@ def cur():
         _run(c, M321)
         with candidates_off_routes(c):          # AA-1026 I6: 331 / 332 routes name 324's models; 324's guard refuses
             _run(c, M324)
+        _run(c, M334)
+        _run(c, M337)
         conn.close()
 
 
 def _set_324_aside(c):
     """Migration 324's rows out (they need the 320 families); the fixture applies 324 again at teardown."""
     c.execute("DELETE FROM shared.llm_model_deployment WHERE updated_by = 'migration-324-aa1017'")
-    # 333 (AA-1026) re-signs the llama4-scout row when it records the model's forced tool choice
+    # 333 (AA-1026) re-signs the llama4-scout row when it records the model's forced tool choice, 337 (AA-1024) both
+    # Llama 4 rows when it records their structured output mode
     c.execute("DELETE FROM shared.llm_model_catalog "
-              "WHERE updated_by IN ('migration-324-aa1017', 'migration-333-aa1026')")
+              "WHERE updated_by IN ('migration-324-aa1017', 'migration-333-aa1026', 'migration-337-aa1024')")
     c.execute("DELETE FROM shared.schema_versions WHERE version = '324'")
 
 
@@ -197,8 +204,10 @@ def test_health_takes_truncated(cur):
                   "VALUES ('acc3', 'sonnet-5', 'nonsense')")
 
 
-def test_route_deadline_is_null_and_bounded(cur):
-    cur.execute("SELECT count(*) AS n FROM shared.llm_role_config WHERE route_deadline_s IS NOT NULL")
+def test_route_deadline_is_bounded_and_set_by_334_only(cur):
+    # 320 adds the column with no value; 334 (AA-1024 A3) gives every row the deadline of its role
+    # (tests/integration/test_aa1024_migrations_334_337.py), so no row is NULL after the full chain.
+    cur.execute("SELECT count(*) AS n FROM shared.llm_role_config WHERE route_deadline_s IS NULL")
     assert cur.fetchone()["n"] == 0
     _refused(cur, "UPDATE shared.llm_role_config SET route_deadline_s = 0")
     cur.execute("SELECT privilege_type FROM information_schema.column_privileges WHERE table_schema = 'shared' "

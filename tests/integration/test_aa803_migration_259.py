@@ -105,12 +105,12 @@ def test_new_rows_are_on_no_route(cur):
     # 259 routes no stage; the later migrations that route one are listed here: 282 (S251, supply_content_writer) and
     # 327 (AA-1026, every route that named the legacy haiku / sonnet keys, supply_content_writer included); 331
     # (AA-1026 I6) appends an acc2 fallback to judge / validate routes that name these keys; 333 puts one before the
-    # OpenAI API hop of the judge routes.
+    # OpenAI API hop of the judge routes; 336 (AA-1024 D8) switches off the dead s1_atom_writer / tp_extract routes.
     assert "supply_content_writer" in {r[0] for r in rows}
     # Rows a test admin switched (the AA-642 A1 stage-switch tests sign as admin:zz-*) are not migrations.
     migrated = {r[1] for r in rows if not str(r[1]).startswith("admin:zz-")}
     assert migrated <= {"migration-282-aa835", "migration-327-aa1026", "migration-331-aa1026", "migration-332-aa1026",
-                        "migration-333-aa1026"}
+                        "migration-333-aa1026", "migration-336-aa1024"}
 
 
 def test_sonnet_drops_the_legacy_acc2_profile_only(cur):
