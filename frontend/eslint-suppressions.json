@@ -30,20 +30,6 @@
       "count": 9
     }
   },
-  "app/admin/cost-ops/page.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 3
-    },
-    "aa-kit/no-hex-colour": {
-      "count": 3
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    },
-    "aa-kit/no-raw-table": {
-      "count": 6
-    }
-  },
   "app/admin/decisions/page.tsx": {
     "aa-kit/no-hand-styled-button": {
       "count": 1
@@ -76,26 +62,6 @@
     },
     "aa-kit/no-raw-table": {
       "count": 3
-    }
-  },
-  "app/admin/s1-rewrite/page.tsx": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    },
-    "aa-kit/no-hand-styled-button": {
-      "count": 2
-    },
-    "aa-kit/no-hex-colour": {
-      "count": 4
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    },
-    "aa-kit/no-raw-table": {
-      "count": 1
-    },
-    "react-hooks/set-state-in-effect": {
-      "count": 1
     }
   },
   "app/admin/tenants/page.tsx": {
