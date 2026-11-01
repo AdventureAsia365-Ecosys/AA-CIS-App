@@ -69,6 +69,12 @@ class StageConfig:
     # AA-1018 part 2 (migration 320) — the wall-time budget of the whole route in seconds (every model and deployment
     # it tries, fallbacks included). None = no deadline (every row today, column NULL / not migrated): no change.
     route_deadline_s: Optional[int] = None
+    # AA-642 A1 (migration 326): the stage kill switch (llm_role_config.is_active; False = every call refused before any
+    # provider attempt), the admin's reason, and the declared degrade mode (ADR 0009 decision 5). A stage with no row
+    # (SAFE_DEFAULTS) is on.
+    enabled: bool = True
+    disabled_reason: Optional[str] = None
+    degrade_mode: Optional[str] = None
 
 
 # S235 (Nghiệp, 14/10/2026): Bedrock first; the OpenAI platform API is only the LAST-RESORT fallback for
@@ -218,7 +224,18 @@ def _row_to_config(row) -> StageConfig:
         shadow_sample_pct=row["shadow_sample_pct"] or 0,
         allowed_scopes=data_scope.normalize(_scopes_of(row)),
         route_deadline_s=_deadline_of(row),
+        enabled=_column(row, "is_active", True) is not False,
+        disabled_reason=_column(row, "disabled_reason", None),
+        degrade_mode=_column(row, "degrade_mode", None),
     )
+
+
+def _column(row, name: str, default):
+    """An optional column of a row (missing before its migration, or not selected): ``default``."""
+    try:
+        return row[name]
+    except (KeyError, IndexError):
+        return default
 
 
 def _deadline_of(row) -> Optional[int]:
@@ -247,30 +264,40 @@ def _scopes_of(row) -> Optional[list]:
 
 # AA-1018 part 2: migration 320 adds route_deadline_s, read the same way (missing column = no deadline, retried later).
 _deadline_column_missing_at = 0.0
+# AA-642 A1: migration 326 adds degrade_mode / disabled_reason, read the same way (missing = none declared, no reason).
+_SWITCH_COLUMNS = ", degrade_mode, disabled_reason"
+_switch_column_missing_at = 0.0
 
 
 def _scope_select() -> str:
-    """", allowed_scopes[, route_deadline_s]" for the optional columns believed to exist, else ""."""
+    """", allowed_scopes[, route_deadline_s[, degrade_mode, disabled_reason]]" for the optional columns believed to
+    exist, else ""."""
     now = time.monotonic()
     if _scope_column_missing_at and now - _scope_column_missing_at < _SCOPE_RETRY_SECONDS:
         return ""
     if _deadline_column_missing_at and now - _deadline_column_missing_at < _SCOPE_RETRY_SECONDS:
         return ", allowed_scopes"
-    return ", allowed_scopes, route_deadline_s"
+    if _switch_column_missing_at and now - _switch_column_missing_at < _SCOPE_RETRY_SECONDS:
+        return ", allowed_scopes, route_deadline_s"
+    return ", allowed_scopes, route_deadline_s" + _SWITCH_COLUMNS
 
 
 async def _fetch_scoped(fetch, sql_for):
-    """``fetch(sql_for(optional_cols))``; on a missing optional column (route_deadline_s before migration 320,
-    allowed_scopes before 311), once more without it."""
-    global _scope_column_missing_at, _deadline_column_missing_at
-    for _ in range(3):
+    """``fetch(sql_for(optional_cols))``; on a missing optional column (degrade_mode / disabled_reason before migration
+    326, route_deadline_s before 320, allowed_scopes before 311), once more without it."""
+    global _scope_column_missing_at, _deadline_column_missing_at, _switch_column_missing_at
+    for _ in range(4):
         cols = _scope_select()
         try:
             return await fetch(sql_for(cols))
         except asyncpg.exceptions.UndefinedColumnError as e:
             if not cols:
                 raise
-            if "route_deadline_s" in cols and "route_deadline_s" in str(e):
+            if "degrade_mode" in cols and ("degrade_mode" in str(e) or "disabled_reason" in str(e)):
+                _switch_column_missing_at = time.monotonic()
+                logger.warning("llm_role_config_switch_columns_missing",
+                               hint="migration 326 not applied: no degrade modes, no switch reasons")
+            elif "route_deadline_s" in cols and "route_deadline_s" in str(e):
                 _deadline_column_missing_at = time.monotonic()
                 logger.warning("llm_role_config_deadline_column_missing",
                                hint="migration 320 not applied: no route deadlines")
@@ -286,8 +313,8 @@ async def _fetch_one(stage: str) -> Optional[StageConfig]:
     try:
         row = await _fetch_scoped(
             lambda sql: conn.fetchrow(sql, stage),
-            lambda cols: (f"SELECT stage, role, provider, model_id, account_route, {_ROUTE_COLUMNS}{cols} "
-                          "FROM shared.llm_role_config WHERE stage = $1 AND is_active"))
+            lambda cols: (f"SELECT stage, role, provider, model_id, account_route, is_active, {_ROUTE_COLUMNS}{cols} "
+                          "FROM shared.llm_role_config WHERE stage = $1"))
         return _row_to_config(row) if row else None
     finally:
         await conn.close()
@@ -305,7 +332,7 @@ async def get_stage_config(stage: str) -> StageConfig:
         if cfg is None:
             cfg = SAFE_DEFAULTS.get(stage, _GENERIC_FALLBACK)
             logger.warning("llm_role_config_stage_missing", stage=stage,
-                            hint="no active row — using SAFE_DEFAULTS, check migration 137 seeded")
+                            hint="no row — using SAFE_DEFAULTS, check migration 137 seeded")
         _cache[stage] = (cfg, now)
         return cfg
     except Exception as e:
@@ -362,9 +389,8 @@ def invalidate(stage: Optional[str] = None) -> None:
 
 
 async def list_stage_configs() -> list[StageConfig]:
-    """Admin UI read — every row regardless of is_active isn't needed here (inactive rows would
-    only exist if a future UI adds soft-delete; migration 137 seeds everything active), so this
-    intentionally mirrors get_stage_config()'s own `AND is_active` filter for consistency."""
+    """Admin UI read — every row, switched-off ones included (AA-642 A1: ``is_active`` is the stage kill switch), with
+    ``degrade_mode`` / ``disabled_reason`` (None before migration 326)."""
     conn = await asyncpg.connect(get_database_url(), ssl="require")
     try:
         rows = await _fetch_scoped(
@@ -376,6 +402,8 @@ async def list_stage_configs() -> list[StageConfig]:
             r["fallback_model_ids"] = list(r["fallback_model_ids"] or [])
             scopes = data_scope.normalize(r.get("allowed_scopes"))   # AA-1002 (S5): None before migration 311
             r["allowed_scopes"] = list(scopes) if scopes is not None else None
+            r.setdefault("degrade_mode", None)                          # AA-642 A1: None before migration 326
+            r.setdefault("disabled_reason", None)
         return out
     finally:
         await conn.close()
@@ -472,6 +500,41 @@ async def set_stage_route(
         out = dict(row)
         out["fallback_model_ids"] = list(out["fallback_model_ids"] or [])
         return out
+    finally:
+        await conn.close()
+        invalidate(stage)
+
+
+async def set_stage_enabled(stage: str, *, enabled: bool, reason: Optional[str], updated_by: str,
+                            audit_actor: str) -> dict:
+    """AA-642 A1 — the stage kill switch (``is_active``; migration 326 gives it that meaning). Switching off stores the
+    admin's ``reason`` (``disabled_reason``); switching on clears it. The UPDATE and its acp_shared.audit_log row
+    (action ``llm_stage_switched_off`` / ``llm_stage_switched_on``) share one transaction; this process's cache is
+    invalidated at once, other processes (the worker) see it within ``_CACHE_TTL_SECONDS``. Raises ValueError for an
+    unknown stage."""
+    reason = None if enabled else ((reason or "").strip()[:500] or None)
+    conn = await asyncpg.connect(get_database_url(), ssl="require")
+    try:
+        async with conn.transaction():
+            before = await conn.fetchrow(
+                "SELECT is_active, disabled_reason FROM shared.llm_role_config WHERE stage = $1 FOR UPDATE", stage)
+            if before is None:
+                raise ValueError(f"unknown stage: {stage!r}")
+            row = await conn.fetchrow(
+                """
+                UPDATE shared.llm_role_config
+                SET is_active = $2, disabled_reason = $3, updated_at = now(), updated_by = $4
+                WHERE stage = $1
+                RETURNING stage, is_active, disabled_reason, degrade_mode, updated_at, updated_by
+                """,
+                stage, enabled, reason, updated_by,
+            )
+            await _insert_audit(
+                conn, actor=audit_actor, action="llm_stage_switched_on" if enabled else "llm_stage_switched_off",
+                resource_type="llm_role_config", resource_id=stage, before=dict(before),
+                after={"is_active": enabled, "disabled_reason": reason},
+            )
+        return dict(row)
     finally:
         await conn.close()
         invalidate(stage)

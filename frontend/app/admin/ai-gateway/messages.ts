@@ -72,10 +72,12 @@ export const OUTCOME = defineMessages(
 export const ERROR_CLASS = defineMessages(
   { access_denied: "access denied", quota_exhausted: "no credit or quota left", throttled: "rate-limited",
     credential: "key or sign-in problem", other: "other error", deadline: "timed out",
-    budget: "stopped by a spending cap", truncated: "answer cut off at its length limit" },
+    budget: "stopped by a spending cap", truncated: "answer cut off at its length limit",
+    disabled: "stage switched off by an admin" },
   { access_denied: "bị từ chối truy cập", quota_exhausted: "hết credit hoặc hạn mức", throttled: "bị giới hạn tần suất",
     credential: "lỗi khoá hoặc đăng nhập", other: "lỗi khác", deadline: "quá thời gian",
-    budget: "bị trần chi phí chặn", truncated: "câu trả lời bị cắt ở giới hạn độ dài" },
+    budget: "bị trần chi phí chặn", truncated: "câu trả lời bị cắt ở giới hạn độ dài",
+    disabled: "stage bị quản trị viên tắt" },
 );
 
 export const M = defineMessages(

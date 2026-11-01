@@ -53,6 +53,36 @@ Lane order: D1 (migration 325) → A1 (migration 326) → A9 → A8. Migration n
 - Class: contract (constraints, column ACL, UPDATE, hot ledger table). MIG-4: 326 applied before the A1 code PR,
   because the code writes `error_class = 'disabled'`.
 
+- Code PR: `get_stage_config` reads the row whatever `is_active` says (no more `AND is_active`), so an inactive row
+  is a switched-off `StageConfig(enabled=False)`, never the SAFE_DEFAULTS route. `LLMClient._stage_switch_gate` runs
+  first in `_generate_with` (before the tenant budget read and before any attempt), also for an explicit
+  `model_tier`; `embed()` has the same gate. The refusal is `LLMStageDisabled`, a subclass of `LLMAccessDenied`, so
+  every pipeline that already re-raises an account refusal re-raises it and the job fails at once without a retry.
+- The job error text (`llm_access_denied: stage '<stage>' is switched off by an admin: <reason>`) is classified
+  `disabled` before any other pattern (the admin's reason may contain "AccessDenied"): the availability card does not
+  count it as an account block, and the bulk re-queue holds such a job only while its own stage is still off (the
+  switch state is read only when a candidate was refused by it).
+- `/admin/llm-availability` `invariant`: per stage `status` (`ok` / `degrade` / `breach`) and `degrade_mode`; a
+  degrade stage has `ok: true` and is not in `breaches`; new totals `declared_degrade` and `disabled` (switched-off
+  stages, not checked). Falls back to the old SELECT before 326.
+- Admin: `PATCH /admin/llm-config/{stage}/switch` `{enabled, reason}` (ai.admin; reason of 3+ characters required to
+  switch off; audit `llm_stage_switched_off` / `_on` in the same transaction). UI: read-only only (a "Switched off"
+  badge with the reason on the stage row, a "Declared degrade mode" badge instead of the breach badge, the
+  availability summary counts degrade stages apart, the Calls tab words for class `disabled`). The toggle itself is
+  not in the UI yet (it needs a reason dialog): follow-up, the API is enough for the live check.
+
+### Tradeoffs (A1)
+- `disabled` is a CIS-only ledger class for now: adding it to the shared core `shared/aa_llm` would resync
+  TripPlanner and AA-Partner while their gateway lanes are open (plan §2 Wave 2 item 5, A10 step 0). The parity
+  test pins the one difference (`CIS_ONLY_ERROR_CLASSES`).
+- Other processes see a switch within the stage-config cache TTL (20 s); the API process that took the PATCH at once.
+
+### Should know (A1)
+- Order: migration 326 applied on Dev (DB Migrate) before the A1 code deploys (the code writes `error_class
+  'disabled'`, lesson S246 CHECK-before-code). The code still runs before 326 (missing columns fall back), but the
+  switch PATCH would fail on `disabled_reason`.
+- A switched-off `tp_compose` also pauses TripPlanner (it already reads `is_active` from the contract view).
+
 ## A9 — ledger v2 for embeddings (gap OPS-02)
 
 ### Decisions

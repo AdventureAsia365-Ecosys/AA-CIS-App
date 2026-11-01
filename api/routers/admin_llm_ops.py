@@ -55,6 +55,7 @@ from shared.llm_client.client import legacy_acc2_native_enabled
 from shared.llm_client.role_config import (
     list_stage_configs,
     set_stage_config,
+    set_stage_enabled,
     set_stage_route,
 )
 
@@ -433,6 +434,45 @@ async def patch_llm_route(
     logger.info("admin_llm_route_changed", stage=stage, fallback_model_ids=fallbacks,
                 shadow_model_id=shadow, shadow_sample_pct=sample_pct, admin_actor=admin_actor)
     await _wm_reverify(request, stage, admin_actor)
+    return updated
+
+
+# ── AA-642 A1 — the stage kill switch ───────────────────────────────────────────────────────────────────────────
+# llm_role_config.is_active (migration 326 gives it this meaning): off = every call of the stage is refused before any
+# provider attempt (a 0 USD ledger row, status refused, error_class disabled); jobs fail without a retry and are
+# re-queued with "Re-queue refused jobs" once the stage is on again (the bulk re-queue holds them while it is off).
+
+
+class LlmStageSwitch(BaseModel):
+    model_config = {"extra": "forbid"}
+    enabled: bool
+    reason: Optional[str] = Field(None, max_length=500)
+
+    @model_validator(mode="after")
+    def _reason_when_off(self):
+        self.reason = (self.reason or "").strip() or None
+        if not self.enabled and (self.reason is None or len(self.reason) < 3):
+            raise ValueError("say why the stage is switched off (reason, at least 3 characters)")
+        return self
+
+
+@router.patch("/llm-config/{stage}/switch",
+              summary="Switch one stage on or off (the kill switch; admin-only, audited)")
+async def patch_llm_stage_switch(
+    stage: str,
+    body: LlmStageSwitch,
+    x_admin_secret: str = Header(None),
+    x_admin_user_id: Optional[str] = Header(None),
+):
+    verify_admin_secret(x_admin_secret)
+    admin_actor = x_admin_user_id or "unknown"
+    try:
+        updated = await set_stage_enabled(stage, enabled=body.enabled, reason=body.reason,
+                                          updated_by=f"admin:{admin_actor}", audit_actor=f"admin:{admin_actor}")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    updated["updated_at"] = updated["updated_at"].isoformat() if updated.get("updated_at") else None
+    logger.info("admin_llm_stage_switched", stage=stage, enabled=body.enabled, admin_actor=admin_actor)
     return updated
 
 

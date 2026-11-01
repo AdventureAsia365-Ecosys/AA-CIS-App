@@ -53,6 +53,9 @@ DEADLINE = "deadline"
 
 # The job failure reason and the prefix of shared.job.error for a job ended by an account-level denial.
 LLM_ACCESS_DENIED_REASON = "llm_access_denied"
+# AA-642 A1 (migration 326): the ledger class of a call the stage kill switch refused (llm_role_config.is_active false).
+DISABLED = "disabled"
+_STAGE_DISABLED = re.compile(r"\bstage '([a-z0-9][a-z0-9_]*)' is switched off\b")
 
 ACCOUNT_LEVEL = frozenset({ACCESS_DENIED, QUOTA_EXHAUSTED})
 
@@ -124,6 +127,26 @@ class LLMAccessDenied(RuntimeError):
         return f"{LLM_ACCESS_DENIED_REASON}: {self.args[0]}"
 
 
+class LLMStageDisabled(LLMAccessDenied):
+    """AA-642 A1: the stage is switched off (``llm_role_config.is_active = false``, the admin kill switch), so the
+    gateway refused the call before any provider attempt (ledger: status refused, error_class ``disabled``, 0 USD).
+    An LLMAccessDenied on purpose: a retry cannot help until someone switches the stage on, so the job runner fails
+    the job at once (``llm_access_denied: stage '<stage>' is switched off ...``) and every pipeline that already
+    re-raises an account refusal re-raises this one; the bulk re-queue holds such a job while its stage is still off
+    (``shared/jobs/queue.llm_hold``). That is the declared degrade mode ``queue_retry``."""
+
+    def __init__(self, stage: str, reason: Optional[str] = None):
+        why = f": {reason.strip()[:300]}" if isinstance(reason, str) and reason.strip() else ""
+        super().__init__(f"stage {stage!r} is switched off by an admin{why}", DISABLED)
+        self.stage = stage
+
+
+def disabled_stage_of(text: Optional[str]) -> Optional[str]:
+    """The stage a stored refusal of the kill switch names (``LLMStageDisabled``'s message), else None. Pure."""
+    m = _STAGE_DISABLED.search(text or "")
+    return m.group(1) if m else None
+
+
 def is_truncated(stop_reason: Optional[str]) -> bool:
     """AA-1017: True when a reply's stop reason says it was cut at its token limit (the TRUNCATED class)."""
     return isinstance(stop_reason, str) and stop_reason in TRUNCATED_STOP_REASONS
@@ -145,6 +168,8 @@ def classify_text(text: Optional[str]) -> str:
     reply cut at its token limit is TRUNCATED (checked first: the OpenAI 400 also carries "invalid_request_error")."""
     if not text:
         return OTHER
+    if disabled_stage_of(text):          # AA-642 A1: first, the admin's reason text may contain any word
+        return DISABLED
     if is_truncated_error(text):
         return TRUNCATED
     for cls, pattern in _PATTERNS:

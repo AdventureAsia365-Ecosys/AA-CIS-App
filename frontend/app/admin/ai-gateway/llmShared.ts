@@ -41,6 +41,12 @@ export interface StageConfigRow {
   route?: StageRoute;
   /** AA-1002 S5: data scopes the stage may use (aws_only, vendor_direct); null before migration 311. Read-only. */
   allowed_scopes?: string[] | null;
+  /** AA-642 A1: the stage kill switch (false = every call refused before any provider attempt). */
+  is_active?: boolean;
+  /** AA-642 A1 (migration 326): why an admin switched the stage off; null while it is on or before 326. */
+  disabled_reason?: string | null;
+  /** AA-642 A1 (migration 326): the declared degrade mode (queue_retry, basic_narration, ...); null = none. */
+  degrade_mode?: string | null;
 }
 
 // ── /admin/llm-catalog ──────────────────────────────────────────────────────
