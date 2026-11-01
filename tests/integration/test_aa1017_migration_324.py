@@ -15,6 +15,7 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 sys.path.insert(0, os.path.dirname(__file__))
+from _acc2_routes import candidates_off_routes  # noqa: E402
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 
 M324 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations", "324_llm_acc2_candidate_models.sql")
@@ -39,7 +40,9 @@ Q0_LINES = """
 
 
 def _run(c):
-    c.execute(open(M324, encoding="utf-8").read())
+    # AA-1026 I6: 331 / 332 end some judge / validate routes on a candidate, which 324's guard refuses on a re-run.
+    with candidates_off_routes(c):
+        c.execute(open(M324, encoding="utf-8").read())
 
 
 def _q0_lines(c) -> set:
@@ -98,10 +101,19 @@ def test_each_model_has_one_enabled_acc2_deployment_on_its_profile(cur):
 
 
 def test_no_route_alias_or_stage_names_a_candidate(cur):
+    """324 routes nothing. Since CIS 331 / 332 (AA-1026 I6) a candidate may END the route of a judge / validate stage,
+    never be a primary, a shadow, a writer's model or an earlier fallback."""
     cur.execute("SELECT count(*) AS n FROM shared.llm_role_config "
-                "WHERE model_id = ANY (%(k)s) OR fallback_model_ids && %(k)s::text[] OR shadow_model_id = ANY (%(k)s)",
+                "WHERE model_id = ANY (%(k)s) OR shadow_model_id = ANY (%(k)s) "
+                "OR (fallback_model_ids && %(k)s::text[] AND (role NOT IN ('judge', 'validate') "
+                "    OR NOT (fallback_model_ids[cardinality(fallback_model_ids)] = ANY (%(k)s)) "
+                "    OR fallback_model_ids[1:cardinality(fallback_model_ids) - 1] && %(k)s::text[]))",
                 {"k": list(KEYS)})
     assert cur.fetchone()["n"] == 0
+    with candidates_off_routes(cur):
+        cur.execute("SELECT count(*) AS n FROM shared.llm_role_config WHERE fallback_model_ids && %s::text[]",
+                    (list(KEYS),))
+        assert cur.fetchone()["n"] == 0                                   # only fallbacks, so the helper clears them
     cur.execute("SELECT count(*) AS n FROM shared.llm_model_alias WHERE model_key = ANY (%s)", (list(KEYS),))
     assert cur.fetchone()["n"] == 0
 
