@@ -119,10 +119,26 @@ def test_329_seeds_the_fallback_disabled_and_never_routed():
     assert "'{\"acc2-usw2\": \"amazon.titan-embed-text-v2:0\"}'::jsonb" in M329
     assert "stages route to titan-embed-text-v2" in M329
     assert "GRANT SELECT ON catalog.v_embedding_space_v1 TO tripplanner;" in M329
-    for fn in ("embedding_prepare_shadow", "_embedding_switch", "embedding_swap", "embedding_rollback",
-               "embedding_drop_shadow", "embedding_drop_previous"):
-        assert re.search(rf"REVOKE ALL ON FUNCTION shared\.{fn}\(", M329), fn
+    assert re.search(r"REVOKE ALL ON FUNCTION shared\._embedding_shadow_reset\(\) FROM PUBLIC, cis_app;", M329)
     assert "SECURITY DEFINER" not in M329
+
+
+def _sql_code(sql: str) -> str:
+    """The file without its -- comments (the header explains what moved where)."""
+    return "\n".join(line.split("--", 1)[0] for line in sql.splitlines())
+
+
+def test_329_has_no_dynamic_sql_and_only_the_trigger_function():
+    # The X1 role lint refuses a role switch in dynamic SQL (CIS PR #1225 preflight): the owner steps (prepare, swap,
+    # rollback, drop shadow, view rebuild) run in the AA-CIS-Infra run-script, so 329 creates one function only and
+    # executes no dynamic SQL; its role switches are the literal catalog recipe.
+    code = _sql_code(M329)
+    assert re.findall(r"CREATE OR REPLACE FUNCTION (\S+)\(", code) == ["shared._embedding_shadow_reset"]
+    assert not re.search(r"\bEXECUTE\s+(format|'|\$|[a-z_]+\s*\()", code, re.IGNORECASE)
+    assert re.findall(r"SET LOCAL ROLE (\w+);", code) == ["catalog_owner", "cis_owner"]
+    for gone in ("embedding_prepare_shadow", "_embedding_switch", "embedding_swap", "embedding_rollback",
+                 "embedding_drop_shadow", "embedding_drop_previous", "embedding_dependent_views"):
+        assert gone not in code, gone
 
 
 # ── registry read ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -416,7 +432,12 @@ def test_dry_run_before_prepare_counts_every_vector_row():
     assert out["prepared"] is False and out["rows"] == 1006 and out["blank_rows"] == 2
     assert out["estimated_tokens"] == 16500 and out["estimated_usd"] == pytest.approx(0.00033)
     assert out["requests"] == 1004 and out["target_space"] == es.TITAN_V2_1024
-    assert "embedding_prepare_shadow('acp_contract', 'question_embedding', 'embedding'" in out["next_steps"][0]
+    steps = out["next_steps"]
+    assert steps[0].startswith("prepare: AA-CIS-Infra db/scripts/aa1026_embedding_shadow.py")
+    assert 'ACTION = "prepare", COLUMN = "acp_contract.question_embedding.embedding", ' \
+           'SPACE = "titan-embed-text-v2/1024/v1"' in steps[0]
+    assert 'ACTION = "swap"' in steps[2] and "swap group f10_embed" in steps[2]
+    assert not any("shared.embedding_" in s for s in steps)
 
 
 def test_dry_run_refusals():

@@ -10,9 +10,9 @@ re-embed text source.
 Writers and searches ask ``space_for(column)`` and pass the space to ``embed.embed(..., space=...)``: the gateway then
 tries only the space's models (the stage route filtered to them, else the space's own models), at the space's
 dimension, and the response carries ``space_key`` for the ledger row (``ledger_signal``). Moving a column to another
-space is data: a re-embed into ``<column>__shadow`` (job ``embedding_reembed``), then ``shared.embedding_swap`` (CIS
-329) changes the registry row in the same transaction as the column rename, so the next registry read embeds in the
-new space with no code change.
+space is data: a re-embed into ``<column>__shadow`` (job ``embedding_reembed``), then the swap (AA-CIS-Infra run-script
+``db/scripts/aa1026_embedding_shadow.py``) changes the registry row in the same transaction as the column rename, so the
+next registry read embeds in the new space with no code change.
 
 Like ``connections.py``: two tiny tables, read in one round trip and cached in process (60 s; a failed read is kept
 30 s); the read never raises. ``BUILTIN_SPACES`` / ``BUILTIN_COLUMNS`` mirror the 328 seed field for field (tests
