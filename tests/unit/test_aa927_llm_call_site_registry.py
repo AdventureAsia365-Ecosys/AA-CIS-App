@@ -102,6 +102,9 @@ LOGGED_CALL_SITES: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
         "services/content_generation/source_facts.py", "extract_day_facts"),
     ("services/places/llm.py", "_generate_sync"): (("services/places/llm.py", "make_generate.generate"),),
     ("services/places/llm.py", "embed_texts"): _self("services/places/llm.py", "embed_texts"),
+    # AA-1026 D5: the re-embed job's fill and probe write their own row right after embed() returns.
+    ("services/embeddings/reembed.py", "fill"): _self("services/embeddings/reembed.py", "fill"),
+    ("services/embeddings/reembed.py", "probe"): _self("services/embeddings/reembed.py", "probe"),
     # AA-917: the writing-memory rule drafter; draft_rule writes the row (or the billed_unusable row) after the call.
     ("services/writing_memory/drafter.py", "_generate_sync"): (("services/writing_memory/drafter.py", "draft_rule"),),
     ("services/writing_memory/preference.py", "_generate_sync"): (("services/writing_memory/preference.py",

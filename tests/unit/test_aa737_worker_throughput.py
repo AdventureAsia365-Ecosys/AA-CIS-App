@@ -87,7 +87,9 @@ def test_background_kind_never_claimed_with_two_or_fewer_free_slots(free):
                           # AA-1002 S10: nightly LLM cost reconciliation ($0: DB, stored CE snapshot, usage APIs)
                           "llm_cost_reconcile",
                           # AA-1018: the daily LLM connection probe (off unless LLM_DAILY_PROBE=on; dry run $0)
-                          "llm_connection_probe"}
+                          "llm_connection_probe",
+                          # AA-1026 D5: re-embed of one vector column (dry run $0; a fill is capped, resumable)
+                          "embedding_reembed"}
     assert bool(background & set(w.claim_caps(free))) == (free > worker.BACKGROUND_RESERVE)
 
 

@@ -39,12 +39,18 @@ import time
 import structlog
 
 from shared.llm_client.call_log import billed_fields, record_call_sync
+from shared.llm_client import embedding_space
 from shared.llm_client.embed import embed
 
 logger = structlog.get_logger()
 
 EMBEDDING_STAGE = "f10_embed"
 EMBEDDING_DIMENSIONS = 1536  # matches content_piece.content_embedding vector(1536)
+# AA-1026 D5: f10_embed writes three columns of one swap group (atom, question and content piece vectors are compared
+# with each other or written together), so they always share a space; the content piece column names it. The space
+# (shared.embedding_space via shared.embedding_column) decides the model and dimension: after a re-embed + swap the
+# same code embeds in the new space. EMBEDDING_DIMENSIONS stays the dimension of today's space.
+SPACE_COLUMN = embedding_space.CONTENT_PIECE_EMBEDDING
 
 # Cohere Embed v4 accepts up to 128k tokens per text; a T9 piece is one short single-channel
 # piece (generate.py's own docstring: "not the multi-H2 long-form draft"), realistically well
@@ -115,12 +121,13 @@ def compute_embeddings(texts: list[str]) -> list[list[float] | None]:
     Blocking (pacing sleeps + the Bedrock call): async callers wrap it in `asyncio.to_thread()`."""
     out: list[list[float] | None] = [None] * len(texts)
     todo = [i for i, t in enumerate(texts) if t and t.strip()]
+    space = embedding_space.space_for(SPACE_COLUMN) if todo else None
     for start in range(0, len(todo), MAX_TEXTS_PER_CALL):
         batch = todo[start:start + MAX_TEXTS_PER_CALL]
         _pace_calls()
         try:
             resp = embed(EMBEDDING_STAGE, [texts[i][:_MAX_INPUT_CHARS] for i in batch],
-                         input_type="search_document", dimensions=EMBEDDING_DIMENSIONS)
+                         input_type=space.input_type("document"), dimensions=space.dimension, space=space)
         except Exception as exc:
             logger.warning("content_embedding_call_failed", texts=len(batch),
                            error_type=type(exc).__name__, error=str(exc))
@@ -129,7 +136,7 @@ def compute_embeddings(texts: list[str]) -> list[list[float] | None]:
             stage=EMBEDDING_STAGE, role="embed", model=resp.model_used,
             tokens_in=resp.input_tokens, tokens_out=0, cost_usd=resp.cost_usd,
             quality_signal={"texts": len(batch), "dimensions": len(resp.vectors[0]),
-                            "tokens_estimated": resp.tokens_estimated},
+                            "tokens_estimated": resp.tokens_estimated, **embedding_space.ledger_signal(resp)},
             account=resp.account, fallback_used=resp.fallback_used,
             provider="bedrock-native" if resp.account == "acc2" else "bedrock-satellite", **billed_fields(resp),
         )

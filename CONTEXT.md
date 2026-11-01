@@ -262,6 +262,22 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   `global.cohere.embed-v4:0` since migration 238 (AA-856: the `us.` quota is fixed at 20 rpm, the global
   one is adjustable; one quota shared by f10_embed, a3_place_embed and TripPlanner search). Claude cannot be invoked from a local shell — the satellite roles only trust the
   ECS task role, so real LLM measurements run inside the `api` container via ECS exec.
+- **Embedding spaces** (AA-1026 D5, migrations 328 / 329, `shared/llm_client/embedding_space.py`): a space is one
+  model at one dimension (`cohere-embed-v4/1536/v1`, served by `cohere-embed-v4` on acc2 and `cohere-embed-v4-acc3`).
+  `shared.embedding_space` lists the spaces, `shared.embedding_column` gives every vector column its space and swap
+  group (`f10_embed` = atom + question + content piece vectors; `tour_place`; `published_tours`). Writers
+  (`content_embedding.compute_embeddings`, `places.llm.embed_texts`) pass the column's space to `embed(..., space=)`:
+  only that space's models are tried (the route filtered to them, else the space's own), at its dimension, and the
+  ledger row carries `quality_signal.embedding_space`. TripPlanner reads its column's space through
+  `catalog.v_embedding_space_v1` and searches in it only. The ready fallback of another vendor is Amazon Titan Text
+  Embeddings V2 (`titan-embed-text-v2`, space `titan-embed-text-v2/1024/v1`, standby) on connection `acc2-usw2`
+  (acc2, us-west-2, the model is not offered in us-west-1), connection off (its deployment is enabled: switching
+  is one audited `PATCH /admin/llm-connections/acc2-usw2`). Moving a column:
+  `shared.embedding_prepare_shadow` (owner, run-script; its trigger `<column>__shadow_reset` empties the shadow of a
+  row whose serving vector a writer rewrites) → job `embedding_reembed` (dry_run / fill / probe, POST
+  /admin/job-runner/embedding-reembed/run, resumable, cost cap per job across retries) → `shared.embedding_swap(group)` (renames, rebuilds
+  dependent views as their owners, registry in the same transaction) → `embedding_rollback` / `embedding_drop_previous`.
+  Runbook: root `docs/ops/runbooks/embedding-re-embed.md`.
 - **Model per stage is DB-driven**: `shared.llm_role_config` (20s cache; `SAFE_DEFAULTS` in
   `shared/llm_client/role_config.py` are only a fallback), editable in admin AI providers › Routing.
 - **Model Catalog** (`shared.llm_model_catalog`, AA-658, ADR 0005): the admin dropdown options and

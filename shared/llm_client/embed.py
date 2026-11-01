@@ -5,8 +5,9 @@ The stage route (shared.llm_role_config: model_id + fallback_model_ids) picks ca
 contract as LLMClient.generate(): raises when every model in the route fails, and the CALLER
 writes shared.llm_call_log (quality_signal is the caller's to compute).
 
-Only Cohere's Bedrock request/response shape is implemented — it is the only embedding vendor in
-the catalog. A new vendor gets its own body builder here, not a new call site.
+Two Bedrock request/response shapes: Cohere (Embed v4, up to 96 texts per request, input_type) and, since AA-1026,
+Amazon (Titan Text Embeddings V2, the fallback embedding model: one text per request, ``dimensions``, normalized,
+no input type). A new vendor gets its own body builder here, not a new call site.
 
 AA-1002 (S3): where a model runs comes from the connection registry, not from code. Each model of the
 route is tried on its deployments (vendor_route.deployment_plan: enabled, on an enabled Bedrock
@@ -28,6 +29,12 @@ fails gets the gateway's own 0 USD llm_call_log row (role ``embed``, status refu
 ``client.attempt_outcome``, the connection, latency and attempt number), and so does a model of the route that is not
 tried at all (not in the catalog, disabled, every deployment behind an open circuit or none usable: latency 0, no
 attempt number). The rows are written on a background thread (``call_log._in_background``) and never raise.
+
+AA-1026 D5 (embedding space registry, ``embedding_space.py``): a caller that writes or searches a vector column passes
+the column's space (``space=``). Only the space's models are tried — the stage route filtered to them, or the space's
+own models when the route names none of them (a column swapped to another space needs no route change) — at the
+space's dimension, so one call can never fall back into another vector space. The response carries ``space_key`` for
+the ledger row (``embedding_space.ledger_signal``).
 """
 from __future__ import annotations
 
@@ -75,6 +82,8 @@ class EmbedResponse:
     attempt_no: Optional[int] = None
     deployment_wire_id: Optional[str] = None
     pricing_mode: Optional[str] = None
+    # AA-1026: the vector space of ``vectors`` when the caller passed one (embedding_space.ledger_signal).
+    space_key: Optional[str] = None
 
 
 def _runtime_for(connection_key: str):
@@ -125,8 +134,16 @@ def _cohere_body(texts: list[str], input_type: str, dimensions: Optional[int]) -
     return json.dumps(body)
 
 
-def _call(model: CatalogModel, account: str, texts: list[str], input_type: str,
+# AA-1026: Titan Text Embeddings V2 answers 256, 512 or 1024 dimensions (1024 when none is sent).
+TITAN_DIMENSIONS = (256, 512, 1024)
+# The vendors whose embedding request shape _call builds (the daily probe reads it).
+EMBED_VENDORS = ("cohere", "amazon")
+
+
+def _call(model: CatalogModel, account: str, texts: list[str], input_type: Optional[str],
           dimensions: Optional[int], wire_id: Optional[str] = None) -> EmbedResponse:
+    if model.vendor == "amazon":
+        return _titan_call(model, account, texts, dimensions, wire_id)
     if model.vendor != "cohere":
         raise RuntimeError(f"No embedding request shape for vendor {model.vendor!r}")
     resp = _runtime_for(account).invoke_model(
@@ -188,10 +205,49 @@ def _log_failure(stage: str, model_key: str, exc: BaseException, *, connection_k
         logger.warning("llm_embed_failed_attempt_log_failed", stage=stage, error=str(e)[:200])
 
 
-def embed(stage: str, texts: list[str], *, input_type: str = "search_document",
-          dimensions: Optional[int] = None) -> EmbedResponse:
+def _titan_call(model: CatalogModel, account: str, texts: list[str], dimensions: Optional[int],
+                wire_id: Optional[str]) -> EmbedResponse:
+    """AA-1026: Amazon Titan Text Embeddings V2 — one InvokeModel per text (the model takes one ``inputText``),
+    normalized vectors, the token count from each answer. No input type (the same vector for stored and search
+    text)."""
+    if dimensions and dimensions not in TITAN_DIMENSIONS:
+        raise RuntimeError(f"{model.model_key} answers {TITAN_DIMENSIONS} dimensions, not {dimensions}")
+    runtime = _runtime_for(account)
+    vectors: list[list[float]] = []
+    tokens, estimated = 0, False
+    for text in texts:
+        body = {"inputText": text, "normalize": True}
+        if dimensions:
+            body["dimensions"] = dimensions
+        resp = runtime.invoke_model(modelId=wire_id or model.bedrock_profile_ids[account], body=json.dumps(body),
+                                    contentType="application/json", accept="application/json")
+        payload = json.loads(resp["body"].read())
+        vector = payload.get("embedding")
+        if (not isinstance(vector, list) or not vector or (dimensions and len(vector) != dimensions)):
+            raise RuntimeError(f"{model.model_key} returned a malformed embedding response")
+        vectors.append(vector)
+        count = payload.get("inputTextTokenCount")
+        if isinstance(count, int) and not isinstance(count, bool):
+            tokens += count
+        else:
+            tokens, estimated = tokens + max(1, len(text) // 4), True
+    return EmbedResponse(vectors=vectors, model_used=model.model_key, account=account, input_tokens=tokens,
+                         tokens_estimated=estimated,
+                         cost_usd=round(tokens * (model.price_in_per_mtok or 0.0) / 1_000_000, 6))
+
+
+def _space_chain(chain: list[str], space) -> list[str]:
+    """AA-1026: the route models of ``space`` in route order, else the space's own models (primary first)."""
+    keys = tuple(space.model_keys)
+    return [k for k in chain if k in keys] or list(keys)
+
+
+def embed(stage: str, texts: list[str], *, input_type: Optional[str] = "search_document",
+          dimensions: Optional[int] = None, space=None) -> EmbedResponse:
     """Embeds `texts` with the stage's route. `input_type` is Cohere's: "search_document" for
-    text that is stored, "search_query" for text searched against stored documents."""
+    text that is stored, "search_query" for text searched against stored documents.
+    AA-1026: ``space`` (an ``embedding_space.EmbeddingSpace``) keeps the call inside one vector space (module
+    docstring); its dimension is used when ``dimensions`` is not given."""
     if not texts:
         raise ValueError("embed() needs at least one text")
     cfg = get_stage_config_sync(stage)
@@ -202,6 +258,10 @@ def embed(stage: str, texts: list[str], *, input_type: str = "search_document",
         refusal = LLMStageDisabled(stage, reason if isinstance(reason, str) else None)
         _log_failure(stage, cfg.model_id, refusal)
         raise refusal
+    if space is not None:
+        chain = _space_chain(chain, space)
+        if dimensions is None:
+            dimensions = space.dimension
     errors = []
     attempts = 0
     for position, key in enumerate(chain):
@@ -246,6 +306,7 @@ def embed(stage: str, texts: list[str], *, input_type: str = "search_document",
             resp.attempt_no = attempts
             resp.deployment_wire_id = wire_id or model.bedrock_profile_ids.get(account)
             resp.pricing_mode = "code_table" if model is _CATALOG_FALLBACK.get(key) else "catalog"
+            resp.space_key = space.space_key if space is not None else None
             logger.info("llm_embed_success", stage=stage, model=key, account=account,
                         texts=len(texts), in_tokens=resp.input_tokens, cost_usd=resp.cost_usd)
             return resp

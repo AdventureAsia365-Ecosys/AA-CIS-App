@@ -2441,6 +2441,89 @@
         "title": "DraftBody",
         "type": "object"
       },
+      "EmbeddingReembedRunRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "batch_size": {
+            "anyOf": [
+              {
+                "maximum": 96.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Size"
+          },
+          "column": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "schema.table.column (dry_run, fill)",
+            "title": "Column"
+          },
+          "cost_cap_usd": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 25.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "fill: stop before crossing this spend",
+            "title": "Cost Cap Usd"
+          },
+          "max_rows": {
+            "anyOf": [
+              {
+                "maximum": 10000000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Rows"
+          },
+          "mode": {
+            "default": "dry_run",
+            "enum": [
+              "dry_run",
+              "fill",
+              "probe"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "space_key": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "target space (dry_run before prepare, probe)",
+            "title": "Space Key"
+          }
+        },
+        "title": "EmbeddingReembedRunRequest",
+        "type": "object"
+      },
       "ErasureRunRequest": {
         "additionalProperties": false,
         "properties": {
@@ -17802,6 +17885,160 @@
           }
         },
         "summary": "Open waves and running deploy-blocking jobs, for the CI guard",
+        "tags": [
+          "admin-job-runner"
+        ]
+      }
+    },
+    "/admin/job-runner/embedding-reembed/run": {
+      "post": {
+        "description": "AA-1026 D5 — one `embedding_reembed` job. DRY RUN by default: rows to embed, estimated tokens and USD, no\nprovider call. `fill` (needs the shadow prepared by the table owner and a `cost_cap_usd`) writes the shadow\ncolumn; `probe` makes one tiny call in `space_key`. The swap is an owner SQL step (runbook), never this route.",
+        "operationId": "embedding_reembed_run_admin_job_runner_embedding_reembed_run_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmbeddingReembedRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Enqueue an embedding re-embed (DRY RUN by default)",
+        "tags": [
+          "admin-job-runner"
+        ]
+      }
+    },
+    "/admin/job-runner/embedding-spaces": {
+      "get": {
+        "description": "AA-1026 D5 — shared.embedding_space and shared.embedding_column (CIS 328), read fresh; ``source`` = registry\nor builtin (the mirror of 328, when the tables cannot be read).",
+        "operationId": "embedding_spaces_admin_job_runner_embedding_spaces_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Embedding spaces and the space of every vector column",
         "tags": [
           "admin-job-runner"
         ]

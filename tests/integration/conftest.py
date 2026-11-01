@@ -411,6 +411,9 @@ def _apply_schema(conn):
         # catalog.v_llm_app_spend_today_v1) through the catalog recipe (needs 245's owners).
         # test_aa642_migration_323 applies it the DB Migrate way on the RDS-like state and undoes it at teardown.
         and not f.startswith('323')
+        # AA-1026 (S263): 329 creates catalog.v_embedding_space_v1 through the catalog recipe (needs 245's owners).
+        # test_aa1026_migration_329 applies it the DB Migrate way on the RDS-like state and undoes it at teardown.
+        and not f.startswith('329')
     ])
 
     for mf in migration_files:
