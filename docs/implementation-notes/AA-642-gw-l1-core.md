@@ -145,3 +145,22 @@ Lane order: D1 (migration 325) → A1 (migration 326) → A9 → A8. Migration n
   of an approval stop is already live-tested by AA-1016.
 - `docs/api/openapi.json` regenerated with fastapi 0.161.1 / pydantic 2.14.1 (requirements.txt pins): one line
   (`hard_stop` default).
+
+## PRs (stacked, merge in this order)
+
+1. `feat/gw-d1-prompt-version-seed` — migration 325 + the CI gate (contract: migration PR, Infra copy merged by
+   hand, manual DB Migrate apply).
+2. `feat/gw-a1-stage-switch-migration` — migration 326 only (contract, same path). Its number check needs 325 on
+   `main` first.
+3. `feat/gw-a9-embed-ledger` — A9 code (no migration dependency).
+4. `feat/gw-a8-tenant-budget-fail-closed` — A8 code (no migration dependency; no Dev budget row seeded).
+5. `feat/gw-a1-stage-kill-switch` — A1 code + read-only UI badges; merge only after 326 is applied on Dev.
+
+Each branch holds the commits of the ones before it; after a squash merge, rebase the next one on `main` (the merged
+commit drops out as already applied).
+
+### Classification note
+The lane brief asked for an expand header; both files are contract under root ADR 0017 decision 3 (325 inserts
+config rows into an existing table; 326 adds constraints, a column grant and an UPDATE, and touches the hot ledger
+table). An expand header would fail the runtime post-check (exit 14). Both pass the Infra runner lint
+(`run_migration.py --inspect`, `check_migration_files.py`). Neither creates a table: no DM-7.1 retention row.
