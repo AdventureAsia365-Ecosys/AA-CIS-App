@@ -92,7 +92,6 @@
     "vendor_direct"
    ],
    "fallback_model_ids": [
-    "llama4-scout",
     "gpt-6-luna-openai"
    ],
    "is_active": true,
@@ -620,5 +619,5 @@
    "stage": "writing_memory_mine"
   }
  ],
- "source": "The 37 Dev routes of tests/unit/snapshots/aa1026_routes_after_332.json after CIS migration 333 (AA-1026 I6, \"AWS first, outside last\"): s1_judge, t2_judge, t7_debate_judge, t10_judge, writing_memory_eval and writing_memory_mine get nova-lite, a3_place_dedupe gets llama4-scout, right before gpt-6-luna-openai (the OpenAI API hop stays last); every other row unchanged. Proven by tests/integration/test_aa1026_migration_333.py."
+ "source": "The 37 Dev routes of tests/unit/snapshots/aa1026_routes_after_332.json after CIS migration 333 (AA-1026 I6, \"AWS first, outside last\"): s1_judge, t2_judge, t7_debate_judge, t10_judge, writing_memory_eval and writing_memory_mine get nova-lite right before gpt-6-luna-openai (the OpenAI API hop stays last); every other row unchanged (a3_place_dedupe too: no enabled acc2 model of another maker than its check stage's Nova Lite is known to take a forced tool choice). Proven by tests/integration/test_aa1026_migration_333.py."
 }

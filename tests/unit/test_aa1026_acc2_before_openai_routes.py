@@ -1,7 +1,8 @@
 """AA-1026 I6, "AWS first, outside last" — what the gateway calls for every Dev stage once migration 333 has put an acc2
-pick right before the OpenAI API hop of the judge / validate routes that end on it.
+pick right before the OpenAI API hop of the judge / validate routes that end on it (a3_place_dedupe left
+out, see OPEN).
 
-The routes are ``snapshots/aa1026_routes_after_333.json`` (the post-332 routes with the seven picks inserted;
+The routes are ``snapshots/aa1026_routes_after_333.json`` (the post-332 routes with the six picks inserted;
 ``tests/integration/test_aa1026_migration_333.py`` proves the file produces them on real Postgres, and covers
 ``t10_adjudicate``, which the 29/10 Dev snapshot predates). Each route is walked through ``LLMClient.generate`` with
 every provider failing (``aa1002_s3_route_capture``, the harness of ``test_aa1026_acc2_fallback_routes``), with the
@@ -25,7 +26,10 @@ SNAPSHOTS = Path(__file__).resolve().parent / "snapshots"
 AFTER_332 = SNAPSHOTS / "aa1026_routes_after_332.json"
 AFTER_333 = SNAPSHOTS / "aa1026_routes_after_333.json"
 PICKS = {"s1_judge": "nova-lite", "t2_judge": "nova-lite", "t7_debate_judge": "nova-lite", "t10_judge": "nova-lite",
-         "writing_memory_eval": "nova-lite", "writing_memory_mine": "nova-lite", "a3_place_dedupe": "llama4-scout"}
+         "writing_memory_eval": "nova-lite", "writing_memory_mine": "nova-lite"}
+# Left out of 333 (open): a3_place_dedupe forces a tool choice and its check stage falls back to Nova Lite (Amazon); no
+# enabled acc2 model of another maker is known to take toolChoice.tool (Llama 4 Scout refused it live, S263).
+OPEN = {"a3_place_dedupe"}
 OPENAI_HOP = "gpt-6-luna-openai"
 
 
@@ -53,9 +57,9 @@ def test_the_snapshot_moves_exactly_the_picks_before_the_openai_api_hop():
         assert r == {**before[stage], "fallback_model_ids": expected}, stage
         if stage in PICKS:
             assert f[-1] == OPENAI_HOP and r["role"] in ("judge", "validate")
-    # every judge / validate route that reaches the OpenAI API now reaches acc2 first
+    # every judge / validate route that reaches the OpenAI API now reaches acc2 first, but the open one
     for stage, r in after.items():
-        if r["role"] in ("judge", "validate") and OPENAI_HOP in r["fallback_model_ids"]:
+        if r["role"] in ("judge", "validate") and OPENAI_HOP in r["fallback_model_ids"] and stage not in OPEN:
             f = r["fallback_model_ids"]
             assert any(k in ACC2_MODELS for k in f[:f.index(OPENAI_HOP)]), stage
 

@@ -83,7 +83,11 @@ def test_five_enabled_priced_catalog_rows_with_their_family(cur):
         assert r["price_in_per_mtok"] > 0 and r["price_out_per_mtok"] > 0
         assert set(r["bedrock_profile_ids"]) == {"acc2"}
         assert r["bedrock_profile_ids"]["acc2"].startswith("us.")    # an inference profile id, never an ARN
-        assert r["capabilities"] == {}
+        # CIS 333 (AA-1026) records that Llama 4 Scout refuses a forced tool choice (live contract smoke, S263); a test
+        # that sets 324's rows aside re-creates the row without it, so the key may be missing here
+        caps = {k: v for k, v in r["capabilities"].items() if not (key == "llama4-scout" and k == "forced_tool_choice")}
+        assert caps == {}, key
+    assert rows["llama4-scout"]["capabilities"].get("forced_tool_choice") in (None, False)
     assert rows["kimi-k3"]["supports_temperature"] is False
 
 

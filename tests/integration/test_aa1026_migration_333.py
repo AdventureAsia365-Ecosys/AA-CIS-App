@@ -4,7 +4,8 @@ validate route that ends on it) against real Postgres.
 conftest applies every migration, 333 included. The main test loads the routes after migration 332
 (``tests/unit/snapshots/aa1026_routes_after_332.json``), runs the file's body inside one transaction and compares every
 row with ``tests/unit/snapshots/aa1026_routes_after_333.json``. A second test replays 331 -> 332 -> 333 from the
-routes after 327. Every test rolls back what it wrote.
+routes after 327. a3_place_dedupe is not moved (no enabled acc2 model of another maker than Nova Lite is known to take a
+forced tool choice); the file records that Llama 4 Scout refuses one. Every test rolls back what it wrote.
 """
 import json
 import os
@@ -30,12 +31,13 @@ AFTER_327 = SNAPSHOTS / "aa1026_routes_after_327.json"
 BEFORE = SNAPSHOTS / "aa1026_routes_after_332.json"
 EXPECTED = SNAPSHOTS / "aa1026_routes_after_333.json"
 PICKS = {"s1_judge": "nova-lite", "t2_judge": "nova-lite", "t7_debate_judge": "nova-lite", "t10_judge": "nova-lite",
-         "writing_memory_eval": "nova-lite", "writing_memory_mine": "nova-lite", "a3_place_dedupe": "llama4-scout"}
+         "writing_memory_eval": "nova-lite", "writing_memory_mine": "nova-lite"}
 SMOKED_331_332 = {"s1_brand_audit": "nova-lite", "s1_source_facts": "nova-lite", "a3_atomize": "nova-lite",
                   "a3_place_card": "nova-lite", "a3_place_card_check": "llama4-scout", "a3_place_days": "nova-lite",
                   "a3_place_locate": "nova-lite", "a3_place_dedupe_check": "nova-lite", "t2_brand_audit": "nova-lite",
                   "t10_claims": "nova-lite", "t9_faq_answer_fit": "nova-lite", "t9_faq_filter": "nova-lite"}
 OPENAI_HOP = "gpt-6-luna-openai"
+OPEN = "a3_place_dedupe"
 COLUMNS = ("stage, role, provider, model_id, account_route, is_active, fallback_model_ids, shadow_model_id, "
            "shadow_sample_pct, allowed_scopes")
 ACTOR = "migration-333-aa1026"
@@ -67,9 +69,11 @@ def _smoke(c, stage: str, ok: bool, model: str, at: str = "2026-11-01 09:00+00")
 
 def _load_routes(c, path: Path = BEFORE, smoked: dict = PICKS) -> None:
     """The routes of ``path``, the registry the files expect (acc2 / acc3 / openai-direct on, the acc2 picks
-    deployed) and a passing contract smoke of each stage in ``smoked``."""
+    deployed, Llama 4 Scout's catalog row as 324 seeds it) and a passing contract smoke of each stage in ``smoked``."""
     for stage, model in smoked.items():
         _smoke(c, stage, True, model)
+    c.execute("UPDATE shared.llm_model_catalog SET capabilities = '{}'::jsonb, updated_by = 'migration-324-aa1017' "
+              "WHERE model_key = 'llama4-scout'")
     c.execute("UPDATE shared.llm_provider_connection SET enabled = true "
               "WHERE connection_key IN ('acc2', 'acc3', 'openai-direct')")
     c.execute("UPDATE shared.llm_model_deployment SET enabled = true WHERE connection_key = 'acc2' "
@@ -134,7 +138,8 @@ def test_the_expected_routes_put_the_pick_right_before_the_openai_api_hop_only()
             assert r["role"] in ("judge", "validate")
         else:
             assert r == b, r["stage"]
-            assert OPENAI_HOP not in r["fallback_model_ids"] or r["role"] not in ("judge", "validate"), r["stage"]
+            if r["stage"] != OPEN:                         # left out of 333: see the module docstring
+                assert OPENAI_HOP not in r["fallback_model_ids"] or r["role"] not in ("judge", "validate"), r["stage"]
 
 
 def test_331_332_333_replay_from_the_routes_after_327(cur):
@@ -185,12 +190,47 @@ def test_guard_refuses_without_332(cur):
         cur.execute(_body())
 
 
-def test_guard_refuses_a_dedupe_pick_of_the_check_stage_maker(cur):
+def _scout(c) -> dict:
+    c.execute("SELECT capabilities AS caps, updated_by AS who FROM shared.llm_model_catalog "
+              "WHERE model_key = 'llama4-scout'")
+    return dict(c.fetchone())
+
+
+def test_a3_place_dedupe_keeps_its_route_and_scout_records_its_forced_tool_refusal(cur):
     _load_routes(cur)
-    body = _body().replace("'llama4-scout', 'nova-lite'];", "'nova-lite', 'nova-lite'];", 1)
-    assert body != _body()
-    _smoke(cur, "a3_place_dedupe", True, "nova-lite")
-    with pytest.raises(psycopg2.errors.RaiseException, match="share a maker"):
+    before = {r["stage"]: r for r in _routes(cur)}["a3_place_dedupe"]
+    cur.execute(_body())
+    after = {r["stage"]: r for r in _routes(cur)}["a3_place_dedupe"]
+    assert after == before and after["fallback_model_ids"] == [OPENAI_HOP]
+    assert _scout(cur) == {"caps": {"forced_tool_choice": False}, "who": ACTOR}
+    cur.execute(_body())                                                     # a re-apply leaves the row as it is
+    assert _scout(cur)["caps"] == {"forced_tool_choice": False}
+
+
+def test_a_stated_forced_tool_choice_capability_is_kept(cur):
+    _load_routes(cur)
+    cur.execute("UPDATE shared.llm_model_catalog SET capabilities = '{\"forced_tool_choice\": true}'::jsonb, "
+                "updated_by = 'admin:zz-333' WHERE model_key = 'llama4-scout'")
+    cur.execute(_body())
+    assert _scout(cur) == {"caps": {"forced_tool_choice": True}, "who": "admin:zz-333"}
+
+
+def test_guard_refuses_a_pick_whose_catalog_row_refuses_a_forced_tool_choice(cur):
+    _load_routes(cur)
+    cur.execute("UPDATE shared.llm_model_catalog SET capabilities = capabilities || '{\"forced_tool_choice\": false}' "
+                "WHERE model_key = 'nova-lite'")
+    with pytest.raises(psycopg2.errors.RaiseException, match="refuses a forced tool choice: nova-lite"):
+        cur.execute(_body())
+
+
+def test_a3_place_dedupe_given_llama4_scout_again_is_refused(cur):
+    """The first draft's pick: the guard catches it from the catalog fact, before Bedrock would."""
+    _load_routes(cur)
+    body = _body().replace("'t10_adjudicate'];", "'t10_adjudicate', 'a3_place_dedupe'];", 1)
+    body = body.replace("'nova-lite', 'nova-lite'];", "'nova-lite', 'nova-lite', 'llama4-scout'];", 1)
+    assert body.count("'llama4-scout'];") == 1
+    _smoke(cur, "a3_place_dedupe", True, "llama4-scout")
+    with pytest.raises(psycopg2.errors.RaiseException, match="refuses a forced tool choice: llama4-scout"):
         cur.execute(body)
 
 
@@ -209,7 +249,7 @@ def test_guard_refuses_a_tripplanner_stage(cur):
 
 def test_guard_refuses_an_openai_api_model_as_a_pick(cur):
     _load_routes(cur)
-    body = _body().replace("'llama4-scout', 'nova-lite'];", "'llama4-scout', 'gpt-6-luna-openai'];", 1)
+    body = _body().replace("'nova-lite', 'nova-lite'];", "'nova-lite', 'gpt-6-luna-openai'];", 1)
     assert body != _body()
     with pytest.raises(psycopg2.errors.RaiseException, match="picks without an enabled non-Anthropic Converse"):
         cur.execute(body)
@@ -227,9 +267,9 @@ def test_the_order_gate_refuses_a_stage_whose_latest_smoke_failed(cur):
 def test_the_order_gate_refuses_a_stage_with_no_smoke_on_its_pick(cur):
     _load_routes(cur)
     cur.execute("DELETE FROM shared.llm_call_log WHERE stage = 'adhoc_aa1026' "
-                "AND quality_signal ->> 'contract_smoke' = 'a3_place_dedupe'")
-    _smoke(cur, "a3_place_dedupe", True, "nova-lite")                          # a smoke on another model counts not
-    with pytest.raises(psycopg2.errors.RaiseException, match=r"a3_place_dedupe \(llama4-scout\)"):
+                "AND quality_signal ->> 'contract_smoke' = 'writing_memory_eval'")
+    _smoke(cur, "writing_memory_eval", True, "llama4-scout")                  # a smoke on another model counts not
+    with pytest.raises(psycopg2.errors.RaiseException, match=r"writing_memory_eval \(nova-lite\)"):
         cur.execute(_body())
 
 

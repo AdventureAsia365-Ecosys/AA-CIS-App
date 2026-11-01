@@ -92,7 +92,9 @@ def _undo(c):
     c.execute("DROP TABLE IF EXISTS shared.llm_provider_health")          # 309: references the connection table
     c.execute("DELETE FROM shared.schema_versions WHERE version IN ('309', '310', '317', '322')")
     c.execute("DROP TABLE IF EXISTS shared.llm_model_deployment")
-    c.execute("DELETE FROM shared.llm_model_catalog WHERE updated_by = 'migration-324-aa1017'")
+    # 324's rows (333 / AA-1026 re-signs the llama4-scout row when it records the model's forced tool choice)
+    c.execute("DELETE FROM shared.llm_model_catalog "
+              "WHERE updated_by IN ('migration-324-aa1017', 'migration-333-aa1026')")
     c.execute("DELETE FROM shared.schema_versions WHERE version = '324'")
     c.execute("DROP TABLE IF EXISTS shared.llm_provider_connection")
     c.execute("ALTER TABLE shared.llm_model_catalog DROP COLUMN IF EXISTS capabilities")
@@ -105,7 +107,7 @@ def _undo(c):
 def _profiles(c):
     # 324's catalog rows leave with _undo (they come back with LATER), so they are not part of 304's profiles
     c.execute("SELECT model_key, bedrock_profile_ids FROM shared.llm_model_catalog "
-              "WHERE updated_by <> 'migration-324-aa1017' ORDER BY model_key")
+              "WHERE updated_by NOT IN ('migration-324-aa1017', 'migration-333-aa1026') ORDER BY model_key")
     return [(r["model_key"], r["bedrock_profile_ids"]) for r in c.fetchall()]
 
 
