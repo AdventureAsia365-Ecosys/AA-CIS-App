@@ -3653,6 +3653,22 @@
             "title": "Dry Run",
             "type": "boolean"
           },
+          "models": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "maxProperties": 50,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "stage -> model key to smoke instead of the route's acc2 model or the planned one (a re-pick before it is applied)",
+            "title": "Models"
+          },
           "stages": {
             "anyOf": [
               {
@@ -18995,7 +19011,7 @@
     },
     "/admin/job-runner/llm-contract-smoke/run": {
       "post": {
-        "description": "AA-1026 I6 — one `llm_contract_smoke` job: per stage, one fixture through the stage's own prompt and parser on\nits acc2 fallback model. DRY RUN by default (stages, model, deployment state and estimated cost, no call); a live\nrun makes one small paid call per stage (about 0.01 USD for all of them, refused over 0.10 USD). 422 for an\nunknown stage name.",
+        "description": "AA-1026 I6 — one `llm_contract_smoke` job: per stage, one fixture through the stage's own prompt and parser on\nits acc2 fallback model (or the model named in `models` for that stage). DRY RUN by default (stages, model,\ndeployment state and estimated cost, no call); a live run makes one small paid call per stage (about 0.01 USD for\nall of them, refused over 0.10 USD). Migration 331 / 332 gives a stage its acc2 fallback only after this smoke\npassed for it. 422 for an unknown stage name or an override for a stage the run leaves out.",
         "operationId": "llm_contract_smoke_run_admin_job_runner_llm_contract_smoke_run_post",
         "parameters": [
           {

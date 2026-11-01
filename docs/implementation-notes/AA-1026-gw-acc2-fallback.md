@@ -1,13 +1,16 @@
 # AA-1026 slice I6 — acc2 fallback for judge / validate stages (lane gw-acc2-fallback, S263)
 
-Tech lead approval S263 (01/11): "thêm đường dự phòng acc2". Three CIS PRs, in merge order:
+Tech lead approval S263 (01/11): "thêm đường dự phòng acc2". Three CIS PRs, in merge order (changed in the review
+fix pass: the code PR now goes FIRST, so the contract smoke runs before any route changes):
 
-1. `feat/aa-1026-acc2-judge-fallback`: migration 331 (contract) + its integration test + a unit test that walks the
-   post-331 routes through the gateway. Migration only, no readiness raise (MIG-4).
-2. `feat/aa-1026-contract-smoke`: the contract smoke job + admin route, an optional `client` on the place card
-   calls, CONTEXT.md, these notes. Works with or without 331 (it reads the route, else uses the planned model).
-3. `feat/aa-1026-tenant-acc2-fallback` (held): migration 332, the same fallback for the four tenant judge / validate
-   stages. Merge only after the tech lead says yes to the ADR 0009 decision 14 question below.
+1. `feat/aa-1026-contract-smoke`: the contract smoke job + admin route (with a per-stage model override), the brand
+   audit's hold of an acc2 `pass`, an optional `client` on the place card calls, CONTEXT.md, these notes. Works with
+   or without 331 (it reads the route, else uses the planned model). Merge, deploy, then smoke DRY RUN and live.
+2. `feat/aa-1026-acc2-judge-fallback`: migration 331 (contract) + its integration test + a unit test that walks the
+   post-331 routes through the gateway. Migration only, no readiness raise (MIG-4). Its order gate refuses a stage
+   whose latest contract smoke on the pick did not pass, so it can only be applied after step 1's live smoke.
+3. `feat/aa-1026-tenant-acc2-fallback` (held): migration 332, the same fallback (and the same order gate) for the four
+   tenant judge / validate stages. Merge only after the tech lead says yes to the ADR 0009 decision 14 question below.
 
 ## Decisions
 
@@ -55,10 +58,32 @@ Tech lead approval S263 (01/11): "thêm đường dự phòng acc2". Three CIS P
   days = one entry per day block; locate = every name answered (null allowed), none malformed; dedupe = a verdict of
   same / different / unsure; claims = a row for every sentence; FAQ fit / filter = their own parsers.
 
+- **Review fix pass (two major findings).** (1) *An uncalibrated judge must not publish.* `s1_brand_audit` is a judge
+  whose `pass` publishes a tour, and Nova Lite has no decision 12 calibration. Kept the route (option b of the review):
+  `brand_audit_node.hold_uncalibrated_pass` turns a `pass` answered on a connection in
+  `UNCALIBRATED_JUDGE_CONNECTIONS` (`{"acc2"}`) into `manual_check` + `BRAND_AUDIT_UNCALIBRATED_JUDGE` (taxonomy:
+  `other.degraded_detector`) with a reviewer note; `flagged` / `manual_check` from acc2 stand. So while acc3 refuses,
+  every brand audit still runs and can flag, and a clean one goes to the Review Queue instead of publishing. The test
+  is the reply's `connection_key` (the gateway sets it to the task-role connection on the Converse path), not
+  `fallback_used`: an admin could make acc2 the primary and the verdict would be no more calibrated. It covers
+  `t2_brand_audit` too (same node, 332). Dropped option (a) (take s1_brand_audit out of 331): it leaves the brand audit
+  with no second domain, which is exactly the breach the slice closes. (2) *Smoke before apply.* The planned order
+  applied 331 first; now the code PR merges and deploys first, the smoke runs (DRY RUN, then live on the planned
+  models), and only then 331. The order is a guard, not a note: 331 / 332 refuse a stage they would change unless the
+  latest `shared.llm_call_log` row with `stage = 'adhoc_aa1026'`, `quality_signal->>'contract_smoke' = <stage>`,
+  `model = <pick>` and connection acc2 has `parser_ok = true` (a later failed run cancels an earlier pass). A
+  database that never logged a call (CI / local replay) skips the gate with a NOTICE; Dev has hundreds of thousands
+  of rows. To re-pick a failing stage before the apply, the smoke takes `models: {stage: key}`.
+- **Ladder rungs skipped knowingly.** The tech lead's S263 yes puts the seven validate stages live on the format smoke
+  alone (no calibration, A/B or shadow rung); the brand audit judge goes live only with its `pass` held. Recorded in
+  331's header and in the root ADR 0009 decision 14.
+
 ## Changed
 
-- `api/migrations/331_llm_judge_validate_acc2_fallback.sql` (PR 1), `332_llm_tenant_judge_validate_acc2_fallback.sql`
-  (PR 3, held).
+- `api/migrations/331_llm_judge_validate_acc2_fallback.sql` (PR 2), `332_llm_tenant_judge_validate_acc2_fallback.sql`
+  (PR 3, held); both carry the smoke order gate.
+- `services/content_generation/brand_audit_node.py` (`hold_uncalibrated_pass`, `UNCALIBRATED_JUDGE_CONNECTIONS`),
+  `services/quality/taxonomy.yaml` (`BRAND_AUDIT_UNCALIBRATED_JUDGE`), tests in `tests/test_brand_audit_node.py`.
 - `services/jobs/llm_contract_smoke_job.py`, `services/jobs/__init__.py`, `api/routers/admin_job_runner.py`
   (`POST /admin/job-runner/llm-contract-smoke/run`), `api/core/staff_authz.py` (ai.admin), `docs/api/openapi.json`
   (regenerated with the pinned fastapi 0.161.1 / pydantic 2.14.1), `services/acp_shared/place_cards.py` (optional
@@ -81,8 +106,13 @@ Tech lead approval S263 (01/11): "thêm đường dự phòng acc2". Three CIS P
 ## Tradeoffs
 
 - **Judge calibration not done.** ADR 0009 decision 12's ladder asks for judge calibration (40 labelled items) and an
-  A/B before an acc2 judge route; the tech lead's yes covers the fallback position now. A brand audit answered by Nova
-  Lite is a fallback verdict only while acc3 refuses; it still fails closed to `manual_check` on an unusable reply.
+  A/B before an acc2 judge route; the tech lead's yes covers the fallback position now. So a brand audit answered by
+  Nova Lite can flag or hold, never pass: its `pass` becomes `manual_check` (more Review Queue work while acc3 refuses,
+  in exchange for no tour published on an uncalibrated verdict). Calibrating Nova Lite (40 items) and removing `acc2`
+  from `UNCALIBRATED_JUDGE_CONNECTIONS` lifts it.
+- **Order gate reads the ledger.** A migration that depends on `shared.llm_call_log` rows is unusual; the alternative
+  (a note in the runbook) is what the review rejected. The empty-ledger exemption keeps CI / local replays working;
+  the integration tests exercise both sides.
 - **Nova Lite for coordinates.** a3_place_locate asks the model for coordinates; a small model knows fewer places, but
   every proposed point must be confirmed by the geocoder (AA-997), so a weak answer costs a re-try, not a wrong pin.
 - **The brand-audit user prompt is a rebuild,** not the node's string: running the node would call Jev (paid) and need
@@ -94,13 +124,15 @@ Tech lead approval S263 (01/11): "thêm đường dự phòng acc2". Three CIS P
 
 - **Numbering:** 330 belongs to AA-1031 (`330_staff_crm_grant.sql`). The CIS preflight refuses 331 until 330 is on main;
   merge AA-1031 first, or label PR 1 `migration:out-of-order`. 332 needs 331 on main first.
-- **Order after merge:** Infra bot copy of 331 → DB Migrate check / apply (job tables idle) → `GET
-  /admin/llm-availability` (`invariant.breaches` down by eight; the four tenant stages still listed) → deploy of PR 2 →
-  smoke DRY RUN → smoke live (all twelve stages; the tenant four run on their planned model before 332, which is what
-  332's decision needs) → bot/db-schema-reference PR → root route page recapture.
-- **If a stage fails the smoke:** re-point its last fallback with `PATCH /admin/llm-config/{stage}/route` to the next
-  model (llama4-scout, then llama4-maverick; never kimi-k3 for a format contract), and keep the place-card pair on two
-  makers. No new migration needed.
+- **Order after merge:** PR 1 (smoke + brand audit hold) merge → deploy api + worker → smoke DRY RUN → smoke live
+  (all twelve stages; the tenant four run on their planned model before 332, which is what 332's decision needs) →
+  PR 2 (331) merge → Infra bot copy → DB Migrate check / apply (job tables idle; the order gate passes only with the
+  smoke rows) → `GET /admin/llm-availability` (`invariant.breaches` down by eight; the four tenant stages still
+  listed) → bot/db-schema-reference PR → root route page recapture.
+- **If a stage fails the smoke before the apply:** smoke the next model for it (`models: {"<stage>":
+  "llama4-scout"}`, then llama4-maverick; never kimi-k3 for a format contract; keep the place-card pair on two makers)
+  and change that stage's pick in 331 (and its snapshot / tests) before merging PR 2, or drop the stage from 331.
+  After the apply, re-point with `PATCH /admin/llm-config/{stage}/route` (no new migration).
 - The smoke counts on the acc2 deployment circuit (it is a probe): a refused call can open it like the daily probe.
 - Not done here (follow-ups): ADR 0009 decision 14 also says the OpenAI API is the judges' warm path "ahead of acc2";
   the judge routes that end on the OpenAI API have no acc2 entry yet, so with the OpenAI API unfunded they stay in one

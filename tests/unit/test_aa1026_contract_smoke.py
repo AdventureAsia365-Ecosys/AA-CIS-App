@@ -214,6 +214,24 @@ def test_the_plan_refuses_an_anthropic_pick_and_a_switched_off_deployment():
     assert not any(e["callable"] for e in plan["stages"])
 
 
+def test_an_override_replaces_the_route_and_the_planned_model_and_is_checked_like_them():
+    ps = _registry({"a3_place_card_check": ("haiku-5-5", "sonnet-5-5", "nova-lite")})
+    for p in ps:
+        p.start()
+    try:
+        plan = smoke.build_plan(["a3_place_card_check", "a3_atomize", "a3_place_days"],
+                                {"a3_place_card_check": "llama4-scout", "a3_atomize": "haiku-5-5"})
+    finally:
+        for p in ps:
+            p.stop()
+    by = {e["stage"]: e for e in plan["stages"]}
+    assert (by["a3_place_card_check"]["model_key"], by["a3_place_card_check"]["model_source"]) == ("llama4-scout",
+                                                                                                    "override")
+    assert by["a3_place_card_check"]["callable"]
+    assert by["a3_atomize"]["model_source"] == "override" and not by["a3_atomize"]["callable"]   # Anthropic: never
+    assert (by["a3_place_days"]["model_key"], by["a3_place_days"]["model_source"]) == ("nova-lite", "planned")
+
+
 def test_the_planned_anthropic_model_is_never_called():
     with patch.dict(smoke.PLANNED, {"a3_atomize": "haiku-5-5"}):
         plan = _plan({})
@@ -316,6 +334,31 @@ async def test_enqueue_refuses_an_unknown_stage_and_dedupes_the_list():
 
 
 @pytest.mark.asyncio
+async def test_enqueue_checks_the_model_overrides():
+    with pytest.raises(ValueError, match="no contract smoke for stage"):
+        await smoke.enqueue_manual(MagicMock(), dry_run=True, stages=None, actor="admin:x",
+                                   models={"s1_generate": "nova-lite"})
+    with pytest.raises(ValueError, match="leaves out"):
+        await smoke.enqueue_manual(MagicMock(), dry_run=True, stages=["a3_atomize"], actor="admin:x",
+                                   models={"a3_place_days": "llama4-scout"})
+    with pytest.raises(ValueError, match="needs a model key"):
+        await smoke.enqueue_manual(MagicMock(), dry_run=True, stages=None, actor="admin:x", models={"a3_atomize": " "})
+    with patch.object(smoke, "enqueue", AsyncMock(return_value=("job-2", True))) as enq:
+        await smoke.enqueue_manual(MagicMock(), dry_run=True, stages=["a3_atomize"], actor="admin:x",
+                                   models={"a3_atomize": " llama4-scout "})
+    assert enq.await_args.args[2]["models"] == {"a3_atomize": "llama4-scout"}
+
+
+@pytest.mark.asyncio
+async def test_a_run_passes_the_overrides_to_the_plan():
+    ctx, _db = _ctx({"stages": ["a3_atomize"], "models": {"a3_atomize": "llama4-scout"}})
+    with patch.object(smoke, "build_plan", return_value={"stages": [], "unknown": [], "estimated_usd": 0.0,
+                                                         "unpriced": 0}) as plan:
+        await smoke.run(ctx)
+    assert plan.call_args.args == (["a3_atomize"], {"a3_atomize": "llama4-scout"})
+
+
+@pytest.mark.asyncio
 async def test_the_admin_route_enqueues_and_maps_an_unknown_stage_to_422(monkeypatch):
     from fastapi import HTTPException
 
@@ -325,7 +368,7 @@ async def test_the_admin_route_enqueues_and_maps_an_unknown_stage_to_422(monkeyp
     with patch.object(smoke, "enqueue", AsyncMock(return_value=("job-9", True))):
         out = await admin_job_runner.llm_contract_smoke_run(
             admin_job_runner.LlmContractSmokeRunRequest(), request, x_admin_secret="s", x_admin_user_id="u1")
-    assert out == {"job_id": "job-9", "kind": "llm_contract_smoke", "dry_run": True, "stages": None}
+    assert out == {"job_id": "job-9", "kind": "llm_contract_smoke", "dry_run": True, "stages": None, "models": None}
     with pytest.raises(HTTPException) as e:
         await admin_job_runner.llm_contract_smoke_run(
             admin_job_runner.LlmContractSmokeRunRequest(stages=["t2_generate"]), request, x_admin_secret="s",

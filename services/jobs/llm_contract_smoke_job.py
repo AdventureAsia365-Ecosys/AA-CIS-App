@@ -6,7 +6,10 @@ stage whether the parser accepted the reply. It is the "contract smoke" rung of 
 
 Which model. For each stage: the last model of its live route (``shared.llm_role_config``) that has a deployment on
 the acc2 connection (migration 331 / 332 put it there); when the route has none yet, the model the migration plans
-(``PLANNED``), so the smoke can run before the apply too. ``result.stages[].model_source`` says which.
+(``PLANNED``), so the smoke can run before the apply too; or the model the admin names for the stage in the payload's
+``models`` (to smoke a re-pick before it goes into a migration or a route). ``result.stages[].model_source`` says
+which (route / planned / override). Migration 331 / 332 refuses to give a stage its acc2 fallback until the latest
+smoke row of that stage on that model passed (the order gate: smoke first, apply second).
 
 How. ``LLMClient.probe`` on that model's acc2 deployment (the admin's Test connection path: the gateway's own Converse
 adapter on the acc2 task role, structured output as a Converse tool, its outcome counted on the deployment's circuit,
@@ -16,12 +19,12 @@ no route, no fallback, no shadow), with the request's stage set to ``adhoc_aa102
 a billed but unusable reply (schema mismatch) is logged by the gateway and counts as a contract failure with its cost.
 One ``acp_shared.audit_log`` row per live run. Fixtures are invented (no catalogue, tenant or prompt text).
 
-Payload: {"dry_run": bool (default true), "stages": [stage, ...] (default every stage of ``CASES``),
-"requested_by": "admin:<id>"}. A DRY RUN lists the stages, the model and its source, whether the acc2 deployment is
-callable and the estimated cost, with no call. A live run refuses to start when the estimate exceeds
-``COST_CAP_USD`` and stops between stages once the spent cost reaches it. Live cost on Dev: about 0.01 USD for the
-twelve stages (Nova Lite 0.077 / 0.308 USD per 1M tokens; Llama 4 Scout 0.17 / 0.66). max_attempts 1 (a failed
-contract is the answer), background.
+Payload: {"dry_run": bool (default true), "stages": [stage, ...] (default every stage of ``CASES``), "models": {stage:
+model key, ...} (optional override), "requested_by": "admin:<id>"}. A DRY RUN lists the stages, the model and its
+source, whether the acc2 deployment is callable and the estimated cost, with no call. A live run refuses to start when
+the estimate exceeds ``COST_CAP_USD`` and stops between stages once the spent cost reaches it. Live cost on Dev: about
+0.01 USD for the twelve stages (Nova Lite 0.077 / 0.308 USD per 1M tokens; Llama 4 Scout 0.17 / 0.66). max_attempts 1
+(a failed contract is the answer), background.
 """
 from __future__ import annotations
 
@@ -429,13 +432,15 @@ def estimate_usd(model, request) -> Optional[float]:
     return round((prompt / CHARS_PER_TOKEN * float(p_in) + request.max_tokens * float(p_out)) / 1_000_000, 6)
 
 
-def build_plan(stages: Optional[list[str]] = None) -> dict:
+def build_plan(stages: Optional[list[str]] = None, models: Optional[dict[str, str]] = None) -> dict:
     """The smoke plan (sync: reads the route, catalog and registry caches). Unknown stage names are listed in
-    ``unknown`` and never run."""
+    ``unknown`` and never run. ``models`` overrides the model of a stage (``model_source`` 'override'); the override
+    goes through the same checks (catalog row, not Anthropic, enabled acc2 deployment)."""
     wanted = list(stages) if stages else sorted(CASES)
+    models = models or {}
     entries, unknown = [], [s for s in wanted if s not in CASES]
     for stage in [s for s in wanted if s in CASES]:
-        key, source = acc2_model_of(stage)
+        key, source = (models[stage], "override") if models.get(stage) else acc2_model_of(stage)
         entry = {"stage": stage, "role": CASES[stage].role, "model_key": key, "model_source": source,
                  "connection_key": CONNECTION, "callable": False, "why_not": None, "estimated_usd": None}
         if key is None:
@@ -560,7 +565,7 @@ async def _audit(pool, details: dict) -> None:
 async def run(ctx: JobContext) -> dict:
     payload = ctx.payload or {}
     dry_run = bool(payload.get("dry_run", True))
-    plan = await asyncio.to_thread(build_plan, payload.get("stages"))
+    plan = await asyncio.to_thread(build_plan, payload.get("stages"), payload.get("models"))
     result = {"kind": KIND, "dry_run": dry_run, "cost_cap_usd": COST_CAP_USD, "estimated_usd": plan["estimated_usd"],
               "unpriced": plan["unpriced"], "planned": plan["stages"], "unknown_stages": plan["unknown"]}
     if dry_run:
@@ -580,12 +585,20 @@ async def run(ctx: JobContext) -> dict:
     return result
 
 
-async def enqueue_manual(pool, *, dry_run: bool, stages: Optional[list[str]], actor: str) -> tuple[str, bool]:
-    """An admin's run (no idempotency key). Unknown stage names are refused here (ValueError)."""
-    unknown = [s for s in stages or [] if s not in CASES]
+async def enqueue_manual(pool, *, dry_run: bool, stages: Optional[list[str]], actor: str,
+                         models: Optional[dict[str, str]] = None) -> tuple[str, bool]:
+    """An admin's run (no idempotency key). Unknown stage names, an override for a stage the run leaves out and an
+    empty model key are refused here (ValueError); whether the model can be called is the plan's answer."""
+    unknown = [s for s in [*(stages or []), *(models or {})] if s not in CASES]
     if unknown:
-        raise ValueError(f"no contract smoke for stage(s) {unknown}; known: {sorted(CASES)}")
+        raise ValueError(f"no contract smoke for stage(s) {sorted(set(unknown))}; known: {sorted(CASES)}")
+    if stages and models and set(models) - set(stages):
+        raise ValueError(f"models names stage(s) the run leaves out: {sorted(set(models) - set(stages))}")
+    if models and not all(isinstance(k, str) and k.strip() for k in models.values()):
+        raise ValueError("models: every stage needs a model key")
     payload = {"dry_run": dry_run, "requested_by": actor[:64]}
     if stages:
         payload["stages"] = list(dict.fromkeys(stages))
+    if models:
+        payload["models"] = {s: k.strip() for s, k in models.items()}
     return await enqueue(pool, KIND, payload, created_by=actor[:64])

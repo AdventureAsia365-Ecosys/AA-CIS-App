@@ -519,12 +519,20 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   `t9_faq_answer_fit`, `t9_faq_filter`) wait for migration 332 and the tech lead's yes: ADR 0009 decision 14 keeps acc2
   off tenant stages until decision 10 and AA-820 are done. **Contract smoke** (job kind `llm_contract_smoke`,
   `services/jobs/llm_contract_smoke_job.py`; `POST /admin/job-runner/llm-contract-smoke/run`, ai.admin, DRY RUN by
-  default, optional `stages`): per stage one invented fixture through the stage's own prompt pieces and parser, with
-  the stage's acc2 model forced through `LLMClient.probe` on its acc2 deployment (the route's acc2 model, else the
-  planned one), ledger stage `adhoc_aa1026` with the stage's role, `quality_signal.contract_smoke` / `parser_ok`;
-  refused over 0.10 USD estimated, about 0.01 USD for all twelve stages. It proves format only (ladder rung 3); a stage
-  whose pick fails is re-pointed with the admin route PATCH. `draft_card` / `check_card` (place cards) take an optional
-  `client` for it.
+  default, optional `stages` and `models` = stage -> model key override): per stage one invented fixture through the
+  stage's own prompt pieces and parser, with the stage's acc2 model forced through `LLMClient.probe` on its acc2
+  deployment (the override, else the route's acc2 model, else the planned one), ledger stage `adhoc_aa1026` with the
+  stage's role, `quality_signal.contract_smoke` / `parser_ok`; refused over 0.10 USD estimated, about 0.01 USD for all
+  twelve stages. It proves format only (ladder rung 3). **Order gate:** 331 / 332 refuse to give a stage its acc2
+  fallback unless the LATEST smoke row of that stage on that model (connection acc2) passed, so the smoke runs before
+  the apply; a stage that fails is re-picked (smoke the next model with `models`, change the migration's pick) or
+  dropped before the apply, and after the apply re-pointed with the admin route PATCH. (A database that never logged
+  an LLM call, a CI or local replay, skips the gate with a NOTICE.) The validate stages go live on the format smoke
+  alone (the tech lead's S263 yes skips calibration, A/B and shadow for them); the brand audit is the one judge, and
+  **an acc2 brand-audit `pass` is held**: `brand_audit_node.hold_uncalibrated_pass` turns it into `manual_check` +
+  `BRAND_AUDIT_UNCALIBRATED_JUDGE` (connections in `UNCALIBRATED_JUDGE_CONNECTIONS`), so an uncalibrated judge can flag
+  or hold a tour but never publish one. `draft_card` / `check_card` (place cards) take an optional `client` for the
+  smoke.
 - **Structured output (`LLMRequest.json_schema`) per path**: Converse = one tool whose input is the schema, reply
   conformed (`_checked_json`, AA-659/714); OpenAI = strict `response_format`. The legacy `haiku` / `sonnet` keys
   (Anthropic Messages API, `invoke_claude`) have neither: since S251 (AA-835) the gateway appends a "one JSON object
@@ -568,7 +576,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   - A call served by the OpenAI API logs `llm_openai_fallback_used` and is recorded in `llm_call_log`
     with `provider = 'openai'`, `fallback_used = true`.
   - **Brand audit fails closed** (AA-714): a model/schema error gives `manual_check` +
-    `BRAND_AUDIT_UNAVAILABLE` (held for review), never `pass`.
+    `BRAND_AUDIT_UNAVAILABLE` (held for review), never `pass`. A `pass` answered on an uncalibrated judge connection
+    (acc2, AA-1026 I6) gives `manual_check` + `BRAND_AUDIT_UNCALIBRATED_JUDGE`.
   - **Where a GPT model runs**: on Bedrock only on acc3 (acc2 has no OpenAI models), or on the
     OpenAI platform API (`gpt-6-luna-openai`, last resort only). `gpt-4.1` is disabled (migration 224)
     and admin cannot re-enable it; `LLMClient._call_openai` refuses any model whose catalog row is not
