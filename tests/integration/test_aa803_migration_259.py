@@ -29,6 +29,10 @@ def cur():
     conn = psycopg2.connect(host=DB_HOST, port=DB_PORT, dbname=DB_NAME, user=DB_USER, password=DB_PASS)
     conn.autocommit = True
     c = conn.cursor()
+    # _undo deletes the catalog rows, which cascades to their deployments (304 / 306); keep them to put back (AA-1026:
+    # migration 327 and its test need the haiku-5-5 / sonnet-5-5 acc3 deployments the replay made).
+    c.execute("SELECT to_jsonb(d)::text FROM shared.llm_model_deployment d WHERE d.model_key = ANY (%s)", (list(NEW),))
+    deployments = [r[0] for r in c.fetchall()]
     try:
         yield c
     finally:
@@ -36,6 +40,9 @@ def cur():
         _undo(c)
         _run(c)                                 # back to the post-259 state ...
         c.execute(open(MIGRATION_295, encoding="utf-8").read())   # ... and the post-295 one (AA-998)
+        for row in deployments:
+            c.execute("INSERT INTO shared.llm_model_deployment SELECT (jsonb_populate_record("
+                      "NULL::shared.llm_model_deployment, %s::jsonb)).* ON CONFLICT DO NOTHING", (row,))
         conn.close()
 
 
@@ -91,11 +98,16 @@ def test_new_rows_from_pre_259_state(cur, key, prices):
 def test_new_rows_are_on_no_route(cur):
     _undo(cur)
     _run(cur)
-    cur.execute("SELECT stage FROM shared.llm_role_config WHERE model_id = ANY (%s) "
+    cur.execute("SELECT stage, updated_by FROM shared.llm_role_config WHERE model_id = ANY (%s) "
                 "OR shadow_model_id = ANY (%s) OR fallback_model_ids && %s::text[]",
                 (list(NEW), list(NEW), list(NEW)))
-    # 259 routes no stage; a later migration that routes one is listed here (282, S251: supply_content_writer).
-    assert sorted(r[0] for r in cur.fetchall()) == ["supply_content_writer"]
+    rows = cur.fetchall()
+    # 259 routes no stage; the later migrations that route one are listed here: 282 (S251, supply_content_writer) and
+    # 327 (AA-1026, every route that named the legacy haiku / sonnet keys, supply_content_writer included).
+    assert "supply_content_writer" in {r[0] for r in rows}
+    # Rows a test admin switched (the AA-642 A1 stage-switch tests sign as admin:zz-*) are not migrations.
+    migrated = {r[1] for r in rows if not str(r[1]).startswith("admin:zz-")}
+    assert migrated <= {"migration-282-aa835", "migration-327-aa1026"}
 
 
 def test_sonnet_drops_the_legacy_acc2_profile_only(cur):

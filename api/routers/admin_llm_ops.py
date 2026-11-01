@@ -272,6 +272,43 @@ def _check_scopes(stage: str, scopes: Optional[tuple], reach: dict, keys: list) 
             "migration (shared.llm_role_config.allowed_scopes), not an admin setting"))
 
 
+def _check_aws_before_vendor(stage: str, scopes: Optional[tuple], reach: dict, chain: list) -> None:
+    """AA-1026 (S263, tech lead T-3: go outside AWS only when the AWS paths are blocked). 422 when a stage open to
+    vendor_direct names a model reached inside AWS AFTER a model that also has a deployment outside AWS: the gateway
+    tries every deployment of a model (acc3, then its vendor API) before the route's next model
+    (vendor_route.deployment_plan), so that vendor API would be called before the later AWS deployment. ``reach``
+    counts every deployment, enabled or not (the switch is an operation, the scope a policy); a model the registry
+    does not describe counts as inside AWS (the gateway calls it on acc3). An aws_only stage (or no stage policy) never
+    reaches a vendor API behind another deployment, so it is not checked."""
+    if scopes is None or data_scope.VENDOR_DIRECT not in scopes:
+        return
+    keys = [k for k in chain if k]
+    for i, first in enumerate(keys):
+        if not (reach.get(first, frozenset()) - {data_scope.AWS_ONLY}):
+            continue
+        later = [k for k in dict.fromkeys(keys[i + 1:])
+                 if k != first and data_scope.AWS_ONLY in reach.get(k, frozenset({data_scope.AWS_ONLY}))]
+        if later:
+            raise HTTPException(status_code=422, detail=(
+                f"stage {stage!r} may leave AWS only when every AWS path of its route is blocked: {first} is also "
+                f"served by a vendor API, which the gateway tries before the next model, so it would be called before "
+                f"the AWS deployment of {', '.join(later)}. Put {', '.join(later)} ahead of {first}, or leave it out"))
+
+
+def _writer_last_resort(role: str, scopes: Optional[tuple], models: Optional[list], outside: frozenset,
+                        model_key: str) -> bool:
+    """AA-1026 (S263, tech lead T-3): a writer stage a migration opened to vendor_direct may END its route on a model
+    of another maker that is reached only outside AWS (today GPT-6 Luna on the OpenAI API, migration 327): the last
+    resort when every AWS path is blocked. The writer / judge vendor rule still decides the primary, every other
+    fallback and the shadow. The caller checks the position (the last fallback only)."""
+    if role != "writer" or model_key not in outside:
+        return False
+    if scopes is None or data_scope.VENDOR_DIRECT not in scopes:
+        return False
+    m = next((m for m in models or [] if m.model_key == model_key), None)
+    return m is not None and m.enabled and "llm_client" in m.callable_via and m.api_style != "embed"
+
+
 def _options_for(role: str, stage: str, models: Optional[list], scopes: Optional[tuple] = None,
                  reach: Optional[dict] = None) -> list[dict]:
     if models is None:
@@ -328,6 +365,7 @@ async def patch_llm_config(
     if body.model_id not in allowed:
         raise HTTPException(status_code=422,
                             detail=f"model {body.model_id!r} is not selectable for stage {stage!r}")
+    _check_aws_before_vendor(stage, scopes, reach, [body.model_id, *(current.get("fallback_model_ids") or [])])
     # AA-998: only acc3 (or no value = acc3) — the retired fallback account is refused here, before the DB CHECK.
     if body.account_route is not None and body.account_route not in _ACCOUNT_ROUTE_VALUES:
         raise HTTPException(status_code=422,
@@ -407,8 +445,9 @@ async def patch_llm_route(
     if primary in fallbacks:
         raise HTTPException(status_code=422,
                             detail=f"fallback_model_ids must not contain the primary model {primary!r}")
-    for m in fallbacks:
-        if m not in allowed:
+    for i, m in enumerate(fallbacks):
+        if m not in allowed and not (i == len(fallbacks) - 1
+                                     and _writer_last_resort(current["role"], scopes, models, outside, m)):
             raise HTTPException(status_code=422,
                                 detail=f"fallback model {m!r} is not selectable for stage {stage!r}")
 
@@ -420,6 +459,8 @@ async def patch_llm_route(
         if shadow not in allowed:
             raise HTTPException(status_code=422,
                                 detail=f"shadow model {shadow!r} is not selectable for stage {stage!r}")
+    # AA-1026 review: T-3 (outside AWS only when the AWS paths are blocked) holds for the whole route.
+    _check_aws_before_vendor(stage, scopes, reach, [primary, *fallbacks])
 
     try:
         updated = await set_stage_route(
