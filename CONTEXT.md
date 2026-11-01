@@ -253,8 +253,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
 - **AI/Bedrock** (root ADR 0009, as built: root `docs/architecture/ai-gateway.md`): every paid AI and data call goes
   through the gateway in `shared/llm_client/`, whose control plane (registry v2, routes, scopes, budgets, circuit
   state, ledger v2) this repo owns. Chat models run on Bedrock in **acc3**, the main chat account (refusing every model
-  since 2026-10-29, Error 002); acc2 serves embeddings and five candidate chat models catalogued with no route (324,
-  ADR 0009 decision 14: eval, judge and validate only, after the qualification ladder). Outside AWS: the OpenAI API
+  since 2026-10-29, Error 002); acc2 serves embeddings and five candidate chat models (324, ADR 0009 decision 14: eval,
+  judge and validate only), two of which are the LAST fallback of the platform judge / validate routes that reached
+  acc3 only (migration 331: Nova Lite, Llama 4 Scout for the place card check). Outside AWS: the OpenAI API
   (`openai-direct`, last resort of the judge routes) and the Anthropic API (`anthropic-direct`, deployments seeded
   behind acc3 by 306, no key yet), plus Jev, DataForSEO and Geoapify as registry rows (322). acc1 left the ecosystem
   (AA-998). The cross-account trust is provisioned in AA-CIS-Infra.
@@ -509,6 +510,21 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   deployment each (priority 20); no role config or alias names them, and the file refuses one that does. They answer
   the probe and `POST /admin/llm-connections/acc2/test` (body `max_tokens` up to 512 for the reasoning model). "Add a
   model" = one migration PR like this one.
+- **acc2 fallback of judge / validate stages** (AA-1026 I6, migration 331 contract): the eight platform judge / validate
+  stages whose route reached acc3 only (`s1_brand_audit`, `s1_source_facts`, `a3_atomize`, `a3_place_card`,
+  `a3_place_card_check`, `a3_place_days`, `a3_place_locate`, `a3_place_dedupe_check`) end their route on an acc2 model:
+  `nova-lite` (the cheapest acc2 model that meets every one of their output contracts), `llama4-scout` for
+  `a3_place_card_check` (draft and check stay on two makers). The primary, earlier fallbacks, shadow and scopes are
+  unchanged; writers never name an acc2 model. The tenant judge / validate stages (`t2_brand_audit`, `t10_claims`,
+  `t9_faq_answer_fit`, `t9_faq_filter`) wait for migration 332 and the tech lead's yes: ADR 0009 decision 14 keeps acc2
+  off tenant stages until decision 10 and AA-820 are done. **Contract smoke** (job kind `llm_contract_smoke`,
+  `services/jobs/llm_contract_smoke_job.py`; `POST /admin/job-runner/llm-contract-smoke/run`, ai.admin, DRY RUN by
+  default, optional `stages`): per stage one invented fixture through the stage's own prompt pieces and parser, with
+  the stage's acc2 model forced through `LLMClient.probe` on its acc2 deployment (the route's acc2 model, else the
+  planned one), ledger stage `adhoc_aa1026` with the stage's role, `quality_signal.contract_smoke` / `parser_ok`;
+  refused over 0.10 USD estimated, about 0.01 USD for all twelve stages. It proves format only (ladder rung 3); a stage
+  whose pick fails is re-pointed with the admin route PATCH. `draft_card` / `check_card` (place cards) take an optional
+  `client` for it.
 - **Structured output (`LLMRequest.json_schema`) per path**: Converse = one tool whose input is the schema, reply
   conformed (`_checked_json`, AA-659/714); OpenAI = strict `response_format`. The legacy `haiku` / `sonnet` keys
   (Anthropic Messages API, `invoke_claude`) have neither: since S251 (AA-835) the gateway appends a "one JSON object
