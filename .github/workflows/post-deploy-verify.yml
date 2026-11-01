@@ -44,7 +44,7 @@ jobs:
       group: ${{ inputs.from_deploy && format('post-deploy-verify-cis-deploy-{0}-{1}', github.run_id, github.run_attempt) || 'post-deploy-verify-cis' }}
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       # The expected version and required schema come from the expected commit itself, not from the checked-out
       # tree: a dispatch on main for an older SHA compares against what that SHA shipped.
       - name: Read what the expected commit ships

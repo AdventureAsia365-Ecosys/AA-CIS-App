@@ -79,13 +79,13 @@ jobs:
       BASE_URL: ${{ inputs.base_url }}
     steps:
       - name: Checkout the deployed commit
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           # The deployed commit (PR head sha from vercel-deploy.yml); the dispatched ref otherwise.
           ref: ${{ inputs.sha || github.sha }}
 
       - name: Set up Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -103,7 +103,7 @@ jobs:
 
       - name: Upload smoke artifacts (screenshots + HTML report only — NO auth state)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ui-smoke-${{ github.run_id }}
           # Only screenshots and the HTML report. Never upload tests/e2e/.auth (session cookies).
@@ -194,7 +194,7 @@ jobs:
           esac
 
       - name: Checkout the deployed commit
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.sha || github.sha }}
 
@@ -206,7 +206,7 @@ jobs:
           role-session-name: cis-ui-smoke-staff-${{ github.run_id }}
 
       - name: Set up Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -224,7 +224,7 @@ jobs:
       # Screenshots only. NOT the HTML/JSON reports: a `fill` step title would carry the typed sign-in code.
       - name: Upload smoke screenshots (NO report, NO auth state)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ui-smoke-staff-${{ github.run_id }}
           path: tests/e2e/results/smoke/**/*.png
