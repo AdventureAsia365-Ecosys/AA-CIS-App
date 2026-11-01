@@ -17,6 +17,7 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 sys.path.insert(0, os.path.dirname(__file__))
+from _acc2_routes import candidates_off_routes  # noqa: E402
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER, TENANT_ID  # noqa: E402
 
 MIGRATIONS = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations")
@@ -68,7 +69,8 @@ def cur():
         c.execute("DELETE FROM shared.tenant_ai_budget WHERE updated_by = 'zz-aa1017'")
         _run(c, M320)
         _run(c, M321)
-        _run(c, M324)
+        with candidates_off_routes(c):          # AA-1026 I6: 331 / 332 routes name 324's models; 324's guard refuses
+            _run(c, M324)
         conn.close()
 
 
