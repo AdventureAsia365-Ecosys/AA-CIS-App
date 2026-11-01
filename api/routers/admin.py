@@ -16,6 +16,7 @@ from api.core.staff_credential import principal_verified
 from services.acp_publish import daily_limit
 from services.acp_shared.audit_log import AdminTenantAuditAction, write_audit_log
 from services.acp_shared.e2e_tenant_key_sync import sync_note, sync_test_tenant_key
+from shared.ops_checks import EVENT_TYPE_PREFIX as OPS_CHECK_EVENT_PREFIX
 from shared.validators.prompt_sanitize import (
     sanitize_text, sanitize_list, MAX_LONG_FIELD_LEN, MAX_SHORT_FIELD_LEN, MAX_SYSTEM_PROMPT_LEN,
     MAX_BRAND_LONG_LEN, MAX_BRAND_MEDIUM_LEN, brand_length_errors,
@@ -1991,6 +1992,8 @@ async def list_notifications(
         item["dispatched_at"] = item["dispatched_at"].isoformat()
         item["created_at"] = item["created_at"].isoformat()
         item["title"] = _event_labels.get(item["event_type"], item["event_type"])
+        if item["event_type"].startswith(OPS_CHECK_EVENT_PREFIX):   # S263 in-app ops checks (shared/ops_checks.py)
+            item["title"] = payload.get("title") or "Ops check"
         item["message"] = payload.get("tour_name") or payload.get("message") or ""
         items.append(item)
     return {"items": items, "total": len(items)}

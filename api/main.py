@@ -134,9 +134,10 @@ async def lifespan(app: FastAPI):
     # baseline for the wave-4 main-pool shrink decision. api only; cancelled before the pool closes.
     main_pool_gauge_task = start_main_pool_gauge(app)
 
-    # AA-751 / AA-832 — every 300 s publish AA/RDS per-role connections and AA/Jobs/CIS backlog metrics
-    # (one PutMetricData per namespace, line `ops_metrics_sampled`). Replaces the Lambda -> endpoint ->
-    # job chain. AA-913: the same tick reconciles the platform alert recipients with SNS. api only, off when
+    # AA-751 / AA-832 / S263 — every 300 s read per-role connections, XID age and the shared.job backlog (line
+    # `ops_metrics_sampled`) and run the in-app ops checks on them (shared/ops_checks.py: admin bell + alert
+    # e-mail on the SNS topic; no CloudWatch metric since the S263 alert diet). AA-913: the same tick reconciles
+    # the platform alert recipients with SNS. api only, off when
     # ENVIRONMENT == "test", never raises; cancelled before the pool closes.
     from api.core.ops_metrics_sampler import start_ops_metrics_sampler, stop_ops_metrics_sampler
     ops_metrics_task = start_ops_metrics_sampler(app)

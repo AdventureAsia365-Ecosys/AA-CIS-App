@@ -871,21 +871,30 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     queued/running rows of `shared.jobs.registry.RETIRED_KINDS` (kinds whose handler was removed;
     `ops_rds_role_connections` today, error `kind removed (AA-751)`, `retired_cancelled` in the line),
     so a rolling-deploy leftover neither pages as starved nor blocks the deploy gate:
-    - `AA/RDS`, dimension `Role`: `RoleConnections` (Count) + `RoleConnectionLimitPct` (Percent) for
+    - `roles` (was the `AA/RDS` custom metrics until S263): sessions and % of the limit for
       every LOGIN role with a `CONNECTION LIMIT` (`pg_roles` LEFT JOIN `pg_stat_activity`, discovered
       each tick; the main pool logs in as `cis_app` since X1 S18, and `pg_stat_activity` still lists every
-      role's sessions to it, only their query/state columns are hidden);
-    - `AA/Jobs/CIS`, no dimensions (`shared/jobs/backlog.py`): `OverdueRunningJobs` = running rows
+      role's sessions to it, only their query/state columns are hidden); `xid_age` = `max(age(datfrozenxid))`;
+    - the backlog (was `AA/Jobs/CIS` until S263; `shared/jobs/backlog.py`): `overdue_running_jobs` = running rows
       whose current attempt (`progress.attempt_started_at`, else `started_at`) is older than 2 x the
-      kind's `expected_seconds` (600 if unknown); `OldestQueuedAgeSeconds` = capacity-aware age of the
+      kind's `expected_seconds` (600 if unknown); `oldest_queued_age_seconds` = capacity-aware age of the
       longest-**starved** due queued row, 0 if none. A row is starved when no worker is live
       (`shared.job_worker`, `WORKER_ALIVE_SECONDS` rule), when no live worker has its kind in `caps`
       (unregistered), or when a live, non-yielding worker has a free slot, `claim_caps_for` keeps the
       kind and the kind is under its global cap. The age runs from the latest of `run_after` and the
       moment capacity last freed (latest finish / re-queue, the worker's start; for no live worker,
       the last time one was seen), so a full wave or the few seconds before the next poll read 0.
-    AA-CIS-Infra alarms on both (`observability_ecosys.tf`, emails on ALARM only; `*-sampling-stopped`
-    fires when no sample arrives). This replaced the AA-832 chain (ops-probe Lambda every 5 min ->
+    **S263 alert diet (AA-1025): no CloudWatch metric or alarm any more.** The tick evaluates the values itself
+    (`shared/ops_checks.py` state checks `jobs_starved` > 900 s, `jobs_overdue` > 0, `rds_role_connections` > 80 %,
+    `rds_xid_age` > 1e9) and flushes the log events the process counted (structlog processor `ops_checks.capture`
+    on the JSON handler: the `*_write_failed` cost-log events, the `aa817_tenant_*` fail-closed events, a tenant route
+    on the admin pool, `too many connections for role "cis_app"`; the worker flushes its own every 5 minutes). A
+    finding writes the admin bell (`shared.notifications`, `platform.ops_check.<check>`, roles admin, at most one per
+    check per 6 h) and publishes one e-mail per check per UTC day on the alerts SNS topic (`ALERTS_TOPIC_ARN`, task
+    role `sns:Publish`), the topic the removed alarms used. The api being down is the Infra alarm
+    `aa-cis-dev-api-no-healthy-task`. Decision table: root `docs/audits/2026-11-01-S263-alerting-cost/diet.md`.
+    The dead AA-362 `services/acp_produce/metrics.py` emitter (namespace `acp`, never called) is deleted.
+    This replaced the AA-832 chain (ops-probe Lambda every 5 min ->
     `POST /admin/job-runner/rds-role-connections/schedule` -> job `ops_rds_role_connections` -> worker),
     both now removed. `@job_kind(..., deploy_gate_exempt=True)` stays as a mechanism (the pre-deploy
     guard `GET /admin/job-runner/deploy-gate` leaves such kinds out of its info counts and lists them in
@@ -2249,8 +2258,8 @@ Redis flag, fail closed). It logs in as `aa_app_user` (`aa-cis/dev/rds-app-user`
   >= 50 ms logs `aa859_main_pool_wait` (capped per interval), and an acquire with no timeout of its own gives
   up after 5 s (C2.3g) with ERROR `aa859_main_pool_acquire_timeout` (a 500, instead of hanging to the API Gateway
   30 s limit). Main pool size: the literal in `api/main.py` (source of truth, read by the Infra connection
-  budget check). Per-role connections are alarmed
-  (`AA/RDS RoleConnectionLimitPct`, AA-832, published by the api's ops metrics sampler, AA-751).
+  budget check). Per-role connections are checked by the api's ops sampler (`rds_role_connections`, > 80 % of the
+  limit -> admin bell + alert e-mail; S263, was the AA-832 `AA/RDS RoleConnectionLimitPct` alarms).
 
 ## Boundaries — what this repo does NOT do
 

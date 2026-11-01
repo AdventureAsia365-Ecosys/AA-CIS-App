@@ -5,7 +5,8 @@
 - queue.claim() merges progress.attempt_started_at on every claim and keeps the first started_at (F18).
 - backlog.sample(): the four reads on real shared.job / shared.job_worker rows — no live worker,
   unregistered kind, claimable since the worker's start, overdue on the current attempt.
-- sample_once(): one PutMetricData per namespace (CloudWatch is a recording stub).
+- sample_once(): roles, XID age and backlog read on the real catalog; no CloudWatch any more (S263, AA-1025),
+  a healthy tick raises no ops check (SNS is a recording stub).
 """
 import json
 import os
@@ -54,11 +55,11 @@ async def roles(pool):
         await pool.execute(f"DROP ROLE IF EXISTS {n}")
 
 
-class StubCloudWatch:
+class StubSns:
     def __init__(self):
         self.calls = []
 
-    def put_metric_data(self, **kw):
+    def publish(self, **kw):
         self.calls.append(kw)
 
 
@@ -68,7 +69,7 @@ async def _queued(pool, kind, minutes_ago):
         "VALUES ($1, 'aa751-test', now() - make_interval(mins => $2)) RETURNING id::text", kind, minutes_ago)
 
 
-# ── AA/RDS ──────────────────────────────────────────────────────────────────────────────────────
+# ── role connections ──────────────────────────────────────────────────────────────────────────────────────
 
 async def test_sql_counts_sessions_of_limited_login_roles(pool, roles):
     rows = {r["rolname"]: r for r in await pool.fetch(sampler.ROLE_CONNECTIONS_SQL)}
@@ -84,16 +85,15 @@ async def test_sql_counts_sessions_of_limited_login_roles(pool, roles):
         await conn.close()
 
 
-async def test_sample_once_publishes_both_namespaces(pool, roles):
-    cw = StubCloudWatch()
-    out = await sampler.sample_once(pool, cw, kinds=KINDS)
-    assert "rds_error" not in out and "jobs_error" not in out, out
+async def test_sample_once_reads_the_catalog_and_raises_nothing_when_healthy(pool, roles):
+    sns = StubSns()
+    out = await sampler.sample_once(pool, sns, kinds=KINDS)
+    assert not {"rds_error", "jobs_error", "ops_checks_error", "ops_checks"} & set(out), out
     assert out["roles"][roles["limited"]] == {"connections": 0, "limit": 4, "pct": 0.0}
-    assert [c["Namespace"] for c in cw.calls] == ["AA/RDS", "AA/Jobs/CIS"]
-    dims = {d["Dimensions"][0]["Value"] for d in cw.calls[0]["MetricData"]}
-    assert roles["limited"] in dims and roles["unlimited"] not in dims
-    assert {d["MetricName"]: d["Value"] for d in cw.calls[1]["MetricData"]} == {
-        "OldestQueuedAgeSeconds": 0.0, "OverdueRunningJobs": 0.0}
+    assert roles["unlimited"] not in out["roles"]
+    assert 0 < out["xid_age"] < 1_000_000_000
+    assert out["oldest_queued_age_seconds"] == 0.0 and out["overdue_running_jobs"] == 0
+    assert sns.calls == []
 
 
 # ── F18: attempt_started_at ─────────────────────────────────────────────────────────────────────
@@ -193,7 +193,7 @@ async def test_retired_kind_rows_cancelled_on_a_tick(pool):
     await pool.execute("UPDATE shared.job SET status = 'running', started_at = now(), locked_by = 'old-w', "
                        "locked_until = now() + interval '5 min' WHERE id = $1::uuid", r)
     other = await _queued(pool, "aa751_k", 30)
-    out = await sampler.sample_once(pool, StubCloudWatch(), kinds=KINDS)
+    out = await sampler.sample_once(pool, StubSns(), kinds=KINDS)
     assert out["retired_cancelled"] == 2 and "retired_error" not in out, out
     rows = {str(x["id"]): x for x in await pool.fetch("SELECT id, status, error, locked_by, finished_at FROM shared.job")}
     for jid in (q, r):
@@ -204,5 +204,5 @@ async def test_retired_kind_rows_cancelled_on_a_tick(pool):
     # the old worker finishing its row afterwards cannot overwrite the cancel
     assert not await queue.complete(pool, r, "old-w", {"ok": True}, None)
     # idempotent: the next tick finds nothing
-    again = await sampler.sample_once(pool, StubCloudWatch(), kinds=KINDS)
+    again = await sampler.sample_once(pool, StubSns(), kinds=KINDS)
     assert "retired_cancelled" not in again

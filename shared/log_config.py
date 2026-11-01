@@ -26,6 +26,7 @@ from typing import IO, Any
 
 import structlog
 
+from shared import ops_checks
 from shared.sentry_init import _redact, release
 
 HANDLER_NAME = "aa-json"
@@ -148,6 +149,9 @@ def configure_logging(service: str, stream: IO[str] | None = None, level: int | 
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
             structlog.processors.format_exc_info,
             scrub_event,
+            # S263 alert diet (AA-1025): count the ops events (lost cost-log writes, tenant-pool fail-closed states,
+            # cis_app refused connections) that used to be CloudWatch metric filters; shared/ops_checks.py alerts.
+            ops_checks.capture,
             structlog.processors.JSONRenderer(default=str),
         ],
     )
