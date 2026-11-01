@@ -233,9 +233,21 @@ def test_a_same_family_tour_makes_the_s1_regression_run_invalid():
 
 def _run(**kw):
     row = {"pipeline": "writing_memory", "run_kind": "r2", "writer": "a1", "verdict": "pass",
-           "regression_detected": False, "finished_at": "2026-11-01T00:00:00+00:00"}
+           "stop_reason": "completed", "regression_detected": False, "details_invalid": False, "finished_at": "2026-11-01T00:00:00+00:00"}
     row.update(kw)
     return row
+
+
+def _legacy(**kw):
+    row = {"pipeline": "s1_old", "run_kind": "regression", "writer": None, "verdict": None, "stop_reason": None,
+           "regression_detected": False, "details_invalid": False, "finished_at": None}
+    row.update(kw)
+    return row
+
+
+def test_the_eval_run_read_selects_details_invalid():
+    sql = route_evidence._EVAL_RUN_SQL
+    assert "(details -> 'invalid') = 'true'::jsonb AS details_invalid" in sql and "stop_reason" in sql
 
 
 @pytest.mark.parametrize("row,problem", [
@@ -244,14 +256,24 @@ def _run(**kw):
     (_run(verdict="fail"), "verdict fail"),
     (_run(verdict="invalid"), "verdict invalid"),
     (_run(regression_detected=True), "detected a regression"),
+    # a writing-memory run backs a change only with verdict pass + stop_reason completed
+    (_run(verdict="informative"), "verdict informative, not pass"),
+    (_run(verdict="baseline", run_kind="baseline_import"), "verdict baseline, not pass"),
+    (_run(stop_reason="error"), "stopped with error"),
+    (_run(stop_reason="budget_cap"), "stopped with budget_cap"),
+    (_run(stop_reason="futility"), "stopped with futility"),
+    (_run(details_invalid=True), "is INVALID"),
+    # a legacy row is INVALID only through details.invalid (verdict NULL, regression forced false)
+    (_legacy(details_invalid=True), "is INVALID"),
+    (_legacy(regression_detected=True), "detected a regression"),
+    (_legacy(verdict="invalid"), "verdict invalid"),
 ])
 def test_an_eval_run_that_cannot_back_a_change(row, problem):
     assert problem in route_evidence.eval_run_problem(RUN_ID, row)
 
 
-@pytest.mark.parametrize("row", [_run(), _run(verdict="informative"),
-                                 _run(pipeline="s1_old", run_kind="regression", writer=None, verdict=None,
-                                      finished_at=None)])
+@pytest.mark.parametrize("row", [_run(), _run(run_kind="shadow"), _legacy(),
+                                 _legacy(pipeline="s1_from_atom"), _legacy(details_invalid=None)])
 def test_an_eval_run_that_backs_a_change(row):
     assert route_evidence.eval_run_problem(RUN_ID, row) is None
 

@@ -510,7 +510,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   reply while a trace is bound; an R2 item judged by the writer's family is an `error` row with `same_family`, a
   regression tour makes the run INVALID with `same_family_tours`). **Evidence** (`shared/llm_client/route_evidence.py`):
   a change of a writer / judge stage's primary model or fallback chain needs `eval_run_id` (a finished
-  `shared.prompt_eval_runs` row, verdict not fail / invalid, no regression) or `break_glass_reason` (≥ 20 characters):
+  `shared.prompt_eval_runs` row that measured the change: not INVALID (`details.invalid`), a writing-memory run with
+  verdict `pass` and stop reason `completed`, a legacy regression row with no regression) or `break_glass_reason` (≥ 20 characters):
   422 otherwise, 503 when the run cannot be read; the evidence goes into the `acp_shared.audit_log` row
   (`details.evidence`) and a break glass writes an admin bell (`platform.llm_route.break_glass`) in the same
   transaction. A shadow-only, an account-only change and validate / embed stages need none. **Warnings**: both PATCH

@@ -11,8 +11,14 @@ Not covered: ``validate`` and ``embed`` stages (CIS ADR 0008 decision 2: a valid
 a shadow-only change (the shadow is how evidence is gathered; it never serves a reply), an account-route-only change
 and the stage kill switch (an operation, not a model change).
 
-An eval run counts when it exists, has finished (a writing-memory run: ``finished_at`` set; a legacy regression row is
-written once, at the end), and did not fail: verdict not ``fail`` / ``invalid``, no regression detected.
+An eval run counts only when it measured the change and passed:
+- a writing-memory run (``pipeline = 'writing_memory'``): finished, ``verdict = 'pass'`` and
+  ``stop_reason = 'completed'`` (a ``baseline`` / ``informative`` verdict, or a run stopped by ``error`` /
+  ``budget_cap`` / ``futility``, shows nothing about the change);
+- a legacy regression row (``s1_old`` / ``s1_from_atom``, written once at the end, ``verdict`` NULL): not INVALID
+  (``details.invalid``: a hard detector failed open, or a tour was judged by a model of its writer's family) and no
+  regression detected (``_detect_regression`` forces ``regression_detected = false`` on an INVALID run, so the flag
+  alone is not enough).
 """
 from __future__ import annotations
 
@@ -28,13 +34,15 @@ EVIDENCE_ROLES = ("writer", "judge")
 BREAK_GLASS_MIN_CHARS = 20
 BREAK_GLASS_MAX_CHARS = 500
 BREAK_GLASS_EVENT = "platform.llm_route.break_glass"
-_FAILED_VERDICTS = ("fail", "invalid")
+_FAILED_VERDICTS = ("fail", "invalid")      # a legacy regression row (verdict NULL today) with one of these
+_PASS_VERDICT = "pass"                      # the only writing-memory verdict that backs a change
+_COMPLETED = "completed"                    # ... and only when the run was not stopped early
 # The platform sentinel tenant (shared.notifications.tenant_id is NOT NULL; same UUID as the other platform bells).
 _PLATFORM_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 
 _EVAL_RUN_SQL = """
     SELECT id::text AS id, pipeline, run_kind, writer, verdict, stop_reason, regression_detected,
-           finished_at, created_at
+           (details -> 'invalid') = 'true'::jsonb AS details_invalid, finished_at, created_at
       FROM shared.prompt_eval_runs
      WHERE id = $1::uuid
 """
@@ -57,9 +65,17 @@ def eval_run_problem(run_id: str, row: Optional[dict]) -> Optional[str]:
     """Why the eval run cannot back a route change, or None when it can (pure)."""
     if row is None:
         return f"eval run {run_id} does not exist"
-    if row.get("pipeline") == "writing_memory" and row.get("finished_at") is None:
-        return f"eval run {run_id} has not finished"
-    if row.get("verdict") in _FAILED_VERDICTS:
+    if row.get("details_invalid"):
+        return (f"eval run {run_id} is INVALID (a hard detector failed open or the judge shared the writer's "
+                f"family): it measured nothing")
+    if row.get("pipeline") == "writing_memory":
+        if row.get("finished_at") is None:
+            return f"eval run {run_id} has not finished"
+        if row.get("verdict") != _PASS_VERDICT:
+            return f"eval run {run_id} ended with verdict {row.get('verdict')}, not {_PASS_VERDICT}"
+        if row.get("stop_reason") != _COMPLETED:
+            return f"eval run {run_id} stopped with {row.get('stop_reason')}, not {_COMPLETED}"
+    elif row.get("verdict") in _FAILED_VERDICTS:
         return f"eval run {run_id} ended with verdict {row['verdict']}"
     if row.get("regression_detected"):
         return f"eval run {run_id} detected a regression"
@@ -102,7 +118,7 @@ async def require(role: Optional[str], *, eval_run_id: Optional[str], break_glas
         row = await (read_run or read_eval_run)(run_id)
         problem = eval_run_problem(run_id, row)
         if problem:
-            raise EvidenceRefused(f"{problem}: a {role} route change needs a finished eval run that did not fail")
+            raise EvidenceRefused(f"{problem}: a {role} route change needs a finished, valid eval run that passed")
         evidence["eval_run_id"] = run_id
         evidence["eval_run"] = {k: row.get(k) for k in ("pipeline", "run_kind", "writer", "verdict")}
     if reason:

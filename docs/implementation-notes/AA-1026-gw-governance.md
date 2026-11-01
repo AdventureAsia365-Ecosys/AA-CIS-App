@@ -11,9 +11,14 @@ with break glass: reason required, admin only, alerted). Root ADR 0009 decision 
 - **What counts as a change**: the primary model (model PATCH, `model_id` differs) or the fallback chain (route PATCH,
   `fallback_model_ids` differs, order included). A shadow-only change needs nothing (the shadow never serves a reply;
   it is how evidence is gathered), nor does an account-route-only save or the kill switch.
-- **Eval run validity** (`eval_run_problem`, pure): the `shared.prompt_eval_runs` row exists, has finished (a
-  writing-memory run: `finished_at`; a legacy regression row is written once, at the end), verdict not `fail` /
-  `invalid`, `regression_detected` false. No freshness window and no stage match: the run id is stored in the audit
+- **Eval run validity** (`eval_run_problem`, pure): the `shared.prompt_eval_runs` row exists and is not INVALID
+  (`details.invalid`, read as `(details -> 'invalid') = 'true'::jsonb` so a non-boolean value never breaks the read).
+  A writing-memory run: finished, `verdict = 'pass'` and `stop_reason = 'completed'` (`baseline` / `informative`, or a
+  run stopped by `error` / `budget_cap` / `futility` / `hard_stop`, shows nothing about the change; shadow runs that
+  pass are `pass` too). A legacy regression row (`s1_old` / `s1_from_atom`, written once at the end, verdict NULL):
+  verdict not `fail` / `invalid`, `regression_detected` false. Review fix: `_detect_regression` forces
+  `regression_detected = false` on an INVALID run (degraded hard detector, or the A4 `same_family_tours`), so the flag
+  alone let an INVALID legacy run, even one the family rule declared INVALID, pass as evidence. No freshness window and no stage match: the run id is stored in the audit
   row for the reviewer. An id that is given must be valid even next to a break-glass reason.
 - **Break glass**: `break_glass_reason`, at least 20 characters (whitespace collapsed), at most 500. The bell
   (`shared.notifications`, event `platform.llm_route.break_glass`, roles `admin`, platform tenant) is written in the
