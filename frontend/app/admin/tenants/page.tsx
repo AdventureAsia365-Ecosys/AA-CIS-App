@@ -234,6 +234,10 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
 
 // ─── API Key Modal ────────────────────────────────────────────────────────────
 
+// The key shows once: a backdrop click or Escape must not throw it away (getting it back means a rotation, which
+// revokes the key the tenant uses). Only Done closes the dialog, so it has no title-bar close button either.
+const KEEP_OPEN = () => {};
+
 function ApiKeyModal({ keyData, onClose }: { keyData: NewApiKey; onClose: () => void }) {
   const t = useT(TEN);
   const [show, setShow]     = useState(false);
@@ -242,15 +246,10 @@ function ApiKeyModal({ keyData, onClose }: { keyData: NewApiKey; onClose: () => 
   return (
     <Modal
       open
-      onClose={onClose}
+      onClose={KEEP_OPEN}
       width={460}
       ariaLabel={keyData.title ?? (keyData.rotated ? t("newApiKey") : t("tenantCreated"))}
-      title={
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 10, color: K.success }}>
-          <CheckCircle size={20} color={K.success} />
-          {keyData.title ?? (keyData.rotated ? t("newApiKey") : t("tenantCreated"))}
-        </span>
-      }
+      testId="tenant-api-key-modal"
       footer={
         <>
           <Button variant="secondary" onClick={copy}>
@@ -260,6 +259,11 @@ function ApiKeyModal({ keyData, onClose }: { keyData: NewApiKey; onClose: () => 
         </>
       }
     >
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, fontFamily: serif, fontSize: 17,
+          fontWeight: 600, color: K.success }}>
+          <CheckCircle size={20} color={K.success} />
+          {keyData.title ?? (keyData.rotated ? t("newApiKey") : t("tenantCreated"))}
+        </div>
         {keyData.note && <p style={{ fontSize: 13, color: K.muted, margin: "0 0 12px" }}>{keyData.note}</p>}
         <p style={{ fontSize: 13, color: K.muted, marginBottom: 24 }}>
           <strong style={{ color: K.ink }}>{keyData.tenant_name}</strong> {t("shareOnceA")} <strong style={{ color: K.danger }}>{t("neverShownAgain")}</strong>.
