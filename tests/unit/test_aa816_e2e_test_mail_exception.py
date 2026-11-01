@@ -121,7 +121,9 @@ async def test_create_with_a_wider_scope_is_refused_before_any_write(db, stubbed
 # ── roles / sync ─────────────────────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("kwargs", [{"role": "admin"}, {"role": "content"}, {"booking_role": "sales"},
-                                    {"role": "reviewer", "booking_role": "admin"}])
+                                    {"role": "reviewer", "booking_role": "admin"},
+                                    # AA-1031: no CRM role on an E2E directory address (ADR 0006a A10)
+                                    {"crm_roles": ["ops"]}, {"preset": "platform_owner"}])
 @pytest.mark.asyncio
 async def test_roles_change_to_a_wider_scope_is_refused(db, stubbed, kwargs):
     cognito, _ = stubbed
@@ -130,6 +132,7 @@ async def test_roles_change_to_a_wider_scope_is_refused(db, stubbed, kwargs):
         await sd.change_roles(db, cognito, actor_id=db.owner, staff_id=uid, **kwargs)
     assert (err.value.status, err.value.code) == (400, "e2e_test_scope")
     assert db.row(uid)["role"] == "reviewer" and (uid, "booking") not in db.grants and db.audit == []
+    assert db.crm_roles(uid) == []
 
 
 @pytest.mark.asyncio
@@ -168,3 +171,30 @@ def test_e2e_helper_and_migration_250_name_the_same_address():
         assert f"export const E2E_COGNITO_EMAIL = '{E2E}';" in f.read()
     with open(os.path.join(ROOT, "api", "migrations", "250_admin_users_e2e_test_email.sql"), encoding="utf-8") as f:
         assert f"email = '{E2E}' AND role = 'reviewer'" in f.read()
+
+
+def test_scope_refuses_any_crm_role():
+    """AA-1031: the E2E directory addresses hold no CRM role (the WORKFORCE trigger allows no crm-* group either)."""
+    with pytest.raises(sd.StaffDirectoryError) as err:
+        sd.require_e2e_test_scope(E2E, "reviewer", None, ("support",))
+    assert (err.value.status, err.value.code) == (400, "e2e_test_scope")
+    sd.require_e2e_test_scope("new.person@adventure.asia", "admin", "sales", ("ops",))   # no-op for others
+
+
+@pytest.mark.asyncio
+async def test_create_with_a_crm_role_is_refused_before_any_write(db, stubbed):
+    cognito, _ = stubbed
+    with pytest.raises(sd.StaffDirectoryError) as err:
+        await sd.create_staff(db, cognito, actor_id=db.owner, email=E2E, display_name="E2E", role="reviewer",
+                              crm_roles=["ops"])
+    assert (err.value.status, err.value.code) == (400, "e2e_test_scope")
+    assert len(db.rows) == 1 and db.audit == []
+
+
+@pytest.mark.asyncio
+async def test_sync_refuses_an_e2e_row_with_a_crm_grant(db, stubbed):
+    cognito, _ = stubbed
+    uid = db.add(email=E2E, role="reviewer", crm=("ops",))   # written outside the directory
+    with pytest.raises(sd.StaffDirectoryError) as err:
+        await sd.sync_staff(db, cognito, actor_id=db.owner, staff_id=uid)
+    assert err.value.code == "e2e_test_scope"

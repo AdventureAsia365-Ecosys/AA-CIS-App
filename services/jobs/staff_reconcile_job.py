@@ -58,9 +58,10 @@ async def run(ctx: JobContext) -> dict:
         logger.warning("staff_reconcile_cognito_error", job_id=ctx.job_id, error=str(e)[:300])
         raise NonRetryable(str(e)) from e
     await ctx.progress(phase="directory")
-    rows, grants = await sr.load_directory(ctx.pool)
+    rows, grants, crm_directory = await sr.load_directory_with_crm(ctx.pool)
     report = sr.reconcile(pool_data["users"], pool_data["groups"], rows, grants,
-                          issuer=issuer, breakglass=sr.breakglass_email(), known_e2e=sr.known_e2e_enabled())
+                          issuer=issuer, breakglass=sr.breakglass_email(), known_e2e=sr.known_e2e_enabled(),
+                          crm_directory=crm_directory)
     report.update(kind=KIND, trigger=(ctx.payload or {}).get("trigger", "manual"), pool_id=pool_id,
                   checked_at=sr.now_iso())
     await ctx.progress(phase="done", drift_total=report["drift_total"], ready=report["readiness"]["ready"])

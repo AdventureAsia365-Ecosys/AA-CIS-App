@@ -369,6 +369,7 @@ def test_group_role_maps_match_sign_in_and_the_grant_table():
 E2E_REV = "e2e@e2e-mail.lumiguides.it.com"
 E2E_BOOKING = "e2e-booking@e2e-mail.lumiguides.it.com"
 E2E_CIS_ADMIN = "e2e-cis-admin@e2e-mail.lumiguides.it.com"
+E2E_CRM_STAFF = "e2e-crm-staff@e2e-mail.lumiguides.it.com"
 
 
 def _e2e_world():
@@ -398,8 +399,13 @@ def test_known_e2e_addresses_match_the_directory_and_the_a10b_module():
     assert e2e_staff.E2E_REVIEWER_TEST_STAFF_EMAIL == staff_directory.E2E_TEST_STAFF_EMAIL
     assert sr.KNOWN_E2E_STAFF[E2E_REV].directory_role == staff_directory.E2E_TEST_STAFF_ROLE
     assert sr.KNOWN_E2E_STAFF[E2E_CIS_ADMIN].directory_role == staff_directory.E2E_CIS_ADMIN_TEST_STAFF_ROLE
-    assert set(sr.KNOWN_E2E_STAFF) == {E2E_REV, E2E_BOOKING, E2E_CIS_ADMIN}
-    assert {e.clause for e in sr.KNOWN_E2E_STAFF.values()} == {"ADR 0006a A10", "ADR 0006a A10a", "ADR 0006a A10b"}
+    assert set(sr.KNOWN_E2E_STAFF) == {E2E_REV, E2E_BOOKING, E2E_CIS_ADMIN, E2E_CRM_STAFF}
+    assert {e.clause for e in sr.KNOWN_E2E_STAFF.values()} == {"ADR 0006a A10", "ADR 0006a A10a", "ADR 0006a A10b",
+                                                               "ADR 0006a A10c"}
+    # A10c (AA-1019): exactly crm-ops + crm-support, never in the CIS directory (AA-CIS-Infra workforce.py).
+    assert sr.KNOWN_E2E_STAFF[E2E_CRM_STAFF].groups == {"crm-ops", "crm-support"}
+    assert sr.KNOWN_E2E_STAFF[E2E_CRM_STAFF].directory_role is None
+    assert e2e_staff.E2E_CRM_STAFF_TEST_STAFF_EMAIL == E2E_CRM_STAFF
     with pytest.raises(TypeError):
         sr.KNOWN_E2E_STAFF["x@e2e-mail.lumiguides.it.com"] = sr.KNOWN_E2E_STAFF[E2E_REV]  # read-only
 
@@ -539,11 +545,20 @@ def test_summary_fields_count_known_e2e_without_addresses():
 # ── the job ───────────────────────────────────────────────────────────────────────────────────────
 
 class _Conn:
-    def __init__(self, rows, grants):
-        self.rows, self.grants = rows, grants
+    """``crm``: the CRM grants once migration 330 is applied (AA-1031), or None before it."""
+
+    def __init__(self, rows, grants, crm=None):
+        self.rows, self.grants, self.crm = rows, grants, crm
 
     async def fetch(self, sql, *args):
+        if sql == sr.CRM_GRANTS_SQL:
+            assert self.crm is not None, "staff_crm_grant read before the table check"
+            return self.crm
         return self.grants if "staff_app_grant" in sql else self.rows
+
+    async def fetchval(self, sql, *args):
+        assert sql == sr.CRM_TABLE_SQL
+        return self.crm is not None
 
 
 class _Acquire:
@@ -844,3 +859,128 @@ def test_job_runner_reads_return_the_full_report_to_admin(client, job_reads):
     assert "redacted" not in one["result"]
     assert one["result"]["cognito_without_row"][0]["email"] == "ghost@adventure.asia"
     assert one["payload"]["requested_by"] == "u-admin"
+
+
+# ── AA-1031: CRM roles (shared.staff_crm_grant, migration 330) vs the crm-* groups; A10c ────────────
+
+def _crm_grant(uid: str, role: str) -> dict:
+    return {"admin_user_id": uid, "app": "crm", "role": role}
+
+
+def test_crm_group_map_matches_the_directory_writer_and_the_migration():
+    from api.services import staff_directory
+
+    assert dict((r, g) for g, r in sr.CRM_GROUP_ROLES) == dict(staff_directory.CRM_ROLE_GROUPS)
+    mig = (REPO / "api" / "migrations" / "330_staff_crm_grant.sql").read_text()
+    check = re.search(r"staff_crm_grant_role_chk CHECK \(role IN \(([^)]*)\)\)", mig).group(1)
+    assert {r for _, r in sr.CRM_GROUP_ROLES} == set(re.findall(r"'([a-z_]+)'", check))
+    assert set(sr.CRM_GROUPS) <= set(sr.STAFF_GROUPS)
+    assert not re.search(r"\b(INSERT|UPDATE|DELETE)\b", sr.CRM_GRANTS_SQL + sr.CRM_TABLE_SQL)
+
+
+def test_crm_roles_in_step_with_the_groups_are_no_drift():
+    users, groups, rows, grants = _clean_world()
+    groups["crm-platform-admin"] = [NGHIEP]
+    groups["crm-ops"] = [NGHIEP]
+    grants += [_crm_grant("id-nghiep", "ops"), _crm_grant("id-nghiep", "platform_admin")]
+    report = _run(users, groups, rows, grants)
+    assert report["drift_total"] == 0, report
+    assert report["crm_compared"] is True and sr.CRM_NOT_COMPARED_NOTE not in report["notes"]
+
+
+def test_a_crm_group_given_by_hand_is_crm_role_drift():
+    """S263: crm-platform-admin added by command, no CRM role in the directory -> a finding until the Staff page
+    grants it (a sync would remove the group)."""
+    users, groups, rows, grants = _clean_world()
+    groups["crm-platform-admin"] = [NGHIEP]
+    report = _run(users, groups, rows, grants)
+    assert [(d["username"], d["kind"], d["directory"], d["cognito"], d["cognito_groups"])
+            for d in report["group_drift"]] == [("nghiep", "crm_role", None, "platform_admin",
+                                                 ["crm-platform-admin"])]
+    assert report["drift_total"] == 1
+
+
+def test_a_granted_crm_role_missing_in_cognito_is_drift():
+    users, groups, rows, grants = _clean_world()
+    groups["crm-support"] = [NGHIEP]
+    grants += [_crm_grant("id-nghiep", "support"), _crm_grant("id-nghiep", "ops")]
+    report = _run(users, groups, rows, grants)
+    assert [(d["kind"], d["directory"], d["cognito"]) for d in report["group_drift"]] == [
+        ("crm_role", "ops, support", "support")]
+
+
+def test_before_migration_330_crm_groups_are_not_compared():
+    users, groups, rows, grants = _clean_world()
+    groups["crm-platform-admin"] = [NGHIEP]
+    report = sr.reconcile(users, groups, rows, grants, issuer=ISS, breakglass=BG, crm_directory=False)
+    assert report["group_drift"] == [] and report["drift_total"] == 0
+    assert report["crm_compared"] is False and sr.CRM_NOT_COMPARED_NOTE in report["notes"]
+
+
+def _a10c_world(extra_groups=()):
+    users, groups, rows, grants = _e2e_world()
+    crm = _user(E2E_CRM_STAFF, "s-e2e-crm", status="FORCE_CHANGE_PASSWORD")
+    users.append(crm)
+    for g in ("crm-ops", "crm-support") + tuple(extra_groups):
+        groups[g] = groups[g] + [crm]
+    return users, groups, rows, grants
+
+
+def test_on_dev_the_a10c_identity_is_listed_apart_and_not_drift():
+    report = _run_e2e(*_a10c_world())
+    assert report["drift_total"] == 0, report
+    a10c = next(k for k in report["known_e2e_exceptions"] if k["email"] == E2E_CRM_STAFF)
+    assert (a10c["clause"], a10c["exempt_from"], a10c["groups"]) == (
+        "ADR 0006a A10c", ["cognito_without_row"], ["crm-ops", "crm-support"])
+    assert report["counts"]["known_e2e_exceptions"] == 4
+
+
+@pytest.mark.parametrize("extra", ["crm-platform-admin", "cis-admin", "booking-admin"])
+def test_a10c_with_an_unexpected_group_stays_drift(extra):
+    report = _run_e2e(*_a10c_world([extra]))
+    assert (E2E_CRM_STAFF, "no_row") in [(f["email"], f["reason"]) for f in report["cognito_without_row"]]
+    assert E2E_CRM_STAFF not in {k["email"] for k in report["known_e2e_exceptions"]}
+
+
+def test_off_dev_the_a10c_identity_is_drift():
+    report = _run_e2e(*_a10c_world(), known_e2e=False)
+    assert (E2E_CRM_STAFF, "no_row") in [(f["email"], f["reason"]) for f in report["cognito_without_row"]]
+
+
+@pytest.mark.asyncio
+async def test_load_directory_reads_crm_grants_only_when_the_table_exists():
+    users, groups, rows, grants = _clean_world()
+    pool = MagicMock()
+    pool.acquire = MagicMock(return_value=_Acquire(_Conn(rows, grants)))
+    got_rows, got_grants, crm = await sr.load_directory_with_crm(pool)
+    assert crm is False and got_grants == grants and got_rows == rows
+    crm_rows = [_crm_grant("id-nghiep", "ops")]
+    pool.acquire = MagicMock(return_value=_Acquire(_Conn(rows, grants, crm=crm_rows)))
+    _, got_grants, crm = await sr.load_directory_with_crm(pool)
+    assert crm is True and got_grants == grants + crm_rows
+    assert await sr.load_directory(pool) == (rows, grants + crm_rows)
+
+
+@pytest.mark.asyncio
+async def test_job_passes_crm_directory_to_the_report(monkeypatch):
+    from services.jobs import staff_reconcile_job as job
+    from shared.jobs import queue
+
+    monkeypatch.setattr(queue, "set_progress", AsyncMock())
+    monkeypatch.delenv("COGNITO_WORKFORCE_ISSUER", raising=False)
+    users, groups, rows, grants = _clean_world()
+    groups["crm-platform-admin"] = [NGHIEP]
+    client = _client()
+    pool = MagicMock()
+    pool.acquire = MagicMock(return_value=_Acquire(_Conn(rows, grants, crm=[])))
+    with Stubber(client) as stub:
+        stub.add_response("list_users", {"Users": users}, {"UserPoolId": POOL, "Limit": 60})
+        for g in sr.STAFF_GROUPS:
+            stub.add_response("list_users_in_group", {"Users": groups[g]},
+                              {"UserPoolId": POOL, "GroupName": g, "Limit": 60})
+        ctx = registry.JobContext(pool, Job(id="job-4", kind=job.KIND, payload={"trigger": "manual"},
+                                            status="running", attempt=1, max_attempts=2, progress={}, cost_usd=0.0),
+                                  {"cognito": client})
+        result = await job.run(ctx)
+    assert result["crm_compared"] is True
+    assert [d["kind"] for d in result["group_drift"]] == ["crm_role"]

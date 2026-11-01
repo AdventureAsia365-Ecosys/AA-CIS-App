@@ -3,7 +3,8 @@
   GET   /admin/platform/staff                       every CIS staff account (shared.admin_users) + counts + viewer
   GET   /admin/platform/staff/{staff_id}            one account
   POST  /admin/platform/staff                       create (C6)
-  PATCH /admin/platform/staff/{staff_id}/roles      CIS role and/or Booking grant (C6)
+  PATCH /admin/platform/staff/{staff_id}/roles      CIS role, Booking grant and/or CRM roles (C6, AA-1031), or the
+                                                    "platform_owner" preset (AA-1031)
   POST  /admin/platform/staff/{staff_id}/disable    (C6)
   POST  /admin/platform/staff/{staff_id}/enable     (C6)
   POST  /admin/platform/staff/{staff_id}/sign-out   "reset": end every session, re-enable if disabled (C6)
@@ -24,6 +25,11 @@ middleware); a legacy password session, a forged x-admin-role or the machine get
 is in api/services/staff_directory.py (DB first, then Cognito; guards; audit). A Cognito failure after the DB
 change answers 502 ``{"status": "saved_cognito_pending", ...}`` with the saved row; the owner retries with
 ``/sync`` (idempotent), or re-POSTs the same create.
+
+CRM roles (AA-1031, shared.staff_crm_grant, migration 330): every row carries ``crm_roles`` (a list, in
+staff_directory.CRM_ROLES order) and the list says ``crm_roles_available``. Before 330 is applied the reads use the
+SELECT without the CRM column (``crm_roles`` is then ``[]`` and ``crm_roles_available`` false) and a write that sends
+CRM roles answers 503.
 
 The router is included without an include prefix (staff_policy reads the route template from
 scope["route"].path, see staff_authz._route_template).
@@ -49,7 +55,7 @@ router = APIRouter(prefix="/admin/platform", tags=["admin-platform"],
 # stay out (``linked`` is derived in SQL).
 STAFF_COLUMNS: tuple[str, ...] = (
     "id", "username", "role", "is_active", "created_at", "updated_at",
-    "email", "display_name", "is_owner", "last_login_at", "linked", "booking_role", "breakglass",
+    "email", "display_name", "is_owner", "last_login_at", "linked", "booking_role", "crm_roles", "breakglass",
     "last_invited_at", "last_invite_requested_at", "last_invite_not_sent_at", "invite_status",
 )
 _TIME_COLUMNS: tuple[str, ...] = (
@@ -64,9 +70,23 @@ _SELECT = (
     "FROM shared.admin_users u "
     "LEFT JOIN shared.staff_app_grant g ON g.admin_user_id = u.id AND g.app = 'booking'"
 )
+# AA-1031: the same SELECT with the CRM roles (migration 330), used once shared.staff_crm_grant exists.
+_CRM_COLUMN = (
+    "(SELECT coalesce(array_agg(c.role ORDER BY c.role), ARRAY[]::text[]) FROM shared.staff_crm_grant c "
+    "WHERE c.admin_user_id = u.id) AS crm_roles, "
+)
+_SELECT_WITH_CRM = _SELECT.replace("g.role AS booking_role, ", "g.role AS booking_role, " + _CRM_COLUMN, 1)
 
 CisRole = Literal["admin", "reviewer", "content"]
 BookingRole = Literal["admin", "sales", "contracting", "content_creator"]
+CrmRole = Literal["platform_admin", "ops", "support"]
+Preset = Literal["platform_owner"]
+
+
+async def _select_sql(conn: Any) -> tuple[str, bool]:
+    """The staff SELECT for this database and whether it reads the CRM roles (AA-1031, migration 330 applied)."""
+    available = await staff_directory.crm_grants_available(conn)
+    return (_SELECT_WITH_CRM if available else _SELECT), available
 
 
 def _staff_row(row: Any) -> dict:
@@ -79,6 +99,7 @@ def _staff_row(row: Any) -> dict:
         out[key] = value.isoformat() if value is not None else None
     for key in ("is_active", "is_owner", "linked"):
         out[key] = bool(out[key])
+    out["crm_roles"] = list(staff_directory.require_crm_roles(out["crm_roles"] or []))
     out["breakglass"] = staff_directory.is_breakglass(out["username"], out["email"])
     return out
 
@@ -100,7 +121,8 @@ def _viewer(request: Request) -> dict:
 async def list_staff(request: Request):
     pool = request.app.state.pool
     async with pool.acquire() as conn:
-        rows = await conn.fetch(_SELECT + " ORDER BY u.is_active DESC, u.role, lower(u.username)")
+        select, crm_available = await _select_sql(conn)
+        rows = await conn.fetch(select + " ORDER BY u.is_active DESC, u.role, lower(u.username)")
     staff = [_staff_row(r) for r in rows]
     by_role = {role: 0 for role in STAFF_ROLES}
     for s in staff:
@@ -111,6 +133,7 @@ async def list_staff(request: Request):
         "total": len(staff),
         "active": sum(1 for s in staff if s["is_active"]),
         "active_by_role": by_role,
+        "crm_roles_available": crm_available,
         "viewer": _viewer(request),
     }
 
@@ -124,7 +147,8 @@ def _uuid_or_404(staff_id: str) -> uuid.UUID:
 
 async def _read_one(pool: Any, sid: uuid.UUID) -> Optional[dict]:
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(_SELECT + " WHERE u.id = $1", sid)
+        select, _ = await _select_sql(conn)
+        row = await conn.fetchrow(select + " WHERE u.id = $1", sid)
     return _staff_row(row) if row is not None else None
 
 
@@ -144,15 +168,21 @@ class CreateStaffBody(BaseModel):
     display_name: str = Field(..., max_length=staff_directory.MAX_DISPLAY_NAME_LEN)
     role: CisRole
     booking_role: Optional[BookingRole] = None
+    # AA-1031: CRM staff roles (a set; empty or missing = none).
+    crm_roles: Optional[list[CrmRole]] = Field(default=None, max_length=3)
     # S242: queue the invitation e-mail with the create (the Add staff dialog's checkbox, on by default).
     send_invite: bool = True
 
 
 class ChangeRolesBody(BaseModel):
-    """Only the fields sent are changed; ``"booking_role": null`` removes the Booking grant."""
+    """Only the fields sent are changed; ``"booking_role": null`` removes the Booking grant, ``"crm_roles": []``
+    (or null) removes every CRM role. ``"preset": "platform_owner"`` (AA-1031) is sent alone and sets CIS admin +
+    Booking admin + CRM Agency admin."""
     model_config = ConfigDict(extra="forbid")
     role: Optional[CisRole] = None
     booking_role: Optional[BookingRole] = None
+    crm_roles: Optional[list[CrmRole]] = Field(default=None, max_length=3)
+    preset: Optional[Preset] = None
 
 
 def _actor_id(request: Request) -> str:
@@ -201,13 +231,13 @@ async def create_staff(body: CreateStaffBody, request: Request,
         result = await staff_directory.create_staff(
             request.app.state.pool, cognito, actor_id=_actor_id(request), email=body.email,
             display_name=body.display_name, role=body.role, booking_role=body.booking_role,
-            send_invite=body.send_invite)
+            crm_roles=body.crm_roles, send_invite=body.send_invite)
     except StaffDirectoryError as exc:
         raise _refused(exc) from None
     return await _respond(request, result, ok_status=201 if result.created else 200)
 
 
-@router.patch("/staff/{staff_id}/roles", summary="Change the CIS role and/or the Booking grant")
+@router.patch("/staff/{staff_id}/roles", summary="Change the CIS role, the Booking grant and/or the CRM roles")
 async def change_staff_roles(staff_id: str, body: ChangeRolesBody, request: Request,
                              cognito: CognitoDirectory = Depends(get_cognito)):
     sid = _uuid_or_404(staff_id)
@@ -219,6 +249,10 @@ async def change_staff_roles(staff_id: str, body: ChangeRolesBody, request: Requ
         kwargs["role"] = body.role
     if "booking_role" in sent:
         kwargs["booking_role"] = body.booking_role
+    if "crm_roles" in sent:
+        kwargs["crm_roles"] = body.crm_roles or []
+    if "preset" in sent and body.preset is not None:
+        kwargs["preset"] = body.preset
     try:
         result = await staff_directory.change_roles(
             request.app.state.pool, cognito, actor_id=_actor_id(request), staff_id=str(sid), **kwargs)

@@ -1676,8 +1676,13 @@ CHECK + `api/core/e2e_staff.py` / `staff_directory.require_e2e_test_scope` / `re
 the WORKFORCE triggers' dev-only map) —, `display_name`, `cognito_iss` + `cognito_sub`, `last_login_at`
 ("last seen"), `is_owner`; `password_hash` nullable, NULL fails closed). A staff member's role in another app
 lives in `shared.staff_app_grant (admin_user_id, app, role)` (`app` = `booking`, roles `admin` / `sales` /
-`contracting` / `content_creator`). Root ADR 0006 + amendment 0006a are the design; tenants are separate
-(`cis_tenant_token`, role `tenant`).
+`contracting` / `content_creator`). AA-Partner (CRM) staff roles are a set per person in
+`shared.staff_crm_grant (admin_user_id, role)` (AA-1031, migration 330: `platform_admin` / `ops` / `support` =
+WORKFORCE groups `crm-platform-admin` / `crm-ops` / `crm-support`, root ADR 0006b decision 6), written by the same
+directory writer with its own audit field and synced (added and removed) like the CIS / Booking groups; the E2E
+directory addresses hold none, and the A10c CRM staff E2E user stays outside the directory. The Staff page's "Platform
+owner" preset sets CIS admin + Booking admin + CRM `platform_admin` in one change (never the owner flag). Root ADR 0006 +
+amendments 0006a / 0006b are the design; tenants are separate (`cis_tenant_token`, role `tenant`).
 
 **Dev-only E2E CIS admin (A10b, AA-816 S252, root ADR 0006a A10b).** The agent's own admin identity for evidence
 screenshots of the admin-only pages and the AA-916 WM-07 sentence-action sample. `api/core/e2e_staff.py` holds the

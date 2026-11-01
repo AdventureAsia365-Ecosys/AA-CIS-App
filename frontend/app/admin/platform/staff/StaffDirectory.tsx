@@ -6,7 +6,8 @@
 // API: GET /api/admin/platform/staff and /api/admin/platform/staff/{id} (backend
 // api/routers/admin_platform.py, admin only: staff_policy staff.read + BFF API_READ_RULES). Since
 // AA-816 C6 a row also carries the work email, display name, owner flag, last sign-in, whether a
-// company sign-in (Cognito) is linked, and the Booking role (shared.staff_app_grant).
+// company sign-in (Cognito) is linked, and the Booking role (shared.staff_app_grant). AA-1031: and the CRM
+// (AA-Partner) staff roles (shared.staff_crm_grant): a "CRM role" column (in the CSV too) and a drawer field.
 //
 // AA-816 C6 writes (StaffManage.tsx): a platform owner on a company sign-in creates accounts and
 // changes roles / access from this page; everyone else sees it read-only. Who may write comes from
@@ -43,6 +44,7 @@ import {
   CreateStaffModal,
   OutcomeBanner,
   StaffManagePanel,
+  crmRolesOf,
   useStaffWords,
   type Outcome,
   type StaffAccount,
@@ -57,6 +59,8 @@ interface StaffListResp {
   total: number;
   active: number;
   active_by_role: Record<string, number>;
+  /** AA-1031: false until the database update for CRM roles is applied (CRM fields read-only). */
+  crm_roles_available?: boolean;
   viewer?: StaffViewer;
 }
 
@@ -102,7 +106,7 @@ function setUrl(id: string | null): void {
 export default function StaffDirectory({ initialId = null }: { initialId?: string | null }) {
   const t = useT(STAFF);
   const { formatDate, formatDateTime } = useFormat();
-  const { roleLabel, bookingRoleLabel } = useStaffWords();
+  const { roleLabel, bookingRoleLabel, crmRolesLabel } = useStaffWords();
   const [openId, setOpenId] = useState<string | null>(initialId);
   const [creating, setCreating] = useState(false);
   const [pageOutcome, setPageOutcome] = useState<Outcome | null>(null);
@@ -119,6 +123,7 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
   const visibleStaff = useMemo(() => (showDisabled ? staff : staff.filter((s) => s.is_active)), [staff, showDisabled]);
   const viewer = list.data?.viewer;
   const canWrite = canWriteStaff(viewer);
+  const crmAvailable = list.data?.crm_roles_available !== false;
 
   const open = (id: string) => { setOpenId(id); setUrl(id); };
   const close = () => { setOpenId(null); setUrl(null); };
@@ -136,6 +141,16 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
       accessorFn: (r) => r.booking_role ?? "",
       header: t("colBookingRole"),
       cell: (c) => <span style={{ color: c.row.original.booking_role ? K.ink : K.muted }}>{bookingRoleLabel(c.row.original.booking_role)}</span>,
+    },
+    {
+      // AA-1031: every CRM role in words; the accessor text is what search and the CSV export use.
+      id: "crm_roles",
+      accessorFn: (r) => (crmRolesOf(r).length ? crmRolesLabel(crmRolesOf(r)) : ""),
+      header: t("colCrmRole"),
+      cell: (c) => {
+        const roles = crmRolesOf(c.row.original);
+        return <span style={{ color: roles.length ? K.ink : K.muted }}>{crmRolesLabel(roles)}</span>;
+      },
     },
     {
       id: "status",
@@ -167,7 +182,7 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
       enableSorting: false,
       cell: (c) => <BookingLink id={c.row.original.id} />,
     },
-  ], [t, formatDate, formatDateTime, bookingRoleLabel]);
+  ], [t, formatDate, formatDateTime, bookingRoleLabel, crmRolesLabel]);
 
   const counts = list.data;
 
@@ -208,7 +223,7 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
         </div>
       )}
       {canWrite && (
-        <CreateStaffModal open={creating} onClose={() => setCreating(false)}
+        <CreateStaffModal open={creating} onClose={() => setCreating(false)} crmAvailable={crmAvailable}
           onDone={(o) => { setCreating(false); setPageOutcome(o); }} />
       )}
 
@@ -258,12 +273,12 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
           emptyTitle={t("emptyTitle")}
           emptyDescription={t("emptyDescription")}
           onRowClick={(r) => open(r.id)}
-          tableMinWidth={960}
+          tableMinWidth={1080}
         />
       )}
 
       <StaffDrawer id={openId} fallback={staff.find((s) => s.id === openId) ?? null} onClose={close}
-        canWrite={canWrite} selfId={viewer?.admin_id ?? null} />
+        canWrite={canWrite} selfId={viewer?.admin_id ?? null} crmAvailable={crmAvailable} />
     </PageFrame>
   );
 }
@@ -296,16 +311,17 @@ function NameCell({ s }: { s: StaffAccount }) {
   );
 }
 
-function StaffDrawer({ id, fallback, onClose, canWrite, selfId }: {
+function StaffDrawer({ id, fallback, onClose, canWrite, selfId, crmAvailable }: {
   id: string | null;
   fallback: StaffAccount | null;
   onClose: () => void;
   canWrite: boolean;
   selfId: string | null;
+  crmAvailable: boolean;
 }) {
   const t = useT(STAFF);
   const { formatDateTime } = useFormat();
-  const { roleLabel, bookingRoleLabel, inviteLabel } = useStaffWords();
+  const { roleLabel, bookingRoleLabel, crmRolesLabel, inviteLabel } = useStaffWords();
   // The last write's outcome, kept per account id so it survives the panel remounting after a refresh.
   const [outcome, setOutcome] = useState<{ id: string; outcome: Outcome } | null>(null);
   const detail = useQuery({
@@ -344,6 +360,8 @@ function StaffDrawer({ id, fallback, onClose, canWrite, selfId }: {
             {/* AA-816 C6: the Booking role is the shared.staff_app_grant row, written here together with the
                 booking-<role> Cognito group. */}
             <Field label={t("colBookingRole")} value={bookingRoleLabel(s.booking_role)} />
+            {/* AA-1031: shared.staff_crm_grant rows, written here with the crm-* Cognito groups. */}
+            <Field label={t("colCrmRole")} value={crmRolesLabel(crmRolesOf(s))} />
             <Field label={t("fStatus")} value={s.is_active ? t("active") : t("disabledLong")} />
             <Field label={t("fCompanySignIn")} value={s.linked ? t("linked") : t("notLinked")} />
             <Field label={t("colLastSignIn")} value={s.last_login_at ? formatDateTime(s.last_login_at) : t("never")} />
@@ -359,7 +377,8 @@ function StaffDrawer({ id, fallback, onClose, canWrite, selfId }: {
             <OutcomeBanner outcome={outcome.outcome} onRetried={(o) => setOutcome({ id: s.id, outcome: o })} />
           )}
           {canWrite ? (
-            <StaffManagePanel key={`${s.id}:${s.role}:${s.booking_role ?? ""}:${s.is_active}`} staff={s} selfId={selfId}
+            <StaffManagePanel key={`${s.id}:${s.role}:${s.booking_role ?? ""}:${crmRolesOf(s).join(",")}:${s.is_active}`}
+              staff={s} selfId={selfId} crmAvailable={crmAvailable}
               onOutcome={(o) => setOutcome({ id: s.id, outcome: o })} />
           ) : (
             <div style={{ fontSize: 12.5, color: K.muted, lineHeight: 1.5 }}>

@@ -10,6 +10,7 @@ import json
 import os
 import sys
 import uuid
+from pathlib import Path
 
 import asyncpg
 import pytest
@@ -158,3 +159,68 @@ async def test_last_owner_query_counts_only_active_admin_owners(env):
             mine = await conn.fetchval(
                 "SELECT count(*) FROM shared.admin_users WHERE is_owner AND is_active AND role = 'admin'")
     assert mine == others + 1
+
+
+@pytest.mark.asyncio
+async def test_crm_roles_and_the_platform_owner_preset_against_postgres(env):
+    """AA-1031 (migration 330): CRM roles are rows of shared.staff_crm_grant, added and removed with their audit
+    row; the preset writes all three admin roles in one transaction; the list and the reconcile read them."""
+    from services import staff_reconcile as sr
+
+    pool, owner, tag, emails = env
+    email = f"aa1031.{tag}@adventure.asia"
+    emails.append(email)
+    cognito = RecordingCognito()
+
+    async def crm_of(staff_id):
+        rows = await pool.fetch("SELECT role FROM shared.staff_crm_grant WHERE admin_user_id = $1::uuid "
+                                "ORDER BY role", staff_id)
+        return [r["role"] for r in rows]
+
+    async with pool.acquire() as conn:
+        assert await sd.crm_grants_available(conn) is True
+    # The CI database does not carry the Dev role grants, so the grant is checked in the migration text instead.
+    migrations = Path(__file__).resolve().parents[2] / "api" / "migrations"
+    m330 = next(migrations.glob("330_*.sql")).read_text(encoding="utf-8")
+    assert "GRANT SELECT, INSERT, DELETE ON shared.staff_crm_grant TO cis_app" in m330
+
+    res = await sd.create_staff(pool, cognito, actor_id=owner, email=email, display_name="CRM Person",
+                                role="content", crm_roles=["support", "ops"])
+    assert await crm_of(res.staff_id) == ["ops", "support"]
+    assert ("add", email, "crm-ops") in cognito.calls and ("add", email, "crm-support") in cognito.calls
+
+    await sd.change_roles(pool, cognito, actor_id=owner, staff_id=res.staff_id, crm_roles=["ops"])
+    assert await crm_of(res.staff_id) == ["ops"]
+    assert cognito.calls[-1] == ("remove", email, "crm-support")
+
+    await sd.change_roles(pool, cognito, actor_id=owner, staff_id=res.staff_id, preset="platform_owner")
+    row = await pool.fetchrow("SELECT u.role::text AS role, u.is_owner, g.role AS booking FROM shared.admin_users u "
+                              "LEFT JOIN shared.staff_app_grant g ON g.admin_user_id = u.id AND g.app = 'booking' "
+                              "WHERE u.id = $1::uuid", res.staff_id)
+    assert (row["role"], row["booking"], row["is_owner"]) == ("admin", "admin", False)
+    assert await crm_of(res.staff_id) == ["ops", "platform_admin"]
+
+    audit = await pool.fetch("SELECT action, details FROM acp_shared.audit_log WHERE resource_type = 'admin_user' "
+                             "AND resource_id = $1 ORDER BY created_at", res.staff_id)
+    details = [json.loads(a["details"]) for a in audit]
+    assert [a["action"] for a in audit] == ["staff.created", "staff.roles_changed", "staff.roles_changed"]
+    assert details[0]["crm_roles"] == ["ops", "support"]
+    assert details[1]["crm_roles"] == {"before": ["ops", "support"], "after": ["ops"]}
+    assert details[2]["preset"] == "platform_owner"
+    assert details[2]["crm_roles"] == {"before": ["ops"], "after": ["platform_admin", "ops"]}
+
+    async with pool.acquire() as conn:
+        listed = await conn.fetchrow(admin_platform._SELECT_WITH_CRM + " WHERE u.id = $1", uuid.UUID(res.staff_id))
+    assert sorted(listed["crm_roles"]) == ["ops", "platform_admin"] and listed["booking_role"] == "admin"
+
+    _, grants, crm = await sr.load_directory_with_crm(pool)
+    assert crm is True
+    assert sorted(g["role"] for g in grants if g["admin_user_id"] == res.staff_id and g["app"] == "crm") == [
+        "ops", "platform_admin"]
+
+    # The CHECK refuses an unknown role; removing every CRM role deletes the rows.
+    with pytest.raises(asyncpg.CheckViolationError):
+        await pool.execute("INSERT INTO shared.staff_crm_grant (admin_user_id, role) VALUES ($1::uuid, 'boss')",
+                           res.staff_id)
+    await sd.change_roles(pool, cognito, actor_id=owner, staff_id=res.staff_id, crm_roles=[])
+    assert await crm_of(res.staff_id) == []
