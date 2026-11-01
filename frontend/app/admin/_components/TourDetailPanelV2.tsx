@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { X, ChevronRight } from "lucide-react";
-import { K, Badge, alpha, mono, sans, serif, useAdminIdentity, useFormat, useT } from "../../_kit";
+import { K, Badge, alpha, mono, sans, serif, useAdminIdentity, useFormat, useT, Input, Textarea } from "../../_kit";
 import { tourTraceHref } from "@/lib/aiGateway";
 import { M } from "./tour.messages";
 import { SCORE_BANDS } from "@/lib/quality-registry.generated";
@@ -226,7 +226,7 @@ function EditableField({ label, initialValue, onSave, onChange, rows, charLimit,
         </div>
       )}
       {rows ? (
-        <textarea
+        <Textarea
           value={value}
           rows={rows}
           onChange={e => handleChange(e.target.value)}
@@ -235,7 +235,7 @@ function EditableField({ label, initialValue, onSave, onChange, rows, charLimit,
           style={inputStyle}
         />
       ) : (
-        <input
+        <Input
           type="text"
           value={value}
           onChange={e => handleChange(e.target.value)}

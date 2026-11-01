@@ -65,6 +65,7 @@ import { TenantSelect } from "../_components/TenantSelect";
 import {
   PageFrame, PageFrameBody, PageFrameHeader, PageHeader, useFormat, useT, Badge, K, LoadingScreen, Section, mono,
   sans, type Tone,
+  Input, Select,
 } from "../../_kit";
 import { CHANNEL, TRACE } from "./messages";
 
@@ -297,25 +298,25 @@ export default function ContentTracePage() {
             {/* AA-919 S254: the shared admin tenant picker (active tenants, by name; "" = All tenants). */}
             <TenantSelect inline value={tenantId} onChange={setTenantId} placeholder={t("allTenants")} />
             <FilterField label={t("channel")}>
-              <select value={channel} onChange={e => setChannel(e.target.value)} style={{ ...selectStyle, minWidth: 140 }}>
+              <Select value={channel} onChange={e => setChannel(e.target.value)} style={{ ...selectStyle, minWidth: 140 }}>
                 {CHANNEL_OPTIONS.map(o => <option key={o.value} value={o.value}>{channelLabel(o.value)}</option>)}
-              </select>
+              </Select>
             </FilterField>
             <FilterField label={t("status")}>
-              <select value={status} onChange={e => setStatus(e.target.value)} style={{ ...selectStyle, minWidth: 140 }}>
+              <Select value={status} onChange={e => setStatus(e.target.value)} style={{ ...selectStyle, minWidth: 140 }}>
                 {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{t(o.label)}</option>)}
-              </select>
+              </Select>
             </FilterField>
             <FilterField label={t("published")}>
-              <select value={published} onChange={e => setPublished(e.target.value)} style={{ ...selectStyle, minWidth: 130 }}>
+              <Select value={published} onChange={e => setPublished(e.target.value)} style={{ ...selectStyle, minWidth: 130 }}>
                 {PUBLISHED_OPTIONS.map(o => <option key={o.value} value={o.value}>{t(o.label)}</option>)}
-              </select>
+              </Select>
             </FilterField>
             <FilterField label={t("from")}>
-              <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ ...selectStyle, cursor: "text" }} />
+              <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ ...selectStyle, cursor: "text" }} />
             </FilterField>
             <FilterField label={t("to")}>
-              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ ...selectStyle, cursor: "text" }} />
+              <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ ...selectStyle, cursor: "text" }} />
             </FilterField>
           </div>
 

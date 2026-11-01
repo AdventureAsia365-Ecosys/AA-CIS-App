@@ -16,6 +16,7 @@ import { I18nProvider, useT } from "../_kit/core/useI18n";
 import type { Lang } from "../_kit/core/i18n";
 import { langStore } from "../_kit/i18n";
 import { M, LOGIN_ERRORS } from "./messages";
+import { Input } from "../_kit";
 
 interface LoginFormProps {
   legacyEnabled: boolean;
@@ -152,7 +153,7 @@ function LoginFormBody({ legacyEnabled, cognitoAvailable, signInHost, initialErr
               <label style={{ fontSize:11, fontWeight:600, color:"var(--text-muted)", textTransform:"uppercase" as const, letterSpacing:1, display:"block", marginBottom:8 }}>{t("username")}</label>
               <div style={{ position:"relative" }}>
                 <User size={13} style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:"var(--text-muted)" }} />
-                <input type="text" value={username} onChange={e => { setUsername(e.target.value); setError(""); }}
+                <Input type="text" value={username} onChange={e => { setUsername(e.target.value); setError(""); }}
                   placeholder={t("username")}
                   onKeyDown={e => e.key === "Enter" && !loading && login()}
                   style={{ width:"100%", padding:"10px 12px 10px 34px", background:"var(--bg-primary)", border:`1px solid ${error ? "var(--aa-red)" : "var(--border)"}`, borderRadius:8, color:"var(--text-primary)", fontSize:13, outline:"none" }} />
@@ -163,7 +164,7 @@ function LoginFormBody({ legacyEnabled, cognitoAvailable, signInHost, initialErr
               <label style={{ fontSize:11, fontWeight:600, color:"var(--text-muted)", textTransform:"uppercase" as const, letterSpacing:1, display:"block", marginBottom:8 }}>{t("password")}</label>
               <div style={{ position:"relative" }}>
                 <Lock size={13} style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:"var(--text-muted)" }} />
-                <input type="password" value={password} onChange={e => { setPassword(e.target.value); setError(""); }}
+                <Input type="password" value={password} onChange={e => { setPassword(e.target.value); setError(""); }}
                   placeholder="••••••••"
                   onKeyDown={e => e.key === "Enter" && !loading && login()}
                   style={{ width:"100%", padding:"10px 12px 10px 34px", background:"var(--bg-primary)", border:`1px solid ${error ? "var(--aa-red)" : "var(--border)"}`, borderRadius:8, color:"var(--text-primary)", fontSize:13, outline:"none" }} />

@@ -14,6 +14,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { GitMerge, Play, Undo2 } from "lucide-react";
 import {
   Button, DataTable, useFormat, useT, Badge, Eyebrow, K, KpiTile, LoadingScreen, Section, mono, type Tone,
+  Select,
 } from "../../_kit";
 import { PL } from "./messages";
 
@@ -235,15 +236,15 @@ export default function MergesTab({ onError }: { onError: (msg: string) => void 
 
       <Section style={{ marginBottom: 16 }} bodyStyle={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
         <Eyebrow>{t("mergeLog")}</Eyebrow>
-        <select aria-label={t("country")} value={country} onChange={e => { setCountry(e.target.value); setPage(1); }} style={selectStyle}>
+        <Select aria-label={t("country")} value={country} onChange={e => { setCountry(e.target.value); setPage(1); }} style={selectStyle}>
           <option value="">{t("allCountries")}</option>
           {countries.map(c => <option key={c} value={c}>{c}</option>)}
-        </select>
-        <select aria-label={t("state")} value={active} onChange={e => { setActive(e.target.value); setPage(1); }} style={selectStyle}>
+        </Select>
+        <Select aria-label={t("state")} value={active} onChange={e => { setActive(e.target.value); setPage(1); }} style={selectStyle}>
           <option value="true">{t("stateActive")}</option>
           <option value="false">{t("stateUndone")}</option>
           <option value="">{t("stateAll")}</option>
-        </select>
+        </Select>
       </Section>
       {log && (
         <DataTable<Merge> tableId="admin-places-merges" data={log.items} columns={columns} getRowId={m => m.id}

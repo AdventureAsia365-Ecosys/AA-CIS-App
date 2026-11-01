@@ -14,6 +14,7 @@ import SettingsKitTab from "../_components/SettingsKitTab";
 import {
   Button, Tabs, PageFrame, PageHeader, apiGet, useAdminIdentity, useFormat, useT, Badge, Eyebrow, K, LoadingScreen,
   Section, Spinner, alpha, mono, sans, serif, type Tone,
+  Input, Textarea,
 } from "../../_kit";
 import { RETIRED_SETTINGS_TABS, retiredTabTarget } from "@/lib/aiGateway";
 import { can, staffErrorMessage, type Capability } from "@/lib/rbac";
@@ -231,7 +232,7 @@ function SeoConfigTab({ seo: initialSeo, canEdit }: { seo: SettingsData["seo_con
           )}
         </div>
         {canEdit && <div style={{ display: "flex", gap: 8 }}>
-          <input
+          <Input
             value={kwInput}
             onChange={e => setKwInput(e.target.value)}
             onKeyDown={e => e.key === "Enter" && (e.preventDefault(), addKeyword())}
@@ -250,7 +251,7 @@ function SeoConfigTab({ seo: initialSeo, canEdit }: { seo: SettingsData["seo_con
 
       <Section>
         <Eyebrow>{t("targetMarket")}</Eyebrow>
-        <textarea
+        <Textarea
           value={targetJson}
           onChange={e => setTargetJson(e.target.value)}
           readOnly={!canEdit}

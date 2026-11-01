@@ -18,7 +18,9 @@ import {
   AlertCircle, Loader2, CheckCircle, Eye, EyeOff, Copy, X, Ban, Globe, RotateCcw,
 } from "lucide-react";
 import { A, serif, mono, sans, Card, SLabel, Badge, LoadingScreen, TH, TD } from "../_components/adminUi";
-import { Button, ScrollX, PageFrame, Modal, PageHeader, Tabs, useFormat, useIsPhone, useLang, useT } from "../../_kit";
+import {
+  Button, ScrollX, PageFrame, Modal, PageHeader, Tabs, useFormat, useIsPhone, useLang, useT, Input, Textarea,
+} from "../../_kit";
 import { Tenant360Settings } from "./_components/Tenant360Settings";
 import { Tenant360Cost } from "./_components/Tenant360Cost";
 import { Tenant360Quality } from "./_components/Tenant360Quality";
@@ -185,7 +187,7 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
         ].map(f => (
           <div key={f.key} style={{ marginBottom: 16 }}>
             <label style={{ fontSize: 11, fontWeight: 600, color: A.muted, textTransform: "uppercase", letterSpacing: "0.1em", display: "block", marginBottom: 6 }}>{f.label}</label>
-            <input value={f.value} onChange={e => f.onChange(e.target.value)} placeholder={f.placeholder}
+            <Input value={f.value} onChange={e => f.onChange(e.target.value)} placeholder={f.placeholder}
               style={{ width: "100%", padding: "10px 12px", background: A.bg, border: `1px solid ${A.line}`, borderRadius: 8, color: A.body, fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: sans }} />
           </div>
         ))}
@@ -207,7 +209,7 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
           <label style={{ fontSize: 11, fontWeight: 600, color: A.muted, textTransform: "uppercase", letterSpacing: "0.1em", display: "block", marginBottom: 8 }}>
             {t("ppwLabel")}
           </label>
-          <input type="number" min={1} max={14} value={postsPerWeek} onChange={e => setPostsPerWeek(e.target.value)}
+          <Input type="number" min={1} max={14} value={postsPerWeek} onChange={e => setPostsPerWeek(e.target.value)}
             style={{ width: 100, padding: "10px 12px", background: A.bg, border: `1px solid ${A.line}`, borderRadius: 8, color: A.body, fontSize: 13, outline: "none", fontFamily: sans }} />
           <p style={{ fontSize: 11, color: A.muted2, margin: "6px 0 0" }}>
             {t("ppwHelp")}
@@ -446,9 +448,9 @@ function BrandField({ label, value, onChange, rows }: {
     <div>
       <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: A.muted, marginBottom: 6 }}>{label}</div>
       {rows ? (
-        <textarea value={value} onChange={e => onChange(e.target.value)} rows={rows} style={{ ...brandFieldStyle, resize: "vertical", lineHeight: 1.5 }} />
+        <Textarea value={value} onChange={e => onChange(e.target.value)} rows={rows} style={{ ...brandFieldStyle, resize: "vertical", lineHeight: 1.5 }} />
       ) : (
-        <input value={value} onChange={e => onChange(e.target.value)} style={brandFieldStyle} />
+        <Input value={value} onChange={e => onChange(e.target.value)} style={brandFieldStyle} />
       )}
     </div>
   );
@@ -995,7 +997,7 @@ function OffboardModal({ tenant, onClose, onDone }: {
         {t("offboardBody")}
       </p>
       <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: A.ink, marginBottom: 6 }}>{t("reasonLabel")}</label>
-      <textarea value={reason} onChange={e => setReason(e.target.value)} rows={3}
+      <Textarea value={reason} onChange={e => setReason(e.target.value)} rows={3}
         style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 8, border: `1px solid ${A.line}`,
           background: A.bg, color: A.ink, fontSize: 13, fontFamily: "inherit", resize: "vertical" }} />
       {error && (

@@ -9,7 +9,9 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Play, RefreshCw, ArrowRight, Search, CheckCircle, XCircle, Loader2, ChevronRight } from "lucide-react";
 import { A, alpha, serif, sans, mono, Card, SLabel, Badge, LoadingScreen, TH, TD } from "../_components/adminUi";
-import { Button, PageFrame, PageFrameBody, PageFrameHeader, PageHeader, useFormat, useT, type Translator } from "../../_kit";
+import {
+  Button, PageFrame, PageFrameBody, PageFrameHeader, PageHeader, useFormat, useT, type Translator, Checkbox, Input, Select,
+} from "../../_kit";
 import { TourDetailPanelV2 } from "../_components/TourDetailPanelV2";
 import { CompareModal } from "../_components/CompareModal";
 import { Pagination } from "../_components/Pagination";
@@ -609,7 +611,7 @@ export default function S1RewritePage() {
           <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
             <div style={{ flex: "1 1 200px", minWidth: 0 }}>
               <label style={{ fontSize: 11, color: A.muted, display: "block", marginBottom: 4 }}>{t("brandIdentity")}</label>
-              <select
+              <Select
                 value={brandId ?? ""}
                 onChange={e => {
                   const id = e.target.value || null;
@@ -626,11 +628,11 @@ export default function S1RewritePage() {
                     {b.brand_name} · v{b.version}{b.is_active ? t("active") : ""}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
             <div style={{ flex: "1 1 200px", minWidth: 0 }}>
               <label style={{ fontSize: 11, color: A.muted, display: "block", marginBottom: 4 }}>{t("seoMode")}</label>
-              <select
+              <Select
                 value={seoMode}
                 onChange={e => setSeoMode(e.target.value)}
                 disabled={running}
@@ -639,7 +641,7 @@ export default function S1RewritePage() {
                 <option value="standard">{t("seoStandardOption")}</option>
                 <option value="aggressive">{t("seoAggressiveOption")}</option>
                 <option value="minimal">{t("seoMinimalOption")}</option>
-              </select>
+              </Select>
             </div>
             <div style={{ flex: "1 1 200px", minWidth: 0 }}>
               <label style={{ fontSize: 11, color: A.muted, display: "block", marginBottom: 4 }}>{t("model")}</label>
@@ -708,25 +710,25 @@ export default function S1RewritePage() {
           {/* Filter bar */}
           <Card style={{ marginBottom: 16, padding: "12px 16px" }}>
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-              <select
+              <Select
                 value={filterCountry}
                 onChange={e => handleFilterChange(setFilterCountry, e.target.value)}
                 style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 13, fontFamily: sans, background: A.card, minWidth: 140 }}
               >
                 <option value="">{t("allCountries")}</option>
                 {uniqueCountries.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
+              </Select>
 
-              <select
+              <Select
                 value={filterFile}
                 onChange={e => handleFilterChange(setFilterFile, e.target.value)}
                 style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 13, fontFamily: sans, background: A.card, minWidth: 180 }}
               >
                 <option value="">{t("allFiles")}</option>
                 {uniqueFiles.map(f => <option key={f} value={f}>{stripUuidPrefix(f)}</option>)}
-              </select>
+              </Select>
 
-              <select
+              <Select
                 value={filterStatus}
                 onChange={e => handleFilterChange(setFilterStatus, e.target.value)}
                 style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 13, fontFamily: sans, background: A.card, minWidth: 130 }}
@@ -735,11 +737,11 @@ export default function S1RewritePage() {
                 <option value="published">{t("filterPublished")}</option>
                 <option value="ready">{t("filterReady")}</option>
                 <option value="review">{t("filterReview")}</option>
-              </select>
+              </Select>
 
               <div style={{ display: "flex", alignItems: "center", gap: 6, border: `1px solid ${A.line}`, borderRadius: 6, padding: "6px 10px", background: A.card, flex: 1, minWidth: 200 }}>
                 <Search size={13} style={{ color: A.muted2, flexShrink: 0 }} />
-                <input
+                <Input
                   placeholder={t("searchTour")}
                   value={filterSearch}
                   onChange={e => handleFilterChange(setFilterSearch, e.target.value)}
@@ -768,8 +770,8 @@ export default function S1RewritePage() {
                 <thead style={{ position: "sticky", top: 0, zIndex: 2 }}>
                   <tr style={{ background: A.line2 }}>
                     <th style={{ ...TH, width: 36, paddingLeft: 16 }}>
-                      <input
-                        type="checkbox"
+                      <Checkbox
+                       
                         checked={filteredTours.length > 0 && filteredTours.every(t => selectedIds.has(t.tour_id))}
                         onChange={e => e.target.checked ? selectAll() : deselectAll()}
                         style={{ accentColor: A.gold }}
@@ -803,8 +805,8 @@ export default function S1RewritePage() {
                         }}
                       >
                         <td style={{ ...TD, paddingLeft: 16 }} onClick={e => e.stopPropagation()}>
-                          <input
-                            type="checkbox"
+                          <Checkbox
+                           
                             checked={isSelected}
                             onChange={() => {}}
                             onClick={e => { e.stopPropagation(); setSelectedIds(prev => { const next = new Set(prev); next.has(t.tour_id) ? next.delete(t.tour_id) : next.add(t.tour_id); return next; }); }}

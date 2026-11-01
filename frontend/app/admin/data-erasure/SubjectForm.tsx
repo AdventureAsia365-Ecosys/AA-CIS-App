@@ -8,7 +8,7 @@
 
 import { Play } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
-import { Button, K, Tabs, mono, useFormat, useT } from "../../_kit";
+import { Button, K, Tabs, mono, useFormat, useT, Input } from "../../_kit";
 import {
   emailLooksValid, emailSha256, hoursSince, tenantIdProblem, type Subject, type TenantOption,
 } from "@/lib/dataErasure";
@@ -100,7 +100,7 @@ export default function SubjectForm({ tenants, tenantsError, retentionDays, now,
           {(picked === OTHER || offboarded.length === 0) && (
             <label style={labelStyle}>
               {t("tenantId")}
-              <input
+              <Input
                 data-testid="erasure-tenant-id"
                 value={pasted}
                 onChange={(e) => setPasted(e.target.value)}
@@ -126,7 +126,7 @@ export default function SubjectForm({ tenants, tenantsError, retentionDays, now,
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <label style={{ ...labelStyle, maxWidth: 420 }}>
             {t("travellerEmail")}
-            <input
+            <Input
               data-testid="erasure-email"
               type="email"
               name="erasure-subject-address"

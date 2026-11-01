@@ -14,7 +14,9 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { K, ApiError, Badge, Button, apiGet, apiSend, useAdminIdentity, useT, useToast } from "../../_kit";
+import {
+  K, ApiError, Badge, Button, apiGet, apiSend, useAdminIdentity, useT, useToast, Input, Select, Textarea,
+} from "../../_kit";
 import {
   fmtTime, subjectLabelPath,
   type DefectLevel, type LabelSubjectType, type PieceDetail, type PieceLabel as Label, type PieceLabelBody,
@@ -108,21 +110,21 @@ function LabelForm({ target, mine }: { target: LabelTarget; mine: Label | null }
         {DEFECTS.map((k) => (
           <label key={k} style={{ display: "flex", gap: 4, alignItems: "center", fontSize: 12, color: K.body }}>
             {defectName(k)}
-            <select value={d.defects[k] ?? ""} onChange={(e) => setDefect(k, e.target.value as DefectLevel | "")}
+            <Select value={d.defects[k] ?? ""} onChange={(e) => setDefect(k, e.target.value as DefectLevel | "")}
                     aria-label={t("defectsAria", defectName(k))} style={fieldStyle}>
               <option value="">—</option>
               {LEVELS.map((v) => <option key={v} value={v}>{level(v)}</option>)}
-            </select>
+            </Select>
           </label>
         ))}
         <label style={{ display: "flex", gap: 4, alignItems: "center", fontSize: 12, color: K.body }}>
           {t("minutesToFix")}
-          <input type="number" min={0} max={600} value={d.minutes_to_fix ?? ""} aria-label={t("minutesToFix")}
+          <Input type="number" min={0} max={600} value={d.minutes_to_fix ?? ""} aria-label={t("minutesToFix")}
                  onChange={(e) => setD((x) => ({ ...x, minutes_to_fix: e.target.value === "" ? null : Math.max(0, Math.min(600, Math.round(Number(e.target.value)))) }))}
                  style={{ ...fieldStyle, width: 72 }} />
         </label>
       </div>
-      <textarea value={d.reason ?? ""} maxLength={4000} rows={2} aria-label={t("reasonAria")}
+      <Textarea value={d.reason ?? ""} maxLength={4000} rows={2} aria-label={t("reasonAria")}
                 placeholder={t("reasonPlaceholder")}
                 onChange={(e) => setD((x) => ({ ...x, reason: e.target.value }))}
                 style={{ ...fieldStyle, width: "100%", resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }} />

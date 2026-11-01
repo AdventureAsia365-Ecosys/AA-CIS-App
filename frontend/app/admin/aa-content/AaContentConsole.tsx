@@ -29,6 +29,7 @@ import {
   useT,
   useToast,
   type ColumnDef, PageFrame,
+  Input, Select,
 } from "../../_kit";
 import { can } from "@/lib/rbac";
 import {
@@ -201,11 +202,11 @@ function FilterSelect({ label, value, onChange, options, allLabel }: {
   allLabel: string;
 }) {
   return (
-    <select aria-label={label} value={value} onChange={(e) => onChange(e.target.value)}
+    <Select aria-label={label} value={value} onChange={(e) => onChange(e.target.value)}
       style={{ ...fieldStyle, width: "auto", maxWidth: "100%", minWidth: 0, minHeight: 32, padding: "5px 8px", fontSize: 12.5 }}>
       <option value="">{allLabel}</option>
       {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-    </select>
+    </Select>
   );
 }
 
@@ -260,22 +261,22 @@ function CreateModal({ open, onClose, onCreated }: {
       <form data-testid="aa-content-create" onSubmit={(e) => { e.preventDefault(); void submit(); }}
         style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         <Field label={t("kind")} htmlFor="aa-create-kind">
-          <select id="aa-create-kind" value={kind} onChange={(e) => setKind(e.target.value as AaKind)} style={fieldStyle}>
+          <Select id="aa-create-kind" value={kind} onChange={(e) => setKind(e.target.value as AaKind)} style={fieldStyle}>
             {KINDS.map((k) => <option key={k} value={k}>{tx.kind[k]}</option>)}
-          </select>
+          </Select>
         </Field>
         <Field label={t("language")} htmlFor="aa-create-locale" hint={t("languageHint")}>
-          <select id="aa-create-locale" value={locale} onChange={(e) => setLocale(e.target.value as AaLocale)} style={fieldStyle}>
+          <Select id="aa-create-locale" value={locale} onChange={(e) => setLocale(e.target.value as AaLocale)} style={fieldStyle}>
             {LOCALES.map((l) => <option key={l} value={l}>{tx.locale[l]}</option>)}
-          </select>
+          </Select>
         </Field>
         <Field label={t("fieldTitle")} htmlFor="aa-create-title">
-          <input id="aa-create-title" type="text" autoComplete="off" maxLength={300} value={title}
+          <Input id="aa-create-title" type="text" autoComplete="off" maxLength={300} value={title}
             onChange={(e) => setTitle(e.target.value)} style={fieldStyle} />
         </Field>
         <Field label={t("groupKey")} htmlFor="aa-create-key"
           hint={groupKey && !keyOk ? t("groupKeyBad") : t("groupKeyHint")}>
-          <input id="aa-create-key" type="text" autoComplete="off" maxLength={80} value={groupKey}
+          <Input id="aa-create-key" type="text" autoComplete="off" maxLength={80} value={groupKey}
             onChange={(e) => setManualKey(e.target.value.toLowerCase())} style={fieldStyle}
             aria-invalid={!!groupKey && !keyOk} placeholder="prep-pack-vietnam" />
         </Field>

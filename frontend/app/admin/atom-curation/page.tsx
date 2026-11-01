@@ -51,7 +51,9 @@ import {
 import SocialContentSubNav, { type SectionKey } from "../_components/SocialContentSubNav";
 import { A, mono, sans, Card, Badge, LoadingScreen, TH, TD } from "../_components/adminUi";
 import { fetchJson, EmptyState, ErrorState, AuditTable, Col } from "../_components/auditPanels";
-import { Button, PageFrame, PageFrameBody, PageFrameHeader, PageHeader, useFormat, useT } from "../../_kit";
+import {
+  Button, PageFrame, PageFrameBody, PageFrameHeader, PageHeader, useFormat, useT, Checkbox, Input, Select,
+} from "../../_kit";
 import { SeedLine, type SeedInfo } from "../_components/SeedLine";
 import { TenantSelect } from "../_components/TenantSelect";
 import { AT } from "./messages";
@@ -390,14 +392,14 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
 
             <div>
               <div style={{ display: "flex", gap: 10, marginBottom: 14, alignItems: "center", flexWrap: "wrap" }}>
-                <select value={lifecycleFilter} onChange={e => setLifecycleFilter(e.target.value)} style={selectStyle}>
+                <Select value={lifecycleFilter} onChange={e => setLifecycleFilter(e.target.value)} style={selectStyle}>
                   <option value="">{t("allLifecycle")}</option>
                   <option value="active">{t("lifecycleActive")}</option>
                   <option value="phasing_out">{t("lifecyclePhasingOut")}</option>
                   <option value="retired">{t("lifecycleRetired")}</option>
-                </select>
+                </Select>
                 <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: A.body, cursor: "pointer" }}>
-                  <input type="checkbox" checked={unreviewedOnly} onChange={e => setUnreviewedOnly(e.target.checked)} />
+                  <Checkbox checked={unreviewedOnly} onChange={e => setUnreviewedOnly(e.target.checked)} />
                   {t("unreviewedOnly")}
                 </label>
               </div>
@@ -670,9 +672,9 @@ function SegmentSection({ tourId, market, focusRouteId, focusSegmentId, onClearF
     <>
       {/* AA-557 D.3 — sticky filter row, now with a real visual edge (see stickyFilterBarStyle). */}
       <div style={stickyFilterBarStyle}>
-        <input style={inputStyle} placeholder={t("searchPlaceVerb")} value={placeSearch}
+        <Input style={inputStyle} placeholder={t("searchPlaceVerb")} value={placeSearch}
           onChange={e => setPlaceSearch(e.target.value)} />
-        <input style={{ ...inputStyle, width: 110 }} type="number" min={0} placeholder={t("minRecurrence")}
+        <Input style={{ ...inputStyle, width: 110 }} type="number" min={0} placeholder={t("minRecurrence")}
           value={minRecurrence} onChange={e => setMinRecurrence(e.target.value)} />
         {(focusRouteId || focusSegmentId) && (
           <Button variant="ghost" size="sm" onClick={onClearFocus}>{t("clearCross")}</Button>
@@ -796,8 +798,8 @@ function ScoreSection({ tourId, market, onNavigateToSegment }: {
       </div>
       {/* AA-557 E.7 — sticky filter row, now with a real visual edge. */}
       <div style={stickyFilterBarStyle}>
-        <input style={{ ...inputStyle, width: 110 }} type="number" placeholder={t("minTotalRank")} value={minRank} onChange={e => setMinRank(e.target.value)} />
-        <input style={{ ...inputStyle, width: 110 }} type="number" placeholder={t("maxTotalRank")} value={maxRank} onChange={e => setMaxRank(e.target.value)} />
+        <Input style={{ ...inputStyle, width: 110 }} type="number" placeholder={t("minTotalRank")} value={minRank} onChange={e => setMinRank(e.target.value)} />
+        <Input style={{ ...inputStyle, width: 110 }} type="number" placeholder={t("maxTotalRank")} value={maxRank} onChange={e => setMaxRank(e.target.value)} />
       </div>
       <MarketLegend />
       {error ? <ErrorState message={error} onRetry={reload} /> :
@@ -909,9 +911,9 @@ function RouteHubSection({ tourId, market, focusRouteId, onClearFocus, onNavigat
       </div>
       {/* AA-557 F.9 — sticky filter row, now with a real visual edge. */}
       <div style={stickyFilterBarStyle}>
-        <input style={{ ...inputStyle, width: 100 }} type="number" min={1} placeholder={t("minDays")} value={minDays} onChange={e => setMinDays(e.target.value)} />
-        <input style={{ ...inputStyle, width: 100 }} type="number" min={1} placeholder={t("maxDays")} value={maxDays} onChange={e => setMaxDays(e.target.value)} />
-        <input style={inputStyle} placeholder={t("searchRoute")} value={hubSearch} onChange={e => setHubSearch(e.target.value)} />
+        <Input style={{ ...inputStyle, width: 100 }} type="number" min={1} placeholder={t("minDays")} value={minDays} onChange={e => setMinDays(e.target.value)} />
+        <Input style={{ ...inputStyle, width: 100 }} type="number" min={1} placeholder={t("maxDays")} value={maxDays} onChange={e => setMaxDays(e.target.value)} />
+        <Input style={inputStyle} placeholder={t("searchRoute")} value={hubSearch} onChange={e => setHubSearch(e.target.value)} />
         {focusRouteId && <Button variant="ghost" size="sm" onClick={onClearFocus}>{t("clearFromSegment")}</Button>}
         {!tourId && (
           <span style={{ fontSize: 11.5, color: A.muted2, fontStyle: "italic" }}>
@@ -1162,10 +1164,10 @@ function SlateSection() {
       <TenantSelect inline value={selectedTenant ?? ""} onChange={id => setSelectedTenant(id || null)}
         placeholder={t("chooseTenant")} />
       <span style={{ fontSize: 12, color: A.muted }}>{t("channel")}</span>
-      <select value={selectedChannel} onChange={e => setSelectedChannel(e.target.value)} style={selectStyle}>
+      <Select value={selectedChannel} onChange={e => setSelectedChannel(e.target.value)} style={selectStyle}>
         <option value="">{t("allChannels")}</option>
         {CHANNELS.map(c => <option key={c} value={c}>{c}</option>)}
-      </select>
+      </Select>
     </div>
   );
 
@@ -1337,7 +1339,7 @@ function AtomCurationDashboard() {
           <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "flex-end", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <span style={{ fontSize: 12, color: A.muted }}>{t("tourLabel")}</span>
-              <select
+              <Select
                 value={selectedTour ?? ""}
                 onChange={e => setSelectedTour(e.target.value || null)}
                 // AA-601 (feedback 2) — a <select> sizes to its LONGEST option (full tour names,
@@ -1353,12 +1355,12 @@ function AtomCurationDashboard() {
                 {(summary?.by_tour ?? []).map(tr => (
                   <option key={tr.tour_id} value={tr.tour_id}>{tr.tour_name}</option>
                 ))}
-              </select>
+              </Select>
               <span style={{ fontSize: 12, color: A.muted }}>{t("marketLabel")}</span>
-              <select value={selectedMarket} onChange={e => setSelectedMarket(e.target.value)} style={{ ...selectStyle, flex: "0 1 130px", width: "100%", minWidth: 0, maxWidth: "100%" }}>
+              <Select value={selectedMarket} onChange={e => setSelectedMarket(e.target.value)} style={{ ...selectStyle, flex: "0 1 130px", width: "100%", minWidth: 0, maxWidth: "100%" }}>
                 <option value="">{t("allMarkets")}</option>
                 {MARKETS.map(m => <option key={m} value={m}>{m}</option>)}
-              </select>
+              </Select>
               {selectedTourMeta && selectedTourMeta.lifecycle_stage !== "active" && (
                 <Badge color={LIFECYCLE_COLOR[selectedTourMeta.lifecycle_stage]}>{selectedTourMeta.lifecycle_stage}</Badge>
               )}

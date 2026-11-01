@@ -42,6 +42,7 @@ import {
   useT,
   type ColumnDef,
   type Tone, PageFrame,
+  Input,
 } from "../../../_kit";
 import { shownSum } from "@/lib/costWording";
 import { COST_WORDING } from "@/lib/costWording.messages";
@@ -119,7 +120,7 @@ export default function CostByApp() {
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: K.muted, fontFamily: sans }}>
               {t("month")}
-              <input
+              <Input
                 type="month"
                 value={month}
                 max={thisMonth}

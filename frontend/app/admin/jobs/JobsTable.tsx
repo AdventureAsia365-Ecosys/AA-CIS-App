@@ -8,7 +8,9 @@
 
 import { useMemo } from "react";
 import type { SortingState } from "@tanstack/react-table";
-import { K, mono, Button, Badge, type ColumnDef, DataTable, StatusBadge, useFormat, useT } from "../../_kit";
+import {
+  K, mono, Button, Badge, type ColumnDef, DataTable, StatusBadge, useFormat, useT, Input, Select,
+} from "../../_kit";
 import { JOBS } from "./messages";
 import {
   STATUSES, canCancel, fmtSeconds, releases, runSeconds, stepProgress, usd,
@@ -240,32 +242,32 @@ export default function JobsTable(props: JobsTableProps) {
           {/* Server-side search (id prefix / kind / created_by). In the fallback (no server total)
               the DataTable's own client search box is used instead (searchable above). */}
           {supportsServer && (
-            <input value={q} onChange={e => onQChange(e.target.value)} aria-label={t("searchJobs")}
+            <Input value={q} onChange={e => onQChange(e.target.value)} aria-label={t("searchJobs")}
                    placeholder={t("searchPlaceholder")} style={{ ...inputStyle, minWidth: 180 }} />
           )}
-          <select value={kind} onChange={e => onKindChange(e.target.value)} aria-label={t("colKind")}
+          <Select value={kind} onChange={e => onKindChange(e.target.value)} aria-label={t("colKind")}
                   style={{ ...inputStyle, maxWidth: 220 }}>
             <option value="">{t("allKinds")}</option>
             {kinds.map(k => <option key={k.kind} value={k.kind}>{k.kind}</option>)}
-          </select>
-          <select value={status} onChange={e => onStatusChange(e.target.value)} aria-label={t("colStatus")}
+          </Select>
+          <Select value={status} onChange={e => onStatusChange(e.target.value)} aria-label={t("colStatus")}
                   style={inputStyle}>
             <option value="">{t("allStatuses")}</option>
             {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
+          </Select>
           {/* Created by: free text with a datalist of the distinct values on the current page. */}
-          <input value={createdBy} onChange={e => onCreatedByChange(e.target.value)} aria-label={t("createdBy")}
+          <Input value={createdBy} onChange={e => onCreatedByChange(e.target.value)} aria-label={t("createdBy")}
                  list="jobs-created-by" placeholder={t("createdByPlaceholder")} style={{ ...inputStyle, maxWidth: 180 }} />
           <datalist id="jobs-created-by">
             {createdByOptions.map(o => <option key={o} value={o} />)}
           </datalist>
           <label style={{ fontSize: 11, color: K.muted, display: "inline-flex", alignItems: "center", gap: 4 }}>
             {t("since")}
-            <input type="date" value={since} onChange={e => onSinceChange(e.target.value)} aria-label={t("createdSince")} style={inputStyle} />
+            <Input type="date" value={since} onChange={e => onSinceChange(e.target.value)} aria-label={t("createdSince")} style={inputStyle} />
           </label>
           <label style={{ fontSize: 11, color: K.muted, display: "inline-flex", alignItems: "center", gap: 4 }}>
             {t("until")}
-            <input type="date" value={until} onChange={e => onUntilChange(e.target.value)} aria-label={t("createdUntil")} style={inputStyle} />
+            <Input type="date" value={until} onChange={e => onUntilChange(e.target.value)} aria-label={t("createdUntil")} style={inputStyle} />
           </label>
         </div>
       }

@@ -16,6 +16,7 @@ import { AlertCircle } from "lucide-react";
 import {
   K, mono, sans,
   Badge, Button, ErrorState, Section, Spinner, ToastProvider, apiGet, apiSend, useLang, useT, useToast,
+  Input, Select,
 } from "../../../_kit";
 import {
   DAILY_PUBLISH_LIMIT_DEFAULT, DAILY_PUBLISH_LIMIT_MAX, PLANNING_CHANNELS, RATE_LIMIT_RPM_MAX,
@@ -97,14 +98,14 @@ function PlanForm({ tenantId, planTier, rateLimitRpm, locked, onChanged }: {
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
         <div>
           <label style={labelStyle} htmlFor={`plan-${tenantId}`}>{t("plan")}</label>
-          <select id={`plan-${tenantId}`} value={plan} disabled={locked || m.isPending}
+          <Select id={`plan-${tenantId}`} value={plan} disabled={locked || m.isPending}
             onChange={e => setPlan(e.target.value)} style={{ ...inputStyle, minWidth: 140 }}>
             {choices.map(p => <option key={p} value={p}>{p}</option>)}
-          </select>
+          </Select>
         </div>
         <div>
           <label style={labelStyle} htmlFor={`rpm-${tenantId}`}>{t("rateLimit")}</label>
-          <input id={`rpm-${tenantId}`} type="number" min={1} max={RATE_LIMIT_RPM_MAX} value={rpm}
+          <Input id={`rpm-${tenantId}`} type="number" min={1} max={RATE_LIMIT_RPM_MAX} value={rpm}
             disabled={locked || m.isPending} onChange={e => setRpm(e.target.value)}
             aria-invalid={!!rpmError} style={{ ...inputStyle, width: 130 }} />
           <FieldError msg={rpmError} />
@@ -174,7 +175,7 @@ function PublishLimitForm({ tenantId, dailyPublishLimit, locked, onChanged }: {
       description={supported ? t("dplHint", DAILY_PUBLISH_LIMIT_DEFAULT) : t("dplUnsupported")}>
       <div>
         <label style={labelStyle} htmlFor={`dpl-${tenantId}`}>{t("dplLabel")}</label>
-        <input id={`dpl-${tenantId}`} type="number" min={1} max={DAILY_PUBLISH_LIMIT_MAX} value={value}
+        <Input id={`dpl-${tenantId}`} type="number" min={1} max={DAILY_PUBLISH_LIMIT_MAX} value={value}
           placeholder={t("dplPlaceholder", DAILY_PUBLISH_LIMIT_DEFAULT)}
           disabled={!supported || locked || m.isPending} onChange={e => setValue(e.target.value)}
           aria-invalid={!!error} style={{ ...inputStyle, width: 160 }} />
@@ -247,7 +248,7 @@ function ConfigForm({ tenantId, server, locked }: { tenantId: string; server: Te
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         <div>
           <label style={labelStyle} htmlFor={`markets-${tenantId}`}>{t("marketsLabel")}</label>
-          <input id={`markets-${tenantId}`} value={marketsText} disabled={locked || m.isPending}
+          <Input id={`markets-${tenantId}`} value={marketsText} disabled={locked || m.isPending}
             onChange={e => setMarketsText(e.target.value)} placeholder="US, UK, DE"
             aria-invalid={!!errors.markets} style={{ ...inputStyle, width: 320 }} />
           <FieldError msg={errors.markets} />
@@ -278,7 +279,7 @@ function ConfigForm({ tenantId, server, locked }: { tenantId: string; server: Te
         </div>
         <div>
           <label style={labelStyle} htmlFor={`ppw-${tenantId}`}>{t("postsPerWeek")}</label>
-          <input id={`ppw-${tenantId}`} type="number" min={1} max={14} value={ppw}
+          <Input id={`ppw-${tenantId}`} type="number" min={1} max={14} value={ppw}
             disabled={locked || m.isPending} onChange={e => setPpw(e.target.value)}
             aria-invalid={!!errors.posts_per_week} style={{ ...inputStyle, width: 100 }} />
           <FieldError msg={errors.posts_per_week} />

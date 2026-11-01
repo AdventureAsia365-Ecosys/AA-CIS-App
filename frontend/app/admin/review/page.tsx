@@ -28,6 +28,7 @@ import {
   useToast, PageFrame,
   useLang,
   useT,
+  Select,
 } from "../../_kit";
 import { M } from "./messages";
 import { can } from "@/lib/rbac";
@@ -545,26 +546,26 @@ function ReviewQueueInner() {
         // kit toolbar can put it on its own line, then the selects wrap inside it.
         toolbarExtra={
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", minWidth: 0, maxWidth: "100%" }}>
-            <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} style={selectStyle}>
+            <Select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} style={selectStyle}>
               <option value="pending">{t("statusPending")}</option>
               <option value="approved">{t("statusApproved")}</option>
               <option value="rejected">{t("statusRejected")}</option>
               <option value="all">{t("statusAll")}</option>
-            </select>
-            <select value={filterCountry} onChange={(e) => setCountry(e.target.value)} style={selectStyle}>
+            </Select>
+            <Select value={filterCountry} onChange={(e) => setCountry(e.target.value)} style={selectStyle}>
               <option value="all">{t("allCountries")}</option>
               {countries.map((c) => (
                 <option key={c.country} value={c.country}>
                   {c.country} ({c.n})
                 </option>
               ))}
-            </select>
-            <select value={filterScore} onChange={(e) => setScore(e.target.value)} style={selectStyle}>
+            </Select>
+            <Select value={filterScore} onChange={(e) => setScore(e.target.value)} style={selectStyle}>
               <option value="all">{t("allScores")}</option>
               <option value="critical">{t("critical", SCORE_BANDS.low.toFixed(1))}</option>
               <option value="low">{t("low", SCORE_BANDS.low.toFixed(1), (PASS_LINE - 0.1).toFixed(1))}</option>
               <option value="ok">{t("ok", PASS_LINE.toFixed(1))}</option>
-            </select>
+            </Select>
             <Button variant="ghost" size="sm" onClick={() => refetch()}>
               <RotateCcw size={12} className={isFetching ? "spin" : undefined} /> {t("refresh")}
             </Button>

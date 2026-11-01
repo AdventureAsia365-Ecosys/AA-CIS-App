@@ -31,6 +31,7 @@ import {
   Badge, ConfirmModal, DataTable, PageHeader, StatusBadge, Tabs, ToastProvider, apiGet, apiSend, useT, useToast,
   type ColumnDef,
   PageFrame,
+  Checkbox, Input, Radio, Select,
 } from "../../_kit";
 import { GATE_LABEL_MESSAGES } from "@/lib/gateLabels.messages";
 import PieceDrawer from "./PieceDrawer";
@@ -177,31 +178,31 @@ function PiecesTab({ view, update, tenants }: { view: View; update: (p: Partial<
       onRowClick={(r) => update({ piece: r.piece_id })}
       toolbarExtra={
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <input value={view.q} onChange={(e) => update({ q: e.target.value, page: 0 })} placeholder={t("searchPieces")}
+          <Input value={view.q} onChange={(e) => update({ q: e.target.value, page: 0 })} placeholder={t("searchPieces")}
                  aria-label={t("searchPiecesAria")} style={{ ...inputStyle, minWidth: 180 }} />
           <TenantFilter value={view.tenant} onChange={(tenant) => update({ tenant, page: 0 })} tenants={tenants} />
-          <select value={view.channel} onChange={(e) => update({ channel: e.target.value, page: 0 })} aria-label={t("channelAria")} style={inputStyle}>
+          <Select value={view.channel} onChange={(e) => update({ channel: e.target.value, page: 0 })} aria-label={t("channelAria")} style={inputStyle}>
             <option value="">{t("allChannels")}</option>
             {["blog", "linkedin", "facebook", "instagram", "tiktok", "email", "landing_page", "ads"].map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
-          <select value={view.status} onChange={(e) => update({ status: e.target.value, page: 0 })} aria-label={t("statusAria")} style={inputStyle}>
+          </Select>
+          <Select value={view.status} onChange={(e) => update({ status: e.target.value, page: 0 })} aria-label={t("statusAria")} style={inputStyle}>
             <option value="">{t("allStatuses")}</option>
             {(["approved", "held", "failed", "processing"] as const).map((s) => <option key={s} value={s}>{status(s)}</option>)}
-          </select>
-          <select value={view.gate} onChange={(e) => update({ gate: e.target.value, page: 0 })} aria-label={t("gateAria")} style={{ ...inputStyle, maxWidth: 220 }}>
+          </Select>
+          <Select value={view.gate} onChange={(e) => update({ gate: e.target.value, page: 0 })} aria-label={t("gateAria")} style={{ ...inputStyle, maxWidth: 220 }}>
             <option value="">{g("anyGate")}</option>
             {gateFilter.active.map((o) => <option key={o.value} value={o.value}>{o.text}</option>)}
             <optgroup label={g("retiredGroup")}>
               {gateFilter.retired.map((o) => <option key={o.value} value={o.value}>{o.text}</option>)}
             </optgroup>
-          </select>
+          </Select>
           {labelsEnabled && (
-            <select value={view.label} onChange={(e) => update({ label: e.target.value, page: 0 })} aria-label={t("labelAria")} style={inputStyle}>
+            <Select value={view.label} onChange={(e) => update({ label: e.target.value, page: 0 })} aria-label={t("labelAria")} style={inputStyle}>
               <option value="">{t("anyLabel")}</option>
               <option value="labelled">{t("labelled")}</option>
               <option value="unlabelled">{t("notLabelled")}</option>
               {(Object.keys(LABEL_NAMES) as PieceLabelValue[]).map((l) => <option key={l} value={l}>{labelName(l)}</option>)}
-            </select>
+            </Select>
           )}
         </div>
       }
@@ -257,7 +258,7 @@ function VersionsTab({ view, update, tenants }: { view: View; update: (p: Partia
       emptyTitle={t("versionsEmpty")} onRowClick={(r) => update({ version: r.id })}
       toolbarExtra={
         <div style={{ display: "flex", gap: 8 }}>
-          <input value={view.q} onChange={(e) => update({ q: e.target.value, page: 0 })} placeholder={t("searchTour")} aria-label={t("searchToursAria")} style={inputStyle} />
+          <Input value={view.q} onChange={(e) => update({ q: e.target.value, page: 0 })} placeholder={t("searchTour")} aria-label={t("searchToursAria")} style={inputStyle} />
           <TenantFilter value={view.tenant} onChange={(tenant) => update({ tenant, page: 0 })} tenants={tenants} />
         </div>
       }
@@ -324,11 +325,11 @@ function DuplicateClusterRow({ cluster, onMerge, busy }: {
         {cluster.cards.map((c) => (
           <div key={c.card_id} style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", fontSize: 12.5 }}>
             <label style={{ display: "inline-flex", gap: 4, alignItems: "center", minWidth: 64 }}>
-              <input type="radio" name={`keep-${cluster.cards[0].card_id}`} checked={keep === c.card_id} onChange={() => setKeep(c.card_id)} aria-label={t("keepAria", c.display_name)} />
+              <Radio name={`keep-${cluster.cards[0].card_id}`} checked={keep === c.card_id} onChange={() => setKeep(c.card_id)} aria-label={t("keepAria", c.display_name)} />
               {t("keep")}
             </label>
             <label style={{ display: "inline-flex", gap: 4, alignItems: "center", minWidth: 70, color: keep === c.card_id ? K.muted2 : K.ink3 }}>
-              <input type="checkbox" disabled={keep === c.card_id} checked={keep !== c.card_id && merge.has(c.card_id)} onChange={() => toggle(c.card_id)} aria-label={t("mergeAria", c.display_name)} />
+              <Checkbox disabled={keep === c.card_id} checked={keep !== c.card_id && merge.has(c.card_id)} onChange={() => toggle(c.card_id)} aria-label={t("mergeAria", c.display_name)} />
               {t("merge")}
             </label>
             <span style={{ minWidth: 0 }}>
@@ -453,15 +454,15 @@ function PlaceCardsTab({ view, update }: { view: View; update: (p: Partial<View>
       emptyTitle={t("cardsEmpty")} emptyDescription={t("cardsEmptyDesc")}
       toolbarExtra={
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <input value={view.q} onChange={(e) => update({ q: e.target.value, page: 0 })} placeholder={t("searchPlaces")} aria-label={t("searchPlacesAria")} style={inputStyle} />
-          <select value={view.status} onChange={(e) => update({ status: e.target.value, page: 0 })} aria-label={t("cardStatusAria")} style={inputStyle}>
+          <Input value={view.q} onChange={(e) => update({ q: e.target.value, page: 0 })} placeholder={t("searchPlaces")} aria-label={t("searchPlacesAria")} style={inputStyle} />
+          <Select value={view.status} onChange={(e) => update({ status: e.target.value, page: 0 })} aria-label={t("cardStatusAria")} style={inputStyle}>
             <option value="">{t("allStatuses")}</option>
             {(["auto_checked", "verified", "rejected"] as const).map((s) => <option key={s} value={s}>{status(s)}</option>)}
-          </select>
-          <input value={tourId} onChange={(e) => setTourId(e.target.value)} placeholder="tour_id (uuid)" aria-label={t("tourIdAria")} style={{ ...inputStyle, fontFamily: mono, minWidth: 260 }} />
+          </Select>
+          <Input value={tourId} onChange={(e) => setTourId(e.target.value)} placeholder="tour_id (uuid)" aria-label={t("tourIdAria")} style={{ ...inputStyle, fontFamily: mono, minWidth: 260 }} />
           <Button size="sm" disabled={!/^[0-9a-f-]{36}$/i.test(tourId.trim()) || build.isPending} onClick={() => build.mutate()}>{t("buildCards")}</Button>
           <label style={{ display: "inline-flex", gap: 4, alignItems: "center", fontSize: 12, color: K.ink3 }} title={t("retryMissesTitle")}>
-            <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} aria-label={t("retryMissesAria")} />
+            <Checkbox checked={force} onChange={(e) => setForce(e.target.checked)} aria-label={t("retryMissesAria")} />
             {t("retryMisses")}
           </label>
         </div>

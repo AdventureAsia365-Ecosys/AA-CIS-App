@@ -8,7 +8,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { BookOpen, ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { A, sans, mono, Card, SLabel, LoadingScreen, TH, TD, CHART_TOOLTIP } from "../_components/adminUi";
-import { Button, PageFrame, PageFrameBody, PageFrameHeader, PageHeader, useFormat, useT } from "../../_kit";
+import {
+  Button, PageFrame, PageFrameBody, PageFrameHeader, PageHeader, useFormat, useT, Input, Select,
+} from "../../_kit";
 import { useChartColors } from "../../_kit/useTheme";
 import { stripIssueIds } from "@/lib/issueIds";
 import { traceHref } from "@/lib/aiGateway";
@@ -212,14 +214,14 @@ function QuestionEditor({ q, onSaved }: { q: Question; onSaved: () => void }) {
   return (
     <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
       <label style={{ fontSize: 11.5, color: A.muted }}>{t("mode")}<br />
-        <select value={mode} onChange={e => setMode(e.target.value as Mode)} style={input}>
+        <Select value={mode} onChange={e => setMode(e.target.value as Mode)} style={input}>
           <option value="off">{t("modeOff")}</option><option value="shadow">{t("modeShadow")}</option><option value="enforce">{t("modeEnforce")}</option>
-        </select>
+        </Select>
       </label>
-      <label style={{ fontSize: 11.5, color: A.muted }}>{t("acceptFloor")}<br /><input value={accept} onChange={e => setAccept(e.target.value)} placeholder="0.95" style={{ ...input, width: 90 }} /></label>
-      <label style={{ fontSize: 11.5, color: A.muted }}>{t("rejectCeiling")}<br /><input value={reject} onChange={e => setReject(e.target.value)} placeholder="0.30" style={{ ...input, width: 90 }} /></label>
+      <label style={{ fontSize: 11.5, color: A.muted }}>{t("acceptFloor")}<br /><Input value={accept} onChange={e => setAccept(e.target.value)} placeholder="0.95" style={{ ...input, width: 90 }} /></label>
+      <label style={{ fontSize: 11.5, color: A.muted }}>{t("rejectCeiling")}<br /><Input value={reject} onChange={e => setReject(e.target.value)} placeholder="0.30" style={{ ...input, width: 90 }} /></label>
       <label style={{ fontSize: 11.5, color: A.muted, flex: 1, minWidth: 240 }}>{t("calibrationRecord")}<br />
-        <input value={calib} onChange={e => setCalib(e.target.value)} placeholder="docs/calibration/<question>.md" style={{ ...input, width: "100%" }} />
+        <Input value={calib} onChange={e => setCalib(e.target.value)} placeholder="docs/calibration/<question>.md" style={{ ...input, width: "100%" }} />
       </label>
       <Button variant="primary" onClick={save} disabled={saving}>{saving ? t("saving") : t("save")}</Button>
       {err && <div style={{ width: "100%", color: A.red, fontSize: 12 }}>{err}</div>}
@@ -338,9 +340,9 @@ export default function DecisionsPage() {
             }
             actions={
               <>
-                <select value={days} onChange={e => { setDays(Number(e.target.value)); setVPage(0); }} style={input} title={t("windowTitle")}>
+                <Select value={days} onChange={e => { setDays(Number(e.target.value)); setVPage(0); }} style={input} title={t("windowTitle")}>
                   <option value={1}>{t("last24h")}</option><option value={7}>{t("last7")}</option><option value={30}>{t("last30")}</option><option value={90}>{t("last90")}</option>
-                </select>
+                </Select>
                 <Button onClick={() => { loadSummary(); if (tab === "verdicts") loadLog(); }}><RefreshCw size={13} /> {t("refresh")}</Button>
               </>
             }
@@ -437,9 +439,9 @@ export default function DecisionsPage() {
           {data && tab === "questions" && (
             <>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
-                <input value={qSearch} onChange={e => setQSearch(e.target.value)} placeholder={t("searchQuestion")} style={{ ...input, width: 220 }} />
-                <select value={qStage} onChange={e => setQStage(e.target.value)} style={input}><option value="">{t("allStages")}</option>{stagesAll.map(s => <option key={s} value={s}>{s}</option>)}</select>
-                <select value={qMode} onChange={e => setQMode(e.target.value)} style={input}><option value="">{t("allModes")}</option><option value="off">{t("modeOff")}</option><option value="shadow">{t("modeShadow")}</option><option value="enforce">{t("modeEnforce")}</option></select>
+                <Input value={qSearch} onChange={e => setQSearch(e.target.value)} placeholder={t("searchQuestion")} style={{ ...input, width: 220 }} />
+                <Select value={qStage} onChange={e => setQStage(e.target.value)} style={input}><option value="">{t("allStages")}</option>{stagesAll.map(s => <option key={s} value={s}>{s}</option>)}</Select>
+                <Select value={qMode} onChange={e => setQMode(e.target.value)} style={input}><option value="">{t("allModes")}</option><option value="off">{t("modeOff")}</option><option value="shadow">{t("modeShadow")}</option><option value="enforce">{t("modeEnforce")}</option></Select>
                 <span style={{ fontSize: 12, color: A.muted, alignSelf: "center" }}>{t("qShown", filteredQs.length, qs.length)}</span>
               </div>
               <div style={TABLE_BOX}>
@@ -539,15 +541,15 @@ export default function DecisionsPage() {
           {data && tab === "verdicts" && (
             <>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
-                <select value={vStage} onChange={e => resetPage(setVStage)(e.target.value)} style={input}><option value="">{t("allStages")}</option>{stagesAll.map(s => <option key={s} value={s}>{s}</option>)}</select>
-                <select value={vQuestion} onChange={e => resetPage(setVQuestion)(e.target.value)} style={input}><option value="">{t("allQuestions")}</option>{qs.map(q => <option key={q.question_key} value={q.question_key}>{q.question_key}</option>)}</select>
-                <select value={vZone} onChange={e => resetPage(setVZone)(e.target.value)} style={input}><option value="">{t("allZones")}</option>{ZONES.map(z => <option key={z} value={z}>{t(ZONE_META[z].label)}</option>)}</select>
-                <select value={vMode} onChange={e => resetPage(setVMode)(e.target.value)} style={input}><option value="">{t("allModes")}</option><option value="off">{t("modeOff")}</option><option value="shadow">{t("modeShadow")}</option><option value="enforce">{t("modeEnforce")}</option></select>
-                <select value={vTenant} onChange={e => resetPage(setVTenant)(e.target.value)} style={input}>
+                <Select value={vStage} onChange={e => resetPage(setVStage)(e.target.value)} style={input}><option value="">{t("allStages")}</option>{stagesAll.map(s => <option key={s} value={s}>{s}</option>)}</Select>
+                <Select value={vQuestion} onChange={e => resetPage(setVQuestion)(e.target.value)} style={input}><option value="">{t("allQuestions")}</option>{qs.map(q => <option key={q.question_key} value={q.question_key}>{q.question_key}</option>)}</Select>
+                <Select value={vZone} onChange={e => resetPage(setVZone)(e.target.value)} style={input}><option value="">{t("allZones")}</option>{ZONES.map(z => <option key={z} value={z}>{t(ZONE_META[z].label)}</option>)}</Select>
+                <Select value={vMode} onChange={e => resetPage(setVMode)(e.target.value)} style={input}><option value="">{t("allModes")}</option><option value="off">{t("modeOff")}</option><option value="shadow">{t("modeShadow")}</option><option value="enforce">{t("modeEnforce")}</option></Select>
+                <Select value={vTenant} onChange={e => resetPage(setVTenant)(e.target.value)} style={input}>
                   <option value="">{t("allContent")}</option><option value="platform">{t("platform")}</option>
                   {data.tenant_allowlist.map(a => <option key={a.slug} value={a.slug}>{a.slug}</option>)}
-                </select>
-                <input value={vSubject} onChange={e => resetPage(setVSubject)(e.target.value)} placeholder={t("subjectContains")} style={{ ...input, width: 200 }} />
+                </Select>
+                <Input value={vSubject} onChange={e => resetPage(setVSubject)(e.target.value)} placeholder={t("subjectContains")} style={{ ...input, width: 200 }} />
               </div>
               <div style={TABLE_BOX}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>

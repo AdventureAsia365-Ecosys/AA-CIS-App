@@ -21,7 +21,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, Mail, RefreshCw, XCircle } from "lucide-react";
 import { useMemo, useState } from "react";
-import { Button, ConfirmModal, K, Modal, RADIUS, sans, useT } from "../../../_kit";
+import { Button, ConfirmModal, K, Modal, RADIUS, sans, useT, Checkbox, Input, Select } from "../../../_kit";
 import { ASSIGNABLE_STAFF_ROLES, isStaffRole, staffErrorMessage } from "@/lib/rbac";
 import { RBAC_MESSAGES } from "@/lib/rbac.messages";
 import type { Translator } from "../../../_kit/core/i18n";
@@ -238,13 +238,13 @@ function Label({ text, htmlFor, hint, children }: { text: string; htmlFor: strin
 function CisRoleSelect({ id, value, onChange, disabled }: { id: string; value: string; onChange: (v: string) => void; disabled?: boolean }) {
   const { roleLabel } = useStaffWords();
   return (
-    <select id={id} value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} style={fieldStyle}>
+    <Select id={id} value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} style={fieldStyle}>
       {/* AA-878 — the read-only viewer is never assignable here; a viewer row shows its role, not selectable. */}
       {!(ASSIGNABLE_STAFF_ROLES as readonly string[]).includes(value) && value && (
         <option value={value} disabled>{roleLabel(value)}</option>
       )}
       {ASSIGNABLE_STAFF_ROLES.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
-    </select>
+    </Select>
   );
 }
 
@@ -252,10 +252,10 @@ function BookingRoleSelect({ id, value, onChange }: { id: string; value: string;
   const m = useT(MANAGE);
   const { bookingRoleLabel } = useStaffWords();
   return (
-    <select id={id} value={value} onChange={(e) => onChange(e.target.value)} style={fieldStyle}>
+    <Select id={id} value={value} onChange={(e) => onChange(e.target.value)} style={fieldStyle}>
       <option value="">{m("noBooking")}</option>
       {BOOKING_ROLES.map((r) => <option key={r} value={r}>{bookingRoleLabel(r)}</option>)}
-    </select>
+    </Select>
   );
 }
 
@@ -314,11 +314,11 @@ export function CreateStaffModal({ open, onClose, onDone }: { open: boolean; onC
         style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         <Label text={m("workEmail")} htmlFor="staff-create-email"
           hint={email && !domainOk ? m("onlyDomain", STAFF_DOMAIN) : m("emailHint")}>
-          <input id="staff-create-email" type="email" autoComplete="off" value={email} placeholder={`name${STAFF_DOMAIN}`}
+          <Input id="staff-create-email" type="email" autoComplete="off" value={email} placeholder={`name${STAFF_DOMAIN}`}
             onChange={(e) => setEmail(e.target.value)} style={fieldStyle} aria-invalid={!!email && !domainOk} />
         </Label>
         <Label text={m("displayName")} htmlFor="staff-create-name">
-          <input id="staff-create-name" type="text" autoComplete="off" value={name} maxLength={120}
+          <Input id="staff-create-name" type="text" autoComplete="off" value={name} maxLength={120}
             onChange={(e) => setName(e.target.value)} style={fieldStyle} />
         </Label>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14 }}>
@@ -330,7 +330,7 @@ export function CreateStaffModal({ open, onClose, onDone }: { open: boolean; onC
           </Label>
         </div>
         <label htmlFor="staff-create-invite" style={{ display: "flex", gap: 9, alignItems: "flex-start", cursor: "pointer" }}>
-          <input id="staff-create-invite" type="checkbox" checked={sendInvite} data-testid="staff-create-invite"
+          <Checkbox id="staff-create-invite" checked={sendInvite} data-testid="staff-create-invite"
             onChange={(e) => setSendInvite(e.target.checked)} style={{ marginTop: 3, accentColor: K.accent }} />
           <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
             <span style={{ fontSize: 13, fontWeight: 600, color: K.ink3 }}>{m("sendInvite")}</span>

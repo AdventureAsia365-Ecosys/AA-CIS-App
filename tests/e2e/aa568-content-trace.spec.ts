@@ -25,7 +25,7 @@ test.beforeEach(async ({ page }) => {
 test('01 - sidebar: Content Trace sits as an equal peer of 01-05, not a demoted link', async ({ page }) => {
   await page.goto('/admin/atom-curation');
   await page.waitForTimeout(1200);
-  const innerNav = page.locator('.a527-inner-sidebar, div:has(> button:has-text("01 · Atomize"))').first();
+  const innerNav = page.getByTestId('social-content-subnav');
   await expect(page.getByText('06 · Content Trace', { exact: true })).toBeVisible();
   // The old "06-08" label must be gone.
   await expect(page.getByText('06-08 · Content Trace')).toHaveCount(0);

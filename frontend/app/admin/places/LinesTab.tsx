@@ -13,6 +13,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { AlertTriangle, CheckCircle2, Route, Waves } from "lucide-react";
 import {
   Button, DataTable, useFormat, useT, Badge, Eyebrow, K, KpiTile, LoadingScreen, Section, mono, type Tone,
+  Select, Textarea,
 } from "../../_kit";
 import { PL } from "./messages";
 
@@ -154,14 +155,14 @@ export default function LinesTab({ countries, onError }: { countries: string[]; 
       </div>
 
       <Section style={{ marginBottom: 16 }} bodyStyle={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-        <select aria-label={t("country")} value={country} onChange={e => setCountry(e.target.value)} style={selectStyle}>
+        <Select aria-label={t("country")} value={country} onChange={e => setCountry(e.target.value)} style={selectStyle}>
           <option value="">{t("allCountries")}</option>
           {countries.map(c => <option key={c} value={c}>{c}</option>)}
-        </select>
-        <select aria-label={t("geometryStatus")} value={status} onChange={e => setStatus(e.target.value)} style={selectStyle}>
+        </Select>
+        <Select aria-label={t("geometryStatus")} value={status} onChange={e => setStatus(e.target.value)} style={selectStyle}>
           <option value="">{t("allStatuses")}</option>
           {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
+        </Select>
         <Button size="sm" disabled={busy} onClick={() => runBackfill({ country: country || null, limit: 50, dry_run: true })}>
           {t("previewBackfill", country ? ` (${country})` : "")}
         </Button>
@@ -200,7 +201,7 @@ export default function LinesTab({ countries, onError }: { countries: string[]; 
           <div style={{ fontSize: 12, color: K.muted, marginBottom: 6 }}>
             {t("manualHelp", manual.item.country)}
           </div>
-          <textarea aria-label="GeoJSON" value={manual.text} rows={6}
+          <Textarea aria-label="GeoJSON" value={manual.text} rows={6}
                     onChange={e => setManual({ ...manual, text: e.target.value })}
                     style={{ width: "100%", fontFamily: mono, fontSize: 12, border: `1px solid ${K.line}`, borderRadius: 8, padding: 8 }} />
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>

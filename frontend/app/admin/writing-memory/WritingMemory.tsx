@@ -36,6 +36,7 @@ import { useMemo, useState } from "react";
 import { PageFrame,
   Badge, Button, ConfirmModal, DataTable, Drawer, ErrorState, GuidePanel, K, PageHeader, StatusBadge, TableSkeleton,
   Tabs, apiGet, mono, useFormat, useLocalized, useT, useToast, type ColumnDef,
+  Input, Select, Textarea,
 } from "../../_kit";
 import {
   L0_WRITERS, LINT_CHECKS, WM_API, factTone, lintCheck, r0Of, ruleTone, usd,
@@ -194,12 +195,12 @@ function SignalsTab() {
             getRowId={(s) => s.signal_id} loading={signals.isLoading} tableMinWidth={900}
             emptyTitle={t("signalsEmpty")} emptyDescription={t("signalsEmptyDesc")}
             toolbarExtra={
-              <select value={fact} onChange={(e) => setFact(e.target.value)} aria-label={t("factStatusAria")}
+              <Select value={fact} onChange={(e) => setFact(e.target.value)} aria-label={t("factStatusAria")}
                 style={{ fontSize: 12, padding: "6px 8px", borderRadius: 8, border: `1px solid ${K.line}`,
                   background: K.card, color: K.ink }}>
                 <option value="">{t("everyFactStatus")}</option>
                 {FACT_STATUSES.map((s) => <option key={s} value={s}>{factLabel(s)}</option>)}
-              </select>
+              </Select>
             } />
         )}
       </section>
@@ -323,13 +324,13 @@ function RuleDrawer({ ruleId, onClose }: { ruleId: string | null; onClose: () =>
           {editing ? (
             <div style={{ display: "grid", gap: 8 }}>
               <label>{t("ruleField")}
-                <textarea value={draft.text} onChange={(e) => setDraft({ ...draft, text: e.target.value })} rows={3}
+                <Textarea value={draft.text} onChange={(e) => setDraft({ ...draft, text: e.target.value })} rows={3}
                   style={{ width: "100%", fontSize: 13 }} /></label>
               {rule.kind === "lexicon" && <label>{t("replacementField")}
-                <input value={draft.replacement} onChange={(e) => setDraft({ ...draft, replacement: e.target.value })}
+                <Input value={draft.replacement} onChange={(e) => setDraft({ ...draft, replacement: e.target.value })}
                   style={{ width: "100%", fontSize: 13 }} /></label>}
               <label>{t("phrasesField")}
-                <textarea value={draft.phrases} onChange={(e) => setDraft({ ...draft, phrases: e.target.value })}
+                <Textarea value={draft.phrases} onChange={(e) => setDraft({ ...draft, phrases: e.target.value })}
                   rows={3} style={{ width: "100%", fontSize: 13, fontFamily: mono }} /></label>
               <div style={{ display: "flex", gap: 8 }}>
                 <Button variant="primary" onClick={save}>{t("saveAndLint")}</Button>
@@ -356,7 +357,7 @@ function RuleDrawer({ ruleId, onClose }: { ruleId: string | null; onClose: () =>
               <Button onClick={() => setDraft({ text: rule.rule_text, replacement: rule.replacement ?? "",
                 phrases: rule.match_phrases.join("\n") })}>{t("edit")}</Button>
               <div style={{ display: "flex", gap: 8 }}>
-                <input placeholder={t("whyReject")} value={reason} onChange={(e) => setReason(e.target.value)}
+                <Input placeholder={t("whyReject")} value={reason} onChange={(e) => setReason(e.target.value)}
                   style={{ flex: 1, fontSize: 13 }} aria-label={t("rejectAria")} />
                 <Button variant="danger" disabled={reason.trim().length < 3} onClick={reject}>{t("reject")}</Button>
               </div>
@@ -378,7 +379,7 @@ function RuleDrawer({ ruleId, onClose }: { ruleId: string | null; onClose: () =>
             <div style={{ color: K.muted2, fontSize: 11.5 }}>{t("r0Help")}</div>
             {rule.status === "active" && (
               <div style={{ display: "flex", gap: 8 }}>
-                <input placeholder={t("whyRollback")} value={reason} onChange={(e) => setReason(e.target.value)}
+                <Input placeholder={t("whyRollback")} value={reason} onChange={(e) => setReason(e.target.value)}
                   style={{ flex: 1, fontSize: 13 }} aria-label={t("rollbackAria")} />
                 <Button variant="danger" disabled={reason.trim().length < 3}
                   onClick={() => act("rollback", { reason })}>{t("rollBack")}</Button>
@@ -437,12 +438,12 @@ function CandidatesTab() {
           loading={q.isLoading} onRowClick={(r) => setOpen(r.rule_id)} tableMinWidth={900}
           emptyTitle={t("rulesEmpty")} emptyDescription={t("rulesEmptyDesc")}
           toolbarExtra={
-            <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label={t("statusAria")}
+            <Select value={status} onChange={(e) => setStatus(e.target.value)} aria-label={t("statusAria")}
               style={{ fontSize: 12, padding: "6px 8px", borderRadius: 8, border: `1px solid ${K.line}`,
                 background: K.card, color: K.ink }}>
               <option value="">{t("everyStatus")}</option>
               {RULE_STATUSES.map((s) => <option key={s} value={s}>{ruleStatus(s)}</option>)}
-            </select>
+            </Select>
           } />
       )}
       <RuleDrawer ruleId={open} onClose={() => setOpen(null)} />

@@ -22,7 +22,9 @@ import DfsRunsPanel from "./DfsRunsPanel";
 import ForecastPanel from "./ForecastPanel";
 import JevPanel from "./JevPanel";
 import { A, serif, sans, mono, Card, SLabel, Badge, LoadingScreen, StatCard, TH, TD, CHART_TOOLTIP } from "../_components/adminUi";
-import { Button, SegmentedControl, Tabs, ScrollX, PageFrame, PageHeader, useFormat, useT } from "../../_kit";
+import {
+  Button, SegmentedControl, Tabs, ScrollX, PageFrame, PageHeader, useFormat, useT, Input, Select,
+} from "../../_kit";
 import { useChartColors } from "../../_kit/useTheme";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import {
@@ -819,10 +821,10 @@ function CostOperationsInner() {
                      onClick={() => { setCustom(null); setDays(d); }}>{t("days", d)}</Button>
               ))}
               <span style={{ width: 1, height: 20, background: A.line, margin: "0 4px" }} />
-              <input type="date" value={draftStart} onChange={e => setDraftStart(e.target.value)} aria-label={t("fromUtc")}
+              <Input type="date" value={draftStart} onChange={e => setDraftStart(e.target.value)} aria-label={t("fromUtc")}
                      style={{ ...DATE_INPUT, borderColor: custom ? A.ink3 : A.line }} />
               <span style={{ fontSize: 12, color: A.muted }}>→</span>
-              <input type="date" value={draftEnd} onChange={e => setDraftEnd(e.target.value)} aria-label={t("toUtc")}
+              <Input type="date" value={draftEnd} onChange={e => setDraftEnd(e.target.value)} aria-label={t("toUtc")}
                      style={{ ...DATE_INPUT, borderColor: custom ? A.ink3 : A.line }} />
               <Button size="sm" variant={custom ? "primary" : "secondary"} onClick={applyCustom}
                    disabled={!draftStart || (!!draftEnd && draftStart > draftEnd)}>{t("apply")}</Button>
@@ -838,11 +840,11 @@ function CostOperationsInner() {
             <div style={{ display: "flex", gap: 6, alignItems: "center", minWidth: 0, maxWidth: "100%" }}>
               <Building2 size={14} color={A.muted} style={{ flexShrink: 0 }} />
               <span style={{ fontSize: 12, color: A.muted, marginRight: 4 }}>{t("tenant")}</span>
-              <select value={tenantFilter ?? ""} onChange={e => setTenantFilter(e.target.value || null)}
+              <Select value={tenantFilter ?? ""} onChange={e => setTenantFilter(e.target.value || null)}
                 style={{ fontSize: 12.5, padding: "5px 8px", borderRadius: 7, border: `1px solid ${A.line}`, background: A.card, color: A.ink2, fontFamily: sans, cursor: "pointer", minWidth: 0, maxWidth: "100%" }}>
                 <option value="">{t("allTenants")}</option>
                 {tenantOptions.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
-              </select>
+              </Select>
             </div>
             <div data-testid="cost-ops-account-filter"
               style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", minWidth: 0, maxWidth: "100%" }}>

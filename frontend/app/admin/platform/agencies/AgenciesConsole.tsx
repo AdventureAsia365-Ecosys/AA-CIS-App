@@ -34,6 +34,7 @@ import {
   useT,
   useToast,
   type ColumnDef, PageFrame,
+  Checkbox, Input, Radio, Select,
 } from "../../../_kit";
 import {
   CRM_API,
@@ -288,13 +289,13 @@ function CreateAgencyModal({ open, forceSynthetic, onClose, onCreated }: {
         style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         <div role="radiogroup" aria-label={t("sourceGroup")} style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 13 }}>
           <label style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-            <input type="radio" name="crm-source" checked={source === "cis"}
+            <Radio name="crm-source" checked={source === "cis"}
               onChange={() => { setSource("cis"); setTenantId(""); setName(""); }} />
             {t("forCisTenant")}
           </label>
           {forceSynthetic && (
             <label style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-              <input type="radio" name="crm-source" checked={source === "synthetic"}
+              <Radio name="crm-source" checked={source === "synthetic"}
                 onChange={() => { setSource("synthetic"); setTenantId(newUuid()); setName(""); }} />
               {t("newSynthetic")}
             </label>
@@ -306,26 +307,26 @@ function CreateAgencyModal({ open, forceSynthetic, onClose, onCreated }: {
             hint={t("cisTenantHint")} />
         ) : (
           <Field label={t("newId")} htmlFor="crm-create-id" hint={t("newIdHint")}>
-            <input id="crm-create-id" type="text" readOnly value={tenantId} style={{ ...fieldStyle, color: K.muted }} />
+            <Input id="crm-create-id" type="text" readOnly value={tenantId} style={{ ...fieldStyle, color: K.muted }} />
           </Field>
         )}
         <Field label={t("agencyName")} htmlFor="crm-create-name">
-          <input id="crm-create-name" type="text" autoComplete="off" maxLength={120} value={name}
+          <Input id="crm-create-name" type="text" autoComplete="off" maxLength={120} value={name}
             onChange={(e) => setName(e.target.value)} style={fieldStyle} />
         </Field>
         <Field label={t("locale")} htmlFor="crm-create-locale">
-          <select id="crm-create-locale" value={locale} onChange={(e) => setLocale(e.target.value)} style={fieldStyle}>
+          <Select id="crm-create-locale" value={locale} onChange={(e) => setLocale(e.target.value)} style={fieldStyle}>
             {LOCALES.map((l) => <option key={l} value={l}>{l}</option>)}
-          </select>
+          </Select>
         </Field>
         <label style={{ display: "inline-flex", gap: 8, alignItems: "center", fontSize: 13 }}>
-          <input type="checkbox" checked={isSynthetic} disabled={forceSynthetic}
+          <Checkbox checked={isSynthetic} disabled={forceSynthetic}
             onChange={(e) => setSynthetic(e.target.checked)} />
           {t("syntheticBox")}
         </label>
         <Field label={t("ticketLabel")} htmlFor="crm-create-ticket"
           hint={ticket && !ticketOk ? t("ticketBad") : t("createTicketHint")}>
-          <input id="crm-create-ticket" data-testid="crm-create-ticket" type="text" autoComplete="off" value={ticket}
+          <Input id="crm-create-ticket" data-testid="crm-create-ticket" type="text" autoComplete="off" value={ticket}
             maxLength={27} placeholder="SUP-1024" onChange={(e) => setTicket(e.target.value)} style={fieldStyle}
             aria-invalid={!!ticket && !ticketOk} />
         </Field>

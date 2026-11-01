@@ -20,6 +20,7 @@ import { RefreshCw, MapPin, AlertTriangle, CheckCircle2, Route } from "lucide-re
 import {
   Button, Tabs, PageFrame, DataTable, PageHeader, useFormat, useT, Badge, Eyebrow, K, KpiTile, LoadingScreen,
   Section, mono,
+  Select,
 } from "../../_kit";
 import { PL } from "./messages";
 import LinesTab from "./LinesTab";
@@ -242,18 +243,18 @@ export default function PlacesPage() {
           </div>
 
           <Section style={{ marginBottom: 16 }} bodyStyle={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-            <select aria-label={t("country")} value={country} onChange={e => { setCountry(e.target.value); setPage(1); }} style={selectStyle}>
+            <Select aria-label={t("country")} value={country} onChange={e => { setCountry(e.target.value); setPage(1); }} style={selectStyle}>
               <option value="">{t("allCountries")}</option>
               {countries.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-            <select aria-label={t("check")} value={check} onChange={e => { setCheck(e.target.value); setReason(""); setPage(1); }} style={selectStyle}>
+            </Select>
+            <Select aria-label={t("check")} value={check} onChange={e => { setCheck(e.target.value); setReason(""); setPage(1); }} style={selectStyle}>
               <option value="">{t("allChecks")}</option>
               {validity.checks.map(c => <option key={c} value={c}>{checkLabel(c)}</option>)}
-            </select>
-            <select aria-label={t("reason")} value={reason} onChange={e => { setReason(e.target.value); setPage(1); }} style={selectStyle}>
+            </Select>
+            <Select aria-label={t("reason")} value={reason} onChange={e => { setReason(e.target.value); setPage(1); }} style={selectStyle}>
               <option value="">{t("allReasons")}</option>
               {reasons.map(r => <option key={r} value={r}>{r}</option>)}
-            </select>
+            </Select>
             <span style={{ fontSize: 12.5, color: K.muted }}>{t("findings", validity.total)}</span>
             {reason && FIX_OF[reason] && (
               <Button size="sm" disabled={!!busy}

@@ -4,7 +4,7 @@ import React from "react";
 import { Search, X } from "lucide-react";
 import { useT } from "../../_kit/core/useI18n";
 import { M } from "./components.messages";
-import { K, sans } from "../../_kit";
+import { IconButton, Input, K, Select, sans } from "../../_kit";
 
 interface FilterBarProps {
   search: string;
@@ -36,47 +36,40 @@ export function FilterBar({ search, onSearch, placeholder, filters, extra }: Fil
           position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)",
           color: K.muted2, pointerEvents: "none",
         }} />
-        <input
+        <Input
           value={search}
           onChange={e => onSearch(e.target.value)}
           placeholder={placeholder || t("search")}
-          style={{
-            width: "100%", padding: "7px 32px 7px 30px",
-            border: `1px solid ${K.line}`, borderRadius: 7,
-            background: K.card, color: K.ink, fontSize: 13,
-            fontFamily: sans, outline: "none", boxSizing: "border-box",
-          }}
+          size="sm"
+          style={{ width: "100%", padding: "0 32px 0 30px" }}
         />
         {search && (
-          <button
+          <IconButton
+            variant="plain"
+            size="xs"
             onClick={() => onSearch("")}
-            aria-label={t("clearSearch")}
-            style={{
-              position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
-              background: "none", border: "none", cursor: "pointer", color: K.muted2, padding: 0,
-            }}
+            label={t("clearSearch")}
+            title=""
+            style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", color: K.muted2 }}
           >
             <X size={12} />
-          </button>
+          </IconButton>
         )}
       </div>
 
       {filters?.map(f => (
-        <select
+        <Select
           key={f.label}
           value={f.current}
           onChange={e => f.onChange(e.target.value)}
-          style={{
-            padding: "7px 10px", border: `1px solid ${K.line}`, borderRadius: 7,
-            background: K.card, color: K.ink, fontSize: 13, fontFamily: sans,
-            outline: "none", cursor: "pointer",
-          }}
+          size="sm"
+          aria-label={f.label}
         >
           <option value="">{f.label}: {f.allLabel ?? t("all")}</option>
           {f.options.map(o => (
             <option key={o.value} value={o.value}>{o.label}</option>
           ))}
-        </select>
+        </Select>
       ))}
 
       {extra && <div style={{ marginLeft: "auto" }}>{extra}</div>}

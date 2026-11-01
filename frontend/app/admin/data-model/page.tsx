@@ -38,6 +38,7 @@ import {
   useT,
   PageFrame,
   type Tone,
+  Input, Select,
 } from "../../_kit";
 import {
   changeOf,
@@ -643,7 +644,7 @@ export default function DataModelPage() {
               }}
             >
               <Search size={14} style={{ color: K.muted2, flexShrink: 0 }} />
-              <input
+              <Input
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
@@ -674,7 +675,7 @@ export default function DataModelPage() {
                 </button>
               )}
             </label>
-            <select
+            <Select
               value={schema}
               onChange={(e) => setSchema(e.target.value)}
               aria-label={t("schema")}
@@ -698,7 +699,7 @@ export default function DataModelPage() {
                     {s.schema} ({s.owner_app}, {s.tables.length})
                   </option>
                 ))}
-            </select>
+            </Select>
             <Button
               variant={neighboursOnly ? "primary" : "ghost"}
               size="sm"

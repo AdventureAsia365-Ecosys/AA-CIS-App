@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { A, serif, sans, mono, Card, SLabel, TH, TD, Badge } from "../_components/adminUi";
 import { Pagination } from "../_components/Pagination";
-import { Button, ScrollX, PageFrame, PageHeader, useFormat, useT } from "../../_kit";
+import { Button, ScrollX, PageFrame, PageHeader, useFormat, useT, Input, Select } from "../../_kit";
 import { UP } from "./messages";
 
 const TENANT_ID = "00000000-0000-0000-0000-000000000001";
@@ -428,16 +428,16 @@ function ToursReadySection({ tours, loading, onRefresh }: {
       {/* Filters */}
       {!loading && localTours.length > 0 && (
         <div style={{ padding: "10px 16px", borderBottom: `1px solid ${A.line}`, display: "flex", gap: 10 }}>
-          <select value={filterCountry} onChange={e => handleCountry(e.target.value)}
+          <Select value={filterCountry} onChange={e => handleCountry(e.target.value)}
             style={{ padding: "5px 8px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 12, fontFamily: sans, background: A.card }}>
             <option value="">{t("allCountries")}</option>
             {uniqueCountries.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
-          <select value={filterFile} onChange={e => handleFile(e.target.value)}
+          </Select>
+          <Select value={filterFile} onChange={e => handleFile(e.target.value)}
             style={{ padding: "5px 8px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 12, fontFamily: sans, background: A.card, maxWidth: 220 }}>
             <option value="">{t("allFiles")}</option>
             {uniqueFiles.map(f => <option key={f} value={f}>{stripUuidPrefix(f)}</option>)}
-          </select>
+          </Select>
         </div>
       )}
 
@@ -612,15 +612,15 @@ function UploadHistorySection({ history, loading, onRefresh }: {
       {/* Filters */}
       {!loading && history.length > 0 && (
         <div style={{ padding: "10px 16px", borderBottom: `1px solid ${A.line}`, display: "flex", gap: 10, alignItems: "center" }}>
-          <select value={dateFilter} onChange={e => handleDate(e.target.value)}
+          <Select value={dateFilter} onChange={e => handleDate(e.target.value)}
             style={{ padding: "5px 8px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 12, fontFamily: sans, background: A.card }}>
             <option value="all">{t("allTime")}</option>
             <option value="today">{t("today")}</option>
             <option value="week">{t("last7")}</option>
-          </select>
+          </Select>
           <div style={{ display: "flex", alignItems: "center", gap: 6, border: `1px solid ${A.line}`, borderRadius: 6, padding: "5px 8px", background: A.card, flex: 1, maxWidth: 260 }}>
             <Search size={12} style={{ color: A.muted2, flexShrink: 0 }} />
-            <input
+            <Input
               placeholder={t("searchFilename")}
               value={search}
               onChange={e => handleSearch(e.target.value)}
@@ -950,7 +950,7 @@ function DuplicateReviewStep({
                   <span style={{ fontSize: 12, fontWeight: 600, color: A.muted, flexShrink: 0 }}>
                     {t("decision")}
                   </span>
-                  <select
+                  <Select
                     value={decisions[item.staging_id] || "bypass"}
                     onChange={e => setDecisions(prev => ({
                       ...prev, [item.staging_id]: e.target.value as Decision,
@@ -964,7 +964,7 @@ function DuplicateReviewStep({
                     {(Object.entries(decisionLabels(item)) as [Decision, ReturnType<typeof decisionLabels>[string]][]).map(([val, label]) => (
                       <option key={val} value={val}>{t(label)}</option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
               )}
             </div>
@@ -1312,7 +1312,7 @@ function TourContentTab() {
                   {t("maxTours")}
                 </label>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <input type="number" min={1} max={500} value={maxTours}
+                  <Input type="number" min={1} max={500} value={maxTours}
                     onChange={e => setMaxTours(Math.min(500, Math.max(1, Number(e.target.value))))}
                     style={{ width: 90, padding: "7px 10px", borderRadius: 7,
                       border: `1px solid ${A.line}`, background: A.card,

@@ -22,6 +22,7 @@ export const M = defineMessages(
     navContentTrace: "06 · Content Trace",
     navA4Quality: "07 · A4 Quality",
     navContentQuality: "08 · Content Quality",
+    subNavLabel: "Social Content sections",
     // TenantSelect
     tenant: "Tenant",
     pickTenant: "Pick a tenant…",
@@ -60,6 +61,7 @@ export const M = defineMessages(
     navContentTrace: "06 · Truy vết nội dung",
     navA4Quality: "07 · Chất lượng A4",
     navContentQuality: "08 · Chất lượng nội dung",
+    subNavLabel: "Các mục Social Content",
     tenant: "Tenant",
     pickTenant: "Chọn một tenant…",
     searchTenants: "Tìm theo tên, slug hoặc id",

@@ -9,7 +9,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw, HardDrive, Map as MapIcon, Images, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { A, sans, mono, Card, SLabel, Badge, LoadingScreen, TH, TD, StatCard } from "../_components/adminUi";
-import { Button, DataTable, Tabs, PageFrame, PageHeader, useFormat, useT, type ColumnDef } from "../../_kit";
+import {
+  Button, DataTable, Tabs, PageFrame, PageHeader, useFormat, useT, type ColumnDef, Checkbox, Select,
+} from "../../_kit";
 import { PH } from "./messages";
 
 type CountryRow = {
@@ -245,13 +247,13 @@ export default function PhotosPage() {
           description={t("description")}
           actions={
             <>
-              <select value={country} onChange={e => { setCountry(e.target.value); setOffset(0); }} style={selectStyle}>
+              <Select value={country} onChange={e => { setCountry(e.target.value); setOffset(0); }} style={selectStyle}>
                 <option value="">{t("allCountries")}</option>
                 {countries.map(c => <option key={c.country} value={c.country}>{c.country}</option>)}
-              </select>
+              </Select>
               <label style={{ fontSize: 12.5, color: A.body, display: "flex", gap: 6, alignItems: "center" }}
                      title={t("matchTitle")}>
-                <input type="checkbox" checked={matchPlaces} onChange={e => setMatchPlaces(e.target.checked)} />
+                <Checkbox checked={matchPlaces} onChange={e => setMatchPlaces(e.target.checked)} />
                 {t("matchPlaces")}
               </label>
               <Button onClick={refresh} size="sm"><RefreshCw size={13} /> {t("refresh")}</Button>
@@ -359,7 +361,7 @@ export default function PhotosPage() {
           <>
             <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 12 }}>
               <label style={{ fontSize: 13, display: "flex", gap: 6, alignItems: "center" }}>
-                <input type="checkbox" checked={onlyMissing} onChange={e => setOnlyMissing(e.target.checked)} /> {t("onlyMissing")}
+                <Checkbox checked={onlyMissing} onChange={e => setOnlyMissing(e.target.checked)} /> {t("onlyMissing")}
               </label>
               <span style={{ fontSize: 12.5, color: A.muted }}>
                 {t("toursHavePhotos", tours.filter(x => x.photos).length, tours.length, country ? t("inCountry", country) : "")}
@@ -372,11 +374,11 @@ export default function PhotosPage() {
         {tab === "folders" && (
           <>
             <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 12 }}>
-              <select value={folderFilter} onChange={e => setFolderFilter(e.target.value)} style={selectStyle}>
+              <Select value={folderFilter} onChange={e => setFolderFilter(e.target.value)} style={selectStyle}>
                 <option value="all">{t("allFolders", folders.length)}</option>
                 <option value="unmatched">{t("notMatchedFolders", folders.filter(f => !f.tour_id).length)}</option>
                 <option value="matched">{t("matchedFolders", folders.filter(f => !!f.tour_id).length)}</option>
-              </select>
+              </Select>
               <span style={{ fontSize: 12.5, color: A.muted }}>{t("assignHint")}</span>
             </div>
             <div style={{ display: "grid", gap: 12 }}>
@@ -397,10 +399,10 @@ export default function PhotosPage() {
                     </div>
                     {assignFolder && assignFolder.folder_path === f.folder_path && assignFolder.country === f.country ? (
                       <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                        <select value={pickTour} onChange={e => setPickTour(e.target.value)} style={{ ...selectStyle, maxWidth: 320 }}>
+                        <Select value={pickTour} onChange={e => setPickTour(e.target.value)} style={{ ...selectStyle, maxWidth: 320 }}>
                           <option value="">{t("chooseTour")}</option>
                           {tourOpts.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-                        </select>
+                        </Select>
                         <Button size="sm" variant="primary" disabled={!pickTour || busy === f.folder_path} onClick={() => assignFolderTo(f)}>{t("save")}</Button>
                         <Button size="sm" onClick={() => setAssignFolder(null)}>{t("cancel")}</Button>
                       </div>
@@ -418,10 +420,10 @@ export default function PhotosPage() {
         {tab === "gallery" && (
           <>
             <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
-              <select value={status} onChange={e => { setStatus(e.target.value); setOffset(0); }} style={selectStyle}>
+              <Select value={status} onChange={e => { setStatus(e.target.value); setOffset(0); }} style={selectStyle}>
                 <option value="">{t("allStatuses")}</option>
                 {Object.keys(STATUS_COLOR).map(s => <option key={s} value={s}>{statusLabel(s)}</option>)}
-              </select>
+              </Select>
               <span style={{ fontSize: 12.5, color: A.muted }}>{t("photosCount", total)}</span>
               <div style={{ flex: 1 }} />
               <Button size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE))}>{t("prev")}</Button>

@@ -15,7 +15,7 @@ import { useAdminIdentity } from "../../_kit/useAdminIdentity";
 import { can } from "@/lib/rbac";
 import { useT } from "../../_kit/core/useI18n";
 import { M } from "./BrandIdentityEditor.messages";
-import { Button, Eyebrow, K, Section, alpha, sans, serif } from "../../_kit";
+import { Button, Eyebrow, K, Section, alpha, sans, serif, Input, Textarea } from "../../_kit";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -99,7 +99,7 @@ function TagsInput({ value, onChange, placeholder, readOnly }: {
       </div>
       {!readOnly && (
         <div style={{ display: "flex", gap: 6 }}>
-          <input
+          <Input
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); add(); } }}
@@ -658,7 +658,7 @@ export default function BrandIdentityEditor() {
                 <Section style={{ marginBottom: 20 }}>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: "0 24px" }}>
                     <Field label={t("fBrandName")}>
-                      <input
+                      <Input
                         value={form.brand_name}
                         onChange={e => upd("brand_name", e.target.value)}
                         disabled={!isNew || isReadOnly}
@@ -667,7 +667,7 @@ export default function BrandIdentityEditor() {
                       />
                     </Field>
                     <Field label={t("fBrandType")}>
-                      <input
+                      <Input
                         value={form.brand_type}
                         onChange={e => upd("brand_type", e.target.value)}
                         placeholder={t("phBrandType")}
@@ -678,7 +678,7 @@ export default function BrandIdentityEditor() {
                   </div>
 
                   <Field label={t("fCoreIdea")}>
-                    <textarea
+                    <Textarea
                       value={form.core_idea}
                       onChange={e => upd("core_idea", e.target.value)}
                       rows={2}
@@ -699,7 +699,7 @@ export default function BrandIdentityEditor() {
 
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: "0 24px" }}>
                     <Field label={t("fSegment")}>
-                      <textarea
+                      <Textarea
                         value={form.customer_segment}
                         onChange={e => upd("customer_segment", e.target.value)}
                         rows={3}
@@ -709,7 +709,7 @@ export default function BrandIdentityEditor() {
                       />
                     </Field>
                     <Field label={t("fMindset")}>
-                      <textarea
+                      <Textarea
                         value={form.customer_mindset}
                         onChange={e => upd("customer_mindset", e.target.value)}
                         rows={3}
@@ -730,7 +730,7 @@ export default function BrandIdentityEditor() {
                   </Field>
 
                   <Field label={t("fStyle")}>
-                    <textarea
+                    <Textarea
                       value={form.writing_style}
                       onChange={e => upd("writing_style", e.target.value)}
                       rows={3}
@@ -741,7 +741,7 @@ export default function BrandIdentityEditor() {
                   </Field>
 
                   <Field label={t("fExamples")}>
-                    <textarea
+                    <Textarea
                       value={form.good_examples}
                       onChange={e => upd("good_examples", e.target.value)}
                       rows={4}
@@ -752,7 +752,7 @@ export default function BrandIdentityEditor() {
                   </Field>
 
                   <Field label={t("fShouldWrite")}>
-                    <textarea
+                    <Textarea
                       value={form.should_write}
                       onChange={e => upd("should_write", e.target.value)}
                       rows={5}

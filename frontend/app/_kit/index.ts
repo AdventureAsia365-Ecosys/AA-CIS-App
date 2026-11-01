@@ -67,6 +67,8 @@ export { langStore, LANG_COOKIE } from "./i18n";
 export { SHELL_MESSAGES } from "./shell.messages";
 export { NAV_MESSAGES } from "./nav.messages";
 export { CHART_TOOLTIP } from "./chart";
+// AA-1006 — CIS-local names for the `--aa-*` colours K does not name (on-solid, dark surface, link blue…).
+export { KX } from "./adminTokens";
 
 // AA-752 — admin shell (collapsible sidebar, topbar, ⌘K command palette, phone bottom nav).
 export { AdminShell } from "./AdminShell";

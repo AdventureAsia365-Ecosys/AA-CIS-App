@@ -32,6 +32,7 @@ import { TenantSelect } from "../_components/TenantSelect";
 import {
   PageFrame, PageFrameBody, PageFrameHeader, PageHeader, useFormat, useT, Badge, K, Section, mono,
   sans, serif,
+  Input,
 } from "../../_kit";
 import { STATS } from "./messages";
 import { fetchJson, EmptyState, ErrorState } from "../_components/auditPanels";
@@ -492,13 +493,13 @@ function GateTelemetrySection() {
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <input
+          <Input
             type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
             aria-label={t("fromDate")}
             style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${K.line}`, fontSize: 12, fontFamily: mono, outline: "none" }}
           />
           <span style={{ fontSize: 12, color: K.muted2 }}>→</span>
-          <input
+          <Input
             type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
             aria-label={t("toDate")}
             style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${K.line}`, fontSize: 12, fontFamily: mono, outline: "none" }}

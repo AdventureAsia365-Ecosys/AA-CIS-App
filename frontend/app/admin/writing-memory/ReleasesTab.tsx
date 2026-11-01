@@ -25,6 +25,7 @@ import { useCallback, useMemo, useState } from "react";
 import {
   Badge, Button, ConfirmModal, DataTable, Drawer, ErrorState, K, Modal, TableSkeleton, apiGet,
   mono, useAdminIdentity, useFormat, useT, useToast, type ColumnDef,
+  Input, Select, Textarea,
 } from "../../_kit";
 import { can } from "@/lib/rbac";
 import { TenantSelect, useTenants } from "../_components/TenantSelect";
@@ -154,7 +155,7 @@ function WritersPanel({ active, canAdmin }: { active: ActiveReleases | undefined
         <div style={{ display: "grid", gap: 8, fontSize: 13, lineHeight: 1.5 }}>
           <div>{t("closeMonthHelp")}</div>
           <label>{t("month")}
-            <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} style={inputStyle} /></label>
+            <Input type="month" value={month} onChange={(e) => setMonth(e.target.value)} style={inputStyle} /></label>
         </div>
       </Modal>
     </section>
@@ -197,21 +198,21 @@ function NewDraftModal({ open, onClose, onCreated }: { open: boolean; onClose: (
       </div>}>
       <div style={{ display: "grid", gap: 10, fontSize: 13 }}>
         <label>{t("writer")}
-          <select value={f.writer} onChange={(e) => setF({ ...f, writer: e.target.value as Writer })} style={inputStyle}>
+          <Select value={f.writer} onChange={(e) => setF({ ...f, writer: e.target.value as Writer })} style={inputStyle}>
             {WRITERS.map((w) => <option key={w} value={w}>{w}</option>)}
-          </select></label>
+          </Select></label>
         <label>{t("owner")}
-          <select value={f.scope} onChange={(e) => setF({ ...f, scope: e.target.value })} style={inputStyle}>
+          <Select value={f.scope} onChange={(e) => setF({ ...f, scope: e.target.value })} style={inputStyle}>
             <option value="platform">{t("ownerPlatform")}</option>
             <option value="tenant">{t("ownerTenant")}</option>
-          </select></label>
+          </Select></label>
         {f.scope === "tenant" && <TenantSelect value={f.tenant} required
           onChange={(tenant) => setF({ ...f, tenant })} />}
         <label>{t("ruleIds")}
-          <textarea value={f.rules} onChange={(e) => setF({ ...f, rules: e.target.value })} rows={3}
+          <Textarea value={f.rules} onChange={(e) => setF({ ...f, rules: e.target.value })} rows={3}
             style={{ ...inputStyle, fontFamily: mono, fontSize: 12 }} /></label>
         <label>{t("notes")}
-          <input value={f.notes} maxLength={1000} onChange={(e) => setF({ ...f, notes: e.target.value })}
+          <Input value={f.notes} maxLength={1000} onChange={(e) => setF({ ...f, notes: e.target.value })}
             style={inputStyle} /></label>
         <div style={{ color: K.muted, fontSize: 12 }}>{t("newDraftHelp")}</div>
       </div>
@@ -447,7 +448,7 @@ function ReleaseDrawer({ releaseId, onClose, canAdmin, active, ownerOf }: { rele
                   {need.map((slot) => (
                     <label key={slot} style={{ fontSize: 12.5 }}>{slot === "r0" ? t("r0RunId") : slot === "eval"
                       ? t("evalRunId") : t("shadowRunId")}
-                      <input value={ev[slot]} onChange={(e) => setEv({ ...ev, [slot]: e.target.value })}
+                      <Input value={ev[slot]} onChange={(e) => setEv({ ...ev, [slot]: e.target.value })}
                         style={{ ...inputStyle, fontFamily: mono, fontSize: 12 }} /></label>))}
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     {platform && platform.release_id !== r.release_id && r.content_class === "empty" && (
@@ -466,7 +467,7 @@ function ReleaseDrawer({ releaseId, onClose, canAdmin, active, ownerOf }: { rele
               {allowed.approve && (
                 <div style={{ display: "grid", gap: 6 }}>
                   <h3 style={{ fontSize: 13, margin: 0 }}>{t("approve")}</h3>
-                  <input placeholder={t("approvalRefPlaceholder")} value={ref}
+                  <Input placeholder={t("approvalRefPlaceholder")} value={ref}
                     maxLength={300} onChange={(e) => setRef(e.target.value)} style={inputStyle}
                     aria-label={t("approvalRefAria")} />
                   <div><Button variant="primary" disabled={busy}
@@ -485,7 +486,7 @@ function ReleaseDrawer({ releaseId, onClose, canAdmin, active, ownerOf }: { rele
               )}
               {(allowed.rollback || allowed.reject || r.status === "active") && (
                 <div style={{ display: "grid", gap: 6 }}>
-                  <input placeholder={allowed.rollback ? t("whyRollback") : t("whyReject")} value={reason}
+                  <Input placeholder={allowed.rollback ? t("whyRollback") : t("whyReject")} value={reason}
                     onChange={(e) => setReason(e.target.value)} style={inputStyle} maxLength={400}
                     aria-label={allowed.rollback ? t("rollbackAria") : t("rejectAria")} />
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -610,16 +611,16 @@ export default function ReleasesTab() {
             loading={list.isLoading} onRowClick={(r) => setOpen(r.release_id)} tableMinWidth={1100}
             emptyTitle={t("releasesEmpty")} emptyDescription={t("releasesEmptyDesc")}
             toolbarExtra={<div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              <select value={writer} onChange={(e) => setWriter(e.target.value)} aria-label={t("writerAria")}
+              <Select value={writer} onChange={(e) => setWriter(e.target.value)} aria-label={t("writerAria")}
                 style={selectStyle}>
                 <option value="">{t("everyWriter")}</option>
                 {WRITERS.map((w) => <option key={w} value={w}>{w}</option>)}
-              </select>
-              <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+              </Select>
+              <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
                 aria-label={t("statusAria")} style={selectStyle}>
                 <option value="">{t("everyStatus")}</option>
                 {RELEASE_STATUSES.map((s) => <option key={s} value={s}>{status(s)}</option>)}
-              </select>
+              </Select>
             </div>} />
         )}
       </section>

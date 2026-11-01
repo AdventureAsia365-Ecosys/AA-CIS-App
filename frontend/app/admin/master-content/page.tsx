@@ -9,6 +9,7 @@ import { A, alpha, serif, sans, mono, SLabel, Badge, LoadingScreen, StatCard, Ca
 import {
   Button,
   PageFrame, PageFrameHeader, PageHeader, useFormat, useIsPhone, useAdminIdentity, useT, type Translator,
+  Checkbox, Input, Select,
 } from "../../_kit";
 import { can, staffErrorMessage } from "@/lib/rbac";
 import { RBAC_MESSAGES } from "@/lib/rbac.messages";
@@ -596,7 +597,7 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
                 {/* Sticky column header */}
                 <div style={{ padding: "12px 20px", background: panelBg, position: "sticky", top: 0, zIndex: 5, borderBottom: `1px solid ${A.line}` }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                    <select
+                    <Select
                       value={panel.versionNum}
                       onChange={e => changePanel(idx, parseInt(e.target.value))}
                       style={{
@@ -609,7 +610,7 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
                       {allVersions.map(av => (
                         <option key={av.version_num} value={av.version_num}>v{av.version_num}</option>
                       ))}
-                    </select>
+                    </Select>
                     {v && (
                       <span style={{ fontSize: 12, color: A.muted }}>{modelLabel(v.model_id)}</span>
                     )}
@@ -1225,28 +1226,28 @@ function MasterContentPageInner() {
 
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               {/* Inline filters */}
-              <input
+              <Input
                 value={search}
                 onChange={e => handleSearch(e.target.value)}
                 placeholder={t("searchPlaceholder")}
                 aria-label={t("searchPlaceholder")}
                 style={{ padding: "5px 10px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, width: 180, background: A.card, color: A.ink, outline: "none" }}
               />
-              <select value={countryFilter} onChange={e => { setCountryFilter(e.target.value); setPage(1); }}
+              <Select value={countryFilter} onChange={e => { setCountryFilter(e.target.value); setPage(1); }}
                 style={{ padding: "5px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: A.card, color: A.ink }}>
                 <option value="">{t("allCountries")}</option>
                 {countryOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-              <select value={scoreFilter} onChange={e => { setScoreFilter(e.target.value); setPage(1); }}
+              </Select>
+              <Select value={scoreFilter} onChange={e => { setScoreFilter(e.target.value); setPage(1); }}
                 style={{ padding: "5px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: A.card, color: A.ink }}>
                 <option value="">{t("allScores")}</option>
                 {scoreOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-              <select value={versionFilter} onChange={e => { setVersionFilter(e.target.value); setPage(1); }}
+              </Select>
+              <Select value={versionFilter} onChange={e => { setVersionFilter(e.target.value); setPage(1); }}
                 style={{ padding: "5px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: A.card, color: A.ink }}>
                 <option value="">{t("allVersions")}</option>
                 {versionOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
+              </Select>
 
               {/* Compare + export */}
               {selectedIds.size >= 2 && selectedIds.size <= 4 && (
@@ -1306,7 +1307,7 @@ function MasterContentPageInner() {
                     >
                       <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
                         {t.tour_id && (
-                          <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(t.tour_id!)} style={{ accentColor: A.gold, marginTop: 3 }} />
+                          <Checkbox checked={isSelected} onChange={() => toggleSelect(t.tour_id!)} style={{ accentColor: A.gold, marginTop: 3 }} />
                         )}
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontWeight: 600, color: A.ink, fontFamily: serif, fontSize: 14 }}>{t.tour_name}</div>
@@ -1391,8 +1392,8 @@ function MasterContentPageInner() {
                 <thead style={{ position: "sticky", top: 0, zIndex: 2, background: A.bg }}>
                   <tr>
                     <th style={{ ...TH, width: 36, paddingLeft: 16 }}>
-                      <input
-                        type="checkbox"
+                      <Checkbox
+                       
                         checked={paginated.length > 0 && paginated.filter(t => t.tour_id).every(t => selectedIds.has(t.tour_id!))}
                         onChange={e => {
                           if (e.target.checked) {
@@ -1438,7 +1439,7 @@ function MasterContentPageInner() {
                         }}>
                           <td style={{ ...TD, paddingLeft: 16 }} onClick={e => e.stopPropagation()}>
                             {t.tour_id && (
-                              <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(t.tour_id!)} style={{ accentColor: A.gold }} />
+                              <Checkbox checked={isSelected} onChange={() => toggleSelect(t.tour_id!)} style={{ accentColor: A.gold }} />
                             )}
                           </td>
                           <td style={{ ...TD, color: A.muted2 }}>{absIdx + 1}</td>
@@ -1574,8 +1575,8 @@ function MasterContentPageInner() {
                                       {versions.map(v => (
                                         <tr key={v.id} style={{ borderTop: `1px solid ${A.line}`, background: v.is_current ? "var(--aa-amber-bg4)" : "transparent" }}>
                                           <td style={{ padding: "6px 10px", width: 32 }}>
-                                            <input
-                                              type="checkbox"
+                                            <Checkbox
+                                             
                                               checked={vSel.has(v.version_num)}
                                               onChange={() => t.tour_id && toggleVersionSel(t.tour_id, v.version_num)}
                                               disabled={!vSel.has(v.version_num) && vSel.size >= 2}
@@ -1685,13 +1686,13 @@ function MasterContentPageInner() {
                 {/* AA-739: choose rows per page; AA-718: paginate against the real server total. */}
                 <label style={{ fontSize: 12, color: A.muted, display: "inline-flex", alignItems: "center", gap: 8 }}>
                   {t("range", (page - 1) * pageSize + 1, Math.min(page * pageSize, serverTotal), serverTotal)}
-                  <select
+                  <Select
                     value={pageSize}
                     onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }}
                     style={{ padding: "4px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: A.card, color: A.ink }}
                   >
                     {[20, 50, 100, 200].map(n => <option key={n} value={n}>{t("perPage", n)}</option>)}
-                  </select>
+                  </Select>
                 </label>
                 {serverTotal > pageSize && (
                   <Pagination page={page} total={serverTotal} pageSize={pageSize} onPage={setPage} />

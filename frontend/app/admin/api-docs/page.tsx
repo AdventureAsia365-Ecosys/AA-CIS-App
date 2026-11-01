@@ -32,6 +32,7 @@ import {
   PageFrame,
   useT,
   type Tone,
+  Input,
 } from "../../_kit";
 import { M } from "./messages";
 import {
@@ -449,7 +450,7 @@ export default function ApiDocsPage() {
               }}
             >
               <Search size={14} style={{ color: K.muted2, flexShrink: 0 }} />
-              <input
+              <Input
                 // type="text", not "search": the browser's own clear button would sit next to ours.
                 type="text"
                 value={query}

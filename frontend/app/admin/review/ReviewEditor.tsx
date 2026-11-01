@@ -6,7 +6,7 @@
 
 import { AlertTriangle, Edit3, Loader2, Save, ShieldCheck, XCircle } from "lucide-react";
 import { useState } from "react";
-import { K, mono, sans, Button, useFormat, useT } from "../../_kit";
+import { K, mono, sans, Button, useFormat, useT, Input, Textarea } from "../../_kit";
 import { FIELD, M } from "./messages";
 import { ClaimChecks } from "./ClaimChecks";
 import {
@@ -282,14 +282,14 @@ export function ReviewEditor({
         {TEXT_FIELDS.map((f) => (
           <div key={f} style={{ gridColumn: f === "seo_title" ? "1 / -1" : "auto" }}>
             <FieldLabel field={f} fails={fails[f]} />
-            <input value={draft[f]} readOnly={readOnly} onChange={(e) => set(f, e.target.value)} style={fieldBoxStyle(!!fails[f])} />
+            <Input value={draft[f]} readOnly={readOnly} onChange={(e) => set(f, e.target.value)} style={fieldBoxStyle(!!fails[f])} />
           </div>
         ))}
 
         {AREA_FIELDS.map((f) => (
           <div key={f} style={{ gridColumn: "1 / -1" }}>
             <FieldLabel field={f} fails={fails[f]} />
-            <textarea
+            <Textarea
               value={draft[f]}
               readOnly={readOnly}
               onChange={(e) => set(f, e.target.value)}
@@ -312,7 +312,7 @@ export function ReviewEditor({
         {LIST_FIELDS.map((f) => (
           <div key={f}>
             <FieldLabel field={f} fails={fails[f]} />
-            <textarea
+            <Textarea
               value={draft[f]}
               readOnly={readOnly}
               onChange={(e) => set(f, e.target.value)}
@@ -327,7 +327,7 @@ export function ReviewEditor({
         <div style={{ gridColumn: "1 / -1" }}>
           <FieldLabel field="aa_itineraries" fails={fails.aa_itineraries} />
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: 12 }}>
-            <textarea
+            <Textarea
               value={draft.aa_itineraries}
               readOnly={readOnly}
               onChange={(e) => set("aa_itineraries", e.target.value)}
