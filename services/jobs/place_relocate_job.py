@@ -212,7 +212,8 @@ async def _apply_locked(ctx: JobContext, p: dict, inner) -> dict:
                                       limit=p["limit"], hide_unconfirmed=p["hide_unconfirmed"],
                                       progress=ctx.progress, recheck=p.get("recheck"),
                                       strategy=p.get("strategy", "v1"), max_requests=cap,
-                                      accept_rule=p.get("accept_rule", "v1"))
+                                      accept_rule=p.get("accept_rule", "v1"),
+                                      actor=(getattr(ctx.job, "created_by", None) or KIND)[:64], job_id=ctx.job_id)
     except BudgetExceeded as e:
         stopped = {"status": "stopped_budget", **result}
         if p.get("max_requests"):       # the next run reads the chain's geo.geocode_call rows; shown here too

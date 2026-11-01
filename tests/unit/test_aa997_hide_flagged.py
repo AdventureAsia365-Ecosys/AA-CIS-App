@@ -172,12 +172,16 @@ async def test_confirm_hides_each_unchanged_row_with_a_stamp_and_an_audit_row(no
     assert out["dropped_ids"] == [ROWS[1]["id"]] and out["new_since_report"] == 0
     hides = conn.of("UPDATE shared.destinations SET geo_status = 'suspect'")
     assert len(hides) == 5
-    rid, stamp, reason, outcome, located_by = hides[0]
+    rid, stamp, reason, outcome, located_by, stamp_v, accept_rule, stamp_at, country = hides[0]
     stamp = json.loads(stamp)
     assert stamp["by"] == relocate.HIDE_FLAGGED_STAMP and stamp["job"] == "job-9" and stamp["actor"] == "admin:u1"
     assert stamp["reason"] == reason == ROWS[0]["review_reason"] and stamp["outcome"] == outcome == "llm_point"
     assert stamp["stamp_v"] == "aa997.2" and located_by == "llm" and stamp["report"] == "rep-1"
-    assert len(conn.of("UPDATE geo.place_name SET status = 'suspect'")) == 4      # only the rows hidden
+    assert stamp["prev_geo_status"] == "ok"
+    # P15: the stamp version / accept rule / time and the country the confirm read are re-checked by the UPDATE
+    assert (stamp_v, accept_rule, stamp_at, country) == ("aa997.2", "aa997.3", None, "Nepal")
+    names = [a for s, a in conn.sql if s.startswith("WITH n AS ( UPDATE geo.place_name SET status = 'suspect'")]
+    assert len(names) == 4      # only the rows hidden; the keys it changed go into the hide stamp
     audit = [a for s, a in conn.sql if "acp_shared.audit_log" in s]
     assert len(audit) == 1
     details = json.loads(next(x for x in audit[0] if isinstance(x, str) and x.startswith("{")))
@@ -227,6 +231,52 @@ async def test_confirm_hides_only_the_reported_rows_same_count_different_rows(no
                                       dry_run_job="rep-1", max_rows=3)
     assert [h[0] for h in conn.of("UPDATE shared.destinations SET geo_status = 'suspect'")] == [_row(2)["id"]]
     assert out["dropped_ids"] == [_row(1)["id"], _row(3)["id"]] and out["changed_since_report"] == 2
+
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field, value", [("stamp_at", "2026-11-01T02:00:00+00:00"), ("stamp_v", "aa997.9")])
+async def test_a_row_rejudged_since_the_report_is_changed_since_report(no_lock, field, value):
+    """S262 Q2: the digest carries the relocate stamp's `at` and `v`, so a row a relocate run re-judged between the
+    report and the confirm (same reason / outcome / located_by, new stamp) is dropped, not hidden on the old report."""
+    from services.places import relocate
+    at = "2026-10-31T01:00:00+00:00"
+    reported = [{**_row(1), "stamp_at": at}, {**_row(2), "stamp_at": at}]
+    now = [reported[0], {**reported[1], field: value}]
+    assert relocate._row_digest(now[1]) != relocate._row_digest(reported[1])
+    conn = _Conn(now, report=await _report_of(reported))
+    out = await relocate.hide_flagged(_Pool(conn), outcomes=["llm_point", "off_route"], confirm=True,
+                                      dry_run_job="rep-1", max_rows=2)
+    assert [h[0] for h in conn.of("UPDATE shared.destinations SET geo_status = 'suspect'")] == [_row(1)["id"]]
+    assert out["hidden"] == 1 and out["dropped_ids"] == [_row(2)["id"]] and out["changed_since_report"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_failing_audit_flush_never_replaces_the_runs_own_exception(monkeypatch):
+    """S262 Q3: apply() flushes its pending reveal audit rows when the row loop raises; a flush that fails too (a new
+    pool connection) is logged and the run's own exception propagates. Without a run exception the flush error is
+    raised (an audit row is never lost silently)."""
+    from services.places import relocate
+    monkeypatch.setattr(relocate, "candidates", AsyncMock(return_value=[]))
+    monkeypatch.setattr(relocate, "routes_by_destination", AsyncMock(return_value={}))
+    monkeypatch.setattr(relocate, "count_candidates", AsyncMock(return_value=0))
+    write = AsyncMock(side_effect=ConnectionError("pool gone"))
+    monkeypatch.setattr(relocate, "_audit_batch", write)
+
+    def rows_then(exc):
+        async def run(pool, geocoder, rows, routes, towns, out, audit, **kw):
+            await audit.add("d-1", {"outcome": "confirmed", "unhidden": True, "hidden_by": "hide_flagged"})
+            if exc:
+                raise exc
+        return run
+
+    monkeypatch.setattr(relocate, "_apply_rows", rows_then(ValueError("row loop broke")))
+    with pytest.raises(ValueError, match="row loop broke"):
+        await relocate.apply(_Pool(_Conn()), None, located_by=["llm"], country="Nepal", limit=5)
+    assert write.await_count == 1          # the flush was tried
+    monkeypatch.setattr(relocate, "_apply_rows", rows_then(None))
+    with pytest.raises(ConnectionError):
+        await relocate.apply(_Pool(_Conn()), None, located_by=["llm"], country="Nepal", limit=5)
 
 
 @pytest.mark.asyncio
@@ -360,12 +410,14 @@ async def test_a_confirmed_relocate_shows_a_policy_hidden_row_again(no_lock, mon
     monkeypatch.setattr(locate, "_confirmed", lambda item, res, country: res)
     r = await relocate.apply_row(conn, _llm_row(), (), _Geo(hit), hide_unconfirmed=False)
     assert r["outcome"] == "confirmed" and bool(r.get("unhidden")) is shown
-    reveal = [a for s, a in conn.sql if s.startswith("UPDATE shared.destinations SET geo_status = 'ok'")]
+    reveal = [a for s, a in conn.sql
+              if s.startswith("UPDATE shared.destinations SET geo_status = coalesce($2::jsonb ->> 'prev_geo_status'")]
     assert len(reveal) == (1 if shown else 0)
     if shown:
         stamp = json.loads(reveal[0][1])
         assert stamp["by"] == hidden["by"] and stamp["unhidden_by"] == "relocate:confirmed" and stamp["unhidden_at"]
-        assert conn.of("UPDATE geo.place_name SET status = 'resolved'")
+        assert conn.of("UPDATE geo.place_name pn SET status = 'resolved'")
+        assert r["hidden_by"] == hidden["by"]
 
 
 @pytest.mark.asyncio

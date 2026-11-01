@@ -53,8 +53,12 @@ async def env():
         await pool.execute("DELETE FROM geo.place_name WHERE destination_id = ANY($1::uuid[])", list(ids.values()))
         await pool.execute("DELETE FROM shared.destinations WHERE id = ANY($1::uuid[])", list(ids.values()))
         # needs a superuser (CI's postgres user, the documented local cistest role): the table is append-only
-        await delete_audit_rows(pool, "resource_type = $1 AND resource_id LIKE $2", R.AUDIT_RESOURCE,
-                                f"%:{country}:%")
+        # every audit row of the test: tagged by its resource id (country / job carry the tag) or naming its rows (a
+        # restore by id runs with country None: 'unhide:*:<job>')
+        await delete_audit_rows(pool, "resource_type = $1 AND (resource_id LIKE $2 "
+                                      "OR (details -> 'destination_ids') ?| $3::text[] "
+                                      "OR (details -> 'kept_outlier_ids') ?| $3::text[])",
+                                R.AUDIT_RESOURCE, f"%{tag}%", list(ids.values()))
     finally:
         await pool.close()
 
@@ -192,7 +196,7 @@ async def test_plain_hide_keeps_a_restored_row_shown_and_is_audited(env):
     audit = await pool.fetchrow("SELECT action, details FROM acp_shared.audit_log WHERE resource_type = $1 "
                                 "AND resource_id = $2", R.AUDIT_RESOURCE, f"hide:{country}:job-{tag}")
     assert audit["action"] == R.AUDIT_HIDE_POLICY
-    await R.unhide(pool, country=None, destination_ids=[ids["untouched"]], actor="admin:test")
+    await R.unhide(pool, country=None, destination_ids=[ids["untouched"]], actor="admin:test", job_id=f"job-{tag}")
     await R.unhide(pool, country=country, by=[R.HIDE_STAMP], actor="admin:test")
     again = await R.hide(pool, reasons=["llm_point"], country=country, confirm=True)
     assert again["restored_skipped"] == 1 and again["hidden"] == 2
@@ -251,6 +255,6 @@ async def test_a_hidden_row_a_recheck_flags_with_another_reason_can_still_be_res
     kept = await R.unhide(pool, country=country, by=[R.HIDE_FLAGGED_STAMP])
     assert kept["unhidden"] == 1 and kept["kept_reason_changed"] == 1
     assert (await _state(pool, ids["off"]))[0] == "suspect"
-    one = await R.unhide(pool, country=None, destination_ids=[ids["off"]], actor="admin:test")
+    one = await R.unhide(pool, country=None, destination_ids=[ids["off"]], actor="admin:test", job_id=f"job-{tag}")
     assert one["unhidden"] == 1 and one["restored_reason_changed"] == 1
     assert (await _state(pool, ids["off"]))[0] == "ok"
