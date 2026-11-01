@@ -53,6 +53,54 @@ Lane order: D1 (migration 325) → A1 (migration 326) → A9 → A8. Migration n
 - Class: contract (constraints, column ACL, UPDATE, hot ledger table). MIG-4: 326 applied before the A1 code PR,
   because the code writes `error_class = 'disabled'`.
 
+- Code PR: `get_stage_config` reads the row whatever `is_active` says (no more `AND is_active`), so an inactive row
+  is a switched-off `StageConfig(enabled=False)`, never the SAFE_DEFAULTS route. `LLMClient._stage_switch_gate` runs
+  first in `_generate_with` (before the tenant budget read and before any attempt), also for an explicit
+  `model_tier`; `embed()` has the same gate. The refusal is `LLMStageDisabled`, a subclass of `LLMAccessDenied`, so
+  the job fails at once without a retry.
+- Review S263 (fix pass), `queue_retry` made real for `t2_generate` / `t9_write`. Before, the T9 write caught the
+  refusal and marked the piece `failed` (the job then "succeeded"), and the T2 job's on_terminal hook marked the
+  version `failed`, so the re-queue after the switch-on ran a job that skipped itself. Now: the T9 write re-raises it
+  (`errors.stage_disabled_in`, explicit cause chain; the T2 graph / `_rewrite_tour` already re-raise account
+  refusals); `worker.failure_outcome` writes a wrapped kill-switch refusal as the refusal itself, so the job error
+  always names the stage; both `on_terminal` hooks leave the piece `processing` / the version `pending` for such a
+  job (`errors.is_stage_switch_hold`: status `failed` + a stage named in the error; an admin Cancel still marks it
+  failed); the tenant's live view says "on hold" (`ON_HOLD_MESSAGE`), not "try again". "Re-queue refused jobs"
+  (prefix `llm_access_denied`) holds the job while its stage is off and re-queues it once it is on; the handler then
+  finds the piece / version still to do and writes it.
+- Review S263: a degrade mode stands in for the second failure domain only. A stage with no usable deployment at all
+  is a `breach` (`ok: false`) whatever it declares (ADR 0009 d5), so a total outage of tenant writing is never shown
+  as a calm declared degrade.
+- The job error text (`llm_access_denied: stage '<stage>' is switched off by an admin: <reason>`) is classified
+  `disabled` before any other pattern (the admin's reason may contain "AccessDenied"): the availability card does not
+  count it as an account block, and the bulk re-queue holds such a job only while its own stage is still off (the
+  switch state is read only when a candidate was refused by it).
+- `/admin/llm-availability` `invariant`: per stage `status` (`ok` / `degrade` / `breach`) and `degrade_mode`; a
+  degrade stage (one usable domain, no second, a declared mode) has `ok: true` and is not in `breaches`; new totals `declared_degrade` and `disabled` (switched-off
+  stages, not checked). Falls back to the old SELECT before 326.
+- Admin: `PATCH /admin/llm-config/{stage}/switch` `{enabled, reason}` (ai.admin; reason of 3+ characters required to
+  switch off; audit `llm_stage_switched_off` / `_on` in the same transaction). UI: read-only only (a "Switched off"
+  badge with the reason on the stage row, a "Declared degrade mode" badge instead of the breach badge, the
+  availability summary counts degrade stages apart, the Calls tab words for class `disabled`). The toggle itself is
+  not in the UI yet (it needs a reason dialog): follow-up, the API is enough for the live check.
+
+### Tradeoffs (A1)
+- The re-queue after a switch-on is the staff action "Re-queue refused jobs" (DRY RUN first, at most 50 per apply),
+  not automatic on the PATCH: a re-queued write is a paid run, and the same tool already re-queues account refusals.
+  Until then the tenant's piece / version shows "on hold". Auto re-queue on switch-on: follow-up if wanted.
+- Only a `t2_generate` / `t9_write` refusal that reaches the job runner is held. A switched-off sub-stage whose node
+  swallows errors (e.g. `t2_flag_fix`) only degrades that step, as any failure of that node did before.
+- `disabled` is a CIS-only ledger class for now: adding it to the shared core `shared/aa_llm` would resync
+  TripPlanner and AA-Partner while their gateway lanes are open (plan §2 Wave 2 item 5, A10 step 0). The parity
+  test pins the one difference (`CIS_ONLY_ERROR_CLASSES`).
+- Other processes see a switch within the stage-config cache TTL (20 s); the API process that took the PATCH at once.
+
+### Should know (A1)
+- Order: migration 326 applied on Dev (DB Migrate) before the A1 code deploys (the code writes `error_class
+  'disabled'`, lesson S246 CHECK-before-code). The code still runs before 326 (missing columns fall back), but the
+  switch PATCH would fail on `disabled_reason`.
+- A switched-off `tp_compose` also pauses TripPlanner (it already reads `is_active` from the contract view).
+
 ## A9 — ledger v2 for embeddings (gap OPS-02)
 
 ### Decisions
@@ -115,3 +163,22 @@ Lane order: D1 (migration 325) → A1 (migration 326) → A9 → A8. Migration n
   of an approval stop is already live-tested by AA-1016.
 - `docs/api/openapi.json` regenerated with fastapi 0.161.1 / pydantic 2.14.1 (requirements.txt pins): one line
   (`hard_stop` default).
+
+## PRs (stacked, merge in this order)
+
+1. `feat/gw-d1-prompt-version-seed` — migration 325 + the CI gate (contract: migration PR, Infra copy merged by
+   hand, manual DB Migrate apply).
+2. `feat/gw-a1-stage-switch-migration` — migration 326 only (contract, same path). Its number check needs 325 on
+   `main` first.
+3. `feat/gw-a9-embed-ledger` — A9 code (no migration dependency).
+4. `feat/gw-a8-tenant-budget-fail-closed` — A8 code (no migration dependency; no Dev budget row seeded).
+5. `feat/gw-a1-stage-kill-switch` — A1 code + read-only UI badges; merge only after 326 is applied on Dev.
+
+Each branch holds the commits of the ones before it; after a squash merge, rebase the next one on `main` (the merged
+commit drops out as already applied).
+
+### Classification note
+The lane brief asked for an expand header; both files are contract under root ADR 0017 decision 3 (325 inserts
+config rows into an existing table; 326 adds constraints, a column grant and an UPDATE, and touches the hot ledger
+table). An expand header would fail the runtime post-check (exit 14). Both pass the Infra runner lint
+(`run_migration.py --inspect`, `check_migration_files.py`). Neither creates a table: no DM-7.1 retention row.

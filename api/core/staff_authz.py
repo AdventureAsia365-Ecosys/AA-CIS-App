@@ -132,6 +132,8 @@ POLICY: dict[tuple[str, str], str] = {
     # ── admin_llm_ops — stage model, fallback route, catalog (GĐ1)
     ("PATCH", "/admin/llm-config/{stage}"): AI_ADMIN,
     ("PATCH", "/admin/llm-config/{stage}/route"): AI_ADMIN,
+    # AA-642 A1 — the stage kill switch (llm_role_config.is_active, audited)
+    ("PATCH", "/admin/llm-config/{stage}/switch"): AI_ADMIN,
     ("PATCH", "/admin/llm-catalog/{model_key}"): AI_ADMIN,
     # AA-1002 — the LLM connection registry names secrets, roles and endpoints: admin-only read
     ("GET", "/admin/llm-connections"): AI_ADMIN,

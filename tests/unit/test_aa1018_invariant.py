@@ -108,9 +108,9 @@ def test_stage_classes_group_by_role():
               _route("e1", "embed", "embed-z", scopes=("aws_only",))]
     report = invariant.check(routes, ALIASES, DEPS, CONNS)
     assert report["classes"] == [
-        {"role": "embed", "stages": 1, "ok": 0, "breaches": ["e1"]},
-        {"role": "judge", "stages": 1, "ok": 1, "breaches": []},
-        {"role": "writer", "stages": 1, "ok": 0, "breaches": ["w1"]},
+        {"role": "embed", "stages": 1, "ok": 0, "breaches": ["e1"], "degrade": []},
+        {"role": "judge", "stages": 1, "ok": 1, "breaches": [], "degrade": []},
+        {"role": "writer", "stages": 1, "ok": 0, "breaches": ["w1"], "degrade": []},
     ]
     assert report["domains"] == ["bedrock:BEDROCK_ACCT_PRIMARY:aws_only", "bedrock:acc2:aws_only",
                                  "openai:openai-direct:vendor_direct"]

@@ -181,6 +181,16 @@ def test_pricing_constants_match_cis():
 
 # ── ledger v2 ──────────────────────────────────────────────────────────────────────────────────────────────────────
 
+CIS_ONLY_ERROR_CLASSES = ("disabled",)
+
+
+def test_the_kill_switch_refusal_is_the_one_text_the_core_does_not_classify_alike():
+    """AA-642 A1: a job error written by the stage kill switch is ``disabled`` in CIS (never an account block)."""
+    text = "llm_access_denied: stage 't9_write' is switched off by an admin: AccessDenied drill"
+    assert cis_errors.classify_text(text) == "disabled"
+    assert core_errors.classify_text(text) != "disabled"
+
+
 def _insert_columns(sql: str) -> tuple:
     inner = re.search(r"\(([^)]*)\)\s*VALUES", sql, re.S).group(1)
     return tuple(c.strip() for c in inner.split(",") if c.strip())
@@ -191,7 +201,9 @@ def test_ledger_columns_match_the_cis_v2_insert():
     assert core_ledger.COLUMNS == _insert_columns(call_log._INSERT_V2_SQL)
     assert _insert_columns(core_ledger.insert_sql()) == core_ledger.COLUMNS
     assert core_ledger.STATUSES == call_log.STATUSES
-    assert core_ledger.ERROR_CLASSES == call_log.ERROR_CLASSES
+    # AA-642 A1: 'disabled' (the CIS stage kill switch, migration 326) is CIS-only until slice A10 step 0 moves the
+    # outcome classes into the core (a core change resyncs TripPlanner and AA-Partner, so it waits for their lanes).
+    assert core_ledger.ERROR_CLASSES + CIS_ONLY_ERROR_CLASSES == call_log.ERROR_CLASSES
     assert core_ledger.TRUNCATED_STOP_REASONS == call_log.TRUNCATED_STOP_REASONS
 
 

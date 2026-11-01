@@ -22,6 +22,7 @@ from services.acp_content_writing import service
 from services.acp_shared.writing_progress import WritingProgress
 from shared.jobs.registry import JobContext, NonRetryable, job_kind
 from shared.llm_client import stream_sink
+from shared.llm_client.errors import is_stage_switch_hold, stage_disabled_in
 from shared.llm_client.tenant_budget import ON_HOLD_MESSAGE, approval_stop_in, is_approval_stop
 
 logger = structlog.get_logger()
@@ -50,7 +51,8 @@ async def _run_write_with_progress(request_id: UUID, piece_id: UUID, context: di
             await service.run_write_background(request_id, piece_id, context, pool)
     except Exception as e:
         progress.fail()
-        on_hold = approval_stop_in(e) is not None  # AA-1016: waits for staff approval, resumes on its own
+        # AA-1016: waits for staff approval; AA-642 A1: waits for its stage to be switched on (then re-queued).
+        on_hold = approval_stop_in(e) is not None or stage_disabled_in(e) is not None
         raise
     finally:
         if progress.failed:
@@ -74,12 +76,17 @@ async def mark_piece_failed(pool, job_row: dict) -> None:
     """on_terminal: the job ended without success, so the piece must not stay 'processing'. Except a job that waits
     for staff approval of its tenant's AI budget (AA-1016, review S262): the piece stays 'processing' so the approval
     re-queue writes it (a 'failed' piece would make the re-run skip it); a Cancel of that job (decline) marks it
-    failed."""
+    failed. AA-642 A1 (review S263): the same for a job the stage kill switch failed (declared degrade mode
+    queue_retry): the piece stays 'processing' until "Re-queue refused jobs" runs it once the stage is on."""
     piece_id = (job_row.get("payload") or {}).get("piece_id")
     if not piece_id:
         return
     if is_approval_stop(job_row):
         logger.warning("t9_write_job_waits_for_approval", piece_id=piece_id, job_id=job_row.get("id"),
+                       error=(job_row.get("error") or "")[:300])
+        return
+    if is_stage_switch_hold(job_row):   # AA-642 A1 (review S263): queue_retry, re-queued once the stage is on
+        logger.warning("t9_write_job_waits_for_stage_switch", piece_id=piece_id, job_id=job_row.get("id"),
                        error=(job_row.get("error") or "")[:300])
         return
     async with pool.acquire() as conn:

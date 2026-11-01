@@ -426,12 +426,26 @@ def _named_connections(error: str, keys: Sequence[str]) -> list[str]:
     return [k for k in keys if re.search(rf"(?<![A-Za-z0-9-]){re.escape(k)}(?![A-Za-z0-9-])", text)]
 
 
-def llm_hold(error: str, blocked: dict[str, str], keys: Sequence[str]) -> Optional[str]:
+_DISABLED_STAGES_SQL = "SELECT stage FROM shared.llm_role_config WHERE NOT is_active"
+
+
+async def disabled_stages(pool) -> frozenset:
+    """AA-642 A1: the stages switched off now (``llm_role_config.is_active`` false, the kill switch of migration
+    326)."""
+    return frozenset(r["stage"] for r in await pool.fetch(_DISABLED_STAGES_SQL))
+
+
+def llm_hold(error: str, blocked: dict[str, str], keys: Sequence[str],
+             switched_off: frozenset = frozenset()) -> Optional[str]:
     """Why a job refused by an LLM account must not be re-queued yet, or None. A job whose error names a connection
     waits for that connection; one that names none (a Bedrock "Error 002" says no connection) waits while any
-    connection is blocked with the same class (access_denied / quota_exhausted). Pure."""
-    from shared.llm_client.errors import classify_text  # lazy, pure
+    connection is blocked with the same class (access_denied / quota_exhausted). AA-642 A1: a job the stage kill
+    switch refused waits while its stage is still switched off (``switched_off``), and only for that. Pure."""
+    from shared.llm_client.errors import classify_text, disabled_stage_of  # lazy, pure
 
+    stage = disabled_stage_of(error)
+    if stage is not None:
+        return f"stage still switched off: {stage}" if stage in switched_off else None
     named = _named_connections(error, keys)
     if named:
         held = [f"{k} ({blocked[k]})" for k in named if k in blocked]
@@ -466,6 +480,10 @@ async def retry_by_reason(pool, prefix: str = RETRY_REASON_DEFAULT, *, since: da
     rows = [dict(r) for r in await pool.fetch(_RETRY_CANDIDATES_SQL, prefix, since, list(kinds), limit, status)]
     llm = prefix.startswith(RETRY_REASON_DEFAULT)
     blocked, keys = await blocked_connections(pool) if llm else ({}, [])
+    # AA-642 A1: read the switched-off stages only when a candidate was refused by the stage kill switch.
+    from shared.llm_client.errors import disabled_stage_of  # lazy, pure
+    switched_off = (await disabled_stages(pool)
+                    if llm and any(disabled_stage_of(r.get("error")) for r in rows) else frozenset())
     waiting = await tenants_waiting(pool, rows) if tenant_stop else {}
     eligible, held = [], []
     for r in rows:
@@ -478,7 +496,7 @@ async def retry_by_reason(pool, prefix: str = RETRY_REASON_DEFAULT, *, since: da
         else:
             why = kind.retry_refusal({**r, "payload": _json(r["payload"])}) if kind.retry_refusal else None
             if not why and llm:
-                why = llm_hold(r["error"] or "", blocked, keys)
+                why = llm_hold(r["error"] or "", blocked, keys, switched_off)
             if not why and tenant_stop:
                 why = tenant_hold(r["error"] or "", waiting)
         if why:

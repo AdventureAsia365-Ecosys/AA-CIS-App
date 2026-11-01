@@ -37,7 +37,9 @@ export interface LlmAvailability {
   /** AA-1002 S4 / AA-1018: per connection (absent on an older API). */
   connections?: { connection_key: string; enabled?: boolean; status?: string; failure_domain?: string | null }[];
   /** AA-1018: the failure-domain rule, report only (absent on an older API). */
-  invariant?: { ready?: boolean; ok?: boolean; stages_checked?: number; breaches?: number; stages?: unknown[] };
+  invariant?: { ready?: boolean; ok?: boolean; stages_checked?: number; breaches?: number;
+    /** AA-642 A1: stages that pass through a declared degrade mode (not counted in breaches). */
+    declared_degrade?: number; stages?: unknown[] };
 }
 
 export type StatusTone = "success" | "warning" | "danger" | "neutral";

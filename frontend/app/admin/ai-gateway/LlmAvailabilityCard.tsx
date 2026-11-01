@@ -126,7 +126,9 @@ export function LlmAvailabilityCard() {
         {openCircuits > 0 && <div style={{ fontSize: 12.5, color: K.amber }}>{t("availOpenNote", openCircuits)}</div>}
         {inv && (
           <div style={{ fontSize: 12.5, color: inv.ok ? K.muted : K.amber }} data-testid="llm-invariant-summary">
-            {t("invariantSummary", (inv.stages_checked ?? 0) - (inv.breaches ?? 0), inv.stages_checked ?? 0)}
+            {t("invariantSummary",
+              (inv.stages_checked ?? 0) - (inv.breaches ?? 0) - (inv.declared_degrade ?? 0), inv.stages_checked ?? 0)}
+            {inv.declared_degrade ? ` ${t("invariantDegrade", inv.declared_degrade)}` : ""}
           </div>
         )}
 

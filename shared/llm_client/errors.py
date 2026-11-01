@@ -53,6 +53,9 @@ DEADLINE = "deadline"
 
 # The job failure reason and the prefix of shared.job.error for a job ended by an account-level denial.
 LLM_ACCESS_DENIED_REASON = "llm_access_denied"
+# AA-642 A1 (migration 326): the ledger class of a call the stage kill switch refused (llm_role_config.is_active false).
+DISABLED = "disabled"
+_STAGE_DISABLED = re.compile(r"\bstage '([a-z0-9][a-z0-9_]*)' is switched off\b")
 
 ACCOUNT_LEVEL = frozenset({ACCESS_DENIED, QUOTA_EXHAUSTED})
 
@@ -124,6 +127,49 @@ class LLMAccessDenied(RuntimeError):
         return f"{LLM_ACCESS_DENIED_REASON}: {self.args[0]}"
 
 
+class LLMStageDisabled(LLMAccessDenied):
+    """AA-642 A1: the stage is switched off (``llm_role_config.is_active = false``, the admin kill switch), so the
+    gateway refused the call before any provider attempt (ledger: status refused, error_class ``disabled``, 0 USD).
+    An LLMAccessDenied on purpose: a retry cannot help until someone switches the stage on, so the job runner fails
+    the job at once (``llm_access_denied: stage '<stage>' is switched off ...``). The T2 graph / rewrite re-raise it as
+    an account refusal; the T9 write re-raises it by ``stage_disabled_in`` (review S263: it used to mark the piece
+    failed). The T2 / T9 ``on_terminal`` hooks leave the version / piece to do for such a job
+    (``is_stage_switch_hold``), and the bulk re-queue ("Re-queue refused jobs", prefix ``llm_access_denied``) holds
+    it while its stage is still off (``shared/jobs/queue.llm_hold``), then writes it. That is the declared degrade
+    mode ``queue_retry``."""
+
+    def __init__(self, stage: str, reason: Optional[str] = None):
+        why = f": {reason.strip()[:300]}" if isinstance(reason, str) and reason.strip() else ""
+        super().__init__(f"stage {stage!r} is switched off by an admin{why}", DISABLED)
+        self.stage = stage
+
+
+def disabled_stage_of(text: Optional[str]) -> Optional[str]:
+    """The stage a stored refusal of the kill switch names (``LLMStageDisabled``'s message), else None. Pure."""
+    m = _STAGE_DISABLED.search(text or "")
+    return m.group(1) if m else None
+
+
+def stage_disabled_in(exc: Optional[BaseException]) -> Optional[LLMStageDisabled]:
+    """The ``LLMStageDisabled`` in ``exc`` or its explicit cause chain, else None (review S263: the T-stage pipelines
+    re-raise it instead of turning it into a failed piece)."""
+    if exc is None:
+        return None
+    for link in _chain(exc, implicit=False):
+        if isinstance(link, LLMStageDisabled):
+            return link
+    return None
+
+
+def is_stage_switch_hold(job_row: Optional[dict]) -> bool:
+    """True for a job the stage kill switch failed (status ``failed``, its error names a switched-off stage). The T2 /
+    T9 ``on_terminal`` hooks leave its version / piece pending so the re-queue after the stage is switched on writes
+    it; an admin Cancel ends it ``cancelled`` and the hook marks it failed as for any other stop. Pure."""
+    if not job_row or job_row.get("status") != "failed":
+        return False
+    return disabled_stage_of(job_row.get("error")) is not None
+
+
 def is_truncated(stop_reason: Optional[str]) -> bool:
     """AA-1017: True when a reply's stop reason says it was cut at its token limit (the TRUNCATED class)."""
     return isinstance(stop_reason, str) and stop_reason in TRUNCATED_STOP_REASONS
@@ -145,6 +191,8 @@ def classify_text(text: Optional[str]) -> str:
     reply cut at its token limit is TRUNCATED (checked first: the OpenAI 400 also carries "invalid_request_error")."""
     if not text:
         return OTHER
+    if disabled_stage_of(text):          # AA-642 A1: first, the admin's reason text may contain any word
+        return DISABLED
     if is_truncated_error(text):
         return TRUNCATED
     for cls, pattern in _PATTERNS:

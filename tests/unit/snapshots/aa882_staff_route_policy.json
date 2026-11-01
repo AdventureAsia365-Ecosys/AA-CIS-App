@@ -799,6 +799,10 @@
     "capability": "ai.admin",
     "module": "api.routers.admin_llm_ops"
   },
+  "PATCH /admin/llm-config/{stage}/switch": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_llm_ops"
+  },
   "PATCH /admin/llm-connections/{connection_key}": {
     "capability": "ai.admin",
     "module": "api.routers.admin_llm_ops"

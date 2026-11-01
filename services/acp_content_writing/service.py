@@ -36,6 +36,7 @@ from services.acp_shared.writing_progress import progress_show, progress_step
 import structlog
 
 from shared import tour_liveness as _tl
+from shared.llm_client.errors import stage_disabled_in
 from shared.llm_client.tenant_budget import approval_stop_in, counter_unavailable_in
 from fastapi import Request
 
@@ -2504,6 +2505,13 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             logger.warning("t9_write_waits_for_budget_approval", request_id=str(request_id),
                            piece_id=str(piece_id), attempt=attempt, error=str(stop)[:300])
             raise stop
+        switched_off = stage_disabled_in(exc)
+        if switched_off is not None:
+            # AA-642 A1 (review S263): the stage kill switch refused the call (declared degrade mode queue_retry). The
+            # piece stays 'processing'; the t9_write job fails without a retry and is re-queued once the stage is on.
+            logger.warning("t9_write_waits_for_stage_switch", request_id=str(request_id),
+                           piece_id=str(piece_id), attempt=attempt, stage=switched_off.stage)
+            raise switched_off
         unavailable = counter_unavailable_in(exc)
         if unavailable is not None:
             # AA-642 A8 (review S263): the tenant's AI budget counter could not be read (fail closed). The piece stays

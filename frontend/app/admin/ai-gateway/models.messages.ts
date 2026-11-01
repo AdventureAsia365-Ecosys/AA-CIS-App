@@ -39,6 +39,7 @@ export const MODELS = defineMessages(
       `${n} connection${n === 1 ? " has" : "s have"} an open circuit: calls skip ${n === 1 ? "it" : "them"} for now (Providers shows which). Other connections still answer.`,
     invariantSummary: (ok: number, total: number) =>
       `Failure-domain rule (report only): ${ok} of ${total} stages can fall back to another failure domain.`,
+    invariantDegrade: (n: number) => `${n} more declare a degrade mode instead (no breach).`,
     staffMember: "a staff member",
     staffLogin: (ref: string) => `staff (${ref})`,
     domainOk: "Fallback in another failure domain",
@@ -47,6 +48,17 @@ export const MODELS = defineMessages(
     domainBreachOne: (domain: string) =>
       `Every usable model on this route runs in one failure domain (${domain}): if it is blocked, the stage stops.`,
     domainBreachNone: "No switched-on, funded model on this route can run now.",
+    domainDegrade: "Declared degrade mode",
+    domainDegradeWhy: (mode: string) =>
+      `No fallback in another failure domain; when the route is blocked the product degrades on purpose: ${mode}.`,
+    degradeMode: (mode: string) => ({
+      queue_retry: "jobs wait and run again later",
+      basic_narration: "basic narration without AI",
+      last_saved_text: "the last saved text is shown",
+      manual_reply_needed: "staff reply by hand",
+    } as Record<string, string>)[mode] ?? mode,
+    stageOff: "Switched off",
+    stageOffWhy: (reason: string) => `Every call of this stage is refused before any model runs. Reason: ${reason}`,
     availDegraded: "Throttled",
     availBlocked: "Refused",
     availUnknown: "No recent calls",
@@ -203,6 +215,7 @@ export const MODELS = defineMessages(
       `${n} kết nối đang ngắt: các lượt gọi tạm bỏ qua (tab Nhà cung cấp cho biết kết nối nào). Các kết nối khác vẫn trả lời.`,
     invariantSummary: (ok: number, total: number) =>
       `Quy tắc miền lỗi (chỉ báo cáo): ${ok} trên ${total} stage có đường dự phòng ở miền lỗi khác.`,
+    invariantDegrade: (n: number) => `${n} stage khác khai báo chế độ suy giảm thay thế (không tính là vi phạm).`,
     staffMember: "một nhân viên",
     staffLogin: (ref: string) => `nhân viên (${ref})`,
     domainOk: "Có dự phòng ở miền lỗi khác",
@@ -211,6 +224,17 @@ export const MODELS = defineMessages(
     domainBreachOne: (domain: string) =>
       `Mọi model dùng được trên tuyến này chạy trong một miền lỗi (${domain}): nếu nó bị chặn, stage dừng.`,
     domainBreachNone: "Không có model nào trên tuyến này đang bật và có tiền để chạy lúc này.",
+    domainDegrade: "Đã khai báo chế độ suy giảm",
+    domainDegradeWhy: (mode: string) =>
+      `Không có dự phòng ở miền lỗi khác; khi tuyến bị chặn, sản phẩm chủ động chạy ở chế độ suy giảm: ${mode}.`,
+    degradeMode: (mode: string) => ({
+      queue_retry: "job chờ và chạy lại sau",
+      basic_narration: "lời dẫn cơ bản không dùng AI",
+      last_saved_text: "hiện bản đã lưu gần nhất",
+      manual_reply_needed: "nhân viên trả lời tay",
+    } as Record<string, string>)[mode] ?? mode,
+    stageOff: "Đã tắt",
+    stageOffWhy: (reason: string) => `Mọi lượt gọi của stage này bị từ chối trước khi chạy model. Lý do: ${reason}`,
     availDegraded: "Bị giới hạn tốc độ",
     availBlocked: "Bị từ chối",
     availUnknown: "Chưa có lượt gọi gần đây",

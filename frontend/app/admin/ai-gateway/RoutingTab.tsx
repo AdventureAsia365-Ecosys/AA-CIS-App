@@ -81,13 +81,17 @@ function DomainBadge({ result }: { result: InvariantStage }) {
   const t = useT(MODELS);
   const domainText = useDomainText();
   const others = result.other_domains.map((d) => domainText(d)).filter(Boolean).join("; ");
-  const why = result.ok ? t("domainOkWhy", others)
+  // AA-642 A1: a declared degrade mode passes the rule without a second domain (status "degrade").
+  const degrade = result.status === "degrade" && result.degrade_mode;
+  const why = degrade ? t("domainDegradeWhy", t("degradeMode", result.degrade_mode ?? ""))
+    : result.ok ? t("domainOkWhy", others)
     : result.primary_domain ? t("domainBreachOne", domainText(result.primary_domain) ?? "") : t("domainBreachNone");
   return (
     <span data-testid={`llm-domain-${result.stage}`} title={why}
       style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0, flexWrap: "wrap" }}>
-      <Badge tone={result.ok ? "success" : "warning"} dot={false} style={{ whiteSpace: "nowrap" }}>
-        {result.ok ? t("domainOk") : t("domainBreach")}
+      <Badge tone={degrade ? "info" : result.ok ? "success" : "warning"} dot={false}
+        style={{ whiteSpace: "nowrap" }}>
+        {degrade ? t("domainDegrade") : result.ok ? t("domainOk") : t("domainBreach")}
       </Badge>
     </span>
   );
@@ -170,6 +174,11 @@ function ModelRow({ row, showAccount, domain }: {
         </div>
         <Badge tone={ROLE_TONE[row.role] ?? "neutral"} dot={false}>{row.role}</Badge>
         {domain && <DomainBadge result={domain} />}
+        {row.is_active === false && (
+          <span data-testid={`llm-stage-off-${row.stage}`} title={t("stageOffWhy", row.disabled_reason ?? "—")}>
+            <Badge tone="danger" dot={false} style={{ whiteSpace: "nowrap" }}>{t("stageOff")}</Badge>
+          </span>
+        )}
         <Select size="sm" data-testid={`llm-model-select-${row.stage}`} aria-label={t("primaryFor", row.stage)}
           value={modelId} onChange={(e) => setModelId(e.target.value)} disabled={saving}
           style={{ flex: "1 1 260px", minWidth: 0 }}

@@ -20,7 +20,8 @@ from .role_config import get_stage_config_sync
 from .bedrock_satellite import DEFAULT_SATELLITE_ACCOUNT
 from .catalog import LEGACY_KEYS, CatalogModel, capability, get_model_sync
 from .schema_check import SchemaMismatch, conform
-from .errors import (DEADLINE, OTHER, THROTTLED, TRUNCATED, LLMAccessDenied, RouteDeadlineExceeded,
+from .errors import (DEADLINE, DISABLED, OTHER, THROTTLED, TRUNCATED, LLMAccessDenied, LLMStageDisabled,
+                     RouteDeadlineExceeded,
                      account_level_class, classify)
 from . import (breaker, connection_budget, connections, data_scope, prompt_registry, stage_params, stream_sink,
                tenant_budget)
@@ -727,6 +728,8 @@ def attempt_outcome(exc: BaseException) -> tuple[str, str]:
     error_class = the breaker class (a request error counts as 'other'), or 'budget'. AA-1018 part 2: a route deadline
     is ('error', 'deadline'); a refusal to return a reply cut at its token limit is ('truncated', 'truncated')."""
     from shared.cost_guard import BudgetExceeded
+    if any(isinstance(link, LLMStageDisabled) for link in _causes(exc)):
+        return "refused", DISABLED                     # AA-642 A1: the stage kill switch, nothing was sent
     budget_refusals = (BudgetExceeded, tenant_budget.TenantBudgetUnavailable)   # AA-642 A8: unreadable = refused
     if any(isinstance(link, budget_refusals) for link in _causes(exc)):
         return "refused", "budget"
@@ -922,6 +925,8 @@ class LLMClient:
             deadline_s = None                   # a test double or a bad value: no deadline
         deadline_token = _DEADLINE.set((time.monotonic() + deadline_s, deadline_s)) if deadline_s else None
         try:
+            # AA-642 A1: the stage kill switch first (a switched-off stage reads no budget and makes no attempt).
+            self._stage_switch_gate(request, stage_cfg, chain[0])
             # AA-1016: the tenant's monthly AI budget, before any attempt (no budget row = nothing read, no change).
             self._tenant_budget_gate(request, chain[0])
             if len(chain) == 1:
@@ -948,6 +953,21 @@ class LLMClient:
                 and random.random() * 100 < stage_cfg.shadow_sample_pct and not _in_eval_run()):
             self._start_shadow(request, stage_cfg, resp, primary_acct)
         return resp
+
+    def _stage_switch_gate(self, request: LLMRequest, stage_cfg, first_key: str) -> None:
+        """AA-642 A1: a stage switched off (``llm_role_config.is_active = false``, migration 326) is refused before
+        any provider attempt: one 0 USD ledger row (status refused, error_class disabled, the route's first model) and
+        ``LLMStageDisabled`` (an LLMAccessDenied: the job fails without a retry and is re-queued once the stage is on,
+        the ``queue_retry`` degrade). An explicit ``model_tier`` (eval, probe) is refused too: the switch stops the
+        stage, whatever model it would use."""
+        if stage_cfg is None or getattr(stage_cfg, "enabled", True) is not False:
+            return
+        reason = getattr(stage_cfg, "disabled_reason", None)
+        exc = LLMStageDisabled(request.stage or stage_cfg.stage, reason if isinstance(reason, str) else None)
+        pin = split_pin(first_key)
+        log_gateway_failed_attempt(request, exc, model=pin[0] if pin else first_key, latency_ms=0)
+        logger.warning("llm_stage_switched_off_refused", stage=request.stage)
+        raise exc
 
     def _tenant_budget_gate(self, request: LLMRequest, first_key: str) -> None:
         """AA-1016: ``tenant_budget.check`` for the tenant bound to this call (the job's tenant). A refusal (a T-stage

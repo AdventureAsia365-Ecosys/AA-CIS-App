@@ -3591,6 +3591,32 @@
         "title": "LlmRoutePatch",
         "type": "object"
       },
+      "LlmStageSwitch": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "LlmStageSwitch",
+        "type": "object"
+      },
       "ManualShapeRequest": {
         "properties": {
           "geojson": {
@@ -19780,6 +19806,104 @@
           }
         },
         "summary": "Change one stage's fallback chain + shadow (admin-only)",
+        "tags": [
+          "admin-llm-ops"
+        ]
+      }
+    },
+    "/admin/llm-config/{stage}/switch": {
+      "patch": {
+        "operationId": "patch_llm_stage_switch_admin_llm_config__stage__switch_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "stage",
+            "required": true,
+            "schema": {
+              "title": "Stage",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LlmStageSwitch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Switch one stage on or off (the kill switch; admin-only, audited)",
         "tags": [
           "admin-llm-ops"
         ]

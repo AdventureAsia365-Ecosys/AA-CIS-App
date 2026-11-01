@@ -762,6 +762,7 @@ export function isAccessState(state: string | null | undefined): state is Access
  *  the two lists equal). The page prints each one in words (messages.ts ERROR_CLASS), never the code. */
 export const ERROR_CLASSES = [
   "access_denied", "quota_exhausted", "throttled", "credential", "other", "deadline", "budget", "truncated",
+  "disabled",                     // AA-642 A1 (migration 326): the stage kill switch refused the call
 ] as const;
 export type ErrorClass = (typeof ERROR_CLASSES)[number];
 
@@ -839,6 +840,9 @@ export interface InvariantStage {
   primary_domain: string | null;
   other_domains: string[];
   reason: string | null;
+  /** AA-642 A1: ok (another failure domain), degrade (one domain only, declared degrade mode) or breach; absent before. */
+  status?: "ok" | "degrade" | "breach";
+  degrade_mode?: string | null;
 }
 
 export interface Invariant {
@@ -847,6 +851,9 @@ export interface Invariant {
   ok?: boolean;
   stages_checked?: number;
   breaches?: number;
+  /** AA-642 A1: stages that pass through a declared degrade mode, and the switched-off stages (not checked). */
+  declared_degrade?: number;
+  disabled?: string[];
   stages?: InvariantStage[];
 }
 

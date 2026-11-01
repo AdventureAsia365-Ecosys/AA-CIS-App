@@ -196,6 +196,12 @@ def embed(stage: str, texts: list[str], *, input_type: str = "search_document",
         raise ValueError("embed() needs at least one text")
     cfg = get_stage_config_sync(stage)
     chain = [cfg.model_id, *cfg.fallback_model_ids]
+    if getattr(cfg, "enabled", True) is False:          # AA-642 A1: the stage kill switch, before any attempt
+        from .errors import LLMStageDisabled
+        reason = getattr(cfg, "disabled_reason", None)
+        refusal = LLMStageDisabled(stage, reason if isinstance(reason, str) else None)
+        _log_failure(stage, cfg.model_id, refusal)
+        raise refusal
     errors = []
     attempts = 0
     for position, key in enumerate(chain):
