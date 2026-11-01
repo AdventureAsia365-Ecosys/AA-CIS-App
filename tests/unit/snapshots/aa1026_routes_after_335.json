@@ -1,0 +1,604 @@
+{
+ "routes": [
+  {
+   "account_route": "acc3",
+   "allowed_scopes": [
+    "aws_only",
+    "vendor_direct"
+   ],
+   "fallback_model_ids": [
+    "gpt-6-luna-openai"
+   ],
+   "is_active": true,
+   "model_id": "haiku-5-5",
+   "provider": "claude",
+   "role": "writer",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "a0_column_map"
+  },
+  {
+   "account_route": "acc3",
+   "allowed_scopes": [
+    "aws_only"
+   ],
+   "fallback_model_ids": [
+    "haiku-5-5"
+   ],
+   "is_active": true,
+   "model_id": "gpt-6-luna",
+   "provider": "openai",
+   "role": "validate",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "a3_atomize"
+  },
+  {
+   "account_route": "acc3",
+   "allowed_scopes": [
+    "aws_only"
+   ],
+   "fallback_model_ids": [
+    "gpt-5.6-luna"
+   ],
+   "is_active": true,
+   "model_id": "gpt-6-luna",
+   "provider": "openai",
+   "role": "validate",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "a3_place_card"
+  },
+  {
+   "account_route": "acc3",
+   "allowed_scopes": [
+    "aws_only"
+   ],
+   "fallback_model_ids": [
+    "sonnet-5-5"
+   ],
+   "is_active": true,
+   "model_id": "haiku-5-5",
+   "provider": "claude",
+   "role": "validate",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "a3_place_card_check"
+  },
+  {
+   "account_route": "acc3",
+   "allowed_scopes": [
+    "aws_only"
+   ],
+   "fallback_model_ids": [
+    "sonnet-5-5"
+   ],
+   "is_active": true,
+   "model_id": "haiku-5-5",
+   "provider": "claude",
+   "role": "validate",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "a3_place_days"
+  },
+  {
+   "account_route": "acc3",
+   "allowed_scopes": [
+    "aws_only",
+    "vendor_direct"
+   ],
+   "fallback_model_ids": [
+    "gpt-6-luna-openai"
+   ],
+   "is_active": true,
+   "model_id": "gpt-6-luna",
+   "provider": "openai",
+   "role": "validate",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "a3_place_dedupe"
+  },
+  {
+   "account_route": "acc3",
+   "allowed_scopes": [
+    "aws_only"
+   ],
+   "fallback_model_ids": [],
+   "is_active": true,
+   "model_id": "haiku-5-5",
+   "provider": "claude",
+   "role": "validate",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "a3_place_dedupe_check"
+  },
+  {
+   "account_route": null,
+   "allowed_scopes": [
+    "aws_only"
+   ],
+   "fallback_model_ids": [
+    "cohere-embed-v4-acc3"
+   ],
+   "is_active": true,
+   "model_id": "cohere-embed-v4",
+   "provider": "cohere",
+   "role": "embed",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "a3_place_embed"
+  },
+  {
+   "account_route": "acc3",
+   "allowed_scopes": [
+    "aws_only"
+   ],
+   "fallback_model_ids": [
+    "haiku-5-5"
+   ],
+   "is_active": true,
+   "model_id": "sonnet-5-5",
+   "provider": "claude",
+   "role": "validate",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "a3_place_locate"
+  },
+  {
+   "account_route": null,
+   "allowed_scopes": [
+    "aws_only"
+   ],
+   "fallback_model_ids": [
+    "cohere-embed-v4-acc3"
+   ],
+   "is_active": true,
+   "model_id": "cohere-embed-v4",
+   "provider": "cohere",
+   "role": "embed",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "f10_embed"
+  },
+  {
+   "account_route": "acc3",
+   "allowed_scopes": [
+    "aws_only"
+   ],
+   "fallback_model_ids": [
+    "haiku-5-5"
+   ],
+   "is_active": true,
+   "model_id": "sonnet-5-5",
+   "provider": "claude",
+   "role": "writer",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "s1_atom_writer"
+  },
+  {
+   "account_route": null,
+   "allowed_scopes": [
+    "aws_only"
+   ],
+   "fallback_model_ids": [
+    "gpt-6-luna"
+   ],
+   "is_active": true,
+   "model_id": "gpt-5.6-luna",
+   "provider": "openai",
+   "role": "judge",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "s1_brand_audit"
+  },
+  {
+   "account_route": "acc3",
+   "allowed_scopes": [
+    "aws_only",
+    "vendor_direct"
+   ],
+   "fallback_model_ids": [
+    "gpt-6-luna-openai"
+   ],
+   "is_active": true,
+   "model_id": "haiku-5-5",
+   "provider": "claude",
+   "role": "writer",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "s1_flag_fix"
+  },
+  {
+   "account_route": "acc3",
+   "allowed_scopes": [
+    "aws_only",
+    "vendor_direct"
+   ],
+   "fallback_model_ids": [
+    "gpt-6-luna-openai"
+   ],
+   "is_active": true,
+   "model_id": "sonnet-5-5",
+   "provider": "claude",
+   "role": "writer",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "s1_generate"
+  },
+  {
+   "account_route": "acc3",
+   "allowed_scopes": [
+    "aws_only",
+    "vendor_direct"
+   ],
+   "fallback_model_ids": [
+    "gpt-6-luna-openai"
+   ],
+   "is_active": true,
+   "model_id": "haiku-5-5",
+   "provider": "claude",
+   "role": "writer",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "s1_itinerary_nudge"
+  },
+  {
+   "account_route": null,
+   "allowed_scopes": [
+    "aws_only",
+    "vendor_direct"
+   ],
+   "fallback_model_ids": [
+    "gpt-6-luna",
+    "gpt-6-luna-openai"
+   ],
+   "is_active": true,
+   "model_id": "gpt-5.6-luna",
+   "provider": "openai",
+   "role": "judge",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "s1_judge"
+  },
+  {
+   "account_route": "acc3",
+   "allowed_scopes": [
+    "aws_only"
+   ],
+   "fallback_model_ids": [
+    "haiku-5-5"
+   ],
+   "is_active": true,
+   "model_id": "gpt-6-luna",
+   "provider": "openai",
+   "role": "validate",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "s1_source_facts"
+  },
+  {
+   "account_route": "acc3",
+   "allowed_scopes": [
+    "aws_only",
+    "vendor_direct"
+   ],
+   "fallback_model_ids": [
+    "haiku-5-5",
+    "gpt-6-luna-openai"
+   ],
+   "is_active": true,
+   "model_id": "sonnet-5-5",
+   "provider": "claude",
+   "role": "writer",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "supply_content_writer"
+  },
+  {
+   "account_route": "acc3",
+   "allowed_scopes": [
+    "aws_only"
+   ],
+   "fallback_model_ids": [
+    "gpt-5.6-luna"
+   ],
+   "is_active": true,
+   "model_id": "gpt-6-luna",
+   "provider": "openai",
+   "role": "validate",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "t10_claims"
+  },
+  {
+   "account_route": null,
+   "allowed_scopes": [
+    "aws_only",
+    "vendor_direct"
+   ],
+   "fallback_model_ids": [
+    "gpt-6-luna",
+    "gpt-6-luna-openai"
+   ],
+   "is_active": true,
+   "model_id": "gpt-5.6-luna",
+   "provider": "openai",
+   "role": "judge",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "t10_judge"
+  },
+  {
+   "account_route": null,
+   "allowed_scopes": [
+    "aws_only"
+   ],
+   "fallback_model_ids": [
+    "gpt-6-luna"
+   ],
+   "is_active": true,
+   "model_id": "gpt-5.6-luna",
+   "provider": "openai",
+   "role": "judge",
+   "shadow_model_id": "gpt-6-luna",
+   "shadow_sample_pct": 10,
+   "stage": "t2_brand_audit"
+  },
+  {
+   "account_route": "acc3",
+   "allowed_scopes": [
+    "aws_only"
+   ],
+   "fallback_model_ids": [],
+   "is_active": true,
+   "model_id": "haiku-5-5",
+   "provider": "claude",
+   "role": "writer",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "t2_flag_fix"
+  },
+  {
+   "account_route": "acc3",
+   "allowed_scopes": [
+    "aws_only"
+   ],
+   "fallback_model_ids": [
+    "haiku-5-5"
+   ],
+   "is_active": true,
+   "model_id": "sonnet-5-5",
+   "provider": "claude",
+   "role": "writer",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "t2_generate"
+  },
+  {
+   "account_route": "acc3",
+   "allowed_scopes": [
+    "aws_only"
+   ],
+   "fallback_model_ids": [],
+   "is_active": true,
+   "model_id": "haiku-5-5",
+   "provider": "claude",
+   "role": "writer",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "t2_itinerary_nudge"
+  },
+  {
+   "account_route": null,
+   "allowed_scopes": [
+    "aws_only",
+    "vendor_direct"
+   ],
+   "fallback_model_ids": [
+    "gpt-6-luna",
+    "gpt-6-luna-openai"
+   ],
+   "is_active": true,
+   "model_id": "gpt-5.6-luna",
+   "provider": "openai",
+   "role": "judge",
+   "shadow_model_id": "gpt-6-luna",
+   "shadow_sample_pct": 10,
+   "stage": "t2_judge"
+  },
+  {
+   "account_route": null,
+   "allowed_scopes": [
+    "aws_only",
+    "vendor_direct"
+   ],
+   "fallback_model_ids": [
+    "gpt-6-luna",
+    "gpt-6-luna-openai"
+   ],
+   "is_active": true,
+   "model_id": "gpt-5.6-luna",
+   "provider": "openai",
+   "role": "judge",
+   "shadow_model_id": "gpt-6-luna",
+   "shadow_sample_pct": 10,
+   "stage": "t7_debate_judge"
+  },
+  {
+   "account_route": "acc3",
+   "allowed_scopes": [
+    "aws_only"
+   ],
+   "fallback_model_ids": [
+    "haiku-5-5"
+   ],
+   "is_active": true,
+   "model_id": "sonnet-5-5",
+   "provider": "claude",
+   "role": "writer",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "t8_angle_gen"
+  },
+  {
+   "account_route": "acc3",
+   "allowed_scopes": [
+    "aws_only"
+   ],
+   "fallback_model_ids": [
+    "haiku-5-5"
+   ],
+   "is_active": true,
+   "model_id": "sonnet-5-5",
+   "provider": "claude",
+   "role": "validate",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "t9_faq_answer_fit"
+  },
+  {
+   "account_route": "acc3",
+   "allowed_scopes": [
+    "aws_only"
+   ],
+   "fallback_model_ids": [],
+   "is_active": true,
+   "model_id": "haiku-5-5",
+   "provider": "claude",
+   "role": "validate",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "t9_faq_filter"
+  },
+  {
+   "account_route": "acc3",
+   "allowed_scopes": [
+    "aws_only"
+   ],
+   "fallback_model_ids": [
+    "sonnet-5-5"
+   ],
+   "is_active": true,
+   "model_id": "haiku-5-5",
+   "provider": "claude",
+   "role": "writer",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "t9_repair"
+  },
+  {
+   "account_route": "acc3",
+   "allowed_scopes": [
+    "aws_only"
+   ],
+   "fallback_model_ids": [
+    "haiku-5-5"
+   ],
+   "is_active": true,
+   "model_id": "sonnet-5-5",
+   "provider": "claude",
+   "role": "writer",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "t9_write"
+  },
+  {
+   "account_route": null,
+   "allowed_scopes": [
+    "aws_only"
+   ],
+   "fallback_model_ids": [
+    "cohere-embed-v4-acc3"
+   ],
+   "is_active": true,
+   "model_id": "cohere-embed-v4",
+   "provider": "cohere",
+   "role": "embed",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "tp_component_embed"
+  },
+  {
+   "account_route": "acc3",
+   "allowed_scopes": [
+    "aws_only"
+   ],
+   "fallback_model_ids": [],
+   "is_active": true,
+   "model_id": "sonnet-5-5",
+   "provider": "claude",
+   "role": "writer",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "tp_compose"
+  },
+  {
+   "account_route": "acc3",
+   "allowed_scopes": [
+    "aws_only"
+   ],
+   "fallback_model_ids": [],
+   "is_active": true,
+   "model_id": "sonnet-5-5",
+   "provider": "claude",
+   "role": "writer",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "tp_extract"
+  },
+  {
+   "account_route": null,
+   "allowed_scopes": [
+    "aws_only"
+   ],
+   "fallback_model_ids": [
+    "cohere-embed-v4-acc3"
+   ],
+   "is_active": true,
+   "model_id": "cohere-embed-v4",
+   "provider": "cohere",
+   "role": "embed",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "tp_search_embed"
+  },
+  {
+   "account_route": "acc3",
+   "allowed_scopes": [
+    "aws_only",
+    "vendor_direct"
+   ],
+   "fallback_model_ids": [
+    "gpt-6-luna",
+    "gpt-6-luna-openai"
+   ],
+   "is_active": true,
+   "model_id": "gpt-5.6-luna",
+   "provider": "openai",
+   "role": "judge",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "writing_memory_eval"
+  },
+  {
+   "account_route": "acc3",
+   "allowed_scopes": [
+    "aws_only",
+    "vendor_direct"
+   ],
+   "fallback_model_ids": [
+    "gpt-6-luna",
+    "gpt-6-luna-openai"
+   ],
+   "is_active": true,
+   "model_id": "gpt-5.6-luna",
+   "provider": "openai",
+   "role": "judge",
+   "shadow_model_id": null,
+   "shadow_sample_pct": 0,
+   "stage": "writing_memory_mine"
+  }
+ ],
+ "source": "tests/unit/snapshots/aa1002_s3_routes_fixture.json (Dev routes of 29/10) with migration 311's scope backfill, then migration 335 (AA-1026); written by tests/integration/test_aa1026_migration_335.py's helper, compared there with the file applied to real Postgres"
+}

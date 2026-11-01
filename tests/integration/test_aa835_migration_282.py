@@ -19,7 +19,12 @@ from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 MIGRATION = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
                          "282_supply_writer_sonnet_5_5.sql")
 STAGE = "supply_content_writer"
+MIGRATION_335 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
+                             "335_llm_routes_converse_keys_writer_scopes.sql")
 POST_282 = ("sonnet-5-5", ["sonnet"], "writer", "claude", "acc3", True, None, 0)
+# AA-1026 (migration 335, later in the replay): the legacy 'sonnet' becomes its chain on Converse keys (sonnet-5-5 is
+# already first, haiku-5-5 stays) and the A-series writer ends on the OpenAI API model.
+POST_335 = ("sonnet-5-5", ["haiku-5-5", "gpt-6-luna-openai"], "writer", "claude", "acc3", True, None, 0)
 
 
 @pytest.fixture
@@ -36,7 +41,7 @@ def cur():
 
 
 def _restore(c):
-    """The post-282 state other tests see."""
+    """The post-282, then post-335 state other tests see."""
     c.execute("UPDATE shared.llm_model_catalog SET enabled = true, blocked_reason = NULL "
               "WHERE model_key = 'sonnet-5-5'")
     c.execute("""INSERT INTO shared.llm_role_config
@@ -46,6 +51,8 @@ def _restore(c):
                  ON CONFLICT (stage) DO NOTHING""", (STAGE,))
     _seed_278(c)
     _run(c)
+    with open(MIGRATION_335, encoding="utf-8") as f:   # ... and the post-335 state the replay ends in (AA-1026)
+        c.execute(f.read())
 
 
 def _seed_278(c):
@@ -70,8 +77,8 @@ def _registered(c):
     return c.fetchone()[0]
 
 
-def test_replay_state_is_post_282(cur):
-    assert _row(cur) == POST_282
+def test_replay_state_is_post_335(cur):
+    assert _row(cur) == POST_335
     assert _registered(cur) == 1
 
 
