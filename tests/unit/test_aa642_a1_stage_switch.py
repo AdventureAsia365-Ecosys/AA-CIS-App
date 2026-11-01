@@ -250,7 +250,7 @@ def test_the_switch_state_is_read_only_when_a_candidate_was_switched_off(kinds):
 # ── the failure-domain report ───────────────────────────────────────────────────────────────────────────────────────
 
 CONNS = [{"connection_key": "acc3", "kind": "bedrock", "enabled": True, "data_scope": "aws_only",
-          "account_id": "111111111111", "account_id_env": None}]
+          "account_id": "<account>", "account_id_env": None}]
 DEPS = [{"model_key": "writer-x", "connection_key": "acc3", "priority": 1, "enabled": True}]
 
 
