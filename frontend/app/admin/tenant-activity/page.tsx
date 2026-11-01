@@ -295,8 +295,7 @@ export default function ContentTracePage() {
           </div>
 
           {/* AA-572 point 2 — tenant stat header, same tile shape 01-Atomize's own header stat
-              bar uses (adminUi.tsx has no shared StatTile export yet, so this mirrors it inline
-              rather than inventing a differently-shaped one). */}
+              bar uses (mirrored inline rather than inventing a differently-shaped one). */}
           {!loading && !error && rows && (
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 14 }}>
               <StatTile label={t("totalPieces")} value={stats.total} />
