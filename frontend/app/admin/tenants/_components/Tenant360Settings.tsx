@@ -17,6 +17,7 @@ import {
   K, mono, sans,
   Badge, Button, ErrorState, Section, Spinner, ToastProvider, apiGet, apiSend, useLang, useT, useToast,
   Input, Select,
+  ChipButton,
 } from "../../../_kit";
 import {
   DAILY_PUBLISH_LIMIT_DEFAULT, DAILY_PUBLISH_LIMIT_MAX, PLANNING_CHANNELS, RATE_LIMIT_RPM_MAX,
@@ -264,14 +265,8 @@ function ConfigForm({ tenantId, server, locked }: { tenantId: string; server: Te
             {PLANNING_CHANNELS.map(c => {
               const on = channels.includes(c);
               return (
-                <button key={c} type="button" aria-pressed={on} disabled={locked || m.isPending}
-                  onClick={() => toggleChannel(c)}
-                  style={{
-                    padding: "5px 11px", borderRadius: 20, fontSize: 12, fontFamily: sans,
-                    cursor: locked ? "not-allowed" : "pointer", fontWeight: on ? 700 : 400,
-                    border: `1px solid ${on ? K.accent : K.line}`, background: on ? K.accentTint : K.bg,
-                    color: on ? K.accentDeep : K.muted,
-                  }}>{c}</button>
+                <ChipButton key={c} size="sm" selected={on} disabled={locked || m.isPending}
+                  onClick={() => toggleChannel(c)}>{c}</ChipButton>
               );
             })}
           </div>

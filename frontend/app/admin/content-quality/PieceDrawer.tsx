@@ -15,7 +15,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
-import { K, mono, Badge, Drawer, StatusBadge, apiGet, useLang, useT } from "../../_kit";
+import { K, mono, Badge, Drawer, StatusBadge, apiGet, useLang, useT, LinkButton } from "../../_kit";
 import { SeedLine, seedSkipText } from "../_components/SeedLine";
 import { PieceLabelSection } from "./PieceLabel";
 import { AdminEdits, FlaggedSentences, TenantCopyNotice } from "./SentenceActions";
@@ -280,9 +280,9 @@ export default function PieceDrawer({ pieceId, onClose }: { pieceId: string; onC
             )}
             {(p.discarded_attempts || []).length > 0 && (
               <div style={{ marginTop: 8 }}>
-                <button onClick={() => setShowDiscarded((v) => !v)} style={{ fontSize: 12, background: "none", border: "none", color: K.accent, cursor: "pointer", padding: 0 }}>
+                <LinkButton size="sm" weight="regular" aria-expanded={showDiscarded} onClick={() => setShowDiscarded((v) => !v)}>
                   {showDiscarded ? t("hideDiscarded") : t("showDiscarded")}
-                </button>
+                </LinkButton>
                 {showDiscarded && p.discarded_attempts.map((d) => (
                   <div key={d.attempt_number} style={{ marginTop: 6 }}>
                     <div style={{ fontSize: 11.5, fontWeight: 600 }}>{t("attempt", String(d.attempt_number))}</div>

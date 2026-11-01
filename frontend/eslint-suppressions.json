@@ -10,16 +10,6 @@
       "count": 42
     }
   },
-  "app/admin/aa-content/AaContentEditor.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 2
-    }
-  },
-  "app/admin/api-docs/page.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 3
-    }
-  },
   "app/admin/atom-curation/page.tsx": {
     "aa-kit/no-class-name": {
       "count": 4
@@ -40,21 +30,6 @@
       "count": 9
     }
   },
-  "app/admin/content-quality/PieceDrawer.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    }
-  },
-  "app/admin/content-quality/PieceLabel.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    }
-  },
-  "app/admin/content-quality/page.tsx": {
-    "aa-kit/no-class-name": {
-      "count": 1
-    }
-  },
   "app/admin/cost-ops/page.tsx": {
     "aa-kit/no-hand-styled-button": {
       "count": 3
@@ -69,16 +44,6 @@
       "count": 6
     }
   },
-  "app/admin/data-coverage/page.tsx": {
-    "aa-kit/no-class-name": {
-      "count": 2
-    }
-  },
-  "app/admin/data-model/page.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 4
-    }
-  },
   "app/admin/decisions/page.tsx": {
     "aa-kit/no-hand-styled-button": {
       "count": 1
@@ -91,30 +56,6 @@
     },
     "aa-kit/no-raw-table": {
       "count": 3
-    }
-  },
-  "app/admin/jobs/JobKinds.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
-    "aa-kit/no-raw-table": {
-      "count": 1
-    }
-  },
-  "app/admin/jobs/WorkerHealth.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
-    "aa-kit/no-raw-table": {
-      "count": 1
-    }
-  },
-  "app/admin/jobs/page.tsx": {
-    "aa-kit/no-class-name": {
-      "count": 1
-    },
-    "aa-kit/no-hand-styled-button": {
-      "count": 2
     }
   },
   "app/admin/master-content/page.tsx": {
@@ -137,53 +78,6 @@
       "count": 3
     }
   },
-  "app/admin/overview/_components/BookingFunnelCard.tsx": {
-    "aa-kit/no-raw-table": {
-      "count": 1
-    }
-  },
-  "app/admin/overview/_components/CostByAppCard.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
-    "aa-kit/no-raw-table": {
-      "count": 1
-    }
-  },
-  "app/admin/overview/page.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
-    "aa-kit/no-raw-table": {
-      "count": 2
-    }
-  },
-  "app/admin/photos/page.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    },
-    "aa-kit/no-raw-table": {
-      "count": 1
-    }
-  },
-  "app/admin/places/LinesTab.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 3
-    }
-  },
-  "app/admin/places/MergesTab.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    }
-  },
-  "app/admin/places/page.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 2
-    }
-  },
   "app/admin/platform-stats/page.tsx": {
     "aa-kit/no-class-name": {
       "count": 1
@@ -196,43 +90,6 @@
     },
     "react-hooks/set-state-in-effect": {
       "count": 3
-    }
-  },
-  "app/admin/platform/apps/AppsBoard.tsx": {
-    "aa-kit/no-raw-table": {
-      "count": 1
-    }
-  },
-  "app/admin/platform/audit/AuditLog.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    }
-  },
-  "app/admin/review/RegenerateModal.tsx": {
-    "aa-kit/no-class-name": {
-      "count": 1
-    },
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
-    "aa-kit/no-raw-aa-var": {
-      "count": 1
-    }
-  },
-  "app/admin/review/ReviewEditor.tsx": {
-    "aa-kit/no-class-name": {
-      "count": 2
-    },
-    "aa-kit/no-raw-aa-var": {
-      "count": 4
-    }
-  },
-  "app/admin/review/page.tsx": {
-    "aa-kit/no-class-name": {
-      "count": 1
-    },
-    "aa-kit/no-hand-styled-button": {
-      "count": 2
     }
   },
   "app/admin/s1-rewrite/page.tsx": {
@@ -255,21 +112,6 @@
       "count": 1
     }
   },
-  "app/admin/seo-intelligence/page.tsx": {
-    "aa-kit/no-raw-table": {
-      "count": 3
-    }
-  },
-  "app/admin/settings/page.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    }
-  },
-  "app/admin/supply-content/SupplyContentDetail.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    }
-  },
   "app/admin/tenant-activity/page.tsx": {
     "aa-kit/no-class-name": {
       "count": 1
@@ -281,16 +123,6 @@
       "count": 1
     },
     "react-hooks/set-state-in-effect": {
-      "count": 1
-    }
-  },
-  "app/admin/tenants/_components/Tenant360Quality.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    }
-  },
-  "app/admin/tenants/_components/Tenant360Settings.tsx": {
-    "aa-kit/no-hand-styled-button": {
       "count": 1
     }
   },
@@ -338,11 +170,6 @@
     },
     "react-hooks/set-state-in-effect": {
       "count": 2
-    }
-  },
-  "app/admin/writing-memory/WritingMemory.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
     }
   },
   "app/login/LoginForm.tsx": {

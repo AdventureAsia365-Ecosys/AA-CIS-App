@@ -40,6 +40,7 @@ import {
   type ColumnDef,
   type Tone, PageFrame,
   Input, Select,
+  LinkButton,
 } from "../../../_kit";
 import { BOOKING_AUDIT_LOG_URL } from "@/lib/apps";
 import { TenantName } from "../../_components/TenantSelect";
@@ -281,7 +282,7 @@ function ChainStatus({ verify, loading, error, onRetry, filtered }: {
     detail = (
       <>
         {error.message}{" "}
-        <button type="button" onClick={onRetry} style={inlineBtn}>{t("retry")}</button>
+        <LinkButton onClick={onRetry} style={{ fontSize: 12.5 }}>{t("retry")}</LinkButton>
       </>
     );
   } else if (verify) {
@@ -329,11 +330,6 @@ function ChainStatus({ verify, loading, error, onRetry, filtered }: {
     </section>
   );
 }
-
-const inlineBtn: React.CSSProperties = {
-  background: "none", border: "none", padding: 0, color: K.accentDeep, fontWeight: 600, cursor: "pointer",
-  fontFamily: sans, fontSize: 12.5,
-};
 
 // ── filters ─────────────────────────────────────────────────────────────────────────────────
 

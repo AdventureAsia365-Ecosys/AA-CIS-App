@@ -37,6 +37,7 @@ import { PageFrame,
   Badge, Button, ConfirmModal, DataTable, Drawer, ErrorState, GuidePanel, K, PageHeader, StatusBadge, TableSkeleton,
   Tabs, apiGet, mono, useFormat, useLocalized, useT, useToast, type ColumnDef,
   Input, Select, Textarea,
+  LinkButton,
 } from "../../_kit";
 import {
   L0_WRITERS, LINT_CHECKS, WM_API, factTone, lintCheck, r0Of, ruleTone, usd,
@@ -487,10 +488,9 @@ export default function WritingMemory() {
       <PageHeader title={t("title")}
         breadcrumbs={[{ label: t("crumbTenantOutput") }, { label: t("title") }]}
         description={<>{t("description")}{" "}
-          <button type="button" onClick={() => setTab("guide")} data-testid="wm-guide-link"
-            style={{ background: "none", border: "none", padding: 0, font: "inherit", color: K.accentDeep,
-              textDecoration: "underline", textUnderlineOffset: 2, cursor: "pointer" }}>
-            {t("readGuide")}</button></>}
+          <LinkButton size="inherit" weight="regular" onClick={() => setTab("guide")} testId="wm-guide-link"
+            style={{ textDecoration: "underline", textUnderlineOffset: 2 }}>
+            {t("readGuide")}</LinkButton></>}
         actions={<>
           <Button variant="ghost" onClick={() => qc.invalidateQueries({ queryKey: ["wm"] })}>
             <RefreshCw size={14} /> {t("refresh")}</Button>

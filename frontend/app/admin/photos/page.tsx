@@ -8,9 +8,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw, HardDrive, Map as MapIcon, Images, AlertTriangle, CheckCircle2 } from "lucide-react";
-import { A, sans, mono, Card, SLabel, Badge, LoadingScreen, TH, TD, StatCard } from "../_components/adminUi";
 import {
   Button, DataTable, Tabs, PageFrame, PageHeader, useFormat, useT, type ColumnDef, Checkbox, Select,
+  K, sans, mono, Section, Eyebrow, Badge, LoadingScreen, KpiTile,
+  LinkButton,
+  type Tone,
 } from "../../_kit";
 import { PH } from "./messages";
 
@@ -39,8 +41,8 @@ type Folder = {
 type TourCov = { tour_id: string; src_name: string; country: string; duration: string | null; published: boolean; photos: number; sample: string[] };
 type Option = { id: string; name: string };
 
-const STATUS_COLOR: Record<string, "green" | "amber" | "gray" | "red"> = {
-  matched: "green", unmatched: "amber", rejected: "gray", error: "red",
+const STATUS_COLOR: Record<string, Tone> = {
+  matched: "success", unmatched: "warning", rejected: "neutral", error: "danger",
 };
 const PAGE = 120;
 // Tab labels and photo status words are message keys (messages.ts); the status filter value stays the API code.
@@ -55,12 +57,12 @@ const STATUS_LABEL: Record<string, "statusMatched" | "statusUnmatched" | "status
 const fmtMB = (b: number) => b >= 1e9 ? `${(b / 1e9).toFixed(2)} GB` : `${(b / 1e6).toFixed(1)} MB`;
 const pct = (a: number, b: number) => b ? Math.round((a / b) * 100) : 0;
 
-function Bar({ value, total, color = A.accent }: { value: number; total: number; color?: string }) {
+function Bar({ value, total, color = K.accent }: { value: number; total: number; color?: string }) {
   const p = pct(value, total);
   return (
     <div style={{ minWidth: 120 }}>
       <div style={{ fontSize: 11.5, fontFamily: mono }}>{value}/{total} · {p}%</div>
-      <div style={{ height: 5, background: A.line2, borderRadius: 3, overflow: "hidden", marginTop: 3 }}>
+      <div style={{ height: 5, background: K.line2, borderRadius: 3, overflow: "hidden", marginTop: 3 }}>
         <div style={{ width: `${p}%`, height: "100%", background: color }} />
       </div>
     </div>
@@ -69,18 +71,60 @@ function Bar({ value, total, color = A.accent }: { value: number; total: number;
 
 function Thumbs({ urls, h = 56 }: { urls: string[]; h?: number }) {
   const t = useT(PH);
-  if (!urls.length) return <span style={{ fontSize: 12, color: A.muted }}>{t("noPhoto")}</span>;
+  if (!urls.length) return <span style={{ fontSize: 12, color: K.muted }}>{t("noPhoto")}</span>;
   return (
     <div style={{ display: "flex", gap: 4 }}>
       {urls.map(u => (
         // eslint-disable-next-line @next/next/no-img-element -- public redirect URL, small thumbnails
-        <img key={u} src={u} alt="" loading="lazy" style={{ width: h * 1.4, height: h, objectFit: "cover", borderRadius: 6, background: A.line2 }} />
+        <img key={u} src={u} alt="" loading="lazy" style={{ width: h * 1.4, height: h, objectFit: "cover", borderRadius: 6, background: K.line2 }} />
       ))}
     </div>
   );
 }
 
-const selectStyle = { padding: "6px 8px", borderRadius: 8, border: `1px solid ${A.line}`, fontFamily: sans, fontSize: 13 };
+const selectStyle = { padding: "6px 8px", borderRadius: 8, border: `1px solid ${K.line}`, fontFamily: sans, fontSize: 13 };
+
+// AA-1006: the per-country table is a kit DataTable too; a click on a row opens that country's tours (the Tours tab
+// names the country, so the old highlight of the picked row is not needed).
+function CountriesTable({ countries, onPick }: { countries: CountryRow[]; onPick: (country: string) => void }) {
+  const t = useT(PH);
+  const { formatDateTime } = useFormat();
+  const fmtTime = (s: string | null) => (s ? formatDateTime(s) : "—");
+  const num = (v: React.ReactNode, color?: string) => <span style={{ fontFamily: mono, color }}>{v}</span>;
+  const columns = useMemo<ColumnDef<CountryRow, unknown>[]>(() => [
+    { id: "country", header: t("colCountry"), accessorKey: "country",
+      cell: ({ row }) => <span style={{ fontWeight: 600 }}>{row.original.country}</span> },
+    { id: "drive", header: t("colDriveFolder"), accessorKey: "has_drive_folder",
+      cell: ({ row }) => row.original.has_drive_folder ? <Badge tone="success">{t("linked")}</Badge> : <Badge tone="neutral">{t("none")}</Badge> },
+    { id: "photos", header: t("colPhotos"), accessorKey: "photos", cell: ({ row }) => num(row.original.photos) },
+    { id: "inS3", header: t("colInS3"), accessorKey: "with_file", cell: ({ row }) => num(row.original.with_file) },
+    { id: "toursCovered", header: t("colToursWithPhotos"), accessorKey: "tours_covered",
+      cell: ({ row }) => <Bar value={row.original.tours_covered} total={row.original.active_tours} color={K.success} /> },
+    { id: "matched", header: t("colMatched"), accessorKey: "with_tour", cell: ({ row }) => num(row.original.with_tour) },
+    { id: "unmatched", header: t("colUnmatched"), accessorKey: "unmatched",
+      cell: ({ row }) => num(row.original.unmatched, row.original.unmatched ? K.amber : undefined) },
+    { id: "errors", header: t("colErrors"), accessorKey: "errors",
+      cell: ({ row }) => num(row.original.errors, row.original.errors ? K.danger : undefined) },
+    { id: "covers", header: t("colPlaceCovers"), accessorKey: "destinations_with_cover",
+      cell: ({ row }) => num(`${row.original.destinations_with_cover}/${row.original.destinations}`) },
+    { id: "size", header: t("colSize"), accessorKey: "source_bytes",
+      cell: ({ row }) => num(row.original.source_bytes ? fmtMB(row.original.source_bytes) : "—") },
+    { id: "lastSynced", header: t("colLastSynced"), accessorKey: "last_synced", cell: ({ row }) => fmtTime(row.original.last_synced) },
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- fmtTime only reads formatDateTime
+  ], [t, formatDateTime]);
+  return (
+    <DataTable<CountryRow>
+      tableId="photos-countries"
+      data={countries}
+      columns={columns}
+      getRowId={(c) => c.country}
+      onRowClick={(c) => onPick(c.country)}
+      searchable={false}
+      paginate={false}
+      compact
+    />
+  );
+}
 
 // AA-994 S6b: the tour coverage list is a kit DataTable (was a raw table with the legacy TH / TD styles). Every row
 // shows, as before (no pager).
@@ -92,11 +136,11 @@ function ToursTable({ tours }: { tours: TourCov[] }) {
     { id: "duration", header: t("colDuration"), accessorKey: "duration", cell: ({ row }) => row.original.duration ?? "—" },
     {
       id: "published", header: t("colPublished"), accessorKey: "published",
-      cell: ({ row }) => row.original.published ? <Badge color="green">{t("yes")}</Badge> : <Badge color="gray">{t("no")}</Badge>,
+      cell: ({ row }) => row.original.published ? <Badge tone="success">{t("yes")}</Badge> : <Badge tone="neutral">{t("no")}</Badge>,
     },
     {
       id: "photos", header: t("colPhotos"), accessorKey: "photos",
-      cell: ({ row }) => <span style={{ fontFamily: mono, color: row.original.photos ? undefined : A.amber }}>{row.original.photos}</span>,
+      cell: ({ row }) => <span style={{ fontFamily: mono, color: row.original.photos ? undefined : K.amber }}>{row.original.photos}</span>,
     },
     { id: "sample", header: t("colSample"), enableSorting: false, cell: ({ row }) => <Thumbs urls={row.original.sample} h={40} /> },
   ], [t]);
@@ -236,7 +280,7 @@ export default function PhotosPage() {
     } finally { setBusy(null); }
   }
 
-  if (!countries || !totals) return <PageFrame><LoadingScreen msg={t("loading")} /></PageFrame>;
+  if (!countries || !totals) return <PageFrame><LoadingScreen message={t("loading")} /></PageFrame>;
   const jobRunning = lastJob && ["queued", "running"].includes(lastJob.status);
   const shownFolders = folders.filter(f => folderFilter === "all" || (folderFilter === "unmatched" ? !f.tour_id : !!f.tour_id));
 
@@ -251,7 +295,7 @@ export default function PhotosPage() {
                 <option value="">{t("allCountries")}</option>
                 {countries.map(c => <option key={c.country} value={c.country}>{c.country}</option>)}
               </Select>
-              <label style={{ fontSize: 12.5, color: A.body, display: "flex", gap: 6, alignItems: "center" }}
+              <label style={{ fontSize: 12.5, color: K.body, display: "flex", gap: 6, alignItems: "center" }}
                      title={t("matchTitle")}>
                 <Checkbox checked={matchPlaces} onChange={e => setMatchPlaces(e.target.checked)} />
                 {t("matchPlaces")}
@@ -265,10 +309,10 @@ export default function PhotosPage() {
         />
 
         {error && (
-          <Card style={{ marginBottom: 16, borderColor: A.redBorder, background: A.redTint }}>
-            <span style={{ color: A.red, fontSize: 13 }}>{error}</span>{" "}
-            <button onClick={() => setError(null)} style={{ border: 0, background: "none", cursor: "pointer", color: A.muted }}>{t("dismiss")}</button>
-          </Card>
+          <Section style={{ marginBottom: 16, borderColor: K.dangerBorder, background: K.dangerTint }}>
+            <span style={{ color: K.danger, fontSize: 13 }}>{error}</span>{" "}
+            <LinkButton tone="muted" weight="regular" onClick={() => setError(null)}>{t("dismiss")}</LinkButton>
+          </Section>
         )}
 
         <div style={{ marginBottom: 18 }}><Tabs tabs={TABS.map((x) => ({ key: x.key, label: t(x.label) }))} active={tab} onChange={setTab} /></div>
@@ -276,84 +320,58 @@ export default function PhotosPage() {
         {tab === "overview" && (
           <>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14, marginBottom: 18 }}>
-              <StatCard label={t("photosSynced")} value={String(totals.photos)} icon={<Images size={16} />}
-                        sub={t("syncedSub", totals.with_file, totals.tour_folders)} />
-              <StatCard label={t("toursWithPhotos")} value={`${pct(totals.tours_covered, totals.active_tours)}%`} icon={<CheckCircle2 size={16} />}
-                        accent={A.green} sub={t("toursSub", totals.tours_covered, totals.active_tours)} />
-              <StatCard label={t("matchedToTour")} value={String(totals.with_tour)} icon={<MapIcon size={16} />}
-                        sub={t("matchedSub", totals.manual, totals.unmatched)} />
-              <StatCard label={t("placeCovers")} value={`${totals.destinations_with_cover}`} icon={<MapIcon size={16} />}
-                        sub={t("coversSub", totals.destinations)} />
-              <StatCard label={t("errors")} value={String(totals.errors)} icon={<AlertTriangle size={16} />}
-                        accent={totals.errors ? A.red : A.accent} sub={t("rejectedSub", totals.rejected)} />
-              <StatCard label={t("sourceSize")} value={fmtMB(totals.source_bytes)} icon={<HardDrive size={16} />}
-                        sub={t("sizeSub")} />
+              <KpiTile label={t("photosSynced")} value={String(totals.photos)} icon={<Images size={16} />}
+                        hint={t("syncedSub", totals.with_file, totals.tour_folders)} />
+              <KpiTile label={t("toursWithPhotos")} value={`${pct(totals.tours_covered, totals.active_tours)}%`} icon={<CheckCircle2 size={16} />}
+                        hintTone="success" hint={t("toursSub", totals.tours_covered, totals.active_tours)} />
+              <KpiTile label={t("matchedToTour")} value={String(totals.with_tour)} icon={<MapIcon size={16} />}
+                        hint={t("matchedSub", totals.manual, totals.unmatched)} />
+              <KpiTile label={t("placeCovers")} value={`${totals.destinations_with_cover}`} icon={<MapIcon size={16} />}
+                        hint={t("coversSub", totals.destinations)} />
+              <KpiTile label={t("errors")} value={String(totals.errors)} icon={<AlertTriangle size={16} />}
+                        hintTone={totals.errors ? "danger" : "neutral"} hint={t("rejectedSub", totals.rejected)} />
+              <KpiTile label={t("sourceSize")} value={fmtMB(totals.source_bytes)} icon={<HardDrive size={16} />}
+                        hint={t("sizeSub")} />
             </div>
 
-            <Card style={{ marginBottom: 18 }}>
-              <SLabel>{t("dailySync")}</SLabel>
+            <Section style={{ marginBottom: 18 }}>
+              <Eyebrow>{t("dailySync")}</Eyebrow>
               {lastScheduled ? (
-                <div style={{ fontSize: 13, color: A.body }}>
+                <div style={{ fontSize: 13, color: K.body }}>
                   <div style={{ marginBottom: 8 }}>
                     {lastScheduled.day} {t("utc")} ·{" "}
-                    <Badge color={lastScheduled.all_ok ? "green" : "amber"}>{lastScheduled.all_ok ? t("allClean") : t("needsLook")}</Badge>
+                    <Badge tone={lastScheduled.all_ok ? "success" : "warning"}>{lastScheduled.all_ok ? t("allClean") : t("needsLook")}</Badge>
                   </div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                     {lastScheduled.countries.map(c => (
                       <span key={c.country} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 8px",
-                                                     border: `1px solid ${A.line}`, borderRadius: 8, maxWidth: "100%" }}>
+                                                     border: `1px solid ${K.line}`, borderRadius: 8, maxWidth: "100%" }}>
                         {c.country}
-                        <Badge color={c.status === "succeeded" ? (c.errors ? "amber" : "green") : c.status === "failed" ? "red" : c.status ? "amber" : "gray"}>
+                        <Badge tone={c.status === "succeeded" ? (c.errors ? "warning" : "success") : c.status === "failed" ? "danger" : c.status ? "warning" : "neutral"}>
                           {c.status ?? t("notRun")}
                         </Badge>
                         {c.errors != null && <span style={{ fontFamily: mono, fontSize: 12 }}>{t("errShort", c.errors)}</span>}
-                        {c.job_id && <a href={`/admin/jobs?job=${c.job_id}`} style={{ color: A.accentDeep, fontSize: 12 }}>{t("job")}</a>}
+                        {c.job_id && <a href={`/admin/jobs?job=${c.job_id}`} style={{ color: K.accentDeep, fontSize: 12 }}>{t("job")}</a>}
                       </span>
                     ))}
                   </div>
                 </div>
-              ) : <div style={{ fontSize: 13, color: A.muted }}>{t("noScheduled")}</div>}
-            </Card>
+              ) : <div style={{ fontSize: 13, color: K.muted }}>{t("noScheduled")}</div>}
+            </Section>
 
-            <Card style={{ marginBottom: 18 }}>
-              <SLabel>{t("lastJob")}</SLabel>
+            <Section style={{ marginBottom: 18 }}>
+              <Eyebrow>{t("lastJob")}</Eyebrow>
               {lastJob ? (
-                <div style={{ fontSize: 13, color: A.body }}>
-                  <Badge color={lastJob.status === "succeeded" ? "green" : lastJob.status === "failed" ? "red" : "amber"}>{lastJob.status}</Badge>{" "}
+                <div style={{ fontSize: 13, color: K.body }}>
+                  <Badge tone={lastJob.status === "succeeded" ? "success" : lastJob.status === "failed" ? "danger" : "warning"}>{lastJob.status}</Badge>{" "}
                   {t("jobTimes", fmtTime(lastJob.created_at), fmtTime(lastJob.finished_at))}{" "}
-                  <a href={`/admin/jobs?job=${lastJob.id}`} style={{ color: A.accentDeep }}>{t("jobId", lastJob.id.slice(0, 8))}</a>
-                  {lastJob.error && <div style={{ color: A.red, marginTop: 6, fontFamily: mono, fontSize: 12 }}>{lastJob.error}</div>}
+                  <a href={`/admin/jobs?job=${lastJob.id}`} style={{ color: K.accentDeep }}>{t("jobId", lastJob.id.slice(0, 8))}</a>
+                  {lastJob.error && <div style={{ color: K.danger, marginTop: 6, fontFamily: mono, fontSize: 12 }}>{lastJob.error}</div>}
                 </div>
-              ) : <div style={{ fontSize: 13, color: A.muted }}>{t("noSync")}</div>}
-            </Card>
+              ) : <div style={{ fontSize: 13, color: K.muted }}>{t("noSync")}</div>}
+            </Section>
 
-            <Card style={{ padding: 0, overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead>
-                  <tr>{([
-                    "colCountry", "colDriveFolder", "colPhotos", "colInS3", "colToursWithPhotos", "colMatched",
-                    "colUnmatched", "colErrors", "colPlaceCovers", "colSize", "colLastSynced",
-                  ] as const).map(h => <th key={h} style={TH}>{t(h)}</th>)}</tr>
-                </thead>
-                <tbody>
-                  {countries.map(c => (
-                    <tr key={c.country} onClick={() => { setCountry(c.country); setTab("tours"); }} style={{ cursor: "pointer", background: c.country === country ? A.accentTint : undefined }}>
-                      <td style={{ ...TD, fontWeight: 600 }}>{c.country}</td>
-                      <td style={TD}>{c.has_drive_folder ? <Badge color="green">{t("linked")}</Badge> : <Badge color="gray">{t("none")}</Badge>}</td>
-                      <td style={{ ...TD, fontFamily: mono }}>{c.photos}</td>
-                      <td style={{ ...TD, fontFamily: mono }}>{c.with_file}</td>
-                      <td style={TD}><Bar value={c.tours_covered} total={c.active_tours} color={A.green} /></td>
-                      <td style={{ ...TD, fontFamily: mono }}>{c.with_tour}</td>
-                      <td style={{ ...TD, fontFamily: mono, color: c.unmatched ? A.amber : undefined }}>{c.unmatched}</td>
-                      <td style={{ ...TD, fontFamily: mono, color: c.errors ? A.red : undefined }}>{c.errors}</td>
-                      <td style={{ ...TD, fontFamily: mono }}>{c.destinations_with_cover}/{c.destinations}</td>
-                      <td style={{ ...TD, fontFamily: mono }}>{c.source_bytes ? fmtMB(c.source_bytes) : "—"}</td>
-                      <td style={TD}>{fmtTime(c.last_synced)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </Card>
+            <CountriesTable countries={countries} onPick={(c) => { setCountry(c); setTab("tours"); }} />
           </>
         )}
 
@@ -363,7 +381,7 @@ export default function PhotosPage() {
               <label style={{ fontSize: 13, display: "flex", gap: 6, alignItems: "center" }}>
                 <Checkbox checked={onlyMissing} onChange={e => setOnlyMissing(e.target.checked)} /> {t("onlyMissing")}
               </label>
-              <span style={{ fontSize: 12.5, color: A.muted }}>
+              <span style={{ fontSize: 12.5, color: K.muted }}>
                 {t("toursHavePhotos", tours.filter(x => x.photos).length, tours.length, country ? t("inCountry", country) : "")}
               </span>
             </div>
@@ -379,22 +397,22 @@ export default function PhotosPage() {
                 <option value="unmatched">{t("notMatchedFolders", folders.filter(f => !f.tour_id).length)}</option>
                 <option value="matched">{t("matchedFolders", folders.filter(f => !!f.tour_id).length)}</option>
               </Select>
-              <span style={{ fontSize: 12.5, color: A.muted }}>{t("assignHint")}</span>
+              <span style={{ fontSize: 12.5, color: K.muted }}>{t("assignHint")}</span>
             </div>
             <div style={{ display: "grid", gap: 12 }}>
               {shownFolders.map(f => (
-                <Card key={`${f.country}|${f.folder_path}`} style={{ padding: "14px 16px" }}>
+                <Section bodyStyle={{ padding: "14px 16px" }} key={`${f.country}|${f.folder_path}`}>
                   <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
                     <Thumbs urls={f.sample} />
                     <div style={{ flex: 1, minWidth: 260 }}>
-                      <div style={{ fontWeight: 600, color: A.ink, fontSize: 13.5 }}>{f.folder_path || t("countryRoot")}</div>
-                      <div style={{ fontSize: 12.5, color: A.muted }}>
+                      <div style={{ fontWeight: 600, color: K.ink, fontSize: 13.5 }}>{f.folder_path || t("countryRoot")}</div>
+                      <div style={{ fontSize: 12.5, color: K.muted }}>
                         {t("folderLine", f.country, f.photos, f.errors ? t("folderErrors", f.errors) : "")}
                       </div>
                       <div style={{ fontSize: 12.5, marginTop: 4 }}>
                         {f.tour_id
-                          ? <>{t("tourLabel")} <b>{f.tour_name}</b> {f.manual && <Badge color="blue">{t("manual")}</Badge>}</>
-                          : <Badge color="amber">{t("noTour")}</Badge>}
+                          ? <>{t("tourLabel")} <b>{f.tour_name}</b> {f.manual && <Badge tone="info">{t("manual")}</Badge>}</>
+                          : <Badge tone="warning">{t("noTour")}</Badge>}
                       </div>
                     </div>
                     {assignFolder && assignFolder.folder_path === f.folder_path && assignFolder.country === f.country ? (
@@ -410,9 +428,9 @@ export default function PhotosPage() {
                       <Button size="sm" onClick={() => openAssign(f)}>{f.tour_id ? t("changeTour") : t("assignTour")}</Button>
                     )}
                   </div>
-                </Card>
+                </Section>
               ))}
-              {shownFolders.length === 0 && <div style={{ color: A.muted, fontSize: 13 }}>{t("noFolders")}</div>}
+              {shownFolders.length === 0 && <div style={{ color: K.muted, fontSize: 13 }}>{t("noFolders")}</div>}
             </div>
           </>
         )}
@@ -424,39 +442,39 @@ export default function PhotosPage() {
                 <option value="">{t("allStatuses")}</option>
                 {Object.keys(STATUS_COLOR).map(s => <option key={s} value={s}>{statusLabel(s)}</option>)}
               </Select>
-              <span style={{ fontSize: 12.5, color: A.muted }}>{t("photosCount", total)}</span>
+              <span style={{ fontSize: 12.5, color: K.muted }}>{t("photosCount", total)}</span>
               <div style={{ flex: 1 }} />
               <Button size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE))}>{t("prev")}</Button>
               <Button size="sm" disabled={offset + PAGE >= total} onClick={() => setOffset(offset + PAGE)}>{t("next")}</Button>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 14 }}>
               {photos.map(p => (
-                <Card key={p.id} style={{ padding: 0, overflow: "hidden" }}>
+                <Section padded={false} style={{ overflow: "hidden" }} key={p.id}>
                   {p.url_small
                     // eslint-disable-next-line @next/next/no-img-element -- public redirect URL, sized thumbnails
-                    ? <a href={p.url_large ?? undefined} target="_blank" rel="noreferrer"><img src={p.url_small} alt={p.place_label ?? p.file_name} loading="lazy" style={{ width: "100%", height: 135, objectFit: "cover", display: "block", background: A.line2 }} /></a>
-                    : <div style={{ height: 135, display: "grid", placeItems: "center", background: A.line2, color: A.muted, fontSize: 12 }}>{t("notStored")}</div>}
+                    ? <a href={p.url_large ?? undefined} target="_blank" rel="noreferrer"><img src={p.url_small} alt={p.place_label ?? p.file_name} loading="lazy" style={{ width: "100%", height: 135, objectFit: "cover", display: "block", background: K.line2 }} /></a>
+                    : <div style={{ height: 135, display: "grid", placeItems: "center", background: K.line2, color: K.muted, fontSize: 12 }}>{t("notStored")}</div>}
                   <div style={{ padding: "10px 12px", fontSize: 12.5 }}>
                     <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4 }}>
-                      <Badge color={STATUS_COLOR[p.status] ?? "gray"}>{statusLabel(p.status)}</Badge>
-                      {p.match_source === "manual" && <Badge color="blue">{t("manual")}</Badge>}
-                      {p.width && <span style={{ color: A.muted, fontFamily: mono, fontSize: 11 }}>{p.width}×{p.height}</span>}
+                      <Badge tone={STATUS_COLOR[p.status] ?? "neutral"}>{statusLabel(p.status)}</Badge>
+                      {p.match_source === "manual" && <Badge tone="info">{t("manual")}</Badge>}
+                      {p.width && <span style={{ color: K.muted, fontFamily: mono, fontSize: 11 }}>{p.width}×{p.height}</span>}
                     </div>
-                    <div style={{ fontWeight: 600, color: A.ink }} title={p.file_name}>{p.place_label || p.file_name}</div>
-                    <div style={{ color: A.muted }} title={p.folder_path}>{p.country} · {p.tour_folder ?? t("countryRoot")}</div>
-                    <div style={{ color: A.body, marginTop: 4 }}>{t("tourValue", p.tour_name ?? "—")}</div>
-                    {p.destination_name && <div style={{ color: A.body }}>{t("placeValue", p.destination_name)}</div>}
-                    {p.error && <div style={{ color: A.red, fontFamily: mono, fontSize: 11, marginTop: 4 }}>{p.error}</div>}
+                    <div style={{ fontWeight: 600, color: K.ink }} title={p.file_name}>{p.place_label || p.file_name}</div>
+                    <div style={{ color: K.muted }} title={p.folder_path}>{p.country} · {p.tour_folder ?? t("countryRoot")}</div>
+                    <div style={{ color: K.body, marginTop: 4 }}>{t("tourValue", p.tour_name ?? "—")}</div>
+                    {p.destination_name && <div style={{ color: K.body }}>{t("placeValue", p.destination_name)}</div>}
+                    {p.error && <div style={{ color: K.danger, fontFamily: mono, fontSize: 11, marginTop: 4 }}>{p.error}</div>}
                     {p.status !== "rejected" && (
                       <div style={{ marginTop: 8 }}>
                         <Button size="sm" variant="ghost" disabled={busy === p.id} onClick={() => reject(p)}>{t("reject")}</Button>
                       </div>
                     )}
                   </div>
-                </Card>
+                </Section>
               ))}
             </div>
-            {photos.length === 0 && <div style={{ color: A.muted, fontSize: 13 }}>{t("noPhotos")}</div>}
+            {photos.length === 0 && <div style={{ color: K.muted, fontSize: 13 }}>{t("noPhotos")}</div>}
           </>
         )}
       </PageFrame>

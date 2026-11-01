@@ -16,6 +16,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import {
   K, ApiError, Badge, Button, apiGet, apiSend, useAdminIdentity, useT, useToast, Input, Select, Textarea,
+  ChipButton,
 } from "../../_kit";
 import {
   fmtTime, subjectLabelPath,
@@ -96,13 +97,12 @@ function LabelForm({ target, mine }: { target: LabelTarget; mine: Label | null }
         {LABELS.map((l) => {
           const on = d.label === l;
           return (
-            <button key={l} type="button" role="radio" aria-checked={on} title={labelHint(l)}
-                    data-testid={`cq-label-${l}`} onClick={() => setD((x) => ({ ...x, label: l }))}
-                    style={{ ...fieldStyle, cursor: "pointer", fontWeight: on ? 700 : 400,
-                             borderColor: on ? K.accent : K.line, background: on ? K.accentSoft : K.card }}>
+            <ChipButton key={l} role="radio" selected={on} size="sm" title={labelHint(l)}
+                    testId={`cq-label-${l}`} onClick={() => setD((x) => ({ ...x, label: l }))}
+                    style={{ borderRadius: 6, padding: "6px 8px", whiteSpace: "normal", display: "block", textAlign: "left" }}>
               {labelName(l)}
               <span style={{ display: "block", fontSize: 10.5, fontWeight: 400, color: K.muted }}>{labelHint(l)}</span>
-            </button>
+            </ChipButton>
           );
         })}
       </div>

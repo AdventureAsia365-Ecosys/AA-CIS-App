@@ -39,6 +39,7 @@ import {
   useT,
   useToast, PageFrame,
   Checkbox, Textarea,
+  Pressable,
 } from "../../_kit";
 import { can } from "@/lib/rbac";
 import { BOOKING_ADMIN_URL } from "@/lib/apps";
@@ -425,8 +426,8 @@ function History({ versions, publishedId, media }: { versions: Version[]; publis
     <div data-testid="supply-history" style={{ ...card, padding: 0 }}>
       {versions.map((v, i) => (
         <div key={v.id} style={{ borderTop: i ? `1px solid ${K.line}` : "none", padding: "8px 14px" }}>
-          <button type="button" onClick={() => setOpen(open === v.id ? null : v.id)} aria-expanded={open === v.id}
-                  style={{ all: "unset", cursor: "pointer", display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", fontSize: 12.5, color: K.ink, width: "100%" }}>
+          <Pressable onClick={() => setOpen(open === v.id ? null : v.id)} aria-expanded={open === v.id}
+                  style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", fontSize: 12.5, color: K.ink }}>
             <b>v{v.content_version}</b>
             <Badge tone={VERSION_TONE[v.status]} dot={false}>{t("versionStatus", v.status)}</Badge>
             {v.id === publishedId && <Badge tone="success" dot={false}>{t("publishedBadge")}</Badge>}
@@ -434,7 +435,7 @@ function History({ versions, publishedId, media }: { versions: Version[]; publis
               {t("historyLine", v.origin === "llm" ? t("model") : v.created_by ?? t("staff"), v.supply_version, formatDateTime(v.created_at))}
               {v.reviewed_by ? t("reviewedByShort", v.reviewed_by) : ""}
             </span>
-          </button>
+          </Pressable>
           {open === v.id && (
             <div style={{ marginTop: 8 }}><VersionBody v={v} media={media} /></div>
           )}

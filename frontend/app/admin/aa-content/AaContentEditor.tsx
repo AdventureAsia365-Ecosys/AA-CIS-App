@@ -37,6 +37,7 @@ import {
   useT,
   useToast,
   Input, Textarea,
+  ChipButton, Pressable,
 } from "../../_kit";
 import { can } from "@/lib/rbac";
 import {
@@ -331,17 +332,12 @@ function LocalePanel({ item, canWrite, canAdmin, onChanged, onReload, onDirty }:
           {countryOptions(form.country_codes, tx.lang).map((c) => {
             const on = form.country_codes.includes(c.code);
             return (
-              <button key={c.code} type="button" aria-pressed={on} disabled={!editable}
+              <ChipButton key={c.code} size="sm" selected={on} disabled={!editable}
                 onClick={() => edit({
                   country_codes: on ? form.country_codes.filter((x) => x !== c.code) : [...form.country_codes, c.code],
-                })}
-                style={{
-                  fontSize: 12, padding: "3px 9px", borderRadius: RADIUS.pill, fontFamily: sans,
-                  border: `1px solid ${on ? K.accentBorder : K.line}`, background: on ? K.accentTint : "transparent",
-                  color: on ? K.accentDeep : K.muted, cursor: editable ? "pointer" : "default",
-                }}>
+                })}>
                 {c.name}
-              </button>
+              </ChipButton>
             );
           })}
         </div>
@@ -435,17 +431,16 @@ function History({ versions }: { versions: AaVersion[] }) {
         const isOpen = open === v.version;
         return (
           <div key={v.version} style={{ border: `1px solid ${K.line}`, borderRadius: RADIUS.md, minWidth: 0 }}>
-            <button type="button" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : v.version)}
+            <Pressable aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : v.version)}
               style={{
-                display: "flex", width: "100%", gap: 8, alignItems: "center", padding: "6px 8px", border: "none",
-                background: "transparent", cursor: "pointer", fontFamily: sans, fontSize: 12.5, color: K.ink,
+                display: "flex", gap: 8, alignItems: "center", padding: "6px 8px", fontSize: 12.5, color: K.ink,
                 textAlign: "left", flexWrap: "wrap",
               }}>
               {isOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
               <strong>v{v.version}</strong>
               <span style={{ color: K.muted }}>{formatDateTime(v.published_at)}</span>
               <span style={{ color: K.muted, overflowWrap: "anywhere" }}>{v.published_by}</span>
-            </button>
+            </Pressable>
             {isOpen && (
               <div style={{ padding: "0 10px 10px", display: "flex", flexDirection: "column", gap: 6 }}>
                 <div style={{ fontWeight: 600, color: K.ink, fontSize: 13 }}>{v.title}</div>

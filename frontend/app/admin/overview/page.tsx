@@ -30,7 +30,8 @@ import { CostByAppCard } from "./_components/CostByAppCard";
 import { TripPlannerCard } from "./_components/TripPlannerCard";
 import type { OpsOverview } from "./_components/opsTypes";
 import { SourceHint } from "./_components/SourceHint";
-import { useSources, type Sources } from "./_components/sources";
+import { useSources } from "./_components/sources";
+import { hintColumn } from "./_components/opsUi";
 import { OVERVIEW } from "./messages";
 import {
   sans,
@@ -40,13 +41,13 @@ import {
   K,
   LoadingScreen,
   PageHeader,
-  ScrollX,
   SkeletonStyle,
   Spinner,
   StatusBadge,
   type Tone, PageFrame,
   useFormat,
   useT,
+  Button, DataTable,
 } from "../../_kit";
 
 // ── types ───────────────────────────────────────────────────────────────────
@@ -239,22 +240,7 @@ function Stat({
   );
 }
 
-const TH: React.CSSProperties = {
-  textAlign: "left",
-  fontSize: 10,
-  fontWeight: 700,
-  letterSpacing: "0.05em",
-  textTransform: "uppercase",
-  color: K.muted2,
-  padding: "6px 10px",
-  borderBottom: `1px solid ${K.line}`,
-};
-const TD: React.CSSProperties = {
-  fontSize: 13,
-  color: K.body,
-  padding: "7px 10px",
-  borderBottom: `1px solid ${K.line2}`,
-};
+type QuotaOutlier = Overview["tenants"]["quota_outliers"][number];
 
 function delta(n: number) {
   if (!n) return null;
@@ -268,14 +254,6 @@ function delta(n: number) {
 const JOB_FAIL = new Set(["failed", "stopped_budget"]);
 
 // Number columns of the per-country pipeline table, with where each comes from (message key, source key).
-type PipelineWord = "raw" | "generated" | "inReview" | "published" | "atomized";
-const PIPELINE_COLS: { label: PipelineWord; source: keyof Sources["PIPELINE_SRC"] }[] = [
-  { label: "raw", source: "raw" },
-  { label: "generated", source: "generated" },
-  { label: "inReview", source: "review" },
-  { label: "published", source: "published" },
-  { label: "atomized", source: "atomized" },
-];
 
 // AA-804 UI part 3: the "Paid sources" tile sums every provider the overview reports (spend_budget providers and the
 // DataForSEO / geocoder ledgers) and counts the providers at or past their daily cap's alert level; the per-provider
@@ -332,25 +310,15 @@ export default function OverviewPage() {
             title={t("title")}
             description={t("description")}
             actions={
-              <button
+              <Button
+                variant="ghost"
                 onClick={() => {
                   refetch();
                   ops.refetch();
                 }}
-                style={{
-                  padding: "7px 14px",
-                  borderRadius: 999,
-                  border: `1px solid ${K.line}`,
-                  background: K.card,
-                  color: K.ink3,
-                  fontSize: 12,
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  fontFamily: sans,
-                }}
               >
                 {isFetching || ops.isFetching ? t("refreshing") : t("refresh")}
-              </button>
+              </Button>
             }
           />
 
@@ -402,50 +370,32 @@ export default function OverviewPage() {
                 href="/admin/master-content"
                 source={PIPELINE_SRC.card}
               >
-                <ScrollX testId="overview-pipeline-table">
-                  <table style={{ width: "100%", minWidth: 560, borderCollapse: "collapse" }}>
-                    <thead>
-                      <tr>
-                        <th style={TH}>{t("country")}</th>
-                        {PIPELINE_COLS.map((c) => (
-                          <th key={c.label} data-num-col="" style={{ ...TH, textAlign: "right", whiteSpace: "nowrap" }}>
-                            {t(c.label)}
-                            <SourceHint source={PIPELINE_SRC[c.source]} size={11} />
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.pipeline_funnel.map((r) => (
-                        <tr key={r.country}>
-                          <td style={{ ...TD, fontWeight: 600, color: K.ink }}>
-                            {r.country || t("unknown")}
-                          </td>
-                          <td style={{ ...TD, textAlign: "right" }}>
-                            {r.raw_active}
-                            {delta(r.raw_7d)}
-                          </td>
-                          <td style={{ ...TD, textAlign: "right" }}>
-                            {r.generated}
-                            {delta(r.generated_7d)}
-                          </td>
-                          <td style={{ ...TD, textAlign: "right" }}>
-                            {r.in_review > 0 ? (
-                              <span style={{ color: K.amber, fontWeight: 600 }}>{r.in_review}</span>
-                            ) : (
-                              <span style={{ color: K.muted2 }}>0</span>
-                            )}
-                          </td>
-                          <td style={{ ...TD, textAlign: "right", fontWeight: 600 }}>
-                            {r.published}
-                            {delta(r.published_7d)}
-                          </td>
-                          <td style={{ ...TD, textAlign: "right" }}>{r.atomized}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </ScrollX>
+                <div data-testid="overview-pipeline-table">
+                  <DataTable<FunnelRow>
+                    tableId="overview-pipeline"
+                    data={data.pipeline_funnel}
+                    getRowId={(r) => r.country || "unknown"}
+                    searchable={false}
+                    paginate={false}
+                    compact
+                    tableMinWidth={560}
+                    columns={[
+                      { id: t("country"), header: t("country"), enableSorting: false,
+                        cell: ({ row }) => <span style={{ fontWeight: 600, color: K.ink }}>{row.original.country || t("unknown")}</span> },
+                      { ...hintColumn(t("raw"), PIPELINE_SRC.raw),
+                        cell: ({ row }) => <>{row.original.raw_active}{delta(row.original.raw_7d)}</> },
+                      { ...hintColumn(t("generated"), PIPELINE_SRC.generated),
+                        cell: ({ row }) => <>{row.original.generated}{delta(row.original.generated_7d)}</> },
+                      { ...hintColumn(t("inReview"), PIPELINE_SRC.review),
+                        cell: ({ row }) => row.original.in_review > 0
+                          ? <span style={{ color: K.amber, fontWeight: 600 }}>{row.original.in_review}</span>
+                          : <span style={{ color: K.muted2 }}>0</span> },
+                      { ...hintColumn(t("published"), PIPELINE_SRC.published),
+                        cell: ({ row }) => <span style={{ fontWeight: 600 }}>{row.original.published}{delta(row.original.published_7d)}</span> },
+                      { ...hintColumn(t("atomized"), PIPELINE_SRC.atomized), cell: ({ row }) => row.original.atomized },
+                    ]}
+                  />
+                </div>
               </Section>
 
               {/* ── Section 2: Intelligence ── */}
@@ -501,38 +451,23 @@ export default function OverviewPage() {
                   <Stat label={t("published7d")} value={data.tenants.published_pieces_7d} source={TENANT_SRC.published} />
                 </div>
                 {data.tenants.quota_outliers.length > 0 && (
-                  <ScrollX>
-                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                    <thead>
-                      <tr>
-                        <th style={TH}>{t("quotaOutlier")}</th>
-                        <th style={TH}>{t("plan")}</th>
-                        <th data-num-col="" style={{ ...TH, textAlign: "right" }}>
-                          {t("toursPct")}
-                          <SourceHint source={TENANT_SRC.quotaTours} size={11} />
-                        </th>
-                        <th data-num-col="" style={{ ...TH, textAlign: "right" }}>
-                          {t("apiPct")}
-                          <SourceHint source={TENANT_SRC.quotaCalls} size={11} />
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.tenants.quota_outliers.map((q) => (
-                        <tr key={q.tenant_name}>
-                          <td style={{ ...TD, fontWeight: 600, color: K.ink }}>{q.tenant_name}</td>
-                          <td style={TD}>{q.plan_tier}</td>
-                          <td style={{ ...TD, textAlign: "right", color: q.quota_tours_pct >= 100 ? K.danger : K.amber }}>
-                            {q.quota_tours_pct}%
-                          </td>
-                          <td style={{ ...TD, textAlign: "right", color: q.quota_calls_pct >= 100 ? K.danger : K.amber }}>
-                            {q.quota_calls_pct}%
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  </ScrollX>
+                  <DataTable<QuotaOutlier>
+                    tableId="overview-quota-outliers"
+                    data={data.tenants.quota_outliers}
+                    getRowId={(q) => q.tenant_name}
+                    searchable={false}
+                    paginate={false}
+                    compact
+                    columns={[
+                      { id: t("quotaOutlier"), header: t("quotaOutlier"), enableSorting: false,
+                        cell: ({ row }) => <span style={{ fontWeight: 600, color: K.ink }}>{row.original.tenant_name}</span> },
+                      { id: t("plan"), header: t("plan"), enableSorting: false, cell: ({ row }) => row.original.plan_tier },
+                      { ...hintColumn(t("toursPct"), TENANT_SRC.quotaTours),
+                        cell: ({ row }) => <span style={{ color: row.original.quota_tours_pct >= 100 ? K.danger : K.amber }}>{row.original.quota_tours_pct}%</span> },
+                      { ...hintColumn(t("apiPct"), TENANT_SRC.quotaCalls),
+                        cell: ({ row }) => <span style={{ color: row.original.quota_calls_pct >= 100 ? K.danger : K.amber }}>{row.original.quota_calls_pct}%</span> },
+                    ]}
+                  />
                 )}
               </Section>
 

@@ -39,6 +39,7 @@ import {
   PageFrame,
   type Tone,
   Input, Select,
+  IconButton, LinkButton, Pressable,
 } from "../../_kit";
 import {
   changeOf,
@@ -226,8 +227,7 @@ function TableRow({
   const t = ref_.table;
   const pii = piiColumns(t).length;
   return (
-    <button
-      type="button"
+    <Pressable
       onClick={onSelect}
       aria-pressed={selected}
       style={{
@@ -263,7 +263,7 @@ function TableRow({
           <span style={{ fontFamily: mono, overflowWrap: "anywhere" }}>{tr("match", hits.slice(0, 3).join(", "))}</span>
         )}
       </span>
-    </button>
+    </Pressable>
   );
 }
 
@@ -285,8 +285,7 @@ function EdgeChip({
   // Always child columns → parent columns, whichever side this table is on.
   const cols = `${colList(edge.from_columns)} → ${colList(edge.to_columns)}`;
   return (
-    <button
-      type="button"
+    <Pressable
       onClick={() => known && onOpen(target)}
       disabled={!known}
       title={edge.name}
@@ -315,7 +314,7 @@ function EdgeChip({
         {!edge.validated && <SmallBadge tone="warning">{t("notValid")}</SmallBadge>}
       </span>
       <span style={{ fontFamily: mono, fontSize: 11, color: K.muted, overflowWrap: "anywhere" }}>{cols}</span>
-    </button>
+    </Pressable>
   );
 }
 
@@ -665,14 +664,9 @@ export default function DataModelPage() {
                 }}
               />
               {query && (
-                <button
-                  type="button"
-                  onClick={() => setQuery("")}
-                  aria-label={t("clearSearch")}
-                  style={{ display: "inline-flex", background: "none", border: "none", padding: 0, cursor: "pointer", color: K.muted }}
-                >
+                <IconButton variant="plain" size="xs" onClick={() => setQuery("")} label={t("clearSearch")}>
                   <X size={14} />
-                </button>
+                </IconButton>
               )}
             </label>
             <Select
@@ -733,13 +727,9 @@ export default function DataModelPage() {
               >
                 <span>{t("shownOf", shown.length, tableCount)}</span>
                 {neighboursOnly && selected && (
-                  <button
-                    type="button"
-                    onClick={() => setNeighboursOnly(false)}
-                    style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", color: K.accentDeep, fontSize: 12, fontFamily: sans }}
-                  >
+                  <LinkButton size="sm" weight="regular" onClick={() => setNeighboursOnly(false)} style={{ gap: 4 }}>
                     <ArrowLeft size={12} /> {t("allTables")}
-                  </button>
+                  </LinkButton>
                 )}
               </div>
               <div style={{ maxHeight: isPhone ? "none" : "calc(100vh - 300px)", overflowY: "auto" }}>

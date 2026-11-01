@@ -24,7 +24,7 @@ import type { SortingState } from "@tanstack/react-table";
 import { SeedLine } from "../_components/SeedLine";
 import { TenantSelect } from "../_components/TenantSelect";
 import type { TenantRef } from "@/lib/tenants";
-import SocialContentSubNav from "../_components/SocialContentSubNav";
+import SocialContentSubNav, { SocialContentSplit } from "../_components/SocialContentSubNav";
 import {
   K, mono,
   Button,
@@ -496,9 +496,9 @@ function Page() {
   return (
     <PageFrame>
       <PageHeader title={t("title")} description={t("description")} />
-      <div className="a527-dash-body" style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
+      <SocialContentSplit gap={16}>
         <SocialContentSubNav active="content_quality" />
-        {/* width/maxWidth 100%: in the phone column layout (.a527-dash-body) a flex-start child would
+        {/* width/maxWidth 100%: in the phone column layout (SocialContentSplit < 980px) a flex-start child would
             shrink-wrap to its widest row and overflow the page (UI smoke, 390px). */}
         <div data-testid="content-quality-ready" style={{ flex: 1, minWidth: 0, width: "100%", maxWidth: "100%", display: "flex", flexDirection: "column", gap: 12 }}>
           <Tabs tabs={tabs} active={view.tab} onChange={(k) => update({ ...EMPTY, tab: k as TabKey })} />
@@ -507,7 +507,7 @@ function Page() {
           {view.tab === "stats" && <StatsTab gates={stats.data?.gates ?? []} tenants={tenants} loading={stats.isLoading} />}
           {view.tab === "cards" && <PlaceCardsTab view={view} update={update} />}
         </div>
-      </div>
+      </SocialContentSplit>
       {view.piece && <PieceDrawer pieceId={view.piece} onClose={() => update({ piece: null })} />}
       {view.version && <TourVersionDrawer id={view.version} onClose={() => update({ version: null })} />}
     </PageFrame>

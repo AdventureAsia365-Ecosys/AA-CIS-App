@@ -14,6 +14,7 @@ import { AlertTriangle, CheckCircle2, Route, Waves } from "lucide-react";
 import {
   Button, DataTable, useFormat, useT, Badge, Eyebrow, K, KpiTile, LoadingScreen, Section, mono, type Tone,
   Select, Textarea,
+  LinkButton,
 } from "../../_kit";
 import { PL } from "./messages";
 
@@ -38,7 +39,6 @@ const STATUS_COLOR: Record<string, Tone> = {
   ok: "success", manual: "info", approximate: "warning", pending: "neutral", missing: "danger", not_found: "danger", failed: "danger",
 };
 const selectStyle = { padding: "6px 8px", borderRadius: 8, border: `1px solid ${K.line}`, fontSize: 13 };
-const linkBtn = { border: 0, background: "none", color: K.accentDeep, cursor: "pointer", padding: 0, fontSize: 12 };
 
 export default function LinesTab({ countries, onError }: { countries: string[]; onError: (m: string) => void }) {
   const t = useT(PL);
@@ -125,12 +125,12 @@ export default function LinesTab({ countries, onError }: { countries: string[]; 
         const it = row.original;
         return <span style={{ display: "flex", gap: 10 }}>
           {it.status !== "manual" && it.status !== "ok" && (
-            <button disabled={busy} style={linkBtn}
+            <LinkButton size="sm" weight="regular" disabled={busy}
                     onClick={() => runBackfill({ destination_ids: [it.destination_id], dry_run: true,
-                                                 statuses: STATUSES.filter(s => s !== "manual") })}>{t("fetch")}</button>
+                                                 statuses: STATUSES.filter(s => s !== "manual") })}>{t("fetch")}</LinkButton>
           )}
-          <button disabled={busy} style={linkBtn} onClick={() => setManual({ item: it, text: "" })}>{t("setGeoJson")}</button>
-          {it.status === "manual" && <button disabled={busy} style={linkBtn} onClick={() => clearManual(it)}>{t("clearManual")}</button>}
+          <LinkButton size="sm" weight="regular" disabled={busy} onClick={() => setManual({ item: it, text: "" })}>{t("setGeoJson")}</LinkButton>
+          {it.status === "manual" && <LinkButton size="sm" weight="regular" disabled={busy} onClick={() => clearManual(it)}>{t("clearManual")}</LinkButton>}
         </span>;
       } },
   // eslint-disable-next-line react-hooks/exhaustive-deps -- the handlers only read state setters and load

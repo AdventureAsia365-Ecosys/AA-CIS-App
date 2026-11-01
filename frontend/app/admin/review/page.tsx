@@ -29,6 +29,7 @@ import {
   useLang,
   useT,
   Select,
+  IconButton,
 } from "../../_kit";
 import { M } from "./messages";
 import { can } from "@/lib/rbac";
@@ -371,24 +372,15 @@ function ReviewQueueInner() {
                 </Button>
               )}
               <div style={{ display: "flex", gap: 6, alignItems: "center", whiteSpace: "nowrap", flexWrap: "nowrap" }}>
-                <button
+                <IconButton
+                  size="sm"
                   onClick={() => setReasonAction({ action: "dismiss", item })}
                   disabled={busy}
                   title={t("dismissTitle")}
-                  aria-label={t("dismiss")}
-                  style={{
-                    padding: 7,
-                    border: `1px solid ${K.line}`,
-                    borderRadius: 8,
-                    background: "none",
-                    cursor: busy ? "not-allowed" : "pointer",
-                    color: K.muted,
-                    display: "flex",
-                    opacity: busy ? 0.5 : 1,
-                  }}
+                  label={t("dismiss")}
                 >
                   <Ban size={13} />
-                </button>
+                </IconButton>
                 <Button variant="danger" size="sm" disabled={busy} onClick={() => setReasonAction({ action: "reject", item })}>
                   {t("reject")}
                 </Button>
@@ -468,24 +460,10 @@ function ReviewQueueInner() {
           <span>
             {t("showingFor")}<strong>{tourFilterName || t("oneSelectedTour")}</strong>{t("only")}
           </span>
-          <button
-            onClick={() => { setTourFilter(null); setPageIndex(0); }}
-            style={{
-              marginLeft: "auto",
-              border: `1px solid ${K.line}`,
-              borderRadius: 6,
-              background: K.card,
-              cursor: "pointer",
-              padding: "4px 10px",
-              fontSize: 12,
-              color: K.body,
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 5,
-            }}
-          >
+          <Button size="sm" variant="ghost" onClick={() => { setTourFilter(null); setPageIndex(0); }}
+            style={{ marginLeft: "auto" }}>
             <X size={12} /> {t("clearFilter")}
-          </button>
+          </Button>
         </div>
       )}
 
@@ -567,7 +545,7 @@ function ReviewQueueInner() {
               <option value="ok">{t("ok", PASS_LINE.toFixed(1))}</option>
             </Select>
             <Button variant="ghost" size="sm" onClick={() => refetch()}>
-              <RotateCcw size={12} className={isFetching ? "spin" : undefined} /> {t("refresh")}
+              <RotateCcw size={12} style={{ animation: isFetching ? "spin .8s linear infinite" : undefined }} /> {t("refresh")}
             </Button>
           </div>
         }

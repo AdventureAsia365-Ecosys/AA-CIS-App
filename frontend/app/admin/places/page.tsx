@@ -21,6 +21,7 @@ import {
   Button, Tabs, PageFrame, DataTable, PageHeader, useFormat, useT, Badge, Eyebrow, K, KpiTile, LoadingScreen,
   Section, mono,
   Select,
+  LinkButton,
 } from "../../_kit";
 import { PL } from "./messages";
 import LinesTab from "./LinesTab";
@@ -53,7 +54,6 @@ type FixResult = {
 };
 
 const PAGE_SIZE = 50;
-const linkBtn = { border: 0, background: "none", color: K.accentDeep, cursor: "pointer", padding: 0, fontSize: 12 };
 // Tab labels and check names are message keys (messages.ts).
 const TABS = [{ key: "coverage", label: "tabCoverage" }, { key: "validity", label: "tabValidity" },
               { key: "lines", label: "tabLines" },
@@ -174,9 +174,9 @@ export default function PlacesPage() {
         const it = row.original;
         return <span style={{ fontSize: 12, color: K.body }}>{it.detail ?? ""}
           {FIX_OF[it.reason] && (
-            <div><button disabled={!!busy} style={linkBtn}
+            <div><LinkButton size="sm" weight="regular" disabled={!!busy}
                          onClick={() => runFix({ check: FIX_OF[it.reason], source_id: it.source_id, country: it.country, dry_run: true })}>
-              {t("previewFixTour")}</button></div>
+              {t("previewFixTour")}</LinkButton></div>
           )}</span>;
       } },
   // eslint-disable-next-line react-hooks/exhaustive-deps -- runFix only reads state setters and the loaders
@@ -200,7 +200,7 @@ export default function PlacesPage() {
       {error && (
         <Section style={{ marginBottom: 16, borderColor: K.dangerBorder, background: K.dangerTint }}>
           <span style={{ color: K.danger, fontSize: 13 }}>{error}</span>{" "}
-          <button onClick={() => setError(null)} style={{ border: 0, background: "none", cursor: "pointer", color: K.muted }}>{t("dismiss")}</button>
+          <LinkButton tone="muted" weight="regular" onClick={() => setError(null)}>{t("dismiss")}</LinkButton>
         </Section>
       )}
 

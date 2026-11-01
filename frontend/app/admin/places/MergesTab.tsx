@@ -15,6 +15,7 @@ import { GitMerge, Play, Undo2 } from "lucide-react";
 import {
   Button, DataTable, useFormat, useT, Badge, Eyebrow, K, KpiTile, LoadingScreen, Section, mono, type Tone,
   Select,
+  LinkButton,
 } from "../../_kit";
 import { PL } from "./messages";
 
@@ -49,7 +50,6 @@ type Merge = {
 type MergePage = { total: number; page: number; page_size: number; items: Merge[] };
 
 const selectStyle = { padding: "6px 8px", borderRadius: 8, border: `1px solid ${K.line}`, fontSize: 13 };
-const linkBtn = { border: 0, background: "none", color: K.accentDeep, cursor: "pointer", padding: 0, fontSize: 12 };
 const STATUS_COLOR: Record<string, Tone> = {
   applied: "success", dry_run: "info", held_volume: "danger", rule_version_changed: "warning",
 };
@@ -135,7 +135,7 @@ export default function MergesTab({ onError }: { onError: (msg: string) => void 
         const m = row.original;
         if (m.undone_at) return <span style={{ fontSize: 12, color: K.muted }}>{t("undone", formatDateTime(m.undone_at), m.undo_reason ?? "")}</span>;
         if (m.decided_by === "admin") return <span style={{ fontSize: 12, color: K.muted }}>{t("undoInValidity")}</span>;
-        return <button disabled={!!busy} style={linkBtn} onClick={() => runUndo(m, true)}><Undo2 size={12} /> {t("undoLink")}</button>;
+        return <LinkButton size="sm" weight="regular" disabled={!!busy} onClick={() => runUndo(m, true)}><Undo2 size={12} /> {t("undoLink")}</LinkButton>;
       } },
   // eslint-disable-next-line react-hooks/exhaustive-deps -- runUndo only reads state setters and the loaders
   ], [busy, t, formatDateTime]);
