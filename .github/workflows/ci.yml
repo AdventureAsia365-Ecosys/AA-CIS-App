@@ -120,14 +120,23 @@ jobs:
         run: bash .github/scripts/pip_audit_gate.sh requirements.txt
 
 
-  test-unit:
-    name: Unit Tests
+  # AA-1032 (faster CI): the unit suite runs as UNIT_SHARDS parallel jobs ("Unit shard i/N"), each on 4 pytest-xdist
+  # workers; the required check keeps its name: "Unit Tests" below combines the shards' coverage, then runs the same
+  # ratchet and Q0 steps as before. The split is by test file, balanced on .github/test-durations/unit.json
+  # (.github/scripts/ci_shards.py; every file lands in exactly one shard, a new file weighs the median). Before
+  # (10 main runs, 01/11/2026): one job, ~4.5-5 min, of which ~45 s was every worker importing all 667 files.
+  test-unit-shard:
+    name: Unit shard ${{ matrix.shard }}/3
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    env:
+      UNIT_SHARDS: 3
+      SHARD: ${{ matrix.shard }}
     steps:
       - uses: actions/checkout@v5
-        with:
-          # AA-925: the Q0 red-on-base step needs the PR merge commit's first parent (the base tip).
-          fetch-depth: 2
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -145,11 +154,13 @@ jobs:
         run: |
           uv pip install --system -r requirements.txt -r requirements-dev.txt
 
-      - name: Run unit tests
+      - name: Run unit tests (this shard)
         env:
           # AA-993 (CIS-1): Python 3.12 sys.monitoring tracer, about 2x faster than the C tracer with the same
           # covered lines. Needs the coverage pin in requirements-dev.txt.
           COVERAGE_CORE: sysmon
+          # The shard's coverage data; "Unit Tests" combines the shards' files (coverage combine) into the one report.
+          COVERAGE_FILE: coverage-shards/.coverage.unit-${{ matrix.shard }}
           ENVIRONMENT: test
           AWS_REGION: us-west-1
           AWS_DEFAULT_REGION: us-west-1
@@ -161,18 +172,95 @@ jobs:
           LANGFUSE_SECRET_KEY: test
           LANGFUSE_PUBLIC_KEY: test
           LANGFUSE_HOST: http://localhost:3000
-        # AA-993 (CIS-2): one invocation on 4 pytest-xdist workers (pinned in requirements-dev.txt). `--dist loadfile`
-        # keeps each test file on one worker (module fixtures and module state stay per file); -n 4, not auto. The
-        # coverage targets and reports are unchanged; tests/acp is now measured too (it was a separate run without
-        # --cov), so the ratchet total can only go up.
+        # AA-993 (CIS-2): 4 pytest-xdist workers (pinned in requirements-dev.txt), `--dist loadfile` keeps each test file
+        # on one worker (module fixtures and module state stay per file). Same coverage targets as before; the terminal
+        # and XML reports are written once, from the combined data, in "Unit Tests".
         run: |
-          pytest tests/unit/ tests/acp/ -v \
+          set -euo pipefail
+          mapfile -t FILES < <(python3 .github/scripts/ci_shards.py files --shards "$UNIT_SHARDS" --index "$SHARD" \
+            --workers 4 --file-overhead 0.07 --durations .github/test-durations/unit.json tests/unit tests/acp)
+          echo "Unit shard $SHARD/$UNIT_SHARDS: ${#FILES[@]} test files"
+          mkdir -p coverage-shards
+          pytest "${FILES[@]}" -v \
             -n 4 --dist loadfile \
             --tb=short \
             --cov=services \
             --cov=shared \
-            --cov-report=term-missing \
-            --cov-report=xml:coverage.xml
+            --cov-report= \
+            --junitxml="junit-unit-$SHARD.xml" -o junit_family=xunit1
+
+      - name: Upload the shard's coverage data and junit report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-shard-${{ matrix.shard }}
+          path: |
+            coverage-shards/
+            junit-unit-${{ matrix.shard }}.xml
+          include-hidden-files: true    # the coverage data file is .coverage.unit-N
+          if-no-files-found: error
+          retention-days: 5
+
+  test-unit:
+    name: Unit Tests
+    needs: test-unit-shard
+    # Runs when a shard failed too, so the required check turns red instead of "skipped" (a skipped required check
+    # counts as passed).
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    env:
+      UNIT_SHARDS: 3
+    steps:
+      - name: Every unit shard passed
+        env:
+          RESULT: ${{ needs.test-unit-shard.result }}
+        run: |
+          if [ "$RESULT" != "success" ]; then
+            echo "::error::a unit shard did not pass (result: $RESULT); see the 'Unit shard i/N' jobs"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v5
+        with:
+          # AA-925: the Q0 red-on-base step needs the PR merge commit's first parent (the base tip).
+          fetch-depth: 2
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        # Q0 red on base runs pytest on the base tip; coverage comes from the pinned requirements-dev.txt.
+        run: |
+          uv pip install --system -r requirements.txt -r requirements-dev.txt
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: unit-shard-*
+          merge-multiple: true
+          path: shards
+
+      # The shards ran on the same checkout path, so their data files combine as one run's would (same TOTAL; checked
+      # on a two-shard split against a single run, AA-1032 notes). [tool.coverage.run] omit in pyproject.toml applies.
+      - name: Combine coverage of the shards
+        run: |
+          set -euo pipefail
+          FOUND=$(find shards/coverage-shards -name '.coverage.unit-*' | wc -l)
+          if [ "$FOUND" -ne "$UNIT_SHARDS" ]; then
+            echo "::error::expected $UNIT_SHARDS shard coverage files, found $FOUND"
+            exit 1
+          fi
+          coverage combine --keep shards/coverage-shards
+          # -i as pytest-cov reports (ignore_errors): a unit test builds a throwaway "services" package under /tmp
+          # (test_collection_error_on_base); --cov=services measures it and its source is gone by now.
+          coverage report -i --show-missing
+          coverage xml -i -o coverage.xml
 
       # AA-879: coverage ratchet (replaces --cov-fail-under=30; the real total was ~86%). Fails below the
       # floor in .github/coverage-ratchet.json, or when a PR lowers that floor against the base tip (HEAD^1
@@ -200,9 +288,41 @@ jobs:
           PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: python .github/scripts/q0_red_on_base.py --base "$(git rev-parse HEAD^1)"
 
-  test-integration:
-    name: Integration Tests
+      # Report only: each shard's real seconds, and the per-file durations of this run as an artifact to refresh
+      # .github/test-durations/unit.json when the shards drift apart.
+      - name: Shard balance (report)
+        if: ${{ !cancelled() }}
+        run: |
+          python3 .github/scripts/ci_shards.py durations --out unit-durations.json shards/junit-unit-*.xml \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: test-durations-unit
+          path: unit-durations.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # AA-1032 (faster CI): the integration suite runs as INTEGRATION_SHARDS parallel jobs ("Integration shard i/N"), each
+  # with its OWN Postgres and Redis service, so each shard's conftest replays every migration on an empty database
+  # (the session fixture) exactly as the single job did. Each shard is one CONSECUTIVE range of the path-ordered files
+  # (--contiguous, balanced on .github/test-durations/integration.json): the modules are not independent (e.g.
+  # test_aa712_migration_226 drops schema catalog and test_aa712_migration_228, next in order, re-creates it for every
+  # later module), so a file keeps the predecessors it had in the single job; a longest-first split by file broke 9
+  # modules that way (AA-1032 notes). A shard red on main at its FIRST files means a module leans on an earlier one's
+  # leftovers: fix that module's setup. The required check keeps its name: "Integration Tests" below passes only when
+  # every shard passed. Before (10 main runs, 01/11/2026): one job, ~4-4.5 min.
+  test-integration-shard:
+    name: Integration shard ${{ matrix.shard }}/4
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    env:
+      INTEGRATION_SHARDS: 4
+      SHARD: ${{ matrix.shard }}
     services:
       postgres:
         image: postgres:15
@@ -258,7 +378,7 @@ jobs:
           PGPASSWORD=cistest psql -h localhost -U cistest -d cis_integration_test \
             -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_user') THEN CREATE ROLE app_user LOGIN PASSWORD 'appuser123'; END IF; END \$\$;" || true
 
-      - name: Run integration tests
+      - name: Run integration tests (this shard)
         env:
           ENVIRONMENT: test
           DATABASE_URL: postgresql://cistest:cistest@localhost:5432/cis_integration_test
@@ -272,10 +392,64 @@ jobs:
           LANGFUSE_SECRET_KEY: test
           LANGFUSE_PUBLIC_KEY: test
           LANGFUSE_HOST: http://localhost:3000
+        # test_007_rls_isolation.py stays out, as before (--ignore then, --exclude now).
         run: |
-          pytest tests/integration/ \
-            --ignore=tests/integration/test_007_rls_isolation.py \
-            -v --tb=short -p no:cacheprovider
+          set -euo pipefail
+          mapfile -t FILES < <(python3 .github/scripts/ci_shards.py files --contiguous --shards "$INTEGRATION_SHARDS" \
+            --index "$SHARD" --durations .github/test-durations/integration.json \
+            --exclude tests/integration/test_007_rls_isolation.py tests/integration)
+          echo "Integration shard $SHARD/$INTEGRATION_SHARDS: ${#FILES[@]} test files"
+          pytest "${FILES[@]}" -v --tb=short -p no:cacheprovider \
+            --junitxml="junit-integration-$SHARD.xml" -o junit_family=xunit1
+
+      - name: Upload the shard's junit report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-shard-${{ matrix.shard }}
+          path: junit-integration-${{ matrix.shard }}.xml
+          if-no-files-found: ignore
+          retention-days: 5
+
+  test-integration:
+    name: Integration Tests
+    needs: test-integration-shard
+    # Runs when a shard failed too, so the required check turns red instead of "skipped" (a skipped required check
+    # counts as passed).
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every integration shard passed
+        env:
+          RESULT: ${{ needs.test-integration-shard.result }}
+        run: |
+          if [ "$RESULT" != "success" ]; then
+            echo "::error::an integration shard did not pass (result: $RESULT); see the 'Integration shard i/N' jobs"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: integration-shard-*
+          merge-multiple: true
+          path: shards
+
+      # Report only, as for the unit shards: real seconds per shard and the per-file durations of this run.
+      # tests/integration/pytest.ini makes that folder pytest's rootdir, so the junit paths lack it: --prefix puts it
+      # back, or the refreshed file would match no discovered file and the split would fall back to file counts.
+      - name: Shard balance (report)
+        run: |
+          python3 .github/scripts/ci_shards.py durations --prefix tests/integration/ \
+            --out integration-durations.json shards/junit-integration-*.xml | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-durations-integration
+          path: integration-durations.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   # AA-993 M4b (root ADR 0017 d1, design D2.1; critic 7, 17): "Migration preflight". Tells the author of a PR that
   # adds a migration whether it will be auto-applied (header `-- migrate: expand`, lint clean, classify evidence
