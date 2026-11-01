@@ -60,6 +60,10 @@ export {
 export { I18nProvider, useLang, useSetLang, useT, useLocalized, useFormat } from "./core/useI18n";
 export { KIT_MESSAGES } from "./core/kit.messages";
 export { LangSwitch } from "./core/LangSwitch";
+export { AiNotice } from "./core/AiNotice";
+export {
+  AI_NOTICE_MESSAGES, AI_NOTICE_VARIANTS, aiNoticeText, type AiNoticeVariant,
+} from "./core/aiNotice.messages";
 
 // ── CIS-local ──────────────────────────────────────────────────────────────────────────────────────────────
 export * from "./api";

@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { X, ChevronRight } from "lucide-react";
 import {
-  K, KX, Badge, Button, ButtonGroup, DataTable, IconButton, Tabs, ToastProvider, mono, sans, serif,
+  K, KX, AiNotice, Badge, Button, ButtonGroup, DataTable, IconButton, Tabs, ToastProvider, mono, sans, serif,
   useAdminIdentity, useFormat, useT, useToast, Input, Textarea, type ColumnDef,
 } from "../../_kit";
 import { tourTraceHref } from "@/lib/aiGateway";
@@ -750,6 +750,8 @@ function TourDetailPanel({ tourId, tourName, rewriteCount = 0, onClose }: PanelP
                     </div>
                   );
                 })()}
+                {/* AA-1033: the generated fields below are AI-written and editable here. */}
+                <AiNotice style={{ marginBottom: 16 }} />
                 <EditableField label={t("fAaName")} initialValue={gen.aa_name || ""} onSave={v => saveGenerated("aa_name", v)} />
                 <EditableField label={t("fSubtitle")} initialValue={gen.aa_subtitle || ""} onSave={v => saveGenerated("aa_subtitle", v)} />
                 <EditableField label={t("fSummary")} initialValue={gen.aa_summary || ""} onSave={v => saveGenerated("aa_summary", v)} rows={6} />

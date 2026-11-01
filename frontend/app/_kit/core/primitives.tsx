@@ -553,11 +553,18 @@ function useTabStrip(activeKey: string) {
     const btn = el.querySelector<HTMLElement>('[data-kit-tab-active="true"]');
     if (!btn) return;
     const next = scrollToShow(el.scrollLeft, el.clientWidth, btn.offsetLeft - el.offsetLeft, btn.offsetWidth);
-    if (next !== null) el.scrollTo({ left: next });
+    if (next !== null) scrollStripTo(el, next);
   }, [el, activeKey]);
   const mask = tabStripMask(edges.left, edges.right);
   const fade: React.CSSProperties = mask === "none" ? {} : { maskImage: mask, WebkitMaskImage: mask };
   return [setEl, fade] as const;
+}
+
+/** Scroll a tab strip to `left`. jsdom (the consumers' component tests) has no Element.scrollTo: set scrollLeft there
+ * instead of throwing. A module function, so the hook does not mutate its own state value. */
+function scrollStripTo(el: HTMLElement, left: number): void {
+  if (typeof el.scrollTo === "function") el.scrollTo({ left });
+  else el.scrollLeft = left;
 }
 
 export type TabItem = {
