@@ -35,8 +35,18 @@
 --   Every pick is non-Anthropic, so the judge rule holds (a judge's family differs from the Anthropic writers, ADR 0009
 --   decision 12; admin_llm_ops._catalog_options). Whether each pick really meets its contract is checked by the
 --   contract smoke (job kind llm_contract_smoke, AA-1026 I6 code PR), one fixture per stage through the stage's own
---   prompt and parser on the acc2 deployment (cents). A stage whose pick fails it is re-pointed by the admin route
---   PATCH (any enabled non-Anthropic model is selectable for these roles), not by a new migration.
+--   prompt and parser on the acc2 deployment (cents), BEFORE this file is applied: the order gate below refuses a
+--   stage whose latest smoke on its pick did not pass. A stage whose pick fails is re-picked before the apply (smoke
+--   the next model with the job's "models" override, change the pick here) or dropped from this file; after the
+--   apply, the admin route PATCH re-points it (any enabled non-Anthropic model is selectable for these roles).
+--
+-- Ladder (root ADR 0009 decision 12) skipped knowingly. The tech lead's S263 approval puts these routes live on the
+--   contract smoke alone: no judge calibration, A/B or shadow rung. For the seven validate stages that is accepted
+--   as is (their output is parsed and checked downstream: geocoder, card check, dedupe rules). The one judge,
+--   s1_brand_audit, decides whether a tour can publish, so its acc2 verdict is held by code (AA-1026 I6 code PR,
+--   brand_audit_node.hold_uncalibrated_pass): a "pass" answered on acc2 becomes manual_check +
+--   BRAND_AUDIT_UNCALIBRATED_JUDGE; flagged / manual_check stand. An uncalibrated acc2 judge can flag or hold a tour,
+--   never publish one. Recorded in root ADR 0009 decision 14.
 --
 --   Not touched: writers (they stay Claude until a qualification; the A-series writers already fall back to the
 --   OpenAI API, 327); judge / validate stages that already reach a second failure domain (the judge routes ending on
@@ -57,20 +67,26 @@
 --           model; no tenant stage was changed by this file; the family of a check stage's new fallback is not a
 --           family of the stage it checks (a3_place_card / a3_place_card_check, a3_place_dedupe /
 --           a3_place_dedupe_check), and the other way round.
+--   order:  every stage this file changes has a passing contract smoke on its pick: the LATEST shared.llm_call_log
+--           row with stage 'adhoc_aa1026', quality_signal->>'contract_smoke' = the stage, model = the pick and
+--           connection acc2 says parser_ok = true (a later failed run cancels an earlier pass). So the code PR (smoke +
+--           brand audit hold) is deployed and the smoke ran before the apply. A database whose llm_call_log is empty
+--           (a CI or local replay: no traffic to protect) skips this gate with a NOTICE.
 --   NOTICE: the stages changed, and the judge / validate stages still in one failure domain.
 --
 -- Behaviour on Dev. While acc3 refuses, these stages make their acc3 attempts (refused at once by the connection
 -- circuit after the first refusals, 0 USD) and then answer on acc2; nothing changes while acc3 answers. Prices: the
 -- acc2 model is cheaper than the acc3 model it stands in for (GPT-6 Luna 0.1 / 0.5, Haiku 5.5 0.1 / 0.5). The judge
--- calibration of decision 12 (40 labelled items) is not done for Nova Lite: a brand audit answered on acc2 is a
--- fallback verdict, read like any other (it fails closed to manual_check on an unusable reply).
+-- calibration of decision 12 (40 labelled items) is not done for Nova Lite: a brand audit answered on acc2 can flag or
+-- hold a tour (manual_check, also on an unusable reply) but its pass is held as manual_check, so it publishes nothing.
 --
--- Class: contract (root ADR 0017 d3: UPDATE of existing routing rows), so no expand header, and MIG-4 order:
--- (1) this migration-only PR merges to AA-CIS-App main; (2) the byte copy in AA-CIS-Infra db/migrations/cis/ merges
--- (Copy Guard green); (3) a manual DB Migrate apply (check, then apply) with the job tables idle (DM-11.4); (4) the
--- bot/db-schema-reference PR merges. No code depends on it and REQUIRED_CIS_SCHEMA is not raised: the contract smoke
--- (code PR) reads the route and falls back to its own planned model when the route has none. Number: 330 is held by
--- AA-1031 (merge it first, or relabel this PR migration:out-of-order).
+-- Class: contract (root ADR 0017 d3: UPDATE of existing routing rows), so no expand header, and this order:
+-- (0) the AA-1026 I6 code PR (contract smoke + brand audit hold) merges and deploys, and the smoke runs DRY RUN, then
+-- live, on the planned models (the order gate needs its rows); (1) this migration-only PR merges to AA-CIS-App main;
+-- (2) the byte copy in AA-CIS-Infra db/migrations/cis/ merges (Copy Guard green); (3) a manual DB Migrate apply (check,
+-- then apply) with the job tables idle (DM-11.4); (4) the bot/db-schema-reference PR merges. REQUIRED_CIS_SCHEMA is
+-- not raised: the code reads the route and works with or without this file. Number: 330 is held by AA-1031 (merge it
+-- first, or relabel this PR migration:out-of-order).
 --
 -- Rollback (a NEW forward migration): array_remove(fallback_model_ids, '<pick>') on the rows updated_by
 -- 'migration-331-aa1026', or the admin route PATCH per stage (it accepts the shorter fallback list).
@@ -261,6 +277,27 @@ BEGIN
             RAISE EXCEPTION 'migration 331: a check pair would share a maker through the acc2 fallback: %', bad;
         END IF;
     END LOOP;
+
+    -- ── 3. Order gate: the contract smoke passed for every stage changed here, on its pick, before the apply ─────────
+    IF EXISTS (SELECT 1 FROM shared.llm_call_log) THEN
+        SELECT string_agg(s.stage || ' (' || s.pick || ')', ', ' ORDER BY s.stage) INTO bad
+          FROM unnest(stages, picks) AS s (stage, pick)
+         WHERE s.stage = ANY (changed)
+           AND NOT coalesce((SELECT (l.quality_signal ->> 'parser_ok')::boolean
+                               FROM shared.llm_call_log l
+                              WHERE l.stage = 'adhoc_aa1026'
+                                AND l.quality_signal ->> 'contract_smoke' = s.stage
+                                AND l.model = s.pick
+                                AND coalesce(l.connection_key, l.account) = 'acc2'
+                              ORDER BY l.created_at DESC, l.id DESC
+                              LIMIT 1), false);
+        IF bad IS NOT NULL THEN
+            RAISE EXCEPTION 'migration 331: no passing contract smoke on the acc2 pick (run the llm_contract_smoke job '
+                            'live first, re-pick or drop a failing stage): %', bad;
+        END IF;
+    ELSE
+        RAISE NOTICE 'migration 331: shared.llm_call_log is empty (a replay): the contract smoke order gate is skipped';
+    END IF;
 
     RAISE NOTICE 'migration 331: stages given an acc2 fallback: %',
         coalesce(nullif(array_to_string(changed, ', '), ''), '(none)');

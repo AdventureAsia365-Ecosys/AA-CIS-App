@@ -57,8 +57,21 @@ def _seed_registry(c) -> None:
               "AND model_key IN ('nova-lite', 'llama4-scout')")
 
 
-def _load_routes(c) -> None:
+def _smoke(c, stage: str, model: str, ok: bool, at: str = "2026-11-01 09:00+00", conn: str = "acc2") -> None:
+    """One contract smoke ledger row, as services/jobs/llm_contract_smoke_job.py writes it."""
+    c.execute("INSERT INTO shared.llm_call_log (stage, role, model, quality_signal, account, connection_key, "
+              "created_at) VALUES ('adhoc_aa1026', 'validate', %s, %s::jsonb, %s, %s, %s::timestamptz)",
+              (model, json.dumps({"contract_smoke": stage, "parser_ok": ok, "actor": "job:llm_contract_smoke"}),
+               conn, conn, at))
+
+
+def _load_routes(c, smoked: bool = True) -> None:
+    """The Dev routes after 327, and (``smoked``) a passing contract smoke for every stage on its pick: the order gate
+    of the file needs them."""
     _seed_registry(c)
+    if smoked:
+        for stage, pick in PICKS.items():
+            _smoke(c, stage, pick, True)
     c.execute("DELETE FROM shared.llm_role_config")
     for r in json.loads(BEFORE.read_text(encoding="utf-8"))["routes"]:
         c.execute("INSERT INTO shared.llm_role_config (stage, role, provider, model_id, account_route, is_active, "
@@ -123,8 +136,11 @@ def test_writers_tenant_and_tripplanner_stages_are_untouched(cur):
 
 
 def test_a_stage_with_a_second_domain_already_is_left_alone(cur):
-    """An admin already gave a3_place_days the OpenAI API (vendor_direct scope): two failure domains, no acc2 added."""
+    """An admin already gave a3_place_days the OpenAI API (vendor_direct scope): two failure domains, no acc2 added,
+    and no smoke needed for a stage the file leaves alone."""
     _load_routes(cur)
+    cur.execute("DELETE FROM shared.llm_call_log WHERE stage = 'adhoc_aa1026' "
+                "AND quality_signal ->> 'contract_smoke' = 'a3_place_days'")
     cur.execute("UPDATE shared.llm_role_config SET fallback_model_ids = ARRAY['sonnet-5-5', 'gpt-6-luna-openai'], "
                 "allowed_scopes = ARRAY['aws_only', 'vendor_direct'] WHERE stage = 'a3_place_days'")
     cur.execute(_body())
@@ -179,3 +195,48 @@ def test_guard_refuses_a_writer(cur):
     cur.execute("UPDATE shared.llm_role_config SET fallback_model_ids = ARRAY['nova-lite'] WHERE stage = 's1_flag_fix'")
     with pytest.raises(psycopg2.errors.RaiseException, match="writer routes naming an acc2-only chat model"):
         cur.execute(_body())
+
+
+# ── the order gate: the contract smoke before the apply (review fix pass) ───────────────────────────────────────────
+
+def _drop_smoke(c, stage: str) -> None:
+    c.execute("DELETE FROM shared.llm_call_log WHERE stage = 'adhoc_aa1026' "
+              "AND quality_signal ->> 'contract_smoke' = %s", (stage,))
+
+
+def test_the_order_gate_refuses_a_stage_with_no_smoke(cur):
+    _load_routes(cur)
+    _drop_smoke(cur, "a3_place_days")
+    with pytest.raises(psycopg2.errors.RaiseException,
+                       match=r"no passing contract smoke .*a3_place_days \(nova-lite\)"):
+        cur.execute(_body())
+
+
+def test_a_later_failed_smoke_cancels_an_earlier_pass(cur):
+    _load_routes(cur)
+    _smoke(cur, "a3_atomize", "nova-lite", False, at="2026-11-01 10:00+00")
+    with pytest.raises(psycopg2.errors.RaiseException, match=r"a3_atomize \(nova-lite\)"):
+        cur.execute(_body())
+
+
+def test_a_later_pass_clears_an_earlier_failure(cur):
+    _load_routes(cur)
+    _smoke(cur, "a3_atomize", "nova-lite", False, at="2026-11-01 08:00+00")
+    cur.execute(_body())
+    assert _routes(cur) == _expected()
+
+
+def test_a_smoke_on_another_model_or_connection_does_not_count(cur):
+    _load_routes(cur)
+    _drop_smoke(cur, "a3_place_card_check")
+    _smoke(cur, "a3_place_card_check", "nova-lite", True)                     # not the pick (llama4-scout)
+    _smoke(cur, "a3_place_card_check", "llama4-scout", True, conn="acc3")     # not on acc2
+    with pytest.raises(psycopg2.errors.RaiseException, match=r"a3_place_card_check \(llama4-scout\)"):
+        cur.execute(_body())
+
+
+def test_an_empty_ledger_is_a_replay_and_skips_the_gate(cur):
+    _load_routes(cur, smoked=False)
+    cur.execute("DELETE FROM shared.llm_call_log")
+    cur.execute(_body())
+    assert _routes(cur) == _expected()
