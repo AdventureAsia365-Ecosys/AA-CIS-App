@@ -66,7 +66,9 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
           { term: "Errors · latency", text: "For the last 24 hours and the last 7 days: how many calls reached the "
             + "provider, the share that failed (an error, an answer cut short or a billed but unusable answer), and "
             + "the answer time: p50 is the typical call, p95 the slowest one in twenty. Calls our own guard or a switch "
-            + "refused before sending are counted apart and are not errors. Geoapify stores no answer time." },
+            + "refused before sending are counted apart and are not errors. Geoapify stores no answer time. The "
+            + "partner CRM rows come from the CRM's daily totals: today (UTC) and the last 7 days, refusals counted as "
+            + "failures, no answer time." },
           { term: "Health", text: "For a connection: when it last answered and the last error type. For Jev: calls "
             + "and errors of the last 24 hours and the mean answer time." },
           { term: "Budget", text: "The monthly budget of a connection and the daily cap of its provider, with how "
@@ -243,8 +245,8 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
           "TripPlanner's model calls show from the shared log; its per-stage caps are on Cost Operations › AI & data "
             + "spend and the Apps board.",
           "Mapbox writes no log: its row has no spend or answer times; read its usage on the Mapbox console.",
-          "The partner CRM's rows need your staff sign-in. Their 7-day figures cover the CRM's newest 500 calls (the "
-            + "row says so when there were more).",
+          "The partner CRM's rows need your staff sign-in. They read the CRM's daily totals only (whole UTC days, no "
+            + "answer time); single CRM calls are on the Calls tab.",
           "Trial runs of new models (quick test, judge check, compare) are not on the Models & trials tab yet.",
           "Spend is what we logged at our prices. The AWS bill can differ slightly; Cost Operations shows the bill.",
         ] },

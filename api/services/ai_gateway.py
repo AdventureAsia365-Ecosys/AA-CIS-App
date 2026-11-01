@@ -45,9 +45,13 @@ the last 24 h and 7 d (``LLM_STATS_SQL`` / ``DFS_STATS_SQL`` / ``GEO_STATS_SQL``
 connection_key ``typesafe``) — with the 24 h figures at the top (``latency_p50_ms``, ``latency_p95_ms``,
 ``error_pct``). Jev / DataForSEO / Geoapify carry their real switch (``enabled``, ``switchable``: the B1 clients read
 it; the page calls PATCH /admin/llm-connections/{key}); Geoapify's "is the configured geocoder" is ``configured``.
-Three more rows: **Partner CRM AI** and **Bedrock Guardrails (CRM scrub)** from crm.ops.v1 ``GET /llm/usage`` +
-``GET /llm/calls`` with the caller's own staff token (``read_providers(crm_usage_rows=, crm_calls=)``; the guard rows
-are the CRM's stage ``crm_scrub``), and a static **Mapbox** row (TripPlanner maps, free tier, nothing logged).
+Three more rows: **Partner CRM AI** and **Bedrock Guardrails (CRM scrub)** from one crm.ops.v1 ``GET /llm/usage``
+read (the CRM's daily rollup, no per-agency access) with the caller's own staff token
+(``read_providers(crm_usage_rows=)``; the guard rows are the CRM's stage ``crm_scrub``): spend, and calls / failed calls
+over whole UTC days (today, last 7 days; the rollup counts a refusal as a failed call and holds no latency, so the rows
+say ``stats_basis = "utc_days"``). The row-level ledger ``GET /llm/calls`` is never read here: it writes an
+``ops_read`` event into every agency's access log. And a static **Mapbox** row (TripPlanner maps, free tier, nothing
+logged).
 """
 from __future__ import annotations
 
@@ -204,7 +208,7 @@ def _stats_columns(ts: str, attempt: str, error: str, refused: str, latency: Opt
     return ",\n           ".join(cols)
 
 
-_FAILED_SQL = "('error', 'billed_unusable', 'truncated')"
+_FAILED_SQL = "(" + ", ".join(f"'{st}'" for st in FAILED_STATUSES) + ")"
 
 # Every LLM connection and Jev (its rows carry connection_key 'typesafe' since B1); ledger v2 rows only.
 LLM_STATS_SQL = f"""
@@ -238,7 +242,7 @@ GEO_STATS_SQL = """
 """
 
 
-def window_stats(r: Optional[dict], window: str, *, sampled: bool = False) -> dict:
+def window_stats(r: Optional[dict], window: str) -> dict:
     """One window of a stats row (None or no call: zeros, null rates). Pure."""
     r = r or {}
     calls = int(r.get(f"calls_{window}") or 0)
@@ -250,15 +254,13 @@ def window_stats(r: Optional[dict], window: str, *, sampled: bool = False) -> di
     out = {"calls": calls, "errors": errors, "refused": int(r.get(f"refused_{window}") or 0),
            "error_pct": _pct(errors, calls), "latency_p50_ms": ms(r.get(f"p50_{window}")),
            "latency_p95_ms": ms(r.get(f"p95_{window}"))}
-    if sampled:
-        out["sampled"] = True
     return out
 
 
-def with_stats(row: dict, r: Optional[dict], *, sampled_7d: bool = False) -> dict:
+def with_stats(row: dict, r: Optional[dict]) -> dict:
     """``row`` with ``stats`` (24 h and 7 d) and the 24 h figures at the top (latency_p50_ms, latency_p95_ms,
     error_pct). ``r`` None and the source unreadable is the caller's ``stats_unreadable``. Pure."""
-    stats = {w: window_stats(r, w, sampled=sampled_7d and w == "7d") for w, _ in STATS_WINDOWS}
+    stats = {w: window_stats(r, w) for w, _ in STATS_WINDOWS}
     day = stats["24h"]
     return {**row, "stats": stats, "latency_p50_ms": day["latency_p50_ms"], "latency_p95_ms": day["latency_p95_ms"],
             "error_pct": day["error_pct"]}
@@ -274,94 +276,63 @@ async def _read_llm_stats(pool, now: datetime) -> dict[str, dict]:
     return {r["connection_key"]: r for r in rows}
 
 
-def percentile(values: list[float], q: float) -> Optional[float]:
-    """``percentile_cont(q)`` of ``values`` (linear interpolation between the closest ranks), None when empty. Pure."""
-    if not values:
-        return None
-    s = sorted(values)
-    pos = q * (len(s) - 1)
-    lo = int(pos)
-    hi = min(lo + 1, len(s) - 1)
-    return s[lo] + (s[hi] - s[lo]) * (pos - lo)
-
-
 # ── AA-1025 C1: the partner CRM's AI path and its guardrail (crm.ops.v1, the caller's own staff token) ─────────────
 
-CRM_GUARD_STAGE = "crm_scrub"            # the CRM's ApplyGuardrail rows (AA-Partner app/llm/gateway.py _log_guard)
-CRM_CALLS_PAGE = 500                     # crm.ops.v1 LLM_CALLS_MAX_LIMIT: one page of the last 7 days
+CRM_GUARD_STAGE = "crm_scrub"            # the CRM's ApplyGuardrail rows (AA-Partner app/privacy/guardrails.py)
+CRM_STATS_DAYS = 7                       # the "7 d" window of the CRM rows: today and the six UTC days before it
 MAPBOX_USAGE_URL = "https://console.mapbox.com/"
 CrmRead = Callable[..., Awaitable[tuple[Optional[dict], dict]]]
 
 
 def crm_part(stage: Optional[str]) -> str:
-    """Which CRM row a ledger stage belongs to: ``guard`` (the scrub's guardrail rows) or ``llm``. Pure."""
+    """Which CRM row a rollup stage belongs to: ``guard`` (the scrub's guardrail rows) or ``llm``. Pure."""
     return "guard" if stage == CRM_GUARD_STAGE else "llm"
 
 
-def crm_usage_spend(rows: list, today: datetime) -> dict[str, dict]:
-    """{"llm" | "guard": {today, month, calls}} over crm.ops.v1 /llm/usage rows (day, stage, calls, cost_usd as text)
-    of the month to date. ``today``: the UTC day. Rows that do not parse are skipped. Pure."""
-    out = {p: {"today": 0.0, "month": 0.0, "calls": 0, "last": None} for p in ("llm", "guard")}
-    day = today.date().isoformat()
+def _usage_rows(rows: Any):
+    """(UTC day text, part, calls, failed calls, cost) of each crm.ops.v1 /llm/usage row that parses. Pure."""
     for r in rows if isinstance(rows, list) else []:
         if not isinstance(r, dict):
             continue
         try:
             cost, calls = float(r.get("cost_usd") or 0), int(r.get("calls") or 0)
+            failed = int(r.get("failed_calls") or 0)
         except (TypeError, ValueError):
             continue
-        acc = out[crm_part(r.get("stage"))]
+        yield str(r.get("day") or "")[:10], crm_part(r.get("stage")), calls, failed, cost
+
+
+def crm_usage_spend(rows: list, today: datetime) -> dict[str, dict]:
+    """{"llm" | "guard": {today, month, calls, last}} over crm.ops.v1 /llm/usage rows (day, stage, calls, cost_usd as
+    text); only the days of ``today``'s month count (the read may start earlier for the 7 d window). Rows that do not
+    parse are skipped; ``last`` stays None (the rollup has no call time). Pure."""
+    out = {p: {"today": 0.0, "month": 0.0, "calls": 0, "last": None} for p in ("llm", "guard")}
+    day, month = today.date().isoformat(), today.date().replace(day=1).isoformat()
+    for d, part, calls, _failed, cost in _usage_rows(rows):
+        if d < month or d > day:
+            continue
+        acc = out[part]
         acc["month"] += cost
         acc["calls"] += calls
-        if str(r.get("day") or "")[:10] == day:
+        if d == day:
             acc["today"] += cost
     return out
 
 
-def _parse_at(v: Any) -> Optional[datetime]:
-    try:
-        at = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return at if at.tzinfo else at.replace(tzinfo=timezone.utc)
-
-
-def crm_call_stats(rows: list, now: datetime) -> dict[str, dict]:
-    """{"llm" | "guard": a stats row like the SQL ones (calls_24h … p95_7d) + "last"} over crm.ops.v1 /llm/calls rows
-    (at, stage, status, latency_ms). The same rules as the CIS ledgers. Pure."""
-    since = {"24h": now - timedelta(hours=24), "7d": now - timedelta(days=7)}
-    acc = {p: {w: {"calls": 0, "errors": 0, "refused": 0, "lat": []} for w in since} | {"last": None}
-           for p in ("llm", "guard")}
-    for r in rows if isinstance(rows, list) else []:
-        if not isinstance(r, dict):
-            continue
-        at = _parse_at(r.get("at"))
-        if at is None or at > now:
-            continue
-        part = acc[crm_part(r.get("stage"))]
-        if part["last"] is None or at > part["last"]:
-            part["last"] = at
-        status = r.get("status")
-        for w, start in since.items():
-            if at < start:
-                continue
-            a = part[w]
-            if status == "refused":
-                a["refused"] += 1
-                continue
-            a["calls"] += 1
-            if status in FAILED_STATUSES:
-                a["errors"] += 1
-            if isinstance(r.get("latency_ms"), (int, float)):
-                a["lat"].append(float(r["latency_ms"]))
-    out = {}
-    for p, part in acc.items():
-        row: dict = {"last": part["last"]}
-        for w in since:
-            a = part[w]
-            row |= {f"calls_{w}": a["calls"], f"errors_{w}": a["errors"], f"refused_{w}": a["refused"],
-                    f"p50_{w}": percentile(a["lat"], 0.5), f"p95_{w}": percentile(a["lat"], 0.95)}
-        out[p] = row
+def crm_usage_stats(rows: list, today: datetime) -> dict[str, dict]:
+    """{"llm" | "guard": a stats row like the SQL ones (calls_24h … p95_7d)} over crm.ops.v1 /llm/usage rows, by whole
+    UTC days: "24h" is today's UTC day, "7d" today and the six days before. ``errors`` are the rollup's failed calls,
+    which include refusals (the rollup does not tell them apart), so ``refused`` is 0; the rollup holds no latency, so
+    p50 / p95 are None. Pure."""
+    day = today.date()
+    first = {"24h": day.isoformat(), "7d": (day - timedelta(days=CRM_STATS_DAYS - 1)).isoformat()}
+    out = {p: {f"{k}_{w}": 0 for k in ("calls", "errors", "refused") for w in first}
+           | {f"{k}_{w}": None for k in ("p50", "p95") for w in first} for p in ("llm", "guard")}
+    for d, part, calls, failed, _cost in _usage_rows(rows):
+        for w, start in first.items():
+            if start <= d <= day.isoformat():
+                out[part][f"calls_{w}"] += calls
+                out[part][f"errors_{w}"] += failed
     return out
 
 
@@ -376,8 +347,8 @@ def crm_problem_reason(problem: Optional[dict]) -> str:
 
 
 def crm_status(day: dict, problem: Optional[dict]) -> tuple[str, Optional[str]]:
-    """Status of a CRM row from its 24 h figures: unknown with a reason when the CRM could not be read; Degraded when
-    most attempts failed; OK with calls; no call = unknown without a reason ("No recent calls"). Pure."""
+    """Status of a CRM row from its figures of today (UTC): unknown with a reason when the CRM could not be read;
+    Degraded when most attempts failed; OK with calls; no call = unknown without a reason ("No recent calls"). Pure."""
     if problem is not None:
         return "unknown", crm_problem_reason(problem)
     calls, errors = day.get("calls") or 0, day.get("errors") or 0
@@ -387,9 +358,9 @@ def crm_status(day: dict, problem: Optional[dict]) -> tuple[str, Optional[str]]:
 
 
 def crm_row(part: str, spend: Optional[dict], stats: Optional[dict], problem: Optional[dict], *,
-            sampled: bool = False, registry=None) -> dict:
+            registry=None) -> dict:
     """The Partner CRM AI row (``part`` llm) or the Bedrock Guardrails row (``part`` guard). ``spend`` / ``stats``:
-    this part of crm_usage_spend / crm_call_stats (None when unread); ``problem``: why the CRM could not be read.
+    this part of crm_usage_spend / crm_usage_stats (None when unread); ``problem``: why the CRM could not be read.
     ``registry``: the bedrock-guardrails connection row (guard only) for its facts. Pure."""
     guard = part == "guard"
     base = {
@@ -398,11 +369,10 @@ def crm_row(part: str, spend: Optional[dict], stats: Optional[dict], problem: Op
         "label": "Bedrock Guardrails (CRM scrub)" if guard else "Partner CRM AI",
         "connection_key": None, "account_id": None, "enabled": True, "data_scope": "aws_only",
         "health": None, "monthly_budget": None, "daily_cap": None, "balance": None, "credits": None, "error": None,
-        "app": "crm", "switch": "crm_settings", "switchable": False,
-        "spend": None if spend is None else _spend(spend["today"], spend["month"], spend["calls"],
-                                                    (stats or {}).get("last")),
+        "app": "crm", "switch": "crm_settings", "switchable": False, "stats_basis": "utc_days",
+        "spend": None if spend is None else _spend(spend["today"], spend["month"], spend["calls"], spend["last"]),
     }
-    row = with_stats(base, stats, sampled_7d=sampled) if stats is not None else stats_unreadable(base)
+    row = with_stats(base, stats) if stats is not None else stats_unreadable(base)
     row["status"], row["status_reason"] = crm_status(row["stats"]["24h"] if row["stats"] else {}, problem)
     if guard:
         view = registry_view(registry)
@@ -412,22 +382,18 @@ def crm_row(part: str, spend: Optional[dict], stats: Optional[dict], problem: Op
     return row
 
 
-async def _read_crm(now: datetime, crm_usage_rows: Optional[CrmRead], crm_calls: Optional[CrmRead]) -> dict:
-    """The CRM's month-to-date usage rows and its last 7 days of calls (one page each). Never raises: a read that
-    cannot be made gives ``problem``."""
-    if crm_usage_rows is None or crm_calls is None:
-        return {"usage": None, "calls": None, "problem": {"status": "unavailable", "reason": "not_asked"},
-                "sampled": False}
+async def _read_crm(now: datetime, crm_usage_rows: Optional[CrmRead]) -> dict:
+    """The CRM's daily usage rollup from the earlier of the month start and six days ago, to today: one aggregate read
+    (crm.ops.v1 GET /llm/usage, no per-agency access, no audit write in the CRM). Never raises: a read that cannot be
+    made gives ``problem``."""
+    if crm_usage_rows is None:
+        return {"usage": None, "problem": {"status": "unavailable", "reason": "not_asked"}}
     day, month = day_and_month_start(now)
-    week = (now - timedelta(days=7)).date()
-    (usage, p1), (calls, p2) = await asyncio.gather(
-        crm_usage_rows(month.date(), day.date()),
-        crm_calls({"from": week.isoformat(), "to": day.date().isoformat(), "limit": CRM_CALLS_PAGE}))
-    problem = p1 or p2 or None
-    if usage is None or calls is None:
-        return {"usage": None, "calls": None, "problem": problem or {"status": "error"}, "sampled": False}
-    return {"usage": usage.get("rows"), "calls": calls.get("rows"), "problem": None,
-            "sampled": bool(calls.get("next_cursor"))}
+    start = min(month.date(), day.date() - timedelta(days=CRM_STATS_DAYS - 1))
+    usage, problem = await crm_usage_rows(start, day.date())
+    if usage is None:
+        return {"usage": None, "problem": problem or {"status": "error"}}
+    return {"usage": usage.get("rows"), "problem": None}
 
 
 def crm_rows(crm: dict, now: datetime, registry_guard=None) -> list[dict]:
@@ -436,10 +402,10 @@ def crm_rows(crm: dict, now: datetime, registry_guard=None) -> list[dict]:
         return [crm_row("llm", None, None, crm["problem"]),
                 crm_row("guard", None, None, crm["problem"], registry=registry_guard)]
     day, _ = day_and_month_start(now)
-    spend = crm_usage_spend(crm.get("usage") or [], day)
-    stats = crm_call_stats(crm.get("calls") or [], now)
-    return [crm_row("llm", spend["llm"], stats["llm"], None, sampled=crm["sampled"]),
-            crm_row("guard", spend["guard"], stats["guard"], None, sampled=crm["sampled"], registry=registry_guard)]
+    usage = crm.get("usage") or []
+    spend, stats = crm_usage_spend(usage, day), crm_usage_stats(usage, day)
+    return [crm_row("llm", spend["llm"], stats["llm"], None),
+            crm_row("guard", spend["guard"], stats["guard"], None, registry=registry_guard)]
 
 
 def mapbox_row() -> dict:
@@ -727,11 +693,9 @@ async def geo_settings(pool) -> tuple[bool, int]:
     return geocoder.provider_name() == "geoapify", limit
 
 
-async def read_providers(pool, *, now: Optional[datetime] = None, crm_usage_rows: Optional[CrmRead] = None,
-                         crm_calls: Optional[CrmRead] = None) -> dict:
-    """``GET /admin/ai-gateway/providers`` (see the module docstring). AA-1025 C1: ``crm_usage_rows(start, end)`` and
-    ``crm_calls(params)`` are the crm.ops.v1 reads bound to the caller's token (None: the CRM rows say it was not
-    asked)."""
+async def read_providers(pool, *, now: Optional[datetime] = None, crm_usage_rows: Optional[CrmRead] = None) -> dict:
+    """``GET /admin/ai-gateway/providers`` (see the module docstring). AA-1025 C1: ``crm_usage_rows(start, end)`` is the
+    crm.ops.v1 GET /llm/usage read bound to the caller's token (None: the CRM rows say it was not asked)."""
     now = now or datetime.now(timezone.utc)
     day, month = day_and_month_start(now)
     results = await asyncio.gather(
@@ -747,7 +711,7 @@ async def read_providers(pool, *, now: Optional[datetime] = None, crm_usage_rows
                                                           now - timedelta(days=7), now)),
         _guard("Geoapify call stats", lambda: _fetchrow(pool, GEO_STATS_SQL, now - timedelta(hours=24),
                                                         now - timedelta(days=7), now, "geoapify")),
-        _guard("CRM", lambda: _read_crm(now, crm_usage_rows, crm_calls)),
+        _guard("CRM", lambda: _read_crm(now, crm_usage_rows)),
     )
     (conns, conns_err), (ledger, ledger_err), (budgets, budgets_err), (jev, jev_err), (dfs, dfs_err), \
         (geo, geo_err), (llm_stats, llm_stats_err), (dfs_stats, dfs_stats_err), (geo_stats, geo_stats_err), \

@@ -84,8 +84,6 @@ export interface WindowStats {
   error_pct: number | null;
   latency_p50_ms: number | null;
   latency_p95_ms: number | null;
-  /** the CRM rows only: the 7 d figures cover the newest page of calls, not every call */
-  sampled?: boolean;
 }
 
 export const STATS_WINDOWS = ["24h", "7d"] as const;
@@ -132,6 +130,9 @@ export interface ProviderRow {
   usage_url?: string | null;
   /** the app whose calls the row counts when it is not CIS (crm, tripplanner) */
   app?: string | null;
+  /** `utc_days`: the CRM rows, counted from the CRM's daily totals: "24h" is today (UTC) and "7d" the last seven UTC
+   *  days; failed calls include refusals and there is no latency */
+  stats_basis?: string | null;
 }
 
 export interface ProvidersResp {

@@ -5,8 +5,8 @@
                                            verdicts), DataForSEO (latest stored balance), Geoapify (credits today vs
                                            the daily limit); each with its provider-wide daily cap, and (AA-1025 C1)
                                            p50 / p95 latency and error rate over 24 h / 7 d; the CRM's AI and
-                                           guardrail rows (crm.ops.v1 with the staff member's own token) and a
-                                           static Mapbox row.                                                spend.read
+                                           guardrail rows (crm.ops.v1 GET /llm/usage, the daily rollup, with the
+                                           staff member's own token) and a static Mapbox row.                spend.read
   GET /admin/ai-gateway/trace?job_id=      every logged paid call of one job in time order (LLM, Jev, DataForSEO,
       /admin/ai-gateway/trace?tour_id=     geocoder ledgers); or of one tour (its jobs, the pieces they wrote, the
                                            tour_id columns).                                                 spend.read
@@ -56,13 +56,11 @@ async def get_providers(request: Request) -> dict:
 
     async def crm_usage_rows(start, end):
         # AA-1025 C1: the CRM rows (Partner CRM AI, Bedrock Guardrails) with the staff member's own WORKFORCE token.
+        # Only the aggregate GET /llm/usage: the row ledger GET /llm/calls writes an ops_read event into every
+        # agency's access log, so it stays on the Calls tab (a search someone runs), never on this page's refresh.
         return await platform_apps.crm_llm_usage_rows(authorization, start, end)
 
-    async def crm_calls(params: dict):
-        return await platform_apps.crm_llm_calls(authorization, params)
-
-    return await ai_gateway.read_providers(request.app.state.pool, crm_usage_rows=crm_usage_rows,
-                                           crm_calls=crm_calls)
+    return await ai_gateway.read_providers(request.app.state.pool, crm_usage_rows=crm_usage_rows)
 
 
 @router.get("/trace", summary="Every logged paid call of one job or one tour in time order (LLM, Jev, DataForSEO, "

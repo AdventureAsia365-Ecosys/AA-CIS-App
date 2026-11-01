@@ -55,7 +55,9 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
           { term: "Lỗi · độ trễ", text: "Trong 24 giờ và 7 ngày qua: bao nhiêu lần gọi tới được nhà cung cấp, phần trăm "
             + "bị lỗi (lỗi, câu trả lời bị cắt, hoặc tính tiền mà không dùng được), và thời gian trả lời: p50 là lần gọi "
             + "thường gặp, p95 là lần chậm nhất trong hai mươi lần. Lần gọi bị cổng của mình hoặc công tắc từ chối "
-            + "trước khi gửi được đếm riêng, không tính là lỗi. Geoapify không lưu thời gian trả lời." },
+            + "trước khi gửi được đếm riêng, không tính là lỗi. Geoapify không lưu thời gian trả lời. Dòng của CRM "
+            + "đối tác lấy từ tổng theo ngày của CRM: hôm nay (UTC) và 7 ngày qua, lần bị từ chối tính là lỗi, không có "
+            + "thời gian trả lời." },
           { term: "Sức khoẻ", text: "Với kết nối: lần trả lời gần nhất và loại lỗi gần nhất. Với Jev: số lần gọi và "
             + "lỗi trong 24 giờ qua, thời gian trả lời trung bình." },
           { term: "Ngân sách", text: "Ngân sách tháng của kết nối và trần ngày của nhà cung cấp, kèm phần đã dùng. "
@@ -231,8 +233,8 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
           "Lần gọi model của TripPlanner hiện từ sổ ghi chung; trần theo stage của nó ở Cost Operations › Chi phí AI "
             + "và dữ liệu và bảng Ứng dụng.",
           "Mapbox không ghi sổ: dòng của nó không có chi tiêu hay thời gian trả lời; xem mức dùng trên Mapbox console.",
-          "Các dòng của CRM đối tác cần đăng nhập nhân viên của bạn. Số liệu 7 ngày chỉ tính 500 lần gọi mới nhất của "
-            + "CRM (dòng ghi rõ khi có nhiều hơn).",
+          "Các dòng của CRM đối tác cần đăng nhập nhân viên của bạn. Chúng chỉ đọc tổng theo ngày của CRM (trọn ngày "
+            + "UTC, không có thời gian trả lời); từng lần gọi của CRM xem ở tab Lần gọi.",
           "Các lần chạy thử model mới (thử nhanh, kiểm model chấm, so sánh) chưa có trên tab Model và thử nghiệm.",
           "Chi tiêu là số mình ghi theo giá của mình. Hoá đơn AWS có thể lệch chút; Cost Operations hiện hoá đơn.",
         ] },

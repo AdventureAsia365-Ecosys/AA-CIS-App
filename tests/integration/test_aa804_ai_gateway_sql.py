@@ -314,13 +314,6 @@ async def test_stats_queries_count_attempts_errors_and_latency(pool):
     row = gw.with_stats({"key": "x"}, r)
     assert row["error_pct"] == 33.3 and row["latency_p50_ms"] == 200 and row["stats"]["7d"]["error_pct"] == 40.0
 
-    # the CRM's rows get the same figures from the same rules (crm_call_stats mirrors percentile_cont)
-    crm = gw.crm_call_stats([{"at": at.isoformat(), "stage": "crm_draft", "status": st, "latency_ms": ms}
-                             for at, st, ms in rows if st is not None], now)["llm"]
-    for k in ("calls_24h", "errors_24h", "refused_24h", "calls_7d", "errors_7d", "refused_7d"):
-        assert crm[k] == r[k], k
-    assert crm["p95_24h"] == pytest.approx(r["p95_24h"]) and crm["p50_7d"] == pytest.approx(r["p50_7d"])
-
     dfs = dict(await pool.fetchrow(gw.DFS_STATS_SQL.replace("AND NOT cache_hit", "AND NOT cache_hit AND endpoint = $4"),
                                    day_ago, week_ago, now, EP))
     assert (dfs["calls_24h"], dfs["errors_24h"]) == (2, 1) and dfs["p50_24h"] == pytest.approx(700.0)

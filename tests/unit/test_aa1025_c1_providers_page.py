@@ -1,6 +1,7 @@
 """AA-1025 slice C1 (S263 gateway plan) — the Providers page: latency / error rate per connection, the CRM AI and
-Bedrock Guardrails rows (crm.ops.v1 with the caller's token), the static Mapbox row, the real switch of Jev /
-DataForSEO / Geoapify (api/services/ai_gateway.py, api/routers/admin_ai_gateway.py, api/services/platform_apps.py).
+Bedrock Guardrails rows (crm.ops.v1 GET /llm/usage with the caller's token, never the row ledger), the static Mapbox
+row, the real switch of Jev / DataForSEO / Geoapify (api/services/ai_gateway.py, api/routers/admin_ai_gateway.py,
+api/services/platform_apps.py).
 
 No database and no network: the builders are pure, the CRM reads are fakes. The stats SQL runs on PostgreSQL in
 tests/integration/test_aa804_ai_gateway_sql.py. Names below are invented test values.
@@ -8,7 +9,7 @@ tests/integration/test_aa804_ai_gateway_sql.py. Names below are invented test va
 from __future__ import annotations
 
 import asyncio
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -41,11 +42,11 @@ def test_stats_sql_counts_refused_apart_and_reads_both_windows():
 def test_window_stats_and_with_stats():
     r = {"calls_24h": 8, "errors_24h": 2, "refused_24h": 1, "p50_24h": 812.4, "p95_24h": 2400.6,
          "calls_7d": 0, "errors_7d": 0, "refused_7d": 3, "p50_7d": None, "p95_7d": None}
-    row = gw.with_stats({"key": "llm:x"}, r, sampled_7d=True)
+    row = gw.with_stats({"key": "llm:x"}, r)
     assert row["stats"]["24h"] == {"calls": 8, "errors": 2, "refused": 1, "error_pct": 25.0, "latency_p50_ms": 812,
                                    "latency_p95_ms": 2401}
     assert row["stats"]["7d"] == {"calls": 0, "errors": 0, "refused": 3, "error_pct": None, "latency_p50_ms": None,
-                                  "latency_p95_ms": None, "sampled": True}
+                                  "latency_p95_ms": None}
     assert (row["error_pct"], row["latency_p50_ms"], row["latency_p95_ms"]) == (25.0, 812, 2401)
     empty = gw.with_stats({"key": "llm:y"}, None)
     assert empty["stats"]["24h"]["calls"] == 0 and empty["error_pct"] is None
@@ -53,59 +54,52 @@ def test_window_stats_and_with_stats():
     assert gone["stats"] is None and gone["latency_p95_ms"] is None
 
 
-@pytest.mark.parametrize("values,q,expected", [
-    ([], 0.5, None), ([7.0], 0.95, 7.0), ([100.0, 200.0, 900.0], 0.5, 200.0), ([100.0, 200.0, 900.0], 0.95, 830.0),
-    ([4.0, 1.0, 3.0, 2.0], 0.5, 2.5)])
-def test_percentile_matches_percentile_cont(values, q, expected):
-    got = gw.percentile(values, q)
-    assert got == (None if expected is None else pytest.approx(expected))
-
-
 # ── CRM rows ───────────────────────────────────────────────────────────────────────────────────────────────────────
 
 USAGE = [
     {"day": "2026-03-14", "stage": "crm_draft", "model": "probe-model", "calls": 3, "failed_calls": 1,
      "cost_usd": "0.0300"},
+    {"day": "2026-03-10", "stage": "crm_draft", "model": "probe-model", "calls": 2, "failed_calls": 2,
+     "cost_usd": "0.0000"},                                     # 7 d window, not today
     {"day": "2026-03-02", "stage": "crm_draft", "model": "probe-model", "calls": 5, "failed_calls": 0,
-     "cost_usd": "0.0500"},
+     "cost_usd": "0.0500"},                                     # this month, before the 7 d window
     {"day": "2026-03-14", "stage": "crm_scrub", "model": "apply_guardrail", "calls": 4, "failed_calls": 0,
      "cost_usd": "0.0004"},
     {"day": "2026-03-14", "stage": "crm_draft", "model": "probe-model", "calls": "x", "cost_usd": "bad"},
     "not a row",
 ]
-
-
-def _call(minutes_ago: float, stage: str, status: str, ms: int) -> dict:
-    return {"at": (NOW - timedelta(minutes=minutes_ago)).isoformat(), "stage": stage, "status": status,
-            "latency_ms": ms}
-
-
-CALLS = [
-    _call(10, "crm_draft", "ok", 1000), _call(20, "crm_draft", "error", 3000), _call(30, "crm_draft", "refused", 0),
-    _call(60 * 30, "crm_draft", "truncated", 2000),            # 30 h ago: 7 d only
-    _call(15, "crm_scrub", "ok", 80), _call(16, "crm_scrub", "ok", 120),
-    _call(60 * 24 * 9, "crm_draft", "error", 10),               # older than 7 d: never counted
-    {"at": "not a time", "stage": "crm_draft", "status": "ok"},
+# A read that starts before the month (the 7 d window of an early-month day) also brings last month's days.
+EARLY = datetime(2026, 4, 2, tzinfo=timezone.utc)
+USAGE_EARLY = [
+    {"day": "2026-03-28", "stage": "crm_draft", "model": "probe-model", "calls": 6, "failed_calls": 1,
+     "cost_usd": "0.0600"},
+    {"day": "2026-04-02", "stage": "crm_draft", "model": "probe-model", "calls": 1, "failed_calls": 0,
+     "cost_usd": "0.0100"},
 ]
 
 
 def test_crm_usage_spend_splits_the_guardrail_stage():
     spend = gw.crm_usage_spend(USAGE, TODAY)
     assert spend["llm"]["month"] == pytest.approx(0.08) and spend["llm"]["today"] == pytest.approx(0.03)
-    assert spend["llm"]["calls"] == 8
+    assert spend["llm"]["calls"] == 10
     assert spend["guard"] == {"today": pytest.approx(0.0004), "month": pytest.approx(0.0004), "calls": 4,
                               "last": None}
     assert gw.crm_usage_spend("not a list", TODAY)["llm"]["calls"] == 0
+    # last month's days of an early-month read are not this month's spend
+    early = gw.crm_usage_spend(USAGE_EARLY, EARLY)["llm"]
+    assert early["month"] == pytest.approx(0.01) and early["calls"] == 1
 
 
-def test_crm_call_stats_follow_the_ledger_rules():
-    st = gw.crm_call_stats(CALLS, NOW)
+def test_crm_usage_stats_count_whole_utc_days_without_latency():
+    st = gw.crm_usage_stats(USAGE, TODAY)
     llm, guard = st["llm"], st["guard"]
-    assert (llm["calls_24h"], llm["errors_24h"], llm["refused_24h"]) == (2, 1, 1)
-    assert (llm["calls_7d"], llm["errors_7d"], llm["refused_7d"]) == (3, 2, 1)
-    assert llm["p50_24h"] == pytest.approx(2000.0) and llm["p95_7d"] == pytest.approx(2900.0)
-    assert llm["last"] == NOW - timedelta(minutes=10)
-    assert guard["calls_24h"] == 2 and guard["errors_24h"] == 0 and guard["p50_24h"] == pytest.approx(100.0)
+    assert (llm["calls_24h"], llm["errors_24h"], llm["refused_24h"]) == (3, 1, 0)
+    assert (llm["calls_7d"], llm["errors_7d"], llm["refused_7d"]) == (5, 3, 0)          # 03-02 is outside 7 d
+    assert llm["p50_24h"] is None and llm["p95_7d"] is None                              # the rollup has no latency
+    assert (guard["calls_24h"], guard["errors_24h"], guard["calls_7d"]) == (4, 0, 4)
+    early = gw.crm_usage_stats(USAGE_EARLY, EARLY)["llm"]
+    assert (early["calls_24h"], early["calls_7d"], early["errors_7d"]) == (1, 7, 1)      # 7 d crosses the month
+    assert gw.crm_usage_stats(None, TODAY)["llm"]["calls_7d"] == 0
 
 
 @pytest.mark.parametrize("problem,reason", [
@@ -126,13 +120,15 @@ def test_crm_status():
 
 def test_crm_rows_from_a_read_and_from_a_problem():
     guard_reg = connections.BUILTIN_PROVIDERS["bedrock-guardrails"]             # seeded off in the registry
-    crm = {"usage": USAGE, "calls": CALLS, "problem": None, "sampled": True}
+    crm = {"usage": USAGE, "problem": None}
     llm, guard = gw.crm_rows(crm, NOW, guard_reg)
     assert llm["key"] == "crm:llm" and llm["group"] == "llm" and llm["app"] == "crm"
     assert llm["status"] == "ok" and llm["switch"] == "crm_settings" and llm["switchable"] is False
-    assert llm["spend"]["month_usd"] == pytest.approx(0.08) and llm["spend"]["month_calls"] == 8
-    assert llm["spend"]["last_call_at"] == (NOW - timedelta(minutes=10)).isoformat()
-    assert llm["error_pct"] == 50.0 and llm["stats"]["7d"]["sampled"] is True
+    assert llm["stats_basis"] == "utc_days" and guard["stats_basis"] == "utc_days"
+    assert llm["spend"]["month_usd"] == pytest.approx(0.08) and llm["spend"]["month_calls"] == 10
+    assert llm["spend"]["last_call_at"] is None                                          # the rollup has no time
+    assert llm["error_pct"] == 33.3 and llm["stats"]["7d"]["error_pct"] == 60.0
+    assert llm["latency_p50_ms"] is None and llm["stats"]["24h"]["latency_p95_ms"] is None
     assert guard["key"] == "guardrails" and guard["group"] == "guard" and guard["provider"] == "bedrock_guardrails"
     # the registry facts, but never its switch: the CRM's client reads its own settings
     assert guard["enabled"] is True and guard["switchable"] is False and guard["from_registry"] is True
@@ -147,27 +143,35 @@ def test_crm_rows_from_a_read_and_from_a_problem():
     assert down[1]["from_registry"] is False
 
 
-def test_read_crm_asks_both_reads_and_flags_a_sample():
-    asked = {}
+def test_read_crm_makes_one_aggregate_read():
+    asked = []
 
     async def usage(start, end):
-        asked["usage"] = (start, end)
+        asked.append((start, end))
         return {"rows": USAGE}, {}
 
-    async def calls(params):
-        asked["calls"] = params
-        return {"rows": CALLS, "next_cursor": "2026-03-07T00:00:00+00:00~abc"}, {}
-
-    out = asyncio.run(gw._read_crm(NOW, usage, calls))
-    assert asked["usage"] == (date(2026, 3, 1), date(2026, 3, 14))
-    assert asked["calls"] == {"from": "2026-03-07", "to": "2026-03-14", "limit": gw.CRM_CALLS_PAGE}
-    assert out["problem"] is None and out["sampled"] is True and out["usage"] == USAGE
+    out = asyncio.run(gw._read_crm(NOW, usage))
+    assert asked == [(date(2026, 3, 1), date(2026, 3, 14))]          # the month start is before the 7 d window
+    assert out == {"usage": USAGE, "problem": None}
+    asked.clear()
+    asyncio.run(gw._read_crm(datetime(2026, 4, 2, 9, tzinfo=timezone.utc), usage))
+    assert asked == [(date(2026, 3, 27), date(2026, 4, 2))]          # early in the month: the 7 d window starts first
 
     async def refused(*_a):
         return None, {"status": "refused", "http_status": 403}
 
-    assert asyncio.run(gw._read_crm(NOW, usage, refused))["problem"]["status"] == "refused"
-    assert asyncio.run(gw._read_crm(NOW, None, None))["problem"]["reason"] == "not_asked"
+    assert asyncio.run(gw._read_crm(NOW, refused))["problem"]["status"] == "refused"
+    assert asyncio.run(gw._read_crm(NOW, None))["problem"]["reason"] == "not_asked"
+
+
+def test_providers_page_never_reads_the_crm_row_ledger():
+    """The row ledger (crm.ops.v1 GET /llm/calls) writes an ops_read event into each agency's access log; the page
+    refreshes every 2 minutes, so it must only use the aggregate GET /llm/usage."""
+    import inspect
+
+    assert "crm_calls" not in inspect.signature(gw.read_providers).parameters
+    src = inspect.getsource(router_mod.get_providers)
+    assert "crm_llm_usage_rows" in src and "crm_llm_calls" not in src and "crm_llm_calls" not in inspect.getsource(gw)
 
 
 def test_mapbox_row_is_static_and_never_needs_a_look():
@@ -203,19 +207,18 @@ def test_switched_off_geoapify_says_so():
 
 # ── route + CRM relay ──────────────────────────────────────────────────────────────────────────────────────────────
 
-def test_providers_route_relays_the_callers_token_to_both_crm_reads(monkeypatch):
+def test_providers_route_relays_the_callers_token_to_the_crm_usage_read(monkeypatch):
     seen = {}
 
-    async def fake_read(pool, *, crm_usage_rows, crm_calls):
+    async def fake_read(pool, *, crm_usage_rows):
         seen["usage"] = await crm_usage_rows(date(2026, 3, 1), date(2026, 3, 14))
-        seen["calls"] = await crm_calls({"limit": 1})
         return {"providers": []}
 
     async def usage_rows(authorization, start, end):
         return {"auth": authorization, "range": (start, end)}, {}
 
     async def llm_calls(authorization, params):
-        return {"auth": authorization, "params": params}, {}
+        raise AssertionError("the providers page must not read the CRM row ledger")
 
     monkeypatch.setattr(gw, "read_providers", fake_read)
     monkeypatch.setattr(platform_apps, "relay_authorization", lambda request: "Bearer probe-token")
@@ -224,7 +227,6 @@ def test_providers_route_relays_the_callers_token_to_both_crm_reads(monkeypatch)
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(pool=object())))
     assert asyncio.run(router_mod.get_providers(request)) == {"providers": []}
     assert seen["usage"][0] == {"auth": "Bearer probe-token", "range": (date(2026, 3, 1), date(2026, 3, 14))}
-    assert seen["calls"][0] == {"auth": "Bearer probe-token", "params": {"limit": 1}}
 
 
 def test_crm_llm_usage_rows_sends_the_whole_day_range(monkeypatch):

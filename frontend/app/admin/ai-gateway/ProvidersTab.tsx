@@ -180,6 +180,8 @@ function CallsCell({ row }: { row: Row }) {
   const st = row.stats;
   if (row.status === "untracked") return <span style={small}>{t("statsNotLogged")}</span>;
   if (!st) return <span style={small}>—</span>;
+  // the CRM rows come from its daily totals (whole UTC days, no answer time): label the windows as days
+  const daily = row.stats_basis === "utc_days";
   return (
     <Lines>
       {STATS_WINDOWS.map((w) => {
@@ -187,7 +189,7 @@ function CallsCell({ row }: { row: Row }) {
         if (!s) return null;
         return (
           <span key={w} style={small} data-testid={`ai-gateway-stats-${row.key}-${w}`}>
-            <strong style={{ color: K.ink }}>{t("windowLabel", w)}</strong>{" "}
+            <strong style={{ color: K.ink }}>{daily ? t("dayWindowLabel", w) : t("windowLabel", w)}</strong>{" "}
             {s.calls === 0 && s.refused === 0
               ? t("noStatsCalls")
               : (
@@ -199,12 +201,12 @@ function CallsCell({ row }: { row: Row }) {
                   {s.latency_p50_ms != null && <><br />{t("latencyLine", latencyText(s.latency_p50_ms),
                     latencyText(s.latency_p95_ms))}</>}
                   {s.refused > 0 && <><br />{t("refusedLine", s.refused)}</>}
-                  {s.sampled && <><br />{t("statsSampled")}</>}
                 </>
               )}
           </span>
         );
       })}
+      {daily && <span style={small} data-testid={`ai-gateway-stats-${row.key}-daily`}>{t("statsDaily")}</span>}
     </Lines>
   );
 }
