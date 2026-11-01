@@ -12,10 +12,11 @@ import {
   K, alpha, serif, sans, mono, Eyebrow, Badge, LoadingScreen, KpiTile, Section,
   KX, type Tone,
   ButtonGroup, DataTable, Drawer, IconButton, LinkButton, type ColumnDef,
-  Tabs,
+  Tabs, ToastProvider, useToast,
 } from "../../_kit";
 import { can, staffErrorMessage } from "@/lib/rbac";
 import { RBAC_MESSAGES } from "@/lib/rbac.messages";
+import { pageSortProps, phoneCardColumns } from "@/lib/tableSort";
 import { M } from "./messages";
 
 type T = Translator<typeof M.en>;
@@ -262,10 +263,9 @@ function DfsCompareSection({ seed, ideas: ideasRaw, paa: paaRaw, related: relate
   const t = useT(M);
   const [sortKey, setSortKey] = useState<DfsSortKey>("volume");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
-  function onSort(k: DfsSortKey) {
-    if (k === sortKey) setSortDir(d => (d === "asc" ? "desc" : "asc"));
-    else { setSortKey(k); setSortDir(k === "keyword" ? "asc" : "desc"); }
-  }
+  // A header click: the sorted column flips, another one starts ascending (keyword) or descending (numbers).
+  const sortProps = pageSortProps<DfsSortKey>({ key: sortKey, dir: sortDir },
+    (s) => { setSortKey(s.key); setSortDir(s.dir); }, (k) => (k === "keyword" ? "asc" : "desc"));
   const sorted = useMemo(() => {
     const arr = [...ideas];
     const dir = sortDir === "asc" ? 1 : -1;
@@ -294,7 +294,7 @@ function DfsCompareSection({ seed, ideas: ideasRaw, paa: paaRaw, related: relate
         <div style={{ marginBottom: 6, color: K.muted }}>{t("seed")} <strong style={{ color: K.ink }}>{seed || "—"}</strong></div>
         {ideas.length > 0 && (
           <div style={{ marginBottom: 8 }}>
-            {/* AA-1006: a kit DataTable on the panel's own sort (header click = onSort). */}
+            {/* AA-1006: a kit DataTable on the panel's own sort (each sortable column needs an accessor to be clickable). */}
             <DataTable<KeywordIdea & { rowId: string }>
               tableId="master-dfs-ideas"
               data={sorted.map((k, i) => ({ ...k, rowId: `${k.keyword}-${i}` }))}
@@ -302,17 +302,15 @@ function DfsCompareSection({ seed, ideas: ideasRaw, paa: paaRaw, related: relate
               searchable={false}
               paginate={false}
               compact
-              sorting={[{ id: sortKey, desc: sortDir === "desc" }]}
-              onSortingChange={(next) => onSort((next[0]?.id ?? sortKey) as DfsSortKey)}
-              manualSorting
+              {...sortProps}
               columns={[
-                { id: "keyword", header: t("colKeyword"), cell: ({ row: { original: k } }) => <span style={{ color: K.ink }}>{k.keyword}</span> },
-                { id: "volume", header: t("colVol"), meta: { align: "right" },
+                { id: "keyword", header: t("colKeyword"), accessorFn: (k) => k.keyword, cell: ({ row: { original: k } }) => <span style={{ color: K.ink }}>{k.keyword}</span> },
+                { id: "volume", header: t("colVol"), meta: { align: "right" }, accessorFn: (k) => k.search_volume ?? -1,
                   cell: ({ row: { original: k } }) => <span style={{ fontFamily: mono, color: K.body }}>{fmtVol(k.search_volume)}</span> },
-                { id: "competition", header: t("colComp"), meta: { align: "right" }, cell: ({ row: { original: k } }) => (
+                { id: "competition", header: t("colComp"), meta: { align: "right" }, accessorFn: (k) => k.competition_index ?? -1, cell: ({ row: { original: k } }) => (
                   <span style={{ color: K.muted }}>{(k.competition || "—")}{k.competition_index != null ? ` (${k.competition_index})` : ""}</span>
                 ) },
-                { id: "cpc", header: t("colCpc"), meta: { align: "right" },
+                { id: "cpc", header: t("colCpc"), meta: { align: "right" }, accessorFn: (k) => k.cpc ?? -1,
                   cell: ({ row: { original: k } }) => <span style={{ fontFamily: mono, color: K.accent }}>{fmtCpcVal(k.cpc)}</span> },
               ]}
             />
@@ -768,7 +766,10 @@ export default function MasterContentPage() {
   // useSearchParams() needs a Suspense boundary in the App Router.
   return (
     <Suspense fallback={null}>
-      <MasterContentPageInner />
+      {/* AA-1006: the page's confirmations are kit toasts (painted above the versions Drawer). */}
+      <ToastProvider>
+        <MasterContentPageInner />
+      </ToastProvider>
     </Suspense>
   );
 }
@@ -814,7 +815,7 @@ function MasterContentPageInner() {
   const [restoring, setRestoring]       = useState<string | null>(null);
   const [toggling, setToggling]         = useState<string | null>(null);
   const [masterStatusFilter, setMasterStatusFilter] = useState<string>("");
-  const [toast, setToast]               = useState("");
+  const toast = useToast();
 
   const [compareVersionSel, setCompareVersionSel] = useState<Record<string, Set<number>>>({});
   const [compareVersionOpen, setCompareVersionOpen] = useState<{ tourId: string; tourName: string; vNums: [number, number] } | null>(null);
@@ -867,11 +868,10 @@ function MasterContentPageInner() {
 
   function refresh() { refetch(); }
 
-  function toggleSort(key: typeof sortKey) {
-    if (sortKey === key) setSortDir(d => (d === "asc" ? "desc" : "asc"));
-    else { setSortKey(key); setSortDir(key === "quality_score" ? "desc" : "asc"); }
-    setPage(1);
-  }
+  // AA-718 server sort on a header click: the sorted column flips, another one starts ascending (the score
+  // descending); back to page 1.
+  const sortProps = pageSortProps<typeof sortKey>({ key: sortKey, dir: sortDir },
+    (s) => { setSortKey(s.key); setSortDir(s.dir); setPage(1); }, (k) => (k === "quality_score" ? "desc" : "asc"));
 
   const tours = data?.rewritten_tours ?? [];
   const summary = data?.summary;
@@ -953,14 +953,15 @@ function MasterContentPageInner() {
         ? <Checkbox aria-label={row.tour_name} checked={selectedIds.has(row.tour_id)} onChange={() => toggleSelect(row.tour_id!)} />
         : null,
     },
-    { id: "n", header: "#", enableSorting: false,
+    { id: "n", header: "#", enableSorting: false, meta: { hideLabelOnCard: true },
       cell: ({ row }) => <span style={{ color: K.muted2 }}>{(page - 1) * pageSize + row.index + 1}</span> },
-    { id: "tour_name", header: tr("colTourName"),
+    // The sortable columns carry an accessor (TanStack wires a header click only then); the server sorts.
+    { id: "tour_name", header: tr("colTourName"), accessorFn: (row) => row.tour_name,
       cell: ({ row: { original: row } }) => (
         <span style={{ fontWeight: 600, color: K.ink, fontFamily: serif, opacity: row.master_status === "trashed" ? 0.7 : 1 }}>{row.tour_name}</span>
       ) },
-    { id: "country", header: tr("colCountry"), cell: ({ row: { original: row } }) => row.country || "—" },
-    { id: "quality_score", header: tr("colScore"), cell: ({ row: { original: row } }) => (
+    { id: "country", header: tr("colCountry"), accessorFn: (row) => row.country ?? "", cell: ({ row: { original: row } }) => row.country || "—" },
+    { id: "quality_score", header: tr("colScore"), accessorFn: (row) => row.quality_score ?? -1, cell: ({ row: { original: row } }) => (
       <span style={{ fontFamily: mono, fontWeight: 700, fontSize: 15, color: scoreColor(row.quality_score) }}>
         {row.quality_score != null ? row.quality_score.toFixed(1) : "—"}
       </span>
@@ -1124,8 +1125,7 @@ function MasterContentPageInner() {
   }
 
   function showToast(msg: string) {
-    setToast(msg);
-    setTimeout(() => setToast(""), 3000);
+    toast.success(msg, 3000);
   }
 
   async function toggleMasterStatus(tourId: string, tourName: string, newStatus: "active" | "inactive") {
@@ -1183,17 +1183,6 @@ function MasterContentPageInner() {
 
   return (
     <>
-      {toast && (
-        <div style={{
-          position: "fixed", bottom: 24, right: 24, zIndex: 9999,
-          background: KX.toastBg, color: KX.onDark, padding: "10px 20px",
-          borderRadius: 8, fontSize: 13, fontWeight: 500,
-          boxShadow: KX.shadowMd,
-        }}>
-          {toast}
-        </div>
-      )}
-
       {/* AA-718: define the spin keyframe (used by Refresh icon + kit StatusBadge running state). */}
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
 
@@ -1367,10 +1356,8 @@ function MasterContentPageInner() {
                 getRowId={(row) => row.version_id}
                 searchable={false}
                 paginate={false}
-                sorting={[{ id: sortKey, desc: sortDir === "desc" }]}
-                onSortingChange={(next) => toggleSort((next[0]?.id ?? sortKey) as typeof sortKey)}
-                manualSorting
-                columns={masterColumns}
+                {...sortProps}
+                columns={phoneCardColumns(masterColumns, "tour_name", isPhone)}
               />
             )}
             {serverTotal > 0 && (
@@ -1439,7 +1426,8 @@ function MasterContentPageInner() {
                     searchable={false}
                     paginate={false}
                     compact
-                    columns={[
+                    // On a phone the version pill is the card title (the pick checkbox stays first on a desktop).
+                    columns={phoneCardColumns<ColumnDef<TourVersion, unknown>>([
                       { id: "pick", header: "", enableSorting: false, enableHiding: false, meta: { hideLabelOnCard: true },
                         cell: ({ row: { original: v } }) => (
                           <Checkbox
@@ -1475,7 +1463,7 @@ function MasterContentPageInner() {
                       { id: "actions", header: "", enableSorting: false, enableHiding: false, meta: { hideLabelOnCard: true },
                         cell: ({ row: { original: v } }) => (
                           <ButtonGroup label={t("versionActions", v.version_num)} gap="sm">
-                            <Button size="sm" variant="ghost" onClick={() => { setDetailTourId(tourId); setDetailTourName(tourName); }}>{t("view")}</Button>
+                            <Button size="sm" variant="ghost" onClick={() => { closeVersions(); setDetailTourId(tourId); setDetailTourName(tourName); }}>{t("view")}</Button>
                             {/* AA-220 (H3): per-version DOCX export (shared page-scope helper) */}
                             {v.version_num > 0 && (
                               <Button size="sm" variant="ghost" onClick={() => exportVersionDocx(tourId, Number(v.version_num))} title={t("exportDocx")}>DOCX</Button>
@@ -1488,7 +1476,7 @@ function MasterContentPageInner() {
                             )}
                           </ButtonGroup>
                         ) },
-                    ]}
+                    ], "version", isPhone)}
                   />
                   {vSel.size === 2 && (
                     <div style={{ padding: "8px 0", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
@@ -1497,6 +1485,9 @@ function MasterContentPageInner() {
                       </span>
                       <Button size="sm" variant="secondary" onClick={() => {
                         const nums = [...vSel].sort((a, b) => a - b) as [number, number];
+                        // The tour detail panel and the compare view draw under a kit Drawer: close it first (the
+                        // picked pair stays, so Versions reopens with it).
+                        closeVersions();
                         setCompareVersionOpen({ tourId, tourName, vNums: nums });
                       }}>
                         {t("compareVersions")}

@@ -16,6 +16,7 @@ import {
 import { useChartColors } from "../../_kit/useTheme";
 import { stripIssueIds } from "@/lib/issueIds";
 import { traceHref } from "@/lib/aiGateway";
+import { pageSortProps } from "@/lib/tableSort";
 import { DEC } from "./messages";
 
 // ── types ──────────────────────────────────────────────────────────────────────────────────────
@@ -115,15 +116,10 @@ function Kpi({ label, value, sub, color = K.ink }: { label: string; value: strin
 const TABLE_BOX_HEIGHT = "62vh";
 const input: React.CSSProperties = { padding: "7px 9px", border: `1px solid ${K.line}`, borderRadius: 7, fontSize: 12.5, fontFamily: sans, background: K.card };
 
-/** The page's own sort state as a kit DataTable controlled sort (the page sorts, or asks the server to). */
+/** The page's own sort as a kit DataTable controlled sort (the page sorts, or asks the server to). As the old sort
+ * headers did: a click on the sorted column flips it, a click on another column sorts it descending first. */
 function tableSort<K extends string>(sort: { key: K; dir: "asc" | "desc" }, set: (s: { key: K; dir: "asc" | "desc" }) => void) {
-  return {
-    sorting: [{ id: sort.key, desc: sort.dir === "desc" }],
-    onSortingChange: (next: { id: string; desc: boolean }[]) =>
-      set(next[0] ? { key: next[0].id as K, dir: next[0].desc ? "desc" : "asc" }
-        : { key: sort.key, dir: sort.dir === "desc" ? "asc" : "desc" }),
-    manualSorting: true,
-  };
+  return pageSortProps(sort, set, () => "desc");
 }
 
 /** A column with a head tooltip; `sortable` when the page's sort knows the key. */
@@ -133,6 +129,8 @@ function dcol<T>(id: string, header: string, cell: (r: T) => React.ReactNode,
     id,
     header: opts.title ? () => <span title={opts.title}>{header}</span> : header,
     enableSorting: !!opts.sortable,
+    // TanStack enables a header only for a column with an accessor; the page sorts the rows itself (manualSorting).
+    ...(opts.sortable ? { accessorFn: (r: T) => (r as Record<string, unknown>)[id] } : {}),
     cell: ({ row }) => <span style={opts.style?.(row.original)}>{cell(row.original)}</span>,
   };
 }
