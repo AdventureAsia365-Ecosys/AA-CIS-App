@@ -17,8 +17,17 @@
   the bulk re-queue keeps a job held while its tenant still needs approval (``shared/jobs/queue.py``). No silent
   cut-off: the stop always comes with the bell naming the tenant and its spend. Platform (A-stage) calls are never
   stopped by a tenant budget.
-- Never raises anything else. The state of a budgeted tenant is cached ``CACHE_TTL_SECONDS``; when it cannot be read
-  (DB down) the budget is not enforced for ``FAILURE_TTL_SECONDS`` (fail open, logged), like the connection budgets.
+- The state of a budgeted tenant is cached ``CACHE_TTL_SECONDS``. AA-642 A8 (gap CIS-3): when the tenant is known to
+  have a budget (the budgeted-tenant set was read) but its spend counter cannot be read, a **T-stage** call fails
+  closed for ``FAILURE_TTL_SECONDS``: ``TenantBudgetUnavailable`` (a 0 USD ledger row, status refused, class budget;
+  a plain RuntimeError, so the job retries with its normal backoff, never ``stopped_budget``). The T2 graph, the T2
+  rewrite and the T9 write re-raise it like the approval stop (``counter_unavailable_in``), so it reaches the job
+  runner as a retryable failure instead of a failed draft or piece (review S263). A T-stage call re-reads a failed
+  counter after ``UNREADABLE_RECHECK_SECONDS`` (shorter than the job runner's first retry backoff), so the retry
+  attempt reads it again instead of failing on the cached failure; an A-stage call keeps the ``FAILURE_TTL_SECONDS``
+  cache. Exception: the last state read for that tenant had ``hard_stop`` off (the budget only rings a bell): then it
+  fails open, logged. When the budgeted-tenant set itself was never readable (no database at all), nothing is known
+  and the check fails open as before. Platform (A-stage) calls always fail open. Nothing else is raised.
 - ``LLM_TENANT_BUDGETS=off`` (ECS env, read per call) switches the check off.
 """
 from __future__ import annotations
@@ -43,6 +52,10 @@ APPROVAL_REASON = "tenant_ai_budget_approval"
 TENANTS_TTL_SECONDS = 60.0
 CACHE_TTL_SECONDS = 60.0
 FAILURE_TTL_SECONDS = 60.0
+# AA-642 A8 (review S263): a T-stage call re-reads a failed counter after this many seconds. Must stay below the job
+# runner's first retry backoff (shared.jobs.queue.BACKOFF_BASE_SECONDS, 30 s; a unit test pins it), so a retried job
+# reads the counter again instead of burning its last attempt on the cached failure.
+UNREADABLE_RECHECK_SECONDS = 15.0
 MISSING_TABLE_TTL_SECONDS = 300.0
 # The Content studio stages (T0-T11, ADR 0006): t2_generate, t5_atomize, t9_write, t10_judge ...
 T_STAGE = re.compile(r"^t\d+_")
@@ -63,6 +76,38 @@ class TenantBudgetApprovalRequired(cost_guard.BudgetExceeded, RuntimeError):
 
     tenant_id: Optional[str] = None
     budget: Optional[cost_guard.TenantAIBudget] = None
+
+
+UNREADABLE_REASON = "tenant_ai_budget_unreadable"
+
+
+class TenantBudgetUnavailable(RuntimeError):
+    """AA-642 A8: a T-stage call of a budgeted tenant whose spend counter cannot be read (fail closed, module
+    docstring). Not a BudgetExceeded: the job retries with its normal backoff instead of waiting for staff approval.
+    The message starts with UNREADABLE_REASON and names the tenant."""
+
+    tenant_id: Optional[str] = None
+
+
+def counter_unavailable(tenant_id: str) -> TenantBudgetUnavailable:
+    exc = TenantBudgetUnavailable(f"{UNREADABLE_REASON}: Tenant {tenant_id} has an AI budget but its spend this month "
+                                  "could not be read; T-stage AI calls wait until it can (the job retries)")
+    exc.tenant_id = tenant_id
+    return exc
+
+
+def counter_unavailable_in(exc: Optional[BaseException]) -> Optional[TenantBudgetUnavailable]:
+    """AA-642 A8 (review S263): the ``TenantBudgetUnavailable`` in ``exc`` or its explicit cause chain, else None. The
+    T-stage pipelines re-raise it (as they do ``approval_stop_in``'s stop) so the job runner retries the job instead of
+    the pipeline turning the refusal into a failed draft / piece."""
+    from .errors import _chain  # pure, import-light
+
+    if exc is None:
+        return None
+    for link in _chain(exc, implicit=False):
+        if isinstance(link, TenantBudgetUnavailable):
+            return link
+    return None
 
 
 def approval_required(budget: cost_guard.TenantAIBudget) -> TenantBudgetApprovalRequired:
@@ -166,8 +211,10 @@ def _budgeted(tenant_id: str) -> bool:
     return bool(_tenants) and tenant_id in _tenants
 
 
-def budget_of(tenant_id: str) -> Optional[cost_guard.TenantAIBudget]:
-    """The cached budget state of a budgeted tenant (None: no budget, switched off, or unreadable). Never raises."""
+def budget_of(tenant_id: str, *, recheck_after: float = FAILURE_TTL_SECONDS) -> Optional[cost_guard.TenantAIBudget]:
+    """The cached budget state of a budgeted tenant (None: no budget, switched off, or unreadable). Never raises. A
+    failed read is not retried for ``recheck_after`` seconds (``check`` passes UNREADABLE_RECHECK_SECONDS for a
+    T-stage call)."""
     if not enabled() or not _budgeted(tenant_id):
         return None
     now = time.monotonic()
@@ -175,7 +222,7 @@ def budget_of(tenant_id: str) -> Optional[cost_guard.TenantAIBudget]:
     if cached is not None and now - cached[1] < CACHE_TTL_SECONDS:
         return cached[0]
     failed = _failed_at.get(tenant_id)
-    if failed and now - failed < FAILURE_TTL_SECONDS:
+    if failed and now - failed < min(recheck_after, FAILURE_TTL_SECONDS):
         return None
     try:
         budget = loader_state(tenant_id)
@@ -188,17 +235,40 @@ def budget_of(tenant_id: str) -> Optional[cost_guard.TenantAIBudget]:
         return None
 
 
+def counter_unreadable(tenant_id: str) -> bool:
+    """AA-642 A8: True when ``tenant_id`` is known to have a budget and its last state read failed less than
+    FAILURE_TTL_SECONDS ago, unless the last state read before that said its hard stop is off (or it has no amount).
+    Reads nothing (the caches only)."""
+    if not enabled() or not (_tenants and tenant_id in _tenants):
+        return False
+    failed = _failed_at.get(tenant_id)
+    if not failed or time.monotonic() - failed >= FAILURE_TTL_SECONDS:
+        return False
+    last = _state.get(tenant_id)
+    if last is not None and (last[0] is None or not last[0].hard_stop):
+        return False
+    return True
+
+
 def check(stage: Optional[str]) -> Optional[cost_guard.TenantAIBudget]:
     """The gateway's check before any attempt (module docstring). Returns the tenant's budget state (None without a
-    budget); raises TenantBudgetApprovalRequired for a T-stage call of a tenant waiting for approval."""
+    budget); raises TenantBudgetApprovalRequired for a T-stage call of a tenant waiting for approval, and
+    TenantBudgetUnavailable for a T-stage call of a budgeted tenant whose spend cannot be read (AA-642 A8)."""
+    unreadable = False
     try:
         tenant_id = _bound_tenant()
         if tenant_id is None:
             return None
-        budget = budget_of(tenant_id)
+        t_stage = is_t_stage(stage)
+        budget = budget_of(tenant_id,
+                           recheck_after=UNREADABLE_RECHECK_SECONDS if t_stage else FAILURE_TTL_SECONDS)
+        unreadable = budget is None and counter_unreadable(tenant_id)
     except Exception as e:  # noqa: BLE001 — never on the call path
         logger.warning("tenant_ai_budget_check_failed", stage=stage, error=str(e)[:200])
         return None
+    if unreadable and is_t_stage(stage):
+        logger.warning("tenant_ai_budget_unreadable_fail_closed", stage=stage, tenant_id=tenant_id)
+        raise counter_unavailable(tenant_id)
     if budget is not None and budget.needs_approval and is_t_stage(stage):
         logger.warning("tenant_ai_budget_approval_wait", stage=stage, **budget.summary())
         raise approval_required(budget)

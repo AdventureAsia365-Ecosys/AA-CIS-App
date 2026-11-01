@@ -133,7 +133,7 @@ class TenantBudgetBody(BaseModel):
     monthly_usd: Optional[float] = Field(None, ge=0, le=1_000_000)
     alert_pct: int = Field(100, ge=1, le=1000)
     approval_pct: int = Field(150, ge=1, le=1000)
-    hard_stop: bool = False
+    hard_stop: bool = True          # AA-642 A8: a new budget holds T-stage jobs at approval_pct unless told otherwise
     notes: Optional[str] = Field(None, max_length=2000)
 
     @model_validator(mode="after")

@@ -6027,7 +6027,7 @@
             "type": "integer"
           },
           "hard_stop": {
-            "default": false,
+            "default": true,
             "title": "Hard Stop",
             "type": "boolean"
           },

@@ -33,11 +33,11 @@ test("actorLabel never prints a raw staff id (F5)", () => {
 
 test("tenant budget draft -> body, and its problems", () => {
   const empty = tenantBudgetDraftOf(null);
-  assert.deepEqual(empty, { monthly: "", alert_pct: "100", approval_pct: "150", hard_stop: false, notes: "" });
+  assert.deepEqual(empty, { monthly: "", alert_pct: "100", approval_pct: "150", hard_stop: true, notes: "" });
   assert.deepEqual(tenantBudgetBody(empty).body,
-    { monthly_usd: null, alert_pct: 100, approval_pct: 150, hard_stop: false, notes: null });
+    { monthly_usd: null, alert_pct: 100, approval_pct: 150, hard_stop: true, notes: null });
   assert.deepEqual(tenantBudgetBody({ ...empty, monthly: " 12.345 ", notes: " pilot " }).body,
-    { monthly_usd: 12.35, alert_pct: 100, approval_pct: 150, hard_stop: false, notes: "pilot" });
+    { monthly_usd: 12.35, alert_pct: 100, approval_pct: 150, hard_stop: true, notes: "pilot" });
   assert.equal(tenantBudgetBody({ ...empty, monthly: "-1" }).error, "monthly");
   assert.equal(tenantBudgetBody({ ...empty, monthly: "abc" }).error, "monthly");
   assert.equal(tenantBudgetBody({ ...empty, alert_pct: "0" }).error, "alertPct");

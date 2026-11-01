@@ -692,7 +692,7 @@ export function tenantBudgetDraftOf(b: Pick<TenantBudgetRow, "monthly_usd" | "al
     monthly: b?.monthly_usd == null ? "" : String(b.monthly_usd),
     alert_pct: String(b?.alert_pct ?? 100),
     approval_pct: String(b?.approval_pct ?? 150),
-    hard_stop: b?.hard_stop ?? false,
+    hard_stop: b?.hard_stop ?? true,   // a new budget holds jobs at the approval threshold by default
     notes: b?.notes ?? "",
   };
 }
