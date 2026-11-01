@@ -5,23 +5,25 @@ Three modes, all for ONE column of ``shared.embedding_column``:
 
 - ``dry_run`` ($0, no provider call): rows still to embed (a vector in the serving column, none in the shadow), blank
   texts, characters, estimated tokens (characters / 4, plus 10 %) and estimated USD at the target model's catalog
-  price, requests, and whether the shadow is prepared. Works before ``embedding_prepare_shadow`` (then every row with a
-  vector counts) so the cost is known before any DDL.
+  price, requests, and whether the shadow is prepared. Works before the owner script's ``prepare`` (then every row
+  with a vector counts) so the cost is known before any DDL.
 - ``fill``: needs the shadow prepared for the target space (registry row ``shadow_space_key`` = target, the column
-  exists with the space's dimension). Pages through the rows in key order (keyset, ``sources.select_sql``), embeds each
-  page through the gateway in the TARGET space only (``embed(..., space=target)``: its own models, never a fallback
-  into another space), writes the shadow vectors, one ledger row per call (the column's writer stage, role embed,
-  quality_signal op=reembed + ``embedding_space``). Checkpoint = the data: only rows whose shadow is still NULL are
-  read, so a stopped, failed or released run resumes by queueing the same payload (a writer that rewrites a serving
-  vector also empties its shadow: CIS 329 trigger ``<column>__shadow_reset``, so updated rows are re-read like new
-  ones). Stops before a page whose estimate would cross ``cost_cap_usd`` (result ``stopped: cost_cap``), or after
-  ``max_rows``. The cap covers the whole JOB: ``already_spent`` (``shared.job.cost_usd``, kept across retries and
-  releases) counts against it. ``complete`` only when no row with a vector lacks a shadow vector, blank-text rows
-  included (the swap refuses them too): their keys come back in ``blank_keys`` (runbook: purge or fix them).
+  exists with the space's dimension). Pages through the rows in key order (keyset, ``sources.select_sql``), embeds
+  each page through the gateway in the TARGET space only (``embed(..., space=target)``: its own models, never a
+  fallback into another space), writes the shadow vectors, one ledger row per call (the column's writer stage, role
+  embed, quality_signal op=reembed + ``embedding_space``). Checkpoint = the data: only rows whose shadow is still NULL
+  are read, so a stopped, failed or released run resumes by queueing the same payload (a writer that rewrites a
+  serving vector also empties its shadow: trigger ``<column>__shadow_reset`` on CIS 329's function, so updated rows
+  are re-read like new ones). Stops before a page whose estimate would cross ``cost_cap_usd`` (result
+  ``stopped: cost_cap``), or after ``max_rows``. The cap covers the whole JOB: ``already_spent``
+  (``shared.job.cost_usd``, kept across retries and releases) counts against it. ``complete`` only when no row with a
+  vector lacks a shadow vector, blank-text rows included (the swap refuses them too): their keys come back in
+  ``blank_keys`` (runbook: purge or fix them).
 - ``probe``: one embedding of a few words in the target space (its deployments must be enabled), so the fallback model
   is proven reachable before a fill. Ledger stage ``adhoc_conn_test``.
 
-The swap, rollback and drops are SQL functions of the table owner (CIS 329), never this job.
+The prepare, swap, rollback and shadow drop are DDL of the table owner, run by the AA-CIS-Infra run-script
+``db/scripts/aa1026_embedding_shadow.py`` (``OWNER_SCRIPT``), never this job.
 """
 from __future__ import annotations
 
@@ -108,15 +110,18 @@ def resolve(column_key: str, space_key: Optional[str]) -> tuple[embedding_space.
     return col, target
 
 
+OWNER_SCRIPT = "AA-CIS-Infra db/scripts/aa1026_embedding_shadow.py (DB Migrate mode=run-script, dry run then apply)"
+
+
 def next_steps(col: embedding_space.EmbeddingColumn, target: embedding_space.EmbeddingSpace) -> list[str]:
-    """The owner SQL around a fill (runbook), for the dry run's result."""
-    prepare = (f"SELECT shared.embedding_prepare_shadow('{col.table_schema}', '{col.table_name}', "
-               f"'{col.column_name}', '{target.space_key}');")
-    return [prepare, "fill: job embedding_reembed mode=fill (resumable)",
-            f"SELECT shared.embedding_swap('{col.swap_group}');  -- every column of the swap group filled",
-            f"SELECT shared.embedding_rollback('{col.swap_group}');  -- while the __prev column is kept",
-            f"SELECT shared.embedding_drop_shadow('{col.table_schema}', '{col.table_name}', '{col.column_name}');"
-            "  -- abandon a fill instead"]
+    """The owner steps around a fill (runbook), for the dry run's result."""
+    column = f'COLUMN = "{col.table_schema}.{col.table_name}.{col.column_name}"'
+    return [f'prepare: {OWNER_SCRIPT}: ACTION = "prepare", {column}, SPACE = "{target.space_key}"',
+            "fill: job embedding_reembed mode=fill (resumable)",
+            f'swap: {OWNER_SCRIPT}: ACTION = "swap", {column} (every column of swap group {col.swap_group} filled; '
+            "a group read by catalog views swaps with a cis/ migration, runbook)",
+            f'rollback: {OWNER_SCRIPT}: ACTION = "rollback", {column} (while the __prev column is kept)',
+            f'abandon a fill instead: {OWNER_SCRIPT}: ACTION = "drop_shadow", {column}']
 
 
 async def _shadow_type(conn, col: embedding_space.EmbeddingColumn, shadow: str) -> Optional[str]:
@@ -130,7 +135,7 @@ def cast_for(type_name: Optional[str], dimension: int) -> str:
     """The SQL cast of the shadow column's type: ``vector`` (its dimension must be the space's) or an array type
     (tests without pgvector). Refuses anything else."""
     if not type_name:
-        raise ReembedRefused("the shadow column does not exist (run shared.embedding_prepare_shadow first)")
+        raise ReembedRefused("the shadow column does not exist (run the owner script's prepare first)")
     if type_name.startswith("vector"):
         if type_name != f"vector({dimension})":
             raise ReembedRefused(f"the shadow column is {type_name}, the space has dimension {dimension}")

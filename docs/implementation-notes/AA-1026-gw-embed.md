@@ -29,17 +29,35 @@ orchestrator, not this lane).
   models when the route names none (a swapped column needs no route change). So switching is data: registry row +
   re-embed + swap.
 - **Swap by rename, views rebuilt.** A view binds a column by number, so renaming would keep
-  `catalog.v_component_embedding` on the old vectors. `shared.embedding_swap` saves every dependent view (recursive,
-  with options, grants, comments, owner), drops them deepest first, renames `col -> col__prev`,
-  `col__shadow -> col` (NOT NULL and single-column indexes follow), recreates the views as their owners
-  (`SET LOCAL ROLE`, the X1 S22 recipe: cis_owner is not a member of catalog_owner), updates the registry in the
-  same transaction.
+  `catalog.v_component_embedding` on the old vectors. The swap saves every dependent view (recursive, with options,
+  grants, comments), drops them deepest first, renames `col -> col__prev`, `col__shadow -> col` (NOT NULL and
+  single-column indexes follow), recreates the views, updates the registry in the same transaction.
+- **Owner steps in the Infra run-script, not SQL functions (S263 fix of PR #1225's Migration preflight).** The first
+  329 carried prepare / swap / rollback / drop functions; the swap recreated each view as its owner with a dynamic
+  `SET LOCAL ROLE %I`, which the X1 role lint refuses in a migration. The steps now live in AA-CIS-Infra
+  `db/scripts/aa1026_embedding_shadow.py` (DB Migrate mode=run-script, the master switched to `cis_owner` with a
+  literal `SET LOCAL ROLE`, as other run-scripts do; DRY RUN prints every DDL statement and rolls back), with the same
+  checks: refuse while a row has a vector but no shadow vector (unless `ALLOW_MISSING`), registry in the same
+  transaction, reset trigger off before the renames and back after a rollback. 329 keeps only what a migration
+  should hold: the trigger function (a trigger needs a function object; no dynamic SQL), the coverage guard, the
+  Titan rows, `catalog.v_embedding_space_v1`, the revokes.
+- **Views of another owner are refused, not switched to.** The master login is not a member of `catalog_owner` and
+  never becomes one (X1 plan §1.4), so the script recreates views only as `cis_owner` and refuses a group with another
+  owner's view before any change (a real-Postgres mutation run shows why the check matters: `cis_owner` owns schema
+  `catalog`, so without it the swap silently recreates `catalog_owner`'s view as `cis_owner`'s). The `tour_place`
+  group (`catalog.v_component_embedding`, `v_tour_component`) swaps with a contract cis/ migration under the catalog
+  recipe, written when that move is decided (runbook template). The `f10_embed` group has no dependent view;
+  `published_tours` has `acp_contract.v_trip_registry` (cis_owner's).
+- **`drop_previous` is a destructive cis/ migration, not a script action (deviation from the fix brief).** Dropping
+  `<column>__prev` drops real vectors with no way back; destructive-ops says a DROP COLUMN of data is an owner
+  migration, and `-- migrate: destructive` makes DB Migrate snapshot the database first. `drop_shadow` stays in the
+  script (it drops only the re-embedded vectors of an abandoned move, re-creatable for under 1 USD).
 - **Checkpoint = the data.** The fill reads only rows whose shadow is NULL (and that have a vector in the serving
   column), in key order with a keyset, so a retry, a release on deploy or a re-queue resumes; blank texts are skipped
   without looping.
 - **Review fix pass (S263).** Three reviewer findings, all accepted:
   - *Stale shadows.* A writer that rewrites a serving vector after the fill (T9 `UPDATE ... content_embedding`, an
-    upsert) left the old shadow, and the swap would promote it. `embedding_prepare_shadow` now installs a trigger
+    upsert) left the old shadow, and the swap would promote it. The prepare step now installs a trigger
     `<column>__shadow_reset` (BEFORE UPDATE OF the serving column, WHEN it changes and the statement did not set the
     shadow) that empties the row's shadow; the fill and the swap then treat it like a new row. The swap and
     drop_shadow remove it before the renames (a trigger names columns by number), the rollback puts it back. One
@@ -56,8 +74,10 @@ orchestrator, not this lane).
     pieces and places have no purge (fix the text, or a tech lead `ALLOW_MISSING` swap).
 - **Ledger.** Every embed row of a writer, the re-embed fill and the probe carries `quality_signal.embedding_space`
   (no ledger table change: tech lead T-14, no migration to change tables for this).
-- **Migrations split.** 328 is contract after the S263 preflight (the expand classify replay found it changing an existing object; applied by hand). 329 is contract (functions with
-  REVOKE, DO guards, routing rows, the catalog recipe view): manual DB Migrate apply after review.
+- **Migrations split.** 328 is contract after the S263 preflight (the expand classify replay found it changing an
+  existing object; applied by hand). 329 is contract (a function with REVOKE, DO guards, routing rows, the catalog
+  recipe): manual DB Migrate apply after review. Both pass the pinned Infra runner lint (`migration_preflight.py
+  --infra-tools`, run locally the CI way) and the Infra main runner's `--inspect` + ownership lint.
 
 ## Changed
 - `api/migrations/328_embedding_space_registry.sql`, `329_embedding_reembed_tools_titan_fallback.sql`.
@@ -67,14 +87,26 @@ orchestrator, not this lane).
 - `services/embeddings/{sources,reembed}.py`, `services/jobs/embedding_reembed_job.py` (kind `embedding_reembed`).
 - `api/routers/admin_job_runner.py`: `GET /admin/job-runner/embedding-spaces`, `POST
   /admin/job-runner/embedding-reembed/run` (ai.admin, DRY RUN by default); openapi + route policy snapshot.
-- Tests: `tests/unit/test_aa1026_embedding_space.py`, `tests/integration/test_aa1026_migration_329.py`; conftest
-  skips 329 in the replay (catalog recipe), like 323.
+- Tests: `tests/unit/test_aa1026_embedding_space.py` (also: 329 has no dynamic SQL and one function),
+  `tests/integration/test_aa1026_migration_329.py` (registry, grants, Titan rows, TripPlanner view, the reset trigger
+  installed as the script installs it, no owner-step function left); conftest skips 329 in the replay (catalog
+  recipe), like 323. The swap / rollback / view rebuild tests moved to AA-CIS-Infra
+  `db/tests/test_aa1026_embedding_shadow_script_pg.py` (real PostgreSQL, local only).
+- `services/embeddings/reembed.py`: the dry run's `next_steps` name the Infra script's actions instead of SQL calls.
+- 328 stays byte-identical to main and its AA-CIS-Infra copy (#590 copied it before the owner steps moved; a copied
+  migration is immutable, the preflight refuses an edit). Its source comments still name "329 functions"; 329
+  restates the three database comments that did (`shared.embedding_column` table, `shadow_column`,
+  `previous_column`), tested in unit + integration.
 - TripPlanner (separate PR): search embeds only in the space of `geo.tour_place.embedding`
   (`catalog.v_embedding_space_v1`).
 
 ## Tradeoffs
 - Rename swap + view rebuild instead of `UPDATE col = shadow`: the update cannot change the dimension and rewrites
-  every row; the rename is instant and reversible (`embedding_rollback` while `__prev` is kept).
+  every row; the rename is instant and reversible (the script's `rollback` while `__prev` is kept).
+- DDL in a Python run-script instead of SQL functions: the steps are no longer callable from any SQL session (only
+  through a reviewed one-line Infra PR + DB Migrate), and the CIS CI cannot test them (they are tested in Infra,
+  locally, against a real PostgreSQL); in exchange the dry run is a full printed rehearsal and no migration carries
+  dynamic DDL.
 - The registry is cached 60 s in each process. After a swap, a writer may embed in the old space for up to 60 s;
   the runbook swaps with the job tables idle and redeploys api + worker (statement caches, `SELECT *` sites).
 - A rollback after writers added rows is refused (those rows have no old vector) unless `allow_missing`, which leaves
@@ -84,10 +116,13 @@ orchestrator, not this lane).
 
 ## Should know
 - The reset trigger compares vectors with `IS DISTINCT FROM` (pgvector's `=` operator); CI has no pgvector, so the
-  integration test runs it on `real[]`. First live check: the T-15 prepare on Dev, then `drop_shadow`.
-- 329 must be reviewed (RISKY: DDL tools, catalog grant, routing rows). Migration numbers 328/329 are placeholders
-  above the S263 lanes (325-327): renumber at merge to main max + 1 (`git grep '328_'`, `git grep '329_'`, the
-  conftest skip, tests, CONTEXT, root runbook).
+  integration test runs it on `real[]`. First live check: the T-15 prepare on Dev (script dry run, then apply), then
+  `drop_shadow`. The script needs CIS 329 applied (prepare refuses without `shared._embedding_shadow_reset()`).
+- 329 must be reviewed (RISKY: catalog grant, routing rows); the Infra script with it (DDL on live vector columns).
+- PR #1225 merged the FIRST 329 (owner functions with a dynamic `SET LOCAL ROLE`, preflight red) to main before
+  the fix; this follow-up PR (branch `fix/aa-1026-migration-329-owner-script`, cut from main) replaces it. 329
+  was never applied (Dev at 327) and not copied: the bot's Infra copy PR of the old 329 (#591) must be closed or
+  re-synced from the new main bytes, never merged, and no DB Migrate apply of 329 before that.
 - cis_app's default privileges in `shared` grant DML on new tables and EXECUTE on new functions; 329 revokes both
   (SELECT stays).
 - Titan is not usable until the runbook switches connection `acc2-usw2` on (one audited admin PATCH) — the T-15

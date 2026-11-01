@@ -272,12 +272,15 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   `catalog.v_embedding_space_v1` and searches in it only. The ready fallback of another vendor is Amazon Titan Text
   Embeddings V2 (`titan-embed-text-v2`, space `titan-embed-text-v2/1024/v1`, standby) on connection `acc2-usw2`
   (acc2, us-west-2, the model is not offered in us-west-1), connection off (its deployment is enabled: switching
-  is one audited `PATCH /admin/llm-connections/acc2-usw2`). Moving a column:
-  `shared.embedding_prepare_shadow` (owner, run-script; its trigger `<column>__shadow_reset` empties the shadow of a
-  row whose serving vector a writer rewrites) → job `embedding_reembed` (dry_run / fill / probe, POST
-  /admin/job-runner/embedding-reembed/run, resumable, cost cap per job across retries) → `shared.embedding_swap(group)` (renames, rebuilds
-  dependent views as their owners, registry in the same transaction) → `embedding_rollback` / `embedding_drop_previous`.
-  Runbook: root `docs/ops/runbooks/embedding-re-embed.md`.
+  is one audited `PATCH /admin/llm-connections/acc2-usw2`). Moving a column: the owner steps are DDL in the
+  AA-CIS-Infra run-script `db/scripts/aa1026_embedding_shadow.py` (DB Migrate mode=run-script, as `cis_owner`, DRY RUN
+  by default), not SQL functions (a migration may not switch roles in dynamic SQL; 329 only adds the trigger function
+  `shared._embedding_shadow_reset()`): `prepare` (shadow column + trigger `<column>__shadow_reset`, which empties the
+  shadow of a row whose serving vector a writer rewrites) → job `embedding_reembed` (dry_run / fill / probe, POST
+  /admin/job-runner/embedding-reembed/run, resumable, cost cap per job across retries) → `swap` (the whole group in one
+  transaction: renames, rebuilds the dependent views, registry updated) → `rollback` while `__prev` is kept. A group
+  read by `catalog_owner`'s views (`tour_place`) swaps with a contract cis/ migration under the catalog recipe; the old
+  vectors are dropped by a destructive cis/ migration. Runbook: root `docs/ops/runbooks/embedding-re-embed.md`.
 - **Model per stage is DB-driven**: `shared.llm_role_config` (20s cache; `SAFE_DEFAULTS` in
   `shared/llm_client/role_config.py` are only a fallback), editable in admin AI providers › Routing.
 - **Model Catalog** (`shared.llm_model_catalog`, AA-658, ADR 0005): the admin dropdown options and
