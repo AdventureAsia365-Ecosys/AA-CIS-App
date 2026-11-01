@@ -10,6 +10,7 @@ crm-platform-admin writes) and returns only L1 data (no trip, pipeline or revenu
   GET  /admin/platform/crm/agencies/{tid}                            one agency         -> GET  /tenants/{tid}
   GET  …/agencies/{tid}/usage | entitlements | data-requests | members | jobs
   POST …/agencies/{tid}/lock | unlock | owner-invite | data-requests | owner-recovery
+  POST …/agencies/{tid}/owner-invite/withdraw | delete                    (S263, crm.ops.v1 1.8)
   POST …/agencies/{tid}/owner-recovery/{rid}/complete
   POST …/agencies/{tid}/members/{mid}/deactivate
   PUT  …/agencies/{tid}/entitlements-allowed | insights-opt-out
@@ -120,6 +121,18 @@ async def unlock(request: Request, tenant_id: uuid.UUID, payload: dict[str, Any]
 @router.post("/agencies/{tenant_id}/owner-invite", summary="Invite the first owner (empty agency only)")
 async def owner_invite(request: Request, tenant_id: uuid.UUID, payload: dict[str, Any] = Body(...)):
     return await _relay(request, "POST", f"{_t(tenant_id)}/owner-invite", json=payload)
+
+
+@router.post("/agencies/{tenant_id}/owner-invite/withdraw",
+             summary="Withdraw the first-owner invitation AA sent (pending, or claimed and not accepted)")
+async def owner_invite_withdraw(request: Request, tenant_id: uuid.UUID, payload: dict[str, Any] = Body(...)):
+    return await _relay(request, "POST", f"{_t(tenant_id)}/owner-invite/withdraw", json=payload)
+
+
+@router.post("/agencies/{tenant_id}/delete",
+             summary="Delete a synthetic (test) agency without members or travellers (typed name + ticket)")
+async def delete_test_agency(request: Request, tenant_id: uuid.UUID, payload: dict[str, Any] = Body(...)):
+    return await _relay(request, "POST", f"{_t(tenant_id)}/delete", json=payload)
 
 
 @router.post("/agencies/{tenant_id}/data-requests", summary="Raise an export / deletion request")

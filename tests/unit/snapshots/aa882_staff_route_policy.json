@@ -1123,6 +1123,10 @@
     "capability": "tenant.write",
     "module": "api.routers.admin_crm_console"
   },
+  "POST /admin/platform/crm/agencies/{tenant_id}/delete": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_crm_console"
+  },
   "POST /admin/platform/crm/agencies/{tenant_id}/jobs/{job_id}/retry": {
     "capability": "tenant.write",
     "module": "api.routers.admin_crm_console"
@@ -1136,6 +1140,10 @@
     "module": "api.routers.admin_crm_console"
   },
   "POST /admin/platform/crm/agencies/{tenant_id}/owner-invite": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_crm_console"
+  },
+  "POST /admin/platform/crm/agencies/{tenant_id}/owner-invite/withdraw": {
     "capability": "tenant.write",
     "module": "api.routers.admin_crm_console"
   },

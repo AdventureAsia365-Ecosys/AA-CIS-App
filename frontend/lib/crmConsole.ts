@@ -138,6 +138,25 @@ export interface OwnerInviteAccepted {
   expires_at: string;
 }
 
+/** POST …/owner-invite/withdraw (crm.ops.v1 1.8): the newest withdrawn first-owner invitation. */
+export interface OwnerInviteWithdrawn {
+  tenant_id: string;
+  invitation_id: string;
+  status: "revoked";
+}
+
+/** POST …/delete (crm.ops.v1 1.8): a synthetic agency moved to the trash, its keys destroyed. */
+export interface AgencyDeleted {
+  tenant_id: string;
+  status: "deleted";
+}
+
+/** The body of POST …/delete: the agency name typed exactly, and the ticket. */
+export interface DeleteTestAgencyBody {
+  agency_name: string;
+  ticket_ref: string;
+}
+
 export interface InsightsOptOut {
   opt_out: boolean;
 }
@@ -406,6 +425,10 @@ export const CRM_ERROR_TEXT: Record<string, string> = {
   invalid_display_name: "The agency name is not valid.",
   invalid_locale: "The locale must be en-AU, en-GB, en-US or vi-VN.",
   invalid_ticket_ref: "The ticket reference must look like SUP-1024.",
+  owner_invite_not_found: "There is no first-owner invitation to withdraw (none pending, or it was accepted).",
+  not_synthetic: "Only a test (synthetic) agency can be deleted here. A real agency is deleted by its owner.",
+  agency_name_mismatch: "The typed name is not the agency's name. Type it exactly as shown.",
+  has_members: "The agency still has active or invited members.",
 };
 
 /** One readable line for a failed call: plain words + the code. `detail` may be a code string or FastAPI's 422
@@ -468,6 +491,27 @@ export async function crmWrite<T = Record<string, unknown>>(
     code: typeof data.detail === "string" ? data.detail : null,
   };
 }
+
+// ── delete a test agency (crm.ops.v1 1.8) ───────────────────────────────────────────────────────
+
+/** Why "Delete test agency" is not possible right now, as the CRM's own refusal code (the CRM checks again):
+ * null when it is. `members` undefined = not loaded yet ("members_unknown"). Only synthetic agencies get the action. */
+export type DeleteBlock = "not_synthetic" | "tenant_status" | "has_travellers" | "has_members" | "members_unknown";
+
+export function testAgencyDeleteBlock(
+  agency: Pick<TenantSummary, "is_synthetic" | "state" | "holds_travellers">,
+  members: ReadonlyArray<Pick<AgencyMember, "status">> | undefined,
+): DeleteBlock | null {
+  if (!agency.is_synthetic) return "not_synthetic";
+  if (agency.state === "offboarding") return "tenant_status";
+  if (agency.holds_travellers) return "has_travellers";
+  if (members === undefined) return "members_unknown";
+  if (members.some((m) => m.status === "active" || m.status === "invited")) return "has_members";
+  return null;
+}
+
+/** The typed confirmation must be the agency's name exactly (the CRM compares it as it is). */
+export const agencyNameMatches = (typed: string, name: string) => typed === name && name.length > 0;
 
 // ── formatters ─────────────────────────────────────────────────────────────────────────────────
 

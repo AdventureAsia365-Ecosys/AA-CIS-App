@@ -57,6 +57,8 @@ ALLOWED: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         ("GET", _T),
         ("GET", rf"{_T}/(usage|entitlements|data-requests|members|jobs)"),
         ("POST", rf"{_T}/(lock|unlock|owner-invite|data-requests|owner-recovery)"),
+        # S263 (crm.ops.v1 1.8): withdraw the first-owner invitation; delete a synthetic (test) agency.
+        ("POST", rf"{_T}/(owner-invite/withdraw|delete)"),
         ("POST", rf"{_T}/owner-recovery/{_ID}/complete"),
         ("POST", rf"{_T}/members/{_ID}/deactivate"),
         ("PUT", rf"{_T}/(entitlements-allowed|insights-opt-out)"),
