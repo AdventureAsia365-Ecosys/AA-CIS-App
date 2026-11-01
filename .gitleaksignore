@@ -103,3 +103,6 @@ ffa78aefa4e88ec83def8938768c1f3b47bba6dc:tests/integration/test_007_rls_isolatio
 # hash; the key name "tokens" trips generic-api-key. Not a secret (the hash of a committed source file). The current
 # format nests the hash under "sha256", which does not match.
 93dacc48d69ef8e1e847889a1dec7b80e5cd8109:frontend/app/_kit/core/MANIFEST.json:generic-api-key:34
+# S263 (AA-1026 #1225): test line 'resp.space_key == es.TITAN_V2_1024' in a PR-head commit; the name space_key trips
+# generic-api-key. Not a secret (an embedding space constant). The line was split before merge, so only this commit.
+c6e5eaa0078b1f3e777a0bda73b866ca9c4ce3dd:tests/unit/test_aa1026_embedding_space.py:generic-api-key:230
