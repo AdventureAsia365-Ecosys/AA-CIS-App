@@ -500,6 +500,25 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   was reached" is `truncated` (never counted on a circuit); an adhoc stage logs `LLMRequest.role`. Ratchets:
   `test_aa642_model_tier_allowlist.py` (fixed / passed-through `model_tier` sites), `test_aa642_s11_alias_equivalence.py`
   (the 17 legacy stages send the same wire ids through aliases; the switch stays off).
+- **Route governance** (AA-1024 A2 / A4 / A6, AA-1026 D7; root ADR 0009 decisions 5 and 12, no migration):
+  **family rule** (`shared/llm_client/family_rule.py`): a judge never scores text of its own model family
+  (`CatalogModel.family_key`, migration 320); writers stay on `WRITER_FAMILY` (`anthropic`). The admin options and both
+  PATCH routes read the family, not the vendor, with English reasons. The eval runners check it twice: before the run
+  (`stage_pair_conflicts`: the writer stage's primary against every model of the judge route; R2
+  `check_judge_family` refuses, its DRY RUN reports `judge_family_check`; the S1-old regression raises
+  `SameFamilyJudge`) and at call time (`trace_models`: `LLMClient.generate` records `(role, model label)` of each
+  reply while a trace is bound; an R2 item judged by the writer's family is an `error` row with `same_family`, a
+  regression tour makes the run INVALID with `same_family_tours`). **Evidence** (`shared/llm_client/route_evidence.py`):
+  a change of a writer / judge stage's primary model or fallback chain needs `eval_run_id` (a finished
+  `shared.prompt_eval_runs` row, verdict not fail / invalid, no regression) or `break_glass_reason` (≥ 20 characters):
+  422 otherwise, 503 when the run cannot be read; the evidence goes into the `acp_shared.audit_log` row
+  (`details.evidence`) and a break glass writes an admin bell (`platform.llm_route.break_glass`) in the same
+  transaction. A shadow-only, an account-only change and validate / embed stages need none. **Warnings**: both PATCH
+  routes answer `warnings[]` from the failure-domain rule on the saved route (`invariant.read` with the refusing
+  circuits, as the digest runs it; report only, never blocks). **No per-request model**: the rewrite / ingest / batch
+  request bodies have no `model_tier` (a value = 422, `api/core/model_tier.py`; an explicit null is ignored); the
+  `s1_rewrite` idempotency key is tour + batch, the batch ingest runs on the route; eval and probe callers still pass
+  a model to `_rewrite_tour` / `LLMRequest`.
 - **Shared core `aa_llm`** (AA-642 S8, root ADR 0009 decision 13): `shared/aa_llm/` is the pure, standard-library
   core of the gateway (error classes, `quote` with the catalog passed in, the ledger v2 row and INSERT, the budget
   decision, the 323 contract SELECTs) that TripPlanner (`backend/aa_llm/`) and AA-Partner (`app/aa_llm/`) vendor byte
@@ -594,8 +613,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     with a vendor API deployment (migration 327 dropped `supply_content_writer`'s `haiku-5-5` for that; each writer is
     [one Anthropic model, GPT-6 Luna]). Both admin PATCH endpoints refuse that order (`_check_aws_before_vendor`), and
     the route PATCH accepts the one other-maker last fallback on a vendor_direct writer (`_writer_last_resort`); the
-    writer / judge vendor rule holds for the primary, every other fallback and the shadow. A draft written by that last resort is judged by a GPT judge
-    (same maker): its ledger row says `provider = 'openai'`, `fallback_used = true`. T-stages, `tp_*` and the CRM stay
+    writer / judge family rule holds for the primary, every other fallback and the shadow. A draft written by that last resort is judged by a GPT judge
+    (same maker): its ledger row says `provider = 'openai'`, `fallback_used = true`; an eval run refuses that verdict
+    ("Route governance" above). T-stages, `tp_*` and the CRM stay
     `aws_only`.
   - acc3 is the only chat account a route uses today (AA-998; the acc2 candidates of 324 have no route). The legacy Haiku/Sonnet chain is acc3 Sonnet → acc3 Haiku
     (no cross-account tier); `account_route` is CHECKed to acc3 / NULL (migration 295) and the gateway ignores any
