@@ -1,5 +1,5 @@
 {
-  "_about": "AA-900 prompt register manifest. One entry per (stage, version), newest last. prompt_sha256 = sha256 of the source text of the symbols (shared/llm_client/prompt_registry.prompt_hash_of). Changing a prompt: run python3 scripts/prompt_registry_check.py --bump, then register the new rows with a migration (scripts/prompt_registry_check.py --sql). Never edit an existing entry.",
+  "_about": "AA-900 prompt register manifest. One entry per (stage, version), newest last. prompt_sha256 = sha256 of the source text of the symbols (shared/llm_client/prompt_registry.prompt_hash_of). Changing a prompt: run python3 scripts/prompt_registry_check.py --bump, then register the new rows with a migration (scripts/prompt_registry_check.py --sql --unregistered --created-by migration-NNN; the gate fails until a file in api/migrations/ inserts them). Never edit an existing entry.",
   "prompts": [
     {
       "stage": "s1_generate",

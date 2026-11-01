@@ -50,8 +50,10 @@ file does not count). The gate `tests/unit/test_aa900_prompt_registry_gate.py` f
 longer matches its source. To change a prompt:
 
 1. `python3 scripts/prompt_registry_check.py --bump` appends the next version for each changed stage.
-2. A CIS migration registers the new rows in `shared.prompt_version` (`python3 scripts/prompt_registry_check.py --sql`
-   prints the INSERT; the table stores no prompt text).
+2. A CIS migration registers the new rows in `shared.prompt_version`
+   (`python3 scripts/prompt_registry_check.py --sql --unregistered --created-by migration-NNN` prints the INSERT of the
+   rows no migration inserts yet; the table stores no prompt text). The gate fails until such a file exists
+   (migration 325 registered the first 32 versions).
 3. After the migration, `llm_call_log.prompt_version` carries the version for every call of that stage (the gateway
    writes it only when the deployed source and the registered hash agree). `llm_call_log.prompt_hash` is the sha256 of
    the system prompt the call sent.

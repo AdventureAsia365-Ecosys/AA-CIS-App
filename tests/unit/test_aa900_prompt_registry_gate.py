@@ -22,6 +22,13 @@ def test_the_repository_manifest_matches_every_prompt_source():
     assert found == [], "\n".join(found)
 
 
+def test_every_manifest_entry_is_registered_by_a_migration():
+    """AA-642 D1 (gap OPS-03): a version bump without the migration that inserts it into shared.prompt_version fails
+    here (migration 325 registered the first 32)."""
+    found = gate.registration_problems(prompt_registry.load_manifest())
+    assert found == [], "\n".join(found)
+
+
 def test_every_manifest_stage_is_a_gateway_stage_or_a_registered_prompt():
     manifest = prompt_registry.load_manifest()
     register = (REPO / "docs" / "llm" / "prompt-register.md").read_text(encoding="utf-8")
@@ -124,10 +131,62 @@ def test_sql_registers_every_row_without_prompt_text(tree):
     assert "ON CONFLICT (stage, version) DO NOTHING" in out and "Lake Varra" not in out
 
 
+def _migration(root, name, manifest_path, created_by="migration-901"):
+    (root / "migrations").mkdir(exist_ok=True)
+    body = gate.sql(prompt_registry.load_manifest(manifest_path), created_by)
+    (root / "migrations" / name).write_text(f"BEGIN;\n{body}COMMIT;\n", encoding="utf-8")
+    return root / "migrations"
+
+
+def test_a_bump_without_its_migration_fails_until_a_migration_inserts_it(tree):
+    root, src, path = tree
+    migrations = _migration(root, "901_seed.sql", path)
+    assert gate.registration_problems(prompt_registry.load_manifest(path), migrations) == []
+    src.write_text(PROMPTS_V1.replace("two sentences", "three sentences"), encoding="utf-8")
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    gate.bump(raw, root)
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    found = gate.registration_problems(prompt_registry.load_manifest(path), migrations)
+    assert len(found) == 1 and found[0].startswith("t9_varra v2: no migration") and "--unregistered" in found[0]
+    # --sql --unregistered prints exactly the missing row; a migration with it makes the gate pass
+    manifest = prompt_registry.load_manifest(path)
+    only = gate.unregistered(manifest, gate.migration_rows(migrations))
+    out = gate.sql(manifest, "migration-902", only)
+    assert out.count("('t9_varra'") == 1 and "'v2'" in out and "'migration-902'" in out and "'v1'" not in out
+    (migrations / "902_bump.sql").write_text(out, encoding="utf-8")
+    assert gate.registration_problems(prompt_registry.load_manifest(path), migrations) == []
+
+
+def test_a_migration_row_with_another_hash_does_not_count(tree):
+    root, src, path = tree
+    migrations = _migration(root, "901_seed.sql", path)
+    text = (migrations / "901_seed.sql").read_text(encoding="utf-8")
+    sha = json.loads(path.read_text(encoding="utf-8"))["prompts"][0]["prompt_sha256"]
+    (migrations / "901_seed.sql").write_text(text.replace(sha, "0" * 64), encoding="utf-8")
+    assert len(gate.registration_problems(prompt_registry.load_manifest(path), migrations)) == 1
+
+
+def test_rows_of_other_tables_are_not_read_as_prompt_versions(tree):
+    root, src, path = tree
+    sha = json.loads(path.read_text(encoding="utf-8"))["prompts"][0]["prompt_sha256"]
+    (root / "migrations").mkdir()
+    (root / "migrations" / "901_other.sql").write_text(
+        f"INSERT INTO shared.other_table VALUES ('t9_varra', 'v1', '{sha}');\n", encoding="utf-8")
+    assert gate.migration_rows(root / "migrations") == set()
+
+
+def test_sql_refuses_a_created_by_that_is_not_a_label(tree):
+    root, src, path = tree
+    with pytest.raises(ValueError):
+        gate.sql(prompt_registry.load_manifest(path), "x'); DROP TABLE y; --")
+    assert gate.sql(prompt_registry.load_manifest(path), "m", only=[]).startswith("-- every manifest row")
+
+
 def test_the_cli_exit_code(tree, capsys):
     root, src, path = tree
     assert gate.main(["--manifest", str(path)]) == 1      # its source is not in the repository: a problem
     assert gate.main([]) == 0                                     # the repository's own manifest is clean
+    assert gate.main(["--migrations", str(root)]) == 1           # no migration registers the 32 versions
 
 
 # ── runtime lookup ─────────────────────────────────────────────────────────────────────────────────────────────────
