@@ -23,8 +23,9 @@ MIGRATION_335 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migr
                              "335_llm_routes_converse_keys_writer_scopes.sql")
 POST_282 = ("sonnet-5-5", ["sonnet"], "writer", "claude", "acc3", True, None, 0)
 # AA-1026 (migration 335, later in the replay): the legacy 'sonnet' becomes its chain on Converse keys (sonnet-5-5 is
-# already first, haiku-5-5 stays) and the A-series writer ends on the OpenAI API model.
-POST_335 = ("sonnet-5-5", ["haiku-5-5", "gpt-6-luna-openai"], "writer", "claude", "acc3", True, None, 0)
+# already first, then haiku-5-5), the A-series writer ends on the OpenAI API model, and haiku-5-5 is dropped again: it
+# would follow sonnet-5-5's Anthropic API deployment (T-3: outside AWS only after every AWS path of the route).
+POST_335 = ("sonnet-5-5", ["gpt-6-luna-openai"], "writer", "claude", "acc3", True, None, 0)
 
 
 @pytest.fixture

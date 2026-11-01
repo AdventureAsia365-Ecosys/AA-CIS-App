@@ -284,7 +284,6 @@
     "vendor_direct"
    ],
    "fallback_model_ids": [
-    "haiku-5-5",
     "gpt-6-luna-openai"
    ],
    "is_active": true,

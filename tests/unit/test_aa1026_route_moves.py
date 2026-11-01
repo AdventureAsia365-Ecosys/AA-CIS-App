@@ -9,8 +9,8 @@ connection off (today) and ON (once its key is plugged in). No provider, AWS or 
 What the tech lead decided (S263) and this proves:
 - T-4: a moved stage resolves first to the same model family as before (Anthropic stays Anthropic, GPT stays GPT),
   on Bedrock acc3, through the Converse API: never the legacy InvokeModel chain again.
-- T-3: the five A-series writers try every AWS deployment of a model before that model's vendor API deployment, and
-  the OpenAI API only at the very end; T-stages, tp_* and every other moved stage never leave AWS, even with the
+- T-3: the five A-series writers try every AWS deployment of the whole route before any vendor API (the Anthropic API,
+  then the OpenAI API at the very end); T-stages, tp_* and every other moved stage never leave AWS, even with the
   Anthropic API switched on.
 - A stage the migration does not touch makes exactly the calls of the S3 golden file.
 """
@@ -159,6 +159,8 @@ def test_writers_try_aws_first_and_the_openai_api_last(calls, models, state, sta
         assert served[-1] == "gpt-6-luna-openai"
         first_vendor = min(i for i, c in enumerate(got) if c[0] in VENDOR_APIS)
         assert got[0][0] in BEDROCK_APIS and first_vendor >= 1               # an AWS deployment first
+        last_aws = max(i for i, c in enumerate(got) if c[0] in BEDROCK_APIS)
+        assert last_aws < first_vendor, (stage, variant, got)                # T-3: every AWS path of the ROUTE first
         for i, c in enumerate(got):                                          # per model: AWS before its vendor API
             if c[0] == "anthropic":
                 assert any(p[0] in BEDROCK_APIS and served[j] == served[i] for j, p in enumerate(got[:i]))

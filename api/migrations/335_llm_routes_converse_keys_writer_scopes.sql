@@ -22,16 +22,23 @@
 --      or `sonnet`. A legacy key is replaced by what its legacy chain ran (migration 307's alias rows: haiku = Haiku
 --      4.5; sonnet = Sonnet 4.6, then Haiku 4.5), each model at the same tier on its Converse key:
 --        haiku  -> haiku-5-5
---        sonnet -> sonnet-5-5, haiku-5-5        (the chain's Sonnet -> Haiku degrade, kept as an explicit fallback)
+--        sonnet -> sonnet-5-5, haiku-5-5        (the chain's Sonnet -> Haiku degrade, kept as an explicit fallback;
+--                                                an A-series writer drops it again in item 2)
 --      then duplicates are dropped (first occurrence wins), so e.g. [haiku, sonnet] -> [haiku-5-5, sonnet-5-5],
 --      [sonnet, haiku] -> [sonnet-5-5, haiku-5-5], [sonnet-5-5, sonnet] -> [sonnet-5-5, haiku-5-5]. TripPlanner stages
 --      (`tp_*`) map one to one (sonnet -> sonnet-5-5): their own gateway never had the Haiku degrade. A legacy shadow
 --      maps one to one; a shadow that would equal the new primary is cleared (sample 0). Inactive rows move too.
 --   2. T-3: the A-series Claude writers s1_generate, s1_flag_fix, s1_itinerary_nudge, a0_column_map,
 --      supply_content_writer get allowed_scopes {aws_only, vendor_direct} and `gpt-6-luna-openai` as their LAST
---      fallback (moved to the end when already in the route). Per model, the gateway tries the AWS deployment first
---      and a vendor deployment after it (priority order, vendor_route.deployment_plan): sonnet-5-5 on acc3, then on
---      anthropic-direct once its key exists (the connection is off today), ..., then GPT-6 Luna on the OpenAI API.
+--      fallback (moved to the end when already in the route). "Outside only when the AWS paths are blocked" must
+--      hold for the whole route, but the gateway tries EVERY deployment of a model (priority order: acc3, then
+--      anthropic-direct once its key exists) before the route's next model (vendor_route.deployment_plan,
+--      LLMClient._call_plan). So a writer keeps no fallback reached inside AWS behind a model that also has a
+--      deployment outside AWS (every Anthropic model has an anthropic-direct row, migration 306; enabled or not, as
+--      the admin's reach rule counts it): such a fallback is dropped. Today that drops only supply_content_writer's
+--      haiku-5-5 (the T-4 degrade of its legacy `sonnet`), so all five writers become [<one Anthropic model>,
+--      gpt-6-luna-openai]: acc3, then the Anthropic API, then GPT-6 Luna on the OpenAI API. The admin route PATCH
+--      refuses the same interleaving afterwards (api/routers/admin_llm_ops.py, _check_aws_before_vendor).
 --      Not opened: s1_atom_writer (retired, no caller since AA-611) and every T-stage / tp_* stage.
 --   3. I3: shared.llm_provider_connection 'openai-direct' monthly_budget_usd = 10 when it is NULL (an admin's value is
 --      kept), and its shared.llm_connection_cost_policy row (alert_pct 80, hard_stop true) when it has none. How the
@@ -44,7 +51,8 @@
 --           with an openai-direct deployment; openai-direct is a vendor_direct connection.
 --   after:  no route names a legacy key; every route this file changed names catalog keys only, without duplicates,
 --           its primary not among its fallbacks, its shadow not its primary; each writer of item 2 ends on
---           gpt-6-luna-openai with both scopes and an Anthropic primary; every stage allowed vendor_direct is one of
+--           gpt-6-luna-openai with both scopes and an Anthropic primary, and names no fallback reached inside AWS
+--           behind a model with a deployment outside AWS; every stage allowed vendor_direct is one of
 --           those writers or names a model reached only outside AWS (migration 311's rule); no T-stage or tp_* stage
 --           was opened by this file.
 --
@@ -160,20 +168,46 @@ UPDATE shared.llm_role_config r
  WHERE p.stage = r.stage;
 
 -- ── 2. T-3: A-series writers may fall back outside AWS, the OpenAI API model last ──────────────────────────────
-WITH writers AS (
+-- reach: per model, whether a deployment is inside AWS / outside it (every row, enabled or not: the switch is an
+-- operation, the scope a policy). A model without a deployment row is called on acc3 by the gateway: inside AWS.
+WITH reach AS (
+    SELECT d.model_key,
+           bool_or(c.data_scope = 'aws_only')  AS inside,
+           bool_or(c.data_scope <> 'aws_only') AS outside
+      FROM shared.llm_model_deployment d
+      JOIN shared.llm_provider_connection c ON c.connection_key = d.connection_key
+     GROUP BY d.model_key
+), writers AS (
     SELECT r.stage,
-           array_append(array_remove(coalesce(r.fallback_model_ids, ARRAY[]::text[]), 'gpt-6-luna-openai'),
-                        'gpt-6-luna-openai') AS fallbacks
+           ARRAY[r.model_id] || array_remove(coalesce(r.fallback_model_ids, ARRAY[]::text[]), 'gpt-6-luna-openai')
+               AS chain
       FROM shared.llm_role_config r
      WHERE r.stage IN ('s1_generate', 's1_flag_fix', 's1_itinerary_nudge', 'a0_column_map', 'supply_content_writer')
        AND r.model_id <> 'gpt-6-luna-openai'
+), positions AS (
+    SELECT w.stage, k.key, k.ord,
+           coalesce(re.inside, true)
+           AND EXISTS (SELECT 1
+                         FROM unnest(w.chain) WITH ORDINALITY AS e (key, ord)
+                         JOIN reach x ON x.model_key = e.key
+                        WHERE e.ord < k.ord AND x.outside) AS behind_vendor
+      FROM writers w
+     CROSS JOIN LATERAL unnest(w.chain) WITH ORDINALITY AS k (key, ord)
+      LEFT JOIN reach re ON re.model_key = k.key
+), kept AS (
+    SELECT stage,
+           array_append(coalesce(array_agg(key ORDER BY ord) FILTER (WHERE ord > 1 AND NOT behind_vendor),
+                                 ARRAY[]::text[]),
+                        'gpt-6-luna-openai') AS fallbacks
+      FROM positions
+     GROUP BY stage
 )
 UPDATE shared.llm_role_config r
    SET allowed_scopes     = ARRAY['aws_only', 'vendor_direct']::text[],
        fallback_model_ids = w.fallbacks,
        updated_at         = now(),
        updated_by         = 'migration-335-aa1026'
-  FROM writers w
+  FROM kept w
  WHERE w.stage = r.stage
    AND (r.allowed_scopes IS DISTINCT FROM ARRAY['aws_only', 'vendor_direct']::text[]
         OR r.fallback_model_ids IS DISTINCT FROM w.fallbacks);
@@ -239,6 +273,33 @@ BEGIN
     IF bad IS NOT NULL THEN
         RAISE EXCEPTION 'migration 335: A-series writers not on an Anthropic primary with the OpenAI API last and both '
                         'scopes: %', bad;
+    END IF;
+
+    -- T-3: a writer leaves AWS only after every AWS deployment of its route (the gateway walks a model's deployments
+    -- before the next model, so no model reached inside AWS may follow one with a deployment outside AWS).
+    WITH reach AS (
+        SELECT d.model_key,
+               bool_or(c.data_scope = 'aws_only')  AS inside,
+               bool_or(c.data_scope <> 'aws_only') AS outside
+          FROM shared.llm_model_deployment d
+          JOIN shared.llm_provider_connection c ON c.connection_key = d.connection_key
+         GROUP BY d.model_key
+    ), chains AS (
+        SELECT r.stage, ARRAY[r.model_id] || coalesce(r.fallback_model_ids, ARRAY[]::text[]) AS chain
+          FROM shared.llm_role_config r
+         WHERE r.stage IN ('s1_generate', 's1_flag_fix', 's1_itinerary_nudge', 'a0_column_map',
+                           'supply_content_writer')
+    )
+    SELECT string_agg(DISTINCT c.stage || ':' || a.key || '>' || b.key, ', ') INTO bad
+      FROM chains c
+     CROSS JOIN LATERAL unnest(c.chain) WITH ORDINALITY AS a (key, ord)
+      JOIN reach ra ON ra.model_key = a.key AND ra.outside
+     CROSS JOIN LATERAL unnest(c.chain) WITH ORDINALITY AS b (key, ord)
+      LEFT JOIN reach rb ON rb.model_key = b.key
+     WHERE b.ord > a.ord AND coalesce(rb.inside, true);
+    IF bad IS NOT NULL THEN
+        RAISE EXCEPTION 'migration 335: writers that would call a vendor API before an AWS deployment of a later '
+                        'model (model with a deployment outside AWS > later model inside AWS): %', bad;
     END IF;
 
     -- 311's rule, with this file's writers as the only additions: vendor_direct = a route reaching a model only

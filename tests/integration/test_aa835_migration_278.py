@@ -145,11 +145,11 @@ def test_registered_rerunnable_owned_and_granted(cur):
         assert cur.fetchone()[0] is allowed, role
     # 278 seeds the stage ('sonnet', ON CONFLICT DO NOTHING); the replay already ran 282 (S251), which moved it to the
     # catalog key sonnet-5-5 with the legacy 'sonnet' last, then 335 (AA-1026: Converse keys, the OpenAI API model
-    # last), and a re-run of 278 leaves that row alone.
+    # last, no AWS fallback behind sonnet-5-5's Anthropic API deployment), and a re-run of 278 leaves that row alone.
     cur.execute("SELECT stage, role, provider, model_id, account_route, is_active, shadow_model_id, fallback_model_ids "
                 "FROM shared.llm_role_config WHERE stage = 'supply_content_writer'")
     assert cur.fetchone() == ("supply_content_writer", "writer", "claude", "sonnet-5-5", "acc3", True, None,
-                              ["haiku-5-5", "gpt-6-luna-openai"])
+                              ["gpt-6-luna-openai"])
     cur.execute("SELECT per_run_usd, per_day_usd, hard_stop FROM shared.spend_budget "
                 "WHERE provider = 'bedrock' AND scope = 'job:supply_content_draft'")
     assert [float(x) if not isinstance(x, bool) else x for x in cur.fetchone()] == [0.10, 1.00, True]

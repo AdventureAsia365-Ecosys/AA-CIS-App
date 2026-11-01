@@ -127,12 +127,38 @@ def test_writers_end_on_the_openai_api_with_both_scopes(cur):
 
 def test_openai_api_mid_route_moves_to_the_end(cur):
     _load_fixture_routes(cur)
-    cur.execute("UPDATE shared.llm_role_config SET fallback_model_ids = ARRAY['gpt-6-luna-openai', 'sonnet'] "
+    cur.execute("UPDATE shared.llm_role_config SET fallback_model_ids = ARRAY['gpt-6-luna-openai', 'gpt-6-luna'] "
                 "WHERE stage = 's1_flag_fix'")
     cur.execute(_body())
     cur.execute("SELECT model_id, fallback_model_ids FROM shared.llm_role_config WHERE stage = 's1_flag_fix'")
     r = cur.fetchone()
-    assert (r["model_id"], r["fallback_model_ids"]) == ("haiku-5-5", ["sonnet-5-5", "gpt-6-luna-openai"])
+    # gpt-6-luna is reached only inside AWS (acc2) but follows haiku-5-5, which has an Anthropic API deployment: kept
+    # out (next test); the OpenAI API model moves to the end
+    assert (r["model_id"], r["fallback_model_ids"]) == ("haiku-5-5", ["gpt-6-luna-openai"])
+
+
+def test_a_writer_keeps_no_aws_fallback_behind_a_model_with_a_vendor_deployment(cur):
+    """T-3 for the whole route: the gateway walks every deployment of a model (acc3, then anthropic-direct) before the
+    route's next model, so an AWS fallback behind an Anthropic model would come after the Anthropic API. The T-4 degrade
+    sonnet -> haiku-5-5 is dropped for a writer (supply_content_writer on Dev), kept for every other stage."""
+    _load_fixture_routes(cur)
+    cur.execute("UPDATE shared.llm_role_config SET model_id = 'sonnet', fallback_model_ids = ARRAY['sonnet-5-5'] "
+                "WHERE stage = 's1_flag_fix'")
+    cur.execute(_body())
+    cur.execute("SELECT stage, model_id, fallback_model_ids FROM shared.llm_role_config "
+                "WHERE stage IN ('a3_place_locate', 's1_flag_fix', 'supply_content_writer') ORDER BY stage")
+    assert [tuple(r.values()) for r in cur.fetchall()] == [
+        ("a3_place_locate", "sonnet-5-5", ["haiku-5-5"]),                     # aws_only stage: the degrade stays
+        ("s1_flag_fix", "sonnet-5-5", ["gpt-6-luna-openai"]),
+        ("supply_content_writer", "sonnet-5-5", ["gpt-6-luna-openai"])]
+
+
+def test_guard_refuses_a_writer_that_would_leave_aws_before_a_later_aws_model(cur):
+    _load_fixture_routes(cur)
+    body = _body().replace("FILTER (WHERE ord > 1 AND NOT behind_vendor)", "FILTER (WHERE ord > 1)", 1)
+    assert body != _body()                                                  # the mutation really applied
+    with pytest.raises(psycopg2.errors.RaiseException, match="vendor API before an AWS deployment"):
+        cur.execute(body)
 
 
 def test_a_legacy_shadow_maps_and_is_cleared_when_it_becomes_the_primary(cur):

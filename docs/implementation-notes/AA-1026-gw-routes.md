@@ -18,13 +18,19 @@ runbook / orchestrator script / AI Use Register update is the root PR of the sam
 - **Inactive rows move too** (`s1_atom_writer`, retired): no route names a legacy key after 335 (guard).
 - **T-3 writers = the five named in the plan.** `s1_atom_writer` is the only other A-series Claude writer in the route
   list; it has no caller (AA-611), so it is not opened.
-- **"AWS first, vendor after" is per model** (`vendor_route.deployment_plan`): a model's acc3 deployment (priority 10)
-  before its anthropic-direct one (priority 100), and `gpt-6-luna-openai` (OpenAI API only) appended as the route's
-  LAST fallback. For `supply_content_writer` with the Anthropic key on, the order is sonnet-5-5@acc3 →
-  sonnet-5-5@anthropic-direct → haiku-5-5@acc3 → haiku-5-5@anthropic-direct → gpt-6-luna@openai-direct. An account-level
-  acc3 refusal opens the acc3 connection circuit at once, so in the real failure (Error 002) every acc3 attempt is
-  skipped anyway; a strict "all AWS before any vendor" order across models would need a gateway code change and was
-  not asked.
+- **"AWS first, vendor after" holds for the whole route (review fix).** The gateway tries every deployment of a model
+  (`vendor_route.deployment_plan`: acc3 priority 10, anthropic-direct priority 100) before the route's next model
+  (`LLMClient._call_plan`). The first cut kept `supply_content_writer` on [sonnet-5-5, haiku-5-5, gpt-6-luna-openai],
+  so with the Anthropic key on, a sonnet-only acc3 failure (throttle, timeout, model-level refusal: anything that does
+  not open the whole acc3 connection circuit) would have sent the content to the Anthropic API before haiku-5-5 on
+  acc3, against T-3 ("go outside only if the AWS paths are blocked"). Chosen fix: config, not gateway code. Step 2 of
+  335 drops every writer fallback reached inside AWS that follows a model with a deployment outside AWS (counted over
+  every deployment, enabled or not, like the admin's reach), so today it drops only that `haiku-5-5`, and all five
+  writers are [one Anthropic model, gpt-6-luna-openai]: acc3 → Anthropic API → OpenAI API. A guard in 335 and
+  `_check_aws_before_vendor` on both admin PATCH endpoints keep that order. Rejected: (b) a gateway walk "all AWS
+  deployments of every model first, then the vendor ones" — a change to the core call path (unusable replies,
+  deadlines, budget / circuit skips, ledger positions) for one stage, not asked; (c) accepting the per-model order —
+  not what T-3 says.
 - **I3 in the same migration**, not an admin PATCH: reviewed and reproducible. Only when `monthly_budget_usd IS NULL`
   and the policy row is missing (`ON CONFLICT DO NOTHING`), so an admin value is kept. `credential_env` stays
   `OPENAI_API_KEY` (the key keeps coming from the ECS task env; the tech lead said do not change its delivery).
@@ -38,13 +44,15 @@ runbook / orchestrator script / AI Use Register update is the root PR of the sam
 ## Changed
 
 - `api/migrations/335_llm_routes_converse_keys_writer_scopes.sql` (new, contract).
-- `api/routers/admin_llm_ops.py`: `_writer_last_resort` + its use in `patch_llm_route`.
+- `api/routers/admin_llm_ops.py`: `_writer_last_resort` + its use in `patch_llm_route`; `_check_aws_before_vendor`
+  (review fix) in `patch_llm_route` and `patch_llm_config`, after the vendor-rule checks (their message stays first).
 - Tests: `tests/integration/test_aa1026_migration_335.py`, `tests/unit/test_aa1026_route_moves.py`,
   `tests/unit/test_aa1026_admin_writer_last_resort.py`, snapshot `tests/unit/snapshots/aa1026_routes_after_335.json`.
 - Replay-state tests that read the route table after the full replay now expect the post-335 rows:
   `test_aa784_migration_286.py` (a3_place_card_check), `test_aa803_migration_259.py` (which stages route the 5.5 keys;
   its teardown also puts back the haiku-5-5 / sonnet-5-5 deployments its `_undo` cascades away),
-  `test_aa835_migration_278.py`, `test_aa835_migration_282.py` (its restore now ends with 335).
+  `test_aa835_migration_278.py`, `test_aa835_migration_282.py` (its restore now ends with 335; both expect
+  `supply_content_writer` = sonnet-5-5 → gpt-6-luna-openai after the review fix).
 - `CONTEXT.md`: writers' last resort, the T-4 move.
 
 ## Tradeoffs
@@ -57,6 +65,10 @@ runbook / orchestrator script / AI Use Register update is the root PR of the sam
   (the gateway drops it). No prompt change was asked; quality is checked later by eval when LLM access is back.
 - **Cost goes down** at catalog prices (haiku 1/5 → 0.1/0.5, sonnet 3/15 → 2/10 USD per 1M tokens), but a moved
   `sonnet` stage now has an explicit `haiku-5-5` fallback that the old chain had implicitly: same number of attempts.
+- **`supply_content_writer` loses the Haiku degrade** (it had acc3 Sonnet → acc3 Haiku inside the legacy chain). In
+  exchange, when only Sonnet fails on acc3 it goes to Sonnet on the Anthropic API (once the key is in), then GPT-6
+  Luna: a stronger model than Haiku for customer copy, and staff review every draft. With the Anthropic key off (today)
+  a Sonnet-only acc3 failure goes straight to GPT-6 Luna on the OpenAI API (inside its 10 USD budget).
 
 ## Should know
 
