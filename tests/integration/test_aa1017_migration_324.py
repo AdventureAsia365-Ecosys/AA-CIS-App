@@ -102,13 +102,17 @@ def test_each_model_has_one_enabled_acc2_deployment_on_its_profile(cur):
 
 def test_no_route_alias_or_stage_names_a_candidate(cur):
     """324 routes nothing. Since CIS 331 / 332 (AA-1026 I6) a candidate may END the route of a judge / validate stage,
-    never be a primary, a shadow, a writer's model or an earlier fallback."""
-    cur.execute("SELECT count(*) AS n FROM shared.llm_role_config "
-                "WHERE model_id = ANY (%(k)s) OR shadow_model_id = ANY (%(k)s) "
-                "OR (fallback_model_ids && %(k)s::text[] AND (role NOT IN ('judge', 'validate') "
-                "    OR NOT (fallback_model_ids[cardinality(fallback_model_ids)] = ANY (%(k)s)) "
-                "    OR fallback_model_ids[1:cardinality(fallback_model_ids) - 1] && %(k)s::text[]))",
-                {"k": list(KEYS)})
+    and since 333 it may stand right before the OpenAI API hop that ends one; never a primary, a shadow, a writer's
+    model or an earlier fallback. (The route without its trailing OpenAI API hops ends on the one candidate.)"""
+    cur.execute("SELECT count(*) AS n FROM shared.llm_role_config r "
+                "CROSS JOIN LATERAL (SELECT array_remove(r.fallback_model_ids, %(v)s) AS g) x "
+                "WHERE r.model_id = ANY (%(k)s) OR r.shadow_model_id = ANY (%(k)s) "
+                "OR (r.fallback_model_ids && %(k)s::text[] AND (r.role NOT IN ('judge', 'validate') "
+                "    OR NOT (x.g[cardinality(x.g)] = ANY (%(k)s)) "
+                "    OR x.g[1:cardinality(x.g) - 1] && %(k)s::text[] "
+                "    OR array_position(r.fallback_model_ids, %(v)s) < array_position(r.fallback_model_ids, "
+                "                                                           x.g[cardinality(x.g)])))",
+                {"k": list(KEYS), "v": "gpt-6-luna-openai"})
     assert cur.fetchone()["n"] == 0
     with candidates_off_routes(cur):
         cur.execute("SELECT count(*) AS n FROM shared.llm_role_config WHERE fallback_model_ids && %s::text[]",
