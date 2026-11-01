@@ -89,7 +89,9 @@ def test_background_kind_never_claimed_with_two_or_fewer_free_slots(free):
                           # AA-1018: the daily LLM connection probe (off unless LLM_DAILY_PROBE=on; dry run $0)
                           "llm_connection_probe",
                           # AA-1026 D5: re-embed of one vector column (dry run $0; a fill is capped, resumable)
-                          "embedding_reembed"}
+                          "embedding_reembed",
+                          # AA-1026 I6: the acc2 fallback contract smoke (dry run $0; live about 0.01 USD, cap 0.10)
+                          "llm_contract_smoke"}
     assert bool(background & set(w.claim_caps(free))) == (free > worker.BACKGROUND_RESERVE)
 
 

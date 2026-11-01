@@ -182,6 +182,7 @@ POLICY: dict[tuple[str, str], str] = {
     ("POST", "/admin/job-runner/jobs/retry-llm-denied"): OPS_WRITE,      # AA-1018 (DRY RUN by default, audited)
     ("POST", "/admin/job-runner/llm-probe/run"): AI_ADMIN,               # AA-1018 (DRY RUN by default)
     ("POST", "/admin/job-runner/embedding-reembed/run"): AI_ADMIN,       # AA-1026 D5 (DRY RUN by default)
+    ("POST", "/admin/job-runner/llm-contract-smoke/run"): AI_ADMIN,      # AA-1026 I6 (DRY RUN by default)
     ("POST", "/admin/job-runner/retention/run"): OPS_WRITE,
     ("POST", "/admin/job-runner/retention/schedule"): OPS_WRITE,
     ("POST", "/admin/job-runner/staff-reconcile/schedule"): OPS_WRITE,   # AA-816 C7, daily (MACHINE_ROUTES)
