@@ -21,7 +21,7 @@ MIGRATION = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migratio
                          "286_place_card_draft_gpt6_luna.sql")
 STAGE = "a3_place_card"
 POST_286 = ("gpt-6-luna", ["gpt-5.6-luna"], "validate", "openai", "acc3", True, None, 0)
-# The check route after the replay: 222 set haiku -> sonnet, AA-1026 (migration 335) moved it to the Converse keys.
+# The check route after the replay: 222 set haiku -> sonnet, AA-1026 (migration 327) moved it to the Converse keys.
 CHECK_ROUTE = ("haiku-5-5", ["sonnet-5-5"], "validate", "claude", "acc3", True, None, 0)
 
 

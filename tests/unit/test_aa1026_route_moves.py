@@ -1,7 +1,7 @@
-"""AA-1026 — what the gateway calls for every Dev stage once migration 335 has moved the routes.
+"""AA-1026 — what the gateway calls for every Dev stage once migration 327 has moved the routes.
 
-The routes are ``snapshots/aa1026_routes_after_335.json``: the 37 Dev routes of the S3 fixture (29/10) after migration
-335, as ``tests/integration/test_aa1026_migration_335.py`` proves by applying the file to real Postgres. Each route is
+The routes are ``snapshots/aa1026_routes_after_327.json``: the 37 Dev routes of the S3 fixture (29/10) after migration
+327, as ``tests/integration/test_aa1026_migration_327.py`` proves by applying the file to real Postgres. Each route is
 walked through ``LLMClient.generate`` with every provider failing (``aa1002_s3_route_capture``), so every attempt the
 gateway would make is recorded in order, under the registry rows of migrations 304 / 306 with the Anthropic API
 connection off (today) and ON (once its key is plugged in). No provider, AWS or database is reached.
@@ -22,7 +22,7 @@ import pytest
 from tests.unit import aa1002_s3_route_capture as rc
 
 SNAPSHOTS = Path(__file__).resolve().parent / "snapshots"
-AFTER = SNAPSHOTS / "aa1026_routes_after_335.json"
+AFTER = SNAPSHOTS / "aa1026_routes_after_327.json"
 GOLDEN = SNAPSHOTS / "aa1002_s3_pre_s3_route_calls.json"
 LEGACY = ("haiku", "sonnet")
 WRITERS = ("a0_column_map", "s1_flag_fix", "s1_generate", "s1_itinerary_nudge", "supply_content_writer")
@@ -56,7 +56,7 @@ _CALLS: dict = {}
 
 @pytest.fixture
 def calls() -> dict:
-    """{registry state: capture()} over the post-335 routes, each stage with its post-335 data scopes. Captured once,
+    """{registry state: capture()} over the post-327 routes, each stage with its post-327 data scopes. Captured once,
     inside the first test that needs it (function scope, so the conftest's breaker-off and no-DB stubs are active;
     a module fixture would run before them)."""
     if not _CALLS:
@@ -83,7 +83,7 @@ def test_the_moved_set_is_the_twenty_one_legacy_stages():
 
 
 def test_the_capture_scopes_are_the_ones_the_migration_writes():
-    """capture(scoped=True) derives the scopes with migration 311's rule; after 335 that rule gives exactly the scopes
+    """capture(scoped=True) derives the scopes with migration 311's rule; after 327 that rule gives exactly the scopes
     the migration wrote (the writers end on a model reached only outside AWS)."""
     fixture = {**rc.load_fixture(), "routes": list(_after().values())}
     derived = rc.stage_scopes(fixture)

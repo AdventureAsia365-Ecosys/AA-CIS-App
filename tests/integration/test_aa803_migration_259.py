@@ -30,7 +30,7 @@ def cur():
     conn.autocommit = True
     c = conn.cursor()
     # _undo deletes the catalog rows, which cascades to their deployments (304 / 306); keep them to put back (AA-1026:
-    # migration 335 and its test need the haiku-5-5 / sonnet-5-5 acc3 deployments the replay made).
+    # migration 327 and its test need the haiku-5-5 / sonnet-5-5 acc3 deployments the replay made).
     c.execute("SELECT to_jsonb(d)::text FROM shared.llm_model_deployment d WHERE d.model_key = ANY (%s)", (list(NEW),))
     deployments = [r[0] for r in c.fetchall()]
     try:
@@ -103,9 +103,9 @@ def test_new_rows_are_on_no_route(cur):
                 (list(NEW), list(NEW), list(NEW)))
     rows = cur.fetchall()
     # 259 routes no stage; the later migrations that route one are listed here: 282 (S251, supply_content_writer) and
-    # 335 (AA-1026, every route that named the legacy haiku / sonnet keys, supply_content_writer included).
+    # 327 (AA-1026, every route that named the legacy haiku / sonnet keys, supply_content_writer included).
     assert "supply_content_writer" in {r[0] for r in rows}
-    assert {r[1] for r in rows} <= {"migration-282-aa835", "migration-335-aa1026"}
+    assert {r[1] for r in rows} <= {"migration-282-aa835", "migration-327-aa1026"}
 
 
 def test_sonnet_drops_the_legacy_acc2_profile_only(cur):

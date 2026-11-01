@@ -599,5 +599,5 @@
    "stage": "writing_memory_mine"
   }
  ],
- "source": "tests/unit/snapshots/aa1002_s3_routes_fixture.json (Dev routes of 29/10) with migration 311's scope backfill, then migration 335 (AA-1026); written by tests/integration/test_aa1026_migration_335.py's helper, compared there with the file applied to real Postgres"
+ "source": "tests/unit/snapshots/aa1002_s3_routes_fixture.json (Dev routes of 29/10) with migration 311's scope backfill, then migration 327 (AA-1026); written by tests/integration/test_aa1026_migration_327.py's helper, compared there with the file applied to real Postgres"
 }

@@ -1,6 +1,6 @@
-"""AA-1026 (S263, tech lead T-3) — the admin route PATCH keeps working on the A-series writers after migration 335.
+"""AA-1026 (S263, tech lead T-3) — the admin route PATCH keeps working on the A-series writers after migration 327.
 
-Migration 335 ends the routes of five writer stages on GPT-6 Luna through the OpenAI API (vendor_direct). The writer /
+Migration 327 ends the routes of five writer stages on GPT-6 Luna through the OpenAI API (vendor_direct). The writer /
 judge vendor rule marks a GPT model "not selectable" for a writer, and the route PATCH re-validates every fallback the
 row keeps, so without an exception an admin could no longer change a shadow or a fallback of those stages. The
 exception is narrow: the LAST fallback of a writer stage whose data scopes include vendor_direct may be a model of

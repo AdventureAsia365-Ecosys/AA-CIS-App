@@ -1,10 +1,10 @@
-"""AA-1026 — migration 335 (legacy haiku / sonnet routes -> Converse keys, A-series writers vendor_direct with the
+"""AA-1026 — migration 327 (legacy haiku / sonnet routes -> Converse keys, A-series writers vendor_direct with the
 OpenAI API last, the openai-direct monthly budget) against real Postgres.
 
-conftest applies every migration, 335 included. The main test replaces the route table with the 37 Dev routes of the
+conftest applies every migration, 327 included. The main test replaces the route table with the 37 Dev routes of the
 S3 fixture (``tests/unit/snapshots/aa1002_s3_routes_fixture.json``, Dev 29/10, with migration 311's scope backfill),
 runs the file's body inside one transaction (errors not swallowed) and compares every row with
-``tests/unit/snapshots/aa1026_routes_after_335.json``, the routes the unit test ``test_aa1026_route_moves.py`` walks
+``tests/unit/snapshots/aa1026_routes_after_327.json``, the routes the unit test ``test_aa1026_route_moves.py`` walks
 through the gateway. Every test rolls back what it wrote.
 """
 import json
@@ -22,10 +22,10 @@ sys.path.insert(0, os.path.dirname(__file__))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
-M335 = ROOT / "api" / "migrations" / "335_llm_routes_converse_keys_writer_scopes.sql"
+M327 = ROOT / "api" / "migrations" / "327_llm_routes_converse_keys_writer_scopes.sql"
 M311 = ROOT / "api" / "migrations" / "311_llm_stage_allowed_scopes.sql"
 FIXTURE = ROOT / "tests" / "unit" / "snapshots" / "aa1002_s3_routes_fixture.json"
-EXPECTED = ROOT / "tests" / "unit" / "snapshots" / "aa1026_routes_after_335.json"
+EXPECTED = ROOT / "tests" / "unit" / "snapshots" / "aa1026_routes_after_327.json"
 WRITERS = ("a0_column_map", "s1_flag_fix", "s1_generate", "s1_itinerary_nudge", "supply_content_writer")
 COLUMNS = ("stage, role, provider, model_id, account_route, is_active, fallback_model_ids, shadow_model_id, "
            "shadow_sample_pct, allowed_scopes")
@@ -33,7 +33,7 @@ COLUMNS = ("stage, role, provider, model_id, account_route, is_active, fallback_
 
 def _body() -> str:
     """The file without its own BEGIN / COMMIT, so a test runs it inside the test's transaction."""
-    return M335.read_text(encoding="utf-8").replace("BEGIN;", "", 1).replace("COMMIT;", "")
+    return M327.read_text(encoding="utf-8").replace("BEGIN;", "", 1).replace("COMMIT;", "")
 
 
 def _backfill_311() -> str:
@@ -72,8 +72,8 @@ def _routes(c) -> list[dict]:
 
 
 def test_registered(cur):
-    cur.execute("SELECT version AS ok FROM shared.schema_versions WHERE version = '335'")
-    assert cur.fetchone()["ok"] == "335"
+    cur.execute("SELECT version AS ok FROM shared.schema_versions WHERE version = '327'")
+    assert cur.fetchone()["ok"] == "327"
 
 
 def test_the_dev_routes_become_the_expected_routes(cur):
@@ -177,7 +177,7 @@ def test_a_legacy_shadow_maps_and_is_cleared_when_it_becomes_the_primary(cur):
 def test_openai_budget_and_policy_set_once_an_admin_value_is_kept(cur):
     cur.execute("SELECT monthly_budget_usd AS b FROM shared.llm_provider_connection "
                 "WHERE connection_key = 'openai-direct'")
-    assert float(cur.fetchone()["b"]) == 10.0                                 # conftest applied 335
+    assert float(cur.fetchone()["b"]) == 10.0                                 # conftest applied 327
     cur.execute("SELECT alert_pct, hard_stop FROM shared.llm_connection_cost_policy "
                 "WHERE connection_key = 'openai-direct'")
     assert tuple(cur.fetchone().values()) == (80, True)

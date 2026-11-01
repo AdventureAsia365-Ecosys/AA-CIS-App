@@ -514,12 +514,12 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `shared/llm_client/judge.py` (`call_judge`; it also holds the judge JSON parsers). It writes no
     `llm_call_log` row: the callers (judge_node, debate, quality_gates) do, once they have the verdict.
   - `s1_brand_audit`, `t2_brand_audit`: GPT-5.6 Luna → GPT-6 Luna (no OpenAI last resort).
-  - **A-series writers** (AA-1026, migration 335, tech lead T-3 in S263): `s1_generate`, `s1_flag_fix`,
+  - **A-series writers** (AA-1026, migration 327, tech lead T-3 in S263): `s1_generate`, `s1_flag_fix`,
     `s1_itinerary_nudge`, `a0_column_map`, `supply_content_writer` have `allowed_scopes = {aws_only, vendor_direct}`
     and end on GPT-6 Luna (OpenAI API) as the LAST fallback. "Outside AWS only when the AWS paths are blocked" holds
     for the whole route: the gateway tries every deployment of a model (acc3, then the Anthropic API once its key
     exists) before the route's next model, so a vendor_direct stage names no model reached inside AWS after a model
-    with a vendor API deployment (migration 335 dropped `supply_content_writer`'s `haiku-5-5` for that; each writer is
+    with a vendor API deployment (migration 327 dropped `supply_content_writer`'s `haiku-5-5` for that; each writer is
     [one Anthropic model, GPT-6 Luna]). Both admin PATCH endpoints refuse that order (`_check_aws_before_vendor`), and
     the route PATCH accepts the one other-maker last fallback on a vendor_direct writer (`_writer_last_resort`); the
     writer / judge vendor rule holds for the primary, every other fallback and the shadow. A draft written by that last resort is judged by a GPT judge
@@ -602,7 +602,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   new LLM call site that is not registered with the function writing its row. Stages added: `a0_column_map`, `f10_embed`, and `tp_compose` /
   `tp_search_embed` for AA-TripPlanner-Web, which reads the same tables (migration 172).
   Current choices, each decided from a real A/B run:
-  - AA-1026 (migration 335, tech lead T-4 in S263): no route names the legacy `haiku` / `sonnet` keys any more; each
+  - AA-1026 (migration 327, tech lead T-4 in S263): no route names the legacy `haiku` / `sonnet` keys any more; each
     moved to the Converse key of the same tier (`haiku-5-5`, `sonnet-5-5`; a CIS `sonnet` became `sonnet-5-5` →
     `haiku-5-5`, the legacy chain's degrade, except for an A-series writer, see above; `tp_*` one to one). The model names below are the history of each choice.
   - `s1_generate` (A1 admin rewrite) = Haiku 4.5; `s1_flag_fix` / `s1_itinerary_nudge` = Haiku.

@@ -298,7 +298,7 @@ def _check_aws_before_vendor(stage: str, scopes: Optional[tuple], reach: dict, c
 def _writer_last_resort(role: str, scopes: Optional[tuple], models: Optional[list], outside: frozenset,
                         model_key: str) -> bool:
     """AA-1026 (S263, tech lead T-3): a writer stage a migration opened to vendor_direct may END its route on a model
-    of another maker that is reached only outside AWS (today GPT-6 Luna on the OpenAI API, migration 335): the last
+    of another maker that is reached only outside AWS (today GPT-6 Luna on the OpenAI API, migration 327): the last
     resort when every AWS path is blocked. The writer / judge vendor rule still decides the primary, every other
     fallback and the shadow. The caller checks the position (the last fallback only)."""
     if role != "writer" or model_key not in outside:

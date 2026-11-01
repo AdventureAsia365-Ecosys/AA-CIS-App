@@ -1,4 +1,4 @@
--- Migration 335: AA-1026 (AI gateway v2, route changes the tech lead approved in S263) — the stages still on the legacy
+-- Migration 327: AA-1026 (AI gateway v2, route changes the tech lead approved in S263) — the stages still on the legacy
 -- keys move to the Converse keys, the A-series writers may fall back outside AWS, and the OpenAI API connection gets
 -- its monthly budget.
 --
@@ -43,7 +43,7 @@
 --   3. I3: shared.llm_provider_connection 'openai-direct' monthly_budget_usd = 10 when it is NULL (an admin's value is
 --      kept), and its shared.llm_connection_cost_policy row (alert_pct 80, hard_stop true) when it has none. How the
 --      key reaches the task is unchanged (credential_env OPENAI_API_KEY, injected by ECS).
---   4. Register 335.
+--   4. Register 327.
 --
 -- Guards (RAISE rolls the whole file back):
 --   before: the registry tables (304, 317) and allowed_scopes (311) exist; haiku-5-5 and sonnet-5-5 are enabled
@@ -96,13 +96,13 @@ BEGIN
     IF to_regclass('shared.llm_role_config') IS NULL OR to_regclass('shared.llm_model_catalog') IS NULL
        OR to_regclass('shared.llm_model_deployment') IS NULL OR to_regclass('shared.llm_provider_connection') IS NULL
        OR to_regclass('shared.llm_connection_cost_policy') IS NULL THEN
-        RAISE EXCEPTION 'migration 335: a registry table is missing (llm_role_config, llm_model_catalog, '
+        RAISE EXCEPTION 'migration 327: a registry table is missing (llm_role_config, llm_model_catalog, '
                         'llm_model_deployment, llm_provider_connection, llm_connection_cost_policy): apply 304 and 317';
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_attribute
                     WHERE attrelid = 'shared.llm_role_config'::regclass AND attname = 'allowed_scopes'
                       AND NOT attisdropped) THEN
-        RAISE EXCEPTION 'migration 335: shared.llm_role_config.allowed_scopes is missing: apply 311 first';
+        RAISE EXCEPTION 'migration 327: shared.llm_role_config.allowed_scopes is missing: apply 311 first';
     END IF;
 
     SELECT string_agg(k, ', ' ORDER BY k) INTO missing
@@ -114,7 +114,7 @@ BEGIN
                         WHERE m.model_key = k AND m.enabled AND m.vendor = 'anthropic' AND m.provider = 'bedrock'
                           AND m.api_style = 'converse');
     IF missing IS NOT NULL THEN
-        RAISE EXCEPTION 'migration 335: Converse keys without an enabled Anthropic catalog row and acc3 deployment: %',
+        RAISE EXCEPTION 'migration 327: Converse keys without an enabled Anthropic catalog row and acc3 deployment: %',
                         missing;
     END IF;
 
@@ -123,11 +123,11 @@ BEGIN
                      JOIN shared.llm_model_deployment d
                        ON d.model_key = m.model_key AND d.connection_key = 'openai-direct'
                     WHERE m.model_key = 'gpt-6-luna-openai' AND m.enabled AND m.provider = 'openai') THEN
-        RAISE EXCEPTION 'migration 335: gpt-6-luna-openai (enabled OpenAI API row on openai-direct) is missing';
+        RAISE EXCEPTION 'migration 327: gpt-6-luna-openai (enabled OpenAI API row on openai-direct) is missing';
     END IF;
     IF NOT EXISTS (SELECT 1 FROM shared.llm_provider_connection
                     WHERE connection_key = 'openai-direct' AND kind = 'openai' AND data_scope = 'vendor_direct') THEN
-        RAISE EXCEPTION 'migration 335: connection openai-direct (kind openai, vendor_direct) is missing';
+        RAISE EXCEPTION 'migration 327: connection openai-direct (kind openai, vendor_direct) is missing';
     END IF;
 END $$;
 
@@ -163,7 +163,7 @@ UPDATE shared.llm_role_config r
        shadow_model_id    = CASE WHEN p.shadow = p.chain[1] THEN NULL ELSE p.shadow END,
        shadow_sample_pct  = CASE WHEN p.shadow IS NULL OR p.shadow = p.chain[1] THEN 0 ELSE r.shadow_sample_pct END,
        updated_at         = now(),
-       updated_by         = 'migration-335-aa1026'
+       updated_by         = 'migration-327-aa1026'
   FROM planned p
  WHERE p.stage = r.stage;
 
@@ -206,7 +206,7 @@ UPDATE shared.llm_role_config r
    SET allowed_scopes     = ARRAY['aws_only', 'vendor_direct']::text[],
        fallback_model_ids = w.fallbacks,
        updated_at         = now(),
-       updated_by         = 'migration-335-aa1026'
+       updated_by         = 'migration-327-aa1026'
   FROM kept w
  WHERE w.stage = r.stage
    AND (r.allowed_scopes IS DISTINCT FROM ARRAY['aws_only', 'vendor_direct']::text[]
@@ -216,14 +216,14 @@ UPDATE shared.llm_role_config r
 UPDATE shared.llm_provider_connection
    SET monthly_budget_usd = 10,
        updated_at         = now(),
-       updated_by         = 'migration-335-aa1026'
+       updated_by         = 'migration-327-aa1026'
  WHERE connection_key = 'openai-direct'
    AND monthly_budget_usd IS NULL;
 
 INSERT INTO shared.llm_connection_cost_policy (connection_key, alert_pct, hard_stop, notes, updated_by)
 VALUES ('openai-direct', 80, true,
-        'AA-1026 (S263 T-2 / I3): 10 USD a month, alert at 80 %, hard stop at 100 % (migration 335).',
-        'migration-335-aa1026')
+        'AA-1026 (S263 T-2 / I3): 10 USD a month, alert at 80 %, hard stop at 100 % (migration 327).',
+        'migration-327-aa1026')
 ON CONFLICT (connection_key) DO NOTHING;
 
 -- ── 4. Guard: the routes as decided ─────────────────────────────────────────────────────────────────────────────
@@ -237,28 +237,28 @@ BEGIN
         OR coalesce(fallback_model_ids, ARRAY[]::text[]) && ARRAY['haiku', 'sonnet']::text[]
         OR shadow_model_id IN ('haiku', 'sonnet');
     IF bad IS NOT NULL THEN
-        RAISE EXCEPTION 'migration 335: stages still naming a legacy key: %', bad;
+        RAISE EXCEPTION 'migration 327: stages still naming a legacy key: %', bad;
     END IF;
 
     SELECT string_agg(r.stage || ':' || k.key, ', ' ORDER BY r.stage) INTO bad
       FROM shared.llm_role_config r
      CROSS JOIN LATERAL unnest(ARRAY[r.model_id, r.shadow_model_id] || coalesce(r.fallback_model_ids, ARRAY[]::text[]))
            AS k (key)
-     WHERE r.updated_by = 'migration-335-aa1026' AND k.key IS NOT NULL
+     WHERE r.updated_by = 'migration-327-aa1026' AND k.key IS NOT NULL
        AND NOT EXISTS (SELECT 1 FROM shared.llm_model_catalog m WHERE m.model_key = k.key);
     IF bad IS NOT NULL THEN
-        RAISE EXCEPTION 'migration 335: routes naming a key outside the catalog: %', bad;
+        RAISE EXCEPTION 'migration 327: routes naming a key outside the catalog: %', bad;
     END IF;
 
     SELECT string_agg(stage, ', ' ORDER BY stage) INTO bad
       FROM shared.llm_role_config r
-     WHERE r.updated_by = 'migration-335-aa1026'
+     WHERE r.updated_by = 'migration-327-aa1026'
        AND (r.model_id = ANY (coalesce(r.fallback_model_ids, ARRAY[]::text[]))
             OR cardinality(coalesce(r.fallback_model_ids, ARRAY[]::text[]))
                <> (SELECT count(DISTINCT f) FROM unnest(r.fallback_model_ids) AS f)
             OR r.shadow_model_id = r.model_id);
     IF bad IS NOT NULL THEN
-        RAISE EXCEPTION 'migration 335: routes with a duplicate key, the primary among its fallbacks or as its '
+        RAISE EXCEPTION 'migration 327: routes with a duplicate key, the primary among its fallbacks or as its '
                         'shadow: %', bad;
     END IF;
 
@@ -271,7 +271,7 @@ BEGIN
                 AND EXISTS (SELECT 1 FROM shared.llm_model_catalog m
                              WHERE m.model_key = r.model_id AND m.vendor = 'anthropic'));
     IF bad IS NOT NULL THEN
-        RAISE EXCEPTION 'migration 335: A-series writers not on an Anthropic primary with the OpenAI API last and both '
+        RAISE EXCEPTION 'migration 327: A-series writers not on an Anthropic primary with the OpenAI API last and both '
                         'scopes: %', bad;
     END IF;
 
@@ -298,7 +298,7 @@ BEGIN
       LEFT JOIN reach rb ON rb.model_key = b.key
      WHERE b.ord > a.ord AND coalesce(rb.inside, true);
     IF bad IS NOT NULL THEN
-        RAISE EXCEPTION 'migration 335: writers that would call a vendor API before an AWS deployment of a later '
+        RAISE EXCEPTION 'migration 327: writers that would call a vendor API before an AWS deployment of a later '
                         'model (model with a deployment outside AWS > later model inside AWS): %', bad;
     END IF;
 
@@ -313,7 +313,7 @@ BEGIN
     SELECT string_agg(r.stage, ', ' ORDER BY r.stage) INTO bad
       FROM shared.llm_role_config r
      WHERE 'vendor_direct' = ANY (coalesce(r.allowed_scopes, ARRAY[]::text[]))
-       AND (((r.stage LIKE 't%' OR r.stage LIKE 'tp\_%') AND r.updated_by = 'migration-335-aa1026')
+       AND (((r.stage LIKE 't%' OR r.stage LIKE 'tp\_%') AND r.updated_by = 'migration-327-aa1026')
             OR (r.stage NOT IN ('s1_generate', 's1_flag_fix', 's1_itinerary_nudge', 'a0_column_map',
                                 'supply_content_writer')
                 AND NOT EXISTS (SELECT 1 FROM reach o
@@ -322,16 +322,16 @@ BEGIN
                                         OR o.model_key = ANY (coalesce(r.fallback_model_ids, ARRAY[]::text[]))
                                         OR o.model_key = r.shadow_model_id))));
     IF bad IS NOT NULL THEN
-        RAISE EXCEPTION 'migration 335: stages allowed vendor_direct outside the decided set: %', bad;
+        RAISE EXCEPTION 'migration 327: stages allowed vendor_direct outside the decided set: %', bad;
     END IF;
 
     SELECT string_agg(stage, ', ' ORDER BY stage) INTO bad
-      FROM shared.llm_role_config WHERE updated_by = 'migration-335-aa1026';
-    RAISE NOTICE 'migration 335: stages changed by this file: %', coalesce(bad, '(none)');
+      FROM shared.llm_role_config WHERE updated_by = 'migration-327-aa1026';
+    RAISE NOTICE 'migration 327: stages changed by this file: %', coalesce(bad, '(none)');
 END $$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('335', now(), 'AA-1026: legacy haiku / sonnet routes -> haiku-5-5 / sonnet-5-5; A-series writers vendor_direct '
+VALUES ('327', now(), 'AA-1026: legacy haiku / sonnet routes -> haiku-5-5 / sonnet-5-5; A-series writers vendor_direct '
                       'with gpt-6-luna-openai last; openai-direct monthly budget 10 USD (alert 80 %, hard stop)')
 ON CONFLICT (version) DO NOTHING;
 
