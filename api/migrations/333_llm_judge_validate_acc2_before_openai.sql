@@ -37,7 +37,7 @@
 --   16.50 USD per 1M tokens). It keeps its route until a pick passes the contract smoke (the admin's override run:
 --   POST /admin/job-runner/llm-contract-smoke/run with "models": {"a3_place_dedupe": "<key>"}), then a later migration.
 --
---   Catalog (step 0): llama4-scout's capabilities gain "forced_tool_choice": false, the fact the smoke proved, so the
+--   Catalog (step 0b): llama4-scout's capabilities gain "forced_tool_choice": false, the fact the smoke proved, so the
 --   gateway asks it with tool choice `auto` + an instruction from the first call (client._forced_tool_choice_ok) and
 --   the contract smoke's plan refuses it for a stage that forces a tool choice. Only when the row does not state the
 --   capability already (an admin's or a later migration's value wins).
