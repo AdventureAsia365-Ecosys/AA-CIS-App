@@ -1,6 +1,7 @@
 // app/admin/platform/staff/messages.ts — AA-994: Platform › People & access › Staff in English and Vietnamese.
 // STAFF: the directory and the account drawer; MANAGE: the write panel, create dialog and outcome banner;
-// BOOKING_ROLE: Booking role names keyed by role code; HEALTH (+ HEALTH_REASON / HEALTH_KIND): the directory health
+// BOOKING_ROLE: Booking role names keyed by role code; CRM_ROLE (AA-1031): CRM (AA-Partner) staff role names keyed by
+// role code; HEALTH (+ HEALTH_REASON / HEALTH_KIND): the directory health
 // card. CIS role names are lib/rbac.messages.ts; API text (refusals, job errors, E2E reasons) stays as sent.
 
 import { defineMessages } from "../../../_kit/core/i18n";
@@ -8,6 +9,13 @@ import { defineMessages } from "../../../_kit/core/i18n";
 export const BOOKING_ROLE = defineMessages(
   { admin: "Booking admin", sales: "Sales", contracting: "Contracting", content_creator: "Content creator" },
   { admin: "Quản trị Booking", sales: "Kinh doanh", contracting: "Hợp đồng", content_creator: "Người tạo nội dung" },
+);
+
+// AA-1031: the CRM staff roles (shared.staff_crm_grant role codes; WORKFORCE groups crm-platform-admin / crm-ops /
+// crm-support).
+export const CRM_ROLE = defineMessages(
+  { platform_admin: "Agency admin", ops: "Operations", support: "Support" },
+  { platform_admin: "Quản trị đại lý", ops: "Vận hành", support: "Hỗ trợ" },
 );
 
 export const STAFF = defineMessages(
@@ -19,6 +27,7 @@ export const STAFF = defineMessages(
     colName: "Name",
     colCisRole: "CIS role",
     colBookingRole: "Booking role",
+    colCrmRole: "CRM role",
     colStatus: "Status",
     colLastSignIn: "Last sign-in",
     never: "Never",
@@ -76,6 +85,7 @@ export const STAFF = defineMessages(
     colName: "Tên",
     colCisRole: "Vai trò CIS",
     colBookingRole: "Vai trò Booking",
+    colCrmRole: "Vai trò CRM",
     colStatus: "Trạng thái",
     colLastSignIn: "Đăng nhập gần nhất",
     never: "Chưa bao giờ",
@@ -194,6 +204,18 @@ export const MANAGE = defineMessages(
     eachChange: "Each change is saved in CIS first, then in the company sign-in (Cognito), and recorded in the audit log.",
     cisChange: (from: string, to: string) => ` CIS role: ${from} → ${to}.`,
     bookingChange: (from: string, to: string) => ` Booking role: ${from} → ${to}.`,
+    crmRole: "CRM role",
+    crmHint: "Pick any; none means no CRM staff access.",
+    crmUnavailable: "CRM roles can be set once the database update for them is applied on this server.",
+    crmChange: (from: string, to: string) => ` CRM role: ${from} → ${to}.`,
+    presetTitle: "Platform owner preset",
+    presetNote:
+      "One save gives CIS Administrator, Booking admin and CRM Agency admin. Other CRM roles are kept. It does not make the person a directory owner.",
+    presetHas: "This account already has every admin role.",
+    presetApply: "Apply preset",
+    presetQ: "Give every admin role?",
+    presetBody: "gets CIS Administrator, Booking admin and CRM Agency admin in one change. They sign in again to use the new access.",
+    presetDone: "Platform owner preset saved in CIS and the company sign-in. The person signs in again to use it.",
     disableQ: "Disable this account?",
     disableBody:
       "can no longer sign in, and every session is ended. An access token already issued stays valid for up to 15 minutes. You can enable the account again later.",
@@ -274,6 +296,18 @@ export const MANAGE = defineMessages(
       "Mỗi thay đổi được lưu trong CIS trước, sau đó trong hệ thống đăng nhập công ty (Cognito), và được ghi vào nhật ký kiểm tra.",
     cisChange: (from: string, to: string) => ` Vai trò CIS: ${from} → ${to}.`,
     bookingChange: (from: string, to: string) => ` Vai trò Booking: ${from} → ${to}.`,
+    crmRole: "Vai trò CRM",
+    crmHint: "Chọn tuỳ ý; không chọn nghĩa là không có quyền nhân sự CRM.",
+    crmUnavailable: "Vai trò CRM đặt được khi bản cập nhật cơ sở dữ liệu cho chúng đã được áp dụng trên máy chủ này.",
+    crmChange: (from: string, to: string) => ` Vai trò CRM: ${from} → ${to}.`,
+    presetTitle: "Mẫu chủ sở hữu nền tảng",
+    presetNote:
+      "Một lần lưu cấp Quản trị viên CIS, Quản trị Booking và Quản trị đại lý CRM. Các vai trò CRM khác được giữ nguyên. Không biến người đó thành chủ sở hữu danh bạ.",
+    presetHas: "Tài khoản này đã có mọi vai trò quản trị.",
+    presetApply: "Áp dụng mẫu",
+    presetQ: "Cấp mọi vai trò quản trị?",
+    presetBody: "nhận Quản trị viên CIS, Quản trị Booking và Quản trị đại lý CRM trong một lần thay đổi. Họ đăng nhập lại để dùng quyền mới.",
+    presetDone: "Đã lưu mẫu chủ sở hữu nền tảng trong CIS và hệ thống đăng nhập công ty. Người đó đăng nhập lại để dùng.",
     disableQ: "Vô hiệu hoá tài khoản này?",
     disableBody:
       "sẽ không đăng nhập được nữa, và mọi phiên đều bị kết thúc. Access token đã cấp vẫn còn hiệu lực tối đa 15 phút. Bạn có thể bật lại tài khoản sau.",
@@ -306,8 +340,11 @@ export const HEALTH_REASON = defineMessages(
 );
 
 export const HEALTH_KIND = defineMessages(
-  { cis_role: "CIS role", booking_role: "Booking role", cognito_disabled: "sign-in disabled", email: "email" },
-  { cis_role: "vai trò CIS", booking_role: "vai trò Booking", cognito_disabled: "đăng nhập bị tắt", email: "e-mail" },
+  { cis_role: "CIS role", booking_role: "Booking role", crm_role: "CRM role", cognito_disabled: "sign-in disabled", email: "email" },
+  {
+    cis_role: "vai trò CIS", booking_role: "vai trò Booking", crm_role: "vai trò CRM", cognito_disabled: "đăng nhập bị tắt",
+    email: "e-mail",
+  },
 );
 
 export const HEALTH = defineMessages(
@@ -353,6 +390,7 @@ export const HEALTH = defineMessages(
     e2eNote:
       "allowed on Dev by the identity ADR, so not counted in “to check”. Any other sign-in group on these addresses is still a finding.",
     findings: (n: number) => `${n} finding${n === 1 ? "" : "s"}`,
+    crmNotCompared: "CRM roles were not compared in this check: the database update for them was not applied yet.",
   },
   {
     exemptNoRow: "không có tài khoản nhân sự ở đây, theo thiết kế",
@@ -398,5 +436,6 @@ export const HEALTH = defineMessages(
     e2eNote:
       "được phép trên Dev theo ADR danh tính, nên không tính vào “cần kiểm tra”. Mọi nhóm đăng nhập khác trên các địa chỉ này vẫn là một phát hiện.",
     findings: (n: number) => `${n} phát hiện`,
+    crmNotCompared: "Lần kiểm tra này chưa so sánh vai trò CRM: bản cập nhật cơ sở dữ liệu cho chúng chưa được áp dụng.",
   },
 );

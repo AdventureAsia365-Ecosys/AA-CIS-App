@@ -17,15 +17,21 @@
 // "Send invitation email" checkbox (on by default) and the banner says whether one was queued; the drawer has
 // "Resend invite" (POST …/invite: active accounts, at most 1 per 10 minutes and 5 per day, 429 otherwise) and the
 // list / drawer show "Last invited" (read from the audit log by the backend).
+//
+// AA-1031: CRM (AA-Partner) staff roles, several per person (Agency admin, Operations, Support = WORKFORCE groups
+// crm-platform-admin / crm-ops / crm-support), set in Add staff and Manage access next to the Booking role; and the
+// "Platform owner" preset (CIS Administrator + Booking admin + CRM Agency admin in one save, PATCH …/roles
+// {"preset": "platform_owner"}). Until the database update for CRM roles is applied the list says
+// crm_roles_available: false and the CRM field is read-only.
 
 import { useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, Mail, RefreshCw, XCircle } from "lucide-react";
 import { useMemo, useState } from "react";
-import { Button, ConfirmModal, K, Modal, RADIUS, sans, useT, Checkbox, Input, Select } from "../../../_kit";
+import { Button, ConfirmModal, Field, K, Modal, RADIUS, sans, useT, Checkbox, Input, Select } from "../../../_kit";
 import { ASSIGNABLE_STAFF_ROLES, isStaffRole, staffErrorMessage } from "@/lib/rbac";
 import { RBAC_MESSAGES } from "@/lib/rbac.messages";
 import type { Translator } from "../../../_kit/core/i18n";
-import { BOOKING_ROLE, MANAGE } from "./messages";
+import { BOOKING_ROLE, CRM_ROLE, MANAGE } from "./messages";
 
 // Mirrors the backend row (api/routers/admin_platform.py STAFF_COLUMNS).
 export interface StaffAccount {
@@ -41,6 +47,8 @@ export interface StaffAccount {
   last_login_at: string | null;
   linked: boolean;
   booking_role: string | null;
+  /** AA-1031: CRM staff role codes (CRM_ROLES order); [] = none. Optional: older API answers lack it. */
+  crm_roles?: string[];
   breakglass: boolean;
   // S242 invitation e-mail (from acp_shared.audit_log): SES accepted / requested / not sent, and the derived state.
   last_invited_at?: string | null;
@@ -58,15 +66,36 @@ export type BookingRole = (typeof BOOKING_ROLES)[number];
 /** English Booking role names (the `en` side of ./messages.ts BOOKING_ROLE). */
 export const BOOKING_ROLE_LABEL: Record<BookingRole, string> = BOOKING_ROLE.en;
 
+/** AA-1031: the CRM staff roles in display order (backend staff_directory.CRM_ROLES). */
+export const CRM_ROLES = ["platform_admin", "ops", "support"] as const;
+export type CrmRole = (typeof CRM_ROLES)[number];
+
+/** The account's CRM roles in CRM_ROLES order, unknown codes dropped. */
+export function crmRolesOf(s: Pick<StaffAccount, "crm_roles">): CrmRole[] {
+  const held = new Set(s.crm_roles ?? []);
+  return CRM_ROLES.filter((r) => held.has(r));
+}
+
+/** The "Platform owner" preset is already in place: CIS admin, Booking admin and CRM Agency admin. */
+export function hasPlatformOwnerRoles(s: Pick<StaffAccount, "role" | "booking_role" | "crm_roles">): boolean {
+  return s.role === "admin" && s.booking_role === "admin" && crmRolesOf(s).includes("platform_admin");
+}
+
 /** AA-994: the staff label helpers in the UI language — CIS role, Booking role and "Last invited" in words. */
 export function useStaffWords() {
   const m = useT(MANAGE);
   const role = useT(RBAC_MESSAGES);
   const booking = useT(BOOKING_ROLE);
+  const crm = useT(CRM_ROLE);
   return useMemo(() => ({
     roleLabel: (r: string) => (isStaffRole(r) ? role(r) : r),
     bookingRoleLabel: (r: string | null) =>
       (!r ? m("none") : Object.hasOwn(BOOKING_ROLE_LABEL, r) ? booking(r as BookingRole) : r),
+    /** AA-1031: CRM roles in words ("Agency admin, Support"), or "None". */
+    crmRolesLabel: (roles: readonly string[] | null | undefined) => {
+      const known = CRM_ROLES.filter((r) => (roles ?? []).includes(r));
+      return known.length ? known.map((r) => crm(r)).join(", ") : m("none");
+    },
     /** "Last invited" in words, for the list and the drawer. */
     inviteLabel: (s: InviteFields, fmt: (iso: string) => string) => {
       switch (s.invite_status) {
@@ -80,7 +109,7 @@ export function useStaffWords() {
           return m("never");
       }
     },
-  }), [m, role, booking]);
+  }), [m, role, booking, crm]);
 }
 
 /** The refusal words of staffWrite(), in the UI language. */
@@ -259,9 +288,46 @@ function BookingRoleSelect({ id, value, onChange }: { id: string; value: string;
   );
 }
 
+/** AA-1031: CRM roles as a group of kit checkboxes (any number, none = no CRM staff access). */
+function CrmRolesField({ idPrefix, value, onChange, disabled }: {
+  idPrefix: string;
+  value: readonly CrmRole[];
+  onChange: (v: CrmRole[]) => void;
+  disabled?: boolean;
+}) {
+  const m = useT(MANAGE);
+  const crm = useT(CRM_ROLE);
+  const toggle = (r: CrmRole, on: boolean) => {
+    const next = new Set(value);
+    if (on) next.add(r); else next.delete(r);
+    onChange(CRM_ROLES.filter((x) => next.has(x)));
+  };
+  return (
+    <Field as="div" label={m("crmRole")} hint={disabled ? m("crmUnavailable") : m("crmHint")} locked={disabled}>
+      <div data-testid={`${idPrefix}-crm`} style={{ display: "flex", gap: "6px 16px", flexWrap: "wrap" }}>
+        {CRM_ROLES.map((r) => (
+          <Checkbox key={r} id={`${idPrefix}-crm-${r}`} data-testid={`${idPrefix}-crm-${r}`} label={crm(r)}
+            checked={value.includes(r)} disabled={disabled} onChange={(e) => toggle(r, e.target.checked)}
+            style={{ fontSize: 13.5 }} />
+        ))}
+      </div>
+    </Field>
+  );
+}
+
+function sameRoles(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((r) => b.includes(r));
+}
+
 // ── Create ───────────────────────────────────────────────────────────────────────────────────────
 
-export function CreateStaffModal({ open, onClose, onDone }: { open: boolean; onClose: () => void; onDone: (o: Outcome) => void }) {
+export function CreateStaffModal({ open, onClose, onDone, crmAvailable = true }: {
+  open: boolean;
+  onClose: () => void;
+  onDone: (o: Outcome) => void;
+  /** AA-1031: false until the database update for CRM roles is applied (the list's crm_roles_available). */
+  crmAvailable?: boolean;
+}) {
   const m = useT(MANAGE);
   const w = useWriteWords();
   const refresh = useRefreshStaff();
@@ -269,6 +335,7 @@ export function CreateStaffModal({ open, onClose, onDone }: { open: boolean; onC
   const [name, setName] = useState("");
   const [role, setRole] = useState<string>("content");
   const [booking, setBooking] = useState<string>("");
+  const [crmRoles, setCrmRoles] = useState<CrmRole[]>([]);
   const [sendInvite, setSendInvite] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -278,7 +345,7 @@ export function CreateStaffModal({ open, onClose, onDone }: { open: boolean; onC
   const canSubmit = domainOk && name.trim().length > 0 && !busy;
 
   const reset = () => {
-    setEmail(""); setName(""); setRole("content"); setBooking(""); setSendInvite(true); setError(null);
+    setEmail(""); setName(""); setRole("content"); setBooking(""); setCrmRoles([]); setSendInvite(true); setError(null);
   };
   const close = () => { if (!busy) { reset(); onClose(); } };
 
@@ -287,7 +354,10 @@ export function CreateStaffModal({ open, onClose, onDone }: { open: boolean; onC
     setBusy(true);
     setError(null);
     const outcome = await staffWrite("POST", API, "", w,
-      { email: normalized, display_name: name.trim(), role, booking_role: booking || null, send_invite: sendInvite });
+      {
+        email: normalized, display_name: name.trim(), role, booking_role: booking || null, send_invite: sendInvite,
+        ...(crmRoles.length ? { crm_roles: crmRoles } : {}),
+      });
     setBusy(false);
     if (outcome.kind === "error") {
       setError(outcome.message);
@@ -329,6 +399,7 @@ export function CreateStaffModal({ open, onClose, onDone }: { open: boolean; onC
             <BookingRoleSelect id="staff-create-booking" value={booking} onChange={setBooking} />
           </Label>
         </div>
+        <CrmRolesField idPrefix="staff-create" value={crmRoles} onChange={setCrmRoles} disabled={!crmAvailable} />
         <label htmlFor="staff-create-invite" style={{ display: "flex", gap: 9, alignItems: "flex-start", cursor: "pointer" }}>
           <Checkbox id="staff-create-invite" checked={sendInvite} data-testid="staff-create-invite"
             onChange={(e) => setSendInvite(e.target.checked)} style={{ marginTop: 3, accentColor: K.accent }} />
@@ -346,19 +417,23 @@ export function CreateStaffModal({ open, onClose, onDone }: { open: boolean; onC
 
 // ── Manage one account (drawer) ──────────────────────────────────────────────────────────────────
 
-type Confirm = null | "disable" | "sign-out";
+type Confirm = null | "disable" | "sign-out" | "preset";
 
-export function StaffManagePanel({ staff, selfId, onOutcome }: {
+export function StaffManagePanel({ staff, selfId, onOutcome, crmAvailable = true }: {
   staff: StaffAccount;
   selfId: string | null;
   onOutcome: (o: Outcome) => void;
+  /** AA-1031: false until the database update for CRM roles is applied (the list's crm_roles_available). */
+  crmAvailable?: boolean;
 }) {
   const m = useT(MANAGE);
   const w = useWriteWords();
-  const { roleLabel, bookingRoleLabel } = useStaffWords();
+  const { roleLabel, bookingRoleLabel, crmRolesLabel } = useStaffWords();
   const refresh = useRefreshStaff();
   const [role, setRole] = useState(staff.role);
   const [booking, setBooking] = useState(staff.booking_role ?? "");
+  const savedCrm = crmRolesOf(staff);
+  const [crmRoles, setCrmRoles] = useState<CrmRole[]>(savedCrm);
   const [busy, setBusy] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<Confirm>(null);
 
@@ -382,12 +457,15 @@ export function StaffManagePanel({ staff, selfId, onOutcome }: {
 
   const roleChanged = role !== staff.role;
   const bookingChanged = booking !== (staff.booking_role ?? "");
+  const crmChanged = !sameRoles(crmRoles, savedCrm);
   const saveRoles = () => {
-    const body: Record<string, string | null> = {};
+    const body: Record<string, string | string[] | null> = {};
     if (roleChanged) body.role = role;
     if (bookingChanged) body.booking_role = booking || null;
+    if (crmChanged) body.crm_roles = crmRoles;
     void run("roles", "PATCH", `${base}/roles`, m("rolesSaved"), body);
   };
+  const presetInPlace = hasPlatformOwnerRoles(staff);
 
   return (
     <section data-testid="staff-manage" aria-label={m("manageAria")} style={{
@@ -407,8 +485,10 @@ export function StaffManagePanel({ staff, selfId, onOutcome }: {
           <BookingRoleSelect id={`staff-booking-${staff.id}`} value={booking} onChange={setBooking} />
         </Label>
       </div>
+      <CrmRolesField idPrefix={`staff-${staff.id}`} value={crmRoles} onChange={setCrmRoles} disabled={!crmAvailable} />
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <Button size="sm" variant="primary" onClick={saveRoles} disabled={(!roleChanged && !bookingChanged) || !!busy}>
+        <Button size="sm" variant="primary" onClick={saveRoles}
+          disabled={(!roleChanged && !bookingChanged && !crmChanged) || !!busy}>
           {busy === "roles" ? m("saving") : m("saveRoles")}
         </Button>
         {staff.is_active ? (
@@ -445,7 +525,28 @@ export function StaffManagePanel({ staff, selfId, onOutcome }: {
         {m("eachChange")}
         {roleChanged && role !== staff.role && m("cisChange", roleLabel(staff.role), roleLabel(role))}
         {bookingChanged && m("bookingChange", bookingRoleLabel(staff.booking_role), bookingRoleLabel(booking || null))}
+        {crmChanged && m("crmChange", crmRolesLabel(savedCrm), crmRolesLabel(crmRoles))}
       </div>
+
+      {/* AA-1031: the "Platform owner" preset. Every viewer of this panel is a platform owner (canWriteStaff), and
+          the backend re-checks it; the preset only raises roles, so it is offered on one's own row too. */}
+      {staff.is_active && (
+        <div data-testid="staff-preset" style={{
+          display: "flex", gap: 10, alignItems: "flex-start", flexWrap: "wrap", padding: "10px 12px",
+          background: K.line2, borderRadius: RADIUS.sm,
+        }}>
+          <span style={{ flex: "1 1 220px", minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: K.ink3 }}>{m("presetTitle")}</span>
+            <span style={{ fontSize: 12, color: K.muted, lineHeight: 1.45 }}>
+              {presetInPlace ? m("presetHas") : m("presetNote")}
+            </span>
+          </span>
+          <Button size="sm" variant="secondary" data-testid="staff-preset-apply" onClick={() => setConfirm("preset")}
+            disabled={presetInPlace || !crmAvailable || !!busy} title={!crmAvailable ? m("crmUnavailable") : undefined}>
+            {m("presetApply")}
+          </Button>
+        </div>
+      )}
 
       <ConfirmModal
         open={confirm === "disable"}
@@ -458,6 +559,17 @@ export function StaffManagePanel({ staff, selfId, onOutcome }: {
           <strong>{staff.display_name || staff.username}</strong> {m("disableBody")}
         </>}
         onConfirm={() => void run("disable", "POST", `${base}/disable`, m("disabledDone"))}
+      />
+      <ConfirmModal
+        open={confirm === "preset"}
+        onClose={() => setConfirm(null)}
+        busy={busy === "preset"}
+        title={m("presetQ")}
+        confirmLabel={m("presetApply")}
+        body={<>
+          <strong>{staff.display_name || staff.username}</strong> {m("presetBody")}
+        </>}
+        onConfirm={() => void run("preset", "PATCH", `${base}/roles`, m("presetDone"), { preset: "platform_owner" })}
       />
       <ConfirmModal
         open={confirm === "sign-out"}
