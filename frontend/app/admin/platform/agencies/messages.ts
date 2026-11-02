@@ -165,6 +165,19 @@ export const DRAWER = defineMessages(
     ownerEmail: "Owner's email",
     emailBad: "Enter a full email address.",
     emailHint: "The CRM mails the invitation link to this address.",
+    // AA-1031 (S264): the same address also gets the Content studio owner invitation (CIS tenant only).
+    studioBox: "Also invite to the Content studio as owner",
+    studioBoxHint:
+      "This agency is a CIS tenant. The same address also gets a separate Content studio invitation (owner), the same one Tenants › Tenant 360 › Members sends.",
+    resultTitle: "Last invitation",
+    resultCrm: (expires: string) => `Partner CRM: first-owner invitation sent.${expires}`,
+    resultStudioSent: (expires: string) => `Content studio: owner invitation sent.${expires}`,
+    resultStudioNotDelivered: (why: string) =>
+      `Content studio: the owner membership was created, but the e-mail was not sent (${why}). Send it again from Tenants › Tenant 360 › Members.`,
+    resultStudioFailed: (why: string) =>
+      `Content studio: not invited (${why}). Invite from Tenants › Tenant 360 › Members.`,
+    resultStudioSkipped: "Content studio: not invited (the box was not ticked).",
+    studioProblem: "The CRM invitation was sent, but the Content studio invitation needs attention (see the section).",
     withdrawInvite: "Withdraw owner invitation",
     withdrawTitle: "Withdraw the first-owner invitation?",
     withdrawConfirm: "Withdraw invitation",
@@ -323,6 +336,18 @@ export const DRAWER = defineMessages(
     ownerEmail: "E-mail của chủ sở hữu",
     emailBad: "Nhập một địa chỉ e-mail đầy đủ.",
     emailHint: "CRM gửi đường dẫn mời đến địa chỉ này.",
+    studioBox: "Mời luôn vào Content studio với vai trò chủ sở hữu",
+    studioBoxHint:
+      "Đại lý này là một tenant CIS. Cùng địa chỉ đó nhận thêm một lời mời Content studio riêng (chủ sở hữu), giống lời mời gửi từ Tenants › Tenant 360 › Thành viên.",
+    resultTitle: "Lời mời gần nhất",
+    resultCrm: (expires: string) => `CRM đối tác: đã gửi lời mời chủ sở hữu đầu tiên.${expires}`,
+    resultStudioSent: (expires: string) => `Content studio: đã gửi lời mời chủ sở hữu.${expires}`,
+    resultStudioNotDelivered: (why: string) =>
+      `Content studio: đã tạo thành viên chủ sở hữu nhưng chưa gửi được e-mail (${why}). Gửi lại từ Tenants › Tenant 360 › Thành viên.`,
+    resultStudioFailed: (why: string) =>
+      `Content studio: chưa mời được (${why}). Mời từ Tenants › Tenant 360 › Thành viên.`,
+    resultStudioSkipped: "Content studio: không mời (ô chưa được chọn).",
+    studioProblem: "Đã gửi lời mời CRM, nhưng lời mời Content studio cần xử lý thêm (xem trong mục).",
     withdrawInvite: "Rút lại lời mời chủ sở hữu",
     withdrawTitle: "Rút lại lời mời chủ sở hữu đầu tiên?",
     withdrawConfirm: "Rút lại lời mời",

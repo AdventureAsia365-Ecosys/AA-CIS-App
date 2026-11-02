@@ -572,3 +572,37 @@ export function recoveryDue(eligibleAt: string | null | undefined, now: number =
   const t = Date.parse(eligibleAt);
   return Number.isFinite(t) && t <= now;
 }
+
+// ── first owner: also invite to the Content studio (AA-1031, S264) ────────────────────────────────────────────────
+// When the agency id is a CIS tenant, "Invite first owner" can also create the CIS Content studio invitation (owner)
+// for the same address: POST /api/admin/tenants/{id}/members/invitations (the existing Tenant 360 route, tenant.write).
+// It stays a staff action, so root ADR 0010a holds ("Staff invite from Tenant 360"; no CRM event grants a CIS role).
+
+export const studioInvitationsPath = (tenantId: string) =>
+  `/api/admin/tenants/${encodeURIComponent(tenantId)}/members/invitations`;
+
+/** Offer the "also invite to the Content studio" box? Only for an ACTIVE CIS tenant (the API refuses a suspended or
+ * offboarded one) and a staff member with tenant.write (the CRM write right alone is not enough). */
+export function studioInviteOffered(
+  cisTenant: { status?: string | null } | undefined, canTenantWrite: boolean,
+): boolean {
+  return !!cisTenant && canTenantWrite && (!cisTenant.status || cisTenant.status === "active");
+}
+
+/** The studio half of the outcome: sent, created but the mail not delivered, or refused / failed. */
+export type StudioInviteOutcome =
+  | { kind: "sent"; expiresAt: string | null }
+  | { kind: "not_delivered"; why: string }
+  | { kind: "failed"; why: string };
+
+/** The answer of POST .../members/invitations (201 even when the CRM relay failed: delivery.status = "failed"). */
+export function studioInviteOutcome(body: {
+  delivery?: { status?: string; crm_status?: number; expires_at?: string | null; detail?: string | null; message?: string | null };
+} | null | undefined): StudioInviteOutcome {
+  const d = body?.delivery;
+  if (d?.status === "sent") return { kind: "sent", expiresAt: d.expires_at ?? null };
+  const code = d?.detail ? String(d.detail) : "";
+  const msg = d?.message ? String(d.message) : "";
+  const why = msg && code ? `${msg} (${code})` : msg || code || (d?.crm_status ? `HTTP ${d.crm_status}` : "no answer");
+  return { kind: "not_delivered", why };
+}
