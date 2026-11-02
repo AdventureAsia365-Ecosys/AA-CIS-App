@@ -118,6 +118,10 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
             + "edited here: they change only through a reviewed migration." },
           { term: "Jev credit", text: "Record each Jev top-up by hand (Jev has no balance service), see the "
             + "estimated credit left, and send test alerts." },
+          { term: "Credit", text: "The same for the OpenAI and Anthropic APIs: record the balance read on the "
+            + "provider's console and each top-up, see the estimated balance (the newest balance read plus the "
+            + "top-ups after it, minus the spend logged since) and set the alert threshold. Below it, admins get "
+            + "one bell and one e-mail a day." },
         ] },
         { kind: "control", label: "Switch off", does: "Switches Jev, DataForSEO or Geoapify off (or back on with "
           + "Switch on), after a confirm. While off, nothing is sent to it: each refused call is logged at zero cost, "

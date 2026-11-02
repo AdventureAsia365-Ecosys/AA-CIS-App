@@ -53,6 +53,12 @@ over whole UTC days (today, last 7 days; the rollup counts a refusal as a failed
 say ``stats_basis = "utc_days"``). The row-level ledger ``GET /llm/calls`` is never read here: it writes an
 ``ops_read`` event into every agency's access log. And a static **Mapbox** row (TripPlanner maps, free tier, nothing
 logged).
+
+AA-1025 B3 / B5: the Jev / DataForSEO / Geoapify rows carry ``circuit`` (their shared circuit,
+``shared.provider_health`` through shared/provider_circuit.read_views; open or half-open makes the row "open" unless
+it is switched off), and every LLM connection whose ``balance_source`` is ``topups_minus_spend`` (the vendor APIs,
+migration 343) carries ``balance`` estimated from the credit ledger (shared/provider_credit.balances: recorded balance
+minus the spend logged since), "low" below its ``low_balance_usd``.
 """
 from __future__ import annotations
 
@@ -667,6 +673,45 @@ def _with_registry(provider: dict, row) -> dict:
     return out
 
 
+def with_circuit(row: dict, circuit: Optional[dict]) -> dict:
+    """AA-1025 B3: a Jev / DataForSEO / Geoapify row with its shared circuit (shared/provider_circuit.view; None = no
+    row = closed). An open or half-open circuit makes the row "open" (reason circuit_open) unless it is switched off
+    or unreadable (Off wins: nothing is sent either way). Pure."""
+    out = {**row, "circuit": circuit}
+    if circuit and circuit.get("state") in ("open", "half_open") and out.get("status") != "disabled" \
+            and out.get("status_reason") != "source_unreadable":
+        out["status"], out["status_reason"] = "open", "circuit_open"
+    return out
+
+
+def with_credit(row: dict, balance: Optional[dict]) -> dict:
+    """AA-1025 B5: an LLM connection row with its estimated balance from the credit ledger (shared/provider_credit;
+    only for a topups_minus_spend connection). Below the threshold an OK row becomes "low" (reason below_threshold);
+    nothing left becomes "cap_reached" (credit_used_up), like the Jev row. Pure."""
+    if balance is None:
+        return row
+    out = {**row, "balance": balance}
+    left = balance.get("usd")
+    if out.get("status") in ("ok", "no_recent_calls", "unknown") and left is not None:
+        if left <= 0:
+            out["status"], out["status_reason"] = "cap_reached", "credit_used_up"
+        elif balance.get("below_threshold"):
+            out["status"], out["status_reason"] = "low", "below_threshold"
+    return out
+
+
+async def _read_circuits(pool, now: datetime) -> dict:
+    from shared import provider_circuit
+
+    return await provider_circuit.read_views(pool, now)
+
+
+async def _read_credit(pool) -> dict:
+    from shared import provider_credit
+
+    return await provider_credit.balances(pool)
+
+
 async def _read_budgets(pool) -> dict:
     return {r["provider"]: r for r in await _fetch(pool, BUDGETS_SQL)}
 
@@ -714,14 +759,17 @@ async def read_providers(pool, *, now: Optional[datetime] = None, crm_usage_rows
         _guard("Geoapify call stats", lambda: _fetchrow(pool, GEO_STATS_SQL, now - timedelta(hours=24),
                                                         now - timedelta(days=7), now, "geoapify")),
         _guard("CRM", lambda: _read_crm(now, crm_usage_rows)),
+        _guard("Provider circuits", lambda: _read_circuits(pool, now)),
+        _guard("Provider credit", lambda: _read_credit(pool)),
     )
     (conns, conns_err), (ledger, ledger_err), (budgets, budgets_err), (jev, jev_err), (dfs, dfs_err), \
         (geo, geo_err), (llm_stats, llm_stats_err), (dfs_stats, dfs_stats_err), (geo_stats, geo_stats_err), \
-        (crm, crm_err) = results
+        (crm, crm_err), (circuits, circuits_err), (credit, credit_err) = results
     errors = [{"source": s, "error": e} for s, e in (
         ("llm_connections", conns_err), ("llm_ledger", ledger_err), ("spend_budgets", budgets_err),
         ("jev", jev_err), ("dataforseo", dfs_err), ("geoapify", geo_err), ("llm_stats", llm_stats_err),
-        ("dataforseo_stats", dfs_stats_err), ("geoapify_stats", geo_stats_err), ("crm", crm_err)) if e]
+        ("dataforseo_stats", dfs_stats_err), ("geoapify_stats", geo_stats_err), ("crm", crm_err),
+        ("provider_circuits", circuits_err), ("provider_credit", credit_err)) if e]
 
     ledger = ledger or []
     by_account = ledger_by_account(ledger)
@@ -747,6 +795,7 @@ async def read_providers(pool, *, now: Optional[datetime] = None, crm_usage_rows
                 r["spend"] = None
                 r["error"] = ledger_err
         providers = [stats_of(r, llm_stats.get(r["connection_key"]), llm_stats_err) for r in providers]
+        providers = [with_credit(r, (credit or {}).get(r["connection_key"])) for r in providers]
     else:
         providers.append(stats_unreadable(failed_row("llm", "llm", "llm", "LLM connections", conns_err)))
     if jev is not None:
@@ -756,18 +805,18 @@ async def read_providers(pool, *, now: Optional[datetime] = None, crm_usage_rows
             row["spend"], row["error"] = None, ledger_err
     else:
         row = failed_row("jev", "decide", "typesafe", "Jev (TypeSafe decisions)", jev_err)
-    jev_out = _with_registry(row, registry_rows.get("typesafe"))
+    jev_out = with_circuit(_with_registry(row, registry_rows.get("typesafe")), (circuits or {}).get("typesafe"))
     if dfs is not None:
         row = dfs_row(dfs_balance, await dfs_threshold(pool), dfs_spend or {}, budgets, spent_today)
     else:
         row = failed_row("dataforseo", "data", "dataforseo", "DataForSEO", dfs_err)
-    dfs_out = _with_registry(row, registry_rows.get("dataforseo"))
+    dfs_out = with_circuit(_with_registry(row, registry_rows.get("dataforseo")), (circuits or {}).get("dataforseo"))
     if geo is not None:
         configured, limit = await geo_settings(pool)
         row = geo_row(configured, geo, limit, budgets, spent_today)
     else:
         row = failed_row("geoapify", "data", "geoapify", "Geoapify (geocoder)", geo_err)
-    geo_out = _with_registry(row, registry_rows.get("geoapify"))
+    geo_out = with_circuit(_with_registry(row, registry_rows.get("geoapify")), (circuits or {}).get("geoapify"))
 
     # CRM (partner app): its AI path joins the LLM section, its guardrail gets its own row (AA-1025 C1).
     crm_llm, crm_guard = crm_rows(crm or {"problem": {"status": "error"}}, now, registry_rows.get("bedrock-guardrails"))

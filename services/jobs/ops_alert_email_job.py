@@ -13,6 +13,10 @@ when a connection circuit opens (shared/llm_client/breaker.alert_connection_open
 AA-642 (S263 L2, B4): {"template": "dfs_balance_low", balance_usd, threshold_usd, ...} from the daily DataForSEO
 balance check and {"template": "llm_cost_mismatch", window, mismatches, mismatch_count} from the nightly LLM cost
 reconcile, each when its bell row was just written, once per UTC day.
+AA-1025 B3 / B5: {"template": "provider_circuit_open", connection_key, label, error_class, ...} when a Jev /
+DataForSEO / Geoapify circuit opens (shared/provider_circuit.alert_open), once per connection, class and day; and
+{"template": "provider_credit_low", connection_key, estimated_left_usd, threshold_usd, ...} when a vendor API's
+estimated credit falls under its threshold (shared/provider_credit.check_low_credit), once per connection and day.
 
 Recipients (AA-913, shared/alert_recipients.ops_recipients): the confirmed rows of shared.alert_recipient plus
 ALERT_EMAIL_TO, lower case, deduplicated; all in the To of one message (internal staff). When the alerts topic is
@@ -50,6 +54,8 @@ _RENDERERS = {
     ops_alerts.TEMPLATE_LLM_CIRCUIT_OPEN: ops_alerts.render_llm_circuit_open,         # AA-1018
     ops_alerts.TEMPLATE_DFS_BALANCE_LOW: ops_alerts.render_dfs_balance_low,           # AA-642 (S263 L2, B4)
     ops_alerts.TEMPLATE_LLM_COST_MISMATCH: ops_alerts.render_llm_cost_mismatch,       # AA-642 (S263 L2, B4)
+    ops_alerts.TEMPLATE_PROVIDER_CIRCUIT_OPEN: ops_alerts.render_provider_circuit_open,   # AA-1025 B3
+    ops_alerts.TEMPLATE_PROVIDER_CREDIT_LOW: ops_alerts.render_provider_credit_low,       # AA-1025 B5
 }
 WORKER_ACTOR = f"job:{ops_alerts.KIND}"
 

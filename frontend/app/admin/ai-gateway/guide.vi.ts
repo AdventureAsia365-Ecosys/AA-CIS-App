@@ -108,6 +108,10 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
             + "migration có duyệt." },
           { term: "Số dư Jev", text: "Ghi tay từng lần nạp Jev (Jev không có dịch vụ xem số dư), xem số dư ước tính "
             + "và gửi cảnh báo thử." },
+          { term: "Số dư API", text: "Tương tự cho API OpenAI và Anthropic: ghi số dư đọc trên console của nhà cung "
+            + "cấp và từng lần nạp, xem số dư ước tính (lần ghi số dư mới nhất cộng các lần nạp sau đó, trừ chi phí đã "
+            + "ghi sổ từ lúc đó) và đặt ngưỡng cảnh báo. Dưới ngưỡng, admin nhận một thông báo chuông và một e-mail "
+            + "mỗi ngày." },
         ] },
         { kind: "control", label: "Tắt", does: "Tắt Jev, DataForSEO hoặc Geoapify (hoặc bật lại bằng nút Bật), sau "
           + "một bước xác nhận. Khi đang tắt, không gửi gì tới nhà cung cấp: mỗi lần gọi bị từ chối được ghi với chi phí "

@@ -711,6 +711,18 @@ def _no_sts_caller_identity(monkeypatch):
     monkeypatch.setattr("shared.aws_client.bronze.caller_account_id", lambda: "111122223333")
 
 
+@pytest.fixture(autouse=True)
+def _provider_circuit_off(request, monkeypatch):
+    """AA-1025 B3: the provider circuit keeps state in process across tests; off and empty unless a test opts in with
+    the marker `real_provider_circuit` (then the test sets its own DB runner and alert hook)."""
+    from shared import provider_circuit
+    provider_circuit.reset()
+    if "real_provider_circuit" not in request.keywords:
+        monkeypatch.setenv(provider_circuit.SWITCH_ENV, "off")
+    yield
+    provider_circuit.reset()
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _setup_schema():
     """Apply schema once per session."""

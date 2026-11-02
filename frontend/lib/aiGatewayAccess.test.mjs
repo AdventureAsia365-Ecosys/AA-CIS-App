@@ -53,6 +53,7 @@ test("every write control of the page reads usePageAccess", () => {
     "ProvidersTab.tsx": ['can("provider_switch")', 'can("requeue")'],
     "ConnectionsPanel.tsx": ['can("connections")', 'can("connection_test")'],
     "JevCreditPanel.tsx": ['can("jev_credit")'],
+    "ProviderCreditPanel.tsx": ['can("credit")', 'can("connections")'],
     "BudgetsTab.tsx": ['can("budgets")'],
     "RoutingTab.tsx": ['can("routing")'],
     "CatalogTable.tsx": ['can("catalog")'],

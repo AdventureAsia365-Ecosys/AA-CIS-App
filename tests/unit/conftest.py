@@ -123,6 +123,29 @@ def _llm_breaker_off(request, monkeypatch):
     central_budget.invalidate()
 
 
+@pytest.fixture(autouse=True)
+def _provider_circuit_off(request, monkeypatch):
+    """AA-1025 B3: the shared provider circuit (Jev, DataForSEO, Geoapify) keeps state across calls, so client tests
+    that script provider failures would see it open. Off (PROVIDER_CIRCUIT_BREAKER=off) unless a test opts in with
+    the marker `real_provider_circuit`; either way it starts empty, never touches a database and raises no alert."""
+    from shared import provider_circuit
+    provider_circuit.reset()
+    if "real_provider_circuit" not in request.keywords:
+        monkeypatch.setenv(provider_circuit.SWITCH_ENV, "off")
+    else:
+        monkeypatch.delenv(provider_circuit.SWITCH_ENV, raising=False)
+
+    async def _no_db(fn):
+        raise RuntimeError("no database in unit tests")
+
+    async def _no_alert(health):
+        return None
+    monkeypatch.setattr(provider_circuit, "db_runner", _no_db)
+    monkeypatch.setattr(provider_circuit, "on_open", _no_alert)
+    yield
+    provider_circuit.reset()
+
+
 async def _fake_public_dns(host, port, family=0):
     """AA-875 — no unit test does a real DNS lookup through shared.safe_http: every name resolves to
     one public address. Tests of the DNS rules replace safe_http._getaddrinfo themselves."""

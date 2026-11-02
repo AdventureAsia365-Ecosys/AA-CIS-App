@@ -66,7 +66,9 @@ The AA-832 chain (EventBridge -> ops-probe Lambda -> admin POST -> shared.job ->
 - AA-845: every JEV_CREDIT_CHECK_EVERY_S (shared/jev_credit.py, 30 min) the loop also runs the Jev low-credit
   check (estimated TypeSafe credit below the threshold -> throttled bell + operator e-mail). It runs after the
   tick, outside sample_once, under its own PART_TIMEOUT_S, and logs its own line (`jev_credit_low_checked` /
-  `jev_credit_low_alert`, or `jev_credit_check_error` here). The schedule is a local of the loop (monotonic),
+  `jev_credit_low_alert`, or `jev_credit_check_error` here). AA-1025 B5: right after it, the low-credit check of the
+  vendor API connections (shared/provider_credit.py; `provider_credit_check_error` here). The schedule is a local of
+  the loop (monotonic),
   so there is no module state to reset; the first check runs on the first tick.
 - api only (not the worker service); started from api/main.py's lifespan after the main pool,
   cancelled before the pool closes. Off when ENVIRONMENT == "test". Never raises: a failing part is
@@ -423,6 +425,20 @@ async def jev_credit_tick(pool, part_timeout_s: float = PART_TIMEOUT_S) -> Optio
         return None
 
 
+async def provider_credit_tick(pool, part_timeout_s: float = PART_TIMEOUT_S) -> Optional[list]:
+    """AA-1025 B5: one low-credit check of the vendor API connections (shared/provider_credit.check_low_credit), on
+    the Jev check's schedule. Never raises (except CancelledError); a failure or a hang (or migration 342 not applied)
+    is one `provider_credit_check_error` warning and the next check retries."""
+    from shared import provider_credit
+
+    try:
+        return await asyncio.wait_for(provider_credit.check_low_credit(pool, source="ops_sampler"),
+                                      timeout=part_timeout_s)
+    except Exception as e:   # asyncio.TimeoutError included
+        logger.warning("provider_credit_check_error", error=_err(e))
+        return None
+
+
 def _log(out: dict) -> None:
     if any(k in out for k in ("rds_error", "retired_error", "jobs_error", "alert_recipients_error",
                               "tripplanner_purge_error", "supply_pull_error", "writing_memory_error",
@@ -461,6 +477,7 @@ async def run_ops_metrics_sampler(app, interval_s: float = OPS_METRICS_INTERVAL_
         if pool is not None and time.monotonic() >= next_jev_check:
             next_jev_check = time.monotonic() + jev_check_every_s
             await jev_credit_tick(pool, part_timeout_s)
+            await provider_credit_tick(pool, part_timeout_s)       # AA-1025 B5, same schedule
         await asyncio.sleep(interval_s)
 
 
