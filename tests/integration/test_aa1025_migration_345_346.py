@@ -4,7 +4,9 @@ stage) against real Postgres.
 conftest applies every migration, 345 and 346 included. Each test re-runs both files (idempotent: CREATE ... IF NOT
 EXISTS, INSERT ... ON CONFLICT DO NOTHING, ADD COLUMN IF NOT EXISTS, DROP / ADD CONSTRAINT, registration ON CONFLICT
 DO NOTHING) and checks the table, the seed rows, the constraints and the cis_app grants (writes as cis_app through
-SET LOCAL SESSION AUTHORIZATION, the X1 lesson). Plain SQL only: this test ships with the migration-only PR and
+SET LOCAL SESSION AUTHORIZATION, the X1 lesson). The grant tests first give cis_app the table-wide privileges cis_owner's
+default privileges give it on Dev (CIS 245; CI creates the table as the superuser, so they never apply here) and
+re-run 345, so its REVOKE is proven against Dev's grants. Plain SQL only: this test ships with the migration-only PR and
 imports no code of the later code PR. Every change is rolled back or put back.
 """
 import os
@@ -120,11 +122,47 @@ def test_geocode_call_accepts_a_v3_row_and_an_old_shape_row(cur):
     cur.execute("ROLLBACK")
 
 
+EDITABLE = ("ai_enabled", "bulk_paused", "default_daily_budget_usd", "degrade_mode", "disabled_reason", "updated_at",
+            "updated_by")
+
+
+def _simulate_dev_default_privileges_then_rerun_345(cur):
+    """On Dev DB Migrate creates the table as cis_owner, whose default privileges in shared (CIS 245) give cis_app
+    SELECT, INSERT, UPDATE, DELETE on every new table. CI creates it as the superuser, so the default privileges never
+    apply: grant them here (plus TRUNCATE etc. via ALL), then re-run 345 inside the open transaction, as on Dev."""
+    cur.execute("GRANT ALL ON shared.llm_app_profile TO cis_app")
+    cur.execute("GRANT ALL ON shared.llm_app_profile TO PUBLIC")
+    cur.execute(open(M345, encoding="utf-8").read().replace("BEGIN;", "").replace("COMMIT;", ""))
+
+
+def test_345_narrows_the_default_privileges(cur):
+    cur.execute("SELECT 1 AS ok FROM pg_roles WHERE rolname = 'cis_app'")
+    if cur.fetchone() is None:
+        pytest.skip("role cis_app is not in this DB")
+    cur.execute("BEGIN")
+    _simulate_dev_default_privileges_then_rerun_345(cur)
+    for role in ("cis_app", "public"):
+        for priv in ("INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"):
+            cur.execute("SELECT has_table_privilege(%s, 'shared.llm_app_profile', %s) AS ok", (role, priv))
+            assert cur.fetchone()["ok"] is False, (role, priv)
+    cur.execute("SELECT has_table_privilege('cis_app', 'shared.llm_app_profile', 'SELECT') AS ok")
+    assert cur.fetchone()["ok"] is True
+    cur.execute("SELECT has_table_privilege('public', 'shared.llm_app_profile', 'SELECT') AS ok")
+    assert cur.fetchone()["ok"] is False
+    cur.execute("SELECT has_column_privilege('cis_app', 'shared.llm_app_profile', 'app', 'UPDATE') AS ok")
+    assert cur.fetchone()["ok"] is False                         # the key is not editable
+    for column in EDITABLE:
+        cur.execute("SELECT has_column_privilege('cis_app', 'shared.llm_app_profile', %s, 'UPDATE') AS ok", (column,))
+        assert cur.fetchone()["ok"] is True, column
+    cur.execute("ROLLBACK")
+
+
 def test_cis_app_grants(cur):
     cur.execute("SELECT 1 AS ok FROM pg_roles WHERE rolname = 'cis_app'")
     if cur.fetchone() is None:
         pytest.skip("role cis_app is not in this DB")
     cur.execute("BEGIN")
+    _simulate_dev_default_privileges_then_rerun_345(cur)          # the refusals below hold on Dev's grants too
     cur.execute("GRANT USAGE ON SCHEMA shared TO cis_app")       # temporary: rolled back below
     cur.execute("SET LOCAL SESSION AUTHORIZATION cis_app")
     cur.execute("SELECT ai_enabled AS ok FROM shared.llm_app_profile WHERE app = 'cis'")
@@ -135,8 +173,11 @@ def test_cis_app_grants(cur):
     with pytest.raises(psycopg2.errors.InsufficientPrivilege):    # the four rows are fixed by migration
         cur.execute("INSERT INTO shared.llm_app_profile (app, degrade_mode) VALUES ('cis', 'none')")
     cur.execute("ROLLBACK TO SAVEPOINT s")
+    with pytest.raises(psycopg2.errors.InsufficientPrivilege):    # a missing row means AI on: no DELETE
+        cur.execute("DELETE FROM shared.llm_app_profile WHERE app = 'cis'")
+    cur.execute("ROLLBACK TO SAVEPOINT s")
     with pytest.raises(psycopg2.errors.InsufficientPrivilege):
-        cur.execute("DELETE FROM shared.llm_app_profile WHERE app = 'booking'")
+        cur.execute("TRUNCATE shared.llm_app_profile")
     cur.execute("ROLLBACK TO SAVEPOINT s")
     with pytest.raises(psycopg2.errors.InsufficientPrivilege):    # the key is not editable
         cur.execute("UPDATE shared.llm_app_profile SET app = 'cis' WHERE app = 'cis'")

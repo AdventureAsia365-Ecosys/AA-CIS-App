@@ -1,4 +1,3 @@
--- migrate: expand
 -- Migration 345: AA-1025 (S263 gateway plan, slice H1a) — the app profile: one row per app with its AI switch,
 -- bulk pause, default daily AI budget and degrade mode (root ADR 0009 decision 4).
 --
@@ -23,18 +22,23 @@
 --        disabled_reason           why AI was switched off (required by the admin when switching off, <= 500 chars);
 --        updated_at, updated_by.
 --   2. One row per app (AI on, not paused, no budget, the T-21 degrade mode); ON CONFLICT DO NOTHING.
---   3. GRANT cis_app SELECT, and UPDATE on the editable columns only (no INSERT / DELETE: the four rows are fixed).
+--   3. Grants: REVOKE ALL from PUBLIC, cis_app, aa_app_user and catalog_owner first, then cis_app SELECT and UPDATE
+--      on the editable columns only (no INSERT / DELETE, the key app not editable: the four rows are fixed). On Dev
+--      DB Migrate creates the table as cis_owner, whose default privileges in shared (CIS 245) give cis_app
+--      SELECT, INSERT, UPDATE, DELETE on every new table; without the REVOKE the runtime role could DELETE the 'cis'
+--      row, and a missing row means AI on (the gateway fails open). Same pattern as 321.
 --   4. Register 345.
 --
 -- Behaviour. None on apply: every app has AI on, nothing is paused. Before this file is applied the gateway reads no
 -- profile (the code catches the missing table: AI on) and the admin routes answer 503.
 --
--- Class: expand (root ADR 0017 d3): a new table, its constraints, its seed rows, grants on it and comments; no existing
--- object changes, no DO block. Retention row (DM-7.1): root data standards Part B section 7, in the root PR of this
--- change.
+-- Class: contract (root ADR 0017 d3): the content is a new table, its constraints, seed rows, grants and comments, but
+-- narrowing the default-privilege grants needs REVOKE, which the expand lint refuses. Applied with 346 (contract) by
+-- Infra Migration Apply once every job table is idle (root ADR 0017a). Retention row (DM-7.1): root data standards
+-- Part B section 7, in the root PR of this change.
 --
 -- Number. 344 is the highest on main (02/11). 346 (geo.geocode_call ledger columns, slice D3, contract) follows in the
--- same migration-only PR.
+-- same migration-only PR (batch cis 345-346, MIG-4: no readiness raise).
 --
 -- Rollback (a new forward migration, after the code is reverted): DROP TABLE shared.llm_app_profile; (a destructive
 -- file, DRY RUN).
@@ -88,6 +92,8 @@ INSERT INTO shared.llm_app_profile (app, degrade_mode) VALUES
     ('booking', 'none')
 ON CONFLICT (app) DO NOTHING;
 
+REVOKE ALL ON shared.llm_app_profile FROM PUBLIC;
+REVOKE ALL ON shared.llm_app_profile FROM cis_app, aa_app_user, catalog_owner;   -- cis_owner's default privileges
 GRANT SELECT ON shared.llm_app_profile TO cis_app;
 GRANT UPDATE (ai_enabled, bulk_paused, default_daily_budget_usd, degrade_mode, disabled_reason, updated_at, updated_by)
     ON shared.llm_app_profile TO cis_app;
