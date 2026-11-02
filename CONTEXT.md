@@ -1759,8 +1759,12 @@ a new writer of `shared.tenants` needs INSERT on the event table (migration guar
 (Content studio role) and `POST .../members/{membership_id}/remove`, both `tenant.write`, audited
 (`tenant.member_role_changed` / `tenant.member_removed`). The partner CRM applies a removal (member disabled and
 signed out; last owner -> agency locked until owner recovery) and agency lifecycle within a minute; it never takes a
-CRM role from CIS. Invitation and activation of identities come with AA-979 (partner-pool re-enrolment); until then
-rows are created only by staff tooling / the Dev seed.
+CRM role from CIS. Invitation and activation of identities came with AA-979 (partner-pool re-enrolment, below).
+**Admin UI (AA-1031, S264):** Tenants › Tenant 360 › Members (`frontend/app/admin/tenants/_components/Tenant360Members.tsx`,
+helpers `frontend/lib/tenantMembers.ts`) lists the memberships (fingerprint, role, status, invited / last change) and,
+with `tenant.write`, invites (e-mail + role + mail language), sends an invitation again (the address is typed again:
+CIS keeps none), changes the role and removes (warning when it is the last active owner), all over the routes above;
+the mail result of an invitation stays on the page (sent / created but not delivered).
 Tenant read (AA-978 follow-up): `GET /v1/account/members` (`api/routers/v1_account_members.py`,
 `services/tenant_membership/portal.py`), the portal's Account › Members page: the agency's invited + active rows
 (fingerprint, role, status, dates; no staff actor, no invitation id), tenant id from the tenant JWT only, main pool.
