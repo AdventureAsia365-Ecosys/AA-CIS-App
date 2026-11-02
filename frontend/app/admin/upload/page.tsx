@@ -156,9 +156,14 @@ interface TourReadyItem {
 }
 
 // ─── StepIndicator ────────────────────────────────────────────────────────────
+// AA-1006 (S264): five labelled pills in one nowrap row were ~675 px wide, so at 390 px the stepper ran off the right
+// edge and widened the page frame. The row now wraps (never wider than its container), and on a phone only the
+// current step shows its label: the other steps are numbered dots that keep their label for screen readers and as
+// a tooltip, so all five fit on one line (lib/uploadStepper.test.mjs).
 
 function StepIndicator({ step }: { step: 1 | 2 | 3 | 4 | 5 }) {
   const t = useT(UP);
+  const isPhone = useIsPhone();
   const STEPS = [
     { n: 1 as const, label: t("stepSelect") },
     { n: 2 as const, label: t("stepUpload") },
@@ -167,18 +172,31 @@ function StepIndicator({ step }: { step: 1 | 2 | 3 | 4 | 5 }) {
     { n: 5 as const, label: t("stepDup") },
   ];
   return (
-    <div style={{ display: "flex", alignItems: "center", marginBottom: 28 }}>
+    <ol
+      data-testid="upload-stepper"
+      style={{
+        display: "flex", flexWrap: "wrap", alignItems: "center", rowGap: 8,
+        minWidth: 0, maxWidth: "100%", margin: "0 0 28px", padding: 0, listStyle: "none",
+      }}
+    >
       {STEPS.map((s, i) => {
         const done   = s.n < step;
         const active = s.n === step;
+        const showLabel = active || !isPhone;
         return (
-          <React.Fragment key={s.n}>
+          <li
+            key={s.n}
+            aria-current={active ? "step" : undefined}
+            aria-label={showLabel ? undefined : s.label}
+            title={showLabel ? undefined : s.label}
+            style={{ display: "flex", alignItems: "center", minWidth: 0 }}
+          >
             <div style={{
-              display: "flex", alignItems: "center", gap: 8,
-              padding: "7px 14px", borderRadius: 20,
+              display: "flex", alignItems: "center", gap: 8, minWidth: 0,
+              padding: isPhone ? "7px 8px" : "7px 14px", borderRadius: 20,
               background: active ? K.accent : done ? K.successSoft : K.line2,
             }}>
-              <div style={{
+              <div aria-hidden={showLabel ? undefined : true} style={{
                 width: 20, height: 20, borderRadius: "50%", flexShrink: 0,
                 display: "flex", alignItems: "center", justifyContent: "center",
                 background: active ? KX.onSolid : done ? K.success : K.muted2,
@@ -186,18 +204,20 @@ function StepIndicator({ step }: { step: 1 | 2 | 3 | 4 | 5 }) {
               }}>
                 {done ? "✓" : s.n}
               </div>
-              <span style={{ fontSize: 12, fontWeight: 600, whiteSpace: "nowrap",
-                color: active ? KX.onSolid : done ? K.success : K.muted }}>
-                {s.label}
-              </span>
+              {showLabel && (
+                <span style={{ fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", minWidth: 0,
+                  color: active ? KX.onSolid : done ? K.success : K.muted }}>
+                  {s.label}
+                </span>
+              )}
             </div>
             {i < STEPS.length - 1 && (
-              <div style={{ width: 20, height: 1, background: K.line }} />
+              <div aria-hidden style={{ width: isPhone ? 8 : 20, height: 1, flexShrink: 0, background: K.line }} />
             )}
-          </React.Fragment>
+          </li>
         );
       })}
-    </div>
+    </ol>
   );
 }
 
