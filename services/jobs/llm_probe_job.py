@@ -247,7 +247,9 @@ async def probe_embedding(pool, connection_key: str, model_key: str, wire_id: st
         ledger_class = classify(e)
         row = gateway_failure_row(
             stage=svc.TEST_STAGE, role="embed", model=model_key,
-            status="refused" if ledger_class in ("access_denied", "quota_exhausted", "throttled") else "error",
+            # AA-1025 H1a: 'disabled' = the app's AI is off in its app profile (nothing was sent)
+            status="refused" if ledger_class in ("access_denied", "quota_exhausted", "throttled", "disabled")
+            else "error",
             error_class=ledger_class, error=out["error"], provider=_bedrock_provider(conn),
             connection_key=connection_key, latency_ms=latency, attempt_no=1, deployment_wire_id=wire_id,
             quality_signal_extra=signal)       # AA-642 A9: one attempt, numbered like every gateway attempt row
@@ -268,6 +270,7 @@ async def probe_geoapify(pool, job_id: Optional[str] = None) -> dict:
     """AA-642 (S263 L2, B2): ONE Geoapify geocode search (free plan credit), under the Geoapify lock (a place job that
     holds it is not disturbed: the probe is skipped), logged in geo.geocode_call (the daily credit guard counts it),
     with Geoapify's access_state and last_probe_at. No retry: a 429 / 5xx is the answer."""
+    from api.services import llm_connections as svc
     from services.places import geocoder
     from services.places import store as place_store
     from services.places.geolock import geoapify_lock
@@ -299,7 +302,8 @@ async def probe_geoapify(pool, job_id: Optional[str] = None) -> dict:
             try:
                 async with pool.acquire() as db:
                     await place_store.log_geocode_calls(db, GEOAPIFY_KEY, g.requests, cost, job_id,
-                                                        failed_requests=g.failed_requests)
+                                                        failed_requests=g.failed_requests, stage=svc.TEST_STAGE,
+                                                        latency_ms=getattr(g, "latency_ms", None))
             except Exception as e:  # noqa: BLE001 — the credit is spent either way; the job result shows it
                 logger.warning("llm_probe_geocode_log_failed", error=str(e)[:200])
             await g.aclose()

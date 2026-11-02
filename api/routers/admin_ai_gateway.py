@@ -45,6 +45,13 @@
                                                         sampler runs it every 30 min): bell + e-mail below the
                                                         threshold, throttled.                               spend.write
 
+  GET    /admin/ai-gateway/app-profiles             AA-1025 H1a: the app profile of every app (AI on / off, bulk
+                                                        paused, default daily budget, degrade mode) with the central
+                                                        LLM cap llm/app:<app> next to it.                   spend.read
+  PATCH  /admin/ai-gateway/app-profiles/{app}       edit one app's profile; switching AI off needs a reason (audited
+                                                        llm_app_ai_switched_off / _on, llm_app_profile_updated).
+                                                                                                              ai.admin
+
 $0: database reads (and one CRM read) and the tenant budget writes; no provider is called. The other caps are edited
 through their existing write routes (PUT /admin/budgets/{provider}/{scope}, PATCH /admin/llm-connections/{key}).
 AA-1016 (C4): the tenant budget writes answer 503 when migration 321 (the table) is not applied, 404 for an unknown
@@ -54,6 +61,7 @@ sources and their limits: api/services/ai_gateway.py and api/services/ai_gateway
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Literal, Optional
 
@@ -65,6 +73,7 @@ from api.routers.admin import verify_admin_secret
 from api.services import ai_gateway, ai_gateway_calls, ai_gateway_experiments, platform_apps, tenant_ai_budget
 from services.acp_shared.audit_log import write_audit_log
 from shared import provider_credit
+from shared.llm_client import app_profile
 
 router = APIRouter(prefix="/admin/ai-gateway", tags=["admin-ai-gateway"],
                    dependencies=[Depends(verify_admin_secret), Depends(staff_policy)])
@@ -167,6 +176,8 @@ PAGE_WRITES: dict[str, tuple[str, str]] = {
     "jev_credit": ("POST", "/admin/decisions/jev-credit/topups"),
     # AA-1025 B5 Credit view: add or delete an entry, Check now (all spend.write); its threshold save is `connections`
     "credit": ("POST", "/admin/ai-gateway/credit/{connection_key}/entries"),
+    # AA-1025 H1a App profiles card: the AI switch, bulk pause, default budget and degrade mode of each app (ai.admin)
+    "app_profiles": ("PATCH", "/admin/ai-gateway/app-profiles/{app}"),
 }
 
 
@@ -331,3 +342,95 @@ async def delete_credit_entry(request: Request, entry_id: int = Path(..., ge=1),
     except provider_credit.LedgerUnavailable:
         raise HTTPException(status_code=503, detail=_LEDGER_MISSING)
     return {"deleted": True, "entry": gone}
+
+
+# ── AA-1025 H1a: the app profile of each app (root ADR 0009 decision 4) ─────────────────────────────────────────────
+
+_APP = Path(..., pattern=r"^[a-z][a-z0-9_]{0,30}$")
+_PROFILE_MISSING = "the app profile needs migration 345"
+_CENTRAL_APP_CAPS_SQL = """
+    SELECT to_jsonb(b) AS row
+      FROM shared.spend_budget b
+     WHERE b.provider = 'llm' AND b.scope LIKE 'app:%'
+"""
+
+
+class AppProfilePatch(BaseModel):
+    """The fields to change (the others are kept). ``default_daily_budget_usd`` null clears it; switching AI off needs
+    ``reason`` (3 to 500 characters), switching it on clears the stored reason. The limits are migration 345's
+    CHECKs."""
+    model_config = ConfigDict(extra="forbid")
+    ai_enabled: Optional[bool] = None
+    bulk_paused: Optional[bool] = None
+    default_daily_budget_usd: Optional[float] = Field(None, ge=0, le=app_profile.BUDGET_MAX_USD)
+    degrade_mode: Optional[Literal["queue_retry", "basic_narration", "last_saved_text", "manual_reply_needed",
+                                   "none"]] = None
+    reason: Optional[str] = Field(None, max_length=app_profile.REASON_MAX)
+
+    @model_validator(mode="after")
+    def _no_null_switches(self):
+        for name in ("ai_enabled", "bulk_paused", "degrade_mode"):
+            if name in self.model_fields_set and getattr(self, name) is None:
+                raise ValueError(f"{name} cannot be null")
+        if not (self.model_fields_set - {"reason"}):
+            raise ValueError("no field to change")
+        return self
+
+    def fields(self) -> dict:
+        """The profile fields of this PATCH (``reason`` becomes ``disabled_reason``)."""
+        out = {k: getattr(self, k) for k in self.model_fields_set if k != "reason"}
+        if "reason" in self.model_fields_set:
+            out["disabled_reason"] = self.reason
+        return out
+
+
+def central_app_caps(rows: list) -> dict:
+    """{app: {per_day_usd, per_month_usd, hard_stop}} of the central LLM caps llm/app:<app> (A7), from rows of
+    ``to_jsonb`` text or dicts under ``row``. Pure."""
+    out = {}
+    for r in rows:
+        raw = r["row"]
+        if isinstance(raw, str):
+            raw = json.loads(raw)
+        scope = str(raw.get("scope") or "")
+        if not scope.startswith("app:"):
+            continue
+
+        def num(key):
+            v = raw.get(key)
+            return None if v is None else round(float(v), 4)
+
+        out[scope[4:]] = {"per_day_usd": num("per_day_usd"), "per_month_usd": num("per_month_usd"),
+                          "hard_stop": bool(raw.get("hard_stop", False))}
+    return out
+
+
+@router.get("/app-profiles", summary="The app profile of every app: AI on / off, bulk paused, default budget, "
+                                     "degrade mode ($0)")
+async def get_app_profiles(request: Request) -> dict:
+    try:
+        async with request.app.state.pool.acquire() as conn:
+            profiles = await app_profile.read_all(conn)
+            caps = central_app_caps(await conn.fetch(_CENTRAL_APP_CAPS_SQL))
+    except app_profile.AppProfileUnavailable:
+        raise HTTPException(status_code=503, detail=_PROFILE_MISSING)
+    rows = []
+    for app in app_profile.APPS:
+        p = profiles.get(app) or app_profile.AppProfile(app=app)
+        rows.append({**p.as_dict(), "central_cap": caps.get(app),
+                     "enforced_here": app == "cis"})       # the CIS gateway acts on it; other apps in H1b / H1c
+    return {"profiles": rows, "degrade_modes": list(app_profile.DEGRADE_MODES)}
+
+
+@router.patch("/app-profiles/{app}", summary="Edit one app's profile: AI on / off, bulk paused, default budget, "
+                                            "degrade mode (audited)")
+async def patch_app_profile(body: AppProfilePatch, request: Request, app: str = _APP,
+                            x_admin_user_id: Optional[str] = Header(None)) -> dict:
+    try:
+        return await app_profile.update(request.app.state.pool, app, body.fields(), actor=_actor(x_admin_user_id))
+    except LookupError:
+        raise HTTPException(status_code=404, detail="no such app")
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except app_profile.AppProfileUnavailable:
+        raise HTTPException(status_code=503, detail=_PROFILE_MISSING)

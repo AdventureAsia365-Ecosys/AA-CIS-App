@@ -26,6 +26,7 @@ from .errors import (BUDGET, DEADLINE, DISABLED, MAX_CHAIN_ATTEMPTS, OTHER, ROLE
                      RouteRoleNotServed, account_level_class, classify)
 from . import (breaker, central_budget, connection_budget, connections, data_scope, family_rule, prompt_registry,
                stage_params, stream_sink, tenant_budget)
+from . import app_profile
 from .vendor_route import (VendorDeployment, deployment_plan, pinned_deployment, role_refusal, split_pin,
                            vendor_deployment_for)
 from .deployments import alias_targets_sync
@@ -1050,6 +1051,8 @@ class LLMClient:
             deadline_s = None                   # a test double or a bad value: no deadline
         deadline_token = _DEADLINE.set((time.monotonic() + deadline_s, deadline_s)) if deadline_s else None
         try:
+            # AA-1025 H1a: the app profile's AI switch before everything (AI off for the app = every stage refused).
+            self._app_profile_gate(request, chain[0])
             # AA-642 A1: the stage kill switch first (a switched-off stage reads no budget and makes no attempt).
             self._stage_switch_gate(request, stage_cfg, chain[0])
             # AA-1016: the tenant's monthly AI budget, before any attempt (no budget row = nothing read, no change).
@@ -1083,6 +1086,17 @@ class LLMClient:
                 and random.random() * 100 < stage_cfg.shadow_sample_pct and not _in_eval_run()):
             self._start_shadow(request, stage_cfg, resp, primary_acct)
         return resp
+
+    def _app_profile_gate(self, request: LLMRequest, first_key: str) -> None:
+        """AA-1025 H1a: the app's AI switched off in its app profile (``app_profile``) is refused before any provider
+        attempt, like the stage kill switch: one 0 USD ledger row (status refused, error_class disabled) and
+        ``LLMAppDisabled`` (an LLMStageDisabled: the declared degrade mode ``queue_retry``)."""
+        exc = app_profile.refusal(request.stage)
+        if exc is None:
+            return
+        pin = split_pin(first_key)
+        log_gateway_failed_attempt(request, exc, model=pin[0] if pin else first_key, latency_ms=0)
+        raise exc
 
     def _stage_switch_gate(self, request: LLMRequest, stage_cfg, first_key: str) -> None:
         """AA-642 A1: a stage switched off (``llm_role_config.is_active = false``, migration 326) is refused before
@@ -1817,6 +1831,7 @@ class LLMClient:
         scope_token = _ATTEMPT_SCOPE.set(_scope_for(request, "validate",
                                                     {"connection_test": target.connection.connection_key}))
         try:
+            self._app_profile_gate(request, model.model_key)   # AA-1025 H1a: AI off for the app = no test call either
             return self._call_target(request, model, target, admit=False)
         except Exception as e:
             billed = _billed_usage_of(e)

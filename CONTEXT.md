@@ -524,6 +524,21 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   was reached" is `truncated` (never counted on a circuit); an adhoc stage logs `LLMRequest.role`. Ratchets:
   `test_aa642_model_tier_allowlist.py` (fixed / passed-through `model_tier` sites), `test_aa642_s11_alias_equivalence.py`
   (the 17 legacy stages send the same wire ids through aliases; the switch stays off).
+- **App profile** (AA-1025 H1a, migration 345, root ADR 0009 decision 4; `shared/llm_client/app_profile.py`):
+  `shared.llm_app_profile` holds one row per app (`cis`, `tripplanner`, `crm`, `booking`, fixed by migration;
+  `cis_app` has SELECT and column UPDATE only, 345 revokes `cis_owner`'s default privileges):
+  `ai_enabled`, `bulk_paused`, `default_daily_budget_usd`, `degrade_mode` (tech lead T-21: CIS `queue_retry`,
+  TripPlanner `basic_narration`, CRM `manual_reply_needed`, Booking `none`) and `disabled_reason`. The CIS gateway reads
+  its own app's row (20 s cache per process; no table, no row or unreadable = AI on) before anything else: AI off
+  refuses `generate` (before the stage switch), the connection test (`probe`), `embed()`, the daily embedding probe
+  (`embed.probe`) and Jev `decide()` / the Jev canary with one 0 USD ledger row each (status refused, error_class `disabled`). The refusal is `LLMAppDisabled`, an
+  `LLMStageDisabled` whose message names the stage, so jobs fail without a retry, T2 / T9 keep their version / piece to
+  do, and the bulk re-queue holds every stage while the app's AI is off (`shared/jobs/queue.disabled_stages` returns
+  `EveryStage`); Jev fails open as on its own switch. `bulk_paused` and the default budget are stored and shown only
+  (CIS enforces its central cap `llm/app:cis`; H2 acts on the bulk pause; TripPlanner and the CRM read their row in
+  H1b / H1c). `LLM_APP_PROFILE=off` skips the check. Admin: AI providers › Providers › App profiles
+  (`AppProfilesCard.tsx`; `GET /admin/ai-gateway/app-profiles` spend.read, `PATCH /admin/ai-gateway/app-profiles/{app}`
+  ai.admin, a reason to switch off, audited `llm_app_ai_switched_off` / `_on` / `llm_app_profile_updated`).
 - **Non-LLM provider circuit and the vendor API credit ledger** (AA-1025 B3 / B5, migrations 342 / 343):
   `shared/provider_circuit.py` keeps ONE circuit per decide / data provider connection (`typesafe`, `dataforseo`,
   `geoapify`) in `shared.provider_health` (PK `connection_key`; the breaker's pure transitions and `RULES`, a 10 s
@@ -734,7 +749,13 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     key. So a success is one row (the caller's) and each failed attempt before it one more at 0 USD. Jev failed /
     refused asks (breaker open, daily cap, 402, outage) and DataForSEO failed calls and budget refusals
     (`shared.dfs_call_log.status / latency_ms / error`) get rows too; Geoapify counts `geo.geocode_call
-    .failed_requests` and the job's `tenant_id`. Readers take `coalesce(app, quality_signal->>'app', 'cis')` and
+    .failed_requests` and the job's `tenant_id`, and since AA-1025 D3 (migration 346) each batch also carries `status`
+    (ok | refused | error; NULL before 346 = derived: every request failed = error), `latency_ms` (the sum over its
+    requests), `app` and `stage` (place_geocode / place_relocate / place_shape / adhoc_conn_test). The contract is
+    read federated (root ADR 0009 decision 8 as amended in S264, DM-10.4): `llm_call_log` for LLM and Jev calls (a Jev
+    row has role `decide` since D3, `validate` before), the domain ledgers for DataForSEO and Geoapify, read together
+    by the Calls tab, the trace and Providers (the geocoder answers the stage / app / status filters; a Jev ask refused
+    before an answer is `refused` there, `api/services/ai_gateway.JEV_STATUS_SQL`). Readers take `coalesce(app, quality_signal->>'app', 'cis')` and
     `coalesce(is_shadow, quality_signal @> '{"shadow": true}')` (no backfill); `llm_call_daily` adds
     `refused_calls`, `error_calls`, `latency_ms_sum` / `latency_ms_count` (`calls` = every row of the group).
   Exclusions: a Jev verdict-cache hit (no provider call; counted in `decision_cache_hits_daily`), a
@@ -772,7 +793,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   - Tenant content goes to TypeSafe only for tenants in `shared.jev_tenant_allowlist` (the AA test
     tenants) until the DPA/ZDR is confirmed.
   - Every verdict is logged in `shared.decision_log`, and each call in `llm_call_log` (provider
-    `typesafe`, role `validate`), so Jev shows in Cost Operations (Jev tab). Admin page: `/admin/decisions`.
+    `typesafe`, role `decide` since AA-1025 D3, `validate` before), so Jev shows in Cost Operations (Jev tab). Admin page: `/admin/decisions`.
     Key: secret `aa-cis/dev/typesafe`. Migration 181.
 - **Cost observability (epic AA-616)**:
   - `shared.llm_call_log` records account (acc3 / acc2; rows before AA-998 may hold acc1), provider and

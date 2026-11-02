@@ -1273,7 +1273,7 @@ export const ACCESS_API = "/api/admin/ai-gateway/access";
 
 export const PAGE_ACTIONS = [
   "provider_switch", "connections", "connection_test", "requeue", "routing", "catalog", "budgets", "jev_credit",
-  "credit",
+  "credit", "app_profiles",
 ] as const;
 export type PageAction = (typeof PAGE_ACTIONS)[number];
 
@@ -1294,6 +1294,7 @@ export const ACTION_CAPABILITY: Record<PageAction, "ai.admin" | "ops.write" | "s
   budgets: "spend.write",
   jev_credit: "spend.write",
   credit: "spend.write",
+  app_profiles: "ai.admin",
 };
 
 /**
@@ -1368,4 +1369,90 @@ export function thresholdValue(text: string): number | null | undefined {
   if (!text.trim()) return null;
   const v = Number(text.trim());
   return Number.isFinite(v) && v >= 0 ? Math.round(v * 100) / 100 : undefined;
+}
+
+// ── AA-1025 H1a: the app profile of each app (GET / PATCH /api/admin/ai-gateway/app-profiles) ─────────────────────
+// Backend shared/llm_client/app_profile.py (migration 345). AI off for an app: the CIS gateway refuses every AI call of
+// that app before it is sent (a 0 USD refused row on the Calls tab); TripPlanner and the CRM read their row later.
+
+export const APP_PROFILES_API = "/api/admin/ai-gateway/app-profiles";
+export const APP_PROFILES_KEY = ["ai-gateway", "app-profiles"] as const;
+export const PROFILE_APPS = ["cis", "tripplanner", "crm", "booking"] as const;
+export type ProfileApp = (typeof PROFILE_APPS)[number];
+export const DEGRADE_MODES = ["queue_retry", "basic_narration", "last_saved_text", "manual_reply_needed",
+  "none"] as const;
+export type DegradeMode = (typeof DEGRADE_MODES)[number];
+/** The table's limits (migration 345 CHECKs). */
+export const PROFILE_REASON_MAX = 500;
+export const PROFILE_BUDGET_MAX = 100000;
+
+export interface AppProfile {
+  app: ProfileApp;
+  ai_enabled: boolean;
+  bulk_paused: boolean;
+  default_daily_budget_usd: number | null;
+  degrade_mode: DegradeMode;
+  disabled_reason: string | null;
+  updated_at: string | null;
+  updated_by: string | null;
+  /** The central LLM cap llm/app:<app> (Budgets tab), when one exists. */
+  central_cap: { per_day_usd: number | null; per_month_usd: number | null; hard_stop: boolean } | null;
+  /** True for the app whose gateway acts on the profile today (CIS). */
+  enforced_here: boolean;
+}
+
+export interface AppProfilesResp {
+  profiles: AppProfile[];
+  degrade_modes: DegradeMode[];
+}
+
+/** The editor's fields as typed. */
+export interface AppProfileDraft {
+  ai_enabled: boolean;
+  bulk_paused: boolean;
+  budget: string;
+  degrade_mode: DegradeMode;
+  reason: string;
+}
+
+export function appProfileDraft(p: AppProfile): AppProfileDraft {
+  return { ai_enabled: p.ai_enabled, bulk_paused: p.bulk_paused,
+    budget: p.default_daily_budget_usd == null ? "" : String(p.default_daily_budget_usd),
+    degrade_mode: p.degrade_mode, reason: p.disabled_reason ?? "" };
+}
+
+export type AppProfileError = "budget" | "reason" | "unchanged";
+
+/**
+ * The PATCH body from the editor: only the fields that changed (the API keeps the rest). Switching AI off needs a
+ * reason of 3 to 500 characters (sent as `reason`); a budget is "" (cleared) or a number from 0 to 100000. A string
+ * is the error key of the first wrong field. Pure.
+ */
+export function appProfileBody(before: AppProfile, d: AppProfileDraft): Record<string, unknown> | AppProfileError {
+  const body: Record<string, unknown> = {};
+  const text = d.budget.trim();
+  let budget: number | null = null;
+  if (text) {
+    const v = Number(text);
+    if (!Number.isFinite(v) || v < 0 || v > PROFILE_BUDGET_MAX) return "budget";
+    budget = Math.round(v * 10000) / 10000;
+  }
+  const reason = d.reason.trim();
+  if (!d.ai_enabled && (reason.length < 3 || reason.length > PROFILE_REASON_MAX)) return "reason";
+  if (d.ai_enabled !== before.ai_enabled) body.ai_enabled = d.ai_enabled;
+  if (!d.ai_enabled && reason !== (before.disabled_reason ?? "")) body.reason = reason;
+  if (d.bulk_paused !== before.bulk_paused) body.bulk_paused = d.bulk_paused;
+  if (budget !== before.default_daily_budget_usd) body.default_daily_budget_usd = budget;
+  if (d.degrade_mode !== before.degrade_mode) body.degrade_mode = d.degrade_mode;
+  if (Object.keys(body).length === 0) return "unchanged";
+  if ("reason" in body && !("ai_enabled" in body) && Object.keys(body).length === 1) {
+    // only the stored reason of an app already off: the API takes a reason only with another field
+    body.ai_enabled = false;
+  }
+  return body;
+}
+
+/** The PATCH path of one app's profile. */
+export function appProfilePath(app: string): string {
+  return `${APP_PROFILES_API}/${encodeURIComponent(app)}`;
 }

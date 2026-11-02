@@ -42,6 +42,11 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
       heading: "Đọc một dòng thế nào",
       blocks: [
         { kind: "terms", uiLabels: true, items: [
+          { term: "Hồ sơ ứng dụng", text: "Công tắc AI của từng ứng dụng (CIS, TripPlanner, CRM đối tác, AA-Booking). "
+            + "Tắt AI: mọi lời gọi AI của ứng dụng đó bị từ chối trước khi gửi đi, có một dòng bị từ chối 0 USD ở tab "
+            + "Calls, và job của nó chờ tới khi bật lại AI. Thẻ này cũng giữ việc tạm dừng tác vụ hàng loạt, ngân sách "
+            + "ngày mặc định và điều ứng dụng hiển thị khi AI không dùng được. Hiện gateway CIS áp dụng công tắc; các "
+            + "ứng dụng khác đọc dòng của mình khi chúng dùng tới. Tắt AI cần lý do và được ghi nhật ký kiểm toán." },
           { term: "Kết nối LLM", text: "Mỗi dòng là một đường nền tảng gọi tới model, ví dụ Bedrock trong một tài "
             + "khoản AWS (hiện bằng số tài khoản) hoặc API của OpenAI. Lần gọi AI của CRM đối tác có một dòng riêng, "
             + "đọc từ CRM bằng đăng nhập nhân viên của bạn; bật tắt chúng ở CRM, không phải ở đây." },
@@ -55,7 +60,8 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
           { term: "Lỗi · độ trễ", text: "Trong 24 giờ và 7 ngày qua: bao nhiêu lần gọi tới được nhà cung cấp, phần trăm "
             + "bị lỗi (lỗi, câu trả lời bị cắt, hoặc tính tiền mà không dùng được), và thời gian trả lời: p50 là lần gọi "
             + "thường gặp, p95 là lần chậm nhất trong hai mươi lần. Lần gọi bị cổng của mình hoặc công tắc từ chối "
-            + "trước khi gửi được đếm riêng, không tính là lỗi. Geoapify không lưu thời gian trả lời. Dòng của CRM "
+            + "trước khi gửi được đếm riêng, không tính là lỗi. Thời gian trả lời của Geoapify là thời gian trung bình "
+            + "mỗi request của từng lô (lô trước 02/11/2026 không có). Dòng của CRM "
             + "đối tác lấy từ tổng theo ngày của CRM: hôm nay (UTC) và 7 ngày qua, lần bị từ chối tính là lỗi, không có "
             + "thời gian trả lời." },
           { term: "Sức khoẻ", text: "Với kết nối: lần trả lời gần nhất và loại lỗi gần nhất. Với Jev: số lần gọi và "

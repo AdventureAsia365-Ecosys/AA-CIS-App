@@ -1650,13 +1650,15 @@ JEV_CANARY_STAGE = "adhoc_jev_canary"
 
 async def _log_jev_canary_call(pool, data: dict) -> None:
     """AA-642 (S0): the canary is a billed TypeSafe call, so it writes its llm_call_log row like decide() does
-    (provider typesafe, role validate, input tokens only) — before, it was spend no ledger or Jev cap saw.
+    (provider typesafe, role decide since AA-1025 D3, input tokens only) — before, it was spend no ledger or Jev cap
+    saw.
     record_call_with_pool never raises (a failed write is a warning)."""
     from shared.llm_client import decide as decide_mod
     from shared.llm_client.call_log import record_call_with_pool
 
     model, tokens, cost = decide_mod.jev_usage(data)
-    await record_call_with_pool(pool, stage=JEV_CANARY_STAGE, role="validate", model=model, tokens_in=tokens,
+    await record_call_with_pool(pool, stage=JEV_CANARY_STAGE, role=decide_mod.JEV_ROLE, model=model,
+                                tokens_in=tokens,
                                 tokens_out=0, cost_usd=cost, provider="typesafe",
                                 quality_signal={"source": "jev_canary"},
                                 connection_key=decide_mod.JEV_CONNECTION_KEY)   # AA-642 (S263 L2): account set
@@ -1676,6 +1678,14 @@ async def check_jev_canary(request: Request, x_admin_secret: str = Header(None))
         return {"credit_ok": None, "billing_error": False, "alerted": False, "skipped": decide_mod.JEV_SWITCHED_OFF,
                 "breaker_open": decide_mod.jev_breaker_open(), "detail": None,
                 "checked_at": datetime.now(timezone.utc).isoformat()}
+    # AA-1025 H1a: the app's AI switched off in its app profile = no canary call either (nothing is sent).
+    from shared.llm_client import app_profile
+    off = await app_profile.ai_off_async(pool)
+    if off is not None:
+        logger.info("admin_jev_canary_skipped", reason="app_ai_off", app=off.app)
+        return {"credit_ok": None, "billing_error": False, "alerted": False,
+                "skipped": app_profile.refusal_text(off.app), "breaker_open": decide_mod.jev_breaker_open(),
+                "detail": None, "checked_at": datetime.now(timezone.utc).isoformat()}
     # A minimal, cheap probe. We do not care about the verdict content — only whether the call is
     # billable (credit present) or raises JevBillingError (402).
     probe_questions = {"canary": {"type": "noul", "instructions": "Reply true.",

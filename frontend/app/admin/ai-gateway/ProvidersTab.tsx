@@ -27,6 +27,8 @@
 // AA-1025 B3 / B5: the Health cell of Jev / DataForSEO / Geoapify says their shared circuit (open until, the probe,
 // failures in a row); a vendor API connection shows its balance estimated from the credit ledger, whose view
 // (`?view=credit`, ProviderCreditPanel) records top-ups and balance reads and sets the low-balance threshold.
+// AA-1025 H1a: the App profiles card (AppProfilesCard) above the LLM connections: the AI switch, bulk pause, default
+// daily budget and degrade mode of each app; Edit only for a session that may use it (usePageAccess "app_profiles").
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, Power, RotateCcw } from "lucide-react";
@@ -53,6 +55,7 @@ import { ACCESS, M, REASON, STATUS } from "./messages";
 import { useDomainText } from "./useDomainText";
 import { useErrorClassText } from "./useErrorClassText";
 import { useLlmConnections } from "./useLlmConnections";
+import AppProfilesCard from "./AppProfilesCard";
 import { usePageAccess } from "./usePageAccess";
 
 export const PROVIDERS_KEY = ["ai-gateway", "providers"] as const;
@@ -416,6 +419,7 @@ function ProvidersOverview() {
       {data && data.errors.length > 0 && (
         <div role="status" style={{ ...small, color: K.danger }}>{t("sourceErrors")}</div>
       )}
+      <AppProfilesCard />
       <Section title={t("groupLlm")} description={t("groupLlmHelp")} padded={false}>
         <ProviderTable id="ai-gateway-llm" rows={groups.llm} loading={!data} empty={t("emptyLlm")} />
         {data?.unattributed_llm && data.unattributed_llm.month_calls > 0 && (

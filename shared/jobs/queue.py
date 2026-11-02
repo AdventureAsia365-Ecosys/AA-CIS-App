@@ -429,10 +429,22 @@ def _named_connections(error: str, keys: Sequence[str]) -> list[str]:
 _DISABLED_STAGES_SQL = "SELECT stage FROM shared.llm_role_config WHERE NOT is_active"
 
 
+class EveryStage(frozenset):
+    """AA-1025 H1a: every stage is switched off (the app's AI is off in its app profile): any stage is in it."""
+
+    def __contains__(self, item) -> bool:
+        return True
+
+
 async def disabled_stages(pool) -> frozenset:
     """AA-642 A1: the stages switched off now (``llm_role_config.is_active`` false, the kill switch of migration
-    326)."""
-    return frozenset(r["stage"] for r in await pool.fetch(_DISABLED_STAGES_SQL))
+    326). AA-1025 H1a: every stage while this app's AI is off in its app profile (``EveryStage``), so the bulk re-queue
+    holds those jobs until AI is back on."""
+    stages = frozenset(r["stage"] for r in await pool.fetch(_DISABLED_STAGES_SQL))
+    from shared.llm_client import app_profile  # lazy: the gateway package is heavy
+    if await app_profile.ai_off_async(pool) is not None:
+        return EveryStage(stages)
+    return stages
 
 
 def llm_hold(error: str, blocked: dict[str, str], keys: Sequence[str],

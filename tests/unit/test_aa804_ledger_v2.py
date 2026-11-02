@@ -484,9 +484,12 @@ def test_log_geocode_calls_writes_the_tenant_and_the_failures():
     with call_log.bind_tenant("33333333-3333-3333-3333-333333333333"):
         asyncio.run(store.log_geocode_calls(conn, "geoapify", 5, 0.01, None, failed_requests=2))
     sql, *args = conn.execute.call_args.args
-    assert sql == store._GEOCODE_CALL_V2_SQL and args[6:] == ["33333333-3333-3333-3333-333333333333", 2]
+    # AA-1025 D3: the v3 row (migration 346) adds status, latency, app and stage after the 319 columns
+    assert sql == store._GEOCODE_CALL_V3_SQL and args[6:8] == ["33333333-3333-3333-3333-333333333333", 2]
     conn = AsyncMock()
-    conn.execute.side_effect = [asyncpg.exceptions.UndefinedColumnError("tenant_id"), None]
+    conn.execute.side_effect = [asyncpg.exceptions.UndefinedColumnError("status"),
+                                asyncpg.exceptions.UndefinedColumnError("tenant_id"), None]
     asyncio.run(store.log_geocode_calls(conn, "geoapify", 5, 0.01, None))
-    assert conn.execute.call_args.args[0] == store._GEOCODE_CALL_SQL
+    assert [c.args[0] for c in conn.execute.call_args_list] == [
+        store._GEOCODE_CALL_V3_SQL, store._GEOCODE_CALL_V2_SQL, store._GEOCODE_CALL_SQL]
     assert json.dumps(args[:6])        # the pre-319 values are unchanged

@@ -15,7 +15,8 @@ Filters (all optional, combined with AND): ``job_id``, ``tour_id`` (the tour's j
 the ``tour_id`` columns), ``app`` (cis | tripplanner | crm | …), ``provider`` (a spend-budget provider:
 ``shared.cost_guard.PROVIDERS``), ``status`` (ok | refused | error | billed_unusable | truncated), ``stage``,
 ``source`` and ``window`` (1h | 24h | 7d | 30d, default 24h). A filter a ledger cannot answer leaves that ledger out
-(for example ``stage`` leaves the geocoder out, ``status=truncated`` leaves everything but the LLM log out), so a
+(for example ``status=truncated`` leaves everything but the LLM log out; AA-1025 D3: the geocoder answers ``stage``,
+``app`` and ``status=refused`` since migration 346), so a
 filtered list never shows rows that only look like matches.
 
 Paging is keyset on (``at``, ``id``) descending, where ``id`` is ``<source>:<ledger row id>`` compared byte-wise
@@ -54,10 +55,11 @@ WINDOWS = {"1h": timedelta(hours=1), "24h": timedelta(hours=24), "7d": timedelta
 DEFAULT_WINDOW = "24h"
 DEFAULT_LIMIT = 100
 MAX_LIMIT = 200
-# The statuses each ledger can hold (decision_log and geocode_call have none: derived, ok | error).
+# The statuses each ledger can hold. decision_log has no status column: derived (ai_gateway.JEV_STATUS_SQL, AA-1025
+# D3: a refused ask is refused). geocode_call has one since migration 346 (AA-1025 D3); older rows are derived.
 SOURCE_STATUSES = {
-    "llm": set(STATUSES), "dfs": {"ok", "refused", "error"}, "jev": {"ok", "error"},
-    "geocoder": {"ok", "error"}, "crm": {"ok", "refused", "error"},
+    "llm": set(STATUSES), "dfs": {"ok", "refused", "error"}, "jev": {"ok", "refused", "error"},
+    "geocoder": {"ok", "refused", "error"}, "crm": {"ok", "refused", "error"},
 }
 # The spend-budget provider (shared/cost_guard.py PROVIDERS) a source answers for; llm and crm by their provider.
 SOURCE_OF_PROVIDER = {"jev": "jev", "dfs": "dfs", "geocoder": "geocoder"}
@@ -156,13 +158,11 @@ def sources_for(f: CallFilters) -> tuple[str, ...]:
         if f.app is not None:
             if s == "crm" and f.app != "crm":
                 continue
-            if s in ("jev", "geocoder") and f.app != "cis":
+            if s == "jev" and f.app != "cis":
                 continue
-            if s in ("llm", "dfs") and f.app == "crm":
+            if s in ("llm", "dfs", "geocoder") and f.app == "crm":
                 continue  # the CRM's rows are in its own ledger
         if f.stage is not None:
-            if s == "geocoder":
-                continue
             if s == "crm" and not f.stage.startswith("crm_"):
                 continue
         if s == "crm" and (f.job_id is not None or f.tour_id is not None):
@@ -185,14 +185,19 @@ _TABLE = {"llm": "shared.llm_call_log", "jev": "shared.decision_log", "dfs": "sh
           "geocoder": "geo.geocode_call"}
 _TIME = {"llm": "created_at", "jev": "created_at", "dfs": "created_at", "geocoder": "called_at"}
 _COLS = {"llm": gw._LLM_COLS, "jev": gw._DECISION_COLS, "dfs": gw._DFS_COLS, "geocoder": gw._GEO_COLS}
+# AA-1025 D3 (migration 346): geocode_call's status / app / stage are read through to_jsonb, so the list runs before
+# 346 is applied; a row without them (written before 346) is derived as before (status) or cis (app).
+_GEO = "to_jsonb(geocode_call)"
 _STATUS_EXPR = {
     "llm": "coalesce(status, 'ok')",
     "dfs": "coalesce(status, 'ok')",
-    "jev": "CASE WHEN error IS NOT NULL OR zone = 'error' THEN 'error' ELSE 'ok' END",
-    "geocoder": ("CASE WHEN coalesce(failed_requests, 0) > 0 AND failed_requests >= requests "
-                 "THEN 'error' ELSE 'ok' END"),
+    "jev": gw.JEV_STATUS_SQL,
+    "geocoder": (f"coalesce({_GEO} ->> 'status', CASE WHEN coalesce(failed_requests, 0) > 0 "
+                 "AND failed_requests >= requests THEN 'error' ELSE 'ok' END)"),
 }
-_APP_EXPR = {"llm": "coalesce(app, quality_signal ->> 'app', 'cis')", "dfs": "coalesce(app, 'cis')"}
+_APP_EXPR = {"llm": "coalesce(app, quality_signal ->> 'app', 'cis')", "dfs": "coalesce(app, 'cis')",
+             "geocoder": f"coalesce({_GEO} ->> 'app', 'cis')"}
+_STAGE_EXPR = {"llm": "stage", "jev": "stage", "dfs": "stage", "geocoder": f"{_GEO} ->> 'stage'"}
 _TENANT = {"llm": "tenant_id::text", "jev": "tenant_id::text", "dfs": "tenant_id::text",
            "geocoder": "tenant_id::text"}
 
@@ -228,8 +233,8 @@ def source_sql(source: str, f: CallFilters, *, since: datetime, until: datetime,
         where.append(f"{_APP_EXPR[source]} = {arg(f.app)}")
     if f.status is not None:
         where.append(f"{_STATUS_EXPR[source]} = {arg(f.status)}")
-    if f.stage is not None and source in ("llm", "jev", "dfs"):
-        where.append(f"stage = {arg(f.stage)}")
+    if f.stage is not None and source in _STAGE_EXPR:
+        where.append(f"{_STAGE_EXPR[source]} = {arg(f.stage)}")
     if f.provider is not None and source == "llm":
         if f.provider == "bedrock":
             where.append("provider LIKE 'bedrock%'")
