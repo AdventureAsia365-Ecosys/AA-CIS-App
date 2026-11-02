@@ -39,6 +39,13 @@ Both invitation routes are on the write allow-list of the Dev-only E2E CIS admin
 unless the tenant is synthetic (``is_canary``), the address is an E2E mailbox address and the role is viewer / editor
 (the body's role on a new invitation, the stored role on a send-again: :func:`_refuse_e2e_resend_role`).
 
+AA-1031 (S264 live check F3) adds the read the page uses to show only the writes the API would accept:
+
+* ``GET /admin/tenants/{id}/members/access`` — ``{read_only, actions: {invite, send_again, change_role, remove},
+  invite_roles}``. Each action is ``staff_authz.denial_reason`` on that write's own route, plus the invitation routes'
+  own refusal of the Dev-only E2E CIS admin (synthetic tenant only, viewer / editor only), so a read-only session sees
+  no Invite button and no row menu. UI hint only: every write keeps its own checks.
+
 Cost definition is the AA-798 one (migration 223): ``shared.llm_call_log.cost_usd`` for the
 tenant, current calendar month (``date_trunc('month', now())``), Jev included, shadow rows
 (``quality_signal @> {"shadow": true}``) excluded — so the totals here add up to the
@@ -56,7 +63,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from api.core import e2e_staff
-from api.core.staff_authz import request_staff_identity, staff_policy
+from api.core.staff_authz import StaffPrincipal, denial_reason, request_staff_identity, staff_policy
 
 from api.routers._billing import usage_row_to_dict
 from api.routers.admin import _admin_actor, verify_admin_secret
@@ -645,3 +652,50 @@ async def resend_tenant_member_invitation(
     _refuse_e2e_resend_role(request, tenant_id, member)
     delivery = await _deliver(request, tenant_id, member["invitation_id"], body.email, body.locale)
     return {"tenant_id": str(tenant_id), "member": member, "delivery": delivery}
+
+
+# ── AA-1031 (S264 F3): which member write controls the caller may use ──────────────────────────────────────────────
+
+# Each write control of the Members tab (and of the agency drawer's "also invite to the Content studio" box) and the
+# route it calls (method, POLICY template). The answer for a control is denial_reason on that route, so it follows the
+# API exactly: a role without tenant.write and a read-only session both get False.
+MEMBER_WRITES: dict[str, tuple[str, str]] = {
+    "invite": ("POST", "/admin/tenants/{tenant_id}/members/invitations"),
+    "send_again": ("POST", "/admin/tenants/{tenant_id}/members/{membership_id}/invitation/send"),
+    "change_role": ("PATCH", "/admin/tenants/{tenant_id}/members/{membership_id}"),
+    "remove": ("POST", "/admin/tenants/{tenant_id}/members/{membership_id}/remove"),
+}
+STUDIO_ROLES: tuple[str, ...] = ("owner", "editor", "viewer")
+
+
+def members_access(principal: StaffPrincipal, *, synthetic_tenant: bool) -> dict:
+    """{read_only, actions, invite_roles} for one caller on one tenant (pure; tests/unit/test_aa1031_members_access.py).
+
+    The two invitation routes are on the Dev-only E2E CIS admin's write allow-list (root ADR 0006a A10b-1), so
+    denial_reason lets them through; the routes then refuse that session unless the tenant is synthetic and the role
+    is viewer / editor (_refuse_e2e_invitation, _refuse_e2e_resend_role). The same rule applies here, so the page
+    offers exactly what the route accepts. ``invite_roles`` is empty when neither invitation control is allowed."""
+    actions = {key: denial_reason(principal, method, route) is None for key, (method, route) in MEMBER_WRITES.items()}
+    roles = list(STUDIO_ROLES)
+    if principal.e2e_read_only:
+        if not synthetic_tenant:
+            actions["invite"] = actions["send_again"] = False
+        roles = [r for r in STUDIO_ROLES if r in e2e_staff.E2E_INVITE_ROLES]
+    if not (actions["invite"] or actions["send_again"]):
+        roles = []
+    return {"read_only": not any(actions.values()), "actions": actions, "invite_roles": roles}
+
+
+@router.get("/{tenant_id}/members/access",
+            summary="Which member write controls of this tenant the caller may use (UI hint, $0)")
+async def get_tenant_members_access(
+    tenant_id: UUID, request: Request, principal: StaffPrincipal = Depends(staff_policy),
+    x_admin_secret: str = Header(None),
+):
+    verify_admin_secret(x_admin_secret)
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        await _require_tenant(conn, tenant_id)
+        # Only the E2E session's answer depends on the tenant (its invitations are for synthetic tenants only).
+        synthetic = principal.e2e_read_only and await e2e_staff.is_synthetic_tenant(conn, tenant_id)
+    return {"tenant_id": str(tenant_id), **members_access(principal, synthetic_tenant=bool(synthetic))}

@@ -3,10 +3,14 @@
 // Run: npm run test:unit (node --test with --experimental-strip-types).
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
+  MEMBER_WRITE_ACTIONS,
   STUDIO_ROLES,
+  anyMemberWrite,
   deliveryOk,
   deliveryProblem,
   invitationsPath,
@@ -14,8 +18,12 @@ import {
   isLastActiveOwner,
   isStudioRole,
   liveCount,
+  mayInviteAs,
   memberActions,
   memberPath,
+  memberPermissions,
+  memberRowActions,
+  membersAccessPath,
   removePath,
   sendAgainPath,
   statusTone,
@@ -76,3 +84,99 @@ test("status tones and delivery outcome", () => {
   assert.equal(deliveryProblem({ status: "failed", crm_status: 409, detail: "x_code" }), "x_code");
   assert.equal(deliveryProblem({ status: "failed", crm_status: 503 }), "HTTP 503");
 });
+
+// ── AA-1031 (S264 live check F3): the members access read decides which write controls show ─────────────────────
+
+const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+const all = (v) => Object.fromEntries(MEMBER_WRITE_ACTIONS.map((a) => [a, v]));
+const ADMIN = { read_only: false, actions: all(true), invite_roles: ["owner", "editor", "viewer"] };
+const READ_ONLY = { read_only: true, actions: all(false), invite_roles: [] };
+const E2E_SYNTHETIC = {
+  read_only: false, actions: { invite: true, send_again: true, change_role: false, remove: false },
+  invite_roles: ["editor", "viewer"],
+};
+
+test("members access: the API's answer decides, the role is ignored once it answered", () => {
+  const admin = memberPermissions(ADMIN, false, false);
+  assert.deepEqual(admin, {
+    settled: true, invite: true, sendAgain: true, changeRole: true, remove: true, inviteRoles: [...STUDIO_ROLES],
+  });
+  const ro = memberPermissions(READ_ONLY, false, true);
+  assert.deepEqual(ro, {
+    settled: true, invite: false, sendAgain: false, changeRole: false, remove: false, inviteRoles: [],
+  });
+  assert.equal(anyMemberWrite(ro), false);
+  assert.equal(anyMemberWrite(admin), true);
+});
+
+test("members access: nothing offered while loading; a failed read falls back to the role", () => {
+  const loading = memberPermissions(undefined, false, true);
+  assert.equal(loading.settled, false);
+  assert.equal(anyMemberWrite(loading), false);
+  const failedWriter = memberPermissions(undefined, true, true);
+  assert.equal(failedWriter.settled, true);
+  assert.ok(failedWriter.invite && failedWriter.sendAgain && failedWriter.changeRole && failedWriter.remove);
+  assert.deepEqual(failedWriter.inviteRoles, [...STUDIO_ROLES]);
+  const failedReader = memberPermissions(undefined, true, false);
+  assert.equal(failedReader.settled, true);
+  assert.equal(anyMemberWrite(failedReader), false);
+});
+
+test("members access: the E2E session on a synthetic tenant invites editor / viewer only", () => {
+  const p = memberPermissions(E2E_SYNTHETIC, false, true);
+  assert.deepEqual(p.inviteRoles, ["editor", "viewer"]);
+  assert.equal(mayInviteAs(p, "owner"), false);
+  assert.equal(mayInviteAs(p, "viewer"), true);
+  // a send again re-seals the stored role: an owner invitation is not offered, an editor one is
+  assert.deepEqual(memberRowActions(row("a", "invited", "owner", "inv-1"), p),
+    { changeRole: false, sendAgain: false, remove: false });
+  assert.deepEqual(memberRowActions(row("b", "invited", "editor", "inv-2"), p),
+    { changeRole: false, sendAgain: true, remove: false });
+});
+
+test("members access: row actions are the row's AND the session's", () => {
+  const admin = memberPermissions(ADMIN, false, false);
+  for (const m of [row("a", "active", "owner"), row("b", "invited", "viewer", "inv"), row("c", "removed", "editor")]) {
+    assert.deepEqual(memberRowActions(m, admin), memberActions(m), m.membership_id);
+    assert.deepEqual(memberRowActions(m, memberPermissions(READ_ONLY, false, true)),
+      { changeRole: false, sendAgain: false, remove: false }, m.membership_id);
+  }
+});
+
+test("members access: unknown roles are dropped, a missing invite_roles means every role, none without invite", () => {
+  const odd = memberPermissions({ ...ADMIN, invite_roles: ["owner", "superuser"] }, false, false);
+  assert.deepEqual(odd.inviteRoles, ["owner"]);
+  const older = memberPermissions({ read_only: false, actions: all(true) }, false, false);
+  assert.deepEqual(older.inviteRoles, [...STUDIO_ROLES]);
+  const noInvite = memberPermissions({
+    read_only: false, actions: { change_role: true }, invite_roles: ["owner"],
+  }, false, false);
+  assert.deepEqual(noInvite.inviteRoles, []);
+  assert.equal(noInvite.changeRole, true);
+  assert.equal(mayInviteAs(noInvite, "owner"), false);
+});
+
+test("members access: the action list and the route match the backend", () => {
+  const py = read("../../api/routers/admin_tenant360.py");
+  const block = py.slice(py.indexOf("MEMBER_WRITES: dict"), py.indexOf("def members_access"));
+  const keys = [...block.matchAll(/^\s+"([a-z_]+)": \(/gm)].map((m) => m[1]);
+  assert.deepEqual([...keys].sort(), [...MEMBER_WRITE_ACTIONS].sort());
+  assert.ok(py.includes('@router.get("/{tenant_id}/members/access"'));
+  assert.equal(membersAccessPath(T), `/api/admin/tenants/${T}/members/access`);
+});
+
+test("members access: the Members tab and the agency drawer read it, not the role cookie", () => {
+  const tab = read("../app/admin/tenants/_components/Tenant360Members.tsx");
+  assert.ok(tab.includes("useMembersAccess(tenantId)"));
+  assert.ok(!/can\(\s*useAdminIdentity\(\)\.role/.test(tab), "Members tab must not decide on the role cookie");
+  assert.ok(!tab.includes('"tenant.write"'), "Members tab must not check tenant.write itself");
+  assert.match(tab, /\{perm\.invite && \(/);
+  assert.match(tab, /memberRowActions\(m, perm\)/);
+  const drawer = read("../app/admin/platform/agencies/AgencyDrawer.tsx");
+  assert.ok(drawer.includes("useMembersAccess("));
+  assert.match(drawer, /studioInviteOffered\(cisTenant, mayInviteAs\(studioAccess, "owner"\)\)/);
+  assert.ok(!drawer.includes('"tenant.write")'), "the drawer's studio box must not decide on the role cookie");
+  const hook = read("../app/admin/_components/useMembersAccess.ts");
+  assert.ok(hook.includes("membersAccessPath(id)") && hook.includes('can(role, "tenant.write")'));
+});
+

@@ -241,6 +241,8 @@ POLICY: dict[tuple[str, str], str] = {
     ("GET", "/admin/tenants/{tenant_id}/markets"): TENANT_READ,
     # AA-978 — Tenant 360 Members (CIS memberships; a removal also signs the person out of the partner CRM)
     ("GET", "/admin/tenants/{tenant_id}/members"): TENANT_READ,
+    # AA-1031 (S264 F3): which member write controls this caller may use on the tenant (UI hint, denial_reason)
+    ("GET", "/admin/tenants/{tenant_id}/members/access"): TENANT_READ,
     ("PATCH", "/admin/tenants/{tenant_id}/members/{membership_id}"): TENANT_WRITE,
     ("POST", "/admin/tenants/{tenant_id}/members/{membership_id}/remove"): TENANT_WRITE,
     # AA-979 P2b — Content studio invitations (CIS row + the CRM delivers the AA system mail)

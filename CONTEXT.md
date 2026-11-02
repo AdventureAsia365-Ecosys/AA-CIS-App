@@ -1764,7 +1764,12 @@ CRM role from CIS. Invitation and activation of identities came with AA-979 (par
 helpers `frontend/lib/tenantMembers.ts`) lists the memberships (fingerprint, role, status, invited / last change) and,
 with `tenant.write`, invites (e-mail + role + mail language), sends an invitation again (the address is typed again:
 CIS keeps none), changes the role and removes (warning when it is the last active owner), all over the routes above;
-the mail result of an invitation stays on the page (sent / created but not delivered).
+the mail result of an invitation stays on the page (sent / created but not delivered). Which write controls show is
+the API's own answer for the session, `GET /admin/tenants/{id}/members/access` (`tenant.read`; `{read_only, actions:
+{invite, send_again, change_role, remove}, invite_roles}` from `staff_authz.denial_reason` on each write route plus the
+E2E invitation rule; hook `frontend/app/admin/_components/useMembersAccess.ts`, also used by the agency drawer's
+"also invite to the Content studio" box): a read-only session (the Dev E2E admin) sees no write control, nothing shows
+while the read loads, and only a failed read falls back to the role's `tenant.write` (AA-1031 S264 F3).
 Tenant read (AA-978 follow-up): `GET /v1/account/members` (`api/routers/v1_account_members.py`,
 `services/tenant_membership/portal.py`), the portal's Account › Members page: the agency's invited + active rows
 (fingerprint, role, status, dates; no staff actor, no invitation id), tenant id from the tenant JWT only, main pool.

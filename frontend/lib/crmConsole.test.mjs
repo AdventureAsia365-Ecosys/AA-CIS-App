@@ -253,7 +253,7 @@ test("every delete-block reason has words in English and Vietnamese", () => {
 });
 
 // AA-1031 (S264): "Invite first owner" can also invite the same address to the Content studio as owner.
-test("studio invite is offered only for an active CIS tenant and a tenant.write staff member", async () => {
+test("studio invite is offered only for an active CIS tenant on which the session may invite an owner", async () => {
   const { studioInviteOffered, studioInvitationsPath } = await import("./crmConsole.ts");
   assert.equal(studioInviteOffered(undefined, true), false);
   assert.equal(studioInviteOffered({ status: "active" }, false), false);
