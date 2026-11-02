@@ -189,11 +189,21 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
           { term: "Tenant AI budgets", text: "The monthly AI budget of each tenant that has one, with this month's spend "
             + "and state. Set or change it on the tenant (Tenants › the tenant › Cost). Staff only. Stored and shown "
             + "now; holding new jobs at the approval level comes with the gateway check." },
+          { term: "Central LLM caps", text: "Caps on every model call of one scope, whatever provider answers: the "
+            + "whole app, one stage, one kind of job (also per job run), the eval runs or the ad-hoc scripts; per day "
+            + "and per month. Checked before each call: a cap that stops refuses the call before anything is sent "
+            + "(a zero-cost refused row in Calls). New caps start alert only; on Dev they stay alert only." },
+          { term: "Coverage per call site", text: "One line per stage that calls a model, with the central caps it is "
+            + "under, the kinds of job that called it, and its spend. A line with no central cap is still capped by "
+            + "its connection's monthly budget." },
           { term: "Stops at the cap", text: "The run ends when the next call would pass the cap." },
           { term: "Alert only", text: "Never stops; an admin alert goes out at the alert %." },
         ] },
         { kind: "control", label: "Add a cap", does: "Creates a provider-wide or a job cap.",
           cost: "Free.", when: "A paid source shows No in the coverage list." },
+        { kind: "control", label: "Add a central cap", does: "Creates a cap on every model call of one scope; Remove "
+            + "in its editor drops it.",
+          cost: "Free.", when: "A call site shows no central cap and its spend should ring a bell." },
       ],
     },
     {
