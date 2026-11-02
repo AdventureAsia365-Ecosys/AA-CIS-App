@@ -3,6 +3,7 @@ import time
 from shared.secrets import get_dataforseo_creds
 from shared.dfs_client.call_log import record_dfs_call_sync, extract_cost
 from shared.cost_guard import DFS_CALL_ESTIMATE_USD, BudgetExceeded
+from shared import provider_circuit
 from shared.llm_client import connections as conn_registry
 import httpx
 import structlog
@@ -79,6 +80,17 @@ def as_dfs_error(exc: Exception) -> DFSCallError:
     status = getattr(getattr(exc, "response", None), "status_code", None)
     return DFSCallError(f"DataForSEO request failed: {exc}", fatal=status in _FATAL_HTTP,
                         status_code=status)
+
+
+async def _note_circuit(status_err: DFSCallError | None) -> None:
+    """AA-1025 B3: the outcome of an answered call on the shared circuit. A 20000 body, or a body code that refuses
+    only this request (40xxx other than 401xx / 402xx: a bad keyword or field), is a success; 401xx / 402xx / 5xxxx
+    count as failures (provider_circuit.failure_class reads the first three digits)."""
+    cls = None if status_err is None else provider_circuit.failure_class(status_err.status_code)
+    if cls is None:
+        await provider_circuit.record_success(DFS_CONNECTION_KEY)
+    else:
+        await provider_circuit.record_failure(DFS_CONNECTION_KEY, cls, str(status_err))
 
 
 class DataForSEOClient:
@@ -162,6 +174,14 @@ class DataForSEOClient:
                              keyword_count=keyword_count,
                              meta={"connection_key": DFS_CONNECTION_KEY, "refused": "switched_off"})
             raise DFSCallError(reason, fatal=True)
+        # AA-1025 B3: the shared DataForSEO circuit (every api / worker task). Open = nothing is sent: a 0 USD refused
+        # row (meta.refused circuit_open) and a fatal DFSCallError, so the run stops like on an outage it would hit.
+        refusal = await provider_circuit.admit(DFS_CONNECTION_KEY)
+        if refusal:
+            self._log_failed(endpoint, status="refused", error=refusal[:500], keyword=keyword,
+                             location_code=location_code, keyword_count=keyword_count,
+                             meta={"connection_key": DFS_CONNECTION_KEY, "refused": "circuit_open"})
+            raise DFSCallError(refusal, fatal=True)
         started = time.monotonic()
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
@@ -177,11 +197,14 @@ class DataForSEOClient:
                              keyword=keyword, location_code=location_code, keyword_count=keyword_count,
                              latency_ms=int((time.monotonic() - started) * 1000))
             await conn_registry.note_provider_access(DFS_CONNECTION_KEY, access_state_of(err))
+            await provider_circuit.record_failure(DFS_CONNECTION_KEY, provider_circuit.failure_class(err.status_code),
+                                                  str(err))
             raise
         latency_ms = int((time.monotonic() - started) * 1000)
         status_err = _dfs_status_error(data)
         await conn_registry.note_provider_access(
             DFS_CONNECTION_KEY, "ok" if status_err is None else access_state_of(status_err))
+        await _note_circuit(status_err)
         return data, latency_ms
 
     def _auth(self) -> tuple[str, str]:

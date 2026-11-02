@@ -82,6 +82,8 @@ _JEV_COOLDOWN_MIN = float(os.environ.get("JEV_CREDIT_COOLDOWN_MIN", "15"))
 # Breaker state is process-local (same as the _questions / _allowlist caches below): each worker
 # trips and recovers on its own clock. A truly global breaker would need DB/Redis; per-process is
 # the minimal design that matches the existing caches and is enough to stop the latency bleed.
+# AA-1025 B3: the shared circuit (shared/provider_circuit.py, table shared.provider_health) now covers every task and
+# every failure class (outage / 5xx / timeouts too); this per-process credit breaker stays as the fast local stop.
 _jev_cooldown_until = 0.0        # time.monotonic() deadline; 0.0 = breaker closed (calls allowed)
 
 
@@ -873,6 +875,20 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
         to_ask = {}
 
     if to_ask:
+        # AA-1025 B3: the shared Jev circuit (shared.provider_health, every api / worker task): open after a run of
+        # failed calls (5xx, timeouts, 401 / 403, 402), so no task spends its 3 x 3 s on a provider that is down. Open
+        # = no TypeSafe call; the stage keeps its own rule (fail-open), and the ask gets its 0 USD refused row.
+        from shared import provider_circuit
+
+        refusal = await provider_circuit.admit(JEV_CONNECTION_KEY)
+        if refusal:
+            for key, q in to_ask.items():
+                decision.verdicts[key] = Verdict(key, q.mode, "error", error=refusal)
+            failed_ask = ("refused", provider_circuit.open_class(JEV_CONNECTION_KEY) or "other", refusal,
+                          len(to_ask), None)
+            to_ask = {}
+
+    if to_ask:
         started = time.perf_counter()
         try:
             data = await _call_jev(state, {k: wire_question(q) for k, q in to_ask.items()})
@@ -880,6 +896,7 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
             decision.model, decision.input_tokens, decision.cost_usd = jev_usage(data)
             _charge_jev_budget(decision.cost_usd)
             access_state = "ok"
+            await _circuit_success()
             answers = data.get("answers") or {}
             for key, q in to_ask.items():
                 answer = answers.get(key)
@@ -895,6 +912,7 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
             decision.latency_ms = int((time.perf_counter() - started) * 1000)
             _trip_jev_breaker()
             access_state = "quota_exhausted"
+            await _circuit_failure(402, str(exc) or "credit_exhausted")
             logger.warning("decide_call_billing_error", stage=stage, subject=subject_key)
             for key, q in to_ask.items():
                 decision.verdicts[key] = Verdict(key, q.mode, "error", error="credit_exhausted")
@@ -915,6 +933,7 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
                 decision.verdicts[key] = Verdict(key, q.mode, "error", error=err[:500])
             cls = classify(exc)
             access_state = _ACCESS_OF_CLASS.get(cls)
+            await _circuit_failure(getattr(getattr(exc, "response", None), "status_code", None), err)
             failed_ask = ("refused" if cls in ("access_denied", "quota_exhausted", "throttled") else "error",
                           cls if cls in ("access_denied", "quota_exhausted", "throttled") else "other",
                           err, len(to_ask), decision.latency_ms)
@@ -922,6 +941,21 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
     await _write_logs(db, stage, subject_key, tenant_id, decision, to_ask, failed_ask=failed_ask)
     await note_jev_access(db, access_state)
     return decision
+
+
+async def _circuit_success() -> None:
+    """AA-1025 B3: TypeSafe answered: the shared Jev circuit closes (written at most once a minute when healthy)."""
+    from shared import provider_circuit
+
+    await provider_circuit.record_success(JEV_CONNECTION_KEY)
+
+
+async def _circuit_failure(status: Optional[int], message: str) -> None:
+    """AA-1025 B3: one failed decide call (after its own retries) on the shared Jev circuit. ``status`` = the last HTTP
+    status (None = timeout / transport error); a 400 / 422 (the request's own content) is not counted."""
+    from shared import provider_circuit
+
+    await provider_circuit.record_failure(JEV_CONNECTION_KEY, provider_circuit.failure_class(status), message)
 
 
 async def _insert_logs(conn, rows, hit_rows) -> None:

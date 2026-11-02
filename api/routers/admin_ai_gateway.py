@@ -33,6 +33,18 @@
   DELETE /admin/ai-gateway/tenant-budgets/{tenant_id}   remove it: back to no budget (audited
                                                         tenant_ai_budget_cleared).                          spend.write
 
+  GET    /admin/ai-gateway/credit                       AA-1025 B5: the credit ledger of every connection whose
+                                                        balance_source is topups_minus_spend (the vendor APIs): the
+                                                        entries, the estimate, the low-balance threshold.   spend.read
+  POST   /admin/ai-gateway/credit/{connection_key}/entries   record a top-up or a balance read (audited
+                                                        provider_credit.entry_added), then check that connection's
+                                                        low-credit alert at once.                           spend.write
+  DELETE /admin/ai-gateway/credit/entries/{entry_id}    delete one entry (audited provider_credit.entry_deleted).
+                                                                                                             spend.write
+  POST   /admin/ai-gateway/credit/check                 the low-credit check of every ledger connection now (the
+                                                        sampler runs it every 30 min): bell + e-mail below the
+                                                        threshold, throttled.                               spend.write
+
 $0: database reads (and one CRM read) and the tenant budget writes; no provider is called. The other caps are edited
 through their existing write routes (PUT /admin/budgets/{provider}/{scope}, PATCH /admin/llm-connections/{key}).
 AA-1016 (C4): the tenant budget writes answer 503 when migration 321 (the table) is not applied, 404 for an unknown
@@ -42,7 +54,8 @@ sources and their limits: api/services/ai_gateway.py and api/services/ai_gateway
 """
 from __future__ import annotations
 
-from typing import Optional
+from datetime import datetime
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -50,6 +63,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from api.core.staff_authz import StaffPrincipal, denial_reason, staff_policy
 from api.routers.admin import verify_admin_secret
 from api.services import ai_gateway, ai_gateway_calls, ai_gateway_experiments, platform_apps, tenant_ai_budget
+from services.acp_shared.audit_log import write_audit_log
+from shared import provider_credit
 
 router = APIRouter(prefix="/admin/ai-gateway", tags=["admin-ai-gateway"],
                    dependencies=[Depends(verify_admin_secret), Depends(staff_policy)])
@@ -224,3 +239,93 @@ async def delete_tenant_budget(request: Request, tenant_id: str = _TENANT_ID,
         raise HTTPException(status_code=404, detail="no such tenant")
     except tenant_ai_budget.TenantBudgetUnavailable as e:
         raise HTTPException(status_code=503, detail=str(e))
+
+
+# ── AA-1025 B5: the credit ledger of the vendor API connections (top-ups and balance reads) ────────────────────────
+
+_CONNECTION_KEY = Path(..., pattern=r"^[a-z0-9][a-z0-9-]{1,62}$")
+_LEDGER_MISSING = "the credit ledger needs migration 342"
+
+
+class CreditEntryBody(BaseModel):
+    """One ledger entry. kind 'topup' = money added (amount above 0); 'opening_balance' = the balance read on the
+    provider's console (amount 0 or more): the estimate restarts from the newest one. effective_at defaults to now."""
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["topup", "opening_balance"] = "topup"
+    amount_usd: float = Field(..., ge=0, le=100_000)
+    effective_at: Optional[datetime] = None
+    note: Optional[str] = Field(None, max_length=500)
+
+    @model_validator(mode="after")
+    def _amount(self):
+        if self.kind == "topup" and self.amount_usd <= 0:
+            raise ValueError("a top-up must be above 0")
+        self.amount_usd = round(self.amount_usd, 2)
+        if self.note is not None:
+            self.note = self.note.strip() or None
+        return self
+
+
+@router.get("/credit", summary="The credit ledger and estimated balance of the vendor API connections ($0)")
+async def get_credit(request: Request) -> dict:
+    try:
+        async with request.app.state.pool.acquire() as conn:
+            return {"connections": await provider_credit.read_all(conn)}
+    except provider_credit.LedgerUnavailable:
+        raise HTTPException(status_code=503, detail=_LEDGER_MISSING)
+
+
+@router.post("/credit/check", summary="Run the vendor API low-credit check now (bell + e-mail below the threshold)")
+async def post_credit_check(request: Request) -> dict:
+    try:
+        results = await provider_credit.check_low_credit(request.app.state.pool, source="admin_check")
+    except provider_credit.LedgerUnavailable:
+        raise HTTPException(status_code=503, detail=_LEDGER_MISSING)
+    return {"results": results}
+
+
+@router.post("/credit/{connection_key}/entries", summary="Record a top-up or a balance read of a vendor API "
+                                                         "connection (audited)")
+async def post_credit_entry(body: CreditEntryBody, request: Request, connection_key: str = _CONNECTION_KEY,
+                            x_admin_user_id: Optional[str] = Header(None)) -> dict:
+    actor = _actor(x_admin_user_id)
+    pool = request.app.state.pool
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                entry = await provider_credit.add_entry(
+                    conn, connection_key, kind=body.kind, amount_usd=body.amount_usd, effective_at=body.effective_at,
+                    note=body.note, actor=actor)
+                await write_audit_log(
+                    conn, tenant_id=provider_credit.PLATFORM_TENANT_ID, actor=actor,
+                    action="provider_credit.entry_added", resource_type="provider_credit_topup",
+                    resource_id=str(entry["id"]),
+                    details={"connection_key": connection_key, "kind": body.kind, "amount_usd": body.amount_usd,
+                             "effective_at": entry["effective_at"], "note": body.note})
+        check = await provider_credit.check_low_credit(pool, source="entry_added", connection_key=connection_key)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="no connection with a credit ledger by that key")
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except provider_credit.LedgerUnavailable:
+        raise HTTPException(status_code=503, detail=_LEDGER_MISSING)
+    return {"entry": entry, "check": check[0] if check else None}
+
+
+@router.delete("/credit/entries/{entry_id}", summary="Delete one credit ledger entry (audited)")
+async def delete_credit_entry(request: Request, entry_id: int = Path(..., ge=1),
+                              x_admin_user_id: Optional[str] = Header(None)) -> dict:
+    actor = _actor(x_admin_user_id)
+    try:
+        async with request.app.state.pool.acquire() as conn:
+            async with conn.transaction():
+                gone = await provider_credit.delete_entry(conn, entry_id)
+                if gone is None:
+                    raise HTTPException(status_code=404, detail="no such entry")
+                await write_audit_log(
+                    conn, tenant_id=provider_credit.PLATFORM_TENANT_ID, actor=actor,
+                    action="provider_credit.entry_deleted", resource_type="provider_credit_topup",
+                    resource_id=str(entry_id), details=gone)
+    except provider_credit.LedgerUnavailable:
+        raise HTTPException(status_code=503, detail=_LEDGER_MISSING)
+    return {"deleted": True, "entry": gone}

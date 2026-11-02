@@ -45,10 +45,36 @@ export interface Balance {
   usd: number | null;
   /** true for Jev: recorded top-ups minus the logged spend (TypeSafe has no balance API) */
   estimated: boolean;
-  threshold_usd: number;
+  /** null: no low-balance alert is set (AA-1025 B5: a vendor API connection whose low_balance_usd is empty) */
+  threshold_usd: number | null;
   below_threshold: boolean;
   as_of: string | null;
   source: string;
+}
+
+/** AA-1025 B3: the shared circuit of a Jev / DataForSEO / Geoapify connection (backend shared/provider_circuit.view);
+ *  null = no row = closed and never failed. */
+export interface ProviderCircuit {
+  state: "closed" | "open" | "half_open";
+  error_class: string | null;
+  last_error: string | null;
+  consecutive_failures: number;
+  open_streak: number;
+  opened_at: string | null;
+  open_until: string | null;
+  last_ok_at: string | null;
+  last_error_at: string | null;
+}
+
+/** The line the Health cell shows for a provider circuit, or null when there is nothing to say (closed, no failure). */
+export function circuitLine(c: ProviderCircuit | null | undefined): { kind: "open" | "half_open" | "failing";
+  until: string | null; cls: string | null; failures: number } | null {
+  if (!c) return null;
+  if (c.state === "open" || c.state === "half_open") {
+    return { kind: c.state, until: c.open_until, cls: c.error_class, failures: c.consecutive_failures };
+  }
+  return c.consecutive_failures > 0
+    ? { kind: "failing", until: null, cls: c.error_class, failures: c.consecutive_failures } : null;
 }
 
 export interface Credits {
@@ -128,6 +154,8 @@ export interface ProviderRow {
   configured?: boolean;
   /** Mapbox: where its usage is read (the vendor's console) */
   usage_url?: string | null;
+  /** AA-1025 B3: the shared circuit of a Jev / DataForSEO / Geoapify row (absent on an older API) */
+  circuit?: ProviderCircuit | null;
   /** the app whose calls the row counts when it is not CIS (crm, tripplanner) */
   app?: string | null;
   /** `utc_days`: the CRM rows, counted from the CRM's daily totals: "24h" is today (UTC) and "7d" the last seven UTC
@@ -328,8 +356,9 @@ export function groupRows<R extends Pick<ProviderRow, "group">>(rows: readonly R
 /** The page's tabs, in order. `providers` is the default (no `tab` in the address). */
 export const TAB_KEYS = ["providers", "routing", "models", "budgets", "calls", "guide"] as const;
 export type TabKey = (typeof TAB_KEYS)[number];
-/** The views inside the Providers tab: the read-only overview, the connection settings, the Jev credit ledger. */
-export const PROVIDER_VIEWS = ["overview", "connections", "jev-credit"] as const;
+/** The views inside the Providers tab: the read-only overview, the connection settings, the Jev credit ledger and
+ *  (AA-1025 B5) the credit ledger of the vendor API connections. */
+export const PROVIDER_VIEWS = ["overview", "connections", "jev-credit", "credit"] as const;
 export type ProviderView = (typeof PROVIDER_VIEWS)[number];
 
 export function parseTab(value: string | null | undefined): TabKey {
@@ -1275,4 +1304,66 @@ export function mayUse(
 ): boolean {
   if (access) return access.actions?.[action] === true;
   return failed && !!roleCan && roleCan(action);
+}
+
+// ── AA-1025 B5: the credit ledger of the vendor API connections (GET /api/admin/ai-gateway/credit) ────────────────
+
+export const CREDIT_API = "/api/admin/ai-gateway/credit";
+
+export type CreditEntryKind = "topup" | "opening_balance";
+
+export interface CreditEntry {
+  id: number;
+  connection_key: string;
+  kind: CreditEntryKind;
+  effective_at: string;
+  amount_usd: number;
+  note: string | null;
+  created_by: string | null;
+  created_at: string | null;
+}
+
+export interface CreditConnection {
+  connection_key: string;
+  label: string;
+  kind: string;
+  enabled: boolean;
+  low_balance_usd: number | null;
+  recorded_usd: number | null;
+  since: string | null;
+  spent_usd: number | null;
+  estimated_left_usd: number | null;
+  anchor_kind: CreditEntryKind | null;
+  below_threshold: boolean;
+  last_low_alert_at: string | null;
+  entries: CreditEntry[];
+}
+
+export interface CreditResp {
+  connections: CreditConnection[];
+}
+
+/** The body of POST /api/admin/ai-gateway/credit/{key}/entries from the form's text fields; a string = the error
+ *  key of the first wrong field. */
+export function creditEntryBody(kind: CreditEntryKind, amount: string, effectiveOn: string, note: string):
+  { kind: CreditEntryKind; amount_usd: number; effective_at?: string; note?: string } | "amount" | "date" {
+  const value = Number(amount.trim());
+  if (!amount.trim() || !Number.isFinite(value) || value < 0 || (kind === "topup" && value <= 0) || value > 100000) {
+    return "amount";
+  }
+  const body: { kind: CreditEntryKind; amount_usd: number; effective_at?: string; note?: string } =
+    { kind, amount_usd: Math.round(value * 100) / 100 };
+  if (effectiveOn.trim()) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveOn.trim())) return "date";
+    body.effective_at = `${effectiveOn.trim()}T00:00:00Z`;
+  }
+  if (note.trim()) body.note = note.trim().slice(0, 500);
+  return body;
+}
+
+/** The low-balance threshold field: "" = no alert (null), else a number of 0 or more; undefined = not a number. */
+export function thresholdValue(text: string): number | null | undefined {
+  if (!text.trim()) return null;
+  const v = Number(text.trim());
+  return Number.isFinite(v) && v >= 0 ? Math.round(v * 100) / 100 : undefined;
 }

@@ -178,6 +178,10 @@ POLICY: dict[tuple[str, str], str] = {
     ("GET", "/admin/ai-gateway/tenant-budgets/{tenant_id}"): SPEND_READ,      # AA-1016 UI (C4): Tenant 360 tile
     ("PUT", "/admin/ai-gateway/tenant-budgets/{tenant_id}"): SPEND_WRITE,     # AA-1016 UI (C4), audited
     ("DELETE", "/admin/ai-gateway/tenant-budgets/{tenant_id}"): SPEND_WRITE,  # AA-1016 UI (C4), audited
+    ("GET", "/admin/ai-gateway/credit"): SPEND_READ,      # AA-1025 B5: vendor API credit ledger + estimate (money)
+    ("POST", "/admin/ai-gateway/credit/{connection_key}/entries"): SPEND_WRITE,   # AA-1025 B5, audited
+    ("DELETE", "/admin/ai-gateway/credit/entries/{entry_id}"): SPEND_WRITE,       # AA-1025 B5, audited
+    ("POST", "/admin/ai-gateway/credit/check"): SPEND_WRITE,   # AA-1025 B5: the low-credit check now (bell + e-mail)
     # ── admin_job_runner — job control + retention
     ("POST", "/admin/job-runner/jobs/{job_id}/cancel"): OPS_WRITE,
     ("POST", "/admin/job-runner/jobs/{job_id}/retry"): OPS_WRITE,

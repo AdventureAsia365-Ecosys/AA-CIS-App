@@ -1977,6 +1977,8 @@ async def list_notifications(
         "tour.master.restored":     "Master tour restored",
         "tenant.cta.review_claim":  "Tenant CTA mentions reviews or ratings",  # AA-819 follow-up
         "llm_circuit_open":         "LLM connection paused",  # AA-1018 (connection-level circuit)
+        "provider_circuit_open":    "Provider paused",        # AA-1025 B3 (Jev / DataForSEO / Geoapify circuit)
+        "platform.provider_credit.low": "Provider credit low",  # AA-1025 B5 (vendor API credit ledger)
     }
 
     items = []

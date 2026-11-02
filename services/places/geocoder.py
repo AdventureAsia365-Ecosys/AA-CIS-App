@@ -222,6 +222,30 @@ def check_switch() -> None:
         raise GeocoderUnavailable(f"geoapify: {conn_registry.switched_off_reason(GEOAPIFY_CONNECTION_KEY)}")
 
 
+async def check_circuit() -> None:
+    """AA-1025 B3: raise GeocoderUnavailable when the shared Geoapify circuit (shared.provider_health, every api /
+    worker task) is open: nothing is sent, the run stops like on an outage and its names stay pending (no try
+    counted). Half-open: this call may be the one probe. Never raises otherwise."""
+    from shared import provider_circuit
+
+    refusal = await provider_circuit.admit(GEOAPIFY_CONNECTION_KEY)
+    if refusal:
+        raise GeocoderUnavailable(f"geoapify: {refusal}")
+
+
+async def circuit_outcome(status: Optional[int], message: str = "") -> None:
+    """AA-1025 B3: one Geoapify call's outcome on the shared circuit (after its retries): 200 (or a 404 'no such
+    place' of the details API) closes it; 401 / 403, 402, 429, 5xx, a timeout or a body that is not JSON count as a
+    failure; any other 4xx is the request's own fault (not counted). Never raises."""
+    from shared import provider_circuit
+
+    if status in (200, 404) and not message:
+        await provider_circuit.record_success(GEOAPIFY_CONNECTION_KEY)
+    else:
+        await provider_circuit.record_failure(GEOAPIFY_CONNECTION_KEY, provider_circuit.failure_class(status),
+                                              f"geoapify: {message}" if message else "geoapify")
+
+
 def daily_credit_limit() -> int:
     """The Geoapify credits a UTC day: the connection row's value last read in this process, else the env var, else
     DEFAULT_DAILY_CREDITS."""
@@ -367,7 +391,8 @@ class GeoapifyGeocoder:
                      bias: Optional[tuple[float, float]] = None) -> dict:
         """One search (with retries on 429 / 5xx / transport errors). Every attempt costs a credit."""
         params = {**self.params(text, iso2, codes=codes, bias=bias), "apiKey": self._get_key()}
-        last = "unknown"
+        await check_circuit()               # AA-1025 B3: the shared Geoapify circuit open = nothing is sent
+        last, last_status = "unknown", None
         for attempt in range(self.max_retries + 1):
             if self.credits_left() <= 0:
                 raise CreditLimitReached(
@@ -379,7 +404,7 @@ class GeoapifyGeocoder:
             try:
                 resp = await self._client().get(GEOAPIFY_URL, params=params)
             except Exception as e:  # noqa: BLE001 — transport error: the message may hold the URL
-                last = f"{type(e).__name__}"
+                last, last_status = f"{type(e).__name__}", None
                 self.failed_requests += 1
             else:
                 status = getattr(resp, "status_code", 0)
@@ -388,16 +413,20 @@ class GeoapifyGeocoder:
                         data = resp.json()
                     except Exception as e:  # noqa: BLE001
                         self.failed_requests += 1
+                        await circuit_outcome(None, "invalid JSON")
                         raise GeocoderError(f"geoapify: invalid JSON ({type(e).__name__})") from None
                     await note_access("ok")
+                    await circuit_outcome(200)
                     return data
                 self.failed_requests += 1
                 if status in (401, 403):
                     await note_access("access_denied")
+                    await circuit_outcome(status, f"HTTP {status} (key rejected)")
                     raise GeocoderUnavailable(f"geoapify: HTTP {status} (key rejected)")
                 if status != 429 and status < 500:
+                    await circuit_outcome(status, f"HTTP {status}")
                     raise GeocoderError(f"geoapify: HTTP {status}")
-                last = f"HTTP {status}"
+                last, last_status = f"HTTP {status}", status
                 retry_after = (getattr(resp, "headers", None) or {}).get("Retry-After")
             if attempt == self.max_retries:
                 break
@@ -409,6 +438,7 @@ class GeoapifyGeocoder:
                 pass
             logger.warning("geoapify_retry", attempt=attempt + 1, error=last, delay_s=delay)
             await self._sleep(delay)
+        await circuit_outcome(last_status, f"{last} after {self.max_retries + 1} attempts")
         raise GeocoderError(f"geoapify: {last} after {self.max_retries + 1} attempts")
 
     # ── the confirm call ──

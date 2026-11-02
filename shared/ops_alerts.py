@@ -596,3 +596,145 @@ def render_llm_cost_mismatch(payload: dict, *, to: Recipients, base_url: Optiona
             f"<p><a href=\"{html.escape(link)}\">Open AI providers / Connections</a></p>"
             f"<p style=\"color:#777;font-size:12px\">{html.escape(footer)}</p></div>")
     return Message(to=to, subject=subject, text=text, html=body)
+
+
+# ── AA-1025 B3 — a non-LLM provider circuit opened (Jev, DataForSEO, Geoapify) ──────────────────────────────────────
+# Queued by shared/provider_circuit.alert_open only when it just wrote the bell (one unread per connection per 24 h);
+# at most one e-mail per connection, class and UTC day (the idempotency key).
+
+TEMPLATE_PROVIDER_CIRCUIT_OPEN = "provider_circuit_open"
+PROVIDERS_PAGE_PATH = "/admin/ai-gateway?tab=providers"
+
+
+def provider_circuit_key(connection_key: str, error_class: str, day: str) -> str:
+    return f"{KIND}:{TEMPLATE_PROVIDER_CIRCUIT_OPEN}:{connection_key}:{error_class}:{day}"
+
+
+async def enqueue_provider_circuit_email(conn, *, details: dict, now: Optional[datetime] = None) -> Optional[str]:
+    """Queue the operator e-mail for a provider circuit that just opened (``details``: connection_key, label,
+    error_class, times, the masked last error; never a key or a request body). None when e-mail is not configured or
+    today's e-mail for this connection and class is queued already."""
+    connection_key = str(details.get("connection_key") or "?")
+    error_class = str(details.get("error_class") or "other")
+    if sender_config() is None:
+        logger.info("ops_alert_email_not_configured", template=TEMPLATE_PROVIDER_CIRCUIT_OPEN,
+                    connection=connection_key)
+        return None
+    from shared.jobs import queue  # lazy: shared.jobs.worker imports shared.cost_guard
+
+    day = utc_day(now)
+    payload = {"template": TEMPLATE_PROVIDER_CIRCUIT_OPEN, "period": day, **details}
+    job_id, created = await queue.enqueue(conn, KIND, payload, max_attempts=MAX_ATTEMPTS,
+                                          idempotency_key=provider_circuit_key(connection_key, error_class, day),
+                                          created_by="provider_circuit")
+    logger.info("ops_alert_email_queued" if created else "ops_alert_email_already_queued",
+                job_id=job_id, template=TEMPLATE_PROVIDER_CIRCUIT_OPEN, connection=connection_key, period=day)
+    return job_id if created else None
+
+
+_PROVIDER_CIRCUIT_ACTIONS = {
+    "access_denied": "The provider refuses the key. Check the secret named on the connection, then switch the "
+                     "provider off and on again in AI providers once it is fixed.",
+    "quota_exhausted": "The provider refuses for lack of credit. Top up the account with the provider.",
+    "throttled": "The provider keeps answering 429. Lower the rate of the jobs that call it, or wait.",
+    "other": "The provider is down or failing. Check its status page; the circuit probes it again on its own.",
+}
+
+
+def render_provider_circuit_open(payload: dict, *, to: Recipients, base_url: Optional[str] = None,
+                                 environment: Optional[str] = None) -> Message:
+    """AA-1025 B3: a provider circuit opened; every api and worker task skips the provider until the probe passes.
+    The last error is masked again here (ARNs, account IDs)."""
+    from shared.llm_client.errors import redact_ids  # lazy: keeps ops_alerts import-light
+
+    env = environment or os.environ.get("ENVIRONMENT", "dev")
+    link = f"{base_url or admin_base_url()}{PROVIDERS_PAGE_PATH}"
+    key = str(payload.get("connection_key") or "?")
+    label = str(payload.get("label") or key)
+    cls = str(payload.get("error_class") or "other")
+    subject = f"[AA-CIS {env}] {label} paused by its circuit ({cls})"
+    rows = [("Provider", f"{label} ({key})"), ("Reason", cls),
+            ("Failed calls in a row", str(payload.get("consecutive_failures") or "-")),
+            ("Opened at", str(payload.get("opened_at") or "-")),
+            ("Calls skip it until", str(payload.get("open_until") or "-")),
+            ("Last provider answer", redact_ids(str(payload.get("last_error") or "")) or "-"),
+            ("Day", f"{payload.get('period')} (UTC)")]
+    action = _PROVIDER_CIRCUIT_ACTIONS.get(cls, _PROVIDER_CIRCUIT_ACTIONS["other"])
+    footer = ("After the open period one call probes the provider; its success closes the circuit for every task. "
+              "The same alert is in the admin notification bell. At most one e-mail per provider, reason and UTC day.")
+    text = "\n".join([f"{label} was paused: its calls failed the same way in a row.", ""]
+                     + [f"{k}: {v}" for k, v in rows]
+                     + ["", action, "", f"AI providers: {link}", footer])
+    body = ("<div style=\"font-family:Arial,sans-serif;font-size:14px;color:#222\">"
+            f"<p><strong>{html.escape(label)} paused</strong>: its calls failed the same way in a row.</p>"
+            f"<table style=\"border-collapse:collapse\">{_jev_rows_html(rows)}</table>"
+            f"<p>{html.escape(action)}</p>"
+            f"<p><a href=\"{html.escape(link)}\">Open AI providers / Providers</a></p>"
+            f"<p style=\"color:#777;font-size:12px\">{html.escape(footer)}</p></div>")
+    return Message(to=to, subject=subject, text=text, html=body)
+
+
+# ── AA-1025 B5 — the estimated credit of a vendor API connection (top-ups minus spend) is low ─────────────────────
+# Queued by shared/provider_credit.check_low_credit only when it just wrote the bell (one real bell per connection per
+# 24 h); at most one e-mail per connection and UTC day (a test send has its own key).
+
+TEMPLATE_PROVIDER_CREDIT_LOW = "provider_credit_low"
+PROVIDER_CREDIT_PAGE_PATH = "/admin/ai-gateway?tab=providers&view=credit"
+
+
+def provider_credit_key(connection_key: str, test: bool, day: str) -> str:
+    return f"{KIND}:{TEMPLATE_PROVIDER_CREDIT_LOW}:{connection_key}:{'test' if test else 'real'}:{day}"
+
+
+async def enqueue_provider_credit_email(conn, *, details: dict, test: bool = False,
+                                        now: Optional[datetime] = None) -> Optional[str]:
+    """Queue the operator e-mail for a low-credit bell that was just written (``details``: connection_key, label,
+    estimated_left_usd, threshold_usd, the ledger figures). None when e-mail is not configured or today's e-mail for
+    this connection (real or test) is queued already."""
+    connection_key = str(details.get("connection_key") or "?")
+    if sender_config() is None:
+        logger.info("ops_alert_email_not_configured", template=TEMPLATE_PROVIDER_CREDIT_LOW, connection=connection_key)
+        return None
+    from shared.jobs import queue  # lazy: shared.jobs.worker imports shared.cost_guard
+
+    day = utc_day(now)
+    payload = {"template": TEMPLATE_PROVIDER_CREDIT_LOW, "period": day, "test": bool(test), **details}
+    job_id, created = await queue.enqueue(conn, KIND, payload, max_attempts=MAX_ATTEMPTS,
+                                          idempotency_key=provider_credit_key(connection_key, test, day),
+                                          created_by="provider_credit")
+    logger.info("ops_alert_email_queued" if created else "ops_alert_email_already_queued",
+                job_id=job_id, template=TEMPLATE_PROVIDER_CREDIT_LOW, connection=connection_key, test=bool(test),
+                period=day)
+    return job_id if created else None
+
+
+def render_provider_credit_low(payload: dict, *, to: Recipients, base_url: Optional[str] = None,
+                               environment: Optional[str] = None) -> Message:
+    """AA-1025 B5: the estimated credit of a provider connection is below its low-balance threshold."""
+    env = environment or os.environ.get("ENVIRONMENT", "dev")
+    link = f"{base_url or admin_base_url()}{PROVIDER_CREDIT_PAGE_PATH}"
+    key = str(payload.get("connection_key") or "?")
+    label = str(payload.get("label") or key)
+    tag = "[TEST] " if payload.get("test") else ""
+    subject = (f"{tag}[AA-CIS {env}] {label} credit low: about {_usd(payload.get('estimated_left_usd'))} left "
+               f"(alert below {_usd(payload.get('threshold_usd'))})")
+    rows = [("Connection", f"{label} ({key})"),
+            ("Estimated left", _usd(payload.get("estimated_left_usd"))),
+            ("Alert threshold", _usd(payload.get("threshold_usd"))),
+            ("Balance recorded", _usd(payload.get("recorded_usd"))),
+            ("Spent since", f"{_usd(payload.get('spent_usd'))} since {payload.get('since') or '-'}"),
+            ("Day", f"{payload.get('period')} (UTC)")]
+    action = ("Top up the account with the provider and record the top-up (or a fresh balance read from its console) "
+              "in AI providers › Credit. The estimate is the recorded balance minus the spend logged since then; the "
+              "provider has no balance API the gateway may call.")
+    footer = "The same alert is in the admin notification bell. At most one e-mail per connection and UTC day."
+    text = "\n".join([f"{tag}The estimated credit of {label} is below its alert threshold.", ""]
+                     + [f"{k}: {v}" for k, v in rows]
+                     + ["", action, "", f"Credit ledger: {link}", footer])
+    body = ("<div style=\"font-family:Arial,sans-serif;font-size:14px;color:#222\">"
+            f"<p><strong>{html.escape(tag)}{html.escape(label)} credit low</strong></p>"
+            f"<table style=\"border-collapse:collapse\">{_jev_rows_html(rows)}</table>"
+            f"<p>{html.escape(action)}</p>"
+            f"<p><a href=\"{html.escape(link)}\">Open AI providers / Credit</a></p>"
+            f"<p style=\"color:#777;font-size:12px\">{html.escape(footer)}</p></div>")
+    return Message(to=to, subject=subject, text=text, html=body)

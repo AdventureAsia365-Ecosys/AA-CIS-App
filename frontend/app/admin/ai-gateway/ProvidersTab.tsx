@@ -24,6 +24,9 @@
 // session may use them (usePageAccess: the API's own route policy), so a read-only session (the Dev E2E admin) sees
 // no button and one line saying why; the API still answers 403 to a write it refuses. The tables are 1080 px at least
 // (was 1160: the last column was cut at 1440 with the sidebar open).
+// AA-1025 B3 / B5: the Health cell of Jev / DataForSEO / Geoapify says their shared circuit (open until, the probe,
+// failures in a row); a vendor API connection shows its balance estimated from the credit ledger, whose view
+// (`?view=credit`, ProviderCreditPanel) records top-ups and balance reads and sets the low-balance threshold.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, Power, RotateCcw } from "lucide-react";
@@ -33,7 +36,8 @@ import {
   useT, useToast, type ColumnDef,
 } from "../../_kit";
 import {
-  ERROR_CLASSES, PROVIDERS_API, PROVIDER_VIEWS, RETRY_LLM_DENIED_API, STATS_WINDOWS, accessTone, errorRateTone,
+  ERROR_CLASSES, PROVIDERS_API, PROVIDER_VIEWS, RETRY_LLM_DENIED_API, STATS_WINDOWS, accessTone, circuitLine,
+  errorRateTone,
   groupRows, heldGroups, isAccessState, isReadOnlyRefusal, latencyText, needsLook, nextRequeueSince, pct,
   providerSwitch, registryFacts, requeueBody, statusTone, statusWordKey, usd, warmPathOf,
   type HeldGroup, type ProviderRow, type ProviderView, type ProvidersResp, type RegistryFacts,
@@ -44,6 +48,7 @@ import { connectionName } from "@/lib/llmConnections";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import { ConnectionsPanel } from "./ConnectionsPanel";
 import { JevCreditPanel } from "./JevCreditPanel";
+import { ProviderCreditPanel } from "./ProviderCreditPanel";
 import { ACCESS, M, REASON, STATUS } from "./messages";
 import { useDomainText } from "./useDomainText";
 import { useErrorClassText } from "./useErrorClassText";
@@ -153,17 +158,37 @@ function ProbeLine({ row }: { row: Row }) {
     : <span style={small}>{t("neverProbed")}</span>;
 }
 
+/** AA-1025 B3: the shared circuit of a Jev / DataForSEO / Geoapify row (open until, the probe, failures in a row). */
+function CircuitLine({ row }: { row: Row }) {
+  const t = useT(M);
+  const errorText = useErrorClassText();
+  const c = circuitLine(row.circuit);
+  if (!c) return null;
+  const cls = errorText(c.cls ?? "other") ?? c.cls ?? "other";
+  if (c.kind === "failing") {
+    return <span style={{ ...small, color: K.amber }} data-testid={`ai-gateway-circuit-${row.key}`}>
+      {t("circuitFailing", c.failures)}</span>;
+  }
+  return (
+    <span style={{ ...small, color: K.danger }} data-testid={`ai-gateway-circuit-${row.key}`}>
+      {c.kind === "open" ? <>{t("circuitOpen", cls)} {c.until ? <DateText value={c.until} relative /> : "—"}</>
+        : t("circuitHalfOpen", cls)}
+    </span>
+  );
+}
+
 function HealthCell({ row }: { row: Row }) {
   const t = useT(M);
   const errorText = useErrorClassText();
   const h = row.health;
-  if (!h) return <Lines><span style={small}>—</span><ProbeLine row={row} /></Lines>;
+  if (!h) return <Lines><span style={small}>—</span><ProbeLine row={row} /><CircuitLine row={row} /></Lines>;
   if (row.group === "decide") {
     return (
       <Lines>
         <span style={small}>{t("jevCalls", h.calls ?? 0, h.errors ?? 0)}</span>
         {h.mean_latency_ms != null && <span style={small}>{t("meanLatency", h.mean_latency_ms)}</span>}
         <ProbeLine row={row} />
+        <CircuitLine row={row} />
       </Lines>
     );
   }
@@ -264,7 +289,7 @@ function BalanceCell({ row }: { row: Row }) {
         <strong style={{ fontFamily: mono, color: b.below_threshold ? K.danger : K.ink }}>{usd(b.usd, 2)}</strong>{" "}
         <span style={small}>{t("left")}{b.estimated ? ` (${t("estimated")})` : ""}</span>
       </span>
-      <span style={small}>{t("threshold", usd(b.threshold_usd, 2))}</span>
+      <span style={small}>{b.threshold_usd == null ? t("noThreshold") : t("threshold", usd(b.threshold_usd, 2))}</span>
       {b.as_of && <span style={small}>{t("asOf")} <DateText value={b.as_of} relative /></span>}
     </Lines>
   );
@@ -563,9 +588,11 @@ function RequeueRefusedJobs({ canRun }: { canRun: boolean }) {
   );
 }
 
-const VIEW_LABEL = { overview: "viewOverview", connections: "viewConnections", "jev-credit": "viewJevCredit" } as const;
+const VIEW_LABEL = {
+  overview: "viewOverview", connections: "viewConnections", "jev-credit": "viewJevCredit", credit: "viewCredit",
+} as const;
 
-/** The Providers tab: the overview (default) or one of its two editing views, picked with underline tabs. */
+/** The Providers tab: the overview (default) or one of its editing views, picked with underline tabs. */
 export default function ProvidersTab({ view, onView }: { view: ProviderView; onView: (v: ProviderView) => void }) {
   const t = useT(M);
   return (
@@ -576,6 +603,7 @@ export default function ProvidersTab({ view, onView }: { view: ProviderView; onV
       {view === "overview" && <ProvidersOverview />}
       {view === "connections" && <ConnectionsPanel />}
       {view === "jev-credit" && <JevCreditPanel />}
+      {view === "credit" && <ProviderCreditPanel />}
     </div>
   );
 }

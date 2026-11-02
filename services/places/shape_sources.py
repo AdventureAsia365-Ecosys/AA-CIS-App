@@ -145,7 +145,8 @@ class GeoapifyDetails:
     async def fetch(self, place_id: str, *, full_geometry: bool = False) -> dict:
         cost = DETAILS_CREDITS + (FULL_GEOMETRY_CREDITS if full_geometry else 0)
         params = {**self.params(place_id, full_geometry), "apiKey": self._get_key()}
-        last = "unknown"
+        await geocoder_mod.check_circuit()          # AA-1025 B3: the shared Geoapify circuit open = nothing is sent
+        last, last_status = "unknown", None
         for attempt in range(self.max_retries + 1):
             if self.credits_left() < cost:
                 raise geocoder_mod.CreditLimitReached(
@@ -158,24 +159,30 @@ class GeoapifyDetails:
             try:
                 resp = await self._client().get(DETAILS_URL, params=params)
             except Exception as e:  # noqa: BLE001
-                last = type(e).__name__
+                last, last_status = type(e).__name__, None
                 self.failed_requests += 1
             else:
                 status = getattr(resp, "status_code", 0)
                 if status == 200:
                     try:
-                        return resp.json()
+                        data = resp.json()
                     except Exception as e:  # noqa: BLE001
                         self.failed_requests += 1
+                        await geocoder_mod.circuit_outcome(None, "details: invalid JSON")
                         raise ShapeSourceError(f"geoapify details: invalid JSON ({type(e).__name__})") from None
+                    await geocoder_mod.circuit_outcome(200)
+                    return data
                 if status == 404:
+                    await geocoder_mod.circuit_outcome(404)        # no such place: the provider answered
                     return {}
                 self.failed_requests += 1
                 if status in (401, 403):
+                    await geocoder_mod.circuit_outcome(status, f"details: HTTP {status} (key rejected)")
                     raise geocoder_mod.GeocoderUnavailable(f"geoapify: HTTP {status} (key rejected)")
                 if status != 429 and status < 500:
+                    await geocoder_mod.circuit_outcome(status, f"details: HTTP {status}")
                     raise ShapeSourceError(f"geoapify details: HTTP {status}")
-                last = f"HTTP {status}"
+                last, last_status = f"HTTP {status}", status
                 retry_after = (getattr(resp, "headers", None) or {}).get("Retry-After")
             if attempt == self.max_retries:
                 break
@@ -186,6 +193,7 @@ class GeoapifyDetails:
             except (TypeError, ValueError):
                 pass
             await self._sleep(delay)
+        await geocoder_mod.circuit_outcome(last_status, f"details: {last} after {self.max_retries + 1} attempts")
         raise ShapeSourceError(f"geoapify details: {last} after {self.max_retries + 1} attempts")
 
     async def line(self, place_id: str) -> Optional[LineCandidate]:
