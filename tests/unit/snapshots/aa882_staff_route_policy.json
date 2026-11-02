@@ -11,6 +11,10 @@
     "capability": "content.settings.write",
     "module": "api.routers.admin_pipeline"
   },
+  "DELETE /admin/budgets/llm/{scope}": {
+    "capability": "spend.write",
+    "module": "api.routers.admin_budgets"
+  },
   "DELETE /admin/decisions/jev-credit/topups/{topup_id}": {
     "capability": "spend.write",
     "module": "api.routers.admin_decisions"

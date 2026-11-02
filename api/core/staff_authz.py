@@ -167,6 +167,7 @@ POLICY: dict[tuple[str, str], str] = {
     # ── admin_budgets
     ("GET", "/admin/budgets"): SPEND_READ,
     ("PUT", "/admin/budgets/{provider}/{scope}"): SPEND_WRITE,
+    ("DELETE", "/admin/budgets/llm/{scope}"): SPEND_WRITE,        # AA-1025 A7: remove a central LLM cap
     # ── admin_ai_gateway (AA-804) — AI providers page: every paid source's health / spend / balance and the job trace
     ("GET", "/admin/ai-gateway/providers"): SPEND_READ,
     ("GET", "/admin/ai-gateway/trace"): SPEND_READ,

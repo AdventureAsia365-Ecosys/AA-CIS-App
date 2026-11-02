@@ -540,7 +540,7 @@ async def maybe_alert_central(conn, summary: dict, *, alert_pct: int, stopped: b
     """One admin bell (and the ops e-mail, AA-828) for a central LLM budget at or above its alert threshold, or one
     that refused a call (``stopped``); at most one unread bell per scope per 24 h. Best effort: never raises. ``conn``
     is an asyncpg connection; ``summary`` is central_budget.summary()."""
-    entity = f"{CENTRAL_PROVIDER}:{summary.get('scope')}"
+    entity = f"{CENTRAL_PROVIDER}:{summary.get('scope')}"[:100]      # notifications.entity_id is varchar(100)
     try:
         if await conn.fetchval(_RECENT_ALERT_SQL, CENTRAL_BUDGET_ALERT_EVENT, entity):
             return False
