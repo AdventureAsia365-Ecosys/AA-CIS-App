@@ -525,7 +525,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   `test_aa642_model_tier_allowlist.py` (fixed / passed-through `model_tier` sites), `test_aa642_s11_alias_equivalence.py`
   (the 17 legacy stages send the same wire ids through aliases; the switch stays off).
 - **App profile** (AA-1025 H1a, migration 345, root ADR 0009 decision 4; `shared/llm_client/app_profile.py`):
-  `shared.llm_app_profile` holds one row per app (`cis`, `tripplanner`, `crm`, `booking`, fixed by migration):
+  `shared.llm_app_profile` holds one row per app (`cis`, `tripplanner`, `crm`, `booking`, fixed by migration;
+  `cis_app` has SELECT and column UPDATE only, 345 revokes `cis_owner`'s default privileges):
   `ai_enabled`, `bulk_paused`, `default_daily_budget_usd`, `degrade_mode` (tech lead T-21: CIS `queue_retry`,
   TripPlanner `basic_narration`, CRM `manual_reply_needed`, Booking `none`) and `disabled_reason`. The CIS gateway reads
   its own app's row (20 s cache per process; no table, no row or unreadable = AI on) before anything else: AI off
