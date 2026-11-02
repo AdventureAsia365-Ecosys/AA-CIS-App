@@ -76,7 +76,11 @@ def test_routes_are_served_and_run_the_policy():
                           ("GET", "/admin/ai-gateway/experiments"), ("GET", "/admin/ai-gateway/access"),
                           ("GET", "/admin/ai-gateway/tenant-budgets/{tenant_id}"),
                           ("PUT", "/admin/ai-gateway/tenant-budgets/{tenant_id}"),
-                          ("DELETE", "/admin/ai-gateway/tenant-budgets/{tenant_id}")}
+                          ("DELETE", "/admin/ai-gateway/tenant-budgets/{tenant_id}"),
+                          # AA-1025 B5: the credit ledger of the vendor API connections
+                          ("GET", "/admin/ai-gateway/credit"), ("POST", "/admin/ai-gateway/credit/check"),
+                          ("POST", "/admin/ai-gateway/credit/{connection_key}/entries"),
+                          ("DELETE", "/admin/ai-gateway/credit/entries/{entry_id}")}
     for (_m, p), (r, inh) in found.items():
         assert r.path == p and _runs_policy(r, inh, p)
 
@@ -265,6 +269,13 @@ def stubs(monkeypatch):
     monkeypatch.setattr(gw, "geo_settings", geo_settings)
     monkeypatch.setattr(gw, "dfs_threshold", dfs_threshold)
     monkeypatch.setattr(jev_credit, "low_credit_threshold", jev_threshold)
+
+    async def no_rows(pool, *a):
+        return {}
+
+    # AA-1025 B3 / B5: no provider circuit row and no credit ledger connection (tests in test_aa1025_b3b5_*.py)
+    monkeypatch.setattr(gw, "_read_circuits", no_rows)
+    monkeypatch.setattr(gw, "_read_credit", no_rows)
 
 
 def test_read_providers_lists_every_paid_source(stubs):

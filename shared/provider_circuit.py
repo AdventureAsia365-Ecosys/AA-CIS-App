@@ -13,10 +13,10 @@ failed half-open probe (capped); after the period exactly ONE call across all ta
 success closes the circuit. A caller records one outcome per logical call (after the client's own retries), so "5
 failures" means 5 calls that each failed every retry.
 
-What counts (``failure_class``): HTTP 401 / 403 access_denied, 402 quota_exhausted, 429 throttled, 404 / 408 / 5xx
-and a timeout or transport error other. Any other 4xx is a refusal of the request's own content (a bad keyword, a
-malformed body): not counted, the provider answered. DataForSEO's five-digit body codes are read by their first three
-digits (40100 -> 401).
+What counts (``failure_class``): HTTP 401 / 403 access_denied, 402 quota_exhausted, 429 throttled, 404 / 405 /
+408 / 410 / 5xx and a timeout or transport error other. Any other 4xx is a refusal of the request's own content (a bad
+keyword, a malformed body): not counted, the provider answered. DataForSEO's five-digit body codes are read by their
+first three digits (40100 -> 401).
 
 The calls. ``admit(key)`` before a call: None = go ahead (closed, or this call took the half-open probe lease), else
 the refusal text (the circuit is open; nothing is sent; the caller writes its 0 USD refused ledger row and fails like
@@ -93,7 +93,8 @@ _ok_written: dict[str, float] = {}
 # ── classification (pure) ────────────────────────────────────────────────────────────────────────────────────────
 
 def failure_class(status: Optional[int]) -> Optional[str]:
-    """The circuit class of a failed call from its HTTP status (None = a timeout / transport error = ``other``), or
+    """The circuit class of a failed call from its HTTP status (None = a timeout / transport error = ``other``;
+    404 / 405 / 410 = the endpoint is wrong or gone, every request fails alike), or
     None when the failure says nothing about the provider (a refusal of the request's own content: 400, 409, 413, 422
     and the other 4xx). A DataForSEO body code (5 digits) is read by its first three digits."""
     if status is None:
@@ -110,7 +111,7 @@ def failure_class(status: Optional[int]) -> Optional[str]:
         return QUOTA_EXHAUSTED
     if code == 429:
         return THROTTLED
-    if code in (404, 408) or code >= 500:
+    if code in (404, 405, 408, 410) or code >= 500:     # the endpoint itself is wrong or gone, a timeout, 5xx
         return OTHER
     if 400 <= code < 500:
         return None

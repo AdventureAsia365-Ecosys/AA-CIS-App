@@ -3,6 +3,10 @@
     "capability": "content.write",
     "module": "api.routers.admin_aa_content"
   },
+  "DELETE /admin/ai-gateway/credit/entries/{entry_id}": {
+    "capability": "spend.write",
+    "module": "api.routers.admin_ai_gateway"
+  },
   "DELETE /admin/ai-gateway/tenant-budgets/{tenant_id}": {
     "capability": "spend.write",
     "module": "api.routers.admin_ai_gateway"
@@ -80,6 +84,10 @@
     "module": "api.routers.admin_ai_gateway"
   },
   "GET /admin/ai-gateway/calls": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_ai_gateway"
+  },
+  "GET /admin/ai-gateway/credit": {
     "capability": "spend.read",
     "module": "api.routers.admin_ai_gateway"
   },
@@ -906,6 +914,14 @@
   "POST /admin/aa-content/{content_id}/retire": {
     "capability": "master.admin",
     "module": "api.routers.admin_aa_content"
+  },
+  "POST /admin/ai-gateway/credit/check": {
+    "capability": "spend.write",
+    "module": "api.routers.admin_ai_gateway"
+  },
+  "POST /admin/ai-gateway/credit/{connection_key}/entries": {
+    "capability": "spend.write",
+    "module": "api.routers.admin_ai_gateway"
   },
   "POST /admin/atoms/atomize": {
     "capability": "atoms.write",

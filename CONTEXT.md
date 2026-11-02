@@ -68,7 +68,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     status, via react-query — see A3 note below), `atom-curation` (Social Content tabs
     01-05), `tenant-activity` (tabs 06-08), `platform-stats` (includes gate telemetry per tenant
     and channel, AA-615), `cost-ops` (the **Cost Operations** page, AA-622/623/665: tabs Overview, **AI & data spend** (views LLM, DataForSEO, Jev, from the ledger) and AWS bill; the old `/admin/llm-usage` redirects to it),
-    `ai-gateway` (**AI providers**, AA-804: tabs Providers (+ views Connections, Jev credit; warm-path labels, the
+    `ai-gateway` (**AI providers**, AA-804: tabs Providers (+ views Connections, Jev credit, Credit (AA-1025 B5); warm-path labels, the
     "Re-queue refused jobs" card; AA-1025 C1: errors and p50 / p95 latency per row over 24 h / 7 d from the ledgers,
     the Jev / DataForSEO / Geoapify switch (PATCH /admin/llm-connections/{key}), the partner CRM AI and Bedrock
     Guardrails rows from the CRM's daily totals (crm.ops.v1 GET /llm/usage only, with the staff member's own
@@ -524,6 +524,24 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   was reached" is `truncated` (never counted on a circuit); an adhoc stage logs `LLMRequest.role`. Ratchets:
   `test_aa642_model_tier_allowlist.py` (fixed / passed-through `model_tier` sites), `test_aa642_s11_alias_equivalence.py`
   (the 17 legacy stages send the same wire ids through aliases; the switch stays off).
+- **Non-LLM provider circuit and the vendor API credit ledger** (AA-1025 B3 / B5, migrations 342 / 343):
+  `shared/provider_circuit.py` keeps ONE circuit per decide / data provider connection (`typesafe`, `dataforseo`,
+  `geoapify`) in `shared.provider_health` (PK `connection_key`; the breaker's pure transitions and `RULES`, a 10 s
+  snapshot, row-locked writes, per-process fallback when the table cannot be read), so both ECS tasks see the same
+  state. Each client asks `admit` before a call (open = nothing sent, its own 0 USD refused ledger row: Jev
+  `llm_call_log`, DataForSEO `dfs_call_log` meta `circuit_open`, Geoapify `GeocoderUnavailable`) and records one outcome
+  per call after its own retries: HTTP 401 / 403 `access_denied`, 402 `quota_exhausted`, 429 `throttled`, 404 / 405 /
+  408 / 410 / 5xx / timeout `other`, any other 4xx not counted. On opening: one admin bell `provider_circuit_open` (one unread per
+  connection per 24 h) and one `ops_alert_email` job (template `provider_circuit_open`, once per connection, class and
+  UTC day); a Jev 402 keeps only its own exhausted alert. `PROVIDER_CIRCUIT_BREAKER=off` turns it off. Decide's
+  per-process credit breaker stays as the fast local stop. **Credit ledger**: `shared.provider_credit_topup` holds the
+  top-ups and balance reads of every connection whose `balance_source` is `topups_minus_spend` (343: the anthropic /
+  openai kinds; Jev keeps `shared.jev_credit_topup`); `shared/provider_credit.py` estimates newest balance read (or
+  first top-up) + later top-ups − `llm_call_log` spend since (connection_key, else account) and, below the
+  connection's `low_balance_usd`, raises `platform.provider_credit.low` (one bell per connection per 24 h) + the
+  `provider_credit_low` e-mail (the api sampler every 30 min, after each entry, `POST /admin/ai-gateway/credit/check`).
+  Admin: AI providers › Providers › Credit (`ProviderCreditPanel.tsx`, `GET/POST/DELETE /admin/ai-gateway/credit…`,
+  spend.read / spend.write, audited); the Providers rows carry `circuit` and the vendor API `balance`.
 - **Route governance** (AA-1024 A2 / A4 / A6, AA-1026 D7; root ADR 0009 decisions 5 and 12, no migration):
   **family rule** (`shared/llm_client/family_rule.py`): a judge never scores text of its own model family
   (`CatalogModel.family_key`, migration 320); writers stay on `WRITER_FAMILY` (`anthropic`). The admin options and both
