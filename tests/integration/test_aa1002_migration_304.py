@@ -54,7 +54,10 @@ LATER = [os.path.join(os.path.dirname(MIGRATION), f) for f in
           "317_llm_connection_cost_policy_reconcile.sql", "320_llm_registry_v2_families_params.sql",
           "322_provider_connection_v2.sql", "324_llm_acc2_candidate_models.sql",
           # AA-1024: 337 records the Llama 4 capabilities on the rows 324 re-creates
-          "337_llm_llama4_structured_prompt_mode.sql")]
+          "337_llm_llama4_structured_prompt_mode.sql",
+          # AA-1025 B3 / B5: 342's tables reference the connection table (dropped by _undo); 343 re-sets the vendor
+          # API balance source on the rows 322 re-creates
+          "342_provider_health_and_credit_ledger.sql", "343_vendor_api_balance_from_ledger.sql")]
 # The LLM connection kinds of 304 (322 adds typesafe, dataforseo, geoapify and bedrock_guardrails rows).
 LLM_KINDS = ("bedrock", "anthropic", "openai", "azure_openai", "mock")
 
@@ -89,6 +92,9 @@ def cur():
 
 def _undo(c):
     """The pre-304 state: no new tables, no capabilities column, the 181 / 169 / 226 CHECKs, 304 unregistered."""
+    c.execute("DROP TABLE IF EXISTS shared.provider_credit_topup")        # 342: references the connection table
+    c.execute("DROP TABLE IF EXISTS shared.provider_health")              # 342: references the connection table
+    c.execute("DELETE FROM shared.schema_versions WHERE version IN ('342', '343')")
     c.execute("DROP TABLE IF EXISTS shared.llm_cost_reconcile")           # 317: references the connection table
     c.execute("DROP TABLE IF EXISTS shared.llm_connection_cost_policy")   # 317: references the connection table
     c.execute("DROP TABLE IF EXISTS shared.llm_provider_health")          # 309: references the connection table
