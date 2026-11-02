@@ -93,6 +93,7 @@ export const CONNECTIONS = defineMessages(
     save: "Save",
     saving: "Saving…",
     noChange: "Nothing changed",
+    readOnly: "Read-only session: these settings can be seen, not changed.",
     saved: (name: string) => `${name} saved`,
     // test
     testTitle: "Test connection",
@@ -249,6 +250,7 @@ export const CONNECTIONS = defineMessages(
     save: "Lưu",
     saving: "Đang lưu…",
     noChange: "Không có gì thay đổi",
+    readOnly: "Phiên này chỉ được xem: thấy các thiết lập này nhưng không đổi được.",
     saved: (name: string) => `Đã lưu ${name}`,
     testTitle: "Kiểm tra kết nối",
     testIntro:

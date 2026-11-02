@@ -20,6 +20,10 @@
 // Geoapify (the B1 switch their clients read; confirm dialog, then PATCH /api/admin/llm-connections/{key}), the
 // partner CRM's AI row (LLM section) and its Bedrock Guardrails row (Guards section), and the static Mapbox row
 // (Data providers, link to the vendor console).
+// AA-1025 C1 follow-up: the Switch and Re-queue buttons show only when GET /api/admin/ai-gateway/access says this
+// session may use them (usePageAccess: the API's own route policy), so a read-only session (the Dev E2E admin) sees
+// no button and one line saying why; the API still answers 403 to a write it refuses. The tables are 1080 px at least
+// (was 1160: the last column was cut at 1440 with the sidebar open).
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, Power, RotateCcw } from "lucide-react";
@@ -44,8 +48,14 @@ import { ACCESS, M, REASON, STATUS } from "./messages";
 import { useDomainText } from "./useDomainText";
 import { useErrorClassText } from "./useErrorClassText";
 import { useLlmConnections } from "./useLlmConnections";
+import { usePageAccess } from "./usePageAccess";
 
 export const PROVIDERS_KEY = ["ai-gateway", "providers"] as const;
+
+/** The provider tables' least width. At 1440 px the column is 1440 - 236 (sidebar) - 72 (page padding) - 6 (scrollbar)
+ *  - 2 (card border) = 1124 px; 1080 leaves 44 px (lessons: Frontend, keep >= 20 px between a table's least width and
+ *  its frame). 1160 cut the last column (Balance) by about 32 px. Narrower screens scroll inside the card. */
+export const PROVIDER_TABLE_MIN_WIDTH = 1080;
 
 const small = { fontSize: 12, color: K.muted, lineHeight: 1.45 } as const;
 
@@ -295,7 +305,7 @@ function ProviderTable({ id, rows, loading, empty, onSwitch, switching }: {
   return (
     <DataTable<Row>
       tableId={id} data={rows} columns={columns} getRowId={(r) => r.key} loading={loading}
-      searchable={false} paginate={false} stickyHeader={false} tableMinWidth={1160}
+      searchable={false} paginate={false} stickyHeader={false} tableMinWidth={PROVIDER_TABLE_MIN_WIDTH}
       emptyTitle={empty ?? "—"}
     />
   );
@@ -305,6 +315,8 @@ function ProvidersOverview() {
   const t = useT(M);
   const toast = useToast();
   const qc = useQueryClient();
+  const access = usePageAccess();
+  const canSwitch = access.can("provider_switch");
   // AA-1025 C1: the provider switch (Jev, DataForSEO, Geoapify): confirm, then the B1 PATCH
   const [pending, setPending] = useState<Row | null>(null);
   const [switchError, setSwitchError] = useState("");
@@ -373,6 +385,9 @@ function ProvidersOverview() {
           valueTone={look ? "warning" : undefined}
           hint={data ? (look ? t("tileLookHint", data.providers.length) : t("tileAllOk")) : undefined} />
       </div>
+      {access.readOnly && (
+        <div role="status" style={small} data-testid="ai-gateway-read-only">{t("readOnlyNotice")}</div>
+      )}
       {data && data.errors.length > 0 && (
         <div role="status" style={{ ...small, color: K.danger }}>{t("sourceErrors")}</div>
       )}
@@ -388,13 +403,13 @@ function ProvidersOverview() {
           </div>
         )}
       </Section>
-      <RequeueRefusedJobs />
+      <RequeueRefusedJobs canRun={access.can("requeue")} />
       <Section title={t("groupDecide")} description={t("groupDecideHelp")} padded={false}>
-        <ProviderTable id="ai-gateway-decide" rows={groups.decide} loading={!data} onSwitch={askSwitch}
+        <ProviderTable id="ai-gateway-decide" rows={groups.decide} loading={!data} onSwitch={canSwitch ? askSwitch : undefined}
           switching={switchMut.isPending} />
       </Section>
       <Section title={t("groupData")} description={t("groupDataHelp")} padded={false}>
-        <ProviderTable id="ai-gateway-data" rows={groups.data} loading={!data} onSwitch={askSwitch}
+        <ProviderTable id="ai-gateway-data" rows={groups.data} loading={!data} onSwitch={canSwitch ? askSwitch : undefined}
           switching={switchMut.isPending} />
       </Section>
       {(!data || groups.guard.length > 0) && (
@@ -451,7 +466,7 @@ function useHeldText(): (g: HeldGroup) => string {
 /** What the last real re-queue did, shown under the card until the next check. */
 interface LastRun { requeued: number; expected: number; next: string | null }
 
-function RequeueRefusedJobs() {
+function RequeueRefusedJobs({ canRun }: { canRun: boolean }) {
   const t = useT(M);
   const toast = useToast();
   const qc = useQueryClient();
@@ -491,12 +506,12 @@ function RequeueRefusedJobs() {
   const busy = dry.isPending || real.isPending;
   return (
     <Section title={t("requeueTitle")} description={t("requeueHelp")} testId="ai-gateway-requeue"
-      actions={
+      actions={canRun ? (
         <Button size="sm" variant="secondary" disabled={busy} onClick={() => check(null)}
           testId="ai-gateway-requeue-dry-run">
           <RotateCcw size={13} /> {dry.isPending ? t("requeueChecking") : t("requeueButton")}
         </Button>
-      }>
+      ) : undefined}>
       {error
         ? readOnly
           ? <div role="status" style={small} data-testid="ai-gateway-requeue-read-only">{error}</div>
@@ -516,7 +531,9 @@ function RequeueRefusedJobs() {
               )}
             </div>
           )
-          : <div style={small}>{t("requeueIdle")}</div>}
+          : canRun
+            ? <div style={small}>{t("requeueIdle")}</div>
+            : <div role="status" style={small} data-testid="ai-gateway-requeue-read-only">{t("requeueReadOnly")}</div>}
       <ConfirmModal open={preview !== null} onClose={() => setPreview(null)} onConfirm={() => {
         if (preview && preview.eligible > 0) real.mutate(preview);
         else if (nextFromPreview) check(nextFromPreview);

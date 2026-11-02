@@ -1113,3 +1113,45 @@ export function priceSourceText(source: string | null | undefined, fallback: str
     .map((p) => tidy(p)).filter((p) => p && !INTERNAL_PART.test(p));
   return parts.length ? parts.join("; ") : fallback;
 }
+
+// ── AA-1025 C1 follow-up: which write controls of the page this session may use (GET /api/admin/ai-gateway/access) ──
+// The API answers each control with staff_authz.denial_reason on that control's own write route (backend
+// api/routers/admin_ai_gateway.py PAGE_WRITES), so the page hides exactly what the API would refuse: a read-only
+// session (the Dev E2E admin, a viewer) sees no write button. UI hint only: every write keeps its own 403.
+
+export const ACCESS_API = "/api/admin/ai-gateway/access";
+
+export const PAGE_ACTIONS = [
+  "provider_switch", "connections", "connection_test", "requeue", "routing", "catalog", "budgets", "jev_credit",
+] as const;
+export type PageAction = (typeof PAGE_ACTIONS)[number];
+
+export interface PageAccess {
+  read_only: boolean;
+  actions: Partial<Record<PageAction, boolean>>;
+}
+
+/** The staff capability each control needs (lib/rbac.ts ROLE_PERMS; backend staff_authz POLICY of its route). Used
+ *  only when the access read failed: the role cookie then decides, and the API still refuses what it must. */
+export const ACTION_CAPABILITY: Record<PageAction, "ai.admin" | "ops.write" | "spend.write"> = {
+  provider_switch: "ai.admin",
+  connections: "ai.admin",
+  connection_test: "ai.admin",
+  requeue: "ops.write",
+  routing: "ai.admin",
+  catalog: "ai.admin",
+  budgets: "spend.write",
+  jev_credit: "spend.write",
+};
+
+/**
+ * May this session use `action`? `access` = the API's answer (undefined while it loads), `failed` = the read failed,
+ * `roleCan` = the role check used only then. While the answer loads a control stays hidden (no flash of a button a
+ * read-only session cannot use); an answer without the action (an older API) hides it too.
+ */
+export function mayUse(
+  access: PageAccess | undefined, action: PageAction, failed = false, roleCan?: (a: PageAction) => boolean,
+): boolean {
+  if (access) return access.actions?.[action] === true;
+  return failed && !!roleCan && roleCan(action);
+}

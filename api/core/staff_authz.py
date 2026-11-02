@@ -173,6 +173,7 @@ POLICY: dict[tuple[str, str], str] = {
     ("GET", "/admin/ai-gateway/budgets"): SPEND_READ,   # AA-804 UI 2: every cap by tier (Budgets tab)
     ("GET", "/admin/ai-gateway/calls"): SPEND_READ,     # AA-804 UI 3: every logged paid call (Calls tab)
     ("GET", "/admin/ai-gateway/experiments"): SPEND_READ,   # AA-900 UI (C4): prompt register + eval runs
+    ("GET", "/admin/ai-gateway/access"): SPEND_READ,        # AA-1025 C1 follow-up: page writes this caller may use
     ("GET", "/admin/ai-gateway/tenant-budgets/{tenant_id}"): SPEND_READ,      # AA-1016 UI (C4): Tenant 360 tile
     ("PUT", "/admin/ai-gateway/tenant-budgets/{tenant_id}"): SPEND_WRITE,     # AA-1016 UI (C4), audited
     ("DELETE", "/admin/ai-gateway/tenant-budgets/{tenant_id}"): SPEND_WRITE,  # AA-1016 UI (C4), audited

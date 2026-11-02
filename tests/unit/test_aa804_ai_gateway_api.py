@@ -73,7 +73,7 @@ def test_routes_are_served_and_run_the_policy():
     found = {(m, p): (r, inh) for m, p, r, inh in _staff_routes() if p.startswith("/admin/ai-gateway")}
     assert set(found) == {("GET", "/admin/ai-gateway/providers"), ("GET", "/admin/ai-gateway/trace"),
                           ("GET", "/admin/ai-gateway/budgets"), ("GET", "/admin/ai-gateway/calls"),
-                          ("GET", "/admin/ai-gateway/experiments"),
+                          ("GET", "/admin/ai-gateway/experiments"), ("GET", "/admin/ai-gateway/access"),
                           ("GET", "/admin/ai-gateway/tenant-budgets/{tenant_id}"),
                           ("PUT", "/admin/ai-gateway/tenant-budgets/{tenant_id}"),
                           ("DELETE", "/admin/ai-gateway/tenant-budgets/{tenant_id}")}

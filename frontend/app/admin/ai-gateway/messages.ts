@@ -245,6 +245,8 @@ export const M = defineMessages(
     requeueLastMore: "More refused jobs may wait after that batch.",
     requeueReadOnly: "This is a read-only session: it can see this card but cannot check or re-queue jobs. Sign in "
       + "with your own staff account to run it.",
+    readOnlyNotice: "Read-only session: you can see every figure here, but the switch, re-queue and edit controls are "
+      + "hidden. Sign in with a staff account that may change them.",
     traceHint: "To see every paid call of one job or one tour, open the job (Jobs) or the tour (Master Content) and "
       + "click Open trace, or open a row of the Calls tab.",
     // trace drawer
@@ -429,6 +431,8 @@ export const M = defineMessages(
     requeueLastMore: "Có thể còn job bị từ chối sau đợt đó.",
     requeueReadOnly: "Phiên này chỉ được xem: thấy thẻ này nhưng không kiểm hay đưa lại job được. Đăng nhập bằng tài "
       + "khoản nhân viên của bạn để chạy.",
+    readOnlyNotice: "Phiên này chỉ được xem: thấy mọi số liệu ở đây, nhưng các nút bật tắt, đưa lại job và sửa đã ẩn. "
+      + "Đăng nhập bằng tài khoản nhân viên có quyền thay đổi.",
     traceHint: "Muốn xem mọi lần gọi trả phí của một job hay một tour, mở job (Jobs) hoặc tour (Master Content) rồi "
       + "bấm Mở truy vết, hoặc mở một dòng ở tab Lần gọi.",
     traceTitle: "Truy vết",

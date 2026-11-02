@@ -30,6 +30,7 @@ import {
 import { connectionName } from "@/lib/llmConnections";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import { BUDGETS, BUDGET_STATE } from "./budgets.messages";
+import { usePageAccess } from "./usePageAccess";
 
 export const BUDGETS_KEY = ["ai-gateway", "budgets"] as const;
 
@@ -172,7 +173,7 @@ function cap(v: string): boolean {
 // ── tables ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 function SpendBudgetTable({ id, rows, loading, onEdit }: {
-  id: string; rows: SpendBudgetRow[]; loading: boolean; onEdit: (r: SpendBudgetRow) => void;
+  id: string; rows: SpendBudgetRow[]; loading: boolean; onEdit?: (r: SpendBudgetRow) => void;
 }) {
   const t = useT(BUDGETS);
   const columns = useMemo<ColumnDef<SpendBudgetRow, unknown>[]>(() => [
@@ -208,12 +209,12 @@ function SpendBudgetTable({ id, rows, loading, onEdit }: {
     { id: "changed", header: t("colChanged"), accessorFn: (r) => r.updated_at ?? "",
       cell: (c) => <ChangedCell row={c.row.original} /> },
     { id: "actions", header: "", enableSorting: false, enableHiding: false,
-      cell: (c) => (
+      cell: (c) => onEdit ? (
         <span onClick={(e) => e.stopPropagation()}>
           <Button size="sm" variant="secondary" onClick={() => onEdit(c.row.original)}
             testId={`budget-edit-${c.row.original.provider}-${c.row.original.scope}`}>{t("edit")}</Button>
         </span>
-      ) },
+      ) : null },
   ], [t, onEdit]);
   return (
     <DataTable<SpendBudgetRow>
@@ -367,6 +368,8 @@ function TenantBudgetTable({ rows, loading }: { rows: TenantBudgetRow[]; loading
 
 export default function BudgetsTab({ onOpenConnections }: { onOpenConnections: () => void }) {
   const t = useT(BUDGETS);
+  // AA-1025 C1 follow-up: Add / Edit only when the API says this session may write budgets (usePageAccess).
+  const canEdit = usePageAccess().can("budgets");
   const q = useQuery({
     queryKey: BUDGETS_KEY,
     queryFn: () => apiGet<BudgetsResp>(BUDGETS_API, { admin: true }),
@@ -407,16 +410,16 @@ export default function BudgetsTab({ onOpenConnections }: { onOpenConnections: (
         <div role="status" style={{ ...small, color: K.danger }}>{t("sourceErrors")}</div>
       )}
       <Section title={t("groupProvider")} description={t("groupProviderHelp")} padded={false}
-        actions={
+        actions={canEdit ? (
           <Button size="sm" variant="secondary" disabled={!data} onClick={() => setEditing({ row: null })}
             testId="budget-add"><Plus size={13} /> {t("addBudget")}</Button>
-        }>
+        ) : undefined}>
         <SpendBudgetTable id="ai-gateway-budgets-provider" rows={tiers?.provider ?? []} loading={loading}
-          onEdit={(row) => setEditing({ row })} />
+          onEdit={canEdit ? (row) => setEditing({ row }) : undefined} />
       </Section>
       <Section title={t("groupJob")} description={t("groupJobHelp")} padded={false}>
         <SpendBudgetTable id="ai-gateway-budgets-job" rows={tiers?.job ?? []} loading={loading}
-          onEdit={(row) => setEditing({ row })} />
+          onEdit={canEdit ? (row) => setEditing({ row }) : undefined} />
       </Section>
       <Section title={t("groupConnection")} description={t("groupConnectionHelp")} padded={false}
         actions={<Button size="sm" variant="secondary" onClick={onOpenConnections}>{t("editConnections")}</Button>}>
