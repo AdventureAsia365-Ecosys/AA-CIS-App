@@ -23,8 +23,8 @@ from .schema_check import SchemaMismatch, conform
 from .errors import (DEADLINE, DISABLED, MAX_CHAIN_ATTEMPTS, OTHER, ROLE_NOT_SERVED, THROTTLED, TRUNCATED,
                      LLMAccessDenied, LLMStageDisabled, RouteAttemptCapReached, RouteDeadlineExceeded,
                      RouteRoleNotServed, account_level_class, classify)
-from . import (breaker, connection_budget, connections, data_scope, family_rule, prompt_registry, stage_params,
-               stream_sink, tenant_budget)
+from . import (breaker, central_budget, connection_budget, connections, data_scope, family_rule, prompt_registry,
+               stage_params, stream_sink, tenant_budget)
 from .vendor_route import (VendorDeployment, deployment_plan, pinned_deployment, role_refusal, split_pin,
                            vendor_deployment_for)
 from .deployments import alias_targets_sync
@@ -886,6 +886,23 @@ def _enrich_billed(exc: BaseException, facts: dict) -> None:
                     b[k] = v
 
 
+def estimate_call_usd(request: LLMRequest, model_key: Optional[str]) -> float:
+    """AA-1025 A7: the worst-case cost of ``request`` on ``model_key`` (a route key, pin allowed) for the central
+    budget check: the prompt at ~4 characters per token as input, the whole ``max_tokens`` as output, at the model's
+    price (``pricing.calc_cost``: catalog, else the code table, else the high estimate rates). Never raises (0.0)."""
+    try:
+        pin = split_pin(model_key) if model_key else None
+        key = pin[0] if pin else model_key
+        if not key:
+            return 0.0
+        chars = len(request.system_prompt or "") + len(request.user_prompt or "")
+        chars += sum(len(str(s.get("content", ""))) for s in (request.few_shots or []) if isinstance(s, dict))
+        return float(calc_cost(key, chars // 4 + 1, max(int(request.max_tokens or 0), 0)))
+    except Exception as e:  # noqa: BLE001 — an estimate never breaks a call
+        logger.warning("llm_central_budget_estimate_failed", model=str(model_key)[:80], error=str(e)[:200])
+        return 0.0
+
+
 class LLMClient:
     """
     Legacy haiku/sonnet chain (acc3 is the only satellite account — AA-998 removed the
@@ -1029,6 +1046,8 @@ class LLMClient:
             self._stage_switch_gate(request, stage_cfg, chain[0])
             # AA-1016: the tenant's monthly AI budget, before any attempt (no budget row = nothing read, no change).
             self._tenant_budget_gate(request, chain[0])
+            # AA-1025 A7: the central LLM budgets (app / stage / job kind / eval / ad-hoc caps), before any attempt.
+            self._central_budget_gate(request, chain[0])
             if len(chain) == 1:
                 try:
                     resp = self._call_key_logged(request, chain[0], primary_acct, role=role, position=0)
@@ -1080,6 +1099,20 @@ class LLMClient:
         try:
             tenant_budget.check(request.stage)
         except (tenant_budget.TenantBudgetApprovalRequired, tenant_budget.TenantBudgetUnavailable) as e:
+            pin = split_pin(first_key)
+            log_gateway_failed_attempt(request, e, model=pin[0] if pin else first_key, latency_ms=0)
+            raise
+
+    def _central_budget_gate(self, request: LLMRequest, first_key: str) -> None:
+        """AA-1025 A7: ``central_budget.check`` for the call's scopes (app, stage, the bound job's kind, eval, ad-hoc),
+        with the worst-case cost of the call on the route's first model (``estimate_call_usd``; computed only when a
+        central cap exists). A refusal (a hard cap would be passed) gets its 0 USD 'refused' / 'budget' ledger row and
+        is raised as is: the job ends ``stopped_budget``, nothing was sent."""
+        if not central_budget.active():
+            return
+        try:
+            central_budget.check(request.stage, estimate_call_usd(request, first_key))
+        except central_budget.CentralBudgetExceeded as e:
             pin = split_pin(first_key)
             log_gateway_failed_attempt(request, e, model=pin[0] if pin else first_key, latency_ms=0)
             raise

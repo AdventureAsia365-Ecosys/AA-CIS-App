@@ -179,11 +179,22 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
           { term: "Ngân sách AI theo đại lý", text: "Ngân sách AI hằng tháng của từng đại lý có đặt, kèm chi tiêu tháng "
             + "này và trạng thái. Đặt hoặc sửa tại đại lý (Đại lý › đại lý đó › Chi phí). Chỉ nhân viên thấy. Hiện được "
             + "lưu và hiển thị; giữ job mới ở mức duyệt sẽ có khi cổng AI kiểm ngân sách." },
+          { term: "Trần LLM chung", text: "Trần cho mọi lượt gọi model của một phạm vi, bất kể nhà cung cấp nào trả "
+            + "lời: cả ứng dụng, một stage, một loại job (cả mỗi lượt job), các lượt eval hoặc các script ad-hoc; theo "
+            + "ngày và theo tháng. Kiểm tra trước mỗi lượt gọi: trần có dừng sẽ từ chối lượt gọi trước khi gửi gì đi "
+            + "(một dòng bị từ chối, chi phí 0, trong Lần gọi). Trần mới bắt đầu ở chế độ chỉ cảnh báo; trên Dev giữ "
+            + "chỉ cảnh báo." },
+          { term: "Độ phủ theo điểm gọi", text: "Mỗi dòng là một stage có gọi model, kèm các trần chung nó nằm dưới, "
+            + "các loại job đã gọi nó và chi tiêu. Dòng chưa có trần chung vẫn bị chặn bởi ngân sách tháng của kết "
+            + "nối." },
           { term: "Dừng ở trần", text: "Lượt chạy kết thúc khi lượt gọi kế tiếp sẽ vượt trần." },
           { term: "Chỉ cảnh báo", text: "Không bao giờ dừng; gửi cảnh báo cho quản trị ở % cảnh báo." },
         ] },
         { kind: "control", label: "Thêm trần", does: "Tạo một trần cho cả nhà cung cấp hoặc cho một loại job.",
           cost: "Miễn phí.", when: "Một nguồn trả phí hiện Không trong danh sách có trần chưa." },
+        { kind: "control", label: "Thêm trần chung", does: "Tạo một trần cho mọi lượt gọi model của một phạm vi; Gỡ "
+            + "trong khung sửa sẽ bỏ nó.",
+          cost: "Miễn phí.", when: "Một điểm gọi chưa có trần chung và chi tiêu của nó cần có chuông báo." },
       ],
     },
     {

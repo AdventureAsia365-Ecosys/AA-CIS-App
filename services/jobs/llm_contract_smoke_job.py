@@ -63,9 +63,10 @@ CHARS_PER_TOKEN = 4
 
 # Migration 331 (platform) and 332 (tenant, held for the tech lead's yes): the acc2 model each stage falls back to.
 # Migration 333 (S263 "AWS first, outside last"): the judge / validate stages whose route ends on the OpenAI API get
-# an acc2 model BEFORE that hop. a3_place_dedupe has a case but no planned model (open): it forces a tool choice, its
-# check stage falls back to Nova Lite (Amazon), and Llama 4 Scout refused toolChoice.tool live (S263); no other acc2
-# model of another maker is known to take one. Smoke a candidate with the payload's ``models`` override.
+# an acc2 model BEFORE that hop. Migration 339 (S264): a3_place_dedupe gets Llama 4 Maverick there. It forces a tool
+# choice (a JSON schema) and its check stage falls back to Nova Lite (Amazon), so its pick is another maker; Llama 4
+# refuses toolChoice.tool, so Maverick is asked in prompt mode (catalog structured_output prompt, migration 337), which
+# the live smoke of 02/11 passed. Another candidate is smoked with the payload's ``models`` override.
 PLANNED = {
     "s1_brand_audit": "nova-lite", "s1_source_facts": "nova-lite", "a3_atomize": "nova-lite",
     "a3_place_card": "nova-lite", "a3_place_card_check": "llama4-scout", "a3_place_days": "nova-lite",
@@ -74,6 +75,7 @@ PLANNED = {
     "t9_faq_filter": "nova-lite",
     "s1_judge": "nova-lite", "t2_judge": "nova-lite", "t7_debate_judge": "nova-lite", "t10_judge": "nova-lite",
     "writing_memory_eval": "nova-lite", "writing_memory_mine": "nova-lite", "t10_adjudicate": "nova-lite",
+    "a3_place_dedupe": "llama4-maverick",
 }
 
 # What a stage's request needs from the model, read from the request: a JSON schema = a forced tool choice on Converse

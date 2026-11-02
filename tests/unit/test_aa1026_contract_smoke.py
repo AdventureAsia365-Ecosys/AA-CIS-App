@@ -29,7 +29,13 @@ HAIKU = CatalogModel(model_key="haiku-5-5", label="Claude Haiku 5.5", vendor="an
                      callable_via=("llm_client",), price_in_per_mtok=0.1, price_out_per_mtok=0.5, enabled=True)
 # Llama 4 Scout as migration 333 records it: Bedrock refused its forced tool choice in the S263 live smoke
 SCOUT_NO_FORCED_TOOL = dataclasses.replace(SCOUT, capabilities={"forced_tool_choice": False})
-MODELS = {m.model_key: m for m in (NOVA, SCOUT, HAIKU)}
+# Llama 4 Maverick as migration 337 records it: no forced tool choice, the object asked in the prompt (339's pick)
+MAVERICK = CatalogModel(model_key="llama4-maverick", label="Meta Llama 4 Maverick", vendor="meta", provider="bedrock",
+                        api_style="converse",
+                        bedrock_profile_ids={"acc2": "us.meta.llama4-maverick-17b-instruct-v1:0"},
+                        callable_via=("llm_client",), price_in_per_mtok=0.24, price_out_per_mtok=0.97, enabled=True,
+                        family="meta", capabilities={"forced_tool_choice": False, "structured_output": "prompt"})
+MODELS = {m.model_key: m for m in (NOVA, SCOUT, HAIKU, MAVERICK)}
 # Bedrock's answer to a3_place_dedupe on Llama 4 Scout in the S263 live smoke
 TOOL_CHOICE_REFUSED = ("An error occurred (ValidationException) when calling the Converse operation: This model "
                        "doesn't support the toolConfig.toolChoice.tool field. Remove toolConfig.toolChoice.tool and "
@@ -39,6 +45,8 @@ ACC2 = ProviderConnection(connection_key="acc2", kind="bedrock", auth_mode="task
 DEPS = {"nova-lite": [ModelDeployment("nova-lite", "acc2", "us.amazon.nova-lite-v1:0", 20, True, "bedrock_profile")],
         "llama4-scout": [ModelDeployment("llama4-scout", "acc2", "us.meta.llama4-scout-17b-instruct-v1:0", 20, True,
                                          "bedrock_profile")],
+        "llama4-maverick": [ModelDeployment("llama4-maverick", "acc2", "us.meta.llama4-maverick-17b-instruct-v1:0", 20,
+                                            True, "bedrock_profile")],
         "haiku-5-5": [ModelDeployment("haiku-5-5", "acc3", "global.anthropic.claude-haiku-5-5", 10, True,
                                       "bedrock_profile")]}
 
@@ -112,15 +120,18 @@ def _run(stage: str, content) -> tuple[dict, FakeClient]:
 
 
 def _model_of(stage: str) -> str:
-    """The planned acc2 model; Nova Lite for a case with none planned (a3_place_dedupe: an override run only)."""
+    """The planned acc2 model (every case has one since migration 339); Nova Lite otherwise."""
     return smoke.PLANNED.get(stage, "nova-lite")
 
 
 def test_every_planned_stage_has_a_case_and_no_writer_or_anthropic_pick():
     assert set(smoke.PLANNED) <= set(smoke.CASES)
-    assert set(smoke.CASES) - set(smoke.PLANNED) == {"a3_place_dedupe"}     # open: no acc2 pick takes its forced tool
+    assert set(smoke.CASES) == set(smoke.PLANNED)                          # 339: a3_place_dedupe has its pick too
     assert {c.role for c in smoke.CASES.values()} == {"judge", "validate"}
-    assert set(smoke.PLANNED.values()) == {"nova-lite", "llama4-scout"}
+    assert set(smoke.PLANNED.values()) == {"nova-lite", "llama4-scout", "llama4-maverick"}
+    # the place pair is smoked on two different makers: dedupe on Meta, its check on Amazon (339 / 331)
+    assert smoke.PLANNED["a3_place_dedupe"] == "llama4-maverick"
+    assert smoke.PLANNED["a3_place_dedupe_check"] == "nova-lite"
     # the place card's draft and check are smoked on two different makers (S234 rule, migration 331)
     assert smoke.PLANNED["a3_place_card"] != smoke.PLANNED["a3_place_card_check"]
 
@@ -224,9 +235,10 @@ def test_a_salvaged_f9_verdict_fails_the_contract():
 
 def test_the_333_smoke_picks():
     assert {smoke.PLANNED[s] for s in NEW_333 if s != "a3_place_dedupe"} == {"nova-lite"}
-    # a3_place_dedupe has no planned pick (left out of 333): its check stage falls back to Nova Lite (Amazon), and the
-    # other maker's model tried (Llama 4 Scout) refused its forced tool choice on Bedrock (S263)
-    assert "a3_place_dedupe" not in smoke.PLANNED and smoke.PLANNED["a3_place_dedupe_check"] == "nova-lite"
+    # a3_place_dedupe was left out of 333 (Llama 4 Scout refused its forced tool choice on Bedrock, S263); migration
+    # 339 gives it Llama 4 Maverick, asked in prompt mode (337), whose live smoke passed on 02/11
+    assert smoke.PLANNED["a3_place_dedupe"] == "llama4-maverick"
+    assert smoke.PLANNED["a3_place_dedupe_check"] == "nova-lite"
     assert smoke.requires(smoke.CASES["a3_place_dedupe"].request()) == ("forced_tool_choice",)
 
 
@@ -308,8 +320,10 @@ def test_the_plan_reads_the_route_then_falls_back_to_the_planned_model():
     assert (by["a3_place_card_check"]["model_key"], by["a3_place_card_check"]["model_source"]) == ("nova-lite",
                                                                                                     "route")
     assert (by["a3_atomize"]["model_key"], by["a3_atomize"]["model_source"]) == ("nova-lite", "planned")
-    assert all(e["callable"] for e in plan["stages"] if e["stage"] != "a3_place_dedupe")
-    assert by["a3_place_dedupe"]["model_key"] is None and "none planned" in by["a3_place_dedupe"]["why_not"]
+    assert all(e["callable"] for e in plan["stages"]), [e for e in plan["stages"] if not e["callable"]]
+    # 339: a3_place_dedupe runs on Maverick in prompt mode (the catalog states a non-forced structured mode)
+    assert (by["a3_place_dedupe"]["model_key"], by["a3_place_dedupe"]["model_source"]) == ("llama4-maverick",
+                                                                                            "planned")
     # every stage, max_tokens fully spent: still far under the 0.10 USD cap of ADR 0009 decision 12
     assert 0 < plan["estimated_usd"] < smoke.COST_CAP_USD / 2 and plan["unpriced"] == 0
 

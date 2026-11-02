@@ -28,7 +28,8 @@ The reads, all $0 (database only; no provider is called):
   (``llm_call_log.content_piece_id``) and the ``tour_id`` columns of ``llm_call_log`` and ``dfs_call_log``.
 - ``read_budgets(pool)`` — ``GET /admin/ai-gateway/budgets``: every spending cap by tier (provider daily caps and
   job caps from ``shared.spend_budget``, the monthly budget of each LLM connection, the tenant tier still empty),
-  today's spend per provider, and a coverage checklist (does every paid source have a cap).
+  today's spend per provider, and a coverage checklist (does every paid source have a cap). AA-1025 A7: the central
+  LLM caps (``spend_budget`` provider ``llm``) as their own tier and the coverage per call site.
 
 Since ledger v2 (migration 319, CIS #1201) every attempt has a row with its ``status`` (ok, refused, error,
 billed_unusable, truncated), ``error_class`` and ``latency_ms``; older rows have none of them (the trace says so with
@@ -56,6 +57,7 @@ logged).
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -1327,6 +1329,118 @@ async def _read_connection_budgets(pool) -> list[dict]:
     return connection_budget_rows(connections, {k: b.summary() for k, b in monthly.items()}, spend, policies)
 
 
+# ── AA-1025 A7: the central LLM caps (spend_budget provider 'llm', migration 340) and the coverage per call site ──
+# The central tier lists every 'llm' row with its scope's spend, read with the query the gateway's check uses
+# (shared/llm_client/central_budget.read_spend), so the state shown is the state enforced. The coverage per call site
+# answers "which cap would stop or ring for this call": one line per CIS stage (the llm_role_config rows and the stages
+# seen in the ledger this month or in the last 7 days, ad-hoc and eval labels included) with its spend, the job kinds
+# that called it in the window, and the central caps whose scope it is in (app, stage, job kind, eval, ad-hoc).
+# TripPlanner rows (llm_call_log.app 'tripplanner') are left out: this gateway does not check them (slice H1).
+
+CENTRAL_ROWS_SQL = """
+    SELECT to_jsonb(b) AS row
+      FROM shared.spend_budget b
+     WHERE b.provider = 'llm'
+     ORDER BY b.scope
+"""
+
+CALL_SITES_SQL = """
+    SELECT l.stage,
+           coalesce(sum(l.cost_usd) FILTER (WHERE l.created_at >= $1), 0)::float AS today_usd,
+           coalesce(sum(l.cost_usd) FILTER (WHERE l.created_at >= $2), 0)::float AS month_usd,
+           count(*) FILTER (WHERE l.created_at >= $3)::int AS calls_7d,
+           coalesce(array_agg(DISTINCT j.kind) FILTER (WHERE j.kind IS NOT NULL), ARRAY[]::text[]) AS job_kinds
+      FROM shared.llm_call_log l
+      LEFT JOIN shared.job j ON j.id = l.job_id
+     WHERE l.created_at >= least($2, $3) AND coalesce(l.app, 'cis') = 'cis'
+     GROUP BY l.stage
+"""
+
+ROUTE_STAGES_SQL = "SELECT stage, role, is_active FROM shared.llm_role_config"
+
+
+def central_row_view(row, spend, names: Optional[dict] = None, raw: Optional[dict] = None) -> dict:
+    """One central cap with its scope's spend (central_budget.Spend, None = unreadable) and its state. Pure."""
+    from shared.llm_client import central_budget as cb
+
+    pct = None if spend is None else cb.used_pct(row, spend)
+    if spend is None:
+        state = "unknown"
+    elif not row.capped:
+        state = "no_daily_cap"
+    elif cb.breaches(row, spend, 0.0) or (pct is not None and pct >= 100):
+        state = "cap_reached"
+    elif pct is not None and pct >= row.alert_pct:
+        state = "alert"
+    else:
+        state = "ok"
+    raw = raw or {}
+    return {"provider": cb.PROVIDER, "scope": row.scope, "scope_kind": row.kind, "target": row.target,
+            "per_run_usd": row.per_run_usd, "per_day_usd": row.per_day_usd, "per_month_usd": row.per_month_usd,
+            "hard_stop": row.hard_stop, "alert_pct": row.alert_pct,
+            "updated_at": _iso(raw.get("updated_at")), "updated_by": raw.get("updated_by"),
+            **actor_view(raw.get("updated_by"), names),
+            "spent_today_usd": None if spend is None else round(spend.day_usd, 4),
+            "spent_month_usd": None if spend is None or spend.month_usd is None else round(spend.month_usd, 4),
+            "used_pct": None if pct is None else round(pct, 1), "state": state}
+
+
+def call_site_coverage(sites: list[dict], routes: list[dict], central: list[dict]) -> list[dict]:
+    """The coverage per call site (section comment). ``sites``: CALL_SITES_SQL rows; ``routes``: ROUTE_STAGES_SQL rows;
+    ``central``: central_row_view rows. Pure."""
+    from shared.llm_client import central_budget as cb
+    from shared.llm_client.call_log import APP
+
+    caps = {c["scope"]: c for c in central if any(c.get(k) is not None
+                                                   for k in ("per_run_usd", "per_day_usd", "per_month_usd"))}
+    seen = {s["stage"]: s for s in sites if s.get("stage")}
+    role = {r["stage"]: r for r in routes}
+    out = []
+    for stage in sorted(set(seen) | set(role)):
+        s, r = seen.get(stage, {}), role.get(stage, {})
+        kinds = sorted(k for k in (s.get("job_kinds") or []) if k)
+        scopes = cb.scopes_for(stage, app=APP, eval_stage=stage if stage in cb.EVAL_STAGES else None)
+        scopes += [f"job:{k}" for k in kinds]
+        covered = [{"scope": sc, "hard_stop": bool(caps[sc]["hard_stop"]), "state": caps[sc]["state"]}
+                   for sc in dict.fromkeys(scopes) if sc in caps]
+        out.append({"stage": stage, "role": r.get("role"), "routed": bool(r), "active": r.get("is_active", True)
+                    if r else None, "today_usd": round(float(s.get("today_usd") or 0.0), 4),
+                    "month_usd": round(float(s.get("month_usd") or 0.0), 4), "calls_7d": int(s.get("calls_7d") or 0),
+                    "job_kinds": kinds, "caps": covered, "capped": bool(covered),
+                    "hard": any(c["hard_stop"] for c in covered)})
+    out.sort(key=lambda x: (-x["month_usd"], x["stage"]))
+    return out
+
+
+async def _read_central(pool, *, now: datetime) -> dict:
+    """The central caps with their spend, and the call sites (one connection; a cap whose spend read fails shows
+    state unknown)."""
+    from shared.llm_client import central_budget as cb
+
+    day, month = day_and_month_start(now)
+    async with pool.acquire() as conn:
+        raws = []
+        for r in await conn.fetch(CENTRAL_ROWS_SQL):
+            raws.append(json.loads(r["row"]) if isinstance(r["row"], str) else dict(r["row"]))
+        try:
+            names = await actor_names(conn, [r.get("updated_by") for r in raws])
+        except asyncpg.PostgresError:
+            names = {}
+        rows = []
+        for raw in raws:
+            row = cb.row_of(raw)
+            if row is None:
+                continue
+            try:
+                spend = await cb.read_spend(conn, row, now=now)
+            except asyncpg.PostgresError:
+                spend = None
+            rows.append(central_row_view(row, spend, names, raw))
+        sites = [dict(r) for r in await conn.fetch(CALL_SITES_SQL, day, month, now - timedelta(days=7))]
+        routes = [dict(r) for r in await conn.fetch(ROUTE_STAGES_SQL)]
+    return {"rows": rows, "call_sites": call_site_coverage(sites, routes, rows)}
+
+
 async def read_budgets(pool, *, now: Optional[datetime] = None) -> dict:
     """``GET /admin/ai-gateway/budgets``: every cap by tier (see the section comment). Each source is read on its own;
     a failing one leaves its tier empty and names itself in ``errors``."""
@@ -1336,26 +1450,34 @@ async def read_budgets(pool, *, now: Optional[datetime] = None) -> dict:
     day, month = day_and_month_start(now)
     from api.services import tenant_ai_budget
 
-    (sb, sb_err), (conns, conns_err), (tenants, tenants_err) = await asyncio.gather(
+    (sb, sb_err), (conns, conns_err), (tenants, tenants_err), (central, central_err) = await asyncio.gather(
         _guard("Spend budgets", lambda: _read_spend_budgets(pool)),
         _guard("LLM connection budgets", lambda: _read_connection_budgets(pool)),
         _guard("Tenant AI budgets", lambda: tenant_ai_budget.read_tier(pool, now=now)),
+        _guard("Central LLM budgets", lambda: _read_central(pool, now=now)),
     )
     spent_today = (sb or {}).get("spent_today", {})
     kind_spent_today = (sb or {}).get("kind_spent_today", {})
     names = (sb or {}).get("names", {})
-    rows = [spend_budget_row(r, spent_today, kind_spent_today, names) for r in (sb or {}).get("rows", [])]
+    rows = [spend_budget_row(r, spent_today, kind_spent_today, names) for r in (sb or {}).get("rows", [])
+            if r.get("provider") != cost_guard.CENTRAL_PROVIDER]       # AA-1025 A7: the llm rows have their own tier
     provider_rows = [r for r in rows if r["scope"] == "global"]
     job_rows = [r for r in rows if r["scope"] != "global"]
     errors = [{"source": s, "error": e} for s, e in (("spend_budgets", sb_err), ("llm_connections", conns_err),
-                                                       ("tenant_budgets", tenants_err)) if e]
+                                                       ("tenant_budgets", tenants_err),
+                                                       ("central_budgets", central_err)) if e]
     return {
         "generated_at": now.isoformat(), "day_start": day.isoformat(), "month_start": month.isoformat(),
         "providers": list(cost_guard.PROVIDERS),
         # AA-1016 (C4): the tenant tier from shared.tenant_ai_budget (migration 321); tenant_ready False before it.
         "tenant_ready": bool(tenants and tenants.get("ready")),
         "tiers": {"provider": provider_rows, "job": job_rows, "connection": conns or [],
-                  "tenant": (tenants or {}).get("rows", [])},
+                  "tenant": (tenants or {}).get("rows", []),
+                  # AA-1025 A7: the central LLM caps (provider 'llm'); empty before migration 340.
+                  "central": (central or {}).get("rows", [])},
+        "central_provider": cost_guard.CENTRAL_PROVIDER,
+        # AA-1025 A7: which central cap covers each CIS call site (stage); empty when the read failed.
+        "call_sites": (central or {}).get("call_sites", []),
         "coverage": [] if sb is None else budget_coverage(provider_rows, conns, cost_guard.PROVIDERS),
         "spent_today_usd": spent_today,
         "errors": errors,

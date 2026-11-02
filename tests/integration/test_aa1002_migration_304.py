@@ -55,6 +55,9 @@ LATER = [os.path.join(os.path.dirname(MIGRATION), f) for f in
           "322_provider_connection_v2.sql", "324_llm_acc2_candidate_models.sql",
           # AA-1024: 337 records the Llama 4 capabilities on the rows 324 re-creates
           "337_llm_llama4_structured_prompt_mode.sql",
+          # AA-1025 A7: 304 re-adds spend_budget_provider_check without 'llm'; 340 widens it again, so every module
+          # that runs after this one sees the live CHECK (S264: two CI rounds failed on the stale one)
+          "340_spend_budget_central_llm_scopes.sql",
           # AA-1025 B3 / B5: 342's tables reference the connection table (dropped by _undo); 343 re-sets the vendor
           # API balance source on the rows 322 re-creates
           "342_provider_health_and_credit_ledger.sql", "343_vendor_api_balance_from_ledger.sql")]

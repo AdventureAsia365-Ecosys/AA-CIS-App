@@ -107,9 +107,12 @@ def _llm_breaker_off(request, monkeypatch):
     monkeypatch.setattr(breaker, "set_access_state", lambda connection_key, state: None)
     # AA-1016 / AA-900 (AA-1018 part 2): the tenant AI budget and the prompt register read the DB on the call path;
     # in unit tests no tenant has a budget and no prompt version is registered (tests that need them set loaders).
-    from shared.llm_client import prompt_registry, tenant_budget
+    from shared.llm_client import central_budget, prompt_registry, tenant_budget
     tenant_budget.invalidate()
     prompt_registry.invalidate()
+    central_budget.invalidate()
+    # AA-1025 A7: no central LLM cap in unit tests (tests that need one set central_budget's loaders).
+    monkeypatch.setattr(central_budget, "loader_rows", lambda: {})
     monkeypatch.setattr(tenant_budget, "loader_tenants", lambda: frozenset())
     monkeypatch.setattr(tenant_budget, "loader_state", lambda tenant_id: None)
     monkeypatch.setattr(prompt_registry, "loader", lambda: set())
@@ -117,6 +120,7 @@ def _llm_breaker_off(request, monkeypatch):
     breaker.reset()
     tenant_budget.invalidate()
     prompt_registry.invalidate()
+    central_budget.invalidate()
 
 
 async def _fake_public_dns(host, port, family=0):

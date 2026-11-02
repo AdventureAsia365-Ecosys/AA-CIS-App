@@ -42,6 +42,8 @@ REGISTRY_READERS = {
     "connection_budget.py": "S10: which connections have a monthly budget (registry_rows_sync) and the month spend / "
                             "policy reads through connections.run_sync / _connect",
     "tenant_budget.py": "AA-1016: the tenant budget and month-spend reads through connections.run_sync / _connect",
+    "central_budget.py": "AA-1025 A7: the central LLM caps and their spend reads through connections.run_sync / "
+                         "_connect",
     "prompt_registry.py": "AA-900: the shared.prompt_version read through connections.run_sync / _connect",
     "embedding_space.py": "AA-1026: the embedding space registry read through connections.run_sync / _connect",
 }
@@ -52,6 +54,7 @@ CALL_PATH = ("client.py", "embed.py", "decide.py", "judge.py", "shadow.py", "bed
              "invariant.py",      # AA-1018: report-only failure-domain rule (reads the tables by SQL, not the registry)
              "stage_params.py",   # AA-1017: stage x model parameters (its own table; empty = the same request object)
              "tenant_budget.py",  # AA-1016: tenant AI budget check (no budget row = nothing read beyond the tenant set)
+             "central_budget.py",  # AA-1025 A7: central LLM caps (no llm row = nothing read beyond the cached rows)
              "prompt_registry.py",  # AA-900: prompt version lookup (no registered row = None on the ledger)
              "embedding_space.py",  # AA-1026: embedding space registry (unreadable = the built-in 328 mirror)
              "json_reply.py",  # AA-1026: reads the JSON value out of a reply text (pure, no I/O)

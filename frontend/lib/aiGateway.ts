@@ -445,6 +445,49 @@ export interface CoverageRow {
   hard_stop: boolean | null;
 }
 
+/** AA-1025 A7: a central LLM cap (spend_budget provider "llm", CIS migration 340), checked by the gateway before
+ *  every LLM call of its scope, whatever provider answers. */
+export type CentralScopeKind = "app" | "stage" | "job" | "eval" | "adhoc";
+
+export interface CentralBudgetRow {
+  provider: string;
+  scope: string;
+  scope_kind: CentralScopeKind;
+  /** The app / stage / job kind of the scope (null for eval and adhoc). */
+  target: string | null;
+  per_run_usd: number | null;
+  per_day_usd: number | null;
+  per_month_usd: number | null;
+  hard_stop: boolean;
+  alert_pct: number;
+  updated_at: string | null;
+  updated_by: string | null;
+  updated_by_kind?: ActorKind;
+  updated_by_name?: string | null;
+  /** null when the scope's spend could not be read (state "unknown"). */
+  spent_today_usd: number | null;
+  /** read only when the cap has a month amount */
+  spent_month_usd: number | null;
+  used_pct: number | null;
+  state: BudgetState | "unknown";
+}
+
+/** AA-1025 A7: one CIS call site (a stage) and the central caps whose scope it is in. */
+export interface CallSiteRow {
+  stage: string;
+  role: string | null;
+  /** false: seen in the ledger only (an ad-hoc script, an eval label), no route row */
+  routed: boolean;
+  active: boolean | null;
+  today_usd: number;
+  month_usd: number;
+  calls_7d: number;
+  job_kinds: string[];
+  caps: { scope: string; hard_stop: boolean; state: string }[];
+  capped: boolean;
+  hard: boolean;
+}
+
 export interface BudgetsResp {
   generated_at: string;
   day_start: string;
@@ -457,7 +500,12 @@ export interface BudgetsResp {
     job: SpendBudgetRow[];
     connection: ConnectionBudgetRow[];
     tenant: TenantBudgetRow[];
+    /** AA-1025 A7; absent on an older API, empty before CIS migration 340. */
+    central?: CentralBudgetRow[];
   };
+  central_provider?: string;
+  /** AA-1025 A7: the coverage per call site; absent on an older API. */
+  call_sites?: CallSiteRow[];
   coverage: CoverageRow[];
   spent_today_usd: Record<string, number>;
   errors: { source: string; error: string }[];
@@ -468,7 +516,7 @@ export const BUDGETS_API = "/api/admin/ai-gateway/budgets";
 /** The spend_budget providers (shared/cost_guard.py PROVIDERS) and their product names. */
 export const BUDGET_PROVIDER_LABEL: Readonly<Record<string, string>> = {
   dfs: "DataForSEO", bedrock: "Bedrock", openai: "OpenAI API", jev: "Jev", geocoder: "Geocoder (Geoapify)",
-  anthropic: "Anthropic API", azure_openai: "Azure OpenAI",
+  anthropic: "Anthropic API", azure_openai: "Azure OpenAI", llm: "All LLM providers",
 };
 
 export function budgetProviderLabel(provider: string): string {
@@ -545,6 +593,79 @@ export function validScope(scope: string): boolean {
 /** The PUT path of one spend_budget row. */
 export function budgetPutPath(provider: string, scope: string): string {
   return `/api/admin/budgets/${encodeURIComponent(provider)}/${encodeURIComponent(scope)}`;
+}
+
+// ── AA-1025 A7: central LLM caps (PUT / DELETE /api/admin/budgets/llm/{scope}) ─────────────────────────────────────
+
+export const CENTRAL_PROVIDER = "llm";
+export const CENTRAL_SCOPE_KINDS: readonly CentralScopeKind[] = ["app", "stage", "job", "eval", "adhoc"];
+/** = the backend central_budget.SCOPE_RE and migration 340's CHECK for an llm row. */
+const CENTRAL_SCOPE_RE = /^(?:(?:app|stage|job):[a-z0-9][a-z0-9_.-]{0,99}|eval|adhoc)$/;
+
+/** The scope of a kind and its target (app, stage or job kind; eval and adhoc have none). */
+export function centralScope(kind: CentralScopeKind, target: string): string {
+  return kind === "eval" || kind === "adhoc" ? kind : `${kind}:${target.trim()}`;
+}
+
+export function validCentralScope(scope: string): boolean {
+  return CENTRAL_SCOPE_RE.test(scope);
+}
+
+export interface CentralDraft {
+  kind: CentralScopeKind;
+  target: string;
+  per_run: string;
+  per_day: string;
+  per_month: string;
+  hard_stop: boolean;
+  alert_pct: string;
+}
+
+export interface CentralBody {
+  per_run_usd: number | null;
+  per_day_usd: number | null;
+  per_month_usd: number | null;
+  hard_stop: boolean;
+  alert_pct: number;
+}
+
+export type CentralError = "cap" | "alertPct" | "scope" | "runScope" | "noCap";
+
+/** A new cap starts alert-only (tech lead T-8: Dev caps never stop normal traffic). */
+export function centralDraftOf(r?: Pick<CentralBudgetRow, "scope_kind" | "target" | "per_run_usd" | "per_day_usd"
+  | "per_month_usd" | "hard_stop" | "alert_pct"> | null): CentralDraft {
+  const str = (v: number | null | undefined) => (v == null ? "" : String(v));
+  if (!r) return { kind: "stage", target: "", per_run: "", per_day: "", per_month: "", hard_stop: false, alert_pct: "80" };
+  return { kind: r.scope_kind, target: r.target ?? "", per_run: str(r.per_run_usd), per_day: str(r.per_day_usd),
+    per_month: str(r.per_month_usd), hard_stop: r.hard_stop, alert_pct: String(r.alert_pct ?? 80) };
+}
+
+export function sameCentralDraft(a: CentralDraft, b: CentralDraft): boolean {
+  return a.kind === b.kind && a.target.trim() === b.target.trim() && a.per_run.trim() === b.per_run.trim()
+    && a.per_day.trim() === b.per_day.trim() && a.per_month.trim() === b.per_month.trim()
+    && a.hard_stop === b.hard_stop && a.alert_pct.trim() === b.alert_pct.trim();
+}
+
+/** The scope and PUT body of a central draft (the backend rules: a run cap on a job scope only, at least one
+ *  amount), or the first problem. */
+export function centralBody(d: CentralDraft): { scope?: string; body?: CentralBody; error?: CentralError } {
+  const scope = centralScope(d.kind, d.target);
+  if (!validCentralScope(scope)) return { error: "scope" };
+  const run = cap(d.per_run);
+  const day = cap(d.per_day);
+  const month = cap(d.per_month);
+  if (run === undefined || day === undefined || month === undefined) return { error: "cap" };
+  if (run !== null && d.kind !== "job") return { error: "runScope" };
+  if (run === null && day === null && month === null) return { error: "noCap" };
+  const pct = Number(d.alert_pct.trim());
+  if (!Number.isInteger(pct) || pct < 1 || pct > 100) return { error: "alertPct" };
+  return { scope, body: { per_run_usd: run, per_day_usd: day, per_month_usd: month, hard_stop: d.hard_stop,
+    alert_pct: pct } };
+}
+
+/** The PUT / DELETE path of one central cap. */
+export function centralPath(scope: string): string {
+  return `/api/admin/budgets/${CENTRAL_PROVIDER}/${encodeURIComponent(scope)}`;
 }
 
 // ── calls (GET /api/admin/ai-gateway/calls, UI part 3) ─────────────────────────────────────────────────────────────

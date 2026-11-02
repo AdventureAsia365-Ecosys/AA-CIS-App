@@ -527,6 +527,39 @@ async def maybe_alert_connection(conn, budget: ConnectionBudget) -> bool:
         return False
 
 
+# ── AA-1025 A7: the central LLM budgets (shared.spend_budget provider 'llm', migration 340) ─────────────────────────
+#
+# The rules, the scopes and the spend queries live in shared/llm_client/central_budget.py (checked by the gateway before
+# any attempt). Only the bell lives here, next to the other budget bells: same event type, entity "llm:<scope>".
+
+CENTRAL_PROVIDER = "llm"
+CENTRAL_BUDGET_ALERT_EVENT = BUDGET_ALERT_EVENT
+
+
+async def maybe_alert_central(conn, summary: dict, *, alert_pct: int, stopped: bool, message: str) -> bool:
+    """One admin bell (and the ops e-mail, AA-828) for a central LLM budget at or above its alert threshold, or one
+    that refused a call (``stopped``); at most one unread bell per scope per 24 h. Best effort: never raises. ``conn``
+    is an asyncpg connection; ``summary`` is central_budget.summary()."""
+    entity = f"{CENTRAL_PROVIDER}:{summary.get('scope')}"[:100]      # notifications.entity_id is varchar(100)
+    try:
+        if await conn.fetchval(_RECENT_ALERT_SQL, CENTRAL_BUDGET_ALERT_EVENT, entity):
+            return False
+        await conn.execute(_INSERT_ALERT_SQL, _PLATFORM_TENANT_ID, CENTRAL_BUDGET_ALERT_EVENT, entity,
+                           json.dumps({"message": message, **summary}))
+        try:
+            from shared import ops_alerts  # lazy: keeps this module import-light for the LLM client
+
+            await ops_alerts.enqueue_spend_budget_email(conn, summary=summary, alert_pct=alert_pct, stopped=stopped,
+                                                        message=message, used_pct=summary.get("used_pct"))
+        except Exception as exc:  # noqa: BLE001 — the bell row stays
+            logger.warning("llm_central_budget_email_enqueue_failed", scope=summary.get("scope"), error=str(exc)[:300])
+        logger.warning("llm_central_budget_alert", stopped=stopped, **summary)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("llm_central_budget_alert_failed", scope=summary.get("scope"), error=str(exc)[:300])
+        return False
+
+
 # ── AA-1016: the monthly AI budget of a Content studio tenant (shared.tenant_ai_budget, migration 321) ──────────────
 #
 # One optional row per tenant: monthly_usd (NULL = unlimited), alert_pct (default 100: the bell), approval_pct
