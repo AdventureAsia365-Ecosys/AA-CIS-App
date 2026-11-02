@@ -16,7 +16,7 @@ failures" means 5 calls that each failed every retry.
 What counts (``failure_class``): HTTP 401 / 403 access_denied, 402 quota_exhausted, 429 throttled, 404 / 405 /
 408 / 410 / 5xx and a timeout or transport error other. Any other 4xx is a refusal of the request's own content (a bad
 keyword, a malformed body): not counted, the provider answered. DataForSEO's five-digit body codes are read by their
-first three digits (40100 -> 401).
+first three digits (40100 -> 401): 401 / 402 / 403 and 5xxxx count, the other 4xxxx (a bad field) do not.
 
 The calls. ``admit(key)`` before a call: None = go ahead (closed, or this call took the half-open probe lease), else
 the refusal text (the circuit is open; nothing is sent; the caller writes its 0 USD refused ledger row and fails like
@@ -103,8 +103,10 @@ def failure_class(status: Optional[int]) -> Optional[str]:
         code = int(status)
     except (TypeError, ValueError):
         return OTHER
-    if code >= 10000:
-        code = int(str(code)[:3])
+    if code >= 10000:              # a DataForSEO body code: only auth, payment and server failures say anything
+        head = int(str(code)[:3])
+        return {401: ACCESS_DENIED, 403: ACCESS_DENIED, 402: QUOTA_EXHAUSTED}.get(
+            head, OTHER if head >= 500 else None)
     if code in (401, 403):
         return ACCESS_DENIED
     if code == 402:
