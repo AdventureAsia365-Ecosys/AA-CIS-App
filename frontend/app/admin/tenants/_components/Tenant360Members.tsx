@@ -7,7 +7,10 @@
 //   language; the CRM delivers the AA system mail), send an invitation again (the address is typed again: CIS never
 //   stores it), change the role, remove (final; the partner CRM signs the person out, and locks the agency when that
 //   was its last active owner).
-// Write controls follow tenant.write (lib/rbac can(); the BFF API_WRITE_RULES "tenants" and the backend re-check).
+// Write controls follow the API's own answer for THIS session (AA-1031 F3, GET .../members/access through
+// useMembersAccess): a read-only session (the Dev E2E admin) sees no Invite and no row menu, the E2E session on a
+// synthetic tenant only what its invitation rule allows. Hidden while the read loads; the role (tenant.write) decides
+// only when it failed. The BFF API_WRITE_RULES "tenants" and the backend re-check every write.
 // No CRM role here: CRM roles live in the partner CRM (root ADR 0010a decision 3).
 
 import { useCallback, useMemo, useState } from "react";
@@ -15,12 +18,12 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw, UserPlus } from "lucide-react";
 import {
   ApiError, Badge, Button, ConfirmModal, DataTable, ErrorState, Field, Input, K, Modal, RowMenu, Select, Spinner,
-  ToastProvider, apiGet, apiSend, mono, useAdminIdentity, useFormat, useT, useToast, type ColumnDef,
+  ToastProvider, apiGet, apiSend, mono, useFormat, useT, useToast, type ColumnDef,
 } from "../../../_kit";
-import { can } from "@/lib/rbac";
+import { useMembersAccess } from "../../_components/useMembersAccess";
 import {
-  INVITE_LOCALES, STUDIO_ROLES, deliveryOk, deliveryProblem, invitationsPath, isInviteEmail, isLastActiveOwner,
-  isStudioRole, memberActions, memberPath, membersPath, removePath, sendAgainPath, statusTone,
+  INVITE_LOCALES, STUDIO_ROLES, anyMemberWrite, deliveryOk, deliveryProblem, invitationsPath, isInviteEmail,
+  isLastActiveOwner, isStudioRole, memberPath, memberRowActions, membersPath, removePath, sendAgainPath, statusTone,
   type InvitationResult, type InviteLocale, type MemberWriteResult, type StudioRole, type TenantMember,
   type TenantMembers,
 } from "@/lib/tenantMembers";
@@ -47,7 +50,9 @@ function MembersInner({ tenantId }: { tenantId: string }) {
   const toast = useToast();
   const qc = useQueryClient();
   const { formatDateTime } = useFormat();
-  const canWrite = can(useAdminIdentity().role, "tenant.write");
+  const perm = useMembersAccess(tenantId);
+  const canWrite = anyMemberWrite(perm);
+  const rowMenu = perm.changeRole || perm.sendAgain || perm.remove;
   const [dialog, setDialog] = useState<Dialog>(null);
   const [outcome, setOutcome] = useState<Outcome>(null);
 
@@ -86,12 +91,12 @@ function MembersInner({ tenantId }: { tenantId: string }) {
           {c.row.original.removed_by ?? c.row.original.created_by ?? "—"}</span>,
       },
     ];
-    if (canWrite) {
+    if (rowMenu) {
       cols.push({
         id: "actions", header: "", enableSorting: false,
         cell: (c) => {
           const m = c.row.original;
-          const a = memberActions(m);
+          const a = memberRowActions(m, perm);
           if (!a.changeRole && !a.sendAgain && !a.remove) return null;
           return (
             <RowMenu label={t("actions")} testId={`member-actions-${m.membership_id}`} items={[
@@ -104,7 +109,7 @@ function MembersInner({ tenantId }: { tenantId: string }) {
       });
     }
     return cols;
-  }, [t, formatDateTime, canWrite, roleLabel, statusLabel]);
+  }, [t, formatDateTime, rowMenu, perm, roleLabel, statusLabel]);
 
   /** Invitation answered (new or send again): keep the mail result on the page and toast it. */
   const delivered = (res: InvitationResult, again: boolean) => {
@@ -133,7 +138,7 @@ function MembersInner({ tenantId }: { tenantId: string }) {
           <Button size="sm" variant="ghost" onClick={reload} disabled={q.isFetching}>
             <RefreshCw size={13} /> {t("refresh")}
           </Button>
-          {canWrite && (
+          {perm.invite && (
             <span data-testid="tenant360-members-invite">
               <Button size="sm" variant="primary" onClick={() => setDialog({ kind: "invite" })}>
                 <UserPlus size={13} /> {t("invite")}
@@ -142,7 +147,9 @@ function MembersInner({ tenantId }: { tenantId: string }) {
           )}
         </div>
       </div>
-      {!canWrite && <div style={{ fontSize: 12, color: K.muted }}>{t("readOnly")}</div>}
+      {perm.settled && !canWrite && (
+        <div style={{ fontSize: 12, color: K.muted }} data-testid="tenant360-members-read-only">{t("readOnly")}</div>
+      )}
       {outcome && (
         <div role="status" data-testid="tenant360-members-outcome" style={{
           padding: "9px 12px", borderRadius: 8, fontSize: 12.5, lineHeight: 1.5, color: K.ink,
@@ -158,15 +165,15 @@ function MembersInner({ tenantId }: { tenantId: string }) {
       ) : (
         <DataTable<TenantMember> tableId="tenant360-members" data={members} columns={columns}
           getRowId={(r) => r.membership_id} paginate={false} compact tableMinWidth={680}
-          emptyTitle={t("emptyTitle")} emptyDescription={canWrite ? t("emptyWrite") : t("emptyRead")} />
+          emptyTitle={t("emptyTitle")} emptyDescription={perm.invite ? t("emptyWrite") : t("emptyRead")} />
       )}
 
       {d?.kind === "invite" && (
-        <InviteDialog tenantId={tenantId} onClose={() => setDialog(null)}
+        <InviteDialog tenantId={tenantId} roles={perm.inviteRoles} onClose={() => setDialog(null)}
           onDone={(res) => { setDialog(null); delivered(res, false); }} />
       )}
       {d?.kind === "send" && (
-        <InviteDialog tenantId={tenantId} member={d.member} onClose={() => setDialog(null)}
+        <InviteDialog tenantId={tenantId} member={d.member} roles={perm.inviteRoles} onClose={() => setDialog(null)}
           onDone={(res) => { setDialog(null); delivered(res, true); }} />
       )}
       {d?.kind === "role" && (
@@ -189,13 +196,15 @@ function MembersInner({ tenantId }: { tenantId: string }) {
 
 // ── dialogs ──────────────────────────────────────────────────────────────────────────────────────────────────────
 
-/** A new invitation (no `member`), or the send again of an invited member (`member`: role fixed, address typed). */
-function InviteDialog({ tenantId, member, onClose, onDone }: {
-  tenantId: string; member?: TenantMember; onClose: () => void; onDone: (res: InvitationResult) => void;
+/** A new invitation (no `member`), or the send again of an invited member (`member`: role fixed, address typed).
+ *  `roles`: the roles this session may invite as (the access read; the Dev E2E admin: editor / viewer only). */
+function InviteDialog({ tenantId, member, roles, onClose, onDone }: {
+  tenantId: string; member?: TenantMember; roles: readonly StudioRole[]; onClose: () => void;
+  onDone: (res: InvitationResult) => void;
 }) {
   const t = useT(MEM);
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState<StudioRole>("owner");
+  const [role, setRole] = useState<StudioRole>(roles.includes("owner") ? "owner" : roles[0] ?? "viewer");
   const [locale, setLocale] = useState<InviteLocale>("en");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -238,7 +247,7 @@ function InviteDialog({ tenantId, member, onClose, onDone }: {
           <Field label={t("role")} hint={t("roleHint")}>
             <Select value={role} onChange={(e) => setRole(e.target.value as StudioRole)} style={{ width: "100%" }}
               data-testid="tenant360-member-role">
-              {STUDIO_ROLES.map((r) => <option key={r} value={r}>{t(`role_${r}`)}</option>)}
+              {roles.map((r) => <option key={r} value={r}>{t(`role_${r}`)}</option>)}
             </Select>
           </Field>
         )}

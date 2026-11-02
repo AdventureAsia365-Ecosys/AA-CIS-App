@@ -582,11 +582,12 @@ export const studioInvitationsPath = (tenantId: string) =>
   `/api/admin/tenants/${encodeURIComponent(tenantId)}/members/invitations`;
 
 /** Offer the "also invite to the Content studio" box? Only for an ACTIVE CIS tenant (the API refuses a suspended or
- * offboarded one) and a staff member with tenant.write (the CRM write right alone is not enough). */
+ * offboarded one) on which this session may invite an owner (`canInviteOwner`: the members access read, AA-1031 F3,
+ * lib/tenantMembers mayInviteAs(…, "owner"); the CRM write right alone is not enough). */
 export function studioInviteOffered(
-  cisTenant: { status?: string | null } | undefined, canTenantWrite: boolean,
+  cisTenant: { status?: string | null } | undefined, canInviteOwner: boolean,
 ): boolean {
-  return !!cisTenant && canTenantWrite && (!cisTenant.status || cisTenant.status === "active");
+  return !!cisTenant && canInviteOwner && (!cisTenant.status || cisTenant.status === "active");
 }
 
 /** The studio half of the outcome: sent, created but the mail not delivered, or refused / failed. */

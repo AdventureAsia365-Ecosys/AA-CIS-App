@@ -5,8 +5,11 @@
 //   POST  /admin/tenants/{id}/members/{membership_id}/invitation/send     {email, locale}: send an invited row again
 //   PATCH /admin/tenants/{id}/members/{membership_id}                     {content_studio_role}
 //   POST  /admin/tenants/{id}/members/{membership_id}/remove              final
-// Writes need tenant.write (admin). CIS never stores the e-mail: the CRM delivers the AA system mail once, so a send
-// again asks for the address again. No CRM role anywhere (root ADR 0010a decision 3: CIS never grants one).
+//   GET   /admin/tenants/{id}/members/access                              which of these writes this session may use
+// Writes need tenant.write (admin); GET .../members/access (AA-1031 F3) says which of them THIS session may use, so a
+// read-only session (the Dev E2E admin, whose role cookie says "admin") sees no write control. CIS never stores the
+// e-mail: the CRM delivers the AA system mail once, so a send again asks for the address again. No CRM role anywhere
+// (root ADR 0010a decision 3: CIS never grants one).
 // No React here, so node --test can load it (lib/tenantMembers.test.mjs).
 
 export const STUDIO_ROLES = ["owner", "editor", "viewer"] as const;
@@ -64,6 +67,8 @@ export const memberPath = (tenantId: string, membershipId: string) =>
 export const sendAgainPath = (tenantId: string, membershipId: string) =>
   `${memberPath(tenantId, membershipId)}/invitation/send`;
 export const removePath = (tenantId: string, membershipId: string) => `${memberPath(tenantId, membershipId)}/remove`;
+/** GET: which member write controls this session may use on the tenant (AA-1031 F3, `MembersAccess`). */
+export const membersAccessPath = (tenantId: string) => `${membersPath(tenantId)}/access`;
 
 // Mirrors api/routers/admin_tenant360.py _EMAIL and the MemberInvite length limits (6..254).
 const EMAIL = /^[^@\s]{1,64}@[^@\s]{1,189}\.[^@\s]{2,63}$/;
@@ -115,4 +120,75 @@ export function deliveryProblem(d: InvitationDelivery | null | undefined): strin
   const msg = d.message ? String(d.message) : "";
   if (msg && code) return `${msg} (${code})`;
   return msg || code || `HTTP ${d.crm_status}`;
+}
+
+// ── AA-1031 (S264 live check F3): which member writes this session may use ────────────────────────────────────────
+
+export const MEMBER_WRITE_ACTIONS = ["invite", "send_again", "change_role", "remove"] as const;
+export type MemberWriteAction = (typeof MEMBER_WRITE_ACTIONS)[number];
+
+/** GET /admin/tenants/{id}/members/access (api/routers/admin_tenant360.py members_access): each action is the API's
+ *  own route policy for this caller; invite_roles are the roles an invitation (or a send again) may carry. */
+export interface MembersAccess {
+  tenant_id?: string;
+  read_only: boolean;
+  actions: Partial<Record<MemberWriteAction, boolean>>;
+  invite_roles?: string[];
+}
+
+/** What the page may offer. `settled` is false while the access read is in flight (nothing is offered then). */
+export interface MemberPermissions {
+  settled: boolean;
+  invite: boolean;
+  sendAgain: boolean;
+  changeRole: boolean;
+  remove: boolean;
+  inviteRoles: StudioRole[];
+}
+
+/**
+ * The server's answer decides. While it loads, nothing is offered (no write control flashes for a read-only
+ * session). Only when the read FAILED does the role decide (`roleCanWrite`: lib/rbac can(role, "tenant.write")); the
+ * API still refuses what it must.
+ */
+export function memberPermissions(
+  access: MembersAccess | undefined, failed: boolean, roleCanWrite: boolean,
+): MemberPermissions {
+  if (access) {
+    const a = access.actions ?? {};
+    const invite = a.invite === true;
+    const sendAgain = a.send_again === true;
+    const roles = access.invite_roles === undefined ? [...STUDIO_ROLES] : access.invite_roles.filter(isStudioRole);
+    return {
+      settled: true, invite, sendAgain, changeRole: a.change_role === true, remove: a.remove === true,
+      inviteRoles: invite || sendAgain ? roles : [],
+    };
+  }
+  const w = failed && roleCanWrite;
+  return {
+    settled: failed, invite: w, sendAgain: w, changeRole: w, remove: w, inviteRoles: w ? [...STUDIO_ROLES] : [],
+  };
+}
+
+/** May the page offer any write at all? (the "read only" note shows when the answer is settled and this is false) */
+export function anyMemberWrite(p: MemberPermissions): boolean {
+  return p.invite || p.sendAgain || p.changeRole || p.remove;
+}
+
+/** The row actions of one membership for this session: what the row allows (memberActions) AND what the session may
+ *  use. A send again re-seals the invitation with its stored role, so it needs that role in `inviteRoles`. */
+export function memberRowActions(
+  m: Pick<TenantMember, "status" | "invitation_id" | "content_studio_role">, p: MemberPermissions,
+): { changeRole: boolean; sendAgain: boolean; remove: boolean } {
+  const a = memberActions(m);
+  return {
+    changeRole: a.changeRole && p.changeRole,
+    sendAgain: a.sendAgain && p.sendAgain && p.inviteRoles.includes(m.content_studio_role),
+    remove: a.remove && p.remove,
+  };
+}
+
+/** May this session send a NEW invitation with `role`? (the agency drawer's studio box invites as owner) */
+export function mayInviteAs(p: MemberPermissions, role: StudioRole): boolean {
+  return p.invite && p.inviteRoles.includes(role);
 }

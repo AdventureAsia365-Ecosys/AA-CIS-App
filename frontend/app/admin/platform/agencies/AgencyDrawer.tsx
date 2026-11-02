@@ -16,7 +16,9 @@
 // S263 (crm.ops.v1 1.8): withdraw the first-owner invitation AA sent (pending, or claimed and never accepted), so a new
 // one can go; delete a TEST (synthetic) agency with no member and no traveller (typed name + ticket; the section is
 // shown for synthetic agencies only and says why it is disabled). A real agency is deleted only by its owner.
-// AA-1031 (S264): when the agency id is an active CIS tenant and the staff member has tenant.write, "Invite first owner"
+// AA-1031 (S264): when the agency id is an active CIS tenant and this session may invite a Content studio owner on it
+// (the API's own answer, GET /api/admin/tenants/{id}/members/access via useMembersAccess: a read-only session such as
+// the Dev E2E admin gets no box; the role's tenant.write decides only when that read failed), "Invite first owner"
 // offers "Also invite to the Content studio as owner" (ticked by default): after the CRM invitation succeeds, the same
 // address gets the CIS Content studio invitation (POST /api/admin/tenants/{id}/members/invitations, the Tenant 360
 // route). A staff action, so root ADR 0010a holds. Both results stay in the section (CRM + Content studio).
@@ -24,7 +26,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Lock, RefreshCw, Unlock } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
-import { can } from "@/lib/rbac";
 import {
   ApiError,
   Badge,
@@ -40,7 +41,6 @@ import {
   mono,
   sans,
   useFormat,
-  useAdminIdentity,
   useT,
   useToast,
   type ColumnDef,
@@ -86,6 +86,8 @@ import {
   type WriteResult,
 } from "@/lib/crmConsole";
 import { useTenants } from "../../_components/TenantSelect";
+import { useMembersAccess } from "../../_components/useMembersAccess";
+import { mayInviteAs } from "@/lib/tenantMembers";
 import { Field, InlineError, Section, WriteModal, fieldStyle, noteStyle } from "./consoleUi";
 import { DRAWER } from "./messages";
 import { useCrmText } from "./useCrmText";
@@ -331,12 +333,14 @@ function FirstOwnerSection({ agency, canWrite, base, onDone }: { agency: TenantS
   const t = useT(DRAWER);
   const crm = useCrmText();
   const { formatDateTime } = useFormat();
-  const role = useAdminIdentity().role;
   const { byId } = useTenants();
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState("");
-  // AA-1031: the Content studio half, offered only for an active CIS tenant and a tenant.write staff member.
-  const studioOffered = studioInviteOffered(byId.get(agency.tenant_id), can(role, "tenant.write"));
+  // AA-1031: the Content studio half, offered only for an active CIS tenant on which this session may invite an owner
+  // (the access read runs only for an agency that is a CIS tenant).
+  const cisTenant = byId.get(agency.tenant_id);
+  const studioAccess = useMembersAccess(cisTenant ? agency.tenant_id : null);
+  const studioOffered = studioInviteOffered(cisTenant, mayInviteAs(studioAccess, "owner"));
   const [alsoStudio, setAlsoStudio] = useState(true);
   const [last, setLast] = useState<OwnerInviteResult | null>(null);
   // The result of the call that just finished, read by onDone in the same tick (the state is not rendered yet).
