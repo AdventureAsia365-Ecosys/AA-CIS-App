@@ -961,9 +961,15 @@
             "type": "integer"
           },
           "hard_stop": {
-            "default": true,
-            "title": "Hard Stop",
-            "type": "boolean"
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hard Stop"
           },
           "per_day_usd": {
             "anyOf": [

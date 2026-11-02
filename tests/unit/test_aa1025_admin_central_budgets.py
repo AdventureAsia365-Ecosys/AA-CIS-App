@@ -82,6 +82,20 @@ def test_put_a_central_cap_writes_the_month_column_and_drops_the_cache(monkeypat
     assert out["per_month_usd"] is None and dropped == [True]
 
 
+def test_a_central_cap_without_hard_stop_only_alerts(monkeypatch):
+    # T-8 (S263): a Dev central cap never blocks traffic unless the caller asks for a hard stop.
+    monkeypatch.setattr(central_budget, "invalidate", lambda: None)
+    conn = Conn()
+    asyncio.run(ab.upsert_budget("llm", "app:cis", ab.BudgetUpdate(per_day_usd=5.0), _req(conn), "s", None))
+    assert conn.executed[0][1][5] is False
+
+
+def test_a_provider_row_without_hard_stop_still_stops_hard():
+    conn = Conn()
+    asyncio.run(ab.upsert_budget("dfs", "global", ab.BudgetUpdate(per_day_usd=10.0), _req(conn), "s", None))
+    assert conn.executed[0][1][4] is True
+
+
 def test_put_a_provider_row_keeps_its_old_statement(monkeypatch):
     conn = Conn()
     out = asyncio.run(ab.upsert_budget("dfs", "global", ab.BudgetUpdate(per_day_usd=10.0), _req(conn), "s", None))

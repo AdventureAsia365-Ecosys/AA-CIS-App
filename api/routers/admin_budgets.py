@@ -42,7 +42,9 @@ class BudgetUpdate(BaseModel):
     per_day_usd: Optional[float] = Field(None, ge=0)
     # AA-1025 A7: the UTC month cap of a central LLM row (provider 'llm' only).
     per_month_usd: Optional[float] = Field(None, ge=0)
-    hard_stop: bool = True
+    # None = the default of the row's provider: a provider row stops hard, a central 'llm' row only alerts (tech lead
+    # decision T-8, S263: Dev central caps must never block normal traffic unless someone asks for a hard stop).
+    hard_stop: Optional[bool] = None
     alert_pct: int = Field(80, ge=1, le=100)
 
 
@@ -108,13 +110,14 @@ async def upsert_budget(provider: str, scope: str, body: BudgetUpdate, request: 
     _valid(provider, scope, body)
     pool = request.app.state.pool
     central = provider == CENTRAL_PROVIDER
+    hard_stop = body.hard_stop if body.hard_stop is not None else not central
     try:
         async with pool.acquire() as conn:
             if central:
                 await conn.execute(UPSERT_CENTRAL_SQL, provider, scope, body.per_run_usd, body.per_day_usd,
-                                   body.per_month_usd, body.hard_stop, body.alert_pct, x_admin_user_id or "admin")
+                                   body.per_month_usd, hard_stop, body.alert_pct, x_admin_user_id or "admin")
             else:
-                await conn.execute(UPSERT_SQL, provider, scope, body.per_run_usd, body.per_day_usd, body.hard_stop,
+                await conn.execute(UPSERT_SQL, provider, scope, body.per_run_usd, body.per_day_usd, hard_stop,
                                    body.alert_pct, x_admin_user_id or "admin")
     except (asyncpg.CheckViolationError, asyncpg.UndefinedColumnError) as e:
         if not central:
