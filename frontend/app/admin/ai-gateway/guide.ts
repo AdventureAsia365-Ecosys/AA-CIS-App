@@ -53,6 +53,11 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
       heading: "How to read a row",
       blocks: [
         { kind: "terms", uiLabels: true, items: [
+          { term: "App profiles", text: "The AI switch of each app (CIS, TripPlanner, Partner CRM, AA-Booking). AI "
+            + "off: every AI call of that app is refused before it is sent, with a 0 USD refused row on the Calls tab, "
+            + "and its jobs wait until AI is back on. The card also keeps each app's bulk pause, default daily budget "
+            + "and what the app shows when AI is unavailable. Today the CIS gateway acts on the switch; the other apps "
+            + "read their row as they adopt it. Switching off needs a reason and is audited." },
           { term: "LLM connections", text: "One row per way the platform reaches a model, for example Bedrock in an "
             + "AWS account (shown by its account number) or the OpenAI API. The partner CRM's AI calls have one row "
             + "of their own, read from the CRM with your staff sign-in; they are switched in the CRM, not here." },
@@ -66,7 +71,8 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
           { term: "Errors · latency", text: "For the last 24 hours and the last 7 days: how many calls reached the "
             + "provider, the share that failed (an error, an answer cut short or a billed but unusable answer), and "
             + "the answer time: p50 is the typical call, p95 the slowest one in twenty. Calls our own guard or a switch "
-            + "refused before sending are counted apart and are not errors. Geoapify stores no answer time. The "
+            + "refused before sending are counted apart and are not errors. Geoapify's answer time is the mean time per "
+            + "request of each batch (batches before 02/11/2026 have none). The "
             + "partner CRM rows come from the CRM's daily totals: today (UTC) and the last 7 days, refusals counted as "
             + "failures, no answer time." },
           { term: "Health", text: "For a connection: when it last answered and the last error type. For Jev: calls "
