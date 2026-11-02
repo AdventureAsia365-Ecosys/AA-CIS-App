@@ -31,5 +31,11 @@ view it reads.
 ## Should know
 - 323 cannot be re-run on a database where 341 is applied (CREATE OR REPLACE VIEW cannot drop columns); DB Migrate
   never re-runs a registered version, and the 323 integration test undoes everything first.
-- Number: 339 / 340 are held by other S264 lanes; if they do not land first, renumber to main max + 1
-  (`git grep '341_'` and the '341' strings in the file, the test and conftest). Preflight lint is green otherwise.
+- Number (review fix pass): 339 / 340 are held by the S264 lane l1 migration-only PR (branch
+  `feat/s264-l1-migrations-339-340`). On today's main (max 338) the CI migration preflight refuses 341 ("339 = main
+  max + 1"), so this PR is queued only after that PR merges. Checked locally: on main + those two commits the preflight
+  passes (341, class contract, lint ok) and `test_aa1027_migration_341` + `test_aa642_migration_323` pass on local
+  Postgres. Fallback if that PR does not land first: rebase on origin/main, `git mv` the file and the test to main
+  max + 1, replace '341' in the file, the test, conftest and these notes (every '341' there is the migration number),
+  re-run the preflight. Rehearsed with 339 on today's main: preflight green, the two integration tests pass. Never the
+  `migration:out-of-order` label (a labelled file is never auto-applied).

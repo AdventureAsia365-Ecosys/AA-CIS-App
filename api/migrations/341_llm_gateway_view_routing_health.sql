@@ -66,8 +66,10 @@
 -- After 341, migration 323 itself can no longer be re-run on that database (CREATE OR REPLACE VIEW cannot drop the two
 -- appended columns); DB Migrate never re-runs a registered version.
 --
--- Number. 338 is the highest on main (02/11); 339 and 340 are held by other lanes of session S264. If they do not
--- land first, renumber to the owner main max + 1 (git grep '341_' and '341' in this file, the test and conftest).
+-- Number. 338 is the highest on main (02/11); 339 and 340 are held by other lanes of session S264. The CI migration
+-- preflight refuses 341 until 339 and 340 are on main, so this PR is queued after the PR that adds them. If they do not
+-- land first, renumber to the owner main max + 1 (git grep '341_' and '341' in this file, the test and conftest);
+-- never the migration:out-of-order label (a labelled file is never auto-applied).
 --
 -- Locks. Three column GRANTs (no lock that blocks readers or writers of the tables) and one CREATE OR REPLACE VIEW
 -- (AccessExclusiveLock on the view only, held for the transaction). lock_timeout 5s, statement_timeout 1min.
