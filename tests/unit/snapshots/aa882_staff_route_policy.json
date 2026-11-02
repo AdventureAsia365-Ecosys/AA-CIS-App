@@ -627,6 +627,10 @@
     "capability": "tenant.read",
     "module": "api.routers.admin_tenant360"
   },
+  "GET /admin/tenants/{tenant_id}/members/access": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_tenant360"
+  },
   "GET /admin/tenants/{tenant_id}/quality": {
     "capability": "tenant.read",
     "module": "api.routers.admin_tenant360"
