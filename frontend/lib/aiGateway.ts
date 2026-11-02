@@ -967,7 +967,7 @@ export function isAccessState(state: string | null | undefined): state is Access
 
 // ── C4 polish (N4): raw codes in plain words ─────────────────────────────────────────────────────────────────────
 
-/** The ledger's error classes (shared/llm_client/call_log.py ERROR_CLASSES, migration 319 CHECK; a unit test keeps
+/** The ledger's error classes (shared/aa_llm/errors.py LEDGER_ERROR_CLASSES, migration 319 CHECK; a unit test keeps
  *  the two lists equal). The page prints each one in words (messages.ts ERROR_CLASS), never the code. */
 export const ERROR_CLASSES = [
   "access_denied", "quota_exhausted", "throttled", "credential", "other", "deadline", "budget", "truncated",

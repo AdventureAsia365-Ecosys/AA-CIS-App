@@ -26,7 +26,9 @@ import structlog
 
 from shared.secrets import get_database_url
 
-from .errors import TRUNCATED_STOP_REASONS
+from shared.aa_llm import ledger as core_ledger
+
+from .errors import TRUNCATED_STOP_REASONS  # noqa: F401 — kept importable here (the core's own frozenset)
 from .models import ANTHROPIC_API_LABEL_PREFIX, AZURE_OPENAI_LABEL_PREFIX
 
 logger = structlog.get_logger()
@@ -66,9 +68,10 @@ _SHIPPED_INSERT_SQL = _INSERT_SQL
 # fields are), and v2 is not tried again for _V2_RETRY_SECONDS. The AA-729 harness relabels this statement too
 # (evalpatch.relabel_v2_sql); v2 is used only when both statements are the shipped ones or both were replaced, so an
 # eval row can never escape the relabel through it.
-V2_COLUMNS = ("app", "status", "error_class", "latency_ms", "connection_key", "deployment_wire_id", "attempt_no",
-              "request_id", "tour_id", "reasoning_tokens", "effort", "is_shadow", "is_experiment", "prompt_hash",
-              "prompt_version", "units", "unit_kind")
+# AA-1024 A10: the columns and their normalisation are the shared core's (shared/aa_llm/ledger.py, the row TripPlanner
+# writes too), so a CIS row and a TripPlanner row have one shape. The statement text below stays here: the AA-729 eval
+# harness relabels it; tests/unit/test_aa1024_a10_core_identity.py pins its column list to core_ledger.COLUMNS.
+V2_COLUMNS = core_ledger.V2_COLUMNS
 _INSERT_V2_SQL = """
     INSERT INTO shared.llm_call_log
         (tenant_id, stage, role, model, tokens_in, tokens_out, cost_usd, quality_signal,
@@ -90,15 +93,15 @@ _v2_missing_at = 0.0
 # The app every row of this module belongs to (llm_call_log.app); TripPlanner writes its own rows.
 APP = "cis"
 # llm_call_log.status / error_class values (migration 319 CHECKs).
-STATUS_OK, STATUS_REFUSED, STATUS_ERROR = "ok", "refused", "error"
-STATUS_BILLED_UNUSABLE, STATUS_TRUNCATED = "billed_unusable", "truncated"
-STATUSES = (STATUS_OK, STATUS_REFUSED, STATUS_ERROR, STATUS_BILLED_UNUSABLE, STATUS_TRUNCATED)
+STATUS_OK, STATUS_REFUSED, STATUS_ERROR = core_ledger.STATUS_OK, core_ledger.STATUS_REFUSED, core_ledger.STATUS_ERROR
+STATUS_BILLED_UNUSABLE, STATUS_TRUNCATED = core_ledger.STATUS_BILLED_UNUSABLE, core_ledger.STATUS_TRUNCATED
+STATUSES = core_ledger.STATUSES
 # AA-642 A1: 'disabled' = the stage kill switch, CHECK of migration 326. AA-642 A5: 'role_not_served' = no connection
-# serves the stage's role, CHECK of migration 338. (frontend/lib/aiGatewayPolish.test.mjs parses this tuple.)
-ERROR_CLASSES = ("access_denied", "quota_exhausted", "throttled", "credential", "other", "deadline", "budget",
-                 "truncated", "disabled", "role_not_served")
+# serves the stage's role, CHECK of migration 338. AA-1024 A10: the core's list (shared/aa_llm/errors.py
+# LEDGER_ERROR_CLASSES, which frontend/lib/aiGatewayPolish.test.mjs parses).
+ERROR_CLASSES = core_ledger.ERROR_CLASSES
 # A billed answer cut at its token limit (Anthropic / Bedrock max_tokens, OpenAI length): status 'truncated'. AA-1017:
-# the class and its stop reasons live in errors.py (TRUNCATED, TRUNCATED_STOP_REASONS, imported above), the one place
+# the class and its stop reasons live in the core's errors.py (TRUNCATED, TRUNCATED_STOP_REASONS), the one place
 # the gateway classifies outcomes.
 # The gateway facts of one reply that billed_fields() passes on (besides the S6 four).
 V2_BILLED_KEYS = ("latency_ms", "attempt_no", "deployment_wire_id", "request_id", "effort", "reasoning_tokens",
@@ -133,61 +136,22 @@ def _v2_ready() -> bool:
     return not (_v2_missing_at and _time.monotonic() - _v2_missing_at < _V2_RETRY_SECONDS)
 
 
-def _text(value, limit: int) -> Optional[str]:
-    return value[:limit] if isinstance(value, str) and value else None
-
-
-def _uuid_or_none(value) -> Optional[str]:
-    if value is None or str(value) in ("", "None"):
-        return None
-    try:
-        return str(uuid.UUID(str(value)))
-    except ValueError:
-        return None
-
-
 def _v2_values(*, stop_reason=None, quality_signal: Optional[dict] = None, connection_key=None,
                **fields) -> tuple:
     """The 17 values of V2_COLUMNS for one row (``fields`` = the caller's v2 keyword arguments). Derived when the
     caller is silent: app = APP; status = billed_unusable for a billed_unusable signal, truncated for a reply cut at
     its token limit, else ok; is_shadow from the {"shadow": true} signal; is_experiment while an eval label is bound
     (or the signal carries an eval run). A value of the wrong type or outside the CHECKs is written NULL. Never
-    raises."""
+    raises. AA-1024 A10: the shared core's ``ledger.v2_values``; CIS adds only its app default and the eval label."""
     qs = quality_signal if isinstance(quality_signal, dict) else {}
-    status = fields.get("status") if fields.get("status") in STATUSES else None
-    if status is None:
-        if qs.get("billed_unusable") is True:
-            status = STATUS_BILLED_UNUSABLE
-        elif isinstance(stop_reason, str) and stop_reason in TRUNCATED_STOP_REASONS:
-            status = STATUS_TRUNCATED
-        else:
-            status = STATUS_OK
-    error_class = fields.get("error_class") if fields.get("error_class") in ERROR_CLASSES else None
-    if error_class is None and status == STATUS_TRUNCATED:
-        error_class = "truncated"
-    latency = _int_or_none(fields.get("latency_ms"))
-    attempt = _int_or_none(fields.get("attempt_no"))
-    shadow = fields.get("is_shadow")
+    app = fields.get("app")
     experiment = fields.get("is_experiment")
-    return (
-        _text(fields.get("app"), 40) or APP,
-        status,
-        error_class,
-        latency if latency is not None and latency >= 0 else None,
-        _text(connection_key, 100),
-        _text(fields.get("deployment_wire_id"), 300),
-        attempt if attempt is not None and attempt >= 1 else None,
-        _text(fields.get("request_id"), 200),
-        _uuid_or_none(fields.get("tour_id")),
-        _int_or_none(fields.get("reasoning_tokens")),
-        _text(fields.get("effort"), 40),
-        shadow if isinstance(shadow, bool) else qs.get("shadow") is True,
-        experiment if isinstance(experiment, bool) else (_eval_label.get() is not None or "eval_run" in qs),
-        _text(fields.get("prompt_hash"), 128),
-        _text(fields.get("prompt_version"), 100),
-        _int_or_none(fields.get("units")),
-        _text(fields.get("unit_kind"), 40),
-    )
+    if not isinstance(experiment, bool):
+        experiment = _eval_label.get() is not None or "eval_run" in qs
+    return core_ledger.v2_values(
+        **{c: fields.get(c) for c in V2_COLUMNS if c not in ("app", "connection_key", "is_experiment")},
+        app=app if isinstance(app, str) and app else APP, connection_key=connection_key, is_experiment=experiment,
+        stop_reason=stop_reason, quality_signal=qs)
 
 
 def _in_transaction(conn) -> bool:
