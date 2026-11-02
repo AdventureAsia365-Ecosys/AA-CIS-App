@@ -31,6 +31,10 @@ PASSED on 02/11 (0.00021 USD).
 - `tests/unit/test_aa1026_dedupe_acc2_route.py` (walks every route through `LLMClient.generate` with providers failing:
   dedupe = acc3 → Maverick on acc2 Converse → OpenAI API; every other stage unchanged; failure-domain report).
 
+- Code PR of the lane: `services/jobs/llm_contract_smoke_job.py` `PLANNED["a3_place_dedupe"] = "llama4-maverick"`
+  (+ comment), `tests/unit/test_aa1026_contract_smoke.py` (Maverick fixture with the 337 capabilities; every case is
+  planned; the plan runs the stage on Maverick in prompt mode), CONTEXT.md (339, the plan's structured-mode rule).
+
 ## Tradeoffs
 
 - No A/B or shadow rung for Maverick (as 331 / 333): the verdict is checked by `a3_place_dedupe_check` (two makers must
