@@ -2023,6 +2023,10 @@ entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
   carries an e-mail). Page `/admin/platform/agencies` (nav Platform › Tenants › Agencies (CRM)). AA-1031 (S264): the Create
   agency picker leaves out CIS tenants that already have an agency in the loaded list, and the CRM's 409
   `tenant_deleted` (crm.ops.v1 1.9: the id of a deleted test agency, never reused) reads "create a new CIS tenant".
+  When the agency id is an active CIS tenant and the staff member has `tenant.write`, the drawer's "Invite first owner"
+  offers "Also invite to the Content studio as owner" (ticked by default): after the CRM invitation is sent, the page
+  calls the Tenant 360 route `POST /admin/tenants/{id}/members/invitations` (role owner) with the same address — a
+  staff action, so no CRM event grants a CIS role (root ADR 0010a) — and keeps both results in the section.
   **One health definition (S243):** a card's `status` is `overall.status` from `api/services/app_health.py`
   `overall_status(probe, traffic)` — the worst known signal of the app's own check (`probe`; none for TripPlanner) and
   its CloudWatch traffic of the last 24 h (`traffic_section`, the AA-858 health section and its Redis key, shared by

@@ -251,3 +251,26 @@ test("every delete-block reason has words in English and Vietnamese", () => {
     assert.equal(n, 2, `deleteBlocked_${code}`);
   }
 });
+
+// AA-1031 (S264): "Invite first owner" can also invite the same address to the Content studio as owner.
+test("studio invite is offered only for an active CIS tenant and a tenant.write staff member", async () => {
+  const { studioInviteOffered, studioInvitationsPath } = await import("./crmConsole.ts");
+  assert.equal(studioInviteOffered(undefined, true), false);
+  assert.equal(studioInviteOffered({ status: "active" }, false), false);
+  assert.equal(studioInviteOffered({ status: "suspended" }, true), false);
+  assert.equal(studioInviteOffered({ status: "offboarded" }, true), false);
+  assert.ok(studioInviteOffered({ status: "active" }, true));
+  assert.ok(studioInviteOffered({}, true));
+  assert.equal(studioInvitationsPath("t-1"), "/api/admin/tenants/t-1/members/invitations");
+});
+
+test("studio invite outcome: sent, or created but not delivered with the CRM reason", async () => {
+  const { studioInviteOutcome } = await import("./crmConsole.ts");
+  assert.deepEqual(studioInviteOutcome({ delivery: { status: "sent", crm_status: 202, expires_at: "2026-11-09T00:00:00Z" } }),
+    { kind: "sent", expiresAt: "2026-11-09T00:00:00Z" });
+  assert.deepEqual(studioInviteOutcome({ delivery: { status: "failed", crm_status: 409, detail: "x_code", message: "Nope" } }),
+    { kind: "not_delivered", why: "Nope (x_code)" });
+  assert.deepEqual(studioInviteOutcome({ delivery: { status: "failed", crm_status: 503 } }),
+    { kind: "not_delivered", why: "HTTP 503" });
+  assert.deepEqual(studioInviteOutcome(null), { kind: "not_delivered", why: "no answer" });
+});

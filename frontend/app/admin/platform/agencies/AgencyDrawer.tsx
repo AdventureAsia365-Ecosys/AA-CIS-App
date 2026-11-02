@@ -16,10 +16,15 @@
 // S263 (crm.ops.v1 1.8): withdraw the first-owner invitation AA sent (pending, or claimed and never accepted), so a new
 // one can go; delete a TEST (synthetic) agency with no member and no traveller (typed name + ticket; the section is
 // shown for synthetic agencies only and says why it is disabled). A real agency is deleted only by its owner.
+// AA-1031 (S264): when the agency id is an active CIS tenant and the staff member has tenant.write, "Invite first owner"
+// offers "Also invite to the Content studio as owner" (ticked by default): after the CRM invitation succeeds, the same
+// address gets the CIS Content studio invitation (POST /api/admin/tenants/{id}/members/invitations, the Tenant 360
+// route). A staff action, so root ADR 0010a holds. Both results stay in the section (CRM + Content studio).
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Lock, RefreshCw, Unlock } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { can } from "@/lib/rbac";
 import {
   ApiError,
   Badge,
@@ -31,9 +36,11 @@ import {
   SkeletonBar,
   SkeletonStyle,
   apiGet,
+  apiSend,
   mono,
   sans,
   useFormat,
+  useAdminIdentity,
   useT,
   useToast,
   type ColumnDef,
@@ -49,6 +56,9 @@ import {
   pct,
   recoveryDue,
   shortId,
+  studioInvitationsPath,
+  studioInviteOffered,
+  studioInviteOutcome,
   testAgencyDeleteBlock,
   usdPct,
   type AgencyDeleted,
@@ -70,10 +80,12 @@ import {
   type OwnerInviteWithdrawn,
   type RecoveryCompleted,
   type RecoveryOpened,
+  type StudioInviteOutcome,
   type TenantSummary,
   type TicketBody,
   type WriteResult,
 } from "@/lib/crmConsole";
+import { useTenants } from "../../_components/TenantSelect";
 import { Field, InlineError, Section, WriteModal, fieldStyle, noteStyle } from "./consoleUi";
 import { DRAWER } from "./messages";
 import { useCrmText } from "./useCrmText";
@@ -313,12 +325,22 @@ function AccessSection({ agency, canWrite, base, onDone }: { agency: TenantSumma
 
 // ── 3. First owner ────────────────────────────────────────────────────────────────────────────────
 
+type OwnerInviteResult = { crmExpires: string; studio: StudioInviteOutcome | null };
+
 function FirstOwnerSection({ agency, canWrite, base, onDone }: { agency: TenantSummary; canWrite: boolean; base: string; onDone: Done }) {
   const t = useT(DRAWER);
   const crm = useCrmText();
   const { formatDateTime } = useFormat();
+  const role = useAdminIdentity().role;
+  const { byId } = useTenants();
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState("");
+  // AA-1031: the Content studio half, offered only for an active CIS tenant and a tenant.write staff member.
+  const studioOffered = studioInviteOffered(byId.get(agency.tenant_id), can(role, "tenant.write"));
+  const [alsoStudio, setAlsoStudio] = useState(true);
+  const [last, setLast] = useState<OwnerInviteResult | null>(null);
+  // The result of the call that just finished, read by onDone in the same tick (the state is not rendered yet).
+  const lastRef = useRef<OwnerInviteResult | null>(null);
   const path = base.slice(CRM_API.length);
   const blocked = agency.has_owner
     ? t("ownerExists")
@@ -328,10 +350,39 @@ function FirstOwnerSection({ agency, canWrite, base, onDone }: { agency: TenantS
         ? t("onlyActive")
         : null;
   const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
-  const close = () => { setEmail(""); setOpen(false); };
+  const close = () => { setEmail(""); setAlsoStudio(true); setOpen(false); };
   const [withdrawing, setWithdrawing] = useState(false);
   // S263: an invitation sent but never accepted blocks a new one (owner_invite_pending); AA withdraws it first.
   const canWithdraw = !agency.has_owner && (agency.state === "active" || agency.state === "locked");
+  const expiresText = (at: unknown) => (typeof at === "string" && at ? t("expires", formatDateTime(at)) : "");
+
+  /** The CRM first-owner invitation, then (only when it was sent, and the box is ticked) the studio one. A refused
+   *  CRM call stops here, so a retry never creates a second studio invitation. */
+  const invite = async (ticket: string): Promise<WriteResult<OwnerInviteAccepted>> => {
+    const address = email.trim();
+    const r = await crm.write<OwnerInviteAccepted>("POST", `${path}/owner-invite`, { owner_email: address, ticket_ref: ticket });
+    if (!r.ok) return r;
+    let studio: StudioInviteOutcome | null = null;
+    if (studioOffered && alsoStudio) {
+      try {
+        studio = studioInviteOutcome(await apiSend<Parameters<typeof studioInviteOutcome>[0]>(
+          studioInvitationsPath(agency.tenant_id),
+          { method: "POST", body: { email: address, content_studio_role: "owner", locale: "en" }, admin: true }));
+      } catch (e) {
+        studio = { kind: "failed", why: (e as Error)?.message || String(e) };
+      }
+    }
+    lastRef.current = { crmExpires: expiresText(r.body?.expires_at), studio };
+    setLast(lastRef.current);
+    return r;
+  };
+
+  const studioLine = (s: StudioInviteOutcome | null) =>
+    s === null ? t("resultStudioSkipped")
+      : s.kind === "sent" ? t("resultStudioSent", expiresText(s.expiresAt))
+        : s.kind === "not_delivered" ? t("resultStudioNotDelivered", s.why)
+          : t("resultStudioFailed", s.why);
+
   return (
     <Section title={t("firstOwner")} testId="crm-first-owner">
       <div style={noteStyle}>{t("firstOwnerNote")}</div>
@@ -347,6 +398,20 @@ function FirstOwnerSection({ agency, canWrite, base, onDone }: { agency: TenantS
           )}
         </div>
       )}
+      {last && (
+        <div role="status" data-testid="crm-first-owner-result" style={{
+          ...noteStyle, color: K.ink, border: `1px solid ${K.line}`, borderRadius: RADIUS.md, padding: "8px 10px",
+          display: "grid", gap: 4,
+        }}>
+          <strong style={{ fontSize: 12 }}>{t("resultTitle")}</strong>
+          <span>{t("resultCrm", last.crmExpires)}</span>
+          {(studioOffered || last.studio) && (
+            <span style={{ color: last.studio && last.studio.kind !== "sent" ? K.danger : K.ink }}>
+              {studioLine(last.studio)}
+            </span>
+          )}
+        </div>
+      )}
       <WriteModal open={withdrawing} onClose={() => setWithdrawing(false)} title={t("withdrawTitle")}
         confirmLabel={t("withdrawConfirm")} destructive
         submit={(ticket) => crm.write<OwnerInviteWithdrawn>("POST", `${path}/owner-invite/withdraw`, { ticket_ref: ticket })}
@@ -355,17 +420,28 @@ function FirstOwnerSection({ agency, canWrite, base, onDone }: { agency: TenantS
       </WriteModal>
       <WriteModal open={open} onClose={close} title={t("inviteTitle")} confirmLabel={t("sendInvite")}
         canSubmit={emailOk}
-        submit={(ticket) => crm.write<OwnerInviteAccepted>("POST", `${path}/owner-invite`, { owner_email: email.trim(), ticket_ref: ticket })}
+        submit={invite}
         onDone={(r) => {
-          const expires = typeof r.body?.expires_at === "string" ? t("expires", formatDateTime(r.body.expires_at)) : "";
+          const studio = lastRef.current?.studio ?? null;
+          const studioOk = studio === null || studio.kind === "sent";
           close();
-          onDone(t("inviteSent", expires));
+          onDone(studioOk ? t("inviteSent", expiresText(r.body?.expires_at)) : t("studioProblem"));
         }}>
         <Field label={t("ownerEmail")} htmlFor="crm-owner-email"
           hint={email && !emailOk ? t("emailBad") : t("emailHint")}>
           <Input id="crm-owner-email" type="email" autoComplete="off" value={email} maxLength={254}
             onChange={(e) => setEmail(e.target.value)} style={fieldStyle} />
         </Field>
+        {studioOffered && (
+          <div style={{ display: "grid", gap: 4 }}>
+            <label style={{ display: "inline-flex", gap: 8, alignItems: "center", fontSize: 13 }}>
+              <Checkbox checked={alsoStudio} onChange={(e) => setAlsoStudio(e.target.checked)}
+                data-testid="crm-owner-also-studio" />
+              {t("studioBox")}
+            </label>
+            <span style={noteStyle}>{t("studioBoxHint")}</span>
+          </div>
+        )}
       </WriteModal>
     </Section>
   );
