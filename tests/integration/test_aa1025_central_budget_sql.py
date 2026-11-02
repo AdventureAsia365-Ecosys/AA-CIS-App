@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import asyncpg
+from pathlib import Path
 import pytest
 import pytest_asyncio
 
@@ -35,6 +36,9 @@ KIND = "aa1025_probe_kind"
 NOW = datetime(2024, 8, 15, 12, 0, tzinfo=timezone.utc)
 
 
+M340 = Path(__file__).resolve().parents[2] / "api" / "migrations" / "340_spend_budget_central_llm_scopes.sql"
+
+
 def _utc(*a):
     return datetime(*a, tzinfo=timezone.utc)
 
@@ -42,6 +46,10 @@ def _utc(*a):
 @pytest_asyncio.fixture
 async def pool():
     p = await asyncpg.create_pool(DSN, min_size=1, max_size=4)
+    # Modules that re-run an older migration (226, 304) leave spend_budget_provider_check without 'llm': start from
+    # 340's state (the file is re-runnable and changes nothing when 340 is already live).
+    async with p.acquire() as c:
+        await c.execute(M340.read_text(encoding="utf-8"))
     yield p
     async with p.acquire() as c:
         await c.execute("DELETE FROM shared.llm_call_log WHERE app = $1 OR stage = ANY($2::text[])", APP,
