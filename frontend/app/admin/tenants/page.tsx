@@ -10,6 +10,7 @@
 // AA-766 (S236): Tenant 360 — Settings editors (plan, RPM, markets, channels, posts/week), and new
 // Cost, Quality (per T10 gate + edit rate) and Markets tabs, in ./_components (admin-only data).
 // AA-994: text in the UI language (messages.ts, _components/tenant360.messages.ts); values from the API stay as sent.
+// AA-1031 (S264): Members tab (Content studio memberships: invite, send again, change role, remove), ./_components.
 
 import { Suspense, useState, useEffect, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -30,6 +31,7 @@ import { Tenant360Cost } from "./_components/Tenant360Cost";
 import { Tenant360Quality } from "./_components/Tenant360Quality";
 import { Tenant360Markets } from "./_components/Tenant360Markets";
 import { Tenant360VoiceMemory } from "./_components/Tenant360VoiceMemory";
+import { Tenant360Members } from "./_components/Tenant360Members";
 import { fmtDailyPublishLimit } from "./_components/tenant360";
 import { T360_WORDS_MESSAGES } from "./_components/tenant360.messages";
 import { SCORE_BANDS } from "@/lib/quality-registry.generated";
@@ -707,10 +709,10 @@ function SocialContentTabContent({ tenantId }: { tenantId: string }) {
 // separate page. Added tabs: Usage & Billing, Quality (gate telemetry), Audit, Settings.
 // AA-766: + Cost and Markets; Quality and Settings rebuilt (./_components).
 type DTab = "tours" | "pipeline" | "activity" | "api" | "brand" | "social_content"
-          | "billing" | "cost" | "quality" | "markets" | "audit" | "settings";
+          | "billing" | "cost" | "quality" | "markets" | "members" | "audit" | "settings";
 
 const DETAIL_TABS: readonly DTab[] = ["tours", "pipeline", "activity", "api", "brand", "social_content", "billing",
-  "cost", "quality", "markets", "audit", "settings"];
+  "cost", "quality", "markets", "members", "audit", "settings"];
 
 /** The tab a deep link asks for, only for the tenant it names; "tours" otherwise. */
 function initialDetailTab(linkTenant: string | null, linkTab: string | null, tenantId: string): DTab {
@@ -778,6 +780,8 @@ function TenantDetail({ tenant, onChanged }: {
     { key: "cost" as DTab,     label: tr("tabCost") },
     { key: "quality" as DTab,  label: tr("tabQuality") },
     { key: "markets" as DTab,  label: tr("tabMarkets") },
+    // AA-1031 (S264): Content studio members (invite, send again, role, remove) — root ADR 0010a decision 4.
+    { key: "members" as DTab,  label: tr("tabMembers") },
     { key: "audit" as DTab,    label: tr("tabAudit") },
     { key: "settings" as DTab, label: tr("tabSettings") },
   ];
@@ -824,6 +828,7 @@ function TenantDetail({ tenant, onChanged }: {
       {tab === "quality"  && <Tenant360Quality   tenantId={tenantId} byChannel={<ChannelGateTelemetry tenantId={tenantId} />} />}
       {tab === "quality"  && <Tenant360VoiceMemory tenantId={tenantId} />}
       {tab === "markets"  && <Tenant360Markets   tenantId={tenantId} />}
+      {tab === "members"  && <Tenant360Members   tenantId={tenantId} />}
       {tab === "audit"    && <AuditTabContent    tenantId={tenantId} />}
       {tab === "settings" && (
         <Tenant360Settings tenantId={tenantId} planTier={tenant.plan_tier} rateLimitRpm={tenant.rate_limit_rpm}
