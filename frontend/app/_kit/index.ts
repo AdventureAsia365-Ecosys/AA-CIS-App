@@ -51,7 +51,10 @@ export {
   formatMoney, minorUnits, formatDay, isIsoDay, parseDayInput, relativeParts, type RelativeParts,
 } from "./core/format";
 export { KitGallery } from "./core/KitGallery";
-export { useSidebarCollapsed } from "./core/useSidebar";
+export { useSidebarCollapsed, useNavGroups, type NavGroups } from "./core/useSidebar";
+// S264 — collapsible sidebar nav groups (the same component and store in every app's sidebar).
+export { NavGroup, NavGroupHeader, navBadgeText, type NavGroupProps, type NavGroupHeaderProps } from "./core/NavGroup";
+export { navGroupId, resolveNavGroupOpen, type NavGroupState } from "./core/sidebarStore";
 // AA-994 — UI language (EN default, VI second): one typed catalogue per area (`messages.ts`), `useT(M)` in components.
 export {
   defineMessages, localized, missingTranslations, parseLang, translator, DEFAULT_LANG, LANGS, LANG_LABEL,

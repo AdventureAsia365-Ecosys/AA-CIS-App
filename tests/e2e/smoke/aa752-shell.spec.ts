@@ -10,6 +10,9 @@
 //   (e) AA-883: an admin sees the Platform and CIS Content sections with fold toggles, the Apps block
 //       links to Booking admin in a new tab (no Tenant portal link), and in the collapsed rail the
 //       section headers become plain dividers.
+//   (f) S264: the nav groups inside a section fold (kit NavGroup): the group of the current page is open on
+//       arrival, folding it hides its items, a reload opens it again, and (admin) an unfolded other group stays
+//       unfolded after a reload (localStorage aa_nav_groups:cis-admin).
 // AA-878 — viewer mode (the smoke account is the read-only viewer): the shell is checked on pages the viewer
 // may open (/admin/review, /admin/master-content), the logo lands on the viewer's landing page (Overview is
 // admin-only, the proxy redirects), and (e) — the admin Platform section — is skipped.
@@ -165,6 +168,43 @@ test.describe('AA-752 — admin shell', { tag: '@staff' }, () => {
       await expect(rail).toHaveAttribute('data-collapsed', 'true', { timeout: 5000 });
       await expect(page.getByTestId('nav-section-toggle-platform')).toHaveCount(0);
       await expect(page.getByTestId('nav-section-divider-platform')).toHaveCount(1);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test('(f) S264: nav groups fold, the current page group opens on arrival, choices persist', async ({ browser }) => {
+    const { context, page } = await adminPage(browser);
+    try {
+      await page.goto(shellPath(), { waitUntil: 'domcontentloaded' });
+      await waitForShellHydrated(page);
+      await expect(page.getByTestId('admin-sidebar')).toHaveAttribute('data-collapsed', 'false', { timeout: 5000 });
+      // /admin/jobs sits in the Jobs group, /admin/review in Pipeline.
+      const active = isAdminRun() ? 'jobs' : 'pipeline';
+      const toggle = page.getByTestId(`nav-group-${active}-toggle`);
+      const group = page.getByTestId(`nav-group-${active}`);
+      await expect(toggle).toHaveAttribute('aria-expanded', 'true', { timeout: 10000 });
+      await expect(group.getByRole('group')).toBeVisible();
+
+      await toggle.click();
+      await expect(toggle).toHaveAttribute('aria-expanded', 'false', { timeout: 5000 });
+      await expect(group.getByRole('group')).toBeHidden();
+
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await waitForShellHydrated(page);
+      await expect(page.getByTestId(`nav-group-${active}-toggle`)).toHaveAttribute('aria-expanded', 'true', { timeout: 10000 });
+
+      if (isAdminRun()) {
+        const assets = page.getByTestId('nav-group-assets-toggle');
+        const was = await assets.getAttribute('aria-expanded');
+        if (was === 'false') {
+          await assets.click();
+          await expect(assets).toHaveAttribute('aria-expanded', 'true', { timeout: 5000 });
+        }
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await waitForShellHydrated(page);
+        await expect(page.getByTestId('nav-group-assets-toggle')).toHaveAttribute('aria-expanded', 'true', { timeout: 10000 });
+      }
     } finally {
       await context.close();
     }
