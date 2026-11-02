@@ -107,10 +107,17 @@ def _llm_breaker_off(request, monkeypatch):
     monkeypatch.setattr(breaker, "set_access_state", lambda connection_key, state: None)
     # AA-1016 / AA-900 (AA-1018 part 2): the tenant AI budget and the prompt register read the DB on the call path;
     # in unit tests no tenant has a budget and no prompt version is registered (tests that need them set loaders).
-    from shared.llm_client import central_budget, prompt_registry, tenant_budget
+    from shared.llm_client import app_profile, central_budget, prompt_registry, tenant_budget
     tenant_budget.invalidate()
     prompt_registry.invalidate()
     central_budget.invalidate()
+    app_profile.invalidate()
+    # AA-1025 H1a: every app has AI on in unit tests (tests that switch one off set app_profile.loader).
+    monkeypatch.setattr(app_profile, "loader", lambda: {})
+
+    async def _no_profiles(db):
+        return {}
+    monkeypatch.setattr(app_profile, "loader_async", _no_profiles)
     # AA-1025 A7: no central LLM cap in unit tests (tests that need one set central_budget's loaders).
     monkeypatch.setattr(central_budget, "loader_rows", lambda: {})
     monkeypatch.setattr(tenant_budget, "loader_tenants", lambda: frozenset())
@@ -121,6 +128,7 @@ def _llm_breaker_off(request, monkeypatch):
     tenant_budget.invalidate()
     prompt_registry.invalidate()
     central_budget.invalidate()
+    app_profile.invalidate()
 
 
 @pytest.fixture(autouse=True)

@@ -237,14 +237,23 @@ DFS_STATS_SQL = f"""
      WHERE created_at >= $2 AND created_at < $3 AND status IS NOT NULL AND NOT cache_hit
 """
 
-# Geoapify: one row per batch of requests with its failed ones; no latency is stored.
-GEO_STATS_SQL = """
+# Geoapify: one row per batch of requests with its failed ones. AA-1025 D3 (migration 346): a batch written since 346
+# carries latency_ms (the sum over its requests), so p50 / p95 are of the mean request latency of each batch; older
+# batches have none (percentile_cont ignores NULL). Read through to_jsonb so this runs before 346 is applied.
+_GEO_PER_REQUEST_MS = ("((to_jsonb(geocode_call) ->> 'latency_ms')::float / nullif(requests, 0))")
+GEO_STATS_SQL = f"""
     SELECT coalesce(sum(requests) FILTER (WHERE called_at >= $1), 0)::int AS calls_24h,
            coalesce(sum(coalesce(failed_requests, 0)) FILTER (WHERE called_at >= $1), 0)::int AS errors_24h,
-           0 AS refused_24h, NULL::float AS p50_24h, NULL::float AS p95_24h,
+           0 AS refused_24h,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY {_GEO_PER_REQUEST_MS})
+               FILTER (WHERE called_at >= $1)::float AS p50_24h,
+           percentile_cont(0.95) WITHIN GROUP (ORDER BY {_GEO_PER_REQUEST_MS})
+               FILTER (WHERE called_at >= $1)::float AS p95_24h,
            coalesce(sum(requests), 0)::int AS calls_7d,
            coalesce(sum(coalesce(failed_requests, 0)), 0)::int AS errors_7d,
-           0 AS refused_7d, NULL::float AS p50_7d, NULL::float AS p95_7d
+           0 AS refused_7d,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY {_GEO_PER_REQUEST_MS})::float AS p50_7d,
+           percentile_cont(0.95) WITHIN GROUP (ORDER BY {_GEO_PER_REQUEST_MS})::float AS p95_7d
       FROM geo.geocode_call
      WHERE provider = $4 AND called_at >= $2 AND called_at < $3
 """
@@ -885,8 +894,12 @@ _LLM_COLS = """created_at AS at, stage, role, model, provider, account, connecti
 _DFS_COLS = """created_at AS at, endpoint, keyword, location_code, keyword_count, cost_usd::float AS cost_usd,
            cache_hit, fetched_live, tour_id::text AS tour_id, job_id::text AS job_id, status, latency_ms, error,
            stage"""
+# AA-1025 D3 (migration 346): the ledger columns of geo.geocode_call, read through to_jsonb so the reads run before 346
+# is applied (a missing column is NULL, like a row written before it).
 _GEO_COLS = """called_at AS at, provider, endpoint, requests, credits, failed_requests, cost_usd::float AS cost_usd,
-           job_id::text AS job_id"""
+           job_id::text AS job_id, to_jsonb(geocode_call) ->> 'status' AS status,
+           (to_jsonb(geocode_call) ->> 'latency_ms')::int AS latency_ms,
+           to_jsonb(geocode_call) ->> 'app' AS app, to_jsonb(geocode_call) ->> 'stage' AS stage"""
 _DECISION_COLS = """created_at AS at, stage, question_key, subject_key, mode, zone, model, latency_ms,
            cost_usd::float AS cost_usd, error, outcome, cached, job_id::text AS job_id"""
 _COUNTS = "count(*) OVER () AS total_n, coalesce(sum(cost_usd) OVER (), 0)::float AS total_cost"
@@ -1006,9 +1019,28 @@ def llm_event(r: dict) -> dict:
                        "connection_key": r.get("connection_key"), "tour_id": r.get("tour_id")}}
 
 
+# AA-1025 D3: the decision_log error texts of a Jev ask that the gateway or the provider refused with nothing answered
+# (shared/llm_client/decide.py: the Jev switch, the app profile and the circuit end with the suffix; the daily cap, the
+# credit breaker and a 402 are the exact texts). Their llm_call_log row says status refused; the Calls tab says so too.
+JEV_REFUSED_SUFFIX = "nothing was sent to the provider"
+JEV_REFUSED_ERRORS = ("budget_exceeded", "credit_exhausted", "credit_exhausted (breaker open)")
+
+
 def jev_verdict_status(r: dict) -> str:
-    """decision_log has no status column: a verdict with an error (zone ``error`` or an error text) is ``error``."""
-    return "error" if r.get("error") or r.get("zone") == "error" else "ok"
+    """decision_log has no status column. AA-1025 D3: an ask refused before an answer (``JEV_REFUSED_*``, or a
+    ``skipped`` verdict with a reason: the tenant guard) is ``refused``; another verdict with an error (zone
+    ``error`` or an error text) is ``error``; else ``ok``. The SQL twin is ``JEV_STATUS_SQL``. Pure."""
+    error = r.get("error")
+    if error and (str(error).endswith(JEV_REFUSED_SUFFIX) or error in JEV_REFUSED_ERRORS
+                  or r.get("zone") == "skipped"):
+        return "refused"
+    return "error" if error or r.get("zone") == "error" else "ok"
+
+
+JEV_STATUS_SQL = (
+    "CASE WHEN error IS NOT NULL AND (error LIKE '%" + JEV_REFUSED_SUFFIX + "' OR error IN ("
+    + ", ".join(f"'{e}'" for e in JEV_REFUSED_ERRORS) + ") OR zone = 'skipped') THEN 'refused' "
+    "WHEN error IS NOT NULL OR zone = 'error' THEN 'error' ELSE 'ok' END")
 
 
 def jev_event(r: dict) -> dict:
@@ -1016,7 +1048,7 @@ def jev_event(r: dict) -> dict:
     status = jev_verdict_status(r)
     return {"at": _iso(r["at"]), "source": "jev", "stage": r.get("stage"), "what": r.get("question_key"),
             "model": r.get("model"), "provider": "typesafe", "account": None,
-            "outcome": "error" if status == "error" else r.get("zone"), "status": status, "error_class": None,
+            "outcome": r.get("zone") if status == "ok" else status, "status": status, "error_class": None,
             "cost_usd": _f(r.get("cost_usd")), "latency_ms": r.get("latency_ms"), "tokens_in": None,
             "tokens_out": None, "job_id": r.get("job_id"), "app": "cis",
             "detail": {"mode": r.get("mode"), "subject_key": r.get("subject_key"), "cached": r.get("cached"),
@@ -1038,18 +1070,24 @@ def dfs_event(r: dict) -> dict:
                        "error": _err(r.get("error"))}}
 
 
+GEO_STATUSES = ("ok", "refused", "error")
+
+
 def geo_status(r: dict) -> str:
-    """geocode_call has no status column: a row whose every request failed is ``error``."""
+    """The row's ``status`` (migration 346, AA-1025 D3); a row written before it has none: a row whose every request
+    failed is ``error``, else ``ok``. Pure."""
+    if r.get("status") in GEO_STATUSES:
+        return r["status"]
     failed, requests = int(r.get("failed_requests") or 0), int(r.get("requests") or 0)
     return "error" if failed > 0 and failed >= requests else "ok"
 
 
 def geo_event(r: dict) -> dict:
     status = geo_status(r)
-    return {"at": _iso(r["at"]), "source": "geocoder", "stage": None, "what": r.get("endpoint"), "model": None,
-            "provider": r.get("provider"), "account": None, "outcome": status, "status": status,
-            "error_class": None, "cost_usd": _f(r.get("cost_usd")), "latency_ms": None, "tokens_in": None,
-            "tokens_out": None, "job_id": r.get("job_id"), "app": "cis",
+    return {"at": _iso(r["at"]), "source": "geocoder", "stage": r.get("stage"), "what": r.get("endpoint"),
+            "model": None, "provider": r.get("provider"), "account": None, "outcome": status, "status": status,
+            "error_class": None, "cost_usd": _f(r.get("cost_usd")), "latency_ms": r.get("latency_ms"),
+            "tokens_in": None, "tokens_out": None, "job_id": r.get("job_id"), "app": r.get("app") or "cis",
             "detail": {"requests": r.get("requests"), "credits": r.get("credits"),
                        "failed_requests": r.get("failed_requests")}}
 

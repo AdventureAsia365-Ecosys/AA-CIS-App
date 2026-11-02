@@ -326,6 +326,11 @@ def embed(stage: str, texts: list[str], *, input_type: Optional[str] = "search_d
         raise ValueError("embed() needs at least one text")
     cfg = get_stage_config_sync(stage)
     chain = [cfg.model_id, *cfg.fallback_model_ids]
+    from . import app_profile
+    app_refusal = app_profile.refusal(stage)            # AA-1025 H1a: AI off for the app, before anything else
+    if app_refusal is not None:
+        _log_failure(stage, cfg.model_id, app_refusal)
+        raise app_refusal
     if getattr(cfg, "enabled", True) is False:          # AA-642 A1: the stage kill switch, before any attempt
         from .errors import LLMStageDisabled
         reason = getattr(cfg, "disabled_reason", None)

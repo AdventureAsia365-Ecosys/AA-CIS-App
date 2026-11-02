@@ -338,6 +338,7 @@ class GeoapifyGeocoder:
         self.cost_per_request = cost_per_request
         self.requests = 0                   # HTTP requests sent by this instance (= credits spent)
         self.failed_requests = 0            # AA-804: of those, the ones that did not answer 200 (still a credit)
+        self.latency_ms = 0                 # AA-1025 D3: the provider time of those requests (geo.geocode_call)
         self.daily_credit_limit = int(daily_credit_limit)
         self.credits_used_today = int(credits_used_today)   # before this instance (geo.geocode_call, UTC day)
         self.max_retries = max_retries
@@ -401,12 +402,15 @@ class GeoapifyGeocoder:
             await self._throttle.wait()
             self.requests += 1
             retry_after = None
+            sent = time.monotonic()
             try:
                 resp = await self._client().get(GEOAPIFY_URL, params=params)
             except Exception as e:  # noqa: BLE001 — transport error: the message may hold the URL
+                self.latency_ms += int((time.monotonic() - sent) * 1000)
                 last, last_status = f"{type(e).__name__}", None
                 self.failed_requests += 1
             else:
+                self.latency_ms += int((time.monotonic() - sent) * 1000)
                 status = getattr(resp, "status_code", 0)
                 if status == 200:
                     try:

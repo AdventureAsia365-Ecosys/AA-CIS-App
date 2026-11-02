@@ -13,7 +13,8 @@ writes text. Design: docs/architecture/at-series-v2-design.md §3.
 - **Tenant guard (design C2):** tenant content goes to TypeSafe only for tenants in
   `shared.jev_tenant_allowlist` until the DPA/ZDR is confirmed. Platform content always may.
 - Every verdict is written to `shared.decision_log` (all probabilities kept) and each call to
-  `shared.llm_call_log` (provider `typesafe`, role `validate`), under the current job if any.
+  `shared.llm_call_log` (provider `typesafe`, role `decide` since AA-1025 D3; `validate` before), under the
+  current job if any.
 
 `decide()` never raises: a caller can always read `decision.accepted(k)` / `rejected(k)`, which are
 True only for an enforced, confident verdict.
@@ -43,6 +44,9 @@ from .catalog import get_model_sync
 logger = structlog.get_logger()
 
 JEV_MODEL = "jev-latest"
+# AA-1025 D3 (root ADR 0009 decision 8, DM-10.4): a Jev call's llm_call_log row has role 'decide' (the CHECK of CIS 319
+# allows it); rows before D3 say 'validate'. Readers that mean "Jev" filter on provider 'typesafe', never on the role.
+JEV_ROLE = "decide"
 JEV_URL = os.environ.get("TYPESAFE_BASE_URL", "https://api.typesafe.ai").rstrip("/") + "/v1/systemone"
 _FALLBACK_PRICE_IN_PER_MTOK = 0.042          # used only if the catalog row cannot be read
 _TIMEOUT_S = 3.0
@@ -852,6 +856,18 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
     failed_ask: Optional[tuple] = None
     access_state: Optional[str] = None            # AA-642 (S263 L2): the call's lasting outcome, for access_state
 
+    if to_ask:
+        # AA-1025 H1a: the app's AI switched off in its app profile: no TypeSafe call; the stage keeps its own rule
+        # (fail-open, like the Jev switch) and the ask gets its 0 USD refused row (error_class disabled).
+        from . import app_profile
+        off = await app_profile.ai_off_async(db)
+        if off is not None:
+            text = app_profile.refusal_text(off.app)
+            for key, q in to_ask.items():
+                decision.verdicts[key] = Verdict(key, q.mode, "error", error=text)
+            failed_ask = ("refused", "disabled", text, len(to_ask), None)
+            to_ask = {}
+
     if to_ask and not jev_enabled():
         # AA-642 (S263 L2, B1): the admin switched Jev off: no TypeSafe call; the stage keeps its own rule (fail-open).
         for key, q in to_ask.items():
@@ -1016,7 +1032,7 @@ async def _write_logs(db, stage, subject_key, tenant_id, decision: Decision, ask
         zones: dict[str, int] = {}
         for v in decision.verdicts.values():
             zones[v.zone] = zones.get(v.zone, 0) + 1
-        kwargs = dict(stage=stage, role="validate", model=decision.model, tokens_in=decision.input_tokens,
+        kwargs = dict(stage=stage, role=JEV_ROLE, model=decision.model, tokens_in=decision.input_tokens,
                       tokens_out=0, cost_usd=decision.cost_usd, provider="typesafe",
                       quality_signal={"source": "decide", "questions": len(asked), "zones": zones},
                       tenant_id=str(tenant_id) if tenant_id else None,
@@ -1026,7 +1042,7 @@ async def _write_logs(db, stage, subject_key, tenant_id, decision: Decision, ask
     elif failed_ask is not None:
         status, error_class, error, questions, latency_ms = failed_ask
         row = gateway_failure_row(
-            stage=stage, role="validate", model=JEV_MODEL, status=status, error_class=error_class, error=error,
+            stage=stage, role=JEV_ROLE, model=JEV_MODEL, status=status, error_class=error_class, error=error,
             provider="typesafe", connection_key=JEV_CONNECTION_KEY, latency_ms=latency_ms, units=questions,
             unit_kind="question",
             quality_signal_extra={"source": "decide", "questions": questions},

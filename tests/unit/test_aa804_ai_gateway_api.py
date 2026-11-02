@@ -80,6 +80,8 @@ def test_routes_are_served_and_run_the_policy():
                           # AA-1025 B5: the credit ledger of the vendor API connections
                           ("GET", "/admin/ai-gateway/credit"), ("POST", "/admin/ai-gateway/credit/check"),
                           ("POST", "/admin/ai-gateway/credit/{connection_key}/entries"),
+                          # AA-1025 H1a: the app profile of every app
+                          ("GET", "/admin/ai-gateway/app-profiles"), ("PATCH", "/admin/ai-gateway/app-profiles/{app}"),
                           ("DELETE", "/admin/ai-gateway/credit/entries/{entry_id}")}
     for (_m, p), (r, inh) in found.items():
         assert r.path == p and _runs_policy(r, inh, p)

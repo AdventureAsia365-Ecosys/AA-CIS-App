@@ -113,7 +113,7 @@ async def test_success_parses_answers_prices_input_and_logs():
     rows = conn.executemany.await_args.args[1]
     assert {r[1] for r in rows} == {"kw_belongs", "idea_ok"} and {r[6] for r in rows} == {"reject", "accept"}
     log = m_log.await_args.kwargs
-    assert log["provider"] == "typesafe" and log["role"] == "validate" and log["tokens_in"] == 1000
+    assert log["provider"] == "typesafe" and log["role"] == "decide" and log["tokens_in"] == 1000
 
 
 @pytest.mark.asyncio

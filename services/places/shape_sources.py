@@ -106,6 +106,7 @@ class GeoapifyDetails:
         self._key = api_key
         self.requests = 0
         self.failed_requests = 0       # AA-804: requests that did not answer 200 / 404 (their credits are still spent)
+        self.latency_ms = 0            # AA-1025 D3: the provider time of those requests (geo.geocode_call)
         self.credits = 0
         self.daily_credit_limit = int(daily_credit_limit)
         self.credits_used_today = int(credits_used_today)
@@ -156,12 +157,15 @@ class GeoapifyDetails:
             self.requests += 1
             self.credits += cost
             retry_after = None
+            sent = time.monotonic()
             try:
                 resp = await self._client().get(DETAILS_URL, params=params)
             except Exception as e:  # noqa: BLE001
+                self.latency_ms += int((time.monotonic() - sent) * 1000)
                 last, last_status = type(e).__name__, None
                 self.failed_requests += 1
             else:
+                self.latency_ms += int((time.monotonic() - sent) * 1000)
                 status = getattr(resp, "status_code", 0)
                 if status == 200:
                     try:

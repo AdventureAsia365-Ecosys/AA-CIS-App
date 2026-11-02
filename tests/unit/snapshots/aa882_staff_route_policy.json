@@ -79,6 +79,10 @@
     "capability": "spend.read",
     "module": "api.routers.admin_ai_gateway"
   },
+  "GET /admin/ai-gateway/app-profiles": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_ai_gateway"
+  },
   "GET /admin/ai-gateway/budgets": {
     "capability": "spend.read",
     "module": "api.routers.admin_ai_gateway"
@@ -786,6 +790,10 @@
   "GET /v1/pipeline/sources": {
     "capability": null,
     "module": "api.routers.v1_pipeline"
+  },
+  "PATCH /admin/ai-gateway/app-profiles/{app}": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_ai_gateway"
   },
   "PATCH /admin/atoms/{atom_id}": {
     "capability": "atoms.write",
