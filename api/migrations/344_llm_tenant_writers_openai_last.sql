@@ -23,13 +23,13 @@
 -- there). Every other T-stage keeps its scopes; TripPlanner (tp_*) and the CRM are not touched.
 --
 -- What. For each of
---   stage                 route before (live, = tests/unit/snapshots/aa1026_routes_after_339.json)  route after
---   t2_flag_fix           haiku-5-5                                                                 haiku-5-5, gpt-6-luna-openai
---   t2_generate           sonnet-5-5, haiku-5-5                                                     sonnet-5-5, gpt-6-luna-openai
---   t2_itinerary_nudge    haiku-5-5                                                                 haiku-5-5, gpt-6-luna-openai
---   t8_angle_gen          sonnet-5-5, haiku-5-5                                                     sonnet-5-5, gpt-6-luna-openai
---   t9_repair             haiku-5-5, sonnet-5-5                                                     haiku-5-5, gpt-6-luna-openai
---   t9_write              sonnet-5-5, haiku-5-5                                                     sonnet-5-5, gpt-6-luna-openai
+--   stage                 route before (live; tests/unit/snapshots/aa1026_routes_after_339.json)
+--   t2_flag_fix           haiku-5-5                  ->  haiku-5-5, gpt-6-luna-openai
+--   t2_generate           sonnet-5-5, haiku-5-5      ->  sonnet-5-5, gpt-6-luna-openai
+--   t2_itinerary_nudge    haiku-5-5                  ->  haiku-5-5, gpt-6-luna-openai
+--   t8_angle_gen          sonnet-5-5, haiku-5-5      ->  sonnet-5-5, gpt-6-luna-openai
+--   t9_repair             haiku-5-5, sonnet-5-5      ->  haiku-5-5, gpt-6-luna-openai
+--   t9_write              sonnet-5-5, haiku-5-5      ->  sonnet-5-5, gpt-6-luna-openai
 -- when it is a writer row on an Anthropic primary: allowed_scopes {aws_only, vendor_direct}; `gpt-6-luna-openai`
 -- appended as the last fallback (moved to the end when already in the route); and, as 327 did for
 -- supply_content_writer, every fallback reached inside AWS that follows a model which also has a deployment outside
@@ -43,13 +43,14 @@
 --
 -- Behaviour on Dev. While acc3 refuses: the acc3 hop is refused at once by the connection circuit (0 USD), the
 -- Anthropic API has no key (switched off, not planned), and the call is answered by GPT-6 Luna on the OpenAI API
--- (2 / 10 USD per 1M tokens: a few cents per piece, inside the 10 USD monthly hard stop of 327; the tenant AI budget
--- of 321 applies as before). Judge stages are unchanged: while acc3 refuses they answer on Nova Lite (acc2, 333)
--- before their own OpenAI API hop, so a GPT-written piece is normally scored by another maker. While acc3 answers,
--- nothing changes but the lost Sonnet <-> Haiku degrade (a throttled acc3 model now falls to the Anthropic API /
--- OpenAI API instead of the other Claude tier on acc3). The ladder (ADR 0009 decision 12: writers stay on Anthropic
--- until non-inferiority) is skipped for this last rung, knowingly, as for 327: it is the tech lead's S264 call for a
--- blocked AWS path; the tenant reviews every piece before it is published (T10 / T11, AI notice).
+-- (catalog price 0.10 / 0.50 USD per 1M tokens, migration 170: well under a cent per piece, inside the 10 USD monthly
+-- hard stop of 327; the tenant AI budget of 321 applies as before). Judge stages are unchanged: while acc3 refuses
+-- they answer on Nova Lite (acc2, 333) before their own OpenAI API hop, so a GPT-written piece is normally scored by
+-- another maker. While acc3 answers, nothing changes but the lost Sonnet <-> Haiku degrade (a throttled acc3 model
+-- now falls to the Anthropic API / OpenAI API instead of the other Claude tier on acc3). The ladder (ADR 0009
+-- decision 12: writers stay on Anthropic until non-inferiority) is skipped for this last rung, knowingly, as for 327:
+-- it is the tech lead's S264 call for a blocked AWS path; the tenant reviews every piece before it is published (T10
+-- / T11, AI notice).
 --
 -- Guards (RAISE rolls the whole file back):
 --   before: the registry tables (304, 307), allowed_scopes (311), served_roles (322), 327 registered;

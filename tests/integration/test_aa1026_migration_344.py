@@ -53,7 +53,8 @@ def cur():
 
 def _load_routes(c) -> None:
     """The routes after 339 and the registry the file expects (openai-direct on, serving writers)."""
-    c.execute("UPDATE shared.llm_provider_connection SET enabled = true WHERE connection_key IN ('acc3', 'openai-direct')")
+    c.execute("UPDATE shared.llm_provider_connection SET enabled = true "
+              "WHERE connection_key IN ('acc3', 'openai-direct')")
     c.execute("DELETE FROM shared.llm_role_config")
     for r in json.loads(BEFORE.read_text(encoding="utf-8"))["routes"]:
         c.execute("INSERT INTO shared.llm_role_config (stage, role, provider, model_id, account_route, is_active, "
@@ -225,7 +226,8 @@ def test_guard_refuses_a_change_to_another_row(cur):
     _load_routes(cur)
     body = _body().replace("        changed := changed || stages[i];\n",
                            "        changed := changed || stages[i];\n"
-                           "        UPDATE shared.llm_role_config SET shadow_sample_pct = 7 WHERE stage = 't2_judge';\n",
+                           "        UPDATE shared.llm_role_config SET shadow_sample_pct = 7 "
+                           "WHERE stage = 't2_judge';\n",
                            1)
     assert body != _body()                                                  # the mutation really applied
     with pytest.raises(psycopg2.errors.RaiseException, match="rows outside the six tenant writers changed"):
