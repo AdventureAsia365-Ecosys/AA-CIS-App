@@ -977,6 +977,18 @@
             ],
             "title": "Per Day Usd"
           },
+          "per_month_usd": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Per Month Usd"
+          },
           "per_run_usd": {
             "anyOf": [
               {
@@ -11311,6 +11323,88 @@
           }
         },
         "summary": "Spend budgets + today's spend per provider",
+        "tags": [
+          "admin-budgets"
+        ]
+      }
+    },
+    "/admin/budgets/llm/{scope}": {
+      "delete": {
+        "description": "AA-1025 A7: drop one ``llm`` row (the gateway stops checking that scope within a minute). Provider rows are\nnever deleted here (their absence means \"no cap\" for the jobs' RunBudget, set them with PUT instead).",
+        "operationId": "delete_central_budget_admin_budgets_llm__scope__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "scope",
+            "required": true,
+            "schema": {
+              "title": "Scope",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "title": "X-Admin-User-Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove one central LLM cap",
         "tags": [
           "admin-budgets"
         ]
