@@ -14,4 +14,4 @@ Modules (standard library only, relative imports only, no I/O, no secrets, no pr
 - ``contract``: names and SELECTs of the CIS contract views for TripPlanner (CIS migration 323).
 """
 
-CORE_VERSION = "1.0.0"
+CORE_VERSION = "1.1.0"

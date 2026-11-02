@@ -568,8 +568,12 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   for byte; `check_copy.py` + `MANIFEST.json` pin each copy. Never edit a copy: change it here, run
   `python3 shared/aa_llm/check_copy.py --write`, merge, and the **Llm Core Sync** workflow (`llm-core-sync.yml`, bot
   branch `bot/llm-core-sync`, never merges) opens the consumer PRs; `llm-core-consumers.yml` runs each consumer's tests
-  on a CIS PR that touches the core. `tests/unit/test_aa642_s8_aa_llm_parity.py` pins `shared/llm_client` and the core
-  to the same results until the CIS modules import from the core.
+  on a CIS PR that touches the core. **CIS runs on the core** (AA-1024 A10): `shared/llm_client/errors.py`,
+  `pricing.py` and the ledger v2 values of `call_log.py` import it (`attempt_outcome` asks the core's
+  `ledger.failed_outcome` / `outcome_of` first and adds only the CIS-typed refusals: breaker, limiter, budget
+  exceptions, OpenAI platform block); `tests/unit/test_aa1024_a10_core_identity.py` checks the names are the core's
+  own objects and compares a CIS ledger row with the core's row column by column. The core (1.1.0) also owns the
+  outcome classes `truncated` (from the provider's text too), `disabled`, `role_not_served`, `deadline`, `budget`.
 - **Contract views for TripPlanner** (migration 323, contract class): `catalog.v_llm_gateway_config_v1` (routes,
   models, prices and deployments of the `tp_*` stages only) and `catalog.v_llm_app_spend_today_v1` (today's ledger
   spend of `app = 'tripplanner'` per stage), owned by `catalog_owner` with column-level SELECT on the four gateway

@@ -20,7 +20,8 @@ from .role_config import get_stage_config_sync
 from .bedrock_satellite import DEFAULT_SATELLITE_ACCOUNT
 from .catalog import LEGACY_KEYS, CatalogModel, capability, get_model_sync
 from .schema_check import SchemaMismatch, conform
-from .errors import (DEADLINE, DISABLED, MAX_CHAIN_ATTEMPTS, OTHER, ROLE_NOT_SERVED, THROTTLED, TRUNCATED,
+from shared.aa_llm.ledger import failed_outcome as core_failed_outcome, outcome_of as core_outcome_of
+from .errors import (BUDGET, DEADLINE, DISABLED, MAX_CHAIN_ATTEMPTS, OTHER, ROLE_NOT_SERVED, THROTTLED, TRUNCATED,
                      LLMAccessDenied, LLMStageDisabled, RouteAttemptCapReached, RouteDeadlineExceeded,
                      RouteRoleNotServed, account_level_class, classify)
 from . import (breaker, central_budget, connection_budget, connections, data_scope, family_rule, prompt_registry,
@@ -807,23 +808,30 @@ def attempt_outcome(exc: BaseException) -> tuple[str, str]:
     said no (access denied, no credit, a missing / rejected key, a rate limit, an open circuit, the connection's own
     limiter, a budget, a data-scope block); 'error' otherwise (outage, timeout, a bad reply that was not billed).
     error_class = the breaker class (a request error counts as 'other'), or 'budget'. AA-1018 part 2: a route deadline
-    is ('error', 'deadline'); a refusal to return a reply cut at its token limit is ('truncated', 'truncated')."""
+    is ('error', 'deadline'); a refusal to return a reply cut at its token limit is ('truncated', 'truncated').
+
+    AA-1024 A10: the shared core's ``ledger.failed_outcome`` decides every class it knows (the kill switch, the served
+    role, the deadline, a cut reply, the account / credit / rate-limit refusals); this function adds only what needs a
+    CIS type: the kill switch and budget exceptions, the route deadline, an unreadable key, the CIS circuit / limiter
+    and the OpenAI platform block. The order is the one before A10."""
     from shared.cost_guard import BudgetExceeded
     if any(isinstance(link, LLMStageDisabled) for link in _causes(exc)):
-        return "refused", DISABLED                     # AA-642 A1: the stage kill switch, nothing was sent
-    if classify(exc) == ROLE_NOT_SERVED:
+        return core_outcome_of(DISABLED)           # AA-642 A1: the stage kill switch, nothing was sent
+    status, cls = core_failed_outcome(exc)
+    if cls == ROLE_NOT_SERVED:
         # AA-642 A5 (review S263): the model (or every model of the request) was left out because no connection may
         # serve the stage's role; nothing was sent. A mixed failure keeps the class _all_failed decided.
-        return "refused", ROLE_NOT_SERVED
+        return status, cls
     budget_refusals = (BudgetExceeded, tenant_budget.TenantBudgetUnavailable)   # AA-642 A8: unreadable = refused
     if any(isinstance(link, budget_refusals) for link in _causes(exc)):
-        return "refused", "budget"
+        return core_outcome_of(BUDGET)
     if any(isinstance(link, RouteDeadlineExceeded) for link in _causes(exc)):
-        return "error", DEADLINE                       # AA-1018 part 2: the route's time ran out, nothing was sent
-    if classify(exc) == TRUNCATED:
+        return core_outcome_of(DEADLINE)           # AA-1018 part 2: the route's time ran out, nothing was sent
+    if cls in (TRUNCATED, DISABLED, DEADLINE, BUDGET):
         # AA-1018 part 2: the provider refused a reply cut at its token limit (OpenAI 400): the request asked for too
-        # few tokens; recorded as truncated, like a cut reply that came back.
-        return "truncated", TRUNCATED
+        # few tokens; recorded as truncated, like a cut reply that came back. A kill-switch / deadline / budget class
+        # carried by the error's text or llm_error_class keeps the core's outcome too.
+        return status, cls
     cls = breaker.failure_class(exc)
     if cls not in ("access_denied", "quota_exhausted", "throttled", "credential"):
         cls = OTHER

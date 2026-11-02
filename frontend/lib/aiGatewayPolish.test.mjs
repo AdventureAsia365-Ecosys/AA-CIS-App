@@ -44,9 +44,10 @@ test("actorLabel: a '<username>:<reference>' value is never printed raw (N4)", (
 });
 
 test("error classes: the list matches the ledger's, every class has words in EN and VI (N4)", () => {
-  const py = readFileSync(fileURLToPath(new URL("../../shared/llm_client/call_log.py", import.meta.url)), "utf8");
-  const m = /ERROR_CLASSES = \(([^)]*)\)/s.exec(py);
-  assert.ok(m, "call_log.py ERROR_CLASSES not found");
+  // AA-1024 A10: the ledger's list is the shared core's (call_log.py imports it).
+  const py = readFileSync(fileURLToPath(new URL("../../shared/aa_llm/errors.py", import.meta.url)), "utf8");
+  const m = /LEDGER_ERROR_CLASSES = \(([^)]*)\)/s.exec(py);
+  assert.ok(m, "aa_llm/errors.py LEDGER_ERROR_CLASSES not found");
   const backend = [...m[1].matchAll(/"([a-z_]+)"/g)].map((x) => x[1]);
   assert.deepEqual([...ERROR_CLASSES].sort(), backend.sort());
 
