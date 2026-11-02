@@ -5,8 +5,8 @@ attempt (cost 0) and its outcome. ``LedgerRow`` is that row with every column of
 ``shared/llm_client/call_log.py``; ``insert_sql()`` is the statement and ``LedgerRow.args()`` its arguments in the
 same order. The v2 values are normalised the way the CIS writer does (``_v2_values``): status derived when the
 caller is silent, values outside the migration 319 CHECKs written NULL, so a row is never refused by a CHECK.
-``tests/unit/test_aa642_s8_aa_llm_parity.py`` in AA-CIS-App pins the column list and the normalisation to the CIS
-writer.
+AA-CIS-App ``shared/llm_client/call_log.py`` writes its rows with these columns and ``v2_values`` (AA-1024 A10), so a
+CIS row and a TripPlanner row have one shape.
 
 The CRM (AA-Partner) does not write this table (root ADR 0008a): it vendors this module for the constants and the
 row shape only and keeps ``crm.llm_call``.
@@ -24,12 +24,17 @@ from dataclasses import dataclass, field
 
 from .errors import (
     ACCESS_DENIED,
+    BUDGET,
     CREDENTIAL,
+    DEADLINE,
+    DISABLED,
     LEDGER_ERROR_CLASSES,
     OTHER,
     QUOTA_EXHAUSTED,
+    ROLE_NOT_SERVED,
     THROTTLED,
     TRUNCATED,
+    TRUNCATED_STOP_REASONS,
     classify,
 )
 from .pricing import PRICING_MODE_RE
@@ -43,8 +48,8 @@ STATUS_BILLED_UNUSABLE = "billed_unusable"
 STATUS_TRUNCATED = "truncated"
 STATUSES = (STATUS_OK, STATUS_REFUSED, STATUS_ERROR, STATUS_BILLED_UNUSABLE, STATUS_TRUNCATED)
 ERROR_CLASSES = LEDGER_ERROR_CLASSES
-# A billed answer cut at its token limit (Anthropic / Bedrock max_tokens, OpenAI length): status 'truncated'.
-TRUNCATED_STOP_REASONS = frozenset({"max_tokens", "length", "model_context_window_exceeded"})
+# A billed answer cut at its token limit (Anthropic / Bedrock max_tokens, OpenAI length): status 'truncated'. The
+# stop reasons (``TRUNCATED_STOP_REASONS``, imported above and kept importable from here) live in errors.py.
 # llm_call_log.role (migration 319 CHECK).
 ROLES = ("writer", "judge", "validate", "embed", "decide", "data", "guard")
 
@@ -141,17 +146,87 @@ def derive_status(
 
 
 # The classes of an attempt the provider (or the gateway) said no to: status 'refused'. Anything else that raised with
-# nothing billed (outage, timeout, a bad reply) is 'error' with class 'other' (the CIS client's attempt_outcome).
+# nothing billed (outage, timeout, a bad reply) is 'error' with class 'other'.
 REFUSED_CLASSES = frozenset({ACCESS_DENIED, QUOTA_EXHAUSTED, THROTTLED, CREDENTIAL})
+# The gateway's own outcomes (AA-1024 A10 step 0, the CIS client's attempt_outcome): the stage kill switch, no
+# connection serving the stage's role and a budget are refusals; a passed route deadline is an error; a provider that
+# refused to return a reply cut at its token limit is a truncated attempt (the request asked for too few tokens).
+OUTCOME_CLASSES = {
+    DISABLED: STATUS_REFUSED,
+    ROLE_NOT_SERVED: STATUS_REFUSED,
+    BUDGET: STATUS_REFUSED,
+    DEADLINE: STATUS_ERROR,
+    TRUNCATED: STATUS_TRUNCATED,
+}
+
+
+def outcome_of(error_class: str | None) -> tuple[str, str]:
+    """(status, error_class) of an unbilled attempt whose class the caller already knows: a gateway outcome of
+    OUTCOME_CLASSES (``refused`` disabled / role_not_served / budget, ``error`` deadline, ``truncated`` truncated),
+    ('refused', the class) for an access, credit, credential or rate-limit refusal, else ('error', 'other')."""
+    if error_class in OUTCOME_CLASSES:
+        return OUTCOME_CLASSES[error_class], error_class
+    if error_class in REFUSED_CLASSES:
+        return STATUS_REFUSED, error_class
+    return STATUS_ERROR, OTHER
 
 
 def failed_outcome(error: BaseException | str | None) -> tuple[str, str]:
-    """(status, error_class) of an attempt that raised with nothing billed: ('refused', its class) for an access,
-    credit, credential or rate-limit refusal, else ('error', 'other')."""
-    cls = classify(error)
-    if cls not in REFUSED_CLASSES:
-        return STATUS_ERROR, OTHER
-    return STATUS_REFUSED, cls
+    """(status, error_class) of an attempt that raised with nothing billed: ``outcome_of`` its ``classify`` class."""
+    return outcome_of(classify(error))
+
+
+def v2_values(
+    *,
+    app: str | None,
+    status: str | None = None,
+    error_class: str | None = None,
+    latency_ms=None,
+    connection_key: str | None = None,
+    deployment_wire_id: str | None = None,
+    attempt_no=None,
+    request_id: str | None = None,
+    tour_id=None,
+    reasoning_tokens=None,
+    effort: str | None = None,
+    is_shadow=None,
+    is_experiment=None,
+    prompt_hash: str | None = None,
+    prompt_version: str | None = None,
+    units=None,
+    unit_kind: str | None = None,
+    stop_reason: str | None = None,
+    quality_signal: dict | None = None,
+) -> tuple:
+    """The 17 values of V2_COLUMNS for one row, normalised: status derived when the caller is silent
+    (``derive_status``), a truncated row's class 'truncated', a value of the wrong type or outside the CHECKs written
+    NULL; ``is_shadow`` / ``is_experiment`` default from the signal ({"shadow": true}, an "eval_run"). Never raises."""
+    qs = quality_signal if isinstance(quality_signal, dict) else {}
+    status = derive_status(status, stop_reason=stop_reason, quality_signal=qs)
+    error_class = error_class if error_class in ERROR_CLASSES else None
+    if error_class is None and status == STATUS_TRUNCATED:
+        error_class = TRUNCATED
+    latency = _int_or_none(latency_ms)
+    attempt = _int_or_none(attempt_no)
+    return (
+        _text(app, 40),
+        status,
+        error_class,
+        latency if latency is not None and latency >= 0 else None,
+        _text(connection_key, 100),
+        _text(deployment_wire_id, 300),
+        attempt if attempt is not None and attempt >= 1 else None,
+        _text(request_id, 200),
+        _uuid_or_none(tour_id),
+        _int_or_none(reasoning_tokens),
+        _text(effort, 40),
+        is_shadow if isinstance(is_shadow, bool) else qs.get("shadow") is True,
+        is_experiment if isinstance(is_experiment, bool) else "eval_run" in qs,
+        _text(prompt_hash, 128),
+        _text(prompt_version, 100),
+        _int_or_none(units),
+        _text(unit_kind, 40),
+    )
 
 
 @dataclass
@@ -198,32 +273,10 @@ class LedgerRow:
     def v2_values(self) -> tuple:
         """The 17 values of V2_COLUMNS, normalised like the CIS writer: a value of the wrong type or outside the
         migration 319 CHECKs is written NULL; ``is_shadow`` / ``is_experiment`` default from the signal."""
-        qs = self.quality_signal if isinstance(self.quality_signal, dict) else {}
-        status = derive_status(self.status, stop_reason=self.stop_reason, quality_signal=qs)
-        error_class = self.error_class if self.error_class in ERROR_CLASSES else None
-        if error_class is None and status == STATUS_TRUNCATED:
-            error_class = TRUNCATED
-        latency = _int_or_none(self.latency_ms)
-        attempt = _int_or_none(self.attempt_no)
-        shadow, experiment = self.is_shadow, self.is_experiment
-        return (
-            _text(self.app, 40),
-            status,
-            error_class,
-            latency if latency is not None and latency >= 0 else None,
-            _text(self.connection_key, 100),
-            _text(self.deployment_wire_id, 300),
-            attempt if attempt is not None and attempt >= 1 else None,
-            _text(self.request_id, 200),
-            _uuid_or_none(self.tour_id),
-            _int_or_none(self.reasoning_tokens),
-            _text(self.effort, 40),
-            shadow if isinstance(shadow, bool) else qs.get("shadow") is True,
-            experiment if isinstance(experiment, bool) else "eval_run" in qs,
-            _text(self.prompt_hash, 128),
-            _text(self.prompt_version, 100),
-            _int_or_none(self.units),
-            _text(self.unit_kind, 40),
+        return v2_values(
+            **{c: getattr(self, c) for c in V2_COLUMNS},
+            stop_reason=self.stop_reason,
+            quality_signal=self.quality_signal,
         )
 
     def s6_values(self) -> tuple:

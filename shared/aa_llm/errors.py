@@ -1,8 +1,8 @@
 """Error classes of a failed model call, by what a retry can change (root ADR 0009 decision 6).
 
-Same rules as AA-CIS-App ``shared/llm_client/errors.py`` (AA-900, AA-1002 S2, AA-1018), copied here as the shared
-core (AA-642 S8, ADR 0009 decision 13); ``tests/unit/test_aa642_s8_aa_llm_parity.py`` in AA-CIS-App proves both
-classify every case of its table the same way until the CIS module re-exports this one.
+The rules of the AI gateway (AA-900, AA-1002 S2, AA-1018), the shared core (AA-642 S8, ADR 0009 decision 13). The CIS
+gateway imports them (AA-CIS-App ``shared/llm_client/errors.py`` re-exports this module and adds the CIS-only
+exceptions, AA-1024 A10), so every app classifies a failed call the same way.
 
 - ``access_denied``: the account may not call the model (a Bedrock account-level refusal, an IAM "not authorized
   to perform", an OpenAI 401/403, an Anthropic API 401/403). A retry minutes later is refused the same way.
@@ -12,8 +12,17 @@ classify every case of its table the same way until the CIS module re-exports th
   backoff can succeed.
 - ``other``: everything else (outage, timeout, bad reply).
 
-The ledger (``shared.llm_call_log.error_class``, migration 319) also stores ``credential``, ``deadline``, ``budget``
-and ``truncated``; those are set by the caller that knows them, never derived from text here.
+Two more classes are read from text (AA-1024 A10 step 0, so every app classifies them alike):
+
+- ``truncated``: a provider REFUSED to return a reply cut at its token limit (OpenAI 400 "Could not finish the message
+  because max_tokens or model output limit was reached", the openai ``LengthFinishReasonError``). Same class as an
+  answered reply cut at its limit (``reply_class``): the request asked for too few tokens, the deployment is healthy.
+- ``disabled``: a stored refusal of the CIS stage kill switch ("stage '<stage>' is switched off"), checked first
+  because the admin's reason text may contain any word.
+
+The ledger (``shared.llm_call_log.error_class``, migrations 319 / 326 / 338) also stores ``credential``,
+``deadline``, ``budget`` and ``role_not_served``; those are set by the caller that knows them (an exception's
+``llm_error_class``), never derived from text here.
 
 Pure functions on exception text: no provider SDK, no I/O, standard library only.
 """
@@ -27,20 +36,49 @@ ACCESS_DENIED = "access_denied"
 QUOTA_EXHAUSTED = "quota_exhausted"
 THROTTLED = "throttled"
 OTHER = "other"
-# Ledger-only classes (set by the caller, never by classify): a missing or rejected credential, the route deadline,
-# a budget refusal, a reply cut at its token limit.
+# Ledger classes set by the caller (an exception's ``llm_error_class``), never read from text: a missing or rejected
+# credential, the route deadline, a budget refusal, no connection serving the stage's role (CIS migration 338).
 CREDENTIAL = "credential"
 DEADLINE = "deadline"
 BUDGET = "budget"
+ROLE_NOT_SERVED = "role_not_served"
+# A reply cut at its token limit: recorded (status and error_class 'truncated'), never a failure of the deployment.
 TRUNCATED = "truncated"
+# The CIS stage kill switch (CIS migration 326): the gateway refused the call before any provider attempt.
+DISABLED = "disabled"
 
-# Every value shared.llm_call_log.error_class accepts (migration 319 CHECK).
-LEDGER_ERROR_CLASSES = (ACCESS_DENIED, QUOTA_EXHAUSTED, THROTTLED, CREDENTIAL, OTHER, DEADLINE, BUDGET, TRUNCATED)
+# Every value shared.llm_call_log.error_class accepts (CHECKs of CIS migrations 319, 326 and 338), as literals: the CIS
+# admin's unit test (frontend/lib/aiGatewayPolish.test.mjs) parses this tuple to keep its labels complete.
+LEDGER_ERROR_CLASSES = (
+    "access_denied",
+    "quota_exhausted",
+    "throttled",
+    "credential",
+    "other",
+    "deadline",
+    "budget",
+    "truncated",
+    "disabled",
+    "role_not_served",
+)
+
+# The stop reasons of a reply cut at its token limit: Anthropic / Bedrock max_tokens, OpenAI length, Anthropic
+# model_context_window_exceeded.
+TRUNCATED_STOP_REASONS = frozenset({"max_tokens", "length", "model_context_window_exceeded"})
 
 # The job failure reason and the prefix of a job error for a job ended by an account-level denial.
 LLM_ACCESS_DENIED_REASON = "llm_access_denied"
 
 ACCOUNT_LEVEL = frozenset({ACCESS_DENIED, QUOTA_EXHAUSTED})
+
+# A provider that refuses to return a reply cut at its token limit (OpenAI 400, seen live 31/10/2026 and once logged
+# as 'other'; the openai LengthFinishReasonError).
+_TRUNCATED_ERROR = re.compile(
+    r"max_tokens or model output limit was reached|could not parse response content as the length limit was reached",
+    re.IGNORECASE,
+)
+# The CIS stage kill switch's refusal text (``LLMStageDisabled``): "stage '<stage>' is switched off by an admin".
+_STAGE_DISABLED = re.compile(r"\bstage '([a-z0-9][a-z0-9_]*)' is switched off\b")
 
 # Order matters: a quota 429 also says "429", so it is checked before throttling.
 _PATTERNS: tuple[tuple[str, re.Pattern], ...] = (
@@ -114,10 +152,37 @@ class LLMAccessDenied(RuntimeError):
         return f"{LLM_ACCESS_DENIED_REASON}: {self.args[0]}"
 
 
+def disabled_stage_of(text: str | None) -> str | None:
+    """The stage a stored refusal of the CIS stage kill switch names, else None."""
+    m = _STAGE_DISABLED.search(text or "")
+    return m.group(1) if m else None
+
+
+def is_truncated(stop_reason: str | None) -> bool:
+    """True when a reply's stop reason says it was cut at its token limit (the TRUNCATED class)."""
+    return isinstance(stop_reason, str) and stop_reason in TRUNCATED_STOP_REASONS
+
+
+def reply_class(stop_reason: str | None) -> str | None:
+    """The class of a reply that was answered: TRUNCATED when it was cut at its token limit, else None (complete)."""
+    return TRUNCATED if is_truncated(stop_reason) else None
+
+
+def is_truncated_error(text: str | None) -> bool:
+    """True when a provider error says the reply hit its token limit (the provider refused to return it cut)."""
+    return bool(text) and _TRUNCATED_ERROR.search(text) is not None
+
+
 def classify_text(text: str | None) -> str:
-    """The error class of one message (an exception's str, a stored job error)."""
+    """The error class of one message (an exception's str, a stored job error). A stage kill switch refusal is
+    DISABLED (checked first), a refusal to return a reply cut at its token limit TRUNCATED (checked before the
+    patterns: the OpenAI 400 also carries "invalid_request_error")."""
     if not text:
         return OTHER
+    if disabled_stage_of(text):
+        return DISABLED
+    if is_truncated_error(text):
+        return TRUNCATED
     for cls, pattern in _PATTERNS:
         if pattern.search(text):
             return cls
@@ -179,7 +244,14 @@ def is_llm_access_denied(error: BaseException | None) -> bool:
 
 def account_level_class(classes: list[str]) -> str | None:
     """The class to raise LLMAccessDenied with when EVERY attempt (``classes``, one per model tried) was refused at
-    account level; None when the list is empty or any attempt failed another way."""
-    if not classes or any(c not in ACCOUNT_LEVEL for c in classes):
+    account level; None when the list is empty or any attempt failed another way. A model left out because no
+    connection serves the stage's role (ROLE_NOT_SERVED, CIS) is a refusal no retry can fix either: every model
+    refused that way -> ROLE_NOT_SERVED; mixed with account-level refusals only -> the account-level class."""
+    if not classes:
         return None
-    return QUOTA_EXHAUSTED if all(c == QUOTA_EXHAUSTED for c in classes) else ACCESS_DENIED
+    rest = [c for c in classes if c != ROLE_NOT_SERVED]
+    if not rest:
+        return ROLE_NOT_SERVED
+    if any(c not in ACCOUNT_LEVEL for c in rest):
+        return None
+    return QUOTA_EXHAUSTED if all(c == QUOTA_EXHAUSTED for c in rest) else ACCESS_DENIED
