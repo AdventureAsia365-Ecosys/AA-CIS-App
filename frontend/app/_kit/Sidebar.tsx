@@ -20,18 +20,25 @@
 // is always the full panel) the headers become a plain divider and folded sections still show their
 // icons. Below the nav, an "Apps" block links to the other apps from lib/apps.ts (new tab each), with
 // one icon per app so the collapsed rail tells them apart.
+//
+// S264 — the titled groups inside a section (Overview, People & access, Pipeline, Assets…) fold too, through the kit
+// NavGroup + useNavGroups (core, scope "cis-admin"): folded unless the user opened them, the group holding the current
+// page always open on arrival. A folded Pipeline shows the Review Queue count on its header. One-item groups named like
+// their item (Apps) have no header and stay open. The icon rail shows every item, folded or not.
 
 import { useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { ArrowUpRight, CalendarCheck, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, Map as MapIcon } from "lucide-react";
 import { LOGO_SRC } from "./core/brand";
 import {
-  SETTINGS_ENTRY, navActive, sectionGroups, visibleSections,
+  NAV_GROUPS, SETTINGS_ENTRY, navActive, sectionGroups, visibleSections,
   type NavEntry, type NavGroup, type NavSection,
 } from "./adminNav";
 import { useNavSections } from "./useNavSections";
 import { APP_LINKS, type AppId, type AppLink } from "@/lib/apps";
-import { useSidebarCollapsed } from "./core/useSidebar";
+import { useNavGroups, useSidebarCollapsed } from "./core/useSidebar";
+import { NavGroup as KitNavGroup } from "./core/NavGroup";
+import { navGroupId } from "./core/sidebarStore";
 import { useHydrated } from "./core/useHydrated";
 import { canSeePage } from "@/lib/rbac";
 import { useAdminIdentity } from "./useAdminIdentity";
@@ -75,6 +82,13 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
   // The 68px icon rail: desktop collapsed. The phone drawer always shows the full panel (globals.css),
   // whatever the stored desktop state, so folding works there as on the expanded desktop sidebar.
   const rail = collapsed && !drawerOpen;
+
+  // S264 — the role's groups per section, and the group holding the current page (always open on arrival).
+  const sectionGroupsFor = (id: NavSection["id"]) => sectionGroups(id)
+    .map((g) => ({ ...g, items: g.items.filter((n) => canSeePage(role, n.href)) }))
+    .filter((g) => g.items.length > 0);
+  const activeGroup = NAV_GROUPS.find((g) => g.items.some((n) => navActive(n, pathname)));
+  const navGroups = useNavGroups("cis-admin", activeGroup ? navGroupId(activeGroup.label) : null, pathname);
 
   function go(href: string) {
     router.push(href);
@@ -125,12 +139,10 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
       {/* Nav — AA-883: Platform / CIS Content sections */}
       <nav style={{ flex: 1, display: "flex", flexDirection: "column", gap: 22 }}>
         {sections.map((section) => {
-          const groups = sectionGroups(section.id)
-            .map((g) => ({ ...g, items: g.items.filter((n) => canSeePage(role, n.href)) }))
-            .filter((g) => g.items.length > 0);
+          const secGroups = sectionGroupsFor(section.id);
           // The icon rail has no header label to unfold with, so a folded section still shows there.
           const closed = showHeaders && isClosed(section.id) && !rail;
-          const hasActive = groups.some((g) => g.items.some((n) => navActive(n, pathname)));
+          const hasActive = secGroups.some((g) => g.items.some((n) => navActive(n, pathname)));
           return (
             <div key={section.id} data-testid={`nav-section-${section.id}`}
               style={{ display: "flex", flexDirection: "column" }}>
@@ -142,10 +154,14 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
                 <SectionHeader section={section} closed={closed} hasActive={hasActive}
                   onToggle={() => toggleSection(section.id)} />
               ))}
-              {!closed && groups.map((group, i) => (
-                <NavGroupBlock key={group.label} group={group} pathname={pathname} pending={pending} go={go}
-                  spaceAbove={groupSpaceAbove(group, groups[i - 1], showHeaders, rail)} />
-              ))}
+              {!closed && secGroups.map((group, i) => {
+                const id = navGroupId(group.label);
+                return (
+                  <NavGroupBlock key={group.label} group={group} pathname={pathname} pending={pending} go={go}
+                    open={navGroups.isOpen(id)} onToggle={() => navGroups.toggle(id)} rail={rail}
+                    spaceAbove={groupSpaceAbove(group, secGroups[i - 1], showHeaders, rail)} />
+                );
+              })}
             </div>
           );
         })}
@@ -206,27 +222,34 @@ function groupSpaceAbove(group: NavGroup, prev: NavGroup | undefined, showHeader
   return groupHasTitle(prev) || groupHasTitle(group) ? 16 : 6;
 }
 
-function NavGroupBlock({ group, pathname, pending, go, spaceAbove }: {
+function NavGroupBlock({ group, pathname, pending, go, spaceAbove, open, onToggle, rail }: {
   group: NavGroup; pathname: string; pending: number | null | undefined; go: (href: string) => void;
-  spaceAbove: number;
+  spaceAbove: number; open: boolean; onToggle: () => void; rail: boolean;
 }) {
-  const showTitle = groupHasTitle(group);
   const navLabel = useNavLabel();
+  const badgeOf = (n: NavEntry) => (n.href === "/admin/review" && pending ? pending : undefined);
+  const total = group.items.reduce((sum, n) => sum + (badgeOf(n) ?? 0), 0);
   return (
-    <div style={{ marginTop: spaceAbove }}>
-      {showTitle && <div className="aa-sidebar-group-title" style={groupTitleStyle}>{navLabel(group.label)}</div>}
-      <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-        {group.items.map((n) => (
-          <NavItem
-            key={n.href}
-            entry={n}
-            active={navActive(n, pathname)}
-            badge={n.href === "/admin/review" && pending ? pending : undefined}
-            onClick={() => go(n.href)}
-          />
-        ))}
-      </div>
-    </div>
+    <KitNavGroup
+      id={navGroupId(group.label)}
+      label={groupHasTitle(group) ? navLabel(group.label) : null}
+      open={open}
+      onToggle={onToggle}
+      rail={rail}
+      active={group.items.some((n) => navActive(n, pathname))}
+      badge={total || null}
+      style={{ marginTop: spaceAbove }}
+    >
+      {group.items.map((n) => (
+        <NavItem
+          key={n.href}
+          entry={n}
+          active={navActive(n, pathname)}
+          badge={badgeOf(n)}
+          onClick={() => go(n.href)}
+        />
+      ))}
+    </KitNavGroup>
   );
 }
 
