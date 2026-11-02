@@ -1273,6 +1273,7 @@ export const ACCESS_API = "/api/admin/ai-gateway/access";
 
 export const PAGE_ACTIONS = [
   "provider_switch", "connections", "connection_test", "requeue", "routing", "catalog", "budgets", "jev_credit",
+  "credit",
 ] as const;
 export type PageAction = (typeof PAGE_ACTIONS)[number];
 
@@ -1292,6 +1293,7 @@ export const ACTION_CAPABILITY: Record<PageAction, "ai.admin" | "ops.write" | "s
   catalog: "ai.admin",
   budgets: "spend.write",
   jev_credit: "spend.write",
+  credit: "spend.write",
 };
 
 /**

@@ -86,3 +86,12 @@ test("the Providers tab shows the circuit line and the Credit view", () => {
     assert.equal(m.split(`${key}:`).length - 1, 2, key);      // English and Vietnamese
   }
 });
+
+test("the Credit view hides its write controls from a session the API would refuse", () => {
+  const panel = read("../app/admin/ai-gateway/ProviderCreditPanel.tsx");
+  assert.match(panel, /canEdit && !notDeployed && connections\.length > 0 && <CheckNowButton \/>/);
+  assert.match(panel, /\{canEdit && \(\s*<>\s*<span[^\n]*addEntry/);
+  assert.match(panel, /if \(canEdit\) \{\s*cols\.push\(\{ id: "actions"/);
+  assert.match(panel, /canThreshold\s*\? <ThresholdForm c=\{c\} \/>/);
+  assert.match(panel, /data-testid="ai-gateway-credit-read-only"/);
+});

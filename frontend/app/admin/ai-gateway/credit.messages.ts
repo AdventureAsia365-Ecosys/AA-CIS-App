@@ -26,6 +26,10 @@ export const CREDIT = defineMessages(
     thresholdBad: "Enter an amount of 0 or more, or leave it empty.",
     saveThreshold: "Save threshold",
     thresholdSaved: "Threshold saved",
+    thresholdView: (v: string) => `Alert below ${v}.`,
+    thresholdNone: "No low-balance alert set.",
+    readOnly: "Read-only session: you can see the ledger and the estimate, but adding or deleting entries, the "
+      + "threshold and Check now are hidden. Sign in with a staff account that may change them.",
     belowThreshold: (v: string) => `The estimate is below the alert threshold (${v}).`,
     lastAlert: (when: string) => ` Last alert: ${when}.`,
     checkNow: "Check now",
@@ -82,6 +86,10 @@ export const CREDIT = defineMessages(
     thresholdBad: "Nhập số tiền từ 0 trở lên, hoặc để trống.",
     saveThreshold: "Lưu ngưỡng",
     thresholdSaved: "Đã lưu ngưỡng",
+    thresholdView: (v: string) => `Cảnh báo dưới ${v}.`,
+    thresholdNone: "Chưa đặt cảnh báo số dư thấp.",
+    readOnly: "Phiên này chỉ được xem: thấy sổ và số dư ước tính, nhưng thêm hay xoá dòng, ngưỡng và Kiểm ngay đã ẩn. "
+      + "Đăng nhập bằng tài khoản nhân viên có quyền thay đổi.",
     belowThreshold: (v: string) => `Số dư ước tính đang dưới ngưỡng cảnh báo (${v}).`,
     lastAlert: (when: string) => ` Cảnh báo gần nhất: ${when}.`,
     checkNow: "Kiểm ngay",

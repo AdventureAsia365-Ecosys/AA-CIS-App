@@ -8,6 +8,10 @@
 // PATCH /api/admin/llm-connections/{key}. Below it the backend raises one bell and one e-mail a day (also from the
 // api sampler every 30 minutes). A backend without the ledger (migration 342) answers 503: a clean notice.
 // Jev keeps its own ledger (JevCreditPanel).
+// Like every write control of the page (AA-1025 C1 follow-up), the add form, the delete buttons and Check now show only
+// when GET /api/admin/ai-gateway/access says this session may write the ledger (usePageAccess "credit", spend.write on
+// the API), and the threshold form only when it may edit connections ("connections", ai.admin): a read-only session
+// (the Dev E2E admin, a viewer) sees the figures and one line saying why. The API still answers 403 to a write it refuses.
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -21,6 +25,7 @@ import {
   type CreditResp,
 } from "@/lib/aiGateway";
 import { CREDIT } from "./credit.messages";
+import { usePageAccess } from "./usePageAccess";
 // The Providers overview query (ProvidersTab PROVIDERS_KEY), named here to keep the two modules free of a cycle.
 const PROVIDERS_KEY = ["ai-gateway", "providers"] as const;
 
@@ -123,7 +128,7 @@ function AddEntryForm({ c }: { c: CreditConnection }) {
   );
 }
 
-function EntriesTable({ c }: { c: CreditConnection }) {
+function EntriesTable({ c, canEdit }: { c: CreditConnection; canEdit: boolean }) {
   const t = useT(CREDIT);
   const { formatDateTime } = useFormat();
   const toast = useToast();
@@ -134,7 +139,8 @@ function EntriesTable({ c }: { c: CreditConnection }) {
     onSuccess: () => { toast.success(t("entryDeleted")); setConfirming(null); refresh(); },
     onError: (e) => { toast.error(e instanceof Error ? e.message : t("deleteFailed")); setConfirming(null); },
   });
-  const columns = useMemo<ColumnDef<CreditEntry, unknown>[]>(() => [
+  const columns = useMemo<ColumnDef<CreditEntry, unknown>[]>(() => {
+    const cols: ColumnDef<CreditEntry, unknown>[] = [
     { accessorKey: "effective_at", header: t("colDate"),
       cell: (x) => <span style={{ fontFamily: mono }}>{formatDateTime(x.row.original.effective_at)}</span> },
     { accessorKey: "kind", header: t("colType"),
@@ -145,14 +151,18 @@ function EntriesTable({ c }: { c: CreditConnection }) {
       cell: (x) => <span style={{ color: K.muted }}>{x.row.original.note || "—"}</span> },
     { id: "added", header: t("colAddedBy"), accessorFn: (r) => r.created_at ?? "",
       cell: (x) => <span style={small}>{x.row.original.created_by || "—"}</span> },
-    { id: "actions", header: "", enableSorting: false, enableHiding: false, meta: { align: "right" },
-      cell: (x) => (
-        <IconButton size="sm" variant="plain" tone="danger" label={t("deleteTitle")} disabled={del.isPending}
-          onClick={() => setConfirming(x.row.original)}>
-          <Trash2 size={13} />
-        </IconButton>
-      ) },
-  ], [t, formatDateTime, del.isPending]);
+    ];
+    if (canEdit) {
+      cols.push({ id: "actions", header: "", enableSorting: false, enableHiding: false, meta: { align: "right" },
+        cell: (x) => (
+          <IconButton size="sm" variant="plain" tone="danger" label={t("deleteTitle")} disabled={del.isPending}
+            onClick={() => setConfirming(x.row.original)}>
+            <Trash2 size={13} />
+          </IconButton>
+        ) });
+    }
+    return cols;
+  }, [t, formatDateTime, del.isPending, canEdit]);
   if (c.entries.length === 0) {
     return <EmptyState icon={<Wallet size={30} />} title={t("noEntriesTitle")} description={t("noEntriesBody")} />;
   }
@@ -172,7 +182,9 @@ function EntriesTable({ c }: { c: CreditConnection }) {
   );
 }
 
-function ConnectionCredit({ c }: { c: CreditConnection }) {
+function ConnectionCredit({ c, canEdit, canThreshold }: {
+  c: CreditConnection; canEdit: boolean; canThreshold: boolean;
+}) {
   const t = useT(CREDIT);
   const { formatDateTime } = useFormat();
   return (
@@ -192,10 +204,17 @@ function ConnectionCredit({ c }: { c: CreditConnection }) {
             {c.last_low_alert_at ? t("lastAlert", formatDateTime(c.last_low_alert_at)) : ""}
           </span>
         )}
-        <ThresholdForm c={c} />
-        <span style={{ ...small, fontWeight: 600, color: K.ink }}>{t("addEntry")}</span>
-        <AddEntryForm c={c} />
-        <EntriesTable c={c} />
+        {canThreshold
+          ? <ThresholdForm c={c} />
+          : <span style={small} data-testid={`credit-threshold-view-${c.connection_key}`}>
+            {c.low_balance_usd == null ? t("thresholdNone") : t("thresholdView", usd(c.low_balance_usd, 2))}</span>}
+        {canEdit && (
+          <>
+            <span style={{ ...small, fontWeight: 600, color: K.ink }}>{t("addEntry")}</span>
+            <AddEntryForm c={c} />
+          </>
+        )}
+        <EntriesTable c={c} canEdit={canEdit} />
       </div>
     </Section>
   );
@@ -229,6 +248,9 @@ function CheckNowButton() {
 /** The Credit view: one section per vendor API connection whose balance comes from this ledger. */
 export function ProviderCreditPanel() {
   const t = useT(CREDIT);
+  const access = usePageAccess();
+  const canEdit = access.can("credit");
+  const canThreshold = access.can("connections");
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: [...CREDIT_KEY],
     queryFn: () => apiGet<CreditResp>(CREDIT_API, { admin: true }),
@@ -244,11 +266,16 @@ export function ProviderCreditPanel() {
     <div data-testid="ai-gateway-credit" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 16 }}>
       <p style={{ ...small, margin: 0 }}>{t("intro")}</p>
       {notDeployed && <span role="status" style={{ fontSize: 12, color: K.muted2 }}>{t("notDeployed")}</span>}
-      {!notDeployed && connections.length > 0 && <CheckNowButton />}
+      {access.readOnly && (
+        <div role="status" style={small} data-testid="ai-gateway-credit-read-only">{t("readOnly")}</div>
+      )}
+      {canEdit && !notDeployed && connections.length > 0 && <CheckNowButton />}
       {!notDeployed && connections.length === 0 && (
         <EmptyState icon={<Wallet size={30} />} title={t("noConnections")} description={t("noConnectionsBody")} />
       )}
-      {connections.map((c) => <ConnectionCredit key={c.connection_key} c={c} />)}
+      {connections.map((c) => (
+        <ConnectionCredit key={c.connection_key} c={c} canEdit={canEdit} canThreshold={canThreshold} />
+      ))}
     </div>
   );
 }

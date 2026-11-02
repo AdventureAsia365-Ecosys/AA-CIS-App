@@ -56,7 +56,19 @@ def test_actions_follow_the_capability_of_each_route(monkeypatch):
     monkeypatch.setitem(staff_authz.ROLE_PERMS, "money-only", perms)
     out = router_mod.page_access(_principal("money-only"))
     assert out["read_only"] is False
-    assert {k for k, v in out["actions"].items() if v} == {"budgets", "jev_credit"}
+    assert {k for k, v in out["actions"].items() if v} == {"budgets", "jev_credit", "credit"}
+
+
+def test_the_credit_view_writes_share_one_answer():
+    """AA-1025 B5: the Credit view's add, delete and Check now all need what the `credit` action reports, and its
+    threshold save is the connection PATCH that `connections` reports, so one answer per control is exact."""
+    credit = staff_authz.POLICY[router_mod.PAGE_WRITES["credit"]]
+    siblings = (("DELETE", "/admin/ai-gateway/credit/entries/{entry_id}"), ("POST", "/admin/ai-gateway/credit/check"))
+    for route in siblings:
+        assert staff_authz.POLICY[route] == credit, route
+    assert router_mod.PAGE_WRITES["connections"] == ("PATCH", "/admin/llm-connections/{connection_key}")
+    read_only = router_mod.page_access(_principal("admin", e2e_read_only=True))
+    assert read_only["actions"]["credit"] is False
 
 
 def test_route_returns_the_callers_access():

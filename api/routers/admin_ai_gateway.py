@@ -165,6 +165,8 @@ PAGE_WRITES: dict[str, tuple[str, str]] = {
     "catalog": ("PATCH", "/admin/llm-catalog/{model_key}"),
     "budgets": ("PUT", "/admin/budgets/{provider}/{scope}"),
     "jev_credit": ("POST", "/admin/decisions/jev-credit/topups"),
+    # AA-1025 B5 Credit view: add or delete an entry, Check now (all spend.write); its threshold save is `connections`
+    "credit": ("POST", "/admin/ai-gateway/credit/{connection_key}/entries"),
 }
 
 
