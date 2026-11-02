@@ -247,7 +247,9 @@ async def probe_embedding(pool, connection_key: str, model_key: str, wire_id: st
         ledger_class = classify(e)
         row = gateway_failure_row(
             stage=svc.TEST_STAGE, role="embed", model=model_key,
-            status="refused" if ledger_class in ("access_denied", "quota_exhausted", "throttled") else "error",
+            # AA-1025 H1a: 'disabled' = the app's AI is off in its app profile (nothing was sent)
+            status="refused" if ledger_class in ("access_denied", "quota_exhausted", "throttled", "disabled")
+            else "error",
             error_class=ledger_class, error=out["error"], provider=_bedrock_provider(conn),
             connection_key=connection_key, latency_ms=latency, attempt_no=1, deployment_wire_id=wire_id,
             quality_signal_extra=signal)       # AA-642 A9: one attempt, numbered like every gateway attempt row

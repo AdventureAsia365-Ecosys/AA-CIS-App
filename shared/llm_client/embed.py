@@ -422,6 +422,10 @@ def probe(model: CatalogModel, conn: connections.ProviderConnection, wire_id: st
     (``call_log.billed_fields``: connection, latency, attempt 1, wire id, pricing mode)."""
     if model.api_style != "embed" or conn.kind != "bedrock":
         raise RuntimeError(f"{model.model_key!r} on {conn.connection_key!r} is not a Bedrock embedding deployment")
+    from . import app_profile
+    app_refusal = app_profile.refusal("adhoc_conn_test")     # AA-1025 H1a: AI off for the app = no probe call either
+    if app_refusal is not None:
+        raise app_refusal
     started = time.monotonic()
     resp = breaker.guarded(conn, model.model_key, functools.partial(
         _call, model, conn.connection_key, texts, input_type, None, wire_id), admit_call=False)

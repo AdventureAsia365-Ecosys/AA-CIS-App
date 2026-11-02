@@ -529,8 +529,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   `ai_enabled`, `bulk_paused`, `default_daily_budget_usd`, `degrade_mode` (tech lead T-21: CIS `queue_retry`,
   TripPlanner `basic_narration`, CRM `manual_reply_needed`, Booking `none`) and `disabled_reason`. The CIS gateway reads
   its own app's row (20 s cache per process; no table, no row or unreadable = AI on) before anything else: AI off
-  refuses `generate` (before the stage switch), the connection test (`probe`), `embed()` and Jev `decide()` / the Jev
-  canary with one 0 USD ledger row each (status refused, error_class `disabled`). The refusal is `LLMAppDisabled`, an
+  refuses `generate` (before the stage switch), the connection test (`probe`), `embed()`, the daily embedding probe
+  (`embed.probe`) and Jev `decide()` / the Jev canary with one 0 USD ledger row each (status refused, error_class `disabled`). The refusal is `LLMAppDisabled`, an
   `LLMStageDisabled` whose message names the stage, so jobs fail without a retry, T2 / T9 keep their version / piece to
   do, and the bulk re-queue holds every stage while the app's AI is off (`shared/jobs/queue.disabled_stages` returns
   `EveryStage`); Jev fails open as on its own switch. `bulk_paused` and the default budget are stored and shown only

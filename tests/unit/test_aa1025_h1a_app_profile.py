@@ -382,3 +382,41 @@ def test_page_access_names_the_app_profile_control():
 def test_the_jev_refusal_text_reads_as_refused_on_the_calls_tab():
     from api.services import ai_gateway as gw
     assert gw.jev_verdict_status({"zone": "error", "error": app_profile.refusal_text("cis")}) == "refused"
+
+
+def test_ai_off_refuses_the_daily_embedding_probe_as_refused(cis_off, monkeypatch):
+    from services.jobs import llm_probe_job
+    model = MagicMock(model_key="embed-x", api_style="embed")
+    conn = MagicMock(connection_key="acc2", kind="bedrock", auth_mode="task_role")
+    with pytest.raises(app_profile.LLMAppDisabled):
+        embed_mod.probe(model, conn, "wire-x", ["a quiet lake"])
+
+    rows: list = []
+
+    class _Db:
+        async def fetch(self, *a):
+            return []
+
+        async def execute(self, *a):
+            return None
+
+    class _Pool:
+        def acquire(self):
+            db = _Db()
+
+            class _A:
+                async def __aenter__(self):
+                    return db
+
+                async def __aexit__(self, *exc):
+                    return False
+            return _A()
+
+    async def record(pool, **row):
+        rows.append(row)
+    monkeypatch.setattr("shared.llm_client.connections.fetch_connections", AsyncMock(return_value={"acc2": conn}))
+    monkeypatch.setattr("shared.llm_client.catalog.get_model_sync", lambda key: model)
+    monkeypatch.setattr("shared.llm_client.call_log.record_call_with_pool", record)
+    out = asyncio.run(llm_probe_job.probe_embedding(_Pool(), "acc2", "embed-x", "wire-x"))
+    assert out["ok"] is False and out["cost_usd"] == 0.0
+    assert (rows[0]["status"], rows[0]["error_class"], rows[0]["role"]) == ("refused", DISABLED, "embed")
