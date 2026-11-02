@@ -21,6 +21,7 @@ import {
   isTicket,
   lockSourceText,
   membershipFeed,
+  offerForNewAgency,
   parseUsd,
   platformMembershipFeed,
   pct,
@@ -214,6 +215,19 @@ test("the new refusal codes read in plain words with their code", () => {
     assert.ok(CRM_ERROR_TEXT[code], code);
     assert.ok(crmErrorText(409, code).endsWith(`(${code})`), code);
   }
+});
+
+test("AA-1031: a deleted test agency's id reads as tenant_deleted in plain words", () => {
+  assert.match(CRM_ERROR_TEXT.tenant_deleted, /cannot be reused/);
+  assert.match(CRM_ERROR_TEXT.tenant_deleted, /new CIS tenant/);
+  assert.equal(crmErrorText(409, "tenant_deleted", "server words"), `${CRM_ERROR_TEXT.tenant_deleted} (tenant_deleted)`);
+});
+
+test("AA-1031: Create agency offers only CIS tenants without an agency in the loaded list", () => {
+  const offer = offerForNewAgency([{ tenant_id: "t-1" }, { tenant_id: "t-3" }]);
+  assert.equal(offer({ tenant_id: "t-1" }), false);
+  assert.equal(offer({ tenant_id: "t-2" }), true);
+  assert.equal(offerForNewAgency([])({ tenant_id: "t-1" }), true);
 });
 
 const DRAWER_SRC = readFileSync(fileURLToPath(new URL("../app/admin/platform/agencies/AgencyDrawer.tsx", import.meta.url)), "utf8");

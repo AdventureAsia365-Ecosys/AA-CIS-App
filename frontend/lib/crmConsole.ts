@@ -405,6 +405,8 @@ export const CRM_ERROR_TEXT: Record<string, string> = {
   has_travellers: "The agency already holds travellers or inquiries, so AA cannot invite a first owner.",
   owner_exists: "The agency already has an owner.",
   tenant_exists: "An agency with this id already exists in the CRM. Nothing was changed.",
+  // AA-1031 (S264, crm.ops.v1 1.9): the CIS tenant's (test) agency was deleted; a trashed id is never reused.
+  tenant_deleted: "This tenant's test agency was deleted; its id cannot be reused. Create a new CIS tenant.",
   owner_invite_pending: "An owner invitation is already pending.",
   member_limit_reached: "The agency has no free seat.",
   invalid_feature: "One of the features is not a known code.",
@@ -554,6 +556,15 @@ export function usdPct(cost: string | number | null | undefined, budget: string 
 }
 
 export const shortId = (id: string | null | undefined) => (id ? id.slice(0, 8) : "—");
+
+/** AA-1031 (S264): may "Create agency" offer this CIS tenant? Not when the loaded agency list already has an agency
+ * with its id (the CRM would answer 409 tenant_exists). Build once per list: `const offer = offerForNewAgency(rows)`. */
+export function offerForNewAgency(
+  agencies: ReadonlyArray<Pick<TenantSummary, "tenant_id">>,
+): (tenant: { tenant_id: string }) => boolean {
+  const taken = new Set(agencies.map((a) => a.tenant_id));
+  return (tenant) => !taken.has(tenant.tenant_id);
+}
 
 /** May the owner recovery be completed now? (eligible_at has passed; the CRM re-checks it). */
 export function recoveryDue(eligibleAt: string | null | undefined, now: number = Date.now()): boolean {

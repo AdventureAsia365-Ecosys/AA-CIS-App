@@ -5,7 +5,8 @@
 // API (CIS BFF → api/routers/admin_crm_console.py → the CRM's crm.ops.v1 with this staff member's own Cognito token):
 //   GET  /api/admin/platform/crm/console          {can_write, environment}: write buttons only for crm-platform-admin
 //   GET  /api/admin/platform/crm/agencies         keyset pages of TenantSummary ("Load more")
-//   POST /api/admin/platform/crm/agencies         create an agency (201; an existing id is 409 tenant_exists, nothing written)
+//   POST /api/admin/platform/crm/agencies         create an agency (201; an existing id is 409 tenant_exists, nothing written;
+//                                                 AA-1031: the id of a deleted (trashed) test agency is 409 tenant_deleted)
 //   GET  /api/admin/tenants                       the CIS tenants, to pick the one the agency belongs to
 // The drawer (AgencyDrawer.tsx) holds the meters and every L1 action.
 //
@@ -16,6 +17,8 @@
 // line above the table shows the CIS membership feed's health as the CRM reports it (platform-wide, the same value on
 // every agency). Read-only display: no new route or write.
 // AA-994: text in the UI language (./messages.ts; CRM codes and labels through ./useCrmText.ts).
+// AA-1031 (S264): the Create agency tenant picker leaves out CIS tenants that already have an agency in the loaded list,
+// and a tenant whose test agency was deleted gets the CRM's 409 tenant_deleted in plain words ("create a new CIS tenant").
 
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, RefreshCw } from "lucide-react";
@@ -40,6 +43,7 @@ import {
   CRM_API,
   LOCALES,
   isTicket,
+  offerForNewAgency,
   type CrmConsole,
   type TenantPage,
   type TenantSummary,
@@ -210,7 +214,7 @@ export default function AgenciesConsole() {
           }}
         />
       )}
-      <CreateAgencyModal open={creating} forceSynthetic={!isProd} onClose={() => setCreating(false)}
+      <CreateAgencyModal open={creating} forceSynthetic={!isProd} agencies={rows} onClose={() => setCreating(false)}
         onCreated={(agency) => { setCreating(false); void qc.invalidateQueries({ queryKey: AGENCIES_KEY }); setSelected(agency); }} />
     </PageFrame>
   );
@@ -227,8 +231,9 @@ function newUuid(): string {
   return crypto.randomUUID();
 }
 
-function CreateAgencyModal({ open, forceSynthetic, onClose, onCreated }: {
-  open: boolean; forceSynthetic: boolean; onClose: () => void; onCreated: (agency: TenantSummary) => void;
+function CreateAgencyModal({ open, forceSynthetic, agencies, onClose, onCreated }: {
+  open: boolean; forceSynthetic: boolean; agencies: TenantSummary[]; onClose: () => void;
+  onCreated: (agency: TenantSummary) => void;
 }) {
   const t = useT(AGENCIES);
   const crm = useCrmText();
@@ -243,6 +248,8 @@ function CreateAgencyModal({ open, forceSynthetic, onClose, onCreated }: {
   const [error, setError] = useState<string | null>(null);
 
   const isSynthetic = forceSynthetic ? true : synthetic;
+  // AA-1031: a CIS tenant that already has an agency in the loaded list is not offered (it would be 409 tenant_exists).
+  const offer = useMemo(() => offerForNewAgency(agencies), [agencies]);
   const ticketOk = isTicket(ticket);
   const canSubmit = !!tenantId && name.trim().length > 0 && ticketOk && !busy;
 
@@ -269,7 +276,8 @@ function CreateAgencyModal({ open, forceSynthetic, onClose, onCreated }: {
       setError(r.message);
       return;
     }
-    // The CRM creates only (201); an id that already exists is refused with 409 tenant_exists above.
+    // The CRM creates only (201); an id that already exists is refused with 409 tenant_exists above, and the id of a
+    // deleted test agency with 409 tenant_deleted (its text says to create a new CIS tenant).
     toast.success(t("created", r.body.agency_name));
     reset();
     onCreated(r.body);
@@ -303,7 +311,7 @@ function CreateAgencyModal({ open, forceSynthetic, onClose, onCreated }: {
         </div>
         {source === "cis" ? (
           // AA-919 S254: the shared admin tenant picker (active CIS tenants by name; it shows its own load error).
-          <TenantSelect label={t("cisTenant")} value={tenantId} onChange={pickTenant} required
+          <TenantSelect label={t("cisTenant")} value={tenantId} onChange={pickTenant} required offer={offer}
             hint={t("cisTenantHint")} />
         ) : (
           <Field label={t("newId")} htmlFor="crm-create-id" hint={t("newIdHint")}>
