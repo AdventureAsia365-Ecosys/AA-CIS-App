@@ -517,7 +517,7 @@ function Money({ value }: { value: number | null }) {
 }
 
 function CentralTable({ rows, loading, onEdit }: {
-  rows: CentralBudgetRow[]; loading: boolean; onEdit: (r: CentralBudgetRow) => void;
+  rows: CentralBudgetRow[]; loading: boolean; onEdit?: (r: CentralBudgetRow) => void;
 }) {
   const t = useT(BUDGETS);
   const tc = useT(CENTRAL);
@@ -561,12 +561,12 @@ function CentralTable({ rows, loading, onEdit }: {
     { id: "changed", header: t("colChanged"), accessorFn: (r) => r.updated_at ?? "",
       cell: (c) => <ChangedCell row={c.row.original} /> },
     { id: "actions", header: "", enableSorting: false, enableHiding: false,
-      cell: (c) => (
+      cell: (c) => onEdit ? (
         <span onClick={(e) => e.stopPropagation()}>
           <Button size="sm" variant="secondary" onClick={() => onEdit(c.row.original)}
             testId={`central-edit-${c.row.original.scope}`}>{t("edit")}</Button>
         </span>
-      ) },
+      ) : null },
   ], [t, tc, label, onEdit]);
   return (
     <DataTable<CentralBudgetRow>
@@ -695,11 +695,11 @@ export default function BudgetsTab({ onOpenConnections }: { onOpenConnections: (
           onEdit={canEdit ? (row) => setEditing({ row }) : undefined} />
       </Section>
       <Section title={tc("group")} description={tc("groupHelp")} padded={false} testId="ai-gateway-budgets-central-tier"
-        actions={
+        actions={canEdit ? (
           <Button size="sm" variant="secondary" disabled={!data} onClick={() => setCentralEditing({ row: null })}
             testId="central-add"><Plus size={13} /> {tc("add")}</Button>
-        }>
-        <CentralTable rows={central} loading={loading} onEdit={(row) => setCentralEditing({ row })} />
+        ) : undefined}>
+        <CentralTable rows={central} loading={loading} onEdit={canEdit ? (row) => setCentralEditing({ row }) : undefined} />
       </Section>
       <Section title={t("groupConnection")} description={t("groupConnectionHelp")} padded={false}
         actions={<Button size="sm" variant="secondary" onClick={onOpenConnections}>{t("editConnections")}</Button>}>
