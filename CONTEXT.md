@@ -497,7 +497,21 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   stop (`tenant_budget.approval_stop_in`; the worker reads the explicit cause chain too), and the `t2_rewrite` /
   `t9_write` on_terminal hooks leave the version `pending` / piece `processing` for such a job (the tenant's live view
   says "on hold"), so the re-queue writes it; an admin Cancel of the `stopped_budget` job is the decline (the hook then
-  marks it failed). `LLM_TENANT_BUDGETS=off` switches it off. **Prompt register**:
+  marks it failed). `LLM_TENANT_BUDGETS=off` switches it off. **Central LLM budgets** (AA-1025 A7, migration 340;
+  `shared/llm_client/central_budget.py`): `shared.spend_budget` rows of provider `llm` cap every LLM provider together
+  per scope: `app:<app>` (`llm_call_log.app`, NULL = cis), `stage:<stage>`, `job:<kind>` (that kind's jobs; its
+  `per_run_usd` = the running job's spend), `eval` (an eval label bound, or `writing_memory_eval`; spend = the eval log
+  stages) and `adhoc` (`adhoc_*` stages); `per_day_usd` (UTC day), `per_month_usd` (UTC month, llm rows only). Checked
+  in `_generate_with` after the stage switch and the tenant budget: no `llm` row = nothing more read; a row with
+  `hard_stop` whose cap spent + the call's worst case (`client.estimate_call_usd`: the route's first model, the prompt
+  at ~4 chars per token, the whole `max_tokens`) would pass refuses the call with `CentralBudgetExceeded` (a
+  BudgetExceeded: job `stopped_budget`, ledger `refused` / `budget`, 0 USD, nothing sent); an alert-only row never
+  refuses (tech lead T-8: Dev caps alert-only). Bell + ops e-mail at `alert_pct` or on a refusal
+  (`cost_guard.maybe_alert_central`, entity `llm:<scope>`). Rows 60 s, spend 30 s cached per process; unreadable =
+  not enforced; `LLM_CENTRAL_BUDGETS=off` switches it off. 340 seeds one alert-only `app:cis` daily cap = p95 of the
+  last 30 days x 1.5 (T-8). Edited on AI providers › Budgets (`PUT /admin/budgets/llm/{scope}`, `DELETE
+  /admin/budgets/llm/{scope}`); the tab shows the central tier and the coverage per call site (which cap covers each
+  CIS stage). **Prompt register**:
   `prompt_hash` = sha256 of the system prompt; `prompt_version` = `prompt_registry.version_for(stage)` (the manifest
   `shared/llm_client/prompt_versions.json` hashes the prompt symbols' source with `ast`; the version counts only when
   `shared.prompt_version` holds the same hash; migration 325 registered the 32 v1 rows), on every reply and attempt
@@ -558,10 +572,12 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   off tenant stages until decision 10 and AA-820 are done. **Migration 333** ("AWS first, outside last", tech lead
   S263): every judge / validate route that ends on the OpenAI API hop (`gpt-6-luna-openai`) gets an acc2 pick right
   BEFORE it, so the OpenAI API stays the last rung: `s1_judge`, `t2_judge`, `t7_debate_judge`, `t10_judge`,
-  `t10_adjudicate`, `writing_memory_eval`, `writing_memory_mine` on `nova-lite`. `a3_place_dedupe` is left out (open):
-  it forces a tool choice, its check stage falls back to Nova Lite (Amazon), and the other maker's model tried, Llama 4
-  Scout, refused Converse `toolChoice.tool` in the live smoke; 333 records that as the catalog capability
-  `forced_tool_choice: false` on `llama4-scout` (the gateway then asks it with `auto` from the first call). These
+  `t10_adjudicate`, `writing_memory_eval`, `writing_memory_mine` on `nova-lite`. `a3_place_dedupe` was left out of
+  333: it forces a tool choice, its check stage falls back to Nova Lite (Amazon), and Llama 4 Scout refused Converse
+  `toolChoice.tool` in the live smoke (333 records `forced_tool_choice: false` on `llama4-scout`). **Migration 339**
+  (S264) closes it: `llama4-maverick` (Meta) right before its OpenAI API hop, asked for the verdict in the prompt
+  (`structured_output: prompt`, 337); the place pair keeps two makers (dedupe OpenAI + Meta, check Anthropic +
+  Amazon), and its live smoke passed on 02/11. These
   judges' acc2 verdicts are not held by code (only the brand audits' `pass` is); the revert is the admin route PATCH. **Contract smoke** (job kind `llm_contract_smoke`,
   `services/jobs/llm_contract_smoke_job.py`; `POST /admin/job-runner/llm-contract-smoke/run`, ai.admin, DRY RUN by
   default, optional `stages` and `models` = stage -> model key override): per stage one invented fixture through the
@@ -570,11 +586,12 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   stage's role, `quality_signal.contract_smoke` / `parser_ok`; refused over 0.10 USD estimated, about 0.01 USD for the
   twelve stages of 331 / 332 (estimate 0.02 USD for all twenty cases: the eight judge / validate stages whose route
   ends on the OpenAI API have cases too, seven of them planned for migration 333, which puts an acc2 pick before that
-  hop; `a3_place_dedupe` has no planned pick and runs only with an override). It proves format only (ladder rung 3).
+  hop; since 339 `a3_place_dedupe` is planned on `llama4-maverick`). It proves format only (ladder rung 3).
   A stage that got no usable reply (a refused or failed provider call, a billed unusable reply) is FAILED in the
   summary, never absent, and writes a 0 USD smoke row with `parser_ok` false and the error (the order gate reads the
   latest row). A structured stage (its request carries a JSON schema, so Converse forces the tool choice) is not run on
-  a model whose catalog row states `forced_tool_choice: false` (`requires` / `why_not` in the plan). **Order gate:** 331 / 332 / 333 refuse to give a stage its acc2
+  a model whose catalog row states `forced_tool_choice: false` (`requires` / `why_not` in the plan), unless that row
+  also states a non-forced `structured_output` mode (any / auto / prompt). **Order gate:** 331 / 332 / 333 refuse to give a stage its acc2
   fallback unless the LATEST smoke row of that stage on that model (connection acc2) passed, so the smoke runs before
   the apply; a stage that fails is re-picked (smoke the next model with `models`, change the migration's pick) or
   dropped before the apply, and after the apply re-pointed with the admin route PATCH. (A database that never logged
