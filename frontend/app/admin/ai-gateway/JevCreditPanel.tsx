@@ -9,6 +9,8 @@
 // A backend without the GET endpoint or the shared.jev_credit_topup table (migration 209) answers 404/501: that
 // renders a clean empty state, not an error screen.
 // AA-994: text in the UI language (jevCredit.messages.ts); notes and API errors stay as sent.
+// AA-1025 C1 follow-up: the alert check, the add form and the delete buttons show only when GET
+// /api/admin/ai-gateway/access says this session may write top-ups (usePageAccess, spend.write on the API).
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -18,6 +20,7 @@ import {
   Section, Spinner, apiGet, apiSend, mono, useFormat, useT, useToast, type ColumnDef,
 } from "../../_kit";
 import { JEV_CREDIT } from "./jevCredit.messages";
+import { usePageAccess } from "./usePageAccess";
 
 interface Topup {
   id: number;
@@ -144,7 +147,7 @@ function AddTopupForm() {
 }
 
 // ── Top-ups table ──────────────────────────────────────────────────────────────────────────────────────────────────
-function TopupsTable({ topups }: { topups: Topup[] }) {
+function TopupsTable({ topups, canEdit }: { topups: Topup[]; canEdit: boolean }) {
   const t = useT(JEV_CREDIT);
   const { formatDateTime } = useFormat();
   const toast = useToast();
@@ -165,7 +168,8 @@ function TopupsTable({ topups }: { topups: Topup[] }) {
     },
   });
 
-  const columns = useMemo<ColumnDef<Topup, unknown>[]>(() => [
+  const columns = useMemo<ColumnDef<Topup, unknown>[]>(() => {
+    const cols: ColumnDef<Topup, unknown>[] = [
     { accessorKey: "topped_up_on", header: t("date"),
       cell: (c) => <span style={{ fontFamily: mono }}>{c.row.original.topped_up_on}</span> },
     { accessorKey: "amount_usd", header: t("colAmount"), meta: { align: "right" },
@@ -179,14 +183,18 @@ function TopupsTable({ topups }: { topups: Topup[] }) {
           {c.row.original.created_at && <div>{formatDateTime(c.row.original.created_at)}</div>}
         </div>
       ) },
-    { id: "actions", header: "", enableSorting: false, enableHiding: false, meta: { align: "right" },
-      cell: (c) => (
-        <IconButton size="sm" variant="plain" tone="danger" label={t("deleteTitle")} disabled={del.isPending}
-          onClick={() => setConfirming(c.row.original)}>
-          <Trash2 size={13} />
-        </IconButton>
-      ) },
-  ], [t, formatDateTime, del.isPending]);
+    ];
+    if (canEdit) {
+      cols.push({ id: "actions", header: "", enableSorting: false, enableHiding: false, meta: { align: "right" },
+        cell: (c) => (
+          <IconButton size="sm" variant="plain" tone="danger" label={t("deleteTitle")} disabled={del.isPending}
+            onClick={() => setConfirming(c.row.original)}>
+            <Trash2 size={13} />
+          </IconButton>
+        ) });
+    }
+    return cols;
+  }, [t, formatDateTime, del.isPending, canEdit]);
 
   if (topups.length === 0) {
     return <EmptyState icon={<Wallet size={30} />} title={t("noTopupsTitle")} description={t("noTopupsBody")} />;
@@ -217,6 +225,7 @@ function TopupsTable({ topups }: { topups: Topup[] }) {
 export function JevCreditPanel() {
   const t = useT(JEV_CREDIT);
   const { formatDateTime } = useFormat();
+  const canEdit = usePageAccess().can("jev_credit");
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: JEV_CREDIT_KEY,
     queryFn: () => apiGet<JevCreditResp>("/api/admin/decisions/jev-credit", { admin: true }),
@@ -266,12 +275,14 @@ export function JevCreditPanel() {
           {notDeployed && <span>{t("notDeployed")}</span>}
         </div>
       )}
-      {!notDeployed && view.low_threshold_usd != null && <TestAlertsButton />}
-      <Section title={t("addTopup")}>
-        <AddTopupForm />
-      </Section>
+      {canEdit && !notDeployed && view.low_threshold_usd != null && <TestAlertsButton />}
+      {canEdit && (
+        <Section title={t("addTopup")}>
+          <AddTopupForm />
+        </Section>
+      )}
       <Section padded={false}>
-        <TopupsTable topups={view.topups} />
+        <TopupsTable topups={view.topups} canEdit={canEdit} />
       </Section>
     </div>
   );

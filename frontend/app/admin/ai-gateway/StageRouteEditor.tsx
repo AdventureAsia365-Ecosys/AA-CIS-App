@@ -53,7 +53,9 @@ function shadowOptions(row: StageConfigRow): ModelOption[] {
   return row.options.filter((o) => o.available && o.model_id !== row.model_id);
 }
 
-export function StageRouteEditor({ row }: { row: StageConfigRow }) {
+/** `readOnly` (AA-1025 C1 follow-up, a session the API would refuse): every control inside is disabled through the
+ *  wrapping fieldset and the Save / Cancel row is hidden; the state line stays readable. */
+export function StageRouteEditor({ row, readOnly = false }: { row: StageConfigRow; readOnly?: boolean }) {
   const t = useT(MODELS);
   const toast = useToast();
   const qc = useQueryClient();
@@ -162,14 +164,18 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
   const shadowLabel = effShadow ? label(effShadow) : null;
 
   return (
-    <div
+    // A fieldset, so `disabled` locks every control inside at once (read-only session); minWidth 0 because a
+    // fieldset's default min-width is its min-content.
+    <fieldset
+      disabled={readOnly}
       data-testid={`llm-route-editor-${row.stage}`}
       style={{
         display: "flex",
         flexDirection: "column",
         gap: 12,
         padding: "12px 14px",
-        marginTop: 10,
+        margin: "10px 0 0",
+        minWidth: 0,
         borderRadius: 10,
         border: `1px solid ${K.line2}`,
         background: alpha(K.accent, 3),
@@ -333,12 +339,16 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
 
       {/* Footer: save / cancel / error */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <Button size="sm" variant="primary" disabled={!dirty || mut.isPending} onClick={() => setConfirming(true)}>
-          {mut.isPending ? t("saving") : t("saveRoute")}
-        </Button>
-        <Button size="sm" variant="ghost" disabled={!dirty || mut.isPending} onClick={cancel}>
-          {t("cancel")}
-        </Button>
+        {!readOnly && (
+          <>
+            <Button size="sm" variant="primary" disabled={!dirty || mut.isPending} onClick={() => setConfirming(true)}>
+              {mut.isPending ? t("saving") : t("saveRoute")}
+            </Button>
+            <Button size="sm" variant="ghost" disabled={!dirty || mut.isPending} onClick={cancel}>
+              {t("cancel")}
+            </Button>
+          </>
+        )}
         {disabledOpts.length > 0 && (
           <span style={{ fontSize: 11, color: K.muted2 }}>
             {t("unavailable", disabledOpts.length)}
@@ -381,7 +391,7 @@ export function StageRouteEditor({ row }: { row: StageConfigRow }) {
           </div>
         }
       />
-    </div>
+    </fieldset>
   );
 }
 

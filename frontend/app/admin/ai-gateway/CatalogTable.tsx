@@ -21,6 +21,7 @@ import { accountName } from "@/lib/awsAccounts";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import { type CatalogRow } from "./llmShared";
 import { MODELS } from "./models.messages";
+import { usePageAccess } from "./usePageAccess";
 
 interface CatalogResp {
   models: CatalogRow[];
@@ -33,6 +34,8 @@ const accountsOf = (r: CatalogRow) => Object.keys(r.bedrock_profile_ids || {});
 
 export function CatalogTable() {
   const t = useT(MODELS);
+  // AA-1025 C1 follow-up: the on / off switch is locked when the API says this session may not change the catalog.
+  const mayToggle = usePageAccess().can("catalog");
   const { formatDateTime } = useFormat();
   const toast = useToast();
   const qc = useQueryClient();
@@ -126,7 +129,7 @@ export function CatalogTable() {
               checked={r.enabled}
               label={t("toggle", r.model_key)}
               testId={`catalog-enabled-${r.model_key}`}
-              disabled={!canToggle || toggleMut.isPending}
+              disabled={!mayToggle || !canToggle || toggleMut.isPending}
               onChange={(next) => toggleMut.mutate({ model_key: r.model_key, enabled: next })}
             />
             <span style={{ fontSize: 12, color: r.enabled ? K.ink : K.muted }}>
@@ -165,7 +168,7 @@ export function CatalogTable() {
         </span>
       ),
     },
-  ], [toggleMut, awsAccounts, accountText, t, formatDateTime]);
+  ], [toggleMut, awsAccounts, accountText, t, formatDateTime, mayToggle]);
 
   return (
     <DataTable<CatalogRow>

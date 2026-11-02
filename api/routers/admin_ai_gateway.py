@@ -22,6 +22,11 @@
   GET /admin/ai-gateway/experiments        the Models & trials Experiments section: the prompt register
                                            (shared.prompt_version, AA-900) and the newest evaluation runs
                                            (shared.prompt_eval_runs).                                        spend.read
+  GET /admin/ai-gateway/access             (AA-1025 C1 follow-up) which of the page's writes the caller may use:
+                                           each answer is staff_authz.denial_reason on that write's own route, so
+                                           the page hides exactly what the API would refuse (a read-only session,
+                                           such as the Dev E2E admin, sees no write button). UI hint only: every
+                                           write keeps its own check.                                         spend.read
   GET    /admin/ai-gateway/tenant-budgets/{tenant_id}   one tenant's monthly AI budget and this month's spend
                                                         (Tenant 360 › Cost).                                 spend.read
   PUT    /admin/ai-gateway/tenant-budgets/{tenant_id}   create or replace it (audited tenant_ai_budget_set). spend.write
@@ -42,7 +47,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from api.core.staff_authz import staff_policy
+from api.core.staff_authz import StaffPrincipal, denial_reason, staff_policy
 from api.routers.admin import verify_admin_secret
 from api.services import ai_gateway, ai_gateway_calls, ai_gateway_experiments, platform_apps, tenant_ai_budget
 
@@ -129,6 +134,34 @@ async def get_calls(
 @router.get("/experiments", summary="The prompt register and the newest evaluation runs (read-only, $0)")
 async def get_experiments(request: Request) -> dict:
     return await ai_gateway_experiments.read(request.app.state.pool)
+
+
+# ── AA-1025 C1 follow-up: which of the page's writes the caller may use ───────────────────────────────────────────
+
+# Each write control of the AI providers page and the route it calls (method, POLICY template). The answer for a
+# control is denial_reason on that route, so it follows the API exactly: a role without the capability and a
+# read-only session (the viewer role, the Dev E2E admin) both get False.
+PAGE_WRITES: dict[str, tuple[str, str]] = {
+    "provider_switch": ("PATCH", "/admin/llm-connections/{connection_key}"),   # Jev / DataForSEO / Geoapify switch
+    "connections": ("PATCH", "/admin/llm-connections/{connection_key}"),       # Connections view: on/off, limits
+    "connection_test": ("POST", "/admin/llm-connections/{connection_key}/test"),
+    "requeue": ("POST", "/admin/job-runner/jobs/retry-llm-denied"),            # Re-queue refused jobs (dry run too)
+    "routing": ("PATCH", "/admin/llm-config/{stage}"),
+    "catalog": ("PATCH", "/admin/llm-catalog/{model_key}"),
+    "budgets": ("PUT", "/admin/budgets/{provider}/{scope}"),
+    "jev_credit": ("POST", "/admin/decisions/jev-credit/topups"),
+}
+
+
+def page_access(principal: StaffPrincipal) -> dict:
+    """{read_only, actions: {control: allowed}} for one caller (pure; tests/unit/test_aa1025_providers_access.py)."""
+    actions = {key: denial_reason(principal, method, route) is None for key, (method, route) in PAGE_WRITES.items()}
+    return {"read_only": not any(actions.values()), "actions": actions}
+
+
+@router.get("/access", summary="Which write controls of the AI providers page the caller may use (UI hint, $0)")
+async def get_access(principal: StaffPrincipal = Depends(staff_policy)) -> dict:
+    return page_access(principal)
 
 
 # ── AA-1016 UI (C4): one tenant's monthly AI budget (Tenant 360 › Cost) ────────────────────────────────────────────

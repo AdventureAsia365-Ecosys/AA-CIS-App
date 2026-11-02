@@ -39,6 +39,7 @@ import {
   type ChangeEvidence,
 } from "./ChangeEvidenceFields";
 import { StageRouteEditor } from "./StageRouteEditor";
+import { usePageAccess } from "./usePageAccess";
 import { useDomainText } from "./useDomainText";
 
 const STAGE_GROUP_LABELS: Record<string, string> = Object.fromEntries(STAGE_GROUPS.map((g) => [g.key, g.label]));
@@ -132,6 +133,8 @@ function ModelRow({ row, showAccount, domain }: {
   const [evidenceError, setEvidenceError] = useState<string | null>(null);
   const awsAccounts = useAwsAccounts();
   const accountText = useAccountText();
+  // AA-1025 C1 follow-up: a session the API would refuse sees the route as text: selects locked, no Save.
+  const locked = !usePageAccess().can("routing");
 
   const accountSelect = showAccount && row.account_route_options.length > 0;
   const dirty = modelId !== row.model_id || (accountSelect && accountRoute !== (row.account_route ?? ""));
@@ -202,7 +205,7 @@ function ModelRow({ row, showAccount, domain }: {
           </span>
         )}
         <Select size="sm" data-testid={`llm-model-select-${row.stage}`} aria-label={t("primaryFor", row.stage)}
-          value={modelId} onChange={(e) => setModelId(e.target.value)} disabled={saving}
+          value={modelId} onChange={(e) => setModelId(e.target.value)} disabled={saving || locked}
           style={{ flex: "1 1 260px", minWidth: 0 }}
           options={row.options.map((o) => ({
             value: o.model_id, disabled: !o.available,
@@ -215,7 +218,7 @@ function ModelRow({ row, showAccount, domain }: {
         ) : null}
         {accountSelect && (
           <Select size="sm" data-testid={`llm-account-select-${row.stage}`} aria-label={t("accountFor", row.stage)}
-            value={accountRoute} onChange={(e) => setAccountRoute(e.target.value)} disabled={saving}
+            value={accountRoute} onChange={(e) => setAccountRoute(e.target.value)} disabled={saving || locked}
             style={{ flex: "0 1 180px", minWidth: 0 }}
             options={row.account_route_options.map((o) => ({ value: o.value, label: o.label }))} />
         )}
@@ -225,11 +228,13 @@ function ModelRow({ row, showAccount, domain }: {
             {row.updated_at ? formatDateTime(row.updated_at) : "—"} ·{" "}
             {actorLabel(row, t("staffMember"), (ref) => t("staffLogin", ref)) ?? "—"}
           </span>
-          <Button variant="secondary" size="sm" disabled={!dirty || saving} onClick={() => setConfirming(true)}
-            testId={`llm-model-save-${row.stage}`}>
-            {saving ? <Spinner size={12} /> : null}
-            {saving ? t("saving") : t("save")}
-          </Button>
+          {!locked && (
+            <Button variant="secondary" size="sm" disabled={!dirty || saving} onClick={() => setConfirming(true)}
+              testId={`llm-model-save-${row.stage}`}>
+              {saving ? <Spinner size={12} /> : null}
+              {saving ? t("saving") : t("save")}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -237,7 +242,7 @@ function ModelRow({ row, showAccount, domain }: {
       {domain && <DomainLine result={domain} />}
 
       {/* AA-686 — fallback chain + shadow A/B editor */}
-      <StageRouteEditor row={row} />
+      <StageRouteEditor row={row} readOnly={locked} />
 
       <ConfirmModal
         open={confirming}
