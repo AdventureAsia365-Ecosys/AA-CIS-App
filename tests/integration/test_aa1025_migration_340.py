@@ -32,6 +32,10 @@ def cur():
     conn.autocommit = True
     c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     c.execute("BEGIN")
+    # Another module may leave an older CHECK behind (test_aa1002_migration_304 ends in the post-304 state, whose
+    # spend_budget_provider_check has no 'llm'), so every test starts from 340's state: re-run its body (re-runnable)
+    # inside this test's transaction; the ROLLBACK below undoes it with the rest.
+    c.execute(_body())
     try:
         yield c
     finally:
