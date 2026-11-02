@@ -1998,7 +1998,9 @@ entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
   delete a synthetic test agency with no member or traveller, typed name + ticket). A relay only: each route mirrors one `crm.ops.v1` route
   with the staff member's own Cognito token, inside a path allow-list (`ALLOWED`); the CRM's status and body pass
   through (it decides crm-platform-admin writes and filters L1 keys); bodies are never logged (the owner invite
-  carries an e-mail). Page `/admin/platform/agencies` (nav Platform › Tenants › Agencies (CRM)).
+  carries an e-mail). Page `/admin/platform/agencies` (nav Platform › Tenants › Agencies (CRM)). AA-1031 (S264): the Create
+  agency picker leaves out CIS tenants that already have an agency in the loaded list, and the CRM's 409
+  `tenant_deleted` (crm.ops.v1 1.9: the id of a deleted test agency, never reused) reads "create a new CIS tenant".
   **One health definition (S243):** a card's `status` is `overall.status` from `api/services/app_health.py`
   `overall_status(probe, traffic)` — the worst known signal of the app's own check (`probe`; none for TripPlanner) and
   its CloudWatch traffic of the last 24 h (`traffic_section`, the AA-858 health section and its Redis key, shared by
