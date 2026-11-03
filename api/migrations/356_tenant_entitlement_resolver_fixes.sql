@@ -18,13 +18,20 @@
 --   * 355's guard 2 passed several privileges in one has_table_privilege() call ('SELECT, INSERT, UPDATE'), which is
 --     true when ANY of them is held, so a writer with SELECT only would have passed. The guard is re-run here with
 --     one call per privilege (355 is applied on Dev and is never re-run, so the fix lives in this file).
+--   * A trialing subscription whose trial_ends_at has passed stayed live: 353's live_sub took every 'trialing' row,
+--     so the plan's keys (trade.book included) stayed served with an expires_at in the past, and nothing ends a trial
+--     yet (the trial-end tick is slice 3 work; the tenant_provision saga refuses trial_days until then). From now on
+--     a trialing row is live only while trial_ends_at > now() (353 requires trial_ends_at while trialing), so every
+--     reader of the live resolver (tenant.entitlements.v1 snapshot, catalog.v_tenant_account_v1.trade_book of 357)
+--     stops serving it at the trial end.
 --   * Wording: 353's "Order" header line says "353 (expand)"; 353 is a contract file, as its "Class" paragraph
 --     states. 353 is applied on Dev and its bytes are not edited (an edit to an applied file is a silent no-op).
 --
 -- What.
 --   1. CREATE OR REPLACE VIEW shared.v_tenant_entitlement_resolved, same columns: (a) a platform-key candidate other
 --      than the plan's needs a live content subscription; (b) a new candidate of rank 0, shared.tenants.rate_limit_rpm
---      as content.rate_limit_rpm (source override), only when it differs from the live content plan's value.
+--      as content.rate_limit_rpm (source override), only when it differs from the live content plan's value; (c) a
+--      trialing subscription is live only until its trial_ends_at.
 --   2. Trigger tenants_rate_limit_resync on shared.tenants (AFTER UPDATE OF rate_limit_rpm, the 353 function
 --      shared.tenant_entitlement_resync_row): an RPM change re-syncs that tenant's entitlements (entitlement.changed).
 --      The name sorts after tenants_content_subscription_upd, so on a PATCH that moves plan_tier and rate_limit_rpm
@@ -71,7 +78,9 @@ CREATE OR REPLACE VIEW shared.v_tenant_entitlement_resolved AS
 WITH live_sub AS (
     SELECT s.tenant_id, s.product, s.plan_key, s.status, s.trial_ends_at, s.seats
       FROM shared.tenant_subscription s
-     WHERE s.status IN ('trialing', 'active', 'past_due')
+     WHERE s.status IN ('active', 'past_due')
+        -- 356: a trial is live only until it ends (353 requires trial_ends_at while trialing)
+        OR (s.status = 'trialing' AND s.trial_ends_at > now())
 ),
 candidate AS (
     -- 356: the limiter's per-tenant RPM (shared.tenants.rate_limit_rpm) when it differs from the live content plan.
@@ -126,7 +135,8 @@ SELECT r.tenant_id, r.feature_key, r.product, r.value_kind, r.unit,
 COMMENT ON VIEW shared.v_tenant_entitlement_resolved IS
     'AA-1028 R1 (CIS 353, 356): the resolver, computed live: shared.tenants.rate_limit_rpm when it differs from the '
     'content plan (the limiter''s value, 356) > override (unexpired) > shared.tenant_ai_budget (as the '
-    'ai.budget_usd_monthly override) > the plan of a live subscription (trial while trialing). A non-plan candidate '
+    'ai.budget_usd_monthly override) > the plan of a live subscription (trial while trialing, until trial_ends_at, '
+    '356). A non-plan candidate '
     'needs a live subscription of its product (content for platform keys, 356). Internal: the contract view is '
     'shared.v_tenant_entitlement_v1 (355).';
 
@@ -219,7 +229,8 @@ BEGIN
       JOIN shared.entitlement_feature f ON f.feature_key = e.feature_key AND f.product = 'platform'
      WHERE NOT EXISTS (SELECT 1 FROM shared.tenant_subscription s
                         WHERE s.tenant_id = e.tenant_id AND s.product = 'content'
-                          AND s.status IN ('trialing', 'active', 'past_due'));
+                          AND (s.status IN ('active', 'past_due')
+                               OR (s.status = 'trialing' AND s.trial_ends_at > now())));
     IF n > 0 THEN
         RAISE EXCEPTION 'migration 356: % platform entitlement(s) without a live content subscription', n;
     END IF;
@@ -227,7 +238,8 @@ BEGIN
     SELECT count(*) INTO n
       FROM shared.tenants t
       JOIN shared.tenant_subscription s ON s.tenant_id = t.tenant_id AND s.product = 'content'
-                                       AND s.status IN ('trialing', 'active', 'past_due')
+                                       AND (s.status IN ('active', 'past_due')
+                                            OR (s.status = 'trialing' AND s.trial_ends_at > now()))
       LEFT JOIN shared.tenant_entitlement e ON e.tenant_id = t.tenant_id AND e.feature_key = 'content.rate_limit_rpm'
      WHERE e.limit_value IS DISTINCT FROM t.rate_limit_rpm::numeric(14,2)
        -- an explicit override on a tenant whose column equals its plan still wins (slice 3 moves the limiter)
@@ -240,7 +252,7 @@ END $$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
 VALUES ('356', now(), 'AA-1028 R1 slice 2: resolver fixes (platform keys need a live content subscription, '
-                      'rate_limit_rpm mirrored), writer guard per privilege')
+                      'rate_limit_rpm mirrored, an ended trial is not live), writer guard per privilege')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;
