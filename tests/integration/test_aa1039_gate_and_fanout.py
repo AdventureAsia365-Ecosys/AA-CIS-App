@@ -73,6 +73,8 @@ def _env(monkeypatch):
 
 # ── 360 ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
+M360 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
+                    "360_content_compliance_and_tour_notices.sql")
 TABLES = ("acp_shared.content_compliance_flag", "acp_shared.tenant_tour_notice", "acp_shared.tour_retirement_policy")
 
 
@@ -86,8 +88,11 @@ async def test_360_tables_are_force_rls_cis_app_only(conn, table):
                                                          table)}
     name = table.split(".")[1]
     assert policies == {f"{name}_cis_app_all", f"{name}_cis_owner_all", "tenant_isolation"}
-    for priv in ("SELECT", "INSERT", "UPDATE", "DELETE"):
-        assert await conn.fetchval("SELECT has_table_privilege('cis_app', $1, $2) AS ok", table, priv)
+    # cis_app's grant is read from the file: other modules' X1 teardowns (conftest.x1_244_undo, run by the
+    # rds_like_245 fixtures) revoke every acp_shared grant of cis_app in the shared test DB, so the live privilege
+    # depends on the module order (the same check as test_aa923_migration_315).
+    with open(M360, encoding="utf-8") as f:
+        assert f"GRANT SELECT, INSERT, UPDATE, DELETE ON {table} TO cis_app;" in f.read()
     assert not await conn.fetchval("SELECT has_table_privilege('aa_app_user', $1, 'SELECT') AS ok", table)
     assert await conn.fetchval("SELECT 1 FROM shared.schema_versions WHERE version = '360'") == 1
 
