@@ -129,7 +129,7 @@ _POOL_ROWS_SQL = """
     SELECT pt.id, pt.tour_id, pt.aa_name, pt.aa_subtitle, pt.aa_summary,
            pt.aa_highlights, pt.aa_itineraries, pt.aa_description,
            pt.seo_title, pt.seo_meta, pt.seo_keywords_used,
-           pt.published_at,
+           pt.published_at, pt.updated_at,
            rt.country, rt.duration, rt.price_raw,
            EXISTS(
                SELECT 1 FROM gold_aa_internal.tenant_tour_versions ttv
@@ -1054,6 +1054,7 @@ async def get_version(
 _EXPORT_VERSION_TENANT_COND = "ttv.tenant_id = $2::uuid"
 _EXPORT_VERSION_SQL = """
             SELECT ttv.version_number, ttv.rewritten_content, ttv.rewrite_language,
+                   ttv.edit_source, ttv.created_at,
                    pt.tour_id, pt.aa_name, pt.aa_subtitle, pt.aa_summary, pt.aa_highlights,
                    pt.aa_itineraries,
                    rt.country, rt.duration, rt.inclusions, rt.exclusions
@@ -1132,6 +1133,10 @@ async def export_version_docx(
     GRAY = RGBColor(0x33, 0x36, 0x3D)
 
     doc = Document()
+    # AA-1040 — the machine-readable AI mark in the file's own metadata (File > Properties: keywords, comments).
+    from services.acp_content_writing.ai_marking import docx_properties, version_mark
+    for _prop, _value in docx_properties(version_mark(row.get("edit_source"), row.get("created_at"))).items():
+        setattr(doc.core_properties, _prop, _value)
 
     def _section(text):
         p = doc.add_paragraph()

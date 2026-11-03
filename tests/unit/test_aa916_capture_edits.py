@@ -27,7 +27,8 @@ SECRET = "s3cret"
 SID = uuid.UUID(int=916)
 TEXT = "Edited by tenant"
 TENANT_SAFE_KEYS = {"piece_id", "angle_gate_request_id", "channel", "ready_state", "content_text", "seo_title",
-                    "meta_description", "slug", "route_hub_name", "route_segment_count", "created_at"}
+                    "meta_description", "slug", "route_hub_name", "route_segment_count", "created_at",
+                    "ai"}  # AA-1040: the machine-readable AI mark
 
 
 @pytest.fixture(autouse=True)

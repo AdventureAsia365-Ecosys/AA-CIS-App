@@ -372,6 +372,7 @@ async def list_pending(request: Request, tenant=Depends(get_tenant)):
 _PUBLISH_PIECE_TENANT_COND = "cp.tenant_id = $2::uuid"
 _PUBLISH_PIECE_SQL = """
             SELECT cp.piece_id, cp.content_text, cp.status, cp.slug, cp.seo_title, cp.meta_description,
+                   cp.created_at, cp.writer_input -> 'ai_provenance' AS ai_provenance,
                    COALESCE(cp.channel, agr.channel) AS channel, ago.name AS angle_name,
                    cp.angle_gate_request_id::text AS request_id,
                    EXISTS (SELECT 1 FROM acp_shared.content_piece newer

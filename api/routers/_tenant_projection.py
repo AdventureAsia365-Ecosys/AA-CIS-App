@@ -97,12 +97,23 @@ def project_version(row: Any) -> dict:
         out["status"] = tenant_version_status(out["status"])
     if "master_updated_at" in out:
         out["master_newer"] = master_newer(out["master_updated_at"], out.get("created_at"))
+    if "edit_source" in out:
+        # AA-1040 — the machine-readable AI mark of the version (EU AI Act Art. 50(2)), from its edit_source.
+        from services.acp_content_writing.ai_marking import version_mark
+        out["ai"] = version_mark(out["edit_source"], out.get("created_at"))
     return out
 
 
 def project_tour(row: Any) -> dict:
-    """A published_tours row as the tenant may see it."""
-    return _without(row, TENANT_HIDDEN_TOUR_FIELDS)
+    """A published_tours row as the tenant may see it.
+
+    AA-1040: a row carrying the Master catalog text (any `aa_*` text column) also gets `ai`, the machine-readable mark
+    of that AI-written text (EU AI Act Art. 50(2)), from `updated_at` (last Master publish) else `published_at`."""
+    out = _without(row, TENANT_HIDDEN_TOUR_FIELDS)
+    from services.acp_content_writing.ai_marking import CATALOG_TEXT_FIELDS, tour_mark
+    if CATALOG_TEXT_FIELDS.intersection(out):
+        out["ai"] = tour_mark(out.get("updated_at"), out.get("published_at"))
+    return out
 
 
 def project_raw(row: Any) -> dict:
