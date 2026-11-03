@@ -21,7 +21,7 @@
   },
   "files": {
     "AiNotice.tsx": {
-      "sha256": "74e4179613b0f9a5dc60dfb49dabf7bec132995ea0d369396c3a837b48711f01"
+      "sha256": "9e42076c70e34f46f8a604375b272b99c23f8996478af5e205eb21426f6da480"
     },
     "Buttons.tsx": {
       "sha256": "6ca183d8c2baa3747a8e58cfc1bb7a8d94e26e454640af9c96e724a72764e8a4"
@@ -48,7 +48,7 @@
       "sha256": "8dd928920b5dc760b7b80433011f8b482ae6592c91456557542cb45df59142a5"
     },
     "KitGallery.tsx": {
-      "sha256": "2cc3b84f6eff8199cd1cc50cfb72b1ac09ffa49919df00d0acdca55dfca6695b"
+      "sha256": "a714a42dddeaf99cad2035726dcebd73c71caa4805a06dfddb30141aa6f3152e"
     },
     "KpiTile.tsx": {
       "sha256": "f421219ad2f1fb24806aad077199fe950aaadbc0c192989e424e96fe338f827f"
@@ -87,7 +87,7 @@
       "sha256": "260c5bf648b13241961d085880d2e8f63aff9da041a8ee5f2044c0da387ede12"
     },
     "aiNotice.messages.ts": {
-      "sha256": "3cc9b1fd5458509c18c2594097f12d5d24665d441939d6510134ab45abd10b2c"
+      "sha256": "4e14c790280b0d8a99b09db5dd7a90fd12721ff70c324bc24da277b8c6ede525"
     },
     "brand.ts": {
       "sha256": "bc6773a9a5a69ae55496752779c9c2fc8ac49eb07ed832cc91edff70c21dda00"

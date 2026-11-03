@@ -9,7 +9,9 @@
 //      tokens profile (TripPlanner renders the traveller sentence from it) and imports only i18n.ts, also a token file;
 //   3. the markup: a `<p role="note">` with the test id and variant, the icon hidden from screen readers, English
 //      outside an I18nProvider, Vietnamese inside one set to vi or with `lang="vi"`, the `lang` prop winning over the
-//      provider.
+//      provider;
+//   4. AA-1040: the narration variant (a traveller reading what the AI wrote on request, EU AI Act Art. 50(1)) and
+//      the badge form ("AI-assisted", the variant's sentence as its accessible name and tooltip).
 // Like kitButtons.test.mjs, the TSX core is transpiled into a temporary folder inside frontend/ (so `react` and
 // `lucide-react` resolve) and rendered with react-dom/server.
 
@@ -35,6 +37,8 @@ let L; // i18n module
 let AI_NOTICE_TEXT;
 let AI_NOTICE_VARIANTS;
 let aiNoticeText;
+let AI_BADGE_TEXT;
+let aiBadgeText;
 let React;
 let render;
 
@@ -54,7 +58,8 @@ before(async () => {
   N = await import(pathToFileURL(join(dir, "AiNotice.mjs")).href);
   I = await import(pathToFileURL(join(dir, "useI18n.mjs")).href);
   L = await import(pathToFileURL(join(dir, "i18n.mjs")).href);
-  ({ AI_NOTICE_MESSAGES: AI_NOTICE_TEXT, AI_NOTICE_VARIANTS, aiNoticeText } = await import(
+  ({ AI_NOTICE_MESSAGES: AI_NOTICE_TEXT, AI_NOTICE_VARIANTS, aiNoticeText, AI_BADGE_MESSAGES: AI_BADGE_TEXT,
+    aiBadgeText } = await import(
     pathToFileURL(join(dir, "aiNotice.messages.mjs")).href
   ));
   React = require("react");
@@ -68,7 +73,7 @@ after(() => {
 const h = (...a) => React.createElement(...a);
 
 test("every variant has English and Vietnamese text, none empty", () => {
-  assert.deepEqual([...AI_NOTICE_VARIANTS].sort(), ["publisher", "staff", "traveller"]);
+  assert.deepEqual([...AI_NOTICE_VARIANTS].sort(), ["narration", "publisher", "staff", "traveller"]);
   for (const lang of ["en", "vi"]) {
     assert.deepEqual(Object.keys(AI_NOTICE_TEXT[lang]).sort(), [...AI_NOTICE_VARIANTS].sort(), lang);
     for (const v of AI_NOTICE_VARIANTS) assert.ok(AI_NOTICE_TEXT[lang][v].trim().length > 20, `${lang}.${v}`);
@@ -111,8 +116,9 @@ test("AiNotice is a full-profile core file; its text file travels with the token
   assert.deepEqual(importSpecifiers(readFileSync(join(CORE, "aiNotice.messages.ts"), "utf8")), ["./i18n"]);
   assert.ok(manifest.profiles.tokens.includes("i18n.ts"), "its one import is a token file too");
   const barrel = readFileSync(join(CORE, "..", "index.ts"), "utf8");
-  assert.match(barrel, /export \{ AiNotice \} from "\.\/core\/AiNotice"/);
+  assert.match(barrel, /export \{ AiNotice\b[^}]*\} from "\.\/core\/AiNotice"/);
   assert.match(barrel, /aiNoticeText[^;]*from "\.\/core\/aiNotice\.messages"/);
+  assert.match(barrel, /aiBadgeText[^;]*from "\.\/core\/aiNotice\.messages"/);
 });
 
 test("markup: a note with the test id and variant, icon hidden, English outside a provider", () => {
@@ -150,4 +156,39 @@ test("placements: every CIS admin screen where a reviewer acts on AI output rend
   assert.match(panel, /\{sug && <AiNotice testId="cq-rewrite-ai-notice" \/>\}/);
   assert.match(src("content-quality", "TourVersionDrawer.tsx"), /<RewritePanel\b/);
   assert.match(sa, /<RewritePanel\b/, "the piece drawer's flagged sentences use the same panel");
+});
+
+test("narration (AA-1040): says the AI wrote it on request, may be wrong, the quote binds", () => {
+  const en = AI_NOTICE_TEXT.en.narration;
+  assert.match(en, /written by AI when you asked for it/);
+  assert.match(en, /may contain mistakes/);
+  assert.match(en, /confirmed in your official quote/);
+  assert.equal(aiNoticeText("narration", "vi"), AI_NOTICE_TEXT.vi.narration);
+  assert.notEqual(AI_NOTICE_TEXT.vi.narration, en);
+});
+
+test("badge text (AA-1040): AI-assisted in English, Vietnamese for vi, the same language rule", () => {
+  assert.equal(AI_BADGE_TEXT.en.badge, "AI-assisted");
+  assert.ok(AI_BADGE_TEXT.vi.badge.trim().length > 0);
+  assert.equal(aiBadgeText(), "AI-assisted");
+  assert.equal(aiBadgeText("vi-VN"), AI_BADGE_TEXT.vi.badge);
+  assert.equal(aiBadgeText("fr"), "AI-assisted");
+});
+
+test("badge form (AA-1040): a note span, short text shown, the variant sentence as name and tooltip", () => {
+  const html = render(h(N.AiNotice, { variant: "publisher", form: "badge", testId: "piece-ai-badge" }));
+  assert.match(html, /^<span role="note"/);
+  assert.match(html, /data-testid="piece-ai-badge"/);
+  assert.match(html, /data-ai-notice="publisher"/);
+  assert.match(html, /data-ai-notice-form="badge"/);
+  const esc = (s) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "&#x27;");
+  assert.ok(html.includes(`title="${esc(AI_NOTICE_TEXT.en.publisher)}"`), "tooltip = the sentence");
+  assert.ok(html.includes(`aria-label="AI-assisted. ${esc(AI_NOTICE_TEXT.en.publisher)}"`), "name = badge + sentence");
+  assert.match(html, />AI-assisted<\/span><\/span>$/);
+  assert.match(html, /<svg[^>]*aria-hidden="true"/);
+  assert.doesNotMatch(html, /<p\b/, "a badge is inline, never a paragraph");
+  const vi = render(h(N.AiNotice, { variant: "staff", form: "badge", lang: "vi" }));
+  assert.ok(vi.includes(AI_BADGE_TEXT.vi.badge) && vi.includes(esc(AI_NOTICE_TEXT.vi.staff)));
+  // the default form stays the line
+  assert.match(render(h(N.AiNotice, { variant: "narration" })), /^<p role="note" data-testid="ai-notice" data-ai-notice="narration"/);
 });
