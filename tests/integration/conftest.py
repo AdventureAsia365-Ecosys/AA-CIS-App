@@ -39,6 +39,17 @@ os.environ.setdefault("BEDROCK_ACCT_PRIMARY", "acc3-test-account")
 
 _SCHEMA_APPLIED = False
 
+# AA-1028 R1 slice 2 (CIS 356): the grants CI's legacy app_user (a writer of shared.tenants here only) needs for 356's
+# per-privilege writer guard; prepended to 356 in the replay and by every test that re-applies 356 after 353.
+APP_USER_356_GRANTS = (
+    "DO $$ BEGIN IF to_regrole('app_user') IS NOT NULL THEN "
+    "GRANT SELECT ON shared.plan, shared.plan_feature, shared.v_tenant_entitlement_resolved TO app_user; "
+    "GRANT SELECT, INSERT, UPDATE, DELETE ON shared.tenant_subscription, shared.tenant_entitlement TO app_user; "
+    "GRANT INSERT ON shared.tenant_account_event TO app_user; "
+    "GRANT EXECUTE ON FUNCTION shared.tenant_entitlement_sync(uuid), shared.tenant_account_closed(uuid), "
+    "shared.tenant_account_emit(text, uuid, jsonb) TO app_user; END IF; END $$;\n"
+)
+
 # AA-817: stand-in for gold_aa_internal.tenant_tour_versions (live table created by migration 001, which
 # this DB skips). Columns used by the RLS tests, with defaults; no version_number, so test_aa766's
 # _ttv_minimal() treats it as a stand-in too.
@@ -427,6 +438,10 @@ def _apply_schema(conn):
         # Migrate way on the RDS-like state and undoes all three at teardown. (351, the tripplanner REVOKE, is
         # replayed like every file; test_aa1027_migration_351 re-seeds the grants and re-applies it.)
         and not f.startswith('350')
+        # AA-1028 R1 slice 2 (S266): 357 creates catalog.v_tenant_account_v1 (the Booking projection's read) through
+        # the catalog recipe (needs 245's owners). test_aa1028_migration_357 applies it the DB Migrate way on the
+        # RDS-like state and undoes it at teardown.
+        and not f.startswith('357')
     ])
 
     for mf in migration_files:
@@ -491,6 +506,11 @@ def _apply_schema(conn):
             sql = ("DO $$ BEGIN IF to_regrole('app_user') IS NOT NULL THEN "
                    "REVOKE ALL ON shared.tenant_brand_rules, shared.tenant_seo_config FROM app_user; "
                    "END IF; END $$;\n") + sql
+        if mf.startswith("356_"):
+            # AA-1028 R1 slice 2: CI's legacy app_user writes shared.tenants here (early grants; Dev has no such role),
+            # and 356's guard checks, one privilege at a time, that every writer can run the 355 bridge and the RPM
+            # re-sync. Give it what cis_app holds (353) before the file, as the post-replay block does after it.
+            sql = APP_USER_356_GRANTS + sql
         if mf.startswith("229_"):
             # AA-817: 229 sets RLS + grants on gold_aa_internal.tenant_tour_versions, which only
             # migration 001 creates (skipped here), and its guard refuses a missing table. Apply it
