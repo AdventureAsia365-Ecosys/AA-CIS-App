@@ -188,7 +188,7 @@ export default function AgencyDrawer({ agency, canWrite, onClose, onChanged }: P
         <UsageSection q={usage} />
         <AccessSection agency={a} canWrite={canWrite && lockable} base={base} onDone={done} />
         <FirstOwnerSection agency={a} canWrite={canWrite} base={base} onDone={done} />
-        <FeaturesSection q={ent} canWrite={canWrite && lockable} base={base} onDone={done} />
+        <FeaturesSection q={ent} />
         <InsightsSection q={ent} canWrite={canWrite && lockable} base={base} onDone={done} />
         <DataRequestsSection q={requests} canWrite={canWrite} active={active} base={base} onDone={done} />
         <RecoverySection q={members} canWrite={canWrite} active={active} base={base} onDone={done} />
@@ -494,53 +494,29 @@ function DeleteTestAgencySection({ agency, members, canWrite, base, onDeleted }:
   );
 }
 
-// ── 4. Features allowed ───────────────────────────────────────────────────────────────────────────
+// ── 4. Features allowed (read-only: the CIS tenant control plane decides them) ─────────────────────────────
 
-function FeaturesSection({ q, canWrite, base, onDone }: { q: Q<AgencyEntitlements>; canWrite: boolean; base: string; onDone: Done }) {
+// Since crm.ops.v1 1.11 the allowed list is the projection of the tenant's CIS entitlements (the CRM's
+// crm_entitlement_pull job writes it); the old PUT /entitlements-allowed answers 409 entitlements_managed_by_cis.
+function FeaturesSection({ q }: { q: Q<AgencyEntitlements> }) {
   const t = useT(DRAWER);
   const crm = useCrmText();
   const errText = useErrText();
-  const [draft, setDraft] = useState<string[] | null>(null);
-  const [open, setOpen] = useState(false);
   const current = q.data?.features_allowed ?? [];
-  const chosen = draft ?? current;
-  const dirty = draft !== null && (draft.length !== current.length || draft.some((f) => !current.includes(f)));
-  const path = base.slice(CRM_API.length);
-  const toggle = (code: string) =>
-    setDraft((prev) => {
-      const list = prev ?? current;
-      return list.includes(code) ? list.filter((c) => c !== code) : [...list, code];
-    });
   return (
     <Section title={t("features")} testId="crm-features"
       aside={q.data ? <span style={noteStyle}>{t("planSeats", q.data.plan, q.data.seats_allowed)}</span> : undefined}>
-      <div style={noteStyle}>{t("featuresNote")}</div>
+      <div style={noteStyle}>{t("featuresManaged")}</div>
       {q.isLoading ? <Loading /> : q.isError ? <InlineError message={errText(q.error)} /> : (
-        <>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 200px), 1fr))", gap: 6 }}>
-            {crm.features.map((f) => (
-              <label key={f.code} style={{ display: "inline-flex", gap: 8, alignItems: "center", fontSize: 13 }}>
-                <Checkbox checked={chosen.includes(f.code)} disabled={!canWrite}
-                  onChange={() => toggle(f.code)} />
-                {f.label}
-              </label>
-            ))}
-          </div>
-          {canWrite && (
-            <div style={{ display: "flex", gap: 8 }}>
-              <Button size="sm" variant="secondary" disabled={!dirty} onClick={() => setOpen(true)}>{t("saveFeatures")}</Button>
-              {dirty && <Button size="sm" variant="ghost" onClick={() => setDraft(null)}>{t("undo")}</Button>}
-            </div>
-          )}
-        </>
-      )}
-      <WriteModal open={open} onClose={() => setOpen(false)} title={t("featuresTitle")} confirmLabel={t("save")}
-        submit={(ticket) => crm.write("PUT", `${path}/entitlements-allowed`, { features_allowed: chosen, ticket_ref: ticket })}
-        onDone={() => { setOpen(false); setDraft(null); onDone(t("featuresSaved")); }}>
-        <div style={noteStyle}>
-          {t("allowedAfter", chosen.length ? chosen.map((c) => crm.featureLabel(c)).join(", ") : t("noneLower"))}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 200px), 1fr))", gap: 6 }}>
+          {crm.features.map((f) => (
+            <label key={f.code} style={{ display: "inline-flex", gap: 8, alignItems: "center", fontSize: 13 }}>
+              <Checkbox checked={current.includes(f.code)} disabled onChange={() => undefined} />
+              {f.label}
+            </label>
+          ))}
         </div>
-      </WriteModal>
+      )}
     </Section>
   );
 }

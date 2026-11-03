@@ -100,6 +100,7 @@ KIND_LINES: dict[str, Optional[str]] = {
     "report_generate": None, "retention_cost_explorer_snapshot": None, "retention_decision_log": None,
     "retention_job": None, "retention_llm_call_log": None, "retention_tenant_api_usage": None,
     "s1_seo_prefetch": None, "staff_directory_reconcile": None, "staff_invite_email": None, "supply_media_purge": None,
+    "tenant_provision": None,
     "tour_graph_build": None, "tripplanner_purge": None, "writing_memory_kpi_weekly": None,
     "writing_memory_post_activation": None,
 }

@@ -120,6 +120,9 @@ class AdminTenantAuditAction:
     # identity or an e-mail).
     MEMBER_INVITED = "tenant.member_invited"
     MEMBER_ACTIVATED = "tenant.member_activated"
+    # AA-1028 R1 slice 2 — the tenant_provision saga added or changed add-on subscriptions of an existing tenant
+    # (details: the request key, the steps and the resulting subscriptions; a create logs ONBOARD instead).
+    SUBSCRIPTION_CHANGED = "tenant.subscription_changed"
 
 
 async def write_audit_log(
