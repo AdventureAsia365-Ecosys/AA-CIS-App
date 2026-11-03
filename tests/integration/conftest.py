@@ -495,6 +495,16 @@ def _apply_schema(conn):
             sql = ("DO $$ BEGIN IF to_regrole('app_user') IS NOT NULL THEN "
                    "REVOKE ALL ON shared.tenant_brand_rules, shared.tenant_seo_config FROM app_user; "
                    "END IF; END $$;\n") + sql
+        if mf.startswith("356_"):
+            # AA-1028 R1 slice 2: CI's legacy app_user writes shared.tenants here (early grants; Dev has no such role),
+            # and 356's guard checks, one privilege at a time, that every writer can run the 355 bridge and the RPM
+            # re-sync. Give it what cis_app holds (353) before the file, as the post-replay block does after it.
+            sql = ("DO $$ BEGIN IF to_regrole('app_user') IS NOT NULL THEN "
+                   "GRANT SELECT ON shared.plan, shared.plan_feature, shared.v_tenant_entitlement_resolved TO app_user; "
+                   "GRANT SELECT, INSERT, UPDATE, DELETE ON shared.tenant_subscription, shared.tenant_entitlement "
+                   "TO app_user; GRANT INSERT ON shared.tenant_account_event TO app_user; "
+                   "GRANT EXECUTE ON FUNCTION shared.tenant_entitlement_sync(uuid), shared.tenant_account_closed(uuid), "
+                   "shared.tenant_account_emit(text, uuid, jsonb) TO app_user; END IF; END $$;\n") + sql
         if mf.startswith("229_"):
             # AA-817: 229 sets RLS + grants on gold_aa_internal.tenant_tour_versions, which only
             # migration 001 creates (skipped here), and its guard refuses a missing table. Apply it
