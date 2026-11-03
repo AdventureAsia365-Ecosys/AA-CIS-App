@@ -30,13 +30,15 @@ def tour_id_of(source_id: str) -> str:
 
 
 def tour_row(source_id: str, *, title: str = "Hanoi and Ha Long", country: str = "Vietnam",
-             updated_at: datetime = T0, duration_days: Optional[int] = 3) -> dict:
+             updated_at: datetime = T0, duration_days: Optional[int] = 3,
+             published_at: Optional[datetime] = None) -> dict:
     return {
         "source_id": source_id, "tour_id": tour_id_of(source_id), "title": title,
         "summary": "Old Quarter and the bay.", "country": country,
         "duration_days": duration_days, "activities": ["Kayaking", "Food tour"],
         "inclusions": "- Guide\n- Boat cruise; Breakfast daily",
         "exclusions": "International flights\nEntrance fees at the pagodas\nTips for guide and driver\nVisa",
+        "published_at": published_at,
         "updated_at": updated_at,
     }
 

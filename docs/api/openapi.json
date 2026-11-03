@@ -1428,6 +1428,62 @@
         "title": "CatalogAaTourKey",
         "type": "object"
       },
+      "CatalogAiMark": {
+        "additionalProperties": false,
+        "description": "The machine-readable mark of AI-generated text (contract 1.3, AA-1040, EU AI Act Art. 50(2)).",
+        "properties": {
+          "ai_generated": {
+            "title": "Ai Generated",
+            "type": "boolean"
+          },
+          "generated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated At"
+          },
+          "generator": {
+            "title": "Generator",
+            "type": "string"
+          },
+          "human_edited": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Human Edited"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          }
+        },
+        "required": [
+          "ai_generated",
+          "generator",
+          "model",
+          "generated_at",
+          "human_edited"
+        ],
+        "title": "CatalogAiMark",
+        "type": "object"
+      },
       "CatalogDestination": {
         "additionalProperties": false,
         "description": "GET /catalog/v1/destinations/{destination_id} — one destination with its IANA time zone.",
@@ -1640,6 +1696,16 @@
         "additionalProperties": false,
         "description": "GET /catalog/v1/tours/{source_system}/{source_id} — the served tour (ETag = ``content_hash``).",
         "properties": {
+          "ai": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CatalogAiMark"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "content_hash": {
             "title": "Content Hash",
             "type": "string"

@@ -47,7 +47,7 @@ DEFAULT_PAGE = 20
 MAX_PAGE = 50
 
 _TOUR_COLS = ("source_id, tour_id, title, summary, country, duration_days, activities, inclusions, exclusions, "
-              "updated_at")
+              "published_at, updated_at")
 
 LIST_TOURS_SQL = f"""
     SELECT {_TOUR_COLS}

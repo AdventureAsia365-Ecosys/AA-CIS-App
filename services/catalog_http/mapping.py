@@ -16,6 +16,9 @@ Field sources (every name from the live schema reference, root docs/architecture
 - ``photos``: ``catalog.v_tour_photo`` rows, ``path`` relative to the CIS public API base (contract catalog.tour.v1
   ``cover_photo_path``), ``place_label`` as the alt text.
 - ``Destination``: one ``catalog.v_destination`` row.
+- ``ai`` (contract 1.3, AA-1040, EU AI Act Art. 50(2)): the machine-readable mark of the AI-written Master text, the
+  same object as the CIS tenant tour reads (``services.acp_content_writing.ai_marking.tour_mark``): ``generated_at``
+  = ``v_tour.updated_at`` (the last Master publish), else ``published_at``.
 
 ``content_hash`` is ``sha256:<hex>`` over the canonical JSON of the served body itself (everything but the hash), so
 it changes exactly when what the CRM copies changes, including place, time-zone and photo changes that
@@ -30,6 +33,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping, Optional
 
+from services.acp_content_writing.ai_marking import tour_mark
 from services.catalog_http.geo import FALLBACK_ZONE, country_code, time_zone
 
 SOURCE_SYSTEM = "cis"
@@ -289,6 +293,8 @@ def tour_body(tour: Mapping[str, Any], *, days: Iterable[Mapping[str, Any]] = ()
         "exclusions": exclusions(tour.get("exclusions")),
         "facets": facets(tour.get("activities"), components),
         "photos": photo_list,
+        # AA-1040 (contract 1.3): inside the hashed body, so the ETag moves with the mark (a Master publish).
+        "ai": tour_mark(tour.get("updated_at"), tour.get("published_at")),
     }
     body["content_hash"] = content_hash(body)
     return body
