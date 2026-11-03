@@ -422,6 +422,11 @@ def _apply_schema(conn):
         # catalog recipe (needs 245's owners). test_aa1025_migration_347 applies it the DB Migrate way on the RDS-like
         # state and undoes it at teardown.
         and not f.startswith('347')
+        # AA-1027 E4 (S265): 350 replaces 341's catalog.v_llm_gateway_config_v1 (two more appended columns) through the
+        # catalog recipe and needs 323 + 341 (skipped above). test_aa1027_migration_350 applies 323 + 341 + 350 the DB
+        # Migrate way on the RDS-like state and undoes all three at teardown. (351, the tripplanner REVOKE, is
+        # replayed like every file; test_aa1027_migration_351 re-seeds the grants and re-applies it.)
+        and not f.startswith('350')
     ])
 
     for mf in migration_files:
