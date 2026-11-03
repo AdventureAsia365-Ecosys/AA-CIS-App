@@ -25,8 +25,8 @@ import {
   parseMarkets, validateConfig, validateDailyPublishLimit, validateRpm,
 } from "./tenant360";
 import { T360, T360_WORDS_MESSAGES } from "./tenant360.messages";
+import { useContentTiers } from "./useContentTiers";
 
-const PLAN_CHOICES = ["starter", "growth", "business"];
 
 const labelStyle: React.CSSProperties = {
   fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em",
@@ -63,7 +63,8 @@ function PlanForm({ tenantId, planTier, rateLimitRpm, locked, onChanged }: {
   const rpmError = validateRpm(rpm, words);
   const planDirty = plan !== saved.plan;
   const rpmDirty = Number(rpm) !== saved.rpm;
-  const choices = PLAN_CHOICES.includes(saved.plan) ? PLAN_CHOICES : [saved.plan, ...PLAN_CHOICES];
+  // AA-1028 R1 slice 3: the tiers of the plan catalogue (live public content plans), plus the tenant's own
+  const { tiers: choices } = useContentTiers(saved.plan);
 
   const m = useMutation({
     mutationFn: (body: { plan_tier?: string; rate_limit_rpm?: number }) =>

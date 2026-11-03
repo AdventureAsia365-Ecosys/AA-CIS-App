@@ -1,0 +1,147 @@
+// frontend/lib/tenantPlans.test.mjs
+// AA-1028 R1 slice 3: unit tests for the plan catalogue and Tenant 360 › Subscription helpers (lib/tenantPlans.ts).
+// Run: npm run test:unit (node --test with --experimental-strip-types).
+
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+
+import {
+  limitText, overrideBody, overrideDraftOf, planBody, planDraftOf, refusalOf, runSaga, tierChoices,
+} from "./tenantPlans.ts";
+
+const CATALOGUE = [
+  { feature_key: "content.rate_limit_rpm", product: "content", value_kind: "limit", unit: "rpm", description: "RPM" },
+  { feature_key: "content.social", product: "content", value_kind: "flag", unit: null, description: "Social" },
+  { feature_key: "crm.core", product: "crm", value_kind: "flag", unit: null, description: "CRM" },
+  { feature_key: "crm.seats", product: "crm", value_kind: "seats", unit: "seats", description: "Seats" },
+  { feature_key: "ai.budget_usd_monthly", product: "platform", value_kind: "limit", unit: "usd_month",
+    description: "AI" },
+];
+
+const plan = (over) => ({
+  plan_key: "content.growth", product: "content", name: "Growth", tier: "growth", price_usd_monthly: "799.00",
+  price_unit: "tenant", seats_included: null, price_extra_seat_usd: null, is_public: true, version: 3, notes: null,
+  updated_at: null, updated_by: "migration:355", retired_at: null, live_subscriptions: 4,
+  features: [{ feature_key: "content.rate_limit_rpm", limit_value: "300.00" }, { feature_key: "content.social",
+                                                                                   limit_value: null }],
+  ...over,
+});
+
+test("tier choices come from the live public content plans, cheapest first, plus the current tier", () => {
+  const plans = [
+    plan({ plan_key: "content.business", tier: "business", price_usd_monthly: "1499.00" }),
+    plan({}),
+    plan({ plan_key: "content.starter", tier: "starter", price_usd_monthly: "299.00" }),
+    plan({ plan_key: "content.enterprise", tier: "enterprise", price_usd_monthly: null, is_public: false }),
+    plan({ plan_key: "content.old", tier: "starter", retired_at: "2026-11-01T00:00:00Z" }),
+    plan({ plan_key: "crm.core", product: "crm", tier: null }),
+  ];
+  assert.deepEqual(tierChoices(plans), ["starter", "growth", "business"]);
+  assert.deepEqual(tierChoices(plans, "internal"), ["internal", "starter", "growth", "business"]);
+  assert.deepEqual(tierChoices(undefined, "growth"), ["growth"]);
+});
+
+test("no hard-coded tier list is left in the tenant pages", () => {
+  for (const f of ["../app/admin/tenants/page.tsx", "../app/admin/tenants/_components/Tenant360Settings.tsx"]) {
+    const src = readFileSync(fileURLToPath(new URL(f, import.meta.url)), "utf8");
+    assert.ok(!/PLAN_OPTIONS|PLAN_CHOICES/.test(src), `${f} still lists the plans`);
+    assert.ok(!/\["starter", "growth", "business"\]/.test(src), `${f} still lists the tiers`);
+  }
+});
+
+test("an edit body keeps the version and the feature set", () => {
+  const p = plan({});
+  const d = planDraftOf(p);
+  assert.equal(d.features["content.rate_limit_rpm"], "300.00");
+  d.name = " Growth plus ";
+  d.features["ai.budget_usd_monthly"] = "40";
+  const { body, error } = planBody(d, CATALOGUE, p);
+  assert.equal(error, null);
+  assert.equal(body.version, 3);
+  assert.equal(body.name, "Growth plus");
+  assert.ok(!("plan_key" in body) && !("tier" in body));
+  assert.deepEqual(body.features, [
+    { feature_key: "ai.budget_usd_monthly", limit_value: "40" },
+    { feature_key: "content.rate_limit_rpm", limit_value: "300.00" },
+    { feature_key: "content.social", limit_value: null },
+  ]);
+});
+
+test("a create body names product, key and tier; the rules the API applies", () => {
+  const d = planDraftOf(null, "crm");
+  assert.equal(d.plan_key, "crm.");
+  assert.equal(planBody(d, CATALOGUE, null).error, "key");
+  Object.assign(d, { plan_key: "crm.team", name: "Team", features: { "crm.core": "", "crm.seats": "5" } });
+  const ok = planBody(d, CATALOGUE, null);
+  assert.equal(ok.error, null);
+  assert.deepEqual([ok.body.plan_key, ok.body.product, ok.body.tier, ok.body.price_unit], ["crm.team", "crm", null, "seat"]);
+  assert.equal(planBody({ ...d, plan_key: "content.team" }, CATALOGUE, null).error, "key");
+  assert.equal(planBody({ ...d, price: "1.234" }, CATALOGUE, null).error, "price");
+  assert.equal(planBody({ ...d, seats_included: "-1" }, CATALOGUE, null).error, "seats");
+  const bad = planBody({ ...d, features: { "crm.seats": "lots" } }, CATALOGUE, null);
+  assert.deepEqual([bad.error, bad.field], ["limit", "crm.seats"]);
+  const tiered = { ...planDraftOf(null, "content"), plan_key: "content.zz", name: "Z", tier: "growth" };
+  assert.equal(planBody(tiered, CATALOGUE, null).error, "rpmRequired");
+  tiered.features = { "content.rate_limit_rpm": "100" };
+  assert.equal(planBody(tiered, CATALOGUE, null).body.tier, "growth");
+});
+
+test("override drafts", () => {
+  const today = "2026-11-03";
+  assert.deepEqual(overrideBody({ feature_key: "crm.core", mode: "off", limit: "", reason: "texts", expires: "" },
+                                CATALOGUE, today).body,
+                   { enabled: false, limit_value: null, reason: "texts", expires_at: null });
+  assert.deepEqual(overrideBody({ feature_key: "ai.budget_usd_monthly", mode: "limit", limit: "0.01",
+                                  reason: " proof ", expires: "2026-11-04" }, CATALOGUE, today).body,
+                   { enabled: true, limit_value: "0.01", reason: "proof", expires_at: "2026-11-04T23:59:59Z" });
+  const err = (d) => overrideBody({ feature_key: "crm.seats", mode: "limit", limit: "3", reason: "r", expires: "",
+                                    ...d }, CATALOGUE, today).error;
+  assert.equal(err({ feature_key: "" }), "feature");
+  assert.equal(err({ feature_key: "crm.core" }), "flagLimit");
+  assert.equal(err({ limit: "x" }), "limit");
+  assert.equal(err({ reason: " " }), "reason");
+  assert.equal(err({ expires: "2026-11-02" }), "expires");
+  assert.equal(err({}), null);
+  const row = { feature_key: "crm.seats", product: "crm", value_kind: "seats", limit_value: "3.00", enabled: true,
+                reason: "r", granted_by: "admin:x", expires_at: "2026-12-01T23:59:59+00:00", updated_at: null, active: true };
+  assert.deepEqual(overrideDraftOf(row), { feature_key: "crm.seats", mode: "limit", limit: "3.00", reason: "r",
+                                           expires: "2026-12-01" });
+});
+
+test("limit text", () => {
+  const w = { on: "On", noLimit: "No limit", perMonth: (v) => `${v}/mo`, usdMonth: (v) => `USD ${v}/mo`,
+              perMinute: (v) => `${v}/min`, seats: (v) => `${v} seats`, days: (v) => `${v} d` };
+  assert.equal(limitText("flag", null, null, w), "On");
+  assert.equal(limitText("limit", "count_month", null, w), "No limit");
+  assert.equal(limitText("limit", "count_month", "20000.00", w), "20,000/mo");
+  assert.equal(limitText("limit", "usd_month", "15.00", w), "USD 15.00/mo");
+  assert.equal(limitText("limit", "rpm", "300.00", w), "300/min");
+  assert.equal(limitText("seats", "seats", "4.00", w), "4 seats");
+  assert.equal(limitText("policy", "days", "7.00", w), "7 d");
+});
+
+test("refusal bodies keep the API code", () => {
+  assert.deepEqual(refusalOf({ detail: { detail: "version_conflict", message: "stale" } }, 409),
+                   { code: "version_conflict", message: "stale" });
+  assert.deepEqual(refusalOf({ detail: "Tenant not found" }, 404), { code: "http_404", message: "Tenant not found" });
+  assert.equal(refusalOf({ detail: [{ loc: ["body", "version"], msg: "Field required" }] }, 422).message,
+               "version: Field required");
+  assert.equal(refusalOf(null, 500).code, "http_500");
+});
+
+test("the saga call waits for its job", async () => {
+  const answers = [{ job_id: "j", status: "queued", steps: [], error: null, result: null },
+                   { job_id: "j", status: "running", steps: [], error: null, result: null },
+                   { job_id: "j", status: "succeeded", steps: ["crm_canceled"], error: null, result: {} }];
+  const calls = [];
+  globalThis.fetch = async (path, init) => {
+    calls.push([path, init.method]);
+    return { ok: true, status: 200, json: async () => answers.shift() };
+  };
+  const job = await runSaga("/api/admin/tenants/t/provision/cancel", { request_key: "k" }, { sleep: async () => {} });
+  assert.equal(job.status, "succeeded");
+  assert.deepEqual(calls.map((c) => c[1]), ["POST", "GET", "GET"]);
+  assert.equal(calls[1][0], "/api/admin/tenants/provision/j");
+});

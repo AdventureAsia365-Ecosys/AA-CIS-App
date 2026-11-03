@@ -53,8 +53,8 @@ export const ADMIN_IA: IaGroup[] = [
     { href: "/admin/tenants", label: "Directory", icon: "tenants" },
     { href: "/admin/tenants/agencies", label: "CRM agencies", icon: "agencies" },
     { href: "/admin/tenants/data-erasure", label: "Data erasure", icon: "erasure" },
-    // Reserved for the plans and add-ons catalogue (tenant control plane, slice 3).
-    { href: "/admin/tenants/plans", label: "Plans & add-ons", icon: "plans", hidden: true },
+    // The plans and add-ons catalogue (AA-1028 R1 slice 3, tenant control plane).
+    { href: "/admin/tenants/plans", label: "Plans & add-ons", icon: "plans" },
   ] },
   { label: "AA Catalogue", items: [
     { href: "/admin/upload", label: "Upload (S0)", icon: "upload" },
