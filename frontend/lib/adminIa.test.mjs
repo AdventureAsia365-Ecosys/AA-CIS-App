@@ -138,7 +138,7 @@ const read = (rel) => readFileSync(join(FRONTEND, rel), "utf8");
 
 test("7. next.config.ts serves the moves; no link still points at an old URL", () => {
   assert.match(read("next.config.ts"), /\.\.\.adminIaRedirects\(\)/);
-  const old = ADMIN_ROUTE_MOVES.filter((m) => !m.query).map((m) => m.from.replace(/[/-]/g, "\\$&"));
+  const old = ADMIN_ROUTE_MOVES.filter((m) => !m.query).map((m) => m.from.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&"));
   // A quote or backtick right before the path: links and pushes, never "/api/admin/…" (BFF paths keep their names).
   const linkRe = new RegExp(`["'\`](${old.join("|")})(?![\\w/-])`);
   const slateRe = /atom-curation\?section=slate/;
