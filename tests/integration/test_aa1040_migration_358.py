@@ -1,8 +1,8 @@
-"""AA-1040 (EU AI Act Art. 50(2)) — migration 366: catalog.v_supply_content appends the machine-readable AI mark of
+"""AA-1040 (EU AI Act Art. 50(2)) — migration 358: catalog.v_supply_content appends the machine-readable AI mark of
 the published supply text (ai_generated, ai_generated_at, ai_human_edited) for Booking.
 
-conftest skips 366 (catalog recipe). Each test runs in ONE transaction on the RDS-like state of
-test_aa860_migration_245: 278 and 366 are applied as cis_owner (DB Migrate's live-owner switch), the checks run as
+conftest skips 358 (catalog recipe). Each test runs in ONE transaction on the RDS-like state of
+test_aa860_migration_245: 278 and 358 are applied as cis_owner (DB Migrate's live-owner switch), the checks run as
 booking, and the transaction is rolled back.
 
 Checks: registered once and re-runnable; 278's columns unchanged and first, the three mark columns appended; owner,
@@ -23,7 +23,7 @@ import test_aa860_migration_245 as t245  # noqa: E402
 import test_aa835_migration_278 as t278  # noqa: E402  (helpers: _apply, _entity, _version, _publish, BOOKING_SQL)
 from test_aa860_migration_245 import rds_like_245  # noqa: E402,F401  (module fixture: Dev after 244 + 245)
 
-MIGRATION = "366_supply_content_ai_mark.sql"
+MIGRATION = "358_supply_content_ai_mark.sql"
 COLUMNS_278 = ["source_system", "source_id", "entity_type", "content_status", "content_version", "description",
                "highlights", "good_to_know", "photo_urls", "edit_url", "published_at"]
 MARK = ["ai_generated", "ai_generated_at", "ai_human_edited"]
@@ -75,7 +75,7 @@ def _mark(c, source_ids):
 
 def test_registered_rerunnable_and_columns_appended(cur):
     t278._apply(cur, MIGRATION)                               # idempotent re-run
-    cur.execute("SELECT count(*) AS n FROM shared.schema_versions WHERE version = '366'")
+    cur.execute("SELECT count(*) AS n FROM shared.schema_versions WHERE version = '358'")
     assert cur.fetchone()[0] == 1
     cur.execute("SELECT attname FROM pg_attribute WHERE attrelid = 'catalog.v_supply_content'::regclass "
                 "AND attnum > 0 AND NOT attisdropped ORDER BY attnum")
@@ -135,29 +135,29 @@ def test_booking_reader_sql_still_runs(cur):
 
 
 def test_closing_check_refuses_a_marked_row_without_text(cur):
-    """Mutation check: the after-guard of 366 catches a definition that marks an unpublished row."""
+    """Mutation check: the after-guard of 358 catches a definition that marks an unpublished row."""
     body = t278._body(MIGRATION).replace(
         "CASE WHEN p.id IS NOT NULL THEN ai.llm_created_at IS NOT NULL END AS ai_generated",
         "true AS ai_generated")
     entity_id, _ = t278._entity(cur)
     t278._version(cur, entity_id, 1)
-    cur.execute("SAVEPOINT aa1040_366")
+    cur.execute("SAVEPOINT aa1040_358")
     try:
         cur.execute("SET LOCAL ROLE cis_owner")
         with pytest.raises(psycopg2.Error, match="marks a row that serves no text"):
             cur.execute(body)
     finally:
-        cur.execute("ROLLBACK TO SAVEPOINT aa1040_366")
+        cur.execute("ROLLBACK TO SAVEPOINT aa1040_358")
 
 
 def test_view_explain_reads_one_entity_by_key(cur):
     """Lesson S238: Booking's single-entity read stays a keyed lookup (no scan of every entity's chain)."""
     t278._entity(cur)
-    cur.execute("SAVEPOINT aa1040_366_x")
+    cur.execute("SAVEPOINT aa1040_358_x")
     try:
         cur.execute("SET LOCAL ROLE booking")
         cur.execute("EXPLAIN " + BOOKING_MARK_SQL, ([str(uuid.uuid4())],))
         plan = "\n".join(r[0] for r in cur.fetchall())
     finally:
-        cur.execute("ROLLBACK TO SAVEPOINT aa1040_366_x")
+        cur.execute("ROLLBACK TO SAVEPOINT aa1040_358_x")
     assert "supply_entity" in plan

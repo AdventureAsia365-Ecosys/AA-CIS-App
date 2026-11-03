@@ -1,4 +1,4 @@
--- Migration 366: AA-1040 (EU AI Act Art. 50(2), root ADR 0019 d19) — the machine-readable AI mark of the supply
+-- Migration 358: AA-1040 (EU AI Act Art. 50(2), root ADR 0019 d19) — the machine-readable AI mark of the supply
 -- content Booking shows: catalog.v_supply_content appends ai_generated, ai_generated_at and ai_human_edited.
 --
 -- Why. CIS drafts the customer text of every Booking hotel and service with the writer stage supply_content_writer
@@ -29,7 +29,7 @@
 --      catalog_owner may not read (column SELECT only, CIS 311 era), and the tour mark leaves model null too.
 --      Columns are append-only: Booking's reader (AA-Booking app/supply/content.py) feature-detects 278's nine
 --      columns and, separately, these three (its mark turns on by itself once this file is applied).
---   2. Register 366.
+--   2. Register 358.
 --
 -- Behaviour. None for the existing reader: CREATE OR REPLACE VIEW with 278's columns first, unchanged; the ACL is
 -- kept (re-stated below). Booking's AA-1040 code shows the mark once it detects the columns.
@@ -47,11 +47,12 @@
 -- Recipe. The X1 S22 catalog recipe (as 278 / 323 / 341 / 357): GRANT CREATE ON SCHEMA catalog TO catalog_owner; SET
 -- LOCAL ROLE catalog_owner; the view DDL; SET LOCAL ROLE cis_owner; REVOKE CREATE. DB Migrate runs the file as
 -- cis_owner (login db_migrator). Never RESET ROLE, no SECURITY DEFINER, no role DDL, no dynamic SQL. The conftest
--- replay skips this file (catalog recipe, 245's owners); tests/integration/test_aa1040_migration_366.py applies 278 +
--- 366 the DB Migrate way and rolls back.
+-- replay skips this file (catalog recipe, 245's owners); tests/integration/test_aa1040_migration_358.py applies 278 +
+-- 358 the DB Migrate way and rolls back.
 --
--- Number. 357 is the highest on main (03/11) and S266 lanes hold 358-365. If the numbers move, renumber to the owner
--- main max + 1 (git grep '366_' and '366' in this file, its test and conftest).
+-- Number. 357 is the highest on main (03/11), so this file is main max + 1 and 359 (catalog.v_tour text_updated_at)
+-- follows it in the same migration-only PR. If another CIS file lands first, renumber both to the owner main max + 1
+-- and + 2 (git grep '358_' / '359_' and the bare numbers in each file, its test and conftest).
 --
 -- Locks. One CREATE OR REPLACE VIEW (AccessExclusiveLock on the view only, catalog-only), lock_timeout 5s,
 -- statement_timeout 1min. Idempotent (same column list on a re-run, re-runnable grants, ON CONFLICT DO NOTHING), one
@@ -71,15 +72,15 @@ DECLARE
     cols text;
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM shared.schema_versions WHERE version = '278') THEN
-        RAISE EXCEPTION 'migration 366: apply 278 (supply content) first';
+        RAISE EXCEPTION 'migration 358: apply 278 (supply content) first';
     END IF;
     IF (SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = 'catalog') IS DISTINCT FROM 'cis_owner' THEN
-        RAISE EXCEPTION 'migration 366: schema catalog is not owned by cis_owner (apply 245 first)';
+        RAISE EXCEPTION 'migration 358: schema catalog is not owned by cis_owner (apply 245 first)';
     END IF;
     IF to_regclass('catalog.v_supply_content') IS NULL
        OR (SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid = to_regclass('catalog.v_supply_content'))
           <> 'catalog_owner' THEN
-        RAISE EXCEPTION 'migration 366: catalog.v_supply_content is missing or not catalog_owner''s';
+        RAISE EXCEPTION 'migration 358: catalog.v_supply_content is missing or not catalog_owner''s';
     END IF;
     SELECT string_agg(a.attname, ',' ORDER BY a.attnum) INTO cols
       FROM pg_attribute a WHERE a.attrelid = 'catalog.v_supply_content'::regclass AND a.attnum > 0
@@ -88,10 +89,10 @@ BEGIN
                     'good_to_know,photo_urls,edit_url,published_at',
                     'source_system,source_id,entity_type,content_status,content_version,description,highlights,'
                     'good_to_know,photo_urls,edit_url,published_at,ai_generated,ai_generated_at,ai_human_edited') THEN
-        RAISE EXCEPTION 'migration 366: catalog.v_supply_content has unexpected columns: %', cols;
+        RAISE EXCEPTION 'migration 358: catalog.v_supply_content has unexpected columns: %', cols;
     END IF;
     IF NOT has_table_privilege('catalog_owner', 'shared.supply_content_version', 'SELECT') THEN
-        RAISE EXCEPTION 'migration 366: catalog_owner cannot read shared.supply_content_version (278)';
+        RAISE EXCEPTION 'migration 358: catalog_owner cannot read shared.supply_content_version (278)';
     END IF;
 END $$;
 
@@ -159,7 +160,7 @@ COMMENT ON VIEW catalog.v_supply_content IS
     'highlights, good_to_know and photo_urls are non-NULL only while content_status = published (approved version, '
     'active entity); draft, in_review, stale and unpublished rows carry NULL text. photo_urls = CDN URLs of the '
     'published photos whose Booking media has usage_rights. edit_url = the CIS admin path of the entity (prefix the '
-    'CIS admin origin). AA-1040 (CIS 366, EU AI Act Art. 50(2)): ai_generated = the published text is AI-written '
+    'CIS admin origin). AA-1040 (CIS 358, EU AI Act Art. 50(2)): ai_generated = the published text is AI-written '
     '(the supply_content_writer draft, or a staff edit of it), ai_generated_at = when that draft was written, '
     'ai_human_edited = a person edited it before publishing; all three NULL while not published. Columns are '
     'append-only (Booking feature-detects them).';
@@ -180,19 +181,19 @@ BEGIN
                              'photo_urls text[], edit_url text, published_at timestamp with time zone, '
                              'ai_generated boolean, ai_generated_at timestamp with time zone, '
                              'ai_human_edited boolean' THEN
-        RAISE EXCEPTION 'migration 366: catalog.v_supply_content has unexpected columns: %', cols;
+        RAISE EXCEPTION 'migration 358: catalog.v_supply_content has unexpected columns: %', cols;
     END IF;
     IF EXISTS (SELECT 1 FROM catalog.v_supply_content
                 WHERE description IS NULL
                   AND (ai_generated IS NOT NULL OR ai_generated_at IS NOT NULL OR ai_human_edited IS NOT NULL)) THEN
-        RAISE EXCEPTION 'migration 366: catalog.v_supply_content marks a row that serves no text';
+        RAISE EXCEPTION 'migration 358: catalog.v_supply_content marks a row that serves no text';
     END IF;
     IF EXISTS (SELECT 1 FROM catalog.v_supply_content
                 WHERE (ai_generated IS TRUE) <> (ai_generated_at IS NOT NULL)
                    OR (ai_generated IS TRUE) <> (ai_human_edited IS NOT NULL)) THEN
-        RAISE EXCEPTION 'migration 366: ai_generated_at / ai_human_edited must be set exactly when ai_generated';
+        RAISE EXCEPTION 'migration 358: ai_generated_at / ai_human_edited must be set exactly when ai_generated';
     END IF;
-    RAISE NOTICE 'migration 366: catalog.v_supply_content published rows %, AI-written %, of which edited by staff %',
+    RAISE NOTICE 'migration 358: catalog.v_supply_content published rows %, AI-written %, of which edited by staff %',
         (SELECT count(*) FROM catalog.v_supply_content WHERE description IS NOT NULL),
         (SELECT count(*) FROM catalog.v_supply_content WHERE ai_generated),
         (SELECT count(*) FROM catalog.v_supply_content WHERE ai_human_edited);
@@ -209,26 +210,26 @@ BEGIN
     IF EXISTS (SELECT 1 FROM pg_class WHERE oid = 'catalog.v_supply_content'::regclass
                                         AND (pg_get_userbyid(relowner) <> 'catalog_owner'
                                              OR NOT COALESCE(reloptions, '{}') @> ARRAY['security_barrier=true'])) THEN
-        RAISE EXCEPTION 'migration 366: catalog.v_supply_content must be catalog_owner''s and security_barrier';
+        RAISE EXCEPTION 'migration 358: catalog.v_supply_content must be catalog_owner''s and security_barrier';
     END IF;
     SELECT string_agg(r || ':' || p, ', ' ORDER BY r, p) INTO privs FROM (
         SELECT CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS r, a.privilege_type AS p
           FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
          WHERE c.oid = 'catalog.v_supply_content'::regclass AND a.grantee <> c.relowner) x;
     IF privs IS DISTINCT FROM 'booking:SELECT' THEN
-        RAISE EXCEPTION 'migration 366: unexpected grants on catalog.v_supply_content: %', privs;
+        RAISE EXCEPTION 'migration 358: unexpected grants on catalog.v_supply_content: %', privs;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_attribute WHERE attacl IS NOT NULL
                                             AND attrelid = 'catalog.v_supply_content'::regclass) THEN
-        RAISE EXCEPTION 'migration 366: column grants on catalog.v_supply_content';
+        RAISE EXCEPTION 'migration 358: column grants on catalog.v_supply_content';
     END IF;
     IF has_schema_privilege('catalog_owner', 'catalog', 'CREATE') THEN
-        RAISE EXCEPTION 'migration 366: catalog_owner still has CREATE on schema catalog';
+        RAISE EXCEPTION 'migration 358: catalog_owner still has CREATE on schema catalog';
     END IF;
 END $$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('366', now(), 'AA-1040: catalog.v_supply_content appends ai_generated, ai_generated_at, ai_human_edited '
+VALUES ('358', now(), 'AA-1040: catalog.v_supply_content appends ai_generated, ai_generated_at, ai_human_edited '
                       '(the machine-readable AI mark of the published supply text, for Booking)')
 ON CONFLICT (version) DO NOTHING;
 
