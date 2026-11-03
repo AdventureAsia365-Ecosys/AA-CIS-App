@@ -106,6 +106,12 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     # AA-978 (276): the guards allow these deletes only for an offboarded tenant (or after the 90-day retention).
     _d("shared.tenant_members", "the agency's memberships (identities, Content studio roles)"),
     _d("shared.tenant_membership_event", "the agency's tenant.membership.v1 feed events"),
+    # AA-1028 R1 (353): the control-plane rows of the tenant. The guards allow the entitlement and event deletes only
+    # for an offboarded tenant; the subscription / override deletes of an offboarded tenant emit nothing.
+    _d("shared.tenant_subscription", "the tenant's product subscriptions (plan, status, billing reference)"),
+    _d("shared.tenant_entitlement_override", "per-tenant entitlement exceptions"),
+    _d("shared.tenant_entitlement", "the tenant's materialised entitlements"),
+    _d("shared.tenant_account_event", "the tenant's tenant.entitlements.v1 account events"),
     # AA-916 (277, ADR 0010 decision 11): tenant text lives only in deletable tables. Platform rows have no tenant.
     _d("shared.writing_signal", "writing-memory signals (before/after text) of the tenant"),
     # AA-917 (280): tenant-scoped learned writing rules (derived from the tenant's text). Platform rules have no tenant.

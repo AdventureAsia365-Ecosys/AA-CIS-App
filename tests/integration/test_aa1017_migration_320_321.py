@@ -30,6 +30,11 @@ M324 = os.path.join(MIGRATIONS, "324_llm_acc2_candidate_models.sql")
 # Llama 4 capabilities on the rows 324 re-creates; the teardown applies both again so later modules see the full chain.
 M334 = os.path.join(MIGRATIONS, "334_llm_route_deadlines.sql")
 M337 = os.path.join(MIGRATIONS, "337_llm_llama4_structured_prompt_mode.sql")
+# AA-1028 R1: 353 / 355 build views on shared.tenant_ai_budget (the entitlement resolver and the contract view) and a
+# re-sync trigger on it. A test that drops the table drops them too (CASCADE); the teardown applies both again.
+M353 = os.path.join(MIGRATIONS, "353_tenant_control_plane_tables.sql")
+M355 = os.path.join(MIGRATIONS, "355_tenant_plans_seed_and_entitlement_view.sql")
+LATER_ON_TENANT_AI_BUDGET = (("353", M353), ("355", M355))
 FAMILIES = {"anthropic", "openai", "cohere", "typesafe", "amazon", "meta", "moonshot"}
 OLD_HEALTH_CLASSES = "('access_denied', 'quota_exhausted', 'throttled', 'credential', 'other')"
 OLD_VENDORS = "('anthropic', 'openai', 'cohere', 'typesafe')"
@@ -77,6 +82,10 @@ def cur():
             _run(c, M324)
         _run(c, M334)
         _run(c, M337)
+        for version, path in LATER_ON_TENANT_AI_BUDGET:
+            c.execute("SELECT 1 FROM shared.schema_versions WHERE version = %s", (version,))
+            if c.fetchone():
+                _run(c, path)
         conn.close()
 
 
@@ -235,7 +244,7 @@ def test_320_321_grants_hold_under_the_owner_default_privileges(cur):
     assert cur.fetchone()["n"] == 0, "the test user already has default privileges in shared"
     cur.execute(f"ALTER DEFAULT PRIVILEGES IN SCHEMA shared {_OWNER_DEFAULT}")
     try:
-        cur.execute("DROP TABLE shared.prompt_version, shared.tenant_ai_budget")
+        cur.execute("DROP TABLE shared.prompt_version, shared.tenant_ai_budget CASCADE")   # + the 353 / 355 views
         _undo_320(cur)
         cur.execute("CREATE TABLE shared.zz_aa1017_default_acl (x int)")      # the default really applies here
         assert _table_privs(cur, "zz_aa1017_default_acl", "cis_app") == {"SELECT", "INSERT", "UPDATE", "DELETE"}
