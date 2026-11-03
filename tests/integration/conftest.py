@@ -442,6 +442,10 @@ def _apply_schema(conn):
         # the catalog recipe (needs 245's owners). test_aa1028_migration_357 applies it the DB Migrate way on the
         # RDS-like state and undoes it at teardown.
         and not f.startswith('357')
+        # AA-1040 (S266): 366 replaces 278's catalog.v_supply_content (three appended AI-mark columns) through the
+        # catalog recipe and needs 278's part B (skipped above). test_aa1040_migration_366 applies 278 + 366 the DB
+        # Migrate way on the RDS-like state and rolls both back.
+        and not f.startswith('366')
     ])
 
     for mf in migration_files:
