@@ -58,11 +58,11 @@ ensureResultsDir();
 // AA-878 — `viewerRefused`: a page the read-only viewer may not open (admin-only, or Upload / S1, which only
 // write). A new admin-only page must carry it, or viewer mode fails on it (the proxy redirects it away).
 const ADMIN_PAGES: PageSpec[] = [
-  { id: 'atom-curation', label: 'Social Content', path: '/admin/atom-curation', readySelector: '[data-testid="admin-content-ready"]', viewerRefused: true },
+  { id: 'atom-curation', label: 'Atoms & routes', path: '/admin/atom-curation', readySelector: '[data-testid="admin-content-ready"]', viewerRefused: true },
   { id: 'decisions', label: 'Jev Decisions', path: '/admin/decisions', viewerRefused: true },
   { id: 'jobs', label: 'Jobs', path: '/admin/jobs', viewerRefused: true },
   // AA-839 — Jobs › Data erasure (admin only; DRY RUN by default, apply needs the env flag + a Cognito sign-in).
-  { id: 'data-erasure', label: 'Data erasure', path: '/admin/data-erasure', readySelector: '[data-testid="data-erasure-ready"]', viewerRefused: true },
+  { id: 'data-erasure', label: 'Data erasure', path: '/admin/tenants/data-erasure', readySelector: '[data-testid="data-erasure-ready"]', viewerRefused: true },
   { id: 'cost-ops', label: 'Cost Operations', path: '/admin/cost-ops', viewerRefused: true },
   // AA-804 — Platform › AI & spend › AI providers (admin only; backend spend.read). The tiles and three provider tables
   // render once the providers answer; `ai-gateway-ready` marks that.
@@ -79,18 +79,22 @@ const ADMIN_PAGES: PageSpec[] = [
   { id: 'platform-cost', label: 'Cost per app', path: '/admin/platform/cost', readySelector: '[data-testid="platform-cost-ready"]', viewerRefused: true },
   // AA-913 — Platform › People & access › Alert recipients (admin only; changes need a Cognito sign-in).
   { id: 'platform-alerts', label: 'Alert recipients', path: '/admin/platform/alerts', readySelector: '[data-testid="alert-recipients-ready"]', viewerRefused: true },
-  // AA-941 — Platform › Tenants › Agencies (CRM): the partner CRM's L1 console (admin only; needs a Cognito sign-in).
-  { id: 'platform-agencies', label: 'Agencies (CRM)', path: '/admin/platform/agencies', viewerRefused: true },
+  // AA-941 — Tenants › CRM agencies (AA-1039: was /admin/platform/agencies): the partner CRM's L1 console (admin only;
+  // needs a Cognito sign-in).
+  { id: 'tenants-agencies', label: 'CRM agencies', path: '/admin/tenants/agencies', viewerRefused: true },
   { id: 'photos', label: 'Photos', path: '/admin/photos', viewerRefused: true },
   // AA-977 — CIS Content › Assets › AA content (CRM): every staff role reads (the viewer too; write controls hidden).
-  { id: 'aa-content', label: 'AA content (CRM)', path: '/admin/aa-content' },
+  { id: 'aa-content', label: 'AA content', path: '/admin/aa-content' },
   // AA-814 — CIS Content › Assets › Facts: every staff role reads (write controls hidden; writes admin only).
   { id: 'facts', label: 'Facts', path: '/admin/facts' },
   // AA-835 — CIS Content › Assets › Supply (Booking): every staff role reads (lib/rbac.ts PAGE_RULES ALL_STAFF).
-  { id: 'supply-content', label: 'Supply content (Booking)', path: '/admin/supply-content' },
-  { id: 'platform-stats', label: 'A4 Quality', path: '/admin/platform-stats', readySelector: '[data-testid="admin-content-ready"]', viewerRefused: true },
-  // AA-769 — Content Quality (T2/T9 quality signals for every tenant; tenants never see them).
-  { id: 'content-quality', label: 'Content Quality', path: '/admin/content-quality', readySelector: '[data-testid="content-quality-ready"]', viewerRefused: true },
+  { id: 'supply-content', label: 'Supply copy', path: '/admin/supply-content' },
+  // AA-1039 — Tenant content QA (was /admin/platform-stats, /admin/content-quality, /admin/tenant-activity and the
+  // atom-curation Slate section; the old URLs are 307s, aa1039-admin-ia-redirects.spec.ts).
+  { id: 'tenant-qa-review-log', label: 'Review log', path: '/admin/tenant-qa/review-log', readySelector: '[data-testid="admin-content-ready"]', viewerRefused: true },
+  // AA-769 — Content quality (T2/T9 quality signals for every tenant; tenants never see them).
+  { id: 'tenant-qa-quality', label: 'Content quality', path: '/admin/tenant-qa/quality', readySelector: '[data-testid="content-quality-ready"]', viewerRefused: true },
+  { id: 'tenant-qa-slate', label: 'Slate', path: '/admin/tenant-qa/slate', readySelector: '[data-testid="tenant-qa-slate-ready"]', viewerRefused: true },
   { id: 'review', label: 'Review Queue', path: '/admin/review' },
   { id: 's1-rewrite', label: 'S1 Rewrite', path: '/admin/s1-rewrite', viewerRefused: true },
   { id: 'seo-intelligence', label: 'SEO Intelligence', path: '/admin/seo-intelligence', viewerRefused: true },
@@ -111,7 +115,7 @@ const ADMIN_PAGES: PageSpec[] = [
   { id: 'ai-gateway-requeue', label: 'AI providers · Re-queue refused jobs', path: '/admin/ai-gateway?tab=providers', readySelector: '[data-testid="ai-gateway-requeue"]', viewerRefused: true },
   { id: 'ai-gateway-calls', label: 'AI providers · Calls', path: '/admin/ai-gateway?tab=calls', readySelector: '[data-testid="ai-gateway-calls-ready"]', viewerRefused: true },
   { id: 'cost-ops-spend', label: 'Cost Operations · AI & data spend', path: '/admin/cost-ops?tab=spend', readySelector: '[data-testid="cost-tp-caps"]', viewerRefused: true },
-  { id: 'tenant-activity', label: 'Content Trace', path: '/admin/tenant-activity', readySelector: '[data-testid="admin-content-ready"]', viewerRefused: true },
+  { id: 'tenant-qa-trace', label: 'Content Trace', path: '/admin/tenant-qa/trace', readySelector: '[data-testid="admin-content-ready"]', viewerRefused: true },
   { id: 'tenants', label: 'Tenants', path: '/admin/tenants', viewerRefused: true },
   { id: 'upload', label: 'Upload', path: '/admin/upload', viewerRefused: true },
 ];

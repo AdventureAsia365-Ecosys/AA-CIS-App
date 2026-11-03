@@ -7,7 +7,7 @@
 //   cd apps/AA-CIS-App && AWS_PROFILE=aa365-admin E2EADMIN=1 npx playwright test --project admin-evidence
 //
 // Steps: /login → "Sign in with company email" → managed login → the admin address → code from inbound-admin/ →
-// back under /admin (cis_admin_token cookie, Account menu) → /admin/content-quality and /admin/writing-memory at
+// back under /admin (cis_admin_token cookie, Account menu) → /admin/tenant-qa/quality and /admin/writing-memory at
 // 1440x900 (grown to the inner scroll region) and 390x844, light and dark → AA-898: the docs manifest says owner_read
 // true / is_owner false, then docs/glossary.md in EN and VI (the switch), the owner-only docs/legal/register.md, and a
 // Mermaid page + a callout page when published, at the same sizes and themes → API checks through the BFF that write
@@ -29,7 +29,7 @@ import { growViewportToContent } from '../smoke/smoke-helpers';
 
 const CIS_PROD_ORIGIN = 'https://aa-cis.lumiguides.it.com';
 const SHOTS_DIR = 'tests/e2e/results/admin-evidence';
-const PAGES = ['/admin/content-quality', '/admin/writing-memory', '/admin/docs'] as const;  // AA-898: + docs reader
+const PAGES = ['/admin/tenant-qa/quality', '/admin/writing-memory', '/admin/docs'] as const;  // AA-898: + docs reader
 // Ids that do not exist: nothing is ever written by this spec.
 const MISSING_CARD = '00000000-0000-4000-8000-00000000a10b';
 const MISSING_PIECE = '00000000-0000-4000-8000-00000000a10c';

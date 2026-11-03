@@ -65,9 +65,10 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     view with a Dismiss action, AA-626; migrated to the UI kit + react-query with multi-select
     bulk regenerate and non-blocking regenerate, AA-662 PR 2 / AA-719), `master-content` (AA-718:
     server-side filter/sort/paginate + filter-aware stat cards + windowed cost + derived pipeline
-    status, via react-query — see A3 note below), `atom-curation` (Social Content tabs
-    01-05), `tenant-activity` (tabs 06-08), `platform-stats` (includes gate telemetry per tenant
-    and channel, AA-615), `cost-ops` (the **Cost Operations** page, AA-622/623/665: tabs Overview, **AI & data spend** (views LLM, DataForSEO, Jev, from the ledger) and AWS bill; the old `/admin/llm-usage` redirects to it),
+    status, via react-query — see A3 note below), `atom-curation` (**Atoms & routes**, sections
+    01 Atomize · 02 Segment · 03 Score · 04 Route/Hub; was "Social Content"), `tenant-qa/*` (AA-1039: `quality` =
+    Content quality, `trace` = Content Trace, `review-log` = review log with gate telemetry per tenant and channel,
+    AA-615, `slate` = the per-tenant Slate that was atom-curation section 05), `cost-ops` (the **Cost Operations** page, AA-622/623/665: tabs Overview, **AI & data spend** (views LLM, DataForSEO, Jev, from the ledger) and AWS bill; the old `/admin/llm-usage` redirects to it),
     `ai-gateway` (**AI providers**, AA-804: tabs Providers (+ views Connections, Jev credit, Credit (AA-1025 B5); warm-path labels, the
     "Re-queue refused jobs" card; AA-1025 C1: errors and p50 / p95 latency per row over 24 h / 7 d from the ledgers,
     the Jev / DataForSEO / Geoapify switch (PATCH /admin/llm-connections/{key}), the partner CRM AI and Bedrock
@@ -81,12 +82,10 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     admin-only read-only OpenAPI reader built on the kit: `GET /admin/openapi.json` through the BFF, since the
     AA-577 `/docs`, `/redoc`, `/openapi.json` need the X-Admin-Secret header on ECS), `settings` (pipeline gates, **Brand
     Identity** editor, SEO config, LLM model per stage + read-only Jev questions per stage). `run-health` was removed with N7/N8 (AA-603).
-  - Admin navigation (AA-663): **Overview** (Dashboard) · **Content** (Upload, Rewrite S1,
-    Review Queue, Master Content) · **Intelligence** (Social Content) · **Tenants** ·
-    **Operations** (Cost Operations, Jobs, Jev Decisions, API Docs) · **Settings**. Admin-only items are hidden for other
-    roles (same list as `lib/rbac.ts` PAGE_RULES, enforced by `proxy.ts`). The legacy `(internal)` route group
+  - Admin navigation: see **Admin console layout** below (AA-1039, seven groups). Admin-only items are hidden for
+    other roles (same list as `lib/rbac.ts` PAGE_RULES, enforced by `proxy.ts`). The legacy `(internal)` route group
     (`/upload`, `/review`, `/catalog`, `/brand`) is deleted; those URLs and `/admin/brand`
-    redirect in `next.config.ts`.
+    redirect in `next.config.ts` (AA-663).
   - **The admin host and the portal (AA-885, AA-979)**: the admin answers `/portal`, `/portal/*` and `/tenant-login`
     with **308** to the same path on `https://portal.lumiguides.it.com` (`frontend/next.config.ts`, `PORTAL_BASE_URL`
     in `frontend/lib/apps.ts`) and serves no portal page or tenant BFF. Staff have **no** access to the tenant portal
@@ -182,7 +181,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     (`kit-consumers.yml`, non-required): core overlaid on each consumer's `main`, then integrity, `tsc --noEmit` and
     the app's lint. CIS-local, outside `core/`: `api.ts`,
     `guideContent.ts` (the guide checks, re-exporting the core shape), the shell (`AdminShell`, `Sidebar`, `Topbar`,
-    `BottomNav`, `CommandPalette`, `SessionKeepAlive`), `adminNav.tsx`, `useNavSections.ts`, `useAdminIdentity.ts`,
+    `BottomNav`, `CommandPalette`, `SessionKeepAlive`), `adminNav.tsx`, `useAdminIdentity.ts`,
     `useReviewPendingCount.ts`, `chart.ts` (`CHART_TOOLTIP`, the recharts tooltip style, moved out of `adminUi.tsx`
     in AA-994 S6b), and `theme.ts` / `useTheme.ts` (the core store and hooks bound to `cis_theme`; the
     root layout's restore script is `themeStore.restoreScript`). Pages import the barrel `app/_kit` (which re-exports
@@ -2084,10 +2083,30 @@ The matrix lives in `frontend/lib/rbac.ts` and is read by `frontend/proxy.ts` (p
 (`requireAdmin(req, API_RULES.x)` → 401 bad/missing token, 403 wrong role) and the admin nav (an item
 shows only when the role may open its page).
 
-**Admin console layout (AA-883, S241 design option A).** One console (`aa-cis-frontend`), nav model
-`frontend/app/_kit/adminNav.tsx` in two sections named after who a page serves: **Platform** (Overview,
-People & access › Staff, Tenants, Jobs, AI & spend, Developer) and **CIS Content** (Pipeline, Assets,
-Intelligence, Tenant output). Section headers fold and show only when the role sees both sections.
+**Admin console layout (AA-883, S241 design option A; regrouped by AA-1039 R6 slice 1, S266, root ADR 0019 d13).**
+One console (`aa-cis-frontend`). The nav model is plain data in `frontend/lib/adminIa.ts` (`ADMIN_IA`; icons added
+in `frontend/app/_kit/adminNav.tsx`), seven groups, each folding on its own (kit NavGroup, S264; no sections, no
+footer Settings entry):
+- **Home** — Overview, App health (`/admin/platform/apps`), Reports, Data coverage;
+- **Tenants** — Directory (`/admin/tenants`, a row opens the Tenant 360 drawer), CRM agencies
+  (`/admin/tenants/agencies`), Data erasure (`/admin/tenants/data-erasure`), and a hidden slot Plans & add-ons
+  (`/admin/tenants/plans`, shown once its page ships with the tenant control plane);
+- **AA Catalogue** — Upload (S0), Rewrite (S1), Review Queue, Master Content, Atoms & routes (`/admin/atom-curation`),
+  Places, Photos, Facts, Supply copy, AA content, SEO Intelligence, Settings;
+- **Tenant content QA** — Content quality, Content Trace, Review log, Slate (`/admin/tenant-qa/*`, admin only);
+- **AI & spend** — AI providers (tabs Providers, Routing incl. "Routing by data class", Models & trials, Budgets,
+  Calls, Guide), Cost Operations, Cost per app;
+- **Writing Lab** — Writing memory, Jev Decisions (the per-stage lab comes later; S262 TL-11 freeze unchanged);
+- **Platform** — Staff & access, Audit log, Jobs, Alert recipients, API Docs, Data model, Docs.
+
+Moved pages answer **307** from their old URL with the query string kept (`ADMIN_ROUTE_MOVES`, served by
+`next.config.ts` before `proxy.ts`): `/admin/content-quality` → `/admin/tenant-qa/quality`, `/admin/tenant-activity`
+→ `/admin/tenant-qa/trace`, `/admin/platform-stats` → `/admin/tenant-qa/review-log`,
+`/admin/atom-curation?section=slate` → `/admin/tenant-qa/slate`, `/admin/platform/agencies` →
+`/admin/tenants/agencies`, `/admin/data-erasure` → `/admin/tenants/data-erasure`. BFF and backend paths keep their
+names (`/api/admin/content-quality/*`, `/admin/platform/crm/*`). `frontend/lib/adminIa.test.mjs` checks that every
+page URL of the S265 nav still opens a page, nav items never point at an old URL and every admin page has a nav
+entry; `tests/e2e/smoke/aa1039-admin-ia-redirects.spec.ts` checks the 307s on the deployed host.
 The other apps are links from the typed registry `frontend/lib/apps.ts` (Booking admin, TripPlanner
 public site; no tenant-portal link until there is a real support view, since the portal needs a tenant
 session); deep links are built only there, never from a return URL, never with a
@@ -2128,7 +2147,7 @@ entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
   delete a synthetic test agency with no member or traveller, typed name + ticket). A relay only: each route mirrors one `crm.ops.v1` route
   with the staff member's own Cognito token, inside a path allow-list (`ALLOWED`); the CRM's status and body pass
   through (it decides crm-platform-admin writes and filters L1 keys); bodies are never logged (the owner invite
-  carries an e-mail). Page `/admin/platform/agencies` (nav Platform › Tenants › Agencies (CRM)). AA-1031 (S264): the Create
+  carries an e-mail). Page `/admin/tenants/agencies` (nav Tenants › CRM agencies; was `/admin/platform/agencies`, AA-1039). AA-1031 (S264): the Create
   agency picker leaves out CIS tenants that already have an agency in the loaded list, and the CRM's 409
   `tenant_deleted` (crm.ops.v1 1.9: the id of a deleted test agency, never reused) reads "create a new CIS tenant".
   When the agency id is an active CIS tenant and the staff member has `tenant.write`, the drawer's "Invite first owner"
@@ -2250,7 +2269,7 @@ fetched about once a day.
 |---|---|---|---|---|---|
 | Content work pages: Upload, Rewrite (S1) | ✓ | ✓ | ✓ | — | — |
 | Content pages: Review Queue, Master Content, Settings (viewer: read only, write controls hidden by `can()`) | ✓ | ✓ | ✓ | read | — |
-| Overview, Photos, Social Content (atom curation), Content Trace, A4 Quality (`/admin/platform-stats`), Content Quality, SEO Intelligence, Tenants, Cost Operations, Jobs, Jev Decisions, API Docs | ✓ | — | — | — | — |
+| Overview, Photos, Atoms & routes (atom curation), Tenant content QA (`/admin/tenant-qa/*`: Content quality, Content Trace, Review log, Slate), SEO Intelligence, Tenants (`/admin/tenants/*`), Cost Operations, Jobs, Jev Decisions, API Docs | ✓ | — | — | — | — |
 | Platform pages `/admin/platform/*` (AA-883 Staff directory; writes need `staff.write`, owners only; AA-913 Alert recipients, changes need `alerts.write` + Cognito) | ✓ | — | — | — | — |
 | BFF `/api/admin/openapi.json` and `/api/admin/platform/*` (any method; `lib/rbac.ts` API_READ_RULES, backend re-checks the role) | ✓ | — | — | — | — |
 | Backend docs `openapi.json`, `docs`, `redoc` through the staff branch of `/api/tenant/*` (`lib/rbac.ts` isApiDocsPath) | ✓ | — | — | — | — |
@@ -2984,8 +3003,8 @@ data**: the tenant-safe projection (`_tenant_safe_piece`) drops `status`, `held_
 `gate_ledger`, `repair_log` and `flags`, exposing only `ready_state` (`ready` / `not_ready`, where
 `not_ready` means there is no content yet). The same rule covers T2 tour versions (see **Tenant
 projection** below). `writer_input` (migration 220) stores what the writer was given. Admins
-see everything on **Content Quality** (`/admin/content-quality`, AA-769), plus Content Trace and
-Platform Stats. An **admin** (staff role `admin` only) can cut or rewrite one flagged sentence of
+see everything on **Content quality** (`/admin/tenant-qa/quality`, AA-769; was `/admin/content-quality`), plus
+Content Trace and the review log (Tenant content QA). An **admin** (staff role `admin` only) can cut or rewrite one flagged sentence of
 an approved/held Piece from that drawer (S234): *suggest* is one cheap LLM call (stage
 `t9_repair`, logged with `content_piece_id`, nothing saved); *apply* is deterministic (span-text
 match under `FOR UPDATE`, the replacement re-checked by F1/F2/brand-forbidden/F11 and — with the
