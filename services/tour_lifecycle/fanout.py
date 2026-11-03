@@ -46,6 +46,8 @@ DEFAULT_NOTICE_DAYS = 7
 STALE_REQUESTED_SECONDS = 900      # a publish claim this old without an answer is abandoned (idempotency.py: 300 s)
 ACTOR = "system:tour_retirement"
 FLAG_KIND = "tour_retired"
+# publish_log.channel of a WordPress post: 'blog' (the T11 channel); older rows say 'wordpress'.
+WORDPRESS_CHANNELS = ("blog", "wordpress")
 
 EVENT_SQL = """
     SELECT e.id AS event_id, e.source_id, e.tour_id::text AS tour_id, e.event, e.reason, e.occurred_at,
@@ -206,7 +208,7 @@ async def fan_out(pool, event_key: str) -> dict:
                     out = await _restored(conn, event, tour_ids)
         except asyncpg.UndefinedTableError:
             return {"status": "unavailable", "reason": "CIS 362 not applied"}
-    logger.info("tour_retirement_fanout", event_key=event_key, event=kind,
+    logger.info("tour_retirement_fanout", event_key=event_key, lifecycle_event=kind,
                 **{k: v for k, v in out.items() if k != "immediate_notices"})
     return {"status": "done", "event": kind, **out}
 
@@ -219,7 +221,7 @@ async def _retired(conn, event, tour_ids: list[str]) -> dict:
         tid = p["tenant_id"]
         if tid not in days_cache:
             days_cache[tid] = await notice_days(conn, tid)
-        if p["channel"] == "blog":
+        if p["channel"] in WORDPRESS_CHANNELS:
             due = event["occurred_at"] + timedelta(days=days_cache[tid])
             action, message = "draft_after_notice", page_message(tour_name, due)
         else:
@@ -230,7 +232,7 @@ async def _retired(conn, event, tour_ids: list[str]) -> dict:
             json.dumps(detail), message, event["idempotency_key"], action, due)
         flags += 1 if flag_id else 0
         entry = per_tenant.setdefault(tid, {"pages": [], "posts": []})
-        if p["channel"] == "blog":
+        if p["channel"] in WORDPRESS_CHANNELS:
             entry["pages"].append({"url": p["external_url"], "draft_on": _fmt_day(due)})
         else:
             entry["posts"].append({"url": p["external_url"], "channel": p["channel"]})
