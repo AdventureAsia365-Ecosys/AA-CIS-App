@@ -477,6 +477,17 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   call). Bedrock runtime clients take the connection's `timeout_s` when set; since AA-1024 A3 every runtime client makes
   one attempt per request (botocore `total_max_attempts` 1, SDK `max_retries` 0: the gateway owns retries, at most
   `errors.MAX_CHAIN_ATTEMPTS` = 6 provider attempts per request, the 7th refused as a 0 USD `deadline` row).
+- **Model lifecycle as data** (AA-1024 D2, OPS-04; migration 352): `shared.llm_model_catalog` carries
+  `lifecycle_status` (active | legacy | unlisted | unknown | untracked), `eol_date`, `legacy_date`,
+  `lifecycle_checked_at`, `lifecycle_detail` (per Bedrock connection: access, error class, wire id, matched model).
+  Job kind `llm_model_lifecycle_sync` (`services/jobs/llm_model_lifecycle_job.py`, core in
+  `shared/llm_client/model_lifecycle.py`): one free Bedrock `ListFoundationModels` per enabled Bedrock connection (acc2
+  on the task role, acc3 through the satellite session; IAM in AA-CIS-Infra), then every catalog row; a model with no
+  Bedrock deployment is `untracked`, a refusing account keeps the earlier answered status (else `unknown`), so no routed
+  model stays NULL. Nightly from 04:00 UTC (`LLM_MODEL_LIFECYCLE_SYNC`, default on), background, deploy-gate exempt;
+  `POST /admin/job-runner/llm-model-lifecycle/run` (ai.admin, `dry_run` optional). A routed model (active routes,
+  fallbacks, shadows, aliases expanded) whose end of life is within 90 days, or that is LEGACY or unlisted, gets an
+  admin bell `llm_model_lifecycle` (once per 7 days) and an OPS-12 digest attention line (section "Model lifecycle").
 - **Reliability part 2** (AA-1018 / AA-1016 / AA-900, no migration; reads 320 / 321 / 322): **route deadline**
   `llm_role_config.route_deadline_s` (set on every row by migration 334: writer 1200, judge 900, validate 600, embed
   120 s; NULL = nothing bound): checked before every

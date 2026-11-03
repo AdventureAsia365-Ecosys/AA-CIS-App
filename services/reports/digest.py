@@ -35,6 +35,10 @@ for in docs/implementation-notes/AA-1003.md, "R2 follow-up requests"):
               (shared.llm_cost_reconcile). A balance under its threshold, a refusing or switched-off provider, the
               Geoapify daily limit reached or a mismatch is an attention line.
   reports     the register's overdue reports and failed runs (EX-06 rule).
+  lifecycle   AA-1024 D2 (OPS-04): every routed model (active shared.llm_role_config rows, aliases expanded) with its
+              lifecycle status and end-of-life date (shared.llm_model_catalog, CIS 352, filled by the nightly
+              llm_model_lifecycle_sync). An end of life within 90 days (or past), a LEGACY or unlisted routed model,
+              a routed model with no status (the sync has not run) or with status unknown is an attention line.
 
 Every section is read on its own: one that fails becomes a "section unavailable" line and an attention item, never a
 failed digest (`collect`). `render` is pure and unit-tested.
@@ -298,6 +302,45 @@ async def load_balances(conn, now: datetime) -> dict:
             "reconcile": {"ready": recent is not None, "days": RECONCILE_DAYS, "mismatches": mismatches}}
 
 
+LIFECYCLE_SQL = ("SELECT model_key, lifecycle_status, eol_date, lifecycle_checked_at FROM shared.llm_model_catalog "
+                 "ORDER BY model_key")
+LIFECYCLE_JOB_SQL = """
+    SELECT id::text AS id, status, result, finished_at FROM shared.job
+     WHERE kind = 'llm_model_lifecycle_sync' AND finished_at >= $1 ORDER BY finished_at DESC LIMIT 1
+"""
+
+
+async def load_lifecycle(conn, now: datetime) -> dict:
+    """AA-1024 D2: the routed models and their lifecycle (stored rows only: no provider is called). ``ready`` False
+    before migration 352."""
+    import asyncpg
+
+    from services.jobs.llm_model_lifecycle_job import ALIASES_SQL, ROUTES_SQL
+    from shared.llm_client import model_lifecycle as ml
+
+    try:
+        rows = [dict(r) for r in await conn.fetch(LIFECYCLE_SQL)]
+    except asyncpg.exceptions.UndefinedColumnError:
+        return {"ready": False}
+    routed = ml.route_keys([dict(r) for r in await conn.fetch(ROUTES_SQL)],
+                           [dict(r) for r in await conn.fetch(ALIASES_SQL)])
+    by_key = {r["model_key"]: r for r in rows}
+    job = await conn.fetchrow(LIFECYCLE_JOB_SQL, now - timedelta(hours=48))
+    res = handoff._json(job["result"]) if job is not None else {}
+    return {"ready": True,
+            "models": [{"model_key": k, "stages": stages,
+                        "status": (by_key.get(k) or {}).get("lifecycle_status"),
+                        "eol_date": _iso((by_key.get(k) or {}).get("eol_date")),
+                        "checked_at": _iso((by_key.get(k) or {}).get("lifecycle_checked_at"))}
+                       for k, stages in routed.items()],
+            "warnings": ml.warnings([{"model_key": r["model_key"], "lifecycle_status": r["lifecycle_status"],
+                                      "eol_date": r["eol_date"]} for r in rows], routed, now.date()),
+            "last_run": None if job is None else {
+                "job_id": job["id"], "status": job["status"], "finished_at": _iso(job["finished_at"]),
+                "connections": [{k: c.get(k) for k in ("connection_key", "access", "error_class")}
+                                for c in (res or {}).get("connections") or []]}}
+
+
 async def collect(conn, reg: Registry, day: date, now: datetime) -> dict:
     """Every section, each isolated: a failure becomes facts['errors'][section]."""
     sections: dict[str, Callable[[], Awaitable[dict]]] = {
@@ -311,6 +354,7 @@ async def collect(conn, reg: Registry, day: date, now: datetime) -> dict:
         "handoff": lambda: load_handoff(conn),
         "reports": lambda: load_reports(conn, reg, now),
         "balances": lambda: load_balances(conn, now),
+        "lifecycle": lambda: load_lifecycle(conn, now),
     }
     facts: dict[str, Any] = {"errors": {}}
     for name, load in sections.items():   # one connection: sequential reads
@@ -415,6 +459,23 @@ def attention(facts: dict, series: dict, day: date) -> list[str]:
     for r in (facts.get("reports") or {}).get("flagged", []):
         items.append(f"Report {r['id']} {r['name']}: {r['due']}, {r['failed_7d']} failed run(s) in 7 days")
     items += balance_attention(facts.get("balances"))
+    items += lifecycle_attention(facts.get("lifecycle"))
+    return items
+
+
+def lifecycle_attention(lc: Optional[dict]) -> list[str]:
+    """AA-1024 D2: attention lines of the lifecycle section (pure). Absent section or before migration 352: none."""
+    if not lc or not lc.get("ready"):
+        return []
+    items = [w["message"] for w in lc.get("warnings") or []]
+    missing = [m["model_key"] for m in lc.get("models") or [] if not m.get("status")]
+    if missing:
+        items.append(f"{len(missing)} routed model(s) have no lifecycle status ({', '.join(missing[:5])}): the "
+                     "nightly model lifecycle sync has not run")
+    unknown = [m["model_key"] for m in lc.get("models") or [] if m.get("status") == "unknown"]
+    if unknown:
+        items.append(f"Lifecycle unknown for {len(unknown)} routed model(s) ({', '.join(unknown[:5])}): no Bedrock "
+                     "account serving them answered the lifecycle read")
     return items
 
 
@@ -587,6 +648,7 @@ def render_digest(reg: Registry, report: Report, day: date, facts: dict, kpi_row
     md += ["## Open waves", ""] + ([f"- {w['name']} ({w['country'] or 'all'}, {w['tours']} tours) since "
                                      f"{w['created_at']}" for w in waves] or ["- None."]) + [""]
     md += render_balances(facts.get("balances"))
+    md += render_lifecycle(facts.get("lifecycle"))
     flagged = (facts.get("reports") or {}).get("flagged") or []
     md += ["## Reports", ""] + ([f"- {r['id']} {r['name']}: {r['due']}, {r['failed_7d']} failed in 7 days"
                                  for r in flagged] or ["- No report overdue or failed."]) + [""]
@@ -625,6 +687,27 @@ def render_balances(b: Optional[dict]) -> list[str]:
             f"{fmt(m['provider_usd'], 'usd')}" for m in rec["mismatches"][:10]) + ".")
     else:
         md.append(f"LLM cost reconcile, last {rec.get('days')} days: no settled mismatch.")
+    return md + [""]
+
+
+def render_lifecycle(lc: Optional[dict]) -> list[str]:
+    """AA-1024 D2: the model lifecycle section (Markdown lines, pure). Absent from a digest written before it."""
+    if not lc:
+        return []
+    md = ["## Model lifecycle", ""]
+    if not lc.get("ready"):
+        return md + ["Not available (CIS migration 352 not applied).", ""]
+    run = lc.get("last_run")
+    if run:
+        md.append(f"Last sync {run.get('finished_at')} ({run.get('status')}); accounts: "
+                  + (", ".join(f"{c['connection_key']} {c['access']}"
+                               + (f" ({c['error_class']})" if c.get("error_class") else "")
+                               for c in run.get("connections") or []) or "—") + ".")
+    else:
+        md.append("No lifecycle sync in the last 48 h.")
+    md += ["", "| Routed model | Status | End of life | Stages |", "|---|---|---|---|"]
+    md += [f"| {m['model_key']} | {m.get('status') or '—'} | {m.get('eol_date') or '—'} | "
+           f"{', '.join(m.get('stages') or []) or '—'} |" for m in lc.get("models") or []]
     return md + [""]
 
 

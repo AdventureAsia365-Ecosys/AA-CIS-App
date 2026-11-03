@@ -1071,6 +1071,10 @@
     "capability": "ai.admin",
     "module": "api.routers.admin_job_runner"
   },
+  "POST /admin/job-runner/llm-model-lifecycle/run": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_job_runner"
+  },
   "POST /admin/job-runner/llm-probe/run": {
     "capability": "ai.admin",
     "module": "api.routers.admin_job_runner"
