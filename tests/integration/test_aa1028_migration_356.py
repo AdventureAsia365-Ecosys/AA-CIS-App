@@ -20,7 +20,7 @@ import pytest
 import pytest_asyncio
 
 sys.path.insert(0, os.path.dirname(__file__))
-from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
+from conftest import APP_USER_356_GRANTS, DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 from _rls_fixture_helpers import migration_body  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
@@ -31,6 +31,9 @@ async def conn():
     c = await asyncpg.connect(DSN)
     tr = c.transaction()
     await tr.start()
+    # Another module may have re-created the resolver (a 353 re-run): CI's legacy writer app_user needs its grants back
+    # for the 356 guard (rolled back with the test).
+    await c.execute(APP_USER_356_GRANTS)
     try:
         yield c
     finally:

@@ -18,7 +18,7 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 sys.path.insert(0, os.path.dirname(__file__))
 from _acc2_routes import candidates_off_routes  # noqa: E402
-from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER, TENANT_ID  # noqa: E402
+from conftest import APP_USER_356_GRANTS, DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER, TENANT_ID  # noqa: E402
 
 MIGRATIONS = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations")
 M320 = os.path.join(MIGRATIONS, "320_llm_registry_v2_families_params.sql")
@@ -34,7 +34,9 @@ M337 = os.path.join(MIGRATIONS, "337_llm_llama4_structured_prompt_mode.sql")
 # re-sync trigger on it. A test that drops the table drops them too (CASCADE); the teardown applies both again.
 M353 = os.path.join(MIGRATIONS, "353_tenant_control_plane_tables.sql")
 M355 = os.path.join(MIGRATIONS, "355_tenant_plans_seed_and_entitlement_view.sql")
-LATER_ON_TENANT_AI_BUDGET = (("353", M353), ("355", M355))
+# AA-1028 R1 slice 2: 356 restates the resolver on top of 353's (a 353 re-run puts the old one back), so it follows.
+M356 = os.path.join(MIGRATIONS, "356_tenant_entitlement_resolver_fixes.sql")
+LATER_ON_TENANT_AI_BUDGET = (("353", M353), ("355", M355), ("356", M356))
 FAMILIES = {"anthropic", "openai", "cohere", "typesafe", "amazon", "meta", "moonshot"}
 OLD_HEALTH_CLASSES = "('access_denied', 'quota_exhausted', 'throttled', 'credential', 'other')"
 OLD_VENDORS = "('anthropic', 'openai', 'cohere', 'typesafe')"
@@ -85,6 +87,8 @@ def cur():
         for version, path in LATER_ON_TENANT_AI_BUDGET:
             c.execute("SELECT 1 FROM shared.schema_versions WHERE version = %s", (version,))
             if c.fetchone():
+                if version == "356":
+                    c.execute(APP_USER_356_GRANTS)  # 353's re-run re-created the resolver without app_user's grant
                 _run(c, path)
         conn.close()
 
