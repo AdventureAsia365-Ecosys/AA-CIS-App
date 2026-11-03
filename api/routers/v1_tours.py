@@ -362,7 +362,7 @@ async def _get_tenant_plan_limit(conn, tenant_id: str) -> tuple:
                COALESCE((SELECT 0 FROM shared.tenant_entitlement_override o
                           WHERE o.tenant_id = t.tenant_id AND o.feature_key = 'content.rewrite' AND NOT o.enabled
                             AND (o.expires_at IS NULL OR o.expires_at > now())),
-                        (SELECT e.limit_value::int FROM shared.v_tenant_entitlement_resolved e
+                        (SELECT LEAST(e.limit_value, 2147483647)::int FROM shared.v_tenant_entitlement_resolved e
                           WHERE e.tenant_id = t.tenant_id AND e.feature_key = 'content.rewrite'),
                         mp.tours_quota_monthly,
                         (SELECT tours_quota_monthly FROM shared.membership_plans

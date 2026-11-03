@@ -2444,7 +2444,10 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
   versioned (`shared.plan.version`, a stale write is 409 `version_conflict`), audited (`plan.created` / `.updated` /
   `.retired`, before / after). An edit re-syncs every subscriber at once; a retired plan takes no new subscription,
   current subscribers keep it. Product, key and tier never change; a tier plan must give `content.rate_limit_rpm`
-  (a whole number). An RPM edit also moves `shared.tenants.rate_limit_rpm` (what the limiter enforces) of every
+  (a whole number) and list `ai.budget_usd_monthly` (a number, 0 = none included; NULL only on `internal`) and
+  `content.rewrite`. A limit the plan has is never dropped by an edit (`limit_removal_refused`: "no row" = no limit),
+  platform keys (`ai.*`, `policy.*`) go on content plans only, counts / seats / days / RPM are whole numbers within
+  int4 and the RPM at most 10,000. An RPM edit also moves `shared.tenants.rate_limit_rpm` (what the limiter enforces) of every
   tenant on the plan whose column still equals the old value; a tenant with its own RPM (PATCH) keeps it.
 - **Tenant 360 › Subscription** (`frontend/app/admin/tenants/_components/Tenant360Subscription.tsx`; API
   `api/routers/admin_tenant_subscription.py`, `services/tenant_account/subscription.py`): subscriptions, the resolved
@@ -2457,14 +2460,19 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
   job `tenant_account_tick` (`services/tenant_account/lifecycle.py`, queued by the api's ops sampler, key per UTC hour,
   `TENANT_ACCOUNT_TICK=off` stops it) moves an ended trial to `active` (finance recorded `paid_through` covering
   today) or `past_due` (grace, service goes on) and the account out of `trial`, calls
-  `tenant_entitlement_sync_due()`, and reports a pilot past its end (no change).
+  `tenant_entitlement_sync_due()`, and reports a pilot past its end (no change). Until the tick moves it, an ended
+  trial stays live in the resolver (CIS 361: source `trial`, `expires_at` in the past), so nothing (the AI budget
+  included) drops at `trial_ends_at`; CIS 361 also takes a platform key from the content plan only (tie-break on
+  `plan_key`).
 - **No hard-coded plans**: `PLAN_LIMITS`, the ACPv1 quota ledger write (10/10/50, no reader) and the UI
   `PLAN_OPTIONS` / `PLAN_CHOICES` are gone; RPM per tier, the rewrite quota and the UI tier choices read the plans /
   entitlements (`useContentTiers`: the live public content plans).
 - **AI budget = the entitlement** (`shared/cost_guard.py`): the gateway's tenant budget is `ai.budget_usd_monthly`
   (thresholds from the AA-1016 row if any, else alert 80 % / approval 100 % / hard stop), and `adhoc_*` stages count as
   tenant spend like T-stages (`shared/llm_client/tenant_budget.is_tenant_spend_stage`). It fails closed: a 0 USD
-  budget stops the first call, a disabled override of the key reads as 0. Tenant 360 › Cost shows this effective
+  budget stops the first call whatever the AA-1016 row's `hard_stop` says, a disabled override of the key reads as 0,
+  and a tenant with no resolved key and no AA-1016 row falls back to its (not canceled) content subscription plan's
+  value, never "no budget". Tenant 360 › Cost shows this effective
   budget and its source (`tenant_ai_budget.read_one` → `effective`).
 - **Dev guard** (root ADR 0019 d16, `services/tenant_account/dev_guard.py`): on Dev (`ENVIRONMENT` exactly `dev`) a new
   tenant defaults to `demo` (synthetic) in `POST /admin/tenants` and the saga; an `agency` is refused unless the saga

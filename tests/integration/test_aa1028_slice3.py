@@ -126,11 +126,9 @@ async def test_plan_create_edit_retire_with_versions_and_audit(conn):
     created = await pl.create_plan(conn, {
         "plan_key": "crm.zz_trailhead", "product": "crm", "name": "Trailhead CRM", "price_usd_monthly": "12.50",
         "seats_included": 3, "is_public": False,
-        "features": [{"feature_key": "crm.core"}, {"feature_key": "crm.seats", "limit_value": 3},
-                     {"feature_key": "ai.budget_usd_monthly", "limit_value": "5"}]}, actor=ACTOR)
+        "features": [{"feature_key": "crm.core"}, {"feature_key": "crm.seats", "limit_value": 3}]}, actor=ACTOR)
     assert created["version"] == 1 and created["price_unit"] == "seat" and created["price_usd_monthly"] == "12.50"
-    assert {f["feature_key"]: f["limit_value"] for f in created["features"]} == {
-        "ai.budget_usd_monthly": "5.00", "crm.core": None, "crm.seats": "3.00"}
+    assert {f["feature_key"]: f["limit_value"] for f in created["features"]} == {"crm.core": None, "crm.seats": "3.00"}
 
     tid = await _tenant(conn, add_ons=[{"product": "crm", "plan_key": "crm.zz_trailhead"}])
     assert (await _ents(conn, tid))["crm.seats"] == (3.0, "plan")
@@ -142,8 +140,7 @@ async def test_plan_create_edit_retire_with_versions_and_audit(conn):
         "features": [{"feature_key": "crm.core"}, {"feature_key": "crm.seats", "limit_value": 8},
                      {"feature_key": "crm.ai_assist"}]}, actor=ACTOR)
     assert edited["version"] == 2 and edited["name"] == "Trailhead CRM Plus"
-    assert sorted(edited["changed"]) == sorted(["name", "feature:ai.budget_usd_monthly", "feature:crm.ai_assist",
-                                                "feature:crm.seats"])
+    assert sorted(edited["changed"]) == sorted(["name", "feature:crm.ai_assist", "feature:crm.seats"])
     assert edited["live_subscriptions"] == 1
     assert (await _stored(conn, tid))["crm.seats"] == (8.0, "plan") and "crm.ai_assist" in await _stored(conn, tid)
     events = await conn.fetchval("SELECT count(*) FROM shared.tenant_account_event WHERE tenant_id = $1::uuid "
@@ -189,8 +186,21 @@ async def test_plan_rules(conn):
         assert e.value.code == code, e.value.message
 
     base = {"plan_key": "content.zz_custom", "product": "content", "name": "Custom content"}
-    await refused({**base, "tier": "growth", "features": [{"feature_key": "content.rate_limit_rpm",
-                                                           "limit_value": 100}]}, "tier_taken")
+    tiered = [{"feature_key": "content.rate_limit_rpm", "limit_value": 100},
+              {"feature_key": "content.rewrite", "limit_value": 100},
+              {"feature_key": "ai.budget_usd_monthly", "limit_value": 20}]
+    await refused({**base, "tier": "growth", "features": tiered}, "tier_taken")
+    # S266 review of slice 3: enforced limits listed, platform keys on content plans, bounded counts
+    await refused({**base, "tier": "growth", "features": tiered[:2]}, "enforced_limit_required")
+    await refused({**base, "tier": "growth", "features": tiered[:2] + [{"feature_key": "ai.budget_usd_monthly"}]},
+                  "enforced_limit_required")
+    await refused({**base, "plan_key": "crm.zz_ai", "product": "crm",
+                   "features": [{"feature_key": "crm.core"}, {"feature_key": "ai.budget_usd_monthly",
+                                                               "limit_value": 5}]}, "platform_key_content_only")
+    await refused({**base, "features": [{"feature_key": "content.rewrite", "limit_value": 10_000_000_000}]},
+                  "invalid_number")
+    await refused({**base, "features": [{"feature_key": "content.rate_limit_rpm", "limit_value": 10001}]},
+                  "invalid_number")
     await refused({**base, "plan_key": "crm.zz_x"}, "invalid_plan_key")
     await refused({**base, "features": [{"feature_key": "crm.core"}]}, "feature_product_mismatch")
     await refused({**base, "features": [{"feature_key": "content.social", "limit_value": 1}]}, "flag_takes_no_limit")
@@ -203,7 +213,8 @@ async def test_plan_rules(conn):
     await refused({**base, "tier": "enterprise", "features": []}, "rate_limit_required")
     await conn.execute("UPDATE shared.plan SET retired_at = now() WHERE plan_key = 'content.enterprise'")
     made = await pl.create_plan(conn, {**base, "tier": "enterprise",
-                                       "features": [{"feature_key": "content.rate_limit_rpm", "limit_value": 2000}]},
+                                       "features": [{"feature_key": "content.rate_limit_rpm", "limit_value": 2000},
+                                                    *tiered[1:]]},
                                 actor=ACTOR)
     assert made["tier"] == "enterprise" and await pl.tier_rate_limit_rpm(conn, "enterprise") == 2000
     with pytest.raises(pl.PlanError) as e:
@@ -212,6 +223,23 @@ async def test_plan_rules(conn):
     with pytest.raises(pl.PlanError) as e:
         await pl.update_plan(conn, "content.zz_custom", {"version": 1, "features": []}, actor=ACTOR)
     assert e.value.code == "rate_limit_required"
+    # an edit cannot drop a limit the plan has ("no row" = no limit for every subscriber): set a value instead
+    crm = await pl.create_plan(conn, {"plan_key": "crm.zz_seats", "product": "crm", "name": "Seats",
+                                      "features": [{"feature_key": "crm.core"},
+                                                   {"feature_key": "crm.seats", "limit_value": 4}]}, actor=ACTOR)
+    with pytest.raises(pl.PlanError) as e:
+        await pl.update_plan(conn, "crm.zz_seats", {"version": crm["version"],
+                                                    "features": [{"feature_key": "crm.core"}]}, actor=ACTOR)
+    assert e.value.code == "limit_removal_refused"
+    growth = await pl.get_plan(conn, "content.growth")
+    with pytest.raises(pl.PlanError) as e:
+        await pl.update_plan(conn, "content.growth", {"version": growth["version"], "features": [
+            f for f in growth["features"] if f["feature_key"] != "ai.budget_usd_monthly"]}, actor=ACTOR)
+    assert e.value.code == "enforced_limit_required"
+    # a flag can be taken off; a limit set to "no limit" explicitly is accepted
+    out = await pl.update_plan(conn, "crm.zz_seats", {"version": crm["version"],
+                                                      "features": [{"feature_key": "crm.seats"}]}, actor=ACTOR)
+    assert sorted(out["changed"]) == ["feature:crm.core", "feature:crm.seats"]
 
 
 @pytest.mark.asyncio
@@ -436,6 +464,70 @@ async def test_a_disabled_or_zero_ai_budget_fails_closed(conn):
                            expires_at=None, actor=ACTOR)
     b = await cost_guard.tenant_budget_check(conn, tid)
     assert (b.monthly_usd, b.needs_approval) == (0.0, True)
+    # ... also when the tenant's AA-1016 row has the hard stop off (S266 review: 0 always stops)
+    await conn.execute("INSERT INTO shared.tenant_ai_budget (tenant_id, monthly_usd, alert_pct, approval_pct, "
+                       "hard_stop, updated_by) VALUES ($1::uuid, 50, 100, 1000, false, 'zz')", tid)
+    b = await cost_guard.tenant_budget_check(conn, tid)
+    assert (b.monthly_usd, b.hard_stop, b.needs_approval) == (0.0, True, True)
+
+
+@pytest.mark.asyncio
+async def test_an_ended_trial_keeps_its_budget_until_the_tick(conn):
+    # S266 review of slice 3: between trial_ends_at and the hourly tick the tenant keeps every key (CIS 361) and the
+    # AI budget never reads as unlimited
+    tid = await _tenant(conn, "starter", add_ons=[{"product": "crm", "plan_key": "crm.core"}], trial_days=3)
+    before = await _ents(conn, tid)
+    assert before["ai.budget_usd_monthly"] == (15.0, "trial") and "crm.core" in before
+    await conn.execute("UPDATE shared.tenant_subscription SET trial_ends_at = now() - interval '5 minutes' "
+                       "WHERE tenant_id = $1::uuid", tid)
+    assert await _ents(conn, tid) == before                        # nothing changes at the trial end ...
+    assert await _stored(conn, tid) == before
+    assert tid in await cost_guard.budgeted_tenants(conn)
+    b = await cost_guard.tenant_budget_check(conn, tid)
+    assert (b.monthly_usd, b.hard_stop) == (15.0, True)
+    await lifecycle.tick(_Pool(conn), job_id="zz-grace")          # ... everything follows the tick
+    after = await _ents(conn, tid)
+    assert after["ai.budget_usd_monthly"] == (15.0, "plan") and after["crm.core"][1] == "plan"
+
+
+@pytest.mark.asyncio
+async def test_the_budget_falls_back_to_the_content_plan(conn):
+    # a customer whose resolver rows are absent (an unpaid / paused content subscription) keeps its plan's budget;
+    # a canceled one (offboarded) has none
+    tid = await _tenant(conn, "growth")
+    await conn.execute("UPDATE shared.tenant_subscription SET status = 'unpaid' WHERE tenant_id = $1::uuid "
+                       "AND product = 'content'", tid)
+    assert "ai.budget_usd_monthly" not in await _ents(conn, tid)
+    assert tid in await cost_guard.budgeted_tenants(conn)
+    b = await cost_guard.tenant_budget_check(conn, tid)
+    assert (b.monthly_usd, b.alert_pct, b.approval_pct, b.hard_stop) == (40.0, 80, 100, True)
+    from api.services import tenant_ai_budget as tb
+
+    assert (await tb.read_one(_Pool(conn), tid))["effective"]["source"] == "plan"
+    # an AA-1016 row still comes before the plan fallback
+    await conn.execute("INSERT INTO shared.tenant_ai_budget (tenant_id, monthly_usd, updated_by) "
+                       "VALUES ($1::uuid, 9, 'zz')", tid)
+    assert (await cost_guard.tenant_budget_check(conn, tid)).monthly_usd == 9.0
+    await conn.execute("DELETE FROM shared.tenant_ai_budget WHERE tenant_id = $1::uuid", tid)
+    await conn.execute("UPDATE shared.tenant_subscription SET status = 'canceled', canceled_at = now() "
+                       "WHERE tenant_id = $1::uuid AND product = 'content'", tid)
+    assert await cost_guard.tenant_budget_check(conn, tid) is None
+    assert tid not in await cost_guard.budgeted_tenants(conn)
+
+
+@pytest.mark.asyncio
+async def test_a_platform_key_comes_from_the_content_plan_only(conn):
+    # CIS 361: an add-on plan that carries a platform key (written by hand: the API refuses it) never wins
+    tid = await _tenant(conn, "starter", add_ons=[{"product": "crm", "plan_key": "crm.core"}])
+    await conn.execute("INSERT INTO shared.plan_feature (plan_key, feature_key, limit_value, updated_by) "
+                       "VALUES ('crm.core', 'ai.budget_usd_monthly', 999, 'zz'), "
+                       "('crm.core', 'policy.notice_days', 99, 'zz')")
+    ents = await _ents(conn, tid)
+    assert ents["ai.budget_usd_monthly"] == (15.0, "plan") and ents["policy.notice_days"] == (7.0, "plan")
+    plan_keys = {r["feature_key"]: r["plan_key"] for r in await conn.fetch(
+        "SELECT feature_key, plan_key FROM shared.v_tenant_entitlement_resolved WHERE tenant_id = $1::uuid "
+        "AND product = 'platform'", tid)}
+    assert plan_keys == {"ai.budget_usd_monthly": "content.starter", "policy.notice_days": "content.starter"}
 
 
 @pytest.mark.asyncio

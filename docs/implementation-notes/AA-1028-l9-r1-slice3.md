@@ -2,9 +2,10 @@
 
 Lane l9-r1-slice3 of S266 (pulled ahead from S268). Root ADR 0019 d1 / d2 / d16; design: root
 `docs/audits/2026-11-03-S265-ecosystem-restructure/README.md` §3.2-3.7; slices 1-2: `AA-1028-l1-r1-control-plane.md`,
-`AA-1028-l8-r1-slice2.md`. One code PR, **no migration**: cis_app already holds every grant this needs (CIS 353:
+`AA-1028-l8-r1-slice2.md`. One code PR; cis_app already holds every grant this needs (CIS 353:
 INSERT / UPDATE on `shared.plan`, all on `plan_feature`, `tenant_subscription`, `tenant_entitlement_override`, SELECT
-on the resolver; `shared.tenants` writes).
+on the resolver; `shared.tenants` writes). Review fix pass 2 adds one contract migration, **CIS 361** (resolver: trial
+grace until the tick, platform keys from the content plan only), with no readiness raise: no code waits for it.
 
 ## Decisions
 
@@ -100,6 +101,46 @@ on the resolver; `shared.tenants` writes).
 - `plans.LIMIT_MAX` is written `Decimal(10) ** 12 - Decimal("0.01")`: the literal (twelve nines) tripped the public
   repo resource-id check (`.github/scripts/check_resource_ids.py`) as an account id.
 
+### Review fix pass 2 (S266 re-review, seven majors confirmed)
+
+- **Live spend check before the deploy** (two findings): no code; the read-only check is recorded under Tradeoffs
+  (every Dev tenant at 0 USD this month, checked by the orchestrator).
+- **Trial end leaves no gap** (two findings, a + the cost_guard one): **CIS 361** keeps a `trialing` subscription live
+  in the resolver past `trial_ends_at` until `tenant_account_tick` moves it (its next state, active or past_due, is
+  live anyway): the keys keep source `trial` and the past `expires_at`, so nothing changes at the trial end and
+  everything follows the tick. Independently (works with or without 361, MIG-4): `shared.cost_guard` falls back to
+  the `ai.budget_usd_monthly` of the tenant's content subscription plan while that subscription is not `canceled`,
+  when no key resolves and there is no AA-1016 row (`_PLAN_FALLBACK`, in `budgeted_tenants` too). Never unlimited for
+  a customer; an offboarded (canceled) tenant has no budget, as before. Tenant 360 › Cost names that source `plan`.
+- **0 USD always stops** (b): `_TENANT_BUDGET_SQL` sets `hard_stop` true when the amount is 0 (override, row or
+  plan), whatever the AA-1016 row's `hard_stop`; `TenantAIBudget.stops` (row flag or 0 budget) drives
+  `needs_approval`, `summary()`, `counter_unreadable` and the AA-1016 tile's `budget_state`.
+- **Platform keys on content plans only** (c): `plans._features` refuses `ai.*` / `policy.*` on a crm / tripplanner
+  plan (`platform_key_content_only`); `featuresFor` offers them on content plans only and `planBody` drops a key the
+  product may not carry. CIS 361 also makes the resolver deterministic (a plan's platform key counts only from the
+  content subscription's plan; `ORDER BY rank, plan_key`), for rows written by hand.
+- **A plan edit cannot remove an enforced limit** (d): `update_plan` refuses dropping any limit / seats key the plan
+  has (`limit_removal_refused`; set its value, empty = no limit, instead), and a tiered content plan must list
+  `ai.budget_usd_monthly` (a number except on `internal`), `content.rewrite` and `content.rate_limit_rpm`
+  (`enforced_limit_required`). The drawer locks the checkbox of a limit the plan has and shows both errors. The 355
+  seed satisfies both rules, so no stored plan becomes uneditable.
+- Minors done: count / seat / day / RPM values are whole numbers within int4 and the RPM at most
+  `RATE_LIMIT_RPM_MAX` (10,000, now shared by `PATCH /admin/tenants` and the plan editor) in `plans.draft` and
+  `set_override` (`plans.bound_limit`, mirrored in `tenantPlans.ts`); the rewrite quota read clamps to int4. The proof
+  script (`.tmp-session/S266/l9/failclosed.py`) sets the override to this month's spend + 0.01 USD, refuses a tenant
+  with queued / running jobs, an AA-1016 row with `approval_pct` != 100 or `hard_stop` off, a saved override that is
+  disabled or ends within the window, waits for `call_log.wait_for_pending_writes()` before reading the refused row,
+  and lists any job held during the window with the re-queue call.
+- **Contract text**: tenant.entitlements.v1 1.1 (root `docs/contracts/`, byte copy here) says a trialing
+  subscription is live only until `trial_ends_at` (356). CIS 361 keeps it live until the tick (rows keep source
+  `trial` and the past `expires_at`), so the root file needs a minor 1.2 sentence and the byte copy follows, before
+  or with this PR's merge; no HTTP shape changes. `test_aa1028_migration_357` now checks that Booking's `trade_book`
+  stays through the trial end and ends on cancel.
+- **Follow-ups (not here)**: billing source alignment (`v_tenant_monthly_usage` / `get_my_billing` still read
+  `shared.membership_plans`; equal at deploy, they split on the first edit or override of `content.rewrite`), and the
+  AI providers › Budgets tenant tier (still lists only AA-1016 rows with their own amount; build it from
+  `budgeted_tenants()` + `tenant_budget_check()` and label the source).
+
 ## Changed (vs. the issue / design text)
 
 - Enterprise becomes assignable from the admin PATCH / create (its seeded plan sets RPM 1,000, so the data says it
@@ -112,7 +153,10 @@ on the resolver; `shared.tenants` writes).
 
 - Hard stop at 100 % of the plan's included AI spend for every priced tenant, from deploy: correct per d2 / BO-19, but
   a Dev E2E tenant that already spent more than its plan's 15 / 40 / 80 USD this month has its T-stage jobs held for
-  approval (`stopped_budget`, the bell names it). The live step below checks the spend per tenant before the deploy.
+  approval (`stopped_budget`, the bell names it). Live step (done by the orchestrator, S266, before the deploy): this
+  month's `shared.llm_call_log` spend per tenant against the resolved `ai.budget_usd_monthly` — every Dev tenant has
+  spent 0 USD in November 2026, so no tenant is held or alerted at deploy. Re-run the same read-only query if the
+  deploy slips into a later day with T-stage spend.
 - Trial end -> `past_due` rather than `paused` / `suspended`: no loss of service without a person deciding, at the
   cost of a state that needs the billing tick to move on.
 - No `GET /admin/plans/{key}` history table: versions are the audit rows (before / after); a history table is a
@@ -125,12 +169,14 @@ on the resolver; `shared.tenants` writes).
   disabled numeric override (if any) keeps failing closed through cost_guard / the quota reader; staff edit it to a
   limit in the drawer (it shows "Turn off" for such a stored row so it can be seen and changed).
 
-- Order: this PR alone (no migration, no readiness raise). Deploy api + worker together (the worker runs the new
+- Order: this PR, with CIS 361 inside (contract, no readiness raise: Deploy Dev does not wait for it; a person
+  applies it with DB Migrate apply, all job tables idle). The code is correct before and after 361. Deploy api + worker together (the worker runs the new
   kind; the api's sampler queues it once the kind is registered in that process).
 - `tests/unit/conftest.py` has a `seeded_plans` fixture (the tier readers answered with the 355 numbers) used by the
   mocked-connection tenant tests (`test_aa309`, `test_aa496`, `test_aa766`, `test_aa797`).
 - `docs/api/openapi.json` regenerated with fastapi 0.161.1 / pydantic 2.14.1 (the pins).
 - `tests/unit/snapshots/aa882_staff_route_policy.json` regenerated; the router sample list has the two new routers.
 - The fail-closed proof script (not in the repo; the orchestrator runs it inside the api container) needs this PR
-  deployed: it sets the E2E tenant's override to 0.01 USD, calls `nova-lite` through `LLMClient.generate()` with stage
-  `adhoc_aa1028` until the gateway refuses, logs every billed call with `**billed_fields(resp)`, restores the override.
+  deployed: it sets the E2E tenant's override to this month's spend + 0.01 USD (30 min expiry), calls `nova-lite`
+  through `LLMClient.generate()` with stage `adhoc_aa1028` until the gateway refuses, logs every billed call with
+  `**billed_fields(resp)`, restores the override.

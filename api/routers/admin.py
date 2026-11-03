@@ -85,7 +85,7 @@ async def _require_master_admin_if_published(request: Request, tour_id: str, x_a
 # CIS 355 with the same 60 / 300 / 1,000 / internal 60), read by services/tenant_account/plans.tier_rate_limit_rpm.
 # AA-766: upper bound for an admin RPM override — a technical guard against typos (10x the largest
 # plan default), not a commercial limit.
-RATE_LIMIT_RPM_MAX = 10000
+RATE_LIMIT_RPM_MAX = tenant_plans.RATE_LIMIT_RPM_MAX   # 10000; the plan editor shares the bound (S266)
 
 # ── Auth guard ────────────────────────────────────────────────────────────────
 

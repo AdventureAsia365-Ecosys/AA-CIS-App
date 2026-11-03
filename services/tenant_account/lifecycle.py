@@ -6,9 +6,11 @@ run by the hourly ``tenant_account_tick`` job (``services/jobs/tenant_account_ti
    (the grace state: service goes on, finance sees it; suspending after the grace is the billing tick's job, not this
    one). The account leaves ``trial`` once no trial of it is running: ``active`` when its content subscription is
    ``active``, else ``past_due``. The CIS 353 subscription trigger re-syncs the tenant's entitlements (source
-   ``trial`` -> ``plan``, ``expires_at`` cleared) and writes the feed events the CRM and Booking pulls apply. The
-   resolver already stops serving an ended trial at ``trial_ends_at`` (CIS 356), so the tick only makes the stored
-   state and the feed follow; an hour late is harmless.
+   ``trial`` -> ``plan``, ``expires_at`` cleared) and writes the feed events the CRM and Booking pulls apply. Until
+   the tick moves it, an ended trial stays live in the resolver (CIS 361: source ``trial``, ``expires_at`` in the
+   past), so the tenant keeps its plan's limits, the AI budget included, between ``trial_ends_at`` and the tick (up
+   to an hour plus the queue); ``shared.cost_guard`` also falls back to the content plan's AI budget when no key
+   resolves (before CIS 361, CIS 356 dropped an ended trial at once). The budget never reads as unlimited.
 2. **Expired overrides.** ``shared.tenant_entitlement_sync_due()`` (CIS 353): a tenant whose materialised rows carry a
    passed ``expires_at`` (an override that ended) is re-synced, so the table and the feed follow the live view.
 3. **Pilot end** (root ADR 0019 d16): a pilot tenant past ``pilot_ends_at`` is reported (count + log line

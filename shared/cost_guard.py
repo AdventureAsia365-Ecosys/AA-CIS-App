@@ -567,8 +567,11 @@ async def maybe_alert_central(conn, summary: dict, *, alert_pct: int, stopped: b
 # its live content subscription, 15 / 40 / 80 USD on Starter / Growth / Business; NULL = unlimited, e.g. AA itself).
 # The thresholds come from the tenant's ``shared.tenant_ai_budget`` row when it has one (alert_pct, approval_pct,
 # hard_stop, as AA-1016); a plan budget with no row uses PLAN_ALERT_PCT / PLAN_APPROVAL_PCT with the hard stop on: the
-# included spend is the ceiling (fail closed at 100 %). A tenant with no resolved key (no live content subscription)
-# keeps its AA-1016 row, if any. Spend = the tenant's llm_call_log rows this UTC month (tenant_id = the tenant). Not
+# included spend is the ceiling (fail closed at 100 %). A tenant with no resolved key keeps its AA-1016 row, if any,
+# else the ai.budget_usd_monthly of its content subscription's plan while that subscription is not canceled (S266
+# review: never "no budget" for a customer whose resolver rows are momentarily absent, e.g. a trial past its end
+# before CIS 361 or an unpaid / paused subscription). A budget of 0 USD always stops (hard stop on whatever the
+# AA-1016 row says: "0 = no AI"). Spend = the tenant's llm_call_log rows this UTC month (tenant_id = the tenant). Not
 # budgeted: the gateway reads nothing more (shared/llm_client/tenant_budget.py). No silent cut-off: the approval stop
 # always writes an admin bell (and queues the ops e-mail) naming the tenant and its spend. Before CIS 353 (no
 # resolver view) the AA-1016 row alone decides, as before.
@@ -585,6 +588,13 @@ _DISABLED_OVERRIDE = """
      WHERE o.feature_key = 'ai.budget_usd_monthly' AND NOT o.enabled
        AND (o.expires_at IS NULL OR o.expires_at > now())
 """
+# The fallback when no key resolves and the tenant has no AA-1016 row: its content subscription's plan value (one
+# content row per tenant, UNIQUE (tenant_id, product)), unless the subscription is canceled (offboarded, CIS 356).
+_PLAN_FALLBACK = """
+    SELECT s.tenant_id, pf.limit_value FROM shared.tenant_subscription s
+      JOIN shared.plan_feature pf ON pf.plan_key = s.plan_key AND pf.feature_key = 'ai.budget_usd_monthly'
+     WHERE s.product = 'content' AND s.status <> 'canceled'
+"""
 TENANT_BUDGET_TENANTS_SQL = f"""
     SELECT d.tenant_id::text AS tenant_id FROM ({_DISABLED_OVERRIDE}) d
     UNION
@@ -595,6 +605,12 @@ TENANT_BUDGET_TENANTS_SQL = f"""
      WHERE b.monthly_usd IS NOT NULL
        AND NOT EXISTS (SELECT 1 FROM shared.v_tenant_entitlement_resolved e
                         WHERE e.tenant_id = b.tenant_id AND e.feature_key = 'ai.budget_usd_monthly')
+    UNION
+    SELECT p.tenant_id::text FROM ({_PLAN_FALLBACK}) p
+     WHERE p.limit_value IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM shared.tenant_ai_budget b WHERE b.tenant_id = p.tenant_id)
+       AND NOT EXISTS (SELECT 1 FROM shared.v_tenant_entitlement_resolved e
+                        WHERE e.tenant_id = p.tenant_id AND e.feature_key = 'ai.budget_usd_monthly')
 """
 _LEGACY_TENANTS_SQL = ("SELECT tenant_id::text AS tenant_id FROM shared.tenant_ai_budget "
                        "WHERE monthly_usd IS NOT NULL")
@@ -607,18 +623,28 @@ _SPEND_COLUMNS = """
                AND l.created_at >= date_trunc('month', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc') AS calls
 """
 _TENANT_BUDGET_SQL = f"""
-    SELECT $1::uuid::text AS tenant_id,
-           CASE WHEN d.tenant_id IS NOT NULL THEN 0::numeric
-                WHEN e.feature_key IS NOT NULL THEN e.limit_value ELSE b.monthly_usd END AS monthly_usd,
-           coalesce(b.alert_pct, {PLAN_ALERT_PCT}) AS alert_pct,
-           coalesce(b.approval_pct, {PLAN_APPROVAL_PCT}) AS approval_pct,
-           d.tenant_id IS NOT NULL OR coalesce(b.hard_stop, true) AS hard_stop,
-           CASE WHEN d.tenant_id IS NOT NULL THEN 'override' ELSE e.source END AS source, {_SPEND_COLUMNS}
-      FROM (SELECT 1) AS one
-      LEFT JOIN ({_DISABLED_OVERRIDE}) d ON d.tenant_id = $1::uuid
-      LEFT JOIN shared.v_tenant_entitlement_resolved e
-             ON e.tenant_id = $1::uuid AND e.feature_key = 'ai.budget_usd_monthly'
-      LEFT JOIN shared.tenant_ai_budget b ON b.tenant_id = $1::uuid
+    SELECT $1::uuid::text AS tenant_id, x.monthly_usd, x.alert_pct, x.approval_pct,
+           -- a 0 USD budget always stops (S266 review: "0 = no AI", whatever the AA-1016 row's hard_stop says)
+           x.forced OR x.monthly_usd = 0 OR x.row_hard_stop AS hard_stop, x.source, {_SPEND_COLUMNS}
+      FROM (
+        SELECT CASE WHEN d.tenant_id IS NOT NULL THEN 0::numeric
+                    WHEN e.feature_key IS NOT NULL THEN e.limit_value
+                    WHEN b.tenant_id IS NOT NULL THEN b.monthly_usd
+                    ELSE p.limit_value END AS monthly_usd,
+               coalesce(b.alert_pct, {PLAN_ALERT_PCT}) AS alert_pct,
+               coalesce(b.approval_pct, {PLAN_APPROVAL_PCT}) AS approval_pct,
+               d.tenant_id IS NOT NULL AS forced, coalesce(b.hard_stop, true) AS row_hard_stop,
+               CASE WHEN d.tenant_id IS NOT NULL THEN 'override'
+                    WHEN e.feature_key IS NOT NULL THEN e.source
+                    WHEN b.tenant_id IS NOT NULL THEN 'override'
+                    WHEN p.tenant_id IS NOT NULL THEN 'plan' END AS source
+          FROM (SELECT 1) AS one
+          LEFT JOIN ({_DISABLED_OVERRIDE}) d ON d.tenant_id = $1::uuid
+          LEFT JOIN shared.v_tenant_entitlement_resolved e
+                 ON e.tenant_id = $1::uuid AND e.feature_key = 'ai.budget_usd_monthly'
+          LEFT JOIN shared.tenant_ai_budget b ON b.tenant_id = $1::uuid
+          LEFT JOIN ({_PLAN_FALLBACK}) p ON p.tenant_id = $1::uuid
+      ) x
 """
 _LEGACY_TENANT_BUDGET_SQL = f"""
     SELECT b.tenant_id::text AS tenant_id, b.monthly_usd, b.alert_pct, b.approval_pct, b.hard_stop,
@@ -657,7 +683,12 @@ class TenantAIBudget:
     def needs_approval(self) -> bool:
         """New T-stage AI calls of the tenant wait for staff: hard_stop on and spend at or past approval_pct."""
         pct = self.used_pct
-        return self.hard_stop and pct is not None and pct >= self.approval_pct
+        return self.stops and pct is not None and pct >= self.approval_pct
+
+    @property
+    def stops(self) -> bool:
+        """The hard stop in effect: the row's hard_stop, and always for a 0 USD budget (S266: "0 = no AI")."""
+        return self.hard_stop or self.monthly_usd <= 0
 
     @property
     def state(self) -> str:
@@ -671,13 +702,14 @@ class TenantAIBudget:
             "provider": "tenant_ai", "scope": f"tenant:{self.tenant_id}", "tenant_id": self.tenant_id,
             "monthly_usd": round(self.monthly_usd, 2), "month_spent_usd": round(self.month_spent_usd, 4),
             "month_calls": self.month_calls, "used_pct": _round(self.used_pct), "alert_pct": self.alert_pct,
-            "approval_pct": self.approval_pct, "hard_stop": self.hard_stop, "state": self.state,
+            "approval_pct": self.approval_pct, "hard_stop": self.stops, "state": self.state,
         }
 
 
 async def budgeted_tenants(conn) -> Optional[frozenset]:
     """The tenants that have an AI budget (a resolved ai.budget_usd_monthly with a limit, or an AA-1016 row with
-    monthly_usd while no key resolves). Before CIS 353: the AA-1016 rows; None before migration 321 (no table)."""
+    monthly_usd while no key resolves, else the content subscription plan's value while not canceled). Before CIS
+    353: the AA-1016 rows; None before migration 321 (no table)."""
     for sql in (TENANT_BUDGET_TENANTS_SQL, _LEGACY_TENANTS_SQL):
         try:
             rows = await conn.fetch(sql)

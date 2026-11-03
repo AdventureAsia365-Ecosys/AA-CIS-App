@@ -10,7 +10,7 @@ import {
   Badge, Button, Checkbox, ConfirmModal, Drawer, Field, Input, K, Select, Switch, Textarea, mono, useT, useToast,
 } from "../../../_kit";
 import {
-  DEFAULT_UNIT, PLANS_API, PLANS_KEY, PRODUCTS, TIERS, featuresFor, planBody, planDraftOf, sendJson,
+  DEFAULT_UNIT, PLANS_API, PLANS_KEY, PRODUCTS, TIERS, featuresFor, lockedLimitKeys, planBody, planDraftOf, sendJson,
   type Feature, type Plan, type PlanDraft, type PlanDraftError, type Product,
 } from "@/lib/tenantPlans";
 import { PLANS } from "./plans.messages";
@@ -18,11 +18,12 @@ import { PLANS } from "./plans.messages";
 const small = { fontSize: 12, color: K.muted, lineHeight: 1.45, margin: 0 } as const;
 const grid = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))", gap: 12 };
 
-// "limit" names its feature key: err_limit(key), below
+// "limit", "enforcedRequired" and "limitRemoved" name their feature key: errText, below
+type KeyedError = "limit" | "enforcedRequired" | "limitRemoved";
 const ERR = {
   key: "err_key", name: "err_name", price: "err_price", seats: "err_seats", extraSeat: "err_extraSeat",
   notes: "err_notes", rpmRequired: "err_rpmRequired",
-} as const satisfies Record<Exclude<PlanDraftError, "limit">, keyof typeof PLANS.en>;
+} as const satisfies Record<Exclude<PlanDraftError, KeyedError>, keyof typeof PLANS.en>;
 
 export function PlanDrawer({ plan, product, catalogue, onClose }: {
   plan: Plan | null; product: Product; catalogue: Feature[]; onClose: () => void;
@@ -37,8 +38,15 @@ export function PlanDrawer({ plan, product, catalogue, onClose }: {
   const features = useMemo(() => featuresFor(draft.product, catalogue), [draft.product, catalogue]);
   const { body, error, field } = planBody(draft, catalogue, plan);
   const set = (p: Partial<PlanDraft>) => setDraft((d) => ({ ...d, ...p }));
-  const err = (k: PlanDraftError) => (error !== k ? undefined
-    : k === "limit" ? t("err_limit", field ?? "") : t(ERR[k]));
+  const locked = useMemo(() => lockedLimitKeys(plan, catalogue), [plan, catalogue]);
+  const err = (k: PlanDraftError) => {
+    if (error !== k) return undefined;
+    if (k === "limit") return t("err_limit", field ?? "");
+    if (k === "enforcedRequired") return t("err_enforcedRequired", field ?? "");
+    if (k === "limitRemoved") return t("err_limitRemoved", field ?? "");
+    return t(ERR[k]);
+  };
+  const featureError = err("rpmRequired") ?? err("enforcedRequired") ?? err("limitRemoved");
 
   const done = () => { void qc.invalidateQueries({ queryKey: PLANS_KEY }); onClose(); };
   const save = useMutation({
@@ -154,16 +162,19 @@ export function PlanDrawer({ plan, product, catalogue, onClose }: {
         <div>
           <div style={{ fontSize: 13, fontWeight: 600, color: K.ink }}>{t("featuresTitle")}</div>
           <p style={{ ...small, marginBottom: 8 }}>{t("featuresHint")}</p>
-          {err("rpmRequired") && <p role="alert" style={{ ...small, color: K.danger }}>{err("rpmRequired")}</p>}
+          {featureError && <p role="alert" style={{ ...small, color: K.danger }}>{featureError}</p>}
           <div data-testid="plan-features" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {features.map((f) => {
               const on = f.feature_key in draft.features;
-              const bad = error === "limit" && field === f.feature_key;
+              const bad = (error === "limit" || error === "enforcedRequired" || error === "limitRemoved")
+                && field === f.feature_key;
+              const keep = on && locked.has(f.feature_key);
               return (
                 <div key={f.feature_key} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 140px",
                   gap: 10, alignItems: "center", padding: "6px 8px", borderRadius: 8,
                   background: on ? K.panel : "transparent", border: `1px solid ${bad ? K.danger : K.line}` }}>
-                  <Checkbox checked={on} disabled={lock} onChange={(e) => toggle(f.feature_key, e.target.checked)}
+                  <Checkbox checked={on} disabled={lock || keep} title={keep ? t("limitLocked") : undefined}
+                    onChange={(e) => toggle(f.feature_key, e.target.checked)}
                     label={
                       <span style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
                         <span style={{ fontSize: 13, color: K.ink, overflowWrap: "anywhere" }}>{f.description}</span>

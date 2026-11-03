@@ -219,9 +219,12 @@ async def _effective(conn, tenant_id: str) -> Optional[dict]:
     if b is None:
         return {"source": source, "monthly_usd": None, "alert_pct": None, "approval_pct": None, "hard_stop": None,
                 "used_pct": None, "state": "unlimited"}
-    used, state = budget_state(b.monthly_usd, b.month_spent_usd, b.alert_pct, b.approval_pct, b.hard_stop)
+    if source == "none":
+        # no key resolves and no row: the gateway fell back to the content subscription plan's value (cost_guard)
+        source = "plan"
+    used, state = budget_state(b.monthly_usd, b.month_spent_usd, b.alert_pct, b.approval_pct, b.stops)
     return {"source": source, "monthly_usd": round(b.monthly_usd, 2), "alert_pct": b.alert_pct,
-            "approval_pct": b.approval_pct, "hard_stop": b.hard_stop, "used_pct": used, "state": state}
+            "approval_pct": b.approval_pct, "hard_stop": b.stops, "used_pct": used, "state": state}
 
 
 async def read_one(pool, tenant_id: str, *, now: Optional[datetime] = None) -> Optional[dict]:

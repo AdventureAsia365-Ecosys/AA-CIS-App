@@ -8,8 +8,8 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
-  defaultOverrideMode, limitText, overrideBody, overrideDraftOf, overrideFeatures, overrideModes, planBody,
-  planDraftOf, refusalOf, runSaga, tierChoices,
+  INT4_MAX, RATE_LIMIT_RPM_MAX, defaultOverrideMode, featuresFor, limitText, lockedLimitKeys, overrideBody,
+  overrideDraftOf, overrideFeatures, overrideModes, planBody, planDraftOf, refusalOf, runSaga, tierChoices,
 } from "./tenantPlans.ts";
 
 const CATALOGUE = [
@@ -27,8 +27,10 @@ const plan = (over) => ({
   plan_key: "content.growth", product: "content", name: "Growth", tier: "growth", price_usd_monthly: "799.00",
   price_unit: "tenant", seats_included: null, price_extra_seat_usd: null, is_public: true, version: 3, notes: null,
   updated_at: null, updated_by: "migration:355", retired_at: null, live_subscriptions: 4,
-  features: [{ feature_key: "content.rate_limit_rpm", limit_value: "300.00" }, { feature_key: "content.social",
-                                                                                   limit_value: null }],
+  features: [{ feature_key: "ai.budget_usd_monthly", limit_value: "40.00" },
+             { feature_key: "content.rate_limit_rpm", limit_value: "300.00" },
+             { feature_key: "content.rewrite", limit_value: "200.00" },
+             { feature_key: "content.social", limit_value: null }],
   ...over,
 });
 
@@ -68,6 +70,7 @@ test("an edit body keeps the version and the feature set", () => {
   assert.deepEqual(body.features, [
     { feature_key: "ai.budget_usd_monthly", limit_value: "40" },
     { feature_key: "content.rate_limit_rpm", limit_value: "300.00" },
+    { feature_key: "content.rewrite", limit_value: "200.00" },
     { feature_key: "content.social", limit_value: null },
   ]);
 });
@@ -87,9 +90,70 @@ test("a create body names product, key and tier; the rules the API applies", () 
   assert.deepEqual([bad.error, bad.field], ["limit", "crm.seats"]);
   const tiered = { ...planDraftOf(null, "content"), plan_key: "content.zz", name: "Z", tier: "growth" };
   assert.equal(planBody(tiered, CATALOGUE, null).error, "rpmRequired");
-  tiered.features = { "content.rate_limit_rpm": "100" };
+  tiered.features = { "content.rate_limit_rpm": "100", "ai.budget_usd_monthly": "40", "content.rewrite": "" };
   assert.equal(planBody(tiered, CATALOGUE, null).body.tier, "growth");
 });
+
+test("a tiered content plan keeps its enforced limits; the AI budget is a number except on internal", () => {
+  const tiered = { ...planDraftOf(null, "content"), plan_key: "content.zz", name: "Z", tier: "growth",
+                   features: { "content.rate_limit_rpm": "100", "content.rewrite": "50" } };
+  assert.deepEqual(pick(planBody(tiered, CATALOGUE, null)), ["enforcedRequired", "ai.budget_usd_monthly"]);
+  tiered.features["ai.budget_usd_monthly"] = "";                  // "no limit" is not a budget on a priced tier
+  assert.deepEqual(pick(planBody(tiered, CATALOGUE, null)), ["enforcedRequired", "ai.budget_usd_monthly"]);
+  assert.equal(planBody({ ...tiered, tier: "internal" }, CATALOGUE, null).error, null);
+  tiered.features["ai.budget_usd_monthly"] = "0";                 // 0 = no AI included, explicit
+  assert.equal(planBody(tiered, CATALOGUE, null).error, null);
+  delete tiered.features["content.rewrite"];
+  assert.deepEqual(pick(planBody(tiered, CATALOGUE, null)), ["enforcedRequired", "content.rewrite"]);
+});
+
+test("an edit cannot untick a limit the plan has", () => {
+  const p = plan({});
+  const d = planDraftOf(p);
+  delete d.features["ai.budget_usd_monthly"];
+  assert.deepEqual(pick(planBody(d, CATALOGUE, p)), ["limitRemoved", "ai.budget_usd_monthly"]);
+  const crm = plan({ plan_key: "crm.core", product: "crm", tier: null,
+                     features: [{ feature_key: "crm.core", limit_value: null }, { feature_key: "crm.seats", limit_value: "10" }] });
+  const c = planDraftOf(crm);
+  delete c.features["crm.seats"];
+  assert.deepEqual(pick(planBody(c, CATALOGUE, crm)), ["limitRemoved", "crm.seats"]);
+  delete c.features["crm.core"];                                  // a flag can still be taken off ...
+  c.features["crm.seats"] = "";                                   // ... and a limit set to "no limit" explicitly
+  assert.equal(planBody(c, CATALOGUE, crm).error, null);
+  assert.deepEqual([...lockedLimitKeys(crm, CATALOGUE)], ["crm.seats"]);
+  assert.equal(lockedLimitKeys(null, CATALOGUE).size, 0);
+});
+
+test("platform keys are offered and sent on content plans only", () => {
+  assert.ok(featuresFor("content", CATALOGUE).some((f) => f.feature_key === "ai.budget_usd_monthly"));
+  assert.ok(!featuresFor("crm", CATALOGUE).some((f) => f.product === "platform"));
+  const d = { ...planDraftOf(null, "crm"), plan_key: "crm.team", name: "Team",
+              features: { "crm.core": "", "ai.budget_usd_monthly": "5" } };
+  assert.deepEqual(planBody(d, CATALOGUE, null).body.features, [{ feature_key: "crm.core", limit_value: null }]);
+});
+
+test("count, seat and RPM limits stay within what their readers hold", () => {
+  const p = plan({});
+  const d = planDraftOf(p);
+  d.features["content.rewrite"] = "10000000000";
+  assert.deepEqual(pick(planBody(d, CATALOGUE, p)), ["limit", "content.rewrite"]);
+  d.features["content.rewrite"] = "12.5";
+  assert.deepEqual(pick(planBody(d, CATALOGUE, p)), ["limit", "content.rewrite"]);
+  d.features["content.rewrite"] = String(INT4_MAX);
+  d.features["content.rate_limit_rpm"] = String(RATE_LIMIT_RPM_MAX + 1);
+  assert.deepEqual(pick(planBody(d, CATALOGUE, p)), ["limit", "content.rate_limit_rpm"]);
+  d.features["content.rate_limit_rpm"] = String(RATE_LIMIT_RPM_MAX);
+  assert.equal(planBody(d, CATALOGUE, p).error, null);
+  d.features["ai.budget_usd_monthly"] = "12.34";                  // USD keeps its 2 decimals
+  assert.equal(planBody(d, CATALOGUE, p).error, null);
+  const o = { feature_key: "content.rewrite", mode: "limit", limit: "3000000000", reason: "r", expires: "" };
+  assert.equal(overrideBody(o, CATALOGUE, "2026-11-03").error, "limit");
+  assert.equal(overrideBody({ ...o, limit: "300" }, CATALOGUE, "2026-11-03").error, null);
+});
+
+function pick(r) {
+  return [r.error, r.field];
+}
 
 test("override drafts", () => {
   const today = "2026-11-03";

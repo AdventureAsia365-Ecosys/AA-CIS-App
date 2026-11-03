@@ -64,9 +64,39 @@ export function tierChoices(plans: Plan[] | undefined, current?: string | null):
   return out;
 }
 
-/** The features a plan of `product` may give: the product's keys, then the platform keys. */
+/** The features a plan of `product` may give: the product's keys, then (content plans only) the platform keys. A
+ * platform key (AI budget, notice policy) belongs to the base subscription: the resolver reads it from the content
+ * plan only (CIS 361) and the API refuses it on an add-on plan (platform_key_content_only). */
 export function featuresFor(product: Product, catalogue: Feature[]): Feature[] {
-  return catalogue.filter((f) => f.product === product).concat(catalogue.filter((f) => f.product === "platform"));
+  const own = catalogue.filter((f) => f.product === product);
+  return product === "content" ? own.concat(catalogue.filter((f) => f.product === "platform")) : own;
+}
+
+// Bounds the API applies (services/tenant_account/plans.py bound_limit): whole numbers up to int4 for counts, seats,
+// days and the RPM; the RPM at most RATE_LIMIT_RPM_MAX.
+export const INT4_MAX = 2 ** 31 - 1;
+export const RATE_LIMIT_RPM_MAX = 10000;
+const WHOLE_UNITS = new Set(["count_month", "seats", "days", "rpm"]);
+
+/** True when ``v`` (a valid decimal) is out of the bounds of its key's unit. */
+export function limitOutOfBounds(f: Pick<Feature, "feature_key" | "unit">, v: string): boolean {
+  if (!f.unit || !WHOLE_UNITS.has(f.unit)) return false;
+  const n = Number(v);
+  if (!Number.isInteger(n) || n > INT4_MAX) return true;
+  return f.feature_key === "content.rate_limit_rpm" && n > RATE_LIMIT_RPM_MAX;
+}
+
+/** Limits a tiered content plan always lists (the API's enforced_limit_required): "no row" would mean no limit for
+ * every tenant on the plan. The AI budget needs a number except on AA's own (internal) tier. */
+export const ENFORCED_CONTENT_KEYS = ["ai.budget_usd_monthly", "content.rewrite", "content.rate_limit_rpm"];
+export const UNLIMITED_AI_TIERS = ["internal"];
+
+/** The limit keys an edit cannot untick (the API's limit_removal_refused): every limit / seats key the plan has. */
+export function lockedLimitKeys(plan: Plan | null, catalogue: Feature[]): Set<string> {
+  if (!plan) return new Set();
+  const kinds = new Map(catalogue.map((f) => [f.feature_key, f.value_kind]));
+  return new Set(plan.features.map((f) => f.feature_key)
+    .filter((k) => kinds.get(k) === "limit" || kinds.get(k) === "seats"));
 }
 
 // ── Plan drafts ───────────────────────────────────────────────────────────────────────────────────────────────
@@ -101,7 +131,8 @@ export function planDraftOf(plan: Plan | null, product: Product = "content"): Pl
 }
 
 export type PlanDraftError =
-  | "key" | "name" | "price" | "seats" | "extraSeat" | "notes" | "limit" | "rpmRequired";
+  | "key" | "name" | "price" | "seats" | "extraSeat" | "notes" | "limit" | "rpmRequired" | "enforcedRequired"
+  | "limitRemoved";
 
 export interface PlanBody {
   plan_key?: string; product?: Product; tier?: string | null; version?: number;
@@ -125,20 +156,32 @@ export function planBody(d: PlanDraft, catalogue: Feature[], plan: Plan | null):
   const extra = d.price_extra_seat.trim();
   if (extra && !DECIMAL.test(extra)) return { body: null, error: "extraSeat" };
   if (d.notes.length > 1000) return { body: null, error: "notes" };
-  const kinds = new Map(catalogue.map((f) => [f.feature_key, f.value_kind]));
+  const byKey = new Map(catalogue.map((f) => [f.feature_key, f]));
+  const allowed = new Set(featuresFor(d.product, catalogue).map((f) => f.feature_key));
   const features: PlanBody["features"] = [];
   for (const [key, raw] of Object.entries(d.features).sort(([a], [b]) => a.localeCompare(b))) {
-    const kind = kinds.get(key);
-    if (!kind) continue;                                  // a retired key is dropped
+    const f = byKey.get(key);
+    if (!f || !allowed.has(key)) continue;                // a retired key, or one this product may not carry
     const v = raw.trim();
-    if (kind !== "flag" && v && !DECIMAL.test(v)) return { body: null, error: "limit", field: key };
-    features.push({ feature_key: key, limit_value: kind === "flag" || !v ? null : v });
+    if (f.value_kind !== "flag" && v && (!DECIMAL.test(v) || limitOutOfBounds(f, v))) {
+      return { body: null, error: "limit", field: key };
+    }
+    features.push({ feature_key: key, limit_value: f.value_kind === "flag" || !v ? null : v });
+  }
+  const given = new Set(features.map((f) => f.feature_key));
+  for (const key of lockedLimitKeys(plan, catalogue)) {
+    if (byKey.has(key) && !given.has(key)) return { body: null, error: "limitRemoved", field: key };
   }
   const tier = plan ? plan.tier : (d.product === "content" && d.tier ? d.tier : null);
   if (tier) {
     const rpm = features.find((f) => f.feature_key === "content.rate_limit_rpm");
     if (!rpm || rpm.limit_value == null || Number(rpm.limit_value) < 1) {
       return { body: null, error: "rpmRequired", field: "content.rate_limit_rpm" };
+    }
+    for (const key of ENFORCED_CONTENT_KEYS) {
+      const row = features.find((f) => f.feature_key === key);
+      const needsNumber = key === "ai.budget_usd_monthly" && !UNLIMITED_AI_TIERS.includes(tier);
+      if (!row || (needsNumber && row.limit_value == null)) return { body: null, error: "enforcedRequired", field: key };
     }
   }
   const body: PlanBody = {
@@ -265,7 +308,9 @@ export function overrideBody(d: OverrideDraft, catalogue: Feature[], today = new
   if (d.mode === "limit" && f.value_kind === "flag") return { body: null, error: "flagLimit" };
   if (d.mode === "off" && f.value_kind !== "flag") return { body: null, error: "offLimit" };
   const limit = d.limit.trim();
-  if (d.mode === "limit" && limit && !DECIMAL.test(limit)) return { body: null, error: "limit" };
+  if (d.mode === "limit" && limit && (!DECIMAL.test(limit) || limitOutOfBounds(f, limit))) {
+    return { body: null, error: "limit" };
+  }
   if (rules.limit_required.includes(f.feature_key) && (d.mode !== "limit" || !limit)) {
     return { body: null, error: "limitRequired" };
   }

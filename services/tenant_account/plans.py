@@ -14,6 +14,12 @@ re-syncs each tenant on the plan and writes one ``entitlement.changed`` per chan
 - ``plan_key`` (``<product>.<name>``), ``product`` and ``tier`` never change after create: the content tier links
   ``shared.tenants.plan_tier`` to its plan (the 355 bridge), so it is chosen once. A content plan with a tier must
   give ``content.rate_limit_rpm`` (the limiter and the tenant create read it), a whole number.
+- **Limits never vanish** (S266 review): "no row" means "no limit", so an edit cannot drop a limit key the plan has
+  (``limit_removal_refused``: set its value, empty = no limit, instead), and a content plan with a tier always lists
+  ``ai.budget_usd_monthly`` (a number, NULL only on the internal tier), ``content.rewrite`` and
+  ``content.rate_limit_rpm`` (``enforced_limit_required``). Platform keys (``ai.*``, ``policy.*``) go on content plans
+  only (``platform_key_content_only``; the resolver reads them from the content plan, CIS 361). Count, seat, day and
+  RPM values are whole numbers up to int4 (the readers' type), an RPM at most ``RATE_LIMIT_RPM_MAX``.
 - **RPM follows live**: the limiter enforces ``shared.tenants.rate_limit_rpm`` (copied from the plan at create), so an
   edit of a content plan's RPM also moves that column for every tenant on the plan whose column still equals the old
   value (they follow the default); a tenant with its own RPM (PATCH /admin/tenants/{id}) keeps it.
@@ -39,6 +45,19 @@ PLAN_KEY_RE = re.compile(r"^[a-z]+\.[a-z][a-z0-9_]*$")
 LIMIT_MAX = Decimal(10) ** 12 - Decimal("0.01")  # numeric(14,2) max (written so: 12 nines read as an account id)
 PRICE_MAX = Decimal("99999999.99")              # numeric(10,2)
 RPM_KEY = "content.rate_limit_rpm"
+AI_BUDGET_KEY = "ai.budget_usd_monthly"
+REWRITE_KEY = "content.rewrite"
+# Bounds by unit (S266 review): a count, seat, day or RPM value is a whole number its integer readers can hold
+# (shared.tenants.rate_limit_rpm and the rewrite quota are int4); an RPM is capped like PATCH /admin/tenants.
+INT4_MAX = 2**31 - 1
+RATE_LIMIT_RPM_MAX = 10000
+WHOLE_UNITS = frozenset({"count_month", "seats", "days", "rpm"})
+# Limits a reader enforces on every tenant of a tiered content plan (S266 review): "no row" reads as "no limit", so
+# such a plan always lists them, with an explicit value. The AI budget is a number (0 = no AI included) on every tier
+# but AA's own (internal: NULL = no limit); the rewrite quota may be NULL (Enterprise / internal: the quota falls back
+# to shared.membership_plans) but is listed. The RPM is required by rate_limit_required.
+ENFORCED_CONTENT_KEYS = (AI_BUDGET_KEY, REWRITE_KEY, RPM_KEY)
+UNLIMITED_AI_TIERS = frozenset({"internal"})
 
 CREATED = "plan.created"
 UPDATED = "plan.updated"
@@ -167,6 +186,22 @@ def _decimal(value: Any, what: str, maximum: Decimal) -> Optional[Decimal]:
 parse_decimal = _decimal
 
 
+def bound_limit(key: str, unit: Optional[str], limit: Optional[Decimal]) -> Optional[Decimal]:
+    """``limit`` checked against its unit's bound (module constants): a whole number up to INT4_MAX for a count,
+    seat, day or RPM key, an RPM at most RATE_LIMIT_RPM_MAX. Raises :class:`PlanError`."""
+    if limit is None or unit not in WHOLE_UNITS:
+        return limit
+    if limit != limit.to_integral_value():
+        if key == RPM_KEY:
+            raise PlanError("rate_limit_whole", f"{RPM_KEY} is a whole number of requests a minute")
+        raise PlanError("invalid_number", f"{key} is a whole number")
+    if key == RPM_KEY and limit > RATE_LIMIT_RPM_MAX:
+        raise PlanError("invalid_number", f"{RPM_KEY} must be 1-{RATE_LIMIT_RPM_MAX}")
+    if limit > INT4_MAX:
+        raise PlanError("invalid_number", f"{key} must be 0-{INT4_MAX}")
+    return limit
+
+
 @dataclass(frozen=True)
 class PlanFeature:
     feature_key: str
@@ -204,9 +239,13 @@ def _features(raw: Any, product: str, catalogue: dict[str, dict]) -> tuple[PlanF
             raise PlanError("unknown_feature", f"no live feature key {key!r}")
         if f["product"] not in (product, "platform"):
             raise PlanError("feature_product_mismatch", f"{key} is a {f['product']} feature, the plan is {product}")
+        if f["product"] == "platform" and product != "content":
+            # a platform key (AI budget, notice policy) belongs to the base subscription: the resolver takes it from
+            # the content plan only (CIS 361), so on an add-on plan it would be shown but never applied
+            raise PlanError("platform_key_content_only", f"{key} is set on the content plan, not on a {product} plan")
         if key in out:
             raise PlanError("invalid_features", f"{key} is listed twice")
-        limit = _decimal(item.get("limit_value"), f"{key} limit", LIMIT_MAX)
+        limit = bound_limit(key, f.get("unit"), _decimal(item.get("limit_value"), f"{key} limit", LIMIT_MAX))
         if f["value_kind"] == "flag" and limit is not None:
             raise PlanError("flag_takes_no_limit", f"{key} is on/off and takes no limit")
         out[key] = PlanFeature(key, limit)
@@ -244,12 +283,21 @@ def draft(payload: dict, *, product: str, tier: Optional[str], catalogue: dict[s
         features = tuple(PlanFeature(f["feature_key"], _decimal(f.get("limit_value"), f["feature_key"], LIMIT_MAX))
                          for f in base.get("features") or [])
     rpm = next((f for f in features if f.feature_key == RPM_KEY), None)
-    if product == "content" and tier is not None:
-        if rpm is None or rpm.limit_value is None or rpm.limit_value < 1:
-            raise PlanError("rate_limit_required", f"a content plan with a tier sets {RPM_KEY} (requests a minute)")
     if rpm is not None and rpm.limit_value is not None and rpm.limit_value != rpm.limit_value.to_integral_value():
         # shared.tenants.rate_limit_rpm (what the limiter enforces and a plan edit moves) is an integer
         raise PlanError("rate_limit_whole", f"{RPM_KEY} is a whole number of requests a minute")
+    if product == "content" and tier is not None:
+        if rpm is None or rpm.limit_value is None or rpm.limit_value < 1:
+            raise PlanError("rate_limit_required", f"a content plan with a tier sets {RPM_KEY} (requests a minute)")
+        given = {f.feature_key: f for f in features}
+        for key in ENFORCED_CONTENT_KEYS:
+            if key not in given:
+                raise PlanError("enforced_limit_required",
+                                f"a content plan with a tier lists {key}: removing it would remove the limit for "
+                                "every tenant on the plan; give a value instead")
+        if given[AI_BUDGET_KEY].limit_value is None and tier not in UNLIMITED_AI_TIERS:
+            raise PlanError("enforced_limit_required",
+                            f"{AI_BUDGET_KEY} needs a number on the {tier} plan (0 = no AI spend included)")
     return PlanDraft(name=name.strip(), price_usd_monthly=_decimal(pick("price_usd_monthly"), "price", PRICE_MAX),
                      price_unit=unit, seats_included=seats,
                      price_extra_seat_usd=_decimal(pick("price_extra_seat_usd"), "extra seat price", PRICE_MAX),
@@ -397,6 +445,13 @@ async def update_plan(conn, plan_key: str, payload: dict, *, actor: str) -> dict
         catalogue = await _catalogue(conn)
         before = draft({}, product=stored["product"], tier=None, catalogue=catalogue, base=stored)
         after = draft(payload, product=stored["product"], tier=stored["tier"], catalogue=catalogue, base=stored)
+        dropped = {f.feature_key for f in before.features} - {f.feature_key for f in after.features}
+        removed_limits = sorted(k for k in dropped if (catalogue.get(k) or {}).get("value_kind") in ("limit", "seats"))
+        if removed_limits:
+            # "no row" = no limit for every subscriber at once (S266 review): an edit sets the limit, explicitly
+            raise PlanError("limit_removal_refused",
+                            f"{', '.join(removed_limits)}: a limit is not removed from a plan; set its value "
+                            "(empty = no limit) instead")
         fields_changed = [k for k, v in after.columns().items() if before.columns()[k] != v]
         if not fields_changed and before.features == after.features:
             return {**stored, "changed": []}

@@ -258,7 +258,7 @@ def counter_unreadable(tenant_id: str) -> bool:
     if not failed or time.monotonic() - failed >= FAILURE_TTL_SECONDS:
         return False
     last = _state.get(tenant_id)
-    if last is not None and (last[0] is None or not last[0].hard_stop):
+    if last is not None and (last[0] is None or not last[0].stops):
         return False
     return True
 

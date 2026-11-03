@@ -19,11 +19,15 @@ from shared.llm_client import tenant_budget
 
 TID = "7d4c6f0e-1b2a-4c3d-9e8f-0a1b2c3d4e5f"
 CATALOGUE = {
-    "content.rate_limit_rpm": {"feature_key": "content.rate_limit_rpm", "product": "content", "value_kind": "limit"},
-    "content.social": {"feature_key": "content.social", "product": "content", "value_kind": "flag"},
-    "crm.core": {"feature_key": "crm.core", "product": "crm", "value_kind": "flag"},
-    "crm.seats": {"feature_key": "crm.seats", "product": "crm", "value_kind": "seats"},
-    "ai.budget_usd_monthly": {"feature_key": "ai.budget_usd_monthly", "product": "platform", "value_kind": "limit"},
+    "content.rate_limit_rpm": {"feature_key": "content.rate_limit_rpm", "product": "content", "value_kind": "limit",
+                               "unit": "rpm"},
+    "content.rewrite": {"feature_key": "content.rewrite", "product": "content", "value_kind": "limit",
+                        "unit": "count_month"},
+    "content.social": {"feature_key": "content.social", "product": "content", "value_kind": "flag", "unit": None},
+    "crm.core": {"feature_key": "crm.core", "product": "crm", "value_kind": "flag", "unit": None},
+    "crm.seats": {"feature_key": "crm.seats", "product": "crm", "value_kind": "seats", "unit": "seats"},
+    "ai.budget_usd_monthly": {"feature_key": "ai.budget_usd_monthly", "product": "platform", "value_kind": "limit",
+                              "unit": "usd_month"},
 }
 
 
@@ -31,11 +35,35 @@ CATALOGUE = {
 
 def test_draft_normalises_a_crm_plan():
     d = pl.draft({"name": "  Ferncliff CRM ", "price_usd_monthly": 9.5, "features": [
-        {"feature_key": "crm.seats", "limit_value": "5"}, {"feature_key": "crm.core"},
-        {"feature_key": "ai.budget_usd_monthly", "limit_value": 3}]}, product="crm", tier=None, catalogue=CATALOGUE)
+        {"feature_key": "crm.seats", "limit_value": "5"}, {"feature_key": "crm.core"}]},
+        product="crm", tier=None, catalogue=CATALOGUE)
     assert d.name == "Ferncliff CRM" and d.price_unit == "seat" and str(d.price_usd_monthly) == "9.50"
-    assert [f.feature_key for f in d.features] == ["ai.budget_usd_monthly", "crm.core", "crm.seats"]
-    assert str(d.features[2].limit_value) == "5.00" and d.is_public is False
+    assert [f.feature_key for f in d.features] == ["crm.core", "crm.seats"]
+    assert str(d.features[1].limit_value) == "5.00" and d.is_public is False
+
+
+_TIERED = [{"feature_key": "content.rate_limit_rpm", "limit_value": 300},
+           {"feature_key": "content.rewrite", "limit_value": 200},
+           {"feature_key": "ai.budget_usd_monthly", "limit_value": 40}]
+
+
+def _without(key, **values):
+    return [{**f, **({"limit_value": values[f["feature_key"]]} if f["feature_key"] in values else {})}
+            for f in _TIERED if f["feature_key"] != key]
+
+
+def test_a_tiered_content_plan_with_its_enforced_limits():
+    d = pl.draft({"name": "x", "features": _TIERED}, product="content", tier="growth", catalogue=CATALOGUE)
+    assert [f.feature_key for f in d.features] == ["ai.budget_usd_monthly", "content.rate_limit_rpm",
+                                                   "content.rewrite"]
+    # 0 = no AI included (explicit); the rewrite quota may be "no limit" (the membership_plans fallback reads it)
+    pl.draft({"name": "x", "features": _without(None, **{"ai.budget_usd_monthly": 0, "content.rewrite": None})},
+             product="content", tier="growth", catalogue=CATALOGUE)
+    # AA's own tier may leave the AI budget unlimited
+    pl.draft({"name": "x", "features": _without(None, **{"ai.budget_usd_monthly": None})}, product="content",
+             tier="internal", catalogue=CATALOGUE)
+    # a content plan without a tier has no enforced set
+    pl.draft({"name": "x", "features": []}, product="content", tier=None, catalogue=CATALOGUE)
 
 
 @pytest.mark.parametrize("payload,product,tier,code", [
@@ -60,6 +88,21 @@ def test_draft_normalises_a_crm_plan():
      "growth", "rate_limit_whole"),
     ({"name": "x", "features": [{"feature_key": "content.rate_limit_rpm", "limit_value": "300.5"}]}, "content", None,
      "rate_limit_whole"),
+    # S266 review of slice 3: a tiered content plan lists its enforced limits ("no row" = no limit)
+    ({"name": "x", "features": _without("ai.budget_usd_monthly")}, "content", "growth", "enforced_limit_required"),
+    ({"name": "x", "features": _without(None, **{"ai.budget_usd_monthly": None})}, "content", "growth",
+     "enforced_limit_required"),
+    ({"name": "x", "features": _without("content.rewrite")}, "content", "starter", "enforced_limit_required"),
+    # platform keys only on content plans (the resolver reads them there, CIS 361)
+    ({"name": "x", "features": [{"feature_key": "ai.budget_usd_monthly", "limit_value": 3}]}, "crm", None,
+     "platform_key_content_only"),
+    # bounds: counts and RPM are whole numbers their int4 readers hold; RPM <= RATE_LIMIT_RPM_MAX
+    ({"name": "x", "features": _without(None, **{"content.rewrite": 10_000_000_000})}, "content", "growth",
+     "invalid_number"),
+    ({"name": "x", "features": _without(None, **{"content.rewrite": "12.5"})}, "content", "growth", "invalid_number"),
+    ({"name": "x", "features": _without(None, **{"content.rate_limit_rpm": 10001})}, "content", "growth",
+     "invalid_number"),
+    ({"name": "x", "features": [{"feature_key": "crm.seats", "limit_value": 2**31}]}, "crm", None, "invalid_number"),
 ])
 def test_draft_refuses(payload, product, tier, code):
     with pytest.raises(pl.PlanError) as e:
@@ -253,19 +296,26 @@ def test_budget_reads_the_entitlement_then_falls_back():
 
 
 def test_a_zero_budget_stops_the_first_call():
-    # "0 = no AI" (S266 review): with the hard stop on, a 0 USD budget refuses before any spend
+    # "0 = no AI" (S266 review): a 0 USD budget refuses before any spend
     b = cost_guard.TenantAIBudget(tenant_id=TID, monthly_usd=0.0, month_spent_usd=0.0, alert_pct=80,
                                   approval_pct=100, hard_stop=True)
     assert b.needs_approval and b.state == "approval"
-    assert not cost_guard.TenantAIBudget(tenant_id=TID, monthly_usd=0.0, month_spent_usd=0.0,
-                                         hard_stop=False).needs_approval
+    # ... whatever the AA-1016 row's hard_stop says (an override of 0 is the revocation path)
+    off = cost_guard.TenantAIBudget(tenant_id=TID, monthly_usd=0.0, month_spent_usd=0.0, hard_stop=False,
+                                    approval_pct=1000)
+    assert off.stops and off.needs_approval and off.summary()["hard_stop"] is True
+    # a budget above 0 keeps the row's hard_stop off (alert only)
+    soft = cost_guard.TenantAIBudget(tenant_id=TID, monthly_usd=5.0, month_spent_usd=9.0, hard_stop=False)
+    assert not soft.stops and not soft.needs_approval and soft.state == "alert"
+    assert "x.monthly_usd = 0" in cost_guard._TENANT_BUDGET_SQL
 
 
 def test_a_disabled_budget_override_is_a_zero_budget():
     # the resolver drops a disabled key; cost_guard must not read that as "no budget" (fail closed)
     assert "NOT o.enabled" in cost_guard._DISABLED_OVERRIDE
     assert "WHEN d.tenant_id IS NOT NULL THEN 0::numeric" in cost_guard._TENANT_BUDGET_SQL
-    assert "d.tenant_id IS NOT NULL OR coalesce(b.hard_stop, true)" in cost_guard._TENANT_BUDGET_SQL
+    assert "d.tenant_id IS NOT NULL AS forced" in cost_guard._TENANT_BUDGET_SQL
+    assert "x.forced OR x.monthly_usd = 0 OR x.row_hard_stop" in cost_guard._TENANT_BUDGET_SQL
     assert cost_guard._DISABLED_OVERRIDE.strip() in cost_guard.TENANT_BUDGET_TENANTS_SQL
     row = {"tenant_id": TID, "monthly_usd": 0, "alert_pct": 80, "approval_pct": 100, "hard_stop": True,
            "spent": 0, "calls": 0, "source": "override"}
@@ -276,6 +326,15 @@ def test_a_disabled_budget_override_is_a_zero_budget():
 def test_plan_budget_defaults():
     assert (cost_guard.PLAN_ALERT_PCT, cost_guard.PLAN_APPROVAL_PCT) == (80, 100)
     assert "coalesce(b.hard_stop, true)" in cost_guard._TENANT_BUDGET_SQL
+
+
+def test_no_resolved_key_falls_back_to_the_content_plan_budget():
+    # S266 review: never "no budget" while the tenant is a customer (a trial past its end before CIS 361, an unpaid
+    # or paused subscription): the content subscription plan's value, unless canceled
+    assert "s.product = 'content' AND s.status <> 'canceled'" in cost_guard._PLAN_FALLBACK
+    assert cost_guard._PLAN_FALLBACK.strip() in cost_guard.TENANT_BUDGET_TENANTS_SQL
+    assert cost_guard._PLAN_FALLBACK.strip() in cost_guard._TENANT_BUDGET_SQL
+    assert "ELSE p.limit_value END AS monthly_usd" in cost_guard._TENANT_BUDGET_SQL
 
 
 # ── the admin routes ────────────────────────────────────────────────────────────────────────────────────────────
@@ -419,6 +478,35 @@ def test_set_override_refuses_what_no_reader_enforces(key, kind, enabled, limit,
         asyncio.run(sub.set_override(conn, TID, key, enabled=enabled, limit_value=limit, reason="zz",
                                      expires_at=None, actor="admin:x"))
     assert e.value.code == code and e.value.status == 422 and conn.writes == []
+
+
+@pytest.mark.parametrize("key,kind,unit,limit", [
+    ("content.rewrite", "limit", "count_month", "3000000000"),     # past int4: the quota read would overflow
+    ("content.rewrite", "limit", "count_month", "12.5"),
+    ("crm.seats", "seats", "seats", str(2**31)),
+])
+def test_set_override_bounds_whole_number_limits(key, kind, unit, limit):
+    from services.tenant_account import subscription as sub
+
+    conn = _TxConn({"feature_key": key, "product": key.split(".")[0], "value_kind": kind, "unit": unit})
+    with pytest.raises(pl.PlanError) as e:
+        asyncio.run(sub.set_override(conn, TID, key, enabled=True, limit_value=limit, reason="zz",
+                                     expires_at=None, actor="admin:x"))
+    assert e.value.code == "invalid_number" and conn.writes == []
+
+
+def test_bound_limit():
+    D = pl.parse_decimal
+    assert pl.bound_limit("ai.budget_usd_monthly", "usd_month", D("12.34", "x", pl.LIMIT_MAX)) == D("12.34", "x",
+                                                                                                    pl.LIMIT_MAX)
+    assert pl.bound_limit("content.rewrite", "count_month", None) is None
+    assert pl.bound_limit(pl.RPM_KEY, "rpm", D(pl.RATE_LIMIT_RPM_MAX, "x", pl.LIMIT_MAX)) == pl.RATE_LIMIT_RPM_MAX
+    with pytest.raises(pl.PlanError) as e:
+        pl.bound_limit(pl.RPM_KEY, "rpm", D("1.5", "x", pl.LIMIT_MAX))
+    assert e.value.code == "rate_limit_whole"
+    from api.routers import admin
+
+    assert admin.RATE_LIMIT_RPM_MAX == pl.RATE_LIMIT_RPM_MAX == 10000
 
 
 def test_override_rules_cover_the_limiter_and_the_quota():

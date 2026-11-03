@@ -56,7 +56,8 @@ export const PLANS = defineMessages(
     fieldPublic: "Public (offered to new tenants)",
     fieldNotes: "Notes",
     featuresTitle: "Features and limits",
-    featuresHint: "Tick what the plan gives. A limit left empty means no limit.",
+    featuresHint: "Tick what the plan gives. A limit left empty means no limit. A limit the plan has cannot be "
+      + "unticked; AI budget and notice days go on content plans only.",
     limitPlaceholder: "no limit",
     subscribersNote: (n: number) => (n === 0 ? "No tenant holds this plan."
       : n === 1 ? "1 tenant holds this plan: saving changes what it may do at once."
@@ -70,6 +71,12 @@ export const PLANS = defineMessages(
     err_notes: "At most 1,000 characters.",
     err_limit: (key: string) => `${key}: a number with at most 2 decimals, or empty.`,
     err_rpmRequired: "A content plan with a tier needs content.rate_limit_rpm (requests a minute).",
+    err_enforcedRequired: (key: string) => key === "ai.budget_usd_monthly"
+      ? "A content plan with a tier needs ai.budget_usd_monthly as a number (0 = no AI spend included)."
+      : `A content plan with a tier lists ${key}: leaving it out would remove the limit for every tenant on it.`,
+    err_limitRemoved: (key: string) =>
+      `${key} is a limit of this plan: it cannot be removed. Set its value instead (empty = no limit).`,
+    limitLocked: "A limit the plan has stays: change its value instead.",
     cancel: "Cancel",
     save: "Save",
     create: "Create plan",
@@ -136,7 +143,8 @@ export const PLANS = defineMessages(
     fieldPublic: "Công khai (chào cho đại lý mới)",
     fieldNotes: "Ghi chú",
     featuresTitle: "Tính năng và giới hạn",
-    featuresHint: "Đánh dấu những gì gói cho. Giới hạn để trống là không giới hạn.",
+    featuresHint: "Đánh dấu những gì gói cho. Giới hạn để trống là không giới hạn. Giới hạn gói đang có thì không "
+      + "bỏ đánh dấu được; ngân sách AI và số ngày báo trước chỉ đặt ở gói Content.",
     limitPlaceholder: "không giới hạn",
     subscribersNote: (n: number) => (n === 0 ? "Chưa đại lý nào dùng gói này."
       : `${n} đại lý đang dùng gói này: lưu sẽ đổi ngay những gì họ được dùng.`),
@@ -149,6 +157,12 @@ export const PLANS = defineMessages(
     err_notes: "Tối đa 1.000 ký tự.",
     err_limit: (key: string) => `${key}: một số có tối đa 2 chữ số thập phân, hoặc để trống.`,
     err_rpmRequired: "Gói Content có hạng cần content.rate_limit_rpm (số request mỗi phút).",
+    err_enforcedRequired: (key: string) => key === "ai.budget_usd_monthly"
+      ? "Gói Content có hạng cần ai.budget_usd_monthly là một số (0 = không kèm chi phí AI)."
+      : `Gói Content có hạng phải có ${key}: bỏ đi là bỏ giới hạn cho mọi đại lý dùng gói.`,
+    err_limitRemoved: (key: string) =>
+      `${key} là giới hạn của gói này: không bỏ được. Hãy đổi giá trị (để trống = không giới hạn).`,
+    limitLocked: "Giới hạn gói đang có thì giữ lại: hãy đổi giá trị.",
     cancel: "Huỷ",
     save: "Lưu",
     create: "Tạo gói",

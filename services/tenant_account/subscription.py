@@ -14,10 +14,13 @@ Refused, because no reader would enforce the result (S266 review of slice 3):
     ``PATCH /admin/tenants/{id}`` (``rate_limit_rpm``).
   - no limit (NULL) on ``content.rewrite`` (``limit_required``): the rewrite quota is published as a number
     (``GET /v1/quota`` and the tenant portal meter); "no limit" has no number to serve.
-A ``reason`` is required; ``expires_at`` (optional) ends it (the hourly tick re-syncs at the end). An override of a crm
-/ tripplanner key applies only while the tenant has a live subscription of that product (the resolver); the response
-says so (``applies``). The CIS 353 trigger re-syncs the tenant and writes ``entitlement.changed`` (``aa.actor`` = the
-admin); the audit row (``tenant.entitlement_override_set`` / ``_removed``) holds before and after.
+Count, seat, day and RPM values are whole numbers up to int4 (``plans.bound_limit``). An override of
+``ai.budget_usd_monthly`` of 0 always stops the tenant's T-stage and ad-hoc AI calls (``shared.cost_guard``: a 0 USD
+budget forces the hard stop, whatever its AA-1016 row says). A ``reason`` is required; ``expires_at`` (optional)
+ends it (the hourly tick re-syncs at the end). An override of a crm / tripplanner key applies only while the tenant
+has a live subscription of that product (the resolver); the response says so (``applies``). The CIS 353 trigger
+re-syncs the tenant and writes ``entitlement.changed`` (``aa.actor`` = the admin); the audit row
+(``tenant.entitlement_override_set`` / ``_removed``) holds before and after.
 """
 from __future__ import annotations
 
@@ -27,7 +30,7 @@ from decimal import Decimal
 from typing import Any, Optional
 
 from services.acp_shared.audit_log import AdminTenantAuditAction, write_audit_log
-from services.tenant_account.plans import LIMIT_MAX, RPM_KEY, PlanError, parse_decimal
+from services.tenant_account.plans import LIMIT_MAX, RPM_KEY, PlanError, bound_limit, parse_decimal
 
 OVERRIDE_SET = AdminTenantAuditAction.ENTITLEMENT_OVERRIDE_SET
 OVERRIDE_REMOVED = AdminTenantAuditAction.ENTITLEMENT_OVERRIDE_REMOVED
@@ -111,7 +114,8 @@ async def snapshot(conn, tenant_id: str) -> Optional[dict]:
     }
 
 
-FEATURE_SQL = "SELECT feature_key, product, value_kind FROM shared.entitlement_feature WHERE feature_key = $1 " \
+FEATURE_SQL = "SELECT feature_key, product, value_kind, unit FROM shared.entitlement_feature " \
+              "WHERE feature_key = $1 " \
               "AND retired_at IS NULL"
 TENANT_LOCK_SQL = "SELECT account_status FROM shared.tenants WHERE tenant_id = $1::uuid FOR UPDATE"
 OVERRIDE_ROW_SQL = """
@@ -176,6 +180,7 @@ async def set_override(conn, tenant_id: str, feature_key: str, *, enabled: bool,
             raise PlanError("unknown_feature", f"no live feature key {feature_key!r}", 404)
         if f["value_kind"] == "flag" and limit is not None:
             raise PlanError("flag_takes_no_limit", f"{feature_key} is on/off and takes no limit")
+        limit = bound_limit(feature_key, f.get("unit"), limit)
         if not enabled and limit is not None:
             raise PlanError("disabled_takes_no_limit", "a disabled feature takes no limit")
         if not enabled and f["value_kind"] != "flag":
