@@ -46,6 +46,7 @@ from services.acp_angle_gate.channel_style import get_channel_style
 from services.acp_angle_gate.goals import get_goal
 from services.acp_shared.atom_seed import atom_seed_text, route_moment_seeds
 from services.acp_shared.seed_canon import is_overnight
+from services.acp_content_writing import ai_marking  # AA-1040 (machine-readable AI mark)
 from services.acp_content_writing import seo_grounding
 from services.acp_shared.channel_spec import channel_spec, first_sentence
 from services.acp_content_writing.quality_gates import (
@@ -2649,6 +2650,13 @@ async def _finalize_piece(
     # attempt) — only run_write_background()'s own main loop ever passes a non-empty list.
     discarded_attempts = discarded_attempts or []
     async with pool.acquire() as conn:
+        if writer_input is not None and status in ("approved", "held"):
+            # AA-1040 — the machine-readable AI mark of a piece with content (ai_marking.py): the writer model of the
+            # final attempt from the ledger (best-effort, None when unreadable), stamped next to the writer input.
+            request_id = await conn.fetchval(
+                "SELECT angle_gate_request_id FROM acp_shared.content_piece WHERE piece_id = $1", piece_id)
+            model = await ai_marking.writer_model(conn, request_id, piece_id) if request_id else None
+            writer_input = {**writer_input, ai_marking.PROVENANCE_KEY: ai_marking.stamp(model)}
         row = await conn.fetchrow(
             """
             UPDATE acp_shared.content_piece
@@ -2720,6 +2728,9 @@ def _tenant_safe_piece(row) -> dict:
         "route_segment_count": d.get("route_segment_count"),
         # AA-770 (S233) — no gate notes on the tenant side; they live in the admin Content Quality page.
         "created_at": d["created_at"],
+        # AA-1040 — the machine-readable AI mark (EU AI Act Art. 50(2)): every piece is T9 output.
+        "ai": ai_marking.piece_mark(
+            d["created_at"], row["ai_provenance"] if "ai_provenance" in row.keys() else None),
     }
 
 
@@ -2785,7 +2796,8 @@ _CHOSEN_OPTION_QUERY = """
 _LATEST_PIECE_FOR_OPTION_QUERY = """
     SELECT piece_id, tenant_id, angle_gate_request_id, attempt_number, content_text, status,
            held_reason, gate_ledger, repair_log, created_at, seo_title, meta_description, slug,
-           route_hub_name, route_segment_count, flags
+           route_hub_name, route_segment_count, flags,
+           writer_input -> 'ai_provenance' AS ai_provenance  -- AA-1040, the one tenant-safe key of writer_input
     FROM acp_shared.content_piece
     WHERE angle_gate_request_id = $1 AND tenant_id = $2
       AND (angle_gate_option_id = $3 OR angle_gate_option_id IS NULL)
@@ -2841,7 +2853,8 @@ _FETCH_PIECE_QUERY = """
     SELECT piece_id, tenant_id, angle_gate_request_id, attempt_number, content_text,
            status, held_reason, gate_ledger, repair_log, created_at,
            seo_title, meta_description, slug, channel,
-           route_hub_name, route_segment_count, flags
+           route_hub_name, route_segment_count, flags,
+           writer_input -> 'ai_provenance' AS ai_provenance  -- AA-1040, the one tenant-safe key of writer_input
     FROM acp_shared.content_piece
     WHERE piece_id = $1 AND tenant_id = $2
 """
@@ -2900,13 +2913,20 @@ _PIECE_EDIT_SQL = """
         FOR UPDATE
     )
     UPDATE acp_shared.content_piece
-    SET content_text = $3
+    SET content_text = $3,
+        -- AA-1040: the AI mark records the tenant's edit (a piece without writer_input, older than AA-769, keeps NULL)
+        writer_input = CASE WHEN writer_input IS NULL THEN NULL
+                            ELSE jsonb_set(writer_input, '{ai_provenance}',
+                                           COALESCE(writer_input -> 'ai_provenance', '{}'::jsonb)
+                                           || jsonb_build_object('human_edited_at', now()))
+                       END
     FROM prev
     WHERE piece_id = $1 AND tenant_id = $2 AND status IN ('approved', 'held')
     RETURNING piece_id, tenant_id, angle_gate_request_id, attempt_number, content_text,
               status, held_reason, gate_ledger, repair_log, created_at,
               seo_title, meta_description, slug, channel,
-              route_hub_name, route_segment_count, flags, prev.before_text
+              route_hub_name, route_segment_count, flags, prev.before_text,
+              writer_input -> 'ai_provenance' AS ai_provenance
 """
 
 

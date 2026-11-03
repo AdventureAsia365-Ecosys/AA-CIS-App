@@ -1213,6 +1213,12 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     support, deterministic and report-only, `services/content_generation/t2_brand_claims.py`); the admin reads it in
     Content Quality → Tour versions. **T9 write is a job** too (`t9_write`, `content_piece.job_id`; a job that
     ends without success marks the piece `failed`, which the portal already shows with Retry).
+    **Machine-readable AI mark (AA-1040, EU AI Act Art. 50(2)):** every T9 piece is AI output;
+    `content_piece.writer_input -> 'ai_provenance'` holds `ai_generated`, `generator`, the writer `model` of the final
+    attempt (from the `t9_write` ledger row) and `generated_at`, stamped at finalize, plus `human_edited_at` on a
+    tenant edit (no migration). `services/acp_content_writing/ai_marking.py` builds the mark: `piece["ai"]` in the
+    tenant JSON, `data-ai-*` on the `<article>` and `<meta name="ai-*">` tags in exports and the WordPress post, the
+    `X-AI-*` headers of a download. Facebook Page text posts have no API label (the mark stays in the piece).
     **A3 atomize is a job** (`a3_atomize`, one tour at a time), enqueued by publish
     (`process_export`) and by `POST /admin/atoms/atomize` (one job per tour).
   - **Recompute stage registry (AA-735 nac 3, ADR 0003 layer B + C)**: the platform-wide
