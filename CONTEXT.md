@@ -154,6 +154,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     confirmed quote and booking terms bind, never claims to exclude liability), which with `i18n.ts` is in the
     `tokens` profile so TripPlanner's own B2C notice renders the same sentence. Language: the I18nProvider's, or
     the `lang` prop (CRM web). Tested in `lib/kitAiNotice.test.mjs`; shown in the kit gallery.
+    **AA-1040:** variant `narration` (a traveller reading what the AI wrote when they asked for it: TripPlanner trip
+    narration, EU AI Act Art. 50(1)) and `form="badge"`: the short "AI-assisted" pill (`aiBadgeText`) for cards and
+    rows, a `<span role="note">` whose accessible name and tooltip are the variant's sentence (Content studio).
     `check-kit-copy.mjs`, **`eslint-kit.mjs`** (AA-994 S1c, see "Kit lint" below), `MANIFEST.json` and **`tokens.css`** (AA-994 S1b: the one `--aa-*` token set of every
     frontend — light and dark palettes, `--aa-scrim` / `--aa-hero-bg`, shadows, `--aa-font-*` as
     `var(--font-*, "<family>")`, and the type / radius / space / z / motion scales from TripPlanner AA-995;

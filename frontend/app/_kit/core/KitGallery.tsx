@@ -347,6 +347,11 @@ export function KitGallery() {
           <AiNotice testId="kit-gallery-ai-staff" />
           <AiNotice variant="publisher" testId="kit-gallery-ai-publisher" />
           <AiNotice variant="traveller" testId="kit-gallery-ai-traveller" />
+          <AiNotice variant="narration" testId="kit-gallery-ai-narration" />
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <AiNotice variant="publisher" form="badge" testId="kit-gallery-ai-badge" />
+            <AiNotice variant="staff" form="badge" testId="kit-gallery-ai-badge-staff" />
+          </div>
         </div>
       </Entry>
 
