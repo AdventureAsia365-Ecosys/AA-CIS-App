@@ -474,14 +474,22 @@ async def test_a_restore_after_the_first_checks_stops_the_apply_inside_the_trans
     # the restore lands after apply_refusals read the (still offboarded) row and before the transaction; it writes
     # no audit row here, so the counts (and the fingerprint) stay the same: only the locked re-check can stop it.
     # AA-978 (CIS 276): a real restore also writes a tenant.unlocked feed event, which alone changes the counts; the
-    # feed trigger is off for this one statement so the test still reaches the locked re-check.
+    # feed trigger is off for this one statement so the test still reaches the locked re-check. AA-1028 (CIS 354): so is
+    # the account.status_changed trigger, which a restore also fires, and (CIS 355) the content-subscription bridge,
+    # which makes the canceled subscription active again and re-materialises the entitlements.
     stale = dict(await admin.fetchrow("SELECT tenant_id, is_active, cancelled_at FROM shared.tenants "
                                       "WHERE tenant_id = $1::uuid", tid))
+    feeds = [r["tgname"] for r in await admin.fetch(
+        "SELECT tgname FROM pg_trigger WHERE tgrelid = 'shared.tenants'::regclass "
+        "AND tgname IN ('tenants_membership_feed_upd', 'tenants_account_event_upd', "
+        "'tenants_content_subscription_upd')")]
     async with admin.acquire() as c, c.transaction():
-        await c.execute("ALTER TABLE shared.tenants DISABLE TRIGGER tenants_membership_feed_upd")
+        for name in feeds:
+            await c.execute(f"ALTER TABLE shared.tenants DISABLE TRIGGER {name}")
         await c.execute("UPDATE shared.tenants SET cancelled_at = NULL, is_active = true WHERE tenant_id = $1::uuid",
                         tid)
-        await c.execute("ALTER TABLE shared.tenants ENABLE TRIGGER tenants_membership_feed_upd")
+        for name in feeds:
+            await c.execute(f"ALTER TABLE shared.tenants ENABLE TRIGGER {name}")
     real = ej.apply_refusals
     monkeypatch.setattr(ej, "apply_refusals",
                         lambda payload, dry_job, tenant_row, now, env=None: real(payload, dry_job, stale, now, env))

@@ -74,6 +74,10 @@ async def _as_runtime(conn):
     await conn.execute(migration_body(276))
     await conn.execute("GRANT USAGE ON SCHEMA shared TO cis_app")
     await conn.execute("GRANT SELECT, INSERT, UPDATE ON shared.tenants TO cis_app")
+    # AA-1028 (CIS 354 / 355): a tenant write also emits account.status_changed and keeps the content subscription
+    # (and so the entitlements) as the writer: re-apply 353 for the grants it gives cis_app.
+    if await conn.fetchval("SELECT to_regprocedure('shared.tenant_account_emit(text,uuid,jsonb)') IS NOT NULL"):
+        await conn.execute(migration_body(353))
     await conn.execute("SET LOCAL ROLE cis_app")
 
 
