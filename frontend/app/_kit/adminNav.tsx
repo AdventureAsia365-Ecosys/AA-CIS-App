@@ -13,7 +13,7 @@
 
 import {
   Cpu, Gauge, Users, Upload, Wand2, ClipboardList, Library, Settings, Wallet, UserCog, Radio,
-  Puzzle, ListChecks, Scale, Search, Image as ImageIcon, BookOpen, BarChart3, ShieldCheck,
+  Puzzle, ListChecks, Scale, Search, Image as ImageIcon, BookOpen, BarChart3, ShieldAlert, ShieldCheck,
   Boxes, ScrollText, ChartPie, BellRing, MapPin, Network, Eraser, Building2, FileText, Hotel, Table2, BookMarked, Quote,
   Newspaper, CreditCard, FileStack, PenLine,
 } from "lucide-react";
@@ -61,6 +61,7 @@ const ICONS: Record<NavIcon, React.ReactNode> = {
   trace: <Radio size={16} />,
   reviewLog: <BarChart3 size={16} />,
   slate: <FileStack size={16} />,
+  compliance: <ShieldAlert size={16} />,
   aiGateway: <Cpu size={16} />,
   spend: <Wallet size={16} />,
   costPerApp: <ChartPie size={16} />,

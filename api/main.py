@@ -68,6 +68,7 @@ from api.routers.admin_supply_content import router as admin_supply_content_rout
 from api.routers.admin_search import router as admin_search_router  # AA-752 — global ⌘K search
 from api.routers.admin_waves import router as admin_waves_router  # AA-727 — rerun waves as objects
 from api.routers.admin_content_quality import router as admin_content_quality_router  # AA-769
+from api.routers.admin_tenant_compliance import router as admin_tenant_compliance_router  # AA-1039 R6
 from api.routers.admin_tenant360 import router as admin_tenant360_router  # AA-766
 from api.routers.admin_platform_ops import router as admin_platform_ops_router  # AA-884
 from api.routers.admin_crm_console import router as admin_crm_console_router  # AA-941
@@ -344,6 +345,7 @@ app.include_router(admin_supply_content_router)  # AA-835 — /admin/supply-cont
 app.include_router(admin_search_router)  # AA-752 — GET /admin/search (global ⌘K palette)
 app.include_router(admin_waves_router)  # AA-727 — /admin/waves (expected set, report, check)
 app.include_router(admin_content_quality_router)  # AA-769 — /admin/content-quality (T2/T9 quality, place cards)
+app.include_router(admin_tenant_compliance_router)  # AA-1039 R6 — /admin/tenant-qa/compliance (d20 / d21 flags)
 app.include_router(admin_tenant360_router)  # AA-766 — /admin/tenants/{id}/{cost,quality,markets}
 app.include_router(photos_public_router)  # AA-708 — /content/photos/{id} (public image redirect)
 app.include_router(v1_progress_router)  # AA-637 — GET /v1/progress/{kind}/{job_id}

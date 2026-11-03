@@ -22,6 +22,7 @@ export const M = defineMessages(
     navContentTrace: "Content Trace",
     navReviewLog: "Review log",
     navSlate: "Slate",
+    navCompliance: "Compliance",
     subNavLabel: "Atoms & routes sections",
     subNavLabelQa: "Tenant content QA pages",
     // TenantSelect
@@ -62,6 +63,7 @@ export const M = defineMessages(
     navContentTrace: "Truy vết nội dung",
     navReviewLog: "Nhật ký duyệt",
     navSlate: "Slate",
+    navCompliance: "Tuân thủ",
     subNavLabel: "Các mục Atom & tuyến",
     subNavLabelQa: "Các trang kiểm nội dung tenant",
     tenant: "Tenant",

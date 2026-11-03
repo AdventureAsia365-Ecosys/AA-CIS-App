@@ -611,6 +611,10 @@
     "capability": null,
     "module": "api.routers.admin_supply_content"
   },
+  "GET /admin/tenant-qa/compliance": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_tenant_compliance"
+  },
   "GET /admin/tenants": {
     "capability": "tenant.read",
     "module": "api.routers.admin"
@@ -1314,6 +1318,10 @@
   "POST /admin/supply-content/{entity_id}/versions/{version_id}/reject": {
     "capability": "review.act",
     "module": "api.routers.admin_supply_content"
+  },
+  "POST /admin/tenant-qa/compliance/{flag_id}/release": {
+    "capability": "quality.write",
+    "module": "api.routers.admin_tenant_compliance"
   },
   "POST /admin/tenants": {
     "capability": "tenant.write",

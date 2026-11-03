@@ -145,6 +145,29 @@ class WordPressAdapter(CMSAdapter):
                                f"(HTTP {status_code}{': ' + message if message else ''})")
         raise RuntimeError(f"WP API delete {status_code} returned an unexpected response: {body_text[:300]}")
 
+    async def set_draft(self, post_id) -> str:
+        """AA-1039 R6 (root ADR 0019 d20): take a page about a tour AA retired off the public site after the notice
+        period by moving it back to draft (POST /wp/v2/posts/{id} {"status": "draft"}); nothing is deleted and the
+        site owner can publish it again. Returns "drafted", or "already_gone" when WordPress says the post no longer
+        exists or is in the trash. Same AA-460 lesson: the answer must be a real post object now in draft."""
+        resp = await safe_http.request("POST", f"{self.api_base}/posts/{quote(str(post_id), safe='')}",
+                                       json={"status": "draft"}, headers=self._headers(), timeout=_TIMEOUT_S)
+        status_code = resp.status
+        body_text = resp.text()
+        parsed_body = _json_or_none(resp.headers.get("content-type", ""), body_text)
+        if status_code == 200 and isinstance(parsed_body, dict) and "id" in parsed_body:
+            if parsed_body.get("status") == "draft":
+                return "drafted"
+            if parsed_body.get("status") == "trash":
+                return "already_gone"
+        code, message = _wp_error(parsed_body)
+        if (status_code, code) in ((404, "rest_post_invalid_id"), (410, "rest_already_trashed")):
+            return "already_gone"
+        if status_code == 401 or code in ("rest_cannot_edit", "rest_forbidden"):
+            raise RuntimeError("WordPress refused the change — the connected user cannot edit this post "
+                               f"(HTTP {status_code}{': ' + message if message else ''})")
+        raise RuntimeError(f"WP API update {status_code} returned an unexpected response: {body_text[:300]}")
+
 
 def _json_or_none(content_type: str, body_text: str):
     if not content_type.startswith("application/json"):

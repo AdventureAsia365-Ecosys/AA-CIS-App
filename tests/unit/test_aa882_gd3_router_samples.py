@@ -36,6 +36,7 @@ SAMPLES = [
     ("admin_atoms", "PATCH", "/admin/atoms/{atom_id}", {"text": "x"}),
     ("admin_a4", "POST", "/admin/a4/publish-log/{publish_id}/unpublish", {}),
     ("admin_content_quality", "PATCH", "/admin/content-quality/place-cards/{card_id}", {}),
+    ("admin_tenant_compliance", "POST", "/admin/tenant-qa/compliance/{flag_id}/release", {"reason": "ok"}),  # AA-1039
     ("admin_photos", "POST", "/admin/photos/{photo_id}/assign", {}),
     ("admin_places", "POST", "/admin/places/backfill", {"limit": 999}),
     ("admin_supply_content", "POST", "/admin/supply-content/{entity_id}/versions/{version_id}/publish", None),
