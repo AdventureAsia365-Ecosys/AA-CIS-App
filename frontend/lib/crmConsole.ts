@@ -68,6 +68,9 @@ export interface AgencyEntitlements {
   seats_allowed: number;
   features_allowed: string[];
   insights_opt_out: boolean;
+  /** crm.ops.v1 1.11: "cis" once the CRM's crm_entitlement_pull projected the tenant's CIS account (the allowed
+   *  features are then read-only here); "ops" while not projected yet. Absent from a 1.10 server. */
+  managed_by?: "cis" | "ops";
 }
 
 export type DataRequestKind = "agency_export" | "agency_deletion";

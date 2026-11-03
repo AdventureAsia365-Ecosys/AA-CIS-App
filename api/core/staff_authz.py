@@ -213,6 +213,10 @@ POLICY: dict[tuple[str, str], str] = {
     # ── admin (admin.py) — tenant accounts (Tenants page, admin-only; AA-797 already re-checks writes)
     ("GET", "/admin/tenants"): TENANT_READ,
     ("POST", "/admin/tenants"): TENANT_WRITE,
+    # AA-1028 R1 slice 2 — the tenant_provision saga (admin_tenant_provision.py): create with subscriptions, add-ons
+    ("POST", "/admin/tenants/provision"): TENANT_WRITE,
+    ("POST", "/admin/tenants/{tenant_id}/provision"): TENANT_WRITE,
+    ("GET", "/admin/tenants/provision/{job_id}"): TENANT_READ,
     ("PATCH", "/admin/tenants/{tenant_id}"): TENANT_WRITE,
     ("GET", "/admin/tenants/{tenant_id}/usage"): TENANT_READ,
     ("GET", "/admin/tenants/{tenant_id}/audit"): TENANT_READ,

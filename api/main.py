@@ -42,6 +42,7 @@ from api.routers.v1_account_members import router as v1_account_members_router  
 from api.routers.v1_trip_page import router as v1_trip_page_router  # AA-482
 from api.routers.v1_trip_page import admin_router as admin_trip_page_router  # AA-482
 from api.routers.admin import router as admin_router
+from api.routers.admin_tenant_provision import router as admin_tenant_provision_router  # AA-1028 R1 slice 2
 from api.routers.admin_api_docs import router as admin_api_docs_router  # AA-577 — /admin/openapi.json
 from api.routers.admin_data_model import router as admin_data_model_router  # AA-894 — /admin/data-model
 from api.routers.admin_docs import router as admin_docs_router  # AA-898 — /admin/docs/*
@@ -313,6 +314,7 @@ app.include_router(v1_account_router)  # AA-761 — tenant Account pages: activi
 app.include_router(v1_account_members_router)  # AA-978 — tenant Account › Members (CIS 276 directory)
 app.include_router(v1_trip_page_router)  # AA-482 — GET /v1/trip/{tour_id}, public page data
 app.include_router(admin_trip_page_router)  # AA-482 — /admin/trip-pages/{publish,recheck}
+app.include_router(admin_tenant_provision_router)  # before admin_router: /tenants/provision is no tenant id
 app.include_router(admin_router)
 app.include_router(admin_pipeline_router)
 app.include_router(admin_settings_router)

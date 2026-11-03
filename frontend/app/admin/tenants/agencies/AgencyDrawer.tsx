@@ -496,6 +496,10 @@ function DeleteTestAgencySection({ agency, members, canWrite, base, onDeleted }:
 
 // ── 4. Features allowed ───────────────────────────────────────────────────────────────────────────
 
+// crm.ops.v1 1.11: once the CRM's crm_entitlement_pull has projected the tenant's CIS account (managed_by "cis") the
+// allowed list follows the CIS entitlements and is read-only here (PUT /entitlements-allowed answers 409
+// entitlements_managed_by_cis). While the agency is managed_by "ops" (never projected: no CIS tenant, or CIS holds no
+// crm subscription yet) AA still allows features here, as before 1.11.
 function FeaturesSection({ q, canWrite, base, onDone }: { q: Q<AgencyEntitlements>; canWrite: boolean; base: string; onDone: Done }) {
   const t = useT(DRAWER);
   const crm = useCrmText();
@@ -503,6 +507,8 @@ function FeaturesSection({ q, canWrite, base, onDone }: { q: Q<AgencyEntitlement
   const [draft, setDraft] = useState<string[] | null>(null);
   const [open, setOpen] = useState(false);
   const current = q.data?.features_allowed ?? [];
+  const managedByCis = q.data?.managed_by === "cis";
+  const editable = canWrite && !managedByCis;
   const chosen = draft ?? current;
   const dirty = draft !== null && (draft.length !== current.length || draft.some((f) => !current.includes(f)));
   const path = base.slice(CRM_API.length);
@@ -514,19 +520,19 @@ function FeaturesSection({ q, canWrite, base, onDone }: { q: Q<AgencyEntitlement
   return (
     <Section title={t("features")} testId="crm-features"
       aside={q.data ? <span style={noteStyle}>{t("planSeats", q.data.plan, q.data.seats_allowed)}</span> : undefined}>
-      <div style={noteStyle}>{t("featuresNote")}</div>
+      <div style={noteStyle}>{managedByCis ? t("featuresManaged") : t("featuresNote")}</div>
       {q.isLoading ? <Loading /> : q.isError ? <InlineError message={errText(q.error)} /> : (
         <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 200px), 1fr))", gap: 6 }}>
             {crm.features.map((f) => (
               <label key={f.code} style={{ display: "inline-flex", gap: 8, alignItems: "center", fontSize: 13 }}>
-                <Checkbox checked={chosen.includes(f.code)} disabled={!canWrite}
+                <Checkbox checked={chosen.includes(f.code)} disabled={!editable}
                   onChange={() => toggle(f.code)} />
                 {f.label}
               </label>
             ))}
           </div>
-          {canWrite && (
+          {editable && (
             <div style={{ display: "flex", gap: 8 }}>
               <Button size="sm" variant="secondary" disabled={!dirty} onClick={() => setOpen(true)}>{t("saveFeatures")}</Button>
               {dirty && <Button size="sm" variant="ghost" onClick={() => setDraft(null)}>{t("undo")}</Button>}

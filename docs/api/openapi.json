@@ -374,6 +374,43 @@
         "title": "AccountPagination",
         "type": "object"
       },
+      "AddOnIn": {
+        "properties": {
+          "plan_key": {
+            "maxLength": 64,
+            "pattern": "^[a-z]+\\.[a-z][a-z0-9_]*$",
+            "title": "Plan Key",
+            "type": "string"
+          },
+          "product": {
+            "enum": [
+              "crm",
+              "tripplanner"
+            ],
+            "title": "Product",
+            "type": "string"
+          },
+          "seats": {
+            "anyOf": [
+              {
+                "maximum": 500.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seats"
+          }
+        },
+        "required": [
+          "product",
+          "plan_key"
+        ],
+        "title": "AddOnIn",
+        "type": "object"
+      },
       "AddRecipientBody": {
         "additionalProperties": false,
         "properties": {
@@ -4781,6 +4818,173 @@
           }
         },
         "title": "PostActivationBody",
+        "type": "object"
+      },
+      "ProvisionAttachIn": {
+        "properties": {
+          "add_ons": {
+            "items": {
+              "$ref": "#/components/schemas/AddOnIn"
+            },
+            "maxItems": 2,
+            "minItems": 1,
+            "title": "Add Ons",
+            "type": "array"
+          },
+          "request_key": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,63}$",
+            "title": "Request Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_key",
+          "add_ons"
+        ],
+        "title": "ProvisionAttachIn",
+        "type": "object"
+      },
+      "ProvisionCreateIn": {
+        "properties": {
+          "add_ons": {
+            "items": {
+              "$ref": "#/components/schemas/AddOnIn"
+            },
+            "maxItems": 2,
+            "title": "Add Ons",
+            "type": "array"
+          },
+          "kind": {
+            "default": "agency",
+            "enum": [
+              "agency",
+              "demo"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "plan_tier": {
+            "enum": [
+              "starter",
+              "growth",
+              "business"
+            ],
+            "title": "Plan Tier",
+            "type": "string"
+          },
+          "posts_per_week": {
+            "maximum": 14.0,
+            "minimum": 1.0,
+            "title": "Posts Per Week",
+            "type": "integer"
+          },
+          "request_key": {
+            "description": "The caller's key for this request; the same key twice is one job",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,63}$",
+            "title": "Request Key",
+            "type": "string"
+          },
+          "slug": {
+            "pattern": "^[a-z0-9](?:[a-z0-9-]{0,98}[a-z0-9])?$",
+            "title": "Slug",
+            "type": "string"
+          },
+          "trial_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Not supported yet: any value answers 422 trial_not_supported_yet (no job ends a trial before slice 3); the content subscription starts active",
+            "title": "Trial Days"
+          }
+        },
+        "required": [
+          "request_key",
+          "name",
+          "slug",
+          "plan_tier",
+          "posts_per_week"
+        ],
+        "title": "ProvisionCreateIn",
+        "type": "object"
+      },
+      "ProvisionJobOut": {
+        "properties": {
+          "created": {
+            "title": "Created",
+            "type": "boolean"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "request_key": {
+            "title": "Request Key",
+            "type": "string"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "tenant_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tenant Id"
+          }
+        },
+        "required": [
+          "job_id",
+          "created",
+          "status",
+          "request_key"
+        ],
+        "title": "ProvisionJobOut",
         "type": "object"
       },
       "QuestionUpdate": {
@@ -33004,6 +33208,172 @@
         ]
       }
     },
+    "/admin/tenants/provision": {
+      "post": {
+        "operationId": "provision_tenant_admin_tenants_provision_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProvisionCreateIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProvisionJobOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Provision a tenant: account, content subscription and add-ons in one job",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/tenants/provision/{job_id}": {
+      "get": {
+        "operationId": "get_provision_job_admin_tenants_provision__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProvisionJobOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "One tenant provisioning job",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/admin/tenants/{tenant_id}": {
       "patch": {
         "description": "Plan change (plan_tier + plan_id + rate_limit_rpm together), an RPM override\n(rate_limit_rpm, AA-766), a daily publish limit override (daily_publish_limit, AA-819; `null`\nclears it) and/or suspend/resume (is_active). An offboarded tenant (cancelled_at set) gets 409\nhere: it comes back only through POST /tenants/{id}/restore, which also issues a new key.\nEach change writes one audit row with before/after, in the same transaction. Before migration 230\nthe publish limit override is refused with 409 (the code default applies to every tenant).",
@@ -34511,6 +34881,107 @@
           }
         },
         "summary": "Tenant offboarding — cancel tenant + revoke key (soft)",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/tenants/{tenant_id}/provision": {
+      "post": {
+        "operationId": "provision_add_ons_admin_tenants__tenant_id__provision_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProvisionAttachIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProvisionJobOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add or change add-on subscriptions of a tenant in one job",
         "tags": [
           "admin"
         ]
