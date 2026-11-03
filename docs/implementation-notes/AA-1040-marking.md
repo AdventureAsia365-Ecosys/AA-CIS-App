@@ -42,6 +42,17 @@ carries a mark software can read. Deadline 02/12/2026 (root ADR 0019 d19).
   `edit_source` (`/v1/tours/my-versions`, `/v1/tours/versions/{id}` and its history, the pool's version list), and the
   DOCX download writes the mark into the file's core properties (keywords `ai-generated`, comments with generator /
   generated-at / human-edited). The model stays in the hidden `generation_meta` (not projected).
+- **Master catalog text (review fix, S266):** the largest body of AI text a tenant reads is the A-series Master text
+  (`published_tours.aa_name/aa_subtitle/aa_summary/aa_description/aa_highlights/aa_itineraries/mobile_card_text`,
+  written by the S1 writer). `project_tour()` now adds `ai` to every row carrying any of those columns
+  (`/v1/tours/pool`, `/v1/tours/{id}`, `/v1/tours/{id}/full` tenant branch): `ai_generated: true`, `generator`
+  "Adventure Asia catalog writer", `generated_at` = `updated_at` (last Master publish, CIS 273), else
+  `published_at`. `model: null` and `human_edited: null` (not known at this read): the writer models and a staff
+  edit before approval are recorded on `silver_aa_internal.generated_content`, which the tenant pool cannot read
+  (`tenant_isolation`, no master-read policy) and which AA-796 keeps admin-side; joining it would put admin review
+  data on the tenant path. The pool listing now selects `pt.updated_at` too. `/v1/marketplace` returns only the
+  tour name and the version state (no body text), so it gets no tour mark; its versions carry none either (the
+  query selects no `edit_source`). The TripPlanner tour page marks the same text per block (TP notes).
 - Default of `render_content_text_to_fragment/document` without `ai` stays byte for byte (AA-613 tests); every
   caller with a real piece passes it (export route, publish dispatch).
 
@@ -53,7 +64,8 @@ carries a mark software can read. Deadline 02/12/2026 (root ADR 0019 d19).
 - `export.py`: `ai=` on fragment / document. `dispatch.py`: `piece_ai_mark`, the blog post carries the mark.
 - `v1_publish._PUBLISH_PIECE_SQL`: `cp.created_at`, the provenance key. `v1_content_writing.export_piece`: marked
   HTML and `X-AI-*` headers.
-- `api/routers/_tenant_projection.project_version`: `ai` (T2). `v1_tours._EXPORT_VERSION_SQL` reads
+- `api/routers/_tenant_projection.project_version`: `ai` (T2); `project_tour`: `ai` (Master text);
+  `v1_tours._POOL_ROWS_SQL` selects `pt.updated_at`. `v1_tours._EXPORT_VERSION_SQL` reads
   `ttv.edit_source, ttv.created_at`; `export_version_docx` sets the DOCX core properties.
 - Tests: `tests/unit/test_aa1040_ai_marking.py`, `tests/integration/test_aa1040_ai_marking_sql.py`;
   `test_aa916_capture_edits.TENANT_SAFE_KEYS` gains `ai`; `test_aa859_t2_version_detail_reads._OLD_EXPORT` gains the

@@ -1221,6 +1221,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `X-AI-*` headers of a download. Facebook Page text posts have no API label (the mark stays in the piece).
     T2 versions: `project_version()` adds `ai` from `edit_source` (`tenant_edit` = human-edited) and the DOCX download
     carries it in its core properties (keywords `ai-generated`, comments).
+    Master catalog text (A-series `published_tours.aa_*`, S1 writer): `project_tour()` adds `ai` (`generator`
+    "Adventure Asia catalog writer", `generated_at` = `updated_at` else `published_at`; `model` and `human_edited`
+    null, both recorded admin-side on `generated_content`) to `/v1/tours/pool`, `/v1/tours/{id}` and `/{id}/full`.
     **A3 atomize is a job** (`a3_atomize`, one tour at a time), enqueued by publish
     (`process_export`) and by `POST /admin/atoms/atomize` (one job per tour).
   - **Recompute stage registry (AA-735 nac 3, ADR 0003 layer B + C)**: the platform-wide

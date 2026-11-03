@@ -289,3 +289,32 @@ async def test_docx_export_file_has_the_ai_properties():
     body = b"".join([chunk async for chunk in resp.body_iterator])
     props = Document(io.BytesIO(body)).core_properties
     assert props.keywords == "ai-generated" and "generator=Adventure Asia Content studio" in props.comments
+
+
+# ── 6. the A-series Master catalog text (review fix) ──────────────────────────────────────────────────────────
+
+LATER = datetime(2026, 10, 28, 4, 0, tzinfo=timezone.utc)
+
+
+def test_tour_mark_uses_the_last_master_publish():
+    m = ai_marking.tour_mark(LATER, CREATED)
+    assert m == {"ai_generated": True, "generator": ai_marking.CATALOG_GENERATOR, "model": None,
+                 "generated_at": LATER.isoformat(), "human_edited": None}
+    assert ai_marking.tour_mark(None, CREATED)["generated_at"] == CREATED.isoformat()
+    assert ai_marking.tour_mark(None, None)["generated_at"] is None
+
+
+def test_project_tour_marks_master_text_and_hides_the_score():
+    from api.routers._tenant_projection import forbidden_keys, project_tour
+    row = {"id": uuid.uuid4(), "aa_name": "Lantern Valley walk", "aa_summary": "A quiet walk.",
+           "quality_score": 8.1, "quality_score_id": uuid.uuid4(), "published_at": CREATED, "updated_at": LATER}
+    out = project_tour(row)
+    assert out["ai"]["ai_generated"] is True and out["ai"]["generated_at"] == LATER.isoformat()
+    assert "quality_score" not in out and forbidden_keys(out) == []
+    # a row without any Master text column (an id lookup) gets no mark
+    assert "ai" not in project_tour({"id": uuid.uuid4(), "published_at": CREATED})
+
+
+def test_pool_listing_selects_the_last_master_publish():
+    from api.routers import v1_tours
+    assert "pt.published_at, pt.updated_at," in v1_tours._POOL_ROWS_SQL

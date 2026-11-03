@@ -129,7 +129,7 @@ _POOL_ROWS_SQL = """
     SELECT pt.id, pt.tour_id, pt.aa_name, pt.aa_subtitle, pt.aa_summary,
            pt.aa_highlights, pt.aa_itineraries, pt.aa_description,
            pt.seo_title, pt.seo_meta, pt.seo_keywords_used,
-           pt.published_at,
+           pt.published_at, pt.updated_at,
            rt.country, rt.duration, rt.price_raw,
            EXISTS(
                SELECT 1 FROM gold_aa_internal.tenant_tour_versions ttv

@@ -31,6 +31,11 @@ from typing import Any, Optional
 
 PROVENANCE_KEY = "ai_provenance"
 GENERATOR = "Adventure Asia Content studio"
+# The A-series Master catalog text (gold_aa_internal.published_tours aa_* columns) is written by the S1 writer model.
+CATALOG_GENERATOR = "Adventure Asia catalog writer"
+# The published_tours columns that hold that AI-written text; a tenant row carrying any of them gets the mark.
+CATALOG_TEXT_FIELDS = frozenset({"aa_name", "aa_subtitle", "aa_summary", "aa_description", "aa_highlights",
+                                 "aa_itineraries", "mobile_card_text"})
 # IPTC NewsCodes digital source type: "created by a trained algorithmic model" (cv.iptc.org digitalsourcetype).
 IPTC_DIGITAL_SOURCE_TYPE = "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia"
 WRITER_STAGE = "t9_write"
@@ -143,6 +148,22 @@ def version_mark(edit_source: Optional[str], created_at: Any) -> dict:
     }
 
 
+def tour_mark(updated_at: Any, published_at: Any = None) -> dict:
+    """The mark of a tour's A-series Master catalog text (`published_tours.aa_*`, written by the S1 writer).
+
+    `generated_at` is the last Master publish (`published_tours.updated_at`, moved only by a Master publish /
+    promote, CIS 273), else the first (`published_at`). `model` is None: the writer model is recorded on
+    `silver_aa_internal.generated_content`, which the tenant pool cannot read. `human_edited` is None (not known at
+    this read): a staff edit before approval is recorded on `generated_content.human_edited`, also admin-side."""
+    return {
+        "ai_generated": True,
+        "generator": CATALOG_GENERATOR,
+        "model": None,
+        "generated_at": _iso(updated_at) or _iso(published_at),
+        "human_edited": None,
+    }
+
+
 def docx_properties(mark: dict) -> dict:
     """Core properties of a DOCX download (python-docx `core_properties`): keywords + comments carry the mark."""
     parts = [f"generator={mark.get('generator') or GENERATOR}"]
@@ -162,6 +183,6 @@ async def writer_model(conn, request_id, piece_id) -> Optional[str]:
         return None
 
 
-__all__ = ["GENERATOR", "IPTC_DIGITAL_SOURCE_TYPE", "PROVENANCE_KEY", "WRITER_MODEL_SQL", "docx_properties",
-           "html_attributes", "html_meta_tags", "piece_mark", "response_headers", "stamp", "version_mark",
-           "writer_model"]
+__all__ = ["CATALOG_GENERATOR", "CATALOG_TEXT_FIELDS", "GENERATOR", "IPTC_DIGITAL_SOURCE_TYPE", "PROVENANCE_KEY",
+           "WRITER_MODEL_SQL", "docx_properties", "html_attributes", "html_meta_tags", "piece_mark",
+           "response_headers", "stamp", "tour_mark", "version_mark", "writer_model"]

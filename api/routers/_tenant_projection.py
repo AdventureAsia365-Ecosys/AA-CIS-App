@@ -105,8 +105,15 @@ def project_version(row: Any) -> dict:
 
 
 def project_tour(row: Any) -> dict:
-    """A published_tours row as the tenant may see it."""
-    return _without(row, TENANT_HIDDEN_TOUR_FIELDS)
+    """A published_tours row as the tenant may see it.
+
+    AA-1040: a row carrying the Master catalog text (any `aa_*` text column) also gets `ai`, the machine-readable mark
+    of that AI-written text (EU AI Act Art. 50(2)), from `updated_at` (last Master publish) else `published_at`."""
+    out = _without(row, TENANT_HIDDEN_TOUR_FIELDS)
+    from services.acp_content_writing.ai_marking import CATALOG_TEXT_FIELDS, tour_mark
+    if CATALOG_TEXT_FIELDS.intersection(out):
+        out["ai"] = tour_mark(out.get("updated_at"), out.get("published_at"))
+    return out
 
 
 def project_raw(row: Any) -> dict:
