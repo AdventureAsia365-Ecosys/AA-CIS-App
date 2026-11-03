@@ -27,7 +27,7 @@ CONTRACT = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "catalog
 DOC = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
 # sha256 of AA-Ecosys docs/contracts/catalog.http.v1.openapi.yaml (info.version 1.3). Update the root file first,
 # copy it here byte for byte, then set this to `sha256sum` of the root file.
-ROOT_CONTRACT_SHA256 = "6d10912381e7e00d169dda59e428c31ea320913f694f31d102e89907693244c3"
+ROOT_CONTRACT_SHA256 = "4ab152c10900a56b457dbff16dba9803cc6d9fe5330a0a0064a827c5953f6eaa"
 
 
 def test_copy_is_the_pinned_root_contract():

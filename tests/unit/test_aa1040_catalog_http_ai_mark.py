@@ -95,3 +95,68 @@ def test_served_tour_answers_with_a_contract_valid_mark(_env):
 def test_reader_selects_both_publish_times():
     assert "published_at" in reader.GET_TOUR_SQL and "updated_at" in reader.GET_TOUR_SQL
     assert "published_at" in reader.LIST_TOURS_SQL
+
+
+PHOTO = datetime(2026, 10, 20, 3, 0, tzinfo=timezone.utc)   # a photo update after the last text publish
+
+
+def test_generated_at_is_the_text_time_not_a_photo_change():
+    """CIS 359: v_tour.updated_at also moves with a photo; text_updated_at is the last Master publish only."""
+    views = seeded()
+    views.tours[SID_A].update(updated_at=PHOTO, text_updated_at=LAST, published_at=FIRST)
+    assert _body(views)["ai"] == tour_mark(LAST, FIRST)
+    assert _body(views)["ai"]["generated_at"] == LAST.isoformat()
+
+
+def test_a_photo_change_does_not_move_the_mark():
+    views = seeded()
+    views.tours[SID_A].update(updated_at=LAST, text_updated_at=LAST, published_at=FIRST)
+    before = _body(views)["ai"]
+    views.tours[SID_A].update(updated_at=PHOTO)
+    assert _body(views)["ai"] == before
+
+
+def test_reader_names_text_updated_at_and_the_pre_359_reads_select_null():
+    for sql in (reader.GET_TOUR_SQL, reader.LIST_TOURS_SQL):
+        assert ", text_updated_at" in sql
+    for sql in (reader.GET_TOUR_SQL_PRE_359, reader.LIST_TOURS_SQL_PRE_359):
+        assert "NULL::timestamptz AS text_updated_at" in sql
+        assert ", text_updated_at" not in sql.replace("AS text_updated_at", "")
+    assert "pg_attribute" in reader.TEXT_UPDATED_AT_SQL and "'text_updated_at'" in reader.TEXT_UPDATED_AT_SQL
+
+
+def _served(token, views):
+    client = TestClient(catalog_app(FakePool(views)))
+    resp = client.get(f"/catalog/v1/tours/cis/{SID_A}", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200
+    return resp.json()["ai"]
+
+
+def test_served_mark_uses_text_updated_at_once_359_is_applied(_env):
+    views = seeded()
+    views.tours[SID_A].update(updated_at=PHOTO, text_updated_at=LAST, published_at=FIRST)
+    assert _served(_env.token(), views)["generated_at"] == LAST.isoformat()
+    assert views.probes == 1
+    assert any(sql == reader.GET_TOUR_SQL for sql, _ in views.sql)
+    _served(_env.token(), views)
+    assert views.probes == 1                                  # a true probe is remembered for the process
+
+
+def test_before_359_the_mark_falls_back_to_updated_at_and_reprobes(_env):
+    views = seeded()
+    views.has_text_updated_at = False
+    views.tours[SID_A].update(updated_at=PHOTO, text_updated_at=LAST, published_at=FIRST)
+    assert _served(_env.token(), views)["generated_at"] == PHOTO.isoformat()   # the column is absent: upper bound
+    assert any(sql == reader.GET_TOUR_SQL_PRE_359 for sql, _ in views.sql)
+    views.has_text_updated_at = True                          # 359 applied while the task runs
+    assert _served(_env.token(), views)["generated_at"] == LAST.isoformat()
+    assert views.probes == 2
+
+
+def test_list_reads_follow_the_probe(_env):
+    views = seeded()
+    views.has_text_updated_at = False
+    client = TestClient(catalog_app(FakePool(views)))
+    resp = client.get("/catalog/v1/tours", headers={"Authorization": f"Bearer {_env.token()}"})
+    assert resp.status_code == 200
+    assert any(sql == reader.LIST_TOURS_SQL_PRE_359 for sql, _ in views.sql)

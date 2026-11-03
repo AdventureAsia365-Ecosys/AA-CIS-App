@@ -43,7 +43,8 @@ _PARAM = re.compile(r"\$(\d+)")
 
 
 class PgConn:
-    """The asyncpg calls reader.py makes (fetch, fetchrow), run on the psycopg2 test cursor as aa_app_user."""
+    """The asyncpg calls reader.py makes (fetch, fetchrow, fetchval), run on the psycopg2 test cursor as
+    aa_app_user."""
 
     def __init__(self, c):
         self.c = c
@@ -69,6 +70,10 @@ class PgConn:
     async def fetchrow(self, sql, *args):
         rows = self._run(sql, args)
         return rows[0] if rows else None
+
+    async def fetchval(self, sql, *args):
+        rows = self._run(sql, args)
+        return next(iter(rows[0].values())) if rows else None
 
 
 def _run(coro):
@@ -109,7 +114,23 @@ def test_served_tour_is_assembled_from_the_views_and_matches_the_contract(seeded
     errors = [e.message for e in _tour_validator().iter_errors(body)]
     assert errors == []
     assert body["content_hash"].startswith("sha256:")
-    assert conn.statements == 5     # v_tour + days, places, photos, components (tour_id = ANY each)
+    # the text_updated_at probe (AA-1040; this state has no CIS 359, so it runs every time) + v_tour + days, places,
+    # photos, components (tour_id = ANY each)
+    assert conn.statements == 6
+
+
+def test_before_359_the_reader_falls_back_to_updated_at(seeded):
+    """AA-1040: on a catalog.v_tour without text_updated_at (Dev before CIS 359), the probe answers false, the
+    pre-359 read runs as aa_app_user, and the mark's generated_at is v_tour.updated_at."""
+    c, _ = seeded
+    _, grp = c.seeded["served"]
+    reader.reset_gate()
+    conn = PgConn(c)
+    assert _run(reader.has_text_updated_at(conn)) is False
+    body = _run(reader.get_tour(conn, grp, photo_base=BASE)).body
+    c.execute("SELECT updated_at FROM catalog.v_tour WHERE source_id = %s", (grp,))
+    assert body["ai"]["generated_at"] == c.fetchone()[0].isoformat()
+    assert body["ai"]["ai_generated"] is True
 
 
 @pytest.mark.parametrize("key, state, reason", [
