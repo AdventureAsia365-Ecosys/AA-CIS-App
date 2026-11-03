@@ -2379,6 +2379,10 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
   `shared.tenant_subscription` (one per tenant and product, Stripe status vocabulary; an add-on needs a live content
   row), `shared.tenant_entitlement_override` (per-tenant exceptions with a reason, optional expiry, `enabled = false`
   takes a feature away).
+- Until the slice-2 saga writes subscriptions, the bridge trigger `tenants_content_subscription_ins` / `_upd` (CIS 355)
+  keeps the content subscription in step with `shared.tenants`: created at tenant create on the live plan of
+  `plan_tier` (`shared.plan.tier`), moved on a tier change, canceled with the add-ons on offboarding / closed, active
+  again on restore. The admin routes write no subscription themselves.
 - The resolver `shared.v_tenant_entitlement_resolved` (live): override > `shared.tenant_ai_budget` (as the
   `ai.budget_usd_monthly` override, until slice 3 retires that table; the gateway still reads it directly) > the plan
   of a live subscription. `shared.tenant_entitlement` is its materialisation, written only by
