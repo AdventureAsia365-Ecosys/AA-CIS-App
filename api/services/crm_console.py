@@ -66,6 +66,8 @@ ALLOWED: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         # AA-979 P2b — Content studio invitation delivery (Tenant 360 Members invite / send again), relayed by
         # api/routers/admin_tenant360.py: the CRM sends the AA system mail and owns the claim (crm.studio_invitation).
         ("POST", rf"{_T}/studio-invitations"),
+        # AA-1025 H1c (crm.ops.v1 1.10): the CRM app profile, relayed by PATCH /admin/ai-gateway/app-profiles/crm.
+        ("PUT", r"/llm/app-profile"),
     )
 )
 

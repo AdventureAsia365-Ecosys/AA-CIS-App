@@ -45,8 +45,10 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
           { term: "Hồ sơ ứng dụng", text: "Công tắc AI của từng ứng dụng (CIS, TripPlanner, CRM đối tác, AA-Booking). "
             + "Tắt AI: mọi lời gọi AI của ứng dụng đó bị từ chối trước khi gửi đi, có một dòng bị từ chối 0 USD ở tab "
             + "Calls, và job của nó chờ tới khi bật lại AI. Thẻ này cũng giữ việc tạm dừng tác vụ hàng loạt, ngân sách "
-            + "ngày mặc định và điều ứng dụng hiển thị khi AI không dùng được. Hiện gateway CIS áp dụng công tắc; các "
-            + "ứng dụng khác đọc dòng của mình khi chúng dùng tới. Tắt AI cần lý do và được ghi nhật ký kiểm toán." },
+            + "ngày mặc định và điều ứng dụng hiển thị khi AI không dùng được. CIS, TripPlanner (trong vòng 20 giây) và "
+            + "CRM đối tác áp dụng công tắc; TripPlanner và CRM còn dừng ở ngân sách ngày mặc định, và cảnh báo 80 % và "
+            + "100 % của TripPlanner tới chuông và e-mail vận hành. Thay đổi cho CRM đối tác được gửi tới CRM trước "
+            + "(cần nhóm quản trị nền tảng CRM). Tắt AI cần lý do và được ghi nhật ký kiểm toán." },
           { term: "Kết nối LLM", text: "Mỗi dòng là một đường nền tảng gọi tới model, ví dụ Bedrock trong một tài "
             + "khoản AWS (hiện bằng số tài khoản) hoặc API của OpenAI. Lần gọi AI của CRM đối tác có một dòng riêng, "
             + "đọc từ CRM bằng đăng nhập nhân viên của bạn; bật tắt chúng ở CRM, không phải ở đây." },

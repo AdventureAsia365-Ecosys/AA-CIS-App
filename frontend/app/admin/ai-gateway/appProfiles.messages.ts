@@ -23,8 +23,9 @@ export const PROFILES = defineMessages(
   {
     title: "App profiles",
     help: "The AI switch of each app. AI off: every AI call of the app is refused before it is sent (a 0 USD "
-      + "refused row on the Calls tab) and its jobs wait until AI is back on. Bulk pause, the default daily budget "
-      + "and the degrade mode are recorded here for each app.",
+      + "refused row on the Calls tab) and its jobs wait until AI is back on. The default daily budget is the daily "
+      + "cap of TripPlanner and the Partner CRM (an alert at 80 % and 100 %); CIS uses its cap on the Budgets tab. "
+      + "A Partner CRM change is sent to the CRM first.",
     loadError: "Could not load the app profiles.",
     notDeployed: "App profiles are not set up on this server yet.",
     colApp: "App",
@@ -40,8 +41,8 @@ export const PROFILES = defineMessages(
     paused: "Paused",
     noBudget: "Not set",
     centralCap: (v: string) => `Enforced cap ${v} a day (Budgets)`,
-    appliesHere: "Now, in this gateway",
-    appliesLater: "When the app reads its profile",
+    appliesHere: "Now, in the app's own gateway (TripPlanner within 20 s)",
+    appliesLater: "Not used (the app makes no AI call)",
     edit: "Edit",
     editTitle: (app: string) => `App profile · ${app}`,
     fieldAi: "AI for this app",
@@ -77,8 +78,9 @@ export const PROFILES = defineMessages(
   {
     title: "Hồ sơ ứng dụng",
     help: "Công tắc AI của từng ứng dụng. Tắt AI: mọi lời gọi AI của ứng dụng bị từ chối trước khi gửi đi (một dòng "
-      + "bị từ chối 0 USD ở tab Calls) và job của nó chờ tới khi bật lại AI. Tạm dừng tác vụ hàng loạt, ngân sách "
-      + "ngày mặc định và chế độ khi AI không dùng được được ghi ở đây cho từng ứng dụng.",
+      + "bị từ chối 0 USD ở tab Calls) và job của nó chờ tới khi bật lại AI. Ngân sách ngày mặc định là trần ngày của "
+      + "TripPlanner và CRM đối tác (cảnh báo ở 80 % và 100 %); CIS dùng trần ở tab Budgets. Thay đổi cho CRM đối "
+      + "tác được gửi tới CRM trước.",
     loadError: "Không tải được hồ sơ ứng dụng.",
     notDeployed: "Máy chủ này chưa có hồ sơ ứng dụng.",
     colApp: "Ứng dụng",
@@ -94,8 +96,8 @@ export const PROFILES = defineMessages(
     paused: "Tạm dừng",
     noBudget: "Chưa đặt",
     centralCap: (v: string) => `Trần đang áp dụng ${v} một ngày (Budgets)`,
-    appliesHere: "Ngay, trong gateway này",
-    appliesLater: "Khi ứng dụng đọc hồ sơ của nó",
+    appliesHere: "Ngay, trong gateway của ứng dụng (TripPlanner trong 20 giây)",
+    appliesLater: "Không dùng (ứng dụng không gọi AI)",
     edit: "Sửa",
     editTitle: (app: string) => `Hồ sơ ứng dụng · ${app}`,
     fieldAi: "AI của ứng dụng này",

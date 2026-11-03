@@ -50,7 +50,10 @@
                                                         LLM cap llm/app:<app> next to it.                   spend.read
   PATCH  /admin/ai-gateway/app-profiles/{app}       edit one app's profile; switching AI off needs a reason (audited
                                                         llm_app_ai_switched_off / _on, llm_app_profile_updated).
-                                                                                                              ai.admin
+                                                        AA-1025 H1c: for app crm the whole profile is first relayed to
+                                                        the CRM (crm.ops.v1 PUT /llm/app-profile, the staff member's
+                                                        own token, crm-platform-admin); a refusal there changes
+                                                        nothing here.                                         ai.admin
 
 $0: database reads (and one CRM read) and the tenant budget writes; no provider is called. The other caps are edited
 through their existing write routes (PUT /admin/budgets/{provider}/{scope}, PATCH /admin/llm-connections/{key}).
@@ -70,7 +73,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from api.core.staff_authz import StaffPrincipal, denial_reason, staff_policy
 from api.routers.admin import verify_admin_secret
-from api.services import ai_gateway, ai_gateway_calls, ai_gateway_experiments, platform_apps, tenant_ai_budget
+from api.services import (ai_gateway, ai_gateway_calls, ai_gateway_experiments, crm_console, platform_apps,
+                          tenant_ai_budget)
 from services.acp_shared.audit_log import write_audit_log
 from shared import provider_credit
 from shared.llm_client import app_profile
@@ -418,14 +422,50 @@ async def get_app_profiles(request: Request) -> dict:
     for app in app_profile.APPS:
         p = profiles.get(app) or app_profile.AppProfile(app=app)
         rows.append({**p.as_dict(), "central_cap": caps.get(app),
-                     "enforced_here": app == "cis"})       # the CIS gateway acts on it; other apps in H1b / H1c
+                     "enforced_here": app in ENFORCED_APPS})
     return {"profiles": rows, "degrade_modes": list(app_profile.DEGRADE_MODES)}
+
+
+# The apps whose gateway acts on their profile: CIS (H1a), TripPlanner (H1b: catalog.v_llm_app_profile_v1, CIS 347,
+# within its 20 s cache), the CRM (H1c: relayed at once to crm.llm_app_profile, crm-041). AA-Booking has no AI.
+ENFORCED_APPS = frozenset({"cis", "tripplanner", "crm"})
+CRM_PROFILE_PATH = "/llm/app-profile"
+
+
+def crm_profile_body(p: app_profile.AppProfile) -> dict:
+    """The crm.ops.v1 1.10 PUT body of a CIS profile (the whole profile; the budget as a 4-decimal string). Pure."""
+    budget = p.default_daily_budget_usd
+    return {"ai_enabled": p.ai_enabled, "bulk_paused": p.bulk_paused,
+            "default_daily_budget_usd": None if budget is None else f"{budget:.4f}",
+            "degrade_mode": p.degrade_mode, "disabled_reason": p.disabled_reason}
+
+
+async def _relay_crm_profile(request: Request, fields: dict) -> None:
+    """AA-1025 H1c: the CRM's copy first (root ADR 0008a §6: the CRM reads no shared.llm_* table). The CIS row after the
+    edit is relayed whole; anything but 200 is raised with the CRM's code, so the CIS row is not changed."""
+    try:
+        async with request.app.state.pool.acquire() as conn:
+            before = (await app_profile.read_all(conn)).get("crm") or app_profile.AppProfile(app="crm")
+    except app_profile.AppProfileUnavailable:
+        raise HTTPException(status_code=503, detail=_PROFILE_MISSING)
+    try:
+        after = app_profile.merged(before, fields)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    status, body = await crm_console.crm_ops_call("PUT", CRM_PROFILE_PATH, platform_apps.relay_authorization(request),
+                                                  json=crm_profile_body(after))
+    if status != 200:
+        detail = body.get("detail") if isinstance(body.get("detail"), str) else "crm_app_profile_refused"
+        raise HTTPException(status_code=status if status in (401, 403, 422, 503) else 502,
+                            detail=f"the partner CRM did not take the profile: {detail}")
 
 
 @router.patch("/app-profiles/{app}", summary="Edit one app's profile: AI on / off, bulk paused, default budget, "
                                             "degrade mode (audited)")
 async def patch_app_profile(body: AppProfilePatch, request: Request, app: str = _APP,
                             x_admin_user_id: Optional[str] = Header(None)) -> dict:
+    if app == "crm":
+        await _relay_crm_profile(request, body.fields())
     try:
         return await app_profile.update(request.app.state.pool, app, body.fields(), actor=_actor(x_admin_user_id))
     except LookupError:

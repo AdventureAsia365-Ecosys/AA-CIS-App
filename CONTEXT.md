@@ -539,6 +539,17 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   H1b / H1c). `LLM_APP_PROFILE=off` skips the check. Admin: AI providers › Providers › App profiles
   (`AppProfilesCard.tsx`; `GET /admin/ai-gateway/app-profiles` spend.read, `PATCH /admin/ai-gateway/app-profiles/{app}`
   ai.admin, a reason to switch off, audited `llm_app_ai_switched_off` / `_on` / `llm_app_profile_updated`).
+  **The other apps (AA-1025 H1b / H1c):** TripPlanner reads its row through `catalog.v_llm_app_profile_v1` (migration
+  347, `tripplanner` only, six columns: no reason, no `updated_by`) and acts on it within its own 20 s cache (AI off =
+  a 0 USD refused row and the basic narration / keyword search; `default_daily_budget_usd` = its daily cap over every
+  `tp_*` stage). The CRM reads no `shared.llm_*` table (root ADR 0008a §6): `PATCH .../app-profiles/crm` first relays
+  the whole profile to the CRM (`crm.ops.v1` 1.10 `PUT /llm/app-profile`, the staff member's own token, so it needs
+  `crm-platform-admin`; `api/services/crm_console.ALLOWED`) and changes the CIS row only after a 200 (a refusal answers
+  its status and changes nothing). The card's "Takes effect" (`enforced_here`) is true for cis, tripplanner and crm.
+  The ops check `llm_spend_alert.tripplanner.near|cap` (`shared/ops_checks.app_spend_findings`, sampler tick): when
+  TripPlanner's row has a budget, today's (UTC) `shared.llm_call_log` spend of app `tripplanner` against it at 80 % and
+  100 %, admin bell + one ops e-mail a UTC day per threshold; the CRM's spend has no such check (its ledger is
+  `crm.llm_call`, readable only with a staff token).
 - **Non-LLM provider circuit and the vendor API credit ledger** (AA-1025 B3 / B5, migrations 342 / 343):
   `shared/provider_circuit.py` keeps ONE circuit per decide / data provider connection (`typesafe`, `dataforseo`,
   `geoapify`) in `shared.provider_health` (PK `connection_key`; the breaker's pure transitions and `RULES`, a 10 s

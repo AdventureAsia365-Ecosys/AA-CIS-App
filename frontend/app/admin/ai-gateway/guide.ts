@@ -56,8 +56,10 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
           { term: "App profiles", text: "The AI switch of each app (CIS, TripPlanner, Partner CRM, AA-Booking). AI "
             + "off: every AI call of that app is refused before it is sent, with a 0 USD refused row on the Calls tab, "
             + "and its jobs wait until AI is back on. The card also keeps each app's bulk pause, default daily budget "
-            + "and what the app shows when AI is unavailable. Today the CIS gateway acts on the switch; the other apps "
-            + "read their row as they adopt it. Switching off needs a reason and is audited." },
+            + "and what the app shows when AI is unavailable. CIS, TripPlanner (within 20 seconds) and the Partner CRM "
+            + "act on the switch; TripPlanner and the CRM also stop at their default daily budget, and TripPlanner's "
+            + "80 % and 100 % alerts reach the bell and the ops e-mail. A Partner CRM change is sent to the CRM first "
+            + "(it needs the CRM platform admin group). Switching off needs a reason and is audited." },
           { term: "LLM connections", text: "One row per way the platform reaches a model, for example Bedrock in an "
             + "AWS account (shown by its account number) or the OpenAI API. The partner CRM's AI calls have one row "
             + "of their own, read from the CRM with your staff sign-in; they are switched in the CRM, not here." },

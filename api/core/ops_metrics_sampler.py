@@ -170,7 +170,9 @@ async def _ops_checks_part(pool, client, out: dict) -> None:
     """S263: the state checks of this tick plus the log events this process counted -> bell + e-mail."""
     from shared import ops_checks
 
-    results = await ops_checks.alert_all(pool, ops_checks.state_findings(out), client)
+    # AA-1025 H1b: + the app spend checks (TripPlanner against its app profile budget: the llm_spend_alert signal).
+    findings = ops_checks.state_findings(out) + await ops_checks.app_spend_findings(pool)
+    results = await ops_checks.alert_all(pool, findings, client)
     results.update(await ops_checks.flush_events(pool, client))
     if results:
         out["ops_checks"] = results
