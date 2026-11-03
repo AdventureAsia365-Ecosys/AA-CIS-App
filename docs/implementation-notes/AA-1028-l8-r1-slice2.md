@@ -55,3 +55,9 @@ README.md` §3.4-3.6; slice 1: `AA-1028-l1-r1-control-plane.md`. Three CIS PRs i
 - The saga's routes are in `tests/unit/snapshots/aa882_staff_route_policy.json` and the router sample list.
 - On the CI replay `shared.tenants.plan_id` does not exist (made by hand on Dev); the saga's integration test adds it in
   its rolled-back transaction, as test_aa797 does.
+- Review fix (S266): the branch was stacked on the pre-squash producer commits; it is rebased onto `origin/main` after
+  #1276 (`git rebase --onto origin/main c86bd8b9`), so the diff is the saga, the AgencyDrawer change (on the moved
+  path `frontend/app/admin/tenants/agencies/`), the contract 1.1 copy (byte-identical to the root file) and the re-pin.
+- Existing CRM agencies: the CRM pull keeps an agency's L1 features until CIS holds a crm subscription for it (adoption
+  guard, AA-Partner). After this PR deploys, attach the crm add-on to each CRM agency with
+  `POST /admin/tenants/{id}/provision` (crm.core, seats = its member limit) so the projection takes over.
