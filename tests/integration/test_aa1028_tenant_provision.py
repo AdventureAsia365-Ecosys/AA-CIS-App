@@ -4,8 +4,8 @@ The saga runs on a test connection inside one outer transaction that is rolled b
 the saga's own transaction is a savepoint). Covers:
 
   * create: the tenant row as POST /admin/tenants writes it (quota ledger, default brand rules row, no API key), the
-    content subscription from the 355 bridge, the trial (account trial, subscription trialing, entitlements source
-    trial), add-ons with seats, the feed events carrying the job's actor, the ONBOARD audit row with the request key;
+    content subscription from the 355 bridge (active: a trial is refused until the slice 3 trial-end tick), add-ons
+    with seats, the feed events carrying the job's actor, the ONBOARD audit row with the request key;
   * idempotency: the same request again returns the stored outcome (resumed) and writes nothing; a slug that exists
     without this key's audit row is refused (slug_taken);
   * attach: add-ons on an existing tenant, a canceled add-on active again, unchanged when nothing differs, refused on
@@ -82,29 +82,29 @@ async def _ents(conn, tid) -> dict:
 @pytest.mark.asyncio
 async def test_create_writes_the_tenant_subscriptions_and_events(conn):
     job = str(uuid.uuid4())
-    req = _create(trial_days=14, kind="demo",
+    req = _create(kind="demo",
                   add_ons=[{"product": "crm", "plan_key": "crm.core", "seats": 4},
                            {"product": "tripplanner", "plan_key": "tripplanner.hosted"}])
     out = await _run(conn, req, job)
     tid = out["tenant_id"]
     assert out["resumed"] is False and out["mode"] == "create" and out["api_key"] == "not_issued"
-    assert out["steps"] == ["tenant_created", "content_trial", "crm_subscribed", "tripplanner_subscribed"]
+    assert out["steps"] == ["tenant_created", "content_active", "crm_subscribed", "tripplanner_subscribed"]
     t = await conn.fetchrow("SELECT name, slug, plan_tier::text AS tier, rate_limit_rpm, api_key_hash, is_active, "
                             "account_status, kind, is_canary, posts_per_week FROM shared.tenants "
                             "WHERE tenant_id = $1::uuid", tid)
     assert (t["name"], t["slug"], t["tier"], t["rate_limit_rpm"]) == ("Zephyr Trails synthetic", req.slug,
                                                                       "starter", 60)
-    assert t["api_key_hash"] is None and t["is_active"] is True and t["account_status"] == "trial"
+    assert t["api_key_hash"] is None and t["is_active"] is True and t["account_status"] == "active"
     assert t["kind"] == "demo" and t["is_canary"] is True and t["posts_per_week"] == 3
     assert await conn.fetchval("SELECT s2_runs_limit FROM acp_shared.acp_quota_ledger WHERE tenant_id = $1::uuid",
                                tid) == 10
     assert await conn.fetchval("SELECT count(*) FROM shared.tenant_brand_rules WHERE tenant_id = $1::uuid "
                                "AND brand_name = 'default'", tid) == 1
-    assert await _subs(conn, tid) == {"content": ("content.starter", "trialing", None),
+    assert await _subs(conn, tid) == {"content": ("content.starter", "active", None),
                                       "crm": ("crm.core", "active", 4),
                                       "tripplanner": ("tripplanner.hosted", "active", None)}
     ents = await _ents(conn, tid)
-    assert ents["content.rewrite"] == (50.0, "trial") and ents["crm.seats"] == (4.0, "plan")
+    assert ents["content.rewrite"] == (50.0, "plan") and ents["crm.seats"] == (4.0, "plan")
     assert ents["crm.ai_assist"] == (None, "plan") and ents["tp.hosted"] == (None, "plan")
     actor = pv.actor_for(job)
     n = await conn.fetchval("SELECT count(*) FROM shared.tenant_account_event WHERE tenant_id = $1::uuid "
@@ -117,7 +117,10 @@ async def test_create_writes_the_tenant_subscriptions_and_events(conn):
                                 "AND action = 'agency.onboard'", tid)
     details = json.loads(audit["details"])
     assert audit["actor"] == actor and details["provision_request_key"] == req.request_key
-    assert details["job_id"] == job and details["trial_days"] == 14
+    assert details["job_id"] == job and "trial_days" not in details
+    with pytest.raises(pv.ProvisionError) as refused:
+        _create(trial_days=14)
+    assert refused.value.code == "trial_not_supported_yet"
 
 
 @pytest.mark.asyncio

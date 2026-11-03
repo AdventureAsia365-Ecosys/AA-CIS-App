@@ -8,8 +8,10 @@ Two modes (``ProvisionRequest``, validated again in the job because the payload 
 - ``create``: a new ``shared.tenants`` row (the same rows as ``POST /admin/tenants``: quota ledger 10/10/50, the
   ``default`` brand rules row), with **no API key** (``api_key_hash`` NULL: a key is shown once, so it is never put
   in a job; staff issue it with ``POST /admin/tenants/{id}/generate-key``). The CIS 355 bridge trigger creates the
-  content subscription on the live plan of ``plan_tier``; with ``trial_days`` the saga makes it ``trialing`` until
-  ``now() + trial_days`` and the account ``trial``. Then the add-ons.
+  content subscription (active) on the live plan of ``plan_tier``; the account is ``active``. Then the add-ons.
+  **No trial yet** (fix pass 2): ``trial_days`` is refused (``trial_not_supported_yet``) because nothing would end
+  the trial; the trial-end tick (a ``shared.job`` kind that moves the subscription off ``trialing`` and the account
+  off ``trial`` at ``trial_ends_at``, then re-syncs the entitlements) is slice 3 work, which then lifts the refusal.
 - ``attach``: add-ons for an existing tenant that is not offboarding or closed (an add-on needs a live content row,
   the CIS 353 guard).
 
@@ -40,7 +42,6 @@ IDEMPOTENCY_PREFIX = f"{KIND}:"
 TIERS = ("starter", "growth", "business")
 KINDS = ("agency", "demo")
 ADDON_PRODUCTS = ("crm", "tripplanner")
-TRIAL_DAYS_MAX = 60
 SEATS_MAX = 500
 REQUEST_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,63}$")
 SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,98}[a-z0-9])?$")
@@ -82,7 +83,6 @@ class ProvisionRequest:
     plan_tier: Optional[str] = None
     posts_per_week: int = 3
     kind: str = "agency"
-    trial_days: Optional[int] = None
     add_ons: tuple[AddOn, ...] = field(default_factory=tuple)
     requested_by: Optional[str] = None
 
@@ -95,7 +95,7 @@ class ProvisionRequest:
                                "add_ons": [a.to_payload() for a in self.add_ons]}
         if self.mode == "create":
             out.update(name=self.name, slug=self.slug, plan_tier=self.plan_tier, posts_per_week=self.posts_per_week,
-                       kind=self.kind, trial_days=self.trial_days)
+                       kind=self.kind)
         else:
             out["tenant_id"] = self.tenant_id
         if self.requested_by:
@@ -162,12 +162,12 @@ def parse(payload: dict[str, Any]) -> ProvisionRequest:
     kind = payload.get("kind", "agency")
     if kind not in KINDS:
         raise ProvisionError("invalid_kind", f"kind must be one of {', '.join(KINDS)}")
-    trial = payload.get("trial_days")
-    if trial is not None and (isinstance(trial, bool) or not isinstance(trial, int)
-                              or not 1 <= trial <= TRIAL_DAYS_MAX):
-        raise ProvisionError("invalid_trial_days", f"trial_days: 1-{TRIAL_DAYS_MAX}")
+    if payload.get("trial_days") is not None:
+        # nothing ends a trial before the slice 3 trial-end tick: a trial made now would never end
+        raise ProvisionError("trial_not_supported_yet",
+                             "trials are not supported yet (no job ends them); create the tenant without trial_days")
     return ProvisionRequest(request_key=key, mode=mode, name=name.strip(), slug=slug, plan_tier=tier,
-                            posts_per_week=ppw, kind=kind, trial_days=trial, add_ons=add_ons,
+                            posts_per_week=ppw, kind=kind, add_ons=add_ons,
                             requested_by=requested_by)
 
 
@@ -198,11 +198,6 @@ QUOTA_SQL = """
 BRAND_SQL = """
     INSERT INTO shared.tenant_brand_rules (tenant_id, brand_name)
     SELECT $1, 'default' WHERE NOT EXISTS (SELECT 1 FROM shared.tenant_brand_rules WHERE tenant_id = $1)
-"""
-TRIAL_SQL = """
-    UPDATE shared.tenant_subscription
-       SET status = 'trialing', trial_ends_at = now() + make_interval(days => $2), updated_by = $3
-     WHERE tenant_id = $1 AND product = 'content'
 """
 TENANT_SQL = "SELECT tenant_id, account_status FROM shared.tenants WHERE tenant_id = $1::uuid FOR UPDATE"
 ADDON_PLAN_SQL = "SELECT 1 FROM shared.plan WHERE plan_key = $1 AND product = $2 AND retired_at IS NULL"
@@ -240,18 +235,13 @@ async def _create(conn, req: ProvisionRequest, actor: str, steps: list[str]) -> 
         raise ProvisionError("no_rate_limit", f"plan {plan['plan_key']} sets no content.rate_limit_rpm")
     if plan["membership_plan_id"] is None:
         warnings.append("membership_plan_missing")      # quota / price show 0 / inf until it is linked (AA-797)
-    status = "trial" if req.trial_days else "active"
     tenant_id = await conn.fetchval(INSERT_TENANT_SQL, req.name, req.slug, req.plan_tier, plan["membership_plan_id"],
-                                    req.posts_per_week, int(plan["rpm"]), req.kind, req.kind == "demo", status)
+                                    req.posts_per_week, int(plan["rpm"]), req.kind, req.kind == "demo", "active")
     await conn.execute(QUOTA_SQL, tenant_id, *QUOTA_DEFAULTS)
     await conn.execute(BRAND_SQL, tenant_id)
     steps.append("tenant_created")
     # the 355 bridge trigger created the content subscription (active) on the tier's live plan
-    if req.trial_days:
-        await conn.execute(TRIAL_SQL, tenant_id, req.trial_days, actor)
-        steps.append("content_trial")
-    else:
-        steps.append("content_active")
+    steps.append("content_active")
     return tenant_id, warnings
 
 
@@ -313,8 +303,7 @@ async def provision(pool, req: ProvisionRequest, *, job_id: str) -> dict[str, An
             "requested_by": req.requested_by,
         }
         if req.mode == "create":
-            details.update(name=req.name, plan_tier=req.plan_tier, posts_per_week=req.posts_per_week, kind=req.kind,
-                           trial_days=req.trial_days)
+            details.update(name=req.name, plan_tier=req.plan_tier, posts_per_week=req.posts_per_week, kind=req.kind)
         # last in the transaction: the audit chain trigger holds a transaction-scoped lock (QRY-4)
         await write_audit_log(conn, tenant_id=str(tenant_id), actor=actor,
                               action=ONBOARD if req.mode == "create" else SUBSCRIPTION_CHANGED,

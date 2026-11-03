@@ -2,7 +2,7 @@
 as one idempotent action (root ADR 0019 d1; the saga's rules are in ``services/tenant_account/provision.py``).
 
 Payload: ``services.tenant_account.provision.ProvisionRequest.to_payload()`` (no secret and no personal data: the
-tenant's trading name, slug, tier, kind, trial days, add-on plans and seats, the requesting admin's id).
+tenant's trading name, slug, tier, kind, add-on plans and seats, the requesting admin's id).
 
 Enqueued by ``POST /admin/tenants/provision`` (create) and ``POST /admin/tenants/{tenant_id}/provision`` (attach),
 idempotency key ``tenant_provision:<request_key>``: the same request twice is one job. Status:

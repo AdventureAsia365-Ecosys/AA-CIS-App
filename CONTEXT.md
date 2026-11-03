@@ -2424,14 +2424,16 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
   (`services/tenant_account/provision.py`, `services/jobs/tenant_provision_job.py`, routes in
   `api/routers/admin_tenant_provision.py`, admin role, `tenant.write`): `POST /admin/tenants/provision` creates a tenant
   (the same rows as `POST /admin/tenants`, no API key: staff issue it with generate-key) with its content subscription
-  (the 355 bridge; optional trial: account `trial`, subscription `trialing`) and optional crm / tripplanner add-ons;
+  (the 355 bridge, active; `trial_days` answers 422 `trial_not_supported_yet` until the slice 3 trial-end tick, since
+  nothing would end the trial) and optional crm / tripplanner add-ons;
   `POST /admin/tenants/{id}/provision` adds or changes add-ons of an existing tenant; `GET
   /admin/tenants/provision/{job_id}` reads the job. Idempotent per `request_key` (job key `tenant_provision:<key>`; the
   database steps are one transaction that writes the audit row naming the key, so a retry after a commit returns the
   stored outcome). The feed events carry `aa.actor` = `job:tenant_provision:<job id>`. The CRM (`crm_entitlement_pull`,
   plan / seats / allowed features / CIS lock) and Booking (`bk_tenant_pull`) projections follow by themselves; creating
   the CRM agency itself and inviting its owner stay on Platform › Agencies (the relay uses the staff's own WORKFORCE
-  token, which a job does not have). The bridge triggers of 355 stay: `POST /admin/tenants`, PATCH, offboard and
+  token, which a job does not have). Platform › Agencies shows the CRM allowed features read-only once the CRM
+  projected the agency from CIS (crm.ops.v1 1.11 `managed_by` cis) and still edits them while it is `managed_by` ops. The bridge triggers of 355 stay: `POST /admin/tenants`, PATCH, offboard and
   restore still write only `shared.tenants`.
 - Platform › Agencies shows the CRM's allowed features read-only (crm.ops.v1 1.11: the CRM refuses the L1 write with
   409 `entitlements_managed_by_cis`; they follow the tenant's CRM subscription and overrides here).

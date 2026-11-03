@@ -4898,15 +4898,13 @@
           "trial_days": {
             "anyOf": [
               {
-                "maximum": 60.0,
-                "minimum": 1.0,
                 "type": "integer"
               },
               {
                 "type": "null"
               }
             ],
-            "description": "Content trial length; none = the subscription starts active",
+            "description": "Not supported yet: any value answers 422 trial_not_supported_yet (no job ends a trial before slice 3); the content subscription starts active",
             "title": "Trial Days"
           }
         },

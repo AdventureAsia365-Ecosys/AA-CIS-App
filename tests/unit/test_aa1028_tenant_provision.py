@@ -29,9 +29,9 @@ def _create(**kw):
 # ── parse ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 def test_parse_create_round_trips():
-    req = pv.parse(_create(trial_days=14, kind="demo", requested_by="u-1",
+    req = pv.parse(_create(kind="demo", requested_by="u-1", trial_days=None,
                            add_ons=[{"product": "crm", "plan_key": "crm.core", "seats": 5}]))
-    assert req.name == "Larkspur Journeys" and req.mode == "create" and req.trial_days == 14
+    assert req.name == "Larkspur Journeys" and req.mode == "create" and req.kind == "demo"
     assert req.idempotency_key == f"tenant_provision:{KEY}"
     assert req.add_ons == (pv.AddOn("crm", "crm.core", 5),)
     payload = req.to_payload()
@@ -60,8 +60,10 @@ def test_parse_attach_round_trips():
     (_create(posts_per_week=0), "invalid_posts_per_week"),
     (_create(posts_per_week=True), "invalid_posts_per_week"),
     (_create(kind="internal"), "invalid_kind"),
-    (_create(trial_days=61), "invalid_trial_days"),
-    (_create(trial_days=0), "invalid_trial_days"),
+    # fix pass 2: nothing ends a trial before the slice 3 trial-end tick, so any trial is refused
+    (_create(trial_days=14), "trial_not_supported_yet"),
+    (_create(trial_days=0), "trial_not_supported_yet"),
+    (_create(trial_days="14"), "trial_not_supported_yet"),
     (_create(add_ons={"product": "crm"}), "invalid_add_ons"),
     (_create(add_ons=["crm"]), "invalid_add_ons"),
     (_create(add_ons=[{"product": "booking", "plan_key": "booking.x"}]), "invalid_add_ons"),
@@ -199,14 +201,14 @@ def test_create_enqueues_one_job(client, monkeypatch):
     enq = AsyncMock(return_value=("8a1f2b3c-4d5e-4f60-8a1b-2c3d4e5f6a7b", True))
     monkeypatch.setattr(job, "enqueue_request", enq)
     body = {"request_key": KEY, "name": "Larkspur Journeys", "slug": "larkspur-journeys", "plan_tier": "starter",
-            "posts_per_week": 3, "trial_days": 14, "add_ons": [{"product": "crm", "plan_key": "crm.core"}]}
+            "posts_per_week": 3, "add_ons": [{"product": "crm", "plan_key": "crm.core"}]}
     pool.fetchrow = AsyncMock(return_value=_row({**body, "mode": "create"}))
     resp = c.post("/admin/tenants/provision", json=body, headers=_h())
     assert resp.status_code == 202, resp.text
     out = resp.json()
     assert out["created"] is True and out["status"] == "queued" and out["request_key"] == KEY
     req = enq.await_args.args[1]
-    assert req.mode == "create" and req.trial_days == 14 and req.requested_by == "u-admin"
+    assert req.mode == "create" and req.requested_by == "u-admin"
     assert req.add_ons == (pv.AddOn("crm", "crm.core", None),)
 
 
@@ -234,5 +236,10 @@ def test_validation_and_missing_job(client):
     assert c.post("/admin/tenants/provision", json=bad, headers=_h()).status_code == 422
     assert c.post(f"/admin/tenants/{TID}/provision", json={"request_key": KEY, "add_ons": []},
                   headers=_h()).status_code == 422
+    # fix pass 2: a trial would never end before the slice 3 trial-end tick, so the route refuses it
+    trial = {"request_key": KEY, "name": "Larkspur Journeys", "slug": "larkspur-journeys", "plan_tier": "starter",
+             "posts_per_week": 3, "trial_days": 14}
+    resp = c.post("/admin/tenants/provision", json=trial, headers=_h())
+    assert resp.status_code == 422 and resp.json()["detail"]["detail"] == "trial_not_supported_yet"
     pool.fetchrow = AsyncMock(return_value=None)
     assert c.get(f"/admin/tenants/provision/{TID}", headers=_h()).status_code == 404

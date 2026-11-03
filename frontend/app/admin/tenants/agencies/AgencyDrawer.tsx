@@ -188,7 +188,7 @@ export default function AgencyDrawer({ agency, canWrite, onClose, onChanged }: P
         <UsageSection q={usage} />
         <AccessSection agency={a} canWrite={canWrite && lockable} base={base} onDone={done} />
         <FirstOwnerSection agency={a} canWrite={canWrite} base={base} onDone={done} />
-        <FeaturesSection q={ent} />
+        <FeaturesSection q={ent} canWrite={canWrite && lockable} base={base} onDone={done} />
         <InsightsSection q={ent} canWrite={canWrite && lockable} base={base} onDone={done} />
         <DataRequestsSection q={requests} canWrite={canWrite} active={active} base={base} onDone={done} />
         <RecoverySection q={members} canWrite={canWrite} active={active} base={base} onDone={done} />
@@ -494,29 +494,59 @@ function DeleteTestAgencySection({ agency, members, canWrite, base, onDeleted }:
   );
 }
 
-// ── 4. Features allowed (read-only: the CIS tenant control plane decides them) ─────────────────────────────
+// ── 4. Features allowed ───────────────────────────────────────────────────────────────────────────
 
-// Since crm.ops.v1 1.11 the allowed list is the projection of the tenant's CIS entitlements (the CRM's
-// crm_entitlement_pull job writes it); the old PUT /entitlements-allowed answers 409 entitlements_managed_by_cis.
-function FeaturesSection({ q }: { q: Q<AgencyEntitlements> }) {
+// crm.ops.v1 1.11: once the CRM's crm_entitlement_pull has projected the tenant's CIS account (managed_by "cis") the
+// allowed list follows the CIS entitlements and is read-only here (PUT /entitlements-allowed answers 409
+// entitlements_managed_by_cis). While the agency is managed_by "ops" (never projected: no CIS tenant, or CIS holds no
+// crm subscription yet) AA still allows features here, as before 1.11.
+function FeaturesSection({ q, canWrite, base, onDone }: { q: Q<AgencyEntitlements>; canWrite: boolean; base: string; onDone: Done }) {
   const t = useT(DRAWER);
   const crm = useCrmText();
   const errText = useErrText();
+  const [draft, setDraft] = useState<string[] | null>(null);
+  const [open, setOpen] = useState(false);
   const current = q.data?.features_allowed ?? [];
+  const managedByCis = q.data?.managed_by === "cis";
+  const editable = canWrite && !managedByCis;
+  const chosen = draft ?? current;
+  const dirty = draft !== null && (draft.length !== current.length || draft.some((f) => !current.includes(f)));
+  const path = base.slice(CRM_API.length);
+  const toggle = (code: string) =>
+    setDraft((prev) => {
+      const list = prev ?? current;
+      return list.includes(code) ? list.filter((c) => c !== code) : [...list, code];
+    });
   return (
     <Section title={t("features")} testId="crm-features"
       aside={q.data ? <span style={noteStyle}>{t("planSeats", q.data.plan, q.data.seats_allowed)}</span> : undefined}>
-      <div style={noteStyle}>{t("featuresManaged")}</div>
+      <div style={noteStyle}>{managedByCis ? t("featuresManaged") : t("featuresNote")}</div>
       {q.isLoading ? <Loading /> : q.isError ? <InlineError message={errText(q.error)} /> : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 200px), 1fr))", gap: 6 }}>
-          {crm.features.map((f) => (
-            <label key={f.code} style={{ display: "inline-flex", gap: 8, alignItems: "center", fontSize: 13 }}>
-              <Checkbox checked={current.includes(f.code)} disabled onChange={() => undefined} />
-              {f.label}
-            </label>
-          ))}
-        </div>
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 200px), 1fr))", gap: 6 }}>
+            {crm.features.map((f) => (
+              <label key={f.code} style={{ display: "inline-flex", gap: 8, alignItems: "center", fontSize: 13 }}>
+                <Checkbox checked={chosen.includes(f.code)} disabled={!editable}
+                  onChange={() => toggle(f.code)} />
+                {f.label}
+              </label>
+            ))}
+          </div>
+          {editable && (
+            <div style={{ display: "flex", gap: 8 }}>
+              <Button size="sm" variant="secondary" disabled={!dirty} onClick={() => setOpen(true)}>{t("saveFeatures")}</Button>
+              {dirty && <Button size="sm" variant="ghost" onClick={() => setDraft(null)}>{t("undo")}</Button>}
+            </div>
+          )}
+        </>
       )}
+      <WriteModal open={open} onClose={() => setOpen(false)} title={t("featuresTitle")} confirmLabel={t("save")}
+        submit={(ticket) => crm.write("PUT", `${path}/entitlements-allowed`, { features_allowed: chosen, ticket_ref: ticket })}
+        onDone={() => { setOpen(false); setDraft(null); onDone(t("featuresSaved")); }}>
+        <div style={noteStyle}>
+          {t("allowedAfter", chosen.length ? chosen.map((c) => crm.featureLabel(c)).join(", ") : t("noneLower"))}
+        </div>
+      </WriteModal>
     </Section>
   );
 }

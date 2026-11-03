@@ -9,7 +9,8 @@ info:
     for display and support only. Three parts: this HTTP API, the database view shared.v_tenant_entitlement_v1 (CIS
     355; the same rows, granted to a consumer role by the CIS migration that adds the consumer) and the account event
     feed below. Resolution (CIS shared.v_tenant_entitlement_resolved, computed live): a per-tenant override (unexpired)
-    wins over the plan of a live subscription (status trialing, active or past_due); an override of a crm or
+    wins over the plan of a live subscription (status active or past_due, or trialing until trial_ends_at); an
+    override of a crm or
     tripplanner key applies only while that product's subscription is live; a disabled override removes the key.
     A key that is not listed is not entitled. limit null = no limit (for a flag, always null). A consumer serves the
     tenant only while in_service is true (account_status trial, active or past_due) and refuses every feature
@@ -24,7 +25,8 @@ info:
     that is not the plan's own (an override, the legacy AI budget) needs a live content subscription, so an offboarded
     tenant keeps no platform key; content.rate_limit_rpm is the CIS public API limiter's per-tenant value
     (shared.tenants.rate_limit_rpm) when it differs from the content plan's, served with source override, and it wins
-    over an explicit override of that key. (b) A second view part for Booking, catalog.v_tenant_account_v1 (CIS 357,
+    over an explicit override of that key; a trialing subscription is live only until its trial_ends_at (before,
+    an ended trial kept giving its keys while nothing moved it off trialing). (b) A second view part for Booking, catalog.v_tenant_account_v1 (CIS 357,
     SELECT to role booking only): one row per tenant with tenant_id, name (the trading name, which Booking already
     holds as booking.b2b_partners.agency_name), account_status, suspend_reason, in_service, kind, is_pilot and
     trade_book (the trade.book entitlement is live); columns are only appended. Booking reads it instead of HTTP, so
@@ -127,7 +129,8 @@ components:
     SubscriptionStatus:
       type: string
       enum: [trialing, active, past_due, unpaid, canceled, paused]
-      description: Stripe's vocabulary (billing v1 is by hand). trialing, active and past_due give entitlements.
+      description: Stripe's vocabulary (billing v1 is by hand). active and past_due give entitlements; trialing
+        gives them until trial_ends_at (1.1).
     Decimal:
       type: string
       pattern: "^[0-9]{1,12}(\\.[0-9]{1,2})?$"

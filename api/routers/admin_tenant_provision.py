@@ -1,8 +1,9 @@
 """AA-1028 R1 slice 2 (root ADR 0019 d1) — one-action tenant provisioning: the ``tenant_provision`` saga on
 ``shared.job`` (``services/jobs/tenant_provision_job.py``, rules in ``services/tenant_account/provision.py``).
 
-- ``POST /admin/tenants/provision``: a new tenant (name, slug, tier, posts per week, kind agency / demo, optional
-  trial days) with its content subscription and optional add-ons (crm, tripplanner), as one job. 202 with the job.
+- ``POST /admin/tenants/provision``: a new tenant (name, slug, tier, posts per week, kind agency / demo) with its
+  content subscription and optional add-ons (crm, tripplanner), as one job. 202 with the job. ``trial_days`` is
+  refused for now (422 ``trial_not_supported_yet``): nothing ends a trial before the slice 3 trial-end tick.
 - ``POST /admin/tenants/{tenant_id}/provision``: add-ons for an existing tenant (or a new plan / seats for one).
 - ``GET /admin/tenants/provision/{job_id}``: the job's status, steps and result.
 
@@ -47,8 +48,9 @@ class ProvisionCreateIn(BaseModel):
     plan_tier: Literal["starter", "growth", "business"]
     posts_per_week: int = Field(..., ge=1, le=14)
     kind: Literal["agency", "demo"] = "agency"
-    trial_days: Optional[int] = Field(None, ge=1, le=pv.TRIAL_DAYS_MAX,
-                                      description="Content trial length; none = the subscription starts active")
+    trial_days: Optional[int] = Field(None, description="Not supported yet: any value answers 422 "
+                                      "trial_not_supported_yet (no job ends a trial before slice 3); the content "
+                                      "subscription starts active")
     add_ons: list[AddOnIn] = Field(default_factory=list, max_length=2)
 
 
