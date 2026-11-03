@@ -264,3 +264,29 @@ def _no_provider_row_reads(monkeypatch):
     yield
     connections.reset_provider_state()
     decide.reset_jev_access()
+
+
+async def _gate_publish_noop(pool, piece, tenant_id, piece_id, channel):
+    return None
+
+
+async def _gate_pending_noop(pool, tenant_id, piece_ids):
+    return {}
+
+
+async def _gate_write_noop(pool, piece_id):
+    return None
+
+
+@pytest.fixture(autouse=True)
+def _subject_gate_off(request, monkeypatch):
+    """AA-1039 R6: the AA-subject gate (services/acp_shared/subject_gate.py) reads the main pool at the write and the
+    publish stage; publish and T9 unit tests script their pool calls in order, so the three hooks are stubbed unless a
+    test opts in with the marker `real_subject_gate` (tests/unit/test_aa1039_subject_gate.py)."""
+    if "real_subject_gate" in request.keywords:
+        return
+    from api.routers import v1_publish
+    from services.acp_content_writing import service as writing_service
+    monkeypatch.setattr(v1_publish, "_subject_gate", _gate_publish_noop)
+    monkeypatch.setattr(v1_publish, "_pending_needs_change", _gate_pending_noop)
+    monkeypatch.setattr(writing_service, "_subject_gate_after_write", _gate_write_noop)

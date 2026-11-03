@@ -2692,7 +2692,17 @@ async def _finalize_piece(
                 "request_id": str(row["angle_gate_request_id"]),
             },
         )
+    # AA-1039 R6 (root ADR 0019 d21): the AA-subject gate on the finished piece (no LLM, best-effort: a failing
+    # piece gets an open Compliance flag, which the publish stage reads again before it refuses).
+    if status in ("approved", "held"):
+        await _subject_gate_after_write(pool, str(row["piece_id"]))
     return _row_to_dict(row)
+
+
+async def _subject_gate_after_write(pool, piece_id: str) -> None:
+    """AA-1039 R6 (d21): the write stage of the AA-subject gate (never raises; unit tests stub this hook)."""
+    from services.acp_shared import subject_gate
+    await subject_gate.run_for_piece(pool, piece_id, stage="write")
 
 
 # AA-613 — the tenant-facing projection. The tenant experience is flat: they see the CONTENT and

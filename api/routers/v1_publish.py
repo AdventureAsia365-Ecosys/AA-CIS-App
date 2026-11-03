@@ -64,6 +64,7 @@ from shared import tour_liveness as _tl
 from shared.tour_liveness import TourNotServedError
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from services.acp_publish import daily_limit
+from services.acp_shared import subject_gate
 # AA-765: T11 channel dispatch (adapters, post building, remote lookup / delete) lives in services/acp_publish.
 from services.acp_publish.dispatch import (
     INTEGRATION_TYPE, SUPPORTED_CHANNELS, channel_display_name, delete_remote, find_remote, other_account,
@@ -341,6 +342,8 @@ async def list_pending(request: Request, tenant=Depends(get_tenant)):
         # AA-986 L3: the served state of each piece's tour (Publish badge; publishing it is refused with a 409)
         served = await annotate_by_request(conn, tenant_id, [{"request_id": r.get("request_id")} for r in rows])
     logger.info("aa544_stage1_list_pending", tenant_id=tenant_id, used_tenant_pool=used_tenant_pool)
+    # AA-1039 R6 (d21): why a piece waits (the AA-subject gate's content-style reason), read on MAIN (no tenant grant)
+    needs_change = await _pending_needs_change(request.app.state.pool, tenant_id, [r["piece_id"] for r in rows])
 
     return {
         "data": [
@@ -355,6 +358,8 @@ async def list_pending(request: Request, tenant=Depends(get_tenant)):
                 # atom-picker request), same convention as T10's fetch_review()/fetch_review_list().
                 "route_hub_name": r["route_hub_name"],
                 "route_segment_count": r["route_segment_count"],
+                # AA-1039 R6 (d21): None, or the sentence that says what to change before this piece can publish
+                "needs_change": needs_change.get(r["piece_id"]),
             }
             for r, sv in zip(rows, served)
         ],
@@ -470,6 +475,10 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
             raise refuse_http(exc) from exc
         integ = await conn.fetchrow(_PUBLISH_INTEGRATION_SQL, tenant_id, INTEGRATION_TYPE[channel])
 
+    # AA-1039 R6 (root ADR 0019 d21): the AA-subject gate again, right before the publish, on MAIN (the Compliance flag
+    # table and the Segment tables have no tenant-pool grant). A failing piece is held (409, content-style reason).
+    await _subject_gate(pool, piece, tenant_id, piece_id, channel)
+
     if not integ or not integ["secret_key"]:
         raise HTTPException(status_code=422, detail=f"Connect {channel_display_name(channel)} to publish")
 
@@ -555,6 +564,34 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
         logger.warning("publish_audit_log_failed", tenant_id=tenant_id, piece_id=str(piece_id), error=str(exc))
 
     return _publish_response(row, success=success)
+
+
+async def _pending_needs_change(pool, tenant_id, piece_ids) -> dict:
+    """{piece_id: sentence} of the pending pieces the AA-subject gate holds (display only; a read failure is {})."""
+    try:
+        async with pool.acquire() as main_conn:
+            return await subject_gate.open_messages(main_conn, piece_ids)
+    except Exception:  # noqa: BLE001 — display only
+        logger.warning("subject_gate_pending_read_failed", tenant_id=str(tenant_id), exc_info=True)
+        return {}
+
+
+async def _subject_gate(pool, piece, tenant_id, piece_id, channel) -> None:
+    """Raise 409 when the piece fails the AA-subject gate (services/acp_shared/subject_gate.py); the verdict is
+    recorded in admin Tenant content QA › Compliance either way."""
+    gate_piece = {"piece_id": str(piece_id), "tenant_id": str(tenant_id), "request_id": piece.get("request_id"),
+                  "content_text": piece["content_text"], "channel": channel}
+    try:
+        async with pool.acquire() as conn:
+            result = await subject_gate.run(conn, piece=gate_piece, stage="publish", actor=f"tenant:{tenant_id}")
+    except Exception:  # noqa: BLE001 — a rule check, not an auth boundary: a read failure is logged, never a 500
+        logger.warning("subject_gate_publish_error", tenant_id=str(tenant_id), piece_id=str(piece_id), exc_info=True)
+        return
+    if not result.ok:
+        logger.info("publish_held_by_subject_gate", tenant_id=str(tenant_id), piece_id=str(piece_id),
+                    codes=result.codes)
+        raise HTTPException(status_code=409, detail=result.tenant_message,
+                            headers={"X-Error-Code": subject_gate.PublishHeld.code})
 
 
 def _publish_response(row: dict, *, success: bool, replayed: bool = False) -> dict:
