@@ -166,7 +166,7 @@ async def test_deploy_gate_safe_when_idle():
     # AA-832: exempt kinds (deploy_gate_exempt) are listed, not counted; AA-751: none left (noop_sleep is test-only)
     # until AA-1018's daily LLM probe (it may sit queued across a deploy, a re-run is harmless)
     assert result == {"active": 0, "by_status": {}, "scheduled_later": 0, "safe_to_deploy": True,
-                      "exempt_kinds": ["llm_connection_probe"],
+                      "exempt_kinds": ["llm_connection_probe", "llm_model_lifecycle_sync"],  # + AA-1024 D2
                       "open_waves": 0, "blocking_kinds": result["blocking_kinds"], "blocking_running": {},
                       "blocking_due": {}, "blocked_by": []}
 

@@ -3928,6 +3928,18 @@
         "title": "LlmCostReconcileRun",
         "type": "object"
       },
+      "LlmModelLifecycleRunRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          }
+        },
+        "title": "LlmModelLifecycleRunRequest",
+        "type": "object"
+      },
       "LlmProbeRunRequest": {
         "additionalProperties": false,
         "properties": {
@@ -20252,6 +20264,96 @@
           }
         },
         "summary": "Enqueue the acc2 fallback contract smoke (DRY RUN by default)",
+        "tags": [
+          "admin-job-runner"
+        ]
+      }
+    },
+    "/admin/job-runner/llm-model-lifecycle/run": {
+      "post": {
+        "description": "AA-1024 D2 — one `llm_model_lifecycle_sync` job: a free control-plane list per Bedrock connection, then the\nlifecycle columns of every catalog row and a bell for a routed model near its end of life. `dry_run` computes\nthe rows without writing them.",
+        "operationId": "llm_model_lifecycle_run_admin_job_runner_llm_model_lifecycle_run_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LlmModelLifecycleRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Enqueue the model lifecycle sync (Bedrock ListFoundationModels, $0)",
         "tags": [
           "admin-job-runner"
         ]

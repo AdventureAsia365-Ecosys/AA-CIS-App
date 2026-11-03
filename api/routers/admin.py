@@ -1979,6 +1979,7 @@ async def list_notifications(
         "llm_circuit_open":         "LLM connection paused",  # AA-1018 (connection-level circuit)
         "provider_circuit_open":    "Provider paused",        # AA-1025 B3 (Jev / DataForSEO / Geoapify circuit)
         "platform.provider_credit.low": "Provider credit low",  # AA-1025 B5 (vendor API credit ledger)
+        "llm_model_lifecycle":      "LLM model end of life",  # AA-1024 D2 (routed model EOL within 90 days)
     }
 
     items = []

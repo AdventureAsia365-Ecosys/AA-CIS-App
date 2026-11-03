@@ -310,6 +310,18 @@ async def _llm_probe_part(pool, kinds: dict, ts: datetime, out: dict) -> None:
         out["llm_connection_probe"] = {"job_id": job_id, "day": day.isoformat()}
 
 
+async def _llm_model_lifecycle_part(pool, kinds: dict, ts: datetime, out: dict) -> None:
+    """AA-1024 D2: the nightly model lifecycle sync, once per UTC day from its hour (idempotency key per day; one
+    indexed EXISTS a tick after that hour). Only while the kind is registered; LLM_MODEL_LIFECYCLE_SYNC=off stops it."""
+    from services.jobs.llm_model_lifecycle_job import KIND, enqueue_nightly, schedule_enabled
+
+    if KIND not in kinds or not schedule_enabled():
+        return
+    job_id, created, day = await enqueue_nightly(pool, now=ts)
+    if created:
+        out["llm_model_lifecycle_sync"] = {"job_id": job_id, "day": day.isoformat()}
+
+
 async def _alert_recipients_part(pool, redis, out: dict) -> None:
     from shared import alert_recipients
 
@@ -401,6 +413,12 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
         await asyncio.wait_for(_llm_probe_part(pool, kinds, ts, out), timeout=5.0)
     except Exception as e:
         out["llm_connection_probe_error"] = _err(e)
+
+    # AA-1024 D2: one idempotent INSERT a day (free control-plane reads), same short budget
+    try:
+        await asyncio.wait_for(_llm_model_lifecycle_part(pool, kinds, ts, out), timeout=5.0)
+    except Exception as e:
+        out["llm_model_lifecycle_sync_error"] = _err(e)
 
     try:
         await asyncio.wait_for(_jobs_part(pool, kinds, out), timeout=part_timeout_s)

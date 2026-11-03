@@ -92,7 +92,7 @@ KIND_LINES: dict[str, Optional[str]] = {
     # prod: tenant work someone waits for
     "t2_rewrite": PROD, "t7_slate": PROD, "t8_angles": PROD, "t9_write": PROD, "supply_content_draft": PROD,
     # dev: the probes (never held: a held probe could not close a circuit)
-    "llm_connection_probe": DEV, "llm_contract_smoke": DEV,
+    "llm_connection_probe": DEV, "llm_contract_smoke": DEV, "llm_model_lifecycle_sync": DEV,
     # no LLM call
     "data_erasure": None, "inquiry_handoff_check": None, "kpi_snapshot_daily": None, "llm_cost_reconcile": None,
     "ops_alert_email": None, "photo_destination_match": None, "photo_medium_backfill": None, "photo_sync": None,

@@ -64,7 +64,8 @@ CALL_PATH = ("client.py", "embed.py", "decide.py", "judge.py", "shadow.py", "bed
              "family_rule.py",  # AA-1024 A4: judge / writer model-family rule (catalog read only)
              "route_evidence.py",  # AA-1026 D7: route change evidence (reads shared.prompt_eval_runs by SQL)
              "app_profile.py",  # AA-1025 H1a: the app's AI switch (no row / unreadable = AI on)
-             "capacity.py")  # AA-1025 H2: TPM limits and lines (no row / unreadable = no limit, nothing held)
+             "capacity.py",  # AA-1025 H2: TPM limits and lines (no row / unreadable = no limit, nothing held)
+             "model_lifecycle.py")  # AA-1024 D2: Bedrock model lifecycle (free control-plane list; no call path)
 
 
 def _imported_modules(path: Path) -> set[str]:

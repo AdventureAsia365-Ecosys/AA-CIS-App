@@ -352,6 +352,29 @@ async def llm_probe_run(body: LlmProbeRunRequest, request: Request, x_admin_secr
             "switch_on": llm_probe_job.schedule_enabled()}
 
 
+# ── AA-1024 D2 — the nightly model lifecycle sync (services/jobs/llm_model_lifecycle_job.py) ─────────────────────
+
+class LlmModelLifecycleRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    dry_run: bool = False
+
+
+@router.post("/llm-model-lifecycle/run", summary="Enqueue the model lifecycle sync (Bedrock ListFoundationModels, $0)")
+async def llm_model_lifecycle_run(body: LlmModelLifecycleRunRequest, request: Request,
+                                  x_admin_secret: str = Header(None), x_admin_user_id: Optional[str] = Header(None)):
+    """AA-1024 D2 — one `llm_model_lifecycle_sync` job: a free control-plane list per Bedrock connection, then the
+    lifecycle columns of every catalog row and a bell for a routed model near its end of life. `dry_run` computes
+    the rows without writing them."""
+    verify_admin_secret(x_admin_secret)
+    from services.jobs import llm_model_lifecycle_job
+    actor = f"admin:{x_admin_user_id}" if x_admin_user_id else "admin"
+    job_id, _ = await llm_model_lifecycle_job.enqueue_manual(request.app.state.pool, dry_run=body.dry_run,
+                                                             actor=actor)
+    logger.info("admin_llm_model_lifecycle_run", job_id=job_id, dry_run=body.dry_run, admin_user=x_admin_user_id)
+    return {"job_id": job_id, "kind": llm_model_lifecycle_job.KIND, "dry_run": body.dry_run,
+            "switch_on": llm_model_lifecycle_job.schedule_enabled()}
+
+
 # ── AA-1026 I6 — the contract smoke of the acc2 fallback models (services/jobs/llm_contract_smoke_job.py) ───────────
 
 class LlmContractSmokeRunRequest(BaseModel):

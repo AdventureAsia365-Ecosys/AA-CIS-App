@@ -167,7 +167,7 @@ def test_unreadable_probes_and_alarms_are_named_not_hidden():
 
 def test_collect_isolates_a_failing_section(monkeypatch):
     for name in ("load_apps", "load_jobs", "load_llm", "load_deploys", "load_waves", "load_handoff", "load_reports",
-                 "load_balances"):                                   # AA-642 (S263 L2, B4)
+                 "load_balances", "load_lifecycle"):                 # AA-642 (S263 L2, B4); AA-1024 D2
         monkeypatch.setattr(digest, name, AsyncMock(return_value={"ok": name}))
     monkeypatch.setattr(digest, "load_alarms", AsyncMock(side_effect=RuntimeError("boom")))
     monkeypatch.setattr(digest, "load_probes", AsyncMock(return_value={"status": "ok"}))
