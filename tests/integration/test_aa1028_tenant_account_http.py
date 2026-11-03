@@ -56,9 +56,9 @@ async def world():
             "INSERT INTO shared.tenants (tenant_id, name, slug, plan_tier, posts_per_week, rate_limit_rpm, is_active, "
             "time_zone) VALUES ($1, 'AA-1028 synthetic', $2, 'growth', 3, 300, true, 'Asia/Bangkok')",
             tid, f"zz1028h-{tid.hex[:12]}")
-        await admin.execute(
-            "INSERT INTO shared.tenant_subscription (tenant_id, product, plan_key, status, updated_by) "
-            "VALUES ($1, 'content', 'content.growth', 'active', 'admin:test')", tid)
+        # the content subscription comes from the create (CIS 355 bridge), on the live plan of the tier
+        assert await admin.fetchval("SELECT plan_key FROM shared.tenant_subscription WHERE tenant_id = $1 "
+                                    "AND product = 'content'", tid) == "content.growth"
         await admin.execute(
             "INSERT INTO shared.tenant_subscription (tenant_id, product, plan_key, status, trial_ends_at, seats, "
             "updated_by) VALUES ($1, 'crm', 'crm.core', 'trialing', now() + interval '14 days', 3, 'admin:test')", tid)
