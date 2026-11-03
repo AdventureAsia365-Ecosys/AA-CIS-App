@@ -158,7 +158,7 @@ def test_informational_and_own_links_pass(text):
 def test_the_dev_tripplanner_domain_is_an_allowed_sales_target(monkeypatch):
     monkeypatch.delenv("TRIPPLANNER_SITE_HOSTS", raising=False)
     monkeypatch.delenv("TRIPPLANNER_REVALIDATE_URL", raising=False)
-    assert "tripplanner.lumiguides.it.com" in sg.DEFAULT_TRIPPLANNER_HOSTS
+    assert sg.DEFAULT_TRIPPLANNER_HOSTS == ("tripplanner.lumiguides.it.com", "aa-tripplanner.vercel.app")
     hosts = sg.tripplanner_hosts()
     assert {"tripplanner.lumiguides.it.com", "aa-tripplanner.vercel.app"} <= hosts
     targets = sg.AllowedTargets(tripplanner_hosts=hosts)
