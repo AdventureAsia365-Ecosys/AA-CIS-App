@@ -589,8 +589,10 @@ async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomiz
         # AA-987: a publish that closes a paused / retired key (`restored`) brings the tour back on TripPlanner now,
         # not after its 30-min cache. The publish transaction is committed; best-effort, never raises.
         if published.events:
-            from services.tour_lifecycle.effects import notify_tripplanner
+            from services.tour_lifecycle.effects import fan_out_to_tenants, notify_tripplanner
             await notify_tripplanner(conn, published.events, trigger="publish")
+            # AA-1039 R6: a `restored` event also clears the tenants' retirement flags and mails "back on sale"
+            await fan_out_to_tenants(conn, published.events, trigger="publish")
 
         # 3. Mark tour as exported
         await conn.execute(f"""

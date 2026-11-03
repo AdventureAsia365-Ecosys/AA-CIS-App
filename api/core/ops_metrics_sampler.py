@@ -192,6 +192,19 @@ async def _tripplanner_purge_part(pool, kinds: dict, out: dict) -> None:
         out["tripplanner_purge_swept"] = n
 
 
+async def _tour_retirement_part(pool, kinds: dict, ts: datetime, out: dict) -> None:
+    """AA-1039 R6 (root ADR 0019 d20): the fan-out sweep (retired / restored events of the last 2 h without a job), the
+    WordPress pages whose notice period ended (one due-now job each) and the daily tenant e-mail digest (once a UTC
+    day from 08:00). Only while the three kinds are registered."""
+    from services.jobs.tour_retirement_jobs import DRAFT_KIND, FANOUT_KIND, MAIL_KIND, tick
+
+    if not {FANOUT_KIND, DRAFT_KIND, MAIL_KIND} <= set(kinds):
+        return
+    counts = await tick(pool, now=ts)
+    if counts:
+        out["tour_retirement"] = counts
+
+
 def supply_pull_enabled() -> bool:
     return (os.environ.get("SUPPLY_FEED_PULL") or "on").strip().lower() not in ("off", "0", "false", "no")
 
@@ -369,6 +382,12 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
         await asyncio.wait_for(_tripplanner_purge_part(pool, kinds, out), timeout=part_timeout_s)
     except Exception as e:
         out["tripplanner_purge_error"] = _err(e)
+
+    # AA-1039 R6: three idempotent INSERT ... SELECT a tick (indexed), the short budget of the AA-920 check
+    try:
+        await asyncio.wait_for(_tour_retirement_part(pool, kinds, ts, out), timeout=5.0)
+    except Exception as e:
+        out["tour_retirement_error"] = _err(e)
 
     try:
         await asyncio.wait_for(_supply_pull_part(pool, kinds, out), timeout=part_timeout_s)

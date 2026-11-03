@@ -78,12 +78,26 @@ async def notify_tripplanner(db, events, *, trigger: str = "after_commit") -> in
         return 0
 
 
+async def fan_out_to_tenants(db, events, *, trigger: str = "after_commit") -> int:
+    """AA-1039 R6 (root ADR 0019 d20): one `tour_retirement_fanout` job per retired / restored event (tenant post flags,
+    the WordPress draft schedule, the e-mail notices). Best-effort: the ops sampler sweeps whatever is lost here."""
+    if not events:
+        return 0
+    try:
+        from services.jobs.tour_retirement_jobs import enqueue_for_events
+        return await enqueue_for_events(db, events, trigger=trigger)
+    except Exception:
+        _log.warning("aa1039_fanout_enqueue_failed", events=len(events), exc_info=True)
+        return 0
+
+
 async def run_after_commit(pool, outcome, recompute=None) -> None:
     """Post-commit work of one lifecycle outcome. `recompute` defaults to recompute_after_status_change (a caller may
     pass its own, e.g. a router's alias that tests patch)."""
     recompute = recompute or recompute_after_status_change
     # AA-987 first: a TripPlanner purge is the one effect the public site waits on, and it never fails the caller.
     await notify_tripplanner(pool, getattr(outcome, "events", None))
+    await fan_out_to_tenants(pool, getattr(outcome, "events", None))
     for tour_id, new_status in outcome.recompute:
         await recompute(pool, tour_id, new_status)
     await recheck_trip_pages(pool, list(dict.fromkeys(t for t, _ in outcome.recompute)))
