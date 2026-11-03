@@ -15,7 +15,7 @@ export const OVERVIEW = defineMessages(
     sectionError: "This section could not be loaded. Try Refresh in a minute.",
     title: "Overview",
     description:
-      "How the business is doing: apps health, TripPlanner customers, the Booking funnel and cost, then the content pipeline in detail.",
+      "How the business is doing: apps health and cost, then the content pipeline in detail.",
     refreshing: "Refreshing…",
     refresh: "Refresh",
     loadingOps: "Loading apps, customers and cost…",
@@ -77,7 +77,7 @@ export const OVERVIEW = defineMessages(
     sectionError: "Không tải được phần này. Hãy thử Làm mới sau một phút.",
     title: "Tổng quan",
     description:
-      "Tình hình kinh doanh: sức khoẻ ứng dụng, khách hàng TripPlanner, phễu Booking và chi phí, sau đó là chi tiết pipeline nội dung.",
+      "Tình hình kinh doanh: sức khoẻ ứng dụng và chi phí, sau đó là chi tiết pipeline nội dung.",
     refreshing: "Đang làm mới…",
     refresh: "Làm mới",
     loadingOps: "Đang tải ứng dụng, khách hàng và chi phí…",
