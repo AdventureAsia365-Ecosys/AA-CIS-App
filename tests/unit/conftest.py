@@ -266,7 +266,7 @@ def _no_provider_row_reads(monkeypatch):
     decide.reset_jev_access()
 
 
-async def _gate_publish_noop(pool, piece, tenant_id, piece_id, channel):
+async def _gate_publish_noop(pool, piece, tenant_id, piece_id, channel, **_kw):
     return None
 
 

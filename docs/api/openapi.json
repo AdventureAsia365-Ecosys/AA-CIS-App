@@ -5273,6 +5273,11 @@
       "ReleaseBody": {
         "additionalProperties": false,
         "properties": {
+          "content_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Content Sha256",
+            "type": "string"
+          },
           "reason": {
             "maxLength": 500,
             "minLength": 3,
@@ -5281,7 +5286,8 @@
           }
         },
         "required": [
-          "reason"
+          "reason",
+          "content_sha256"
         ],
         "title": "ReleaseBody",
         "type": "object"

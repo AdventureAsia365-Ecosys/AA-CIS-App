@@ -1,16 +1,18 @@
 """AA-1039 R6 slice 2 — admin Tenant content QA › Compliance (root ADR 0019 d20 / d21).
 
   GET  /admin/tenant-qa/compliance
-      The flags of acp_shared.content_compliance_flag (CIS 362), newest first; filters state (open | resolved | all),
+      The flags of acp_shared.content_compliance_flag (CIS 360), newest first; filters state (open | resolved | all),
       kind (subject_gate | tour_retired), tenant_id; with the tenant name, the piece title and channel, the post URL
       and the counts per kind of the open flags.
   POST /admin/tenant-qa/compliance/{flag_id}/release
-      Staff release of an open subject_gate flag for the piece's current text (resolution released, the text's sha256
-      kept, so the publish gate lets exactly that text through); a reason is required.
+      Staff release of an open subject_gate flag for the text the gate read (resolution released, that text's sha256
+      kept, so the publish gate lets exactly that text through); a reason and the flag's ``content_sha256`` are
+      required. 409 when the piece's text changed since the check (the tenant edited it): the reviewed links are not
+      the ones that would publish, so staff re-run the check (the next publish attempt) and review again.
 
 Flags are admin data (memory: the tenant sees content only); tenants read the reason through the publish answer and
 the Publish list, never this route. Reads every staff role may make (TENANT_READ); the release is QUALITY_WRITE and
-audited. 503 until CIS 362 is applied.
+audited. 503 until CIS 360 is applied.
 """
 from __future__ import annotations
 
@@ -26,13 +28,17 @@ from pydantic import BaseModel, ConfigDict, Field
 from api.core.staff_authz import staff_policy
 from services.acp_shared import subject_gate
 from services.acp_shared.audit_log import write_audit_log
+from services.tour_lifecycle.fanout import MIGRATION
 
 logger = structlog.get_logger()
 
 router = APIRouter(prefix="/admin/tenant-qa/compliance", tags=["admin-tenant-compliance"],
                    dependencies=[Depends(staff_policy)])
 
-UNAVAILABLE = "Compliance is not available yet: migration 362 (acp_shared.content_compliance_flag) is not applied."
+UNAVAILABLE = (f"Compliance is not available yet: migration {MIGRATION} (acp_shared.content_compliance_flag) is "
+               "not applied.")
+TEXT_CHANGED = ("The piece's text changed since this check, so the links shown are not the ones that would publish. "
+                "Ask the agency to publish again (the check runs again), then review the new result.")
 RELEASE_ACTION = "content_compliance.released"
 
 LIST_SQL = """
@@ -102,15 +108,17 @@ async def list_flags(request: Request,
 class ReleaseBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     reason: str = Field(..., min_length=3, max_length=500)
+    # the hash of the text the gate read (the flag's detail.content_sha256, which the page shows the links of)
+    content_sha256: str = Field(..., pattern=r"^[0-9a-f]{64}$")
 
 
 RELEASE_FLAG_SQL = f"""
     SELECT f.flag_id::text AS flag_id, f.tenant_id::text AS tenant_id, f.piece_id::text AS piece_id, f.state, f.kind,
-           cp.content_text
+           f.detail ->> 'content_sha256' AS checked_sha256, cp.content_text
       FROM acp_shared.content_compliance_flag f
       JOIN acp_shared.content_piece cp ON cp.piece_id = f.piece_id
      WHERE f.flag_id = $1::uuid AND f.kind = '{subject_gate.KIND}'
-     FOR UPDATE OF f
+     FOR UPDATE OF f, cp
 """
 RELEASE_SQL = """
     UPDATE acp_shared.content_compliance_flag
@@ -136,6 +144,9 @@ async def release_flag(flag_id: UUID, body: ReleaseBody, request: Request,
                 if flag["state"] != "open":
                     raise HTTPException(status_code=409, detail="This flag is already resolved")
                 sha = subject_gate.content_sha256(flag["content_text"] or "")
+                if not (body.content_sha256 == flag["checked_sha256"] == sha):
+                    raise HTTPException(status_code=409, detail=TEXT_CHANGED,
+                                        headers={"X-Error-Code": "content_changed_since_check"})
                 row = await conn.fetchrow(RELEASE_SQL, str(flag_id), actor[:128],
                                           json.dumps({"content_sha256": sha, "release_reason": reason}))
     except asyncpg.UndefinedTableError:

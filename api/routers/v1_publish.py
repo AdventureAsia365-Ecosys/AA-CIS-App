@@ -475,9 +475,10 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
             raise refuse_http(exc) from exc
         integ = await conn.fetchrow(_PUBLISH_INTEGRATION_SQL, tenant_id, INTEGRATION_TYPE[channel])
 
-    # AA-1039 R6 (root ADR 0019 d21): the AA-subject gate again, right before the publish, on MAIN (the Compliance flag
-    # table and the Segment tables have no tenant-pool grant). A failing piece is held (409, content-style reason).
-    await _subject_gate(pool, piece, tenant_id, piece_id, channel)
+    key = publish_key(piece_id, channel, piece["content_text"])
+    # AA-1039 R6 (root ADR 0019 d21): the AA-subject gate again, right before a new publish, on MAIN (the Compliance
+    # flag table and the Segment tables have no tenant-pool grant). A failing piece is held (409, content-style reason).
+    await _subject_gate(pool, piece, tenant_id, piece_id, channel, key=key)
 
     if not integ or not integ["secret_key"]:
         raise HTTPException(status_code=422, detail=f"Connect {channel_display_name(channel)} to publish")
@@ -491,7 +492,6 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
     if is_tombstoned_secret(creds):  # AA-859: refused before claim(), so no publish_log row is written
         raise HTTPException(status_code=422, detail=reconnect_detail(channel_display_name(channel)))
 
-    key = publish_key(piece_id, channel, piece["content_text"])
     # AA-819 — the override read runs before claim()'s transaction (a missing column must not abort it).
     # AA-859 MAIN exception (plan D2): shared.tenants has no RLS and no aa_app_user grant; one lookup keyed on the
     # JWT `sub`, on the admin pool, before the tenant block.
@@ -576,18 +576,30 @@ async def _pending_needs_change(pool, tenant_id, piece_ids) -> dict:
         return {}
 
 
+# AA-1039: a publish_log row of the same piece revision + channel that is live or in flight (the replay / in-progress
+# answers of claim()).
+_SAME_REVISION_SQL = """
+    SELECT EXISTS (SELECT 1 FROM acp_shared.publish_log
+                    WHERE piece_id = $1::uuid AND tenant_id = $2::uuid AND idempotency_key = $3
+                      AND status IN ('published', 'requested'))
+"""
+
 SUBJECT_GATE_UNAVAILABLE = "We couldn't check this piece just now. Please try publishing it again in a minute."
 
 
-async def _subject_gate(pool, piece, tenant_id, piece_id, channel) -> None:
+async def _subject_gate(pool, piece, tenant_id, piece_id, channel, *, key: str | None = None) -> None:
     """Raise 409 when the piece fails the AA-subject gate (services/acp_shared/subject_gate.py); the verdict is
     recorded in admin Tenant content QA › Compliance either way. Fails closed: when the gate cannot answer (a read
     error, whatever the piece's text holds) the publish is refused with 503 "try again", never let through. Before
-    CIS 362 the gate still answers (its flag reads and writes are skipped, subject_gate.record / released)."""
+    CIS 360 the gate still answers (its flag reads and writes are skipped, subject_gate.record / released). Only a new
+    publish is checked: a repeat of the same revision (`key`: published, or in flight) is answered by claim() as
+    before; that text passed the gate then, or went live before the gate existed."""
     gate_piece = {"piece_id": str(piece_id), "tenant_id": str(tenant_id), "request_id": piece.get("request_id"),
                   "content_text": piece["content_text"], "channel": channel}
     try:
         async with pool.acquire() as conn:
+            if key and await conn.fetchval(_SAME_REVISION_SQL, str(piece_id), str(tenant_id), key):
+                return
             result = await subject_gate.run(conn, piece=gate_piece, stage="publish", actor=f"tenant:{tenant_id}")
     except Exception as exc:  # noqa: BLE001 — logged; a 503 the tenant can retry, never a 500 and never a pass
         logger.warning("subject_gate_publish_error", tenant_id=str(tenant_id), piece_id=str(piece_id), exc_info=True)

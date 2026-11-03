@@ -1,9 +1,10 @@
 "use client";
 // app/admin/tenant-qa/compliance/page.tsx — AA-1039 R6 slice 2 (root ADR 0019 d20 / d21). Tenant content QA › Compliance:
-// the rows of acp_shared.content_compliance_flag (CIS 362) from GET /admin/tenant-qa/compliance. Two kinds:
+// the rows of acp_shared.content_compliance_flag (CIS 360) from GET /admin/tenant-qa/compliance. Two kinds:
 //   - subject_gate: a tenant piece with no Adventure Asia subject, or a booking link outside the AA catalogue (the
 //     AA-subject gate at write and before publish). Held: the publish answers 409 with the sentence the tenant reads.
-//     Staff may release the current text (POST …/{flag_id}/release, admin only, reason required).
+//     Staff may release the text the check read (POST …/{flag_id}/release, admin only, reason + its content_sha256;
+//     409 when the tenant changed the text since).
 //   - tour_retired: a live post about a tour AA retired (WordPress: moved to draft after the notice period;
 //     Facebook: the tenant is asked to edit, nothing is deleted).
 // Admin only (lib/rbac.ts PAGE_RULES /admin/tenant-qa). Tenants never see this page (memory: tenant sees content only).
@@ -34,7 +35,10 @@ interface FlagRow {
   external_url: string | null;
   publish_status: string | null;
   codes: string[];
-  detail: { refused_links?: string[]; draft_error?: string; release_reason?: string; [k: string]: unknown };
+  detail: {
+    refused_links?: string[]; draft_error?: string; release_reason?: string; content_sha256?: string;
+    [k: string]: unknown;
+  };
   tenant_message: string;
   action: "none" | "draft_after_notice" | "notice_only";
   draft_due_at: string | null;
@@ -79,7 +83,10 @@ export default function TenantQaCompliancePage() {
 
   const release = useMutation({
     mutationFn: (f: FlagRow) =>
-      apiSend(`/api/admin/tenant-qa/compliance/${f.flag_id}/release`, { body: { reason: reason.trim() } }),
+      // the hash of the text the check read: the API refuses (409) when the tenant changed the text since
+      apiSend(`/api/admin/tenant-qa/compliance/${f.flag_id}/release`, {
+        body: { reason: reason.trim(), content_sha256: f.detail.content_sha256 ?? "" },
+      }),
     onSuccess: () => {
       setOpen(null);
       setReason("");

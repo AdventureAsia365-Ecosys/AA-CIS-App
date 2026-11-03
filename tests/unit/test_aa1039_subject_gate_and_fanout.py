@@ -52,7 +52,9 @@ def test_links_are_read_from_markdown_html_and_bare_urls_and_the_cta():
 ])
 def test_links_in_parentheses_quotes_unquoted_href_and_without_a_scheme_are_read(text, url, anchor):
     links = sg.extract_links(text)
-    assert [(link.url, link.text) for link in links] == [(url, anchor)]
+    assert [link.url for link in links] == [url]
+    if anchor:
+        assert links[0].text == anchor
     res = sg.evaluate(text, goal="conversion", cta=None, subject_ok=True, targets=TARGETS)
     assert not res.ok and res.codes == [sg.OFF_CATALOG_LINK]
 
@@ -86,9 +88,14 @@ def test_a_trip_page_id_is_normalised():
 
 @pytest.mark.parametrize("url,text,sales", [
     ("https://museum.example/history", "history of the hall", False),
-    ("https://othertravel.example/mekong-tour", "", True),            # the path reads like a tour
+    ("https://othertravel.example/tours/mekong-days", "", True),      # a product listing path
     ("https://othertravel.example/x", "Book your seat", True),         # the anchor reads like booking
+    ("https://othertravel.example/booking", "", True),                 # the path reads like booking
+    ("https://www.viator.com/Hanoi/d351", "Hanoi tours", True),        # a product word to a commercial host
     ("https://social.example/agency", "follow us", False),
+    ("https://hanoimuseum.example/visit/tours", "guided tours of the museum", False),   # informational
+    ("https://agency.example/blog/best-trips-in-vietnam", "our top trips", False),       # an article
+    ("https://othertravel.example/mekong-tour", "", False),            # a product word alone
 ])
 def test_sales_link_detection(url, text, sales):
     assert sg.is_sales_link(sg.Link(url, text)) is sales
@@ -105,6 +112,71 @@ def test_sales_link_detection(url, text, sales):
 ])
 def test_allowed_sales_targets(url, ok):
     assert sg.allowed_sales_target(url, TARGETS) is ok
+
+
+# Forms Python-Markdown (extensions extra + nl2br, the publisher's render) and browsers turn into a working link: each
+# one is read with its anchor text (or the words before it) and refused when it books off the catalogue.
+@pytest.mark.parametrize("text", [
+    '[Book now](https://competitor.example/p/42 "Hanoi")',              # a title
+    "[Book now](<https://competitor.example/p/42>)",                    # angle brackets
+    "[Book now][1]\n\n[1]: https://competitor.example/p/42",            # a reference link
+    "[Book now](//competitor.example/p/42)",                            # protocol-relative
+    '<a href="//competitor.example/p/42">Book now</a>',
+    '<a href="https&#58;//competitor.example/p/42">Book now</a>',       # an entity in the scheme
+    '<a href="&#x68;ttps://competitor.example/p/42">Book now</a>',
+    "[Book now](HTTPS://competitor.example/p/42)",                      # upper-case scheme
+    '<a href="https:\\\\competitor.example/p/42">Book now</a>',            # backslashes
+    '<a href="ht\ntps://competitor.example/p/42">Book now</a>',          # a newline inside the scheme
+    "<a href='https://competitor.example/p/42'>Book now",              # never closed
+    "Book your cruise here: https://competitor.example/p/42",           # the words before a bare URL
+    "<!-- https://competitor.example/booking -->",                      # hidden on WordPress, a link on Facebook
+])
+def test_every_published_link_form_is_read_and_refused(text):
+    links = sg.extract_links(text)
+    assert any(link.url.startswith("https://competitor.example/") for link in links), links
+    res = sg.evaluate(text, goal="promotion", cta=None, subject_ok=True, targets=TARGETS)
+    assert not res.ok and res.codes == [sg.OFF_CATALOG_LINK]
+    # without an AA subject and with a brand goal, the same link still counts as a sales link
+    res = sg.evaluate(text, goal="trust_building", cta=None, subject_ok=False, targets=TARGETS)
+    assert set(res.codes) == {sg.OFF_CATALOG_LINK, sg.NO_AA_SUBJECT}
+
+
+@pytest.mark.parametrize("text", [
+    "[guided tours of the museum](https://hanoimuseum.example/visit/tours)",
+    "[our ten best trips](/blog/top-10-trips)",                         # relative: the tenant's own site
+    "[top trips](https://agency.example/blog/top-10-trips)",
+    '<a href="mailto:desk@othertravel.example">Book a call</a>',         # not a web link
+    "Book your tour with us today. More about the museum: https://museum.example/history",
+    "Plan your trip on https://tripplanner.lumiguides.it.com/trips/abc",  # the Dev TripPlanner site
+])
+def test_informational_and_own_links_pass(text):
+    res = sg.evaluate(text, goal="promotion", cta=None, subject_ok=True,
+                      targets=sg.AllowedTargets(TARGETS.aa_hosts, TARGETS.trip_page_hosts, sg.tripplanner_hosts()))
+    assert res.ok, res.detail
+
+
+def test_the_dev_tripplanner_domain_is_an_allowed_sales_target(monkeypatch):
+    monkeypatch.delenv("TRIPPLANNER_SITE_HOSTS", raising=False)
+    monkeypatch.delenv("TRIPPLANNER_REVALIDATE_URL", raising=False)
+    assert "tripplanner.lumiguides.it.com" in sg.DEFAULT_TRIPPLANNER_HOSTS
+    hosts = sg.tripplanner_hosts()
+    assert {"tripplanner.lumiguides.it.com", "aa-tripplanner.vercel.app"} <= hosts
+    targets = sg.AllowedTargets(tripplanner_hosts=hosts)
+    res = sg.evaluate("[Book your trip](https://tripplanner.lumiguides.it.com/trips/x)", goal="conversion",
+                      cta=None, subject_ok=True, targets=targets)
+    assert res.ok
+
+
+@pytest.mark.parametrize("href,url", [
+    ("//x.example/a", "https://x.example/a"),
+    ("HTTP://x.example/a", "http://x.example/a"),
+    ("https:x.example/a", "https://x.example/a"),
+    ("www.x.example", "https://www.x.example"),
+    ("x.example/a?b=1", "https://x.example/a?b=1"),
+    ("/blog/a", None), ("#top", None), ("tel:+1", None), ("javascript:alert(1)", None), ("", None), (None, None),
+])
+def test_resolve_href_like_a_browser(href, url):
+    assert sg.resolve_href(href) == url
 
 
 def test_off_catalogue_link_holds_with_a_content_style_sentence():
@@ -174,6 +246,27 @@ async def test_publish_gate_passes_and_a_read_failure_fails_closed_with_503():
     assert "try" in exc.value.detail.lower() and "flag" not in exc.value.detail.lower()
     with patch.object(sg, "open_messages", AsyncMock(side_effect=RuntimeError("db down"))):
         assert await v1_publish._pending_needs_change(_pool(), "t", ["p"]) == {}
+
+
+@pytest.mark.real_subject_gate
+@pytest.mark.asyncio
+async def test_publish_gate_skips_a_repeat_of_the_same_revision():
+    """A publish of the same text already live or in flight is answered by claim() (replay / in progress), not held:
+    the text passed the gate then, or went live before the gate existed."""
+    from api.routers import v1_publish
+    pool = _pool()
+    conn = pool.acquire.return_value.__aenter__.return_value
+    conn.fetchval = AsyncMock(return_value=True)
+    with patch.object(sg, "run", AsyncMock(return_value=sg.GateResult(False, [sg.OFF_CATALOG_LINK], "x"))) as run:
+        assert await v1_publish._subject_gate(pool, {"request_id": "r", "content_text": "x"}, "t", "p", "blog",
+                                              key="p:blog:abc") is None
+    run.assert_not_awaited()
+    conn.fetchval = AsyncMock(return_value=False)
+    with patch.object(sg, "run", AsyncMock(return_value=sg.GateResult(False, [sg.OFF_CATALOG_LINK], "x"))):
+        with pytest.raises(HTTPException) as exc:
+            await v1_publish._subject_gate(pool, {"request_id": "r", "content_text": "x"}, "t", "p", "blog",
+                                           key="p:blog:abc")
+    assert exc.value.status_code == 409
 
 
 @pytest.mark.real_subject_gate
@@ -306,3 +399,28 @@ async def test_a_fanout_replay_enqueues_the_unmailed_immediate_notice_again():
         out = await trj.run_fanout(JobContext(MagicMock(), job, {}))
     assert out["mail_jobs"] == 1 and "immediate_notices" not in out
     assert enq.await_args.kwargs["idempotency_key"] == "tour_notice_email:n-1"
+
+
+@pytest.mark.asyncio
+async def test_a_fanout_before_the_tables_exist_fails_retryable_and_is_requeued_by_name():
+    """Code deployed before CIS 360: the job must not end done (the sweep would never take the event again). It fails
+    with a retryable error whose text the sweep's re-queue matches once the tables exist."""
+    from shared.jobs import queue, worker
+    from shared.jobs.registry import JobContext
+    job = queue.Job(id=str(uuid.uuid4()), kind=trj.FANOUT_KIND, payload={"event_key": "ev-1"}, status="running",
+                    attempt=1, max_attempts=5, cost_usd=0.0, progress={})
+    with patch.object(trj.fanout, "fan_out", AsyncMock(side_effect=trj.fanout.SchemaMissing())):
+        with pytest.raises(trj.fanout.SchemaMissing) as exc:
+            await trj.run_fanout(JobContext(MagicMock(), job, {}))
+    error, retryable, _ = worker.failure_outcome(exc.value)
+    assert retryable and "fanout_schema_missing" in error and f"CIS {trj.fanout.MIGRATION}" in error
+    pool = MagicMock()
+    pool.fetchval = AsyncMock(return_value=3)
+    assert await trj.requeue_schema_missing(pool) == 3
+    assert pool.fetchval.await_args.args[1] == "fanout_schema_missing"
+
+
+def test_the_admin_503_names_the_migration_from_one_constant():
+    from api.routers import admin_tenant_compliance as atc
+    assert f"migration {trj.fanout.MIGRATION} " in atc.UNAVAILABLE
+    assert trj.fanout.MIGRATION == "360"

@@ -1,7 +1,7 @@
-"""AA-1039 R6 slice 2 on real Postgres: CIS 362, the AA-subject gate (root ADR 0019 d21) and the tour retirement
+"""AA-1039 R6 slice 2 on real Postgres: CIS 360, the AA-subject gate (root ADR 0019 d21) and the tour retirement
 fan-out (d20).
 
-- 362: the three tables, FORCE RLS with the X1 parity policies, cis_app DML and no tenant-pool grant.
+- 360: the three tables, FORCE RLS with the X1 parity policies, cis_app DML and no tenant-pool grant.
 - The gate: a booking link outside the catalogue holds the piece (one open flag, the content-style sentence); a link to
   a trip page of a served tour passes and resolves the flag; a sales goal with no live AA subject is held; brand
   content with no sales link passes without a subject; a staff release lets exactly that text through.
@@ -10,6 +10,10 @@ fan-out (d20).
   a per-tenant policy row changes the notice period; run_after_commit enqueues one fan-out job per event; the move to
   draft resolves the flag and takes the post off publish_log; a restore resolves the open flags and writes the
   "back on sale" notice; the mail job sends one message per tenant to the verified owner / editor addresses.
+- Fix pass 2: a second retired event of a retired key adds nothing; "back on sale" goes only to tenants still told
+  "no longer offered" (not after a pause, a second restore or a re-import); before the tables exist the fan-out fails
+  retryable and the sweep re-queues it once they do; a missing policy table never aborts the fan-out; the digest skips
+  a notice a live mail job holds; a staff release is refused when the text changed since the check.
 
 Every test runs in one rolled-back transaction (the seed helpers of test_aa986_l2_tour_lifecycle). No network: the
 WordPress adapter, SES and the partner pool are fakes. Invented names only.
@@ -67,14 +71,14 @@ def _env(monkeypatch):
     monkeypatch.delenv("TRIP_PAGE_BASE_URL", raising=False)
 
 
-# ── 362 ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+# ── 360 ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 TABLES = ("acp_shared.content_compliance_flag", "acp_shared.tenant_tour_notice", "acp_shared.tour_retirement_policy")
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("table", TABLES)
-async def test_362_tables_are_force_rls_cis_app_only(conn, table):
+async def test_360_tables_are_force_rls_cis_app_only(conn, table):
     row = await conn.fetchrow("SELECT relrowsecurity AS rls, relforcerowsecurity AS force FROM pg_class "
                               "WHERE oid = $1::regclass", table)
     assert row["rls"] and row["force"]
@@ -85,7 +89,7 @@ async def test_362_tables_are_force_rls_cis_app_only(conn, table):
     for priv in ("SELECT", "INSERT", "UPDATE", "DELETE"):
         assert await conn.fetchval("SELECT has_table_privilege('cis_app', $1, $2) AS ok", table, priv)
     assert not await conn.fetchval("SELECT has_table_privilege('aa_app_user', $1, 'SELECT') AS ok", table)
-    assert await conn.fetchval("SELECT 1 FROM shared.schema_versions WHERE version = '362'") == 1
+    assert await conn.fetchval("SELECT 1 FROM shared.schema_versions WHERE version = '360'") == 1
 
 
 # ── seeds ──────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -208,7 +212,11 @@ async def test_a_released_text_passes_and_an_edit_is_checked_again(conn):
     await sg.run(conn, piece=_gate_piece(tenant, req, piece, text), stage="write", actor="test")
     flag_id = await conn.fetchval("SELECT flag_id::text FROM acp_shared.content_compliance_flag "
                                   "WHERE piece_id = $1::uuid AND state = 'open'", piece)
-    out = await atc.release_flag(uuid.UUID(flag_id), atc.ReleaseBody(reason="Contract allows partner festival"),
+    checked = await conn.fetchval("SELECT detail ->> 'content_sha256' FROM acp_shared.content_compliance_flag "
+                                  "WHERE flag_id = $1::uuid", flag_id)
+    assert checked == sg.content_sha256(text)
+    out = await atc.release_flag(uuid.UUID(flag_id), atc.ReleaseBody(reason="Contract allows partner festival",
+                                                                      content_sha256=checked),
                                  l2._req(conn), x_admin_user_id="7")
     assert out["resolution"] == "released"
     assert (await sg.run(conn, piece=_gate_piece(tenant, req, piece, text), stage="publish", actor="t")).ok
@@ -218,6 +226,31 @@ async def test_a_released_text_passes_and_an_edit_is_checked_again(conn):
                                    offset=0)
     assert {r["resolution"] for r in listing["data"]} == {"released", None}
     assert listing["open_counts"]["subject_gate"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_a_release_is_refused_when_the_text_changed_since_the_check(conn):
+    """Staff review the links of the text the gate read; a tenant edit after that must not be released unreviewed."""
+    from fastapi import HTTPException
+    from api.routers import admin_tenant_compliance as atc
+    tenant = await l2._tenant(conn, "gate-release-edit")
+    req = await _request(conn, tenant, atom="no-such-atom", goal="promotion")
+    text = "A partner festival day. [Details](https://festival.example/tours/harvest)"
+    piece = await _piece(conn, tenant, req, text)
+    await sg.run(conn, piece=_gate_piece(tenant, req, piece, text), stage="write", actor="test")
+    flag_id = await conn.fetchval("SELECT flag_id::text FROM acp_shared.content_compliance_flag "
+                                  "WHERE piece_id = $1::uuid AND state = 'open'", piece)
+    edited = text + " [Book now](https://competitor.example/book)"
+    await conn.execute("UPDATE acp_shared.content_piece SET content_text = $2 WHERE piece_id = $1::uuid", piece,
+                       edited)
+    for sha in (sg.content_sha256(text), sg.content_sha256(edited)):
+        with pytest.raises(HTTPException) as exc:
+            await atc.release_flag(uuid.UUID(flag_id), atc.ReleaseBody(reason="Partner contract", content_sha256=sha),
+                                   l2._req(conn), x_admin_user_id="7")
+        assert exc.value.status_code == 409 and exc.value.detail == atc.TEXT_CHANGED
+    assert await conn.fetchval("SELECT state FROM acp_shared.content_compliance_flag WHERE flag_id = $1::uuid",
+                               flag_id) == "open"
+    assert not (await sg.run(conn, piece=_gate_piece(tenant, req, piece, edited), stage="publish", actor="t")).ok
 
 
 # ── the fan-out ────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -273,6 +306,101 @@ async def test_retire_flags_live_posts_and_writes_notices(conn):
     assert again["flags_created"] == 0 and again["new_immediate_notices"] == 0
     assert again["immediate_notices"] == result["immediate_notices"]        # still unmailed: enqueued again
     assert await trj.sweep(l2._OneConnPool(conn)) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_second_retired_event_of_a_retired_key_adds_no_flag_notice_or_mail(conn):
+    """The Master is trashed (retired, master_trashed), then the source is deleted (retired, source_deleted): one
+    retirement for the tenant, so no second flag per post, no second notice, no second mail, and the first draft date
+    stands."""
+    w = await _world(conn, "fan-twice")
+    pool = l2._OneConnPool(conn)
+    await tl.trash_master(conn, w.t.tour)
+    first = await fanout.fan_out(pool, await _event_key(conn, w.t, "retired"))
+    assert first["flags_created"] == 2 and first["tenants_noticed"] == 2
+    await tl.retire_source(conn, w.t.tour)
+    keys = [r["idempotency_key"] for r in await conn.fetch(
+        "SELECT idempotency_key FROM gold_aa_internal.tour_lifecycle_event WHERE source_id = $1 AND event = 'retired' "
+        "ORDER BY id", w.t.group)]
+    assert len(keys) == 2, "the reason change writes a second retired event"
+    second = await fanout.fan_out(pool, keys[1])
+    assert second["status"] == "done" and second["flags_created"] == 0 and second["live_posts"] == 0
+    assert second["tenants_noticed"] == 0 and second["immediate_notices"] == []
+    assert await conn.fetchval("SELECT count(*) FROM acp_shared.content_compliance_flag WHERE kind = 'tour_retired' "
+                               "AND state = 'open' AND tour_id = $1::uuid", w.t.tour) == 2
+    assert await conn.fetchval("SELECT count(*) FROM acp_shared.tenant_tour_notice WHERE event_key = $1",
+                               keys[1]) == 0
+
+
+@pytest.mark.asyncio
+async def test_back_on_sale_goes_only_to_tenants_still_told_no_longer_offered(conn):
+    """A restore mails the tenants whose latest notice is 'retired'. A later pause + activate (or a re-import and
+    republish) writes another 'restored' event: nobody is mailed again, and a tenant never told about a pause gets
+    nothing."""
+    w = await _world(conn, "fan-rerestore")
+    pool = l2._OneConnPool(conn)
+    await tl.trash_master(conn, w.t.tour)
+    await fanout.fan_out(pool, await _event_key(conn, w.t, "retired"))
+    await tl.restore_master(conn, w.t.tour)
+    await tl.activate_master(conn, w.t.tour)
+    first = await _event_key(conn, w.t, "restored")
+    assert (await fanout.fan_out(pool, first))["tenants_noticed"] == 2
+
+    await tl.pause_master(conn, w.t.tour)
+    await tl.activate_master(conn, w.t.tour)
+    again = await _event_key(conn, w.t, "restored")
+    assert again != first
+    out = await fanout.fan_out(pool, again)
+    assert out["status"] == "done" and out["tenants_noticed"] == 0 and out["immediate_notices"] == []
+    assert await conn.fetchval("SELECT count(*) FROM acp_shared.tenant_tour_notice WHERE event_key = $1", again) == 0
+
+    p = await _world(conn, "fan-pause-only")
+    await tl.pause_master(conn, p.t.tour)
+    await tl.activate_master(conn, p.t.tour)
+    key = await _event_key(conn, p.t, "restored")
+    assert key, "activate after a pause writes a restored event"
+    out = await fanout.fan_out(pool, key)
+    assert out["tenants_noticed"] == 0
+    assert await conn.fetchval("SELECT count(*) FROM acp_shared.tenant_tour_notice WHERE event_key = $1", key) == 0
+
+
+@pytest.mark.asyncio
+async def test_before_the_tables_exist_the_fanout_fails_retryable_and_is_requeued_once_they_do(conn):
+    """Code deployed before CIS 360: the fan-out raises (the job retries, then fails), and once the tables exist the
+    sweep re-queues it with a fresh set of attempts, so the event is applied and nothing is lost."""
+    w = await _world(conn, "fan-early")
+    pool = l2._OneConnPool(conn)
+    await tl.trash_master(conn, w.t.tour)
+    key = await _event_key(conn, w.t, "retired")
+    await conn.execute("ALTER TABLE acp_shared.content_compliance_flag RENAME TO content_compliance_flag_hidden")
+    with pytest.raises(fanout.SchemaMissing):
+        await fanout.fan_out(pool, key)
+    job_id, _ = await queue.enqueue(pool, trj.FANOUT_KIND, {"event_key": key},
+                                    idempotency_key=f"{trj.FANOUT_KIND}:{key}", max_attempts=5)
+    await conn.execute("UPDATE shared.job SET status = 'failed', attempt = 5, finished_at = now(), error = $2 "
+                       "WHERE id = $1::uuid", job_id, f"SchemaMissing: {fanout.SCHEMA_MISSING}")
+    assert await trj.requeue_schema_missing(pool) == 0                 # still missing: stays failed
+    await conn.execute("ALTER TABLE acp_shared.content_compliance_flag_hidden RENAME TO content_compliance_flag")
+    assert await trj.requeue_schema_missing(pool) == 1
+    row = await conn.fetchrow("SELECT status, attempt, error FROM shared.job WHERE id = $1::uuid", job_id)
+    assert row["status"] == "queued" and row["attempt"] == 0 and row["error"] is None
+    assert await trj.requeue_schema_missing(pool) == 0
+    assert (await fanout.fan_out(pool, key))["flags_created"] == 2
+
+
+@pytest.mark.asyncio
+async def test_a_missing_policy_table_falls_back_to_seven_days_without_aborting_the_fanout(conn):
+    w = await _world(conn, "fan-nopolicy")
+    await tl.trash_master(conn, w.t.tour)
+    key = await _event_key(conn, w.t, "retired")
+    await conn.execute("ALTER TABLE acp_shared.tour_retirement_policy RENAME TO tour_retirement_policy_hidden")
+    out = await fanout.fan_out(l2._OneConnPool(conn), key)
+    assert out["status"] == "done" and out["flags_created"] == 2
+    due, occurred = await conn.fetchrow(
+        "SELECT f.draft_due_at, e.occurred_at FROM acp_shared.content_compliance_flag f "
+        "JOIN gold_aa_internal.tour_lifecycle_event e ON e.idempotency_key = f.event_key "
+        "WHERE f.event_key = $1 AND f.channel = 'blog'", key)
+    assert due == occurred + timedelta(days=fanout.DEFAULT_NOTICE_DAYS)
 
 
 def _job(kind, payload, job_id=None):
@@ -339,6 +467,35 @@ async def test_the_digest_mails_an_immediate_notice_its_dead_mail_job_left_behin
     assert out["sent"] == 1 and len(ses.sent) == 1
     assert await conn.fetchval("SELECT mailed_at IS NOT NULL AS ok FROM acp_shared.tenant_tour_notice "
                                "WHERE notice_id = $1::uuid", notice_id)
+
+
+@pytest.mark.asyncio
+async def test_the_digest_skips_a_notice_a_live_mail_job_holds(conn, monkeypatch):
+    """An immediate mail job in retry backoff holds its notice: the 08:00 digest must not send it too. Once that job
+    ended without sending, its claim is stale and the digest sends the notice."""
+    from shared.jobs.registry import JobContext
+    monkeypatch.setattr("api.core.partner_identity.partner_issuer", lambda: ISS)
+    w = await _world(conn, "fan-claim")
+    await conn.execute(
+        "INSERT INTO shared.tenant_members (tenant_id, cognito_iss, cognito_sub, content_studio_role, status, "
+        "created_by) VALUES ($1, $2, 'sub-owner', 'owner', 'active', 'seed:AA-1039')", w.posting, ISS)
+    await tl.trash_master(conn, w.t.tour)
+    pool = l2._OneConnPool(conn)
+    notice_id = (await fanout.fan_out(pool, await _event_key(conn, w.t, "retired")))["immediate_notices"][0]
+    mail_job, _ = await queue.enqueue(pool, trj.MAIL_KIND, {"notice_id": notice_id},
+                                      idempotency_key=f"{trj.MAIL_KIND}:{notice_id}")
+    await conn.execute("UPDATE acp_shared.tenant_tour_notice SET mail_job_id = $2::uuid, "
+                       "created_at = now() - interval '2 hours' WHERE notice_id = $1::uuid", notice_id, mail_job)
+    ses, cognito = _Ses(), _Cognito({"sub-owner": "owner@agency.example"})
+    digest = _job(trj.MAIL_KIND, {"digest_day": "2026-11-03"})
+    out = await trj.run_mail(JobContext(pool, digest, {"ses": ses, "cognito": cognito}))
+    assert ses.sent == [] and any(r.get("reason") == "held_by_another_mail_job" for r in out["results"])
+
+    await conn.execute("UPDATE shared.job SET status = 'failed', finished_at = now() WHERE id = $1::uuid", mail_job)
+    out = await trj.run_mail(JobContext(pool, digest, {"ses": ses, "cognito": cognito}))
+    assert out["sent"] == 1 and len(ses.sent) == 1
+    assert str(await conn.fetchval("SELECT mail_job_id FROM acp_shared.tenant_tour_notice WHERE notice_id = $1::uuid",
+                                   notice_id)) == digest.id
 
 
 @pytest.mark.asyncio

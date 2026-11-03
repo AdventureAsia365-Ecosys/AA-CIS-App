@@ -7,19 +7,20 @@ A rule check, no LLM ($0). It runs when T9 finishes a piece (stage ``write``, se
    tour of ``shared.tour_liveness.REQUEST_TOURS_SQL``), a live AA atom (``acp_contract.v_active_tour_atoms``) or a
    Slate Segment with a live member. Brand content passes without one when it asks nobody to buy: no sales link and
    a goal outside :data:`SALES_GOALS`.
-2. **Sales links point to AA.** A sales link (the request's CTA, or a link whose text or path reads like booking:
-   :data:`_SALES_WORDS`) must go to an AA tour page (a trip page ``/trip/<served tour id>`` on a trip page host, one
-   of the tenant's own pages of an AA tour in ``acp_deliver.tenant_tour_pages``, or an Adventure Asia host) or to
-   the tenant's TripPlanner site (:func:`tripplanner_hosts`). Any other link (a museum, a map, a social profile)
-   passes: d21 limits sales links only.
+2. **Sales links point to AA.** A sales link (:func:`is_sales_link`: the request's CTA, a booking word in the link's
+   text or path, or a product word with a commercial tour host or a product listing path) must go to an AA tour page
+   (a trip page ``/trip/<served tour id>`` on a trip page host, one of the tenant's own pages of an AA tour in
+   ``acp_deliver.tenant_tour_pages``, or an Adventure Asia host) or to the tenant's TripPlanner site
+   (:func:`tripplanner_hosts`). Any other link (a museum, a map, a social profile) passes: d21 limits sales links
+   only. Links are read from the HTML the publisher sends (:func:`extract_links`).
 
-A piece that fails gets one open ``subject_gate`` row in ``acp_shared.content_compliance_flag`` (CIS 362): admin
+A piece that fails gets one open ``subject_gate`` row in ``acp_shared.content_compliance_flag`` (CIS 360): admin
 Tenant content QA › Compliance lists it, and the publish route refuses it with 409 and the row's ``tenant_message``
 (content-style English, no internal code). A later pass of the gate resolves the row (``passed``); staff may release
 it for the exact text (``released`` with the text's sha256), and the gate then lets that text through.
 
 Every DB read runs on the CIS main pool (cis_app): the flag table has no tenant-pool grant and the Segment tables are
-platform tables. Before CIS 362 is applied the flag writes are skipped (UndefinedTable), the verdict still holds.
+platform tables. Before CIS 360 is applied the flag writes are skipped (UndefinedTable), the verdict still holds.
 """
 from __future__ import annotations
 
@@ -29,10 +30,12 @@ import os
 import re
 import uuid
 from dataclasses import dataclass, field
+from html.parser import HTMLParser
 from typing import Iterable, Optional
 from urllib.parse import urlparse
 
 import asyncpg
+import markdown
 import structlog
 
 from shared import tour_liveness as _tl
@@ -47,19 +50,26 @@ OFF_CATALOG_LINK = "off_catalog_link"
 # content, so it needs an AA subject even without a link.
 SALES_GOALS = frozenset({"promotion", "lead_generation", "conversion"})
 
-# A link reads as a sales link when its text or its URL path has one of these words.
-_SALES_WORDS = re.compile(
-    r"\b(book(?:ing|ings|ed)?|buy|reserv(?:e|ation|ations)|enquir(?:e|y|ies)|inquir(?:e|y|ies)|quote|pric(?:e|es|ing)"
-    r"|deals?|offers?|packages?|checkout|cart|tours?|trips?|itinerar(?:y|ies)|holidays?|vacations?)\b",
+# A link reads as a sales link when its text (the anchor text, or the words just before a bare URL) or its URL path
+# has a booking word, or a product word together with a commercial host or a product listing path (``/tours/<x>``).
+# A product word alone ("guided tours of the museum", "/blog/best-trips") is not a sales link.
+_BOOKING_WORDS = re.compile(
+    r"\b(book(?:ing|ings|ed)?|buy|purchase|reserv(?:e|ation|ations)|enquir(?:e|y|ies)|inquir(?:e|y|ies)|quote"
+    r"|pric(?:e|es|ing)|deals?|checkout|cart)\b",
     re.IGNORECASE,
 )
-_MD_LINK = re.compile(r"\[([^\]\n]{0,300})\]\((https?://[^\s)]{1,2000})\)")
-# An <a> tag's href, quoted or not (browsers and WordPress link `href=https://...` too).
-_HTML_LINK = re.compile(
-    r"<a\s[^>]*?href\s*=\s*(?:\"(https?://[^\"]{1,2000})\"|'(https?://[^']{1,2000})'|(https?://[^\s\"'>]{1,2000}))"
-    r"[^>]*>(.*?)</a>", re.IGNORECASE | re.DOTALL)
-# A bare URL anywhere, also right after "(", a quote or "=" ("Book now (https://...)"): the markdown and HTML matches
-# above keep their anchor text, a bare repeat inside them is skipped by position.
+_PRODUCT_WORDS = re.compile(
+    r"\b(tours?|trips?|packages?|holidays?|vacations?|itinerar(?:y|ies)|offers?|excursions?|cruises?)\b",
+    re.IGNORECASE,
+)
+# Hosts that sell tours (an online travel agency or a tour marketplace): a product word to one of them is a sales link.
+# Env COMMERCIAL_TOUR_HOSTS adds more.
+DEFAULT_COMMERCIAL_HOSTS = (
+    "viator.com", "getyourguide.com", "klook.com", "tripadvisor.com", "booking.com", "expedia.com", "agoda.com",
+    "airbnb.com", "trip.com", "kkday.com", "tiqets.com", "musement.com", "headout.com", "civitatis.com",
+    "traveloka.com", "tourradar.com", "intrepidtravel.com", "gadventures.com", "bookmundi.com", "withlocals.com",
+)
+# A bare URL anywhere (also right after "(", a quote or "="). Text and the raw piece are scanned with it.
 _BARE_URL = re.compile(r"(?<![\w])(https?://[^\s<>\"')\]]{1,2000})", re.IGNORECASE)
 # A link written without a scheme: "www.host.tld[/path]" or "host.tld/path" (Facebook and WordPress turn these into
 # links). Not inside a longer host, a path, a query or an e-mail address.
@@ -67,7 +77,13 @@ _HOST = r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}"
 _SCHEMELESS = re.compile(
     rf"(?<![\w@.\-/:=?&#%+~])((?:www\.{_HOST}(?:/[^\s<>\"')\]]{{0,2000}})?)|(?:{_HOST}/[^\s<>\"')\]]{{0,2000}}))",
     re.IGNORECASE)
-_TAG = re.compile(r"<[^>]+>")
+_SCHEMELESS_HREF = re.compile(rf"^(?:www\.{_HOST}(?:[/?#].*)?|{_HOST}[/?#].*)$", re.IGNORECASE | re.DOTALL)
+_SCHEME = re.compile(r"^([a-z][a-z0-9+.\-]*):", re.IGNORECASE)
+# Block tags end a line of text (the words before a bare URL are read on its own line).
+_BLOCK_TAGS = frozenset({"p", "br", "div", "li", "ul", "ol", "h1", "h2", "h3", "h4", "h5", "h6", "tr", "td", "th",
+                         "table", "blockquote", "pre", "hr", "dt", "dd", "section", "article"})
+_CONTEXT_CHARS = 80
+_SENTENCE_END = re.compile(r"[.!?](?:\s|$)")
 _UUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 _TRIP_PATH = re.compile(rf"^/trip/({_UUID})/?$")
 _TRAILING = ".,;:!?"
@@ -77,9 +93,9 @@ DEFAULT_AA_HOSTS = ("adventure.asia",)
 # The hosts trip pages are served on (api/routers/v1_trip_page.py TRIP_PAGE_BASE_URL, the admin host and the CRM
 # client host it 307s to). Env TRIP_PAGE_HOSTS adds more.
 DEFAULT_TRIP_PAGE_HOSTS = ("aa-cis.lumiguides.it.com", "go-dev.lumiguides.it.com")
-# The TripPlanner site (one platform site today; the per-tenant white-label site of ADR 0019 R5 adds the tenant's own
-# host here). Env TRIPPLANNER_SITE_HOSTS adds more.
-DEFAULT_TRIPPLANNER_HOSTS = ("aa-tripplanner.vercel.app",)
+# The TripPlanner site (one platform site today: the Dev custom domain and its Vercel host; the per-tenant white-label
+# site of ADR 0019 R5 adds the tenant's own host here). Env TRIPPLANNER_SITE_HOSTS adds more.
+DEFAULT_TRIPPLANNER_HOSTS = ("tripplanner.lumiguides.it.com", "aa-tripplanner.vercel.app")
 
 _MAX_LINKS = 200
 
@@ -126,49 +142,157 @@ class Link:
     cta: bool = False
 
 
-def _inside(pos: int, spans: list) -> bool:
-    return any(a <= pos < b for a, b in spans)
+def commercial_hosts() -> frozenset[str]:
+    return frozenset(DEFAULT_COMMERCIAL_HOSTS + _env_hosts("COMMERCIAL_TOUR_HOSTS"))
 
 
-def _plain_urls(text: str, covered: list) -> list[str]:
-    """The bare and scheme-less URLs of `text` outside `covered` (a scheme-less one gets ``https://``)."""
-    out, spans = [], list(covered)
+def resolve_href(href: Optional[str]) -> Optional[str]:
+    """The absolute http(s) URL a browser opens for an ``href`` (entities already decoded by the HTML parser), or None
+    for a link that cannot leave the tenant's page (relative, ``#``, ``mailto:``, ``tel:``, ...). Like a browser:
+    tabs and newlines are dropped, ``\\`` counts as ``/``, the scheme is case-blind, ``//host`` and ``https:host``
+    get ``https://``, and a scheme-less ``www.host`` / ``host.tld/path`` is read as a link to that host."""
+    if href is None:
+        return None
+    h = "".join(ch for ch in href if ch not in "\t\n\r").strip(" \x00\x0b\x0c")
+    if not h:
+        return None
+    m = _SCHEME.match(h)
+    if m:
+        scheme = m.group(1).lower()
+        if scheme not in ("http", "https"):
+            return None
+        rest = h[m.end():].replace("\\", "/")
+        url = f"{scheme}://{rest.lstrip('/')}"
+    else:
+        h2 = h.replace("\\", "/")
+        if h2.startswith("//"):
+            url = "https://" + h2.lstrip("/")
+        elif _SCHEMELESS_HREF.match(h2):
+            url = "https://" + h2
+        else:
+            return None
+    try:
+        return url if urlparse(url).hostname else None
+    except ValueError:
+        return None
+
+
+class _Page(HTMLParser):
+    """The anchors (resolved href, visible text) and the text outside them of the rendered piece."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.anchors: list[tuple[Optional[str], str]] = []
+        self.text: list[str] = []
+        self._open: list[tuple[Optional[str], list]] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "a":
+            href = next((v for k, v in attrs if k == "href"), None)   # the first href wins, as in a browser
+            self._open.append((href, []))
+        elif tag in _BLOCK_TAGS:
+            self._data("\n")
+
+    def handle_startendtag(self, tag, attrs):
+        if tag == "a":
+            self.handle_starttag(tag, attrs)
+            self.handle_endtag(tag)
+        elif tag in _BLOCK_TAGS:
+            self._data("\n")
+
+    def handle_endtag(self, tag):
+        if tag == "a" and self._open:
+            href, parts = self._open.pop()
+            self.anchors.append((href, " ".join("".join(parts).split())))
+        elif tag in _BLOCK_TAGS:
+            self._data("\n")
+
+    def handle_data(self, data):
+        self._data(data)
+
+    def _data(self, data):
+        if self._open:
+            self._open[-1][1].append(data)
+        else:
+            self.text.append(data)
+
+    def close(self):
+        super().close()
+        while self._open:                   # an <a> never closed still links (a browser closes it at the end)
+            self.handle_endtag("a")
+
+
+def rendered_html(text: str) -> str:
+    """The HTML the publisher sends: the same markdown render as services/acp_content_writing/export.py
+    (``extra`` + ``nl2br``) for WordPress; Facebook gets the raw text, which :func:`extract_links` also reads."""
+    return markdown.markdown(text or "", extensions=["extra", "nl2br"])
+
+
+def _context(text: str, start: int) -> str:
+    """The words just before a bare URL: its own line, at most :data:`_CONTEXT_CHARS`, from the last sentence end."""
+    line = text[:start].rsplit("\n", 1)[-1][-_CONTEXT_CHARS:]
+    ends = list(_SENTENCE_END.finditer(line))
+    return " ".join((line[ends[-1].end():] if ends else line).split())
+
+
+def _plain_urls(text: str) -> list[tuple[str, str]]:
+    """The bare and scheme-less URLs of `text` with the words before each (a scheme-less one gets ``https://``)."""
+    out, spans = [], []
     for m in _BARE_URL.finditer(text):
-        if not _inside(m.start(1), spans):
-            out.append(m.group(1).rstrip(_TRAILING))
-            spans.append(m.span(1))
+        out.append((m.group(1).rstrip(_TRAILING), _context(text, m.start(1))))
+        spans.append(m.span(1))
     for m in _SCHEMELESS.finditer(text):
-        if not _inside(m.start(1), spans):
-            out.append("https://" + m.group(1).rstrip(_TRAILING))
-    return [u for u in out if urlparse(u).hostname]
+        if not any(a <= m.start(1) < b for a, b in spans):
+            out.append(("https://" + m.group(1).rstrip(_TRAILING), _context(text, m.start(1))))
+    return [(url, ctx) for url, ctx in ((resolve_href(u), c) for u, c in out) if url]
 
 
 def extract_links(text: str, cta: Optional[str] = None) -> list[Link]:
-    """Every link of the piece (markdown, HTML with a quoted or unquoted href, bare URLs also inside parentheses or
-    quotes, and scheme-less ``www.host`` / ``host.tld/path``), plus the request's CTA links. One entry per URL (a
-    markdown or HTML anchor's text wins over a bare repeat)."""
+    """Every link of the piece, read the way it is published: the anchors of the rendered HTML (markdown inline,
+    titled, angle-bracket and reference links, raw ``<a href>`` quoted or not, entities decoded, ``//host`` and
+    scheme-less hrefs resolved), the bare and scheme-less URLs of its text and of the raw piece (Facebook posts the raw
+    text and links bare URLs), plus the request's CTA links. One entry per URL; an anchor's text wins over the words
+    before a bare repeat."""
     text = text or ""
     found: dict[str, Link] = {}
-    covered: list = []
-    for m in _MD_LINK.finditer(text):
-        found.setdefault(m.group(2), Link(m.group(2), m.group(1)))
-        covered.append(m.span(2))
-    for m in _HTML_LINK.finditer(text):
-        group = next(g for g in (1, 2, 3) if m.group(g) is not None)
-        found.setdefault(m.group(group), Link(m.group(group), _TAG.sub("", m.group(4))))
-        covered.append(m.span(group))
-    for url in _plain_urls(text, covered):
-        found.setdefault(url, Link(url))
-    for url in _plain_urls(cta or "", []):
-        found[url] = Link(url, (found.get(url) or Link(url)).text, cta=True)
+    page = _Page()
+    try:
+        page.feed(rendered_html(text))
+        page.close()
+    except Exception:  # noqa: BLE001 — a parser error never hides a link: the raw text is still scanned below
+        logger.warning("subject_gate_html_parse_failed", exc_info=True)
+    for href, anchor in page.anchors:
+        url = resolve_href(href)
+        if url:
+            found.setdefault(url, Link(url, anchor))
+    for source in ("".join(page.text), text):
+        for url, ctx in _plain_urls(source):
+            found.setdefault(url, Link(url, ctx))
+    for url, ctx in _plain_urls(cta or ""):
+        found[url] = Link(url, (found.get(url) or Link(url, ctx)).text, cta=True)
     return list(found.values())[:_MAX_LINKS]
 
 
+def _product_listing(path: str) -> bool:
+    """A product word as a directory with a page under it: ``/tours/hanoi-food-walk``, ``/packages/x/``."""
+    segments = [seg for seg in path.split("/") if seg]
+    return any(_PRODUCT_WORDS.fullmatch(seg) for seg in segments[:-1])
+
+
 def is_sales_link(link: Link) -> bool:
+    """d21's sales link: the request's CTA; a booking word in the link text or path; or a product word (tour, trip,
+    package, ...) together with a commercial host or a product listing path. A museum's "/visit/tours" page or a blog
+    article "/blog/best-trips" is not one."""
     if link.cta:
         return True
-    path = urlparse(link.url).path.replace("-", " ").replace("_", " ").replace("/", " ")
-    return bool(_SALES_WORDS.search(link.text or "") or _SALES_WORDS.search(path))
+    raw_path = urlparse(link.url).path or ""
+    path = raw_path.replace("-", " ").replace("_", " ").replace("/", " ")
+    words = f"{link.text or ''} {path}"
+    if _BOOKING_WORDS.search(words):
+        return True
+    if not _PRODUCT_WORDS.search(words):
+        return False
+    return _host_in(_host(link.url), commercial_hosts()) or _product_listing(raw_path)
 
 
 @dataclass(frozen=True)
@@ -316,7 +440,7 @@ async def check(conn, *, tenant_id: str, request_id: str, text: str) -> GateResu
     return result
 
 
-# ── the flag rows (CIS 362) ──────────────────────────────────────────────────────────────────────────────────────────
+# ── the flag rows (CIS 360) ──────────────────────────────────────────────────────────────────────────────────────────
 
 RELEASED_SQL = f"""
     SELECT 1 FROM acp_shared.content_compliance_flag
@@ -355,7 +479,7 @@ def _uuid_or_none(value) -> Optional[str]:
 
 async def record(conn, *, piece: dict, result: GateResult, stage: str, actor: str) -> Optional[str]:
     """Write the verdict: an open flag for a failing piece (one per piece, updated in place), the open flag resolved
-    as ``passed`` for a passing one. Returns the open flag id, or None. Skipped (None) before CIS 362."""
+    as ``passed`` for a passing one. Returns the open flag id, or None. Skipped (None) before CIS 360."""
     try:
         if result.ok:
             await conn.fetch(RESOLVE_FLAG_SQL, piece["piece_id"], "passed", actor[:128])

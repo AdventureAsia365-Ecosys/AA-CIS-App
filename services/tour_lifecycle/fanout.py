@@ -8,7 +8,7 @@ TripPlanner purge) runs :func:`fan_out`:
 
 ``retired`` (only while the key is still retired when the job runs):
   - every live post of a piece about the key's tours (``publish_log`` published, not unpublished; the piece's request
-    is about one of the tours) gets one ``tour_retired`` row in ``acp_shared.content_compliance_flag`` (CIS 362):
+    is about one of the tours) gets one ``tour_retired`` row in ``acp_shared.content_compliance_flag`` (CIS 360):
     WordPress ``draft_after_notice`` with ``draft_due_at`` = event time + the notice period
     (``acp_shared.tour_retirement_policy``, default 7 days), Facebook ``notice_only`` (nothing is deleted);
   - publish claims left ``requested`` past the stale window are closed as ``failed`` ("cancelled: ..."); new publishes
@@ -16,8 +16,13 @@ TripPlanner purge) runs :func:`fan_out`:
   - every tenant with a derivative (the tenants the service warned with ``tour.discontinued``, the bell) gets one
     ``acp_shared.tenant_tour_notice`` row: ``immediate`` when it still has live posts (a ``tour_notice_email`` job now),
     else ``digest`` (the daily mail).
-``restored``: the open ``tour_retired`` flags of the key's tours are resolved (``restored``); every tenant that had a
-``retired`` notice for them gets a ``restored`` notice ("back on sale"), at once when it had live posts flagged.
+  A second ``retired`` event of a key that is already retired (only the reason changed, e.g. the Master was trashed and
+  then the source deleted) adds nothing: a post with an open ``tour_retired`` flag of an earlier event keeps it (its
+  draft date stands), and a tenant whose latest notice for the tours is ``retired`` gets no second one.
+``restored``: the open ``tour_retired`` flags of the key's tours are resolved (``restored``); every tenant whose latest
+notice for them is ``retired`` (still told "no longer offered") gets a ``restored`` notice ("back on sale"), at once
+when it had live posts flagged. A restore that follows a pause or a supersede, or a second restore, mails nobody.
+One fan-out of a key runs at a time (a transaction advisory lock on the key).
 ``paused`` and ``superseded`` do nothing here (ADR 0019 d20: a paused tour gets no mail; a supersede is invisible).
 
 The WordPress move to draft runs at ``draft_due_at`` as a ``retired_page_draft`` job (:func:`move_to_draft`),
@@ -27,7 +32,8 @@ gate and the migration idle check count queued rows).
 Flags are admin data: the tenant sees the bell, the e-mail and its content, never a flag (Tenant content QA ›
 Compliance). Booking and TripPlanner read the served state themselves (Booking 409 ``tour_not_served`` on quotes and
 holds, TripPlanner the purge notice + ``catalog.v_tour``); the CRM marks lines "no longer offered" from its hourly
-catalog sync. Before CIS 362 is applied every function here is a no-op that says so (``unavailable``).
+catalog sync. Before CIS 360 is applied :func:`fan_out` raises :class:`SchemaMissing` (the job retries, and the
+sweep re-queues the jobs it failed once the tables exist, so no event is lost); the other functions are no-ops.
 """
 from __future__ import annotations
 
@@ -42,6 +48,9 @@ from . import derivatives as _d
 
 logger = structlog.get_logger()
 
+# The CIS migration that creates the flag, notice and policy tables (named in errors and in the admin 503).
+MIGRATION = "360"
+SCHEMA_MISSING = f"fanout_schema_missing: CIS {MIGRATION} (acp_shared.content_compliance_flag) is not applied"
 DEFAULT_NOTICE_DAYS = 7
 STALE_REQUESTED_SECONDS = 900      # a publish claim this old without an answer is abandoned (idempotency.py: 300 s)
 ACTOR = "system:tour_retirement"
@@ -80,6 +89,8 @@ _PIECES_CTE = """
           LEFT JOIN acp_contract.tour_atoms ta ON ta.atom_id = r.atom_id
          WHERE COALESCE(r.trip_id, ta.tour_id) IN (SELECT tour_id FROM t))"""
 
+# The live posts of the tours ($1) without an open tour_retired flag of an earlier event ($2 = this event's key): a
+# second retired event of a retired key (only the reason changed) never flags a post twice.
 LIVE_POSTS_SQL = f"""
 WITH {_PIECES_CTE}
 SELECT pl.publish_id::text AS publish_id, pl.piece_id::text AS piece_id, pl.tenant_id::text AS tenant_id,
@@ -88,6 +99,9 @@ SELECT pl.publish_id::text AS publish_id, pl.piece_id::text AS piece_id, pl.tena
   JOIN piece ON piece.piece_id = pl.piece_id AND piece.tenant_id = pl.tenant_id
  WHERE pl.status = 'published' AND pl.unpublished_at IS NULL
    AND pl.tenant_id <> '{_d.AA_TENANT}'::uuid
+   AND NOT EXISTS (SELECT 1 FROM acp_shared.content_compliance_flag f
+                    WHERE f.kind = '{FLAG_KIND}' AND f.state = 'open' AND f.publish_id = pl.publish_id
+                      AND f.event_key <> $2)
  ORDER BY pl.tenant_id, pl.published_at, pl.publish_id
 """
 
@@ -140,10 +154,24 @@ UNMAILED_IMMEDIATE_SQL = """
      ORDER BY n.tenant_id
 """
 
-RETIRED_NOTICE_TENANTS_SQL = """
-    SELECT DISTINCT tenant_id::text AS tenant_id FROM acp_shared.tenant_tour_notice
-     WHERE event = 'retired' AND tour_id = ANY($1::uuid[])
+# The tenants whose latest notice for the tours ($1), other than this event's own ($2), is a 'retired' one: they were
+# told "no longer offered" and not told since that it is back. The restore mails these only (a restore after a pause
+# or a supersede, or a second restore, mails nobody); a retire skips them (no second "no longer offered"). "Latest" is
+# the order of the lifecycle events (the change record's id), not of the notice rows: a fan-out job retried late
+# writes its notices after a newer event's.
+OUTSTANDING_RETIRED_SQL = """
+    SELECT tenant_id FROM (
+        SELECT DISTINCT ON (n.tenant_id) n.tenant_id::text AS tenant_id, n.event
+          FROM acp_shared.tenant_tour_notice n
+          LEFT JOIN gold_aa_internal.tour_lifecycle_event e ON e.idempotency_key = n.event_key
+         WHERE n.tour_id = ANY($1::uuid[]) AND n.event_key <> $2
+         ORDER BY n.tenant_id, e.id DESC NULLS LAST, n.created_at DESC, n.notice_id DESC) latest
+     WHERE latest.event = 'retired'
 """
+
+# One fan-out of a key at a time (two events of one key, or a replay racing the first run): the outstanding checks
+# above read what the other run writes.
+KEY_LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtextextended('tour_retirement_fanout:' || $1, 0))"
 
 # The sweep's due drafts: open WordPress flags past their notice period with no job yet (one INSERT ... SELECT).
 DUE_DRAFTS_SQL = f"""
@@ -179,9 +207,19 @@ def post_message(tour_name: str) -> str:
             "you.")
 
 
+class SchemaMissing(RuntimeError):
+    """CIS 360 is not applied yet. Retryable on purpose: the fan-out job retries with backoff, and once the tables
+    exist the sweep re-queues the jobs that failed on it (tour_retirement_jobs.REQUEUE_SCHEMA_MISSING_SQL), so a
+    retire / restore that happens between the code deploy and the migration is never lost."""
+
+    def __init__(self):
+        super().__init__(SCHEMA_MISSING)
+
+
 async def notice_days(conn, tenant_id: str) -> int:
     try:
-        days = await conn.fetchval(NOTICE_DAYS_SQL, tenant_id)
+        async with conn.transaction():      # a savepoint: a missing table never aborts the caller's transaction
+            days = await conn.fetchval(NOTICE_DAYS_SQL, tenant_id)
     except asyncpg.UndefinedTableError:
         days = None
     return int(days) if days else DEFAULT_NOTICE_DAYS
@@ -207,6 +245,7 @@ async def fan_out(pool, event_key: str) -> dict:
         now_state = state["state"] if state else None
         try:
             async with conn.transaction():
+                await conn.execute(KEY_LOCK_SQL, event["source_id"] or event["tour_id"])
                 if kind == "retired":
                     if now_state != "retired":
                         return {"status": "skipped", "reason": f"key_is_{now_state or 'unknown'}_now"}
@@ -218,8 +257,8 @@ async def fan_out(pool, event_key: str) -> dict:
                 out["new_immediate_notices"] = len(out["immediate_notices"])
                 out["immediate_notices"] = [r["notice_id"] for r in await conn.fetch(
                     UNMAILED_IMMEDIATE_SQL, event["idempotency_key"])]
-        except asyncpg.UndefinedTableError:
-            return {"status": "unavailable", "reason": "CIS 362 not applied"}
+        except asyncpg.UndefinedTableError as exc:
+            raise SchemaMissing() from exc
     logger.info("tour_retirement_fanout", event_key=event_key, lifecycle_event=kind,
                 **{k: v for k, v in out.items() if k != "immediate_notices"})
     return {"status": "done", "event": kind, **out}
@@ -227,7 +266,9 @@ async def fan_out(pool, event_key: str) -> dict:
 
 async def _retired(conn, event, tour_ids: list[str]) -> dict:
     tour_name = await _tour_name(conn, event["tour_id"])
-    posts = await conn.fetch(LIVE_POSTS_SQL, tour_ids)
+    key = event["idempotency_key"]
+    posts = await conn.fetch(LIVE_POSTS_SQL, tour_ids, key)
+    told = {r["tenant_id"] for r in await conn.fetch(OUTSTANDING_RETIRED_SQL, tour_ids, key)}
     flags, per_tenant, days_cache = 0, {}, {}
     for p in posts:
         tid = p["tenant_id"]
@@ -253,6 +294,8 @@ async def _retired(conn, event, tour_ids: list[str]) -> dict:
         per_tenant.setdefault(c["tenant_id"], {"pages": [], "posts": []})
     tenants = set((await _d.tenant_derivatives(conn, tour_ids)).keys()) | set(per_tenant)
     tenants.discard(_d.AA_TENANT)
+    already = tenants & told - set(per_tenant)
+    tenants -= already
     replacement = await _tour_name(conn, event["replaced_by_tour_id"]) if event["replaced_by_tour_id"] else None
     immediate = []
     for tid in sorted(tenants):
@@ -267,14 +310,15 @@ async def _retired(conn, event, tour_ids: list[str]) -> dict:
         if notice_id and live:
             immediate.append(notice_id)
     return {"flags_created": flags, "live_posts": len(posts), "publishes_cancelled": len(cancelled),
-            "tenants_noticed": len(tenants), "immediate_notices": immediate}
+            "tenants_noticed": len(tenants), "tenants_already_told": len(already), "immediate_notices": immediate}
 
 
 async def _restored(conn, event, tour_ids: list[str]) -> dict:
     tour_name = await _tour_name(conn, event["tour_id"])
     resolved = await conn.fetch(RESOLVE_RESTORED_SQL, tour_ids, ACTOR)
     had_live = {r["tenant_id"] for r in resolved}
-    tenants = {r["tenant_id"] for r in await conn.fetch(RETIRED_NOTICE_TENANTS_SQL, tour_ids)} | had_live
+    tenants = {r["tenant_id"] for r in await conn.fetch(OUTSTANDING_RETIRED_SQL, tour_ids,
+                                                         event["idempotency_key"])} | had_live
     immediate = []
     for tid in sorted(tenants):
         summary = {"back_on": _fmt_day(event["occurred_at"]), "flags_cleared": sum(
@@ -395,5 +439,5 @@ def immediate_ids(result: dict[str, Any]) -> list[str]:
     return list(result.get("immediate_notices") or [])
 
 
-__all__ = ["DEFAULT_NOTICE_DAYS", "DraftRefused", "enqueue_due_drafts", "fan_out", "immediate_ids", "move_to_draft",
-           "notice_days", "page_message", "post_message"]
+__all__ = ["DEFAULT_NOTICE_DAYS", "DraftRefused", "MIGRATION", "SchemaMissing", "enqueue_due_drafts", "fan_out",
+           "immediate_ids", "move_to_draft", "notice_days", "page_message", "post_message"]

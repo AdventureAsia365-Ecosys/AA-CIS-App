@@ -4,7 +4,9 @@
   ``tour_retirement_fanout:<event idempotency_key>``): services/tour_lifecycle/fanout.fan_out (flags, cancelled
   publish claims, notices), then one ``tour_notice_email`` per notice to send at once. Enqueued right after the
   lifecycle action commits (services/tour_lifecycle/effects.run_after_commit) and swept by the api ops sampler
-  (:func:`sweep`, events of the last 2 h without a job), like ``tripplanner_purge``.
+  (:func:`sweep`, events of the last 2 h without a job), like ``tripplanner_purge``. Before CIS 360 is applied the
+  job fails with a retryable ``SchemaMissing``; once the tables exist the sweep re-queues every fan-out job that ended
+  on it (:data:`REQUEUE_SCHEMA_MISSING_SQL`, any age), so an event between the code deploy and the migration is kept.
 - ``retired_page_draft``  one per open WordPress flag whose notice period ended (key ``retired_page_draft:<flag>``),
   enqueued due now by the sweep (never queued days ahead: the deploy gate and the migration idle check count queued
   rows): fanout.move_to_draft.
@@ -12,7 +14,9 @@
   immediate notice, or ``{"digest_day"}`` for the daily digest (every unmailed notice of the last 14 days, one mail
   per tenant; queued once a UTC day from 08:00 by the sampler; it also takes an ``immediate`` notice left unmailed for
   an hour, the backstop for a mail job that died). SES not configured -> ``skipped``; no recipient or the partner
-  pool unreadable -> the notices wait for the next digest (an immediate one turns into a digest one).
+  pool unreadable -> the notices wait for the next digest (an immediate one turns into a digest one). A mail job
+  claims its notices (``mail_job_id``) before it sends, and skips any notice another live mail job holds, so the
+  digest and an immediate job in retry backoff never both send one notice.
 """
 from __future__ import annotations
 
@@ -41,6 +45,7 @@ DIGEST_WINDOW_DAYS = 14
 IMMEDIATE_BACKSTOP_S = 3600   # an immediate notice unmailed this long joins the digest
 SWEEP_WINDOW_S = 7200
 SWEEP_LAG_S = 30
+REQUEUE_LIMIT = 200
 
 SWEEP_SQL = f"""
     WITH created AS (
@@ -58,6 +63,28 @@ SWEEP_SQL = f"""
     SELECT count(*) FROM created
 """
 
+# Once CIS 360 exists: the fan-out jobs that failed because it did not (SchemaMissing) get a fresh set of attempts,
+# like queue.retry. Any age: the event is kept in the lifecycle table, and the fan-out re-checks the key's state.
+REQUEUE_SCHEMA_MISSING_SQL = f"""
+    WITH tables AS (
+        SELECT to_regclass('acp_shared.content_compliance_flag') IS NOT NULL
+           AND to_regclass('acp_shared.tenant_tour_notice') IS NOT NULL
+           AND to_regclass('acp_shared.tour_retirement_policy') IS NOT NULL AS ready),
+    stuck AS (
+        SELECT j.id FROM shared.job j, tables
+         WHERE tables.ready AND j.kind = '{FANOUT_KIND}' AND j.status = 'failed'
+           AND j.error LIKE '%' || $1 || '%'
+         ORDER BY j.finished_at NULLS FIRST, j.id
+         LIMIT $2),
+    requeued AS (
+        UPDATE shared.job j
+           SET status = 'queued', attempt = 0, run_after = now(), error = NULL, cancel_requested = false,
+               finished_at = NULL, result = NULL, updated_at = now()
+          FROM stuck WHERE j.id = stuck.id AND j.status = 'failed'
+        RETURNING 1)
+    SELECT count(*) FROM requeued
+"""
+
 NOTICE_SQL = """
     SELECT n.notice_id::text AS notice_id, n.tenant_id::text AS tenant_id, n.event, n.tour_name, n.delivery,
            n.summary, n.mailed_at, n.created_at
@@ -71,8 +98,19 @@ MARK_MAILED_SQL = """
 """
 
 DEFER_SQL = """
-    UPDATE acp_shared.tenant_tour_notice SET delivery = 'digest', skipped_reason = $2
+    UPDATE acp_shared.tenant_tour_notice SET delivery = 'digest', skipped_reason = $2, mail_job_id = NULL
      WHERE notice_id = ANY($1::uuid[]) AND mailed_at IS NULL
+"""
+
+# Claim the notices this mail job sends ($2 = its job id): unmailed, and not held by another mail job that is still
+# queued or running (a held claim of a finished job is stale and is taken over). Only the claimed rows are sent.
+CLAIM_SQL = """
+    UPDATE acp_shared.tenant_tour_notice n SET mail_job_id = $2::uuid
+     WHERE n.notice_id = ANY($1::uuid[]) AND n.mailed_at IS NULL
+       AND (n.mail_job_id IS NULL OR n.mail_job_id = $2::uuid
+            OR NOT EXISTS (SELECT 1 FROM shared.job j
+                            WHERE j.id = n.mail_job_id AND j.status IN ('queued', 'running')))
+    RETURNING n.notice_id::text AS notice_id
 """
 
 
@@ -101,6 +139,11 @@ async def sweep(pool) -> int:
     return int(await pool.fetchval(SWEEP_SQL, SWEEP_WINDOW_S, SWEEP_LAG_S) or 0)
 
 
+async def requeue_schema_missing(pool) -> int:
+    """Re-queue the fan-out jobs that failed before CIS 360 existed (0 while it still does not)."""
+    return int(await pool.fetchval(REQUEUE_SCHEMA_MISSING_SQL, "fanout_schema_missing", REQUEUE_LIMIT) or 0)
+
+
 async def enqueue_due_drafts(pool) -> int:
     return await fanout.enqueue_due_drafts(pool, DRAFT_ATTEMPTS)
 
@@ -127,6 +170,9 @@ async def tick(pool, now: Optional[datetime] = None) -> dict:
     swept = await sweep(pool)
     if swept:
         out["fanout_swept"] = swept
+    requeued = await requeue_schema_missing(pool)
+    if requeued:
+        out["fanout_requeued"] = requeued
     drafts = await enqueue_due_drafts(pool)
     if drafts:
         out["drafts_due"] = drafts
@@ -215,6 +261,11 @@ def _in_digest(notice: dict, *, now: datetime) -> bool:
 
 
 async def _send_tenant(ctx: JobContext, cfg, tenant_id: str, notices: list[dict], ses) -> dict:
+    claimed = {r["notice_id"] for r in await ctx.pool.fetch(CLAIM_SQL, [n["notice_id"] for n in notices],
+                                                            str(ctx.job_id))}
+    notices = [n for n in notices if n["notice_id"] in claimed]
+    if not notices:
+        return {"tenant_id": tenant_id, "status": "skipped", "reason": "held_by_another_mail_job"}
     ids = [n["notice_id"] for n in notices]
     agency = await notice_mail.tenant_name(ctx.pool, tenant_id)
     if agency is None:
@@ -260,7 +311,7 @@ async def run_mail(ctx: JobContext) -> dict:
         else:
             raise NonRetryable("payload needs notice_id or digest_day")
     except asyncpg.UndefinedTableError as exc:
-        raise NonRetryable("CIS 362 not applied") from exc
+        raise NonRetryable(fanout.SCHEMA_MISSING) from exc
     by_tenant: dict[str, list[dict]] = {}
     for n in notices:
         by_tenant.setdefault(n["tenant_id"], []).append(n)
@@ -273,4 +324,4 @@ async def run_mail(ctx: JobContext) -> dict:
 
 
 __all__ = ["DRAFT_KIND", "FANOUT_KIND", "MAIL_KIND", "enqueue_daily_digest", "enqueue_due_drafts",
-           "enqueue_for_events", "run_draft", "run_fanout", "run_mail", "sweep", "tick"]
+           "enqueue_for_events", "requeue_schema_missing", "run_draft", "run_fanout", "run_mail", "sweep", "tick"]
