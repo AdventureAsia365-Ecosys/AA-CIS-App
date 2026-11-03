@@ -1,0 +1,328 @@
+"""AA-1028 R1 slice 3 without a database: plan validation, the Dev guard, the hourly tick's job and schedule, the
+gateway's tenant-spend stages and its entitlement read with the pre-353 fallback, and the new admin routes (POLICY,
+admin role only, error mapping). The database paths are in tests/integration/test_aa1028_slice3.py.
+"""
+from __future__ import annotations
+
+import asyncio
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from api.core.staff_authz import POLICY, TENANT_READ, TENANT_WRITE
+from services.tenant_account import dev_guard
+from services.tenant_account import plans as pl
+from shared import cost_guard
+from shared.jobs import registry
+from shared.llm_client import tenant_budget
+
+TID = "7d4c6f0e-1b2a-4c3d-9e8f-0a1b2c3d4e5f"
+CATALOGUE = {
+    "content.rate_limit_rpm": {"feature_key": "content.rate_limit_rpm", "product": "content", "value_kind": "limit"},
+    "content.social": {"feature_key": "content.social", "product": "content", "value_kind": "flag"},
+    "crm.core": {"feature_key": "crm.core", "product": "crm", "value_kind": "flag"},
+    "crm.seats": {"feature_key": "crm.seats", "product": "crm", "value_kind": "seats"},
+    "ai.budget_usd_monthly": {"feature_key": "ai.budget_usd_monthly", "product": "platform", "value_kind": "limit"},
+}
+
+
+# ── plan validation ─────────────────────────────────────────────────────────────────────────────────────────────
+
+def test_draft_normalises_a_crm_plan():
+    d = pl.draft({"name": "  Ferncliff CRM ", "price_usd_monthly": 9.5, "features": [
+        {"feature_key": "crm.seats", "limit_value": "5"}, {"feature_key": "crm.core"},
+        {"feature_key": "ai.budget_usd_monthly", "limit_value": 3}]}, product="crm", tier=None, catalogue=CATALOGUE)
+    assert d.name == "Ferncliff CRM" and d.price_unit == "seat" and str(d.price_usd_monthly) == "9.50"
+    assert [f.feature_key for f in d.features] == ["ai.budget_usd_monthly", "crm.core", "crm.seats"]
+    assert str(d.features[2].limit_value) == "5.00" and d.is_public is False
+
+
+@pytest.mark.parametrize("payload,product,tier,code", [
+    ({"name": ""}, "crm", None, "invalid_name"),
+    ({"name": "x", "price_unit": "month"}, "crm", None, "invalid_price_unit"),
+    ({"name": "x", "seats_included": -1}, "crm", None, "invalid_seats"),
+    ({"name": "x", "is_public": "yes"}, "crm", None, "invalid_is_public"),
+    ({"name": "x", "price_usd_monthly": -1}, "crm", None, "invalid_number"),
+    ({"name": "x", "price_usd_monthly": "1.005"}, "crm", None, "invalid_number"),
+    ({"name": "x", "price_usd_monthly": True}, "crm", None, "invalid_number"),
+    ({"name": "x", "price_usd_monthly": "NaN"}, "crm", None, "invalid_number"),
+    ({"name": "x", "features": "crm.core"}, "crm", None, "invalid_features"),
+    ({"name": "x", "features": [{"feature_key": "crm.core"}] * 2}, "crm", None, "invalid_features"),
+    ({"name": "x", "features": [{"feature_key": "crm.nope"}]}, "crm", None, "unknown_feature"),
+    ({"name": "x", "features": [{"feature_key": "content.social"}]}, "crm", None, "feature_product_mismatch"),
+    ({"name": "x", "features": [{"feature_key": "crm.core", "limit_value": 1}]}, "crm", None, "flag_takes_no_limit"),
+    ({"name": "x", "features": []}, "content", "growth", "rate_limit_required"),
+    ({"name": "x", "features": [{"feature_key": "content.rate_limit_rpm", "limit_value": 0}]}, "content", "growth",
+     "rate_limit_required"),
+])
+def test_draft_refuses(payload, product, tier, code):
+    with pytest.raises(pl.PlanError) as e:
+        pl.draft(payload, product=product, tier=tier, catalogue=CATALOGUE)
+    assert e.value.code == code
+
+
+def test_draft_edit_keeps_what_the_payload_leaves_out():
+    base = {"name": "Old", "price_usd_monthly": "5.00", "price_unit": "seat", "seats_included": 2, "is_public": True,
+            "notes": "n", "features": [{"feature_key": "crm.core", "limit_value": None}]}
+    d = pl.draft({"name": "New"}, product="crm", tier=None, catalogue=CATALOGUE, base=base)
+    assert (d.name, str(d.price_usd_monthly), d.seats_included, d.is_public, d.notes) == ("New", "5.00", 2, True, "n")
+    assert [f.feature_key for f in d.features] == ["crm.core"]
+
+
+@pytest.mark.asyncio
+async def test_tier_rpm_refuses_unknown_tiers_without_a_query():
+    conn = MagicMock()
+    conn.fetchval = AsyncMock(return_value=300)
+    assert await pl.tier_rate_limit_rpm(conn, "growth") == 300
+    assert await pl.tier_rate_limit_rpm(conn, "platinum") is None and conn.fetchval.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_update_needs_a_version_and_never_moves_keys():
+    for payload, code in (({}, "version_required"), ({"version": True}, "version_required"),
+                          ({"version": 1, "tier": "growth"}, "immutable_field"),
+                          ({"version": 1, "product": "crm"}, "immutable_field")):
+        with pytest.raises(pl.PlanError) as e:
+            await pl.update_plan(MagicMock(), "crm.core", payload, actor="admin:x")
+        assert e.value.code == code
+
+
+# ── Dev guard (root ADR 0019 d16) ───────────────────────────────────────────────────────────────────────────────
+
+def test_dev_guard_matrix(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "dev")
+    assert dev_guard.default_kind() == "demo"
+    assert dev_guard.refusal("demo", None) is None
+    assert dev_guard.refusal("agency", None)[0] == "dev_real_tenant_refused"
+    assert dev_guard.refusal("agency", 8) is None
+    assert dev_guard.refusal("agency", 9)[0] == "invalid_pilot_weeks"
+    assert dev_guard.refusal("demo", 2)[0] == "pilot_needs_agency"
+    for env in ("prod", "test", "DEV", ""):
+        monkeypatch.setenv("ENVIRONMENT", env)
+        assert dev_guard.default_kind() == "agency" and dev_guard.refusal("agency", None) is None
+        assert dev_guard.refusal("agency", 4)[0] == "pilot_dev_only"
+    monkeypatch.delenv("ENVIRONMENT")
+    assert dev_guard.default_kind() == "agency"
+
+
+# ── the hourly tick ─────────────────────────────────────────────────────────────────────────────────────────────
+
+def test_tick_kind_registered():
+    from services import jobs  # noqa: F401  (registers every kind)
+    from services.jobs import tenant_account_tick_job as job
+
+    k = registry.get_kind(job.KIND)
+    assert k is not None and k.concurrency == 1 and k.max_attempts == 2
+    assert not k.deploy_blocking and not k.background
+
+
+@pytest.mark.asyncio
+async def test_enqueue_hourly_once_per_hour(monkeypatch):
+    from services.jobs import tenant_account_tick_job as job
+
+    now = datetime(2026, 11, 3, 14, 37, tzinfo=timezone.utc)
+    assert job.schedule_key(now) == "tenant_account_tick:2026-11-03T14"
+    enq = AsyncMock(return_value=("job-1", True))
+    monkeypatch.setattr(job, "enqueue", enq)
+    pool = MagicMock()
+    pool.fetchval = AsyncMock(return_value=False)
+    assert await job.enqueue_hourly(pool, now=now) == ("job-1", True, "tenant_account_tick:2026-11-03T14")
+    assert enq.await_args.kwargs == {"idempotency_key": "tenant_account_tick:2026-11-03T14",
+                                     "created_by": job.SCHEDULER}
+    pool.fetchval = AsyncMock(return_value=True)
+    enq.reset_mock()
+    assert (await job.enqueue_hourly(pool, now=now))[:2] == (None, False) and enq.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_sampler_part(monkeypatch):
+    from api.core import ops_metrics_sampler as sampler
+    from services.jobs import tenant_account_tick_job as job
+
+    monkeypatch.setattr(job, "enqueue_hourly", AsyncMock(return_value=("job-9", True, "k")))
+    out: dict = {}
+    await sampler._tenant_account_tick_part(MagicMock(), {job.KIND: object()}, datetime.now(timezone.utc), out)
+    assert out == {"tenant_account_tick": {"job_id": "job-9", "key": "k"}}
+    out = {}
+    await sampler._tenant_account_tick_part(MagicMock(), {}, datetime.now(timezone.utc), out)   # not registered
+    monkeypatch.setenv(job.SWITCH_ENV, "off")
+    await sampler._tenant_account_tick_part(MagicMock(), {job.KIND: object()}, datetime.now(timezone.utc), out)
+    assert out == {}
+
+
+@pytest.mark.asyncio
+async def test_tick_job_runs_the_lifecycle(monkeypatch):
+    from services.jobs import tenant_account_tick_job as job
+    from services.tenant_account import lifecycle
+    from shared.jobs.queue import Job
+
+    result = {"trials": {"tenants": 1, "subscriptions": {"past_due": 1}, "accounts": {"past_due": 1}, "failed": 0},
+              "expired_entitlements_synced": 2, "pilots_ended": []}
+    monkeypatch.setattr(lifecycle, "tick", AsyncMock(return_value=result))
+    ctx = registry.JobContext(MagicMock(), Job(id="j-7", kind=job.KIND, payload={"trigger": "schedule"},
+                                               status="running", attempt=1, max_attempts=2, progress={},
+                                               cost_usd=0.0))
+    out = await job.run(ctx)
+    assert out["trigger"] == "schedule" and out["expired_entitlements_synced"] == 2 and ctx.result == out
+    assert lifecycle.actor_for("j-7") == "job:tenant_account_tick:j-7"
+
+
+# ── the gateway's tenant AI budget ──────────────────────────────────────────────────────────────────────────────
+
+def test_tenant_spend_stages():
+    assert tenant_budget.is_tenant_spend_stage("t9_write") and tenant_budget.is_tenant_spend_stage("adhoc_aa1028")
+    assert not tenant_budget.is_tenant_spend_stage("s1_generate")
+    assert not tenant_budget.is_tenant_spend_stage(None) and not tenant_budget.is_tenant_spend_stage("")
+
+
+def test_an_adhoc_call_of_a_tenant_past_its_budget_is_refused(monkeypatch):
+    budget = cost_guard.TenantAIBudget(tenant_id=TID, monthly_usd=0.01, month_spent_usd=0.0102, alert_pct=80,
+                                       approval_pct=100, hard_stop=True, month_calls=34)
+    monkeypatch.setattr(tenant_budget, "loader_tenants", lambda: frozenset({TID}))
+    monkeypatch.setattr(tenant_budget, "loader_state", lambda tid: budget)
+    monkeypatch.setattr(tenant_budget, "_bound_tenant", lambda: TID)
+    tenant_budget.invalidate()
+    try:
+        with pytest.raises(tenant_budget.TenantBudgetApprovalRequired):
+            tenant_budget.check("adhoc_aa1028")
+        assert tenant_budget.check("s1_generate") is budget           # a platform stage is never stopped
+    finally:
+        tenant_budget.invalidate()
+
+
+class _Conn:
+    """Answers the entitlement read, or raises UndefinedTableError for the SQL that names ``missing``."""
+
+    def __init__(self, missing=(), row=None):
+        self.missing, self.row, self.sql = missing, row, []
+
+    def _check(self, sql):
+        self.sql.append(sql)
+        if any(m in sql for m in self.missing):
+            raise type("UndefinedTableError", (Exception,), {})("missing")
+
+    async def fetchrow(self, sql, *args):
+        self._check(sql)
+        return self.row
+
+    async def fetch(self, sql, *args):
+        self._check(sql)
+        return [{"tenant_id": TID}]
+
+
+def test_budget_reads_the_entitlement_then_falls_back():
+    row = {"tenant_id": TID, "monthly_usd": 15, "alert_pct": 80, "approval_pct": 100, "hard_stop": True,
+           "spent": 15.2, "calls": 40, "source": "plan"}
+    c = _Conn(row=row)
+    b = asyncio.run(cost_guard.tenant_budget_check(c, TID))
+    assert b.needs_approval and "v_tenant_entitlement_resolved" in c.sql[0] and len(c.sql) == 1
+    # before CIS 353 (no resolver view): the AA-1016 row alone
+    c = _Conn(missing=("v_tenant_entitlement_resolved",), row=row)
+    assert asyncio.run(cost_guard.tenant_budget_check(c, TID)) is not None and len(c.sql) == 2
+    assert "v_tenant_entitlement_resolved" not in c.sql[1]
+    assert asyncio.run(cost_guard.budgeted_tenants(c)) == frozenset({TID})
+    # before 321: nothing
+    c = _Conn(missing=("shared.",))
+    assert asyncio.run(cost_guard.tenant_budget_check(c, TID)) is None
+    assert asyncio.run(cost_guard.budgeted_tenants(c)) is None
+
+
+def test_plan_budget_defaults():
+    assert (cost_guard.PLAN_ALERT_PCT, cost_guard.PLAN_APPROVAL_PCT) == (80, 100)
+    assert "coalesce(b.hard_stop, true)" in cost_guard._TENANT_BUDGET_SQL
+
+
+# ── the admin routes ────────────────────────────────────────────────────────────────────────────────────────────
+
+_SECRET = "aa1028-s3-test-secret"
+
+
+@pytest.fixture
+def client(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from api.main import app
+    from api.routers import admin, admin_settings
+
+    monkeypatch.delenv("ADMIN_SECRET", raising=False)
+    monkeypatch.setattr(admin, "ADMIN_SECRET", _SECRET)
+    monkeypatch.setattr(admin_settings, "ADMIN_SECRET", _SECRET)
+    conn = MagicMock()
+    pool = MagicMock()
+    pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
+    pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(app.state, "pool", pool, raising=False)
+    return TestClient(app, raise_server_exceptions=True), conn
+
+
+def _h(role="admin"):
+    h = {"X-Admin-Secret": _SECRET, "x-admin-user-id": "u-admin"}
+    if role is not None:
+        h["x-admin-role"] = role
+    return h
+
+
+def test_policy_entries():
+    assert POLICY[("GET", "/admin/plans")] == POLICY[("GET", "/admin/plans/features")] == TENANT_READ
+    for key in (("POST", "/admin/plans"), ("PATCH", "/admin/plans/{plan_key}"),
+                ("POST", "/admin/plans/{plan_key}/retire"),
+                ("PUT", "/admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}"),
+                ("DELETE", "/admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}")):
+        assert POLICY[key] == TENANT_WRITE
+    assert POLICY[("GET", "/admin/tenants/{tenant_id}/subscription")] == TENANT_READ
+
+
+@pytest.mark.parametrize("role", ["content", "reviewer", None])
+def test_writes_refuse_non_admin(client, role):
+    c, _ = client
+    assert c.post("/admin/plans", json={"plan_key": "crm.zz", "product": "crm", "name": "Z"},
+                  headers=_h(role)).status_code == 403
+    assert c.patch("/admin/plans/crm.core", json={"version": 1}, headers=_h(role)).status_code == 403
+    assert c.put(f"/admin/tenants/{TID}/entitlement-overrides/crm.core", json={"reason": "r"},
+                 headers=_h(role)).status_code == 403
+
+
+def test_plan_routes_map_refusals(client, monkeypatch):
+    c, _ = client
+    monkeypatch.setattr(pl, "update_plan", AsyncMock(side_effect=pl.PlanError("version_conflict", "stale", 409)))
+    resp = c.patch("/admin/plans/crm.core", json={"version": 1, "name": "Q"}, headers=_h())
+    assert resp.status_code == 409 and resp.json()["detail"]["detail"] == "version_conflict"
+    assert resp.headers["X-Error-Code"] == "version_conflict"
+
+    upd = AsyncMock(return_value={"plan_key": "crm.core", "changed": ["name"]})
+    monkeypatch.setattr(pl, "update_plan", upd)
+    assert c.patch("/admin/plans/crm.core", json={"version": 3, "name": "Q"}, headers=_h()).status_code == 200
+    assert upd.await_args.args[2] == {"version": 3, "name": "Q"} and upd.await_args.kwargs["actor"] == "admin:u-admin"
+
+    create = AsyncMock(return_value={"plan_key": "crm.zz"})
+    monkeypatch.setattr(pl, "create_plan", create)
+    body = {"plan_key": "crm.zz", "product": "crm", "name": "Z", "features": [{"feature_key": "crm.core"}]}
+    assert c.post("/admin/plans", json=body, headers=_h()).status_code == 201
+    sent = create.await_args.args[1]
+    assert "price_unit" not in sent and sent["features"] == [{"feature_key": "crm.core", "limit_value": None}]
+    assert c.post("/admin/plans", json={**body, "product": "booking"}, headers=_h()).status_code == 422
+
+    monkeypatch.setattr(pl, "list_plans", AsyncMock(return_value=[{"plan_key": "crm.core"}]))
+    monkeypatch.setattr(pl, "assignable_tiers", AsyncMock(return_value=["starter"]))
+    got = c.get("/admin/plans?product=crm", headers=_h()).json()
+    assert got == {"plans": [{"plan_key": "crm.core"}], "assignable_tiers": ["starter"]}
+
+
+def test_subscription_routes(client, monkeypatch):
+    from services.tenant_account import subscription as sub
+
+    c, _ = client
+    monkeypatch.setattr(sub, "snapshot", AsyncMock(return_value=None))
+    assert c.get(f"/admin/tenants/{TID}/subscription", headers=_h()).status_code == 404
+    setter = AsyncMock(return_value={"feature_key": "crm.ai_assist", "applies": True})
+    monkeypatch.setattr(sub, "set_override", setter)
+    resp = c.put(f"/admin/tenants/{TID}/entitlement-overrides/crm.ai_assist", headers=_h(),
+                 json={"enabled": False, "reason": "reviewing texts"})
+    assert resp.status_code == 200 and setter.await_args.kwargs["enabled"] is False
+    assert c.put(f"/admin/tenants/{TID}/entitlement-overrides/NotAKey", headers=_h(),
+                 json={"reason": "r"}).status_code == 422
+    monkeypatch.setattr(sub, "remove_override",
+                        AsyncMock(side_effect=pl.PlanError("override_not_found", "none", 404)))
+    resp = c.delete(f"/admin/tenants/{TID}/entitlement-overrides/crm.ai_assist", headers=_h())
+    assert resp.status_code == 404 and resp.json()["detail"]["detail"] == "override_not_found"

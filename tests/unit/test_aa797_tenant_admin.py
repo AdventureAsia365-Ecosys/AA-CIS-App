@@ -14,6 +14,9 @@ from api.routers import admin
 from services.acp_shared.audit_log import AdminTenantAuditAction
 from shared.llm_client.bedrock_satellite import ACC3_ACCOUNT_ID
 
+# AA-1028 R1 slice 3: the plan readers that replaced PLAN_LIMITS answer with the CIS 355 seed (tests/unit/conftest.py)
+pytestmark = pytest.mark.usefixtures("seeded_plans")
+
 _SECRET = "test-admin-secret"
 TENANT_ID = uuid.uuid4()
 PLAN_ID = uuid.uuid4()
@@ -92,9 +95,14 @@ class TestUpdateTenant:
 
     @pytest.mark.asyncio
     async def test_invalid_plan_tier_is_400(self):
+        # AA-1028 R1 slice 3: a tier no live content plan serves (shared.plan, not PLAN_LIMITS) is refused, and
+        # the message lists the assignable tiers
+        conn = _conn()
+        conn.fetchrow.return_value = _before()
         with pytest.raises(HTTPException) as e:
-            await self._patch(_conn(), {"plan_tier": "platinum"})
-        assert e.value.status_code == 400
+            await self._patch(conn, {"plan_tier": "platinum"})
+        assert e.value.status_code == 400 and "business" in e.value.detail
+        conn.execute.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_non_admin_role_is_403(self):

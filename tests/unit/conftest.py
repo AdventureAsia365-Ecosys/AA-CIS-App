@@ -290,3 +290,28 @@ def _subject_gate_off(request, monkeypatch):
     monkeypatch.setattr(v1_publish, "_subject_gate", _gate_publish_noop)
     monkeypatch.setattr(v1_publish, "_pending_needs_change", _gate_pending_noop)
     monkeypatch.setattr(writing_service, "_subject_gate_after_write", _gate_write_noop)
+
+
+# AA-1028 R1 slice 3: the tier RPM / assignable tiers / per-tier RPM readers that replaced PLAN_LIMITS read
+# shared.plan + shared.plan_feature. Tests that mock a connection per query use this fixture to answer them with the
+# CIS 355 seed values (the same numbers PLAN_LIMITS carried) instead of the mocked connection.
+SEEDED_TIER_RPM = {"starter": 60, "growth": 300, "business": 1000, "internal": 60}
+
+
+@pytest.fixture
+def seeded_plans(monkeypatch):
+    from services.tenant_account import plans
+
+    async def _rpm(conn, tier):
+        return SEEDED_TIER_RPM.get(tier)
+
+    async def _tiers(conn):
+        return sorted(SEEDED_TIER_RPM)
+
+    async def _by_tier(conn):
+        return dict(SEEDED_TIER_RPM)
+
+    monkeypatch.setattr(plans, "tier_rate_limit_rpm", _rpm)
+    monkeypatch.setattr(plans, "assignable_tiers", _tiers)
+    monkeypatch.setattr(plans, "rate_limits_by_tier", _by_tier)
+    return SEEDED_TIER_RPM

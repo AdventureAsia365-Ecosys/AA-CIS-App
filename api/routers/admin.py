@@ -6,7 +6,7 @@ import os
 import secrets
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
-from typing import List, Optional
+from typing import List, Literal, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from api.core.staff_authz import MASTER_ADMIN, OPS_READ, TENANT_READ, has_perm, staff_policy
 from pydantic import BaseModel, Field
@@ -16,6 +16,8 @@ from api.core.staff_credential import principal_verified
 from services.acp_publish import daily_limit
 from services.acp_shared.audit_log import AdminTenantAuditAction, write_audit_log
 from services.acp_shared.e2e_tenant_key_sync import sync_note, sync_test_tenant_key
+from services.tenant_account import dev_guard
+from services.tenant_account import plans as tenant_plans
 from shared.ops_checks import EVENT_TYPE_PREFIX as OPS_CHECK_EVENT_PREFIX
 from shared.validators.prompt_sanitize import (
     sanitize_text, sanitize_list, MAX_LONG_FIELD_LEN, MAX_SHORT_FIELD_LEN, MAX_SYSTEM_PROMPT_LEN,
@@ -78,14 +80,9 @@ async def _require_master_admin_if_published(request: Request, tour_id: str, x_a
                             headers={"X-Error-Code": "master_admin_required"})
 
 
-PLAN_LIMITS = {
-    # AA-640: tours per month now live ONLY in shared.membership_plans (what tenants see and are
-    # billed on). This table keeps the per-plan rate limit.
-    "starter":  {"rpm": 60},
-    "growth":   {"rpm": 300},
-    "business": {"rpm": 1000},
-    "internal": {"rpm": 60},
-}
+# AA-1028 R1 slice 3 (root ADR 0019 d2): the hard-coded PLAN_LIMITS (per-tier RPM) is gone. A tier's starting RPM is
+# its live content plan's content.rate_limit_rpm (shared.plan_feature, edited on Tenants › Plans & add-ons; seeded by
+# CIS 355 with the same 60 / 300 / 1,000 / internal 60), read by services/tenant_account/plans.tier_rate_limit_rpm.
 # AA-766: upper bound for an admin RPM override — a technical guard against typos (10x the largest
 # plan default), not a commercial limit.
 RATE_LIMIT_RPM_MAX = 10000
@@ -132,6 +129,15 @@ def tenant_status(is_active: bool, cancelled_at) -> str:
     return "active" if is_active else "suspended"
 
 
+async def _tier_rpm(conn, plan_tier: str) -> int:
+    """The RPM a tenant of ``plan_tier`` starts with (its live content plan); 400 for a tier no live plan serves."""
+    rpm = await tenant_plans.tier_rate_limit_rpm(conn, plan_tier)
+    if rpm is None:
+        raise HTTPException(status_code=400,
+                            detail=f"Invalid plan_tier. Choose: {await tenant_plans.assignable_tiers(conn)}")
+    return rpm
+
+
 async def _resolve_plan_id(conn, plan_tier: str):
     """shared.membership_plans.id for a plan_tier. A tenant without plan_id shows quota/price as
     0/inf (S234 audit), so a tier with no active plan row is refused instead of stored."""
@@ -162,6 +168,9 @@ class CreateTenantRequest(BaseModel):
     name: str
     slug: str
     plan_tier: str = "starter"
+    # AA-1028 R1 slice 3 (root ADR 0019 d16): agency or demo; left out = demo on Dev (synthetic), agency elsewhere.
+    # On Dev a real agency is only the one pilot, made through the saga (POST /admin/tenants/provision, pilot_weeks).
+    kind: Optional[Literal["agency", "demo"]] = None
     # AA-384: caller-chosen posting cadence, no longer implied by plan_tier (was
     # POSTS_PER_WEEK_BY_PLAN_TIER, removed). Required, no default -- every tenant states its own
     # cadence at creation. 1-14 is the validation range confirmed in the AA-384 build task (a
@@ -211,10 +220,11 @@ async def create_tenant(
     verify_admin_secret(x_admin_secret)
     _require_tenant_admin(x_admin_role)
 
-    if body.plan_tier not in PLAN_LIMITS:
-        raise HTTPException(status_code=400, detail=f"Invalid plan_tier. Choose: {list(PLAN_LIMITS.keys())}")
-
-    rpm = PLAN_LIMITS[body.plan_tier]["rpm"]
+    kind = body.kind or dev_guard.default_kind()
+    refused = dev_guard.refusal(kind, None)
+    if refused is not None:
+        raise HTTPException(status_code=422, detail={"detail": refused[0], "message": refused[1]},
+                            headers={"X-Error-Code": refused[0]})
     plaintext = f"cis_{secrets.token_urlsafe(32)}"
     key_hash = hashlib.sha256(plaintext.encode()).hexdigest()
 
@@ -225,25 +235,21 @@ async def create_tenant(
         )
         if existing:
             raise HTTPException(status_code=409, detail=f"Slug '{body.slug}' already exists")
+        rpm = await _tier_rpm(conn, body.plan_tier)
         # AA-797: plan_id was never set here, so every new tenant showed quota/price 0/inf.
         plan_id = await _resolve_plan_id(conn, body.plan_tier)
 
         async with conn.transaction():
             tenant_id = await conn.fetchval("""
                 INSERT INTO shared.tenants
-                    (name, slug, plan_tier, plan_id, posts_per_week, api_key_hash, rate_limit_rpm, is_active)
-                VALUES ($1, $2, $3::plan_tier_enum, $4, $5, $6, $7, true)
+                    (name, slug, plan_tier, plan_id, posts_per_week, api_key_hash, rate_limit_rpm, is_active,
+                     kind, is_canary)
+                VALUES ($1, $2, $3::plan_tier_enum, $4, $5, $6, $7, true, $8, $9)
                 RETURNING tenant_id
-            """, body.name, body.slug, body.plan_tier, plan_id, body.posts_per_week, key_hash, rpm)
-
-            # Quota ledger — default limits per plan
-            plan_limits = PLAN_LIMITS.get(body.plan_tier, PLAN_LIMITS["starter"])
-            await conn.execute("""
-                INSERT INTO acp_shared.acp_quota_ledger
-                    (tenant_id, s2_runs_limit, s3_runs_limit, s4_blogs_limit)
-                VALUES ($1, $2, $3, $4)
-                ON CONFLICT (tenant_id) DO NOTHING
-            """, tenant_id, 10, 10, 50)
+            """, body.name, body.slug, body.plan_tier, plan_id, body.posts_per_week, key_hash, rpm,
+                kind, kind == "demo")
+            # AA-1028 R1 slice 3: no acp_quota_ledger row (the ACPv1 S2/S3/S4 10/10/50 ledger has no reader since
+            # 13/07/2026; a tenant's limits are its entitlements).
 
             # Empty brand rules row — populated later via brand-brief upload
             # ON CONFLICT omitted: no unique constraint on (tenant_id, is_active);
@@ -282,7 +288,7 @@ async def create_tenant(
                 conn, tenant_id=str(tenant_id), actor=_admin_actor(x_admin_user_id),
                 action=AdminTenantAuditAction.ONBOARD, resource_type="tenant", resource_id=str(tenant_id),
                 details={"name": body.name, "plan_tier": body.plan_tier, "plan_id": str(plan_id),
-                         "posts_per_week": body.posts_per_week},
+                         "posts_per_week": body.posts_per_week, "kind": kind},
             )
 
     return CreateTenantResponse(
@@ -540,7 +546,7 @@ class UpdateTenantRequest(BaseModel):
     body, so the Active toggle returned 200 and changed nothing."""
     plan_tier: Optional[str] = None
     is_active: Optional[bool] = None
-    # AA-766: an explicit per-tenant override of the plan's default RPM (PLAN_LIMITS). Sent alone
+    # AA-766: an explicit per-tenant override of the plan's default RPM (content.rate_limit_rpm). Sent alone
     # it changes only the limit; sent with plan_tier it wins over that plan's default.
     rate_limit_rpm: Optional[int] = Field(None, ge=1, le=RATE_LIMIT_RPM_MAX)
     # AA-819 (AUP 2026-11): per-tenant override of the daily publish limit (code default 20 per UTC
@@ -569,8 +575,6 @@ async def update_tenant(
     if body.plan_tier is None and body.is_active is None and body.rate_limit_rpm is None and not set_publish_limit:
         raise HTTPException(status_code=422, detail="Nothing to update: send plan_tier, rate_limit_rpm, "
                                                     "daily_publish_limit and/or is_active")
-    if body.plan_tier is not None and body.plan_tier not in PLAN_LIMITS:
-        raise HTTPException(status_code=400, detail=f"Invalid plan_tier. Choose: {list(PLAN_LIMITS.keys())}")
 
     actor = _admin_actor(x_admin_user_id)
     changed: list[str] = []
@@ -598,8 +602,9 @@ async def update_tenant(
 
         rpm_now = before["rate_limit_rpm"]
         if body.plan_tier is not None and body.plan_tier != before["plan_tier"]:
+            tier_rpm = await _tier_rpm(conn, body.plan_tier)
             plan_id = await _resolve_plan_id(conn, body.plan_tier)
-            rpm = body.rate_limit_rpm if body.rate_limit_rpm is not None else PLAN_LIMITS[body.plan_tier]["rpm"]
+            rpm = body.rate_limit_rpm if body.rate_limit_rpm is not None else tier_rpm
             rpm_now = rpm
             await conn.execute("""
                 UPDATE shared.tenants

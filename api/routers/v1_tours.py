@@ -11,7 +11,7 @@ from api.routers.auth import verify_tenant_jwt
 from api.middleware import tenant_role as _tenant_role  # AA-979 csr check in the dependency
 from api.schemas.public_api import Quota  # AA-899
 from api.core.secret_compare import secrets_equal
-from api.routers.admin import PLAN_LIMITS
+from services.tenant_account import plans as tenant_plans
 from api.routers._billing import no_plan_usage, usage_row_to_dict
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from api.routers._served import annotate as _annotate_served, refuse_http as _refuse_not_served
@@ -319,7 +319,8 @@ async def browse_pool(
 
 
 # ── AA-489: rewrite quota (shared helpers + GET /v1/quota) ────────────────────
-# STEP0 found nothing enforces a tenant's monthly rewrite count: PLAN_LIMITS.tours_per_month
+# STEP0 found nothing enforces a tenant's monthly rewrite count: PLAN_LIMITS.tours_per_month (PLAN_LIMITS is gone
+# since AA-1028 R1 slice 3)
 # (admin.py) was defined but only ever displayed, never checked; raw_tours.rewrite_count
 # (migration 033) is dead, 0 callers; rate_limit_middleware throttles requests/minute across
 # ALL /v1/*, not a monthly count. Deliberately NOT reusing acp_quota_ledger — that's ACPv1
@@ -348,10 +349,16 @@ async def _get_tenant_plan_limit(conn, tenant_id: str) -> tuple:
     """(plan_tier str, tours_quota_monthly int) — plan read live from shared.tenants, not the
     JWT's own plan_tier claim (same rationale AA-432 established for rate_limit_rpm/is_active: a
     plan change shouldn't take up to 24h, the JWT's TTL, to take effect). The quota comes from
-    shared.membership_plans (AA-640); a plan with no row falls back to the starter row."""
+    shared.membership_plans (AA-640); a plan with no row falls back to the starter row.
+    AA-1028 R1 slice 3 (root ADR 0019 d2): the tenant's resolved entitlement ``content.rewrite`` comes first (its
+    plan's value, edited on Tenants › Plans & add-ons, or an override; CIS 355 seeded the same 50 / 200 / 500); the
+    membership_plans read stays only for a tenant with no numeric key (no live content subscription, or a plan
+    without a rewrite limit such as Enterprise / AA internal), so no existing tenant's number changes."""
     row = await conn.fetchrow("""
         SELECT t.plan_tier::text AS plan,
-               COALESCE(mp.tours_quota_monthly,
+               COALESCE((SELECT e.limit_value::int FROM shared.v_tenant_entitlement_resolved e
+                          WHERE e.tenant_id = t.tenant_id AND e.feature_key = 'content.rewrite'),
+                        mp.tours_quota_monthly,
                         (SELECT tours_quota_monthly FROM shared.membership_plans
                          WHERE plan_name = 'starter')) AS quota
         FROM shared.tenants t
@@ -465,6 +472,8 @@ async def get_my_billing(request: Request, tenant=Depends(get_tenant)):
             WHERE is_active AND plan_name <> 'internal'
             ORDER BY (price_usd_monthly IS NULL OR price_usd_monthly <= 0), price_usd_monthly, tours_quota_monthly
         """)
+        # AA-1028 R1 slice 3: each plan's RPM from its live content plan (content.rate_limit_rpm), not PLAN_LIMITS
+        rpm_by_tier = await tenant_plans.rate_limits_by_tier(conn)
         # AA-638 — per-day API calls + tour rewrites for the current month (Dashboard sparkline).
         daily_rows = await conn.fetch("""
             WITH days AS (
@@ -502,7 +511,7 @@ async def get_my_billing(request: Request, tenant=Depends(get_tenant)):
             "price_usd_monthly": (
                 float(p["price_usd_monthly"]) if p["price_usd_monthly"] and p["price_usd_monthly"] > 0 else None
             ),
-            "rate_limit_rpm": PLAN_LIMITS.get(p["plan_name"], {}).get("rpm"),
+            "rate_limit_rpm": rpm_by_tier.get(p["plan_name"]),
         }
         for p in plan_rows
     ]
