@@ -335,7 +335,14 @@ def _feed_conn(cursor=None):
 
 def _pool(rows=None, error=None, execute="UPDATE 0"):
     pool = MagicMock()
-    pool.fetch = AsyncMock(return_value=_role_rows() if rows is None else rows, side_effect=error)
+    answer = _role_rows() if rows is None else rows
+
+    async def fetch(sql, *args):
+        if error is not None:
+            raise error
+        return [] if "shared.llm_app_profile" in sql else answer    # AA-1025 H1b: no app profile budget set
+
+    pool.fetch = AsyncMock(side_effect=fetch)
     pool.execute = AsyncMock(return_value=execute)   # the retired-kind sweep
     pool.fetchval = AsyncMock(return_value=0)        # AA-987: the TripPlanner purge sweep (jobs created)
     pool.fetchrow = AsyncMock(return_value=None)     # AA-1003: the daily KPI snapshot enqueue (already queued)

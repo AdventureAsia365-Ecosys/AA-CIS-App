@@ -14,6 +14,16 @@ Two kinds of checks:
   ``-jobs-overdue-running``), ``rds_role_connections`` (a LOGIN role above 80 % of its CONNECTION LIMIT, was the six
   ``-rds-role-connections-*``), ``rds_xid_age`` (``max(age(datfrozenxid))`` above 1,000,000,000, was
   ``-rds-max-used-xid-high``). See :func:`state_findings`.
+- **App spend** (AA-1025 H1b), evaluated on the same tick from the database (:func:`app_spend_findings`): for each app
+  in :data:`APP_SPEND_APPS` whose app profile (``shared.llm_app_profile``, CIS 345) sets ``default_daily_budget_usd``,
+  today's (UTC) ``shared.llm_call_log`` spend of that app against it. TripPlanner takes its daily cap from the same row
+  (AA-TripPlanner-Web ``backend/shared/app_profile.py``) and prints ``llm_spend_alert`` at 80 % and 100 %; this check
+  is that signal on the CIS bell + e-mail: ``llm_spend_alert.<app>.near`` (80 %, ``SPEND_NEAR_RATIO``) and
+  ``llm_spend_alert.<app>.cap`` (100 %), each its own check so a cap reached after a near alert still bells. Not CIS
+  (its central cap ``llm/app:cis`` alerts from the gateway, A7) and not the CRM (its ledger is ``crm.llm_call``, ADR
+  0008a: CIS cannot read it without a staff token; the CRM's own job sampler e-mails the same alerts topic at 80 % /
+  100 % of its budget, ``llm_app_spend_near`` / ``_cap``, AA-Partner ``app/observability/ops_alerts.py``). No profile
+  budget = no check.
 - **Log events** (were log metric filters on /ecs/aa-cis-dev): :func:`capture` is a structlog processor installed on
   the JSON log handler (shared/log_config.py), so it sees every line of the api and the worker. A line whose event is
   in :data:`EVENT_CHECKS`, a tenant route that ran on the admin pool (``used_tenant_pool`` false, not a known
@@ -103,6 +113,21 @@ CHECKS: dict[str, Check] = {
     "tenant_route_admin_pool": Check("Tenant route on the admin pool", "A tenant route ran on the admin pool "
                                      "(BYPASSRLS): a route flag is rolled back. Find who set it to false."),
 }
+
+# AA-1025 H1b: the apps whose daily AI spend this process checks against their app profile budget (see the docstring).
+APP_SPEND_APPS = ("tripplanner",)
+APP_SPEND_NAMES = {"tripplanner": "TripPlanner"}
+SPEND_NEAR_RATIO = 0.8        # TripPlanner's SPEND_NEAR_CAP_RATIO (backend/config.py), the same 80 %
+for _app in APP_SPEND_APPS:
+    _name = APP_SPEND_NAMES[_app]
+    CHECKS[f"llm_spend_alert.{_app}.near"] = Check(
+        f"{_name} AI spend near its daily cap", f"{_name}'s AI spend today passed 80 % of its daily budget (app "
+        "profile). At 100 % the app stops calling models and degrades. Check AI providers › Calls, then raise the "
+        "budget on App profiles if the traffic is real.", COST_PAGE)
+    CHECKS[f"llm_spend_alert.{_app}.cap"] = Check(
+        f"{_name} AI spend reached its daily cap", f"{_name} reached its daily AI budget (app profile): it calls no "
+        "model until the UTC day ends and serves its degrade mode. Check AI providers › Calls, then raise the budget "
+        "on App profiles if the traffic is real.", COST_PAGE)
 
 # Log event name -> check. Both variants of a write failure (async pool and sync) map to one check.
 EVENT_CHECKS: dict[str, str] = {
@@ -242,6 +267,56 @@ def state_findings(tick: dict) -> list[Finding]:
     if xid is not None and int(xid) > XID_AGE_LIMIT:
         out.append(Finding("rds_xid_age", f"max(age(datfrozenxid)) = {int(xid)}", {"xid_age": int(xid)}))
     return out
+
+
+# $1 = the evaluation time, $2 = the apps. The ledger v2 app column, or the pre-v2 quality_signal app (as CIS 323).
+APP_SPEND_SQL = """
+    SELECT p.app,
+           p.default_daily_budget_usd::float8 AS cap_usd,
+           (SELECT coalesce(sum(l.cost_usd), 0)::float8
+              FROM shared.llm_call_log l
+             WHERE l.created_at >= date_trunc('day', $1::timestamptz, 'UTC')
+               AND l.created_at < date_trunc('day', $1::timestamptz, 'UTC') + interval '1 day'
+               AND COALESCE(l.app, l.quality_signal ->> 'app') = p.app) AS spent_usd
+      FROM shared.llm_app_profile p
+     WHERE p.app = ANY($2::text[]) AND p.default_daily_budget_usd IS NOT NULL
+"""
+
+
+def spend_findings(rows: list, day: str) -> list[Finding]:
+    """The app spend findings of ``APP_SPEND_SQL`` rows (dicts or records with app, cap_usd, spent_usd). A cap of 0 is
+    reached at once (the app makes no AI call). Pure."""
+    out: list[Finding] = []
+    for r in rows:
+        app, cap, spent = r["app"], float(r["cap_usd"]), float(r["spent_usd"] or 0)
+        if app not in APP_SPEND_APPS:
+            continue
+        if spent >= cap:
+            threshold = "cap"
+        elif spent >= cap * SPEND_NEAR_RATIO:
+            threshold = "near"
+        else:
+            continue
+        pct = None if cap <= 0 else round(100.0 * spent / cap, 1)
+        out.append(Finding(f"llm_spend_alert.{app}.{threshold}",
+                           f"{APP_SPEND_NAMES.get(app, app)} spent {spent:.4f} USD of its {cap:.4f} USD daily budget"
+                           + (f" ({pct} %)" if pct is not None else ""),
+                           {"app": app, "day": day, "spent_usd": round(spent, 6), "cap_usd": cap,
+                            "used_pct": pct, "threshold": threshold, "signal": "llm_spend_alert"}))
+    return out
+
+
+async def app_spend_findings(pool, now: Optional[datetime] = None) -> list[Finding]:
+    """The app spend findings of this tick (``APP_SPEND_SQL``). [] before migration 345 (no table). Raises on another
+    database error (the sampler logs it as ``ops_checks_error``)."""
+    import asyncpg
+
+    now = now or datetime.now(timezone.utc)
+    try:
+        rows = await pool.fetch(APP_SPEND_SQL, now, list(APP_SPEND_APPS))
+    except asyncpg.exceptions.UndefinedTableError:
+        return []
+    return spend_findings(rows, now.astimezone(timezone.utc).date().isoformat())
 
 
 def event_findings(items: dict[str, dict]) -> list[Finding]:
