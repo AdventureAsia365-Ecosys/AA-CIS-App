@@ -1,12 +1,12 @@
 """AA-1039 R6 slice 2 — admin Tenant content QA › Compliance (root ADR 0019 d20 / d21).
 
-  GET  /admin/tenant-qa/compliance                    the flags of acp_shared.content_compliance_flag (CIS 362), newest
-                                                      first; filters state (open | resolved | all), kind (subject_gate |
-                                                      tour_retired), tenant_id; with the tenant name, the piece title and
-                                                      channel, the post URL and the counts per kind of the open flags.
-  POST /admin/tenant-qa/compliance/{flag_id}/release  staff release of an open subject_gate flag for the piece's
-                                                      current text (resolution released, the text's sha256 kept, so the
-                                                      publish gate lets exactly that text through); a reason is required.
+  GET  /admin/tenant-qa/compliance
+      The flags of acp_shared.content_compliance_flag (CIS 362), newest first; filters state (open | resolved | all),
+      kind (subject_gate | tour_retired), tenant_id; with the tenant name, the piece title and channel, the post URL
+      and the counts per kind of the open flags.
+  POST /admin/tenant-qa/compliance/{flag_id}/release
+      Staff release of an open subject_gate flag for the piece's current text (resolution released, the text's sha256
+      kept, so the publish gate lets exactly that text through); a reason is required.
 
 Flags are admin data (memory: the tenant sees content only); tenants read the reason through the publish answer and
 the Publish list, never this route. Reads every staff role may make (TENANT_READ); the release is QUALITY_WRITE and

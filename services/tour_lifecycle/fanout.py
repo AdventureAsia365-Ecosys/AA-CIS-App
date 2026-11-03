@@ -327,7 +327,7 @@ class DraftRefused(Exception):
     keeps the reason, staff and the tenant's mail already say what to do. `permanent` = a retry cannot help."""
 
     def __init__(self, reason: str, permanent: bool = True):
-        super().__init__(reason)
+        super().__init__(reason, permanent)
         self.reason = reason
         self.permanent = permanent
 

@@ -350,8 +350,8 @@ async def test_mail_goes_to_owner_and_editor_once(conn, monkeypatch):
     ses = _Ses()
     cognito = _Cognito({"sub-owner": "owner@agency.example", "sub-editor": "editor@agency.example",
                         "sub-viewer": "viewer@agency.example"})
-    job = queue.Job(id=str(uuid.uuid4()), kind=trj.MAIL_KIND, payload={"notice_id": notice_id}, status="running", attempt=1,
-                    max_attempts=4, cost_usd=0.0, progress={})
+    job = queue.Job(id=str(uuid.uuid4()), kind=trj.MAIL_KIND, payload={"notice_id": notice_id}, status="running",
+                    attempt=1, max_attempts=4, cost_usd=0.0, progress={})
     from shared.jobs.registry import JobContext
     out = await trj.run_mail(JobContext(l2._OneConnPool(conn), job, {"ses": ses, "cognito": cognito}))
     assert out["sent"] == 1 and len(ses.sent) == 1
