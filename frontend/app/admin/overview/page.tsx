@@ -13,6 +13,9 @@
 // linking to AI providers, where each provider has its own row.
 // AA-858 (S243) — every number on the page names its source in a SourceHint (kit InfoTip); the wording, in plain
 // business words, is in ./_components/sources.ts.
+// AA-1034 R0 (root ADR 0019, B2B-only model) — the two B2C cards (TripPlanner customers, Booking funnel of traveller
+// inquiries) are off: AA sells to partner agencies only. SHOW_B2C_CARDS brings them back (the components stay); the
+// partner KPIs replace them in R1.
 // AA-1006 follow-up (S263 F1) — the Alerts rows are ./_components/AlertList.tsx: a long alert key wraps and the row
 // stacks on a phone (it pushed the page 65 px past a 390 px screen).
 
@@ -51,6 +54,9 @@ import {
   useT,
   Button, DataTable,
 } from "../../_kit";
+
+/** AA-1034 R0: the B2C cards (TripPlannerCard, BookingFunnelCard) are hidden under the B2B-only model (root ADR 0019). */
+const SHOW_B2C_CARDS = false;
 
 // ── types ───────────────────────────────────────────────────────────────────
 interface FunnelRow {
@@ -333,17 +339,19 @@ export default function OverviewPage() {
             ) : (
               <>
                 <AppHealthStrip section={ops.data?.health ?? opsDown} />
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))",
-                    gap: 18,
-                    alignItems: "start",
-                  }}
-                >
-                  <TripPlannerCard section={ops.data?.tripplanner ?? opsDown} />
-                  <BookingFunnelCard section={ops.data?.booking ?? opsDown} />
-                </div>
+                {SHOW_B2C_CARDS && (
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))",
+                      gap: 18,
+                      alignItems: "start",
+                    }}
+                  >
+                    <TripPlannerCard section={ops.data?.tripplanner ?? opsDown} />
+                    <BookingFunnelCard section={ops.data?.booking ?? opsDown} />
+                  </div>
+                )}
                 <CostByAppCard section={ops.data?.cost ?? opsDown} />
               </>
             )}
