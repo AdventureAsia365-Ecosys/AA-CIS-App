@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  EMPTY_FILTERS, defaultRun, families, filterReports, generatePath, periodText, runPath, runsPath,
+  DUE_TONE, EMPTY_FILTERS, defaultRun, families, filterReports, generatePath, periodText, runPath, runsPath,
 } from "./reports.ts";
 
 const ROW = {
@@ -45,4 +45,11 @@ test("period text", () => {
   assert.equal(periodText("2026-10-28", "2026-10-28"), "2026-10-28");
   assert.equal(periodText("2026-10-01", "2026-10-28"), "2026-10-01 – 2026-10-28");
   assert.equal(periodText(null, null), "");
+});
+
+test("a retired report is neutral, never shown as overdue, and not 'generated here'", () => {
+  assert.equal(DUE_TONE.retired, "neutral");
+  const retired = { ...ROW, id: "TP-03", status: "retired", generator: null, runnable: false, retired_on: "2026-11-03",
+    due: { state: "retired", expected_period_end: null } };
+  assert.deepEqual(filterReports([ROW, retired], { ...EMPTY_FILTERS, generatedOnly: true }).map((r) => r.id), ["EX-04"]);
 });

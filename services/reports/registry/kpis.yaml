@@ -326,9 +326,9 @@ kpis:
   - FI-07
 - id: K-BK-CONV
   version: 1
-  name: Inquiry to confirmed
-  definition: Cases whose first booking.trip_case_status_history row with to_status 'confirmed' exists / inquiry_received,
-    same cohort month
+  name: B2B case to confirmed
+  definition: B2B trip cases (booking.trip_cases channel 'b2b') whose first booking.trip_case_status_history row with
+    to_status 'confirmed' exists / B2B trip cases created, same cohort month (B2C inquiries out of scope since 2026-11-03)
   unit: ratio
   threshold: Baseline after first prod quarter; alert on -20 % vs trailing 3 months
   sources:
@@ -379,7 +379,8 @@ kpis:
 - id: K-BK-INQ2CASE
   version: 1
   name: Inquiry to case
-  definition: trip_case_created / inquiry_received, same source_system
+  definition: 'Retired with TP-03 on 2026-11-03 (no longer snapshotted; shared.kpi_daily keeps the old values). Was:
+    trip_case_created / inquiry_received, same source_system'
   unit: ratio
   threshold: 100 % within 24 h
   sources:
@@ -387,12 +388,6 @@ kpis:
   defined_in: TP-03
   used_by:
   - TP-03
-  snapshot:
-    job: kpi_snapshot_daily
-    scopes:
-    - all
-    computes: trip_case_created / inquiry_received of booking.v_ops_funnel_daily, source_system tripplanner, UTC day D (no
-      value on a day without inquiries)
 - id: K-BK-INVOICED
   version: 1
   name: Invoiced revenue
@@ -429,8 +424,9 @@ kpis:
 - id: K-BK-PARKED
   version: 1
   name: Parked or failed inquiries
-  definition: booking.v_ops_funnel_daily metrics inquiry_parked + inquiry_failed; age from booking.inbox_events (status,
-    received_at, processed_at)
+  definition: 'Retired with TP-03 on 2026-11-03 (no longer snapshotted; shared.kpi_daily keeps the old values). Was:
+    booking.v_ops_funnel_daily metrics inquiry_parked + inquiry_failed; age from booking.inbox_events (status,
+    received_at, processed_at)'
   unit: count
   threshold: 0 open older than 4 h
   sources:
@@ -439,18 +435,10 @@ kpis:
   defined_in: TP-03
   used_by:
   - TP-03
-  snapshot:
-    job: kpi_snapshot_daily
-    scopes:
-    - all
-    computes: inquiry_parked + inquiry_failed of booking.v_ops_funnel_daily for UTC day D, every source (the current status
-      of the inquiries received that day); the age needs booking.inbox_events (no cis_app grant yet)
-  alert:
-    red_gte: 1
 - id: K-BK-STALLED
   version: 1
   name: Stalled cases
-  definition: booking.trip_cases not in completed/cancelled with last status change > 7 days ago
+  definition: B2B booking.trip_cases (channel 'b2b') not in completed/cancelled with last status change > 7 days ago
   unit: count
   threshold: 0 without a note
   sources:
@@ -472,7 +460,7 @@ kpis:
 - id: K-BK-TTC
   version: 1
   name: Time to confirm
-  definition: median and p90 of first 'confirmed' changed_at - created_at
+  definition: median and p90 of first 'confirmed' changed_at - created_at, B2B trip cases
   unit: hours
   threshold: Tracked
   sources: []
@@ -482,7 +470,7 @@ kpis:
 - id: K-BK-TTP
   version: 1
   name: Time to first proposal
-  definition: median(first changed_at with to_status 'proposal_sent' - booking.trip_cases.created_at)
+  definition: median(first changed_at with to_status 'proposal_sent' - booking.trip_cases.created_at), B2B trip cases
   unit: hours
   threshold: <= 48 h
   sources:
@@ -992,7 +980,7 @@ kpis:
 - id: K-CX-COMPLAINT
   version: 1
   name: Complaint closure
-  definition: Complaints closed within 5 working days / complaints raised
+  definition: Agency complaints and support requests closed within 5 working days / raised
   unit: count
   threshold: '>= 90 %'
   sources: []
@@ -1002,7 +990,7 @@ kpis:
 - id: K-CX-CSAT
   version: 1
   name: CSAT
-  definition: Share of answers scoring 4-5 on the 5-point overall question
+  definition: Share of agency survey answers scoring 4-5 on the 5-point overall question
   unit: ratio
   threshold: '>= 85 %'
   sources: []
@@ -1012,7 +1000,7 @@ kpis:
 - id: K-CX-NPS
   version: 1
   name: NPS
-  definition: '% promoters (9-10) - % detractors (0-6) on the recommend question'
+  definition: '% promoters (9-10) - % detractors (0-6) on the agency survey recommend question'
   unit: score
   threshold: '>= 40 (baseline after first prod quarter)'
   sources: []
@@ -1022,7 +1010,7 @@ kpis:
 - id: K-CX-RESP
   version: 1
   name: Response rate
-  definition: Surveys answered / surveys sent for trips that reached 'completed' in the period
+  definition: Agency surveys answered / agency surveys sent in the period (one per active tenant per quarter)
   unit: ratio
   threshold: '>= 30 %'
   sources: []
@@ -1155,8 +1143,10 @@ kpis:
 - id: K-DEM-INQ
   version: 1
   name: Demand
-  definition: 7-day sums of tripplanner.v_ops_traffic_daily metrics trip_started, inquiry_sent and booking.v_ops_funnel_daily
-    metrics inquiry_received, confirmed
+  definition: '7-day sums of tripplanner.v_ops_traffic_daily metrics trip_started, inquiry_sent and
+    booking.v_ops_funnel_daily metrics inquiry_received, confirmed. The inquiry part (inquiry_sent, inquiry_received) is
+    historical since 2026-11-03 (B2B-only model): EX-01 shows the line with status historical until the B2B demand KPIs
+    replace it'
   unit: count
   threshold: Trend only (Dev)
   sources:
@@ -1639,7 +1629,7 @@ kpis:
   version: 1
   name: LLM spend by app
   definition: sum shared.llm_call_daily.cost_usd by app (TripPlanner is app tripplanner; its own counter was dropped by
-    tp-025, AA-1027 E5) + crm.llm_usage_daily.cost_usd (check overlap with shared.llm_call_daily app values before summing)
+    tp-024, AA-1027 E5) + crm.llm_usage_daily.cost_usd (check overlap with shared.llm_call_daily app values before summing)
   unit: usd
   threshold: Within FI-06 allocation
   sources:
@@ -1988,8 +1978,9 @@ kpis:
 - id: K-REC-INBOX
   version: 1
   name: Inbox age p95
-  definition: p95 of now - received_at for booking.inbox_events with processed_at null; p95 of processed_at - received_at
-    for processed rows
+  definition: 'p95 of now - received_at for booking.inbox_events with processed_at null; p95 of processed_at -
+    received_at for processed rows. Historical since 2026-11-03: the inbox only held inquiry.submitted rows, which
+    stopped with the B2C hand-off, so DATA-02 shows it with status historical'
   unit: seconds
   threshold: < 5 min (inquiry lag objective, C1.2)
   sources:
@@ -2000,7 +1991,8 @@ kpis:
 - id: K-REC-UNMATCHED
   version: 1
   name: Unmatched events
-  definition: tripplanner.v_inquiry_outbox rows with no booking.inbox_events row of the same idempotency_key after 24 h
+  definition: 'tripplanner.v_inquiry_outbox rows with no booking.inbox_events row of the same idempotency_key after 24
+    h. Historical since 2026-11-03 (the B2C hand-off is off): DATA-02 shows it with status historical'
   unit: status
   threshold: '0'
   sources:
@@ -2389,7 +2381,7 @@ kpis:
 - id: K-TP-HANDOFFGAP
   version: 1
   name: Handoff gap
-  definition: 'tripplanner.v_inquiry_outbox rows older than 15 min with no booking.inbox_events row of the same idempotency_key;
+  definition: 'Retired with TP-03 on 2026-11-03 (no longer snapshotted; shared.kpi_daily keeps the old values). Was: tripplanner.v_inquiry_outbox rows older than 15 min with no booking.inbox_events row of the same idempotency_key;
     daily view: v_ops_traffic_daily inquiry_sent - v_ops_funnel_daily inquiry_received (source_system tripplanner) per closed
     day'
   unit: count
@@ -2402,15 +2394,6 @@ kpis:
   defined_in: TP-03
   used_by:
   - TP-03
-  snapshot:
-    job: kpi_snapshot_daily
-    scopes:
-    - all
-    computes: 'UTC day D (the contract views count per UTC day): inquiry_sent of tripplanner.v_ops_traffic_daily minus inquiry_received
-      of booking.v_ops_funnel_daily with source_system tripplanner, floored at 0. The per-inquiry 15-minute rule needs a key-level
-      contract view (no cis_app grant on v_inquiry_outbox or inbox_events yet)'
-  alert:
-    red_gte: 1
 - id: K-TP-INQ
   version: 1
   name: TripPlanner inquiries sent
@@ -2490,7 +2473,8 @@ kpis:
 - id: K-TP-T2I
   version: 1
   name: Trip to inquiry
-  definition: inquiry_sent / trip_started
+  definition: 'inquiry_sent / trip_started. Historical since 2026-11-03: the advisor hand-off is off (B2B-only model),
+    so TP-01 shows it with status historical, never red or amber'
   unit: ratio
   threshold: '>= 5 % (baseline after first prod month)'
   sources: []

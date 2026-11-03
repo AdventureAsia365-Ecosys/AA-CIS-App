@@ -25,7 +25,7 @@ for in docs/implementation-notes/AA-1003.md, "R2 follow-up requests"):
   spend       K-LLM-COST-DAY of day D vs the median of the 14 days before (shared.kpi_daily).
   deploys     CIS worker tasks started and migrations registered (shared.schema_versions, every owner) in the 24 h
               before the digest.
-  handoff     TP-03: K-TP-HANDOFFGAP / K-BK-PARKED of day D and the latest hourly check.
+  (handoff)   TP-03 retired by the R0 hotfix (root ADR 0019, B2B-only model): no inquiry handoff section any more.
   waves       open shared.rerun_wave rows (information: a wave is planned work).
   balances    AA-642 (S263 L2, B4): the paid providers that are not LLMs and the money left: the DataForSEO balance
               (latest stored snapshot) and the Jev credit estimate (money_sources.balances, the same reader as the
@@ -67,8 +67,8 @@ HTTP_TIMEOUT_S = 2.0
 RECONCILE_DAYS = 3               # AA-642 (S263 L2): the reconcile's own default window
 BALANCE_PROVIDERS = ("typesafe", "dataforseo", "geoapify")
 REFUSING_STATES = ("access_denied", "quota_exhausted", "unconfigured")
-DIGEST_KPIS = ("K-LLM-COST-DAY", "K-LLM-FALLBACK-24H", "K-JOB-FAIL", "K-JOB-QUEUEAGE", "K-TP-HANDOFFGAP",
-               "K-BK-PARKED", "K-DATA-PROBES", "K-DATA-STALE", "K-DATA-LIVENESS")
+DIGEST_KPIS = ("K-LLM-COST-DAY", "K-LLM-FALLBACK-24H", "K-JOB-FAIL", "K-JOB-QUEUEAGE", "K-DATA-PROBES",
+               "K-DATA-STALE", "K-DATA-LIVENESS")
 
 FAILED_BY_KIND_SQL = """
     SELECT kind, count(*)::int AS n FROM shared.job
@@ -96,11 +96,6 @@ MIGRATIONS_SQL = """
 OPEN_WAVES_SQL = """
     SELECT name, country, created_at, cardinality(expected_tour_ids) AS tours FROM shared.rerun_wave
      WHERE status = 'open' ORDER BY created_at
-"""
-LAST_CHECK_SQL = """
-    SELECT created_at, result FROM shared.job
-     WHERE kind = $1 AND status = 'succeeded'
-     ORDER BY created_at DESC LIMIT 1
 """
 
 
@@ -249,20 +244,11 @@ async def load_waves(conn) -> dict:
                       "tours": r["tours"]} for r in rows]}
 
 
-async def load_handoff(conn) -> dict:
-    row = await conn.fetchrow(LAST_CHECK_SQL, handoff.CHECK_KIND)
-    if row is None:
-        return {"last_check": None}
-    res = handoff._json(row["result"])
-    return {"last_check": {"at": _iso(row["created_at"]), "gap": res.get("gap"), "sent": res.get("sent"),
-                           "received": res.get("received"), "persistent": res.get("persistent"),
-                           "window": res.get("window")}}
-
-
 async def load_reports(conn, reg: Registry, now: datetime) -> dict:
     rows = generate.register_rows(reg, await store.last_runs(conn), now)
     flagged = [{"id": r["id"], "name": r["name_en"], "due": r["due"]["state"], "failed_7d": r["failed_7d"]}
-               for r in rows if r["id"] != "OPS-12" and (r["due"]["state"] == "overdue" or r["failed_7d"])]
+               for r in rows if r["id"] != "OPS-12" and r["due"]["state"] != "retired"
+               and (r["due"]["state"] == "overdue" or r["failed_7d"])]
     return {"flagged": flagged}
 
 
@@ -351,7 +337,6 @@ async def collect(conn, reg: Registry, day: date, now: datetime) -> dict:
         "probes": lambda: load_probes(day, now),
         "deploys": lambda: load_deploys(conn, now),
         "waves": lambda: load_waves(conn),
-        "handoff": lambda: load_handoff(conn),
         "reports": lambda: load_reports(conn, reg, now),
         "balances": lambda: load_balances(conn, now),
         "lifecycle": lambda: load_lifecycle(conn, now),
@@ -447,15 +432,6 @@ def attention(facts: dict, series: dict, day: date) -> list[str]:
     if spend["flagged"]:
         med = "no history" if spend["median_14d"] is None else fmt(spend["median_14d"], "usd")
         items.append(f"LLM spend {fmt(spend['value'], 'usd')} on {day.isoformat()} (14-day median {med})")
-    gap = _value(series, "K-TP-HANDOFFGAP", day)
-    if gap:
-        items.append(f"{gap:.0f} TripPlanner inquiries not received by Booking on {day.isoformat()} (UTC day)")
-    last = (facts.get("handoff") or {}).get("last_check")
-    if last and last.get("persistent"):
-        items.append(f"Inquiry handoff gap {last.get('gap')} at the last hourly check")
-    parked = _value(series, "K-BK-PARKED", day)
-    if parked:
-        items.append(f"{parked:.0f} inquiries parked or failed in the Booking inbox")
     for r in (facts.get("reports") or {}).get("flagged", []):
         items.append(f"Report {r['id']} {r['name']}: {r['due']}, {r['failed_7d']} failed run(s) in 7 days")
     items += balance_attention(facts.get("balances"))
@@ -636,13 +612,6 @@ def render_digest(reg: Registry, report: Report, day: date, facts: dict, kpi_row
         md += [f"- Migration {m['version']} registered at {m['applied_at']}: {m['description']}"
                for m in deploys["migrations"]] or ["- No migration registered."]
         md.append("")
-
-    md += ["## Inquiry handoff (TP-03)", "",
-           f"Gap on UTC day {day.isoformat()}: {fmt(kpis_out['K-TP-HANDOFFGAP'], 'count')}; parked or failed: "
-           f"{fmt(kpis_out['K-BK-PARKED'], 'count')}."]
-    last = (facts.get("handoff") or {}).get("last_check")
-    md += ([f"Last hourly check {last['at']}: sent {last['sent']}, received {last['received']}, gap {last['gap']}"
-            f"{' (persistent)' if last.get('persistent') else ''}.", ""] if last else ["No hourly check yet.", ""])
 
     waves = (facts.get("waves") or {}).get("open") or []
     md += ["## Open waves", ""] + ([f"- {w['name']} ({w['country'] or 'all'}, {w['tours']} tours) since "

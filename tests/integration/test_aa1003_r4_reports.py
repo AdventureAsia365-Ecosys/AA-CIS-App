@@ -184,7 +184,7 @@ async def test_reliability_readers_and_renderers(env, monkeypatch):
         claim_obj = next(o for o in reliability.objectives(ops13) if o["id"] == "job_claim")
         assert claim_obj["value"] is not None, claim_obj
     assert {k: v for k, v in data02.items() if money.failed(v)} == {}, data02          # contract stand-ins: empty
-    assert data02["unmatched"]["unmatched"] == 0 and data02["inbox"]["status"] == []
+    assert not {"handoff", "inbox", "unmatched"} & set(data02)       # R0 hotfix: the inquiry views are not read
     assert any(v["version"] == "305" for v in versions)
     assert {k: v for k, v in data04.items() if money.failed(v)} == {}, data04
     assert {r["table"] for r in data04["overdue"]} >= {"shared.job", "shared.llm_call_log"}

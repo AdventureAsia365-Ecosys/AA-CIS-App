@@ -1,18 +1,17 @@
-"""AA-1003 R2 against real Postgres: the SQL of the daily safety net (TP-03 handoff, OPS-12 digest loaders).
+"""AA-1003 R2 against real Postgres: the SQL of the daily safety net (OPS-12 digest loaders; TP-03 retired by the R0
+hotfix, root ADR 0019 B2B-only model).
 
 The producer views (tp-015, bk-017) live in other repos and are not in this DB. As in test_aa858_ops_activity, the
 fixture creates stand-in views of the CONTRACT SHAPE only (``tripplanner.v_ops_traffic_daily (day, metric, n)``,
 ``booking.v_ops_funnel_daily (day, metric, source_system, n)``) from VALUES lists and drops exactly what it created
 (lesson S237: no global stand-ins left behind).
 
-- handoff.read_days / kpis.inquiry_handoff on the views: per UTC day counts, TripPlanner-only received and cases;
-- a dropped view: kpis.inquiry_handoff raises kpis.Unavailable (the daily chain goes on), not a plain error;
-- the hourly check's shared.job reads (previous check by idempotency key, recent checks, the digest's last check);
-- the gap bell: one INSERT into shared.notifications, throttled for 24 h unless the gap grows;
+- the EX-01 demand reader (money_sources.demand) on the views: 7-day sums per metric; a dropped view is an error
+  for that side only (handoff.CONTRACT_ERRORS), and the connection stays usable;
+- TP-03 retired: a failed TP-03 run in the last 7 days is not flagged by the digest's reports section;
 - the digest loaders' SQL (jobs, deploys, waves) run as written.
 Fixture days 2023-05-18/19 (no other test writes them); every row this module writes is deleted at the end.
 """
-import json
 import os
 import sys
 import uuid
@@ -25,7 +24,7 @@ import pytest_asyncio
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 
-from services.reports import digest, handoff, kpis, periods  # noqa: E402
+from services.reports import digest, money_sources, periods, registry  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 DAY = date(2023, 5, 18)
@@ -67,77 +66,39 @@ async def env():
         await pool.execute(f"DROP VIEW IF EXISTS {view}")
     for schema in created_schemas:
         await pool.execute(f"DROP SCHEMA IF EXISTS {schema}")
-    await pool.execute("DELETE FROM shared.job WHERE kind = $1 OR idempotency_key LIKE 'inquiry_handoff_check:2023-%'",
-                       KIND)
-    await pool.execute("DELETE FROM shared.notifications WHERE event_type = $1", handoff.GAP_EVENT)
+    await pool.execute("DELETE FROM shared.job WHERE kind = $1", KIND)
+    await pool.execute("DELETE FROM shared.report_run WHERE report_id = 'TP-03' AND triggered_by = $1", KIND)
     await pool.close()
 
 
-def _day_ctx(day=DAY):
-    start, end = periods.day_bounds(day)
-    return kpis.DayContext(day=day, start=start, end=end, latest=False)
-
-
-async def test_read_days_counts_the_contract_views_per_utc_day(env):
+async def test_demand_reads_the_contract_views_as_written(env):
     pool, _ = env
     async with pool.acquire() as c:
-        days = await handoff.read_days(c, DAY - timedelta(days=1), NEXT)
-    assert [d.day for d in days] == [DAY - timedelta(days=1), DAY, NEXT]
-    d = days[1]
-    assert (d.sent, d.received, d.parked, d.failed, d.cases, d.gap) == (4, 3, 1, 1, 2, 1)
-    assert (days[2].sent, days[2].received, days[2].gap) == (2, 2, 0) and days[0].gap == 0
-    async with pool.acquire() as c:
-        out = {v.kpi_id: v.value for v in await kpis.inquiry_handoff(c, _day_ctx())}
-    assert out["K-TP-HANDOFFGAP"] == 1 and out["K-BK-PARKED"] == 2 and float(out["K-BK-INQ2CASE"]) == pytest.approx(
-        2 / 3, abs=1e-4)
+        out = await money_sources.demand(c, DAY, NEXT)
+    assert out["tripplanner"] == {"inquiry_sent": 6, "planner_session_started": 40}
+    assert out["booking"]["inquiry_received"] == 10 and out["booking"]["trip_case_created"] == 11
 
 
-async def test_a_missing_contract_view_is_unavailable(env):
+async def test_a_missing_contract_view_is_an_error_for_its_side_only(env):
     pool, created = env
     await pool.execute("DROP VIEW booking.v_ops_funnel_daily")
     created.remove("booking.v_ops_funnel_daily")
     async with pool.acquire() as c:
-        with pytest.raises(kpis.Unavailable, match="UndefinedTableError"):
-            await kpis.inquiry_handoff(c, _day_ctx())
+        out = await money_sources.demand(c, DAY, NEXT)
+        assert "UndefinedTableError" in out["booking"]["error"] and out["tripplanner"]["inquiry_sent"] == 6
         # the connection is still usable afterwards (no transaction left aborted)
         assert await c.fetchval("SELECT 1") == 1
 
 
-async def test_hourly_check_job_reads(env):
+async def test_a_retired_report_s_failed_runs_are_not_flagged(env):
     pool, _ = env
-    hour = datetime(2023, 5, 18, 5, tzinfo=UTC)
-    prev_key = handoff.check_key(hour - timedelta(hours=1))
     await pool.execute(
-        "INSERT INTO shared.job (kind, payload, status, result, idempotency_key, finished_at) "
-        "VALUES ($1, '{}'::jsonb, 'succeeded', $2::jsonb, $3, now())",
-        handoff.CHECK_KIND, json.dumps({"gap": 2, "sent": 4, "received": 2, "persistent": False}), prev_key)
+        "INSERT INTO shared.report_run (report_id, period_start, period_end, status, trigger, triggered_by, "
+        "finished_at, error) VALUES ('TP-03', $1, $1, 'failed', 'manual', $2, now(), 'UndefinedTableError: x')",
+        DAY, KIND)
     async with pool.acquire() as c:
-        prev = await handoff.previous_result(c, hour)
-        assert prev["gap"] == 2
-        assert await handoff.previous_result(c, hour + timedelta(hours=5)) is None
-        recent = await handoff.recent_checks(c, datetime.now(UTC) - timedelta(minutes=5),
-                                             datetime.now(UTC) + timedelta(minutes=1))
-        assert any(r["result"].get("gap") == 2 and r["status"] == "succeeded" for r in recent)
-        last = await digest.load_handoff(c)
-    assert last["last_check"]["gap"] == 2 and last["last_check"]["sent"] == 4
-
-
-async def test_gap_bell_insert_and_throttle(env):
-    pool, _ = env
-    result = {"gap": 1, "sent": 4, "received": 3, "window": {"first": "2023-05-12", "last": "2023-05-18"}}
-    async with pool.acquire() as c:
-        assert await handoff.maybe_raise_gap_bell(c, result) is True
-        assert await handoff.maybe_raise_gap_bell(c, result) is False             # same gap within 24 h
-        assert await handoff.maybe_raise_gap_bell(c, {**result, "gap": 2}) is True  # it grew
-        rows = await c.fetch("SELECT tenant_id::text AS tenant_id, actor_type, entity_type, entity_id, payload, "
-                             "target_roles FROM shared.notifications WHERE event_type = $1 ORDER BY id",
-                             handoff.GAP_EVENT)
-    assert len(rows) == 2
-    r = rows[-1]
-    payload = json.loads(r["payload"]) if isinstance(r["payload"], str) else r["payload"]
-    assert (r["tenant_id"], r["actor_type"], r["entity_type"], r["entity_id"]) == (
-        handoff.PLATFORM_TENANT_ID, "system", "report", "TP-03")
-    assert payload["gap"] == 2 and list(r["target_roles"]) == ["admin"]
+        out = await digest.load_reports(c, registry.load(), datetime.now(UTC))
+    assert not any(f["id"] == "TP-03" for f in out["flagged"])
 
 
 async def test_digest_loaders_run_as_written(env):

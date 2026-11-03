@@ -940,7 +940,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `ops_alert_email` — AA-828, `data_erasure` — AA-839, the writing-memory kinds `writing_signal_backfill`,
     `writing_signal_fact_filter`, `writing_memory_mine` — AA-917, `writing_memory_r0` — AA-918, `writing_memory_r2`,
     `writing_memory_shadow` — AA-919, `writing_memory_post_activation` — AA-920, `writing_memory_kpi_weekly` — AA-922, `kpi_snapshot_daily`, `report_generate`,
-    `inquiry_handoff_check`, `report_email` — AA-1003). Every claim merges `progress.attempt_started_at` (AA-751, F18):
+    `inquiry_handoff_check` (a no-op since the R0 hotfix: TP-03 retired), `report_email` — AA-1003). Every claim merges `progress.attempt_started_at` (AA-751, F18):
     `started_at` keeps the first attempt's start, so per-attempt age reads the progress key.
   - **Background kinds (AA-712)**: `@job_kind(..., background=True)` kinds never take the worker's
     last `BACKGROUND_RESERVE` (2) free slots (`Worker.claim_caps`), so a place-pipeline backlog cannot
@@ -1023,8 +1023,23 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     days are ICT, UTC+7). Manual runs and the register: `/admin/reports` (Platform › Overview › Reports, admin;
     `GET /admin/reports`, `GET /admin/reports/{id}/runs`, `GET /admin/reports/runs/{run_id}`,
     `POST /admin/reports/{id}/run`, 409 for a report not generated here; `POST /admin/reports/snapshots` {day?}
-    re-computes one day's snapshot, the back-fill path, 90 days max). $0: DB reads only.
-  - **Daily safety net (AA-1003 R2)**: `report_generate` also renders **OPS-12** (daily platform health digest,
+    re-computes one day's snapshot, the back-fill path, 90 days max). $0: DB reads only. A report with registry status
+    `retired` (field `retired_on`, no generator) has due state `retired`: never due or overdue, its old failures are
+    not flagged (EX-06, OPS-12), the register lists it under "Retired", the page shows "Retired".
+  - **B2B-only model (AA-1003 R0 hotfix, root ADR 0019 d8 / d11; `services/reports/b2b_only.py`)**: since 2026-11-03
+    the TripPlanner to Booking inquiry hand-off is off (send-to-advisor 410 `b2b_only`, `bk_inquiry_pull` off). **TP-03
+    is retired**: no renderer, the ops sampler no longer queues the hourly check, no KPI snapshot of K-TP-HANDOFFGAP /
+    K-BK-PARKED / K-BK-INQ2CASE (old `shared.kpi_daily` rows stay), no bell `platform.inquiry_handoff.gap`, no e-mail
+    template `inquiry_handoff_gap`, no OPS-12 handoff section, no `INQUIRY_HANDOFF_ALERTS` variable; the kind
+    `inquiry_handoff_check` stays registered as a no-op for a row queued before the release, and OPS-14 does not count
+    it as a dead scheduler. The inquiry metrics other reports still show carry status `historical` (never red or
+    amber): TP-01 inquiries sent and K-TP-T2I, the EX-01 B2C inquiry funnel and K-DEM-INQ, DATA-02 K-REC-INBOX and
+    K-REC-UNMATCHED (DATA-02 no longer reads `booking.v_ops_inquiry_inbox` / `tripplanner.v_ops_inquiry_keys`; the
+    owners' views and grants stay until the B2C drop). Tenant leads (`lead.submitted.v1`) get their own report once the
+    contract has a producer.
+  - **Daily safety net (AA-1003 R2; TP-03 retired by the R0 hotfix, see "B2B-only model" above, so the TP-03, hourly
+    check, bell, e-mail and `inquiry_handoff` KPI parts below are history)**: `report_generate` also renders **OPS-12**
+    (daily platform health digest,
     `services/reports/digest.py`: live /health + /health/ready of CIS (public origin `PUBLIC_API_BASE`, Dev default),
     Booking and the CRM (`platform_apps.http_health_card`), CIS workers' commits vs the API's (not compared when the
     API's commit is unknown), alarms in ALARM (DescribeAlarms), failed / overdue / lease-expired `shared.job` rows, LLM
@@ -1069,8 +1084,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     live rule and `shared.v_tour_photos`, DATA-01 snapshots, action list), **OPS-13** (C1.2 objectives CIS can measure,
     `pg_stat_statements` per role, CloudWatch DatabaseConnections, two-week misses vs the previous run; draft),
     **OPS-14** (`shared.job` per kind vs the registry's `expected_seconds`, overdue, dead scheduled kinds, cost per run)
-    and **DATA-02** (handoff roll-up, `booking.v_ops_inquiry_inbox` age, `tripplanner.v_ops_inquiry_keys` unmatched
-    after 24 h, LLM ledger vs the stored acc3 bill), the monthly **DATA-04** (rows past each retention window counted
+    and **DATA-02** (LLM ledger vs the stored acc3 bill; the handoff roll-up, inbox age and unmatched keys are
+    historical since the R0 hotfix), the monthly **DATA-04** (rows past each retention window counted
     like the retention job, retention runs, growth, largest relations vs the previous run) and the event reports
     **CIS-06** (eval runs, writing-memory releases, worst items), **CIS-07** (rerun waves through
     `services/waves/report.py`, cost per stage, retry waste, projection) and **DATA-03** (`shared.schema_versions`
@@ -1078,6 +1093,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `services/reports/quality.py`, `services/reports/reliability.py`. Booking / TripPlanner / CRM job tables, the
     CRM feed, GitHub checks and Vercel are named "not wired" / "not readable from CIS". No migration.
   - **R4 part 2 reports (AA-1003)**: the weekly **TP-01** (TripPlanner funnel from `tripplanner.v_ops_traffic_daily`,
+    inquiries sent and K-TP-T2I historical since the R0 hotfix,
     AI searches and the TripPlanner online-stage LLM spend vs the mirrored default cap from `shared.llm_call_log`;
     `services/reports/planner.py`) and **DEV-03** (CIS deploys = worker starts on a new commit in `shared.job_worker`,
     rollbacks, migrations per owner; kept in the output so the monthly **DEV-01** can count a month after the worker

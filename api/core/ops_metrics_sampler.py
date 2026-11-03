@@ -57,9 +57,9 @@ The AA-832 chain (EventBridge -> ops-probe Lambda -> admin POST -> shared.job ->
 - AA-1003: each tick also queues the daily KPI snapshot (`kpi_snapshot_daily`, $0, DB reads only) for the ICT day the
   daily chain covers (services/reports/periods.snapshot_day: day D from 00:30 UTC of D + 1); idempotency key per day,
   so only the first tick of the day creates a row. The snapshot job then queues `report_generate` for the daily
-  reports (EX-04, EX-06; R2: OPS-12, TP-03). Only while the kind is registered. Field `kpi_snapshot` (the job id,
-  when created) or `reports_error`. R2: the same part queues the TP-03 inquiry handoff check once per UTC hour
-  (`inquiry_handoff_check`, idempotency key per hour), field `inquiry_handoff_check`.
+  reports (EX-04, EX-06; R2: OPS-12). Only while the kind is registered. Field `kpi_snapshot` (the job id,
+  when created) or `reports_error`. R2 also queued the TP-03 inquiry handoff check every UTC hour; the R0 hotfix
+  (root ADR 0019, B2B-only model) retired TP-03, so nothing queues `inquiry_handoff_check` any more.
 - AA-1002 (S10): each tick also queues the nightly LLM cost reconciliation (`llm_cost_reconcile`, $0) once per UTC day
   from 02:00 UTC (idempotency key per day), while the kind is registered and LLM_COST_RECONCILE is not off. Field
   `llm_cost_reconcile` (the job id, when created) or `llm_cost_reconcile_error`.
@@ -277,13 +277,7 @@ async def _reports_part(pool, kinds: dict, ts: datetime, out: dict) -> None:
         job_id, created, day = await enqueue_scheduled_snapshot(pool, now=ts)
         if created:
             out["kpi_snapshot"] = {"job_id": job_id, "day": day.isoformat()}
-    # AA-1003 R2: the TP-03 inquiry handoff check, once per UTC hour (one indexed EXISTS a tick)
-    from services.jobs.report_ops_jobs import CHECK_KIND, enqueue_hourly_check
-
-    if CHECK_KIND in kinds:
-        check_id, check_created, hour = await enqueue_hourly_check(pool, now=ts)
-        if check_created:
-            out["inquiry_handoff_check"] = {"job_id": check_id, "hour": hour.isoformat()}
+    # AA-1003 R0 hotfix: the TP-03 hourly inquiry handoff check is retired (services/reports/handoff.py).
 
 
 async def _llm_cost_reconcile_part(pool, kinds: dict, ts: datetime, out: dict) -> None:
