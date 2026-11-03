@@ -119,3 +119,33 @@ Not in slice 1: the `tenant_provision` saga, the CRM / Booking pulls, the admin 
   `test_aa839_erasure_job`'s restore statement also pauses `tenants_content_subscription_upd`.
 - Tests that set a tenant's content plan use an upsert (`_subscribe` in `test_aa1028_migrations_353_355.py`): the
   row already exists from the create.
+
+## Code PR: the producer (`/tenant/v1`)
+
+### Decisions
+
+- **Scope `cis.tenant/read`, the CRM client, no new scope in 1.0.** The design suggested a new scope (for example
+  `cis.tenant/entitlements.read`). The CRM, the first consumer, already holds `cis.tenant/read` for the membership
+  feed of the same agencies, and a new scope is an Infra `identity_m2m.tf` change plus a CRM secret update for no
+  added isolation. The Booking client (and, if wanted, its own scope) comes with `bk_tenant_pull`; accepting a second
+  scope later is non-breaking.
+- **Same shape as `tenant.membership.v1`**: `api/core/m2m_auth.require_m2m`, the main pool in one READ ONLY
+  transaction, ETag over the body without `as_of`, the feed's `(txid, seq)` order below the snapshot horizon and its
+  cursor helpers (imported from `services/tenant_membership/feed.py`, not copied).
+- **`in_service` in the body** so no consumer re-derives the live status set (trial, active, past_due).
+- **`limit` as a decimal string** (contracts rule 8: money is a decimal string; `ai.budget_usd_monthly` is USD).
+- **The snapshot reads the live contract view**, not the materialised table, so an expired override or trial is
+  right before the sweep; the feed reads the events the materialisation wrote.
+- **No bill-to fields in 1.0** (data minimisation, the contract policy forbids them). Booking's invoice snapshot reads
+  them under its own scope in R4.
+- **No readiness raise.** The code answers 503 `unavailable` while 353-355 are missing (UndefinedTable / Column /
+  Function), like the membership routes; `REQUIRED_CIS_SCHEMA` stays where it is. Merge it only after 355 is applied
+  by hand (DB Migrate, see Order above) and the DB Schema Dump bot PR has merged (MIG-4).
+
+### Should know
+
+- Live verification needs the AA-CIS-Infra route `/tenant/v1/{tenant_v1_proxy+}` (the gateway routes only
+  `/tenant/membership/*` today). Before it is applied, verify inside the api task (ECS exec, `curl localhost:8000`).
+- `docs/api/openapi.json` was regenerated with fastapi 0.161.1 / pydantic 2.14.1 (the `requirements.txt` pins).
+- `tests/unit/test_s241_admin_routes_require_auth.py` lists `tenant_account.require_account_reader` as an M2M
+  dependency.

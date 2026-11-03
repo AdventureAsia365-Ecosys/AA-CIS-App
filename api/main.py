@@ -80,6 +80,7 @@ from api.routers.catalog_http import (  # AA-976 — catalog.http.v1 for the par
     CatalogProblem, catalog_problem_handler, router as catalog_http_router,
 )
 from api.routers.tenant_membership import router as tenant_membership_router  # AA-978 — tenant.membership.v1
+from api.routers.tenant_account import router as tenant_account_router  # AA-1028 — tenant.entitlements.v1
 from api.routers.tenant_session import router as tenant_session_router  # AA-979 P2b — partner-pool studio sign-in
 from api.middleware.tenant_role import tenant_role_middleware  # AA-979 P2b — Content studio roles (csr)
 from api.middleware.rate_limit import rate_limit_middleware
@@ -346,6 +347,7 @@ app.include_router(photos_public_router)  # AA-708 — /content/photos/{id} (pub
 app.include_router(v1_progress_router)  # AA-637 — GET /v1/progress/{kind}/{job_id}
 app.include_router(catalog_http_router)  # AA-976 — /catalog/v1 (catalog.http.v1, M2M cis.catalog/read)
 app.include_router(tenant_membership_router)  # AA-978 — /tenant/membership/v1 (M2M cis.tenant/read)
+app.include_router(tenant_account_router)  # AA-1028 — /tenant/v1 (M2M cis.tenant/read)
 app.include_router(tenant_session_router)  # AA-979 P2b — /auth/tenant-session, /auth/tenant-memberships (partner pool)
 
 app.middleware("http")(rate_limit_middleware)
@@ -372,7 +374,7 @@ app.add_exception_handler(TourNotServedError, tour_not_served_handler)
 # (same status_code / detail / headers shape as TourNotServedError, so the same handler answers it).
 app.add_exception_handler(AtomReplaced, tour_not_served_handler)
 # AA-976 / AA-978 — contract Problem body; CatalogProblem is api.core.m2m_auth.M2MProblem, also raised by
-# /tenant/membership/v1.
+# /tenant/membership/v1 and (AA-1028) /tenant/v1.
 app.add_exception_handler(CatalogProblem, catalog_problem_handler)
 app.add_exception_handler(Exception, unhandled_error_handler)
 app.add_middleware(RequestIdMiddleware)
