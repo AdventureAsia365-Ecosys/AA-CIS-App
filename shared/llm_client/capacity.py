@@ -430,17 +430,19 @@ def reserve(connection_key: str, model_key: str, tokens: Optional[int] = None, l
             w.waiting[line] += 1
         try:
             logged = False
+            did_wait = False                 # only a real sleep counts: two clock reads always differ a little
             while True:
                 now = _clock()
                 waits = [w.wait_for(tokens, line, now) for w in windows]
                 if all(x is None for x in waits):
                     for w in windows:
                         w.add(now, tokens, line)
+                    if not did_wait:
+                        return 0.0
                     waited = now - started
-                    if waited > 0:
-                        _pressure_until[line] = now + PRESSURE_HOLD_S
-                        logger.info("llm_tpm_waited", connection=connection_key, model=model_key, line=line,
-                                    tokens=tokens, waited_s=round(waited, 2))
+                    _pressure_until[line] = now + PRESSURE_HOLD_S
+                    logger.info("llm_tpm_waited", connection=connection_key, model=model_key, line=line,
+                                tokens=tokens, waited_s=round(waited, 2))
                     return waited
                 _pressure_until[line] = now + PRESSURE_HOLD_S
                 left = deadline - now
@@ -454,6 +456,7 @@ def reserve(connection_key: str, model_key: str, tokens: Optional[int] = None, l
                     logger.info("llm_tpm_waiting", connection=connection_key, model=model_key, line=line,
                                 tokens=tokens)
                     logged = True
+                did_wait = True
                 _wait(_cond, min(max(x for x in waits if x is not None), left, WAKE_S))
         finally:
             for w in windows:

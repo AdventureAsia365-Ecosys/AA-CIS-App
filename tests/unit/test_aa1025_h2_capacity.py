@@ -150,11 +150,25 @@ def test_request_n_plus_one_waits_for_the_window_instead_of_failing(monkeypatch,
     _limits(monkeypatch, Limit(CONN, "*", tpm_limit=3000))
     with capacity.bind_request(1000, PROD):
         assert [capacity.reserve(CONN, "m") for _ in range(3)] == [0.0, 0.0, 0.0]
+        assert capacity.pressure() == frozenset()                     # fitting at once is no pressure
         clock.t += 15
         waited = capacity.reserve(CONN, "m")                          # the 4th: waits ~45 s, then goes
     assert waited == pytest.approx(45.0, abs=1.1)
     assert PROD in capacity.pressure()                                # the worker holds prod claims for a while
     assert PROD not in capacity.pressure(clock.t + capacity.PRESSURE_HOLD_S + 1)
+
+
+def test_a_reserve_that_fits_on_the_real_clock_is_no_wait_and_no_pressure(monkeypatch):
+    """Real time.monotonic (no clock fixture): the two clock reads around the window work differ a little, which must
+    not count as a wait, or every covered call would hold the worker's claims for PRESSURE_HOLD_S."""
+    _limits(monkeypatch, Limit(CONN, "*", tpm_limit=10 ** 6), Limit(CONN, "m", tpm_limit=10 ** 6))
+    slept = []
+    monkeypatch.setattr(capacity, "_wait", lambda cond, timeout: slept.append(timeout))
+    for line in (PROD, BULK, DEV):
+        assert capacity.reserve(CONN, "m", 1000, line) == 0.0
+    assert slept == []
+    assert capacity.pressure() == frozenset()
+    assert {snap["used"] for snap in capacity.windows_snapshot()} == {3000}
 
 
 def test_past_the_line_wait_it_saturates(monkeypatch, clock):

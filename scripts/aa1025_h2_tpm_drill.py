@@ -10,7 +10,7 @@ Runs inside the api container (S3-mediated ECS exec, ``python3 /tmp/s.py``) with
    WAITS until the first leaves the 60 s window, and a bulk call meanwhile waits behind it (bulk holds at most 50 %);
 3. prints one JSON line per call (line, waited_s, error) and the windows, then deletes the row (always).
 
-Expected: calls 1-2 waited_s 0; call 3 waited_s ~60 and no error; the bulk call waited, no error. Nothing is sent to
+Expected: calls 1-2 waited_s 0 and no pressure after them (pressure_after_fits []); call 3 waited_s ~60 and no error; the bulk call waited, no error. Nothing is sent to
 any provider and nothing is written to shared.llm_call_log.
 
   python3 scripts/aa1025_h2_tpm_drill.py [--connection acc2-usw2]
@@ -70,9 +70,11 @@ def main() -> int:
     asyncio.run(_sql(_PUT, key, DRILL_MODEL, TPM))
     capacity.invalidate()
     out: list = []
+    pressure_after_fits: list = []
     try:
         _call(conn, capacity.PROD, out)
         _call(conn, capacity.PROD, out)
+        pressure_after_fits = sorted(capacity.pressure())   # calls that fit at once hold no claims: expect []
         third = threading.Thread(target=_call, args=(conn, capacity.PROD, out))
         third.start()
         time.sleep(1.0)                               # the third prod call is waiting now
@@ -81,13 +83,14 @@ def main() -> int:
         third.join(capacity.WAIT_S[capacity.PROD] + 10)
         bulk.join(capacity.WAIT_S[capacity.BULK] + 10)
         print(json.dumps({"connection": key, "model": DRILL_MODEL, "tpm_limit": TPM, "tokens_per_call": TOKENS,
-                          "calls": out, "windows": capacity.windows_snapshot()}, default=str))
+                          "calls": out, "pressure_after_fits": pressure_after_fits,
+                          "windows": capacity.windows_snapshot()}, default=str))
     finally:
         asyncio.run(_sql(_DELETE, key, DRILL_MODEL))
         capacity.invalidate()
     prod_waits = sorted(c["waited_s"] for c in out if c["line"] == capacity.PROD)
     ok = (len(out) == 4 and all(c["error"] is None for c in out) and prod_waits[-1] >= 0.8 * capacity.WINDOW_S
-          and prod_waits[0] < 1)
+          and prod_waits[0] < 1 and pressure_after_fits == [])
     print(json.dumps({"drill_ok": ok}))
     return 0 if ok else 1
 
