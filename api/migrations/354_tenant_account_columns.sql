@@ -51,7 +51,9 @@
 --
 -- Trigger privileges. The triggers run as the writer of shared.tenants (MIG-6): cis_app (and the owner, the master)
 -- already holds INSERT on shared.tenant_account_event and EXECUTE on shared.tenant_account_emit (353). Guard 2
--- refuses the file if any role that may INSERT or UPDATE shared.tenants could not emit an account event.
+-- refuses the file if any role that may INSERT or UPDATE shared.tenants through a grant (the owner, a grantee of the
+-- table or a column, or a member of one) could not emit an account event. A role whose only path is a predefined
+-- role (rds_superuser through pg_write_all_data) is not a writer of this table and is not counted.
 --
 -- Behaviour. No change for running code: the legacy columns keep their meaning and every admin write path
 -- (create, PATCH is_active, offboard, restore) leaves the same is_active / cancelled_at as before (guard 3 probes
@@ -59,8 +61,9 @@
 -- month on Dev). The backfill writes no event.
 --
 -- Class: contract (ADD COLUMN with constraints, a unique index, triggers on a pre-existing table, an UPDATE of its
--- rows, a re-created trigger). MIG-4: migration-only PR; on Dev the Infra Migration Apply applies it once every job
--- table is idle (root ADR 0017a). Locks: ACCESS EXCLUSIVE on shared.tenants for the file's milliseconds (~4 rows).
+-- rows, a re-created trigger). MIG-4: migration-only PR; on Dev a person applies it after 353 with DB Migrate apply
+-- (every job table idle, DM-11.4; Infra Migration Apply stops at the pending 336, see 353). Locks: ACCESS EXCLUSIVE
+-- on shared.tenants for the file's milliseconds (~4 rows).
 --
 -- Rollback (a NEW forward migration, after the code that reads the columns is reverted): DROP TRIGGER
 -- tenants_account_status_sync, tenants_account_event_ins, tenants_account_event_upd; re-create
@@ -251,15 +254,29 @@ CREATE TRIGGER tenants_membership_feed_upd
 REVOKE ALL ON FUNCTION shared.tenants_account_status_sync(), shared.tenants_account_emit_status() FROM PUBLIC;
 
 -- ── Guard 2: every writer of shared.tenants can emit an account event ───────────────────────────────────────────────
+-- A writer is the table owner or a grantee of INSERT / UPDATE on the table or one of its columns, and every role
+-- that inherits one of those. A role whose only path is a predefined role (pg_write_all_data, which rds_superuser
+-- holds on RDS) is not counted: has_table_privilege() alone would report rds_superuser, which is no member of
+-- cis_owner and so cannot run shared.tenant_account_emit() (the RDS master is a member of cis_owner and is counted
+-- through it). The CI replay builds no rds_* role; test_aa1028 covers a pg_write_all_data member.
 DO $$
 DECLARE
     bad text;
 BEGIN
-    SELECT string_agg(r.rolname, ', ') INTO bad
+    WITH grantee AS (
+        SELECT c.relowner AS oid FROM pg_class c WHERE c.oid = 'shared.tenants'::regclass
+        UNION
+        SELECT a.grantee FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
+         WHERE c.oid = 'shared.tenants'::regclass AND a.privilege_type IN ('INSERT', 'UPDATE')
+        UNION
+        SELECT a.grantee FROM pg_attribute att CROSS JOIN LATERAL aclexplode(att.attacl) a
+         WHERE att.attrelid = 'shared.tenants'::regclass AND NOT att.attisdropped
+           AND a.privilege_type IN ('INSERT', 'UPDATE')
+    )
+    SELECT string_agg(r.rolname, ', ' ORDER BY r.rolname) INTO bad
       FROM pg_roles r
      WHERE r.rolname NOT LIKE 'pg\_%' AND NOT r.rolsuper
-       AND (has_table_privilege(r.oid, 'shared.tenants', 'INSERT') OR has_table_privilege(r.oid, 'shared.tenants', 'UPDATE')
-            OR has_any_column_privilege(r.oid, 'shared.tenants', 'UPDATE'))
+       AND EXISTS (SELECT 1 FROM grantee g WHERE g.oid = 0 OR pg_has_role(r.oid, g.oid, 'USAGE'))
        AND NOT (has_table_privilege(r.oid, 'shared.tenant_account_event', 'INSERT')
                 AND has_function_privilege(r.oid, 'shared.tenant_account_emit(text,uuid,jsonb)', 'EXECUTE'));
     IF bad IS NOT NULL THEN

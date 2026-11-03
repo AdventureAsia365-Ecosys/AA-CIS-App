@@ -58,12 +58,22 @@ async def _tenant(conn, *, tier="starter", active=True, offboarded=False, canary
 
 
 async def _subscribe(conn, tid, product="content", plan="content.starter", status="active", **kw):
+    """Set the tenant's subscription of a product (the content row exists from the create: the 355 bridge)."""
     trial = kw.get("trial_ends_at") or (datetime.now(timezone.utc) + timedelta(days=14) if status == "trialing"
                                         else None)
     await conn.execute(
         "INSERT INTO shared.tenant_subscription (tenant_id, product, plan_key, status, trial_ends_at, seats, "
         "canceled_at, updated_by) VALUES ($1, $2, $3, $4, $5, $6, CASE WHEN $4 = 'canceled' THEN now() END, "
-        "'admin:test')", tid, product, plan, status, trial, kw.get("seats"))
+        "'admin:test') ON CONFLICT (tenant_id, product) DO UPDATE SET plan_key = EXCLUDED.plan_key, "
+        "status = EXCLUDED.status, trial_ends_at = EXCLUDED.trial_ends_at, seats = EXCLUDED.seats, "
+        "canceled_at = EXCLUDED.canceled_at, updated_by = EXCLUDED.updated_by",
+        tid, product, plan, status, trial, kw.get("seats"))
+
+
+async def _sub(conn, tid, product="content"):
+    r = await conn.fetchrow("SELECT plan_key, status, canceled_at IS NOT NULL AS canceled FROM "
+                            "shared.tenant_subscription WHERE tenant_id = $1 AND product = $2", tid, product)
+    return None if r is None else (r["plan_key"], r["status"], r["canceled"])
 
 
 async def _ents(conn, tid) -> dict:
@@ -165,7 +175,10 @@ async def test_seed_policy_values(conn):
 @pytest.mark.asyncio
 async def test_plan_defaults_and_trial(conn):
     tid = await _tenant(conn)
-    assert await _ents(conn, tid) == {}                           # no subscription, nothing
+    assert await _sub(conn, tid) == ("content.starter", "active", False)      # the 355 bridge at create
+    ents = await _ents(conn, tid)
+    assert ents["content.rewrite"] == (50.0, "plan") and ents["content.rate_limit_rpm"] == (60.0, "plan")
+    assert await _materialised(conn, tid) == ents
     await _subscribe(conn, tid, status="trialing")
     ents = await _ents(conn, tid)
     assert ents["ai.budget_usd_monthly"] == (15.0, "trial")
@@ -261,6 +274,7 @@ async def test_sync_due_picks_up_an_expired_override(conn):
 @pytest.mark.asyncio
 async def test_subscription_and_plan_feature_guards(conn):
     tid = await _tenant(conn)
+    await _subscribe(conn, tid, status="unpaid")
     await _refused(conn, "23514", "INSERT INTO shared.tenant_subscription (tenant_id, product, plan_key, status, "
                    "updated_by) VALUES ($1, 'crm', 'crm.core', 'active', 'admin:test')", tid)
     await _subscribe(conn, tid)
@@ -302,10 +316,9 @@ async def test_materialised_table_and_feed_are_written_only_by_their_functions(c
 @pytest.mark.asyncio
 async def test_events_of_a_subscription_and_a_plan_change(conn):
     await conn.execute("SET LOCAL aa.actor = 'admin:test-actor'")
-    tid = await _tenant(conn)
-    assert [t for t, _ in await _events(conn, tid)] == ["account.status_changed"]
-    await _subscribe(conn, tid)
+    tid = await _tenant(conn)                                     # the create writes its content subscription
     evs = await _events(conn, tid)
+    assert evs[0][0] == "account.status_changed"
     assert evs[1] == ("subscription.changed", {"op": "created", "product": "content", "plan_key": "content.starter",
                                                "status": "active", "previous_status": None,
                                                "previous_plan_key": None, "seats": None, "trial_ends_at": None})
@@ -445,3 +458,112 @@ async def test_cis_app_runtime_writes(conn):
     assert (await _materialised(conn, tid))["ai.budget_usd_monthly"] == (3.0, "override")
     types = {t for t, _ in await _events(conn, tid)}
     assert types == {"account.status_changed", "subscription.changed", "entitlement.changed"}
+
+
+# ── the 355 bridge: shared.tenants keeps its content subscription ───────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_admin_write_shapes_keep_the_content_subscription(conn):
+    """Create, PATCH plan_tier, offboard and restore in the shapes of api/routers/admin.py: the contract view follows
+    shared.tenants.plan_tier and the lifecycle with no code writing shared.tenant_subscription."""
+    tid = await _tenant(conn)
+    assert await _sub(conn, tid) == ("content.starter", "active", False)
+    assert (await _ents(conn, tid))["content.rate_limit_rpm"] == (60.0, "plan")
+    # PATCH plan_tier (admin.py: plan_tier, plan_id, rate_limit_rpm from PLAN_LIMITS)
+    await conn.execute("UPDATE shared.tenants SET plan_tier = 'growth'::plan_tier_enum, rate_limit_rpm = 300, "
+                       "updated_at = NOW() WHERE tenant_id = $1", tid)
+    assert await _sub(conn, tid) == ("content.growth", "active", False)
+    ents = await _ents(conn, tid)
+    assert ents["content.rate_limit_rpm"] == (300.0, "plan") and ents["content.rewrite"] == (200.0, "plan")
+    assert ents["ai.budget_usd_monthly"] == (40.0, "plan")
+    assert await _materialised(conn, tid) == ents
+    sub_evs = [c for t, c in await _events(conn, tid, "subscription.changed")]
+    assert sub_evs[-1]["previous_plan_key"] == "content.starter" and sub_evs[-1]["plan_key"] == "content.growth"
+    # an add-on, then offboard (admin.py: cancelled_at, cancellation_reason, is_active false, key revoked)
+    await _subscribe(conn, tid, product="crm", plan="crm.core")
+    await conn.execute("UPDATE shared.tenants SET cancelled_at = NOW(), cancellation_reason = 'synthetic test', "
+                       "is_active = FALSE, api_key_hash = 'REVOKED_' || tenant_id::text, updated_at = NOW() "
+                       "WHERE tenant_id = $1::uuid", tid)
+    assert await _sub(conn, tid) == ("content.growth", "canceled", True)
+    assert await _sub(conn, tid, "crm") == ("crm.core", "canceled", True)
+    assert await _ents(conn, tid) == {} and await _materialised(conn, tid) == {}
+    # restore (admin.py: cancelled_at NULL, is_active TRUE, a new key): content comes back, the add-on does not
+    await conn.execute("UPDATE shared.tenants SET cancelled_at = NULL, cancellation_reason = NULL, is_active = TRUE, "
+                       "api_key_hash = 'synthetic-hash', updated_at = NOW() WHERE tenant_id = $1", tid)
+    assert await _sub(conn, tid) == ("content.growth", "active", False)
+    assert await _sub(conn, tid, "crm") == ("crm.core", "canceled", True)
+    ents = await _ents(conn, tid)
+    assert ents["content.rewrite"] == (200.0, "plan") and "crm.core" not in ents
+    assert await _materialised(conn, tid) == ents
+    # a lock / unlock leaves the subscription alone (the consumer reads account_status)
+    await conn.execute("UPDATE shared.tenants SET is_active = false WHERE tenant_id = $1", tid)
+    assert await _sub(conn, tid) == ("content.growth", "active", False)
+    rows = await conn.fetch("SELECT DISTINCT account_status FROM shared.v_tenant_entitlement_v1 WHERE tenant_id = $1",
+                            tid)
+    assert [r["account_status"] for r in rows] == ["suspended"]
+
+
+@pytest.mark.asyncio
+async def test_bridge_inserts_offboarded_and_refuses_a_tier_without_a_live_plan(conn):
+    off = await _tenant(conn, active=False, offboarded=True)
+    assert await _sub(conn, off) == ("content.starter", "canceled", True)
+    assert await _ents(conn, off) == {}
+    internal = await _tenant(conn, tier="internal")
+    assert await _sub(conn, internal) == ("content.internal", "active", False)
+    await conn.execute("UPDATE shared.plan SET retired_at = now() WHERE plan_key = 'content.enterprise'")
+    await _refused(conn, "23514", "INSERT INTO shared.tenants (tenant_id, name, slug, plan_tier, posts_per_week, "
+                   "rate_limit_rpm, is_active) VALUES (gen_random_uuid(), 'AA-1028 synthetic', 'zz1028-noplan', "
+                   "'enterprise', 3, 60, true)")
+    await _refused(conn, "23514", "UPDATE shared.tenants SET plan_tier = 'enterprise' WHERE tenant_id = $1", internal)
+    assert await _sub(conn, internal) == ("content.internal", "active", False)
+
+
+@pytest.mark.asyncio
+async def test_retiring_a_feature_key_and_removing_a_plan_feature(conn):
+    tid = await _tenant(conn)
+    await conn.execute("INSERT INTO shared.tenant_entitlement_override (tenant_id, feature_key, limit_value, reason, "
+                       "granted_by) VALUES ($1, 'content.rewrite', 70, 'test', 'admin:test')", tid)
+    n = len(await _events(conn, tid))
+    await conn.execute("UPDATE shared.entitlement_feature SET retired_at = now() WHERE feature_key = 'channel.facebook'")
+    assert "channel.facebook" not in await _materialised(conn, tid)
+    assert (await _events(conn, tid))[n:] == [("entitlement.changed", {
+        "op": "removed", "feature_key": "channel.facebook", "product": "content", "limit": None, "source": None,
+        "expires_at": None})]
+    # an overridden key is retired too (its override row stays, it resolves to nothing)
+    await conn.execute("UPDATE shared.entitlement_feature SET retired_at = now() WHERE feature_key = 'content.rewrite'")
+    assert "content.rewrite" not in await _materialised(conn, tid)
+    await conn.execute("UPDATE shared.entitlement_feature SET retired_at = NULL "
+                       "WHERE feature_key IN ('channel.facebook', 'content.rewrite')")
+    mat = await _materialised(conn, tid)
+    assert mat["channel.facebook"] == (None, "plan") and mat["content.rewrite"] == (70.0, "override")
+    # a plan_feature DELETE (OLD only) re-syncs the plan's tenants
+    await conn.execute("DELETE FROM shared.plan_feature WHERE plan_key = 'content.starter' "
+                       "AND feature_key = 'content.article'")
+    assert "content.article" not in await _materialised(conn, tid)
+    assert (await _events(conn, tid))[-1] == ("entitlement.changed", {
+        "op": "removed", "feature_key": "content.article", "product": "content", "limit": None, "source": None,
+        "expires_at": None})
+
+
+def _guard_2(version: int) -> str:
+    """Guard 2 of 354 / 355 (the writers of shared.tenants), as its DO block."""
+    body = migration_body(version)
+    start = body.index("-- ── Guard 2")
+    return body[start:body.index("-- ── Guard 3", start)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("version", [354, 355])
+async def test_writer_guards_count_only_real_grantees(conn, version):
+    """On RDS, rds_superuser holds pg_write_all_data (so has_table_privilege says it may write shared.tenants) but is
+    no member of cis_owner: a role whose only path is a predefined role is not a writer of the table. A real grantee
+    without the event / bridge grants is still refused."""
+    await conn.execute("CREATE ROLE zz1028_write_all NOLOGIN IN ROLE pg_write_all_data")
+    assert await conn.fetchval("SELECT has_table_privilege('zz1028_write_all', 'shared.tenants', 'UPDATE') AS ok")
+    await conn.execute(_guard_2(version))                       # passes: no grant on shared.tenants itself
+    await conn.execute("CREATE ROLE zz1028_grantee NOLOGIN")
+    await conn.execute("GRANT UPDATE (plan_tier) ON shared.tenants TO zz1028_grantee")
+    with pytest.raises(asyncpg.RaiseError) as info:
+        async with conn.transaction():
+            await conn.execute(_guard_2(version))
+    assert "zz1028_grantee" in str(info.value) and "zz1028_write_all" not in str(info.value)

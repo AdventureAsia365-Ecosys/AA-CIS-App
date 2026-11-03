@@ -671,6 +671,13 @@ def _apply_schema(conn):
     # table grant (354's guard 2 refuses a writer of shared.tenants that could not emit).
     cur.execute("DO $$ BEGIN IF to_regprocedure('shared.tenant_account_emit(text,uuid,jsonb)') IS NOT NULL THEN "
                 "GRANT EXECUTE ON FUNCTION shared.tenant_account_emit(text, uuid, jsonb) TO app_user; END IF; END $$")
+    # AA-1028 R1 (355): a tenant INSERT also creates its content subscription (the 355 bridge trigger), which
+    # materialises the entitlements, all as the writer: app_user gets what cis_app holds on those (353 grants).
+    cur.execute("DO $$ BEGIN IF to_regprocedure('shared.tenants_content_subscription_sync()') IS NOT NULL THEN "
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON shared.tenant_subscription, shared.tenant_entitlement "
+                "TO app_user; "
+                "GRANT EXECUTE ON FUNCTION shared.tenant_entitlement_sync(uuid), shared.tenant_account_closed(uuid) "
+                "TO app_user; END IF; END $$")
     # AA-817 (237): on Dev only the owner and aa_app_user hold privileges on shared.tenant_integrations,
     # and 237's guard 1 refuses any other grantee (with RLS on and a policy TO aa_app_user only, it would
     # read 0 rows). Keep the CI-only app_user off it so test_aa817_* can re-apply 237 per test.

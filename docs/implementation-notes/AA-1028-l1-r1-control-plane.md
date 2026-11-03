@@ -54,6 +54,24 @@ Not in slice 1: the `tenant_provision` saga, the CRM / Booking pulls, the admin 
   the AA-1015 limiter cap it); `tp.branding` is in no plan (BO-8: off by default).
 - **No FK to `shared.membership_plans`.** That table was made by hand on Dev and the CI replay of 223 never builds it;
   `plan.membership_plan_id` is a soft link filled by 355 where the table exists.
+- **A bridge trigger keeps the content subscription in step with `shared.tenants` (355 §5b, review fix).** The admin
+  writes (create, PATCH plan_tier, offboard, restore in `api/routers/admin.py`) know nothing of
+  `shared.tenant_subscription`; without the bridge a tenant created after apply had no entitlements, a tier change kept
+  the old plan's limits, and an offboarded tenant kept an active subscription. `shared.tenants_content_subscription_sync()`
+  (AFTER INSERT; AFTER UPDATE when plan_tier or account_status changes) creates the content row on the live plan of
+  the tier (`shared.plan.tier`, not a `'content.' || tier` string), moves it on a tier change (no live plan for the
+  tier refuses the write), cancels the add-ons then the content row on offboarding / closed, and makes a canceled
+  content row active again on a restore (add-ons stay canceled: they are sold again). Lock / unlock, past_due and
+  trial leave the subscription alone: the contract carries `account_status` / `in_service` next to the entitlements.
+  A trigger rather than code in the four handlers: it also covers scripts, E2E fixtures and future writers, and the
+  slice-2 saga replaces it (then the trigger is dropped by a forward migration).
+- **Writer guards count real grantees only (354 / 355 guard 2, review fix).** A writer of `shared.tenants` is its
+  owner, a grantee of INSERT / UPDATE on the table or a column, or a member of one. `has_table_privilege()` over every
+  role also reported `rds_superuser` (pg_write_all_data, not a member of `cis_owner`), which would have failed 354 on
+  Dev only (the CI replay has no `rds_*` role). The RDS master is a member of `cis_owner` and is checked through it.
+- **`tenant_entitlement_resync_plan()` branches per table (353, review fix).** PL/pgSQL resolves `OLD.plan_key`
+  against the firing table's row type at run time, so the shared query raised on an `entitlement_feature` update
+  (retiring a key). The entitlement_feature branch also re-syncs every tenant holding a materialised row of the key.
 - **Feed rows written only through `shared.tenant_account_emit()`** (a transaction-local flag checked by the guard)
   rather than 276's `pg_trigger_depth() >= 2`, because the sync function can also be called directly (sweep).
   `actor` comes from the transaction setting `aa.actor` (code sets it in slice 2; 355 sets `migration:355`).
@@ -77,9 +95,15 @@ Not in slice 1: the `tenant_provision` saga, the CRM / Booking pulls, the admin 
 
 ## Should know
 
-- **Order:** root PR (retention rows + contract) -> this migration PR -> bot copy to Infra -> Migration Apply (contract
-  files wait for every job table idle, ADR 0017a) -> Infra PR (RLS rules byte copy + `/tenant/v1` gateway route) ->
-  the code PR. Nothing reads the objects before the code PR.
+- **Order:** root PR (retention rows + contract) -> this migration PR -> bot copy to Infra -> **a person applies 353,
+  then 354, then 355 with DB Migrate `apply`** (every job table idle, DM-11.4) -> DB Schema Dump bot PR merged ->
+  Infra PR (RLS rules byte copy + `/tenant/v1` gateway route) -> the code PR. Nothing reads the objects before the
+  code PR.
+- **Why not Infra Migration Apply:** CIS 336 is copied to Infra but not registered and sits below the head (352), so
+  the cis owner's auto plan stops there (out-of-order, `plan_pending` in `db/run_migration.py`) and nothing above it
+  runs; contract auto-apply is also off until 336 is applied (AA-1024 D8, from 10/11 ~12:00Z). The manual DB Migrate
+  `apply` runs the named file with no ordering check, so 353-355 can go first; 336 stays a manual out-of-order apply
+  afterwards, as it already is.
 - **Writers of `shared.tenants` need INSERT on `shared.tenant_account_event` and EXECUTE on
   `shared.tenant_account_emit()`** (354 guard 2). CI's legacy `app_user` gets EXECUTE in `tests/integration/conftest.py`
   (post-replay block), and the 276 test's `_as_runtime` re-grants cis_app; any new test that writes tenants as
@@ -89,3 +113,9 @@ Not in slice 1: the `tenant_provision` saga, the CRM / Booking pulls, the admin 
 - The erasure inventory has the four new tenant tables; the RLS catalogue allowlist has them too (rule a, cis_app
   only) and must be byte-copied to AA-CIS-Infra `db/rls_catalogue_rules.py` after this PR merges.
 - On apply, every existing tenant gets one `subscription.changed` and about 11-15 `entitlement.changed` rows.
+- Since 355 a tenant INSERT also writes a content subscription and its entitlements as the writer: a test role that
+  writes `shared.tenants` needs the 353 cis_app grants on `tenant_subscription` / `tenant_entitlement` and EXECUTE on
+  `tenant_entitlement_sync` / `tenant_account_closed` (conftest gives them to `app_user`; the 276 test re-applies 353).
+  `test_aa839_erasure_job`'s restore statement also pauses `tenants_content_subscription_upd`.
+- Tests that set a tenant's content plan use an upsert (`_subscribe` in `test_aa1028_migrations_353_355.py`): the
+  row already exists from the create.

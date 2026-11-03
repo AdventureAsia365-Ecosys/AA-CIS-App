@@ -76,14 +76,17 @@
 -- table is written, the schema_versions row excepted), but the file needs what the expand lint refuses: REVOKE ALL
 -- (the Dev default ACL of cis_owner in shared would otherwise leave cis_app DML on the feed and the catalogue),
 -- CREATE OR REPLACE / DROP TRIGGER IF EXISTS (a re-run is a no-op) and the DO guards. It ships with the contract
--- files 354 / 355 in one migration-only PR anyway (MIG-4), so the class costs nothing. On Dev, Infra Migration Apply
--- applies 353-355 in order once every job table is idle (root ADR 0017a).
+-- files 354 / 355 in one migration-only PR anyway (MIG-4), so the class costs nothing. On Dev a person applies 353,
+-- then 354, then 355 with DB Migrate apply (every job table idle, DM-11.4): Infra Migration Apply cannot, because the
+-- cis owner's auto plan stops at the unregistered 336 (below the head, out-of-order) and contract auto-apply is off
+-- until 336 is applied (AA-1024 D8, from 10/11).
 --
 -- Locks. The FKs take SHARE ROW EXCLUSIVE on shared.tenants for the few milliseconds of the file (reads go on). lock_timeout 5s.
 --
 -- Order. 353 (expand) -> 354 (contract: shared.tenants account columns and their triggers) -> 355 (contract: policy
 -- rows, the tenant_ai_budget re-sync trigger, the content subscriptions of the existing tenants, the contract view).
--- One migration-only PR (MIG-4) for the three; the code PR follows once 355 is applied on Dev.
+-- One migration-only PR (MIG-4) for the three; the code PR follows once 355 is applied on Dev and the DB Schema Dump
+-- bot PR has merged.
 --
 -- Rollback (a NEW forward migration, after the code is reverted; destructive, DRY RUN): DROP VIEW
 -- shared.v_tenant_entitlement_resolved; DROP TABLE shared.tenant_account_event, shared.tenant_entitlement,
@@ -609,28 +612,39 @@ BEGIN
 END
 $$;
 
+-- Shared by the plan_feature and entitlement_feature triggers. Each branch names only the fields of its own table:
+-- PL/pgSQL resolves OLD.x / NEW.x against the firing table's row type at run time, so a query that names
+-- OLD.plan_key raises "record old has no field plan_key" when entitlement_feature fires it, even behind a
+-- TG_TABLE_NAME test in the same WHERE clause.
 CREATE OR REPLACE FUNCTION shared.tenant_entitlement_resync_plan() RETURNS trigger
     LANGUAGE plpgsql
     SET search_path = pg_catalog, shared
 AS $$
 DECLARE
-    t uuid;
+    t      uuid;
+    p_old  text;
+    p_new  text;
+    f_key  text;
 BEGIN
-    FOR t IN
-        SELECT DISTINCT s.tenant_id FROM shared.tenant_subscription s
-         WHERE (TG_TABLE_NAME = 'plan_feature'
-                AND s.plan_key IN (CASE WHEN TG_OP <> 'INSERT' THEN OLD.plan_key END,
-                                   CASE WHEN TG_OP <> 'DELETE' THEN NEW.plan_key END))
-            OR (TG_TABLE_NAME = 'entitlement_feature'
-                AND EXISTS (SELECT 1 FROM shared.plan_feature pf
-                             WHERE pf.plan_key = s.plan_key AND pf.feature_key = NEW.feature_key))
-         ORDER BY 1
-    LOOP
-        PERFORM shared.tenant_entitlement_sync(t);
-    END LOOP;
-    IF TG_TABLE_NAME = 'entitlement_feature' THEN
-        FOR t IN SELECT DISTINCT o.tenant_id FROM shared.tenant_entitlement_override o
-                  WHERE o.feature_key = NEW.feature_key ORDER BY 1
+    IF TG_TABLE_NAME = 'plan_feature' THEN
+        IF TG_OP <> 'INSERT' THEN p_old := OLD.plan_key; END IF;
+        IF TG_OP <> 'DELETE' THEN p_new := NEW.plan_key; END IF;
+        FOR t IN SELECT DISTINCT s.tenant_id FROM shared.tenant_subscription s
+                  WHERE s.plan_key IN (p_old, p_new) ORDER BY 1
+        LOOP
+            PERFORM shared.tenant_entitlement_sync(t);
+        END LOOP;
+    ELSE
+        -- entitlement_feature: AFTER UPDATE only (retired_at, value_kind, unit, product)
+        f_key := NEW.feature_key;
+        FOR t IN SELECT DISTINCT s.tenant_id FROM shared.tenant_subscription s
+                  WHERE EXISTS (SELECT 1 FROM shared.plan_feature pf
+                                 WHERE pf.plan_key = s.plan_key AND pf.feature_key = f_key)
+                 UNION
+                 SELECT o.tenant_id FROM shared.tenant_entitlement_override o WHERE o.feature_key = f_key
+                 UNION
+                 SELECT e.tenant_id FROM shared.tenant_entitlement e WHERE e.feature_key = f_key
+                 ORDER BY 1
         LOOP
             PERFORM shared.tenant_entitlement_sync(t);
         END LOOP;
