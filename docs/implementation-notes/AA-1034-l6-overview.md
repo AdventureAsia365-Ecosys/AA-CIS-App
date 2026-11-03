@@ -15,7 +15,9 @@ Root ADR 0019 (B2B-only ecosystem model, approved S265).
 ## Changed
 
 - `frontend/app/admin/overview/page.tsx`, `frontend/app/admin/overview/messages.ts`.
-- Test: `frontend/lib/overviewB2bOnly.test.mjs` (source guards, `npm run test:unit`).
+- Test: `frontend/lib/overviewB2bOnly.test.mjs` (source guards, `npm run test:unit`); the staff smoke
+  `tests/e2e/smoke/aa858-ops-overview.spec.ts` expects the health and cost cards and neither B2C card (touch hint test
+  moved to the cost card).
 
 ## Tradeoffs
 
