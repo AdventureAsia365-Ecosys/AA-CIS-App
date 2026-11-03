@@ -1,5 +1,5 @@
 -- migrate: expand
--- Migration 362: AA-1039 R6 slice 2 (root ADR 0019 d20, d21) — the compliance flags of tenant content (the AA-subject
+-- Migration 360: AA-1039 R6 slice 2 (root ADR 0019 d20, d21) — the compliance flags of tenant content (the AA-subject
 -- gate holds and the tour retirement flags of live posts), the tenant e-mail notices of a retired or restored tour,
 -- and the notice-period policy before a retired tour's WordPress page goes to draft.
 --
@@ -40,15 +40,20 @@
 --   the reason through the CIS API, never the row). Grants: cis_app SELECT, INSERT, UPDATE, DELETE (DELETE: the
 --   AA-839 erasure). Nothing for aa_app_user.
 --
--- Behaviour. None on apply: no row. Before this file is applied the code skips the flag and notice writes (it
--- catches the missing table) and the admin Compliance route answers 503.
+-- Behaviour. None on apply: no row. Before this file is applied the gate skips its flag reads and writes (it catches
+-- the missing table), the admin Compliance route answers 503, and the fan-out jobs fail with a retryable error so
+-- no retire / restore event is lost: the job retries, and the sweep re-enqueues a dead fan-out job of an event that
+-- has no notice or flag yet once the tables exist.
 --
 -- Class: expand (root ADR 0017 d3): three new tables with their indexes, RLS flags, policies, grants and comments; no
 -- change to any existing object, no DO block, no REVOKE, no seed row. Retention rows (DM-7.1): root data standards
 -- Part B section 7, in the root PR of this change.
 --
--- Number. 357 is the highest on main (03/11); 358-361 are held by parallel lanes of S266. Renumber at merge to main
--- max + 1 if main moved (file name, this header, the registration below, the code comments, tests, CONTEXT.md).
+-- Number. 359 is the highest on main (03/11: 358 and 359 came with AA-1040), so this file is 360. If main moves again
+-- before the merge, renumber to main max + 1 everywhere the number appears: the file name, this header, the
+-- registration below, the code comments and runtime strings (services/tour_lifecycle/fanout.py MIGRATION, the admin
+-- Compliance 503 text), the tests and the X1 lists in tests/integration/conftest.py, CONTEXT.md, the implementation
+-- notes, the root DM-7.1 retention rows and the Infra notes (git grep the number in all three repos).
 --
 -- Rollback (a new forward migration, after the code that writes them is reverted): DROP TABLE
 -- acp_shared.content_compliance_flag, acp_shared.tenant_tour_notice, acp_shared.tour_retirement_policy; (a
@@ -118,19 +123,19 @@ CREATE INDEX content_compliance_flag_tour_idx
     ON acp_shared.content_compliance_flag (tour_id) WHERE tour_id IS NOT NULL;
 
 COMMENT ON TABLE acp_shared.content_compliance_flag IS
-    'AA-1039 R6 (CIS 362, root ADR 0019 d20 / d21): compliance findings on a tenant content piece: subject_gate (no '
+    'AA-1039 R6 (CIS 360, root ADR 0019 d20 / d21): compliance findings on a tenant content piece: subject_gate (no '
     'AA subject, or a sales link off the AA catalogue; an open one blocks the publish) and tour_retired (a live post '
     'about a tour AA retired; WordPress goes to draft after the notice period, Facebook is flagged only). Admin-only '
     '(Tenant content QA › Compliance); the tenant reads tenant_message through the API, never the row. Goes with '
     'the tenant (AA-839 erasure, tenant_id).';
 COMMENT ON COLUMN acp_shared.content_compliance_flag.tenant_message IS
-    'AA-1039 (362): the content-style sentence shown to the tenant (English, no internal code, never "flag" / "QA").';
+    'AA-1039 (360): the content-style sentence shown to the tenant (English, no internal code, never "flag" / "QA").';
 COMMENT ON COLUMN acp_shared.content_compliance_flag.detail IS
-    'AA-1039 (362): {"links": [...], "refused_hosts": [...], "content_sha256": "...", ...}; admin only.';
+    'AA-1039 (360): {"links": [...], "refused_hosts": [...], "content_sha256": "...", ...}; admin only.';
 COMMENT ON COLUMN acp_shared.content_compliance_flag.event_key IS
-    'AA-1039 (362): gold_aa_internal.tour_lifecycle_event.idempotency_key of the retirement (tour_retired only).';
+    'AA-1039 (360): gold_aa_internal.tour_lifecycle_event.idempotency_key of the retirement (tour_retired only).';
 COMMENT ON COLUMN acp_shared.content_compliance_flag.draft_due_at IS
-    'AA-1039 (362): when the WordPress page goes to draft (action draft_after_notice; shared.job retired_page_draft '
+    'AA-1039 (360): when the WordPress page goes to draft (action draft_after_notice; shared.job retired_page_draft '
     'runs at this time). Set from acp_shared.tour_retirement_policy (default 7 days).';
 
 ALTER TABLE acp_shared.content_compliance_flag ENABLE ROW LEVEL SECURITY;
@@ -144,7 +149,7 @@ CREATE POLICY tenant_isolation ON acp_shared.content_compliance_flag AS PERMISSI
     USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
 COMMENT ON POLICY tenant_isolation ON acp_shared.content_compliance_flag IS
-    'AA-1039 (CIS 362): own tenant rows only; the tenant pool holds no privilege (flags are admin data), the policy '
+    'AA-1039 (CIS 360): own tenant rows only; the tenant pool holds no privilege (flags are admin data), the policy '
     'is the floor if one is ever granted.';
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON acp_shared.content_compliance_flag TO cis_app;
@@ -180,7 +185,7 @@ CREATE INDEX tenant_tour_notice_unmailed_idx
 CREATE INDEX tenant_tour_notice_tenant_idx ON acp_shared.tenant_tour_notice (tenant_id, created_at DESC);
 
 COMMENT ON TABLE acp_shared.tenant_tour_notice IS
-    'AA-1039 R6 (CIS 362, root ADR 0019 d20): one e-mail notice per (tenant, tour lifecycle event): retired (at once '
+    'AA-1039 R6 (CIS 360, root ADR 0019 d20): one e-mail notice per (tenant, tour lifecycle event): retired (at once '
     'when live pages or posts remain, else the daily digest) or restored ("back on sale"). A paused tour gets none. '
     'Written by the tour_retirement_fanout job, mailed by tour_notice_email (SES). Ids, the tour name and counts '
     'only; no address (recipients are resolved at send time). Goes with the tenant (AA-839 erasure).';
@@ -212,7 +217,7 @@ CREATE UNIQUE INDEX tour_retirement_policy_scope_key
     ON acp_shared.tour_retirement_policy (COALESCE(tenant_id, '00000000-0000-0000-0000-000000000000'::uuid));
 
 COMMENT ON TABLE acp_shared.tour_retirement_policy IS
-    'AA-1039 R6 (CIS 362, root ADR 0019 d20 b7): days of notice before the WordPress page of a retired tour goes to '
+    'AA-1039 R6 (CIS 360, root ADR 0019 d20 b7): days of notice before the WordPress page of a retired tour goes to '
     'draft. tenant_id NULL = the platform row; a tenant row overrides it. No row = 7 days (code default).';
 
 ALTER TABLE acp_shared.tour_retirement_policy ENABLE ROW LEVEL SECURITY;
@@ -229,7 +234,7 @@ CREATE POLICY tenant_isolation ON acp_shared.tour_retirement_policy AS PERMISSIV
 GRANT SELECT, INSERT, UPDATE, DELETE ON acp_shared.tour_retirement_policy TO cis_app;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('362', now(), 'AA-1039 R6: acp_shared.content_compliance_flag, tenant_tour_notice, tour_retirement_policy '
+VALUES ('360', now(), 'AA-1039 R6: acp_shared.content_compliance_flag, tenant_tour_notice, tour_retirement_policy '
                       '(AA-subject gate holds, tour retirement fan-out flags and e-mail notices)')
 ON CONFLICT (version) DO NOTHING;
 

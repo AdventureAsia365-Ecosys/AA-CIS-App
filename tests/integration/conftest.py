@@ -111,7 +111,7 @@ X1_POST_244_RLS = ("shared.tenant_brand_rules", "shared.tenant_seo_config",
                    "shared.writing_memory_keep",               # 314 (AA-922), FORCE: also X1_POST_245_FORCE_RLS
                    "shared.writing_memory_disagreement",       # 314 (AA-922), FORCE: also X1_POST_245_FORCE_RLS
                    "acp_shared.content_label",                 # 315 (AA-923 WM-32), FORCE: also X1_POST_245_FORCE_RLS
-                   # 362 (AA-1039 R6), FORCE: also X1_POST_245_FORCE_RLS
+                   # 360 (AA-1039 R6), FORCE: also X1_POST_245_FORCE_RLS
                    "acp_shared.content_compliance_flag", "acp_shared.tenant_tour_notice",
                    "acp_shared.tour_retirement_policy")
 # FORCE RLS tables of migrations applied on Dev AFTER 245 (CIS 277, AA-916; CIS 280, AA-917; CIS 284, AA-919): their
