@@ -156,7 +156,7 @@ class AccountApiKey(BaseModel):
 # ── catalog.http.v1 (AA-976) — documentation only ──────────────────────────────
 # The /catalog/v1 handlers (api/routers/catalog_http.py) return their own JSONResponse (ETag, Cache-Control, 304),
 # so these models are declared with ``responses={200: {"model": ...}}`` and never validate or filter a body. They
-# mirror the root contract docs/contracts/catalog.http.v1.openapi.yaml (v1.2), which stays the source of truth (its
+# mirror the root contract docs/contracts/catalog.http.v1.openapi.yaml (v1.3), which stays the source of truth (its
 # test: tests/unit/test_aa976_catalog_http_contract.py). Prefixed ``Catalog`` so no other CIS schema name collides.
 
 class _CatalogModel(BaseModel):
@@ -213,6 +213,15 @@ class CatalogPhoto(_CatalogModel):
     alt: Optional[str] = None
 
 
+class CatalogAiMark(_CatalogModel):
+    """The machine-readable mark of AI-generated text (contract 1.3, AA-1040, EU AI Act Art. 50(2))."""
+    ai_generated: bool
+    generator: str
+    model: Optional[str]
+    generated_at: Optional[str]
+    human_edited: Optional[bool]
+
+
 class CatalogTour(_CatalogModel):
     """GET /catalog/v1/tours/{source_system}/{source_id} — the served tour (ETag = ``content_hash``)."""
     source_system: Literal["cis"]
@@ -227,6 +236,7 @@ class CatalogTour(_CatalogModel):
     exclusions: List[CatalogExclusion]
     facets: CatalogFacets
     photos: List[CatalogPhoto] = []
+    ai: Optional[CatalogAiMark] = None
 
 
 class CatalogDestination(_CatalogModel):

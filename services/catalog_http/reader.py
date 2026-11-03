@@ -47,10 +47,19 @@ DEFAULT_PAGE = 20
 MAX_PAGE = 50
 
 _TOUR_COLS = ("source_id, tour_id, title, summary, country, duration_days, activities, inclusions, exclusions, "
-              "updated_at")
+              "published_at, updated_at, text_updated_at")
+# AA-1040: text_updated_at (CIS 359, the last Master publish of the text; photos excluded) feeds the AI mark's
+# generated_at. Until 359 is applied the column is absent: the reads select NULL in its place and the mark falls back
+# to updated_at (an upper bound). TEXT_UPDATED_AT_SQL probes the view once per process until it answers true.
+_TOUR_COLS_PRE_359 = _TOUR_COLS.replace("text_updated_at", "NULL::timestamptz AS text_updated_at")
+TEXT_UPDATED_AT_SQL = """
+    SELECT EXISTS (SELECT 1 FROM pg_attribute
+                    WHERE attrelid = to_regclass('catalog.v_tour') AND attname = 'text_updated_at'
+                      AND attnum > 0 AND NOT attisdropped) AS ok
+"""
 
-LIST_TOURS_SQL = f"""
-    SELECT {_TOUR_COLS}
+_LIST_TOURS = """
+    SELECT {cols}
       FROM catalog.v_tour
      WHERE source_system = 'cis'
        AND ($1::text IS NULL OR source_id > $1::text)
@@ -59,7 +68,11 @@ LIST_TOURS_SQL = f"""
      ORDER BY source_id
      LIMIT $4
 """
-GET_TOUR_SQL = f"SELECT {_TOUR_COLS} FROM catalog.v_tour WHERE source_system = 'cis' AND source_id = $1::text"
+_GET_TOUR = "SELECT {cols} FROM catalog.v_tour WHERE source_system = 'cis' AND source_id = $1::text"
+LIST_TOURS_SQL = _LIST_TOURS.format(cols=_TOUR_COLS)
+GET_TOUR_SQL = _GET_TOUR.format(cols=_TOUR_COLS)
+LIST_TOURS_SQL_PRE_359 = _LIST_TOURS.format(cols=_TOUR_COLS_PRE_359)
+GET_TOUR_SQL_PRE_359 = _GET_TOUR.format(cols=_TOUR_COLS_PRE_359)
 RETIRED_SQL = """
     SELECT state, reason, changed_at
       FROM catalog.v_tour_retired
@@ -94,6 +107,7 @@ _POOL_ERRORS = (asyncpg.PostgresConnectionError, asyncpg.TooManyConnectionsError
                 OSError, asyncio.TimeoutError)
 
 _gate: Optional[asyncio.Semaphore] = None
+_has_text_updated_at = False   # True once TEXT_UPDATED_AT_SQL saw the column (it never goes away again)
 
 
 class CatalogUnavailable(Exception):  # noqa: N818 - reads as an outcome
@@ -112,9 +126,26 @@ def _semaphore() -> asyncio.Semaphore:
 
 
 def reset_gate() -> None:
-    """Drop the per-process gate (tests run each case on a new event loop)."""
-    global _gate
+    """Drop the per-process gate and the column probe (tests run each case on a new event loop)."""
+    global _gate, _has_text_updated_at
     _gate = None
+    _has_text_updated_at = False
+
+
+async def has_text_updated_at(conn: Any) -> bool:
+    """Whether ``catalog.v_tour`` has ``text_updated_at`` (CIS 359). A true answer is kept for the process; a false
+    one is asked again on the next read, so the reads switch over by themselves once 359 is applied."""
+    global _has_text_updated_at
+    if not _has_text_updated_at:
+        _has_text_updated_at = bool(await conn.fetchval(TEXT_UPDATED_AT_SQL))
+    return _has_text_updated_at
+
+
+async def _tour_sql(conn: Any) -> tuple[str, str]:
+    """(list SQL, get SQL): the reads naming ``text_updated_at`` once CIS 359 is applied, else the pre-359 ones."""
+    if await has_text_updated_at(conn):
+        return LIST_TOURS_SQL, GET_TOUR_SQL
+    return LIST_TOURS_SQL_PRE_359, GET_TOUR_SQL_PRE_359
 
 
 @asynccontextmanager
@@ -221,7 +252,8 @@ async def list_tours(conn: Any, *, after: Optional[str], updated_since: Optional
     names = country_names(country) if country else None
     if names is not None and not names:
         return TourPage(items=[], next_after=None)
-    rows = await conn.fetch(LIST_TOURS_SQL, after, updated_since, names, limit + 1)
+    list_sql, _ = await _tour_sql(conn)
+    rows = await conn.fetch(list_sql, after, updated_since, names, limit + 1)
     more = len(rows) > limit
     rows = rows[:limit]
     details = await _details(conn, rows) if rows else {}
@@ -242,7 +274,8 @@ class TourLookup:
 
 
 async def get_tour(conn: Any, source_id: str, *, photo_base: str) -> TourLookup:
-    row = await conn.fetchrow(GET_TOUR_SQL, source_id)
+    _, get_sql = await _tour_sql(conn)
+    row = await conn.fetchrow(get_sql, source_id)
     if row is not None:
         detail = (await _details(conn, [row])).get(str(row["source_id"]), {})
         body = _assemble(row, detail, photo_base)
@@ -274,5 +307,5 @@ async def merged_into(pool: Any, destination_id: str) -> Optional[str]:
 __all__ = [
     "CatalogUnavailable", "InvalidRequest", "TourLookup", "TourPage", "SOURCE_SYSTEM", "DEFAULT_PAGE", "MAX_PAGE",
     "catalog_connection", "country_names", "decode_cursor", "encode_cursor", "get_destination", "get_tour",
-    "list_tours", "merged_into", "reset_gate",
+    "has_text_updated_at", "list_tours", "merged_into", "reset_gate",
 ]

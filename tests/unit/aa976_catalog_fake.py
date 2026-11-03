@@ -30,14 +30,17 @@ def tour_id_of(source_id: str) -> str:
 
 
 def tour_row(source_id: str, *, title: str = "Hanoi and Ha Long", country: str = "Vietnam",
-             updated_at: datetime = T0, duration_days: Optional[int] = 3) -> dict:
+             updated_at: datetime = T0, duration_days: Optional[int] = 3,
+             published_at: Optional[datetime] = None, text_updated_at: Optional[datetime] = None) -> dict:
     return {
         "source_id": source_id, "tour_id": tour_id_of(source_id), "title": title,
         "summary": "Old Quarter and the bay.", "country": country,
         "duration_days": duration_days, "activities": ["Kayaking", "Food tour"],
         "inclusions": "- Guide\n- Boat cruise; Breakfast daily",
         "exclusions": "International flights\nEntrance fees at the pagodas\nTips for guide and driver\nVisa",
+        "published_at": published_at,
         "updated_at": updated_at,
+        "text_updated_at": text_updated_at,
     }
 
 
@@ -54,6 +57,8 @@ class CatalogViews:
         self.executed: list[str] = []
         self.readonly: list[bool] = []
         self.isolation: list[Optional[str]] = []
+        self.has_text_updated_at = True        # CIS 359 applied (False: the pre-359 view)
+        self.probes = 0
 
     def add_tour(self, source_id: str, **kw: Any) -> dict:
         row = tour_row(source_id, **kw)
@@ -103,10 +108,19 @@ class CatalogViews:
         self.executed.append(sql)
         return "SELECT 1"
 
+    async def fetchval(self, sql: str, *args: Any) -> Any:
+        if sql == reader.TEXT_UPDATED_AT_SQL:       # counted apart from self.sql (the view reads)
+            self.probes += 1
+            return self.has_text_updated_at
+        raise AssertionError(sql)
+
     async def fetchrow(self, sql: str, *args: Any) -> Optional[dict]:
         self.sql.append((sql, args))
-        if sql == reader.GET_TOUR_SQL:
-            return self.tours.get(args[0])
+        if sql in (reader.GET_TOUR_SQL, reader.GET_TOUR_SQL_PRE_359):
+            row = self.tours.get(args[0])
+            if row is not None and sql == reader.GET_TOUR_SQL_PRE_359:
+                row = {**row, "text_updated_at": None}      # the column does not exist before CIS 359
+            return row
         if sql == reader.RETIRED_SQL:
             return self.retired.get(args[0])
         if sql == reader.DESTINATION_SQL:
@@ -115,13 +129,15 @@ class CatalogViews:
 
     async def fetch(self, sql: str, *args: Any) -> list[dict]:
         self.sql.append((sql, args))
-        if sql == reader.LIST_TOURS_SQL:
+        if sql in (reader.LIST_TOURS_SQL, reader.LIST_TOURS_SQL_PRE_359):
             after, since, names, limit = args
             rows = sorted(self.tours.values(), key=lambda r: r["source_id"])
             rows = [r for r in rows
                     if (after is None or r["source_id"] > after)
                     and (since is None or r["updated_at"] >= since)
                     and (names is None or r["country"].lower() in names)]
+            if sql == reader.LIST_TOURS_SQL_PRE_359:
+                rows = [{**r, "text_updated_at": None} for r in rows]
             return rows[:limit]
         for name, template in reader._DETAIL_SQL.items():  # noqa: SLF001
             if sql == template.format(cond=reader.DETAIL_COND):
