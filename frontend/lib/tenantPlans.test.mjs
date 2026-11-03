@@ -8,7 +8,8 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
-  limitText, overrideBody, overrideDraftOf, planBody, planDraftOf, refusalOf, runSaga, tierChoices,
+  defaultOverrideMode, limitText, overrideBody, overrideDraftOf, overrideFeatures, overrideModes, planBody,
+  planDraftOf, refusalOf, runSaga, tierChoices,
 } from "./tenantPlans.ts";
 
 const CATALOGUE = [
@@ -18,6 +19,8 @@ const CATALOGUE = [
   { feature_key: "crm.seats", product: "crm", value_kind: "seats", unit: "seats", description: "Seats" },
   { feature_key: "ai.budget_usd_monthly", product: "platform", value_kind: "limit", unit: "usd_month",
     description: "AI" },
+  { feature_key: "content.rewrite", product: "content", value_kind: "limit", unit: "count_month",
+    description: "Rewrites" },
 ];
 
 const plan = (over) => ({
@@ -144,4 +147,31 @@ test("the saga call waits for its job", async () => {
   assert.equal(job.status, "succeeded");
   assert.deepEqual(calls.map((c) => c[1]), ["POST", "GET", "GET"]);
   assert.equal(calls[1][0], "/api/admin/tenants/provision/j");
+});
+
+test("override rules: no 'off' for a limit, no override of the request rate, a number for the rewrite quota", () => {
+  const today = "2026-11-03";
+  const body = (d) => overrideBody({ limit: "", reason: "r", expires: "", ...d }, CATALOGUE, today);
+  // "off" on a limit would remove it (the AI budget would fail open): refused, 0 is the way
+  assert.equal(body({ feature_key: "ai.budget_usd_monthly", mode: "off" }).error, "offLimit");
+  assert.equal(body({ feature_key: "crm.seats", mode: "off" }).error, "offLimit");
+  assert.deepEqual(body({ feature_key: "ai.budget_usd_monthly", mode: "limit", limit: "0" }).body,
+                   { enabled: true, limit_value: "0", reason: "r", expires_at: null });
+  assert.equal(body({ feature_key: "content.rate_limit_rpm", mode: "limit", limit: "450" }).error, "notOverridable");
+  assert.equal(body({ feature_key: "content.rewrite", mode: "on" }).error, "limitRequired");
+  assert.equal(body({ feature_key: "content.rewrite", mode: "limit", limit: "" }).error, "limitRequired");
+  assert.equal(body({ feature_key: "content.rewrite", mode: "limit", limit: "0" }).error, null);
+  assert.equal(body({ feature_key: "crm.core", mode: "off" }).error, null);
+  // the drawer's choices
+  assert.ok(!overrideFeatures(CATALOGUE).some((f) => f.feature_key === "content.rate_limit_rpm"));
+  const f = (k) => CATALOGUE.find((x) => x.feature_key === k);
+  assert.deepEqual(overrideModes(f("crm.core")), ["off", "on"]);
+  assert.deepEqual(overrideModes(f("ai.budget_usd_monthly")), ["limit", "on"]);
+  assert.deepEqual(overrideModes(f("content.rewrite")), ["limit"]);
+  assert.equal(defaultOverrideMode(f("ai.budget_usd_monthly")), "limit");
+  assert.equal(defaultOverrideMode(f("crm.core")), "off");
+  // the API's rules win over the defaults
+  const rules = { not_overridable: [], limit_required: [] };
+  assert.equal(overrideBody({ feature_key: "content.rewrite", mode: "on", limit: "", reason: "r", expires: "" },
+                            CATALOGUE, today, rules).error, null);
 });

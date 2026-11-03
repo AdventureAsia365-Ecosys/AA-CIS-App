@@ -2443,11 +2443,15 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
   `services/tenant_account/plans.py`): list / create / edit / retire plans and their feature rows, admin only,
   versioned (`shared.plan.version`, a stale write is 409 `version_conflict`), audited (`plan.created` / `.updated` /
   `.retired`, before / after). An edit re-syncs every subscriber at once; a retired plan takes no new subscription,
-  current subscribers keep it. Product, key and tier never change; a tier plan must give `content.rate_limit_rpm`.
+  current subscribers keep it. Product, key and tier never change; a tier plan must give `content.rate_limit_rpm`
+  (a whole number). An RPM edit also moves `shared.tenants.rate_limit_rpm` (what the limiter enforces) of every
+  tenant on the plan whose column still equals the old value; a tenant with its own RPM (PATCH) keeps it.
 - **Tenant 360 › Subscription** (`frontend/app/admin/tenants/_components/Tenant360Subscription.tsx`; API
   `api/routers/admin_tenant_subscription.py`, `services/tenant_account/subscription.py`): subscriptions, the resolved
   entitlements with their source, overrides (PUT / DELETE `…/entitlement-overrides/{key}`, reason required, optional
-  end, audited `tenant.entitlement_override_set` / `_removed`; `enabled = false` is how staff take a feature away),
+  end, audited `tenant.entitlement_override_set` / `_removed`; `enabled = false` is how staff take a flag away; a
+  limit is stopped with 0, never "off", which would remove it; `content.rate_limit_rpm` is not overridable (PATCH the
+  tenant) and `content.rewrite` needs a number),
   add-ons through the saga (attach / change, and `POST /admin/tenants/{id}/provision/cancel`, saga mode `detach`).
 - **Trials**: the saga's `trial_days` (1-60) starts the account in `trial` and the subscriptions `trialing`; the hourly
   job `tenant_account_tick` (`services/tenant_account/lifecycle.py`, queued by the api's ops sampler, key per UTC hour,
@@ -2459,7 +2463,9 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
   entitlements (`useContentTiers`: the live public content plans).
 - **AI budget = the entitlement** (`shared/cost_guard.py`): the gateway's tenant budget is `ai.budget_usd_monthly`
   (thresholds from the AA-1016 row if any, else alert 80 % / approval 100 % / hard stop), and `adhoc_*` stages count as
-  tenant spend like T-stages (`shared/llm_client/tenant_budget.is_tenant_spend_stage`).
+  tenant spend like T-stages (`shared/llm_client/tenant_budget.is_tenant_spend_stage`). It fails closed: a 0 USD
+  budget stops the first call, a disabled override of the key reads as 0. Tenant 360 › Cost shows this effective
+  budget and its source (`tenant_ai_budget.read_one` → `effective`).
 - **Dev guard** (root ADR 0019 d16, `services/tenant_account/dev_guard.py`): on Dev (`ENVIRONMENT` exactly `dev`) a new
   tenant defaults to `demo` (synthetic) in `POST /admin/tenants` and the saga; an `agency` is refused unless the saga
   creates it as the one pilot (`pilot_weeks` 1-8). Existing rows keep their kind.

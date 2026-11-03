@@ -2,8 +2,18 @@
 entitlements with their source, and the per-tenant overrides (``shared.tenant_entitlement_override``, CIS 353).
 
 An override is the staff's exception to the plan for one tenant and one feature key: ``enabled = false`` takes a plan
-feature away (the revocation path, e.g. a CRM channel), ``enabled = true`` with a ``limit_value`` sets another limit
+**flag** away (the revocation path, e.g. a CRM channel), ``enabled = true`` with a ``limit_value`` sets another limit
 (``ai.budget_usd_monthly`` 0.01 for the fail-closed proof; NULL = no limit), a flag the plan lacks can be granted.
+
+Refused, because no reader would enforce the result (S266 review of slice 3):
+  - ``enabled = false`` on a key that is not a flag (``limit_cannot_be_disabled``): the resolver drops a disabled key,
+    and for a limit "no row" means no limit, so "off" would open the limit instead of closing it (the AI budget
+    would fail open). Set a limit of 0 instead (0 USD = no AI spend at all, ``shared.cost_guard``).
+  - ``content.rate_limit_rpm`` (``use_rate_limit_patch``): the public API limiter and the Lambda authorizer enforce
+    ``shared.tenants.rate_limit_rpm``, which outranks an override in the resolver (CIS 356); change it with
+    ``PATCH /admin/tenants/{id}`` (``rate_limit_rpm``).
+  - no limit (NULL) on ``content.rewrite`` (``limit_required``): the rewrite quota is published as a number
+    (``GET /v1/quota`` and the tenant portal meter); "no limit" has no number to serve.
 A ``reason`` is required; ``expires_at`` (optional) ends it (the hourly tick re-syncs at the end). An override of a crm
 / tripplanner key applies only while the tenant has a live subscription of that product (the resolver); the response
 says so (``applies``). The CIS 353 trigger re-syncs the tenant and writes ``entitlement.changed`` (``aa.actor`` = the
@@ -17,7 +27,7 @@ from decimal import Decimal
 from typing import Any, Optional
 
 from services.acp_shared.audit_log import AdminTenantAuditAction, write_audit_log
-from services.tenant_account.plans import LIMIT_MAX, PlanError, parse_decimal
+from services.tenant_account.plans import LIMIT_MAX, RPM_KEY, PlanError, parse_decimal
 
 OVERRIDE_SET = AdminTenantAuditAction.ENTITLEMENT_OVERRIDE_SET
 OVERRIDE_REMOVED = AdminTenantAuditAction.ENTITLEMENT_OVERRIDE_REMOVED
@@ -52,6 +62,13 @@ OVERRIDES_SQL = """
      WHERE o.tenant_id = $1::uuid
      ORDER BY o.feature_key
 """
+# Keys an override may not set to "no limit": their reader publishes a number (module docstring).
+LIMIT_REQUIRED_KEYS = frozenset({"content.rewrite"})
+# Keys an override never sets: another column is the enforced value (module docstring).
+NOT_OVERRIDABLE = {RPM_KEY: ("use_rate_limit_patch",
+                             f"{RPM_KEY} is the limiter's column: change it with PATCH /admin/tenants/{{id}} "
+                             "(rate_limit_rpm)")}
+
 ADDON_PLANS_SQL = """
     SELECT plan_key, product, name, seats_included FROM shared.plan
      WHERE product IN ('crm', 'tripplanner') AND retired_at IS NULL ORDER BY product, plan_key
@@ -88,6 +105,9 @@ async def snapshot(conn, tenant_id: str) -> Optional[dict]:
                                             "granted_by", "active")},
                        "expires_at": _iso(r["expires_at"]), "updated_at": _iso(r["updated_at"])} for r in overrides],
         "add_on_plans": [dict(r) for r in plans],
+        # what the override drawer may offer (set_override refuses the rest)
+        "override_rules": {"not_overridable": sorted(NOT_OVERRIDABLE), "limit_required": sorted(LIMIT_REQUIRED_KEYS),
+                           "off_only_for": "flag"},
     }
 
 
@@ -141,6 +161,8 @@ async def set_override(conn, tenant_id: str, feature_key: str, *, enabled: bool,
             expires_at = expires_at.replace(tzinfo=timezone.utc)
         if expires_at <= datetime.now(timezone.utc):
             raise PlanError("expires_in_past", "expires_at must be in the future")
+    if feature_key in NOT_OVERRIDABLE:
+        raise PlanError(*NOT_OVERRIDABLE[feature_key])
     limit: Optional[Decimal] = parse_decimal(limit_value, f"{feature_key} limit", LIMIT_MAX)
     async with conn.transaction():
         await conn.execute("SELECT set_config('aa.actor', $1, true)", actor)
@@ -156,6 +178,11 @@ async def set_override(conn, tenant_id: str, feature_key: str, *, enabled: bool,
             raise PlanError("flag_takes_no_limit", f"{feature_key} is on/off and takes no limit")
         if not enabled and limit is not None:
             raise PlanError("disabled_takes_no_limit", "a disabled feature takes no limit")
+        if not enabled and f["value_kind"] != "flag":
+            raise PlanError("limit_cannot_be_disabled",
+                            f"{feature_key} is a limit: turning it off would remove the limit; set a limit of 0")
+        if enabled and limit is None and feature_key in LIMIT_REQUIRED_KEYS:
+            raise PlanError("limit_required", f"{feature_key} needs a number (0 or more)")
         before = _row(await conn.fetchrow(OVERRIDE_ROW_SQL, tenant_id, feature_key))
         await conn.execute(UPSERT_OVERRIDE_SQL, tenant_id, feature_key, limit, enabled, reason, actor[:64], expires_at)
         after = {"limit_value": None if limit is None else str(limit), "enabled": enabled, "reason": reason,

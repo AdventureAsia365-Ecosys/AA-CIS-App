@@ -577,7 +577,17 @@ AI_BUDGET_KEY = "ai.budget_usd_monthly"
 PLAN_ALERT_PCT = 80
 PLAN_APPROVAL_PCT = 100
 TENANT_BUDGET_ALERT_EVENT = BUDGET_ALERT_EVENT       # same bell type as the job and connection budgets
-TENANT_BUDGET_TENANTS_SQL = """
+# Fail closed on "off" (S266 review of slice 3): the resolver drops a disabled key, which for a limit would read as
+# "no budget". subscription.set_override refuses enabled=false on a limit; an active disabled override of the key
+# that exists anyway (written before that rule, or by hand) is served as a 0 USD budget with the hard stop on.
+_DISABLED_OVERRIDE = """
+    SELECT o.tenant_id FROM shared.tenant_entitlement_override o
+     WHERE o.feature_key = 'ai.budget_usd_monthly' AND NOT o.enabled
+       AND (o.expires_at IS NULL OR o.expires_at > now())
+"""
+TENANT_BUDGET_TENANTS_SQL = f"""
+    SELECT d.tenant_id::text AS tenant_id FROM ({_DISABLED_OVERRIDE}) d
+    UNION
     SELECT e.tenant_id::text AS tenant_id FROM shared.v_tenant_entitlement_resolved e
      WHERE e.feature_key = 'ai.budget_usd_monthly' AND e.limit_value IS NOT NULL
     UNION
@@ -598,12 +608,14 @@ _SPEND_COLUMNS = """
 """
 _TENANT_BUDGET_SQL = f"""
     SELECT $1::uuid::text AS tenant_id,
-           CASE WHEN e.feature_key IS NOT NULL THEN e.limit_value ELSE b.monthly_usd END AS monthly_usd,
+           CASE WHEN d.tenant_id IS NOT NULL THEN 0::numeric
+                WHEN e.feature_key IS NOT NULL THEN e.limit_value ELSE b.monthly_usd END AS monthly_usd,
            coalesce(b.alert_pct, {PLAN_ALERT_PCT}) AS alert_pct,
            coalesce(b.approval_pct, {PLAN_APPROVAL_PCT}) AS approval_pct,
-           coalesce(b.hard_stop, true) AS hard_stop,
-           e.source AS source, {_SPEND_COLUMNS}
+           d.tenant_id IS NOT NULL OR coalesce(b.hard_stop, true) AS hard_stop,
+           CASE WHEN d.tenant_id IS NOT NULL THEN 'override' ELSE e.source END AS source, {_SPEND_COLUMNS}
       FROM (SELECT 1) AS one
+      LEFT JOIN ({_DISABLED_OVERRIDE}) d ON d.tenant_id = $1::uuid
       LEFT JOIN shared.v_tenant_entitlement_resolved e
              ON e.tenant_id = $1::uuid AND e.feature_key = 'ai.budget_usd_monthly'
       LEFT JOIN shared.tenant_ai_budget b ON b.tenant_id = $1::uuid
@@ -632,8 +644,8 @@ class TenantAIBudget:
 
     @property
     def used_pct(self) -> Optional[float]:
-        if self.monthly_usd <= 0:      # a $0 budget: any spend is past every threshold (the CHECK caps pcts at 1000)
-            return None if self.month_spent_usd <= 0 else 1000.0
+        if self.monthly_usd <= 0:      # a $0 budget = no AI spend: every call is past every threshold (the CHECK
+            return 1000.0              # caps pcts at 1000), the first one included (S266: "0 = no AI", fail closed)
         return 100.0 * self.month_spent_usd / self.monthly_usd
 
     @property

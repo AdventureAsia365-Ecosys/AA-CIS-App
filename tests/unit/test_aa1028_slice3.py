@@ -55,6 +55,11 @@ def test_draft_normalises_a_crm_plan():
     ({"name": "x", "features": []}, "content", "growth", "rate_limit_required"),
     ({"name": "x", "features": [{"feature_key": "content.rate_limit_rpm", "limit_value": 0}]}, "content", "growth",
      "rate_limit_required"),
+    # the limiter's column is an integer (S266 review: a plan RPM edit moves it)
+    ({"name": "x", "features": [{"feature_key": "content.rate_limit_rpm", "limit_value": "300.5"}]}, "content",
+     "growth", "rate_limit_whole"),
+    ({"name": "x", "features": [{"feature_key": "content.rate_limit_rpm", "limit_value": "300.5"}]}, "content", None,
+     "rate_limit_whole"),
 ])
 def test_draft_refuses(payload, product, tier, code):
     with pytest.raises(pl.PlanError) as e:
@@ -86,6 +91,25 @@ async def test_update_needs_a_version_and_never_moves_keys():
         with pytest.raises(pl.PlanError) as e:
             await pl.update_plan(MagicMock(), "crm.core", payload, actor="admin:x")
         assert e.value.code == code
+
+
+@pytest.mark.asyncio
+async def test_follow_rpm_moves_only_on_a_content_rpm_change():
+    def d(rpm):
+        feats = () if rpm is None else (pl.PlanFeature(pl.RPM_KEY, pl.parse_decimal(rpm, "rpm", pl.LIMIT_MAX)),)
+        return pl.PlanDraft(name="x", price_usd_monthly=None, price_unit="tenant", seats_included=None,
+                            price_extra_seat_usd=None, is_public=False, notes=None, features=feats)
+
+    conn = MagicMock()
+    conn.fetch = AsyncMock(return_value=[{"tenant_id": TID}, {"tenant_id": TID}])
+    assert await pl._follow_rpm(conn, "content.growth", "content", d(300), d(450)) == 2
+    assert conn.fetch.await_args.args == (pl.FOLLOW_RPM_SQL, "content.growth", 450, 300)
+    for args in (("crm.core", "crm", d(300), d(450)), ("content.x", "content", d(None), d(450)),
+                 ("content.x", "content", d(300), d(None)), ("content.x", "content", d(300), d(300))):
+        conn.fetch.reset_mock()
+        assert await pl._follow_rpm(conn, *args) == 0 and conn.fetch.await_count == 0
+    # only tenants on this plan whose column is still the old default move
+    assert "t.rate_limit_rpm = $3" in pl.FOLLOW_RPM_SQL and "s.plan_key = $1" in pl.FOLLOW_RPM_SQL
 
 
 # ── Dev guard (root ADR 0019 d16) ───────────────────────────────────────────────────────────────────────────────
@@ -228,6 +252,27 @@ def test_budget_reads_the_entitlement_then_falls_back():
     assert asyncio.run(cost_guard.budgeted_tenants(c)) is None
 
 
+def test_a_zero_budget_stops_the_first_call():
+    # "0 = no AI" (S266 review): with the hard stop on, a 0 USD budget refuses before any spend
+    b = cost_guard.TenantAIBudget(tenant_id=TID, monthly_usd=0.0, month_spent_usd=0.0, alert_pct=80,
+                                  approval_pct=100, hard_stop=True)
+    assert b.needs_approval and b.state == "approval"
+    assert not cost_guard.TenantAIBudget(tenant_id=TID, monthly_usd=0.0, month_spent_usd=0.0,
+                                         hard_stop=False).needs_approval
+
+
+def test_a_disabled_budget_override_is_a_zero_budget():
+    # the resolver drops a disabled key; cost_guard must not read that as "no budget" (fail closed)
+    assert "NOT o.enabled" in cost_guard._DISABLED_OVERRIDE
+    assert "WHEN d.tenant_id IS NOT NULL THEN 0::numeric" in cost_guard._TENANT_BUDGET_SQL
+    assert "d.tenant_id IS NOT NULL OR coalesce(b.hard_stop, true)" in cost_guard._TENANT_BUDGET_SQL
+    assert cost_guard._DISABLED_OVERRIDE.strip() in cost_guard.TENANT_BUDGET_TENANTS_SQL
+    row = {"tenant_id": TID, "monthly_usd": 0, "alert_pct": 80, "approval_pct": 100, "hard_stop": True,
+           "spent": 0, "calls": 0, "source": "override"}
+    b = asyncio.run(cost_guard.tenant_budget_check(_Conn(row=row), TID))
+    assert b.monthly_usd == 0.0 and b.needs_approval
+
+
 def test_plan_budget_defaults():
     assert (cost_guard.PLAN_ALERT_PCT, cost_guard.PLAN_APPROVAL_PCT) == (80, 100)
     assert "coalesce(b.hard_stop, true)" in cost_guard._TENANT_BUDGET_SQL
@@ -326,3 +371,57 @@ def test_subscription_routes(client, monkeypatch):
                         AsyncMock(side_effect=pl.PlanError("override_not_found", "none", 404)))
     resp = c.delete(f"/admin/tenants/{TID}/entitlement-overrides/crm.ai_assist", headers=_h())
     assert resp.status_code == 404 and resp.json()["detail"]["detail"] == "override_not_found"
+
+
+# ── overrides no reader would enforce are refused (S266 review) ─────────────────────────────────────────────────
+
+class _TxConn:
+    """set_override's reads up to the refusal: the tenant lock and the feature row; no write may happen."""
+
+    def __init__(self, feature):
+        self.feature, self.writes = feature, []
+
+    def transaction(self):
+        class _T:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+        return _T()
+
+    async def execute(self, sql, *args):
+        if "set_config" not in sql:
+            self.writes.append(sql)
+
+    async def fetchval(self, sql, *args):
+        return "active"
+
+    async def fetchrow(self, sql, *args):
+        from services.tenant_account import subscription as sub
+
+        assert sql == sub.FEATURE_SQL, sql[:60]
+        return self.feature
+
+
+@pytest.mark.parametrize("key,kind,enabled,limit,code", [
+    ("content.rate_limit_rpm", "limit", True, "450", "use_rate_limit_patch"),
+    ("ai.budget_usd_monthly", "limit", False, None, "limit_cannot_be_disabled"),
+    ("content.rewrite", "limit", False, None, "limit_cannot_be_disabled"),
+    ("crm.seats", "seats", False, None, "limit_cannot_be_disabled"),
+    ("content.rewrite", "limit", True, None, "limit_required"),
+])
+def test_set_override_refuses_what_no_reader_enforces(key, kind, enabled, limit, code):
+    from services.tenant_account import subscription as sub
+
+    conn = _TxConn({"feature_key": key, "product": key.split(".")[0], "value_kind": kind})
+    with pytest.raises(pl.PlanError) as e:
+        asyncio.run(sub.set_override(conn, TID, key, enabled=enabled, limit_value=limit, reason="zz",
+                                     expires_at=None, actor="admin:x"))
+    assert e.value.code == code and e.value.status == 422 and conn.writes == []
+
+
+def test_override_rules_cover_the_limiter_and_the_quota():
+    from services.tenant_account import subscription as sub
+
+    assert set(sub.NOT_OVERRIDABLE) == {pl.RPM_KEY} and sub.LIMIT_REQUIRED_KEYS == {"content.rewrite"}

@@ -69,7 +69,8 @@ def test_thresholds():
     assert _budget(spent=15.0).state == "approval"
     assert _budget(spent=50.0, hard=False).state == "alert"          # no hard stop: never waits, only alerts
     assert _budget(monthly=0.0, spent=0.01).needs_approval            # a $0 budget: any spend waits
-    assert _budget(monthly=0.0, spent=0.0).state == "ok"
+    # AA-1028 slice 3 (S266 review): a $0 budget is "no AI spend", so the first call waits too (fail closed)
+    assert _budget(monthly=0.0, spent=0.0).state == "approval"
     assert "wait for staff approval" in cost_guard.tenant_budget_message(_budget(spent=20.0))
 
 

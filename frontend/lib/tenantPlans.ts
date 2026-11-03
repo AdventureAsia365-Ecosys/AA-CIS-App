@@ -174,6 +174,32 @@ export interface SubscriptionResp {
   entitlements: EntitlementRow[];
   overrides: OverrideRow[];
   add_on_plans: { plan_key: string; product: Product; name: string; seats_included: number | null }[];
+  override_rules?: OverrideRules;
+}
+
+/** What an override may set (the API refuses the rest, services/tenant_account/subscription.py): keys another column
+ * enforces (the request rate: the tenant's settings), and keys whose limit must be a number. "Off" is for on/off
+ * features only: for a limit it would remove the limit, so 0 is the way to stop it. */
+export interface OverrideRules { not_overridable: string[]; limit_required: string[] }
+export const DEFAULT_OVERRIDE_RULES: OverrideRules = {
+  not_overridable: ["content.rate_limit_rpm"], limit_required: ["content.rewrite"],
+};
+
+/** The features the override drawer offers. */
+export function overrideFeatures(catalogue: Feature[], rules: OverrideRules = DEFAULT_OVERRIDE_RULES): Feature[] {
+  return catalogue.filter((f) => !rules.not_overridable.includes(f.feature_key));
+}
+
+/** The effects the drawer offers for a feature: on/off for a flag; a limit (and "no limit" unless one is required). */
+export function overrideModes(f: Feature | undefined, rules: OverrideRules = DEFAULT_OVERRIDE_RULES):
+    OverrideDraft["mode"][] {
+  if (!f || f.value_kind === "flag") return ["off", "on"];
+  return rules.limit_required.includes(f.feature_key) ? ["limit"] : ["limit", "on"];
+}
+
+/** The effect a new override of ``f`` starts with. */
+export function defaultOverrideMode(f: Feature | undefined): OverrideDraft["mode"] {
+  return !f || f.value_kind === "flag" ? "off" : "limit";
 }
 
 export const subscriptionPath = (tenantId: string) => `/api/admin/tenants/${tenantId}/subscription`;
@@ -225,17 +251,24 @@ export function overrideDraftOf(o: OverrideRow | null, key = ""): OverrideDraft 
            limit: o.limit_value ?? "", reason: o.reason, expires: o.expires_at ? o.expires_at.slice(0, 10) : "" };
 }
 
-export type OverrideDraftError = "feature" | "limit" | "reason" | "expires" | "flagLimit";
+export type OverrideDraftError = "feature" | "limit" | "reason" | "expires" | "flagLimit" | "offLimit"
+  | "limitRequired" | "notOverridable";
 
 /** The PUT body, or the first error. ``expires`` is a date (YYYY-MM-DD, end of that day UTC); ``today`` for tests. */
-export function overrideBody(d: OverrideDraft, catalogue: Feature[], today = new Date().toISOString().slice(0, 10)):
+export function overrideBody(d: OverrideDraft, catalogue: Feature[], today = new Date().toISOString().slice(0, 10),
+                             rules: OverrideRules = DEFAULT_OVERRIDE_RULES):
     { body: { enabled: boolean; limit_value: string | null; reason: string; expires_at: string | null } | null;
       error: OverrideDraftError | null } {
   const f = catalogue.find((x) => x.feature_key === d.feature_key);
   if (!f) return { body: null, error: "feature" };
+  if (rules.not_overridable.includes(f.feature_key)) return { body: null, error: "notOverridable" };
   if (d.mode === "limit" && f.value_kind === "flag") return { body: null, error: "flagLimit" };
+  if (d.mode === "off" && f.value_kind !== "flag") return { body: null, error: "offLimit" };
   const limit = d.limit.trim();
   if (d.mode === "limit" && limit && !DECIMAL.test(limit)) return { body: null, error: "limit" };
+  if (rules.limit_required.includes(f.feature_key) && (d.mode !== "limit" || !limit)) {
+    return { body: null, error: "limitRequired" };
+  }
   const reason = d.reason.trim();
   if (reason.length < 1 || reason.length > 500) return { body: null, error: "reason" };
   if (d.expires && (!/^\d{4}-\d{2}-\d{2}$/.test(d.expires) || d.expires < today)) return { body: null, error: "expires" };

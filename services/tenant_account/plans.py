@@ -13,7 +13,10 @@ re-syncs each tenant on the plan and writes one ``entitlement.changed`` per chan
   resolver reads their features) until staff move them. A retired plan is frozen: no edit.
 - ``plan_key`` (``<product>.<name>``), ``product`` and ``tier`` never change after create: the content tier links
   ``shared.tenants.plan_tier`` to its plan (the 355 bridge), so it is chosen once. A content plan with a tier must
-  give ``content.rate_limit_rpm`` (the limiter and the tenant create read it).
+  give ``content.rate_limit_rpm`` (the limiter and the tenant create read it), a whole number.
+- **RPM follows live**: the limiter enforces ``shared.tenants.rate_limit_rpm`` (copied from the plan at create), so an
+  edit of a content plan's RPM also moves that column for every tenant on the plan whose column still equals the old
+  value (they follow the default); a tenant with its own RPM (PATCH /admin/tenants/{id}) keeps it.
 
 Also the readers that replaced the hard-coded ``PLAN_LIMITS``: ``tier_rate_limit_rpm`` (the RPM a new tenant of a
 tier starts with) and ``assignable_tiers`` (the content tiers staff can put a tenant on).
@@ -33,7 +36,7 @@ PRODUCTS = ("content", "crm", "tripplanner")
 PRICE_UNITS = ("tenant", "seat", "site")
 TIERS = ("starter", "growth", "business", "enterprise", "internal")
 PLAN_KEY_RE = re.compile(r"^[a-z]+\.[a-z][a-z0-9_]*$")
-LIMIT_MAX = Decimal("999999999999.99")          # numeric(14,2)
+LIMIT_MAX = Decimal(10) ** 12 - Decimal("0.01")  # numeric(14,2) max (written so: 12 nines read as an account id)
 PRICE_MAX = Decimal("99999999.99")              # numeric(10,2)
 RPM_KEY = "content.rate_limit_rpm"
 
@@ -240,10 +243,13 @@ def draft(payload: dict, *, product: str, tier: Optional[str], catalogue: dict[s
     else:
         features = tuple(PlanFeature(f["feature_key"], _decimal(f.get("limit_value"), f["feature_key"], LIMIT_MAX))
                          for f in base.get("features") or [])
+    rpm = next((f for f in features if f.feature_key == RPM_KEY), None)
     if product == "content" and tier is not None:
-        rpm = next((f for f in features if f.feature_key == RPM_KEY), None)
         if rpm is None or rpm.limit_value is None or rpm.limit_value < 1:
             raise PlanError("rate_limit_required", f"a content plan with a tier sets {RPM_KEY} (requests a minute)")
+    if rpm is not None and rpm.limit_value is not None and rpm.limit_value != rpm.limit_value.to_integral_value():
+        # shared.tenants.rate_limit_rpm (what the limiter enforces and a plan edit moves) is an integer
+        raise PlanError("rate_limit_whole", f"{RPM_KEY} is a whole number of requests a minute")
     return PlanDraft(name=name.strip(), price_usd_monthly=_decimal(pick("price_usd_monthly"), "price", PRICE_MAX),
                      price_unit=unit, seats_included=seats,
                      price_extra_seat_usd=_decimal(pick("price_extra_seat_usd"), "extra seat price", PRICE_MAX),
@@ -266,6 +272,21 @@ UPDATE_PLAN_SQL = """
 RETIRE_PLAN_SQL = """
     UPDATE shared.plan SET retired_at = now(), version = version + 1, updated_at = now(), updated_by = $2
      WHERE plan_key = $1
+"""
+# A plan's RPM edit moves the limiter's column of every tenant that follows the plan (S266 review of slice 3):
+# shared.tenants.rate_limit_rpm is what the public API limiter and the Lambda authorizer enforce, copied from the plan
+# at create. A tenant on this plan (content subscription trialing / active / past_due) whose column still equals the
+# old plan value follows the default and moves; a tenant whose column differs keeps its own RPM (a per-tenant value
+# set with PATCH /admin/tenants/{id}). The CIS 356 trigger tenants_rate_limit_resync then re-syncs each one (source
+# plan again, entitlement.changed with aa.actor = the admin).
+FOLLOW_RPM_SQL = """
+    UPDATE shared.tenants t
+       SET rate_limit_rpm = $2
+     WHERE t.rate_limit_rpm = $3
+       AND EXISTS (SELECT 1 FROM shared.tenant_subscription s
+                    WHERE s.tenant_id = t.tenant_id AND s.product = 'content' AND s.plan_key = $1
+                      AND s.status IN ('trialing', 'active', 'past_due'))
+    RETURNING t.tenant_id
 """
 LIVE_TIER_SQL = """
     SELECT plan_key FROM shared.plan
@@ -340,6 +361,20 @@ async def create_plan(conn, payload: dict, *, actor: str) -> dict:
     return await get_plan(conn, plan_key)
 
 
+def _rpm_of(d: PlanDraft) -> Optional[int]:
+    v = next((f.limit_value for f in d.features if f.feature_key == RPM_KEY), None)
+    return None if v is None else int(v)
+
+
+async def _follow_rpm(conn, plan_key: str, product: str, before: PlanDraft, after: PlanDraft) -> int:
+    """Moves ``shared.tenants.rate_limit_rpm`` of the tenants that follow this content plan's RPM (FOLLOW_RPM_SQL);
+    returns how many moved. A plan that drops the key or gains it moves no one (no old / new default to follow)."""
+    old, new = _rpm_of(before), _rpm_of(after)
+    if product != "content" or old is None or new is None or old == new:
+        return 0
+    return len(await conn.fetch(FOLLOW_RPM_SQL, plan_key, new, old))
+
+
 async def update_plan(conn, plan_key: str, payload: dict, *, actor: str) -> dict:
     """Edits a live plan made from ``payload['version']``; bumps the version. Raises :class:`PlanError`."""
     version = payload.get("version")
@@ -368,12 +403,15 @@ async def update_plan(conn, plan_key: str, payload: dict, *, actor: str) -> dict
         await conn.execute(UPDATE_PLAN_SQL, plan_key, after.name, after.price_usd_monthly, after.price_unit,
                            after.seats_included, after.price_extra_seat_usd, after.is_public, after.notes, actor)
         features_changed = await _write_features(conn, plan_key, before.features, after.features, actor)
+        rpm_followed = await _follow_rpm(conn, plan_key, stored["product"], before, after) \
+            if RPM_KEY in features_changed else 0
         await _audit(conn, actor, UPDATED, plan_key,
                      {"version": version + 1, "fields": fields_changed, "features": features_changed,
-                      "live_subscriptions": stored["live_subscriptions"],
+                      "live_subscriptions": stored["live_subscriptions"], "rate_limit_followed": rpm_followed,
                       "before": _snapshot(before), "after": _snapshot(after)})
     out = await get_plan(conn, plan_key)
-    return {**out, "changed": fields_changed + [f"feature:{k}" for k in features_changed]}
+    return {**out, "changed": fields_changed + [f"feature:{k}" for k in features_changed],
+            "rate_limit_followed": rpm_followed}
 
 
 async def retire_plan(conn, plan_key: str, *, version: Any, reason: Optional[str], actor: str) -> dict:

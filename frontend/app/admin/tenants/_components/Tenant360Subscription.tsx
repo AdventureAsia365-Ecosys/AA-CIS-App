@@ -16,10 +16,11 @@ import {
 } from "../../../_kit";
 import type { Translator } from "../../../_kit/core/i18n";
 import {
-  FEATURES_API, LIVE_STATUSES, PLANS_KEY, limitText, newRequestKey, overrideBody, overrideDraftOf, overridePath,
-  runSaga, sagaFailed, sendJson, sourceTone, statusTone, subscriptionKey, subscriptionPath,
-  type EntitlementRow, type Feature, type OverrideDraft, type OverrideDraftError, type OverrideRow, type Product,
-  type SubscriptionResp, type SubscriptionRow,
+  DEFAULT_OVERRIDE_RULES, FEATURES_API, LIVE_STATUSES, PLANS_KEY, defaultOverrideMode, limitText, newRequestKey,
+  overrideBody, overrideDraftOf, overrideFeatures, overrideModes, overridePath, runSaga, sagaFailed, sendJson,
+  sourceTone, statusTone, subscriptionKey, subscriptionPath,
+  type EntitlementRow, type Feature, type OverrideDraft, type OverrideDraftError, type OverrideRow, type OverrideRules,
+  type Product, type SubscriptionResp, type SubscriptionRow,
 } from "@/lib/tenantPlans";
 import { T360_SUB } from "./subscription.messages";
 
@@ -108,10 +109,11 @@ function AddOnDrawer({ tenantId, data, start, onClose }: {
 
 const OV_ERR = {
   feature: "err_feature", limit: "err_limit", reason: "err_reason", expires: "err_expires", flagLimit: "err_flagLimit",
+  offLimit: "err_offLimit", limitRequired: "err_limitRequired", notOverridable: "err_notOverridable",
 } as const satisfies Record<OverrideDraftError, keyof typeof T360_SUB.en>;
 
-function OverrideDrawer({ tenantId, existing, catalogue, onClose }: {
-  tenantId: string; existing: OverrideRow | null; catalogue: Feature[]; onClose: () => void;
+function OverrideDrawer({ tenantId, existing, catalogue, rules, onClose }: {
+  tenantId: string; existing: OverrideRow | null; catalogue: Feature[]; rules: OverrideRules; onClose: () => void;
 }) {
   const t = useT(T360_SUB);
   const toast = useToast();
@@ -119,8 +121,9 @@ function OverrideDrawer({ tenantId, existing, catalogue, onClose }: {
   const [d, setD] = useState<OverrideDraft>(() => overrideDraftOf(existing));
   const [apiError, setApiError] = useState("");
   const [removing, setRemoving] = useState(false);
-  const { body, error } = overrideBody(d, catalogue);
+  const { body, error } = overrideBody(d, catalogue, undefined, rules);
   const feature = catalogue.find((f) => f.feature_key === d.feature_key);
+  const choices = overrideFeatures(catalogue, rules);
   const set = (p: Partial<OverrideDraft>) => setD((x) => ({ ...x, ...p }));
   const done = (msg: string) => {
     toast.success(msg);
@@ -140,7 +143,10 @@ function OverrideDrawer({ tenantId, existing, catalogue, onClose }: {
   const busy = save.isPending || remove.isPending;
   // the first error the user can act on (a missing reason only once a feature is chosen)
   const shown = error && (error !== "reason" || d.reason !== "") ? t(OV_ERR[error]) : "";
-  const modes = feature?.value_kind === "flag" ? (["off", "on"] as const) : (["off", "on", "limit"] as const);
+  const modes = overrideModes(feature, rules);
+  // "on" of a limit is "no limit"; a stored disabled limit (refused now) still shows what it is
+  const modeLabel = (m: OverrideDraft["mode"]) =>
+    (feature && feature.value_kind !== "flag" && m === "on" ? t("mode_noLimit") : t(`mode_${m}`));
 
   return (
     <Drawer open onClose={onClose} width={480} title={existing ? t("ovEditTitle", existing.feature_key) : t("ovNewTitle")}
@@ -157,15 +163,20 @@ function OverrideDrawer({ tenantId, existing, catalogue, onClose }: {
       <div data-testid="override-drawer" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         <Field label={t("fieldFeature")}>
           <Select value={d.feature_key} disabled={!!existing || busy} placeholder={t("err_feature")}
-            onChange={(e) => set({ feature_key: e.target.value, mode: "off", limit: "" })}
-            options={catalogue.map((f) => ({ value: f.feature_key, label: `${f.description} (${f.feature_key})` }))} />
+            onChange={(e) => set({ feature_key: e.target.value, limit: "",
+                                   mode: defaultOverrideMode(catalogue.find((f) => f.feature_key === e.target.value)) })}
+            options={(existing && !choices.some((f) => f.feature_key === existing.feature_key)
+              ? catalogue.filter((f) => f.feature_key === existing.feature_key) : choices)
+              .map((f) => ({ value: f.feature_key, label: `${f.description} (${f.feature_key})` }))} />
         </Field>
         <Field label={t("fieldMode")}>
           <Select value={d.mode} disabled={busy} onChange={(e) => set({ mode: e.target.value as OverrideDraft["mode"] })}
-            options={modes.map((m) => ({ value: m, label: t(`mode_${m}`) }))} />
+            options={(modes.includes(d.mode) ? modes : [d.mode, ...modes])
+              .map((m) => ({ value: m, label: modeLabel(m) }))} />
         </Field>
         {d.mode === "limit" && (
-          <Field label={t("fieldLimit")} error={error === "limit" ? t("err_limit") : undefined}>
+          <Field label={t("fieldLimit")} hint={t("fieldLimitHint")}
+            error={error === "limit" ? t("err_limit") : undefined}>
             <Input inputMode="decimal" value={d.limit} placeholder={t("noLimit")} disabled={busy}
               onChange={(e) => set({ limit: e.target.value })} data-testid="override-limit" />
           </Field>
@@ -336,7 +347,7 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
       {addOn && <AddOnDrawer tenantId={tenantId} data={data} start={addOn.start} onClose={() => setAddOn(null)} />}
       {override && featuresQ.data && (
         <OverrideDrawer tenantId={tenantId} existing={override.row} catalogue={featuresQ.data}
-          onClose={() => setOverride(null)} />
+          rules={data.override_rules ?? DEFAULT_OVERRIDE_RULES} onClose={() => setOverride(null)} />
       )}
       <ConfirmModal open={!!cancelling} onClose={() => setCancelling(null)}
         onConfirm={() => cancelling && cancel.mutate(cancelling)}

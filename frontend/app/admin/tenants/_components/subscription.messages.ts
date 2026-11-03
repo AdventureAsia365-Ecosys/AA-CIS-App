@@ -47,8 +47,9 @@ export const T360_SUB = defineMessages(
     seats: (v: string) => `${v} seats`,
     days: (v: string) => `${v} days`,
     ovTitle: "Overrides",
-    ovHint: "Staff exceptions to the plan for this tenant: turn a feature off, grant one, or set another limit. A reason "
-      + "is required and every change is recorded.",
+    ovHint: "Staff exceptions to the plan for this tenant: turn an on/off feature off, grant one, or set another limit "
+      + "(0 stops it). The request rate is set in the tenant's settings. A reason is required and every change is "
+      + "recorded.",
     addOverride: "Add an override",
     colReason: "Reason",
     colBy: "By",
@@ -80,7 +81,9 @@ export const T360_SUB = defineMessages(
     mode_off: "Turn off",
     mode_on: "Turn on (no limit)",
     mode_limit: "Set a limit",
+    mode_noLimit: "No limit",
     fieldLimit: "Limit",
+    fieldLimitHint: "0 stops it: for the AI budget, 0 means no AI spend at all.",
     fieldReason: "Reason",
     fieldExpires: "Ends on (optional)",
     fieldExpiresHint: "Empty: until removed. Ends at the end of that day (UTC).",
@@ -90,6 +93,9 @@ export const T360_SUB = defineMessages(
     err_reason: "Say why (1 to 500 characters).",
     err_expires: "A date from today on.",
     err_flagLimit: "This feature is on/off: it takes no limit.",
+    err_offLimit: "This is a limit: turning it off would remove the limit. Set a limit of 0 instead.",
+    err_limitRequired: "This limit needs a number (0 or more).",
+    err_notOverridable: "The request rate is set in the tenant's settings, not here.",
     save: "Save override",
     remove: "Remove override",
     close: "Cancel",
@@ -141,8 +147,9 @@ export const T360_SUB = defineMessages(
     seats: (v: string) => `${v} người dùng`,
     days: (v: string) => `${v} ngày`,
     ovTitle: "Ngoại lệ",
-    ovHint: "Ngoại lệ của nhân viên so với gói, cho riêng đại lý này: tắt một tính năng, cấp thêm, hoặc đặt giới hạn "
-      + "khác. Bắt buộc ghi lý do và mọi thay đổi đều được ghi lại.",
+    ovHint: "Ngoại lệ của nhân viên so với gói, cho riêng đại lý này: tắt một tính năng bật/tắt, cấp thêm, hoặc đặt "
+      + "giới hạn khác (0 là dừng). Tốc độ gọi API đặt ở phần cài đặt của đại lý. Bắt buộc ghi lý do và mọi thay đổi "
+      + "đều được ghi lại.",
     addOverride: "Thêm ngoại lệ",
     colReason: "Lý do",
     colBy: "Bởi",
@@ -173,7 +180,9 @@ export const T360_SUB = defineMessages(
     mode_off: "Tắt",
     mode_on: "Bật (không giới hạn)",
     mode_limit: "Đặt giới hạn",
+    mode_noLimit: "Không giới hạn",
     fieldLimit: "Giới hạn",
+    fieldLimitHint: "0 là dừng: với ngân sách AI, 0 nghĩa là không chi cho AI.",
     fieldReason: "Lý do",
     fieldExpires: "Hết vào ngày (không bắt buộc)",
     fieldExpiresHint: "Để trống: tới khi bỏ. Hết vào cuối ngày đó (UTC).",
@@ -183,6 +192,9 @@ export const T360_SUB = defineMessages(
     err_reason: "Ghi lý do (1 đến 500 ký tự).",
     err_expires: "Một ngày từ hôm nay trở đi.",
     err_flagLimit: "Tính năng này chỉ bật/tắt: không có giới hạn.",
+    err_offLimit: "Đây là một giới hạn: tắt đi sẽ bỏ luôn giới hạn. Hãy đặt giới hạn 0.",
+    err_limitRequired: "Giới hạn này cần một số (từ 0 trở lên).",
+    err_notOverridable: "Tốc độ gọi API đặt ở phần cài đặt của đại lý, không đặt ở đây.",
     save: "Lưu ngoại lệ",
     remove: "Bỏ ngoại lệ",
     close: "Huỷ",

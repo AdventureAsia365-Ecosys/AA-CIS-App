@@ -64,6 +64,42 @@ on the resolver; `shared.tenants` writes).
   `pilot_ends_at`; a second one `pilot_taken`). Elsewhere nothing changes (default `agency`, the pilot marker is
   refused). Existing Dev rows keep their `kind` (the guard decides new tenants).
 
+### Review fix pass (S266, eight findings, all real)
+
+- **Plan RPM edits follow live** (`plans.update_plan` → `_follow_rpm`, `FOLLOW_RPM_SQL`): the limiter and the Lambda
+  authorizer enforce `shared.tenants.rate_limit_rpm`, copied from the plan at create. An edit of a content plan's
+  `content.rate_limit_rpm` now moves that column, in the same transaction, for every tenant on the plan (content
+  subscription trialing / active / past_due) whose column still equals the old plan value; a tenant with its own RPM
+  (PATCH) keeps it. The CIS 356 trigger re-syncs each one (source `plan`). Count in the audit row and the response
+  (`rate_limit_followed`). The RPM must be a whole number (`rate_limit_whole`: the column is an integer). A plan that
+  gains or drops the key moves no one.
+- **Overrides no reader enforces are refused** (`subscription.set_override`, all 422):
+  `use_rate_limit_patch` for `content.rate_limit_rpm` (the column outranks an override in the 356 resolver and is
+  what the limiter reads: PATCH /admin/tenants/{id}); `limit_cannot_be_disabled` for `enabled = false` on any key
+  that is not a flag (the resolver drops a disabled key, and "no row" means no limit, so "off" opened the limit:
+  the AI budget failed open; 0 is the way to stop a limit); `limit_required` for "no limit" on `content.rewrite` (the
+  quota is published as a number by `GET /v1/quota` and the Partner portal meter; changing that contract to allow
+  null was out of scope). The snapshot carries `override_rules` and the drawer follows them: the RPM key is not
+  offered, a limit offers "Set a limit" / "No limit" (not "Turn off"), the rewrite quota only "Set a limit".
+- **Fail closed in depth** (`shared/cost_guard.py`): an active disabled `ai.budget_usd_monthly` override that exists
+  anyway (written before the rule, or by hand) is served as a 0 USD budget with the hard stop on, and the tenant is in
+  `budgeted_tenants`. **A 0 USD budget now stops the first call** (`TenantAIBudget.used_pct` is 1000 % for a 0 budget
+  even before any spend; before, the first call went through and only spend > 0 stopped): "0 = no AI" is exact. The
+  AA-1016 tile's `budget_state` matches (0 budget = `approval` / `over`).
+- **Rewrite quota honours overrides** (`v1_tours._get_tenant_plan_limit`): an override of 0 was already honoured
+  (COALESCE keeps 0); an active disabled override counts as 0 (never the plan's quota).
+- **Tenant 360 › Cost tile shows what the gateway applies** (`tenant_ai_budget.read_one` → `effective`: source
+  `subscription_override` / `budget_row` / `plan` / `none`, amount, thresholds, state, from
+  `cost_guard.tenant_budget_check`; None before CIS 353). The tile shows the effective amount and state, names the
+  source (amber when a Subscription-tab override wins over the row edited here), and the copy says "remove" falls back
+  to the plan's included spend and "empty" means no budget at all (the row's NULL outranks the plan).
+- **Fail-closed proof script** (`.tmp-session/S266/l9/failclosed.py`, not in the repo): the 0.01 USD override has
+  `expires_at = now + 30 min` (ends by itself if the exec session dies; the live resolver ignores it at once), the
+  restore re-applies a saved override only while it is still active (else removes the proof override, a missing one
+  is fine), and a failed restore prints `RESTORE FAILED` with the exact call to run and exits 3.
+- `plans.LIMIT_MAX` is written `Decimal(10) ** 12 - Decimal("0.01")`: the literal (twelve nines) tripped the public
+  repo resource-id check (`.github/scripts/check_resource_ids.py`) as an account id.
+
 ## Changed (vs. the issue / design text)
 
 - Enterprise becomes assignable from the admin PATCH / create (its seeded plan sets RPM 1,000, so the data says it
@@ -83,6 +119,11 @@ on the resolver; `shared.tenants` writes).
   migration for a later slice if staff need a timeline view.
 
 ## Should know
+
+- Review fix pass: no new route, no response-model change (openapi.json unchanged); the AA-1016 `budget_state` /
+  `TenantAIBudget` change of the 0 budget is deliberate (two AA-1016 test cases updated). Existing Dev rows: a
+  disabled numeric override (if any) keeps failing closed through cost_guard / the quota reader; staff edit it to a
+  limit in the drawer (it shows "Turn off" for such a stored row so it can be seen and changed).
 
 - Order: this PR alone (no migration, no readiness raise). Deploy api + worker together (the worker runs the new
   kind; the api's sampler queues it once the kind is registered in that process).

@@ -353,10 +353,16 @@ async def _get_tenant_plan_limit(conn, tenant_id: str) -> tuple:
     AA-1028 R1 slice 3 (root ADR 0019 d2): the tenant's resolved entitlement ``content.rewrite`` comes first (its
     plan's value, edited on Tenants › Plans & add-ons, or an override; CIS 355 seeded the same 50 / 200 / 500); the
     membership_plans read stays only for a tenant with no numeric key (no live content subscription, or a plan
-    without a rewrite limit such as Enterprise / AA internal), so no existing tenant's number changes."""
+    without a rewrite limit such as Enterprise / AA internal), so no existing tenant's number changes.
+    S266 review: an override is honoured. Tenant 360 › Subscription refuses "off" and "no limit" for this key
+    (services/tenant_account/subscription.py: the quota is published as a number), so an override always carries a
+    number; an active disabled override that exists anyway counts as 0 (never falls back to the plan's quota)."""
     row = await conn.fetchrow("""
         SELECT t.plan_tier::text AS plan,
-               COALESCE((SELECT e.limit_value::int FROM shared.v_tenant_entitlement_resolved e
+               COALESCE((SELECT 0 FROM shared.tenant_entitlement_override o
+                          WHERE o.tenant_id = t.tenant_id AND o.feature_key = 'content.rewrite' AND NOT o.enabled
+                            AND (o.expires_at IS NULL OR o.expires_at > now())),
+                        (SELECT e.limit_value::int FROM shared.v_tenant_entitlement_resolved e
                           WHERE e.tenant_id = t.tenant_id AND e.feature_key = 'content.rewrite'),
                         mp.tours_quota_monthly,
                         (SELECT tours_quota_monthly FROM shared.membership_plans

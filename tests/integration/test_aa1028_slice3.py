@@ -109,6 +109,14 @@ async def test_rewrite_quota_reads_the_entitlement(conn):
     await sub.set_override(conn, tid, "content.rewrite", enabled=True, limit_value="7", reason="zz test",
                            expires_at=None, actor=ACTOR)
     assert await v1_tours._get_tenant_plan_limit(conn, tid) == ("growth", 7)
+    # an override of 0 is honoured (COALESCE must not skip it)
+    await sub.set_override(conn, tid, "content.rewrite", enabled=True, limit_value="0", reason="zz test",
+                           expires_at=None, actor=ACTOR)
+    assert await v1_tours._get_tenant_plan_limit(conn, tid) == ("growth", 0)
+    # a disabled override written before the S266 rule (set_override refuses it now) counts as 0, never the plan's
+    await conn.execute("UPDATE shared.tenant_entitlement_override SET enabled = false, limit_value = NULL "
+                       "WHERE tenant_id = $1::uuid AND feature_key = 'content.rewrite'", tid)
+    assert await v1_tours._get_tenant_plan_limit(conn, tid) == ("growth", 0)
 
 
 # ── the plan catalogue ───────────────────────────────────────────────────────────────────────────────────────────
@@ -206,6 +214,34 @@ async def test_plan_rules(conn):
     assert e.value.code == "rate_limit_required"
 
 
+@pytest.mark.asyncio
+async def test_a_plan_rpm_edit_moves_the_tenants_that_follow_it(conn):
+    follower = await _tenant(conn, "growth")
+    own = await _tenant(conn, "growth")
+    await conn.execute("UPDATE shared.tenants SET rate_limit_rpm = 999 WHERE tenant_id = $1::uuid", own)  # PATCH
+    assert (await _ents(conn, own))["content.rate_limit_rpm"] == (999.0, "override")
+    version = (await pl.get_plan(conn, "content.growth"))["version"]
+    features = [{"feature_key": f["feature_key"], "limit_value": f["limit_value"]}
+                for f in (await pl.get_plan(conn, "content.growth"))["features"]
+                if f["feature_key"] != pl.RPM_KEY] + [{"feature_key": pl.RPM_KEY, "limit_value": 450}]
+    out = await pl.update_plan(conn, "content.growth", {"version": version, "features": features}, actor=ACTOR)
+    assert out["changed"] == [f"feature:{pl.RPM_KEY}"] and out["rate_limit_followed"] >= 1
+    rpm = {r["tenant_id"]: r["rate_limit_rpm"] for r in await conn.fetch(
+        "SELECT tenant_id::text AS tenant_id, rate_limit_rpm FROM shared.tenants WHERE tenant_id = ANY($1::uuid[])",
+        [follower, own])}
+    assert rpm == {follower: 450, own: 999}                     # the limiter's column; a real per-tenant RPM stays
+    assert (await _ents(conn, follower))["content.rate_limit_rpm"] == (450.0, "plan")
+    assert (await _stored(conn, follower))["content.rate_limit_rpm"] == (450.0, "plan")
+    assert (await _ents(conn, own))["content.rate_limit_rpm"] == (999.0, "override")
+    audit = await conn.fetchval("SELECT details FROM acp_shared.audit_log WHERE action = $1 AND resource_id = "
+                                "'content.growth' ORDER BY created_at DESC LIMIT 1", pl.UPDATED)
+    assert json.loads(audit)["rate_limit_followed"] == out["rate_limit_followed"]
+    with pytest.raises(pl.PlanError) as e:
+        features[-1]["limit_value"] = "450.5"
+        await pl.update_plan(conn, "content.growth", {"version": version + 1, "features": features}, actor=ACTOR)
+    assert e.value.code == "rate_limit_whole"
+
+
 # ── Tenant 360 › Subscription ────────────────────────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -247,6 +283,16 @@ async def test_overrides_revoke_grant_and_limit(conn):
         with pytest.raises(pl.PlanError) as e:
             await sub.set_override(conn, tid, key, actor=ACTOR, **args)
         assert e.value.code == code
+    # no reader would enforce these (S266 review): refused, nothing written
+    for key, kw, code in (("content.rate_limit_rpm", {"limit_value": 450}, "use_rate_limit_patch"),
+                          ("ai.budget_usd_monthly", {"enabled": False}, "limit_cannot_be_disabled"),
+                          ("content.rewrite", {"enabled": False}, "limit_cannot_be_disabled"),
+                          ("content.rewrite", {}, "limit_required")):
+        args = {"enabled": True, "limit_value": None, "reason": "zz", "expires_at": None, **kw}
+        with pytest.raises(pl.PlanError) as e:
+            await sub.set_override(conn, tid, key, actor=ACTOR, **args)
+        assert e.value.code == code
+    assert (await sub.snapshot(conn, tid))["override_rules"]["not_overridable"] == ["content.rate_limit_rpm"]
     actions = [r["action"] for r in await conn.fetch("SELECT action FROM acp_shared.audit_log WHERE tenant_id = $1 "
                                                      "AND action LIKE 'tenant.entitlement_override%'", tid)]
     assert actions.count(sub.OVERRIDE_SET) == 3 and actions.count(sub.OVERRIDE_REMOVED) == 1
@@ -364,3 +410,54 @@ async def test_the_ai_budget_is_the_entitlement(conn):
         await conn.execute("UPDATE shared.tenants SET plan_tier = 'internal' WHERE tenant_id = $1::uuid", internal)
     assert await cost_guard.tenant_budget_check(conn, internal) is None
     assert internal not in await cost_guard.budgeted_tenants(conn)
+
+
+@pytest.mark.asyncio
+async def test_a_disabled_or_zero_ai_budget_fails_closed(conn):
+    tid = await _tenant(conn)                                              # starter, no AA-1016 row
+    # a disabled override (written before set_override refused it): the resolver drops the key, cost_guard serves 0
+    await conn.execute("INSERT INTO shared.tenant_entitlement_override (tenant_id, feature_key, enabled, reason, "
+                       "granted_by) VALUES ($1::uuid, 'ai.budget_usd_monthly', false, 'zz', 'zz')", tid)
+    assert "ai.budget_usd_monthly" not in await _ents(conn, tid)
+    assert tid in await cost_guard.budgeted_tenants(conn)
+    b = await cost_guard.tenant_budget_check(conn, tid)
+    assert (b.monthly_usd, b.hard_stop, b.needs_approval) == (0.0, True, True)    # before any spend
+    # even an AA-1016 row with the bell only does not reopen it
+    await conn.execute("INSERT INTO shared.tenant_ai_budget (tenant_id, monthly_usd, alert_pct, approval_pct, "
+                       "hard_stop, updated_by) VALUES ($1::uuid, 50, 100, 150, false, 'zz')", tid)
+    assert (await cost_guard.tenant_budget_check(conn, tid)).needs_approval
+    # an expired one no longer counts
+    await conn.execute("UPDATE shared.tenant_entitlement_override SET expires_at = now() - interval '1 minute' "
+                       "WHERE tenant_id = $1::uuid", tid)
+    assert (await cost_guard.tenant_budget_check(conn, tid)).monthly_usd == 50.0
+    # "0 = no AI" through the Subscription tab: the first call already waits
+    await conn.execute("DELETE FROM shared.tenant_ai_budget WHERE tenant_id = $1::uuid", tid)
+    await sub.set_override(conn, tid, "ai.budget_usd_monthly", enabled=True, limit_value="0", reason="zz no AI",
+                           expires_at=None, actor=ACTOR)
+    b = await cost_guard.tenant_budget_check(conn, tid)
+    assert (b.monthly_usd, b.needs_approval) == (0.0, True)
+
+
+@pytest.mark.asyncio
+async def test_the_cost_tile_shows_the_budget_the_gateway_applies(conn):
+    from api.services import tenant_ai_budget as tb
+
+    tid = await _tenant(conn)                                              # starter: 15 USD, no AA-1016 row
+    out = await tb.read_one(_Pool(conn), tid)
+    assert out["budget"] is None
+    assert out["effective"] == {"source": "plan", "monthly_usd": 15.0, "alert_pct": 80, "approval_pct": 100,
+                                "hard_stop": True, "used_pct": 0.0, "state": "ok"}
+    await _spend(conn, tid, 15.0)
+    eff = (await tb.read_one(_Pool(conn), tid))["effective"]
+    assert (eff["state"], eff["used_pct"]) == ("approval", 100.0)        # not "unlimited": the plan holds at 100 %
+    await conn.execute("INSERT INTO shared.tenant_ai_budget (tenant_id, monthly_usd, alert_pct, approval_pct, "
+                       "hard_stop, updated_by) VALUES ($1::uuid, 60, 100, 150, false, 'zz')", tid)
+    eff = (await tb.read_one(_Pool(conn), tid))["effective"]
+    assert (eff["source"], eff["monthly_usd"], eff["state"]) == ("budget_row", 60.0, "ok")
+    await sub.set_override(conn, tid, "ai.budget_usd_monthly", enabled=True, limit_value="5", reason="zz",
+                           expires_at=None, actor=ACTOR)
+    eff = (await tb.read_one(_Pool(conn), tid))["effective"]
+    assert (eff["source"], eff["monthly_usd"]) == ("subscription_override", 5.0)  # wins over the tile's row
+    await sub.remove_override(conn, tid, "ai.budget_usd_monthly", actor=ACTOR)
+    assert (await tb.clear(_Pool(conn), tid, actor=ACTOR))["deleted"] is True
+    assert (await tb.read_one(_Pool(conn), tid))["effective"]["source"] == "plan"   # remove = back to the plan
