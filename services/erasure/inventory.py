@@ -75,6 +75,10 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     _d("acp_shared.content_piece", "T9 content pieces (labels and publish rows follow)"),
     # AA-923 WM-32 (315): human labels on the tenant's T2 versions (keyed on tenant_id: the subject has no FK here).
     _d("acp_shared.content_label", "admin labels on the tenant's T2 versions and A1 rewrites"),
+    # AA-1039 R6 (360): compliance flags on the tenant's pieces / posts, its tour e-mail notices, its notice period.
+    _d("acp_shared.content_compliance_flag", "admin compliance flags on the tenant's pieces and live posts"),
+    _d("acp_shared.tenant_tour_notice", "e-mail notices of retired / restored tours (ids and counts)"),
+    _d("acp_shared.tour_retirement_policy", "the tenant's notice period (the platform row has no tenant)"),
     _d("acp_shared.debate_brand_fit_cache", "brand-fit cache of the tenant"),
     _d("acp_shared.facts", "tenant-scope facts (platform facts have no tenant)"),
     _d("acp_shared.publish_log", "tenant publish history (channels)"),
