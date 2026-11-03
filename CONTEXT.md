@@ -592,8 +592,11 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
 - **Contract views for TripPlanner** (migration 323, contract class): `catalog.v_llm_gateway_config_v1` (routes,
   models, prices and deployments of the `tp_*` stages only) and `catalog.v_llm_app_spend_today_v1` (today's ledger
   spend of `app = 'tripplanner'` per stage), owned by `catalog_owner` with column-level SELECT on the four gateway
-  tables they read, SELECT to `tripplanner` only. The grandfathered SELECT of CIS 173 on `llm_role_config` /
-  `llm_model_catalog` stays until a later migration revokes it.
+  tables they read, SELECT to `tripplanner` only. 341 (AA-1027 E3) appends the route deadline and the deployment
+  routing facts and circuits; 350 (E4) appends the model's `supports_temperature` and `stage_params` (the
+  `shared.stage_model_params` row of the stage and model, NULL = none), which TripPlanner applies with this gateway's
+  precedence. 351 (E5) revokes the grandfathered SELECT of CIS 173 on `llm_role_config` / `llm_model_catalog`:
+  TripPlanner reads the views only (fail closed) and keeps INSERT on `llm_call_log`.
 - **acc2 candidate models** (migration 324, contract class, AA-1017 w4a): Amazon Nova Lite, Nova 2 Lite, Meta Llama 4
   Maverick, Llama 4 Scout and Moonshot Kimi K3 as catalog rows with prices from the AWS price list and one enabled acc2
   deployment each (priority 20); no role config or alias names them, and the file refuses one that does. They answer
