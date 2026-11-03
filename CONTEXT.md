@@ -2710,6 +2710,25 @@ event from `gold_aa_internal.tour_lifecycle_event` and POSTs it, HMAC-signed (`X
 `aa-cis/<env>/tripplanner-revalidate-hmac`, same value as TripPlanner's Vercel env `CATALOG_REVALIDATE_SECRET`), to
 `TRIPPLANNER_REVALIDATE_URL` (default `https://aa-tripplanner.vercel.app/api/revalidate/catalog`), which purges the
 TripPlanner CDN / ISR caches. 4 attempts with backoff; not configured = succeeded `skipped: not_configured`.
+Tenant fan-out (AA-1039 R6, root ADR 0019 d20; CIS 362): every `retired` / `restored` event also gets one
+`tour_retirement_fanout` job (`services/tour_lifecycle/fanout.py`, `services/jobs/tour_retirement_jobs.py`; same
+after-commit enqueue + 2 h sweep). `retired`: each live post of the key's tours gets a `tour_retired` row in
+`acp_shared.content_compliance_flag` (WordPress: `draft_after_notice`, the page goes to draft at `draft_due_at` =
+event + `acp_shared.tour_retirement_policy` days, default 7, through a `retired_page_draft` job the sampler enqueues
+due-now; Facebook: `notice_only`, nothing deleted); stale `requested` publish claims are closed; every derivative
+tenant gets an `acp_shared.tenant_tour_notice` row, mailed at once (`tour_notice_email`, SES) when it still has live
+posts, else in the daily digest (08:00 UTC). `restored` resolves the open flags and writes the "back on sale" notice.
+Recipients: active `owner` / `editor` members, address read at send time from the partner pool (`ListUsers` by sub,
+verified e-mail only); CIS stores no address. A `paused` tour gets no mail.
+**AA-subject gate** (AA-1039 R6, d21; `services/acp_shared/subject_gate.py`, no LLM): when T9 finishes a piece
+(`_finalize_piece`) and again right before `POST /v1/publish-log/{id}/publish`, a piece must be about a served AA
+tour, a live AA atom or a Slate Segment with a live member (brand content with no sales link and a non-sales goal is
+exempt), and every sales link (the CTA, or a link whose text / path reads like booking) must go to an AA host, a trip
+page of a served tour, the tenant's own page of a served AA tour (`acp_deliver.tenant_tour_pages`) or the TripPlanner
+site. A failing piece has one open `subject_gate` flag; the publish answers 409 `content_needs_change` with the flag's
+content-style `tenant_message`, and `/pending` items carry it as `needs_change`. Admin Tenant content QA › Compliance
+(`/admin/tenant-qa/compliance`, API `GET /admin/tenant-qa/compliance`, `POST …/{flag_id}/release`) lists both kinds;
+a release lets exactly the released text (sha256) through. Flags are admin data; tenants never see them.
 _Avoid_: "delete" for a published tour (it is retired and can be restored); `raw_tours.lifecycle_stage` as a
 deletion signal (it is the sales phase).
 
