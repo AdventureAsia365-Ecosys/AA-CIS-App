@@ -151,6 +151,23 @@ async def test_gate_holds_an_off_catalogue_booking_link_and_releases_on_a_fixed_
 
 
 @pytest.mark.asyncio
+async def test_a_malformed_trip_page_link_cannot_make_the_gate_error_out(conn):
+    """A trip page link with no real uuid in it (36 dashes) is not a trip page: the gate answers and holds the piece
+    on its off-catalogue booking links, it never raises (a raise would refuse the publish with 503, never pass)."""
+    t = await l2._tour(conn, "gate-dashes")
+    tenant = await l2._tenant(conn, "gate-dashes")
+    req = await _request(conn, tenant, trip=t.tour, goal="conversion")
+    text = (f"Our river days: https://aa-cis.lumiguides.it.com/trip/{'-' * 36} and the seats "
+            "(https://othertravel.example/booking).")
+    piece = await _piece(conn, tenant, req, text)
+    res = await sg.run(conn, piece=_gate_piece(tenant, req, piece, text), stage="publish", actor="test")
+    assert not res.ok and res.codes == [sg.OFF_CATALOG_LINK]
+    assert set(res.detail["refused_links"]) == {f"https://aa-cis.lumiguides.it.com/trip/{'-' * 36}",
+                                                "https://othertravel.example/booking"}
+    assert len(await _open_gate_flags(conn, piece)) == 1
+
+
+@pytest.mark.asyncio
 async def test_gate_needs_an_aa_subject_for_a_sales_goal_but_not_for_brand_content(conn):
     tenant = await l2._tenant(conn, "gate-brand")
     sales = await _request(conn, tenant, atom="no-such-atom", goal="promotion")
@@ -253,8 +270,75 @@ async def test_retire_flags_live_posts_and_writes_notices(conn):
     assert len(result["immediate_notices"]) == 1
 
     again = await fanout.fan_out(l2._OneConnPool(conn), key)                  # idempotent replay
-    assert again["flags_created"] == 0 and again["immediate_notices"] == []
+    assert again["flags_created"] == 0 and again["new_immediate_notices"] == 0
+    assert again["immediate_notices"] == result["immediate_notices"]        # still unmailed: enqueued again
     assert await trj.sweep(l2._OneConnPool(conn)) == 0
+
+
+def _job(kind, payload, job_id=None):
+    return queue.Job(id=job_id or str(uuid.uuid4()), kind=kind, payload=payload, status="running", attempt=1,
+                     max_attempts=5, cost_usd=0.0, progress={})
+
+
+async def _mail_jobs(conn, notice_ids):
+    return await conn.fetchval("SELECT count(*) FROM shared.job WHERE kind = $1 AND idempotency_key = ANY($2::text[])",
+                               trj.MAIL_KIND, [f"{trj.MAIL_KIND}:{n}" for n in notice_ids])
+
+
+@pytest.mark.asyncio
+async def test_a_fanout_replay_after_a_lost_mail_enqueue_enqueues_the_mail_again(conn):
+    from shared.jobs.registry import JobContext
+    w = await _world(conn, "fan-replay")
+    await tl.trash_master(conn, w.t.tour)
+    key = await _event_key(conn, w.t, "retired")
+    pool = l2._OneConnPool(conn)
+    fanout_job_id, _ = await queue.enqueue(pool, trj.FANOUT_KIND, {"event_key": key},
+                                           idempotency_key=f"{trj.FANOUT_KIND}:{key}")
+    job = _job(trj.FANOUT_KIND, {"event_key": key}, fanout_job_id)        # the parent of the mail jobs
+    first = await trj.run_fanout(JobContext(pool, job, {}))
+    notice_ids = [r["notice_id"] for r in await conn.fetch(
+        "SELECT notice_id::text FROM acp_shared.tenant_tour_notice WHERE event_key = $1 AND delivery = 'immediate'",
+        key)]
+    assert first["mail_jobs"] == 1 and len(notice_ids) == 1 and await _mail_jobs(conn, notice_ids) == 1
+
+    # the worker stopped between the fan-out commit and the mail enqueue: no mail job, the fan-out job retries
+    await conn.execute("DELETE FROM shared.job WHERE kind = $1", trj.MAIL_KIND)
+    again = await trj.run_fanout(JobContext(pool, job, {}))
+    assert again["flags_created"] == 0 and again["mail_jobs"] == 1 and await _mail_jobs(conn, notice_ids) == 1
+
+    # a third run while the mail job exists adds nothing (the job key)
+    await trj.run_fanout(JobContext(pool, job, {}))
+    assert await _mail_jobs(conn, notice_ids) == 1
+
+    # once mailed, a replay has nothing left to send at once
+    await conn.execute("UPDATE acp_shared.tenant_tour_notice SET mailed_at = now() WHERE notice_id = $1::uuid",
+                       notice_ids[0])
+    assert (await fanout.fan_out(pool, key))["immediate_notices"] == []
+
+
+@pytest.mark.asyncio
+async def test_the_digest_mails_an_immediate_notice_its_dead_mail_job_left_behind(conn, monkeypatch):
+    from shared.jobs.registry import JobContext
+    monkeypatch.setattr("api.core.partner_identity.partner_issuer", lambda: ISS)
+    w = await _world(conn, "fan-backstop")
+    await conn.execute(
+        "INSERT INTO shared.tenant_members (tenant_id, cognito_iss, cognito_sub, content_studio_role, status, "
+        "created_by) VALUES ($1, $2, 'sub-owner', 'owner', 'active', 'seed:AA-1039')", w.posting, ISS)
+    await tl.trash_master(conn, w.t.tour)
+    result = await fanout.fan_out(l2._OneConnPool(conn), await _event_key(conn, w.t, "retired"))
+    notice_id = result["immediate_notices"][0]
+    ses, cognito = _Ses(), _Cognito({"sub-owner": "owner@agency.example"})
+    digest = _job(trj.MAIL_KIND, {"digest_day": "2026-11-03"})
+
+    out = await trj.run_mail(JobContext(l2._OneConnPool(conn), digest, {"ses": ses, "cognito": cognito}))
+    assert out["sent"] == 0 and ses.sent == []                     # fresh: its own mail job sends it
+
+    await conn.execute("UPDATE acp_shared.tenant_tour_notice SET created_at = now() - interval '2 hours' "
+                       "WHERE notice_id = $1::uuid", notice_id)    # its mail job died after its retries
+    out = await trj.run_mail(JobContext(l2._OneConnPool(conn), digest, {"ses": ses, "cognito": cognito}))
+    assert out["sent"] == 1 and len(ses.sent) == 1
+    assert await conn.fetchval("SELECT mailed_at IS NOT NULL AS ok FROM acp_shared.tenant_tour_notice "
+                               "WHERE notice_id = $1::uuid", notice_id)
 
 
 @pytest.mark.asyncio

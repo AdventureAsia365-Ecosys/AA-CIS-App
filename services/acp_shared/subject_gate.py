@@ -27,6 +27,7 @@ import hashlib
 import json
 import os
 import re
+import uuid
 from dataclasses import dataclass, field
 from typing import Iterable, Optional
 from urllib.parse import urlparse
@@ -53,10 +54,23 @@ _SALES_WORDS = re.compile(
     re.IGNORECASE,
 )
 _MD_LINK = re.compile(r"\[([^\]\n]{0,300})\]\((https?://[^\s)]{1,2000})\)")
-_HTML_LINK = re.compile(r"<a\s[^>]*href=[\"'](https?://[^\"']{1,2000})[\"'][^>]*>(.*?)</a>", re.IGNORECASE | re.DOTALL)
-_BARE_URL = re.compile(r"(?<![\(\"'=\w])(https?://[^\s<>\"')\]]{1,2000})")
+# An <a> tag's href, quoted or not (browsers and WordPress link `href=https://...` too).
+_HTML_LINK = re.compile(
+    r"<a\s[^>]*?href\s*=\s*(?:\"(https?://[^\"]{1,2000})\"|'(https?://[^']{1,2000})'|(https?://[^\s\"'>]{1,2000}))"
+    r"[^>]*>(.*?)</a>", re.IGNORECASE | re.DOTALL)
+# A bare URL anywhere, also right after "(", a quote or "=" ("Book now (https://...)"): the markdown and HTML matches
+# above keep their anchor text, a bare repeat inside them is skipped by position.
+_BARE_URL = re.compile(r"(?<![\w])(https?://[^\s<>\"')\]]{1,2000})", re.IGNORECASE)
+# A link written without a scheme: "www.host.tld[/path]" or "host.tld/path" (Facebook and WordPress turn these into
+# links). Not inside a longer host, a path, a query or an e-mail address.
+_HOST = r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}"
+_SCHEMELESS = re.compile(
+    rf"(?<![\w@.\-/:=?&#%+~])((?:www\.{_HOST}(?:/[^\s<>\"')\]]{{0,2000}})?)|(?:{_HOST}/[^\s<>\"')\]]{{0,2000}}))",
+    re.IGNORECASE)
 _TAG = re.compile(r"<[^>]+>")
-_TRIP_PATH = re.compile(r"^/trip/([0-9a-fA-F-]{36})/?$")
+_UUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+_TRIP_PATH = re.compile(rf"^/trip/({_UUID})/?$")
+_TRAILING = ".,;:!?"
 
 # Adventure Asia's own hosts (an AA tour page there is always allowed). Env AA_SALES_LINK_HOSTS adds more.
 DEFAULT_AA_HOSTS = ("adventure.asia",)
@@ -112,20 +126,40 @@ class Link:
     cta: bool = False
 
 
+def _inside(pos: int, spans: list) -> bool:
+    return any(a <= pos < b for a, b in spans)
+
+
+def _plain_urls(text: str, covered: list) -> list[str]:
+    """The bare and scheme-less URLs of `text` outside `covered` (a scheme-less one gets ``https://``)."""
+    out, spans = [], list(covered)
+    for m in _BARE_URL.finditer(text):
+        if not _inside(m.start(1), spans):
+            out.append(m.group(1).rstrip(_TRAILING))
+            spans.append(m.span(1))
+    for m in _SCHEMELESS.finditer(text):
+        if not _inside(m.start(1), spans):
+            out.append("https://" + m.group(1).rstrip(_TRAILING))
+    return [u for u in out if urlparse(u).hostname]
+
+
 def extract_links(text: str, cta: Optional[str] = None) -> list[Link]:
-    """Every http(s) link of the piece (markdown, HTML and bare URLs), plus the request's CTA when it holds a URL.
-    One entry per URL (a markdown link's text wins over its bare repeat)."""
+    """Every link of the piece (markdown, HTML with a quoted or unquoted href, bare URLs also inside parentheses or
+    quotes, and scheme-less ``www.host`` / ``host.tld/path``), plus the request's CTA links. One entry per URL (a
+    markdown or HTML anchor's text wins over a bare repeat)."""
     text = text or ""
     found: dict[str, Link] = {}
-    for anchor, url in _MD_LINK.findall(text):
-        found.setdefault(url, Link(url, anchor))
-    for url, anchor in _HTML_LINK.findall(text):
-        found.setdefault(url, Link(url, _TAG.sub("", anchor)))
-    for url in _BARE_URL.findall(text):
-        url = url.rstrip(".,;:!?")
+    covered: list = []
+    for m in _MD_LINK.finditer(text):
+        found.setdefault(m.group(2), Link(m.group(2), m.group(1)))
+        covered.append(m.span(2))
+    for m in _HTML_LINK.finditer(text):
+        group = next(g for g in (1, 2, 3) if m.group(g) is not None)
+        found.setdefault(m.group(group), Link(m.group(group), _TAG.sub("", m.group(4))))
+        covered.append(m.span(group))
+    for url in _plain_urls(text, covered):
         found.setdefault(url, Link(url))
-    for url in _BARE_URL.findall(cta or ""):
-        url = url.rstrip(".,;:!?")
+    for url in _plain_urls(cta or "", []):
         found[url] = Link(url, (found.get(url) or Link(url)).text, cta=True)
     return list(found.values())[:_MAX_LINKS]
 
@@ -150,7 +184,12 @@ def trip_page_tour_id(url: str, targets: AllowedTargets) -> Optional[str]:
     if not _host_in(_host(url), targets.trip_page_hosts):
         return None
     m = _TRIP_PATH.match(urlparse(url).path or "")
-    return m.group(1).lower() if m else None
+    if not m:
+        return None
+    try:   # only a real uuid reaches the served-state read ($1::uuid[]); anything else is not a trip page
+        return str(uuid.UUID(m.group(1)))
+    except ValueError:
+        return None
 
 
 def allowed_sales_target(url: str, targets: AllowedTargets) -> bool:

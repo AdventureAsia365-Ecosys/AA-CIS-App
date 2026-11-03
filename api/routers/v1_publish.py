@@ -576,17 +576,23 @@ async def _pending_needs_change(pool, tenant_id, piece_ids) -> dict:
         return {}
 
 
+SUBJECT_GATE_UNAVAILABLE = "We couldn't check this piece just now. Please try publishing it again in a minute."
+
+
 async def _subject_gate(pool, piece, tenant_id, piece_id, channel) -> None:
     """Raise 409 when the piece fails the AA-subject gate (services/acp_shared/subject_gate.py); the verdict is
-    recorded in admin Tenant content QA › Compliance either way."""
+    recorded in admin Tenant content QA › Compliance either way. Fails closed: when the gate cannot answer (a read
+    error, whatever the piece's text holds) the publish is refused with 503 "try again", never let through. Before
+    CIS 362 the gate still answers (its flag reads and writes are skipped, subject_gate.record / released)."""
     gate_piece = {"piece_id": str(piece_id), "tenant_id": str(tenant_id), "request_id": piece.get("request_id"),
                   "content_text": piece["content_text"], "channel": channel}
     try:
         async with pool.acquire() as conn:
             result = await subject_gate.run(conn, piece=gate_piece, stage="publish", actor=f"tenant:{tenant_id}")
-    except Exception:  # noqa: BLE001 — a rule check, not an auth boundary: a read failure is logged, never a 500
+    except Exception as exc:  # noqa: BLE001 — logged; a 503 the tenant can retry, never a 500 and never a pass
         logger.warning("subject_gate_publish_error", tenant_id=str(tenant_id), piece_id=str(piece_id), exc_info=True)
-        return
+        raise HTTPException(status_code=503, detail=SUBJECT_GATE_UNAVAILABLE,
+                            headers={"X-Error-Code": "content_check_unavailable", "Retry-After": "60"}) from exc
     if not result.ok:
         logger.info("publish_held_by_subject_gate", tenant_id=str(tenant_id), piece_id=str(piece_id),
                     codes=result.codes)

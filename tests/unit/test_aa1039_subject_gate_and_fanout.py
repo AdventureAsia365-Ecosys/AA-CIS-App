@@ -40,6 +40,50 @@ def test_links_are_read_from_markdown_html_and_bare_urls_and_the_cta():
     assert by["https://x.example/a"].text == "Book here" and by["https://cta.example/go"].cta
 
 
+@pytest.mark.parametrize("text,url,anchor", [
+    ("Book now (https://othertravel.example/booking)", "https://othertravel.example/booking", ""),
+    ("Book: 'https://othertravel.example/booking'", "https://othertravel.example/booking", ""),
+    ('Book: "https://othertravel.example/booking".', "https://othertravel.example/booking", ""),
+    ("<a href=https://othertravel.example/booking>Seats</a>", "https://othertravel.example/booking", "Seats"),
+    ("<a class=x href = 'https://othertravel.example/booking'>Seats</a>", "https://othertravel.example/booking",
+     "Seats"),
+    ("Book at othertravel.example/booking today.", "https://othertravel.example/booking", ""),
+    ("Or www.othertravel.example/deals!", "https://www.othertravel.example/deals", ""),
+])
+def test_links_in_parentheses_quotes_unquoted_href_and_without_a_scheme_are_read(text, url, anchor):
+    links = sg.extract_links(text)
+    assert [(link.url, link.text) for link in links] == [(url, anchor)]
+    res = sg.evaluate(text, goal="conversion", cta=None, subject_ok=True, targets=TARGETS)
+    assert not res.ok and res.codes == [sg.OFF_CATALOG_LINK]
+
+
+@pytest.mark.parametrize("text", [
+    "Write to desk@othertravel.example/booking",       # an e-mail-like token, not a link
+    "We walked 3.5km/day near Lake.Town",              # no host with a path
+    "See the map at https://maps.example/view",        # a link, not a sales one
+])
+def test_no_false_sales_link_from_plain_prose(text):
+    assert sg.evaluate(text, goal="conversion", cta=None, subject_ok=True, targets=TARGETS).ok
+
+
+def test_a_markdown_link_counts_once_with_its_anchor_text():
+    links = sg.extract_links("[Book](https://othertravel.example/x) (https://othertravel.example/x)")
+    assert [(link.url, link.text) for link in links] == [("https://othertravel.example/x", "Book")]
+
+
+@pytest.mark.parametrize("path", ["-" * 36, "a" * 36, "1b4e28ba2fa111d2883f0016d3cca427abcd",
+                                  "1b4e28ba-2fa1-11d2-883f-0016d3cca42z"])
+def test_a_malformed_trip_page_id_is_not_a_trip_page_and_is_refused(path):
+    url = f"https://go-dev.lumiguides.it.com/trip/{path}"
+    assert sg.trip_page_tour_id(url, TARGETS) is None
+    res = sg.evaluate(f"Book it: {url}", goal="conversion", cta=None, subject_ok=True, targets=TARGETS)
+    assert not res.ok and res.codes == [sg.OFF_CATALOG_LINK]
+
+
+def test_a_trip_page_id_is_normalised():
+    assert sg.trip_page_tour_id(f"https://go-dev.lumiguides.it.com/trip/{TOUR.upper()}/", TARGETS) == TOUR
+
+
 @pytest.mark.parametrize("url,text,sales", [
     ("https://museum.example/history", "history of the hall", False),
     ("https://othertravel.example/mekong-tour", "", True),            # the path reads like a tour
@@ -117,16 +161,31 @@ async def test_publish_gate_refuses_with_409_and_the_sentence():
 
 @pytest.mark.real_subject_gate
 @pytest.mark.asyncio
-async def test_publish_gate_passes_and_a_read_failure_is_not_a_500():
+async def test_publish_gate_passes_and_a_read_failure_fails_closed_with_503():
     from api.routers import v1_publish
     with patch.object(sg, "run", AsyncMock(return_value=sg.GateResult(True))):
         assert await v1_publish._subject_gate(_pool(), {"request_id": "r", "content_text": "x"}, "t", "p",
                                               "blog") is None
     with patch.object(sg, "run", AsyncMock(side_effect=RuntimeError("db down"))):
-        assert await v1_publish._subject_gate(_pool(), {"request_id": "r", "content_text": "x"}, "t", "p",
-                                              "blog") is None
+        with pytest.raises(HTTPException) as exc:
+            await v1_publish._subject_gate(_pool(), {"request_id": "r", "content_text": "x"}, "t", "p", "blog")
+    assert exc.value.status_code == 503 and exc.value.detail == v1_publish.SUBJECT_GATE_UNAVAILABLE
+    assert exc.value.headers["X-Error-Code"] == "content_check_unavailable"
+    assert "try" in exc.value.detail.lower() and "flag" not in exc.value.detail.lower()
     with patch.object(sg, "open_messages", AsyncMock(side_effect=RuntimeError("db down"))):
         assert await v1_publish._pending_needs_change(_pool(), "t", ["p"]) == {}
+
+
+@pytest.mark.real_subject_gate
+@pytest.mark.asyncio
+async def test_publish_gate_fails_closed_on_a_malformed_trip_page_link_db_error():
+    """The served-state read rejecting a value ($1::uuid[]) must not let the piece through."""
+    from api.routers import v1_publish
+    with patch.object(sg, "check", AsyncMock(side_effect=ValueError("badly formed hexadecimal UUID string"))), \
+            patch.object(sg, "released", AsyncMock(return_value=False)):
+        with pytest.raises(HTTPException) as exc:
+            await v1_publish._subject_gate(_pool(), {"request_id": "r", "content_text": "x"}, "t", "p", "blog")
+    assert exc.value.status_code == 503
 
 
 # ── the fan-out ────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -224,3 +283,26 @@ async def test_daily_digest_is_queued_once_from_its_hour():
         assert await trj.enqueue_daily_digest(pool, datetime(2026, 11, 3, 7, 59, tzinfo=timezone.utc)) == (None, False)
         assert await trj.enqueue_daily_digest(pool, datetime(2026, 11, 3, 8, 1, tzinfo=timezone.utc)) == ("j1", True)
     assert enq.await_args.kwargs["idempotency_key"] == "tour_notice_email:digest:2026-11-03"
+
+
+def test_the_digest_takes_digest_notices_and_immediate_ones_left_unmailed_an_hour():
+    from datetime import datetime, timedelta, timezone
+    now = datetime(2026, 11, 3, 8, 0, tzinfo=timezone.utc)
+    assert trj._in_digest({"delivery": "digest", "created_at": now}, now=now)
+    assert not trj._in_digest({"delivery": "immediate", "created_at": now - timedelta(minutes=20)}, now=now)
+    assert trj._in_digest({"delivery": "immediate", "created_at": now - timedelta(hours=2)}, now=now)
+
+
+@pytest.mark.asyncio
+async def test_a_fanout_replay_enqueues_the_unmailed_immediate_notice_again():
+    from shared.jobs import queue
+    from shared.jobs.registry import JobContext
+    job = queue.Job(id=str(uuid.uuid4()), kind=trj.FANOUT_KIND, payload={"event_key": "ev-1"}, status="running",
+                    attempt=2, max_attempts=5, cost_usd=0.0, progress={})
+    replay = {"status": "done", "event": "retired", "flags_created": 0, "new_immediate_notices": 0,
+              "immediate_notices": ["n-1"]}
+    with patch.object(trj.fanout, "fan_out", AsyncMock(return_value=replay)), \
+            patch.object(trj, "enqueue", AsyncMock(return_value=("mail-1", False))) as enq:
+        out = await trj.run_fanout(JobContext(MagicMock(), job, {}))
+    assert out["mail_jobs"] == 1 and "immediate_notices" not in out
+    assert enq.await_args.kwargs["idempotency_key"] == "tour_notice_email:n-1"
