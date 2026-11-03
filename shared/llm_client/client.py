@@ -24,8 +24,8 @@ from shared.aa_llm.ledger import failed_outcome as core_failed_outcome, outcome_
 from .errors import (BUDGET, DEADLINE, DISABLED, MAX_CHAIN_ATTEMPTS, OTHER, ROLE_NOT_SERVED, THROTTLED, TRUNCATED,
                      LLMAccessDenied, LLMStageDisabled, RouteAttemptCapReached, RouteDeadlineExceeded,
                      RouteRoleNotServed, account_level_class, classify)
-from . import (breaker, central_budget, connection_budget, connections, data_scope, family_rule, prompt_registry,
-               stage_params, stream_sink, tenant_budget)
+from . import (breaker, capacity, central_budget, connection_budget, connections, data_scope, family_rule,
+               prompt_registry, stage_params, stream_sink, tenant_budget)
 from . import app_profile
 from .vendor_route import (VendorDeployment, deployment_plan, pinned_deployment, role_refusal, split_pin,
                            vendor_deployment_for)
@@ -1050,6 +1050,8 @@ class LLMClient:
         if not isinstance(deadline_s, int) or isinstance(deadline_s, bool) or deadline_s <= 0:
             deadline_s = None                   # a test double or a bad value: no deadline
         deadline_token = _DEADLINE.set((time.monotonic() + deadline_s, deadline_s)) if deadline_s else None
+        # AA-1025 H2: the request's line and token estimate, reserved on the TPM limits before each provider attempt.
+        capacity_token = capacity.set_request(capacity.estimate_tokens(request), capacity.line_for(request.stage))
         try:
             # AA-1025 H1a: the app profile's AI switch before everything (AI off for the app = every stage refused).
             self._app_profile_gate(request, chain[0])
@@ -1073,6 +1075,7 @@ class LLMClient:
             else:
                 resp = self._call_route(request, chain, primary_acct, role=role)
         finally:
+            capacity.reset_request(capacity_token)
             if deadline_token is not None:
                 _DEADLINE.reset(deadline_token)
             _ATTEMPT_SCOPE.reset(scope_token)

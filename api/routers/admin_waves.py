@@ -5,6 +5,10 @@
   GET  /admin/waves                 list (newest first), optional ?status=
   GET  /admin/waves/{id}/report     4-column report + states + failure class + Jev coverage + cost
   POST /admin/waves/{id}/close      close it (ends the job window)
+  POST /admin/waves/{id}/pause      AA-1025 H2: pause it (paused_by the staff actor, migration 349): the bulk job
+                                    kinds wait in the queue until a person resumes it
+  POST /admin/waves/{id}/resume     AA-1025 H2: resume it; the worker pauses it again while a prod guard circuit
+                                    refuses or the app's bulk pause is on (shared/llm_client/capacity.py)
   POST /admin/waves/check           evaluate every open wave; incomplete → one admin bell
                                     (called daily by the ops-probe Lambda, AA-CIS-Infra)
 
@@ -125,6 +129,54 @@ async def close_wave(wave_id: str, request: Request, x_admin_secret: str = Heade
     if row is None:
         raise HTTPException(status_code=404, detail="wave not found")
     return wave_report._wave_dict(row)
+
+
+class WavePause(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+
+_PAUSE_ONE_SQL = """
+    UPDATE shared.rerun_wave SET paused_at = coalesce(paused_at, now()), paused_by = $2, pause_reason = $3
+     WHERE id = $1::uuid AND status = 'open'
+ RETURNING *
+"""
+_RESUME_ONE_SQL = """
+    UPDATE shared.rerun_wave SET paused_at = NULL, paused_by = NULL, pause_reason = NULL
+     WHERE id = $1::uuid AND status = 'open'
+ RETURNING *
+"""
+_PAUSE_MISSING = "pausing a wave needs migration 349"
+
+
+async def _pause_write(request: Request, wave_id: str, sql: str, *args) -> dict:
+    import asyncpg
+    try:
+        row = await request.app.state.pool.fetchrow(sql, _uuid(wave_id), *args)
+    except asyncpg.exceptions.UndefinedColumnError:
+        raise HTTPException(status_code=503, detail=_PAUSE_MISSING)
+    if row is None:
+        raise HTTPException(status_code=409, detail="no open wave with this id (only an open wave can be paused)")
+    return wave_report._wave_dict(row)
+
+
+@router.post("/{wave_id}/pause", summary="Pause an open wave (its bulk jobs wait in the queue)")
+async def pause_wave(wave_id: str, body: WavePause, request: Request, x_admin_secret: str = Header(None),
+                     x_admin_user_id: str = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    actor = f"admin:{x_admin_user_id}" if x_admin_user_id else "admin"
+    out = await _pause_write(request, wave_id, _PAUSE_ONE_SQL, actor[:128], body.reason.strip())
+    logger.info("rerun_wave_paused_by_staff", wave_id=out["id"], actor=actor)
+    return out
+
+
+@router.post("/{wave_id}/resume", summary="Resume a paused wave")
+async def resume_wave(wave_id: str, request: Request, x_admin_secret: str = Header(None),
+                      x_admin_user_id: str = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    out = await _pause_write(request, wave_id, _RESUME_ONE_SQL)
+    logger.info("rerun_wave_resumed_by_staff", wave_id=out["id"],
+                actor=f"admin:{x_admin_user_id}" if x_admin_user_id else "admin")
+    return out
 
 
 def _uuid(value: str) -> str:

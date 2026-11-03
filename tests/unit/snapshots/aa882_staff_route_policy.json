@@ -3,6 +3,10 @@
     "capability": "content.write",
     "module": "api.routers.admin_aa_content"
   },
+  "DELETE /admin/ai-gateway/capacity/{connection_key}/{model_key}": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_ai_gateway"
+  },
   "DELETE /admin/ai-gateway/credit/entries/{entry_id}": {
     "capability": "spend.write",
     "module": "api.routers.admin_ai_gateway"
@@ -88,6 +92,10 @@
     "module": "api.routers.admin_ai_gateway"
   },
   "GET /admin/ai-gateway/calls": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_ai_gateway"
+  },
+  "GET /admin/ai-gateway/capacity": {
     "capability": "spend.read",
     "module": "api.routers.admin_ai_gateway"
   },
@@ -1363,6 +1371,14 @@
     "capability": "ops.write",
     "module": "api.routers.admin_waves"
   },
+  "POST /admin/waves/{wave_id}/pause": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_waves"
+  },
+  "POST /admin/waves/{wave_id}/resume": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_waves"
+  },
   "POST /admin/writing-memory/candidates/{rule_id}/activate": {
     "capability": "ai.admin",
     "module": "api.routers.admin_writing_memory"
@@ -1454,6 +1470,10 @@
   "PUT /admin/aa-content/{content_id}/draft": {
     "capability": "content.write",
     "module": "api.routers.admin_aa_content"
+  },
+  "PUT /admin/ai-gateway/capacity/{connection_key}/{model_key}": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_ai_gateway"
   },
   "PUT /admin/ai-gateway/tenant-budgets/{tenant_id}": {
     "capability": "spend.write",

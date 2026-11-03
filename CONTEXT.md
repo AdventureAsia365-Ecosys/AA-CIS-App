@@ -534,9 +534,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   (`embed.probe`) and Jev `decide()` / the Jev canary with one 0 USD ledger row each (status refused, error_class `disabled`). The refusal is `LLMAppDisabled`, an
   `LLMStageDisabled` whose message names the stage, so jobs fail without a retry, T2 / T9 keep their version / piece to
   do, and the bulk re-queue holds every stage while the app's AI is off (`shared/jobs/queue.disabled_stages` returns
-  `EveryStage`); Jev fails open as on its own switch. `bulk_paused` and the default budget are stored and shown only
-  (CIS enforces its central cap `llm/app:cis`; H2 acts on the bulk pause; TripPlanner and the CRM read their row in
-  H1b / H1c). `LLM_APP_PROFILE=off` skips the check. Admin: AI providers › Providers › App profiles
+  `EveryStage`); Jev fails open as on its own switch. `bulk_paused` holds the bulk job kinds and pauses the open waves
+  (H2, below); the default budget is stored and shown only (CIS enforces its central cap `llm/app:cis`; TripPlanner
+  and the CRM read their row in H1b / H1c). `LLM_APP_PROFILE=off` skips the check. Admin: AI providers › Providers › App profiles
   (`AppProfilesCard.tsx`; `GET /admin/ai-gateway/app-profiles` spend.read, `PATCH /admin/ai-gateway/app-profiles/{app}`
   ai.admin, a reason to switch off, audited `llm_app_ai_switched_off` / `_on` / `llm_app_profile_updated`).
   **The other apps (AA-1025 H1b / H1c):** TripPlanner reads its row through `catalog.v_llm_app_profile_v1` (migration
@@ -550,6 +550,29 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   TripPlanner's row has a budget, today's (UTC) `shared.llm_call_log` spend of app `tripplanner` against it at 80 % and
   100 %, admin bell + one ops e-mail a UTC day per threshold; the CRM's spend has no such check (its ledger is
   `crm.llm_call`, readable only with a staff token).
+- **Capacity: lines, TPM limiter, backpressure, wave pause** (AA-1025 H2 = capacity S12, migrations 348 expand /
+  349 contract; `shared/llm_client/capacity.py`). Every LLM call has a line: `bulk` (rerun waves and catalogue
+  backfills), `prod` (tenant work, admin actions, anything outside a job) or `dev` (stage `adhoc_*`, eval runs, the
+  probes); a job's line is its kind's (`capacity.KIND_LINES`, every registered kind listed, guarded by a unit test;
+  the worker binds the kind, `LLMClient` binds the request's line and token estimate = prompt chars / 4 + max_tokens).
+  `shared.llm_capacity_limit` (PK connection_key + model_key, `*` = the whole connection) holds `tpm_limit`,
+  `bulk_pct` (default 50), `dev_pct` and `prod_guard`. `breaker.limit` reserves the estimate on every covering limit
+  before the concurrency / rpm slot; a call that does not fit WAITS (prod / dev 65 s, bulk 180 s; bulk and dev also
+  wait while a prod call waits = bulk yields to prod), then `LimiterSaturated` (throttled). Per process like
+  `rpm_limit` (set a task's share). No estimate (embeddings, the connection test) = no reservation. Backpressure: the
+  worker's claim leaves out held kinds (`capacity.claim_hold`, 10 s cache): a `prod_guard` circuit OPEN (connection
+  circuit for `*`, else the deployment's) holds prod + bulk kinds; still refusing (half-open, nothing answered),
+  `bulk_paused`, or a staff-paused wave hold bulk kinds; this process's TPM waits hold that line's kinds for 30 s;
+  dev kinds (probes) are never held. Wave pause: while a guard refuses or the bulk pause is on the worker sets
+  `shared.rerun_wave.paused_at` / `paused_by 'capacity'` / `pause_reason` on every open wave (status stays `open`, so
+  the deploy gate, retention and the miner still see an open wave; the wave check does not end a paused wave), one
+  bell `platform.rerun_wave.paused` per wave, and resumes them when it clears; `POST /admin/waves/{id}/pause|resume`
+  (ops.write) for a staff pause, which the worker never resumes. The backlog sampler does not count held kinds as
+  starved (`held_kinds` in its output). Admin: `GET /admin/ai-gateway/capacity` (spend.read: rows, hold, held kinds,
+  kind lines, this api task's windows), `PUT` / `DELETE /admin/ai-gateway/capacity/{connection_key}/{model_key}`
+  (ai.admin, audited `llm_capacity_limit_set` / `_cleared`; the model must be deployed on the connection). No row =
+  no limit and no hold; tables missing or unreadable = fail open. `LLM_CAPACITY=off` (ECS env) turns it off. Live
+  drill at $0: `scripts/aa1025_h2_tpm_drill.py` (ECS exec; a drill model key no route uses). No UI card yet.
 - **Non-LLM provider circuit and the vendor API credit ledger** (AA-1025 B3 / B5, migrations 342 / 343):
   `shared/provider_circuit.py` keeps ONE circuit per decide / data provider connection (`typesafe`, `dataforseo`,
   `geoapify`) in `shared.provider_health` (PK `connection_key`; the breaker's pure transitions and `RULES`, a 10 s

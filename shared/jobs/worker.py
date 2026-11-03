@@ -30,7 +30,7 @@ import sentry_sdk
 import structlog
 
 from shared.cost_guard import BudgetExceeded
-from shared.llm_client import call_log
+from shared.llm_client import call_log, capacity
 from shared.llm_client.errors import LLM_ACCESS_DENIED_REASON, LLMAccessDenied, is_llm_access_denied, stage_disabled_in
 from shared.llm_client.tenant_budget import approval_stop_in
 from shared.sentry_init import release  # AA-884: APP_GIT_SHA of this image, written to shared.job_worker
@@ -161,6 +161,9 @@ class Worker:
         # AA-711: a worker on a draining (older) task stops claiming once a newer one is live.
         self.task_revision = ecs_task_revision()
         self.yielding = False
+        # AA-1025 H2: the lines held at the last claim (logged on change) and the DB hold the waves were synced to.
+        self._held_lines: frozenset = frozenset()
+        self._last_hold_seen_db = None
 
     def caps(self) -> dict[str, int]:
         return {name: k.concurrency for name, k in kinds().items()}
@@ -241,8 +244,11 @@ class Worker:
                 self.yielding = True
             return 0
         self.yielding = False
+        held = await self._capacity_hold()
         while len(self._running) < self.max_parallel and not self._stopping.is_set():
             caps = self.claim_caps(self.max_parallel - len(self._running), self.running_background())
+            if held:
+                caps = capacity.without_held(caps, held)
             job = await queue.claim(self.pool, self.worker_id, caps, self.lease_seconds)
             if job is None:
                 break
@@ -252,6 +258,31 @@ class Worker:
             task.add_done_callback(lambda _t, jid=job.id: self._forget(jid))
             claimed += 1
         return claimed
+
+    async def _capacity_hold(self) -> frozenset:
+        """AA-1025 H2 (backpressure): the lines whose LLM job kinds wait in the queue now (capacity.claim_hold: a prod
+        guard circuit open or refusing, the bulk pause, a wave a person paused, this process's TPM pressure), and the
+        wave pause that goes with it (capacity.sync_waves, once per hold refresh). Logs each change of the held set.
+        Never raises (nothing held)."""
+        hold = capacity.Hold()
+        try:
+            db_hold = await capacity.claim_hold(self.pool, with_pressure=False)   # the same object until it refreshes
+            if db_hold is not self._last_hold_seen_db:
+                self._last_hold_seen_db = db_hold
+                await capacity.sync_waves(self.pool, db_hold)
+            hold = capacity.with_pressure_of(db_hold)
+            lines = hold.lines()
+        except Exception as e:  # noqa: BLE001 — a capacity problem never stops the queue
+            logger.warning("job_capacity_hold_failed", error=str(e)[:200])
+            lines = frozenset()
+        if lines != self._held_lines:
+            if lines:
+                logger.warning("job_claims_held", worker_id=self.worker_id, lines=sorted(lines),
+                               kinds=sorted(capacity.held_kinds(lines, self.caps())), **hold.as_dict())
+            else:
+                logger.info("job_claims_released", worker_id=self.worker_id, was=sorted(self._held_lines))
+            self._held_lines = lines
+        return lines
 
     def _forget(self, job_id: str) -> None:
         self._running.pop(job_id, None)
@@ -285,8 +316,9 @@ class Worker:
         # and, for a tenant job, the tenant (AA-741 G1, call_log.bind_tenant).
         # AA-925 — and every Jev outage (zone=error) the handler meets is counted into this job's collector
         # (services/quality/degraded.py), written to shared.job.result.degraded below.
+        # AA-1025 H2: and the job's kind, so each LLM call reserves its tokens on its line (capacity.KIND_LINES).
         with call_log.bind_job(job.id), call_log.bind_tenant(job_tenant_id(job.payload)), \
-                _degraded_collect() as degraded_box:
+                capacity.bind_kind(job.kind), _degraded_collect() as degraded_box:
             handler_task = asyncio.create_task(kind.handler(ctx))
         cancelled_by_admin = False
         try:

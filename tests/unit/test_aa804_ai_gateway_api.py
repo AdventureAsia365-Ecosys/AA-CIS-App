@@ -82,7 +82,11 @@ def test_routes_are_served_and_run_the_policy():
                           ("POST", "/admin/ai-gateway/credit/{connection_key}/entries"),
                           # AA-1025 H1a: the app profile of every app
                           ("GET", "/admin/ai-gateway/app-profiles"), ("PATCH", "/admin/ai-gateway/app-profiles/{app}"),
-                          ("DELETE", "/admin/ai-gateway/credit/entries/{entry_id}")}
+                          ("DELETE", "/admin/ai-gateway/credit/entries/{entry_id}"),
+                          # AA-1025 H2: TPM limits, line shares and prod guards
+                          ("GET", "/admin/ai-gateway/capacity"),
+                          ("PUT", "/admin/ai-gateway/capacity/{connection_key}/{model_key}"),
+                          ("DELETE", "/admin/ai-gateway/capacity/{connection_key}/{model_key}")}
     for (_m, p), (r, inh) in found.items():
         assert r.path == p and _runs_policy(r, inh, p)
 

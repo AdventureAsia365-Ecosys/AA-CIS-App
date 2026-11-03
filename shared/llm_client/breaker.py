@@ -31,6 +31,9 @@ Limiter. Per connection, in process (each ECS task enforces its own share): ``ma
 semaphore) and ``rpm_limit`` calls per rolling minute, both from the connection row (NULL = no limit). A call waits
 for a slot up to ``LIMIT_WAIT_S``; past that it fails with ``LimiterSaturated`` (class ``throttled``), which is not a
 provider failure (no breaker count) and lets the route move to its next deployment or model.
+AA-1025 H2: before that slot, the request's tokens are reserved on the TPM limits of the connection and of the model
+(``shared.llm_capacity_limit``, ``capacity.reserve``): a call that does not fit waits for the window (prod 65 s, bulk
+180 s) and only then fails with the same ``LimiterSaturated``.
 
 AA-1018 (reliability part 1) — the connection-level circuit. An account-wide refusal (Bedrock "Error 002" on the LLM
 account, a key that cannot be read, a provider spend cap) refuses every model of the connection alike, yet the
@@ -736,8 +739,9 @@ def circuit_error(model_key: str, skips: list[tuple[str, Optional[str]]]) -> Cir
 # ── limiter ──────────────────────────────────────────────────────────────────────────────────────────────────────
 
 class LimiterSaturated(RuntimeError):
-    """The connection's own limit (max_concurrency / rpm_limit) had no slot within LIMIT_WAIT_S. Not a provider
-    failure: no breaker count; classified throttled so the route moves on and a job retries with backoff."""
+    """The connection's own limit (max_concurrency / rpm_limit) had no slot within LIMIT_WAIT_S, or (AA-1025 H2) a
+    TPM limit had no room within the line's wait (capacity.WAIT_S). Not a provider failure: no breaker count;
+    classified throttled so the route moves on and a job retries with backoff."""
 
     llm_error_class = THROTTLED
 
@@ -800,9 +804,23 @@ def _limiter_for(conn: connections.ProviderConnection) -> Optional[_Limiter]:
         return lim
 
 
+def _reserve_tokens(conn: connections.ProviderConnection, model_key: Optional[str]) -> None:
+    """AA-1025 H2: reserve the bound request's tokens on the connection's / model's TPM limits (capacity.reserve:
+    waits while they do not fit; no limit or no estimate = nothing). Past the line's wait: LimiterSaturated."""
+    from . import capacity  # lazy: capacity imports this module for its hold
+
+    try:
+        capacity.reserve(conn.connection_key, model_key or capacity.ANY_MODEL)
+    except capacity.TokenLimitSaturated as e:
+        raise LimiterSaturated(str(e)) from e
+
+
 @contextmanager
-def limit(conn: connections.ProviderConnection) -> Iterator[None]:
-    """Hold one of the connection's call slots for the duration of a provider call (no-op without limits)."""
+def limit(conn: connections.ProviderConnection, model_key: Optional[str] = None) -> Iterator[None]:
+    """Hold one of the connection's call slots for the duration of a provider call (no-op without limits). AA-1025
+    H2: first the request's tokens on the TPM limits of the connection and of ``model_key`` (capacity.reserve), so a
+    call waiting for tokens holds no concurrency slot."""
+    _reserve_tokens(conn, model_key)
     lim = _limiter_for(conn)
     if lim is None:
         yield
@@ -820,7 +838,7 @@ def guarded(conn: connections.ProviderConnection, model_key: str, call: Callable
     key = conn.connection_key
     if admit_call and not admit(key, model_key):
         raise circuit_error(model_key, [(key, open_class(key, model_key))])
-    with limit(conn):
+    with limit(conn, model_key):
         try:
             result = call()
         except Exception as e:

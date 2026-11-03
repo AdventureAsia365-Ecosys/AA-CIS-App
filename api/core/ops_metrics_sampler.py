@@ -163,7 +163,8 @@ async def _jobs_part(pool, kinds: dict, out: dict) -> None:
     b = await backlog.sample(pool, kinds)
     out.update(oldest_queued_age_seconds=b["oldest_queued_age_seconds"],
                overdue_running_jobs=b["overdue_running_jobs"], starved=b["starved"], overdue=b["overdue"],
-               queued_due=b["queued_due"], running=b["running"], live_workers=b["live_workers"])
+               queued_due=b["queued_due"], running=b["running"], live_workers=b["live_workers"],
+               held_kinds=b.get("held", []))     # AA-1025 H2: kinds the capacity backpressure holds (not starved)
 
 
 async def _ops_checks_part(pool, client, out: dict) -> None:

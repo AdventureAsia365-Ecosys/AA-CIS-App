@@ -115,10 +115,12 @@ def attempt_started(row: Mapping) -> Optional[datetime]:
 
 def backlog_sample(queued: Iterable[Mapping], running: Iterable[Mapping], workers: Iterable[Mapping],
                    kinds: Mapping[str, Any], now: datetime,
-                   last_freed_at: Optional[datetime] = None) -> dict:
+                   last_freed_at: Optional[datetime] = None, held: Iterable[str] = ()) -> dict:
     """Pure. `queued`: rows of QUEUED_DUE_SQL (per kind); `running`: RUNNING_SQL; `workers`:
     WORKERS_SQL; `kinds`: the registry (name -> JobKind: background, expected_seconds); `now` and
-    `last_freed_at`: CLOCK_SQL (the DB clock, so ages never mix two clocks)."""
+    `last_freed_at`: CLOCK_SQL (the DB clock, so ages never mix two clocks). AA-1025 H2: `held` = the kinds the
+    workers hold back now (capacity backpressure): their due rows wait by design and are not starved."""
+    held = frozenset(held)
     queued, running, workers = list(queued), list(running), list(workers)
 
     # ── overdue running ──
@@ -158,6 +160,8 @@ def backlog_sample(queued: Iterable[Mapping], running: Iterable[Mapping], worker
             reason, since = "no_live_worker", _latest(oldest, last_seen)
         elif kind not in live_kinds:
             reason, since = "unregistered", oldest
+        elif kind in held:
+            continue   # AA-1025 H2: the capacity backpressure holds it (a prod circuit, the bulk pause): by design
         else:
             frees = [freed for _w, cc, freed in claimers
                      if kind in cc and running_by_kind.get(kind, 0) < cc[kind]]
@@ -176,6 +180,7 @@ def backlog_sample(queued: Iterable[Mapping], running: Iterable[Mapping], worker
         "queued_due": sum(int(q["n"]) for q in queued),
         "running": len(running),
         "live_workers": len(live),
+        "held": sorted(held & {q["kind"] for q in queued}),
     }
 
 
@@ -186,5 +191,7 @@ async def sample(pool, kinds: Mapping[str, Any]) -> dict:
         queued = await conn.fetch(QUEUED_DUE_SQL)
         running = await conn.fetch(RUNNING_SQL)
         workers = await conn.fetch(WORKERS_SQL)
+    from shared.llm_client import capacity  # lazy: the gateway package is heavy
+    hold = await capacity.claim_hold(pool, with_pressure=False)   # never raises; the workers' TPM pressure not seen
     return backlog_sample([dict(r) for r in queued], [dict(r) for r in running], [dict(r) for r in workers],
-                          kinds, clock["now"], clock["last_freed_at"])
+                          kinds, clock["now"], clock["last_freed_at"], capacity.held_kinds(hold.lines(), kinds))

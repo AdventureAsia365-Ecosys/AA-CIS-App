@@ -194,9 +194,11 @@ def _wave_dict(row) -> dict:
     d = dict(row)
     d["id"] = str(d["id"])
     d["expected_count"] = len(d.pop("expected_tour_ids") or [])
-    for k in ("created_at", "closed_at", "last_checked_at"):
+    for k in ("created_at", "closed_at", "last_checked_at", "paused_at"):
         if d.get(k) is not None:
             d[k] = d[k].isoformat()
+    # AA-1025 H2 (migration 349): a paused wave keeps status open; `paused` says it waits (false before 349).
+    d["paused"] = d.get("paused_at") is not None
     if isinstance(d.get("last_check"), str):
         d["last_check"] = json.loads(d["last_check"])
     return d
@@ -221,7 +223,8 @@ async def report(conn, wave_id: str) -> Optional[dict]:
 async def check(conn, wave_id: str) -> Optional[dict]:
     """Evaluate one open wave: every tour terminal and no wave job active → `complete`; the wave's
     jobs all finished but some tour is not terminal → `incomplete` and ONE admin notification (the
-    open→incomplete transition happens once). Otherwise it stays open."""
+    open→incomplete transition happens once). Otherwise it stays open. AA-1025 H2: a paused wave
+    (paused_at set, migration 349) stays open whatever its tours (its jobs wait in the queue)."""
     rep = await report(conn, wave_id)
     if rep is None:
         return None
@@ -229,7 +232,8 @@ async def check(conn, wave_id: str) -> Optional[dict]:
     summary["not_terminal"] = [{"tour_id": r["tour_id"], "name": r["name"], "state": r["state"]}
                                for r in rep["not_terminal"]][:50]
     new_status = None
-    if rep["wave"]["status"] == "open":
+    # AA-1025 H2: a paused wave's jobs wait in the queue; it is not ended (complete / incomplete) while paused.
+    if rep["wave"]["status"] == "open" and not rep["wave"].get("paused"):
         # complete needs no job (batch-path tours resolve from Master/review alone); incomplete
         # only once the wave's own jobs have all finished.
         if rep["complete"]:
