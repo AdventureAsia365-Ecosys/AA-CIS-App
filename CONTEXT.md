@@ -1278,11 +1278,12 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   `GET /admin/s1-batch/{job_id}`. Built and merged, but **never run for real**: AWS has not yet
   enabled Batch Inference on acc3 (support case 178979743800653, blocker AA-624). Batch atomize
   (AA-621) waits on the same blocker.
-- **Plans and quota (AA-640)**: the tour-rewrite quota comes only from `shared.membership_plans`
-  (starter 50 / growth 200 / business 500). Over-quota rewrites are allowed, logged as
-  `rewrite_over_quota` and billed as overage. `PLAN_LIMITS` in code now only holds the plan's
-  default RPM; an admin can override one tenant's RPM (`PATCH /admin/tenants/{id}
-  {"rate_limit_rpm": n}`, AA-766, audited as `tenant.rate_limit_changed`).
+- **Plans and quota (AA-640, AA-1028 R1 slice 3)**: the tour-rewrite quota is the tenant's resolved entitlement
+  `content.rewrite` (starter 50 / growth 200 / business 500, edited on Tenants › Plans & add-ons), with the old
+  `shared.membership_plans` read only as the fallback for a tenant with no numeric key. Over-quota rewrites are
+  allowed, logged as `rewrite_over_quota` and billed as overage. There is no `PLAN_LIMITS` any more: a tier's
+  default RPM is its live content plan's `content.rate_limit_rpm`; an admin can override one tenant's RPM
+  (`PATCH /admin/tenants/{id} {"rate_limit_rpm": n}`, AA-766, audited as `tenant.rate_limit_changed`).
 - **Billing (AA-798, migration 223)**: `shared.v_tenant_monthly_usage.llm_cost_usd` = month-to-date
   `SUM(shared.llm_call_log.cost_usd)` for the tenant (shadow and NULL-tenant rows excluded). Admin
   billing and the admin tenant list read that column as-is (one definition, `api/routers/_billing.py`).
@@ -2090,8 +2091,8 @@ in `frontend/app/_kit/adminNav.tsx`), seven groups, each folding on its own (kit
 footer Settings entry):
 - **Home** — Overview, App health (`/admin/platform/apps`), Reports, Data coverage;
 - **Tenants** — Directory (`/admin/tenants`, a row opens the Tenant 360 drawer), CRM agencies
-  (`/admin/tenants/agencies`), Data erasure (`/admin/tenants/data-erasure`), and a hidden slot Plans & add-ons
-  (`/admin/tenants/plans`, shown once its page ships with the tenant control plane);
+  (`/admin/tenants/agencies`), Data erasure (`/admin/tenants/data-erasure`), Plans & add-ons
+  (`/admin/tenants/plans`, AA-1028 R1 slice 3: the plan catalogue, see "Tenant control plane");
 - **AA Catalogue** — Upload (S0), Rewrite (S1), Review Queue, Master Content, Atoms & routes (`/admin/atom-curation`),
   Places, Photos, Facts, Supply copy, AA content, SEO Intelligence, Settings;
 - **Tenant content QA** — Content quality, Content Trace, Review log, Slate (`/admin/tenant-qa/*`, admin only);
@@ -2403,10 +2404,10 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
   `plan_tier` (`shared.plan.tier`), moved on a tier change, canceled with the add-ons on offboarding / closed, active
   again on restore. The admin routes write no subscription themselves.
 - The resolver `shared.v_tenant_entitlement_resolved` (live): override > `shared.tenant_ai_budget` (as the
-  `ai.budget_usd_monthly` override, until slice 3 retires that table; the gateway still reads it directly) > the plan
-  of a live subscription. `shared.tenant_entitlement` is its materialisation, written only by
-  `shared.tenant_entitlement_sync(tenant)`, which triggers on every input call; `shared.tenant_entitlement_sync_due()`
-  re-syncs expired overrides (the daily tick, slice 2). `shared.v_tenant_entitlement_v1` is the contract view.
+  `ai.budget_usd_monthly` override; the table is not retired yet) > the plan of a live subscription.
+  `shared.tenant_entitlement` is its materialisation, written only by `shared.tenant_entitlement_sync(tenant)`, which
+  triggers on every input call; `shared.tenant_entitlement_sync_due()` re-syncs expired overrides (called by the hourly
+  `tenant_account_tick`, slice 3). `shared.v_tenant_entitlement_v1` is the contract view.
 - `shared.tenant_account_event`: the append-only feed, written only through `shared.tenant_account_emit()` (the
   writer's label from the transaction setting `aa.actor`, never served). A new writer of `shared.tenants`,
   `tenant_subscription`, `tenant_entitlement_override`, `plan_feature` or `tenant_ai_budget` needs the CIS 353 grants
@@ -2424,8 +2425,7 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
   (`services/tenant_account/provision.py`, `services/jobs/tenant_provision_job.py`, routes in
   `api/routers/admin_tenant_provision.py`, admin role, `tenant.write`): `POST /admin/tenants/provision` creates a tenant
   (the same rows as `POST /admin/tenants`, no API key: staff issue it with generate-key) with its content subscription
-  (the 355 bridge, active; `trial_days` answers 422 `trial_not_supported_yet` until the slice 3 trial-end tick, since
-  nothing would end the trial) and optional crm / tripplanner add-ons;
+  (the 355 bridge, active, or trialing with `trial_days` since slice 3) and optional crm / tripplanner add-ons;
   `POST /admin/tenants/{id}/provision` adds or changes add-ons of an existing tenant; `GET
   /admin/tenants/provision/{job_id}` reads the job. Idempotent per `request_key` (job key `tenant_provision:<key>`; the
   database steps are one transaction that writes the audit row naming the key, so a retry after a commit returns the
@@ -2438,10 +2438,34 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
 - Platform › Agencies shows the CRM's allowed features read-only (crm.ops.v1 1.11: the CRM refuses the L1 write with
   409 `entitlements_managed_by_cis`; they follow the tenant's CRM subscription and overrides here).
 
-Not yet: the Tenants admin pages (Directory, Subscription tab, Plans: the saga has no UI yet), enforcement from
-entitlements inside CIS (the hard-coded `PLAN_LIMITS`, the 10/10/50 quota ledger and the UI `PLAN_OPTIONS` still decide
-today), the daily tick that calls `tenant_entitlement_sync_due()`, and the Dev guard that refuses real tenants except
-the pilot.
+**Slice 3** (`docs/implementation-notes/AA-1028-l9-r1-slice3.md`):
+- **Plans & add-ons** (`/admin/tenants/plans`; API `api/routers/admin_plans.py`, rules
+  `services/tenant_account/plans.py`): list / create / edit / retire plans and their feature rows, admin only,
+  versioned (`shared.plan.version`, a stale write is 409 `version_conflict`), audited (`plan.created` / `.updated` /
+  `.retired`, before / after). An edit re-syncs every subscriber at once; a retired plan takes no new subscription,
+  current subscribers keep it. Product, key and tier never change; a tier plan must give `content.rate_limit_rpm`.
+- **Tenant 360 › Subscription** (`frontend/app/admin/tenants/_components/Tenant360Subscription.tsx`; API
+  `api/routers/admin_tenant_subscription.py`, `services/tenant_account/subscription.py`): subscriptions, the resolved
+  entitlements with their source, overrides (PUT / DELETE `…/entitlement-overrides/{key}`, reason required, optional
+  end, audited `tenant.entitlement_override_set` / `_removed`; `enabled = false` is how staff take a feature away),
+  add-ons through the saga (attach / change, and `POST /admin/tenants/{id}/provision/cancel`, saga mode `detach`).
+- **Trials**: the saga's `trial_days` (1-60) starts the account in `trial` and the subscriptions `trialing`; the hourly
+  job `tenant_account_tick` (`services/tenant_account/lifecycle.py`, queued by the api's ops sampler, key per UTC hour,
+  `TENANT_ACCOUNT_TICK=off` stops it) moves an ended trial to `active` (finance recorded `paid_through` covering
+  today) or `past_due` (grace, service goes on) and the account out of `trial`, calls
+  `tenant_entitlement_sync_due()`, and reports a pilot past its end (no change).
+- **No hard-coded plans**: `PLAN_LIMITS`, the ACPv1 quota ledger write (10/10/50, no reader) and the UI
+  `PLAN_OPTIONS` / `PLAN_CHOICES` are gone; RPM per tier, the rewrite quota and the UI tier choices read the plans /
+  entitlements (`useContentTiers`: the live public content plans).
+- **AI budget = the entitlement** (`shared/cost_guard.py`): the gateway's tenant budget is `ai.budget_usd_monthly`
+  (thresholds from the AA-1016 row if any, else alert 80 % / approval 100 % / hard stop), and `adhoc_*` stages count as
+  tenant spend like T-stages (`shared/llm_client/tenant_budget.is_tenant_spend_stage`).
+- **Dev guard** (root ADR 0019 d16, `services/tenant_account/dev_guard.py`): on Dev (`ENVIRONMENT` exactly `dev`) a new
+  tenant defaults to `demo` (synthetic) in `POST /admin/tenants` and the saga; an `agency` is refused unless the saga
+  creates it as the one pilot (`pilot_weeks` 1-8). Existing rows keep their kind.
+
+Not yet: retiring `shared.tenant_ai_budget` into overrides, the billing tick (`past_due` -> `suspended` after the
+grace), moving the limiter onto the entitlement (it still reads `shared.tenants.rate_limit_rpm`, mirrored by CIS 356).
 
 ### Tenant lifecycle (AA-797)
 
