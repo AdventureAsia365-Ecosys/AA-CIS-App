@@ -60,7 +60,9 @@ LATER = [os.path.join(os.path.dirname(MIGRATION), f) for f in
           "340_spend_budget_central_llm_scopes.sql",
           # AA-1025 B3 / B5: 342's tables reference the connection table (dropped by _undo); 343 re-sets the vendor
           # API balance source on the rows 322 re-creates
-          "342_provider_health_and_credit_ledger.sql", "343_vendor_api_balance_from_ledger.sql")]
+          "342_provider_health_and_credit_ledger.sql", "343_vendor_api_balance_from_ledger.sql",
+          # AA-1025 H2: 348's capacity table references the connection table (dropped by _undo)
+          "348_llm_capacity_limit.sql")]
 # The LLM connection kinds of 304 (322 adds typesafe, dataforseo, geoapify and bedrock_guardrails rows).
 LLM_KINDS = ("bedrock", "anthropic", "openai", "azure_openai", "mock")
 
@@ -95,6 +97,8 @@ def cur():
 
 def _undo(c):
     """The pre-304 state: no new tables, no capabilities column, the 181 / 169 / 226 CHECKs, 304 unregistered."""
+    c.execute("DROP TABLE IF EXISTS shared.llm_capacity_limit")           # 348: references the connection table
+    c.execute("DELETE FROM shared.schema_versions WHERE version = '348'")
     c.execute("DROP TABLE IF EXISTS shared.provider_credit_topup")        # 342: references the connection table
     c.execute("DROP TABLE IF EXISTS shared.provider_health")              # 342: references the connection table
     c.execute("DELETE FROM shared.schema_versions WHERE version IN ('342', '343')")
