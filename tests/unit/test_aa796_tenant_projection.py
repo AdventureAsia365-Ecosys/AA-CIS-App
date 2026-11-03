@@ -14,6 +14,9 @@ import pytest
 from api.routers import _tenant_projection as tp
 from api.routers import v1_marketplace, v1_tours
 
+# AA-1028 R1 slice 3: the plan readers that replaced PLAN_LIMITS answer with the CIS 355 seed (tests/unit/conftest.py)
+pytestmark = pytest.mark.usefixtures("seeded_plans")
+
 TENANT = {"sub": str(uuid.uuid4())}
 NOW = dt.datetime(2026, 10, 14, 9, 0, tzinfo=dt.timezone.utc)
 PT_ID = uuid.uuid4()

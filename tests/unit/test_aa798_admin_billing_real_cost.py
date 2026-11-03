@@ -21,6 +21,9 @@ from fastapi import HTTPException
 
 from api.routers import _billing, admin, admin_pipeline, admin_overview, admin_settings, v1_tours
 
+# AA-1028 R1 slice 3: the plan readers that replaced PLAN_LIMITS answer with the CIS 355 seed (tests/unit/conftest.py)
+pytestmark = pytest.mark.usefixtures("seeded_plans")
+
 _SECRET = "test-admin-secret"
 TENANT_ID = str(uuid.uuid4())
 MONTH = datetime(2026, 10, 1, tzinfo=timezone.utc)
