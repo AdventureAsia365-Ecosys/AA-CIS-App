@@ -128,6 +128,32 @@ def response_headers(mark: dict) -> dict:
     return headers
 
 
+def version_mark(edit_source: Optional[str], created_at: Any) -> dict:
+    """The mark of a T2 tenant tour version (`tenant_tour_versions.edit_source` already records who wrote it):
+    `ai_generated` / `re_rewrite` rows are a model's rewrite made at `created_at`; a `tenant_edit` row is a person's
+    edit of earlier text (itself an AI rewrite of AI-written Master text), so it is AI-assisted and human-edited,
+    with no generation time of its own."""
+    edited = edit_source == "tenant_edit"
+    return {
+        "ai_generated": True,
+        "generator": GENERATOR,
+        "model": None,
+        "generated_at": None if edited else _iso(created_at),
+        "human_edited": edited,
+    }
+
+
+def docx_properties(mark: dict) -> dict:
+    """Core properties of a DOCX download (python-docx `core_properties`): keywords + comments carry the mark."""
+    parts = [f"generator={mark.get('generator') or GENERATOR}"]
+    if mark.get("model"):
+        parts.append(f"model={mark['model']}")
+    if mark.get("generated_at"):
+        parts.append(f"generated-at={mark['generated_at']}")
+    parts.append(f"human-edited={'true' if mark.get('human_edited') else 'false'}")
+    return {"keywords": "ai-generated", "comments": "AI-generated content; " + "; ".join(parts)}
+
+
 async def writer_model(conn, request_id, piece_id) -> Optional[str]:
     """Best-effort: the writer model of the piece's final attempt, or None (never raises)."""
     try:
@@ -136,5 +162,6 @@ async def writer_model(conn, request_id, piece_id) -> Optional[str]:
         return None
 
 
-__all__ = ["GENERATOR", "IPTC_DIGITAL_SOURCE_TYPE", "PROVENANCE_KEY", "WRITER_MODEL_SQL", "html_attributes",
-           "html_meta_tags", "piece_mark", "response_headers", "stamp", "writer_model"]
+__all__ = ["GENERATOR", "IPTC_DIGITAL_SOURCE_TYPE", "PROVENANCE_KEY", "WRITER_MODEL_SQL", "docx_properties",
+           "html_attributes", "html_meta_tags", "piece_mark", "response_headers", "stamp", "version_mark",
+           "writer_model"]

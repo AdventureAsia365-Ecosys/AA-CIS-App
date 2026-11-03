@@ -97,6 +97,10 @@ def project_version(row: Any) -> dict:
         out["status"] = tenant_version_status(out["status"])
     if "master_updated_at" in out:
         out["master_newer"] = master_newer(out["master_updated_at"], out.get("created_at"))
+    if "edit_source" in out:
+        # AA-1040 — the machine-readable AI mark of the version (EU AI Act Art. 50(2)), from its edit_source.
+        from services.acp_content_writing.ai_marking import version_mark
+        out["ai"] = version_mark(out["edit_source"], out.get("created_at"))
     return out
 
 

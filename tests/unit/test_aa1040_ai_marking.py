@@ -235,3 +235,57 @@ async def test_export_route_sends_the_mark_as_headers():
     assert html.headers["x-ai-generated"] == "true" and html.headers["x-ai-model"] == "writer-model-x"
     assert b'<article data-ai-generated="true"' in html.body and b'<meta name="ai-generated"' in html.body
     assert text.headers["x-ai-generated"] == "true" and text.body == MD.encode()
+
+
+# ── 6. T2 tenant tour versions (AA-1040) ──────────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("source,edited", [("ai_generated", False), ("re_rewrite", False), ("tenant_edit", True)])
+def test_version_mark_follows_edit_source(source, edited):
+    m = ai_marking.version_mark(source, CREATED)
+    assert m["ai_generated"] is True and m["human_edited"] is edited
+    assert m["generated_at"] == (None if edited else CREATED.isoformat())
+
+
+def test_project_version_carries_the_mark_and_no_hidden_key():
+    from api.routers._tenant_projection import forbidden_keys, project_version
+    out = project_version({"id": uuid.uuid4(), "status": "ai_generated", "edit_source": "tenant_edit",
+                           "created_at": CREATED, "generation_meta": {"x": 1}})
+    assert out["ai"]["human_edited"] is True and "generation_meta" not in out
+    assert forbidden_keys(out) == []
+    assert "ai" not in project_version({"id": uuid.uuid4(), "status": "approved"})  # no edit_source selected
+
+
+def test_docx_properties_carry_the_mark():
+    props = ai_marking.docx_properties(ai_marking.version_mark("ai_generated", CREATED))
+    assert props["keywords"] == "ai-generated"
+    assert props["comments"].startswith("AI-generated content; generator=Adventure Asia Content studio")
+    assert f"generated-at={CREATED.isoformat()}" in props["comments"] and "human-edited=false" in props["comments"]
+
+
+@pytest.mark.asyncio
+async def test_docx_export_file_has_the_ai_properties():
+    import io
+    from docx import Document
+    from api.routers import v1_tours
+    row = {"version_number": 2, "rewritten_content": {"name": "Lantern Valley walk"}, "rewrite_language": "en-US",
+           "edit_source": "ai_generated", "created_at": CREATED, "tour_id": uuid.uuid4(), "aa_name": "Lantern Valley",
+           "aa_subtitle": "", "aa_summary": "A quiet walk.", "aa_highlights": "[]", "aa_itineraries": "",
+           "country": "Nowhereland", "duration": "2 days", "inclusions": None, "exclusions": None}
+    conn = MagicMock()
+    conn.fetchrow = AsyncMock(return_value=row)
+
+    class _Scoped:
+        async def __aenter__(self):
+            return conn, True
+
+        async def __aexit__(self, *a):
+            return False
+
+    request = MagicMock()
+    request.app.state.pool = MagicMock()
+    with patch.object(v1_tours, "acquire_scoped_conn", return_value=_Scoped()), \
+            patch.object(v1_tours, "write_audit_log", new=AsyncMock()):
+        resp = await v1_tours.export_version_docx(str(uuid.uuid4()), request, tenant={"sub": str(uuid.uuid4())})
+    body = b"".join([chunk async for chunk in resp.body_iterator])
+    props = Document(io.BytesIO(body)).core_properties
+    assert props.keywords == "ai-generated" and "generator=Adventure Asia Content studio" in props.comments

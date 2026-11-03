@@ -1219,6 +1219,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     tenant edit (no migration). `services/acp_content_writing/ai_marking.py` builds the mark: `piece["ai"]` in the
     tenant JSON, `data-ai-*` on the `<article>` and `<meta name="ai-*">` tags in exports and the WordPress post, the
     `X-AI-*` headers of a download. Facebook Page text posts have no API label (the mark stays in the piece).
+    T2 versions: `project_version()` adds `ai` from `edit_source` (`tenant_edit` = human-edited) and the DOCX download
+    carries it in its core properties (keywords `ai-generated`, comments).
     **A3 atomize is a job** (`a3_atomize`, one tour at a time), enqueued by publish
     (`process_export`) and by `POST /admin/atoms/atomize` (one job per tour).
   - **Recompute stage registry (AA-735 nac 3, ADR 0003 layer B + C)**: the platform-wide

@@ -36,6 +36,12 @@ carries a mark software can read. Deadline 02/12/2026 (root ADR 0019 d19).
 - **Facebook:** the Graph API Page feed has no AI label for a text post (Meta's "AI info" label is detected from
   image/video metadata or set in the app). The post text is not changed; the mark stays in the piece and its publish
   record. Per-platform notes in the register.
+- **T2 tenant tour versions** already record who wrote them (`tenant_tour_versions.edit_source`): `ai_generated` /
+  `re_rewrite` = a model's rewrite at `created_at`, `tenant_edit` = a person's edit of earlier (AI) text. No new
+  storage: `project_version()` adds `ai` (from `edit_source`, `created_at`) to every tenant read that selects
+  `edit_source` (`/v1/tours/my-versions`, `/v1/tours/versions/{id}` and its history, the pool's version list), and the
+  DOCX download writes the mark into the file's core properties (keywords `ai-generated`, comments with generator /
+  generated-at / human-edited). The model stays in the hidden `generation_meta` (not projected).
 - Default of `render_content_text_to_fragment/document` without `ai` stays byte for byte (AA-613 tests); every
   caller with a real piece passes it (export route, publish dispatch).
 
@@ -47,8 +53,11 @@ carries a mark software can read. Deadline 02/12/2026 (root ADR 0019 d19).
 - `export.py`: `ai=` on fragment / document. `dispatch.py`: `piece_ai_mark`, the blog post carries the mark.
 - `v1_publish._PUBLISH_PIECE_SQL`: `cp.created_at`, the provenance key. `v1_content_writing.export_piece`: marked
   HTML and `X-AI-*` headers.
+- `api/routers/_tenant_projection.project_version`: `ai` (T2). `v1_tours._EXPORT_VERSION_SQL` reads
+  `ttv.edit_source, ttv.created_at`; `export_version_docx` sets the DOCX core properties.
 - Tests: `tests/unit/test_aa1040_ai_marking.py`, `tests/integration/test_aa1040_ai_marking_sql.py`;
-  `test_aa916_capture_edits.TENANT_SAFE_KEYS` gains `ai`.
+  `test_aa916_capture_edits.TENANT_SAFE_KEYS` gains `ai`; `test_aa859_t2_version_detail_reads._OLD_EXPORT` gains the
+  two columns.
 
 ## Tradeoffs
 
