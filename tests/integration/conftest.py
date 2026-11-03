@@ -418,6 +418,10 @@ def _apply_schema(conn):
         # catalog recipe and needs 323 (skipped above). test_aa1027_migration_341 applies 323 + 341 the DB Migrate
         # way on the RDS-like state and undoes both at teardown.
         and not f.startswith('341')
+        # AA-1025 H1b (S265): 347 creates catalog.v_llm_app_profile_v1 (TripPlanner's app profile row) through the
+        # catalog recipe (needs 245's owners). test_aa1025_migration_347 applies it the DB Migrate way on the RDS-like
+        # state and undoes it at teardown.
+        and not f.startswith('347')
     ])
 
     for mf in migration_files:
