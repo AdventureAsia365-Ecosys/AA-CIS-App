@@ -29,6 +29,8 @@ SAMPLES = [
     ("admin", "POST", "/admin/tenants/{tenant_id}/generate-key", None),
     ("admin_tenant360", "GET", "/admin/tenants/{tenant_id}/cost", None),
     ("admin_tenant_provision", "POST", "/admin/tenants/{tenant_id}/provision", {}),
+    ("admin_tenant_subscription", "PUT", "/admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}", {}),
+    ("admin_plans", "POST", "/admin/plans", {}),
     ("admin_pipeline", "POST", "/admin/review-queue/{review_id}/approve", {}),
     ("admin_pipeline", "POST", "/admin/run-tour-async", {}),
     ("admin_pipeline", "POST", "/admin/brands", {}),

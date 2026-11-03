@@ -2,9 +2,11 @@
 ``shared.job`` (``services/jobs/tenant_provision_job.py``, rules in ``services/tenant_account/provision.py``).
 
 - ``POST /admin/tenants/provision``: a new tenant (name, slug, tier, posts per week, kind agency / demo) with its
-  content subscription and optional add-ons (crm, tripplanner), as one job. 202 with the job. ``trial_days`` is
-  refused for now (422 ``trial_not_supported_yet``): nothing ends a trial before the slice 3 trial-end tick.
+  content subscription and optional add-ons (crm, tripplanner), as one job. 202 with the job. ``trial_days`` (slice
+  3) starts the account in trial (the hourly ``tenant_account_tick`` ends it). On Dev the default kind is ``demo``;
+  an ``agency`` only as the one pilot (``pilot_weeks``, root ADR 0019 d16; ``services/tenant_account/dev_guard.py``).
 - ``POST /admin/tenants/{tenant_id}/provision``: add-ons for an existing tenant (or a new plan / seats for one).
+- ``POST /admin/tenants/{tenant_id}/provision/cancel``: cancel add-ons (slice 3, the revocation path).
 - ``GET /admin/tenants/provision/{job_id}``: the job's status, steps and result.
 
 Idempotent per ``request_key`` (the caller's, 8-64 characters): the same key twice returns the first job
@@ -47,16 +49,23 @@ class ProvisionCreateIn(BaseModel):
     slug: str = Field(..., pattern=r"^[a-z0-9](?:[a-z0-9-]{0,98}[a-z0-9])?$")
     plan_tier: Literal["starter", "growth", "business"]
     posts_per_week: int = Field(..., ge=1, le=14)
-    kind: Literal["agency", "demo"] = "agency"
-    trial_days: Optional[int] = Field(None, description="Not supported yet: any value answers 422 "
-                                      "trial_not_supported_yet (no job ends a trial before slice 3); the content "
-                                      "subscription starts active")
+    kind: Optional[Literal["agency", "demo"]] = Field(None, description="Default demo on Dev, agency elsewhere")
+    trial_days: Optional[int] = Field(None, ge=1, le=pv.TRIAL_DAYS_MAX,
+                                      description="The account starts in trial for this many days (the content "
+                                                  "subscription and the add-ons of this request trialing)")
+    pilot_weeks: Optional[int] = Field(None, ge=1, le=8, description="Dev only: the one pilot agency for this "
+                                                                     "many weeks (root ADR 0019 d16)")
     add_ons: list[AddOnIn] = Field(default_factory=list, max_length=2)
 
 
 class ProvisionAttachIn(BaseModel):
     request_key: str = Field(..., pattern=REQUEST_KEY_PATTERN)
     add_ons: list[AddOnIn] = Field(..., min_length=1, max_length=2)
+
+
+class ProvisionCancelIn(BaseModel):
+    request_key: str = Field(..., pattern=REQUEST_KEY_PATTERN)
+    products: list[Literal["crm", "tripplanner"]] = Field(..., min_length=1, max_length=2)
 
 
 class ProvisionJobOut(BaseModel):
@@ -133,6 +142,23 @@ async def provision_add_ons(
     _require_tenant_admin(x_admin_role)
     payload = {"request_key": body.request_key, "mode": "attach", "tenant_id": str(tenant_id),
                "add_ons": [a.model_dump() for a in body.add_ons], "requested_by": _actor_id(x_admin_user_id)}
+    return await _enqueue(request, payload)
+
+
+@router.post("/tenants/{tenant_id}/provision/cancel", status_code=202, response_model=ProvisionJobOut,
+             summary="Cancel add-on subscriptions of a tenant in one job")
+async def provision_cancel(
+    tenant_id: uuid.UUID,
+    body: ProvisionCancelIn,
+    request: Request,
+    x_admin_secret: str = Header(None),
+    x_admin_user_id: Optional[str] = Header(None),
+    x_admin_role: Optional[str] = Header(None),
+):
+    verify_admin_secret(x_admin_secret)
+    _require_tenant_admin(x_admin_role)
+    payload = {"request_key": body.request_key, "mode": "detach", "tenant_id": str(tenant_id),
+               "products": list(body.products), "requested_by": _actor_id(x_admin_user_id)}
     return await _enqueue(request, payload)
 
 

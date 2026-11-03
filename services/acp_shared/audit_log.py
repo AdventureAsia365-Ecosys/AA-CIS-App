@@ -123,6 +123,10 @@ class AdminTenantAuditAction:
     # AA-1028 R1 slice 2 — the tenant_provision saga added or changed add-on subscriptions of an existing tenant
     # (details: the request key, the steps and the resulting subscriptions; a create logs ONBOARD instead).
     SUBSCRIPTION_CHANGED = "tenant.subscription_changed"
+    # AA-1028 R1 slice 3 — Tenant 360 › Subscription: a per-tenant entitlement override set / removed (details: the
+    # feature key, before / after, whether it applies, the resolved value; services/tenant_account/subscription.py)
+    ENTITLEMENT_OVERRIDE_SET = "tenant.entitlement_override_set"
+    ENTITLEMENT_OVERRIDE_REMOVED = "tenant.entitlement_override_removed"
 
 
 async def write_audit_log(

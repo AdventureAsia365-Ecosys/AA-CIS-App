@@ -43,6 +43,10 @@
     "capability": "content.write",
     "module": "api.routers.admin_pipeline"
   },
+  "DELETE /admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_tenant_subscription"
+  },
   "GET /admin/a4/content-log": {
     "capability": "tenant.read",
     "module": "api.routers.admin_a4"
@@ -479,6 +483,14 @@
     "capability": null,
     "module": "api.routers.admin_places"
   },
+  "GET /admin/plans": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_plans"
+  },
+  "GET /admin/plans/features": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_plans"
+  },
   "GET /admin/platform/alert-recipients": {
     "capability": "ops.read",
     "module": "api.routers.admin_alert_recipients"
@@ -658,6 +670,10 @@
   "GET /admin/tenants/{tenant_id}/rewrite-activity": {
     "capability": "tenant.read",
     "module": "api.routers.admin"
+  },
+  "GET /admin/tenants/{tenant_id}/subscription": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_tenant_subscription"
   },
   "GET /admin/tenants/{tenant_id}/usage": {
     "capability": "tenant.read",
@@ -874,6 +890,10 @@
   "PATCH /admin/master/{tour_id}/trash": {
     "capability": "master.admin",
     "module": "api.routers.admin"
+  },
+  "PATCH /admin/plans/{plan_key}": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_plans"
   },
   "PATCH /admin/platform/staff/{staff_id}/roles": {
     "capability": "staff.write",
@@ -1155,6 +1175,14 @@
     "capability": "ops.write",
     "module": "api.routers.admin_places"
   },
+  "POST /admin/plans": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_plans"
+  },
+  "POST /admin/plans/{plan_key}/retire": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_plans"
+  },
   "POST /admin/platform/alert-recipients": {
     "capability": "alerts.write",
     "module": "api.routers.admin_alert_recipients"
@@ -1355,6 +1383,10 @@
     "capability": "tenant.write",
     "module": "api.routers.admin_tenant_provision"
   },
+  "POST /admin/tenants/{tenant_id}/provision/cancel": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_tenant_provision"
+  },
   "POST /admin/tenants/{tenant_id}/restore": {
     "capability": "tenant.write",
     "module": "api.routers.admin"
@@ -1542,5 +1574,9 @@
   "PUT /admin/tenants/{tenant_id}/config": {
     "capability": "tenant.write",
     "module": "api.routers.admin"
+  },
+  "PUT /admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin_tenant_subscription"
   }
 }
