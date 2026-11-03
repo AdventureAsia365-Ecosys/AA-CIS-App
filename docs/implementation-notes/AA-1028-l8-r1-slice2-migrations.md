@@ -19,6 +19,13 @@ Lane l8-r1-slice2 of S266. The full slice notes are in `AA-1028-l8-r1-slice2.md`
 - `test_aa1028_migrations_353_355::test_plan_defaults_and_trial`: a business subscription on a tenant whose own RPM is
   60 now resolves `content.rate_limit_rpm` to the override 60 (356), and to the plan's 1,000 once the column says 1,000.
 
+- `tests/integration/conftest.py`: `APP_USER_356_GRANTS`, prepended to 356 in the replay: CI's legacy `app_user` is a
+  writer of `shared.tenants` there (Dev has no such role) and the strict guard refused it (the 355 guard's one-call
+  check had let it through).
+- `test_aa1017_migration_320_321`: its teardown drops `shared.tenant_ai_budget` CASCADE and re-applies 353 / 355; 356
+  joins `LATER_ON_TENANT_AI_BUDGET` (with the app_user prelude), or every later module saw 353's resolver (the lesson
+  "a new migration that restates an object a replay test rebuilds goes into that test's LATER list").
+
 ## Should know
 
 - Dev path: Migration Apply stops at the pending CIS 336 (out of order), so a person applies 356 then 357 with
