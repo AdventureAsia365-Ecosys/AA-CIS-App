@@ -55,6 +55,16 @@
                                                         own token, crm-platform-admin); a refusal there changes
                                                         nothing here.                                         ai.admin
 
+  GET    /admin/ai-gateway/capacity                 AA-1025 H2: the TPM limits and prod guards
+                                                        (shared.llm_capacity_limit), the claim hold now (prod guard
+                                                        circuits, bulk pause, held lines and job kinds) and this
+                                                        api task's TPM windows.                             spend.read
+  PUT    /admin/ai-gateway/capacity/{connection_key}/{model_key}   create or replace one limit row (model_key * =
+                                                        the whole connection; audited llm_capacity_limit_set).
+                                                                                                              ai.admin
+  DELETE /admin/ai-gateway/capacity/{connection_key}/{model_key}   remove it: no limit there any more (audited
+                                                        llm_capacity_limit_cleared).                         ai.admin
+
 $0: database reads (and one CRM read) and the tenant budget writes; no provider is called. The other caps are edited
 through their existing write routes (PUT /admin/budgets/{provider}/{scope}, PATCH /admin/llm-connections/{key}).
 AA-1016 (C4): the tenant budget writes answer 503 when migration 321 (the table) is not applied, 404 for an unknown
@@ -77,7 +87,7 @@ from api.services import (ai_gateway, ai_gateway_calls, ai_gateway_experiments, 
                           tenant_ai_budget)
 from services.acp_shared.audit_log import write_audit_log
 from shared import provider_credit
-from shared.llm_client import app_profile
+from shared.llm_client import app_profile, capacity
 
 router = APIRouter(prefix="/admin/ai-gateway", tags=["admin-ai-gateway"],
                    dependencies=[Depends(verify_admin_secret), Depends(staff_policy)])
@@ -474,3 +484,79 @@ async def patch_app_profile(body: AppProfilePatch, request: Request, app: str = 
         raise HTTPException(status_code=422, detail=str(e))
     except app_profile.AppProfileUnavailable:
         raise HTTPException(status_code=503, detail=_PROFILE_MISSING)
+
+
+# ── AA-1025 H2: capacity limits (TPM per connection / model, line shares, prod guards) ──────────────────────────────
+
+_CONNECTION_KEY = Path(..., pattern=r"^[a-z0-9][a-z0-9-]{1,62}$")
+_MODEL_KEY = Path(..., pattern=r"^(\*|[a-z0-9][a-z0-9._-]{0,99})$")
+_CAPACITY_MISSING = "the capacity limits need migration 348"
+
+
+class CapacityLimitBody(BaseModel):
+    """The whole limit row (a PUT replaces it). tpm_limit null = no token limit at this level (then prod_guard must be
+    true); bulk_pct / dev_pct = the share of tpm_limit the bulk / dev line may hold. The limits are migration 348's
+    CHECKs."""
+    model_config = ConfigDict(extra="forbid")
+    tpm_limit: Optional[int] = Field(None, ge=1, le=capacity.TPM_MAX)
+    bulk_pct: int = Field(50, ge=1, le=100)
+    dev_pct: Optional[int] = Field(None, ge=1, le=100)
+    prod_guard: bool = False
+    notes: Optional[str] = Field(None, max_length=capacity.NOTES_MAX)
+
+
+def _kinds_registered() -> list[str]:
+    from shared.jobs.registry import kinds
+    from shared.jobs.worker import load_kinds
+    load_kinds()
+    return sorted(kinds())
+
+
+@router.get("/capacity", summary="TPM limits, line shares and prod guards; the job claim hold now ($0)")
+async def get_capacity(request: Request) -> dict:
+    pool = request.app.state.pool
+    try:
+        async with pool.acquire() as conn:
+            rows = await capacity.read_all(conn)
+    except capacity.CapacityUnavailable:
+        raise HTTPException(status_code=503, detail=_CAPACITY_MISSING)
+    capacity.invalidate()
+    hold = await capacity.claim_hold(pool)
+    registered = _kinds_registered()
+    return {
+        "limits": [r.as_dict() for r in rows],
+        "hold": hold.as_dict(),
+        "held_kinds": sorted(capacity.held_kinds(hold.lines(), registered)),
+        "kind_lines": {k: capacity.line_of_kind(k) for k in registered},
+        "wait_s": dict(capacity.WAIT_S),
+        "window_s": capacity.WINDOW_S,
+        # The limiter is per process: these are this api task's windows; each worker task keeps its own.
+        "windows_this_task": capacity.windows_snapshot(),
+    }
+
+
+@router.put("/capacity/{connection_key}/{model_key}", summary="Set one TPM limit / prod guard (audited)")
+async def put_capacity(body: CapacityLimitBody, request: Request, connection_key: str = _CONNECTION_KEY,
+                       model_key: str = _MODEL_KEY, x_admin_user_id: Optional[str] = Header(None)) -> dict:
+    try:
+        return await capacity.put(request.app.state.pool, connection_key, model_key, body.model_dump(),
+                                  actor=_actor(x_admin_user_id))
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except capacity.CapacityUnavailable:
+        raise HTTPException(status_code=503, detail=_CAPACITY_MISSING)
+
+
+@router.delete("/capacity/{connection_key}/{model_key}", summary="Remove one TPM limit / prod guard (audited)")
+async def delete_capacity(request: Request, connection_key: str = _CONNECTION_KEY, model_key: str = _MODEL_KEY,
+                          x_admin_user_id: Optional[str] = Header(None)) -> dict:
+    try:
+        gone = await capacity.delete(request.app.state.pool, connection_key, model_key,
+                                     actor=_actor(x_admin_user_id))
+    except capacity.CapacityUnavailable:
+        raise HTTPException(status_code=503, detail=_CAPACITY_MISSING)
+    if not gone:
+        raise HTTPException(status_code=404, detail="no such limit")
+    return {"deleted": True, "connection_key": connection_key, "model_key": model_key}

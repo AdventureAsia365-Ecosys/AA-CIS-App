@@ -1122,6 +1122,64 @@
         "title": "CandidateEdit",
         "type": "object"
       },
+      "CapacityLimitBody": {
+        "additionalProperties": false,
+        "description": "The whole limit row (a PUT replaces it). tpm_limit null = no token limit at this level (then prod_guard must be\ntrue); bulk_pct / dev_pct = the share of tpm_limit the bulk / dev line may hold. The limits are migration 348's\nCHECKs.",
+        "properties": {
+          "bulk_pct": {
+            "default": 50,
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Bulk Pct",
+            "type": "integer"
+          },
+          "dev_pct": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dev Pct"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "prod_guard": {
+            "default": false,
+            "title": "Prod Guard",
+            "type": "boolean"
+          },
+          "tpm_limit": {
+            "anyOf": [
+              {
+                "maximum": 100000000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tpm Limit"
+          }
+        },
+        "title": "CapacityLimitBody",
+        "type": "object"
+      },
       "CatalogAaAppliesTo": {
         "additionalProperties": false,
         "properties": {
@@ -7474,6 +7532,21 @@
         "title": "WaveCreate",
         "type": "object"
       },
+      "WavePause": {
+        "properties": {
+          "reason": {
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "WavePause",
+        "type": "object"
+      },
       "WriteBody": {
         "properties": {
           "cta": {
@@ -9595,6 +9668,287 @@
           }
         },
         "summary": "Every logged paid call, newest first, across the CIS and CRM ledgers (read-only, $0)",
+        "tags": [
+          "admin-ai-gateway"
+        ]
+      }
+    },
+    "/admin/ai-gateway/capacity": {
+      "get": {
+        "operationId": "get_capacity_admin_ai_gateway_capacity_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Capacity Admin Ai Gateway Capacity Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "TPM limits, line shares and prod guards; the job claim hold now ($0)",
+        "tags": [
+          "admin-ai-gateway"
+        ]
+      }
+    },
+    "/admin/ai-gateway/capacity/{connection_key}/{model_key}": {
+      "delete": {
+        "operationId": "delete_capacity_admin_ai_gateway_capacity__connection_key___model_key__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_key",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{1,62}$",
+              "title": "Connection Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "model_key",
+            "required": true,
+            "schema": {
+              "pattern": "^(\\*|[a-z0-9][a-z0-9._-]{0,99})$",
+              "title": "Model Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Delete Capacity Admin Ai Gateway Capacity  Connection Key   Model Key  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove one TPM limit / prod guard (audited)",
+        "tags": [
+          "admin-ai-gateway"
+        ]
+      },
+      "put": {
+        "operationId": "put_capacity_admin_ai_gateway_capacity__connection_key___model_key__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_key",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{1,62}$",
+              "title": "Connection Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "model_key",
+            "required": true,
+            "schema": {
+              "pattern": "^(\\*|[a-z0-9][a-z0-9._-]{0,99})$",
+              "title": "Model Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CapacityLimitBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Put Capacity Admin Ai Gateway Capacity  Connection Key   Model Key  Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set one TPM limit / prod guard (audited)",
         "tags": [
           "admin-ai-gateway"
         ]
@@ -36451,6 +36805,97 @@
         ]
       }
     },
+    "/admin/waves/{wave_id}/pause": {
+      "post": {
+        "operationId": "pause_wave_admin_waves__wave_id__pause_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wave_id",
+            "required": true,
+            "schema": {
+              "title": "Wave Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "title": "X-Admin-User-Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WavePause"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Pause an open wave (its bulk jobs wait in the queue)",
+        "tags": [
+          "admin-waves"
+        ]
+      }
+    },
     "/admin/waves/{wave_id}/report": {
       "get": {
         "operationId": "wave_report_endpoint_admin_waves__wave_id__report_get",
@@ -36518,6 +36963,87 @@
           }
         },
         "summary": "Wave report (4 columns, states, Jev coverage, cost)",
+        "tags": [
+          "admin-waves"
+        ]
+      }
+    },
+    "/admin/waves/{wave_id}/resume": {
+      "post": {
+        "operationId": "resume_wave_admin_waves__wave_id__resume_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wave_id",
+            "required": true,
+            "schema": {
+              "title": "Wave Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "title": "X-Admin-User-Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resume a paused wave",
         "tags": [
           "admin-waves"
         ]

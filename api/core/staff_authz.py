@@ -184,6 +184,9 @@ POLICY: dict[tuple[str, str], str] = {
     ("POST", "/admin/ai-gateway/credit/check"): SPEND_WRITE,   # AA-1025 B5: the low-credit check now (bell + e-mail)
     ("GET", "/admin/ai-gateway/app-profiles"): SPEND_READ,           # AA-1025 H1a: the app profile of every app
     ("PATCH", "/admin/ai-gateway/app-profiles/{app}"): AI_ADMIN,     # AA-1025 H1a: AI on / off per app, audited
+    ("GET", "/admin/ai-gateway/capacity"): SPEND_READ,               # AA-1025 H2: TPM limits, lines, claim hold
+    ("PUT", "/admin/ai-gateway/capacity/{connection_key}/{model_key}"): AI_ADMIN,     # AA-1025 H2: audited
+    ("DELETE", "/admin/ai-gateway/capacity/{connection_key}/{model_key}"): AI_ADMIN,  # AA-1025 H2: audited
     # ── admin_job_runner — job control + retention
     ("POST", "/admin/job-runner/jobs/{job_id}/cancel"): OPS_WRITE,
     ("POST", "/admin/job-runner/jobs/{job_id}/retry"): OPS_WRITE,
@@ -362,6 +365,8 @@ POLICY: dict[tuple[str, str], str] = {
     # ── admin_waves — rerun waves (check is the ops-probe Lambda, a MACHINE_ROUTE)
     ("POST", "/admin/waves"): OPS_WRITE,
     ("POST", "/admin/waves/{wave_id}/close"): OPS_WRITE,
+    ("POST", "/admin/waves/{wave_id}/pause"): OPS_WRITE,    # AA-1025 H2: its bulk jobs wait in the queue
+    ("POST", "/admin/waves/{wave_id}/resume"): OPS_WRITE,   # AA-1025 H2
     ("POST", "/admin/waves/check"): OPS_WRITE,
     ("GET", "/admin/waves"): OPS_READ,
     ("GET", "/admin/waves/{wave_id}/report"): OPS_READ,   # incl. the wave's LLM cost
