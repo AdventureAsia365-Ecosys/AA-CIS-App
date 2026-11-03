@@ -340,3 +340,62 @@ class MembershipEventPage(_CatalogModel):
     """GET /tenant/membership/v1/events — oldest first; ``next_cursor`` is always set (store it and send it back)."""
     items: List[MembershipEvent]
     next_cursor: str
+
+
+# ── tenant.entitlements.v1 (AA-1028 R1) ───────────────────────────────────────────────────────────────────────────────
+
+_AccountStatus = Literal["lead", "applied", "trial", "active", "past_due", "suspended", "offboarding", "closed"]
+_SuspendReason = Optional[Literal["billing", "compliance", "security", "tenant_request"]]
+_SubscriptionStatus = Literal["trialing", "active", "past_due", "unpaid", "canceled", "paused"]
+_Product = Literal["content", "crm", "tripplanner"]
+_FeatureProduct = Literal["content", "crm", "tripplanner", "platform"]
+
+
+class TenantSubscription(_CatalogModel):
+    product: _Product
+    plan_key: str
+    status: _SubscriptionStatus
+    trial_ends_at: Optional[str] = None
+    seats: Optional[int] = None
+
+
+class TenantEntitlement(_CatalogModel):
+    """One entitled feature key; ``limit`` is a decimal string, None = no limit (always None for a flag)."""
+    feature_key: str
+    product: _FeatureProduct
+    kind: Literal["flag", "limit", "seats", "policy"]
+    unit: Optional[Literal["count_month", "usd_month", "rpm", "seats", "days"]] = None
+    limit: Optional[str] = None
+    source: Literal["plan", "trial", "override"]
+    expires_at: Optional[str] = None
+
+
+class TenantAccountBody(_CatalogModel):
+    """GET /tenant/v1/tenants/{tenant_id}/account — the tenant's account, subscriptions and entitlements (ETag, 304).
+    Check feature keys, never plan names; refuse every feature while ``in_service`` is false."""
+    tenant_id: str
+    account_status: _AccountStatus
+    suspend_reason: _SuspendReason = None
+    in_service: bool
+    kind: Literal["agency", "demo", "internal"]
+    is_pilot: bool
+    data_region: Literal["us", "eu"]
+    time_zone: str
+    subscriptions: List[TenantSubscription]
+    entitlements: List[TenantEntitlement]
+    as_of: str
+
+
+class TenantAccountEvent(_CatalogModel):
+    event_id: str
+    cursor: str
+    type: Literal["account.status_changed", "subscription.changed", "entitlement.changed"]
+    occurred_at: str
+    tenant_id: str
+    change: dict
+
+
+class TenantAccountEventPage(_CatalogModel):
+    """GET /tenant/v1/account-events — oldest first; ``next_cursor`` is always set (store it and send it back)."""
+    items: List[TenantAccountEvent]
+    next_cursor: str

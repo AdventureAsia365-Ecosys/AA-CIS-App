@@ -6290,6 +6290,176 @@
         "title": "SyncRequest",
         "type": "object"
       },
+      "TenantAccountBody": {
+        "additionalProperties": false,
+        "description": "GET /tenant/v1/tenants/{tenant_id}/account — the tenant's account, subscriptions and entitlements (ETag, 304).\nCheck feature keys, never plan names; refuse every feature while ``in_service`` is false.",
+        "properties": {
+          "account_status": {
+            "enum": [
+              "lead",
+              "applied",
+              "trial",
+              "active",
+              "past_due",
+              "suspended",
+              "offboarding",
+              "closed"
+            ],
+            "title": "Account Status",
+            "type": "string"
+          },
+          "as_of": {
+            "title": "As Of",
+            "type": "string"
+          },
+          "data_region": {
+            "enum": [
+              "us",
+              "eu"
+            ],
+            "title": "Data Region",
+            "type": "string"
+          },
+          "entitlements": {
+            "items": {
+              "$ref": "#/components/schemas/TenantEntitlement"
+            },
+            "title": "Entitlements",
+            "type": "array"
+          },
+          "in_service": {
+            "title": "In Service",
+            "type": "boolean"
+          },
+          "is_pilot": {
+            "title": "Is Pilot",
+            "type": "boolean"
+          },
+          "kind": {
+            "enum": [
+              "agency",
+              "demo",
+              "internal"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "subscriptions": {
+            "items": {
+              "$ref": "#/components/schemas/TenantSubscription"
+            },
+            "title": "Subscriptions",
+            "type": "array"
+          },
+          "suspend_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "billing",
+                  "compliance",
+                  "security",
+                  "tenant_request"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suspend Reason"
+          },
+          "tenant_id": {
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "time_zone": {
+            "title": "Time Zone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenant_id",
+          "account_status",
+          "in_service",
+          "kind",
+          "is_pilot",
+          "data_region",
+          "time_zone",
+          "subscriptions",
+          "entitlements",
+          "as_of"
+        ],
+        "title": "TenantAccountBody",
+        "type": "object"
+      },
+      "TenantAccountEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "change": {
+            "additionalProperties": true,
+            "title": "Change",
+            "type": "object"
+          },
+          "cursor": {
+            "title": "Cursor",
+            "type": "string"
+          },
+          "event_id": {
+            "title": "Event Id",
+            "type": "string"
+          },
+          "occurred_at": {
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "tenant_id": {
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "account.status_changed",
+              "subscription.changed",
+              "entitlement.changed"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_id",
+          "cursor",
+          "type",
+          "occurred_at",
+          "tenant_id",
+          "change"
+        ],
+        "title": "TenantAccountEvent",
+        "type": "object"
+      },
+      "TenantAccountEventPage": {
+        "additionalProperties": false,
+        "description": "GET /tenant/v1/account-events — oldest first; ``next_cursor`` is always set (store it and send it back).",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TenantAccountEvent"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "title": "Next Cursor",
+            "type": "string"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "TenantAccountEventPage",
+        "type": "object"
+      },
       "TenantBrandIdentityUpdate": {
         "description": "AA-557 J.24 — same field set as the tenant-facing `POST /admin/brand-identity`\n(admin_pipeline.py's `BrandIdentityUpdate`), duplicated here rather than imported: that\nendpoint resolves its own tenant_id from a tenant JWT-or-AA-internal-fallback\n(`_resolve_brand_tenant_id`) with no path for \"admin editing an EXPLICIT other tenant's\nbrand\" — this endpoint exists specifically to give Admin's Tenant→Brand tab that write path\nonto the exact same `shared.tenant_brand_rules` row (2 UIs, 1 data source, per the issue's\nown requirement), not a second copy of the schema.",
         "properties": {
@@ -6532,6 +6702,93 @@
           "posts_per_week"
         ],
         "title": "TenantConfigRequest",
+        "type": "object"
+      },
+      "TenantEntitlement": {
+        "additionalProperties": false,
+        "description": "One entitled feature key; ``limit`` is a decimal string, None = no limit (always None for a flag).",
+        "properties": {
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "feature_key": {
+            "title": "Feature Key",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "flag",
+              "limit",
+              "seats",
+              "policy"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit"
+          },
+          "product": {
+            "enum": [
+              "content",
+              "crm",
+              "tripplanner",
+              "platform"
+            ],
+            "title": "Product",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "plan",
+              "trial",
+              "override"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "enum": [
+                  "count_month",
+                  "usd_month",
+                  "rpm",
+                  "seats",
+                  "days"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          }
+        },
+        "required": [
+          "feature_key",
+          "product",
+          "kind",
+          "source"
+        ],
+        "title": "TenantEntitlement",
         "type": "object"
       },
       "TenantFact": {
@@ -6781,6 +7038,65 @@
           "plan_tier"
         ],
         "title": "TenantSession",
+        "type": "object"
+      },
+      "TenantSubscription": {
+        "additionalProperties": false,
+        "properties": {
+          "plan_key": {
+            "title": "Plan Key",
+            "type": "string"
+          },
+          "product": {
+            "enum": [
+              "content",
+              "crm",
+              "tripplanner"
+            ],
+            "title": "Product",
+            "type": "string"
+          },
+          "seats": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seats"
+          },
+          "status": {
+            "enum": [
+              "trialing",
+              "active",
+              "past_due",
+              "unpaid",
+              "canceled",
+              "paused"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "trial_ends_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trial Ends At"
+          }
+        },
+        "required": [
+          "product",
+          "plan_key",
+          "status"
+        ],
+        "title": "TenantSubscription",
         "type": "object"
       },
       "TopupCreate": {
@@ -41641,6 +41957,116 @@
         "summary": "Get Tenant Members",
         "tags": [
           "tenant-membership"
+        ]
+      }
+    },
+    "/tenant/v1/account-events": {
+      "get": {
+        "operationId": "list_account_events_tenant_v1_account_events_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantAccountEventPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Account Events",
+        "tags": [
+          "tenant-account"
+        ]
+      }
+    },
+    "/tenant/v1/tenants/{tenant_id}/account": {
+      "get": {
+        "operationId": "get_tenant_account_tenant_v1_tenants__tenant_id__account_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantAccountBody"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "304": {
+            "description": "Not Modified"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Tenant Account",
+        "tags": [
+          "tenant-account"
         ]
       }
     },
