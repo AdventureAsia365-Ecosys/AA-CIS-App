@@ -45,6 +45,7 @@ export const NAV_MESSAGES = defineMessages(
     "Content Trace": "Content Trace",
     "Review log": "Review log",
     "Slate": "Slate",
+    "Compliance": "Compliance",
     // AI & spend
     "AI providers": "AI providers",
     "Cost Operations": "Cost Operations",
@@ -97,6 +98,7 @@ export const NAV_MESSAGES = defineMessages(
     "Content Trace": "Truy vết nội dung",
     "Review log": "Nhật ký duyệt",
     "Slate": "Slate",
+    "Compliance": "Tuân thủ",
     "AI providers": "Nhà cung cấp AI",
     "Cost Operations": "Vận hành chi phí",
     "Cost per app": "Chi phí theo ứng dụng",

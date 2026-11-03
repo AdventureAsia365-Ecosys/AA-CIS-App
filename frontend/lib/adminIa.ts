@@ -15,7 +15,7 @@ export type NavIcon =
   | "tenants" | "agencies" | "erasure" | "plans"
   | "upload" | "rewrite" | "review" | "master" | "atoms" | "places" | "photos" | "facts" | "supply" | "aaContent"
   | "seo" | "settings"
-  | "quality" | "trace" | "reviewLog" | "slate"
+  | "quality" | "trace" | "reviewLog" | "slate" | "compliance"
   | "aiGateway" | "spend" | "costPerApp"
   | "writingMemory" | "decisions"
   | "staff" | "audit" | "jobs" | "alerts" | "apiDocs" | "dataModel" | "docs";
@@ -75,6 +75,8 @@ export const ADMIN_IA: IaGroup[] = [
     { href: "/admin/tenant-qa/trace", label: "Content Trace", icon: "trace" },
     { href: "/admin/tenant-qa/review-log", label: "Review log", icon: "reviewLog" },
     { href: "/admin/tenant-qa/slate", label: "Slate", icon: "slate" },
+    // AA-1039 R6 slice 2: the AA-subject gate holds and the retired-tour flags of live posts (root ADR 0019 d20 / d21).
+    { href: "/admin/tenant-qa/compliance", label: "Compliance", icon: "compliance" },
   ] },
   { label: "AI & spend", items: [
     // Tabs: Providers (connections, credit), Routing, Models & trials, Budgets (+ app profiles), Calls, Guide.

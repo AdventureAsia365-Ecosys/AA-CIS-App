@@ -11,13 +11,13 @@
 //     tenant-written content).
 // `active` picks the area: a catalogue section key shows the catalogue list, a QA key the QA list.
 import Link from "next/link";
-import { Puzzle, Layers, TrendingUp, GitBranch, FileStack, Radio, BarChart3, ShieldCheck } from "lucide-react";
+import { Puzzle, Layers, TrendingUp, GitBranch, FileStack, Radio, BarChart3, ShieldAlert, ShieldCheck } from "lucide-react";
 import { useT } from "../../_kit/core/useI18n";
 import { M } from "./components.messages";
 import { K, ListButton, sans, useMediaQuery } from "../../_kit";
 
 export type SectionKey = "atomize" | "segment" | "score" | "route_hub";
-export type QaKey = "content_quality" | "content_trace" | "review_log" | "slate";
+export type QaKey = "content_quality" | "content_trace" | "review_log" | "slate" | "compliance";
 export type SubNavKey = SectionKey | QaKey;
 
 const SECTIONS: { key: SectionKey; label: keyof typeof M.en; icon: React.ReactNode }[] = [
@@ -32,6 +32,7 @@ export const QA_PAGES: { key: QaKey; href: string; label: keyof typeof M.en; ico
   { key: "content_trace",   href: "/admin/tenant-qa/trace",      label: "navContentTrace", icon: <Radio size={15} /> },
   { key: "review_log",      href: "/admin/tenant-qa/review-log", label: "navReviewLog",    icon: <BarChart3 size={15} /> },
   { key: "slate",           href: "/admin/tenant-qa/slate",      label: "navSlate",        icon: <FileStack size={15} /> },
+  { key: "compliance",      href: "/admin/tenant-qa/compliance", label: "navCompliance",   icon: <ShieldAlert size={15} /> },
 ];
 
 function isSection(key: SubNavKey): key is SectionKey {

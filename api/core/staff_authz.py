@@ -324,6 +324,8 @@ POLICY: dict[tuple[str, str], str] = {
     ("GET", "/admin/content-quality/tour-versions/{version_id}"): TENANT_READ,
     ("GET", "/admin/content-quality/tour-versions/{version_id}/label"): TENANT_READ,     # AA-923 WM-32
     ("GET", "/admin/content-quality/a1-content/{content_id}/label"): TENANT_READ,
+    ("GET", "/admin/tenant-qa/compliance"): TENANT_READ,                                  # AA-1039 R6
+    ("POST", "/admin/tenant-qa/compliance/{flag_id}/release"): QUALITY_WRITE,             # AA-1039 R6
     ("POST", "/admin/content-quality/pieces/{piece_id}/label"): QUALITY_WRITE,
     ("POST", "/admin/content-quality/tour-versions/{version_id}/label"): QUALITY_WRITE,    # AA-923 WM-32
     ("POST", "/admin/content-quality/a1-content/{content_id}/label"): QUALITY_WRITE,

@@ -128,6 +128,8 @@ export const API_WRITE_RULES: { prefix: string; roles: StaffRole[] }[] = [
   // AA-774 (S235) — place-card writes (verdict, merge, build job, fact edits) change what every
   // tenant's T9 seed reads; the backend re-checks the role on the fact edit.
   { prefix: "content-quality/place-cards", roles: ["admin"] },
+  // AA-1039 R6 — releasing a held piece (AA-subject gate) lets that text publish; admin only (backend: QUALITY_WRITE)
+  { prefix: "tenant-qa/compliance/", roles: ["admin"] },
   // AA-797 — every write to a tenant account: POST tenants (create), PATCH tenants/{id}
   // (plan/status), generate-key, brand-identity, config, offboard, restore. Prefix "tenants" (no slash)
   // so the bare create path is covered; reads (GET) stay open to every staff role.
