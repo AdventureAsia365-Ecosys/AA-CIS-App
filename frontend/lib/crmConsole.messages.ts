@@ -1,5 +1,5 @@
 // lib/crmConsole.messages.ts — AA-994: the words of lib/crmConsole.ts (Platform › Tenants › Agencies) in English and
-// Vietnamese. The English side is the lib's own constants; app/admin/platform/agencies/useCrmText.ts binds them to the
+// Vietnamese. The English side is the lib's own constants; app/admin/tenants/agencies/useCrmText.ts binds them to the
 // UI language. CRM codes (states, reasons, features, error codes) stay the catalogue keys.
 
 import { defineMessages } from "../app/_kit/core/i18n";

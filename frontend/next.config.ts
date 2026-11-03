@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 import path from "path";
 import { withSentryConfig } from "@sentry/nextjs";
 import { PORTAL_BASE_URL, TRIP_PAGE_BASE_URL } from "./lib/apps";
+import { adminIaRedirects } from "./lib/adminIa";
 
 // AA-876 — security headers on every admin response, same list as the portal (AA-885). The CSP is
 // deliberately minimal (no script-src / style-src yet: the pages use inline styles and Next inline
@@ -59,6 +60,9 @@ const nextConfig: NextConfig = {
       // clean-up (runbook §4.5); it was a 307 during the rollback window (critic S5). The query string carries over.
       // The CIS page (app/trip/[tourId]) was deleted at the clean-up.
       { source: "/trip/:path*", destination: `${TRIP_PAGE_BASE_URL}/trip/:path*`, permanent: true },
+      // AA-1039 R6 slice 1 — the admin pages that moved into the Tenants and Tenant content QA groups (root ADR 0019
+      // d13). 307s; the table and its test live in lib/adminIa.ts / lib/adminIa.test.mjs.
+      ...adminIaRedirects(),
     ];
   },
 };

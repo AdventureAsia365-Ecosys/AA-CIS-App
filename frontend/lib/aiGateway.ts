@@ -1456,3 +1456,31 @@ export function appProfileBody(before: AppProfile, d: AppProfileDraft): Record<s
 export function appProfilePath(app: string): string {
   return `${APP_PROFILES_API}/${encodeURIComponent(app)}`;
 }
+
+// ── AA-1039 R6 slice 1 (S266): routing by data class ───────────────────────────────────────────────────────────────
+// Root ADR 0019 (TL-12): each stage gets a `pii_class` — `content` (AA or tenant content, no personal data: a global
+// route is fine) or `pii` (personal data: US-only routes). The field does not exist yet (no column, no API field); the
+// Routing tab shows an empty state until GET /api/admin/llm-config carries it, then lists the stages per class.
+
+export type PiiClass = "content" | "pii";
+
+export interface DataClassSummary {
+  content: string[];
+  pii: string[];
+  /** Stages the API sent without a class while others have one. */
+  unclassified: string[];
+}
+
+/** Stages per data class, or null when no stage carries a `pii_class` (the empty state). Order kept from `rows`. */
+export function stagesByDataClass(
+  rows: readonly { stage: string; pii_class?: string | null }[],
+): DataClassSummary | null {
+  if (!rows.some((r) => r.pii_class === "content" || r.pii_class === "pii")) return null;
+  const out: DataClassSummary = { content: [], pii: [], unclassified: [] };
+  for (const r of rows) {
+    if (r.pii_class === "content") out.content.push(r.stage);
+    else if (r.pii_class === "pii") out.pii.push(r.stage);
+    else out.unclassified.push(r.stage);
+  }
+  return out;
+}

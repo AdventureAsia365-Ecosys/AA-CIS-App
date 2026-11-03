@@ -3,7 +3,7 @@
 // One source: GET /admin/tenants?include_inactive=true (api/routers/admin.py list_tenants) through the BFF. It returns
 // active, suspended and offboarded tenants with their name, slug and derived status, so a page that only needs to NAME
 // a tenant (a release of an offboarded tenant still has an owner) and a picker that offers only active ones read the
-// same cached query (TENANTS_QUERY_KEY, also the key of /admin/data-erasure). The hook and the picker live in
+// same cached query (TENANTS_QUERY_KEY, also the key of /admin/tenants/data-erasure). The hook and the picker live in
 // app/admin/_components/TenantSelect.tsx; this file holds the pure parts so node --test can load them.
 
 export interface TenantRef {

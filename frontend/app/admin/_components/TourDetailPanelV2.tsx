@@ -9,7 +9,7 @@ import {
 import { tourTraceHref } from "@/lib/aiGateway";
 import { M } from "./tour.messages";
 import { SCORE_BANDS } from "@/lib/quality-registry.generated";
-import { SubjectLabelSection } from "../content-quality/PieceLabel";
+import { SubjectLabelSection } from "../tenant-qa/quality/PieceLabel";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 

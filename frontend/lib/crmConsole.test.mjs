@@ -230,8 +230,8 @@ test("AA-1031: Create agency offers only CIS tenants without an agency in the lo
   assert.equal(offerForNewAgency([])({ tenant_id: "t-1" }), true);
 });
 
-const DRAWER_SRC = readFileSync(fileURLToPath(new URL("../app/admin/platform/agencies/AgencyDrawer.tsx", import.meta.url)), "utf8");
-const MESSAGES_SRC = readFileSync(fileURLToPath(new URL("../app/admin/platform/agencies/messages.ts", import.meta.url)), "utf8");
+const DRAWER_SRC = readFileSync(fileURLToPath(new URL("../app/admin/tenants/agencies/AgencyDrawer.tsx", import.meta.url)), "utf8");
+const MESSAGES_SRC = readFileSync(fileURLToPath(new URL("../app/admin/tenants/agencies/messages.ts", import.meta.url)), "utf8");
 
 test("the drawer offers Delete test agency for synthetic agencies only, behind the typed name", () => {
   assert.match(DRAWER_SRC, /\{a\.is_synthetic && \(\s*<DeleteTestAgencySection/);

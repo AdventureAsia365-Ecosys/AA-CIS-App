@@ -172,7 +172,7 @@ test("members access: the Members tab and the agency drawer read it, not the rol
   assert.ok(!tab.includes('"tenant.write"'), "Members tab must not check tenant.write itself");
   assert.match(tab, /\{perm\.invite && \(/);
   assert.match(tab, /memberRowActions\(m, perm\)/);
-  const drawer = read("../app/admin/platform/agencies/AgencyDrawer.tsx");
+  const drawer = read("../app/admin/tenants/agencies/AgencyDrawer.tsx");
   assert.ok(drawer.includes("useMembersAccess("));
   assert.match(drawer, /studioInviteOffered\(cisTenant, mayInviteAs\(studioAccess, "owner"\)\)/);
   assert.ok(!drawer.includes('"tenant.write")'), "the drawer's studio box must not decide on the role cookie");

@@ -96,7 +96,6 @@ export const M = defineMessages(
   {
     // page
     title: "AI providers",
-    crumbPlatform: "Platform",
     crumbGroup: "AI & spend",
     description: "Every paid AI and data provider in one place: is it answering, what it cost, how close it is to its "
       + "cap, which model each stage uses, and every spending cap. The numbers come from our own logs; opening the "
@@ -295,7 +294,6 @@ export const M = defineMessages(
   },
   {
     title: "Nhà cung cấp AI",
-    crumbPlatform: "Nền tảng",
     crumbGroup: "AI & chi phí",
     description: "Mọi nhà cung cấp AI và dữ liệu trả phí ở một chỗ: còn trả lời không, đã chi bao nhiêu, gần trần chưa, "
       + "mỗi bước dùng model nào, và mọi mức trần chi tiêu. Số liệu lấy từ sổ ghi của mình; mở trang không gọi nhà "

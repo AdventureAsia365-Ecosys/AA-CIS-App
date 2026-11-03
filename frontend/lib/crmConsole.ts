@@ -237,7 +237,7 @@ export const RETRYABLE_KINDS = ["crm_intake_process", "crm_dispatch", "crm_offbo
 // ── words ──────────────────────────────────────────────────────────────────────────────────────
 
 /** AA-994: the phrases the helpers below build (English). The page passes the UI language's words
- * (lib/crmConsole.messages.ts CRM_WORDS_MESSAGES) through app/admin/platform/agencies/useCrmText.ts; a call without
+ * (lib/crmConsole.messages.ts CRM_WORDS_MESSAGES) through app/admin/tenants/agencies/useCrmText.ts; a call without
  * them stays English, so node --test loads this module as it is. */
 export const CRM_WORDS = {
   lagNone: "no successful pull yet",

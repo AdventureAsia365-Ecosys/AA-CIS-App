@@ -98,7 +98,7 @@ export default function AiGateway() {
     <ToastProvider>
       <PageFrame>
         <PageHeader title={t("title")}
-          breadcrumbs={[{ label: t("crumbPlatform") }, { label: t("crumbGroup") }, { label: t("title") }]}
+          breadcrumbs={[{ label: t("crumbGroup") }, { label: t("title") }]}
           description={<>{t("description")}{" "}
             <span data-testid="ai-gateway-guide-link" style={{ display: "inline-flex" }}>
               <LinkButton onClick={() => setTab("guide")}>{t("readGuide")}</LinkButton></span></>}

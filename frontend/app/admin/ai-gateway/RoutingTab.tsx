@@ -15,16 +15,19 @@
 // Route governance (S263, ADR 0009 decision 12): a new primary model of a writer / judge stage asks for the eval run
 // that backs it, or a break-glass reason (ChangeEvidenceFields in the confirm dialog); a save that breaks the
 // failure-domain rule comes back with `warnings` (report only), shown as an info toast.
+// AA-1039 R6 slice 1 (S266): "Routing by data class" (root ADR 0019 TL-12: personal-data stages stay on US routes,
+// content stages may go global) lists the stages per `pii_class` once the API sends it; until then an empty state
+// says so. Read only (lib/aiGateway stagesByDataClass).
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle } from "lucide-react";
 import {
-  Badge, Button, ConfirmModal, DataTable, ErrorState, K, LoadingScreen, Section, Select, Spinner, apiGet, apiSend,
+  Badge, Button, ConfirmModal, DataTable, EmptyState, ErrorState, K, LoadingScreen, Section, Select, Spinner, apiGet, apiSend,
   mono, useFormat, useLocalized, useT, useToast, type ColumnDef,
 } from "../../_kit";
 import {
-  accountRouteMatters, actorLabel, invariantByStage, type Invariant, type InvariantStage,
+  accountRouteMatters, actorLabel, invariantByStage, stagesByDataClass, type Invariant, type InvariantStage,
 } from "@/lib/aiGateway";
 import { accountName } from "@/lib/awsAccounts";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
@@ -373,7 +376,44 @@ export default function RoutingTab() {
           </Section>
         );
       })}
+      <DataClassCard rows={rows} />
       <JevStagesCard />
     </div>
+  );
+}
+
+// ── Routing by data class (AA-1039) ────────────────────────────────────────────────────────────────────────────────
+function DataClassCard({ rows }: { rows: StageConfigRow[] }) {
+  const t = useT(MODELS);
+  const stageLabels = useLocalized({ en: STAGE_LABELS, vi: STAGE_LABELS_VI });
+  const summary = stagesByDataClass(rows.filter((r) => !HIDDEN_STAGES.has(r.stage)));
+  const name = (s: string) => stageLabels[s] ?? s;
+  const line = (label: string, note: string, stages: string[], testId: string) => (
+    <div data-testid={testId} style={{ display: "grid", gap: 6 }}>
+      <div style={{ fontSize: 13, color: K.ink, fontWeight: 600 }}>
+        {label} <span style={{ ...small, fontWeight: 400 }}>{note}</span>
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        {stages.length === 0 ? <span style={small}>{t("dataClassNone")}</span>
+          : stages.map((s) => <Badge key={s} tone="neutral" dot={false}>{name(s)}</Badge>)}
+      </div>
+    </div>
+  );
+  return (
+    <Section title={t("dataClassTitle")}>
+      <div data-testid="ai-gateway-data-class" style={{ display: "grid", gap: 14 }}>
+        <p style={{ ...small, margin: 0 }}>{t("dataClassIntro")}</p>
+        {summary ? (
+          <>
+            {line(t("dataClassPii"), t("dataClassPiiNote"), summary.pii, "ai-gateway-data-class-pii")}
+            {line(t("dataClassContent"), t("dataClassContentNote"), summary.content, "ai-gateway-data-class-content")}
+            {summary.unclassified.length > 0 && line(t("dataClassUnset"), t("dataClassUnsetNote"),
+              summary.unclassified, "ai-gateway-data-class-unset")}
+          </>
+        ) : (
+          <EmptyState title={t("dataClassEmptyTitle")} description={t("dataClassEmptyBody")} />
+        )}
+      </div>
+    </Section>
   );
 }
