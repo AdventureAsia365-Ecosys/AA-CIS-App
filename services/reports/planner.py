@@ -8,9 +8,9 @@
          quality_signal.app = tripplanner) against the mirrored default daily cap (K-TP-LLMCAP).
 
 The keyword-fallback share and the top pinned components live in TripPlanner tables that are not granted to cis_app
-(no contract view): the report names them "not readable from CIS". tripplanner.llm_spend_daily (the TripPlanner
-gateway's own daily roll-up, the KPI's registry source) is not granted either; the CIS ledger rows TripPlanner writes
-are the same calls (api/core/app_registry.py, the /admin/platform/apps card reads them the same way).
+(no contract view): the report names them "not readable from CIS". TripPlanner's spend is the CIS ledger rows it
+writes (api/core/app_registry.py, the /admin/platform/apps card reads them the same way); its own daily roll-up
+(tripplanner.llm_spend_daily) is dropped by tp-025 (AA-1027 E5).
 
 Days are UTC here, like the contract view and the ledger; the report period is the ISO week. Stored rows only; no
 LLM, no paid API.
@@ -195,9 +195,7 @@ def render_tp01(reg: Registry, report: Report, first: date, last: date, facts: d
                  + (", ".join(f"{k} {usd(v)}" for k, v in sorted(sp["by_stage"].items())) or "no call") + ".", ""]
     body += ["## Not readable from CIS", "",
              "- Top pinned components and the keyword-fallback share: TripPlanner tables without a contract view for "
-             "the CIS role (a tp- contract view would add them).",
-             "- tripplanner.llm_spend_daily (TripPlanner's own spend roll-up): not granted; the ledger rows above are "
-             "the same calls.", ""]
+             "the CIS role (a tp- contract view would add them).", ""]
     return _render(reg, report, first, last, generated_at, f"TripPlanner funnel {first.isoformat()} to "
                    f"{last.isoformat()}", headline, kpis, body, UTC_NOTE, funnel=f, llm_spend=sp,
                    sources_unreadable=_unreadable(facts))
