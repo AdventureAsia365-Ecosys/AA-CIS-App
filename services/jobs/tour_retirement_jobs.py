@@ -10,14 +10,15 @@
   rows): fanout.move_to_draft.
 - ``tour_notice_email``  the SES mail (services/tour_lifecycle/notice_mail.py): payload ``{"notice_id"}`` for one
   immediate notice, or ``{"digest_day"}`` for the daily digest (every unmailed notice of the last 14 days, one mail
-  per tenant; queued once a UTC day from 08:00 by the sampler). SES not configured -> ``skipped``; no recipient or
-  the partner pool unreadable -> the notices wait for the next digest (an immediate one turns into a digest one).
+  per tenant; queued once a UTC day from 08:00 by the sampler; it also takes an ``immediate`` notice left unmailed for
+  an hour, the backstop for a mail job that died). SES not configured -> ``skipped``; no recipient or the partner
+  pool unreadable -> the notices wait for the next digest (an immediate one turns into a digest one).
 """
 from __future__ import annotations
 
 import asyncio
 import json
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 import asyncpg
@@ -37,6 +38,7 @@ DRAFT_ATTEMPTS = 4
 MAIL_ATTEMPTS = 4
 DIGEST_HOUR_UTC = 8
 DIGEST_WINDOW_DAYS = 14
+IMMEDIATE_BACKSTOP_S = 3600   # an immediate notice unmailed this long joins the digest
 SWEEP_WINDOW_S = 7200
 SWEEP_LAG_S = 30
 
@@ -203,6 +205,15 @@ async def _load_notices(pool, *, notice_id: Optional[str] = None) -> list[dict]:
     return [{**dict(r), "summary": _summary(r["summary"])} for r in rows]
 
 
+def _in_digest(notice: dict, *, now: datetime) -> bool:
+    """A digest notice, or an ``immediate`` one still unmailed an hour on (its mail job died after its retries, or was
+    never enqueued): the digest is the backstop, so no notice is left unmailed."""
+    if notice["delivery"] == "digest":
+        return True
+    created = notice.get("created_at")
+    return created is not None and now - created >= timedelta(seconds=IMMEDIATE_BACKSTOP_S)
+
+
 async def _send_tenant(ctx: JobContext, cfg, tenant_id: str, notices: list[dict], ses) -> dict:
     ids = [n["notice_id"] for n in notices]
     agency = await notice_mail.tenant_name(ctx.pool, tenant_id)
@@ -244,7 +255,7 @@ async def run_mail(ctx: JobContext) -> dict:
                        if n["mailed_at"] is None]
             mode = "immediate"
         elif payload.get("digest_day"):
-            notices = [n for n in await _load_notices(ctx.pool) if n["delivery"] == "digest"]
+            notices = [n for n in await _load_notices(ctx.pool) if _in_digest(n, now=datetime.now(timezone.utc))]
             mode = "digest"
         else:
             raise NonRetryable("payload needs notice_id or digest_day")

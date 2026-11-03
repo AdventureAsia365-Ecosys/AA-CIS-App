@@ -132,6 +132,14 @@ INSERT_NOTICE_SQL = """
     RETURNING notice_id::text AS notice_id
 """
 
+# The event's notices still to mail at once, whether this run or an earlier one wrote them: the mail jobs are keyed
+# tour_notice_email:<notice_id>, so a replay after a lost enqueue (worker stop, deploy) enqueues them again.
+UNMAILED_IMMEDIATE_SQL = """
+    SELECT n.notice_id::text AS notice_id FROM acp_shared.tenant_tour_notice n
+     WHERE n.event_key = $1 AND n.delivery = 'immediate' AND n.mailed_at IS NULL
+     ORDER BY n.tenant_id
+"""
+
 RETIRED_NOTICE_TENANTS_SQL = """
     SELECT DISTINCT tenant_id::text AS tenant_id FROM acp_shared.tenant_tour_notice
      WHERE event = 'retired' AND tour_id = ANY($1::uuid[])
@@ -185,7 +193,8 @@ async def _tour_name(conn, tour_id: str) -> str:
 
 async def fan_out(pool, event_key: str) -> dict:
     """Apply one lifecycle event to tenant content. Idempotent (every write is keyed on the event); returns counts and
-    the notice ids to mail now (``immediate``)."""
+    the notice ids to mail now: every ``immediate`` notice of the event not mailed yet, also on a replay, so a mail
+    job lost between this commit and its enqueue is enqueued again (the job key makes that safe)."""
     async with pool.acquire() as conn:
         event = await conn.fetchrow(EVENT_SQL, event_key)
         if event is None:
@@ -206,6 +215,9 @@ async def fan_out(pool, event_key: str) -> dict:
                     if now_state not in ("served", None):
                         return {"status": "skipped", "reason": f"key_is_{now_state}_now"}
                     out = await _restored(conn, event, tour_ids)
+                out["new_immediate_notices"] = len(out["immediate_notices"])
+                out["immediate_notices"] = [r["notice_id"] for r in await conn.fetch(
+                    UNMAILED_IMMEDIATE_SQL, event["idempotency_key"])]
         except asyncpg.UndefinedTableError:
             return {"status": "unavailable", "reason": "CIS 362 not applied"}
     logger.info("tour_retirement_fanout", event_key=event_key, lifecycle_event=kind,
