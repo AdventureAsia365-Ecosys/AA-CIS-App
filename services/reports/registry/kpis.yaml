@@ -1638,13 +1638,12 @@ kpis:
 - id: K-LLM-APP
   version: 1
   name: LLM spend by app
-  definition: sum shared.llm_call_daily.cost_usd by app + tripplanner.llm_spend_daily.cost_usd + crm.llm_usage_daily.cost_usd
-    (check overlap with shared.llm_call_daily app values before summing)
+  definition: sum shared.llm_call_daily.cost_usd by app (TripPlanner is app tripplanner; its own counter was dropped by
+    tp-025, AA-1027 E5) + crm.llm_usage_daily.cost_usd (check overlap with shared.llm_call_daily app values before summing)
   unit: usd
   threshold: Within FI-06 allocation
   sources:
   - shared.llm_call_daily
-  - tripplanner.llm_spend_daily
   - crm.llm_usage_daily
   defined_in: FI-03
   used_by:
@@ -2457,7 +2456,7 @@ kpis:
   version: 1
   name: LLM spend vs cap
   definition: Worst UTC day of the week of TripPlanner's customer-facing LLM spend (shared.llm_call_log rows of its online
-    stages, quality_signal app tripplanner; the same calls as tripplanner.llm_spend_daily, which is not granted to cis_app)
+    stages, app tripplanner; the same calls TripPlanner's own spend view catalog.v_llm_app_spend_today_v1 sums)
     vs TP_DAILY_SPEND_CAP_USD (placeholder default 5.0, apps/AA-TripPlanner-Web/backend/config.py lines 117-122; business
     cap still open)
   unit: usd
@@ -2599,11 +2598,11 @@ kpis:
 - id: K-UNIT-TRIP
   version: 1
   name: USD per trip plan
-  definition: (tripplanner App total + tripplanner.llm_spend_daily.cost_usd) / trip_started (tripplanner.v_ops_traffic_daily)
+  definition: (tripplanner App total + shared.llm_call_daily.cost_usd of app tripplanner) / trip_started (tripplanner.v_ops_traffic_daily)
   unit: usd
   threshold: Trend
   sources:
-  - tripplanner.llm_spend_daily
+  - shared.llm_call_daily
   - tripplanner.v_ops_traffic_daily
   defined_in: FI-05
   used_by:
