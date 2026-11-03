@@ -40,6 +40,12 @@ IA) is `AA-1039-r6-admin-ia.md`.
 - **Pending publishes.** There is no scheduled publish in T11: a publish of a retired tour's piece is already refused
   (409 `tour_discontinued`, L3). The fan-out closes `requested` claims older than 15 min (abandoned) as `failed`
   ("cancelled: …") and reports the count in the mail.
+- **No lost immediate mail** (review fix): `fan_out` returns every `immediate` notice of the event with `mailed_at
+  IS NULL`, not only the ones this run inserted, so a fan-out job retried after its commit (worker stop, deploy,
+  enqueue error) enqueues the mail again (key `tour_notice_email:<notice_id>`, so a replay while the job exists adds
+  nothing). The digest also takes an `immediate` notice still unmailed an hour after it was written (its mail job
+  died after `MAIL_ATTEMPTS`, or the fan-out could not rerun); `tour_notice_email` has concurrency 1 and an immediate
+  job re-reads `mailed_at` before sending, so the two never mail the same notice twice.
 - **E-mail.** Immediate when the tenant still has live posts of the tour, else the daily digest (08:00 UTC, one mail
   per tenant, notices of the last 14 days). `restored` → "back on sale", immediate when flags were cleared. `paused`
   and `superseded` → nothing. Recipients: active `owner` and `editor` members (a `viewer` is not a content member).
@@ -66,9 +72,19 @@ IA) is `AA-1039-r6-admin-ia.md`.
 
 ## Tradeoffs
 
-- **Publish gate fails open on a read error** (logged `subject_gate_publish_error`). It is a contract rule, not an
-  auth boundary; a DB hiccup should not block a tenant. The write stage records the verdict first, so a failure at
-  publish is rare and visible in logs.
+- **Publish gate fails closed** (review fix): any error while the gate checks a piece answers 503
+  `content_check_unavailable` ("We couldn't check this piece just now. Please try publishing it again in a minute.",
+  `Retry-After: 60`), never a pass. The first version failed open, and a tenant's own text could trigger it: a link
+  `/trip/` + 36 dashes passed the old `[0-9a-f-]{36}` match, `$1::uuid[]` raised, the publish went ahead with no
+  flag. Now a trip page id must parse as a uuid (else the link is not a trip page and, as a sales link, is refused),
+  and a DB hiccup costs the tenant one retry. Before CIS 362 the gate still answers (flag reads / writes skip
+  `UndefinedTable` inside `record` / `released`), so the order of the two PRs does not matter. The write stage stays
+  best-effort (logged): the publish stage checks again.
+- **Link extraction** (review fix): markdown `[text](url)`, `<a href=...>` with a quoted or unquoted value, bare
+  `http(s)://` URLs also right after `(`, a quote or `=` ("Book now (https://...)"), and scheme-less `www.host[/path]`
+  / `host.tld/path` (Facebook and WordPress make these clickable; e-mail-like tokens and hosts inside a path or
+  query are not read). A bare repeat inside a markdown / HTML link is skipped by position, so the anchor text is kept.
+  A URL nested in another URL's query is not read separately (the outer link is the one the reader clicks).
 - **Keyword detection of sales links** can miss a sales link without a booking word, or count a "tour of the old
   town" museum link. Kept simple and $0; an LLM classifier is out of scope (TL-21: only if the rule lets too much
   through, separate cost yes).

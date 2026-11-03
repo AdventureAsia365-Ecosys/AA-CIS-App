@@ -2717,7 +2717,9 @@ after-commit enqueue + 2 h sweep). `retired`: each live post of the key's tours 
 event + `acp_shared.tour_retirement_policy` days, default 7, through a `retired_page_draft` job the sampler enqueues
 due-now; Facebook: `notice_only`, nothing deleted); stale `requested` publish claims are closed; every derivative
 tenant gets an `acp_shared.tenant_tour_notice` row, mailed at once (`tour_notice_email`, SES) when it still has live
-posts, else in the daily digest (08:00 UTC). `restored` resolves the open flags and writes the "back on sale" notice.
+posts, else in the daily digest (08:00 UTC). A fan-out replay re-enqueues every unmailed `immediate` notice of the
+event (mail job key `tour_notice_email:<notice_id>`), and the digest also takes an `immediate` notice left unmailed
+for an hour (a dead mail job). `restored` resolves the open flags and writes the "back on sale" notice.
 Recipients: active `owner` / `editor` members, address read at send time from the partner pool (`ListUsers` by sub,
 verified e-mail only); CIS stores no address. A `paused` tour gets no mail.
 **AA-subject gate** (AA-1039 R6, d21; `services/acp_shared/subject_gate.py`, no LLM): when T9 finishes a piece
@@ -2726,7 +2728,10 @@ tour, a live AA atom or a Slate Segment with a live member (brand content with n
 exempt), and every sales link (the CTA, or a link whose text / path reads like booking) must go to an AA host, a trip
 page of a served tour, the tenant's own page of a served AA tour (`acp_deliver.tenant_tour_pages`) or the TripPlanner
 site. A failing piece has one open `subject_gate` flag; the publish answers 409 `content_needs_change` with the flag's
-content-style `tenant_message`, and `/pending` items carry it as `needs_change`. Admin Tenant content QA › Compliance
+content-style `tenant_message`, and `/pending` items carry it as `needs_change`; when the gate cannot answer the
+publish fails closed (503 `content_check_unavailable`, "try again"). Links are read from markdown, HTML (quoted or
+unquoted href), bare URLs (also in parentheses / quotes) and scheme-less `www.host` / `host.tld/path`; a trip page
+link counts only with a real uuid. Admin Tenant content QA › Compliance
 (`/admin/tenant-qa/compliance`, API `GET /admin/tenant-qa/compliance`, `POST …/{flag_id}/release`) lists both kinds;
 a release lets exactly the released text (sha256) through. Flags are admin data; tenants never see them.
 _Avoid_: "delete" for a published tour (it is retired and can be restored); `raw_tours.lifecycle_stage` as a
