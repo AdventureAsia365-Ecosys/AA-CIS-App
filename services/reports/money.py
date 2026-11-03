@@ -21,6 +21,7 @@ from datetime import date, datetime, timedelta
 from statistics import mean
 from typing import Any, Iterable, Optional
 
+from services.reports import b2b_only
 from services.reports import money_sources as src
 from services.reports import periods
 from services.reports.generate import GENERATED_BY, Rendered, fmt
@@ -581,11 +582,12 @@ def render_ex01(reg: Registry, report: Report, first: date, last: date, facts: d
                   "" if "error" in lw else f"shadow {usd(lw['shadow_usd'])}; 4-week average {usd(lw['avg_4w_usd'])}"),
         _kpi_line("K-CAT-LIVE", tl.get("value"), "no_data" if tl.get("value") is None else
                   ("amber" if tl["flag"] else "ok"), _tours_live_note(tl)),
-        _kpi_line("K-DEM-INQ", None if "error" in dm else dm.get("inquiry_sent"), "info",
-                  "" if "error" in dm else (f"trips started {fmt(dm.get('trip_started'), 'count')}, inquiries sent "
-                                            f"{fmt(dm.get('inquiry_sent'), 'count')}, received "
-                                            f"{fmt(dm.get('inquiry_received'), 'count')}, confirmed "
-                                            f"{fmt(dm.get('confirmed'), 'count')}")),
+        # AA-1003 R0 hotfix: the B2C inquiry funnel is historical (root ADR 0019 B2B-only model; b2b_only.py)
+        _kpi_line("K-DEM-INQ", None if "error" in dm else dm.get("inquiry_sent"), b2b_only.HISTORICAL,
+                  b2b_only.NOTE if "error" in dm else
+                  (f"{b2b_only.NOTE}; trips started {fmt(dm.get('trip_started'), 'count')}, inquiries sent "
+                   f"{fmt(dm.get('inquiry_sent'), 'count')}, received {fmt(dm.get('inquiry_received'), 'count')}, "
+                   f"confirmed {fmt(dm.get('confirmed'), 'count')}")),
         _kpi_line("K-REL-SEV", None, NOT_WIRED, "SEV1-2 incidents: from the postmortem folder when writing"),
     ]
     headline = (f"Business review draft {first.isoformat()} to {last.isoformat()}: spend {usd(w['total_usd'])}, "
@@ -608,7 +610,8 @@ def render_ex01(reg: Registry, report: Report, first: date, last: date, facts: d
     md += ["Facts for the narrative:", ""] + [f"- {x}" for x in facts_for_narrative] + [""]
     md += ["## 2. How to read this report", "",
            "- Status: red = act now, amber = watch, ok = on target, info = trend only (Dev), not wired = the "
-           "platform does not hold the number yet (fill it in when writing).",
+           "platform does not hold the number yet (fill it in when writing), historical = the B2C inquiry path "
+           f"switched off on {b2b_only.B2C_OFF_DAY.isoformat()} (B2B-only model), kept for history.",
            "- Week over week compares with the ISO week before; money is per UTC day, tours live per ICT day.", ""]
     md += ["## 3. Scorecard", ""] + table(KPI_HEADERS, _kpi_rows(reg, kpis, {"K-DEM-INQ": "count",
                                                                            "K-COST-MTD": "ratio"})) + [""]
@@ -625,9 +628,17 @@ def render_ex01(reg: Registry, report: Report, first: date, last: date, facts: d
     if "error" in dm:
         md += [f"- Demand not readable: {dm['error']}"]
     else:
+        prev = (lambda m: None) if "error" in dm_prev else dm_prev.get
         md += table(["Metric", "This week", "Week before"],
-                    [[m, dm.get(m), None if "error" in dm_prev else dm_prev.get(m)]
-                     for m in ("trip_started", "inquiry_sent", "inquiry_received", "confirmed")])
+                    [[label, dm.get(m), prev(m)] for m, label in (
+                        ("trip_started", "Trips started (TripPlanner)"),
+                        ("confirmed", "Trip cases confirmed (Booking, every source)"))])
+        md += ["", f"B2C inquiry funnel (historical: the TripPlanner to Booking hand-off is off since "
+               f"{b2b_only.B2C_OFF_DAY.isoformat()}, B2B-only model; agency demand comes with the B2B reports):", ""]
+        md += table(["Metric", "This week", "Week before"],
+                    [[label, dm.get(m), prev(m)] for m, label in (
+                        ("inquiry_sent", "Inquiries sent (TripPlanner, historical)"),
+                        ("inquiry_received", "Inquiries received (Booking, historical)"))])
         md.append("")
         for side in ("tripplanner_error", "booking_error"):
             if dm.get(side):

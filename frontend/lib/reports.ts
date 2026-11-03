@@ -5,7 +5,8 @@
 
 import type { Tone } from "../app/_kit/core/primitives";
 
-export type DueState = "ok" | "due" | "overdue" | "manual" | "pending_first" | "not_automated";
+// "retired": the report no longer runs (registry status retired); its past runs stay readable.
+export type DueState = "ok" | "due" | "overdue" | "manual" | "pending_first" | "not_automated" | "retired";
 export type RunStatus = "queued" | "running" | "succeeded" | "failed" | "draft" | "approved" | "posted";
 
 export interface RunSummary {
@@ -36,6 +37,7 @@ export interface ReportRow {
   template: string | null;
   generator: string | null;
   automated_from: string | null;
+  retired_on?: string | null;
   runnable: boolean;
   kpis: string[];
   last_run: RunSummary | null;
@@ -130,6 +132,7 @@ export function families(rows: ReportRow[]): string[] {
 
 export const DUE_TONE: Record<DueState, Tone> = {
   ok: "success", due: "info", overdue: "danger", manual: "neutral", pending_first: "neutral", not_automated: "neutral",
+  retired: "neutral",
 };
 
 export const RUN_TONE: Record<RunStatus, Tone> = {

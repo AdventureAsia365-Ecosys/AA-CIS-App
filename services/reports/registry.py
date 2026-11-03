@@ -22,6 +22,8 @@ KPIS_PATH = _DIR / "kpis.yaml"
 
 # The engine that renders a report here (catalog.yaml `generator`).
 CIS_GENERATOR = "cis"
+# catalog.yaml `status` of a report that no longer runs (AA-1003 R0 hotfix).
+RETIRED = "retired"
 
 
 @dataclass(frozen=True)
@@ -76,11 +78,18 @@ class Report:
     # scheduled period (the deploy day of its generator). A scheduled period the chain made before it is not
     # expected, so a report switched to `generator: cis` is not overdue for periods that ended before it existed.
     automated_from: Optional[date] = None
+    # catalog.yaml `retired_on` (AA-1003 R0 hotfix): the day a report with status `retired` stopped. A retired report
+    # has no generator, is never scheduled or due, and keeps its ID and its past runs (root ADR 0019, TP-03).
+    retired_on: Optional[date] = None
 
     @property
     def runnable(self) -> bool:
         """The CIS engine renders it (job kind report_generate)."""
-        return self.generator == CIS_GENERATOR
+        return self.generator == CIS_GENERATOR and not self.retired
+
+    @property
+    def retired(self) -> bool:
+        return self.status == RETIRED
 
     def summary(self) -> dict:
         return {"id": self.id, "family": self.family, "name_en": self.name_en, "name_vi": self.name_vi,
@@ -88,7 +97,8 @@ class Report:
                 "schedule": self.schedule, "channel": self.channel, "automation": self.automation,
                 "status": self.status, "priority": self.priority, "template": self.template,
                 "generator": self.generator, "runnable": self.runnable, "kpis": list(self.kpis),
-                "automated_from": self.automated_from.isoformat() if self.automated_from else None}
+                "automated_from": self.automated_from.isoformat() if self.automated_from else None,
+                "retired_on": self.retired_on.isoformat() if self.retired_on else None}
 
     def detail(self) -> dict:
         return {**self.summary(), "decision": self.decision, "sections": list(self.sections)}
@@ -121,7 +131,7 @@ def _tuple(v: Any) -> tuple:
     return tuple(v or ())
 
 
-def _date(rid: str, v: Any) -> Optional[date]:
+def _date(rid: str, v: Any, field: str = "automated_from") -> Optional[date]:
     """yaml.safe_load reads an unquoted YYYY-MM-DD as a date; a quoted one is a string."""
     if v is None:
         return None
@@ -130,7 +140,7 @@ def _date(rid: str, v: Any) -> Optional[date]:
     try:
         return date.fromisoformat(str(v))
     except ValueError:
-        raise ValueError(f"report registry: {rid} automated_from {v!r} is not a YYYY-MM-DD date") from None
+        raise ValueError(f"report registry: {rid} {field} {v!r} is not a YYYY-MM-DD date") from None
 
 
 def parse(catalog: dict, kpis: dict) -> Registry:
@@ -158,7 +168,8 @@ def parse(catalog: dict, kpis: dict) -> Registry:
             owner_role=r["owner_role"], decision=r["decision"], cadence=r["cadence"], schedule=r["schedule"],
             channel=r["channel"], automation=r["automation"], status=r["status"], priority=r["priority"],
             template=r.get("template"), generator=r.get("generator"), kpis=_tuple(r.get("kpis")),
-            sections=_tuple(r.get("sections")), automated_from=_date(r["id"], r.get("automated_from"))))
+            sections=_tuple(r.get("sections")), automated_from=_date(r["id"], r.get("automated_from")),
+            retired_on=_date(r["id"], r.get("retired_on"), "retired_on")))
     if not reports:
         raise ValueError("report registry: no reports")
     return Registry(version=int(catalog.get("version") or 0), imported_from=str(catalog.get("imported_from") or ""),

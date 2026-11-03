@@ -6,8 +6,7 @@ row (shared.cost_guard.maybe_alert). Payload: {"template": "spend_budget", "peri
 "requested_by"} from "Send test e-mail" on Platform › Alert recipients (api/services/alert_recipients.py).
 AA-845: {"template": "jev_credit_low" | "jev_credit_exhausted", "test", ...} from the Jev credit bells
 (shared/jev_credit.py, shared/llm_client/decide.maybe_alert_jev_credit).
-AA-1003 R2: {"template": "inquiry_handoff_gap", gap, sent, received, window, ...} from the TP-03 hourly check
-(services/jobs/report_ops_jobs.py), once per UTC day.
+AA-1003 R2 added {"template": "inquiry_handoff_gap"} for the TP-03 hourly check; the R0 hotfix removed it with TP-03.
 AA-1018: {"template": "llm_circuit_open", connection_key, error_class, models, open_until, ...} from the LLM breaker
 when a connection circuit opens (shared/llm_client/breaker.alert_connection_open), once per connection, class and day.
 AA-642 (S263 L2, B4): {"template": "dfs_balance_low", balance_usd, threshold_usd, ...} from the daily DataForSEO
@@ -50,7 +49,6 @@ _RENDERERS = {
     ops_alerts.TEMPLATE_JEV_CREDIT_LOW: ops_alerts.render_jev_credit,              # AA-845
     ops_alerts.TEMPLATE_JEV_CREDIT_EXHAUSTED: ops_alerts.render_jev_credit,        # AA-845
     ops_alerts.TEMPLATE_WRITING_MEMORY_ROLLBACK: ops_alerts.render_writing_memory_rollback,   # AA-920
-    ops_alerts.TEMPLATE_INQUIRY_HANDOFF_GAP: ops_alerts.render_inquiry_handoff_gap,   # AA-1003 TP-03
     ops_alerts.TEMPLATE_LLM_CIRCUIT_OPEN: ops_alerts.render_llm_circuit_open,         # AA-1018
     ops_alerts.TEMPLATE_DFS_BALANCE_LOW: ops_alerts.render_dfs_balance_low,           # AA-642 (S263 L2, B4)
     ops_alerts.TEMPLATE_LLM_COST_MISMATCH: ops_alerts.render_llm_cost_mismatch,       # AA-642 (S263 L2, B4)

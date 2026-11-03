@@ -7,11 +7,9 @@ gold_aa_internal.v_tour_liveness, shared.report_run).
 
 Point-in-time KPIs (tours live) describe "now", so they are written only for the latest closed day, never back-filled.
 
-AA-1003 R2 adds two computers that read outside the CIS tables:
-- `inquiry_handoff` (TP-03): the ops.overview.v1 contract views of TripPlanner and Booking (cis_app has SELECT),
-  services/reports/handoff.py. Those views count per UTC day, so these KPIs describe UTC day D (closed at 17:00 ICT of
-  D, long before the 00:30 UTC snapshot). The views belong to other apps: a revoked grant or a view the owner
-  dropped or reshaped (handoff.CONTRACT_ERRORS) raises Unavailable like the probe log below.
+AA-1003 R2 added two computers that read outside the CIS tables; the R0 hotfix (root ADR 0019, B2B-only model)
+retired the first one with TP-03 (K-TP-HANDOFFGAP, K-BK-PARKED, K-BK-INQ2CASE are no longer snapshotted; their old
+shared.kpi_daily rows stay; services/reports/b2b_only.py):
 - `nightly_probes` (DATA-01): the probe verdict lines in CloudWatch Logs (services/reports/probes.py). When the log
   cannot be read (permission pending, AWS error, older than the log retention) it raises Unavailable: no value is
   written, the reason lands in the job result under `unavailable`, and the job still succeeds (an outside source
@@ -25,7 +23,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Awaitable, Callable, Optional
 
-from services.reports import handoff, periods, probes
+from services.reports import periods, probes
 
 SCOPE_ALL = "all"
 _SCOPE_VALUE = re.compile(r"[^A-Za-z0-9_.-]+")
@@ -149,21 +147,6 @@ async def reports_failed(conn, ctx: DayContext) -> list[KpiValue]:
     return [KpiValue("K-RPT-FAILED", SCOPE_ALL, _dec(n or 0), "shared.report_run")]
 
 
-async def inquiry_handoff(conn, ctx: DayContext) -> list[KpiValue]:
-    """K-TP-HANDOFFGAP, K-BK-PARKED, K-BK-INQ2CASE of UTC day ctx.day (TP-03)."""
-    try:
-        (d,) = await handoff.read_days(conn, ctx.day, ctx.day)
-    except handoff.CONTRACT_ERRORS as e:
-        raise Unavailable(f"contract_view: {type(e).__name__}: {str(e)[:200]}") from e
-    src = "booking.v_ops_funnel_daily"
-    out = [KpiValue("K-TP-HANDOFFGAP", SCOPE_ALL, _dec(d.gap), "tripplanner.v_ops_traffic_daily + " + src),
-           KpiValue("K-BK-PARKED", SCOPE_ALL, _dec(d.parked + d.failed), src)]
-    ratio = handoff.inq_to_case(d)
-    if ratio is not None:
-        out.append(KpiValue("K-BK-INQ2CASE", SCOPE_ALL, _dec(ratio), src))
-    return out
-
-
 async def nightly_probes(conn, ctx: DayContext) -> list[KpiValue]:
     """K-DATA-PROBES, K-DATA-LIVENESS, K-DATA-STALE from the probe runs of ICT day ctx.day (DATA-01)."""
     try:
@@ -188,7 +171,6 @@ COMPUTERS: dict[str, tuple[Computer, tuple[str, ...]]] = {
     "llm_day": (llm_day, ("K-LLM-COST-DAY", "K-LLM-FALLBACK-24H")),
     "tours_live": (tours_live, ("K-CAT-LIVE",)),
     "reports_failed": (reports_failed, ("K-RPT-FAILED",)),
-    "inquiry_handoff": (inquiry_handoff, ("K-TP-HANDOFFGAP", "K-BK-PARKED", "K-BK-INQ2CASE")),
     "nightly_probes": (nightly_probes, ("K-DATA-PROBES", "K-DATA-LIVENESS", "K-DATA-STALE")),
 }
 
