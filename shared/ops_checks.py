@@ -21,7 +21,9 @@ Two kinds of checks:
   is that signal on the CIS bell + e-mail: ``llm_spend_alert.<app>.near`` (80 %, ``SPEND_NEAR_RATIO``) and
   ``llm_spend_alert.<app>.cap`` (100 %), each its own check so a cap reached after a near alert still bells. Not CIS
   (its central cap ``llm/app:cis`` alerts from the gateway, A7) and not the CRM (its ledger is ``crm.llm_call``, ADR
-  0008a: CIS cannot read it without a staff token). No profile budget = no check.
+  0008a: CIS cannot read it without a staff token; the CRM's own job sampler e-mails the same alerts topic at 80 % /
+  100 % of its budget, ``llm_app_spend_near`` / ``_cap``, AA-Partner ``app/observability/ops_alerts.py``). No profile
+  budget = no check.
 - **Log events** (were log metric filters on /ecs/aa-cis-dev): :func:`capture` is a structlog processor installed on
   the JSON log handler (shared/log_config.py), so it sees every line of the api and the worker. A line whose event is
   in :data:`EVENT_CHECKS`, a tenant route that ran on the admin pool (``used_tenant_pool`` false, not a known
