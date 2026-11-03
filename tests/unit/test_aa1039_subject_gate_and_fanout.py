@@ -145,7 +145,8 @@ async def test_only_retired_and_restored_events_enqueue_a_fanout():
 
 def test_retired_mail_names_pages_posts_and_dates_in_content_words():
     notice = {"event": "retired", "tour_name": "Lake Walk Weekend", "summary": {
-        "stop_date": "3 November 2026", "pages": [{"url": "https://agency.example/lake", "draft_on": "10 November 2026"}],
+        "stop_date": "3 November 2026",
+        "pages": [{"url": "https://agency.example/lake", "draft_on": "10 November 2026"}],
         "posts": [{"url": "https://social.example/p/1", "channel": "facebook"}], "publishes_cancelled": 1,
         "replacement": "River Valley Days"}}
     msg = notice_mail.render([notice], to=("owner@agency.example",), agency="Invented Agency")

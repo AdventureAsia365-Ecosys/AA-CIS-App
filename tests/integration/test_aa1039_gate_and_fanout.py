@@ -364,8 +364,8 @@ async def test_mail_goes_to_owner_and_editor_once(conn, monkeypatch):
     out = await trj.run_mail(JobContext(l2._OneConnPool(conn), job, {"ses": ses, "cognito": cognito}))
     assert out["sent"] == 0 and len(ses.sent) == 1                             # mailed once
 
-    digest = queue.Job(id=str(uuid.uuid4()), kind=trj.MAIL_KIND, payload={"digest_day": "2026-11-03"}, status="running", attempt=1,
-                       max_attempts=4, cost_usd=0.0, progress={})
+    digest = queue.Job(id=str(uuid.uuid4()), kind=trj.MAIL_KIND, payload={"digest_day": "2026-11-03"},
+                       status="running", attempt=1, max_attempts=4, cost_usd=0.0, progress={})
     out = await trj.run_mail(JobContext(l2._OneConnPool(conn), digest, {"ses": ses, "cognito": cognito}))
     # the quiet tenant has no member with an address: its digest notice waits (deferred), nothing is sent for it
     assert {r["status"] for r in out["results"]} <= {"deferred", "sent"}
