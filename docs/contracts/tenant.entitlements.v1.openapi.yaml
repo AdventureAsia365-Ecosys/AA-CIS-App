@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: tenant.entitlements.v1 (AA-CIS-App → AA-Partner CRM, AA-Booking, TripPlanner; tenant account and entitlements)
-  version: "1.0"
+  version: "1.1"
   description: >-
     CIS shared is the master of the tenant account: lifecycle status, data region, product subscriptions and the
     entitlements they give (root ADR 0019 d1, d2). This contract tells the other apps, per tenant, which feature keys
@@ -19,8 +19,21 @@ info:
     transaction-id snapshot horizon, as tenant.membership.v1), so an event committed out of order is delivered later,
     never skipped (contracts rule 4); a consumer stores event_id and applies each event once. No personal data, no
     price and no billing field crosses this contract (the bill-to fields stay in CIS; Booking reads them under its
-    own scope, R4). Auth: M2M token of the aa-m2m pool, scope cis.tenant/read (the CRM client in 1.0; a Booking
-    client and its scope come with the Booking pull, ADR 0019 d1).
+    own scope, R4). Auth: M2M token of the aa-m2m pool, scope cis.tenant/read (the CRM client).
+    1.1 (AA-1028 R1 slice 2, additive; no HTTP shape change): (a) resolution, CIS 356: a platform key (ai.*, policy.*)
+    that is not the plan's own (an override, the legacy AI budget) needs a live content subscription, so an offboarded
+    tenant keeps no platform key; content.rate_limit_rpm is the CIS public API limiter's per-tenant value
+    (shared.tenants.rate_limit_rpm) when it differs from the content plan's, served with source override, and it wins
+    over an explicit override of that key. (b) A second view part for Booking, catalog.v_tenant_account_v1 (CIS 357,
+    SELECT to role booking only): one row per tenant with tenant_id, name (the trading name, which Booking already
+    holds as booking.b2b_partners.agency_name), account_status, suspend_reason, in_service, kind, is_pilot and
+    trade_book (the trade.book entitlement is live); columns are only appended. Booking reads it instead of HTTP, so
+    Booking needs no M2M client (its bk_tenant_pull projects every tenant except kind internal into
+    booking.b2b_partners). (c) Consumers: the CRM reads the HTTP API (crm_entitlement_pull: the feed names the tenants
+    that changed, the CRM re-reads each one's snapshot); Booking reads catalog.v_tenant_account_v1; TripPlanner reads
+    a view of its own in R5. Every tenant holds a content subscription that follows plan_tier and the offboard /
+    restore lifecycle (CIS 355 bridge); CIS staff add or change add-ons with the tenant_provision saga (CIS
+    POST /admin/tenants/provision and /admin/tenants/{id}/provision).
   x-aa-contract: tenant.entitlements.v1
   x-aa-producer: AA-CIS-App
   x-aa-consumers: [AA-Partner, AA-Booking, AA-TripPlanner-Web]

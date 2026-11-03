@@ -2412,9 +2412,34 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
   `tenant_subscription`, `tenant_entitlement_override`, `plan_feature` or `tenant_ai_budget` needs the CIS 353 grants
   (the triggers run as the writer, MIG-6).
 
-Not yet: the one-action `tenant_provision` saga, the Tenants admin pages (Directory, Subscription tab, Plans), the CRM
-and Booking pulls, enforcement from entitlements (the hard-coded `PLAN_LIMITS`, the 10/10/50 quota ledger and the UI
-`PLAN_OPTIONS` still decide today), and the Dev guard that refuses real tenants except the pilot.
+- CIS 356 (slice 2, review fixes): a non-plan candidate of a platform key (an override, the legacy AI budget) needs a
+  live **content** subscription (an offboarded tenant keeps no `ai.budget_usd_monthly`); `shared.tenants.rate_limit_rpm`
+  is mirrored as `content.rate_limit_rpm` (source override, rank above an explicit override) when it differs from the
+  live content plan's value, and the trigger `tenants_rate_limit_resync` re-syncs on an RPM change. The column stays
+  the limiter's source (`api/middleware/rate_limit.py`) until slice 3 moves the limiter onto the entitlement.
+- CIS 357 (slice 2): `catalog.v_tenant_account_v1` (catalog recipe, SELECT to `booking` only; contract
+  tenant.entitlements.v1 1.1): one row per tenant (id, name, account_status, suspend_reason, in_service, kind,
+  is_pilot, trade_book) for Booking's `bk_tenant_pull`, which projects every tenant into `booking.b2b_partners`.
+- **One-action provisioning (slice 2):** the `tenant_provision` saga on `shared.job`
+  (`services/tenant_account/provision.py`, `services/jobs/tenant_provision_job.py`, routes in
+  `api/routers/admin_tenant_provision.py`, admin role, `tenant.write`): `POST /admin/tenants/provision` creates a tenant
+  (the same rows as `POST /admin/tenants`, no API key: staff issue it with generate-key) with its content subscription
+  (the 355 bridge; optional trial: account `trial`, subscription `trialing`) and optional crm / tripplanner add-ons;
+  `POST /admin/tenants/{id}/provision` adds or changes add-ons of an existing tenant; `GET
+  /admin/tenants/provision/{job_id}` reads the job. Idempotent per `request_key` (job key `tenant_provision:<key>`; the
+  database steps are one transaction that writes the audit row naming the key, so a retry after a commit returns the
+  stored outcome). The feed events carry `aa.actor` = `job:tenant_provision:<job id>`. The CRM (`crm_entitlement_pull`,
+  plan / seats / allowed features / CIS lock) and Booking (`bk_tenant_pull`) projections follow by themselves; creating
+  the CRM agency itself and inviting its owner stay on Platform › Agencies (the relay uses the staff's own WORKFORCE
+  token, which a job does not have). The bridge triggers of 355 stay: `POST /admin/tenants`, PATCH, offboard and
+  restore still write only `shared.tenants`.
+- Platform › Agencies shows the CRM's allowed features read-only (crm.ops.v1 1.11: the CRM refuses the L1 write with
+  409 `entitlements_managed_by_cis`; they follow the tenant's CRM subscription and overrides here).
+
+Not yet: the Tenants admin pages (Directory, Subscription tab, Plans: the saga has no UI yet), enforcement from
+entitlements inside CIS (the hard-coded `PLAN_LIMITS`, the 10/10/50 quota ledger and the UI `PLAN_OPTIONS` still decide
+today), the daily tick that calls `tenant_entitlement_sync_due()`, and the Dev guard that refuses real tenants except
+the pilot.
 
 ### Tenant lifecycle (AA-797)
 
