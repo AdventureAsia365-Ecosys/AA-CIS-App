@@ -192,7 +192,11 @@ async def test_plan_defaults_and_trial(conn):
     await conn.execute("UPDATE shared.tenant_subscription SET status = 'active', plan_key = 'content.business' "
                        "WHERE tenant_id = $1", tid)
     ents = await _ents(conn, tid)
-    assert ents["ai.budget_usd_monthly"] == (80.0, "plan") and ents["content.rate_limit_rpm"] == (1000.0, "plan")
+    # CIS 356: the tenant's own rate_limit_rpm (60) differs from the business plan's 1,000, so it is the override
+    assert ents["ai.budget_usd_monthly"] == (80.0, "plan") and ents["content.rate_limit_rpm"] == (60.0, "override")
+    await conn.execute("UPDATE shared.tenants SET rate_limit_rpm = 1000 WHERE tenant_id = $1", tid)
+    assert (await _ents(conn, tid))["content.rate_limit_rpm"] == (1000.0, "plan")
+    ents = await _ents(conn, tid)
     assert await _materialised(conn, tid) == ents
     await conn.execute("UPDATE shared.tenant_subscription SET status = 'unpaid' WHERE tenant_id = $1", tid)
     assert await _ents(conn, tid) == {} and await _materialised(conn, tid) == {}

@@ -427,6 +427,10 @@ def _apply_schema(conn):
         # Migrate way on the RDS-like state and undoes all three at teardown. (351, the tripplanner REVOKE, is
         # replayed like every file; test_aa1027_migration_351 re-seeds the grants and re-applies it.)
         and not f.startswith('350')
+        # AA-1028 R1 slice 2 (S266): 357 creates catalog.v_tenant_account_v1 (the Booking projection's read) through
+        # the catalog recipe (needs 245's owners). test_aa1028_migration_357 applies it the DB Migrate way on the
+        # RDS-like state and undoes it at teardown.
+        and not f.startswith('357')
     ])
 
     for mf in migration_files:
