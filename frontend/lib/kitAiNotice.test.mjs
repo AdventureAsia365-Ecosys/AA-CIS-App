@@ -150,11 +150,12 @@ test("placements: every CIS admin screen where a reviewer acts on AI output rend
     assert.match(s, /<AiNotice\b/, file.join("/"));
   }
   // Content quality: the model's rewrite of a flagged sentence, shared by the T9 piece drawer and the T2 version drawer.
-  const sa = src("content-quality", "SentenceActions.tsx");
-  assert.match(sa, /import \{[^}]*\bAiNotice\b[^}]*\} from "\.\.\/\.\.\/_kit"/);
+  // AA-1039 (S266): the page moved to /admin/tenant-qa/quality, one folder deeper.
+  const sa = src("tenant-qa", "quality", "SentenceActions.tsx");
+  assert.match(sa, /import \{[^}]*\bAiNotice\b[^}]*\} from "\.\.\/\.\.\/\.\.\/_kit"/);
   const panel = sa.slice(sa.indexOf("export function RewritePanel"), sa.indexOf("export interface EditOwner"));
   assert.match(panel, /\{sug && <AiNotice testId="cq-rewrite-ai-notice" \/>\}/);
-  assert.match(src("content-quality", "TourVersionDrawer.tsx"), /<RewritePanel\b/);
+  assert.match(src("tenant-qa", "quality", "TourVersionDrawer.tsx"), /<RewritePanel\b/);
   assert.match(sa, /<RewritePanel\b/, "the piece drawer's flagged sentences use the same panel");
 });
 

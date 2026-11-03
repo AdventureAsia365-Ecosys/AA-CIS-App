@@ -54,25 +54,27 @@ export const PAGE_RULES: PageRule[] = [
   { prefix: "/admin/overview", roles: ["admin"] },          // AA-664
   { prefix: "/admin/data-coverage", roles: ["admin"] },     // AA-992 — counts from raw upload to CRM (incl. CRM)
   { prefix: "/admin/reports", roles: ["admin"] },          // AA-1003 — report register, KPI scorecard runs
+  // AA-1039 (S266): also the Tenants group pages /admin/tenants/agencies (was /admin/platform/agencies) and
+  // /admin/tenants/data-erasure (was /admin/data-erasure).
   { prefix: "/admin/tenants", roles: ["admin"] },
   { prefix: "/admin/ai-gateway", roles: ["admin"] },       // AA-804 — AI providers (health, spend, job trace)
   { prefix: "/admin/cost-ops", roles: ["admin"] },         // AA-505; AA-665 (was /admin/llm-usage, redirected)
   { prefix: "/admin/jobs", roles: ["admin"] },              // AA-650
-  { prefix: "/admin/data-erasure", roles: ["admin"] },      // AA-839 — DSAR / tenant erasure (DRY RUN, apply)
   { prefix: "/admin/decisions", roles: ["admin"] },         // AA-660
   { prefix: "/admin/photos", roles: ["admin"] },            // AA-708
   { prefix: "/admin/places", roles: ["admin"] },            // AA-847 — coverage + content validity, fixes
   { prefix: "/admin/seo-intelligence", roles: ["admin"] },  // AA-705
   { prefix: "/admin/atom-curation", roles: ["admin"] },     // AA-527
-  { prefix: "/admin/tenant-activity", roles: ["admin"] },   // AA-551
-  { prefix: "/admin/platform-stats", roles: ["admin"] },    // AA-560
-  { prefix: "/admin/content-quality", roles: ["admin"] },   // AA-769
+  // AA-1039 (S266) — Tenant content QA: quality (was /admin/content-quality, AA-769), trace (was
+  // /admin/tenant-activity, AA-551), review-log (was /admin/platform-stats, AA-560) and slate (was atom-curation
+  // section 05). The old URLs are 307s in next.config.ts (lib/adminIa.ts), which run before proxy.ts.
+  { prefix: "/admin/tenant-qa", roles: ["admin"] },
   { prefix: "/admin/writing-memory", roles: ["admin"] },    // AA-917 — signals and candidate rules (tenant text)
   { prefix: "/admin/api-docs", roles: ["admin"] },          // AA-577 follow-up — OpenAPI reader
   { prefix: "/admin/data-model", roles: ["admin"] },        // AA-894 — live ERD from the nightly schema dump
   { prefix: "/admin/docs", roles: ["admin"] },              // AA-898 — docs catalog reader (synced by root CI)
   // AA-883 — Platform pages (staff directory first). Matches /admin/platform and /admin/platform/…
-  // only, never /admin/platform-stats (pageRule compares prefix or prefix + "/").
+  // only, never a sibling such as /admin/platform-x (pageRule compares prefix or prefix + "/").
   { prefix: "/admin/platform", roles: ["admin"] },
   // Content work — every staff role but the read-only viewer (these pages only write).
   { prefix: "/admin/upload", roles: CONTENT_WORKERS },

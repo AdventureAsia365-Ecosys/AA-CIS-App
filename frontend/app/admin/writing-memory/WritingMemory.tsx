@@ -486,7 +486,7 @@ export default function WritingMemory() {
   return (
     <PageFrame>
       <PageHeader title={t("title")}
-        breadcrumbs={[{ label: t("crumbTenantOutput") }, { label: t("title") }]}
+        breadcrumbs={[{ label: t("crumbWritingLab") }, { label: t("title") }]}
         description={<>{t("description")}{" "}
           <LinkButton size="inherit" weight="regular" onClick={() => setTab("guide")} testId="wm-guide-link"
             style={{ textDecoration: "underline", textUnderlineOffset: 2 }}>

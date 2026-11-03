@@ -353,7 +353,7 @@ def check_chips(files: dict[str, str], root: Path, res: Result) -> None:
         elif found != list(chips.get("defect_classes") or {}):
             res.errors.append(f"(e) DEFECT_CLASSES {found} != registry chips.defect_classes "
                               f"{list(chips.get('defect_classes') or {})} (set and order are frozen)")
-    shared = root / "frontend/app/admin/content-quality/shared.ts"
+    shared = root / "frontend/app/admin/tenant-qa/quality/shared.ts"
     if shared.exists():
         ts = shared.read_text(encoding="utf-8")
         for const, group in (("DEFECT_NAMES", "defect_classes"), ("DUPLICATE_REASON_LABELS", "duplicate_reasons")):

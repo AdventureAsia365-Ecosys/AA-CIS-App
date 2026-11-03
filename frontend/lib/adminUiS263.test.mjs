@@ -6,7 +6,7 @@
 //      65 px wider than the phone → the key wraps anywhere, the row stacks on a phone, the date never breaks inside.
 //   F2 kit DataTable toolbar ("Columns") flush against / clipped at the right edge: Master Content drew the table
 //      full-bleed under an inset header, Upload put it flush in a `Section padded={false}` card → a consistent inset.
-//   F3 /admin/tenant-activity Content Trace: "Total pieces 200" was the number of loaded rows, there was no pager, and
+//   F3 /admin/tenant-qa/trace (was /admin/tenant-activity) Content Trace: "Total pieces 200" was the number of loaded rows, there was no pager, and
 //      ten columns did not fit the pane at 1440 → server paging, the API's own counts, seven columns.
 //   F4 Master Content numbered the previous page's rows with the next page's numbers during "Refreshing…" → the
 //      range follows the rows on screen.
@@ -89,7 +89,7 @@ test("F2: every DataTable on the Upload page sits in the card inset (TableInset)
 // ── F3 ───────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 test("F3: Content Trace pages on the server and counts from the API", () => {
-  const src = code("tenant-activity/page.tsx");
+  const src = code("tenant-qa/trace/page.tsx");
   assert.match(src, /traceQuery\(filterQuery, pageIndex, pageSize\)/);
   assert.match(src, /serverPagination=\{paging\}/);
   assert.match(src, /traceStats\(answer\)/);
@@ -98,7 +98,7 @@ test("F3: Content Trace pages on the server and counts from the API", () => {
 });
 
 test("F3: Content Trace has seven columns, the text ones wrap with a readable minimum", () => {
-  const src = code("tenant-activity/page.tsx");
+  const src = code("tenant-qa/trace/page.tsx");
   const cols = [...src.matchAll(/\bcol\("(\w+)"/g)].map((m) => m[1]);
   assert.deepEqual(cols, ["topic", "tenant", "channel", "angle", "status", "gate", "created_at"]);
   assert.match(src, /col\("topic"[^\n]*textBox\(150, 220\)/);

@@ -697,7 +697,7 @@ function SocialContentTabContent({ tenantId }: { tenantId: string }) {
       </div>
       <div style={{ fontSize: 11.5, color: K.muted2, fontStyle: "italic" }}>
         {t("socialNoteA")}{" "}
-        <a href="/admin/tenant-activity" style={{ color: K.accent }}>{t("contentTrace")}</a> {t("socialNoteB")}
+        <a href="/admin/tenant-qa/trace" style={{ color: K.accent }}>{t("contentTrace")}</a> {t("socialNoteB")}
       </div>
     </div>
   );

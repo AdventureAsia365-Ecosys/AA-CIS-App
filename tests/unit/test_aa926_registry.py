@@ -9,7 +9,7 @@ from services.quality import gen_frontend, lint, registry
 ROOT = Path(__file__).resolve().parents[2]
 SNAPSHOT = ROOT / "tests" / "unit" / "fixtures" / "aa926_gate_snapshot.json"
 
-# frontend/app/admin/content-quality/shared.ts GATE_LABELS before AA-926 (frozen copy, in order).
+# frontend/app/admin/tenant-qa/quality/shared.ts GATE_LABELS before AA-926 (frozen copy, in order).
 OLD_GATE_LABELS = [
     ("F0_complete", "Text cut off"),
     ("F1_grounding", "Number not in source"),

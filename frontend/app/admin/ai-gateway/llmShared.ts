@@ -47,6 +47,8 @@ export interface StageConfigRow {
   disabled_reason?: string | null;
   /** AA-642 A1 (migration 326): the declared degrade mode (queue_retry, basic_narration, ...); null = none. */
   degrade_mode?: string | null;
+  /** AA-1039 (root ADR 0019 TL-12): content | pii — not sent yet; the Routing tab shows an empty state until it is. */
+  pii_class?: string | null;
 }
 
 // ── /admin/llm-catalog ──────────────────────────────────────────────────────

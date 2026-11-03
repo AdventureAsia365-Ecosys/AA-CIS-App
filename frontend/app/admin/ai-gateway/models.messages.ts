@@ -194,6 +194,20 @@ export const MODELS = defineMessages(
     breakGlassPlaceholder: "Why this change cannot wait for an eval run",
     evidenceMissing: (min: number) => `Give an eval run id, or a break-glass reason of at least ${min} characters.`,
     savedWithWarning: (warning: string) => `Saved. ${warning}`,
+    // RoutingTab — routing by data class (AA-1039)
+    dataClassTitle: "Routing by data class",
+    dataClassIntro:
+      "The rule: a stage that handles personal data uses only routes kept in the United States; a stage that handles content only may also use a global route.",
+    dataClassPii: "Personal data",
+    dataClassPiiNote: "US routes only",
+    dataClassContent: "Content only",
+    dataClassContentNote: "global routes allowed",
+    dataClassUnset: "No class yet",
+    dataClassUnsetNote: "class not set",
+    dataClassNone: "None",
+    dataClassEmptyTitle: "No stage has a data class yet",
+    dataClassEmptyBody:
+      "The gateway does not record a data class per stage yet, so routes are not checked against this rule. This card lists the stages per class once it does.",
   },
   {
     route: "Tuyến:",
@@ -379,5 +393,18 @@ export const MODELS = defineMessages(
     breakGlassPlaceholder: "Vì sao thay đổi này không chờ được lượt đánh giá",
     evidenceMissing: (min: number) => `Nhập mã lượt đánh giá, hoặc lý do khẩn cấp dài ít nhất ${min} ký tự.`,
     savedWithWarning: (warning: string) => `Đã lưu. ${warning}`,
+    dataClassTitle: "Định tuyến theo loại dữ liệu",
+    dataClassIntro:
+      "Quy tắc: stage xử lý dữ liệu cá nhân chỉ dùng route giữ ở Hoa Kỳ; stage chỉ xử lý nội dung được dùng thêm route toàn cầu.",
+    dataClassPii: "Dữ liệu cá nhân",
+    dataClassPiiNote: "chỉ route Hoa Kỳ",
+    dataClassContent: "Chỉ nội dung",
+    dataClassContentNote: "được dùng route toàn cầu",
+    dataClassUnset: "Chưa có loại",
+    dataClassUnsetNote: "chưa đặt loại",
+    dataClassNone: "Không có",
+    dataClassEmptyTitle: "Chưa stage nào có loại dữ liệu",
+    dataClassEmptyBody:
+      "Cổng AI chưa ghi loại dữ liệu cho từng stage, nên route chưa được kiểm theo quy tắc này. Khi có, thẻ này liệt kê stage theo từng loại.",
   },
 );

@@ -153,7 +153,7 @@ export const M = defineMessages(
     // page
     queued: (job: string) => `Queued (job ${job}); see Platform › Jobs`,
     title: "Writing memory",
-    crumbTenantOutput: "Tenant output",
+    crumbWritingLab: "Writing Lab",
     description: "What the writers could learn from edits and repeated gate failures. Rules are drafted here and "
       + "reach a writer through an approved release; a lexicon rule proven by R0 can go live at once (L0).",
     readGuide: "New here? Read the Guide",
@@ -301,7 +301,7 @@ export const M = defineMessages(
     everyStatus: "Mọi trạng thái",
     queued: (job: string) => `Đã xếp hàng (job ${job}); xem Nền tảng › Jobs`,
     title: "Bộ nhớ viết",
-    crumbTenantOutput: "Nội dung cho tenant",
+    crumbWritingLab: "Phòng thử viết",
     description: "Những gì các trình viết có thể học từ các lần sửa và các lỗi gate lặp lại. Quy tắc được soạn ở đây "
       + "và đến với trình viết qua một bản phát hành đã duyệt; quy tắc từ vựng đã được R0 chứng minh có thể chạy "
       + "ngay (L0).",

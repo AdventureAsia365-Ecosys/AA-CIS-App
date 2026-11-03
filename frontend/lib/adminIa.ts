@@ -1,0 +1,164 @@
+// frontend/lib/adminIa.ts
+// AA-1039 R6 slice 1 (S266) — the CIS admin information architecture as plain data: the seven nav groups (root ADR 0019
+// d13: Home, Tenants, AA Catalogue, Tenant content QA, AI & spend, Writing Lab, Platform), the pages that moved and
+// where their old URLs go. Dependency-free (no React, no Node APIs) so next.config.ts (redirects), app/_kit/adminNav.tsx
+// (the sidebar, breadcrumb, ⌘K palette), the unit test (lib/adminIa.test.mjs) and the smoke spec
+// (tests/e2e/smoke/aa1039-admin-ia-redirects.spec.ts) all read the same table.
+//
+// Visibility still follows lib/rbac.ts PAGE_RULES (an item shows only when the role may open its page). An item marked
+// `hidden` is a reserved slot: it is in the model (so its place is decided) but no sidebar, palette or breadcrumb shows
+// it until its page ships.
+
+/** Icon keys; app/_kit/adminNav.tsx maps each to a lucide icon (TypeScript checks the map is complete). */
+export type NavIcon =
+  | "overview" | "appHealth" | "reports" | "dataCoverage"
+  | "tenants" | "agencies" | "erasure" | "plans"
+  | "upload" | "rewrite" | "review" | "master" | "atoms" | "places" | "photos" | "facts" | "supply" | "aaContent"
+  | "seo" | "settings"
+  | "quality" | "trace" | "reviewLog" | "slate"
+  | "aiGateway" | "spend" | "costPerApp"
+  | "writingMemory" | "decisions"
+  | "staff" | "audit" | "jobs" | "alerts" | "apiDocs" | "dataModel" | "docs";
+
+export interface IaItem {
+  href: string;
+  label: string;
+  icon: NavIcon;
+  /** Other routes that belong to this entry (its sub-pages), for the active state. */
+  also?: string[];
+  /** A reserved slot: kept in the model, shown nowhere until its page ships. */
+  hidden?: boolean;
+}
+
+export interface IaGroup {
+  label: string;
+  items: IaItem[];
+}
+
+/** The seven groups in display order (root ADR 0019 d13). */
+export const ADMIN_GROUP_LABELS = [
+  "Home", "Tenants", "AA Catalogue", "Tenant content QA", "AI & spend", "Writing Lab", "Platform",
+] as const;
+
+export const ADMIN_IA: IaGroup[] = [
+  { label: "Home", items: [
+    { href: "/admin/overview", label: "Overview", icon: "overview" },
+    // Health and running commit of every app (until the Home health strip replaces it).
+    { href: "/admin/platform/apps", label: "App health", icon: "appHealth" },
+    { href: "/admin/reports", label: "Reports", icon: "reports" },
+    { href: "/admin/data-coverage", label: "Data coverage", icon: "dataCoverage" },
+  ] },
+  { label: "Tenants", items: [
+    // The directory; a row opens the Tenant 360 drawer (?tenant=<id>).
+    { href: "/admin/tenants", label: "Directory", icon: "tenants" },
+    { href: "/admin/tenants/agencies", label: "CRM agencies", icon: "agencies" },
+    { href: "/admin/tenants/data-erasure", label: "Data erasure", icon: "erasure" },
+    // Reserved for the plans and add-ons catalogue (tenant control plane, slice 3).
+    { href: "/admin/tenants/plans", label: "Plans & add-ons", icon: "plans", hidden: true },
+  ] },
+  { label: "AA Catalogue", items: [
+    { href: "/admin/upload", label: "Upload (S0)", icon: "upload" },
+    { href: "/admin/s1-rewrite", label: "Rewrite (S1)", icon: "rewrite" },
+    { href: "/admin/review", label: "Review Queue", icon: "review" },
+    { href: "/admin/master-content", label: "Master Content", icon: "master" },
+    { href: "/admin/atom-curation", label: "Atoms & routes", icon: "atoms" },
+    { href: "/admin/places", label: "Places", icon: "places" },
+    { href: "/admin/photos", label: "Photos", icon: "photos" },
+    { href: "/admin/facts", label: "Facts", icon: "facts" },
+    { href: "/admin/supply-content", label: "Supply copy", icon: "supply" },
+    { href: "/admin/aa-content", label: "AA content", icon: "aaContent" },
+    { href: "/admin/seo-intelligence", label: "SEO Intelligence", icon: "seo" },
+    { href: "/admin/settings", label: "Settings", icon: "settings" },
+  ] },
+  { label: "Tenant content QA", items: [
+    { href: "/admin/tenant-qa/quality", label: "Content quality", icon: "quality" },
+    { href: "/admin/tenant-qa/trace", label: "Content Trace", icon: "trace" },
+    { href: "/admin/tenant-qa/review-log", label: "Review log", icon: "reviewLog" },
+    { href: "/admin/tenant-qa/slate", label: "Slate", icon: "slate" },
+  ] },
+  { label: "AI & spend", items: [
+    // Tabs: Providers (connections, credit), Routing, Models & trials, Budgets (+ app profiles), Calls, Guide.
+    // The page names stay "AI providers" and "Cost Operations" (guides, cross-links and copy use them) until the
+    // later R6 slice that merges Cost Operations and Cost per app into one Spend page.
+    { href: "/admin/ai-gateway", label: "AI providers", icon: "aiGateway" },
+    { href: "/admin/cost-ops", label: "Cost Operations", icon: "spend" },
+    { href: "/admin/platform/cost", label: "Cost per app", icon: "costPerApp" },
+  ] },
+  { label: "Writing Lab", items: [
+    { href: "/admin/writing-memory", label: "Writing memory", icon: "writingMemory" },
+    { href: "/admin/decisions", label: "Jev Decisions", icon: "decisions" },
+  ] },
+  { label: "Platform", items: [
+    { href: "/admin/platform/staff", label: "Staff & access", icon: "staff" },
+    { href: "/admin/platform/audit", label: "Audit log", icon: "audit" },
+    { href: "/admin/jobs", label: "Jobs", icon: "jobs" },
+    { href: "/admin/platform/alerts", label: "Alert recipients", icon: "alerts" },
+    { href: "/admin/api-docs", label: "API Docs", icon: "apiDocs" },
+    { href: "/admin/data-model", label: "Data model", icon: "dataModel" },
+    { href: "/admin/docs", label: "Docs", icon: "docs" },
+  ] },
+];
+
+/** A page that moved: `from` (exact path, optionally only with `query`) answers 307 to `to`; the query string carries
+ *  over (Next.js passes it through). */
+export interface RouteMove {
+  from: string;
+  to: string;
+  query?: { key: string; value: string };
+}
+
+// 307 (permanent: false), not 308: browsers cache a 308 for good, and the later R6 slices may move these again.
+export const ADMIN_ROUTE_MOVES: RouteMove[] = [
+  { from: "/admin/content-quality", to: "/admin/tenant-qa/quality" },
+  { from: "/admin/tenant-activity", to: "/admin/tenant-qa/trace" },
+  { from: "/admin/platform-stats", to: "/admin/tenant-qa/review-log" },
+  // Slate was section 05 of the atom-curation page; it is tenant content, so it moved to Tenant content QA.
+  { from: "/admin/atom-curation", query: { key: "section", value: "slate" }, to: "/admin/tenant-qa/slate" },
+  { from: "/admin/platform/agencies", to: "/admin/tenants/agencies" },
+  { from: "/admin/data-erasure", to: "/admin/tenants/data-erasure" },
+];
+
+/** The Next.js redirect entries of ADMIN_ROUTE_MOVES (next.config.ts `redirects()`). */
+export function adminIaRedirects(): {
+  source: string; destination: string; permanent: false; has?: { type: "query"; key: string; value: string }[];
+}[] {
+  return ADMIN_ROUTE_MOVES.map((m) => ({
+    source: m.from,
+    destination: m.to,
+    permanent: false as const,
+    ...(m.query ? { has: [{ type: "query" as const, key: m.query.key, value: m.query.value }] } : {}),
+  }));
+}
+
+/** Where `url` (path + optional query) lands after the moves, as Next.js would answer it (query kept). */
+export function resolveAdminRoute(url: string): string {
+  let current = url;
+  for (let hop = 0; hop < 5; hop += 1) {
+    const [rawPath, query = ""] = current.split("?", 2);
+    const path = rawPath.length > 1 ? rawPath.replace(/\/+$/, "") : rawPath;
+    const params = new URLSearchParams(query);
+    const move = ADMIN_ROUTE_MOVES.find((m) => m.from === path && (!m.query || params.get(m.query.key) === m.query.value));
+    if (!move) return current;
+    current = query ? `${move.to}?${query}` : move.to;
+  }
+  return current;
+}
+
+/** Every admin page URL the S265 navigation linked (sidebar, footer Settings, the atom-curation sub-nav). Each must
+ *  still open a page after the moves (lib/adminIa.test.mjs). Frozen: add to it, never remove. */
+export const PRE_R6_ADMIN_ROUTES: readonly string[] = [
+  "/admin/overview", "/admin/data-coverage", "/admin/reports",
+  "/admin/platform/staff", "/admin/platform/audit", "/admin/platform/alerts", "/admin/platform/apps",
+  "/admin/tenants", "/admin/platform/agencies",
+  "/admin/jobs", "/admin/data-erasure",
+  "/admin/ai-gateway", "/admin/cost-ops", "/admin/platform/cost", "/admin/decisions",
+  "/admin/api-docs", "/admin/data-model", "/admin/docs",
+  "/admin/upload", "/admin/s1-rewrite", "/admin/review", "/admin/master-content",
+  "/admin/photos", "/admin/places", "/admin/aa-content", "/admin/facts", "/admin/supply-content",
+  "/admin/atom-curation", "/admin/seo-intelligence",
+  "/admin/tenant-activity", "/admin/platform-stats", "/admin/content-quality", "/admin/writing-memory",
+  "/admin/settings",
+  "/admin/atom-curation?section=atomize", "/admin/atom-curation?section=segment",
+  "/admin/atom-curation?section=score", "/admin/atom-curation?section=route_hub",
+  "/admin/atom-curation?section=slate",
+];

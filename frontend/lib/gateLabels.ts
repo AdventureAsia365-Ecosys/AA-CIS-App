@@ -5,7 +5,7 @@
 //
 // The labels and the retired set come from the quality registry (services/quality/taxonomy.yaml →
 // lib/quality-registry.generated.ts); they are passed in rather than imported so `npm run test:unit` (node --test with
-// --experimental-strip-types, no bundler path resolution) can run this file directly. app/admin/content-quality/shared.ts
+// --experimental-strip-types, no bundler path resolution) can run this file directly. app/admin/tenant-qa/quality/shared.ts
 // binds them to the generated registry.
 // AA-994: the retired suffix is a parameter too (English by default); the page passes the UI language's
 // (lib/gateLabels.messages.ts) and the Vietnamese labels (lib/quality-registry.generated.vi.ts).

@@ -48,7 +48,7 @@ def test_limits_match():
 def test_page_rule_nav_and_role_gated_controls():
     rbac = (REPO / "frontend" / "lib" / "rbac.ts").read_text()
     assert '{ prefix: "/admin/aa-content", roles: ALL_STAFF }' in rbac       # the viewer reads
-    nav = (REPO / "frontend" / "app" / "_kit" / "adminNav.tsx").read_text()
+    nav = (REPO / "frontend" / "lib" / "adminIa.ts").read_text()  # AA-1039: the nav model lives there
     assert 'href: "/admin/aa-content"' in nav
     editor = (REPO / "frontend" / "app" / "admin" / "aa-content" / "AaContentEditor.tsx").read_text()
     # drafts are content.write, publish / retire / restore master.admin (api/core/staff_authz.py POLICY)
