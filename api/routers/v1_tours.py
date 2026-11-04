@@ -131,6 +131,7 @@ _POOL_ROWS_SQL = """
            pt.seo_title, pt.seo_meta, pt.seo_keywords_used,
            pt.published_at, pt.updated_at,
            rt.country, rt.duration, rt.price_raw,
+           (COALESCE(rt.source_group_id, rt.tour_id))::text AS catalog_source_id,
            EXISTS(
                SELECT 1 FROM gold_aa_internal.tenant_tour_versions ttv
                WHERE ttv.published_tour_id = pt.id
@@ -199,6 +200,56 @@ def _pool_facets(row: dict) -> dict:
     return row
 
 
+# AA-1029 R4 (root ADR 0005 d1 / d6 as amended by ADR 0019 b15) — the public "from" price of each pool tour comes only
+# from AA-Booking's contract view booking.v_from_prices (price.from.v1, root docs/contracts/price.from.v1.md; SELECT to
+# cis_app by Booking bk-040): the suggested retail price per person for 2 travellers. CIS never computes a price and
+# never shows raw_tours.price_raw as one (ADR 0005 d7: reference only). Read on MAIN (cis_app) after the tenant block,
+# keyed by the catalog key (raw_tours.source_key = COALESCE(source_group_id, tour_id)::text, written as the expression
+# so the SQL does not depend on 258's stored column), like the job statuses above: aa_app_user holds nothing on schema
+# booking. Fail soft: the view not there yet (bk-039), no grant (bk-040 not applied), any other error, or no row = no
+# price (`from_price: null`), never a failed page. Per-tenant prices (AA-1030) are out of scope.
+_FROM_PRICE_SQL = """
+    SELECT source_id, amount::text AS amount, currency, basis, pax, season, valid_to
+      FROM booking.v_from_prices
+     WHERE source_system = 'cis' AND source_id = ANY($1::text[])
+"""
+
+
+async def _from_prices(pool, keys) -> dict:
+    """{catalog source_id: price.from.v1 dict} for the given keys (None ignored); {} when none or unreadable."""
+    ids = sorted({k for k in keys if k})
+    if not ids:
+        return {}
+    try:
+        # A transaction of its own: on a shared connection (tests) a failed read is a savepoint rollback, not an
+        # aborted outer transaction.
+        async with pool.acquire() as conn, conn.transaction():
+            rows = await conn.fetch(_FROM_PRICE_SQL, ids)
+    except Exception as exc:  # noqa: BLE001 — degrade to "no price shown"
+        logger.warning("aa1029_from_price_unreadable", error=type(exc).__name__)
+        return {}
+    out = {}
+    for r in rows:
+        if r["amount"] is None:
+            continue
+        valid_to = r["valid_to"]
+        out[r["source_id"]] = {
+            "amount": str(r["amount"]), "currency": str(r["currency"]).strip(), "basis": r["basis"],
+            "pax": r["pax"], "season": r["season"],
+            "valid_to": valid_to.isoformat() if hasattr(valid_to, "isoformat") else valid_to,
+        }
+    return out
+
+
+async def _with_from_prices(pool, rows: list) -> list:
+    """Each pool row gets `from_price` (price.from.v1 or None); the internal catalog key is dropped."""
+    keys = [r.pop("catalog_source_id", None) for r in rows]
+    prices = await _from_prices(pool, keys)
+    for row, key in zip(rows, keys):
+        row["from_price"] = prices.get(key) if key else None
+    return rows
+
+
 # Countries for the filter dropdown: same master_status/deleted_at gate as the listing, so a
 # trashed/deactivated tour's country doesn't show as a filterable option.
 _POOL_COUNTRIES_SQL = f"""
@@ -237,6 +288,10 @@ async def browse_pool(
     tour's first photo on the public photo route, 600 / 1600 px; else a photo of the place the tour spends the most
     days in; null when neither exists). Filters `activity`, `intensity` (exact
     level) and `added_within_days` (published in the last N days); the answer's `facets` lists the accepted values.
+
+    AA-1029: each row also carries `from_price`, the public suggested retail price per person of AA-Booking's
+    contract price.from.v1 ({amount, currency, basis, pax, season, valid_to}), or null when Booking has no price for
+    the tour (or the view cannot be read).
 
     AA-796: no A1 quality score on the tenant side — the `min_quality` filter, the
     `sort=quality` order and the `quality_score` column are gone. An old client still sending
@@ -307,6 +362,7 @@ async def browse_pool(
         countries = await conn.fetch(_POOL_COUNTRIES_SQL)
         data = await _annotate_served(conn, [_pool_facets(project_tour(r)) for r in rows])   # AA-986 L3
     _log_t2_read("pool", tenant_id, used_tenant_pool, count=len(rows))
+    data = await _with_from_prices(request.app.state.pool, data)   # AA-1029: on MAIN, after the tenant block
 
     return {
         "data": data,

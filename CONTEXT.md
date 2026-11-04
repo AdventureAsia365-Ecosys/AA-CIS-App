@@ -1807,6 +1807,12 @@ views the producers own and grant to `cis_app` in their own migrations (contract
 `booking.v_ops_data_totals`, `v_ops_trip_plan_keys` (bk-025), plus the CRM's counts over HTTP (`crm.ops.v1` 1.4
 `GET /crm/ops/v1/data-coverage`, staff token relayed; no AA role reads schema `crm`).
 
+CIS as a consumer of the public "from" price (AA-1029, contract `price.from.v1`, AA-Ecosys
+`docs/contracts/price.from.v1.md`; Booking bk-040 grants `booking.v_from_prices` to `cis_app`): `GET /v1/tours/pool`
+(the Content studio Marketplace) reads the suggested retail price per person of the page's tours by catalog key, on MAIN
+after the tenant block, and returns it as `from_price` (null when Booking has none or the view cannot be read: fail
+soft). CIS never computes a price and never shows `raw_tours.price_raw` as one (ADR 0005 d7).
+
 CIS as a consumer of Booking supply facts (AA-835, root ADR 0004a; contracts `supply.hotel.v1` / `supply.service.v1`,
 Booking bk-023 grants the four `booking.v_supply_*` views to `cis_app`). `services/supply_content/`:
 - `pull.py`, one batch per api ops-sampler tick (`api/core/ops_metrics_sampler.py`, off with `SUPPLY_FEED_PULL=off`):
