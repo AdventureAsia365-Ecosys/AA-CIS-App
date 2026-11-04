@@ -1,9 +1,7 @@
 # api/routers/admin.py
 # P2-S5 — Multi-tenant onboarding + billing metrics
-import hashlib
 import json
 import os
-import secrets
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 from typing import List, Literal, Optional
@@ -19,7 +17,6 @@ from api.core.staff_credential import principal_verified
 
 from services.acp_publish import daily_limit
 from services.acp_shared.audit_log import AdminTenantAuditAction, write_audit_log
-from services.acp_shared.e2e_tenant_key_sync import sync_note, sync_test_tenant_key
 from services.tenant_account import dev_guard
 from services.tenant_account import plans as tenant_plans
 from shared.ops_checks import EVENT_TYPE_PREFIX as OPS_CHECK_EVENT_PREFIX
@@ -157,7 +154,7 @@ def _admin_actor(x_admin_user_id: Optional[str]) -> str:
 
 
 def tenant_status(is_active: bool, cancelled_at) -> str:
-    """The three tenant states (AA-797): offboarded (cancelled_at set, key revoked; reversible only
+    """The three tenant states (AA-797): offboarded (cancelled_at set, account_status offboarding; reversible only
     through POST /tenants/{id}/restore), suspended is a reversible is_active=false, everything
     else is active."""
     if cancelled_at is not None:
@@ -220,20 +217,9 @@ class CreateTenantResponse(BaseModel):
     slug: str
     plan_tier: str
     posts_per_week: int
-    api_key: str
     rate_limit_rpm: int
     is_active: bool
     message: str
-
-
-class GenerateKeyResponse(BaseModel):
-    tenant_id: str
-    tenant_name: str
-    api_key: str
-    message: str
-    # S237: "synced" when the E2E test copy aa-cis/dev/e2e-tenant/<slug> was updated, "not_test_tenant",
-    # "skipped" (not on ECS) or "failed" (services/acp_shared/e2e_tenant_key_sync.py).
-    test_secret_sync: Optional[str] = None
 
 # ── POST /admin/tenants — Create tenant ───────────────────────────────────────
 
@@ -261,9 +247,6 @@ async def create_tenant(
     if refused is not None:
         raise HTTPException(status_code=422, detail={"detail": refused[0], "message": refused[1]},
                             headers={"X-Error-Code": refused[0]})
-    plaintext = f"cis_{secrets.token_urlsafe(32)}"
-    key_hash = hashlib.sha256(plaintext.encode()).hexdigest()
-
     pool = request.app.state.pool
     async with pool.acquire() as conn:
         existing = await conn.fetchval(
@@ -276,13 +259,13 @@ async def create_tenant(
         plan_id = await _resolve_plan_id(conn, body.plan_tier)
 
         async with conn.transaction():
+            # AA-1036 R3 slice 3 (root ADR 0019 d6): no tenant API key; people join through a studio invitation.
             tenant_id = await conn.fetchval("""
                 INSERT INTO shared.tenants
-                    (name, slug, plan_tier, plan_id, posts_per_week, api_key_hash, rate_limit_rpm, is_active,
-                     kind, is_canary)
-                VALUES ($1, $2, $3::plan_tier_enum, $4, $5, $6, $7, true, $8, $9)
+                    (name, slug, plan_tier, plan_id, posts_per_week, rate_limit_rpm, is_active, kind, is_canary)
+                VALUES ($1, $2, $3::plan_tier_enum, $4, $5, $6, true, $7, $8)
                 RETURNING tenant_id
-            """, body.name, body.slug, body.plan_tier, plan_id, body.posts_per_week, key_hash, rpm,
+            """, body.name, body.slug, body.plan_tier, plan_id, body.posts_per_week, rpm,
                 kind, kind == "demo")
             # AA-1028 R1 slice 3: no acp_quota_ledger row (the ACPv1 S2/S3/S4 10/10/50 ledger has no reader since
             # 13/07/2026; a tenant's limits are its entitlements).
@@ -333,10 +316,9 @@ async def create_tenant(
         slug=body.slug,
         plan_tier=body.plan_tier,
         posts_per_week=body.posts_per_week,
-        api_key=plaintext,
         rate_limit_rpm=rpm,
         is_active=True,
-        message="Store this API key securely — it will not be shown again. Tenant is active.",
+        message="Tenant is active. Invite its people to the Content studio from the tenant's Members tab.",
     )
 
 async def _publish_limit_overrides(conn) -> dict:
@@ -1367,56 +1349,7 @@ async def get_rewrite_activity(
     }
 
 
-# ── POST /admin/tenants/{id}/generate-key ────────────────────────────────────
-
-
-@router.post("/tenants/{tenant_id}/generate-key", response_model=GenerateKeyResponse, dependencies=TENANT_SCOPED)
-async def generate_api_key(
-    tenant_id: UUID,
-    request: Request,
-    x_admin_secret: str = Header(None),
-    x_admin_user_id: Optional[str] = Header(None),
-    x_admin_role: Optional[str] = Header(None),
-):
-    verify_admin_secret(x_admin_secret)
-    _require_tenant_admin(x_admin_role)
-    pool = request.app.state.pool
-    async with pool.acquire() as conn, conn.transaction():
-        row = await conn.fetchrow(
-            "SELECT tenant_id, name, slug, cancelled_at FROM shared.tenants WHERE tenant_id = $1 FOR UPDATE",
-            tenant_id,
-        )
-        if not row:
-            raise HTTPException(status_code=404, detail="Tenant not found")
-        # AA-797: an offboarded tenant's key stays revoked; restore issues the new key.
-        if row["cancelled_at"] is not None:
-            raise HTTPException(
-                status_code=409,
-                detail=(f"Tenant was offboarded at {row['cancelled_at'].isoformat()}; restore it to issue a "
-                        "new API key (POST /admin/tenants/{id}/restore)"),
-            )
-        plaintext = f"cis_{secrets.token_urlsafe(32)}"
-        key_hash = hashlib.sha256(plaintext.encode()).hexdigest()
-        await conn.execute("""
-            UPDATE shared.tenants
-            SET api_key_hash = $1, updated_at = NOW()
-            WHERE tenant_id = $2
-        """, key_hash, tenant_id)
-        await write_audit_log(
-            conn, tenant_id=str(tenant_id), actor=_admin_actor(x_admin_user_id),
-            action=AdminTenantAuditAction.KEY_ROTATED, resource_type="tenant", resource_id=str(tenant_id),
-            details={"name": row["name"]},
-        )
-
-    # S237: after the commit, so a rolled-back rotation never overwrites the test copy.
-    sync = await sync_test_tenant_key(row.get("slug"), plaintext)
-    return GenerateKeyResponse(
-        tenant_id=str(row["tenant_id"]),
-        tenant_name=row["name"],
-        api_key=plaintext,
-        message="Store this key securely — it will not be shown again." + sync_note(sync, row.get("slug")),
-        test_secret_sync=sync,
-    )
+# AA-1036 R3 slice 3 (root ADR 0019 d6): POST /admin/tenants/{id}/generate-key was removed with the tenant API keys.
 
 
 # AA-750: POST /admin/tenants/{id}/brand-brief (DOCX upload → Lambda acp-brand-brief-parser on the old
@@ -1430,7 +1363,7 @@ class OffboardRequest(BaseModel):
     reason: str
 
 
-@router.post("/tenants/{tenant_id}/offboard", summary="Tenant offboarding — cancel tenant + revoke key (soft)",
+@router.post("/tenants/{tenant_id}/offboard", summary="Tenant offboarding — cancel tenant (soft)",
              dependencies=TENANT_SCOPED)
 async def offboard_tenant(
     tenant_id: str,
@@ -1441,11 +1374,13 @@ async def offboard_tenant(
     x_admin_role: Optional[str] = Header(None),
 ):
     """
-    Tenant offboarding: cancel tenant, revoke API key, write the audit row. PRD v1.0 §3.2.
+    Tenant offboarding: cancel tenant (account_status offboarding), write the audit row. PRD v1.0 §3.2.
     Soft state only (AA-797, Nghiệp 14/10/2026): no tenant data or setting is deleted or
     overwritten (brand rules, planning config, T2 versions, content, markets, plan_id, users), so
-    POST /tenants/{id}/restore brings the tenant back whole. PATCH / generate-key on an
-    offboarded tenant return 409. The tenant's QUEUED jobs are cancelled (running ones finish).
+    POST /tenants/{id}/restore brings the tenant back whole. PATCH on an offboarded tenant returns 409.
+    AA-1036: there is no API key to revoke any more; account_status is the one offboarded marker (the 354
+    trigger keeps is_active / cancelled_at in step, and the studio session exchange refuses the tenant).
+    The tenant's QUEUED jobs are cancelled (running ones finish).
     The Jev allow-list row is removed (AA-741) but snapshotted into the audit row so restore can
     put it back. Tenant data erasure is a separate step (AA-839: after offboarding plus a retention
     window, with explicit approval, per the data-erasure runbook), not automated here.
@@ -1485,10 +1420,10 @@ async def offboard_tenant(
             await conn.execute(
                 """
                 UPDATE shared.tenants
-                SET cancelled_at        = NOW(),
+                SET account_status      = 'offboarding',
+                    cancelled_at        = NOW(),
                     cancellation_reason = $2,
                     is_active           = FALSE,
-                    api_key_hash        = 'REVOKED_' || tenant_id::text,
                     updated_at          = NOW()
                 WHERE tenant_id = $1::uuid
                 """,
@@ -1534,7 +1469,6 @@ async def offboard_tenant(
     return {
         "tenant_id": tenant_id,
         "status": "offboarded",
-        "api_key": "REVOKED",
         "cancelled_jobs": len(cancelled),
         "note": "Tenant data and settings are kept; POST /admin/tenants/{id}/restore brings the tenant back.",
     }
@@ -1546,13 +1480,11 @@ class RestoreTenantResponse(BaseModel):
     tenant_id: str
     tenant_name: str
     status: str
-    api_key: str
     previous_offboarded_at: str
     previous_reason: Optional[str]
     jev_allowlist_restored: bool
     cancelled_jobs: list[dict]
     message: str
-    test_secret_sync: Optional[str] = None  # S237, see GenerateKeyResponse
 
 
 @router.post("/tenants/{tenant_id}/restore", response_model=RestoreTenantResponse,
@@ -1567,8 +1499,9 @@ async def restore_tenant(
 ):
     """Nghiệp (14/10/2026): an offboarded tenant must come back quickly with its data and settings.
     Offboard deletes nothing, so restore only clears the offboard markers (cancelled_at,
-    cancellation_reason), sets is_active, re-adds the Jev allow-list row offboard snapshotted, and
-    issues a NEW API key (the old one stays revoked). plan_tier / plan_id / rate limit and every
+    cancellation_reason), sets account_status active, re-adds the Jev allow-list row offboard snapshotted
+    (AA-1036: no API key is issued; members sign in with the partner pool as before).
+    plan_tier / plan_id / rate limit and every
     setting are left exactly as they were. Jobs offboard cancelled are NOT re-enqueued; they are
     listed so the admin can re-run them. 409 unless the tenant is offboarded."""
     verify_admin_secret(x_admin_secret)
@@ -1615,14 +1548,12 @@ async def restore_tenant(
             """, tenant_id, allow["reason"], datetime.fromisoformat(allow["added_at"]), allow["added_by"])
             allow_restored = inserted.endswith(" 1")
 
-        plaintext = f"cis_{secrets.token_urlsafe(32)}"
-        key_hash = hashlib.sha256(plaintext.encode()).hexdigest()
         await conn.execute("""
             UPDATE shared.tenants
-            SET cancelled_at = NULL, cancellation_reason = NULL, is_active = TRUE,
-                api_key_hash = $2, updated_at = NOW()
+            SET account_status = 'active', cancelled_at = NULL, cancellation_reason = NULL, is_active = TRUE,
+                updated_at = NOW()
             WHERE tenant_id = $1
-        """, tenant_id, key_hash)
+        """, tenant_id)
         await write_audit_log(
             conn, tenant_id=tid, actor=_admin_actor(x_admin_user_id),
             action=AdminTenantAuditAction.RESTORED, resource_type="tenant", resource_id=tid,
@@ -1630,27 +1561,22 @@ async def restore_tenant(
                 "name": row["name"],
                 "previous_offboarded_at": offboarded_at.isoformat(),
                 "previous_reason": row["cancellation_reason"],
-                "restored": ["status:active", "api_key:new"] + (["jev_allowlist"] if allow_restored else []),
+                "restored": ["status:active"] + (["jev_allowlist"] if allow_restored else []),
                 "unchanged": "plan_tier, plan_id, rate limit, brand rules, planning config, content, users",
                 "cancelled_jobs_not_rerun": cancelled_jobs,
             },
         )
 
     await _forget_tenant_meta(request, tenant_id)
-    sync = await sync_test_tenant_key(row.get("slug"), plaintext)  # S237, after the commit
     return RestoreTenantResponse(
         tenant_id=tid,
         tenant_name=row["name"],
         status="active",
-        api_key=plaintext,
         previous_offboarded_at=offboarded_at.isoformat(),
         previous_reason=row["cancellation_reason"],
         jev_allowlist_restored=allow_restored,
         cancelled_jobs=cancelled_jobs,
-        message=("Store this key securely — it will not be shown again. "
-                 f"{len(cancelled_jobs)} job(s) cancelled by the offboard were not re-run."
-                 + sync_note(sync, row.get("slug"))),
-        test_secret_sync=sync,
+        message=f"{len(cancelled_jobs)} job(s) cancelled by the offboard were not re-run.",
     )
 
 

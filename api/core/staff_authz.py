@@ -344,7 +344,6 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/tenants/{tenant_id}/config"): _TENANT_ONE_READ,
     ("PUT", "/admin/tenants/{tenant_id}/config"): _TENANT_BOOK_WRITE,           # AA-1035: + customer_success, scoped
     ("PUT", "/admin/tenants/{tenant_id}/brand-identity"): _TENANT_BOOK_WRITE,   # AA-1035: + customer_success, scoped
-    ("POST", "/admin/tenants/{tenant_id}/generate-key"): TENANT_WRITE,
     ("POST", "/admin/tenants/{tenant_id}/offboard"): TENANT_WRITE,
     ("POST", "/admin/tenants/{tenant_id}/restore"): TENANT_WRITE,
     # AA-1035: GET /admin/tenants/{tenant_id}/details — Master Content (every content.read role) reads the aa_internal

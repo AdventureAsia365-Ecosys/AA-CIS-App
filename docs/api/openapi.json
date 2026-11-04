@@ -164,104 +164,6 @@
         "title": "AccountActivityPage",
         "type": "object"
       },
-      "AccountApiKey": {
-        "description": "GET /v1/account/api-key — the key is never readable (only its sha256 is stored): a mask and its dates.",
-        "properties": {
-          "has_key": {
-            "title": "Has Key",
-            "type": "boolean"
-          },
-          "issued_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Issued At"
-          },
-          "last_api_call_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last Api Call At"
-          },
-          "last_api_call_month": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last Api Call Month"
-          },
-          "last_sign_in_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last Sign In At"
-          },
-          "last_used_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last Used At"
-          },
-          "last_used_month": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last Used Month"
-          },
-          "masked": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Masked"
-          }
-        },
-        "required": [
-          "has_key",
-          "masked",
-          "issued_at",
-          "last_sign_in_at",
-          "last_api_call_at",
-          "last_api_call_month",
-          "last_used_at",
-          "last_used_month"
-        ],
-        "title": "AccountApiKey",
-        "type": "object"
-      },
       "AccountMember": {
         "properties": {
           "added_at": {
@@ -2519,10 +2421,6 @@
       },
       "CreateTenantResponse": {
         "properties": {
-          "api_key": {
-            "title": "Api Key",
-            "type": "string"
-          },
           "is_active": {
             "title": "Is Active",
             "type": "boolean"
@@ -2562,7 +2460,6 @@
           "slug",
           "plan_tier",
           "posts_per_week",
-          "api_key",
           "rate_limit_rpm",
           "is_active",
           "message"
@@ -3430,45 +3327,6 @@
           }
         },
         "title": "FactPatch",
-        "type": "object"
-      },
-      "GenerateKeyResponse": {
-        "properties": {
-          "api_key": {
-            "title": "Api Key",
-            "type": "string"
-          },
-          "message": {
-            "title": "Message",
-            "type": "string"
-          },
-          "tenant_id": {
-            "title": "Tenant Id",
-            "type": "string"
-          },
-          "tenant_name": {
-            "title": "Tenant Name",
-            "type": "string"
-          },
-          "test_secret_sync": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Test Secret Sync"
-          }
-        },
-        "required": [
-          "tenant_id",
-          "tenant_name",
-          "api_key",
-          "message"
-        ],
-        "title": "GenerateKeyResponse",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -6166,10 +6024,6 @@
       },
       "RestoreTenantResponse": {
         "properties": {
-          "api_key": {
-            "title": "Api Key",
-            "type": "string"
-          },
           "cancelled_jobs": {
             "items": {
               "additionalProperties": true,
@@ -6212,24 +6066,12 @@
           "tenant_name": {
             "title": "Tenant Name",
             "type": "string"
-          },
-          "test_secret_sync": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Test Secret Sync"
           }
         },
         "required": [
           "tenant_id",
           "tenant_name",
           "status",
-          "api_key",
           "previous_offboarded_at",
           "previous_reason",
           "jev_allowlist_restored",
@@ -7719,47 +7561,6 @@
           "max_own"
         ],
         "title": "TenantFactList",
-        "type": "object"
-      },
-      "TenantLoginRequest": {
-        "properties": {
-          "api_key": {
-            "title": "Api Key",
-            "type": "string"
-          }
-        },
-        "required": [
-          "api_key"
-        ],
-        "title": "TenantLoginRequest",
-        "type": "object"
-      },
-      "TenantLoginResponse": {
-        "properties": {
-          "plan_tier": {
-            "title": "Plan Tier",
-            "type": "string"
-          },
-          "tenant_id": {
-            "title": "Tenant Id",
-            "type": "string"
-          },
-          "tenant_name": {
-            "title": "Tenant Name",
-            "type": "string"
-          },
-          "token": {
-            "title": "Token",
-            "type": "string"
-          }
-        },
-        "required": [
-          "token",
-          "tenant_id",
-          "tenant_name",
-          "plan_tier"
-        ],
-        "title": "TenantLoginResponse",
         "type": "object"
       },
       "TenantSession": {
@@ -35901,97 +35702,6 @@
         ]
       }
     },
-    "/admin/tenants/{tenant_id}/generate-key": {
-      "post": {
-        "operationId": "generate_api_key_admin_tenants__tenant_id__generate_key_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "tenant_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Tenant Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-admin-secret",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Admin-Secret"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-admin-user-id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Admin-User-Id"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-admin-role",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Admin-Role"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GenerateKeyResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Generate Api Key",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
     "/admin/tenants/{tenant_id}/markets": {
       "get": {
         "operationId": "get_tenant_markets_admin_tenants__tenant_id__markets_get",
@@ -36592,7 +36302,7 @@
     },
     "/admin/tenants/{tenant_id}/offboard": {
       "post": {
-        "description": "Tenant offboarding: cancel tenant, revoke API key, write the audit row. PRD v1.0 §3.2.\nSoft state only (AA-797, Nghiệp 14/10/2026): no tenant data or setting is deleted or\noverwritten (brand rules, planning config, T2 versions, content, markets, plan_id, users), so\nPOST /tenants/{id}/restore brings the tenant back whole. PATCH / generate-key on an\noffboarded tenant return 409. The tenant's QUEUED jobs are cancelled (running ones finish).\nThe Jev allow-list row is removed (AA-741) but snapshotted into the audit row so restore can\nput it back. Tenant data erasure is a separate step (AA-839: after offboarding plus a retention\nwindow, with explicit approval, per the data-erasure runbook), not automated here.",
+        "description": "Tenant offboarding: cancel tenant (account_status offboarding), write the audit row. PRD v1.0 §3.2.\nSoft state only (AA-797, Nghiệp 14/10/2026): no tenant data or setting is deleted or\noverwritten (brand rules, planning config, T2 versions, content, markets, plan_id, users), so\nPOST /tenants/{id}/restore brings the tenant back whole. PATCH on an offboarded tenant returns 409.\nAA-1036: there is no API key to revoke any more; account_status is the one offboarded marker (the 354\ntrigger keeps is_active / cancelled_at in step, and the studio session exchange refuses the tenant). The tenant's QUEUED jobs are cancelled (running ones finish).\nThe Jev allow-list row is removed (AA-741) but snapshotted into the audit row so restore can\nput it back. Tenant data erasure is a separate step (AA-839: after offboarding plus a retention\nwindow, with explicit approval, per the data-erasure runbook), not automated here.",
         "operationId": "offboard_tenant_admin_tenants__tenant_id__offboard_post",
         "parameters": [
           {
@@ -36683,7 +36393,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Tenant offboarding — cancel tenant + revoke key (soft)",
+        "summary": "Tenant offboarding — cancel tenant (soft)",
         "tags": [
           "admin"
         ]
@@ -36978,7 +36688,7 @@
     },
     "/admin/tenants/{tenant_id}/restore": {
       "post": {
-        "description": "Nghiệp (14/10/2026): an offboarded tenant must come back quickly with its data and settings.\nOffboard deletes nothing, so restore only clears the offboard markers (cancelled_at,\ncancellation_reason), sets is_active, re-adds the Jev allow-list row offboard snapshotted, and\nissues a NEW API key (the old one stays revoked). plan_tier / plan_id / rate limit and every\nsetting are left exactly as they were. Jobs offboard cancelled are NOT re-enqueued; they are\nlisted so the admin can re-run them. 409 unless the tenant is offboarded.",
+        "description": "Nghiệp (14/10/2026): an offboarded tenant must come back quickly with its data and settings.\nOffboard deletes nothing, so restore only clears the offboard markers (cancelled_at,\ncancellation_reason), sets account_status active, re-adds the Jev allow-list row offboard snapshotted\n(AA-1036: no API key is issued; members sign in with the partner pool as before). plan_tier / plan_id / rate limit and every\nsetting are left exactly as they were. Jobs offboard cancelled are NOT re-enqueued; they are\nlisted so the admin can re-run them. 409 unless the tenant is offboarded.",
         "operationId": "restore_tenant_admin_tenants__tenant_id__restore_post",
         "parameters": [
           {
@@ -43758,40 +43468,24 @@
     },
     "/auth/tenant-login": {
       "post": {
+        "deprecated": true,
         "operationId": "tenant_login_auth_tenant_login_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TenantLoginRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
-          "200": {
+          "410": {
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TenantLoginResponse"
-                }
+                "example": {
+                  "detail": "tenant_api_key_removed",
+                  "message": "Tenant API keys were removed. Sign in to the Content studio with your partner account (the agency web sign-in).",
+                  "sign_in": "partner"
+                },
+                "schema": {}
               }
             },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
+            "description": "Always: tenant API keys were removed; sign in with the partner pool."
           }
         },
-        "summary": "Tenant Login",
+        "summary": "Removed: tenant API keys are gone (410 Gone)",
         "tags": [
           "auth"
         ]
@@ -44834,32 +44528,6 @@
           }
         ],
         "summary": "The tenant's activity trail as CSV (current filters)",
-        "tags": [
-          "tenant-account"
-        ]
-      }
-    },
-    "/v1/account/api-key": {
-      "get": {
-        "operationId": "get_api_key_v1_account_api_key_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AccountApiKey"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Masked API key, issue date and last use",
         "tags": [
           "tenant-account"
         ]

@@ -18,13 +18,13 @@ import { Suspense, useState, useEffect, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import {
-  Plus, Key, RefreshCw, ChevronRight,
-  AlertCircle, Loader2, CheckCircle, Eye, EyeOff, Copy, Ban, Globe, RotateCcw,
+  Plus, RefreshCw, ChevronRight,
+  AlertCircle, Loader2, CheckCircle, Ban, Globe, RotateCcw,
 } from "lucide-react";
 import {
   Button, PageFrame, Modal, PageHeader, Tabs, useFormat, useLang, useT, Input, Textarea,
   K, serif, mono, sans, Section, Eyebrow, Badge, LoadingScreen,
-  DataTable, IconButton, KX, SegmentedControl, type ColumnDef,
+  DataTable, SegmentedControl, type ColumnDef,
   type Tone,
   ButtonGroup, ChipButton, Drawer, Pressable, useAdminIdentity,
 } from "../../_kit";
@@ -87,9 +87,11 @@ const TENANT_STATUS_STYLE: Record<
   offboarded: { label: "statusOffboarded", tone: "danger" },
 };
 
-interface NewApiKey {
-  tenant_id: string; tenant_name: string; api_key: string; rotated?: boolean;
-  title?: string; note?: string;  // AA-797 — restore reuses this modal
+// AA-1036 R3 slice 3 (root ADR 0019 d6): no tenant API key is issued, rotated or shown any more; create and restore
+// end in this small result dialog instead of the old one-time key dialog.
+interface TenantNotice {
+  tenant_id: string; tenant_name: string;
+  title: string; note: string;
 }
 
 // AA-629 Tier 2 — GET /admin/unmapped-market-requests
@@ -155,7 +157,7 @@ function LifecycleBar({ lc }: { lc: Lifecycle }) {
 
 // ─── Create Tenant Modal ──────────────────────────────────────────────────────
 
-function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (k: NewApiKey) => void }) {
+function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (k: TenantNotice) => void }) {
   const t = useT(TEN);
   const [name, setName]   = useState("");
   const [slug, setSlug]   = useState("");
@@ -183,7 +185,7 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
       });
       const data = await res.json();
       if (!res.ok) { setError(data.detail ?? t("createFailed")); return; }
-      onCreated({ tenant_id: data.tenant_id, tenant_name: data.name, api_key: data.api_key });
+      onCreated({ tenant_id: data.tenant_id, tenant_name: data.name, title: t("tenantCreated"), note: t("createdNote") });
     } catch { setError(t("connectionError")); } finally { setLoading(false); }
   }
 
@@ -240,57 +242,27 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
   );
 }
 
-// ─── API Key Modal ────────────────────────────────────────────────────────────
+// ─── Result dialog (create / restore) ─────────────────────────────────────────
 
-// The key shows once: a backdrop click or Escape must not throw it away (getting it back means a rotation, which
-// revokes the key the tenant uses). Only Done closes the dialog, so it has no title-bar close button either.
-const KEEP_OPEN = () => {};
-
-function ApiKeyModal({ keyData, onClose }: { keyData: NewApiKey; onClose: () => void }) {
+function TenantNoticeModal({ notice, onClose }: { notice: TenantNotice; onClose: () => void }) {
   const t = useT(TEN);
-  const [show, setShow]     = useState(false);
-  const [copied, setCopied] = useState(false);
-  const copy = () => { navigator.clipboard.writeText(keyData.api_key); setCopied(true); setTimeout(() => setCopied(false), 2000); };
   return (
     <Modal
       open
-      onClose={KEEP_OPEN}
+      onClose={onClose}
       width={460}
-      ariaLabel={keyData.title ?? (keyData.rotated ? t("newApiKey") : t("tenantCreated"))}
-      testId="tenant-api-key-modal"
-      footer={
-        <>
-          <Button variant="secondary" onClick={copy}>
-            <Copy size={13} />{copied ? t("copied") : t("copyKey")}
-          </Button>
-          <Button variant="primary" onClick={onClose}>{t("done")}</Button>
-        </>
-      }
+      ariaLabel={notice.title}
+      testId="tenant-notice-modal"
+      footer={<Button variant="primary" onClick={onClose}>{t("done")}</Button>}
     >
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, fontFamily: serif, fontSize: 17,
-          fontWeight: 600, color: K.success }}>
-          <CheckCircle size={20} color={K.success} />
-          {keyData.title ?? (keyData.rotated ? t("newApiKey") : t("tenantCreated"))}
-        </div>
-        {keyData.note && <p style={{ fontSize: 13, color: K.muted, margin: "0 0 12px" }}>{keyData.note}</p>}
-        <p style={{ fontSize: 13, color: K.muted, marginBottom: 24 }}>
-          <strong style={{ color: K.ink }}>{keyData.tenant_name}</strong> {t("shareOnceA")} <strong style={{ color: K.danger }}>{t("neverShownAgain")}</strong>.
-        </p>
-        <div style={{ marginBottom: 20 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: K.muted, textTransform: "uppercase", letterSpacing: "0.1em", display: "block", marginBottom: 8 }}>{t("apiKey")}</label>
-          <div style={{ display: "flex", gap: 8 }}>
-            <div style={{
-              flex: 1, fontFamily: mono, fontSize: 12, padding: "10px 14px",
-              background: K.bg, border: `1px solid ${KX.successBorder}`, borderRadius: 8,
-              color: show ? K.success : K.muted, letterSpacing: show ? 0.3 : 3, wordBreak: "break-all",
-            }}>
-              {show ? keyData.api_key : "•".repeat(32)}
-            </div>
-            <IconButton size="lg" onClick={() => setShow(!show)} label={show ? t("hideKey") : t("showKey")} pressed={show}>
-              {show ? <EyeOff size={14} /> : <Eye size={14} />}
-            </IconButton>
-          </div>
-        </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, fontFamily: serif, fontSize: 17,
+        fontWeight: 600, color: K.success }}>
+        <CheckCircle size={20} color={K.success} />
+        {notice.title}
+      </div>
+      <p style={{ fontSize: 13, color: K.muted, margin: 0 }}>
+        <strong style={{ color: K.ink }}>{notice.tenant_name}</strong> {notice.note}
+      </p>
     </Modal>
   );
 }
@@ -984,8 +956,8 @@ async function errorDetail(res: Response, fallback: string): Promise<string> {
   return typeof body?.detail === "string" ? body.detail : fallback;
 }
 
-// AA-797 — Offboard needs a reason (offboarding audit trail): the key is revoked and queued jobs are
-// cancelled. Data and settings are kept, so Restore can bring the tenant back.
+// AA-797 — Offboard needs a reason (offboarding audit trail): the account becomes offboarding (no studio sign-in)
+// and queued jobs are cancelled. Data and settings are kept, so Restore can bring the tenant back.
 function OffboardModal({ tenant, onClose, onDone }: {
   tenant: Tenant; onClose: () => void; onDone: () => void;
 }) {
@@ -1032,13 +1004,12 @@ function OffboardModal({ tenant, onClose, onDone }: {
 }
 
 interface RestoreResult {
-  tenant_id: string; tenant_name: string; api_key: string;
+  tenant_id: string; tenant_name: string;
   cancelled_jobs: { id: string; kind: string }[];
 }
 
 // AA-797 — Restore (tech lead decision, 14/10/2026): offboarded -> active with the same plan, brand rules,
-// config and content. A new API key is issued (the old one stays revoked); jobs the offboard
-// cancelled are not re-run.
+// config and content; jobs the offboard cancelled are not re-run. AA-1036: no API key is issued.
 function RestoreModal({ tenant, onClose, onDone }: {
   tenant: Tenant; onClose: () => void; onDone: (r: RestoreResult) => void;
 }) {
@@ -1067,7 +1038,7 @@ function RestoreModal({ tenant, onClose, onDone }: {
         {t("restoreBody")}
       </p>
       <ul style={{ margin: "0 0 4px", paddingLeft: 18, fontSize: 13, color: K.muted }}>
-        <li>{t("restoreKeyA")} <strong style={{ color: K.ink }}>{t("restoreKeyB")}</strong> {t("restoreKeyC")}</li>
+        <li>{t("restoreSignIn")}</li>
         <li>{t("restoreJobsA")} <strong style={{ color: K.ink }}>{t("restoreJobsB")}</strong>{t("restoreJobsC")}</li>
       </ul>
       {error && (
@@ -1132,10 +1103,9 @@ function TenantStatusToggle({ tenant, onChanged }: { tenant: Tenant; onChanged: 
   );
 }
 
-/** Rotate key, offboard / restore (same slot) and Detail. */
-function TenantActions({ tenant, onRotateKey, onChanged, onRestored, onOpen }: {
+/** Offboard / restore (same slot) and Detail. */
+function TenantActions({ tenant, onChanged, onRestored, onOpen }: {
   tenant: Tenant;
-  onRotateKey: (t: Tenant) => void;
   onChanged: () => void;
   onRestored: (r: RestoreResult) => void;
   onOpen: (tenantId: string) => void;
@@ -1147,10 +1117,6 @@ function TenantActions({ tenant, onRotateKey, onChanged, onRestored, onOpen }: {
   return (
     <div onClick={e => e.stopPropagation()}>
       <ButtonGroup label={t("actionsFor", tenant.name)} gap="sm">
-        <Button size="sm" variant="ghost" onClick={() => onRotateKey(tenant)} disabled={offboarded}
-          title={offboarded ? t("keyRevoked") : t("rotateKey")}>
-          <Key size={12} /> {t("key")}
-        </Button>
         {offboarded ? (
           <Button size="sm" variant="ghost" onClick={() => setRestoring(true)} title={t("restoreHint")}>
             <RotateCcw size={12} /> {t("restore")}
@@ -1176,9 +1142,8 @@ function TenantActions({ tenant, onRotateKey, onChanged, onRestored, onOpen }: {
   );
 }
 
-function TenantsTable({ tenants, onRotateKey, onChanged, onRestored, onOpen }: {
+function TenantsTable({ tenants, onChanged, onRestored, onOpen }: {
   tenants: Tenant[];
-  onRotateKey: (t: Tenant) => void;
   onChanged: () => void;
   onRestored: (r: RestoreResult) => void;
   onOpen: (tenantId: string) => void;
@@ -1222,7 +1187,7 @@ function TenantsTable({ tenants, onRotateKey, onChanged, onRestored, onOpen }: {
       cell: ({ row: { original: x } }) => <TenantStatusToggle tenant={x} onChanged={onChanged} /> },
     { id: "actions", header: "", enableSorting: false, enableHiding: false, meta: { hideLabelOnCard: true },
       cell: ({ row: { original: x } }) => (
-        <TenantActions tenant={x} onRotateKey={onRotateKey} onChanged={onChanged} onRestored={onRestored} onOpen={onOpen} />
+        <TenantActions tenant={x} onChanged={onChanged} onRestored={onRestored} onOpen={onOpen} />
       ) },
   ];
   return (
@@ -1260,7 +1225,7 @@ function TenantsPageInner() {
   const openTenant = tenants.find(x => x.tenant_id === openTenantId) ?? null;
   const [loading, setLoading]       = useState(true);
   const [showCreate, setShowCreate] = useState(false);
-  const [newKey, setNewKey]         = useState<NewApiKey | null>(null);
+  const [notice, setNotice]         = useState<TenantNotice | null>(null);
   const [error, setError]           = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   // AA-629 Tier 2 — best-effort, tolerate failure so the whole page still loads without it.
@@ -1294,24 +1259,13 @@ function TenantsPageInner() {
 
   function restored(r: RestoreResult) {
     const n = r.cancelled_jobs?.length ?? 0;
-    setNewKey({
-      tenant_id: r.tenant_id, tenant_name: r.tenant_name, api_key: r.api_key, rotated: true,
+    setNotice({
+      tenant_id: r.tenant_id, tenant_name: r.tenant_name,
       title: tr("tenantRestored"),
       note: n ? tr("restoredJobs", n, r.cancelled_jobs.map(j => j.kind).join(", "))
         : tr("restoredNoJobs"),
     });
     load(true);
-  }
-
-  async function rotateKey(tenant: Tenant) {
-    if (!confirm(tr("confirmRotate", tenant.name))) return;
-    setError("");
-    try {
-      const res = await fetch(`/api/admin/tenants/${tenant.tenant_id}/generate-key`, { method: "POST" });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) setNewKey({ tenant_id: tenant.tenant_id, tenant_name: tenant.name, api_key: data.api_key, rotated: true });
-      else setError(typeof data?.detail === "string" ? data.detail : tr("rotateFailed"));
-    } catch { setError(tr("connectionError")); }
   }
 
   const statusOf = (t: Tenant): TenantStatus => t.status ?? (t.is_active ? "active" : "suspended");
@@ -1389,7 +1343,7 @@ function TenantsPageInner() {
           {/* Table */}
           <Section padded={false} style={{ overflow: "hidden" }} bodyStyle={{ padding: loading ? 0 : 12 }}>
             {loading ? <LoadingScreen message={tr("loadingTenants")} /> : (
-              <TenantsTable tenants={shown} onRotateKey={rotateKey} onChanged={() => load(true)} onRestored={restored}
+              <TenantsTable tenants={shown} onChanged={() => load(true)} onRestored={restored}
                 onOpen={setOpenTenantId} />
             )}
           </Section>
@@ -1400,8 +1354,8 @@ function TenantsPageInner() {
         {openTenant && <TenantDetail key={openTenant.tenant_id} tenant={openTenant} onChanged={() => load(true)} />}
       </Drawer>
 
-      {showCreate && <CreateModal onClose={() => setShowCreate(false)} onCreated={k => { setShowCreate(false); setNewKey(k); load(); }} />}
-      {newKey && <ApiKeyModal keyData={newKey} onClose={() => setNewKey(null)} />}
+      {showCreate && <CreateModal onClose={() => setShowCreate(false)} onCreated={k => { setShowCreate(false); setNotice(k); load(); }} />}
+      {notice && <TenantNoticeModal notice={notice} onClose={() => setNotice(null)} />}
     </>
   );
 }

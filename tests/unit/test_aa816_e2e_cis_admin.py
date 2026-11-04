@@ -418,7 +418,6 @@ def test_middleware_lets_reads_through_as_admin(issuer, directory, monkeypatch, 
     ("POST", "/admin/waves/check"),
     ("POST", f"/admin/tenants/{PIECE}/members/{VERSION}/remove"),
     ("PATCH", f"/admin/tenants/{PIECE}/members/{VERSION}"),
-    ("POST", f"/admin/tenants/{PIECE}/generate-key"),
     ("POST", f"/admin/tenants/{PIECE}/members/invitations/"),
 ])
 def test_middleware_refuses_every_other_write_before_the_route(issuer, directory, monkeypatch, method, path):

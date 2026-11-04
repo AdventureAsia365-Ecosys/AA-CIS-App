@@ -416,9 +416,8 @@ def test_customer_success_writes_stay_in_its_book(app_client, path, body):
     assert res.status_code == 403 and res.json()["detail"] == ts.OUT_OF_SCOPE
 
 
-@pytest.mark.parametrize("path", ["/admin/tenants/{t}/offboard", "/admin/tenants/{t}/restore",
-                                  "/admin/tenants/{t}/generate-key"])
-def test_customer_success_never_offboards_restores_or_rotates_keys(app_client, path):
+@pytest.mark.parametrize("path", ["/admin/tenants/{t}/offboard", "/admin/tenants/{t}/restore"])
+def test_customer_success_never_offboards_or_restores(app_client, path):
     c, _, _ = app_client
     res = c.post(path.format(t=MINE), headers=_h("customer_success"), json={})
     assert res.status_code == 403 and res.json()["detail"].startswith("Role 'customer_success' lacks"), res.text

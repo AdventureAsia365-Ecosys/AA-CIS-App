@@ -173,30 +173,9 @@ test.describe('Admin Dashboard', () => {
 });
 
 // ── Test Suite 6: Tenant Login ────────────────────────────────
-
-test.describe('Tenant Portal', () => {
-
-  test('tenant login page exists', async ({ page }) => {
-    await page.goto('/tenant-login');
-    await expect(page).toHaveURL(/\/tenant-login/);
-    await expect(page.locator('body')).toBeVisible();
-  });
-
-  test('tenant login has API key input', async ({ page }) => {
-    await page.goto('/tenant-login');
-    const apiKeyInput = page.locator('input[type="text"], input[type="password"], input[placeholder*="key" i], input[placeholder*="API" i]').first();
-    await expect(apiKeyInput).toBeVisible({ timeout: 5000 });
-  });
-
-  test('invalid API key shows error or stays on login', async ({ page }) => {
-    await page.goto('/tenant-login');
-    const input = page.locator('input').first();
-    await input.fill('invalid_key_12345');
-    await page.click('button:has-text("Access Portal"), button[type="submit"]');
-    await expect(page).toHaveURL(/\/tenant-login/);
-  });
-
-});
+// AA-1036 R3 slice 3: the API-key sign-in is gone. This host answers /tenant-login with a 308 to the Content studio
+// (frontend/next.config.ts), whose /tenant-login is a 308 to the partner sign-in; the CIS API answers
+// POST /auth/tenant-login with 410 Gone (tests/unit/test_aa1036_no_tenant_api_keys.py).
 
 // ── Test Suite 7: API Health (backend via frontend) ───────────
 

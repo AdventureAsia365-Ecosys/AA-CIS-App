@@ -11,9 +11,9 @@
 
 Idempotent per ``request_key`` (the caller's, 8-64 characters): the same key twice returns the first job
 (``created`` false). Admin role only for the writes (``tenant.write`` in staff_authz POLICY, re-checked here like
-the AA-797 tenant writes). No API key is issued by the saga (a key is shown once and is never stored in a job):
-``POST /admin/tenants/{tenant_id}/generate-key`` issues it. ``POST /admin/tenants`` (the synchronous create that
-returns a key) stays; the CIS 355 bridge trigger keeps its content subscription in step.
+the AA-797 tenant writes). There are no tenant API keys (AA-1036 R3 slice 3, root ADR 0019 d6).
+``POST /admin/tenants`` (the synchronous create) stays; the CIS 355 bridge trigger keeps its content subscription in
+step.
 
 This router is included before ``admin.router`` so ``/tenants/provision`` is never read as a tenant id.
 """

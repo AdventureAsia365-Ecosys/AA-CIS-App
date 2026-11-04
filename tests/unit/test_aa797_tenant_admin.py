@@ -211,26 +211,16 @@ class TestListTenants:
         assert out["tenants"][2]["cancelled_at"] == CANCELLED.isoformat()
 
 
-class TestGenerateKey:
-    @pytest.mark.asyncio
-    async def test_offboarded_is_409(self):
-        conn = _conn()
-        conn.fetchrow.return_value = {"tenant_id": TENANT_ID, "name": "T", "cancelled_at": CANCELLED}
-        with pytest.raises(HTTPException) as e:
-            await admin.generate_api_key(TENANT_ID, _request(conn), x_admin_secret=_SECRET,
-                                         x_admin_user_id="u", x_admin_role="admin")
-        assert e.value.status_code == 409
-        assert "restore" in e.value.detail
-        assert conn.execute.call_count == 0
+class TestNoApiKey:
+    """AA-1036 R3 slice 3: generate-key is gone; offboard and restore never touch a tenant key."""
 
-    @pytest.mark.asyncio
-    async def test_rotation_is_audited(self):
-        conn = _conn()
-        conn.fetchrow.return_value = {"tenant_id": TENANT_ID, "name": "T", "cancelled_at": None}
-        out = await admin.generate_api_key(TENANT_ID, _request(conn), x_admin_secret=_SECRET,
-                                           x_admin_user_id="u-9", x_admin_role="admin")
-        assert out.api_key.startswith("cis_")
-        assert _audit_rows(conn) == [(AdminTenantAuditAction.KEY_ROTATED, "admin:u-9", {"name": "T"})]
+    def test_generate_key_route_is_gone(self):
+        from api import main
+
+        assert not hasattr(admin, "generate_api_key")
+        assert "/admin/tenants/{tenant_id}/generate-key" not in main.app.openapi()["paths"]
+        assert "api_key" not in admin.CreateTenantResponse.model_fields
+        assert "api_key" not in admin.RestoreTenantResponse.model_fields
 
 
 class TestOffboard:
@@ -291,6 +281,8 @@ class TestOffboard:
         tenant_upd = updates[0]
         for kept in ("plan_id", "plan_tier", "posts_per_week", "rate_limit_rpm"):
             assert kept not in tenant_upd
+        # AA-1036: account_status is the offboarded marker; no key column is written
+        assert "account_status      = 'offboarding'" in tenant_upd and "api_key" not in tenant_upd
         for table in ("brand_rules", "tenant_config", "tenant_tour_versions", "content_piece", "users"):
             assert not any(table in q for q in sqls)
 
@@ -348,7 +340,7 @@ class TestRestore:
         assert conn.execute.call_count == 0
 
     @pytest.mark.asyncio
-    async def test_happy_path_new_key_markers_cleared_settings_untouched(self):
+    async def test_happy_path_markers_cleared_settings_untouched(self):
         conn = _conn()
         conn.fetchrow.return_value = self._offboarded()
         conn.fetch.return_value = [{"id": "j1", "kind": "t9_write"}]
@@ -358,16 +350,16 @@ class TestRestore:
         redis = AsyncMock()
         out = await self._restore(conn, redis=redis)
 
-        assert out.status == "active" and out.api_key.startswith("cis_")
+        assert out.status == "active" and "api_key" not in out.model_dump()
         assert out.previous_offboarded_at == CANCELLED.isoformat() and out.previous_reason == "contract ended"
         assert out.jev_allowlist_restored is True
         assert out.cancelled_jobs == [{"id": "j1", "kind": "t9_write"}]
         [upd] = [c for c in conn.execute.call_args_list if "UPDATE shared.tenants" in c.args[0]]
         sql = upd.args[0]
-        assert "cancelled_at = NULL" in sql and "is_active = TRUE" in sql
-        for kept in ("plan_id", "plan_tier", "rate_limit_rpm", "posts_per_week"):
+        assert "cancelled_at = NULL" in sql and "is_active = TRUE" in sql and "account_status = 'active'" in sql
+        for kept in ("plan_id", "plan_tier", "rate_limit_rpm", "posts_per_week", "api_key"):
             assert kept not in sql
-        assert upd.args[2] != "" and not upd.args[2].startswith("REVOKED_")
+        assert len(upd.args) == 2  # the SQL and the tenant id: no key hash
         [(action, actor, details)] = _audit_rows(conn)
         assert action == AdminTenantAuditAction.RESTORED == "tenant.restored" and actor == "admin:u-5"
         assert details["previous_offboarded_at"] == CANCELLED.isoformat()
