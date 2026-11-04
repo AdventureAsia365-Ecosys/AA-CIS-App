@@ -103,6 +103,13 @@ DM-7.1 retention rows of the two new tables, merged before the Infra copy, and `
   sorted shard order runs wire drift first.
 
 - 370 is contract: Infra Migration Apply applies it on Dev when every job table is idle; the code PR merges after.
+- 370 grants (review fix): on Dev DB Migrate creates the tables and the trigger function as cis_owner, whose default
+  privileges (245) hand cis_app SELECT/INSERT/UPDATE/DELETE on new tables and EXECUTE on new functions. The file
+  REVOKEs ALL from PUBLIC, cis_app, aa_app_user and catalog_owner first (345/353 pattern), revokes EXECUTE on
+  `shared.llm_call_log_stamp_route_version()` from cis_app (X1: trigger functions get no EXECUTE grant), then grants
+  narrowly; an after-guard RAISEs if cis_app still holds UPDATE/DELETE/TRUNCATE on the versions or INSERT/DELETE on
+  the settings. The CI superuser replay has no cis_owner default ACL, so `test_aa1042_migration_370` simulates it
+  (grants everything, re-runs the file, checks it is narrowed) and runs the version write path as cis_app.
 - The code tolerates 370 missing: the tab shows "not set up", the gateway uses the env var, the Routing tab PATCHes
   still work (no version row).
 - `tests/integration/test_aa1002_migration_304.py` and `test_aa1026_migration_367.py` were adjusted: 370 grants
