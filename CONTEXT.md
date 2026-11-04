@@ -2542,6 +2542,14 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
   writer's label from the transaction setting `aa.actor`, never served). A new writer of `shared.tenants`,
   `tenant_subscription`, `tenant_entitlement_override`, `plan_feature` or `tenant_ai_budget` needs the CIS 353 grants
   (the triggers run as the writer, MIG-6).
+- `shared.tenant_addon_request` (CIS 374, AA-1036 R3, ADR 0019 d7): the add-on requests an agency sends from the agency
+  app ("Request add-on": `POST /v1/account/add-on-requests`, Content studio owner only; `GET /v1/account/add-ons` is the
+  app's active / requested / available list) and the staff decision in Tenant 360 › Subscription
+  (`api/routers/admin_tenant_addon_requests.py`, admin role): an approval attaches the plan through the
+  `tenant_provision` saga (attach mode, request key `addon-request:<id>`, enqueued in the same transaction), a decline
+  carries a reason the agency sees. At most one pending request per tenant and product; audited
+  (`tenant.addon_requested`, `tenant.addon_request_approved` / `_declined`); a new request rings the staff bell
+  (`tenant.addon.requested`, admin + customer_success). Rules: `services/tenant_account/addon_requests.py`.
 
 - CIS 356 (slice 2, review fixes): a non-plan candidate of a platform key (an override, the legacy AI budget) needs a
   live **content** subscription (an offboarded tenant keeps no `ai.budget_usd_monthly`); `shared.tenants.rate_limit_rpm`

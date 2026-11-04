@@ -6,7 +6,8 @@
 // their source and the overrides. Add-ons: "Add an add-on" / "Change" run the tenant_provision saga (POST
 // …/provision, one job, the UI waits for it), "Cancel" runs its cancel mode (POST …/provision/cancel). Overrides: PUT /
 // DELETE …/entitlement-overrides/{key} (reason required, audited). Kit only (Section, DataTable, Drawer, Field, Select,
-// Input, ConfirmModal, Badge, Toast).
+// Input, ConfirmModal, Badge, Toast). AA-1036 R3: the agency's add-on requests sit above the subscriptions
+// (Tenant360AddOnRequests: approve runs the same saga, decline needs a reason).
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -22,7 +23,10 @@ import {
   type EntitlementRow, type Feature, type OverrideDraft, type OverrideDraftError, type OverrideRow, type OverrideRules,
   type Product, type SubscriptionResp, type SubscriptionRow,
 } from "@/lib/tenantPlans";
+import { can } from "@/lib/rbac";
+import { useAdminIdentity } from "../../../_kit/useAdminIdentity";
 import { T360_SUB } from "./subscription.messages";
+import { Tenant360AddOnRequests } from "./Tenant360AddOnRequests";
 
 const small = { fontSize: 12, color: K.muted, lineHeight: 1.45, margin: 0 } as const;
 
@@ -222,6 +226,7 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
   const [cancelling, setCancelling] = useState<SubscriptionRow | null>(null);
   const [override, setOverride] = useState<{ row: OverrideRow | null } | null>(null);
   const w = useMemo(() => words(t), [t]);
+  const { role } = useAdminIdentity();
 
   const cancel = useMutation({
     mutationFn: (row: SubscriptionRow) => runSaga(`/api/admin/tenants/${tenantId}/provision/cancel`,
@@ -323,6 +328,8 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
         <Badge tone="neutral" dot={false}>{t("kind", acct.kind)}</Badge>
         {acct.is_pilot && acct.pilot_ends_at && <Badge tone="purple">{t("pilot", acct.pilot_ends_at.slice(0, 10))}</Badge>}
       </div>
+
+      <Tenant360AddOnRequests tenantId={tenantId} data={data} canDecide={can(role, "tenant.write")} />
 
       <Section title={t("subsTitle")} description={t("subsHint")} padded={false} testId="tenant-subscriptions"
         actions={<Button size="sm" variant="secondary" onClick={() => setAddOn({ start: null })}

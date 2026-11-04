@@ -220,6 +220,41 @@ export interface SubscriptionResp {
   override_rules?: OverrideRules;
 }
 
+// ── Add-on requests (AA-1036 R3, root ADR 0019 d7): the agency asks from the agency app, staff decide here ────────
+
+export interface AddOnRequestRow {
+  request_id: string; product: Exclude<Product, "content">; status: "pending" | "approved" | "declined";
+  note: string | null; requested_by: string; requested_at: string; decided_at: string | null;
+  decided_by: string | null; decision_note: string | null; plan_key: string | null; provision_job_id: string | null;
+}
+export interface AddOnRequestsResp { items: AddOnRequestRow[]; pending: number }
+export const addOnRequestsPath = (tenantId: string) => `/api/admin/tenants/${tenantId}/addon-requests`;
+export const addOnRequestsKey = (tenantId: string) => ["tenant360", tenantId, "addon-requests"] as const;
+export const addOnDecisionPath = (tenantId: string, requestId: string, verb: "approve" | "decline") =>
+  `${addOnRequestsPath(tenantId)}/${requestId}/${verb}`;
+
+export function requestTone(status: AddOnRequestRow["status"]): "warning" | "success" | "neutral" {
+  return status === "pending" ? "warning" : status === "approved" ? "success" : "neutral";
+}
+
+/** Pending requests first (oldest first: the longest wait on top), then the decided ones newest first. */
+export function sortAddOnRequests(rows: AddOnRequestRow[]): AddOnRequestRow[] {
+  const pending = rows.filter((r) => r.status === "pending").sort((a, b) => a.requested_at.localeCompare(b.requested_at));
+  const decided = rows.filter((r) => r.status !== "pending")
+    .sort((a, b) => (b.decided_at ?? b.requested_at).localeCompare(a.decided_at ?? a.requested_at));
+  return [...pending, ...decided];
+}
+
+/** What staff send to approve a request: a plan of the request's product; seats only for the CRM (empty = the plan's). */
+export function approveBody(planKey: string, seats: string, note: string):
+  { body: { plan_key: string; seats: number | null; note: string | null } | null; error: "plan" | "seats" | null } {
+  if (!planKey) return { body: null, error: "plan" };
+  const s = seats.trim();
+  if (s !== "" && (!/^\d{1,3}$/.test(s) || Number(s) < 1 || Number(s) > 500)) return { body: null, error: "seats" };
+  const n = note.trim();
+  return { body: { plan_key: planKey, seats: s ? Number(s) : null, note: n ? n.slice(0, 500) : null }, error: null };
+}
+
 /** What an override may set (the API refuses the rest, services/tenant_account/subscription.py): keys another column
  * enforces (the request rate: the tenant's settings), and keys whose limit must be a number. "Off" is for on/off
  * features only: for a limit it would remove the limit, so 0 is the way to stop it. */
