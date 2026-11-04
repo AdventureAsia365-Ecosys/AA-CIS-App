@@ -1,6 +1,7 @@
 """AA-1026 (tech lead S267) — migration 366 (family fallback chains: Converse rows sonnet-4-6 / haiku-4-5 on acc3, the
-ordered chains of 27 stage routes, every active text stage opened to vendor_direct ("AWS preferred, not AWS only"),
-monthly caps acc3 100 USD and anthropic-direct 150 USD) against real Postgres.
+model-first chains of 34 stage routes with GPT-6 Luna's OpenAI API twin right behind it, every active text stage
+opened to vendor_direct ("AWS preferred, not AWS only"), monthly caps acc3 100 USD and anthropic-direct 150 USD)
+against real Postgres.
 
 conftest applies every migration, 366 included. The main test loads the live routes of 04/11/2026
 (``tests/unit/snapshots/aa1026_routes_before_366.json``), runs the file's body inside one transaction and compares
@@ -137,7 +138,7 @@ def test_the_routes_become_the_expected_routes_and_a_second_run_changes_nothing(
     _load_routes(cur)
     cur.execute(_body())
     assert _routes(cur) == _expected()
-    assert len(_decided()) == 27 and len(_widened()) == 15
+    assert len(_decided()) == 34 and len(_widened()) == 15
     assert set(_widened()) <= set(_decided())
     assert _changed(cur) == _decided()
     cur.execute("UPDATE shared.llm_role_config SET updated_by = 'test-aa1026-366-done' WHERE updated_by = %s",
@@ -298,4 +299,24 @@ def test_guard_refuses_a_new_route_past_the_attempt_cap(cur):
                     "origin, updated_by) VALUES ('sonnet-5-5', %s, 'zz-wire', 20, false, 'admin', 'test-aa1026-366') "
                     "ON CONFLICT DO NOTHING", (conn,))
     with pytest.raises(psycopg2.errors.RaiseException, match="breaks the chain rule attempt_cap"):
+        cur.execute(_body())
+
+
+def test_s267_the_openai_api_twin_sits_right_behind_gpt_6_luna(cur):
+    """Model first (tech lead S267 Q2: "openai-direct for a GPT twin if one exists"): the guard knows gpt-6-luna-openai
+    as GPT-6 Luna's vendor twin, so it may come before an AWS model when it sits right behind gpt-6-luna."""
+    _load_routes(cur)
+    cur.execute(_body())
+    assert "vendor twins (vendor-only key > AWS key, part of that model's slot): gpt-6-luna-openai>gpt-6-luna" \
+        in " ".join(cur.connection.notices)
+    assert _fallbacks(cur, "a3_atomize") == ["gpt-6-luna-openai", "haiku-5-5", "haiku-4-5", "nova-lite"]
+    assert _fallbacks(cur, "s1_judge") == ["gpt-6-luna", "gpt-6-luna-openai", "nova-lite"]
+
+
+def test_guard_refuses_a_vendor_only_model_ahead_of_aws_when_it_is_no_twin(cur):
+    """The same chains with gpt-6-luna-openai no longer naming GPT-6 Luna (another wire model): it is then a vendor-only
+    model ahead of AWS models, the vendor_not_last rule."""
+    _load_routes(cur)
+    cur.execute("UPDATE shared.llm_model_catalog SET wire_model = 'gpt-6-astra' WHERE model_key = 'gpt-6-luna-openai'")
+    with pytest.raises(psycopg2.errors.RaiseException, match="breaks the chain rule vendor_not_last"):
         cur.execute(_body())
