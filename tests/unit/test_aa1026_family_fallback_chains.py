@@ -47,28 +47,32 @@ BOTH = ["aws_only", "vendor_direct"]
 # The decision table (docs/implementation-notes/AA-1026-family-fallback.md): stage -> new fallbacks. S267 (every text
 # stage vendor_direct): tp_compose and segment research end on the OpenAI API like the other writers; a validate chain
 # keeps ONE 5.x Claude tier (its primary's: the other 5.x tier is refused with it, and with the Anthropic API on a
-# second one would pass the 6 attempts per request); the GPT / Amazon validate and judge chains that had no vendor rung
-# end on the OpenAI API.
+# second one would pass the 6 attempts per request). Model first (S267 Q2, "openai-direct for a GPT twin if one
+# exists"): on every GPT route the OpenAI API row (GPT-6 Luna's vendor twin) sits right behind gpt-6-luna, before the
+# next model; a3_atomize / s1_source_facts drop GPT-5.6 Luna for it (refused with GPT-6 Luna, the attempt cap).
 DECIDED = {
     **{s: [*LARGE, OPENAI_HOP] for s in ("s1_generate", "supply_content_writer", "t2_generate", "t8_angle_gen",
                                          "t9_write", "tp_compose")},
     **{s: [*SMALL, OPENAI_HOP] for s in ("a0_column_map", "s1_flag_fix", "s1_itinerary_nudge", "t2_flag_fix",
                                          "t2_itinerary_nudge", "t9_repair", "segment_research",
                                          "segment_research_batch")},
-    "a3_atomize": ["gpt-5.6-luna", "haiku-5-5", "haiku-4-5", "nova-lite"],
-    "s1_source_facts": ["gpt-5.6-luna", "haiku-5-5", "haiku-4-5", "nova-lite"],
-    "a3_place_card": ["gpt-5.6-luna", "nova-lite", OPENAI_HOP],
-    "t10_claims": ["gpt-5.6-luna", "nova-lite", OPENAI_HOP],
+    "a3_atomize": [OPENAI_HOP, "haiku-5-5", "haiku-4-5", "nova-lite"],
+    "s1_source_facts": [OPENAI_HOP, "haiku-5-5", "haiku-4-5", "nova-lite"],
+    "a3_place_card": [OPENAI_HOP, "gpt-5.6-luna", "nova-lite"],
+    "t10_claims": [OPENAI_HOP, "gpt-5.6-luna", "nova-lite"],
     "a3_place_card_check": ["haiku-4-5", "sonnet-4-6", "llama4-scout"],
     "a3_place_days": ["haiku-4-5", "sonnet-4-6", "nova-lite"],
-    "a3_place_dedupe": ["gpt-5.6-luna", "llama4-maverick", OPENAI_HOP],
+    "a3_place_dedupe": [OPENAI_HOP, "gpt-5.6-luna", "llama4-maverick"],
     "a3_place_dedupe_check": ["haiku-4-5", "nova-lite"],
     "a3_place_locate": ["sonnet-4-6", "haiku-4-5", "nova-lite"],
     "t9_faq_answer_fit": ["sonnet-4-6", "haiku-4-5", "nova-lite"],
     "t9_faq_filter": ["haiku-4-5", "nova-lite"],
-    "s1_brand_audit": ["gpt-6-luna", "nova-lite", OPENAI_HOP],
-    "t2_brand_audit": ["gpt-6-luna", "nova-lite", OPENAI_HOP],
+    **{s: ["gpt-6-luna", OPENAI_HOP, "nova-lite"] for s in ("s1_brand_audit", "t2_brand_audit", "s1_judge", "t2_judge",
+                                                           "t7_debate_judge", "t10_judge", "writing_memory_eval",
+                                                           "writing_memory_mine")},
+    "t10_adjudicate": [OPENAI_HOP, "gpt-5.6-luna", "nova-lite"],
 }
+GPT_STAGES = {s for s, f in DECIDED.items() if OPENAI_HOP in f and f[-1] != OPENAI_HOP}   # the twin mid-chain
 
 
 def _text_stage(r: dict) -> bool:
@@ -195,7 +199,7 @@ def test_every_decided_chain_keeps_the_stage_primary_and_adds_the_working_siblin
     for stage, fallbacks in DECIDED.items():
         keys = [after[stage]["model_id"], *fallbacks]
         assert len(keys) == len(set(keys)), stage
-        for newer, older in (("sonnet-5-5", "sonnet-4-6"), ("haiku-5-5", "haiku-4-5")):
+        for newer, older in (("sonnet-5-5", "sonnet-4-6"), ("haiku-5-5", "haiku-4-5"), ("gpt-6-luna", OPENAI_HOP)):
             if newer in keys:
                 assert older in keys and keys.index(older) == keys.index(newer) + 1, (stage, keys)
         assert "sonnet" not in keys and "haiku" not in keys                 # never a legacy key again (327 T-4)
@@ -220,15 +224,17 @@ def test_the_chain_rules_hold_after_366_and_name_the_gaps_before():
     ("t9_write", {"fallback_model_ids": ["sonnet-4-6", "nova-lite", OPENAI_HOP]}, "writer_family"),
     ("t9_write", {"allowed_scopes": ["aws_only"]}, "aws_only_text_stage"),
     ("a3_place_locate", {"allowed_scopes": ["aws_only"]}, "aws_only_text_stage"),
-    ("s1_judge", {"fallback_model_ids": ["gpt-6-luna", OPENAI_HOP, "nova-lite"]}, "vendor_not_last"),
+    ("s1_judge", {"fallback_model_ids": ["nova-lite", OPENAI_HOP, "gpt-6-luna"]}, "vendor_not_last"),
+    ("a3_place_card", {"fallback_model_ids": ["gpt-5.6-luna", OPENAI_HOP, "nova-lite"]}, "vendor_not_last"),
     ("a3_place_card_check", {"fallback_model_ids": ["haiku-4-5", "gpt-6-luna", "llama4-scout"]},
      "check_pair_family"),
     ("tp_compose", {"fallback_model_ids": []}, "no_fallback"),
     ("s1_generate", {"fallback_model_ids": ["sonnet-4-6", "haiku-5-5", "haiku-4-5", OPENAI_HOP]}, "attempt_cap"),
-    ("a3_atomize", {"fallback_model_ids": ["gpt-5.6-luna", "haiku-5-5", "haiku-4-5", "nova-lite", OPENAI_HOP]},
+    ("a3_atomize", {"fallback_model_ids": [OPENAI_HOP, "gpt-5.6-luna", "haiku-5-5", "haiku-4-5", "nova-lite"]},
      "attempt_cap"),
     ("a3_place_locate", {"fallback_model_ids": ["sonnet-4-6", "haiku-5-5", "haiku-4-5", "nova-lite"]}, "attempt_cap"),
-], ids=["judge_claude", "writer_acc2_model", "aws_only_writer", "aws_only_validate", "vendor_mid_chain", "check_pair",
+], ids=["judge_claude", "writer_acc2_model", "aws_only_writer", "aws_only_validate", "vendor_mid_chain",
+        "vendor_not_behind_its_twin", "check_pair",
         "no_fallback", "attempt_cap", "attempt_cap_validate_openai", "attempt_cap_two_5x_tiers"])
 def test_each_rule_catches_its_break(stage, change, rule):
     from api.services.llm_route_chains import violations
@@ -246,6 +252,21 @@ def test_an_embedding_stage_stays_aws_only_without_a_violation():
     assert after["f10_embed"]["allowed_scopes"] == ["aws_only"]
     assert not [v for v in violations(after.values(), _models(), reach, acc2_only, _deployment_scopes())
                 if v[0] in ("f10_embed", "a3_place_embed", "tp_search_embed")]
+
+
+def test_the_openai_api_row_is_gpt_6_luna_s_vendor_twin():
+    """S267 Q2 ("openai-direct for a GPT twin if one exists"): the catalog says gpt-6-luna-openai is the same model as
+    gpt-6-luna (wire model gpt-6-luna vs the acc3 profile global.openai.gpt-6-luna); no other vendor-only row is."""
+    from shared.llm_client import data_scope
+    reach, _ = _reach_and_acc2_only()
+    assert data_scope.vendor_twins(_models(), reach) == {OPENAI_HOP: frozenset({"gpt-6-luna"})}
+    chain = ["gpt-6-luna", OPENAI_HOP, "gpt-5.6-luna"]
+    assert data_scope.in_twin_slot(chain, 1, {OPENAI_HOP: frozenset({"gpt-6-luna"})})
+    assert not data_scope.in_twin_slot(["gpt-5.6-luna", OPENAI_HOP], 1, {OPENAI_HOP: frozenset({"gpt-6-luna"})})
+    assert not data_scope.in_twin_slot([OPENAI_HOP, "gpt-6-luna"], 0, {OPENAI_HOP: frozenset({"gpt-6-luna"})})
+    assert data_scope.base_model_id("us.anthropic.claude-haiku-4-5-20251001-v1:0", "anthropic") == \
+        "claude-haiku-4-5-20251001"
+    assert data_scope.base_model_id("gpt-5.6-luna", "openai") == "gpt-5.6-luna"     # a dot in the name is kept
 
 
 def test_every_route_stage_maps_to_a_product_and_a_ledger_app():
@@ -285,8 +306,9 @@ def _same_model(vendor_call, aws_call) -> bool:
 @pytest.mark.parametrize("state", ["seed", "seed_anthropic_on"])
 @pytest.mark.parametrize("stage", sorted(DECIDED))
 def test_a_changed_stage_calls_its_primary_first_then_each_model_on_every_deployment(calls, state, stage):
-    """Model first (S267): a vendor API call is either the same model as the acc3 call right before it, or the
-    route's vendor-only last rung (the OpenAI API); the new 4.x rows are called on acc3 by Converse."""
+    """Model first (S267): a vendor API call is either the same model as the acc3 call right before it (Sonnet 5.5 on
+    the Anthropic API, GPT-6 Luna on the OpenAI API through its twin row), or the route's vendor-only last rung (the
+    OpenAI API); the new 4.x rows are called on acc3 by Converse."""
     route = _routes(AFTER)[stage]
     reach, _ = _reach_and_acc2_only()
     vendor_last = route["fallback_model_ids"][-1] == OPENAI_HOP
@@ -308,8 +330,11 @@ def test_a_changed_stage_calls_its_primary_first_then_each_model_on_every_deploy
             assert new[-1][:2] == ["openai", "openai-direct"], (variant, new)     # the OpenAI API last
         else:
             assert _is_aws(new[-1]), (variant, new)                         # acc2 last (the other failure domain)
-        if state == "seed":                                                 # Anthropic API off: AWS until the end
-            assert all(_is_aws(c) for c in (new[:-1] if vendor_last else new)), (variant, new)
+        if state == "seed":                                                 # Anthropic API off: no Anthropic call
+            assert all(_is_aws(c) or c[:2] == ["openai", "openai-direct"] for c in new), (variant, new)
+        if stage in GPT_STAGES:                                             # GPT-6 Luna, then its OpenAI API twin
+            i = next(i for i, c in enumerate(new) if c[:2] == ["openai", "openai-direct"])
+            assert new[i - 1][1:3] == ["acc3", "global.openai.gpt-6-luna"] and new[i][2] == "gpt-6-luna", (variant, new)
         assert not any(c[0] == "anthropic" for c in new) or any(
             reach.get(k) == frozenset(BOTH) for k in [route["model_id"], *route["fallback_model_ids"]])
         assert len(new) >= len(old)
@@ -378,11 +403,12 @@ def _resolve(stage: str, anthropic_on: bool = False) -> dict:
     ("t9_repair", "haiku-4-5@acc3"),
     ("tp_compose", "sonnet-4-6@acc3"),
     ("a3_place_locate", "sonnet-4-6@acc3"),
-    ("a3_atomize", "haiku-4-5@acc3"),
-    ("s1_judge", "nova-lite@acc2"),
-    ("s1_brand_audit", "nova-lite@acc2"),
-    ("a3_place_dedupe", "llama4-maverick@acc2"),
-    ("a3_place_card", "nova-lite@acc2"),
+    ("a3_atomize", f"{OPENAI_HOP}@openai-direct"),         # GPT-6 Luna refused on acc3: the same model, OpenAI API
+    ("s1_judge", f"{OPENAI_HOP}@openai-direct"),
+    ("s1_brand_audit", f"{OPENAI_HOP}@openai-direct"),
+    ("a3_place_dedupe", f"{OPENAI_HOP}@openai-direct"),
+    ("a3_place_card", f"{OPENAI_HOP}@openai-direct"),
+    ("t10_adjudicate", f"{OPENAI_HOP}@openai-direct"),
     ("segment_research", "haiku-4-5@acc3"),
 ])
 def test_the_resolver_names_the_first_model_that_would_be_called_without_calling_one(stage, first):
@@ -476,7 +502,8 @@ from shared.llm_client.breaker import Health  # noqa: E402
 
 T_NOW = datetime(2026, 11, 4, 9, 0, tzinfo=timezone.utc)
 NOT_AVAILABLE = RuntimeError("AccessDeniedException: The model is not available for this account.")
-ATOMIZE_ON_ACC3 = ["gpt-6-luna", "gpt-5.6-luna", "haiku-5-5", "haiku-4-5"]     # a3_atomize before nova-lite (acc2)
+# a3_atomize's acc3 rungs (its OpenAI API twin between gpt-6-luna and haiku-5-5 is not on acc3: here it fails too)
+ATOMIZE_ON_ACC3 = ["gpt-6-luna", "haiku-5-5", "haiku-4-5"]
 STILL_REFUSED = ("gpt-6-luna", "gpt-5.6-luna", "haiku-5-5", "sonnet-5-5")
 
 
@@ -530,7 +557,7 @@ def test_after_one_4x_success_the_old_refusals_no_longer_skip_the_sibling(acc3_r
     acc3_rows["now"] = T_NOW + timedelta(seconds=1300)          # half-open: each refused row is probed and fails
     assert _walk_acc3(ATOMIZE_ON_ACC3) == "haiku-4-5@acc3"
     assert breaker.connection_open("acc3") is None
-    assert all(breaker.is_open("acc3", m) for m in ("gpt-6-luna", "gpt-5.6-luna", "haiku-5-5"))
+    assert all(breaker.is_open("acc3", m) for m in ("gpt-6-luna", "haiku-5-5"))
     assert breaker.connection_snapshot("acc3") is None          # the admin card does not call acc3 blocked
     probed = breaker._get(("acc3", "gpt-6-luna"))
     assert probed.open_streak == 10 and probed.opened_at == T_NOW - timedelta(seconds=600)   # the streak start kept

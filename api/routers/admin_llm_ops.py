@@ -231,7 +231,8 @@ _SCOPE_REASON = "This stage may not send content outside AWS (data scopes: {scop
 
 _VENDOR_DIRECT_LAST_RESORT_ONLY = (
     "S235: a model reached only outside AWS (data scope vendor_direct, e.g. the OpenAI platform API) may only be the "
-    "last fallback of a route (Bedrock outage), never the primary or the shadow")
+    "last fallback of a route (Bedrock outage), or sit right behind the same model served inside AWS (its twin, "
+    "e.g. gpt-6-luna-openai right after gpt-6-luna), never the primary or the shadow")
 
 
 def _reach_scopes(models: Optional[list]) -> dict[str, frozenset]:
@@ -283,7 +284,8 @@ def _check_scopes(stage: str, scopes: Optional[tuple], reach: dict, keys: list) 
             "migration (shared.llm_role_config.allowed_scopes), not an admin setting"))
 
 
-def _check_aws_before_vendor(stage: str, scopes: Optional[tuple], reach: dict, chain: list) -> None:
+def _check_aws_before_vendor(stage: str, scopes: Optional[tuple], reach: dict, chain: list,
+                             twins: Optional[dict] = None) -> None:
     """AA-1026 (S263, tech lead T-3: go outside AWS only as the last resort; relaxed S267). 422 when a stage open to
     vendor_direct names a model reachable inside AWS AFTER a model reached ONLY outside AWS (every deployment on a
     vendor API, e.g. gpt-6-luna-openai): the vendor-only rungs are the end of the route (the ``vendor_not_last`` rule
@@ -294,13 +296,16 @@ def _check_aws_before_vendor(stage: str, scopes: Optional[tuple], reach: dict, c
     S267 (tech lead, root ADR 0009 decision 5 amendment: "prefer the same model first, then go outside"): a model
     with BOTH an AWS and a vendor API deployment may now sit before an AWS model. The gateway's default model-first
     order calls that model on acc3, then on its vendor API, then the next model on acc3 (e.g. [sonnet-5-5, sonnet-4-6,
-    haiku-4-5, gpt-6-luna-openai]); S263 refused exactly that interleaving."""
+    haiku-4-5, gpt-6-luna-openai]); S263 refused exactly that interleaving. And a model reached only outside AWS that
+    is the VENDOR TWIN of the rung right before it (``twins`` = ``data_scope.vendor_twins``: the same model on its
+    vendor API as a separate catalog row, gpt-6-luna-openai behind gpt-6-luna) is part of that model's slot, so it
+    may sit before the next AWS model ("openai-direct for a GPT twin if one exists", S267 Q2)."""
     if scopes is None or data_scope.VENDOR_DIRECT not in scopes:
         return
     keys = [k for k in chain if k]
     for i, first in enumerate(keys):
         first_reach = reach.get(first, frozenset({data_scope.AWS_ONLY}))
-        if not first_reach or data_scope.AWS_ONLY in first_reach:
+        if not first_reach or data_scope.AWS_ONLY in first_reach or data_scope.in_twin_slot(keys, i, twins or {}):
             continue
         later = [k for k in dict.fromkeys(keys[i + 1:])
                  if k != first and data_scope.AWS_ONLY in reach.get(k, frozenset({data_scope.AWS_ONLY}))]
@@ -436,7 +441,8 @@ async def patch_llm_config(
     if body.model_id not in allowed:
         raise HTTPException(status_code=422,
                             detail=f"model {body.model_id!r} is not selectable for stage {stage!r}")
-    _check_aws_before_vendor(stage, scopes, reach, [body.model_id, *(current.get("fallback_model_ids") or [])])
+    _check_aws_before_vendor(stage, scopes, reach, [body.model_id, *(current.get("fallback_model_ids") or [])],
+                             data_scope.vendor_twins(models or [], reach))
     # AA-998: only acc3 (or no value = acc3) — the retired fallback account is refused here, before the DB CHECK.
     if body.account_route is not None and body.account_route not in _ACCOUNT_ROUTE_VALUES:
         raise HTTPException(status_code=422,
@@ -511,7 +517,12 @@ async def patch_llm_route(
     _check_scopes(stage, scopes, reach, [*fallbacks, shadow])
     allowed = {o["model_id"] for o in _options_for(current["role"], stage, models, scopes, reach) if o["available"]}
     outside = data_scope.outside_aws_only(reach)
-    if any(m in outside for m in fallbacks[:-1]) or (shadow is not None and shadow in outside):
+    # S267 (model first): a vendor-only model right behind its AWS twin is part of that model's slot, not a mid-chain
+    # exit (gpt-6-luna -> gpt-6-luna-openai -> gpt-5.6-luna); any other vendor-only model is still the last fallback.
+    twins = data_scope.vendor_twins(models or [], reach)
+    chain = [primary, *fallbacks]
+    if any(m in outside and not data_scope.in_twin_slot(chain, i + 1, twins) for i, m in enumerate(fallbacks[:-1])) \
+            or (shadow is not None and shadow in outside):
         raise HTTPException(status_code=422, detail=_VENDOR_DIRECT_LAST_RESORT_ONLY)
 
     # Fallback list: no duplicates, must not contain the primary, every entry available.
@@ -535,7 +546,7 @@ async def patch_llm_route(
             raise HTTPException(status_code=422,
                                 detail=f"shadow model {shadow!r} is not selectable for stage {stage!r}")
     # AA-1026 review: T-3 (outside AWS only when the AWS paths are blocked) holds for the whole route.
-    _check_aws_before_vendor(stage, scopes, reach, [primary, *fallbacks])
+    _check_aws_before_vendor(stage, scopes, reach, chain, twins)
     # AA-1026 D7: a new fallback chain of a writer / judge stage needs its eval run or a break-glass reason. A
     # shadow-only change does not (the shadow never serves a reply; it is how the evidence is gathered).
     chain_changed = list(fallbacks) != list(current.get("fallback_model_ids") or [])

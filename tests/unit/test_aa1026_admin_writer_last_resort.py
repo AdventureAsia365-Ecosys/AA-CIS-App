@@ -178,3 +178,47 @@ def test_with_deployment_routing_off_the_relaxed_rule_is_the_same(monkeypatch):
                              ["sonnet-5-5", "haiku-5-5", "gpt-6-luna-openai"])
     with pytest.raises(HTTPException):
         _check_aws_before_vendor("s", ("aws_only", "vendor_direct"), REACH, ["gpt-6-luna-openai", "haiku-5-5"])
+
+
+# ── S267 Q2: "openai-direct for a GPT twin if one exists" — the twin right behind its AWS model ─────────────────────
+
+TWINS = {"gpt-6-luna-openai": frozenset({"gpt-6-luna"})}
+
+
+def test_the_catalog_names_gpt_6_luna_openai_the_twin_of_gpt_6_luna():
+    from shared.llm_client import data_scope
+    assert data_scope.vendor_twins(MODELS, REACH) == TWINS
+
+
+@pytest.mark.parametrize("chain,refused", [
+    (["gpt-6-luna", "gpt-6-luna-openai", "haiku-5-5"], False),            # the twin in GPT-6 Luna's slot
+    (["gpt-5.6-luna", "gpt-6-luna", "gpt-6-luna-openai", "haiku-5-5"], False),
+    (["haiku-5-5", "gpt-6-luna-openai", "gpt-6-luna"], True),             # not behind its AWS model
+    (["gpt-6-luna", "haiku-5-5", "gpt-6-luna-openai", "sonnet-5-5"], True),
+], ids=["twin_slot", "twin_slot_mid", "twin_ahead_of_its_model", "twin_after_another_model"])
+def test_the_aws_before_vendor_rule_keeps_a_twin_in_its_model_slot(chain, refused):
+    from api.routers.admin_llm_ops import _check_aws_before_vendor
+    if refused:
+        with pytest.raises(HTTPException):
+            _check_aws_before_vendor("s", ("aws_only", "vendor_direct"), REACH, chain, TWINS)
+    else:
+        _check_aws_before_vendor("s", ("aws_only", "vendor_direct"), REACH, chain, TWINS)
+
+
+def _validate_row(fallbacks):
+    return {"stage": "a3_atomize", "role": "validate", "model_id": "gpt-6-luna", "fallback_model_ids": list(fallbacks),
+            "shadow_model_id": None, "shadow_sample_pct": 0, "allowed_scopes": BOTH}
+
+
+@pytest.mark.asyncio
+async def test_a_route_with_the_twin_right_behind_gpt_6_luna_saves():
+    out = await _patch_route({"fallback_model_ids": ["gpt-6-luna-openai", "haiku-5-5"]}, _validate_row(["haiku-5-5"]))
+    assert out["fallback_model_ids"] == ["gpt-6-luna-openai", "haiku-5-5"]
+
+
+@pytest.mark.asyncio
+async def test_the_twin_anywhere_else_mid_route_is_still_refused():
+    with pytest.raises(HTTPException) as exc:
+        await _patch_route({"fallback_model_ids": ["haiku-5-5", "gpt-6-luna-openai", "sonnet-5-5"]},
+                           _validate_row(["haiku-5-5"]))
+    assert exc.value.status_code == 422 and "last fallback" in exc.value.detail

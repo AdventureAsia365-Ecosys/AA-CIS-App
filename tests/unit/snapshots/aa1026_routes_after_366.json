@@ -26,7 +26,7 @@
     "vendor_direct"
    ],
    "fallback_model_ids": [
-    "gpt-5.6-luna",
+    "gpt-6-luna-openai",
     "haiku-5-5",
     "haiku-4-5",
     "nova-lite"
@@ -46,9 +46,9 @@
     "vendor_direct"
    ],
    "fallback_model_ids": [
+    "gpt-6-luna-openai",
     "gpt-5.6-luna",
-    "nova-lite",
-    "gpt-6-luna-openai"
+    "nova-lite"
    ],
    "is_active": true,
    "model_id": "gpt-6-luna",
@@ -103,9 +103,9 @@
     "vendor_direct"
    ],
    "fallback_model_ids": [
+    "gpt-6-luna-openai",
     "gpt-5.6-luna",
-    "llama4-maverick",
-    "gpt-6-luna-openai"
+    "llama4-maverick"
    ],
    "is_active": true,
    "model_id": "gpt-6-luna",
@@ -208,8 +208,8 @@
    ],
    "fallback_model_ids": [
     "gpt-6-luna",
-    "nova-lite",
-    "gpt-6-luna-openai"
+    "gpt-6-luna-openai",
+    "nova-lite"
    ],
    "is_active": true,
    "model_id": "gpt-5.6-luna",
@@ -284,8 +284,8 @@
    ],
    "fallback_model_ids": [
     "gpt-6-luna",
-    "nova-lite",
-    "gpt-6-luna-openai"
+    "gpt-6-luna-openai",
+    "nova-lite"
    ],
    "is_active": true,
    "model_id": "gpt-5.6-luna",
@@ -302,7 +302,7 @@
     "vendor_direct"
    ],
    "fallback_model_ids": [
-    "gpt-5.6-luna",
+    "gpt-6-luna-openai",
     "haiku-5-5",
     "haiku-4-5",
     "nova-lite"
@@ -379,9 +379,9 @@
     "vendor_direct"
    ],
    "fallback_model_ids": [
+    "gpt-6-luna-openai",
     "gpt-5.6-luna",
-    "nova-lite",
-    "gpt-6-luna-openai"
+    "nova-lite"
    ],
    "is_active": true,
    "model_id": "gpt-6-luna",
@@ -398,9 +398,9 @@
     "vendor_direct"
    ],
    "fallback_model_ids": [
+    "gpt-6-luna-openai",
     "gpt-5.6-luna",
-    "nova-lite",
-    "gpt-6-luna-openai"
+    "nova-lite"
    ],
    "is_active": true,
    "model_id": "gpt-6-luna",
@@ -418,8 +418,8 @@
    ],
    "fallback_model_ids": [
     "gpt-6-luna",
-    "nova-lite",
-    "gpt-6-luna-openai"
+    "gpt-6-luna-openai",
+    "nova-lite"
    ],
    "is_active": true,
    "model_id": "gpt-5.6-luna",
@@ -437,8 +437,8 @@
    ],
    "fallback_model_ids": [
     "gpt-6-luna",
-    "nova-lite",
-    "gpt-6-luna-openai"
+    "gpt-6-luna-openai",
+    "nova-lite"
    ],
    "is_active": true,
    "model_id": "gpt-5.6-luna",
@@ -513,8 +513,8 @@
    ],
    "fallback_model_ids": [
     "gpt-6-luna",
-    "nova-lite",
-    "gpt-6-luna-openai"
+    "gpt-6-luna-openai",
+    "nova-lite"
    ],
    "is_active": true,
    "model_id": "gpt-5.6-luna",
@@ -532,8 +532,8 @@
    ],
    "fallback_model_ids": [
     "gpt-6-luna",
-    "nova-lite",
-    "gpt-6-luna-openai"
+    "gpt-6-luna-openai",
+    "nova-lite"
    ],
    "is_active": true,
    "model_id": "gpt-5.6-luna",
@@ -710,8 +710,8 @@
    ],
    "fallback_model_ids": [
     "gpt-6-luna",
-    "nova-lite",
-    "gpt-6-luna-openai"
+    "gpt-6-luna-openai",
+    "nova-lite"
    ],
    "is_active": true,
    "model_id": "gpt-5.6-luna",
@@ -729,8 +729,8 @@
    ],
    "fallback_model_ids": [
     "gpt-6-luna",
-    "nova-lite",
-    "gpt-6-luna-openai"
+    "gpt-6-luna-openai",
+    "nova-lite"
    ],
    "is_active": true,
    "model_id": "gpt-5.6-luna",
@@ -741,5 +741,5 @@
    "stage": "writing_memory_mine"
   }
  ],
- "source": "aa1026_routes_before_366.json with CIS migration 366 (S267, tech lead): the family fallback chains and allowed_scopes {aws_only, vendor_direct} on every active non-embed stage (AWS preferred, not AWS only)"
+ "source": "aa1026_routes_before_366.json with CIS migration 366 (S267, tech lead): the model-first family fallback chains (GPT-6 Luna's OpenAI API twin right behind it) and allowed_scopes {aws_only, vendor_direct} on every active non-embed stage (AWS preferred, not AWS only)"
 }

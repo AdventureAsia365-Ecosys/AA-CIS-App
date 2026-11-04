@@ -20,6 +20,7 @@ behaviour.
 """
 from __future__ import annotations
 
+import re
 from typing import Iterable, Optional
 
 import structlog
@@ -66,3 +67,62 @@ def backfill_scopes(route_keys: Iterable[str], outside_keys: Iterable[str]) -> t
     ``(aws_only,)``."""
     outside = set(outside_keys)
     return ALL_SCOPES if any(k in outside for k in route_keys if k) else AWS_ONLY_SCOPES
+
+
+# ── AA-1026 (S267, tech lead Q2: model first) — the vendor twin of an AWS model ──────────────────────────────────────
+# "Every deployment of a model before the next model: acc3 first, then the same model on its vendor API (the Anthropic
+# API for Claude, the OpenAI API for a GPT twin if one exists)." A Claude 5.x row carries both deployments itself
+# (migration 306), so the gateway's per-model order already covers it. GPT-6 Luna's OpenAI API path is a separate
+# catalog row (``gpt-6-luna-openai``, migration 170: "Same model as gpt-6-luna, served by the OpenAI API"), reached
+# only outside AWS: its TWIN. A twin right behind its AWS model is part of that model's slot, so the route rules (the
+# admin PATCH, ``llm_route_chains.violations``, migration 366's guard) accept it ahead of the route's next AWS model.
+
+_REGION_PREFIX = re.compile(r"^(?:global|us|eu|apac|jp|au|ca)\.")
+_VERSION_SUFFIX = re.compile(r"(?:-v\d+(?::\d+)?|:\d+)$")
+
+
+def base_model_id(wire: Optional[str], vendor: Optional[str]) -> Optional[str]:
+    """The model a wire id names, without where it is served: lower case, no Bedrock region prefix (``global.``,
+    ``us.``, ...), no vendor prefix (``<vendor>.``) and no version suffix (``-v1:0``, ``:0``).
+    ``global.openai.gpt-6-luna`` and the OpenAI API's ``gpt-6-luna`` are both ``gpt-6-luna``. None for no id."""
+    if not isinstance(wire, str) or not wire.strip():
+        return None
+    w = _REGION_PREFIX.sub("", wire.strip().lower())
+    v = (vendor or "").strip().lower()
+    if v and w.startswith(v + "."):
+        w = w[len(v) + 1:]
+    return _VERSION_SUFFIX.sub("", w) or None
+
+
+def vendor_twins(models: Iterable, reach: dict[str, frozenset]) -> dict[str, frozenset]:
+    """Model key reached only outside AWS -> the catalog rows reachable inside AWS that are the SAME model (its AWS
+    twins): same family, and the twin's ``wire_model`` names the same base model (``base_model_id``) as one of the
+    AWS row's Bedrock profiles or its ``wire_model``. Today: ``gpt-6-luna-openai`` -> ``{gpt-6-luna}``. ``models``:
+    catalog rows (``model_key``, ``vendor``, ``family_key``, ``api_style``, ``bedrock_profile_ids``,
+    ``wire_model``); ``reach`` as in ``outside_aws_only`` (a model with no reach row counts as inside AWS)."""
+    models = list(models)
+    outside = outside_aws_only(reach)
+    inside: dict[tuple, set] = {}
+    for m in models:
+        if m.model_key in outside or getattr(m, "api_style", None) == "embed":
+            continue
+        profiles = getattr(m, "bedrock_profile_ids", None) or {}
+        for wire in [*(profiles.values() if isinstance(profiles, dict) else ()), getattr(m, "wire_model", None)]:
+            base = base_model_id(wire, m.vendor)
+            if base:
+                inside.setdefault((m.family_key, base), set()).add(m.model_key)
+    out: dict[str, frozenset] = {}
+    for m in models:
+        if m.model_key not in outside:
+            continue
+        base = base_model_id(getattr(m, "wire_model", None), m.vendor)
+        twins = inside.get((m.family_key, base), set()) - {m.model_key} if base else set()
+        if twins:
+            out[m.model_key] = frozenset(twins)
+    return out
+
+
+def in_twin_slot(chain: list, i: int, twins: dict[str, frozenset]) -> bool:
+    """True when ``chain[i]`` is a model reached only outside AWS sitting right behind its AWS twin (``vendor_twins``):
+    the same model on its vendor API, part of that model's slot in a model-first route (tech lead S267 Q2)."""
+    return 0 < i < len(chain) and chain[i - 1] in (twins or {}).get(chain[i], ())

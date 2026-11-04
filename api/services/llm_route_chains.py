@@ -6,7 +6,9 @@ Since migration 366 every active stage route is an ordered chain by model family
 working sibling of each family tier on the route (Claude Sonnet 5.5 -> Sonnet 4.6, Claude Haiku 5.5 -> Haiku 4.5,
 GPT-6 Luna <-> GPT-5.6 Luna), then (writers) the other Claude tier, then the AWS models of the OTHER failure domain the
 route already had (acc2: Nova / Llama, migrations 331-333 / 339), then the vendor API last resort (GPT-6 Luna on the
-OpenAI API, a model reached only outside AWS) at the end. Since the S267 policy "AWS preferred, not AWS only" (tech
+OpenAI API, a model reached only outside AWS) at the end of a writer route. On a GPT route the same OpenAI API row is
+GPT-6 Luna's vendor twin and sits right behind GPT-6 Luna (model first: the same model on acc3, then on its vendor
+API, before the next model). Since the S267 policy "AWS preferred, not AWS only" (tech
 lead, root ADR 0009 decision 5 amendment, replacing T-3) every active text stage (writer, judge, validate) allows
 both data scopes, so the vendor APIs are reachable from every one of them after their AWS deployments; only the
 embedding stages stay ``aws_only`` (no vendor embedding deployment exists). The gateway runs a route MODEL FIRST:
@@ -24,7 +26,10 @@ and ``scripts/llm_ops/route_chain_check.py`` on the live rows:
   tenant content, TripPlanner and the validate stages inside AWS). The detail names any model reached only outside
   AWS the stage could then never call. An embedding stage stays ``aws_only`` and is not checked;
 - ``vendor_not_last``: a model reached only outside AWS is followed by a model reachable inside AWS (the vendor-only
-  rung is the suffix of the chain; a model with an AWS AND a vendor API deployment may sit anywhere, S267);
+  rung is the suffix of the chain; a model with an AWS AND a vendor API deployment may sit anywhere, S267). Except
+  the VENDOR TWIN of the rung right before it (``data_scope.vendor_twins``: the same model on its vendor API as a
+  separate catalog row, e.g. ``gpt-6-luna-openai`` right behind ``gpt-6-luna``): it is part of that model's slot in
+  the model-first order (tech lead S267 Q2: "openai-direct for a GPT twin if one exists");
 - ``judge_writer_family``: a judge route names a model of the writers' family (``family_rule.WRITER_FAMILY``, ADR 0009
   decision 12 / TL-10: a judge never scores text of its own family);
 - ``writer_family``: a writer route names a model of another family, except a model reached only outside AWS at the
@@ -119,8 +124,10 @@ def violations(routes: Iterable[dict], models: Iterable, reach: dict[str, frozen
     the chat model keys whose every deployment is on connection acc2; ``deployment_scopes``: model key -> the data
     scope of each of its deployments (one entry per row, enabled or not; a model without rows counts as one AWS
     deployment). A switched-off route (``is_active`` false) is not checked."""
+    models = list(models)
     by_key = {m.model_key: m for m in models}
     outside = data_scope.outside_aws_only(reach)
+    twins = data_scope.vendor_twins(models, reach)
     acc2_only = set(acc2_only)
     rows = {r["stage"]: r for r in routes}
     out: list[tuple[str, str, str]] = []
@@ -138,9 +145,10 @@ def violations(routes: Iterable[dict], models: Iterable, reach: dict[str, frozen
             out.append((stage, "aws_only_text_stage",
                         f"allowed_scopes {', '.join(scopes)}" + (f"; never called: {', '.join(bad)}" if bad else "")))
         seen_vendor = None
-        for k in keys:
+        for i, k in enumerate(keys):
             if k in outside:
-                seen_vendor = seen_vendor or k
+                if not data_scope.in_twin_slot(keys, i, twins):      # a twin right behind its AWS model: its slot
+                    seen_vendor = seen_vendor or k
             elif seen_vendor:
                 out.append((stage, "vendor_not_last", f"{k} after {seen_vendor}"))
                 break
