@@ -9,7 +9,7 @@ Content studio role from ``shared.tenant_members``) and this middleware enforces
   load, e.g. the brand page's live CTA check). The list is exact (method + full path), never a blanket POST exemption.
 - ``csr = editor``: everything except account writes: a non-read method on :data:`ACCOUNT_WRITE_PREFIXES`
   (channel connections, the API key, members, webhooks) -> 403 ``studio_role_forbidden``.
-- ``csr = owner`` and every API-key token (no ``csr``; machines and the window's API-key sign-in): unchanged.
+- ``csr = owner`` and a token without ``csr`` (the legacy shape; no route mints it since AA-1036): unchanged.
 
 The token is verified with the tenant JWT rules (``api.routers.auth.verify_jwt`` + ``role == tenant``) only to READ the
 claim; a request whose Authorization header carries no valid tenant JWT passes through untouched and gets its real

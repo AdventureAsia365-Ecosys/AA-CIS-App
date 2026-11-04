@@ -6,8 +6,8 @@ subscription and add-ons, or adds add-ons to an existing tenant. It replaces the
 Three modes (``ProvisionRequest``, validated again in the job because the payload comes back from the database):
 
 - ``create``: a new ``shared.tenants`` row (the same rows as ``POST /admin/tenants``: the ``default`` brand rules
-  row), with **no API key** (``api_key_hash`` NULL: a key is shown once, so it is never put in a job; staff issue
-  it with ``POST /admin/tenants/{id}/generate-key``). The CIS 355 bridge trigger creates the content subscription on
+  row); there are no tenant API keys (AA-1036 R3 slice 3, root ADR 0019 d6): people join through a studio
+  invitation. The CIS 355 bridge trigger creates the content subscription on
   the live plan of ``plan_tier``. Without ``trial_days`` the account and the subscription are active. With
   ``trial_days`` (slice 3) the account is ``trial`` and the content subscription (and every add-on of the request)
   ``trialing`` until ``trial_ends_at``; the ``tenant_account_tick`` job ends it (``services/tenant_account/
@@ -214,9 +214,9 @@ CONTENT_PLAN_SQL = """
      WHERE p.product = 'content' AND p.tier = $1::plan_tier_enum AND p.retired_at IS NULL
 """
 INSERT_TENANT_SQL = """
-    INSERT INTO shared.tenants (name, slug, plan_tier, plan_id, posts_per_week, api_key_hash, rate_limit_rpm,
+    INSERT INTO shared.tenants (name, slug, plan_tier, plan_id, posts_per_week, rate_limit_rpm,
                                 is_active, kind, is_canary, account_status, is_pilot, pilot_ends_at)
-    VALUES ($1, $2, $3::plan_tier_enum, $4, $5, NULL, $6, true, $7, $8, $9, $10,
+    VALUES ($1, $2, $3::plan_tier_enum, $4, $5, $6, true, $7, $8, $9, $10,
             CASE WHEN $10 THEN now() + make_interval(weeks => $11::int) END)
     RETURNING tenant_id
 """
@@ -331,8 +331,6 @@ def _result(req: ProvisionRequest, tenant_id: str, *, steps: list[str], subscrip
         "kind": KIND, "mode": req.mode, "request_key": req.request_key, "tenant_id": tenant_id,
         "resumed": resumed, "steps": steps, "subscriptions": subscriptions, "events_written": events,
         "warnings": warnings,
-        # a key is shown once and never stored in a job: staff issue it on the tenant (create mode only)
-        "api_key": "not_issued" if req.mode == "create" else None,
     }
 
 

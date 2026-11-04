@@ -26,7 +26,6 @@ SAMPLES = [
     ("admin", "PATCH", "/admin/master/{tour_id}/trash", None),
     ("admin", "PUT", "/admin/notifications/read-all", None),
     ("admin", "GET", "/admin/tenants", None),
-    ("admin", "POST", "/admin/tenants/{tenant_id}/generate-key", None),
     ("admin_tenant360", "GET", "/admin/tenants/{tenant_id}/cost", None),
     ("admin_tenant_provision", "POST", "/admin/tenants/{tenant_id}/provision", {}),
     ("admin_tenant_subscription", "PUT", "/admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}", {}),

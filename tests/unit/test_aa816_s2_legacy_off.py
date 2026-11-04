@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 import api.main as main_mod
 from api.core import booking_jwt, identity_config, staff_identity
 from api.main import app, get_pool
+from api.routers.auth import _create_jwt
 from tests.unit.aa854_cognito_staff import ISS, SUB, Directory, install_issuer
 
 REPO = Path(__file__).resolve().parents[2]
@@ -172,7 +173,7 @@ def test_verify_tenant_refuses_a_staff_token_with_403_not_500(legacy_unset):
 
 
 def test_verify_tenant_still_accepts_a_tenant_token(legacy_unset):
-    token = main_mod._create_jwt("tenant-s2", "Tenant S2", "starter")
+    token = _create_jwt("tenant-s2", "Tenant S2", "starter")  # the legacy tenant token shape (AA-1036: test helper)
     res = TestClient(app).post("/auth/verify-tenant", json={"token": token})
     assert res.status_code == 200, res.text
     assert res.json() == {"valid": True, "tenant_id": "tenant-s2", "name": "Tenant S2", "plan_tier": "starter"}

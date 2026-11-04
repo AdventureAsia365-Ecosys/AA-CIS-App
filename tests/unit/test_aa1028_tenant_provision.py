@@ -128,7 +128,7 @@ def test_actor_fits_the_feed_column():
 def test_result_shape():
     req = pv.parse(_create())
     out = pv._result(req, TID, steps=["tenant_created"], subscriptions=[], events=3, warnings=[], resumed=False)
-    assert out["api_key"] == "not_issued" and out["kind"] == pv.KIND and out["events_written"] == 3
+    assert "api_key" not in out and out["kind"] == pv.KIND and out["events_written"] == 3
 
 
 # ── the job ───────────────────────────────────────────────────────────────────────────────────────────────────────

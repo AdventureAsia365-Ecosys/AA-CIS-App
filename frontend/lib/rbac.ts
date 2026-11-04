@@ -163,7 +163,7 @@ export const API_WRITE_RULES: { prefix: string; roles: StaffRole[] }[] = [
   // AA-1039 R6 — releasing a held piece (AA-subject gate) lets that text publish (backend: QUALITY_WRITE)
   { prefix: "tenant-qa/compliance/", roles: TENANT_QA },
   // AA-797 — every write to a tenant account: POST tenants (create), PATCH tenants/{id}
-  // (plan/status), generate-key, brand-identity, config, offboard, restore. Prefix "tenants" (no slash)
+  // (plan/status), brand-identity, config, offboard, restore. Prefix "tenants" (no slash)
   // so the bare create path is covered; reads (GET) stay open to every staff role.
   // AA-1035: the tenant desk roles reach the writes the backend allows them (members, invitations; finance the plan
   // and suspend / resume of PATCH tenants/{id}); every other tenant write stays admin in the backend.

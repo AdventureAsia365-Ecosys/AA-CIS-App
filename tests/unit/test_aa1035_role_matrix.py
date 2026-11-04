@@ -138,7 +138,6 @@ def test_the_book_roles_reach_tenants_but_not_money_ai_or_account_writes(role):
     assert _any(allowed, "/admin/ai-gateway", methods=("POST", "PUT", "PATCH", "DELETE")) == []
     assert _any(allowed, "/admin/budgets", "/admin/cost-explorer", "/admin/spend", "/admin/billing") == []
     for write in ("POST /admin/tenants/{tenant_id}/offboard", "POST /admin/tenants/{tenant_id}/restore",
-                  "POST /admin/tenants/{tenant_id}/generate-key",
                   "POST /admin/tenants/{tenant_id}/provision", "POST /admin/tenants",
                   "PUT /admin/tenants/{tenant_id}/assignments/{admin_user_id}",
                   "PUT /admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}"):

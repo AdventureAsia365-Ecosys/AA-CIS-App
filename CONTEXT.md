@@ -59,8 +59,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     in AA-979 (CRM-P2a), runs on Fargate behind CloudFront since the P2b cutover (27/10/2026), and the frozen copy
     left here was deleted at the P2b clean-up (runbook §4.5; `tests/unit/test_aa885_portal_split.py` keeps it
     gone). Read AA-Partner `CONTEXT.md` ("Portal") for its pages, shell, gate and sign-in. The Content studio API
-    (`/v1/*`, `/auth/tenant-session`, `/auth/tenant-memberships`, `/auth/tenant-login` for machines) stays here
-    (root ADR 0010 §7, ADR 0010a).
+    (`/v1/*`, `/auth/tenant-session`, `/auth/tenant-memberships`) stays here (root ADR 0010 §7, ADR 0010a).
+    `/auth/tenant-login` answers **410 Gone** for any body: tenant API keys were removed (AA-1036 R3 slice 3, root
+    ADR 0019 d6); there is no agency machine path to `/v1/*` until R8.
   - Admin pages: `dashboard`, `upload` (A0), `s1-rewrite`, `review` (A2 Review Queue — table
     view with a Dismiss action, AA-626; migrated to the UI kit + react-query with multi-select
     bulk regenerate and non-blocking regenerate, AA-662 PR 2 / AA-719), `master-content` (AA-718:
@@ -1296,9 +1297,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   (`/v1/billing` has no `llm_cost_usd`, AA-796).
 - **Tenant Account pages (AA-761)**: `GET /v1/account/activity` (the tenant's own `acp_shared.audit_log` rows,
   newest first, `category` / `action` / `since` / `until` filters, offset paging with a total, `page_size` ≤ 100),
-  `GET /v1/account/activity/export` (the same filtered set as CSV, at most 50 000 rows, a cut file says so) and
-  `GET /v1/account/api-key` (masked `cis_…` key, issue date from the onboard / rotate / restore audit rows, last
-  sign-in with it and last metered API call). Tenant JWT only; the id comes from the token. `audit_log` has no RLS
+  and `GET /v1/account/activity/export` (the same filtered set as CSV, at most 50 000 rows, a cut file says so).
+  `GET /v1/account/api-key` was removed with the tenant API keys (AA-1036). Tenant JWT only; the id comes from the token. `audit_log` has no RLS
   and no tenant-role grant, so these read on the main pool with the id bound (the `/v1/billing` pattern), and only
   an **allowlist of actions** is visible (`api/services/tenant_account.py` `TENANT_VISIBLE_ACTIONS`): admin silent
   corrections, the staff request trail, brand / config / membership edits and the erasure record never are. A new
@@ -1885,17 +1885,23 @@ person's partner-pool access token (partner-web client) for a short tenant JWT a
 (`api/routers/tenant_session.py`; verifier `api/core/partner_identity.py`, its own `MultiIssuerVerifier`, never a staff
 issuer; WORKFORCE / EXTERNAL / M2M tokens 403). It answers from the active `shared.tenant_members` rows of `(iss, sub)`
 on active agencies (`services/tenant_membership/session.py`): none 403 `no_membership`, several 409 `choose_tenant`
-(chooser `GET /auth/tenant-memberships`). The token is the API-key token's shape plus `client=portal`, `amr=partner`,
+(chooser `GET /auth/tenant-memberships`). The token is the legacy tenant token's shape (`_create_jwt`) plus `client=portal`, `amr=partner`,
 `mid`, `csr`; at most 15 min and never past the access token. Throttled per identity in Redis, not per IP. The Content
 studio role is enforced by `api/middleware/tenant_role.py` on every tenant-JWT path (`/v1/*`, `/admin/brand-identity`):
-viewer read only, editor no writes under `/v1/integrations`, `/v1/account`, `/v1/webhooks`; owner and API-key tokens
-unchanged. Invitations: `POST /admin/tenants/{id}/members/invitations` (`tenant.write`) creates the `invited` row and
+viewer read only, editor no writes under `/v1/integrations`, `/v1/account`, `/v1/webhooks`; owner and tokens without
+`csr` unchanged. Invitations: `POST /admin/tenants/{id}/members/invitations` (`tenant.write`) creates the `invited` row and
 relays the e-mail once to the CRM (`crm.ops.v1` `POST /tenants/{id}/studio-invitations`, staff token, through
 `api/services/crm_console.py`); CIS stores no e-mail; `.../members/{membership_id}/invitation/send` sends again. The
 CRM binds the accepted identity with `POST /tenant/membership/v1/invitations/{invitation_id}/activate` (M2M scope
-`cis.tenant/activate`, contract 1.1; idempotent for the same identity, 409 otherwise). API-key sign-in
-(`/auth/tenant-login`) is unchanged for machines; the portal stopped offering it at the P2b clean-up
-(`PORTAL_API_KEY_SIGNIN=false`: its `/tenant-login` answers 308 to the partner sign-in).
+`cis.tenant/activate`, contract 1.1; idempotent for the same identity, 409 otherwise). **No tenant API keys
+(AA-1036 R3 slice 3, root ADR 0019 d6):** `POST /auth/tenant-login` (both handlers, `api/main.py` and the unmounted
+`api/routers/auth.py` router) answers 410 Gone with `{"detail": "tenant_api_key_removed", "message": …,
+"sign_in": "partner"}` for any body, reads no table and writes no audit row; `verify_tenant_api_key`, the Lambda
+authorizer code, `POST /admin/tenants/{id}/generate-key`, `GET /v1/account/api-key`, the key in the create / restore
+answers and the E2E key copy sync (`aa-cis/dev/e2e-tenant/*`) are gone. `tests/unit/test_aa1036_no_tenant_api_keys.py`
+keeps it so (410 for any body, no key route, a source guard over `api/`, `services/`, `shared/`, `worker/`). CIS 368
+sets `shared.tenants.api_key_hash` NULL; the column DROP is a separate destructive migration (DRY RUN, tech lead).
+The 30-day `audit_log` check before the removal found only synthetic E2E tenants signing in with a key.
 
 ## Staff roles and permissions (AA-656)
 
@@ -2072,7 +2078,8 @@ the main secret with a forged `x-admin-role` would pass on a path without a Bear
 principal-aware since C9 (above); then `ADMIN_SECRET` is rotated (I6) and the flag goes off. New staff are created on
 the Staff page only (the legacy password-row script is retired, AA-816 D1).
 
-**Login throttle (AA-876).** `/auth/admin-login` and `/auth/tenant-login` call `api/core/login_throttle.py` before the
+**Login throttle (AA-876).** `/auth/admin-login` calls `api/core/login_throttle.py` (so did `/auth/tenant-login` until
+AA-1036 made it 410) before the
 DB read and bcrypt (bcrypt runs in the threadpool). One pipelined Redis call checks, per source IP and scope: at most
 20 **failed** logins per 15 min (`loginfail_ip:*`, successes do not count) and a high ceiling of 100 attempts per 5 min
 (`loginrl:*`, protects bcrypt CPU). Admin only, per username (stored as a hash, never in clear): 5 failures from one
@@ -2470,7 +2477,7 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
 - **One-action provisioning (slice 2):** the `tenant_provision` saga on `shared.job`
   (`services/tenant_account/provision.py`, `services/jobs/tenant_provision_job.py`, routes in
   `api/routers/admin_tenant_provision.py`, admin role, `tenant.write`): `POST /admin/tenants/provision` creates a tenant
-  (the same rows as `POST /admin/tenants`, no API key: staff issue it with generate-key) with its content subscription
+  (the same rows as `POST /admin/tenants`; no tenant API key, AA-1036) with its content subscription
   (the 355 bridge, active, or trialing with `trial_days` since slice 3) and optional crm / tripplanner add-ons;
   `POST /admin/tenants/{id}/provision` adds or changes add-ons of an existing tenant; `GET
   /admin/tenants/provision/{job_id}` reads the job. Idempotent per `request_key` (job key `tenant_provision:<key>`; the
@@ -2538,14 +2545,14 @@ A tenant (`shared.tenants`) is in one of three states, derived from two columns
   deactivated" to the tenant's JWT. The PATCH clears the 30 s Redis `tenant_meta:{id}` cache, so
   this applies at once.
 - **offboarded**: `cancelled_at` set. Reached only through `POST /admin/tenants/{id}/offboard`,
-  which needs a reason. That call revokes the key (`api_key_hash = 'REVOKED_' || id`), sets
-  `is_active = false`, removes the tenant from the Jev allow-list (snapshotted in the audit row) and
+  which needs a reason. That call sets `account_status = 'offboarding'` (the CIS 354 trigger keeps
+  `is_active = false` and `cancelled_at` in step; AA-1036 dropped the old `REVOKED_` key marker), removes the
+  tenant from the Jev allow-list (snapshotted in the audit row) and
   cancels its QUEUED `shared.job` rows (running jobs finish). It deletes no data or setting.
 
-PATCH and generate-key on an offboarded tenant return 409. `POST /admin/tenants/{id}/restore`
-(Nghiệp, 14/10/2026) brings it back whole: it clears the offboard markers, sets `is_active`,
-re-adds the snapshotted Jev allow-list row and issues a **new** API key (the old one stays
-revoked); plan and settings are unchanged, and cancelled jobs are listed, not re-enqueued. Tenant
+PATCH on an offboarded tenant returns 409. `POST /admin/tenants/{id}/restore`
+(Nghiệp, 14/10/2026) brings it back whole: it clears the offboard markers, sets `account_status = 'active'`,
+re-adds the snapshotted Jev allow-list row (no key is issued, AA-1036); plan and settings are unchanged, and cancelled jobs are listed, not re-enqueued. Tenant
 data erasure is a separate step after offboarding plus a retention window, with explicit approval: the
 `data_erasure` job (AA-839, see the job runner section) — DRY RUN by default, apply OFF behind
 `ERASURE_APPLY_ENABLED`; after an apply the tenant cannot be restored.

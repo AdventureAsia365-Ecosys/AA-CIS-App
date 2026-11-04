@@ -19,8 +19,7 @@ from api.routers._served import tour_not_served_handler
 from shared.tour_liveness import TourNotServedError
 from services.acp_shared.atom_replaced import AtomReplaced
 from api.routers.auth import (
-    _hash_api_key, _create_jwt, verify_jwt, verify_tenant_jwt,
-    TenantLoginRequest, TenantLoginResponse,
+    verify_jwt, verify_tenant_jwt, tenant_login_gone, TENANT_LOGIN_GONE,
     _verify_password, _create_admin_jwt,
     AdminLoginRequest, AdminLoginResponse, VerifyAdminResponse,
     STAFF_ROLES, BookingTokenResponse,
@@ -99,7 +98,8 @@ from api.core import login_throttle  # AA-876
 from api.core.staff_authz import NO_BOOKING_ROLES  # AA-878
 from api.core.sentry import init_sentry
 from api.schemas.public_api import Health, Jwks, Readiness, TenantSession  # AA-899
-from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
+# AA-1036: the tenant.login audit row was written here by the retired API-key sign-in; the partner sign-in writes it
+# (api/routers/tenant_session.py).
 from shared.log_config import configure_for_process  # AA-871
 
 # AA-871 — JSON lines (structlog + stdlib + uvicorn) with request_id / tenant_id / job ids; skipped under unit tests.
@@ -392,49 +392,18 @@ def get_pool() -> asyncpg.Pool:
         raise HTTPException(status_code=503, detail="DB not ready")
     return pool
 
-@app.post("/auth/tenant-login", response_model=TenantLoginResponse, tags=["auth"])
-async def tenant_login(
-    request: Request,
-    body: TenantLoginRequest,
-    db: asyncpg.Pool = Depends(get_pool),
-):
-    # AA-876 — per-IP failure + attempt limits before any DB read (api/core/login_throttle.py). No per-key
-    # backoff: an API key has far too much entropy to guess, and a per-key wait would let anyone lock a tenant out.
-    await login_throttle.check(request, "tenant")
-    if not body.api_key or len(body.api_key) < 10:
-        raise HTTPException(status_code=400, detail="Invalid API key format")
-    key_hash = _hash_api_key(body.api_key)
-    async with db.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT tenant_id::text, name, plan_tier FROM shared.tenants "
-            "WHERE api_key_hash = $1 AND is_active = true",
-            key_hash,
-        )
-    if not row:
-        await login_throttle.record_failure(request, "tenant")
-        raise HTTPException(status_code=401, detail="Invalid API key")
-    token = _create_jwt(row["tenant_id"], row["name"], row["plan_tier"], client=body.client)
-
-    # AA-559 — semantic tenant-activity log. Best-effort/swallowed (unlike every other new call
-    # site this issue adds): login has no pre-existing DB write of its own to be atomic with, and
-    # a real tenant must never be locked out of the portal because an audit INSERT hiccuped.
-    try:
-        await write_audit_log(
-            db, tenant_id=row["tenant_id"], actor=f"tenant:{row['tenant_id']}",
-            action=TenantAuditAction.TENANT_LOGIN, resource_type="tenant",
-            resource_id=row["tenant_id"],
-            # AA-760 — a portal sign-in says so (its token is a portal session, not metered as API calls).
-            details={"login_method": "api_key", **({"client": body.client} if body.client else {})},
-        )
-    except Exception as exc:
-        logger.error("tenant_login_audit_log_failed", tenant_id=row["tenant_id"], error=str(exc))
-
-    return TenantLoginResponse(
-        token=token,
-        tenant_id=row["tenant_id"],
-        tenant_name=row["name"],
-        plan_tier=row["plan_tier"],
-    )
+# AA-1036 R3 slice 3 (root ADR 0019 d6): tenant API keys are gone. Any body answers 410 Gone with a short JSON body
+# naming the partner sign-in (POST /auth/tenant-session through the agency web). The body is never parsed, the login
+# throttle and the DB are never touched, and no tenant.login audit row is written. The API Gateway resource of this
+# path (AA-876) still forwards here, so a caller sees the 410, not a 403 / 404 from the edge.
+@app.post(
+    "/auth/tenant-login", tags=["auth"], deprecated=True, status_code=410,
+    summary="Removed: tenant API keys are gone (410 Gone)",
+    responses={410: {"description": "Always: tenant API keys were removed; sign in with the partner pool.",
+                     "content": {"application/json": {"example": TENANT_LOGIN_GONE}}}},
+)
+async def tenant_login():
+    return tenant_login_gone()
 
 async def _session_token_from_body(request: Request) -> str:
     """The ``token`` of a ``{"token": "..."}`` body (verify-tenant / verify-admin), or "" when it is missing or not

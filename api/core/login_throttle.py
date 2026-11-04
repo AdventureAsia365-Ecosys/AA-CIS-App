@@ -1,9 +1,10 @@
-"""Login throttle for /auth/admin-login and /auth/tenant-login (AA-876).
+"""Login throttle for /auth/admin-login (AA-876). It also served /auth/tenant-login until AA-1036 made that 410 Gone
+(no DB read, nothing to throttle); the ``scope`` argument stays so another login can get its own buckets.
 
 Everything lives in the api's shared Redis (app.state.redis) and is checked BEFORE the DB read and the bcrypt
 compare, in ONE pipelined round trip, so a throttled request costs one Redis call and nothing else.
 
-Per source IP, per scope (``admin`` / ``tenant``):
+Per source IP, per scope (``admin``):
 
 - FAILURES: ``loginfail_ip:{scope}:{ip}``, LOGIN_IP_FAIL_LIMIT failed logins per LOGIN_FAIL_TTL_S (the TTL is set
   on the first failure and never refreshed). Successes do not count, so staff and CI smoke logins sharing one

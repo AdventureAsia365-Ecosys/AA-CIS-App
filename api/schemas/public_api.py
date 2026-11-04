@@ -139,20 +139,6 @@ class AccountActivityPage(BaseModel):
     actions: List[AccountActivityAction]
 
 
-class AccountApiKey(BaseModel):
-    """GET /v1/account/api-key — the key is never readable (only its sha256 is stored): a mask and its dates."""
-    has_key: bool
-    masked: Optional[str]
-    issued_at: Optional[str]
-    last_sign_in_at: Optional[str]
-    last_api_call_at: Optional[str]
-    # AA-825 rollup fallback: newest month (YYYY-MM) with calls when the 90-day raw window holds none
-    last_api_call_month: Optional[str]
-    last_used_at: Optional[str]
-    # set (and last_used_at null) when that month is newer than every exact use
-    last_used_month: Optional[str]
-
-
 # ── catalog.http.v1 (AA-976) — documentation only ──────────────────────────────
 # The /catalog/v1 handlers (api/routers/catalog_http.py) return their own JSONResponse (ETag, Cache-Control, 304),
 # so these models are declared with ``responses={200: {"model": ...}}`` and never validate or filter a body. They

@@ -87,7 +87,7 @@ async def test_create_writes_the_tenant_subscriptions_and_events(conn):
                            {"product": "tripplanner", "plan_key": "tripplanner.hosted"}])
     out = await _run(conn, req, job)
     tid = out["tenant_id"]
-    assert out["resumed"] is False and out["mode"] == "create" and out["api_key"] == "not_issued"
+    assert out["resumed"] is False and out["mode"] == "create" and "api_key" not in out
     assert out["steps"] == ["tenant_created", "content_active", "crm_subscribed", "tripplanner_subscribed"]
     t = await conn.fetchrow("SELECT name, slug, plan_tier::text AS tier, rate_limit_rpm, api_key_hash, is_active, "
                             "account_status, kind, is_canary, posts_per_week FROM shared.tenants "
@@ -159,7 +159,7 @@ async def test_attach_adds_revives_and_leaves_unchanged(conn):
     add = pv.parse({"request_key": f"zz-att-{uuid.uuid4().hex[:10]}", "mode": "attach", "tenant_id": tid,
                     "add_ons": [{"product": "crm", "plan_key": "crm.pro", "seats": 6}]})
     out = await _run(conn, add)
-    assert out["steps"] == ["crm_subscribed"] and out["api_key"] is None
+    assert out["steps"] == ["crm_subscribed"] and "api_key" not in out
     assert (await _subs(conn, tid))["crm"] == ("crm.pro", "active", 6)
     assert (await _ents(conn, tid))["crm.campaigns"] == (None, "plan")
     assert await conn.fetchval("SELECT count(*) FROM acp_shared.audit_log WHERE tenant_id = $1 "

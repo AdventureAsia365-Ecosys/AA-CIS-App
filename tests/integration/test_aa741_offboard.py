@@ -41,7 +41,7 @@ async def pool():
 
 
 @pytest.mark.asyncio
-async def test_offboard_revokes_key_writes_audit_and_leaves_allowlist(pool, monkeypatch):
+async def test_offboard_sets_account_status_writes_audit_and_leaves_allowlist(pool, monkeypatch):
     from api.routers import admin
     monkeypatch.setattr(admin, "verify_admin_secret", lambda _s: None)
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(pool=pool)))
@@ -49,9 +49,9 @@ async def test_offboard_revokes_key_writes_audit_and_leaves_allowlist(pool, monk
                                       x_admin_role="admin")  # AA-797: tenant writes are admin-only
     assert out["status"] == "offboarded"
 
-    t = await pool.fetchrow("SELECT is_active, api_key_hash, cancelled_at FROM shared.tenants "
+    t = await pool.fetchrow("SELECT is_active, account_status, cancelled_at FROM shared.tenants "
                             "WHERE tenant_id = $1::uuid", TENANT)
-    assert t["is_active"] is False and t["api_key_hash"].startswith("REVOKED_") and t["cancelled_at"]
+    assert t["is_active"] is False and t["account_status"] == "offboarding" and t["cancelled_at"]
     a = await pool.fetchrow("SELECT action, resource_id FROM acp_shared.audit_log "
                             "WHERE tenant_id = $1 AND action = 'agency.offboard'", TENANT)
     assert a and a["resource_id"] == TENANT
