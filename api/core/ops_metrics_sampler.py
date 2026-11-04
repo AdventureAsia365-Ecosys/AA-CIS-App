@@ -70,6 +70,10 @@ The AA-832 chain (EventBridge -> ops-probe Lambda -> admin POST -> shared.job ->
 - AA-1042 (S268): each tick also queues the LLM route watch (`llm_route_watch`, $0) once per 15-min UTC bucket and its
   daily digest once per UTC day from 01:00 UTC (idempotency keys), while the kind is registered and LLM_ROUTE_WATCH is
   not off. Fields `llm_route_watch` / `llm_route_digest` (the job id, when created) or `llm_route_watch_error`.
+- AA-1045: each tick also queues the usage rollup (`ai_usage_rollup`, $0, database only) once per quarter hour (the
+  last hours re-rolled for late rows; idempotency key per quarter hour) and, once, its backfill of the raw window;
+  only while the kind is registered, CIS 372 is applied and AI_USAGE_ROLLUP is not off. Field `ai_usage_rollup` (the
+  jobs created) or `ai_usage_rollup_error`.
 - AA-845: every JEV_CREDIT_CHECK_EVERY_S (shared/jev_credit.py, 30 min) the loop also runs the Jev low-credit
   check (estimated TypeSafe credit below the threshold -> throttled bell + operator e-mail). It runs after the
   tick, outside sample_once, under its own PART_TIMEOUT_S, and logs its own line (`jev_credit_low_checked` /
@@ -374,6 +378,18 @@ async def _tenant_account_tick_part(pool, kinds: dict, ts: datetime, out: dict) 
         out["tenant_account_tick"] = {"job_id": job_id, "key": key}
 
 
+async def _ai_usage_rollup_part(pool, kinds: dict, ts: datetime, out: dict) -> None:
+    """AA-1045: the usage rollup every quarter hour and its one-time backfill (idempotency keys; one to_regclass and at
+    most two indexed EXISTS a tick). Only while the kind is registered; AI_USAGE_ROLLUP=off stops it."""
+    from services.jobs.ai_usage_rollup_job import KIND, enqueue_scheduled, schedule_enabled
+
+    if KIND not in kinds or not schedule_enabled():
+        return
+    created = await enqueue_scheduled(pool, now=ts)
+    if created:
+        out["ai_usage_rollup"] = created
+
+
 async def _alert_recipients_part(pool, redis, out: dict) -> None:
     from shared import alert_recipients
 
@@ -489,6 +505,12 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
         await asyncio.wait_for(_tenant_account_tick_part(pool, kinds, ts, out), timeout=5.0)
     except Exception as e:
         out["tenant_account_tick_error"] = _err(e)
+
+    # AA-1045: at most two idempotent INSERTs a quarter hour (database only), same short budget
+    try:
+        await asyncio.wait_for(_ai_usage_rollup_part(pool, kinds, ts, out), timeout=5.0)
+    except Exception as e:
+        out["ai_usage_rollup_error"] = _err(e)
 
     try:
         await asyncio.wait_for(_jobs_part(pool, kinds, out), timeout=part_timeout_s)

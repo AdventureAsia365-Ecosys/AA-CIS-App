@@ -55,6 +55,10 @@
     "capability": "tenant.write",
     "module": "api.routers.admin_tenant_subscription"
   },
+  "DELETE /admin/usage-explorer/views/{view_id}": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_usage_explorer"
+  },
   "GET /admin/a4/content-log": {
     "capability": "tenant_content.read",
     "module": "api.routers.admin_a4"
@@ -803,6 +807,26 @@
     "capability": null,
     "module": "api.routers.admin_pipeline"
   },
+  "GET /admin/usage-explorer/invoices": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_usage_explorer"
+  },
+  "GET /admin/usage-explorer/options": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_usage_explorer"
+  },
+  "GET /admin/usage-explorer/query": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_usage_explorer"
+  },
+  "GET /admin/usage-explorer/rollup/check": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_usage_explorer"
+  },
+  "GET /admin/usage-explorer/views": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_usage_explorer"
+  },
   "GET /admin/view-as/sessions": {
     "capability": "tenant.view_as",
     "module": "api.routers.admin_view_as"
@@ -1510,6 +1534,14 @@
   "POST /admin/upload-url": {
     "capability": "content.write",
     "module": "api.routers.admin_pipeline"
+  },
+  "POST /admin/usage-explorer/rollup/run": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_usage_explorer"
+  },
+  "POST /admin/usage-explorer/views": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_usage_explorer"
   },
   "POST /admin/view-as/sessions/{session_id}/end": {
     "capability": "tenant.view_as",

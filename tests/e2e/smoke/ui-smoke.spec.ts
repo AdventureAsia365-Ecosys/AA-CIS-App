@@ -69,6 +69,9 @@ const ADMIN_PAGES: PageSpec[] = [
   // AA-804 — AI & spend › AI gateway (was "AI providers"; admin only; backend spend.read). The tiles and three provider
   // tables render once the providers answer; `ai-gateway-ready` marks that.
   { id: 'ai-gateway', label: 'AI gateway', path: '/admin/ai-gateway', readySelector: '[data-testid="ai-gateway-ready"]', viewerRefused: true },
+  // AA-1045 — AI & spend › Usage explorer (AI & spend roles; backend spend.read). `usage-explorer-ready` once the
+  // explorer query answered (or failed: the page then says why).
+  { id: 'usage-explorer', label: 'Usage explorer', path: '/admin/usage', readySelector: '[data-testid="usage-explorer-ready"]', viewerRefused: true },
   { id: 'master-content', label: 'Master Content', path: '/admin/master-content' },
   { id: 'overview', label: 'Overview', path: '/admin/overview', viewerRefused: true },
   // AA-883 — Platform › People & access › Staff (backend live on Dev since CIS main c2f9e919).

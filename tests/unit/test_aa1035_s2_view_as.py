@@ -279,6 +279,29 @@ def test_the_route_trace_and_route_policy_routes_are_refused_under_view_as(world
     assert len(db.audit) == len(AA1042_ROUTES)
 
 
+# AA-1045 added the usage explorer (staff money pages: ai.spend.read / ai.ops.write). None is a view-as read: pinned so
+# the walk above provably covers them, reads included, and so a later READ_ROUTES edit cannot open one silently.
+AA1045_ROUTES = (
+    ("GET", "/admin/usage-explorer/query"), ("GET", "/admin/usage-explorer/options"),
+    ("GET", "/admin/usage-explorer/invoices"), ("GET", "/admin/usage-explorer/views"),
+    ("POST", "/admin/usage-explorer/views"), ("DELETE", "/admin/usage-explorer/views/{view_id}"),
+    ("GET", "/admin/usage-explorer/rollup/check"), ("POST", "/admin/usage-explorer/rollup/run"),
+)
+
+
+def test_the_usage_explorer_routes_are_refused_under_view_as(world):
+    client, db, app = world
+    assert set(AA1045_ROUTES) <= set(_all_routes(app))
+    assert not any(path.startswith("/admin/usage-explorer") for path in view_as.READ_ROUTES)
+    for method, path in AA1045_ROUTES:
+        assert view_as.route_allowed(method, _concrete(path)) is False, (method, path)
+        res = client.request(method, _concrete(path), headers={"Authorization": f"Bearer {token()}"},
+                             json={} if method not in ("GET", "DELETE") else None)
+        assert res.status_code == 403, (method, path, res.status_code)
+        assert res.json()["detail"] == view_as.READ_ONLY_DETAIL, (method, path)
+    assert len(db.audit) == len(AA1045_ROUTES)
+
+
 @pytest.mark.parametrize("header", [
     lambda t: f"Bearer {t}", lambda t: f"bearer {t}", lambda t: f"Bearer  {t}", lambda t: f"Token {t}",
     lambda t: f"Bearer junk {t}",

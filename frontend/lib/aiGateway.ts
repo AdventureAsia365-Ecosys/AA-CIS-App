@@ -753,10 +753,23 @@ export interface CallFilters {
   stage?: string;
   source?: string;
   window?: string;
+  /** AA-1045: the usage explorer's drill-down — a custom range (ISO with an offset, replaces the window) and the
+   *  explorer's dimensions ("(none)" = rows without a value). */
+  since?: string;
+  until?: string;
+  tenant?: string;
+  model?: string;
+  account?: string;
+  role?: string;
+  error_class?: string;
+  product?: string;
 }
 
 export const CALL_FILTER_KEYS = ["job_id", "tour_id", "app", "provider", "status", "stage", "source",
-  "window"] as const;
+  "window", "since", "until", "tenant", "model", "account", "role", "error_class", "product"] as const;
+/** AA-1045: the Calls filters only the usage explorer's drill-down sets (no select of their own on the tab). */
+export const CALL_DRILL_KEYS = ["since", "until", "tenant", "model", "account", "role", "error_class",
+  "product"] as const;
 
 /** The API path of one page of calls: only the filters that are set, then the cursor. */
 export function callsPath(f: CallFilters, cursor?: string | null, limit?: number): string {
@@ -786,6 +799,8 @@ export function callTone(outcome: string | null | undefined): Tone {
 export const CALL_PARAM: Readonly<Record<(typeof CALL_FILTER_KEYS)[number], string>> = {
   job_id: "c_job", tour_id: "c_tour", app: "c_app", provider: "c_provider", status: "c_status", stage: "c_stage",
   source: "c_source", window: "c_window",
+  since: "c_since", until: "c_until", tenant: "c_tenant", model: "c_model", account: "c_account", role: "c_role",
+  error_class: "c_error_class", product: "c_product",
 };
 
 /** The Calls filters read from the address (`get` returns "" for a missing key); a bad job / tour id is dropped. */

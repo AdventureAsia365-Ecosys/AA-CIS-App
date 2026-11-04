@@ -49,6 +49,9 @@ SAMPLES = [
     ("admin_overview", "GET", "/admin/overview", None),
     ("admin_budgets", "GET", "/admin/budgets", None),
     ("admin_llm_ops", "GET", "/admin/spend/daily", None),
+    ("admin_usage_explorer", "GET", "/admin/usage-explorer/query", None),               # AA-1045
+    ("admin_usage_explorer", "POST", "/admin/usage-explorer/rollup/run",
+     {"from": "2026-11-01T00:00:00+00:00", "to": "2026-11-01T01:00:00+00:00"}),         # AA-1045 (ops.write)
     ("admin_ai_gateway", "GET", "/admin/ai-gateway/providers", None),
     ("admin_ai_gateway", "GET", "/admin/ai-gateway/trace", None),
     ("admin_ai_gateway", "GET", "/admin/ai-gateway/budgets", None),

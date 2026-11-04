@@ -17,7 +17,9 @@
   GET /admin/ai-gateway/calls              the Calls tab: every logged paid call newest first across the CIS ledgers
                                            and the CRM ledger (crm.ops.v1 GET /llm/calls with the staff member's
                                            own token), filtered by job / tour / app / provider / status / stage /
-                                           source / window, keyset paged.                                    spend.read
+                                           source / window, keyset paged; AA-1045: also a custom since / until
+                                           and the usage explorer's tenant / model / account / role / error
+                                           class / product (its drill-down).                                 spend.read
 
   GET /admin/ai-gateway/experiments        the Models & trials Experiments section: the prompt register
                                            (shared.prompt_version, AA-900) and the newest evaluation runs
@@ -147,10 +149,22 @@ async def get_calls(
     window: Optional[str] = Query(None, max_length=8),
     cursor: Optional[str] = Query(None, max_length=200),
     limit: int = Query(ai_gateway_calls.DEFAULT_LIMIT, ge=1, le=ai_gateway_calls.MAX_LIMIT),
+    # AA-1045: the usage explorer's drill-down (a custom range and the explorer's dimensions)
+    since: Optional[str] = Query(None, max_length=40),
+    until: Optional[str] = Query(None, max_length=40),
+    tenant: Optional[str] = Query(None, max_length=64),
+    model: Optional[str] = Query(None, max_length=120),
+    account: Optional[str] = Query(None, max_length=120),
+    role: Optional[str] = Query(None, max_length=32),
+    error_class: Optional[str] = Query(None, max_length=32),
+    product: Optional[str] = Query(None, max_length=32),
 ) -> dict:
     try:
         filters = ai_gateway_calls.parse_filters(job_id=job_id, tour_id=tour_id, app=app, provider=provider,
-                                                 status=status, stage=stage, source=source, window=window)
+                                                 status=status, stage=stage, source=source, window=window,
+                                                 since=since, until=until, tenant=tenant, model=model,
+                                                 account=account, role=role, error_class=error_class,
+                                                 product=product)
         ai_gateway_calls.parse_cursor(cursor)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
