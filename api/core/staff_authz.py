@@ -315,6 +315,16 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/ai-gateway/app-profiles"): SPEND_READ,           # AA-1025 H1a: the app profile of every app
     ("PATCH", "/admin/ai-gateway/app-profiles/{app}"): AI_ADMIN,     # AA-1025 H1a: AI on / off per app, audited
     ("GET", "/admin/ai-gateway/capacity"): SPEND_READ,               # AA-1025 H2: TPM limits, lines, claim hold
+    # AA-1045 — the usage explorer (AI & spend): money reads; the saved views are the caller's own (spend.read, like the
+    # notification bell's own state); a re-roll of the rollup is an ops write ($0, audited)
+    ("GET", "/admin/usage-explorer/query"): SPEND_READ,
+    ("GET", "/admin/usage-explorer/options"): SPEND_READ,
+    ("GET", "/admin/usage-explorer/invoices"): SPEND_READ,
+    ("GET", "/admin/usage-explorer/views"): SPEND_READ,
+    ("POST", "/admin/usage-explorer/views"): SPEND_READ,
+    ("DELETE", "/admin/usage-explorer/views/{view_id}"): SPEND_READ,
+    ("GET", "/admin/usage-explorer/rollup/check"): SPEND_READ,
+    ("POST", "/admin/usage-explorer/rollup/run"): OPS_WRITE,
     ("PUT", "/admin/ai-gateway/capacity/{connection_key}/{model_key}"): AI_ADMIN,     # AA-1025 H2: audited
     ("DELETE", "/admin/ai-gateway/capacity/{connection_key}/{model_key}"): AI_ADMIN,  # AA-1025 H2: audited
     # AA-1042 (S268): the Route control tab (order mode, chains, provider order, presets, versions); writes audited

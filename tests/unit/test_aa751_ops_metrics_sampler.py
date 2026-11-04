@@ -740,8 +740,9 @@ def test_job_kind_removed_and_no_kind_is_exempt():
     # AA-1018: the daily LLM probe may sit queued across a deploy (a re-run is harmless), so it is left out
     # AA-1024 D2: so may the nightly model lifecycle sync (free control-plane reads, a re-run is harmless)
     # AA-1042: and the route watch ($0 database reads; its bells are deduplicated)
+    # AA-1045: and the quarter-hourly usage rollup (database only, idempotent per hour)
     assert sorted(k.name for k in registry.kinds().values() if k.deploy_gate_exempt) == [
-        "llm_connection_probe", "llm_model_lifecycle_sync", "llm_route_watch"]
+        "ai_usage_rollup", "llm_connection_probe", "llm_model_lifecycle_sync", "llm_route_watch"]
 
 
 @pytest.fixture
@@ -766,8 +767,8 @@ async def test_deploy_gate_still_excludes_an_exempt_kind(monkeypatch, exempt_tes
     request = MagicMock()
     request.app.state.pool = pool
     out = await admin_job_runner.deploy_gate(request, x_admin_secret=_TEST_SECRET)
-    # AA-1018: + the daily LLM probe; AA-1024 D2: + the nightly model lifecycle sync
-    expected = sorted([exempt_test_kind, "llm_connection_probe", "llm_model_lifecycle_sync",
+    # AA-1018: + the daily LLM probe; AA-1024 D2: + the nightly model lifecycle sync; AA-1045: + the usage rollup
+    expected = sorted([exempt_test_kind, "ai_usage_rollup", "llm_connection_probe", "llm_model_lifecycle_sync",
                        "llm_route_watch"])   # AA-1042
     assert out["safe_to_deploy"] is True and sorted(out["exempt_kinds"]) == expected
     # AA-990: + the scheduled-later horizon. AA-993 G5: the first fetch is active_count, the second deploy_blockers.

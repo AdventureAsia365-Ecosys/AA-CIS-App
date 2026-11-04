@@ -64,6 +64,7 @@ from api.routers.admin_ai_gateway import router as admin_ai_gateway_router  # AA
 from api.routers.admin_llm_route_control import router as admin_llm_route_control_router  # AA-1042
 from api.routers.admin_llm_route import router as admin_llm_route_router  # AA-1042 (Trace tab)
 from api.routers.admin_llm_route import quality_router as admin_llm_route_quality_router  # AA-1042 (Tenant QA list)
+from api.routers.admin_usage_explorer import router as admin_usage_explorer_router  # AA-1045
 from api.routers.admin_decisions import router as admin_decisions_router  # AA-660
 from api.routers.admin_platform import router as admin_platform_router  # AA-883
 from api.routers.admin_photos import router as admin_photos_router, public_router as photos_public_router  # AA-708
@@ -345,6 +346,7 @@ app.include_router(admin_ai_gateway_router)  # AA-804 — /admin/ai-gateway/{pro
 app.include_router(admin_llm_route_control_router)  # AA-1042 — /admin/ai-gateway/route-control/* (Route control tab)
 app.include_router(admin_llm_route_router)  # AA-1042 — /admin/ai-gateway/route-* (Trace tab: trace, alerts)
 app.include_router(admin_llm_route_quality_router)  # AA-1042 — /admin/content-quality/fallback-writes (tenant_content)
+app.include_router(admin_usage_explorer_router)  # AA-1045 — /admin/usage-explorer/* (AI & spend › Usage explorer)
 app.include_router(admin_decisions_router)  # AA-660 — /admin/decisions (Jev per stage, cost)
 app.include_router(admin_platform_router)  # AA-883 — /admin/platform/staff (read-only staff directory)
 app.include_router(admin_platform_ops_router)  # AA-884 — /admin/platform/{apps,audit,cost}

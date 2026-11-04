@@ -366,7 +366,9 @@ def _call_route(pool, **kw):
     from api.routers import admin_ai_gateway as router_mod
 
     args = {k: None for k in ("job_id", "tour_id", "app", "provider", "status", "stage", "source", "window",
-                              "cursor")}
+                              "cursor",
+                              # AA-1045: the usage explorer's drill-down filters
+                              "since", "until", "tenant", "model", "account", "role", "error_class", "product")}
     args.update(limit=calls.DEFAULT_LIMIT, **kw)
     req = _request(pool)
     req.scope = {"state": {}}

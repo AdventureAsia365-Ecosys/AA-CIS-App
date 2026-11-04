@@ -40,4 +40,5 @@ from . import embedding_reembed_job  # noqa: F401  AA-1026 D5 (re-embed a vector
 from . import llm_contract_smoke_job  # noqa: F401  AA-1026 I6 (acc2 fallback contract smoke; dry run $0)
 from . import tenant_provision_job  # noqa: F401  AA-1028 R1 slice 2 (one-action tenant create / add-ons)
 from . import tenant_account_tick_job  # noqa: F401  AA-1028 R1 slice 3 (hourly trial end, expired overrides)
+from . import ai_usage_rollup_job  # noqa: F401  AA-1045 (hourly usage rollup of the paid-call ledgers, $0)
 from . import noop_sleep_job  # noqa: F401  AA-993 G1 (test-only kind, registered only when JOB_TEST_KINDS=1)
