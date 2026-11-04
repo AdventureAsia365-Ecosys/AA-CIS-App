@@ -22,8 +22,9 @@ import {
 } from "../../../_kit";
 import { useMembersAccess } from "../../_components/useMembersAccess";
 import {
-  INVITE_LOCALES, STUDIO_ROLES, anyMemberWrite, deliveryOk, deliveryProblem, invitationsPath, isInviteEmail,
-  isLastActiveOwner, isStudioRole, memberPath, memberRowActions, membersPath, removePath, sendAgainPath, statusTone,
+  INVITE_LOCALES, anyMemberWrite, deliveryOk, deliveryProblem, invitationsPath, isInviteEmail,
+  isLastActiveOwner, isStudioRole, memberPath, memberRowActions, membersPath, removePath, roleChoices, sendAgainPath,
+  statusTone,
   type InvitationResult, type InviteLocale, type MemberWriteResult, type StudioRole, type TenantMember,
   type TenantMembers,
 } from "@/lib/tenantMembers";
@@ -178,7 +179,7 @@ function MembersInner({ tenantId }: { tenantId: string }) {
       )}
       {d?.kind === "role" && (
         <RoleDialog tenantId={tenantId} member={d.member} lastOwner={isLastActiveOwner(members, d.member.membership_id)}
-          roleLabel={roleLabel} onClose={() => setDialog(null)}
+          roles={roleChoices(perm)} roleLabel={roleLabel} onClose={() => setDialog(null)}
           onDone={(res) => {
             setDialog(null);
             toast.success(res.changed ? t("roleSaved", roleLabel(res.member.content_studio_role)) : t("roleUnchanged"));
@@ -262,8 +263,8 @@ function InviteDialog({ tenantId, member, roles, onClose, onDone }: {
   );
 }
 
-function RoleDialog({ tenantId, member, lastOwner, roleLabel, onClose, onDone }: {
-  tenantId: string; member: TenantMember; lastOwner: boolean; roleLabel: (r: string) => string;
+function RoleDialog({ tenantId, member, lastOwner, roles, roleLabel, onClose, onDone }: {
+  tenantId: string; member: TenantMember; lastOwner: boolean; roles: StudioRole[]; roleLabel: (r: string) => string;
   onClose: () => void; onDone: (res: MemberWriteResult) => void;
 }) {
   const t = useT(MEM);
@@ -293,7 +294,7 @@ function RoleDialog({ tenantId, member, lastOwner, roleLabel, onClose, onDone }:
       <div style={{ display: "grid", gap: 14 }}>
         <Field label={t("role")} hint={t("roleNote")}>
           <Select value={role} onChange={(e) => setRole(e.target.value as StudioRole)} style={{ width: "100%" }}>
-            {STUDIO_ROLES.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
+            {roles.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
           </Select>
         </Field>
         {lastOwner && role !== "owner" && (

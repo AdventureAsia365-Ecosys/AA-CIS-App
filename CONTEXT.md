@@ -1861,7 +1861,8 @@ change. Deletes only 90 days after removal / occurrence or for an offboarded ten
 a new writer of `shared.tenants` needs INSERT on the event table (migration guard + standing test). Staff routes
 (Tenant 360 Members, `api/routers/admin_tenant360.py`, `services/tenant_membership/writer.py`): `GET
 /admin/tenants/{id}/members` (identity shown as a 12-hex fingerprint only), `PATCH .../members/{membership_id}`
-(Content studio role) and `POST .../members/{membership_id}/remove`, both `tenant.write`, audited
+(Content studio role) and `POST .../members/{membership_id}/remove`, both `tenant.write` (AA-1035: or
+`tenant.member.write` of the caller's book, never for the owner seat), audited
 (`tenant.member_role_changed` / `tenant.member_removed`). The partner CRM applies a removal (member disabled and
 signed out; last owner -> agency locked until owner recovery) and agency lifecycle within a minute; it never takes a
 CRM role from CIS. Invitation and activation of identities came with AA-979 (partner-pool re-enrolment, below).
@@ -1927,11 +1928,19 @@ root `docs/audits/2026-11-03-S265-ecosystem-restructure/clarifications.md` secti
 is one capability or `any_of(...)`; a GET with no entry needs `content.read` (so `customer_success`, `support` and
 `finance` reach only their listed routes). `tenant.read` still means "every tenant" (admin); the split adds
 `tenant_content.read` (tenant text: Tenant QA, Content Trace, A4 logs, Writing Lab text), `catalog.read` (the atom
-store), `tenant.book.read` / `tenant.member.write` (the tenant desk: directory and the non-money Tenant 360 tabs),
+store), `tenant.book.read` / `tenant.member.write` (the tenant desk: directory and the non-money Tenant 360 tabs;
+member actions customer_success only), `tenant.member.resend` (support: send an editor / viewer invitation again,
+nothing else), `tenant.book.write` (customer_success: config, brand identity, RPM and publish limit of its book; plan,
+suspend, key, offboard / restore and overrides stay `tenant.write` / `billing.write`), the owner seat (invite as owner,
+change to / from owner, remove an owner, send an owner invitation again) only with `tenant.write`
+(`admin_tenant360._require_owner_tier`: a send-again re-seals to the typed address),
 `tenant.book.account.read` (customer_success only: plans and add-ons, subscription, usage, cost, Tenant QA verdicts,
 the AI budget tile of the own book; support never, and its directory rows and Tenant 360 header carry the price,
 overage and LLM cost as null, `staff_authz.sees_tenant_money`), `tenant.assign`, `billing.read` / `billing.write`
-(PATCH `/admin/tenants/{id}` is field-level: finance only `plan_tier` / `is_active`), `wave.run` and `lab.read`. The
+(PATCH `/admin/tenants/{id}` is field-level: finance only `plan_tier` / `is_active`, customer_success every other
+field; finance opens Tenant 360 on `/details`, which answers it the header only), `wave.run` and `lab.read`. The
+shared tenant picker reads `GET /admin/tenant-names` (id, name, slug, status; scoped like the directory) so the
+Tenant QA, Writing Lab and AI & spend roles can pick a tenant without the directory. The
 content-quality writes check `quality.write` (admin, content_lead, tenant_qa) instead of the literal admin role.
 **Tenant scope:** `api/core/tenant_scope.py require_tenant_scope` runs on every staff route with `{tenant_id}`
 (`dependencies=TENANT_SCOPED`; `tests/unit/test_aa1035_tenant_scope_routes.py` fails CI on a route without it):

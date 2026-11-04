@@ -8376,13 +8376,6 @@
       },
       "ValidationError": {
         "properties": {
-          "ctx": {
-            "title": "Context",
-            "type": "object"
-          },
-          "input": {
-            "title": "Input"
-          },
           "loc": {
             "items": {
               "anyOf": [
@@ -34060,6 +34053,70 @@
         "summary": "Reject a draft",
         "tags": [
           "admin-supply-content"
+        ]
+      }
+    },
+    "/admin/tenant-names": {
+      "get": {
+        "description": "AA-1035 (S267 fix pass): the shared admin tenant picker (frontend/lib/tenants.ts TENANTS_API) for every role\nwhose pages pick or name a tenant, including the ones the Tenants directory refuses (content_lead, tenant_qa on\nTenant QA, ai_ops on the Writing Lab and AI & spend). Names only: no plan, usage, money or counts. Active,\nsuspended and offboarded tenants (the derived ``status``), filtered to the caller's scope like the directory\n(api/core/tenant_scope.py tenant_scope_filter: customer_success its book, support its book and the pool).",
+        "operationId": "list_tenant_names_admin_tenant_names_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Tenant ids, names, slugs and status for the admin tenant picker",
+        "tags": [
+          "admin"
         ]
       }
     },

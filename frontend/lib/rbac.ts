@@ -29,6 +29,9 @@ const ALL_STAFF: StaffRole[] = ["admin", "reviewer", "content", "viewer", "conte
 const CONTENT_WORKERS: StaffRole[] = ["admin", "reviewer", "content", "content_lead"];
 // AA-1035: tenant content QA (quality.write) and the Writing Lab readers.
 const TENANT_QA: StaffRole[] = ["admin", "content_lead", "tenant_qa"];
+// AA-1035 (S267 fix pass): the Writing Lab pages — the readers above plus ai_ops (Writing Lab W: lab.read and the
+// ai.admin writes; the tenant-text reads stay tenant_content.read in the backend, so those panels refuse ai_ops).
+const WRITING_LAB: StaffRole[] = [...TENANT_QA, "ai_ops"];
 // AA-1035: the Tenants directory (backend filters it to the caller's scope: api/core/tenant_scope.py).
 const TENANT_DESK: StaffRole[] = ["admin", "customer_success", "support", "finance"];
 // AA-1035: AI & spend.
@@ -97,7 +100,7 @@ export const PAGE_RULES: PageRule[] = [
   { prefix: "/admin/tenant-qa", roles: TENANT_QA },
   // AA-1039 R6 slice 3 — Writing Lab: the stage pages (/admin/lab/<stage>) and the Writing memory tools (AA-917,
   // signals and candidate rules hold tenant text; was /admin/writing-memory, a 307 now).
-  { prefix: "/admin/lab", roles: TENANT_QA },
+  { prefix: "/admin/lab", roles: WRITING_LAB },
   { prefix: "/admin/api-docs", roles: ["admin"] },          // AA-577 follow-up — OpenAPI reader
   { prefix: "/admin/data-model", roles: ["admin"] },        // AA-894 — live ERD from the nightly schema dump
   { prefix: "/admin/docs", roles: ["admin"] },              // AA-898 — docs catalog reader (synced by root CI)
@@ -264,7 +267,9 @@ export type Capability =
   // AA-1035 R2 (root ADR 0019 d3 / d4)
   | "tenant_content.read" | "catalog.read" | "tenant.book.read" | "tenant.member.write" | "tenant.assign"
   | "billing.read" | "billing.write" | "wave.run" | "lab.read"
-  | "tenant.book.account.read";   // AA-1035: plans, usage, cost, Tenant QA, AI budget of the own book (not support)
+  | "tenant.book.account.read"    // AA-1035: plans, usage, cost, Tenant QA, AI budget of the own book (not support)
+  | "tenant.member.resend"        // AA-1035: send a non-owner invitation again (support, customer_success)
+  | "tenant.book.write";          // AA-1035: non-billing Tenant 360 writes of the own book (customer_success)
 
 export const ROLE_PERMS: Record<StaffRole, readonly Capability[]> = {
   admin: [
@@ -273,6 +278,7 @@ export const ROLE_PERMS: Record<StaffRole, readonly Capability[]> = {
     "ops.read", "ops.write", "ai.admin", "spend.read", "spend.write", "staff.read", "audit.read",
     "alerts.write", "tenant_content.read", "catalog.read", "tenant.book.read", "tenant.book.account.read",
     "tenant.member.write", "tenant.assign", "billing.read", "billing.write", "wave.run", "lab.read",
+    "tenant.member.resend", "tenant.book.write",
   ],
   content_lead: [
     "content.read", "content.write", "review.act", "master.admin", "atoms.write", "photos.write",
@@ -282,8 +288,10 @@ export const ROLE_PERMS: Record<StaffRole, readonly Capability[]> = {
   content: ["content.read", "content.write", "review.act", "catalog.read"],
   reviewer: ["content.read", "content.write", "review.act", "catalog.read"],
   tenant_qa: ["content.read", "catalog.read", "tenant_content.read", "quality.write", "a4.unpublish", "lab.read"],
-  customer_success: ["tenant.book.read", "tenant.book.account.read", "tenant.member.write"],
-  support: ["tenant.book.read", "tenant.member.write"],
+  customer_success: [
+    "tenant.book.read", "tenant.book.account.read", "tenant.book.write", "tenant.member.write", "tenant.member.resend",
+  ],
+  support: ["tenant.book.read", "tenant.member.resend"],
   finance: ["billing.read", "billing.write", "spend.read"],
   ai_ops: ["content.read", "catalog.read", "ai.admin", "spend.read", "spend.write", "lab.read"],
   viewer: ["content.read"],

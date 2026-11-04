@@ -739,10 +739,13 @@ function TenantDetail({ tenant, onChanged }: {
   const known = isStaffRole(role);
   const seesAccount = !known || can(role, "tenant.read") || can(role, "tenant.book.account.read");
   const seesBilling = seesAccount || can(role, "billing.read");
+  // AA-1035 (S267 fix pass): finance reaches Tenant 360 for its Billing / Subscription tabs only (matrix: "R (Billing
+  // tab)"); /details answers it the header without tours, runs or brand text, and every other tab would be refused.
+  const billingOnly = known && !can(role, "tenant.read") && !can(role, "tenant.book.read") && can(role, "billing.read");
 
   // C4 (S262): `?tenant=<id>&tab=cost` (AI providers › Budgets "Open the tenant") opens this tenant on that tab.
   const deepTab = useSearchParams();
-  const [tab, setTab]           = useState<DTab>(() => initialDetailTab(deepTab.get("tenant"), deepTab.get("tab"), tenantId));
+  const [picked, setTab]        = useState<DTab>(() => initialDetailTab(deepTab.get("tenant"), deepTab.get("tab"), tenantId));
   // AA-1006: one react-query load for the details and the rewrite activity (was an effect that set state first).
   const detailQ = useQuery({
     queryKey: ["tenant-details", tenantId, isInternal],
@@ -777,7 +780,7 @@ function TenantDetail({ tenant, onChanged }: {
   const s = data.summary;
   // AA-557 I.17 — "Planning" tab removed entirely (the tech lead confirmed: tenants no longer self-
   // serve Quarter-Plan, replaced by Slate since AA-511/519 — the tab had no meaning left).
-  const TABS: { key: DTab; label: string }[] = [
+  const ALL_TABS: { key: DTab; label: string }[] = [
     { key: "tours",   label: tr("tabTours", data.rewritten_tours.length) },
     ...(isInternal
       ? [{ key: "pipeline" as DTab, label: tr("tabPipeline", data.pipeline_runs.length) }]
@@ -799,6 +802,9 @@ function TenantDetail({ tenant, onChanged }: {
     { key: "audit" as DTab,    label: tr("tabAudit") },
     { key: "settings" as DTab, label: tr("tabSettings") },
   ];
+  const TABS = billingOnly ? ALL_TABS.filter((x) => x.key === "billing" || x.key === "subscription") : ALL_TABS;
+  // A deep link or the default tab may name a tab this role does not get: open its first tab instead.
+  const tab: DTab = TABS.some((x) => x.key === picked) ? picked : TABS[0].key;
 
   return (
     <div style={{ background: K.bg, borderRadius: 10, padding: 16, border: `1px solid ${K.line}`, marginTop: 4 }}>

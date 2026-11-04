@@ -16,7 +16,7 @@
 //   POST /api/admin/job-runner/erasure/run          DRY RUN (default) or apply
 //   GET  /api/admin/job-runner/jobs/{id}            polled every 3 s while queued / running only
 //   GET  /api/admin/job-runner/jobs?kind=data_erasure  history, polled every 10 s only while a row is active
-//   GET  /api/admin/tenants?include_inactive=true   the offboarded tenants for the picker
+//   GET  /api/admin/tenant-names                     the offboarded tenants for the picker (lib/tenants.ts TENANTS_API)
 // The selected DRY RUN and apply job ids live in the URL (?job=…&apply=…), so a reload or a deploy between the
 // DRY RUN and the apply keeps the page. The traveller hash is kept only in memory (for the verification run).
 

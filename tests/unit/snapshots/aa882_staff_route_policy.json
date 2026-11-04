@@ -627,6 +627,10 @@
     "capability": null,
     "module": "api.routers.admin_supply_content"
   },
+  "GET /admin/tenant-names": {
+    "capability": "tenant.read|tenant_content.read|tenant.book.read|billing.read|lab.read|spend.read",
+    "module": "api.routers.admin"
+  },
   "GET /admin/tenant-qa/compliance": {
     "capability": "tenant_content.read",
     "module": "api.routers.admin_tenant_compliance"
@@ -656,7 +660,7 @@
     "module": "api.routers.admin_tenant360"
   },
   "GET /admin/tenants/{tenant_id}/details": {
-    "capability": "content.read|tenant.read|tenant.book.read",
+    "capability": "content.read|tenant.read|tenant.book.read|billing.read",
     "module": "api.routers.admin"
   },
   "GET /admin/tenants/{tenant_id}/markets": {
@@ -916,7 +920,7 @@
     "module": "api.routers.admin_settings"
   },
   "PATCH /admin/tenants/{tenant_id}": {
-    "capability": "tenant.write|billing.write",
+    "capability": "tenant.write|billing.write|tenant.book.write",
     "module": "api.routers.admin"
   },
   "PATCH /admin/tenants/{tenant_id}/members/{membership_id}": {
@@ -1380,7 +1384,7 @@
     "module": "api.routers.admin_tenant360"
   },
   "POST /admin/tenants/{tenant_id}/members/{membership_id}/invitation/send": {
-    "capability": "tenant.write|tenant.member.write",
+    "capability": "tenant.write|tenant.member.write|tenant.member.resend",
     "module": "api.routers.admin_tenant360"
   },
   "POST /admin/tenants/{tenant_id}/members/{membership_id}/remove": {
@@ -1584,11 +1588,11 @@
     "module": "api.routers.admin_tenant360"
   },
   "PUT /admin/tenants/{tenant_id}/brand-identity": {
-    "capability": "tenant.write",
+    "capability": "tenant.write|tenant.book.write",
     "module": "api.routers.admin"
   },
   "PUT /admin/tenants/{tenant_id}/config": {
-    "capability": "tenant.write",
+    "capability": "tenant.write|tenant.book.write",
     "module": "api.routers.admin"
   },
   "PUT /admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}": {

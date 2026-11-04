@@ -37,8 +37,10 @@ EXPECTED_PERMS = {
     "content": {"content.read", "content.write", "review.act", "catalog.read"},
     "reviewer": {"content.read", "content.write", "review.act", "catalog.read"},
     "tenant_qa": {"content.read", "catalog.read", "tenant_content.read", "quality.write", "a4.unpublish", "lab.read"},
-    "customer_success": {"tenant.book.read", "tenant.book.account.read", "tenant.member.write"},
-    "support": {"tenant.book.read", "tenant.member.write"},
+    "customer_success": {"tenant.book.read", "tenant.book.account.read", "tenant.book.write", "tenant.member.write",
+                         "tenant.member.resend"},
+    # S267 fix pass: support only sends a non-owner invitation again (no tenant.member.write)
+    "support": {"tenant.book.read", "tenant.member.resend"},
     "finance": {"billing.read", "billing.write", "spend.read"},
     "ai_ops": {"content.read", "catalog.read", "ai.admin", "spend.read", "spend.write", "lab.read"},
     "viewer": {"content.read"},
@@ -132,14 +134,35 @@ def test_the_tenant_desk_never_reaches_the_catalogue_or_tenant_text(role):
 def test_the_book_roles_reach_tenants_but_not_money_ai_or_account_writes(role):
     allowed = _allowed(role)
     assert "GET /admin/tenants" in allowed and "GET /admin/tenants/{tenant_id}/members" in allowed
-    assert "POST /admin/tenants/{tenant_id}/members/invitations" in allowed
+    assert "POST /admin/tenants/{tenant_id}/members/{membership_id}/invitation/send" in allowed
     assert _any(allowed, "/admin/ai-gateway", methods=("POST", "PUT", "PATCH", "DELETE")) == []
     assert _any(allowed, "/admin/budgets", "/admin/cost-explorer", "/admin/spend", "/admin/billing") == []
-    for write in ("PATCH /admin/tenants/{tenant_id}", "POST /admin/tenants/{tenant_id}/offboard",
+    for write in ("POST /admin/tenants/{tenant_id}/offboard", "POST /admin/tenants/{tenant_id}/restore",
+                  "POST /admin/tenants/{tenant_id}/generate-key",
                   "POST /admin/tenants/{tenant_id}/provision", "POST /admin/tenants",
                   "PUT /admin/tenants/{tenant_id}/assignments/{admin_user_id}",
                   "PUT /admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}"):
         assert write not in allowed, write
+
+
+# AA-1035 (S267 fix pass): customer_success writes the non-billing Tenant 360 of its book (tenant.book.write; PATCH is
+# field-level in the route) and every member action; support only sends a non-owner invitation again.
+BOOK_WRITES = ("PATCH /admin/tenants/{tenant_id}", "PUT /admin/tenants/{tenant_id}/config",
+               "PUT /admin/tenants/{tenant_id}/brand-identity")
+MEMBER_WRITES = ("POST /admin/tenants/{tenant_id}/members/invitations",
+                 "PATCH /admin/tenants/{tenant_id}/members/{membership_id}",
+                 "POST /admin/tenants/{tenant_id}/members/{membership_id}/remove")
+
+
+@pytest.mark.parametrize("route", BOOK_WRITES + MEMBER_WRITES)
+def test_customer_success_writes_its_book_and_support_does_not(route):
+    assert route in _allowed("customer_success")
+    assert route not in _allowed("support")
+
+
+def test_support_only_sends_invitations_again():
+    writes = _any(_allowed("support"), "/admin", methods=("POST", "PUT", "PATCH", "DELETE"))
+    assert writes == ["POST /admin/tenants/{tenant_id}/members/{membership_id}/invitation/send"]
 
 
 # AA-1035 (S267 review): clarifications.md section 3 gives support "-" on plans / invoices, Tenant QA and AI & spend
@@ -180,6 +203,10 @@ def test_finance_reads_billing_and_changes_only_billing_fields():
                  "GET /admin/tenants/{tenant_id}/subscription", "GET /admin/billing", "GET /admin/plans"):
         assert read in allowed, read
     assert "PATCH /admin/tenants/{tenant_id}" in allowed            # field-level in the route
+    # S267 fix pass: Tenant 360 opens on /details (header only for finance) for the Billing / Subscription tabs
+    assert "GET /admin/tenants/{tenant_id}/details" in allowed
+    for write in BOOK_WRITES[1:]:
+        assert write not in allowed, write
     for refused in ("GET /admin/tenants/{tenant_id}/members", "POST /admin/tenants/{tenant_id}/members/invitations",
                     "GET /admin/tenants/{tenant_id}/audit", "POST /admin/tenants/{tenant_id}/offboard",
                     "PATCH /admin/llm-config/{stage}", "PUT /admin/budgets/{provider}/{scope}"):
@@ -194,6 +221,19 @@ def test_the_content_side_never_reads_the_tenants_directory_or_money(role):
                 "/admin/tenants/{tenant_id}/cost", "/admin/billing") == []
     if role != "ai_ops":     # AI & spend W is ai_ops'
         assert _any(allowed, "/admin/budgets", "/admin/ai-gateway", "/admin/cost-explorer") == []
+
+
+# AA-1035 (S267 fix pass): the shared tenant picker (names only) for every role whose pages pick a tenant; never the
+# pure content roles (content, reviewer alias, viewer), which see no tenant but aa_internal.
+@pytest.mark.parametrize("role", ["admin", "content_lead", "tenant_qa", "ai_ops", "customer_success", "support",
+                                  "finance"])
+def test_the_tenant_picker_is_open_to_every_role_that_picks_a_tenant(role):
+    assert "GET /admin/tenant-names" in _allowed(role)
+
+
+@pytest.mark.parametrize("role", ["content", "reviewer", "viewer"])
+def test_the_pure_content_roles_get_no_tenant_names(role):
+    assert "GET /admin/tenant-names" not in _allowed(role)
 
 
 def test_ai_ops_owns_ai_and_spend_but_no_tenant_text():

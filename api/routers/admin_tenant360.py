@@ -23,6 +23,11 @@ AA-978 adds the Members routes over the CIS membership directory (``shared.tenan
   out within a minute, and locks the agency when that was its last owner.
 
 Both writes need tenant.write (staff_authz POLICY) and write an acp_shared.audit_log row with the change.
+AA-1035 R2: tenant.member.write (customer_success, scoped to its book) also passes POLICY; the owner role is not part of
+it. A change to or from ``owner``, the removal of an owner, an owner invitation and the send-again of an owner
+invitation need tenant.write (:func:`_require_owner_tier`): a send-again re-seals the invitation to the address in the
+body (neither CIS nor the CRM can read back the first address), so it could otherwise hand an owner seat to anyone.
+support holds only tenant.member.resend: the send-again of a non-owner invitation.
 
 AA-979 P2b adds the Content studio invitation (re-enrolment in the partner pool, root ADR 0010a):
 
@@ -63,7 +68,9 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from api.core import e2e_staff
-from api.core.staff_authz import StaffPrincipal, denial_reason, request_staff_identity, staff_policy
+from api.core.staff_authz import (
+    TENANT_WRITE, StaffPrincipal, denial_reason, principal_from_role, request_staff_identity, staff_policy,
+)
 from api.core.tenant_scope import TENANT_SCOPED
 
 from api.routers._billing import usage_row_to_dict
@@ -492,7 +499,38 @@ async def get_tenant_members(tenant_id: UUID, request: Request, x_admin_secret: 
     }
 
 
-async def _member_write(request: Request, tenant_id: UUID, op) -> dict:
+OWNER_ROLE = "owner"
+
+
+def may_write_owner(principal: StaffPrincipal) -> bool:
+    """AA-1035: may this caller grant, change, remove or (re)send the ``owner`` Content studio role? tenant.write only
+    (admin); tenant.member.write / tenant.member.resend never reach the owner seat. The machine (main secret, no role)
+    never reaches the member routes (POLICY: not MACHINE_ROUTES); it would be the secret holder, who may claim admin."""
+    return principal.is_machine or TENANT_WRITE in principal.perms
+
+
+def _caller(principal: Any, request: Request) -> StaffPrincipal:
+    """The staff_policy principal, or (a direct call in a test, where the Depends default is not resolved) the one
+    the request headers and the verified identity give."""
+    if isinstance(principal, StaffPrincipal):
+        return principal
+    return principal_from_role(request.headers.get("x-admin-role"), request_staff_identity(request))
+
+
+def owner_tier_refusal(principal: StaffPrincipal) -> HTTPException:
+    # Starts with "Role '" like the policy refusals, so the page's staffErrorMessage() reads it the same way.
+    return HTTPException(status_code=403, detail=(
+        f"Role '{principal.role}' lacks the '{TENANT_WRITE}' permission the owner role needs"))
+
+
+def _require_owner_tier(principal: StaffPrincipal, *roles: Optional[str]) -> None:
+    """403 when one of ``roles`` (the role asked for, the stored role) is owner and the caller lacks tenant.write."""
+    if OWNER_ROLE in roles and not may_write_owner(principal):
+        logger.warning("tenant_member_owner_refused", role=principal.role)
+        raise owner_tier_refusal(principal)
+
+
+async def _member_write(request: Request, tenant_id: UUID, op, principal: Optional[StaffPrincipal] = None) -> dict:
     pool = request.app.state.pool
     async with pool.acquire() as conn:
         await _require_tenant(conn, tenant_id)
@@ -500,6 +538,9 @@ async def _member_write(request: Request, tenant_id: UUID, op) -> dict:
             row, changed = await op(conn)
         except members_writer.MemberNotFound as exc:
             raise HTTPException(status_code=404, detail="Membership not found") from exc
+        except members_writer.OwnerNeedsTenantWrite as exc:
+            logger.warning("tenant_member_owner_refused", role=getattr(principal, "role", None))
+            raise owner_tier_refusal(principal or StaffPrincipal(kind="staff")) from exc
         except members_writer.MemberRemoved as exc:
             raise HTTPException(status_code=409, detail="This membership is removed; removal is final.") from exc
         except asyncpg.UndefinedTableError as exc:
@@ -513,11 +554,16 @@ async def _member_write(request: Request, tenant_id: UUID, op) -> dict:
 async def patch_tenant_member(
     tenant_id: UUID, membership_id: UUID, body: MemberRoleChange, request: Request,
     x_admin_secret: str = Header(None), x_admin_user_id: str = Header(None),
+    principal: StaffPrincipal = Depends(staff_policy),
 ):
     verify_admin_secret(x_admin_secret)
     actor = _admin_actor(x_admin_user_id)
+    principal = _caller(principal, request)
+    _require_owner_tier(principal, body.content_studio_role)
+    allow_owner = may_write_owner(principal)
     result = await _member_write(request, tenant_id, lambda conn: members_writer.change_role(
-        conn, str(tenant_id), str(membership_id), body.content_studio_role, actor))
+        conn, str(tenant_id), str(membership_id), body.content_studio_role, actor, allow_owner=allow_owner),
+        principal)
     logger.info("tenant_member_role_changed", tenant_id=str(tenant_id), membership_id=str(membership_id),
                 role=body.content_studio_role, changed=result["changed"])
     return result
@@ -529,11 +575,14 @@ async def patch_tenant_member(
 async def remove_tenant_member(
     tenant_id: UUID, membership_id: UUID, request: Request,
     x_admin_secret: str = Header(None), x_admin_user_id: str = Header(None),
+    principal: StaffPrincipal = Depends(staff_policy),
 ):
     verify_admin_secret(x_admin_secret)
     actor = _admin_actor(x_admin_user_id)
+    principal = _caller(principal, request)
+    allow_owner = may_write_owner(principal)
     result = await _member_write(request, tenant_id, lambda conn: members_writer.remove(
-        conn, str(tenant_id), str(membership_id), actor))
+        conn, str(tenant_id), str(membership_id), actor, allow_owner=allow_owner), principal)
     logger.info("tenant_member_removed", tenant_id=str(tenant_id), membership_id=str(membership_id),
                 changed=result["changed"])
     return result
@@ -618,9 +667,12 @@ async def _deliver(request: Request, tenant_id: UUID, invitation_id: str, email:
 async def invite_tenant_member(
     tenant_id: UUID, body: MemberInvite, request: Request,
     x_admin_secret: str = Header(None), x_admin_user_id: str = Header(None),
+    principal: StaffPrincipal = Depends(staff_policy),
 ):
     verify_admin_secret(x_admin_secret)
     actor = _admin_actor(x_admin_user_id)
+    principal = _caller(principal, request)
+    _require_owner_tier(principal, body.content_studio_role)
     pool = request.app.state.pool
     async with pool.acquire() as conn:
         await _require_tenant(conn, tenant_id)
@@ -644,8 +696,10 @@ async def invite_tenant_member(
 async def resend_tenant_member_invitation(
     tenant_id: UUID, membership_id: UUID, body: MemberInviteResend, request: Request,
     x_admin_secret: str = Header(None),
+    principal: StaffPrincipal = Depends(staff_policy),
 ):
     verify_admin_secret(x_admin_secret)
+    principal = _caller(principal, request)
     pool = request.app.state.pool
     async with pool.acquire() as conn:
         await _require_tenant(conn, tenant_id)
@@ -660,6 +714,9 @@ async def resend_tenant_member_invitation(
     if member["status"] != "invited" or not member["invitation_id"]:
         raise HTTPException(status_code=409, detail="Only an invited membership has an invitation to send.")
     _refuse_e2e_resend_role(request, tenant_id, member)
+    # AA-1035: the body's address replaces the first one (nothing can read that back), so an owner invitation is sent
+    # again only by tenant.write; support / customer_success send again editor and viewer invitations.
+    _require_owner_tier(principal, member.get("content_studio_role"))
     delivery = await _deliver(request, tenant_id, member["invitation_id"], body.email, body.locale)
     return {"tenant_id": str(tenant_id), "member": member, "delivery": delivery}
 
@@ -684,16 +741,22 @@ def members_access(principal: StaffPrincipal, *, synthetic_tenant: bool) -> dict
     The two invitation routes are on the Dev-only E2E CIS admin's write allow-list (root ADR 0006a A10b-1), so
     denial_reason lets them through; the routes then refuse that session unless the tenant is synthetic and the role
     is viewer / editor (_refuse_e2e_invitation, _refuse_e2e_resend_role). The same rule applies here, so the page
-    offers exactly what the route accepts. ``invite_roles`` is empty when neither invitation control is allowed."""
+    offers exactly what the route accepts. ``invite_roles`` is empty when neither invitation control is allowed.
+    AA-1035: ``invite_roles`` leaves out ``owner`` and ``owner_writes`` (change role / remove on an owner row) is False
+    for a caller without tenant.write (_require_owner_tier)."""
     actions = {key: denial_reason(principal, method, route) is None for key, (method, route) in MEMBER_WRITES.items()}
-    roles = list(STUDIO_ROLES)
+    # AA-1035: without tenant.write the owner role is never offered (invite, send again of an owner invitation, change
+    # to / from owner, removal of an owner: _require_owner_tier).
+    owner_writes = may_write_owner(principal)
+    roles = [r for r in STUDIO_ROLES if owner_writes or r != OWNER_ROLE]
     if principal.e2e_read_only:
         if not synthetic_tenant:
             actions["invite"] = actions["send_again"] = False
-        roles = [r for r in STUDIO_ROLES if r in e2e_staff.E2E_INVITE_ROLES]
+        roles = [r for r in roles if r in e2e_staff.E2E_INVITE_ROLES]
     if not (actions["invite"] or actions["send_again"]):
         roles = []
-    return {"read_only": not any(actions.values()), "actions": actions, "invite_roles": roles}
+    return {"read_only": not any(actions.values()), "actions": actions, "invite_roles": roles,
+            "owner_writes": owner_writes and (actions["change_role"] or actions["remove"])}
 
 
 @router.get("/{tenant_id}/members/access",

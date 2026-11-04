@@ -25,6 +25,7 @@ import {
   memberRowActions,
   membersAccessPath,
   removePath,
+  roleChoices,
   sendAgainPath,
   statusTone,
 } from "./tenantMembers.ts";
@@ -100,10 +101,12 @@ test("members access: the API's answer decides, the role is ignored once it answ
   const admin = memberPermissions(ADMIN, false, false);
   assert.deepEqual(admin, {
     settled: true, invite: true, sendAgain: true, changeRole: true, remove: true, inviteRoles: [...STUDIO_ROLES],
+    ownerWrites: true,
   });
   const ro = memberPermissions(READ_ONLY, false, true);
   assert.deepEqual(ro, {
     settled: true, invite: false, sendAgain: false, changeRole: false, remove: false, inviteRoles: [],
+    ownerWrites: false,
   });
   assert.equal(anyMemberWrite(ro), false);
   assert.equal(anyMemberWrite(admin), true);
@@ -154,6 +157,41 @@ test("members access: unknown roles are dropped, a missing invite_roles means ev
   assert.deepEqual(noInvite.inviteRoles, []);
   assert.equal(noInvite.changeRole, true);
   assert.equal(mayInviteAs(noInvite, "owner"), false);
+});
+
+// AA-1035 (S267 fix pass): customer_success (tenant.member.write) never touches the owner role; support only sends a
+// non-owner invitation again (tenant.member.resend).
+const CUSTOMER_SUCCESS = {
+  read_only: false, actions: all(true), invite_roles: ["editor", "viewer"], owner_writes: false,
+};
+const SUPPORT = {
+  read_only: false, actions: { invite: false, send_again: true, change_role: false, remove: false },
+  invite_roles: ["editor", "viewer"], owner_writes: false,
+};
+
+test("members access: without owner_writes an owner row has no role change or removal, no owner choice", () => {
+  const p = memberPermissions(CUSTOMER_SUCCESS, false, false);
+  assert.equal(p.ownerWrites, false);
+  assert.equal(mayInviteAs(p, "owner"), false);
+  assert.deepEqual(roleChoices(p), ["editor", "viewer"]);
+  assert.deepEqual(memberRowActions(row("a", "active", "owner"), p),
+    { changeRole: false, sendAgain: false, remove: false });
+  assert.deepEqual(memberRowActions(row("b", "invited", "owner", "inv-1"), p),
+    { changeRole: false, sendAgain: false, remove: false });
+  assert.deepEqual(memberRowActions(row("c", "active", "editor"), p),
+    { changeRole: true, sendAgain: false, remove: true });
+  assert.deepEqual(roleChoices(memberPermissions(ADMIN, false, false)), [...STUDIO_ROLES]);
+});
+
+test("members access: support only sends a non-owner invitation again", () => {
+  const p = memberPermissions(SUPPORT, false, false);
+  assert.equal(p.invite, false);
+  assert.deepEqual(memberRowActions(row("a", "invited", "editor", "inv-1"), p),
+    { changeRole: false, sendAgain: true, remove: false });
+  assert.deepEqual(memberRowActions(row("b", "invited", "owner", "inv-2"), p),
+    { changeRole: false, sendAgain: false, remove: false });
+  assert.deepEqual(memberRowActions(row("c", "active", "viewer"), p),
+    { changeRole: false, sendAgain: false, remove: false });
 });
 
 test("members access: the action list and the route match the backend", () => {

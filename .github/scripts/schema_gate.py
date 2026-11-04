@@ -10,9 +10,12 @@ Red **before** the rollout otherwise, so code never rolls onto a schema it needs
 
 What the commit needs (read from the checked-out tree, i.e. the commit being deployed):
   * booking / crm: every key of ``REQUIRED_SCHEMA_VERSIONS`` in the readiness file;
-    cis: every number from ``LEGACY_CIS_BASELINE`` + 1 up to ``REQUIRED_CIS_SCHEMA`` (api/core/readiness.py);
+    cis: every number from ``LEGACY_CIS_BASELINE`` + 1 up to ``REQUIRED_CIS_SCHEMA`` (api/core/readiness.py), plus each
+    key of the optional literal ``REQUIRED_CIS_ABOVE_GAP`` (keys needed above an unapplied gap, AA-1035);
   * plus every migration file of the commit numbered at or below the highest required key (above the CIS baseline):
-    with the strict-prefix apply of ADR 0017 d5 nothing below the required key may be missing (critic 2).
+    with the strict-prefix apply of ADR 0017 d5 nothing below the required key may be missing (critic 2). For cis the
+    highest key of that rule is ``REQUIRED_CIS_SCHEMA``: the above-gap keys are required one by one, never the files
+    between them and the prefix (the gap itself is the file that is not applied yet).
 
 What Dev has: ``registered_keys`` on the readiness URL (AA-993 M4a). A task that predates M4a has no such field: the
 gate then falls back to ``schema_version`` (the newest key) and ``missing_schema_versions`` (critic 23).
@@ -107,7 +110,10 @@ def readiness_keys(app: str, source: str) -> set:
             baseline, head = int(found["LEGACY_CIS_BASELINE"]), int(found["REQUIRED_CIS_SCHEMA"])
         except KeyError as exc:
             raise ValueError(f"readiness file has no literal {exc.args[0]}") from None
-        return {str(n) for n in range(baseline + 1, head + 1)}
+        above = found.get("REQUIRED_CIS_ABOVE_GAP", ())
+        if not isinstance(above, (tuple, list)):
+            raise ValueError("REQUIRED_CIS_ABOVE_GAP is not a literal tuple")
+        return {str(n) for n in range(baseline + 1, head + 1)} | {norm_key(app, k) for k in above}
     versions = found.get("REQUIRED_SCHEMA_VERSIONS")
     if not isinstance(versions, (tuple, list)) or not versions:
         raise ValueError("readiness file has no literal REQUIRED_SCHEMA_VERSIONS tuple")
@@ -118,10 +124,18 @@ def cis_baseline(source: str) -> int:
     return int(_assignments(source).get("LEGACY_CIS_BASELINE", 0))
 
 
+def strict_top(app: str, source: str, keys: set) -> int:
+    """The highest key of the strict-prefix file rule: the newest required key; for cis ``REQUIRED_CIS_SCHEMA`` (the
+    ``REQUIRED_CIS_ABOVE_GAP`` keys sit above a file that is not applied yet and are required one by one)."""
+    if app == "cis":
+        return int(_assignments(source)["REQUIRED_CIS_SCHEMA"])
+    return max(key_number(k) for k in keys)
+
+
 def required_keys(app: str, source: str, file_names: list) -> list:
-    """Readiness keys plus every migration file key at or below the highest one (above the CIS baseline), sorted."""
+    """Readiness keys plus every migration file key up to the strict-prefix top (above the CIS baseline), sorted."""
     keys = readiness_keys(app, source)
-    top = max(key_number(k) for k in keys)
+    top = strict_top(app, source, keys)
     floor = cis_baseline(source) if app == "cis" else 0
     for name in file_names:
         m = FILE_RE.match(name)

@@ -106,6 +106,14 @@ TENANT_BOOK_READ = "tenant.book.read"        # Tenants directory / Tenant 360 of
 # Tenant QA verdicts, the AI budget tile (customer_success; never support)
 TENANT_BOOK_ACCOUNT_READ = "tenant.book.account.read"
 TENANT_MEMBER_WRITE = "tenant.member.write"  # Content studio members: invite, send again, change role, remove
+# AA-1035 (S267 fix pass): support only sends an existing invitation again (matrix: "send invitations again"); never
+# invites, changes a role or removes. An owner invitation (and every owner invite / role change / removal) needs
+# tenant.write in the route (admin_tenant360.py _require_owner_tier), whatever member capability the caller holds.
+TENANT_MEMBER_RESEND = "tenant.member.resend"
+# AA-1035 (S267 fix pass): the non-billing Tenant 360 writes of the caller's book (customer_success: config, brand
+# identity, the RPM and publish limit of PATCH /admin/tenants/{id}); plan, suspend, key, offboard / restore and the
+# entitlement overrides stay tenant.write / billing.write. Scoped by require_tenant_scope like every {tenant_id} route.
+TENANT_BOOK_WRITE = "tenant.book.write"
 TENANT_ASSIGN = "tenant.assign"              # who looks after which tenant (shared.staff_tenant_assignment)
 BILLING_READ = "billing.read"                # plan, usage and billing columns of every tenant
 BILLING_WRITE = "billing.write"              # plan change and suspend / resume of a tenant (PATCH, field-level)
@@ -124,7 +132,7 @@ ROLE_PERMS: dict[str, frozenset[str]] = {
         TENANT_READ, TENANT_WRITE, OPS_READ, OPS_WRITE, AI_ADMIN, SPEND_READ, SPEND_WRITE,
         STAFF_READ, AUDIT_READ, ALERTS_WRITE,
         TENANT_CONTENT_READ, CATALOG_READ, TENANT_BOOK_READ, TENANT_BOOK_ACCOUNT_READ, TENANT_MEMBER_WRITE,
-        TENANT_ASSIGN, BILLING_READ, BILLING_WRITE, WAVE_RUN, LAB_READ,
+        TENANT_ASSIGN, BILLING_READ, BILLING_WRITE, WAVE_RUN, LAB_READ, TENANT_MEMBER_RESEND, TENANT_BOOK_WRITE,
     },
     # AA Catalogue W, Tenant QA W, Writing Lab R (wave, review queue, master content, atoms / photos, SEO).
     "content_lead": _CONTENT_WORK | {
@@ -137,12 +145,16 @@ ROLE_PERMS: dict[str, frozenset[str]] = {
     "reviewer": _CONTENT_WORK | {CATALOG_READ},
     # Tenant QA W, AA Catalogue R, Writing Lab R.
     "tenant_qa": frozenset({CONTENT_READ, CATALOG_READ, TENANT_CONTENT_READ, QUALITY_WRITE, A4_UNPUBLISH, LAB_READ}),
-    # Tenants directory R / Tenant 360 W of the own book (tenant_scope.py), members and invitations; plans and add-ons
-    # R, AI & spend R and Tenant QA R of the own tenants (tenant.book.account.read).
-    "customer_success": frozenset({TENANT_BOOK_READ, TENANT_BOOK_ACCOUNT_READ, TENANT_MEMBER_WRITE}),
-    # Tenants directory R / Tenant 360 R of the own book and the pool, member actions. Never plans, billing, usage,
-    # cost, Tenant QA or AI spend (no tenant.book.account.read).
-    "support": frozenset({TENANT_BOOK_READ, TENANT_MEMBER_WRITE}),
+    # Tenants directory R / Tenant 360 W of the own book except billing (tenant_scope.py; tenant.book.write), members
+    # and invitations but never the owner role (tenant.write); plans and add-ons R, AI & spend R and Tenant QA R of the
+    # own tenants (tenant.book.account.read).
+    "customer_success": frozenset({
+        TENANT_BOOK_READ, TENANT_BOOK_ACCOUNT_READ, TENANT_BOOK_WRITE, TENANT_MEMBER_WRITE, TENANT_MEMBER_RESEND,
+    }),
+    # Tenants directory R / Tenant 360 R of the own book and the pool; sends an existing non-owner invitation again
+    # (tenant.member.resend), nothing else. Never plans, billing, usage, cost, Tenant QA or AI spend (no
+    # tenant.book.account.read). Reset MFA of a tenant member has no CIS route (the CRM owns it).
+    "support": frozenset({TENANT_BOOK_READ, TENANT_MEMBER_RESEND}),
     # Billing columns and plans of every tenant, plan change and suspend for debt (field-level), AI & spend R.
     "finance": frozenset({BILLING_READ, BILLING_WRITE, SPEND_READ}),
     # AI & spend W, Writing Lab W (writes; reads without tenant text), AA Catalogue R.
@@ -215,6 +227,8 @@ _TENANT_ACCOUNT_READ = any_of(TENANT_READ, TENANT_BOOK_ACCOUNT_READ)     # cost,
 _TENANT_DIRECTORY_READ = any_of(TENANT_READ, TENANT_BOOK_READ, BILLING_READ)  # directory (money columns: admin.py)
 _TENANT_BILLING_READ = any_of(TENANT_READ, TENANT_BOOK_ACCOUNT_READ, BILLING_READ)  # usage, plans, subscription
 _TENANT_MEMBER_WRITE = any_of(TENANT_WRITE, TENANT_MEMBER_WRITE)
+_TENANT_MEMBER_RESEND = any_of(TENANT_WRITE, TENANT_MEMBER_WRITE, TENANT_MEMBER_RESEND)
+_TENANT_BOOK_WRITE = any_of(TENANT_WRITE, TENANT_BOOK_WRITE)                 # non-billing Tenant 360 writes (scoped)
 _LAB_READ = any_of(TENANT_CONTENT_READ, LAB_READ)                          # Writing Lab reads without tenant text
 
 POLICY: dict[tuple[str, str], Any] = {
@@ -302,6 +316,10 @@ POLICY: dict[tuple[str, str], Any] = {
 
     # ── admin (admin.py) — tenant accounts (Tenants page, admin-only; AA-797 already re-checks writes)
     ("GET", "/admin/tenants"): _TENANT_DIRECTORY_READ,     # AA-1035: filtered to the caller's scope
+    # AA-1035 (S267 fix pass): the shared tenant picker (id, name, slug, status only; filtered to the caller's scope):
+    # every role whose pages pick or name a tenant (directory, Tenant QA, Writing Lab, AI & spend), never content.read
+    ("GET", "/admin/tenant-names"): any_of(TENANT_READ, TENANT_CONTENT_READ, TENANT_BOOK_READ, BILLING_READ, LAB_READ,
+                                           SPEND_READ),
     ("POST", "/admin/tenants"): TENANT_WRITE,
     # AA-1028 R1 slice 2 — the tenant_provision saga (admin_tenant_provision.py): create with subscriptions, add-ons
     ("POST", "/admin/tenants/provision"): TENANT_WRITE,
@@ -317,20 +335,22 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/plans"): TENANT_WRITE,
     ("PATCH", "/admin/plans/{plan_key}"): TENANT_WRITE,
     ("POST", "/admin/plans/{plan_key}/retire"): TENANT_WRITE,
-    # AA-1035: field-level in the route (finance: plan_tier / is_active only; admin.py _require_tenant_patch)
-    ("PATCH", "/admin/tenants/{tenant_id}"): any_of(TENANT_WRITE, BILLING_WRITE),
+    # AA-1035: field-level in the route (finance: plan_tier / is_active only; customer_success: every other field;
+    # admin.py _require_tenant_patch)
+    ("PATCH", "/admin/tenants/{tenant_id}"): any_of(TENANT_WRITE, BILLING_WRITE, TENANT_BOOK_WRITE),
     ("GET", "/admin/tenants/{tenant_id}/usage"): _TENANT_BILLING_READ,
     ("GET", "/admin/tenants/{tenant_id}/audit"): _TENANT_ONE_READ,
     ("GET", "/admin/tenants/{tenant_id}/rewrite-activity"): _TENANT_ONE_READ,
     ("GET", "/admin/tenants/{tenant_id}/config"): _TENANT_ONE_READ,
-    ("PUT", "/admin/tenants/{tenant_id}/config"): TENANT_WRITE,
-    ("PUT", "/admin/tenants/{tenant_id}/brand-identity"): TENANT_WRITE,
+    ("PUT", "/admin/tenants/{tenant_id}/config"): _TENANT_BOOK_WRITE,           # AA-1035: + customer_success, scoped
+    ("PUT", "/admin/tenants/{tenant_id}/brand-identity"): _TENANT_BOOK_WRITE,   # AA-1035: + customer_success, scoped
     ("POST", "/admin/tenants/{tenant_id}/generate-key"): TENANT_WRITE,
     ("POST", "/admin/tenants/{tenant_id}/offboard"): TENANT_WRITE,
     ("POST", "/admin/tenants/{tenant_id}/restore"): TENANT_WRITE,
     # AA-1035: GET /admin/tenants/{tenant_id}/details — Master Content (every content.read role) reads the aa_internal
-    # catalog through it; require_tenant_scope keeps those roles on the aa_internal tenant (scope "internal").
-    ("GET", "/admin/tenants/{tenant_id}/details"): any_of(CONTENT_READ, TENANT_READ, TENANT_BOOK_READ),
+    # catalog through it; require_tenant_scope keeps those roles on the aa_internal tenant (scope "internal"). finance
+    # (billing.read) opens Tenant 360 on it too and gets the header only (no tours, runs or brand text: admin.py).
+    ("GET", "/admin/tenants/{tenant_id}/details"): any_of(CONTENT_READ, TENANT_READ, TENANT_BOOK_READ, BILLING_READ),
     # admin — master tour lifecycle (S241 §5.1 master.admin; Master Content page)
     ("PATCH", "/admin/master/{tour_id}/activate"): MASTER_ADMIN,
     ("PATCH", "/admin/master/{tour_id}/deactivate"): MASTER_ADMIN,
@@ -359,7 +379,8 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/tenants/{tenant_id}/members/{membership_id}/remove"): _TENANT_MEMBER_WRITE,
     # AA-979 P2b — Content studio invitations (CIS row + the CRM delivers the AA system mail)
     ("POST", "/admin/tenants/{tenant_id}/members/invitations"): _TENANT_MEMBER_WRITE,
-    ("POST", "/admin/tenants/{tenant_id}/members/{membership_id}/invitation/send"): _TENANT_MEMBER_WRITE,
+    # AA-1035 (S267 fix pass): support sends again (tenant.member.resend); an owner invitation needs tenant.write
+    ("POST", "/admin/tenants/{tenant_id}/members/{membership_id}/invitation/send"): _TENANT_MEMBER_RESEND,
     # AA-1035 R2 (root ADR 0019 d4) — who looks after the tenant (shared.staff_tenant_assignment, CIS 364)
     ("GET", "/admin/tenants/{tenant_id}/assignments"): _TENANT_ONE_READ,
     ("PUT", "/admin/tenants/{tenant_id}/assignments/{admin_user_id}"): TENANT_ASSIGN,
