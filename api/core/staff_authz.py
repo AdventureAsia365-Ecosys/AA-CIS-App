@@ -384,6 +384,10 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/tenants/{tenant_id}/subscription"): _TENANT_BILLING_READ,
     ("PUT", "/admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}"): TENANT_WRITE,
     ("DELETE", "/admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}"): TENANT_WRITE,
+    # AA-1036 R3 (root ADR 0019 d7): add-on requests; a decision attaches a paid add-on (admin only, as the saga)
+    ("GET", "/admin/tenants/{tenant_id}/addon-requests"): _TENANT_BILLING_READ,
+    ("POST", "/admin/tenants/{tenant_id}/addon-requests/{request_id}/approve"): TENANT_WRITE,
+    ("POST", "/admin/tenants/{tenant_id}/addon-requests/{request_id}/decline"): TENANT_WRITE,
     ("GET", "/admin/plans"): _TENANT_BILLING_READ,
     ("GET", "/admin/plans/features"): _TENANT_BILLING_READ,
     ("POST", "/admin/plans"): TENANT_WRITE,

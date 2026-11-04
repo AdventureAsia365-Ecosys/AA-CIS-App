@@ -55,6 +55,8 @@ class TenantAuditAction:
     FACT_CREATED = "fact.created"
     FACT_UPDATED = "fact.updated"
     FACT_DELETED = "fact.deleted"
+    # AA-1036 R3 (root ADR 0019 d7) — the Content studio owner asked for an add-on (shared.tenant_addon_request)
+    ADDON_REQUESTED = "tenant.addon_requested"
 
 
 class PlatformAuditAction:
@@ -137,6 +139,10 @@ class AdminTenantAuditAction:
     # (api/core/view_as.py AUDIT_ACTION_REQUEST, written by api/middleware/view_as.py).
     VIEW_AS_STARTED = "tenant.view_as_started"
     VIEW_AS_ENDED = "tenant.view_as_ended"
+    # AA-1036 R3 (root ADR 0019 d7): the staff decision on a tenant's add-on request (shared.tenant_addon_request, CIS
+    # 374); an approval attaches the plan through the tenant_provision saga (its own tenant.subscription_changed rows)
+    ADDON_REQUEST_APPROVED = "tenant.addon_request_approved"
+    ADDON_REQUEST_DECLINED = "tenant.addon_request_declined"
 
 
 async def write_audit_log(

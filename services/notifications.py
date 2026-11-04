@@ -29,6 +29,9 @@ class EventType(str, Enum):
     # AA-819 follow-up (S237) — a tenant saved a CTA that claims reviews or ratings. Admin-only:
     # the tenant sees a warning in the portal, never this row.
     TENANT_CTA_REVIEW_CLAIM = "tenant.cta.review_claim"
+    # AA-1036 R3 (root ADR 0019 d7) — a tenant asked for an add-on (CRM, Trip planner) from the agency app. Staff-only:
+    # admin and the tenant's customer_success manager (the bell's role scope narrows it to the manager's book).
+    TENANT_ADDON_REQUESTED = "tenant.addon.requested"
 
 
 _DEFAULT_ROLES: dict[EventType, list[str]] = {
@@ -47,6 +50,7 @@ _DEFAULT_ROLES: dict[EventType, list[str]] = {
     EventType.MASTER_TRASHED:      ["admin", "content"],
     EventType.MASTER_RESTORED:     ["admin"],
     EventType.TENANT_CTA_REVIEW_CLAIM: ["admin"],
+    EventType.TENANT_ADDON_REQUESTED: ["admin", "customer_success"],
 }
 
 

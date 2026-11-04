@@ -70,7 +70,9 @@ REQUIRED_CIS_SCHEMA = 322
 # shared.llm_route_config_version, sets llm_model_deployment.priority; the gateway reads the order mode from the
 # settings row; each read falls back without it: the tab answers 503, the gateway uses the env var).
 # Not read by Deploy Dev schema-gate (it reads only the prefix): the migration-only PR is applied before the code PR.
-REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370)
+# 374 (AA-1036 R3 — GET /v1/account/add-ons, POST /v1/account/add-on-requests and the Tenant 360 add-on request routes
+# read and write shared.tenant_addon_request; each answers 503 without it).
+REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374)
 # Versions this code needs that were registered after a higher one (reserved numbers): 297 (AA-920 WM-25) was reserved
 # in S255 and applied after 299. max() is already 299 without it, so the version reported is capped below the lowest
 # listed version that is not registered (297 missing -> 296 -> "schema_behind").

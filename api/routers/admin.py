@@ -2046,6 +2046,7 @@ async def list_notifications(
         "tour.master.trashed":      "Master tour trashed",
         "tour.master.restored":     "Master tour restored",
         "tenant.cta.review_claim":  "Tenant CTA mentions reviews or ratings",  # AA-819 follow-up
+        "tenant.addon.requested":   "Add-on requested",  # AA-1036 R3 (Tenant 360 › Subscription decides)
         "llm_circuit_open":         "LLM connection paused",  # AA-1018 (connection-level circuit)
         "provider_circuit_open":    "Provider paused",        # AA-1025 B3 (Jev / DataForSEO / Geoapify circuit)
         "platform.provider_credit.low": "Provider credit low",  # AA-1025 B5 (vendor API credit ledger)
