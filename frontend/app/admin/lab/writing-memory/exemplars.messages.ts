@@ -2,7 +2,7 @@
 // preview, the example drawer), English and Vietnamese. Writer and channel codes stay as the API sends them.
 // The English texts are the page's own words that the Guide quotes (lib/guides.test.mjs reads this file).
 
-import { defineMessages } from "../../_kit/core/i18n";
+import { defineMessages } from "../../../_kit/core/i18n";
 
 /** Status of an example (lib/writingMemory.ts ExemplarStatus). */
 export const EXEMPLAR_STATUS = defineMessages(

@@ -9,7 +9,9 @@
 //   6. the reserved Plans & add-ons slot is hidden while its page does not exist;
 //   7. next.config.ts serves the moves; no link in the app still points at an old URL;
 //   8. every nav label has an English and a Vietnamese row (nav.messages.ts);
-//   9. a content worker sees the AA Catalogue group only.
+//   9. a content worker sees the AA Catalogue group only;
+//  10. AA-1039 R6 slice 3: the AI & spend group (AI gateway, one Spend page) and the Writing Lab (stages, Writing
+//      memory moved under it), their moves and the query merge of a move whose target names a tab.
 // Run: npm run test:unit.
 
 import assert from "node:assert/strict";
@@ -104,6 +106,7 @@ const UNLISTED = new Set([
   "/admin/platform/staff/[id]",      // Staff › one account
   "/admin/supply-content/[id]",      // Booking's "Edit in CIS" deep link
   "/admin/tenant-qa",                // index → /admin/tenant-qa/quality
+  "/admin/lab/[stage]",              // Writing Lab › one stage (the stage bar of /admin/lab)
 ]);
 
 test("5. every admin page is in the nav or reached from another page", () => {
@@ -177,4 +180,22 @@ test("9. a content worker sees the AA Catalogue group only; the viewer sees its 
   const viewer = visible.filter((i) => canSeePage("viewer", i.href)).map((i) => i.href);
   assert.ok(viewer.includes("/admin/review") && viewer.includes("/admin/settings"));
   assert.ok(!viewer.includes("/admin/upload"), "the viewer never gets the upload page");
+});
+
+test("10. AI & spend and Writing Lab (R6 slice 3): groups, moves, query merge", () => {
+  const group = (label) => ADMIN_IA.find((g) => g.label === label).items.map((i) => i.href);
+  assert.deepEqual(group("AI & spend"), ["/admin/ai-gateway", "/admin/spend"]);
+  assert.deepEqual(group("Writing Lab"), ["/admin/lab", "/admin/lab/writing-memory", "/admin/decisions"]);
+  assert.equal(resolveAdminRoute("/admin/writing-memory"), "/admin/lab/writing-memory");
+  assert.equal(resolveAdminRoute("/admin/cost-ops?tab=spend&view=dfs"), "/admin/spend?tab=spend&view=dfs");
+  assert.equal(resolveAdminRoute("/admin/platform/cost"), "/admin/spend?tab=apps");
+  // the target's own tab wins; the request's other keys carry over
+  assert.equal(resolveAdminRoute("/admin/platform/cost?month=2026-10"), "/admin/spend?month=2026-10&tab=apps");
+  assert.equal(resolveAdminRoute("/admin/platform/cost?tab=x"), "/admin/spend?tab=apps");
+  // the old pages are gone, the stage page is admin only
+  for (const old of ["/admin/writing-memory", "/admin/cost-ops", "/admin/platform/cost"]) assert.ok(!pageExists(old));
+  assert.ok(pageExists("/admin/lab/t9-social") && canSeePage("admin", "/admin/lab/t9-social"));
+  for (const role of ["viewer", "content", "reviewer"]) {
+    assert.ok(!canSeePage(role, "/admin/lab/t9-social") && !canSeePage(role, "/admin/spend"), role);
+  }
 });

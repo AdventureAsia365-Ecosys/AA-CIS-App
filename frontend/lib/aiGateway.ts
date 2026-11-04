@@ -381,10 +381,13 @@ export const RETIRED_SETTINGS_TABS: Readonly<Record<string, string>> = {
   models: aiGatewayHref("routing"),
   "jev-credit": aiGatewayHref("providers", "jev-credit"),
 };
-/** The Cost Operations page and its merged "AI & data spend" tab (UI part 3: the LLM, DataForSEO and Jev tabs became
- *  views of one tab). */
-export const COST_OPS_PATH = "/admin/cost-ops";
+/** The Spend page (was Cost Operations at /admin/cost-ops, AA-1039 R6 slice 3: it also holds the "Cost per app" page
+ *  as its By app tab) and its merged "AI & data spend" tab (UI part 3: the LLM, DataForSEO and Jev tabs became views
+ *  of one tab). The old URLs answer 307 here (lib/adminIa.ts ADMIN_ROUTE_MOVES). */
+export const COST_OPS_PATH = "/admin/spend";
 export const SPEND_TAB = "spend";
+/** The By app tab of the Spend page (was /admin/platform/cost). */
+export const SPEND_APPS_TAB = "apps";
 export const SPEND_VIEWS = ["llm", "dfs", "jev"] as const;
 export type SpendView = (typeof SPEND_VIEWS)[number];
 

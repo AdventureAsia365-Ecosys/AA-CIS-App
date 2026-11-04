@@ -57,7 +57,7 @@ export function CostByAppCard({ section }: { section: Section<CostData> | undefi
       title={section && section.status === "ok" ? t("costTitleMonth", monthName(section.month, lang)) : t("costTitle")}
       subtitle={t("costSubtitle")}
       source={COST_SRC.card}
-      link={{ href: "/admin/cost-ops", label: t("costOpsLink") }}
+      link={{ href: "/admin/spend", label: t("costOpsLink") }}
     >
       {!section ? null : section.status !== "ok" ? (
         <UnavailableNote section={section} />

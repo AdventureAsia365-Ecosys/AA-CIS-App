@@ -12,7 +12,7 @@
 // guide test (lib/guides.test.mjs) fails when the page stops printing one. Public repo: no ids, ARNs or tenant names.
 // Data only (the type import is erased), so node --test loads it directly.
 
-import type { GuideContent } from "../../_kit/guideContent";
+import type { GuideContent } from "../../../_kit/guideContent";
 
 export const WRITING_MEMORY_GUIDE: GuideContent = {
   title: "How to use Writing memory",

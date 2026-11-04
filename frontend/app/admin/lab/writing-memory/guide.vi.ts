@@ -3,7 +3,7 @@
 // the original, so change it first and this one in the same PR. Terms in `uiLabels` blocks are the page's Vietnamese
 // words (messages.ts, releases.messages.ts, lib/writingMemory.messages.ts). Data only, so node --test loads it.
 
-import type { GuideContent } from "../../_kit/guideContent";
+import type { GuideContent } from "../../../_kit/guideContent";
 
 export const WRITING_MEMORY_GUIDE_VI: GuideContent = {
   title: "Cách dùng Bộ nhớ viết",

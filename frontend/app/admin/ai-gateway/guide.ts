@@ -14,7 +14,7 @@
 import type { GuideContent } from "../../_kit/guideContent";
 
 export const AI_GATEWAY_GUIDE: GuideContent = {
-  title: "How to use AI providers",
+  title: "How to use the AI gateway",
   intro: "One page for every paid AI and data source. Read it to answer four questions: is each source answering, "
     + "what did it cost, which model does each stage use, and is anything close to a limit.",
   sections: [
@@ -33,7 +33,7 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
           + "trials (the model catalog and the shadow comparisons), Budgets (every spending cap), Calls (every "
           + "logged call, one by one) and this Guide. Settings › LLM Models, Settings › Jev Credit and Cost "
           + "Operations › Budgets moved here; their old links open the right tab. The spend totals by tenant, model "
-          + "and market stay on Cost Operations, in its AI & data spend tab." },
+          + "and market stay on Spend, in its AI & data spend tab." },
       ],
     },
     {
@@ -264,13 +264,13 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
           text: "Calls logged before 31 Oct 2026 have no outcome or answer time, and a refused attempt from before "
             + "that date was not logged at all. Since then every attempt has its row, a refused one at zero cost." },
         { kind: "list", items: [
-          "TripPlanner's model calls show from the shared log; its per-stage caps are on Cost Operations › AI & data "
+          "TripPlanner's model calls show from the shared log; its per-stage caps are on Spend › AI & data "
             + "spend and the Apps board.",
           "Mapbox writes no log: its row has no spend or answer times; read its usage on the Mapbox console.",
           "The partner CRM's rows need your staff sign-in. They read the CRM's daily totals only (whole UTC days, no "
             + "answer time); single CRM calls are on the Calls tab.",
           "Trial runs of new models (quick test, judge check, compare) are not on the Models & trials tab yet.",
-          "Spend is what we logged at our prices. The AWS bill can differ slightly; Cost Operations shows the bill.",
+          "Spend is what we logged at our prices. The AWS bill can differ slightly; Spend shows the bill.",
         ] },
       ],
     },

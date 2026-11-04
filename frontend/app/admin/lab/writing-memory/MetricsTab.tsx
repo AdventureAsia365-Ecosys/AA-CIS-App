@@ -20,7 +20,7 @@ import { useMemo, useState } from "react";
 import {
   Badge, Button, DataTable, ErrorState, Field, Input, K, KpiTile, Modal, TableSkeleton, apiGet, mono,
   useAdminIdentity, useT, useToast, type ColumnDef,
-} from "../../_kit";
+} from "../../../_kit";
 import { can } from "@/lib/rbac";
 import {
   SOFT_STOP_CODES, WM_API, WRITERS, actionTone, pctOrDash, usd,

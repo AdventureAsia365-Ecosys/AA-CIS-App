@@ -22,15 +22,15 @@ const read = (p) => readFileSync(join(FRONTEND, p), "utf8");
 
 /** Every guide: its module and export, the page that renders it, and the files that print its labels. */
 const GUIDES = [
-  { name: "Writing memory", module: "app/admin/writing-memory/guide.ts", exportName: "WRITING_MEMORY_GUIDE",
-    page: "app/admin/writing-memory/WritingMemory.tsx",
+  { name: "Writing memory", module: "app/admin/lab/writing-memory/guide.ts", exportName: "WRITING_MEMORY_GUIDE",
+    page: "app/admin/lab/writing-memory/WritingMemory.tsx",
     // AA-994: the page prints its words through these dictionaries (English side = the labels the guide quotes).
-    messages: ["app/admin/writing-memory/messages.ts", "app/admin/writing-memory/releases.messages.ts",
-      "app/admin/writing-memory/exemplars.messages.ts", "app/admin/writing-memory/metrics.messages.ts",
+    messages: ["app/admin/lab/writing-memory/messages.ts", "app/admin/lab/writing-memory/releases.messages.ts",
+      "app/admin/lab/writing-memory/exemplars.messages.ts", "app/admin/lab/writing-memory/metrics.messages.ts",
       "lib/writingMemory.messages.ts"],
-    sources: ["lib/writingMemory.ts", "app/admin/writing-memory/ReleasesTab.tsx",
-      "app/admin/writing-memory/ExemplarsTab.tsx", "app/admin/writing-memory/MetricsTab.tsx"],
-    vi: { module: "app/admin/writing-memory/guide.vi.ts", exportName: "WRITING_MEMORY_GUIDE_VI" } },
+    sources: ["lib/writingMemory.ts", "app/admin/lab/writing-memory/ReleasesTab.tsx",
+      "app/admin/lab/writing-memory/ExemplarsTab.tsx", "app/admin/lab/writing-memory/MetricsTab.tsx"],
+    vi: { module: "app/admin/lab/writing-memory/guide.vi.ts", exportName: "WRITING_MEMORY_GUIDE_VI" } },
   // AA-804 — Platform › AI & spend › AI providers (the "Open trace" control lives in the Jobs drawer)
   { name: "AI providers", module: "app/admin/ai-gateway/guide.ts", exportName: "AI_GATEWAY_GUIDE",
     page: "app/admin/ai-gateway/AiGateway.tsx",

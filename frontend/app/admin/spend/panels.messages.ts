@@ -32,7 +32,7 @@ export const PANELS = defineMessages(
     noSpendMonth: "No spend this month",
     noAwsAccounts: "No AWS accounts",
     forecastFootnote:
-      "AI providers: gateway estimates (llm_call_log, llm_call_daily) and dfs_call_log; budget = the provider's daily cap (AI providers › Budgets) × days in the month. AWS accounts: the stored Cost Explorer days (AWS bill tab), which lag 1–2 days; budget = the account's AWS Budget.",
+      "AI providers: gateway estimates (llm_call_log, llm_call_daily) and dfs_call_log; budget = the provider's daily cap (AI gateway › Budgets) × days in the month. AWS accounts: the stored Cost Explorer days (AWS bill tab), which lag 1–2 days; budget = the account's AWS Budget.",
     // DFS runs
     attrWindow: "One job running",
     attrAmbiguous: "Several jobs running",
@@ -107,7 +107,7 @@ export const PANELS = defineMessages(
     noJevCalls: "No Jev calls",
     noJevDays: (days: number) => `No Jev decision in the last ${days} days.`,
     jevFootnote:
-      "Billed = the TypeSafe calls in llm_call_log (provider typesafe), the same figure as the Jev row of the Overview forecast and of Cost per app. Credit left is an estimate: top-ups minus logged spend since the first top-up.",
+      "Billed = the TypeSafe calls in llm_call_log (provider typesafe), the same figure as the Jev row of the Overview forecast and of Spend › By app. Credit left is an estimate: top-ups minus logged spend since the first top-up.",
   },
   {
     statusOver: "Vượt ngân sách",
@@ -134,7 +134,7 @@ export const PANELS = defineMessages(
     noSpendMonth: "Tháng này chưa có chi phí",
     noAwsAccounts: "Không có tài khoản AWS",
     forecastFootnote:
-      "Nhà cung cấp AI: ước tính của gateway (llm_call_log, llm_call_daily) và dfs_call_log; ngân sách = mức trần mỗi ngày của nhà cung cấp (Nhà cung cấp AI › Ngân sách) × số ngày trong tháng. Tài khoản AWS: các ngày Cost Explorer đã lưu (tab Hoá đơn AWS), trễ 1–2 ngày; ngân sách = AWS Budget của tài khoản.",
+      "Nhà cung cấp AI: ước tính của gateway (llm_call_log, llm_call_daily) và dfs_call_log; ngân sách = mức trần mỗi ngày của nhà cung cấp (Cổng AI › Ngân sách) × số ngày trong tháng. Tài khoản AWS: các ngày Cost Explorer đã lưu (tab Hoá đơn AWS), trễ 1–2 ngày; ngân sách = AWS Budget của tài khoản.",
     attrWindow: "Một job đang chạy",
     attrAmbiguous: "Nhiều job đang chạy",
     attrIncident: "Sự cố đã ghi nhận",

@@ -7,7 +7,7 @@
 //   cd apps/AA-CIS-App && AWS_PROFILE=aa365-admin E2EADMIN=1 npx playwright test --project admin-evidence
 //
 // Steps: /login → "Sign in with company email" → managed login → the admin address → code from inbound-admin/ →
-// back under /admin (cis_admin_token cookie, Account menu) → /admin/tenant-qa/quality and /admin/writing-memory at
+// back under /admin (cis_admin_token cookie, Account menu) → the PAGES below (quality, Writing Lab, AI & spend) at
 // 1440x900 (grown to the inner scroll region) and 390x844, light and dark → AA-898: the docs manifest says owner_read
 // true / is_owner false, then docs/glossary.md in EN and VI (the switch), the owner-only docs/legal/register.md, and a
 // Mermaid page + a callout page when published, at the same sizes and themes → API checks through the BFF that write
@@ -29,7 +29,17 @@ import { growViewportToContent } from '../smoke/smoke-helpers';
 
 const CIS_PROD_ORIGIN = 'https://aa-cis.lumiguides.it.com';
 const SHOTS_DIR = 'tests/e2e/results/admin-evidence';
-const PAGES = ['/admin/tenant-qa/quality', '/admin/writing-memory', '/admin/docs'] as const;  // AA-898: + docs reader
+// AA-898: + docs reader. AA-1039 R6 slice 3: Writing memory moved to /admin/lab/writing-memory; + one Writing Lab stage
+// (T9 social, the first writer of the learning loop) and the AI & spend group (AI gateway, Spend, Spend › By app).
+const PAGES = [
+  '/admin/tenant-qa/quality', '/admin/lab/writing-memory', '/admin/docs',
+  '/admin/lab/t9-social', '/admin/ai-gateway', '/admin/spend', '/admin/spend?tab=apps',
+] as const;
+// A page whose loaded content is not a table row: its ready marker (rendered only once its data answered).
+const READY: Partial<Record<(typeof PAGES)[number], string>> = {
+  '/admin/lab/t9-social': '[data-testid="writing-lab-ready"]',
+  '/admin/spend?tab=apps': '[data-testid="platform-cost-ready"]',
+};
 // Ids that do not exist: nothing is ever written by this spec.
 const MISSING_CARD = '00000000-0000-4000-8000-00000000a10b';
 const MISSING_PIECE = '00000000-0000-4000-8000-00000000a10c';
@@ -117,11 +127,13 @@ test.describe('AA-816 A10b — admin evidence as the Dev-only E2E CIS admin', ()
 
     // ── 7. Admin-only pages: 1440 (grown to the inner scroll region) + 390, light + dark ──
     for (const pagePath of PAGES) {
-      const slug = pagePath.replace(/^\/admin\//, '').replace(/\//g, '-');
+      const slug = pagePath.replace(/^\/admin\//, '').replace(/[/?=&]/g, '-');
       await page.setViewportSize({ width: 1440, height: 900 });
       await page.goto(pagePath, { waitUntil: 'domcontentloaded' });
-      expect(new URL(page.url()).pathname).toBe(pagePath);   // not bounced: the session is an admin
-      await waitForPageData(page);
+      expect(new URL(page.url()).pathname).toBe(pagePath.split('?')[0]);   // not bounced: the session is an admin
+      const ready = READY[pagePath];
+      if (ready) await expect(page.locator(ready).first()).toBeVisible({ timeout: 30000 });
+      else await waitForPageData(page);
       for (const scheme of ['light', 'dark'] as const) {
         await page.emulateMedia({ colorScheme: scheme });
         await page.setViewportSize({ width: 1440, height: 900 });

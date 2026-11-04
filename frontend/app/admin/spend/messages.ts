@@ -1,4 +1,4 @@
-// app/admin/cost-ops/messages.ts — AA-994: Cost Operations (page, LLM tree, fallback calls, AWS bill, DataForSEO
+// app/admin/spend/messages.ts (was app/admin/cost-ops/messages.ts) — AA-994: Spend (page, LLM tree, fallback calls, AWS bill, DataForSEO
 // tables) in English and Vietnamese. The panels have their own catalogue (panels.messages.ts). Tenant labels,
 // stages, roles, models, endpoints, markets and AWS service names come from the API and stay as sent.
 
@@ -60,6 +60,7 @@ export const COST = defineMessages(
     tabLlm: "LLM",
     tabDfs: "DataForSEO",
     tabAws: "AWS bill",
+    tabApps: "By app",
     tabJev: "Jev",
     // page
     lastDays: (n: number) => `last ${n} days`,
@@ -68,8 +69,8 @@ export const COST = defineMessages(
     ceFetched: (rows: number) => `Fetched ${rows} rows from AWS.`,
     ceRefreshFailed: "Refresh failed — check server logs.",
     dfsThirdParty: "DataForSEO (3rd-party)",
-    title: "Cost Operations",
-    description: "What the platform spends — LLM, DataForSEO, Jev and the AWS bill — against budget",
+    title: "Spend",
+    description: "What the platform spends — LLM, DataForSEO, Jev, the AWS bill and each app — against budget",
     days: (n: number) => `${n} days`,
     fromUtc: "From (UTC)",
     toUtc: "To (UTC, inclusive; empty = today)",
@@ -139,7 +140,7 @@ export const COST = defineMessages(
     noLlmFilter: "No LLM calls match the filter.",
     subAccount: "account",
     subTenant: "tenant",
-    modelConfig: "Current model config (AI providers → Routing)",
+    modelConfig: "Current model config (AI gateway → Routing)",
     accountBalance: "Account balance",
     asOfDay: (day: string) => `as of ${day}`,
     noReading: "no reading yet",
@@ -212,6 +213,7 @@ export const COST = defineMessages(
     tabLlm: "LLM",
     tabDfs: "DataForSEO",
     tabAws: "Hoá đơn AWS",
+    tabApps: "Theo ứng dụng",
     tabJev: "Jev",
     lastDays: (n: number) => `${n} ngày qua`,
     loadError: "Không tải được dữ liệu chi phí",
@@ -220,8 +222,8 @@ export const COST = defineMessages(
     ceFetched: (rows: number) => `Đã lấy ${rows} dòng từ AWS.`,
     ceRefreshFailed: "Làm mới thất bại — hãy xem log máy chủ.",
     dfsThirdParty: "DataForSEO (bên thứ ba)",
-    title: "Vận hành chi phí",
-    description: "Nền tảng chi bao nhiêu — LLM, DataForSEO, Jev và hoá đơn AWS — so với ngân sách",
+    title: "Chi tiêu",
+    description: "Nền tảng chi bao nhiêu — LLM, DataForSEO, Jev, hoá đơn AWS và từng ứng dụng — so với ngân sách",
     days: (n: number) => `${n} ngày`,
     fromUtc: "Từ (UTC)",
     toUtc: "Đến (UTC, tính cả ngày cuối; để trống = hôm nay)",
@@ -293,7 +295,7 @@ export const COST = defineMessages(
     noLlmFilter: "Không có lượt gọi LLM nào khớp bộ lọc.",
     subAccount: "tài khoản",
     subTenant: "đại lý",
-    modelConfig: "Cấu hình model hiện tại (Nhà cung cấp AI → Điều hướng)",
+    modelConfig: "Cấu hình model hiện tại (Cổng AI → Điều hướng)",
     accountBalance: "Số dư tài khoản",
     asOfDay: (day: string) => `tính đến ${day}`,
     noReading: "chưa có số đọc",

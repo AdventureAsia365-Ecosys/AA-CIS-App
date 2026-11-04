@@ -100,9 +100,9 @@ test("retired Settings and Cost Operations tabs point to their new tab", () => {
     "/admin/ai-gateway?tab=providers&view=jev-credit");
   assert.equal(retiredTabTarget(RETIRED_COST_OPS_TABS, "budgets"), "/admin/ai-gateway?tab=budgets");
   // UI part 3: the LLM, DataForSEO and Jev tabs are views of the merged "AI & data spend" tab
-  assert.equal(retiredTabTarget(RETIRED_COST_OPS_TABS, "llm"), "/admin/cost-ops?tab=spend");
-  assert.equal(retiredTabTarget(RETIRED_COST_OPS_TABS, "dfs"), "/admin/cost-ops?tab=spend&view=dfs");
-  assert.equal(retiredTabTarget(RETIRED_COST_OPS_TABS, "jev"), "/admin/cost-ops?tab=spend&view=jev");
+  assert.equal(retiredTabTarget(RETIRED_COST_OPS_TABS, "llm"), "/admin/spend?tab=spend");
+  assert.equal(retiredTabTarget(RETIRED_COST_OPS_TABS, "dfs"), "/admin/spend?tab=spend&view=dfs");
+  assert.equal(retiredTabTarget(RETIRED_COST_OPS_TABS, "jev"), "/admin/spend?tab=spend&view=jev");
   // tabs that stay where they are, no tab, and object keys are never a target
   for (const v of ["brand", "pipeline", "", null, undefined, "toString", "__proto__"]) {
     assert.equal(retiredTabTarget(RETIRED_SETTINGS_TABS, v), null, String(v));
@@ -220,9 +220,9 @@ test("callTone: refused and errors red, partial outcomes amber, answers green", 
 });
 
 test("the merged spend tab: exactly one tab value, a view only when it is not the LLM view", () => {
-  assert.equal(costOpsSpendHref(), "/admin/cost-ops?tab=spend");
-  assert.equal(costOpsSpendHref("llm"), "/admin/cost-ops?tab=spend");
-  assert.equal(costOpsSpendHref("jev"), "/admin/cost-ops?tab=spend&view=jev");
+  assert.equal(costOpsSpendHref(), "/admin/spend?tab=spend");
+  assert.equal(costOpsSpendHref("llm"), "/admin/spend?tab=spend");
+  assert.equal(costOpsSpendHref("jev"), "/admin/spend?tab=spend&view=jev");
   assert.equal(parseSpendView("dfs"), "dfs");
   assert.equal(parseSpendView("aws"), "llm");
   assert.equal(parseSpendView(null), "llm");

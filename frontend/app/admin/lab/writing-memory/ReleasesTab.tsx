@@ -26,9 +26,9 @@ import {
   Badge, Button, ConfirmModal, DataTable, Drawer, ErrorState, K, Modal, TableSkeleton, apiGet,
   mono, useAdminIdentity, useFormat, useT, useToast, type ColumnDef,
   Input, Select, Textarea,
-} from "../../_kit";
+} from "../../../_kit";
 import { can } from "@/lib/rbac";
-import { TenantSelect, useTenants } from "../_components/TenantSelect";
+import { TenantSelect, useTenants } from "../../_components/TenantSelect";
 import {
   EVIDENCE_NEEDED, RELEASE_STATUSES, WM_API, WRITERS, actorLabel, checkTone,
   evidenceOk, evidenceWord, isUuid, monthStart, releaseActions, releaseTone, stratumLabel,

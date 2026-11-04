@@ -1,12 +1,12 @@
 // frontend/lib/writingMemoryGuide.test.mjs
-// AA-919: the Writing memory Guide (app/admin/writing-memory/guide.ts) keeps its outline, its header buttons and the
+// AA-919: the Writing memory Guide (app/admin/lab/writing-memory/guide.ts) keeps its outline, its header buttons and the
 // facts that were corrected against the code. The shape, English-only text and page-label checks every guide shares
 // are in guides.test.mjs. Run: npm run test:unit.
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { WRITING_MEMORY_GUIDE as guide } from "../app/admin/writing-memory/guide.ts";
+import { WRITING_MEMORY_GUIDE as guide } from "../app/admin/lab/writing-memory/guide.ts";
 import { guideControlLabels, guideUiLabels } from "../app/_kit/guideContent.ts";
 import { LINT_LABEL } from "./writingMemory.ts";
 

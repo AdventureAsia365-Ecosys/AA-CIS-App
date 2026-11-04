@@ -548,7 +548,7 @@ export default function OverviewPage() {
                     {t("aiThisMonth")} <b style={{ color: K.ink }}>{money(data.cost.ai_month_to_date_usd)}</b>
                     <SourceHint source={PROVIDER_COST_SRC.aiMonth} size={11} />{" "}
                     {t("sameAsEstimate")}{" "}
-                    <Link href="/admin/platform/cost" style={{ color: K.accentDeep, fontWeight: 600 }}>{t("costPerApp")}</Link>.{" "}
+                    <Link href="/admin/spend?tab=apps" style={{ color: K.accentDeep, fontWeight: 600 }}>{t("costPerApp")}</Link>.{" "}
                     {t("todayFromMidnight")}
                   </div>
                 )}

@@ -3,7 +3,7 @@
 // Writer, stage, gate, kind and content-class codes (t9_blog, lexicon, F2_…) stay as the API sends them.
 // The English texts are the page's own words that the Guide quotes (lib/guides.test.mjs reads this file).
 
-import { defineMessages } from "../../_kit/core/i18n";
+import { defineMessages } from "../../../_kit/core/i18n";
 
 /** Fact status of a signal (lib/writingMemory.ts FactStatus). */
 export const FACT_STATUS = defineMessages(

@@ -1,7 +1,10 @@
 "use client";
-// app/admin/platform/cost/CostByApp.tsx
-// AA-884 (S241 admin console GĐ10) — Platform › AI & spend › Cost per app: what each app cost in one UTC
-// month (month to date for the current one), AWS and AI together, plus LLM spend by app.
+// app/admin/spend/CostByApp.tsx (was app/admin/platform/cost/CostByApp.tsx)
+// AA-884 (S241 admin console GĐ10) — what each app cost in one UTC month (month to date for the current one), AWS
+// and AI together, plus LLM spend by app.
+// AA-1039 R6 slice 3 (root ADR 0019 d13): the "Cost per app" page became the By app tab of AI & spend › Spend
+// (app/admin/spend/page.tsx); /admin/platform/cost answers 307 to /admin/spend?tab=apps. It renders inside the Spend
+// page frame (no PageFrame / PageHeader of its own); `onOpenSpend` switches the page to its AI & data spend tab.
 //
 // API: GET /api/admin/platform/cost?month=YYYY-MM (backend api/routers/admin_platform_ops.py →
 // services/platform_cost.py cost_by_app(), the console's ONE cost module — AA-858's overview card reads the
@@ -20,7 +23,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, ChevronRight, CloudDownload, Info } from "lucide-react";
-import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import {
   Badge,
@@ -29,7 +32,6 @@ import {
   Drawer,
   ErrorState,
   K,
-  PageHeader,
   RADIUS,
   SkeletonBar,
   SkeletonStyle,
@@ -41,12 +43,12 @@ import {
   useLang,
   useT,
   type ColumnDef,
-  type Tone, PageFrame,
-  Input,
-} from "../../../_kit";
+  type Tone,
+  Input, LinkButton,
+} from "../../_kit";
 import { shownSum } from "@/lib/costWording";
 import { COST_WORDING } from "@/lib/costWording.messages";
-import type { Lang } from "../../../_kit/core/i18n";
+import type { Lang } from "../../_kit/core/i18n";
 import {
   currentUtcMonth,
   lastIncludedDay,
@@ -57,7 +59,7 @@ import {
   type CostRowKind,
   type SatelliteLine,
 } from "@/lib/platform";
-import { COST } from "./messages";
+import { COST } from "./byApp.messages";
 
 type KindWord = "kindApp" | "kindLlm" | "kindShared" | "kindOther" | "kindUntagged";
 const KIND_TONE: Record<CostRowKind, { tone: Tone; label: KindWord }> = {
@@ -77,11 +79,14 @@ function monthLabel(month: string, lang: Lang = "en"): string {
     : d.toLocaleString(lang === "vi" ? "vi-VN" : "en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 }
 
-export default function CostByApp() {
+export default function CostByApp({ onOpenSpend }: { onOpenSpend: () => void }) {
   const t = useT(COST);
   const qc = useQueryClient();
   const [thisMonth] = useState(() => currentUtcMonth());
-  const [month, setMonth] = useState(thisMonth);
+  // `?month=YYYY-MM` (the monthly report's link, the old /admin/platform/cost?month= links through the 307) opens that
+  // month; anything else, or a future month, opens this one.
+  const wanted = useSearchParams().get("month");
+  const [month, setMonth] = useState(() => (wanted && MONTH_RE.test(wanted) && wanted <= thisMonth ? wanted : thisMonth));
   const key = ["platform-cost", month] as const;
 
   const cost = useQuery({
@@ -106,17 +111,14 @@ export default function CostByApp() {
   };
 
   return (
-    <PageFrame>
+    <div data-testid="spend-by-app" style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
       <SkeletonStyle />
-      <PageHeader
-        title={t("title")}
-        description={
-          <>
-            {t("description")}{" "}
-            <Link href="/admin/cost-ops" style={{ color: K.accentDeep, fontWeight: 600 }}>{t("costOps")}</Link>.
-          </>
-        }
-        actions={
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", justifyContent: "space-between",
+        marginBottom: 14, minWidth: 0 }}>
+        <div style={{ ...noteStyle, fontSize: 13, flex: "1 1 320px", minWidth: 0 }}>
+          {t("description")}{" "}
+          <LinkButton onClick={onOpenSpend}>{t("costOps")}</LinkButton>.
+        </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: K.muted, fontFamily: sans }}>
               {t("month")}
@@ -137,8 +139,7 @@ export default function CostByApp() {
               <CloudDownload size={13} /> {check.isPending ? t("fetching") : t("refreshAws")}
             </Button>
           </div>
-        }
-      />
+      </div>
 
       {check.isError && (
         <div style={{ ...noteStyle, color: K.danger, marginBottom: 12 }}>
@@ -156,11 +157,11 @@ export default function CostByApp() {
           <Summary data={data} />
           <DataStatus data={data} />
           <CostTable data={data} />
-          <LlmByApp data={data} />
+          <LlmByApp data={data} onOpenSpend={onOpenSpend} />
           <DataSources sources={data.sources} />
         </div>
       )}
-    </PageFrame>
+    </div>
   );
 }
 
@@ -433,7 +434,7 @@ const lineStyle: React.CSSProperties = { display: "flex", flexWrap: "wrap", just
 
 // ── LLM spend by app ────────────────────────────────────────────────────────────────────────
 
-function LlmByApp({ data }: { data: CostResp }) {
+function LlmByApp({ data, onOpenSpend }: { data: CostResp; onOpenSpend: () => void }) {
   const t = useT(COST);
   const lang = useLang();
   const { formatDateTime } = useFormat();
@@ -482,9 +483,9 @@ function LlmByApp({ data }: { data: CostResp }) {
           )}
         </div>
       )}
-      <Link href="/admin/cost-ops" style={{ color: K.accentDeep, fontWeight: 600, fontSize: 12.5, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4 }}>
-        {t("perProvider")} <ArrowRight size={11} />
-      </Link>
+      <span style={{ display: "inline-flex", fontSize: 12.5 }}>
+        <LinkButton onClick={onOpenSpend}>{t("perProvider")} <ArrowRight size={11} /></LinkButton>
+      </span>
     </section>
   );
 }

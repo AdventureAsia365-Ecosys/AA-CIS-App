@@ -14,7 +14,7 @@
 import {
   Cpu, Gauge, Users, Upload, Wand2, ClipboardList, Library, Settings, Wallet, UserCog, Radio,
   Puzzle, ListChecks, Scale, Search, Image as ImageIcon, BookOpen, BarChart3, ShieldAlert, ShieldCheck,
-  Boxes, ScrollText, ChartPie, BellRing, MapPin, Network, Eraser, Building2, FileText, Hotel, Table2, BookMarked, Quote,
+  Boxes, ScrollText, FlaskConical, BellRing, MapPin, Network, Eraser, Building2, FileText, Hotel, Table2, BookMarked, Quote,
   Newspaper, CreditCard, FileStack, PenLine,
 } from "lucide-react";
 import { useCallback } from "react";
@@ -64,7 +64,7 @@ const ICONS: Record<NavIcon, React.ReactNode> = {
   compliance: <ShieldAlert size={16} />,
   aiGateway: <Cpu size={16} />,
   spend: <Wallet size={16} />,
-  costPerApp: <ChartPie size={16} />,
+  lab: <FlaskConical size={16} />,
   writingMemory: <PenLine size={16} />,
   decisions: <Scale size={16} />,
   staff: <UserCog size={16} />,

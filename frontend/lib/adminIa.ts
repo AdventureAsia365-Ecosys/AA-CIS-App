@@ -16,8 +16,8 @@ export type NavIcon =
   | "upload" | "rewrite" | "review" | "master" | "atoms" | "places" | "photos" | "facts" | "supply" | "aaContent"
   | "seo" | "settings"
   | "quality" | "trace" | "reviewLog" | "slate" | "compliance"
-  | "aiGateway" | "spend" | "costPerApp"
-  | "writingMemory" | "decisions"
+  | "aiGateway" | "spend"
+  | "lab" | "writingMemory" | "decisions"
   | "staff" | "audit" | "jobs" | "alerts" | "apiDocs" | "dataModel" | "docs";
 
 export interface IaItem {
@@ -79,15 +79,17 @@ export const ADMIN_IA: IaGroup[] = [
     { href: "/admin/tenant-qa/compliance", label: "Compliance", icon: "compliance" },
   ] },
   { label: "AI & spend", items: [
-    // Tabs: Providers (connections, credit), Routing, Models & trials, Budgets (+ app profiles), Calls, Guide.
-    // The page names stay "AI providers" and "Cost Operations" (guides, cross-links and copy use them) until the
-    // later R6 slice that merges Cost Operations and Cost per app into one Spend page.
-    { href: "/admin/ai-gateway", label: "AI providers", icon: "aiGateway" },
-    { href: "/admin/cost-ops", label: "Cost Operations", icon: "spend" },
-    { href: "/admin/platform/cost", label: "Cost per app", icon: "costPerApp" },
+    // AA-1039 R6 slice 3: the AI gateway (tabs Providers with its Connections / credit views, Routing, Models &
+    // trials, Budgets with app profiles, Calls, Guide; was "AI providers") and one Spend page (was Cost Operations and
+    // Cost per app; /admin/cost-ops and /admin/platform/cost redirect).
+    { href: "/admin/ai-gateway", label: "AI gateway", icon: "aiGateway" },
+    { href: "/admin/spend", label: "Spend", icon: "spend" },
   ] },
   { label: "Writing Lab", items: [
-    { href: "/admin/writing-memory", label: "Writing memory", icon: "writingMemory" },
+    // AA-1039 R6 slice 3: one page per pipeline stage (/admin/lab/<stage>; /admin/lab opens the first) over the
+    // existing learning tables, then the Writing memory tools (moved from /admin/writing-memory) and Jev Decisions.
+    { href: "/admin/lab", label: "Stages", icon: "lab" },
+    { href: "/admin/lab/writing-memory", label: "Writing memory", icon: "writingMemory" },
     { href: "/admin/decisions", label: "Jev Decisions", icon: "decisions" },
   ] },
   { label: "Platform", items: [
@@ -102,7 +104,7 @@ export const ADMIN_IA: IaGroup[] = [
 ];
 
 /** A page that moved: `from` (exact path, optionally only with `query`) answers 307 to `to`; the query string carries
- *  over (Next.js passes it through). */
+ *  over (Next.js passes it through, merged with a query of `to`, whose own keys win). */
 export interface RouteMove {
   from: string;
   to: string;
@@ -118,6 +120,11 @@ export const ADMIN_ROUTE_MOVES: RouteMove[] = [
   { from: "/admin/atom-curation", query: { key: "section", value: "slate" }, to: "/admin/tenant-qa/slate" },
   { from: "/admin/platform/agencies", to: "/admin/tenants/agencies" },
   { from: "/admin/data-erasure", to: "/admin/tenants/data-erasure" },
+  // AA-1039 R6 slice 3: Writing memory moved under the Writing Lab; Cost Operations and Cost per app became one
+  // Spend page (Cost per app is its By app tab).
+  { from: "/admin/writing-memory", to: "/admin/lab/writing-memory" },
+  { from: "/admin/cost-ops", to: "/admin/spend" },
+  { from: "/admin/platform/cost", to: "/admin/spend?tab=apps" },
 ];
 
 /** The Next.js redirect entries of ADMIN_ROUTE_MOVES (next.config.ts `redirects()`). */
@@ -132,7 +139,8 @@ export function adminIaRedirects(): {
   }));
 }
 
-/** Where `url` (path + optional query) lands after the moves, as Next.js would answer it (query kept). */
+/** Where `url` (path + optional query) lands after the moves, as Next.js would answer it (query kept; a key the
+ *  destination sets itself keeps the destination's value). */
 export function resolveAdminRoute(url: string): string {
   let current = url;
   for (let hop = 0; hop < 5; hop += 1) {
@@ -141,7 +149,11 @@ export function resolveAdminRoute(url: string): string {
     const params = new URLSearchParams(query);
     const move = ADMIN_ROUTE_MOVES.find((m) => m.from === path && (!m.query || params.get(m.query.key) === m.query.value));
     if (!move) return current;
-    current = query ? `${move.to}?${query}` : move.to;
+    // Next.js prepareDestination: { ...request query, ...destination query } (the destination's keys win).
+    const [toPath, toQuery = ""] = move.to.split("?", 2);
+    new URLSearchParams(toQuery).forEach((v, k) => params.set(k, v));
+    const q = params.toString();
+    current = q ? `${toPath}?${q}` : toPath;
   }
   return current;
 }

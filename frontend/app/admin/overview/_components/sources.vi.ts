@@ -89,7 +89,7 @@ const COST_SRC: Sources["COST_SRC"] = {
   card:
     "Hoá đơn AWS qua Cost Explorer, chia theo thẻ App của từng tài nguyên, từ đầu tháng đến nay (lấy khoảng mỗi ngày một " +
     "lần, bản thân hoá đơn trễ khoảng hai ngày), cộng nhật ký cuộc gọi AI cho phần AI tính ngoài hoá đơn AWS (máy chủ " +
-    "cập nhật mỗi 15 phút, bấm Làm mới để tải số mới nhất); cùng số liệu với trang Chi phí theo ứng dụng",
+    "cập nhật mỗi 15 phút, bấm Làm mới để tải số mới nhất); cùng số liệu với Chi tiêu › Theo ứng dụng",
   total: `${CW.awsBill} + ${CW.aiOutside}, cho cùng ứng dụng và cùng tháng`,
   prevMonth: (month: string) => `Cùng các nguồn đó cho toàn bộ ${month}`,
   aiNote: `Nhật ký cuộc gọi AI, tháng này: toàn bộ ước tính AI. ${CW.aiOnBillSrc}`,
@@ -138,8 +138,8 @@ const PROVIDER_COST_SRC: Sources["PROVIDER_COST_SRC"] = {
     "Nhật ký cuộc gọi AI (AWS Bedrock, OpenAI, Jev) và nhật ký cuộc gọi DataForSEO, chi phí từ nửa đêm UTC hôm nay; màu đỏ " +
     "khi chạm mức cảnh báo của ngân sách",
   month:
-    "Nhật ký cuộc gọi AI, tháng này (cùng ước tính AI với trang Chi phí theo ứng dụng); DataForSEO: nhật ký cuộc gọi của nó, tháng này",
-  budget: "Ngân sách chi tiêu đặt trong CIS (Nhà cung cấp AI, Ngân sách), hạn mức theo ngày cho từng nhà cung cấp; được đếm khi chi hôm nay chạm mức cảnh báo",
+    "Nhật ký cuộc gọi AI, tháng này (cùng ước tính AI với Chi tiêu › Theo ứng dụng); DataForSEO: nhật ký cuộc gọi của nó, tháng này",
+  budget: "Ngân sách chi tiêu đặt trong CIS (Cổng AI, Ngân sách), hạn mức theo ngày cho từng nhà cung cấp; được đếm khi chi hôm nay chạm mức cảnh báo",
   aiMonth: "Nhật ký cuộc gọi AI, mọi nhà cung cấp AI, tháng này (UTC)",
   dfsBalance: "Số dư tài khoản DataForSEO từ lần kiểm tra số dư được lưu gần nhất (không gọi trực tiếp)",
 };
