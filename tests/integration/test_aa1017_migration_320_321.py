@@ -36,7 +36,9 @@ M353 = os.path.join(MIGRATIONS, "353_tenant_control_plane_tables.sql")
 M355 = os.path.join(MIGRATIONS, "355_tenant_plans_seed_and_entitlement_view.sql")
 # AA-1028 R1 slice 2: 356 restates the resolver on top of 353's (a 353 re-run puts the old one back), so it follows.
 M356 = os.path.join(MIGRATIONS, "356_tenant_entitlement_resolver_fixes.sql")
-LATER_ON_TENANT_AI_BUDGET = (("353", M353), ("355", M355), ("356", M356))
+# AA-1028 R1 slice 3: 361 restates the resolver on top of 356's (the trial grace, platform keys from the content plan).
+M361 = os.path.join(MIGRATIONS, "361_tenant_entitlement_trial_grace.sql")
+LATER_ON_TENANT_AI_BUDGET = (("353", M353), ("355", M355), ("356", M356), ("361", M361))
 FAMILIES = {"anthropic", "openai", "cohere", "typesafe", "amazon", "meta", "moonshot"}
 OLD_HEALTH_CLASSES = "('access_denied', 'quota_exhausted', 'throttled', 'credential', 'other')"
 OLD_VENDORS = "('anthropic', 'openai', 'cohere', 'typesafe')"

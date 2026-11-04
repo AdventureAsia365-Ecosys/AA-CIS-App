@@ -7,8 +7,8 @@ conftest replays 356 like every migration. Each test runs in one transaction tha
     subscription: an offboarded tenant loses it, a restore gives it back;
   * shared.tenants.rate_limit_rpm is published as content.rate_limit_rpm: an override while it differs from the
     content plan, the plan's value again when equal; each change writes entitlement.changed;
-  * a trialing subscription is live only until its trial_ends_at: an ended trial serves no key (the plan's, the
-    RPM mirror, a platform key), a running one serves the plan's keys as source trial with the end as expires_at;
+  * a running trial serves the plan's keys as source trial with the end as expires_at (356 also stopped an ended
+    trial at once; CIS 361 keeps it live until the tick, see test_aa1028_migration_361);
   * the writer guard checks one privilege per call: a writer that holds SELECT but not INSERT on
     tenant_subscription is refused (355's guard, one call for 'SELECT, INSERT, UPDATE', let it pass).
 """
@@ -158,13 +158,17 @@ async def test_an_ended_trial_is_not_live(conn):
     expires = await conn.fetchval("SELECT expires_at FROM shared.v_tenant_entitlement_v1 WHERE tenant_id = $1 "
                                   "AND feature_key = 'trade.book'", tid)
     assert expires is not None
-    # the trial ended (nothing moves the row off trialing yet: the trial-end tick is slice 3)
+    # the trial ended: 356 stopped serving it at once; CIS 361 (replayed after it) keeps it live until the
+    # tenant_account_tick moves it (test_aa1028_migration_361), so the 356 rule is checked on a canceled row instead
     await conn.execute("UPDATE shared.tenant_subscription SET trial_ends_at = now() - interval '1 day' "
+                       "WHERE tenant_id = $1 AND product = 'content'", tid)
+    assert (await _ents(conn, tid))["trade.book"][1] == "trial"
+    await conn.execute("UPDATE shared.tenant_subscription SET status = 'canceled', canceled_at = now() "
                        "WHERE tenant_id = $1 AND product = 'content'", tid)
     assert await _ents(conn, tid) == {}
     assert await _materialised(conn, tid) == {}                 # the subscription trigger re-synced it
     assert (await _changes(conn, tid, "trade.book"))[-1]["op"] == "removed"
-    # the guards of 356 agree with the resolver on an ended trial
+    # the guards of 356 agree with the resolver
     await conn.execute(_guards())
 
 
