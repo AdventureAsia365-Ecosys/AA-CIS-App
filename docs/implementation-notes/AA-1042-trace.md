@@ -66,3 +66,17 @@ Parallel lane of AA-1042. The admin chain editor, provider order, presets and ro
 - Rows written before this change have no `route_trace`: the Trace tab shows them as single-attempt requests
   only through the Calls list, not in the request list.
 - The test endpoint makes real (tiny) paid calls: about 0.0001 USD each on today's routes.
+- **Migration number.** 373 follows the orchestrator's hint (369-372 held by parallel lanes); the CIS preflight
+  refuses it until main reaches 372. Renumbering touches: the file name and body, `api/routers/admin_llm_route.py`,
+  `api/services/llm_route_trace.py`, `services/quality/route_guard.py`, `shared/llm_client/route_watch.py`,
+  `tests/integration/test_aa1042_route_trace_db.py`, this file, and the root docs (`ai-gateway.md`, the S268
+  retention row). Check with `git grep '373_'` and `git grep 'CIS 373'`.
+- **No readiness raise.** Every read falls back when 373 is missing (`ready: false`, defaults; policy writes 503), so
+  the migration and the code ship in one PR (ADR 0017 d1, expand file).
+- **Live check (Dev).** Pick an active judge / validate stage with at least two models, then
+  `POST /admin/ai-gateway/route-trace/test {"stage": "...", "refuse_primary": true, "count": 6}`, run
+  `POST /admin/ai-gateway/route-watch/run {"mode": "watch"}` (fallback + last-model bells and e-mails), then the test
+  again with `refuse_primary: false` and the watch again (primary back). At most one e-mail per alert and UTC day.
+- **Shared-file edits** kept small for the controls lane: `AiGateway.tsx` (tab + target state), `lib/aiGateway.ts`
+  (`TAB_KEYS`, `PAGE_ACTIONS`), `CallsTab.tsx` (Route link), `admin_ai_gateway.py` (`PAGE_WRITES`), `staff_authz.py`
+  (one POLICY block), `call_log.py` / `client.py` (route keys, forced refusal).
