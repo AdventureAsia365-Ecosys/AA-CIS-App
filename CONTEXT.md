@@ -720,7 +720,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     (`brand_fit._judge`), the T10 F9 judge (`quality_gates` via `invoke_judge`) — is built and sent by
     `shared/llm_client/judge.py` (`call_judge`; it also holds the judge JSON parsers). It writes no
     `llm_call_log` row: the callers (judge_node, debate, quality_gates) do, once they have the verdict.
-  - `s1_brand_audit`, `t2_brand_audit`: GPT-5.6 Luna → GPT-6 Luna (no OpenAI last resort).
+  - `s1_brand_audit`, `t2_brand_audit`: GPT-5.6 Luna → GPT-6 Luna → Nova Lite (acc2) → GPT-6 Luna (OpenAI API, last
+    resort since migration 366, S267).
   - **A-series writers** (AA-1026, migration 327, tech lead T-3 in S263): `s1_generate`, `s1_flag_fix`,
     `s1_itinerary_nudge`, `a0_column_map`, `supply_content_writer` have `allowed_scopes = {aws_only, vendor_direct}`
     and end on GPT-6 Luna (OpenAI API) as the LAST fallback. Route order is MODEL FIRST (tech lead S267, root ADR 0009
@@ -730,11 +731,24 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     Anthropic API, Sonnet 4.6 on acc3, Haiku 4.5 on acc3, then GPT-6 Luna on the OpenAI API (5 attempts, within the
     6 per request). `LLM_ROUTE_AWS_FIRST=on` (`client.route_attempts`, default off) runs every AWS deployment of the
     route first instead. A model reached ONLY outside AWS stays the end of the route: both admin PATCH endpoints refuse
-    an AWS model behind it (`_check_aws_before_vendor`, relaxed S267), and the route PATCH accepts the one other-maker last fallback on a vendor_direct writer (`_writer_last_resort`); the
-    writer / judge family rule holds for the primary, every other fallback and the shadow. A draft written by that last resort is judged by a GPT judge
-    (same maker): its ledger row says `provider = 'openai'`, `fallback_used = true`; an eval run refuses that verdict
-    ("Route governance" above). T-stages, `tp_*` and the CRM stay
-    `aws_only`.
+    an AWS model behind it (`_check_aws_before_vendor`, relaxed S267), and the route PATCH accepts the one other-maker
+    last fallback on a vendor_direct writer (`_writer_last_resort`); the writer / judge family rule holds for the
+    primary, every other fallback and the shadow. A draft written by that last resort is judged by a GPT judge (same
+    maker): its ledger row says `provider = 'openai'`, `fallback_used = true`; an eval run refuses that verdict
+    ("Route governance" above).
+  - **AWS preferred, not AWS only** (tech lead S267, root ADR 0009 decision 5 amendment; it replaced T-3, which kept
+    tenant content, TripPlanner, the CRM and the validate stages inside AWS): migration 366 gives EVERY active text
+    stage (writer, judge, validate) `allowed_scopes = {aws_only, vendor_direct}`, so each one reaches the Anthropic API
+    (one key, connection `anthropic-direct`, 150 USD a month, alert 80 %, hard stop) for its Claude 5.x primary and,
+    where its chain ends on it, the OpenAI API after its AWS deployments. Only the embedding stages stay `aws_only`
+    (no vendor embedding deployment). The data protections stay as they are: the tenant AI budget (fail closed,
+    `tenant_budget`), the per-connection monthly caps, the tenant `data_region` (ADR 0019; the per-stage `pii_class`
+    routing it plans is not in this gateway yet) and the CRM's PII scrubbing in its own gateway. `llm_route_chains.violations` reports a text
+    stage left on `aws_only` (`aws_only_text_stage`). TripPlanner's own gateway still calls Bedrock only, so it skips
+    a vendor deployment on `tp_compose` until it gains the vendor adapters; the CRM routes in its own gateway
+    (AA-Partner), outside `shared.llm_role_config`. Per-product spend stays in the ledger:
+    `llm_route_chains.product_of` / `ledger_app` map every stage to catalogue, tenant content, TripPlanner, Booking or
+    shared, and to the `app` the admin Spend > By app page groups by.
   - acc3 is the only chat account a route uses today (AA-998; the acc2 candidates of 324 have no route). The legacy Haiku/Sonnet chain is acc3 Sonnet → acc3 Haiku
     (no cross-account tier); `account_route` is CHECKed to acc3 / NULL (migration 295) and the gateway ignores any
     other value. `CatalogModel.account_for` only picks acc3 or acc2. They no longer try acc2-native Bedrock first (AA-843:

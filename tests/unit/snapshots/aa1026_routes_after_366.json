@@ -22,7 +22,8 @@
   {
    "account_route": "acc3",
    "allowed_scopes": [
-    "aws_only"
+    "aws_only",
+    "vendor_direct"
    ],
    "fallback_model_ids": [
     "gpt-5.6-luna",
@@ -41,11 +42,13 @@
   {
    "account_route": "acc3",
    "allowed_scopes": [
-    "aws_only"
+    "aws_only",
+    "vendor_direct"
    ],
    "fallback_model_ids": [
     "gpt-5.6-luna",
-    "nova-lite"
+    "nova-lite",
+    "gpt-6-luna-openai"
    ],
    "is_active": true,
    "model_id": "gpt-6-luna",
@@ -58,11 +61,11 @@
   {
    "account_route": "acc3",
    "allowed_scopes": [
-    "aws_only"
+    "aws_only",
+    "vendor_direct"
    ],
    "fallback_model_ids": [
     "haiku-4-5",
-    "sonnet-5-5",
     "sonnet-4-6",
     "llama4-scout"
    ],
@@ -77,11 +80,11 @@
   {
    "account_route": "acc3",
    "allowed_scopes": [
-    "aws_only"
+    "aws_only",
+    "vendor_direct"
    ],
    "fallback_model_ids": [
     "haiku-4-5",
-    "sonnet-5-5",
     "sonnet-4-6",
     "nova-lite"
    ],
@@ -115,7 +118,8 @@
   {
    "account_route": "acc3",
    "allowed_scopes": [
-    "aws_only"
+    "aws_only",
+    "vendor_direct"
    ],
    "fallback_model_ids": [
     "haiku-4-5",
@@ -148,11 +152,11 @@
   {
    "account_route": "acc3",
    "allowed_scopes": [
-    "aws_only"
+    "aws_only",
+    "vendor_direct"
    ],
    "fallback_model_ids": [
     "sonnet-4-6",
-    "haiku-5-5",
     "haiku-4-5",
     "nova-lite"
    ],
@@ -199,11 +203,13 @@
   {
    "account_route": null,
    "allowed_scopes": [
-    "aws_only"
+    "aws_only",
+    "vendor_direct"
    ],
    "fallback_model_ids": [
     "gpt-6-luna",
-    "nova-lite"
+    "nova-lite",
+    "gpt-6-luna-openai"
    ],
    "is_active": true,
    "model_id": "gpt-5.6-luna",
@@ -292,7 +298,8 @@
   {
    "account_route": "acc3",
    "allowed_scopes": [
-    "aws_only"
+    "aws_only",
+    "vendor_direct"
    ],
    "fallback_model_ids": [
     "gpt-5.6-luna",
@@ -311,11 +318,13 @@
   {
    "account_route": "acc3",
    "allowed_scopes": [
-    "aws_only"
+    "aws_only",
+    "vendor_direct"
    ],
    "fallback_model_ids": [
     "haiku-4-5",
-    "sonnet-4-6"
+    "sonnet-4-6",
+    "gpt-6-luna-openai"
    ],
    "is_active": true,
    "model_id": "haiku-5-5",
@@ -328,11 +337,13 @@
   {
    "account_route": "acc3",
    "allowed_scopes": [
-    "aws_only"
+    "aws_only",
+    "vendor_direct"
    ],
    "fallback_model_ids": [
     "haiku-4-5",
-    "sonnet-4-6"
+    "sonnet-4-6",
+    "gpt-6-luna-openai"
    ],
    "is_active": true,
    "model_id": "haiku-5-5",
@@ -383,11 +394,13 @@
   {
    "account_route": "acc3",
    "allowed_scopes": [
-    "aws_only"
+    "aws_only",
+    "vendor_direct"
    ],
    "fallback_model_ids": [
     "gpt-5.6-luna",
-    "nova-lite"
+    "nova-lite",
+    "gpt-6-luna-openai"
    ],
    "is_active": true,
    "model_id": "gpt-6-luna",
@@ -419,11 +432,13 @@
   {
    "account_route": null,
    "allowed_scopes": [
-    "aws_only"
+    "aws_only",
+    "vendor_direct"
    ],
    "fallback_model_ids": [
     "gpt-6-luna",
-    "nova-lite"
+    "nova-lite",
+    "gpt-6-luna-openai"
    ],
    "is_active": true,
    "model_id": "gpt-5.6-luna",
@@ -550,11 +565,11 @@
   {
    "account_route": "acc3",
    "allowed_scopes": [
-    "aws_only"
+    "aws_only",
+    "vendor_direct"
    ],
    "fallback_model_ids": [
     "sonnet-4-6",
-    "haiku-5-5",
     "haiku-4-5",
     "nova-lite"
    ],
@@ -569,7 +584,8 @@
   {
    "account_route": "acc3",
    "allowed_scopes": [
-    "aws_only"
+    "aws_only",
+    "vendor_direct"
    ],
    "fallback_model_ids": [
     "haiku-4-5",
@@ -640,11 +656,13 @@
   {
    "account_route": "acc3",
    "allowed_scopes": [
-    "aws_only"
+    "aws_only",
+    "vendor_direct"
    ],
    "fallback_model_ids": [
     "sonnet-4-6",
-    "haiku-4-5"
+    "haiku-4-5",
+    "gpt-6-luna-openai"
    ],
    "is_active": true,
    "model_id": "sonnet-5-5",
@@ -723,5 +741,5 @@
    "stage": "writing_memory_mine"
   }
  ],
- "source": "aa1026_routes_before_366.json with the family chains of CIS migration 366 (S267)"
+ "source": "aa1026_routes_before_366.json with CIS migration 366 (S267, tech lead): the family fallback chains and allowed_scopes {aws_only, vendor_direct} on every active non-embed stage (AWS preferred, not AWS only)"
 }

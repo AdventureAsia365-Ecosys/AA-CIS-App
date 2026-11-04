@@ -2,21 +2,24 @@
 and what the gateway calls for them.
 
 ``snapshots/aa1026_routes_before_366.json`` is the live route table of 04/11/2026 (the post-344 snapshot plus the three
-rows it predates); ``snapshots/aa1026_routes_after_366.json`` is the same table with the family chains
-(``tests/integration/test_aa1026_migration_366.py`` proves the migration produces it on real Postgres). Each route is
-walked through ``LLMClient.generate`` with every provider failing (``aa1002_s3_route_capture``), under the 304 / 306 /
-324 registry rows plus migration 366's two catalog rows (Claude Sonnet 4.6 / Haiku 4.5 on Converse, acc3 only), with
-the Anthropic API connection off and ON. No provider, AWS or database is reached.
+rows it predates); ``snapshots/aa1026_routes_after_366.json`` is the same table with the family chains and the S267
+data scopes (``tests/integration/test_aa1026_migration_366.py`` proves the migration produces it on real Postgres).
+Each route is walked through ``LLMClient.generate`` with every provider failing (``aa1002_s3_route_capture``), with
+the snapshot's own ``allowed_scopes``, under the 304 / 306 / 324 registry rows plus migration 366's two catalog rows
+(Claude Sonnet 4.6 / Haiku 4.5 on Converse, acc3 only), with the Anthropic API connection off and ON. No provider, AWS
+or database is reached.
 
 What this proves:
-- only the fallbacks of the decided stages change; primary, shadow, scopes, role and the switched-off rows do not;
+- only the fallbacks of the decided stages and the scopes of the active text stages change (tech lead S267: "AWS
+  preferred, not AWS only", every active writer / judge / validate stage allows aws_only AND vendor_direct; the
+  embedding stages and the switched-off rows stay aws_only); primary, shadow and role do not;
 - every active route keeps the chain rules (``llm_route_chains.violations``), which the old table broke (no fallback on
-  tp_compose / segment_research*);
-- a changed stage still calls its primary on acc3 first, then the new Claude 4.x rows on acc3 by Converse; on a
-  vendor_direct stage the gateway runs MODEL FIRST (tech lead S267, root ADR 0009 decision 5 amendment): with the
-  Anthropic API switched on, Sonnet 5.5 on acc3, then Sonnet 5.5 on the Anthropic API, then Sonnet 4.6 on acc3, ...,
-  the OpenAI API last, within the gateway's 6 attempts; with the AWS-first switch on (``LLM_ROUTE_AWS_FIRST``, kept,
-  default off) every AWS call comes before any vendor API call; an aws_only stage never leaves AWS in either order;
+  tp_compose / segment_research*, and the text stages T-3 kept on aws_only);
+- a changed stage still calls its primary on acc3 first, then the new Claude 4.x rows on acc3 by Converse; the gateway
+  runs MODEL FIRST (tech lead S267, root ADR 0009 decision 5 amendment): with the Anthropic API switched on, Sonnet
+  5.5 on acc3, then Sonnet 5.5 on the Anthropic API, then Sonnet 4.6 on acc3, ..., the OpenAI API last, within the
+  gateway's 6 attempts; with the AWS-first switch on (``LLM_ROUTE_AWS_FIRST``, kept, default off) every AWS call comes
+  before any vendor API call; an embedding stage never leaves AWS;
 - every stage not changed makes exactly the calls it made before.
 """
 import dataclasses
@@ -40,25 +43,37 @@ NEW_MODELS = {
 }
 LARGE = ["sonnet-4-6", "haiku-4-5"]   # not haiku-5-5: refused with sonnet-5-5, and the 6-attempt cap
 SMALL = ["haiku-4-5", "sonnet-4-6"]
-# The decision table (docs/implementation-notes/AA-1026-family-fallback.md): stage -> new fallbacks.
+BOTH = ["aws_only", "vendor_direct"]
+# The decision table (docs/implementation-notes/AA-1026-family-fallback.md): stage -> new fallbacks. S267 (every text
+# stage vendor_direct): tp_compose and segment research end on the OpenAI API like the other writers; a validate chain
+# keeps ONE 5.x Claude tier (its primary's: the other 5.x tier is refused with it, and with the Anthropic API on a
+# second one would pass the 6 attempts per request); the GPT / Amazon validate and judge chains that had no vendor rung
+# end on the OpenAI API.
 DECIDED = {
     **{s: [*LARGE, OPENAI_HOP] for s in ("s1_generate", "supply_content_writer", "t2_generate", "t8_angle_gen",
-                                         "t9_write")},
-    "tp_compose": LARGE,
+                                         "t9_write", "tp_compose")},
     **{s: [*SMALL, OPENAI_HOP] for s in ("a0_column_map", "s1_flag_fix", "s1_itinerary_nudge", "t2_flag_fix",
-                                         "t2_itinerary_nudge", "t9_repair")},
-    "segment_research": SMALL,
-    "segment_research_batch": SMALL,
+                                         "t2_itinerary_nudge", "t9_repair", "segment_research",
+                                         "segment_research_batch")},
     "a3_atomize": ["gpt-5.6-luna", "haiku-5-5", "haiku-4-5", "nova-lite"],
     "s1_source_facts": ["gpt-5.6-luna", "haiku-5-5", "haiku-4-5", "nova-lite"],
-    "a3_place_card_check": ["haiku-4-5", "sonnet-5-5", "sonnet-4-6", "llama4-scout"],
-    "a3_place_days": ["haiku-4-5", "sonnet-5-5", "sonnet-4-6", "nova-lite"],
+    "a3_place_card": ["gpt-5.6-luna", "nova-lite", OPENAI_HOP],
+    "t10_claims": ["gpt-5.6-luna", "nova-lite", OPENAI_HOP],
+    "a3_place_card_check": ["haiku-4-5", "sonnet-4-6", "llama4-scout"],
+    "a3_place_days": ["haiku-4-5", "sonnet-4-6", "nova-lite"],
     "a3_place_dedupe": ["gpt-5.6-luna", "llama4-maverick", OPENAI_HOP],
     "a3_place_dedupe_check": ["haiku-4-5", "nova-lite"],
-    "a3_place_locate": ["sonnet-4-6", "haiku-5-5", "haiku-4-5", "nova-lite"],
-    "t9_faq_answer_fit": ["sonnet-4-6", "haiku-5-5", "haiku-4-5", "nova-lite"],
+    "a3_place_locate": ["sonnet-4-6", "haiku-4-5", "nova-lite"],
+    "t9_faq_answer_fit": ["sonnet-4-6", "haiku-4-5", "nova-lite"],
     "t9_faq_filter": ["haiku-4-5", "nova-lite"],
+    "s1_brand_audit": ["gpt-6-luna", "nova-lite", OPENAI_HOP],
+    "t2_brand_audit": ["gpt-6-luna", "nova-lite", OPENAI_HOP],
 }
+
+
+def _text_stage(r: dict) -> bool:
+    """An active writer / judge / validate stage: allowed both data scopes since 366 (S267)."""
+    return r["is_active"] and r["role"] != "embed"
 
 
 def _routes(path: Path) -> dict:
@@ -98,6 +113,11 @@ def _seed(original):
     return seed
 
 
+def _scopes_of(routes: dict):
+    """The snapshot's own allowed_scopes (rc.stage_scopes derives 311's backfill from the route, which 366 widened)."""
+    return lambda fixture: {s: tuple(r["allowed_scopes"]) for s, r in routes.items()}
+
+
 def _capture(routes: dict, env: dict) -> dict:
     fixture = _fixture(routes)
     current: list = []
@@ -109,6 +129,7 @@ def _capture(routes: dict, env: dict) -> dict:
 
     with patch.object(rc, "load_fixture", return_value=fixture), \
             patch.object(rc, "seed_deployments", _seed(rc.seed_deployments)), \
+            patch.object(rc, "stage_scopes", _scopes_of(routes)), \
             patch.object(rc, "Recorder", Recorder), \
             patch("shared.llm_client.bedrock_satellite.native_runtime",
                   side_effect=lambda conn, **_: current[0].runtime(conn.connection_key)):
@@ -156,13 +177,17 @@ def _deployment_scopes() -> dict:
 
 # ── the decided table ──────────────────────────────────────────────────────────────────────────────────────────────
 
-def test_only_the_decided_fallbacks_change():
+def test_only_the_decided_fallbacks_and_the_text_stage_scopes_change():
     before, after = _routes(BEFORE), _routes(AFTER)
     assert set(before) == set(after)
     for stage, r in after.items():
         expected = DECIDED.get(stage, before[stage]["fallback_model_ids"])
-        assert r == {**before[stage], "fallback_model_ids": expected}, stage
+        scopes = BOTH if _text_stage(before[stage]) else before[stage]["allowed_scopes"]
+        assert r == {**before[stage], "fallback_model_ids": expected, "allowed_scopes": scopes}, stage
     assert all(after[s]["is_active"] for s in DECIDED)                      # switched-off routes are not touched
+    # embeddings and switched-off rows stay inside AWS (no vendor embedding deployment exists)
+    assert {s for s, r in after.items() if r["allowed_scopes"] == ["aws_only"]} == {
+        "a3_place_embed", "f10_embed", "tp_search_embed", "tp_component_embed", "s1_atom_writer", "tp_extract"}
 
 
 def test_every_decided_chain_keeps_the_stage_primary_and_adds_the_working_siblings():
@@ -182,21 +207,29 @@ def test_the_chain_rules_hold_after_366_and_name_the_gaps_before():
     after = violations(_routes(AFTER).values(), _models(), reach, acc2_only, _deployment_scopes())
     assert after == []
     before = violations(_routes(BEFORE).values(), _models(), reach, acc2_only)
+    aws_only_text = {s for s, r in _routes(BEFORE).items()
+                     if _text_stage(r) and "vendor_direct" not in r["allowed_scopes"]}
+    assert len(aws_only_text) == 15
     assert {(s, rule) for s, rule, _ in before} == {
-        ("segment_research", "no_fallback"), ("segment_research_batch", "no_fallback"), ("tp_compose", "no_fallback")}
+        ("segment_research", "no_fallback"), ("segment_research_batch", "no_fallback"), ("tp_compose", "no_fallback"),
+        *((s, "aws_only_text_stage") for s in aws_only_text)}
 
 
 @pytest.mark.parametrize("stage,change,rule", [
     ("s1_judge", {"fallback_model_ids": ["gpt-6-luna", "haiku-4-5", "nova-lite", OPENAI_HOP]}, "judge_writer_family"),
     ("t9_write", {"fallback_model_ids": ["sonnet-4-6", "nova-lite", OPENAI_HOP]}, "writer_family"),
-    ("t9_write", {"allowed_scopes": ["aws_only"]}, "vendor_on_aws_only"),
+    ("t9_write", {"allowed_scopes": ["aws_only"]}, "aws_only_text_stage"),
+    ("a3_place_locate", {"allowed_scopes": ["aws_only"]}, "aws_only_text_stage"),
     ("s1_judge", {"fallback_model_ids": ["gpt-6-luna", OPENAI_HOP, "nova-lite"]}, "vendor_not_last"),
     ("a3_place_card_check", {"fallback_model_ids": ["haiku-4-5", "gpt-6-luna", "llama4-scout"]},
      "check_pair_family"),
     ("tp_compose", {"fallback_model_ids": []}, "no_fallback"),
     ("s1_generate", {"fallback_model_ids": ["sonnet-4-6", "haiku-5-5", "haiku-4-5", OPENAI_HOP]}, "attempt_cap"),
-], ids=["judge_claude", "writer_acc2_model", "aws_only_vendor", "vendor_mid_chain", "check_pair", "no_fallback",
-        "attempt_cap"])
+    ("a3_atomize", {"fallback_model_ids": ["gpt-5.6-luna", "haiku-5-5", "haiku-4-5", "nova-lite", OPENAI_HOP]},
+     "attempt_cap"),
+    ("a3_place_locate", {"fallback_model_ids": ["sonnet-4-6", "haiku-5-5", "haiku-4-5", "nova-lite"]}, "attempt_cap"),
+], ids=["judge_claude", "writer_acc2_model", "aws_only_writer", "aws_only_validate", "vendor_mid_chain", "check_pair",
+        "no_fallback", "attempt_cap", "attempt_cap_validate_openai", "attempt_cap_two_5x_tiers"])
 def test_each_rule_catches_its_break(stage, change, rule):
     from api.services.llm_route_chains import violations
     reach, acc2_only = _reach_and_acc2_only()
@@ -204,6 +237,30 @@ def test_each_rule_catches_its_break(stage, change, rule):
     routes[stage] = {**routes[stage], **change}
     found = violations(routes.values(), _models(), reach, acc2_only, _deployment_scopes())
     assert rule in {r for s, r, _ in found if s == stage}
+
+
+def test_an_embedding_stage_stays_aws_only_without_a_violation():
+    from api.services.llm_route_chains import violations
+    reach, acc2_only = _reach_and_acc2_only()
+    after = _routes(AFTER)
+    assert after["f10_embed"]["allowed_scopes"] == ["aws_only"]
+    assert not [v for v in violations(after.values(), _models(), reach, acc2_only, _deployment_scopes())
+                if v[0] in ("f10_embed", "a3_place_embed", "tp_search_embed")]
+
+
+def test_every_route_stage_maps_to_a_product_and_a_ledger_app():
+    """S267 (tech lead: ONE Anthropic API key, per-product spend tracked in our ledger): every stage, switched off or
+    not, names its product, and the ledger app the Spend > By app page groups it under."""
+    from api.services.llm_route_chains import ledger_app, product_of
+    products = {s: product_of(s) for s in _routes(AFTER)}
+    assert not [s for s, p in products.items() if p is None]
+    assert {p for p in products.values()} == {"catalogue", "tenant_content", "tripplanner", "booking", "shared"}
+    assert products["s1_generate"] == "catalogue" and products["t2_generate"] == "tenant_content"
+    assert products["supply_content_writer"] == "booking" and products["writing_memory_eval"] == "shared"
+    assert {s for s in products if ledger_app(s) == "tripplanner"} == {
+        "tp_compose", "tp_extract", "tp_search_embed", "tp_component_embed"}
+    assert all(ledger_app(s) == "cis" for s in products if not s.startswith("tp_"))
+    assert product_of("crm_draft") is None                                   # the CRM has its own gateway
 
 
 def test_a_switched_off_route_is_not_checked():
@@ -231,6 +288,8 @@ def test_a_changed_stage_calls_its_primary_first_then_each_model_on_every_deploy
     """Model first (S267): a vendor API call is either the same model as the acc3 call right before it, or the
     route's vendor-only last rung (the OpenAI API); the new 4.x rows are called on acc3 by Converse."""
     route = _routes(AFTER)[stage]
+    reach, _ = _reach_and_acc2_only()
+    vendor_last = route["fallback_model_ids"][-1] == OPENAI_HOP
     for variant in ("plain", "structured"):
         old = calls["before"][state][stage][variant]["calls"]
         new = calls["after"][state][stage][variant]["calls"]
@@ -244,10 +303,15 @@ def test_a_changed_stage_calls_its_primary_first_then_each_model_on_every_deploy
             if key in NEW_MODELS:
                 assert ["converse", "acc3", NEW_MODELS[key][1]] in [c[:3] for c in new] or \
                     ["converse_stream", "acc3", NEW_MODELS[key][1]] in [c[:3] for c in new], (key, variant, new)
-        if "vendor_direct" not in route["allowed_scopes"]:
-            assert all(_is_aws(c) for c in new), (variant, new)            # aws_only: never leaves AWS
-        else:
+        assert route["allowed_scopes"] == BOTH                              # S267: every text stage
+        if vendor_last:
             assert new[-1][:2] == ["openai", "openai-direct"], (variant, new)     # the OpenAI API last
+        else:
+            assert _is_aws(new[-1]), (variant, new)                         # acc2 last (the other failure domain)
+        if state == "seed":                                                 # Anthropic API off: AWS until the end
+            assert all(_is_aws(c) for c in (new[:-1] if vendor_last else new)), (variant, new)
+        assert not any(c[0] == "anthropic" for c in new) or any(
+            reach.get(k) == frozenset(BOTH) for k in [route["model_id"], *route["fallback_model_ids"]])
         assert len(new) >= len(old)
         assert len(new) <= 6                                                # errors.MAX_CHAIN_ATTEMPTS: last rung runs
         # the AWS-first switch makes the same calls (only the order may move)
@@ -290,7 +354,7 @@ def _resolve(stage: str, anthropic_on: bool = False) -> dict:
     routes = _routes(AFTER)
     fixture = _fixture(routes)
     models = rc.catalog_models(fixture)
-    cfg = rc.stage_configs(fixture, rc.stage_scopes(fixture))[stage]
+    cfg = rc.stage_configs(fixture, _scopes_of(routes)(fixture))[stage]
     rc._reset_registry()
     catalog._models = dict(models)
     catalog._loaded_at, catalog._failed_at = time.monotonic(), 0.0
@@ -316,7 +380,10 @@ def _resolve(stage: str, anthropic_on: bool = False) -> dict:
     ("a3_place_locate", "sonnet-4-6@acc3"),
     ("a3_atomize", "haiku-4-5@acc3"),
     ("s1_judge", "nova-lite@acc2"),
+    ("s1_brand_audit", "nova-lite@acc2"),
     ("a3_place_dedupe", "llama4-maverick@acc2"),
+    ("a3_place_card", "nova-lite@acc2"),
+    ("segment_research", "haiku-4-5@acc3"),
 ])
 def test_the_resolver_names_the_first_model_that_would_be_called_without_calling_one(stage, first):
     out = _resolve(stage)
@@ -334,6 +401,21 @@ def test_the_resolver_shows_the_model_first_order_of_a_vendor_direct_writer():
     assert out["attempts"][0] == {"model": "sonnet-5-5", "scope": "stage", "status": "call",
                                   "connection": "anthropic-direct", "deployments": ["anthropic-direct"]}
     assert out["first"] == "sonnet-5-5@anthropic-direct"
+
+
+@pytest.mark.parametrize("stage,first,rest", [
+    ("tp_compose", "sonnet-5-5", ["sonnet-4-6", "haiku-4-5", OPENAI_HOP]),
+    ("a3_place_locate", "sonnet-5-5", ["sonnet-4-6", "haiku-4-5", "nova-lite"]),
+    ("t9_faq_filter", "haiku-5-5", ["haiku-4-5", "nova-lite"]),
+    ("segment_research", "haiku-5-5", ["haiku-4-5", "sonnet-4-6", OPENAI_HOP]),
+])
+def test_s267_a_former_aws_only_stage_reaches_its_primary_on_the_anthropic_api(stage, first, rest):
+    """S267 (AWS preferred, not AWS only): TripPlanner, segment research and the validate stages now allow
+    vendor_direct, so with the Anthropic API on and acc3 refusing 5.x their primary runs on the Anthropic API before
+    the 4.x sibling on acc3. (TripPlanner's own gateway still calls Bedrock only: it skips that deployment.)"""
+    out = _resolve(stage, anthropic_on=True)
+    assert [a["model"] for a in out["attempts"]] == [first, *rest]
+    assert out["first"] == f"{first}@anthropic-direct"
 
 
 def test_the_resolver_shows_the_aws_first_passes_with_the_switch_on(monkeypatch):
@@ -369,7 +451,10 @@ def test_the_check_script_prints_one_report_with_the_first_model_per_stage(capsy
     out = capsys.readouterr().out
     report = json.loads(out.split("--- ROUTE CHAIN CHECK ---\n", 1)[1].split("\n--- END ---", 1)[0])
     assert report["violations"] == []
+    assert report["unmapped_stages"] == []
     assert report["first_by_stage"]["s1_generate"] == "sonnet-5-5@acc3"
+    by_stage = {s["stage"]: s for s in report["stages"]}
+    assert (by_stage["t9_write"]["product"], by_stage["t9_write"]["app"]) == ("tenant_content", "cis")
     assert "tp_extract" not in report["first_by_stage"]                      # switched off: listed, not resolved
     assert {s["stage"] for s in report["stages"] if s.get("switched_off")} == {
         "s1_atom_writer", "tp_extract", "tp_component_embed"}

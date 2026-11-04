@@ -6,18 +6,23 @@ Since migration 366 every active stage route is an ordered chain by model family
 working sibling of each family tier on the route (Claude Sonnet 5.5 -> Sonnet 4.6, Claude Haiku 5.5 -> Haiku 4.5,
 GPT-6 Luna <-> GPT-5.6 Luna), then (writers) the other Claude tier, then the AWS models of the OTHER failure domain the
 route already had (acc2: Nova / Llama, migrations 331-333 / 339), then the vendor API last resort (GPT-6 Luna on the
-OpenAI API) only on a stage allowed ``vendor_direct``. The gateway runs a route MODEL FIRST (tech lead S267, root ADR
-0009 decision 5 amendment: "prefer the same model first, then go outside"): every deployment of a model (acc3 by
-priority, then the same model on its vendor API, e.g. Sonnet 5.5 on the Anthropic API) before the route's next model;
-``LLM_ROUTE_AWS_FIRST=on`` (``client.route_attempts``) runs every AWS deployment of the route first instead. An
-``aws_only`` stage never leaves AWS in either order.
+OpenAI API, a model reached only outside AWS) at the end. Since the S267 policy "AWS preferred, not AWS only" (tech
+lead, root ADR 0009 decision 5 amendment, replacing T-3) every active text stage (writer, judge, validate) allows
+both data scopes, so the vendor APIs are reachable from every one of them after their AWS deployments; only the
+embedding stages stay ``aws_only`` (no vendor embedding deployment exists). The gateway runs a route MODEL FIRST:
+every deployment of a model (acc3 by priority, then the same model on its vendor API, e.g. Sonnet 5.5 on the
+Anthropic API) before the route's next model; ``LLM_ROUTE_AWS_FIRST=on`` (``client.route_attempts``, default off)
+runs every AWS deployment of the route first instead. An ``aws_only`` stage never leaves AWS in either order.
 
 ``violations(routes, models, reach)`` (pure) checks the rules a route must keep, whatever an admin or a later
 migration does; the unit tests run it on the decided routes (``tests/unit/snapshots/aa1026_routes_after_366.json``)
 and ``scripts/llm_ops/route_chain_check.py`` on the live rows:
 
 - ``no_fallback``: an active route with no fallback at all (one refused model stops the stage);
-- ``vendor_on_aws_only``: an ``aws_only`` stage names a model reached only outside AWS;
+- ``aws_only_text_stage``: an active text stage (role writer, judge or validate) that does not allow ``vendor_direct``
+  (S267: AWS preferred, not AWS only; it replaced S263's ``vendor_on_aws_only``, which checked the T-3 rule that kept
+  tenant content, TripPlanner and the validate stages inside AWS). The detail names any model reached only outside
+  AWS the stage could then never call. An embedding stage stays ``aws_only`` and is not checked;
 - ``vendor_not_last``: a model reached only outside AWS is followed by a model reachable inside AWS (the vendor-only
   rung is the suffix of the chain; a model with an AWS AND a vendor API deployment may sit anywhere, S267);
 - ``judge_writer_family``: a judge route names a model of the writers' family (``family_rule.WRITER_FAMILY``, ADR 0009
@@ -31,6 +36,14 @@ and ``scripts/llm_ops/route_chain_check.py`` on the live rows:
   starts per request (``errors.MAX_CHAIN_ATTEMPTS``, ADR 0009 decision 5), counting every deployment of every model
   in the stage's scopes (the Anthropic API included, on or off): its last rungs (the OpenAI API) would never run.
   The count does not depend on the order (model first or AWS first make the same attempts).
+
+``product_of(stage)`` names the product a stage's spend belongs to (S267, tech lead: ONE Anthropic API key for every
+product, the per-product split stays in our ledger): ``catalogue`` (A-series admin pipeline), ``tenant_content``
+(T-series), ``tripplanner``, ``booking`` (the supply descriptions Booking shows), ``shared`` (the writing-memory loop
+both content lines use), and the ledger ``app`` its rows carry (``shared.llm_call_log.app``, what the admin Spend > By
+app page groups by): ``tripplanner`` for the stages TripPlanner's own gateway calls, ``cis`` for every stage the CIS
+gateway calls. The CRM has no stage here (its own gateway and ledger, ``crm.llm_call``; the By app page reads it
+through ``crm.ops.v1``). ``None`` for a stage no rule knows: the unit test keeps every route stage mapped.
 
 ``resolve_stage(...)`` walks a stage the way the gateway would (``client.route_attempts`` for the order and the
 pass scopes, ``vendor_route.deployment_plan`` for the deployments a model would be called on now: enabled, connection
@@ -51,6 +64,40 @@ CHECK_PAIRS: dict[str, str] = {
     "a3_place_dedupe_check": "a3_place_dedupe",
 }
 ACC2_CONNECTION = "acc2"
+# The roles of the text stages that may reach a vendor API after their AWS deployments (S267, tech lead: AWS preferred,
+# not AWS only). An embed stage stays aws_only: no vendor embedding deployment exists.
+TEXT_ROLES = frozenset({"writer", "judge", "validate"})
+
+
+# Stage -> product (S267: one Anthropic key, per-product tracking in the ledger). Exact stages first, then prefixes.
+_PRODUCT_BY_STAGE: dict[str, str] = {
+    "supply_content_writer": "booking",          # AA-835: the hotel / service descriptions Booking shows
+    "segment_research": "catalogue",             # AA-642 A2: the admin demand-research loop
+    "segment_research_batch": "catalogue",
+    "f10_embed": "catalogue",
+}
+_PRODUCT_BY_PREFIX: tuple[tuple[str, str], ...] = (
+    ("tp_", "tripplanner"),
+    ("writing_memory_", "shared"),
+    ("a0_", "catalogue"), ("a3_", "catalogue"), ("s1_", "catalogue"),
+    ("t2_", "tenant_content"), ("t7_", "tenant_content"), ("t8_", "tenant_content"), ("t9_", "tenant_content"),
+    ("t10_", "tenant_content"),
+)
+# The ledger app of a product's rows: TripPlanner's gateway writes 'tripplanner', the CIS gateway call_log.APP 'cis'.
+_LEDGER_APP = {"tripplanner": "tripplanner"}
+
+
+def product_of(stage: str) -> Optional[str]:
+    """The product a stage's spend belongs to (see the module docstring), or None for a stage no rule knows."""
+    if stage in _PRODUCT_BY_STAGE:
+        return _PRODUCT_BY_STAGE[stage]
+    return next((prod for prefix, prod in _PRODUCT_BY_PREFIX if stage.startswith(prefix)), None)
+
+
+def ledger_app(stage: str) -> Optional[str]:
+    """The ``shared.llm_call_log.app`` value a stage's rows carry (the Spend > By app row), None when unmapped."""
+    prod = product_of(stage)
+    return None if prod is None else _LEDGER_APP.get(prod, "cis")
 
 
 def _family(models: dict, key: Optional[str]) -> Optional[str]:
@@ -86,10 +133,10 @@ def violations(routes: Iterable[dict], models: Iterable, reach: dict[str, frozen
         role = r.get("role")
         if not (r.get("fallback_model_ids") or []):
             out.append((stage, "no_fallback", f"{r.get('model_id')} has no fallback"))
-        if data_scope.VENDOR_DIRECT not in scopes:
+        if role in TEXT_ROLES and data_scope.VENDOR_DIRECT not in scopes:
             bad = [k for k in keys if k in outside]
-            if bad:
-                out.append((stage, "vendor_on_aws_only", ", ".join(bad)))
+            out.append((stage, "aws_only_text_stage",
+                        f"allowed_scopes {', '.join(scopes)}" + (f"; never called: {', '.join(bad)}" if bad else "")))
         seen_vendor = None
         for k in keys:
             if k in outside:
@@ -183,4 +230,4 @@ def resolve_stage(cfg) -> dict:
     return out
 
 
-__all__ = ["CHECK_PAIRS", "resolve_stage", "violations"]
+__all__ = ["CHECK_PAIRS", "TEXT_ROLES", "ledger_app", "product_of", "resolve_stage", "violations"]

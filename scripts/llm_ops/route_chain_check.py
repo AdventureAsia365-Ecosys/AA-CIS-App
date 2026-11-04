@@ -12,13 +12,17 @@ nothing, and needs the code of ``api/services/llm_route_chains.py`` in the image
 For each active stage: its chain, the attempts in the gateway's order (``client.route_attempts``: model first by
 default, tech lead S267, each attempt listing the deployments in the order they would be tried, e.g. acc3 then the
 Anthropic API; the AWS-first passes only with ``LLM_ROUTE_AWS_FIRST=on``), each attempt's status (``call`` = a
-deployment would be called now, with its connection; ``skip`` = why not: circuit open with the class that opened it, budget reached, role not served,
-no enabled deployment in that scope), and FIRST = the first model@connection that would be called. "Would be called"
-is not "will answer": a circuit only opens after a refusal, so a model refused for the first time still shows as
-``call``. Then the chain-rule violations (``llm_route_chains.violations``) of the live rows. Exit code 0 (a report).
+deployment would be called now, with its connection; ``skip`` = why not: circuit open with the class that opened it,
+budget reached, role not served, no enabled deployment in that scope), and FIRST = the first model@connection that
+would be called. "Would be called" is not "will answer": a circuit only opens after a refusal, so a model refused
+for the first time still shows as ``call``. Then the chain-rule violations (``llm_route_chains.violations``) of the
+live rows. Each stage also carries its ``product`` and ledger ``app`` (``llm_route_chains.product_of`` /
+``ledger_app``, S267: one Anthropic API key, per-product spend read from the ledger by stage); a stage no rule maps is
+listed under ``unmapped_stages``. Exit code 0 (a report).
 
 Output markers: ``--- ROUTE CHAIN CHECK ---`` / ``--- END ---`` around the JSON object
-``{"stages": [...], "violations": [[stage, rule, detail], ...], "first_by_stage": {stage: "model@connection"}}``.
+``{"stages": [...], "violations": [[stage, rule, detail], ...], "first_by_stage": {stage: "model@connection"},
+"unmapped_stages": [stage, ...]}``.
 """
 from __future__ import annotations
 
@@ -79,23 +83,27 @@ def main() -> int:
                            "reason": row.get("disabled_reason")})
             continue
         stages.append(route_chains.resolve_stage(_config(row)))
+    for s in stages:
+        s.update(product=route_chains.product_of(s["stage"]), app=route_chains.ledger_app(s["stage"]))
     reach, acc2_only, per_row = _reach(models)
     found = route_chains.violations(rows, models, reach, acc2_only, per_row)
     report = {"stages": stages, "violations": [list(v) for v in found],
-              "first_by_stage": {s["stage"]: s.get("first") for s in stages if not s.get("switched_off")}}
+              "first_by_stage": {s["stage"]: s.get("first") for s in stages if not s.get("switched_off")},
+              "unmapped_stages": sorted(s["stage"] for s in stages if s.get("product") is None)}
 
     if not args.json:
         for s in stages:
             if s.get("switched_off"):
                 print(f"{s['stage']:26} switched off ({s.get('reason') or 'no reason'})")
                 continue
-            print(f"{s['stage']:26} {s['role']:8} {','.join(s.get('scopes') or ['-']):22} FIRST {s.get('first')}")
+            print(f"{s['stage']:26} {s['role']:8} {','.join(s.get('scopes') or ['-']):22} "
+                  f"{s.get('product') or 'UNMAPPED'}/{s.get('app') or '-'} FIRST {s.get('first')}")
             for a in s["attempts"]:
                 where = a.get("connection") or a.get("reason")
                 print(f"    {a['model']:22} [{a['scope']}] {a['status']}: {where}")
             if s.get("error"):
                 print(f"    ERROR {s['error']}")
-        print(f"violations: {len(found)}")
+        print(f"violations: {len(found)}; stages with no product: {', '.join(report['unmapped_stages']) or 'none'}")
         for v in found:
             print("   ", " | ".join(v))
     print("--- ROUTE CHAIN CHECK ---")
