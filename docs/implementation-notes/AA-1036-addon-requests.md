@@ -26,6 +26,8 @@ Partner side (agency app page, sidebar, CRM AI pause banner, invited-user test):
 - **Repeat requests:** a second request while one is pending answers the pending one (200, `created: false`, no second
   bell row); at most 10 requests per tenant in 24 hours (429); refused when the add-on is live (409
   `already_subscribed`) or the account is not in service (409 `tenant_not_in_service`).
+- **Tenant Activity** (Account › Activity) lists "Requested an add-on", "Add-on request approved / declined" with the
+  add-on name only (never the plan key, the job id or the staff note): `api/services/tenant_account.py` allowlist.
 - **Declines carry a reason** (required, at most 500 characters) that the agency sees in its add-ons page; an approval
   may carry an optional note.
 
