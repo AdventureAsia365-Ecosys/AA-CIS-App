@@ -402,11 +402,22 @@ class CognitoDirectory:
         self._call("AdminAddUserToGroup", Username=email, GroupName=group)
 
     def remove_from_group(self, email: str, group: str) -> None:
+        """AdminRemoveUserFromGroup. A missing user or a missing group counts as done: neither holds anybody.
+
+        ``ResourceNotFoundException`` is what Cognito answers for a group the pool does not have (AA-1035: the R2
+        ``cis-<role>`` / ``booking-finance`` groups exist only once AA-CIS-Infra is applied, and every Sync / existing
+        user create removes every staff group the row does not hold). A wrong pool id answers the same code; the
+        create, add, enable and disable steps still fail on it, and the warning names the group."""
         try:
             self._call("AdminRemoveUserFromGroup", Username=email, GroupName=group)
         except ClientError as exc:
-            if _error_code(exc) != "UserNotFoundException":   # no user: it is in no group either
-                raise
+            code = _error_code(exc)
+            if code == "UserNotFoundException":   # no user: it is in no group either
+                return
+            if code == "ResourceNotFoundException":   # no group: nobody is in it
+                logger.warning("staff_directory_remove_missing_group", group=group)
+                return
+            raise
 
     def disable(self, email: str) -> None:
         try:
