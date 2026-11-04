@@ -14,13 +14,17 @@ planner) from the agency app, AA staff approve or decline it in Tenant 360 › S
   tenant's customer_success manager) in one transaction, the audit row last (QRY-4, as the saga).
 - :func:`approve`: the decision of an admin or of the tenant's account manager (customer_success, its own book: the
   route's capability and ``require_tenant_scope``). Refused (409 ``tenant_not_in_service``) when the account is not in
-  service, before anything is written. The plan (an unretired plan of the product) is attached through the existing
-  control-plane path, the ``tenant_provision`` saga in attach mode (``services/tenant_account/provision.py``), enqueued
-  in the SAME transaction that marks the request approved, with request key ``addon-request:<request id>``: one job per
-  request, and no approved request without its job (or the reverse). The saga writes the subscription, the
-  entitlements and the ``tenant.subscription_changed`` audit rows; this module adds ``tenant.addon_request_approved``.
-  An approved request then carries ``setup`` from its job (:func:`setup_state`): ``in_progress``, ``done`` or
-  ``failed`` (the saga failed for good: the add-on is not on), so neither staff nor the agency read a bare "approved".
+  service, and (409 ``already_subscribed``) when the add-on is live by now, before anything is written: an approval
+  turns an add-on on, it never changes the plan or seats of a live one (``tenant.write`` / ``billing.write``); the
+  saga request carries ``only_new`` so a subscription that goes live after the approval is not changed either, and
+  any attach closes the pending requests of the products it made live (``provision.py``). The plan (an unretired
+  plan of the product) is attached through the existing control-plane path, the ``tenant_provision`` saga in attach
+  mode (``services/tenant_account/provision.py``), enqueued in the SAME transaction that marks the request approved,
+  with request key ``addon-request:<request id>``: one job per request, and no approved request without its job (or
+  the reverse). The saga writes the subscription, the entitlements and the ``tenant.subscription_changed`` audit
+  rows; this module adds ``tenant.addon_request_approved``. An approved request then carries ``setup`` from its job
+  (:func:`setup_state`): ``in_progress``, ``done`` or ``failed`` (the saga failed for good: the add-on is not on), so
+  neither staff nor the agency read a bare "approved".
 - :func:`decline`: the same deciders, with a reason (shown to the tenant), audited ``tenant.addon_request_declined``.
 
 A decision is set once (``status = 'pending'`` in the UPDATE; the CIS 374 CHECKs hold the shape). Errors are
@@ -272,17 +276,26 @@ async def approve(conn, tenant_id: str, request_id: str, *, plan_key: Any, seats
     note = _text(note, "note", required=False)
     async with conn.transaction():
         await conn.execute("SELECT set_config('aa.actor', $1, true)", actor)
-        r = await _decidable(conn, tenant_id, request_id)
+        # The tenant row first (FOR SHARE), then the request: the saga's order (tenant FOR UPDATE, then the pending
+        # requests an attach closes), so the two never deadlock, and no attach of this tenant runs between the live
+        # check below and the commit.
         t = await conn.fetchrow(TENANT_SQL + " FOR SHARE", tenant_id)
+        r = await _decidable(conn, tenant_id, request_id)
         if t is None or not in_service(t):
             raise PlanError("tenant_not_in_service", "this account is not in service: no add-on can be attached", 409)
+        # The add-on went live after the request (Tenant 360 "Add an add-on", another saga): approving now would change
+        # the plan and seats of a live subscription, a tenant.write / billing.write decision, never the account
+        # manager's (tenant.book.write). The saga's only_new keeps that true if it goes live after this commit too.
+        if await conn.fetch(LIVE_SQL, tenant_id, [r["product"]]):
+            raise PlanError("already_subscribed",
+                            f"the {PRODUCT_LABEL[r['product']]} add-on is already on; decline this request", 409)
         if not isinstance(plan_key, str) or await conn.fetchval(PLAN_SQL, plan_key, r["product"]) is None:
             raise PlanError("unknown_plan", f"no live {PRODUCT_LABEL[r['product']]} plan {plan_key!r}")
         add_on: dict[str, Any] = {"product": r["product"], "plan_key": plan_key}
         if seats is not None:
             add_on["seats"] = seats
         req = pv.parse({"request_key": f"{REQUEST_KEY_PREFIX}{r['request_id']}", "mode": "attach",
-                        "tenant_id": tenant_id, "add_ons": [add_on], "requested_by": staff_id})
+                        "tenant_id": tenant_id, "add_ons": [add_on], "requested_by": staff_id, "only_new": True})
         job_id, _created = await tenant_provision_job.enqueue_request(conn, req)
         job_status = await conn.fetchval("SELECT status FROM shared.job WHERE id = $1::uuid", job_id)
         row = await conn.fetchrow(APPROVE_SQL, r["request_id"], tenant_id, actor[:64], note, plan_key, job_id)

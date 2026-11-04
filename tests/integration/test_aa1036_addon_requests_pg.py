@@ -255,3 +255,104 @@ async def test_an_approval_whose_setup_failed_says_so(conn):
     assert (status, one["setup"]) == ("failed", "failed") and error.startswith("unknown_plan")
     tp = (await ar.tenant_view(conn, tid))["add_ons"][1]
     assert tp["state"] == "available" and tp["last_decision"]["setup"] == "failed"
+
+
+# ── AA-1036 review: an approval never changes a live add-on (tenant.book.write is not a billing write) ─────────────
+
+CS = "admin:5c3e8d20-0000-4000-8000-00000000c036"          # the tenant's account manager (customer_success)
+
+
+async def _sub(conn, tid, product="crm"):
+    r = await conn.fetchrow("SELECT plan_key, status, seats FROM shared.tenant_subscription "
+                            "WHERE tenant_id = $1::uuid AND product = $2", tid, product)
+    return tuple(r) if r is not None else None
+
+
+async def _attach(conn, tid, plan_key="crm.pro", seats=6, only_new=False):
+    """Tenant 360 "Add an add-on" (an admin's attach saga) run by the worker; returns (result, job id)."""
+    job_id = str(uuid.uuid4())
+    body = {"request_key": f"zz-att-{uuid.uuid4().hex[:10]}", "mode": "attach", "tenant_id": tid,
+            "add_ons": [{"product": "crm", "plan_key": plan_key, "seats": seats}]}
+    if only_new:
+        body["only_new"] = True
+    return await pv.provision(_Pool(conn), pv.parse(body), job_id=job_id), job_id
+
+
+@pytest.mark.asyncio
+async def test_an_attach_closes_the_pending_request_and_the_account_manager_cannot_approve_it(conn):
+    """A pending CRM request, then an admin attaches the CRM (crm.pro, 6 seats): the saga closes the request
+    (approved, by the saga, with the live plan, audited); the account manager's approve with another plan and seats
+    answers 409 and the live plan and seats stay as they are."""
+    tid = await _tenant(conn)
+    row, _ = await ar.create_request(conn, tid, "crm", None, actor=OWNER)
+    out, job_id = await _attach(conn, tid)
+    assert out["steps"] == ["crm_subscribed", "crm_request_closed"]
+    stored = await _request_row(conn, row["request_id"])
+    assert stored["status"] == "approved" and stored["plan_key"] == "crm.pro"
+    assert stored["decided_by"] == pv.actor_for(job_id) and str(stored["provision_job_id"]) == job_id
+    assert stored["decision_note"] == pv.REQUEST_CLOSED_NOTE
+    audit = await conn.fetch("SELECT actor, resource_id, details FROM acp_shared.audit_log WHERE tenant_id = $1 "
+                             "AND action = 'tenant.addon_request_approved'", tid)
+    assert [(a["actor"], a["resource_id"]) for a in audit] == [(pv.actor_for(job_id), row["request_id"])]
+    jobs = await conn.fetchval("SELECT count(*) FROM shared.job WHERE kind = 'tenant_provision'")
+    with pytest.raises(PlanError) as e:
+        await ar.approve(conn, tid, row["request_id"], plan_key="crm.core", seats=500, note=None, actor=CS,
+                         staff_id=None)
+    assert e.value.status == 409 and e.value.code == "already_decided"
+    assert await _sub(conn, tid) == ("crm.pro", "active", 6)
+    assert await conn.fetchval("SELECT count(*) FROM shared.job WHERE kind = 'tenant_provision'") == jobs
+    crm = (await ar.tenant_view(conn, tid))["add_ons"][0]
+    assert crm["state"] == "active" and crm["request"] is None and crm["last_decision"]["status"] == "approved"
+    # a second attach of the same plan closes nothing more (no pending request left)
+    again, _ = await _attach(conn, tid)
+    assert again["steps"] == ["crm_unchanged"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status,trial", [
+    ("active", None), ("past_due", None), ("trialing", "now() + interval '5 days'"),
+])
+async def test_approving_a_request_whose_add_on_is_live_by_now_is_refused(conn, status, trial):
+    """The add-on went live through a path that closes no request (here: written directly): approve answers 409
+    already_subscribed before anything is written; the request stays pending (staff decline it)."""
+    tid = await _tenant(conn)
+    row, _ = await ar.create_request(conn, tid, "crm", None, actor=OWNER)
+    await conn.execute("INSERT INTO shared.tenant_subscription (tenant_id, product, plan_key, status, seats, "
+                       "updated_by, trial_ends_at) "
+                       f"VALUES ($1::uuid, 'crm', 'crm.pro', $2, 6, 'zz-test', {trial or 'NULL'})", tid, status)
+    jobs = await conn.fetchval("SELECT count(*) FROM shared.job WHERE kind = 'tenant_provision'")
+    with pytest.raises(PlanError) as e:
+        await ar.approve(conn, tid, row["request_id"], plan_key="crm.core", seats=500, note=None, actor=CS,
+                         staff_id=None)
+    assert e.value.status == 409 and e.value.code == "already_subscribed"
+    assert await _sub(conn, tid) == ("crm.pro", status, 6)
+    stored = await _request_row(conn, row["request_id"])
+    assert stored["status"] == "pending" and stored["provision_job_id"] is None
+    assert await conn.fetchval("SELECT count(*) FROM shared.job WHERE kind = 'tenant_provision'") == jobs
+    assert (await ar.decline(conn, tid, row["request_id"], reason="Already on", actor=CS))["status"] == "declined"
+
+
+@pytest.mark.asyncio
+async def test_an_approval_whose_add_on_went_live_before_its_job_ran_changes_nothing(conn):
+    """Approved while the CRM is off (crm.core, 2 seats); an admin attaches crm.pro with 6 seats before the worker
+    runs the approval's job: that job (only_new) leaves the live subscription as it is."""
+    tid = await _tenant(conn)
+    row, _ = await ar.create_request(conn, tid, "crm", None, actor=OWNER)
+    _, job_id = await ar.approve(conn, tid, row["request_id"], plan_key="crm.core", seats=2, note=None, actor=CS,
+                                 staff_id=None)
+    payload = await conn.fetchval("SELECT payload FROM shared.job WHERE id = $1::uuid", job_id)
+    payload = json.loads(payload) if isinstance(payload, str) else payload
+    assert payload["only_new"] is True
+    admin, _ = await _attach(conn, tid)
+    assert admin["steps"] == ["crm_subscribed"]                 # the request was approved already: nothing to close
+    out = await pv.provision(_Pool(conn), pv.parse(payload), job_id=job_id)
+    assert out["steps"] == ["crm_already_on"]
+    assert await _sub(conn, tid) == ("crm.pro", "active", 6)
+    # only_new still turns on an add-on that is not live (canceled; a trial that has ended)
+    for change in ("status = 'canceled', canceled_at = now(), trial_ends_at = NULL",
+                   "status = 'trialing', trial_ends_at = now() - interval '1 day', canceled_at = NULL"):
+        await conn.execute(f"UPDATE shared.tenant_subscription SET {change} "
+                           "WHERE tenant_id = $1::uuid AND product = 'crm'", tid)
+        out, _ = await _attach(conn, tid, plan_key="crm.core", seats=2, only_new=True)
+        assert out["steps"] == ["crm_subscribed"], change
+        assert await _sub(conn, tid) == ("crm.core", "active", 2)

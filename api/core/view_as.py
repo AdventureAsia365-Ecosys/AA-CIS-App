@@ -28,8 +28,9 @@ How it works
      widens it): else 401 ``view_as_ended``, and the session is ended for good (:func:`close_session`, one
      ``tenant.view_as_ended`` row);
    - the read must be one the session's start role may see (:func:`role_may_read`, :data:`ROUTE_CAPS`): a read
-     that carries the plan or usage (``/v1/quota``) needs a money capability of its own on top of ``tenant.view_as``,
-     so support never sees it; else 403 ``view_as_not_for_role``. View-as never widens a role's own reads;
+     that carries the plan or usage (``/v1/quota``) or the add-on subscriptions and request decisions
+     (``/v1/account/add-ons``) needs an account capability of its own on top of ``tenant.view_as``, so support never
+     sees it; else 403 ``view_as_not_for_role``. View-as never widens a role's own reads;
    - every request, refused or served, writes one ``acp_shared.audit_log`` row (:func:`audit_row`, action
      ``tenant.view_as_request``: actor the staff member, the session, method, route, status). A request is served only
      after its session check; its row is written once the response status is known.
@@ -125,9 +126,13 @@ READ_ROUTES: tuple[str, ...] = (
 # Reads that need a capability of their own on top of tenant.view_as (any one of the listed): the role x read matrix.
 # View-as must never show a role more than its own staff pages do. /v1/quota carries the plan tier and the rewrites
 # used: the Tenant 360 account / usage reads (tenant.read: admin; tenant.book.account.read: customer_success), never
-# support. A read not listed here needs tenant.view_as only.
+# support. /v1/account/add-ons carries each add-on's subscription status and the add-on requests with the staff
+# decision notes: the Tenant 360 › Subscription reads (GET /admin/tenants/{id}/subscription and …/addon-requests need
+# tenant.read | tenant.book.account.read | billing.read), never support (AA-1036 review). A read not listed here needs
+# tenant.view_as only.
 ROUTE_CAPS: dict[str, tuple[str, ...]] = {
     "/v1/quota": ("tenant.read", "tenant.book.account.read"),
+    "/v1/account/add-ons": ("tenant.read", "tenant.book.account.read"),
 }
 
 

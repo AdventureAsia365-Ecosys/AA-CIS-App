@@ -25,7 +25,22 @@ Partner side (agency app page, sidebar, CRM AI pause banner, invited-user test):
   `tenant.read` (admin only), which the account manager does not hold, so the drawer polls the new
   `GET /admin/tenants/{tenant_id}/addon-requests/{request_id}` (same provision job shape + the request; Subscription
   read permission, tenant-scoped). `runSaga` takes a `pollPath`.
-- **Not in service = no approval.** `approve()` reads the tenant row (`FOR SHARE`) after the request lock and refuses
+- **An approval never changes a live add-on (review fix, S268).** Changing the plan or seats of a live subscription
+  is a `tenant.write` / `billing.write` decision; approving a request is `tenant.book.write` (the account manager).
+  So: (1) `approve()` checks `LIVE_SQL` for the request's product inside its transaction and refuses 409
+  `already_subscribed` before anything is written (the request stays pending; staff decline it); (2) the approval's
+  saga request carries `only_new`: the saga inserts the add-on or turns on a row that is not live (canceled, paused,
+  unpaid, an ended trial), and leaves a live row exactly as it is (step `<product>_already_on`), so an add-on that
+  goes live between the approval and the job is not changed either. `only_new` comes only from the stored job
+  payload of an approval; the admin provision bodies (`ProvisionAttachIn`) cannot carry it. (3) Every attach saga
+  (Tenant 360 "Add an add-on" included) closes the tenant's pending requests of the products that are live after it:
+  `approved`, `decided_by` the saga actor `job:tenant_provision:<job id>`, the plan the subscription has, note "The
+  add-on was turned on by Adventure Asia.", `provision_job_id` the saga's job, one `tenant.addon_request_approved`
+  audit row each (before the saga's own row). Guarded by `to_regclass` so the saga works before 374 is applied.
+- **Lock order.** `approve()` now takes the tenant row `FOR SHARE` BEFORE the request row `FOR UPDATE`, the saga's
+  order (tenant `FOR UPDATE`, then the pending request rows it closes): the two never deadlock, and no attach of
+  the tenant can commit between approve's live check and its commit.
+- **Not in service = no approval.** `approve()` reads the tenant row (`FOR SHARE`) before the request lock and refuses
   409 `tenant_not_in_service` unless `account_status` is trial / active / past_due AND `is_active` AND no
   `cancelled_at` (`in_service()`, also used by the request and the agency's list), before the request is marked or the
   saga enqueued. A decline still works.
@@ -72,3 +87,8 @@ Partner side (agency app page, sidebar, CRM AI pause banner, invited-user test):
 - `docs/api/openapi.json` regenerated with the pinned FastAPI 0.161.1 / Pydantic 2.14.1; the staff route policy snapshot
   regenerated (3 new admin routes).
 - Retention row (DM-7.1): root data standards Part B section 7, root PR merged before the Infra copy of 374.
+- View-as (review fix, S268): `/v1/account/add-ons` is in `ROUTE_CAPS` (`tenant.read` | `tenant.book.account.read`)
+  and in the frontend mirror `VIEW_AS_ROUTE_ROLES` (admin, customer_success): it carries each add-on's subscription
+  status and the request history with the staff decision notes, which support's own staff pages never show (the
+  Subscription tab and `…/addon-requests` need `tenant.read` | `tenant.book.account.read` | `billing.read`).
+  Support's view-as gets 403 `view_as_not_for_role` on it (logged); no view-as page reads it today.

@@ -38,7 +38,10 @@ test("the reads depend on the role: view-as never widens a role's own reads (S26
   const all = [...VIEW_AS_READ_ROUTES];
   assert.deepEqual(viewAsReadsForRole("admin"), all);
   assert.deepEqual(viewAsReadsForRole("customer_success"), all);
-  assert.deepEqual(viewAsReadsForRole("support"), all.filter((t) => t !== "/v1/quota"));
+  // AA-1036 review: support never reads the add-ons (subscription statuses, staff decision notes) either
+  assert.deepEqual(viewAsReadsForRole("support"), all.filter((t) => t !== "/v1/quota" && t !== "/v1/account/add-ons"));
+  assert.ok(!viewAsPathAllowed("/v1/account/add-ons", "support"));
+  assert.ok(viewAsPathAllowed("/v1/account/add-ons", "customer_success"));
   for (const role of ["finance", "content", "content_lead", "tenant_qa", "ai_ops", "viewer", null, undefined]) {
     assert.deepEqual(viewAsReadsForRole(role), [], String(role));
   }

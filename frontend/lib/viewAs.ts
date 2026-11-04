@@ -53,9 +53,11 @@ export const VIEW_AS_READ_ROUTES = [
 ] as const;
 
 // The reads that need a capability of their own on top of tenant.view_as: the staff roles that may make each one
-// (api/core/view_as.py ROUTE_CAPS; /v1/quota carries the plan tier and usage). A read not listed: every view-as role.
+// (api/core/view_as.py ROUTE_CAPS; /v1/quota carries the plan tier and usage, /v1/account/add-ons the add-on
+// subscription statuses and the request decision notes). A read not listed: every view-as role.
 export const VIEW_AS_ROUTE_ROLES: Readonly<Record<string, readonly string[]>> = {
   "/v1/quota": ["admin", "customer_success"],
+  "/v1/account/add-ons": ["admin", "customer_success"],
 };
 
 const READ_PATTERNS = VIEW_AS_READ_ROUTES.map((t) =>

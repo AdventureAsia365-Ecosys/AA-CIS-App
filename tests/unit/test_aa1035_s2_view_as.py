@@ -609,7 +609,8 @@ def test_start_accepts_the_reviewer_alias_as_its_target_only():
 READS_BY_ROLE = {
     "admin": set(view_as.READ_ROUTES),
     "customer_success": set(view_as.READ_ROUTES),
-    "support": set(view_as.READ_ROUTES) - {"/v1/quota"},
+    # AA-1036 review: the add-ons read carries subscription statuses and staff decision notes (Subscription tab data)
+    "support": set(view_as.READ_ROUTES) - {"/v1/quota", "/v1/account/add-ons"},
 }
 
 
@@ -653,14 +654,17 @@ def test_nobody_reads_billing_in_a_view_as_session(role, status):
 
 
 def test_support_quota_is_refused_with_the_real_app(world):
-    """The real app: a support view-as token gets 403 on /v1/quota and /v1/billing (logged), 200-path reads pass."""
+    """The real app: a support view-as token gets 403 on /v1/quota, /v1/account/add-ons and /v1/billing (logged)."""
     client, db, _ = world
     db.session["staff_role"] = "support"
-    for path, detail in (("/v1/quota", view_as.NOT_FOR_ROLE_DETAIL), ("/v1/billing", view_as.READ_ONLY_DETAIL)):
+    for path, detail in (("/v1/quota", view_as.NOT_FOR_ROLE_DETAIL),
+                         ("/v1/account/add-ons", view_as.NOT_FOR_ROLE_DETAIL),
+                         ("/v1/billing", view_as.READ_ONLY_DETAIL)):
         res = client.get(path, headers={"Authorization": f"Bearer {token(srl='support')}"})
         assert res.status_code == 403 and res.json()["detail"] == detail, path
     outcomes = [a[5] for a in db.audit if a[2] == view_as.AUDIT_ACTION_REQUEST]
-    assert len(outcomes) == 2 and '"refused_route_not_for_role"' in outcomes[0] and '"refused_read_only"' in outcomes[1]
+    assert len(outcomes) == 3 and all('"refused_route_not_for_role"' in o for o in outcomes[:2])
+    assert '"refused_read_only"' in outcomes[2]
 
 
 # ── the gate's own rate limit (S268 fix round 2: a refused request may be limited before it is logged) ───────────

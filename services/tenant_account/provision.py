@@ -15,7 +15,13 @@ Three modes (``ProvisionRequest``, validated again in the job because the payloa
   ``agency`` only as the one pilot (``pilot_weeks``). No ``acp_quota_ledger`` row any more (slice 3: the ACPv1
   S2/S3/S4 ledger has no reader; the limits are entitlements).
 - ``attach``: add-ons for an existing tenant that is not offboarding or closed (an add-on needs a live content row,
-  the CIS 353 guard).
+  the CIS 353 guard). With ``only_new`` (set only by an approved add-on request, ``addon_requests.approve``; the admin
+  API bodies cannot carry it) an add-on that is already live is left exactly as it is (step ``<product>_already_on``):
+  the request's decider (the account manager, ``tenant.book.write``) may turn an add-on on, never change the plan or
+  the seats of a live one (``tenant.write`` / ``billing.write``), even when the add-on went live between the approval
+  and the job. Every attach then closes the tenant's pending add-on requests of the products it made live (approved,
+  ``decided_by`` the saga actor, the plan the subscription has, audited ``tenant.addon_request_approved``), so no
+  stale request is left to approve.
 - ``detach`` (slice 3): cancel add-ons (``products``) of an existing tenant: the subscription row stays, status
   ``canceled``; its plan's keys and the add-on's overrides stop applying (the resolver), and the CRM / Booking
   projections follow the feed. This is the revocation path that replaced the CRM's L1 entitlement write.
@@ -56,6 +62,7 @@ TRIAL_DAYS_MAX = 60
 MODES = ("create", "attach", "detach")
 ONBOARD = AdminTenantAuditAction.ONBOARD
 SUBSCRIPTION_CHANGED = AdminTenantAuditAction.SUBSCRIPTION_CHANGED
+ADDON_REQUEST_APPROVED = AdminTenantAuditAction.ADDON_REQUEST_APPROVED
 
 
 class ProvisionError(ValueError):
@@ -95,6 +102,7 @@ class ProvisionRequest:
     trial_days: Optional[int] = None            # create: the account starts in trial
     pilot_weeks: Optional[int] = None           # create, Dev only: the one pilot agency (root ADR 0019 d16)
     cancel: tuple[str, ...] = field(default_factory=tuple)   # detach: the add-on products to cancel
+    only_new: bool = False                      # attach: never change a live add-on (an approved add-on request)
 
     @property
     def idempotency_key(self) -> str:
@@ -114,6 +122,8 @@ class ProvisionRequest:
             out["tenant_id"] = self.tenant_id
         if self.mode == "detach":
             out["products"] = list(self.cancel)
+        if self.only_new:
+            out["only_new"] = True
         if self.requested_by:
             out["requested_by"] = self.requested_by
         return out
@@ -163,7 +173,7 @@ def parse(payload: dict[str, Any]) -> ProvisionRequest:
             if not add_ons:
                 raise ProvisionError("invalid_add_ons", "attach needs at least one add-on")
             return ProvisionRequest(request_key=key, mode=mode, tenant_id=tenant_id, add_ons=add_ons,
-                                    requested_by=requested_by)
+                                    requested_by=requested_by, only_new=payload.get("only_new") is True)
         products = payload.get("products")
         if not isinstance(products, list) or not products or any(p not in ADDON_PRODUCTS for p in products) \
                 or len(set(products)) != len(products):
@@ -248,6 +258,32 @@ UPSERT_ADDON_SQL = """
         OR s.status NOT IN ('trialing', 'active', 'past_due')
     RETURNING s.product
 """
+# only_new (an approved add-on request): insert, or turn on a row that is not live (canceled, paused, unpaid, a trial
+# that has ended: the agency's view and LIVE_SQL of addon_requests.py); a live row is never changed.
+NEW_ADDON_SQL = """
+    INSERT INTO shared.tenant_subscription AS s (tenant_id, product, plan_key, status, seats, updated_by)
+    VALUES ($1, $2, $3, 'active', $4, $5)
+    ON CONFLICT (tenant_id, product) DO UPDATE
+       SET plan_key = EXCLUDED.plan_key, seats = EXCLUDED.seats, updated_by = EXCLUDED.updated_by, status = 'active',
+           trial_ends_at = NULL, canceled_at = NULL
+     WHERE NOT (s.status IN ('active', 'past_due') OR (s.status = 'trialing' AND s.trial_ends_at > now()))
+    RETURNING s.product
+"""
+# An attach closes the pending add-on requests (CIS 374) of the products that are live after it: approved with the
+# plan the subscription has. decided_at is never before requested_at (a request committed after this transaction
+# began has a later now()).
+ADDON_REQUEST_TABLE_SQL = "SELECT to_regclass('shared.tenant_addon_request') IS NOT NULL"
+CLOSE_REQUESTS_SQL = """
+    UPDATE shared.tenant_addon_request r
+       SET status = 'approved', decided_at = GREATEST(now(), r.requested_at), decided_by = $3, decision_note = $4,
+           plan_key = s.plan_key, provision_job_id = $5::uuid
+      FROM shared.tenant_subscription s
+     WHERE r.tenant_id = $1 AND r.product = ANY($2::text[]) AND r.status = 'pending'
+       AND s.tenant_id = r.tenant_id AND s.product = r.product
+       AND (s.status IN ('active', 'past_due') OR (s.status = 'trialing' AND s.trial_ends_at > now()))
+    RETURNING r.request_id::text AS request_id, r.product, r.plan_key
+"""
+REQUEST_CLOSED_NOTE = "The add-on was turned on by Adventure Asia."
 CANCEL_ADDON_SQL = """
     UPDATE shared.tenant_subscription
        SET status = 'canceled', canceled_at = now(), updated_by = $3
@@ -314,9 +350,25 @@ async def _add_ons_step(conn, tenant_id: uuid.UUID, req: ProvisionRequest, actor
     for a in req.add_ons:
         if await conn.fetchval(ADDON_PLAN_SQL, a.plan_key, a.product) is None:
             raise ProvisionError("unknown_plan", f"no live plan {a.plan_key}")
+        if req.only_new:
+            changed = await conn.fetchval(NEW_ADDON_SQL, tenant_id, a.product, a.plan_key, a.seats, actor)
+            steps.append(f"{a.product}_{'subscribed' if changed else 'already_on'}")
+            continue
         changed = await conn.fetchval(UPSERT_ADDON_SQL, tenant_id, a.product, a.plan_key, a.seats, actor,
                                       trial_ends_at)
         steps.append(f"{a.product}_{'subscribed' if changed else 'unchanged'}")
+
+
+async def _close_requests(conn, tenant_id: uuid.UUID, req: ProvisionRequest, actor: str, job_id: str,
+                          steps: list[str]) -> list[dict]:
+    """Closes the tenant's pending add-on requests of the products this attach left live; returns them (the caller
+    audits each one). Nothing before CIS 374 is applied."""
+    if not req.add_ons or not await conn.fetchval(ADDON_REQUEST_TABLE_SQL):
+        return []
+    rows = [dict(r) for r in await conn.fetch(CLOSE_REQUESTS_SQL, tenant_id, [a.product for a in req.add_ons],
+                                              actor, REQUEST_CLOSED_NOTE, job_id)]
+    steps.extend(f"{r['product']}_request_closed" for r in rows)
+    return rows
 
 
 async def _cancel_step(conn, tenant_id: uuid.UUID, req: ProvisionRequest, actor: str, steps: list[str]) -> None:
@@ -356,10 +408,13 @@ async def provision(pool, req: ProvisionRequest, *, job_id: str) -> dict[str, An
             tenant_id, warnings, trial_ends_at = await _create(conn, req, actor, steps)
         else:
             tenant_id = await _attach_target(conn, req)
+        closed: list[dict] = []
         if req.mode == "detach":
             await _cancel_step(conn, tenant_id, req, actor, steps)
         else:
             await _add_ons_step(conn, tenant_id, req, actor, steps, trial_ends_at)
+            if req.mode == "attach":
+                closed = await _close_requests(conn, tenant_id, req, actor, job_id, steps)
         subs = [dict(r) for r in await conn.fetch(SUBS_SQL, tenant_id)]
         events = int(await conn.fetchval(EVENTS_SQL, tenant_id, actor) or 0)
         details = {
@@ -371,6 +426,11 @@ async def provision(pool, req: ProvisionRequest, *, job_id: str) -> dict[str, An
             details.update(name=req.name, plan_tier=req.plan_tier, posts_per_week=req.posts_per_week, kind=req.kind,
                            trial_days=req.trial_days, trial_ends_at=trial_ends_at, pilot_weeks=req.pilot_weeks)
         # last in the transaction: the audit chain trigger holds a transaction-scoped lock (QRY-4)
+        for r in closed:
+            await write_audit_log(conn, tenant_id=str(tenant_id), actor=actor, action=ADDON_REQUEST_APPROVED,
+                                  resource_type="tenant_addon_request", resource_id=r["request_id"],
+                                  details={"product": r["product"], "plan_key": r["plan_key"], "seats": None,
+                                           "provision_job_id": job_id, "closed_by_attach": req.request_key})
         await write_audit_log(conn, tenant_id=str(tenant_id), actor=actor,
                               action=ONBOARD if req.mode == "create" else SUBSCRIPTION_CHANGED,
                               resource_type="tenant", resource_id=str(tenant_id),
