@@ -33,6 +33,10 @@ denied on two or more models; ``state`` closed | open | half_open, ``refusing`` 
 until when, the tripping models), and ``failure_domain`` (``shared.llm_client.invariant.failure_domain``).
 ``invariant`` is the report-only failure-domain rule (``invariant.read``): per stage and stage class, whether an
 enabled, funded deployment in another failure domain exists.
+
+AA-1026 (S267) — ``stage_coverage`` (``shared.llm_client.stage_coverage.read``): per active stage, the model that
+answers now (proven by the breaker or the probe within 36 h, no refusal or open circuit since), or none: the Stage
+coverage card on the Routing tab; the same report raises the ops check ``llm_stage_coverage.<stage>``.
 """
 from __future__ import annotations
 
@@ -42,7 +46,7 @@ from typing import Iterable, Optional
 
 import asyncpg
 
-from shared.llm_client import invariant
+from shared.llm_client import invariant, stage_coverage
 from shared.llm_client.breaker import (CLOSED, Health, connection_health, connection_members, connection_refusing,
                                        state_of)
 from shared.llm_client.errors import ACCESS_DENIED, QUOTA_EXHAUSTED, THROTTLED, classify_text
@@ -287,4 +291,5 @@ async def read(conn, *, hours: int = 24, now: Optional[datetime] = None) -> dict
     out = build(call_rows, job_rows, hours=hours, now=now)
     out["health_ready"], out["connections"] = await read_connections(conn, now=now)
     out["invariant"] = await invariant.read(conn, blocked=blocked_from(out["connections"]), now=now)
+    out["stage_coverage"] = await stage_coverage.read(conn, now=now)     # AA-1026 (S267): the Stage coverage card
     return out

@@ -63,6 +63,10 @@ The AA-832 chain (EventBridge -> ops-probe Lambda -> admin POST -> shared.job ->
 - AA-1002 (S10): each tick also queues the nightly LLM cost reconciliation (`llm_cost_reconcile`, $0) once per UTC day
   from 02:00 UTC (idempotency key per day), while the kind is registered and LLM_COST_RECONCILE is not off. Field
   `llm_cost_reconcile` (the job id, when created) or `llm_cost_reconcile_error`.
+- AA-1026 (S267): the ops checks part also evaluates LLM stage coverage (shared/llm_client/stage_coverage.py: every
+  active stage has a model that answered within 36 h, no refusal or open circuit since); a stage without one raises
+  the ops check ``llm_stage_coverage.<stage>`` (bell once a day per stage, one e-mail per stage and UTC day). Fields
+  `stage_coverage_uncovered` (the stages) or `stage_coverage_error`.
 - AA-845: every JEV_CREDIT_CHECK_EVERY_S (shared/jev_credit.py, 30 min) the loop also runs the Jev low-credit
   check (estimated TypeSafe credit below the threshold -> throttled bell + operator e-mail). It runs after the
   tick, outside sample_once, under its own PART_TIMEOUT_S, and logs its own line (`jev_credit_low_checked` /
@@ -173,6 +177,15 @@ async def _ops_checks_part(pool, client, out: dict) -> None:
 
     # AA-1025 H1b: + the app spend checks (TripPlanner against its app profile budget: the llm_spend_alert signal).
     findings = ops_checks.state_findings(out) + await ops_checks.app_spend_findings(pool)
+    # AA-1026 (S267): + one check per active LLM stage without a model that answers ($0 registry reads)
+    try:
+        coverage = await ops_checks.stage_coverage_findings(pool)
+    except Exception as e:  # noqa: BLE001 — the other checks still alert
+        out["stage_coverage_error"] = _err(e)
+        coverage = []
+    if coverage:
+        out["stage_coverage_uncovered"] = [f.details["stage"] for f in coverage]
+    findings += coverage
     results = await ops_checks.alert_all(pool, findings, client)
     results.update(await ops_checks.flush_events(pool, client))
     if results:

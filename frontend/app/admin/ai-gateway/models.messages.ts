@@ -42,6 +42,20 @@ export const MODELS = defineMessages(
     invariantDegrade: (n: number) => `${n} more declare a degrade mode instead (no breach).`,
     invariantRoleSkipped: (n: number) =>
       `${n} stage${n === 1 ? " names" : "s name"} a model on a connection that does not serve the stage's role; the gateway never calls it there:`,
+    // StageCoverageCard (AA-1026)
+    coverageTitle: "Stage coverage",
+    coverageIntro: (hours: number) =>
+      `For every active stage, the model that answers now: it answered within ${hours} h (a real call or the probe), with no refusal or open circuit since. No test call is made here.`,
+    coverageAllLive: (n: number) => `All ${n} stages have a live model`,
+    coverageMissing: (n: number) => `${n} stage${n === 1 ? "" : "s"} with no live model`,
+    coverageNoLiveModel: "NO LIVE MODEL",
+    coverageStage: "Stage",
+    coverageRole: "Role",
+    coverageLiveNow: "Live model now",
+    coverageNotes: "Why",
+    coverageUnproven: (n: number) => `${n} model${n === 1 ? "" : "s"} not tested recently`,
+    coverageNotReady: "The stage coverage report is not available on this API yet.",
+    coverageEmpty: "No active stage",
     staffMember: "a staff member",
     staffLogin: (ref: string) => `staff (${ref})`,
     domainOk: "Fallback in another failure domain",
@@ -244,6 +258,20 @@ export const MODELS = defineMessages(
     invariantDegrade: (n: number) => `${n} stage khác khai báo chế độ suy giảm thay thế (không tính là vi phạm).`,
     invariantRoleSkipped: (n: number) =>
       `${n} stage có model nằm trên kết nối không phục vụ vai trò của stage; gateway không bao giờ gọi model đó ở kết nối này:`,
+    // StageCoverageCard (AA-1026)
+    coverageTitle: "Độ phủ theo stage",
+    coverageIntro: (hours: number) =>
+      `Với mỗi stage đang bật: model đang trả lời được, tức đã trả lời trong ${hours} giờ qua (lượt gọi thật hoặc probe) và từ đó không bị từ chối hay ngắt mạch. Thẻ này không gọi thử.`,
+    coverageAllLive: (n: number) => `Cả ${n} stage đều có model đang trả lời`,
+    coverageMissing: (n: number) => `${n} stage không có model nào đang trả lời`,
+    coverageNoLiveModel: "KHÔNG CÓ MODEL TRẢ LỜI",
+    coverageStage: "Stage",
+    coverageRole: "Vai trò",
+    coverageLiveNow: "Model đang trả lời",
+    coverageNotes: "Lý do",
+    coverageUnproven: (n: number) => `${n} model chưa được kiểm gần đây`,
+    coverageNotReady: "API này chưa có báo cáo độ phủ theo stage.",
+    coverageEmpty: "Không có stage nào đang bật",
     staffMember: "một nhân viên",
     staffLogin: (ref: string) => `nhân viên (${ref})`,
     domainOk: "Có dự phòng ở miền lỗi khác",

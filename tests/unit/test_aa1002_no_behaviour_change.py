@@ -65,7 +65,8 @@ CALL_PATH = ("client.py", "embed.py", "decide.py", "judge.py", "shadow.py", "bed
              "route_evidence.py",  # AA-1026 D7: route change evidence (reads shared.prompt_eval_runs by SQL)
              "app_profile.py",  # AA-1025 H1a: the app's AI switch (no row / unreadable = AI on)
              "capacity.py",  # AA-1025 H2: TPM limits and lines (no row / unreadable = no limit, nothing held)
-             "model_lifecycle.py")  # AA-1024 D2: Bedrock model lifecycle (free control-plane list; no call path)
+             "model_lifecycle.py",  # AA-1024 D2: Bedrock model lifecycle (free control-plane list; no call path)
+             "stage_coverage.py")  # AA-1026 S267: report-only stage coverage (reads the tables by SQL, not a call)
 
 
 def _imported_modules(path: Path) -> set[str]:

@@ -1891,31 +1891,41 @@ class LLMClient:
         raise _all_failed(f"Every deployment of {model.model_key!r} failed: " + "; ".join(errors), failures)
 
     def _call_target(self, request: LLMRequest, model: CatalogModel, target: VendorDeployment, *,
-                     admit: bool = True) -> LLMResponse:
+                     admit: bool = True, count: bool = True) -> LLMResponse:
         """AA-1002 (S4): one catalog model on one deployment through the breaker (breaker.guarded): a half-open circuit
         lets one probe call through (``admit``), the connection's limiter holds a slot, and the outcome is counted on
         the deployment's circuit (an unusable reply is an answer: it counts as a success). Raises the provider's own
-        exception unchanged, or breaker.CircuitOpen / LimiterSaturated without a call."""
-        conn = target.connection
-        return self._attempt(
-            request, lambda: breaker.guarded(conn, model.model_key,
-                                             lambda: self._dispatch_target(request, model, target),
-                                             admit_call=admit, answered=(UnusableReply,)),
-            model=model.model_key, connection_key=conn.connection_key, wire_id=target.deployment.wire_id,
-            provider=_provider_of(conn))
+        exception unchanged, or breaker.CircuitOpen / LimiterSaturated without a call.
 
-    def probe(self, request: LLMRequest, model: CatalogModel, target: VendorDeployment) -> LLMResponse:
+        AA-1026 (S267): ``count=False`` (the availability sweep of a DISABLED candidate deployment) keeps the limiter
+        but writes nothing to the breaker: no deployment row, no connection circuit, no access_state. Two refused
+        candidates must not pause a connection whose routed models still answer (``CONNECTION_DENIED_MODELS``)."""
+        conn = target.connection
+
+        def call():
+            if count:
+                return breaker.guarded(conn, model.model_key, lambda: self._dispatch_target(request, model, target),
+                                       admit_call=admit, answered=(UnusableReply,))
+            with breaker.limit(conn, model.model_key):
+                return self._dispatch_target(request, model, target)
+
+        return self._attempt(request, call, model=model.model_key, connection_key=conn.connection_key,
+                             wire_id=target.deployment.wire_id, provider=_provider_of(conn))
+
+    def probe(self, request: LLMRequest, model: CatalogModel, target: VendorDeployment, *,
+              count: bool = True) -> LLMResponse:
         """AA-1002 (S4): the admin's connection test — ``model`` on one explicit deployment (which may be switched off:
         the test runs before enabling it), no stage route, no shadow, no fallback. It is the operator's half-open
         probe: an open circuit is not in the way, and the outcome is counted (a success closes the circuit). A billed
         but unusable reply writes the gateway's billed_unusable llm_call_log row (as _call_key_logged does) and is
-        re-raised; an answered call is logged by the caller (stage adhoc_conn_test)."""
+        re-raised; an answered call is logged by the caller (stage adhoc_conn_test). AA-1026 (S267): ``count=False``
+        leaves the breaker out (``_call_target``): the availability sweep of a disabled candidate deployment."""
         # AA-804 (ledger v2): a refused or failed test writes its 0 USD attempt row (role validate).
         scope_token = _ATTEMPT_SCOPE.set(_scope_for(request, "validate",
                                                     {"connection_test": target.connection.connection_key}))
         try:
             self._app_profile_gate(request, model.model_key)   # AA-1025 H1a: AI off for the app = no test call either
-            return self._call_target(request, model, target, admit=False)
+            return self._call_target(request, model, target, admit=False, count=count)
         except Exception as e:
             billed = _billed_usage_of(e)
             if billed:

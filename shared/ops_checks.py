@@ -34,6 +34,11 @@ Two kinds of checks:
   Renaming one of these events in the code silently drops its check: the names
   are tested against the code (tests/unit/test_s263_ops_checks.py).
 
+- **LLM stage coverage** (AA-1026, S267), evaluated on the same tick from the database (:func:`stage_coverage_findings`,
+  ``shared/llm_client/stage_coverage.py``, $0): one check per active stage with no model that answers now,
+  ``llm_stage_coverage.<stage>`` (:func:`check_for`; the stage names are data, so these checks are not in
+  :data:`CHECKS`). Bell at most once per 24 h per stage (``Check.bell_every``), e-mail once per stage and UTC day.
+
 Dedupe (one advisory-locked transaction, so two api tasks never double up): a check writes a bell only when it has
 none in the last :data:`BELL_EVERY` (6 h), and mails only for the first bell of the UTC day: at most one e-mail per
 check per UTC day. A failed publish deletes the bell it just wrote, so the next tick tries both again. E-mail is
@@ -77,6 +82,7 @@ class Check:
     title: str
     action: str
     page: str = PLATFORM_PAGE
+    bell_every: Optional[timedelta] = None      # None = BELL_EVERY (AA-1026: the stage coverage checks bell daily)
 
 
 CHECKS: dict[str, Check] = {
@@ -128,6 +134,26 @@ for _app in APP_SPEND_APPS:
         f"{_name} AI spend reached its daily cap", f"{_name} reached its daily AI budget (app profile): it calls no "
         "model until the UTC day ends and serves its degrade mode. Check AI providers › Calls, then raise the budget "
         "on App profiles if the traffic is real.", COST_PAGE)
+
+# AA-1026 (S267): one check per LLM stage without a model that answers (the stage name follows the prefix).
+STAGE_COVERAGE_PREFIX = "llm_stage_coverage."
+ROUTING_PAGE = "/admin/ai-gateway?tab=routing"
+STAGE_COVERAGE_CHECK = Check(
+    "LLM stage has no live model", "Every model on this stage's route is switched off, refused by its account, "
+    "behind an open circuit or has not answered in the last 36 hours. Jobs of the stage fail or wait. Check the Stage "
+    "coverage card on AI gateway > Routing, run the availability sweep, then give the stage a model that answers.",
+    ROUTING_PAGE, bell_every=timedelta(hours=24))
+
+
+def check_for(name: str) -> Check:
+    """The Check of a finding: a fixed one of :data:`CHECKS`, or the stage coverage check for
+    ``llm_stage_coverage.<stage>``. KeyError for anything else."""
+    if name in CHECKS:
+        return CHECKS[name]
+    if name.startswith(STAGE_COVERAGE_PREFIX) and len(name) > len(STAGE_COVERAGE_PREFIX):
+        return STAGE_COVERAGE_CHECK
+    raise KeyError(name)
+
 
 # Log event name -> check. Both variants of a write failure (async pool and sync) map to one check.
 EVENT_CHECKS: dict[str, str] = {
@@ -319,6 +345,33 @@ async def app_spend_findings(pool, now: Optional[datetime] = None) -> list[Findi
     return spend_findings(rows, now.astimezone(timezone.utc).date().isoformat())
 
 
+def coverage_findings(report: dict) -> list[Finding]:
+    """AA-1026 (S267): one finding per stage of a ``stage_coverage`` report with no live model. Pure."""
+    if not report.get("ready"):
+        return []
+    out: list[Finding] = []
+    for st in report.get("stages") or []:
+        if st.get("status") == "live":
+            continue
+        models = st.get("models") or []
+        reasons = "; ".join(f"{m['model_key']}@{m.get('connection_key') or '-'} {m['state']}" for m in models[:6])
+        out.append(Finding(f"{STAGE_COVERAGE_PREFIX}{st['stage']}",
+                           f"stage {st['stage']} ({st.get('role')}) has no model that answers: {reasons or 'no model'}",
+                           {"stage": st["stage"], "role": st.get("role"), "unproven": st.get("unproven", 0),
+                            "models": [{k: m.get(k) for k in ("model_key", "connection_key", "state", "why")}
+                                       for m in models]}))
+    return out
+
+
+async def stage_coverage_findings(pool, now: Optional[datetime] = None) -> list[Finding]:
+    """AA-1026 (S267): the stage coverage findings of this tick (``stage_coverage.read``, six small reads). [] before
+    the registry migrations. Raises on another database error (the sampler logs it). ``pool.fetch`` per read, like
+    :func:`app_spend_findings` (no connection held across the reads)."""
+    from shared.llm_client import stage_coverage
+
+    return coverage_findings(await stage_coverage.read(pool, now=now))
+
+
 def event_findings(items: dict[str, dict]) -> list[Finding]:
     """Findings for drained log events. Pure."""
     return [Finding(check, f"{v['count']} line(s) between {v['first_at']} and {v['last_at']}",
@@ -368,7 +421,7 @@ def admin_base_url() -> str:
 
 def render(finding: Finding, environment: Optional[str] = None) -> tuple[str, str]:
     """(subject, text) of the e-mail. Subject <= 100 characters (SNS limit), ASCII."""
-    chk = CHECKS[finding.check]
+    chk = check_for(finding.check)
     env = environment or os.environ.get("ENVIRONMENT", "dev")
     subject = f"[AA-CIS {env}] Ops check: {chk.title}"[:100]
     lines = [f"{chk.title}: {finding.summary}.", "", chk.action, ""]
@@ -382,10 +435,11 @@ def render(finding: Finding, environment: Optional[str] = None) -> tuple[str, st
 
 async def raise_alert(pool, finding: Finding, client: Any = None, *,
                       client_factory: Callable[[], Any] = sns_client, now: Optional[datetime] = None) -> dict:
-    """Bell (at most one per check per BELL_EVERY) and, for the first bell of the UTC day, one SNS e-mail.
+    """Bell (at most one per check per BELL_EVERY, or the check's own ``bell_every``) and, for the first bell of the
+    UTC day, one SNS e-mail.
     Returns what was done. Raises only on a database error (the caller logs it). ``now`` is for tests."""
     now = now or datetime.now(timezone.utc)
-    chk = CHECKS[finding.check]
+    chk = check_for(finding.check)
     event_type = EVENT_TYPE_PREFIX + finding.check
     payload = json.dumps({"title": chk.title, "message": f"{finding.summary}. {chk.action}", "check": finding.check,
                           "details": finding.details}, default=str)
@@ -394,7 +448,7 @@ async def raise_alert(pool, finding: Finding, client: Any = None, *,
             await conn.execute("SELECT pg_advisory_xact_lock($1)", _LOCK_KEY)
             row = await conn.fetchrow(LAST_BELL_SQL, event_type, now)
             last = row["last"] if row else None
-            if last is not None and last >= now - BELL_EVERY:
+            if last is not None and last >= now - (chk.bell_every or BELL_EVERY):
                 return {"bell": False}
             bell_id = await conn.fetchval(BELL_SQL, PLATFORM_TENANT_ID, event_type, finding.check, payload,
                                           BELL_ROLES)

@@ -28,6 +28,16 @@ DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 KINDS = {"aa751_k": SimpleNamespace(background=False, expected_seconds=60)}
 
 
+@pytest.fixture(autouse=True)
+def _no_stage_coverage(monkeypatch):
+    """AA-1026: the test DB has every migrated route but no answered call, so each stage would be uncovered and bell.
+    The coverage check on real rows is tested in test_aa1026_stage_coverage_db.py; here it reports nothing."""
+    from unittest.mock import AsyncMock
+
+    from shared import ops_checks
+    monkeypatch.setattr(ops_checks, "stage_coverage_findings", AsyncMock(return_value=[]))
+
+
 @pytest_asyncio.fixture
 async def pool():
     p = await asyncpg.create_pool(DSN, min_size=1, max_size=4)
