@@ -5,7 +5,9 @@ Lane l9-r1-slice3 of S266 (pulled ahead from S268). Root ADR 0019 d1 / d2 / d16;
 `AA-1028-l8-r1-slice2.md`. One code PR; cis_app already holds every grant this needs (CIS 353:
 INSERT / UPDATE on `shared.plan`, all on `plan_feature`, `tenant_subscription`, `tenant_entitlement_override`, SELECT
 on the resolver; `shared.tenants` writes). Review fix pass 2 adds one contract migration, **CIS 361** (resolver: trial
-grace until the tick, platform keys from the content plan only), with no readiness raise: no code waits for it.
+grace until the tick, platform keys from the content plan only), with no readiness raise: no code waits for it. It
+ships in its own migration-only PR (`feat/aa1028-cis-361-trial-grace`, with the 320/321, 356, 357 and 361 replay
+tests it changes) ahead of this code PR.
 
 ## Decisions
 
@@ -183,9 +185,10 @@ grace until the tick, platform keys from the content plan only), with no readine
   disabled numeric override (if any) keeps failing closed through cost_guard / the quota reader; staff edit it to a
   limit in the drawer (it shows "Turn off" for such a stored row so it can be seen and changed).
 
-- Order: this PR, with CIS 361 inside (contract, no readiness raise: Deploy Dev does not wait for it; a person
-  applies it with DB Migrate apply, all job tables idle). The code is correct before and after 361. Deploy api + worker together (the worker runs the new
-  kind; the api's sampler queues it once the kind is registered in that process).
+- Order: root PR (tenant.entitlements.v1 1.2) -> the CIS 361 migration-only PR (contract, no readiness raise: a
+  person applies it with DB Migrate apply, all job tables idle) -> this code PR, rebased on the main that holds 361
+  (so it carries no migration). The code is correct before and after 361. Deploy api + worker together (the worker
+  runs the new kind; the api's sampler queues it once the kind is registered in that process).
 - `tests/unit/conftest.py` has a `seeded_plans` fixture (the tier readers answered with the 355 numbers) used by the
   mocked-connection tenant tests (`test_aa309`, `test_aa496`, `test_aa766`, `test_aa797`).
 - `docs/api/openapi.json` regenerated with fastapi 0.161.1 / pydantic 2.14.1 (the pins).
