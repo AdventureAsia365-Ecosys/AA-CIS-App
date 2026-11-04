@@ -56,6 +56,8 @@ SAMPLES = [
     ("admin_ai_gateway", "GET", "/admin/ai-gateway/tenant-budgets/{tenant_id}", None),     # AA-1016 UI (C4)
     ("admin_ai_gateway", "PUT", "/admin/ai-gateway/tenant-budgets/{tenant_id}", {"monthly_usd": 5}),
     ("admin_ai_gateway", "DELETE", "/admin/ai-gateway/tenant-budgets/{tenant_id}", None),
+    ("admin_llm_route", "GET", "/admin/ai-gateway/route-policy", None),                  # AA-1042 Trace tab
+    ("admin_llm_route", "PUT", "/admin/ai-gateway/route-policy/{stage}", {"fallback_alert_pct": 20}),
     ("admin_dashboard", "GET", "/admin/dashboard/summary", None),
     ("admin_search", "GET", "/admin/search", None),
     ("admin_seo", "GET", "/admin/seo-intelligence", None),

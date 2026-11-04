@@ -292,13 +292,24 @@ def _held(degraded_list: Any) -> bool:
                for e in (degraded_list or []))
 
 
+async def _content_rows(db, sql: str, since: datetime) -> list[dict]:
+    """The rows of one content list; [] when its table or a column is missing (a database without the content
+    pipeline's tables, e.g. a test replay)."""
+    import asyncpg
+    try:
+        return [dict(r) for r in await db.fetch(sql, since, CONTENT_LIMIT)]
+    except (asyncpg.exceptions.UndefinedTableError, asyncpg.exceptions.UndefinedColumnError) as e:
+        logger.warning("llm_route_fallback_content_unreadable", error=str(e)[:200])
+        return []
+
+
 async def read_fallback_content(pool, *, window: Optional[str] = None, now: Optional[datetime] = None) -> dict:
     key, span = window_of(window or "7d")
     now = now or datetime.now(timezone.utc)
     since = now - span
     async with pool.acquire() as db:
-        tours = [dict(r) for r in await db.fetch(FALLBACK_TOURS_SQL, since, CONTENT_LIMIT)]
-        pieces = [dict(r) for r in await db.fetch(FALLBACK_PIECES_SQL, since, CONTENT_LIMIT)]
+        tours = await _content_rows(db, FALLBACK_TOURS_SQL, since)
+        pieces = await _content_rows(db, FALLBACK_PIECES_SQL, since)
     return {"window": key,
             "tours": [{"id": t["id"], "tour_id": t["tour_id"], "tour_name": t.get("tour_name"),
                        "version": t.get("version_num"), "status": t.get("status"), "at": _iso(t.get("created_at")),
