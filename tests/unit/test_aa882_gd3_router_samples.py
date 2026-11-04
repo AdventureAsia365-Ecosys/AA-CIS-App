@@ -31,6 +31,7 @@ SAMPLES = [
     ("admin_tenant_assignments", "GET", "/admin/tenant-assignments", None),                       # AA-1035 s2
     ("admin_tenant_provision", "POST", "/admin/tenants/{tenant_id}/provision", {}),
     ("admin_tenant_subscription", "PUT", "/admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}", {}),
+    ("admin_tenant_addon_requests", "POST", "/admin/tenants/{tenant_id}/addon-requests/{request_id}/decline", {}),
     ("admin_plans", "POST", "/admin/plans", {}),
     ("admin_pipeline", "POST", "/admin/review-queue/{review_id}/approve", {}),
     ("admin_pipeline", "POST", "/admin/run-tour-async", {}),

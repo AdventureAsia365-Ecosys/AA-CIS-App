@@ -55,6 +55,8 @@ TENANT_VISIBLE_ACTIONS: dict[str, tuple[str, str]] = {
     "fact.created": ("content", "Added a fact"),  # AA-814 — Content studio › Facts (the tenant's own facts)
     "fact.updated": ("content", "Edited a fact"),
     "fact.deleted": ("content", "Deleted a fact"),
+    # AA-1036 R3 (root ADR 0019 d7): the owner asked for an add-on (Account › Add-ons)
+    "tenant.addon_requested": ("account", "Requested an add-on"),
     # what Adventure Asia changed on the account (AdminTenantAuditAction), facts the tenant is told anyway
     "agency.onboard": ("account", "Account opened"),
     "tenant.restored": ("account", "Account restored"),
@@ -63,6 +65,9 @@ TENANT_VISIBLE_ACTIONS: dict[str, tuple[str, str]] = {
     "tenant.daily_publish_limit_changed": ("account", "Daily publish limit changed"),
     "tenant.status_changed": ("account", "Account status changed"),
     "tenant.key_rotated": ("account", "API key replaced"),  # history only: no key is issued since AA-1036
+    # AA-1036 R3: Adventure Asia's decision on the request (the plan change itself is tenant.subscription_changed)
+    "tenant.addon_request_approved": ("account", "Add-on request approved"),
+    "tenant.addon_request_declined": ("account", "Add-on request declined"),
 }
 
 MAX_PAGE_SIZE = 100
@@ -71,6 +76,7 @@ MAX_PAGE_SIZE = 100
 # loading an unbounded result into the api task's memory. A cut file says so in its last line.
 EXPORT_MAX_ROWS = 50_000
 
+_ADDON_LABELS = {"crm": "CRM", "tripplanner": "Trip planner"}
 _CHANNEL_LABELS = {"blog": "WordPress", "wordpress": "WordPress", "facebook": "Facebook", "instagram": "Instagram",
                    "tiktok": "TikTok", "email": "Email", "landing_page": "Landing page", "ads": "Ads"}
 
@@ -190,6 +196,8 @@ def detail_text(action: str, raw_details: Any) -> str:
         return " · ".join(p for p in parts if p)
     if action == "tour.rewrite_triggered":
         return "Retry" if d.get("retry") is True else ""
+    if action in ("tenant.addon_requested", "tenant.addon_request_approved", "tenant.addon_request_declined"):
+        return _ADDON_LABELS.get(str(d.get("product") or ""), "")
     if action == "tenant.login":
         return "Content studio" if d.get("client") == "portal" else "API"
     if action == "tenant.plan_changed":

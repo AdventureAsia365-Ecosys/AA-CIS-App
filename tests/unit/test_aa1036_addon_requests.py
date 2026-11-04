@@ -233,3 +233,13 @@ def test_decision_refusals_are_mapped(client, monkeypatch):
     assert listed.status_code == 200 and listed.json()["pending"] == 1
     monkeypatch.setattr(ar, "staff_list", AsyncMock(side_effect=asyncpg.UndefinedTableError("x")))
     assert c.get(f"/admin/tenants/{TID}/addon-requests", headers=_staff()).status_code == 503
+
+
+def test_the_tenant_activity_shows_the_request_and_the_decision_with_the_add_on_only():
+    from api.services import tenant_account as ta
+    for action in ("tenant.addon_requested", "tenant.addon_request_approved", "tenant.addon_request_declined"):
+        assert ta.TENANT_VISIBLE_ACTIONS[action][0] == "account"
+    assert ta.detail_text("tenant.addon_requested", {"product": "crm", "note": True}) == "CRM"
+    assert ta.detail_text("tenant.addon_request_approved",
+                          {"product": "tripplanner", "plan_key": "tripplanner.hosted",
+                           "provision_job_id": "j"}) == "Trip planner"     # never the plan or the job
