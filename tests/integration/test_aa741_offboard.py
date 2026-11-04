@@ -27,8 +27,8 @@ async def pool():
     slug = f"t-{TENANT[:8]}"
     await p.execute("""
         INSERT INTO shared.tenants (tenant_id, name, slug, plan_tier, rate_limit_rpm, is_active,
-                                    posts_per_week, api_key_hash)
-        VALUES ($1::uuid, 'Offboard Test', $2, 'starter', 60, true, 3, 'h')
+                                    posts_per_week)
+        VALUES ($1::uuid, 'Offboard Test', $2, 'starter', 60, true, 3)
         ON CONFLICT DO NOTHING""", TENANT, slug)
     await p.execute("""
         INSERT INTO shared.jev_tenant_allowlist (tenant_id, reason, added_by)

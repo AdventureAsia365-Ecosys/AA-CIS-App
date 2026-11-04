@@ -28,9 +28,9 @@ T0 = datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc)
 async def _tenant(pool, tag: str, suffix: str) -> uuid.UUID:
     tid = uuid.uuid4()
     await pool.execute(
-        "INSERT INTO shared.tenants (tenant_id, name, slug, plan_tier, api_key_hash, rate_limit_rpm, is_active, "
-        "posts_per_week) VALUES ($1, $2, $3, 'starter', $4, 60, true, 3)",
-        tid, f"AA-761 {suffix} {tag}", f"aa761-{suffix}-{tag}", f"hash-{suffix}-{tag}")
+        "INSERT INTO shared.tenants (tenant_id, name, slug, plan_tier, rate_limit_rpm, is_active, "
+        "posts_per_week) VALUES ($1, $2, $3, 'starter', 60, true, 3)",
+        tid, f"AA-761 {suffix} {tag}", f"aa761-{suffix}-{tag}")
     return tid
 
 

@@ -28,7 +28,7 @@ import pytest_asyncio
 
 sys.path.insert(0, os.path.dirname(__file__))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
-from _rls_fixture_helpers import NO_PRIVILEGE_WITHOUT_RLS_SQL_V3, migration_body  # noqa: E402
+from _rls_fixture_helpers import KEY_HASH_STANDIN_SQL, NO_PRIVILEGE_WITHOUT_RLS_SQL_V3, migration_body  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 OBJECTS = ("entitlement_feature", "plan", "plan_feature", "tenant_subscription", "tenant_entitlement_override",
@@ -51,8 +51,8 @@ async def _tenant(conn, *, tier="starter", active=True, offboarded=False, canary
     """The INSERT of POST /admin/tenants (api/routers/admin.py), with an offboarded / canary variant."""
     tid = uuid.uuid4()
     await conn.execute(
-        "INSERT INTO shared.tenants (tenant_id, name, slug, plan_tier, posts_per_week, api_key_hash, rate_limit_rpm, "
-        "is_active, cancelled_at, is_canary) VALUES ($1, 'AA-1028 synthetic', $2, $3::plan_tier_enum, 3, NULL, 60, $4, "
+        "INSERT INTO shared.tenants (tenant_id, name, slug, plan_tier, posts_per_week, rate_limit_rpm, "
+        "is_active, cancelled_at, is_canary) VALUES ($1, 'AA-1028 synthetic', $2, $3::plan_tier_enum, 3, 60, $4, "
         "CASE WHEN $5 THEN now() END, $6)", tid, f"zz1028-{tid.hex[:12]}", tier, active, offboarded, canary)
     return tid
 
@@ -112,6 +112,7 @@ async def test_files_applied_and_rerun_is_a_noop(conn):
             f"conftest swallowed an error in {v} (see its log)"
     before = await conn.fetchval("SELECT count(*) FROM shared.tenant_account_event")
     ents = await conn.fetchval("SELECT count(*) FROM shared.tenant_entitlement")
+    await conn.execute(KEY_HASH_STANDIN_SQL)   # AA-1036: 354 / 355's probe INSERT names the column CIS 369 dropped
     for v in (353, 354, 355):
         await conn.execute(migration_body(v))
     assert await conn.fetchval("SELECT count(*) FROM shared.tenant_account_event") == before
@@ -123,6 +124,7 @@ async def test_grants_are_exact(conn):
     await conn.execute("GRANT SELECT ON shared.plan, shared.tenant_account_event TO aa_app_user, catalog_owner, PUBLIC")
     await conn.execute("GRANT UPDATE ON shared.tenant_account_event TO cis_app")
     await conn.execute("GRANT USAGE ON SEQUENCE shared.tenant_account_event_seq_seq TO cis_app")
+    await conn.execute(KEY_HASH_STANDIN_SQL)   # AA-1036: 355's probe INSERT names the column CIS 369 dropped
     for v in (353, 355):
         await conn.execute(migration_body(v))
     rows = await conn.fetch("""
@@ -483,17 +485,17 @@ async def test_admin_write_shapes_keep_the_content_subscription(conn):
     assert await _materialised(conn, tid) == ents
     sub_evs = [c for t, c in await _events(conn, tid, "subscription.changed")]
     assert sub_evs[-1]["previous_plan_key"] == "content.starter" and sub_evs[-1]["plan_key"] == "content.growth"
-    # an add-on, then offboard (admin.py: cancelled_at, cancellation_reason, is_active false, key revoked)
+    # an add-on, then offboard (admin.py: cancelled_at, cancellation_reason, is_active false)
     await _subscribe(conn, tid, product="crm", plan="crm.core")
     await conn.execute("UPDATE shared.tenants SET cancelled_at = NOW(), cancellation_reason = 'synthetic test', "
-                       "is_active = FALSE, api_key_hash = 'REVOKED_' || tenant_id::text, updated_at = NOW() "
+                       "is_active = FALSE, updated_at = NOW() "
                        "WHERE tenant_id = $1::uuid", tid)
     assert await _sub(conn, tid) == ("content.growth", "canceled", True)
     assert await _sub(conn, tid, "crm") == ("crm.core", "canceled", True)
     assert await _ents(conn, tid) == {} and await _materialised(conn, tid) == {}
-    # restore (admin.py: cancelled_at NULL, is_active TRUE, a new key): content comes back, the add-on does not
+    # restore (admin.py: cancelled_at NULL, is_active TRUE): content comes back, the add-on does not
     await conn.execute("UPDATE shared.tenants SET cancelled_at = NULL, cancellation_reason = NULL, is_active = TRUE, "
-                       "api_key_hash = 'synthetic-hash', updated_at = NOW() WHERE tenant_id = $1", tid)
+                       "updated_at = NOW() WHERE tenant_id = $1", tid)
     assert await _sub(conn, tid) == ("content.growth", "active", False)
     assert await _sub(conn, tid, "crm") == ("crm.core", "canceled", True)
     ents = await _ents(conn, tid)

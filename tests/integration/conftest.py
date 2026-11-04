@@ -750,12 +750,12 @@ def _apply_schema(conn):
     # Seed test tenant
     cur.execute("""
         INSERT INTO shared.tenants
-            (tenant_id, name, slug, plan_tier, posts_per_week, api_key_hash, rate_limit_rpm, is_active)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            (tenant_id, name, slug, plan_tier, posts_per_week, rate_limit_rpm, is_active)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT DO NOTHING;
     """, (
         TENANT_ID, 'Test Tenant', 'test-tenant',
-        'internal', 7, None, 60, True
+        'internal', 7, 60, True
     ))
 
     cur.close()

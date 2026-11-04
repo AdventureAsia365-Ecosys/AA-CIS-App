@@ -266,41 +266,18 @@ async def test_gold_schema_tenant_b_exists(admin_conn):
 
 
 # ---------------------------------------------------------------------------
-# SECTION 5: API Key Hash Verification
+# SECTION 5: No tenant API key column
 # ---------------------------------------------------------------------------
 #
-# AA-433 (22/08/2026): these two tests used to assert api_key_hash == sha256(<a plaintext
-# test key hardcoded right here>) — that plaintext was the same one committed in cleartext
-# in migration 007 (real security exposure, since fixed) and, independent of that, this
-# assertion was already stale before AA-433 touched anything: Tenant A (wanderlux-travel) is
-# a live is_active=true tenant and had its key rotated for real (generate_api_key()) prior to
-# this session, so its api_key_hash no longer matched the migration-007 seed value even before
-# AA-433's own rotation. Pinning a test to one specific historical secret value is inherently
-# fragile the moment key rotation is a real, expected operation — asserting hash "looks like a
-# real hash" is what actually stays true across rotations, so that's what these now check.
+# AA-1036 (root ADR 0019 d6): tenant API keys were removed; CIS 368 cleared shared.tenants.api_key_hash and CIS 369
+# dropped it. The two tests that checked each seed tenant held a SHA-256 key hash (AA-433) are replaced by this one.
 
 @pytest.mark.asyncio
-async def test_tenant_a_api_key_hash(admin_conn):
-    """Tenant A api_key_hash must be a real SHA256 hex digest (not null, not empty, not the
-    literal seed placeholder from migration 007 — the real value is set by whichever key was
-    last issued via generate_api_key(), which changes on rotation by design)."""
-    row = await admin_conn.fetchrow(
-        "SELECT api_key_hash FROM shared.tenants WHERE tenant_id = $1",
-        uuid.UUID(TENANT_A_ID)
+async def test_tenants_have_no_api_key_column(admin_conn):
+    """shared.tenants carries no tenant API key column any more (CIS 369)."""
+    n = await admin_conn.fetchval(
+        "SELECT count(*) AS n FROM information_schema.columns "
+        "WHERE table_schema = 'shared' AND table_name = 'tenants' AND column_name = 'api_key_hash'"
     )
-    key_hash = row["api_key_hash"]
-    assert key_hash and len(key_hash) == 64 and all(c in "0123456789abcdef" for c in key_hash), \
-        f"Tenant A api_key_hash is not a valid 64-char SHA256 hex digest: {key_hash!r}"
-
-
-@pytest.mark.asyncio
-async def test_tenant_b_api_key_hash(admin_conn):
-    """Tenant B api_key_hash must be a real SHA256 hex digest (see test_tenant_a_api_key_hash)."""
-    row = await admin_conn.fetchrow(
-        "SELECT api_key_hash FROM shared.tenants WHERE tenant_id = $1",
-        uuid.UUID(TENANT_B_ID)
-    )
-    key_hash = row["api_key_hash"]
-    assert key_hash and len(key_hash) == 64 and all(c in "0123456789abcdef" for c in key_hash), \
-        f"Tenant B api_key_hash is not a valid 64-char SHA256 hex digest: {key_hash!r}"
+    assert n == 0
 
