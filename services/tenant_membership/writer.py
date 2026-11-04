@@ -58,6 +58,11 @@ class MemberRemoved(Exception):  # noqa: N818 - reads as an outcome
     """The membership is removed; a removed membership never changes again (409)."""
 
 
+class OwnerNeedsTenantWrite(Exception):  # noqa: N818 - reads as an outcome
+    """AA-1035: the caller may not grant, change or remove the ``owner`` Content studio role (403). Checked on the
+    locked row, so a concurrent change to owner can not slip past the check."""
+
+
 def fingerprint(iss: Optional[str], sub: Optional[str]) -> Optional[str]:
     if iss is None or sub is None:
         return None
@@ -93,12 +98,19 @@ async def _locked(conn: Any, tenant_id: str, membership_id: str) -> Any:
     return row
 
 
-async def change_role(conn: Any, tenant_id: str, membership_id: str, role: str, actor: str) -> tuple[dict, bool]:
-    """Set the Content studio role. Returns (row, changed); the same role is a no-op (no audit row, no event)."""
+async def change_role(conn: Any, tenant_id: str, membership_id: str, role: str, actor: str,
+                      *, allow_owner: bool = True) -> tuple[dict, bool]:
+    """Set the Content studio role. Returns (row, changed); the same role is a no-op (no audit row, no event).
+    ``allow_owner=False`` (AA-1035: a staff caller without tenant.write) refuses a change to or from ``owner``
+    with :class:`OwnerNeedsTenantWrite`."""
     if role not in ROLES:
         raise ValueError(f"content_studio_role must be one of {', '.join(ROLES)}")
+    if not allow_owner and role == "owner":
+        raise OwnerNeedsTenantWrite(membership_id)
     async with conn.transaction():
         before = await _locked(conn, tenant_id, membership_id)
+        if not allow_owner and before["content_studio_role"] == "owner":
+            raise OwnerNeedsTenantWrite(membership_id)
         if before["content_studio_role"] == role:
             return staff_row(before), False
         after = await conn.fetchrow(ROLE_SQL, tenant_id, membership_id, role)
@@ -111,14 +123,18 @@ async def change_role(conn: Any, tenant_id: str, membership_id: str, role: str, 
     return staff_row(after), True
 
 
-async def remove(conn: Any, tenant_id: str, membership_id: str, actor: str) -> tuple[dict, bool]:
-    """Remove the membership (final). Returns (row, changed); removing a removed membership is a no-op."""
+async def remove(conn: Any, tenant_id: str, membership_id: str, actor: str,
+                 *, allow_owner: bool = True) -> tuple[dict, bool]:
+    """Remove the membership (final). Returns (row, changed); removing a removed membership is a no-op.
+    ``allow_owner=False`` (AA-1035) refuses removing a live ``owner`` membership with :class:`OwnerNeedsTenantWrite`."""
     async with conn.transaction():
         row = await conn.fetchrow(LOCK_SQL, tenant_id, membership_id)
         if row is None:
             raise MemberNotFound(membership_id)
         if row["status"] == "removed":
             return staff_row(row), False
+        if not allow_owner and row["content_studio_role"] == "owner":
+            raise OwnerNeedsTenantWrite(membership_id)
         after = await conn.fetchrow(REMOVE_SQL, tenant_id, membership_id, actor[:64])
         await write_audit_log(
             conn, tenant_id=tenant_id, actor=actor, action=AdminTenantAuditAction.MEMBER_REMOVED,

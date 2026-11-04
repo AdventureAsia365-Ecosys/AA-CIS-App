@@ -8,7 +8,11 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 from typing import List, Literal, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from api.core.staff_authz import MASTER_ADMIN, OPS_READ, TENANT_READ, has_perm, staff_policy
+from api.core.staff_authz import (
+    BILLING_READ, BILLING_WRITE, CONTENT_READ, MASTER_ADMIN, OPS_READ, TENANT_BOOK_READ, TENANT_BOOK_WRITE, TENANT_READ,
+    TENANT_WRITE, has_any_perm, has_perm, sees_tenant_money, staff_policy,
+)
+from api.core.tenant_scope import TENANT_SCOPED, tenant_scope_filter
 from pydantic import BaseModel, Field
 from api.core.secret_compare import secrets_equal
 from api.core.staff_credential import principal_verified
@@ -111,6 +115,38 @@ def _require_tenant_admin(x_admin_role: Optional[str]) -> None:
     always forwards the verified role as x-admin-role; a direct call must send it too."""
     if x_admin_role != "admin":
         raise HTTPException(status_code=403, detail="Only an admin can change a tenant")
+
+
+# AA-1035 R2 (root ADR 0019 d3, clarifications.md section 3: "PATCH /admin/tenants/{tenant_id} checks per field:
+# finance only changes billing fields"). The plan and suspend / resume are billing; RPM and the publish limit are not.
+BILLING_PATCH_FIELDS = frozenset({"plan_tier", "is_active"})
+
+
+def _require_tenant_patch(x_admin_role: Optional[str], fields: set[str]) -> None:
+    """PATCH /admin/tenants/{id}: tenant.write (admin) may send every field; billing.write (finance) only the billing
+    fields; tenant.book.write (customer_success, its book: require_tenant_scope) only the other ones (RPM, publish
+    limit). Defense in depth behind POLICY (any of the three), like _require_tenant_admin."""
+    if has_perm(x_admin_role, TENANT_WRITE):
+        return
+    if has_perm(x_admin_role, BILLING_WRITE) and fields <= BILLING_PATCH_FIELDS:
+        return
+    if has_perm(x_admin_role, TENANT_BOOK_WRITE) and not fields & BILLING_PATCH_FIELDS:
+        return
+    if has_perm(x_admin_role, BILLING_WRITE):
+        raise HTTPException(status_code=403, detail=(
+            "Your role may change only the plan and suspend / resume of a tenant (plan_tier, is_active)"))
+    if has_perm(x_admin_role, TENANT_BOOK_WRITE):
+        raise HTTPException(status_code=403, detail=(
+            "Your role may not change the plan or suspend / resume a tenant (plan_tier, is_active)"))
+    raise HTTPException(status_code=403, detail="Only an admin can change a tenant")
+
+
+def _require_tenant_book_write(x_admin_role: Optional[str]) -> None:
+    """AA-1035 (S267 fix pass): the non-billing Tenant 360 writes (config, brand identity): tenant.write (admin) or
+    tenant.book.write (customer_success; require_tenant_scope has already kept it to its book). Defense in depth behind
+    POLICY, like _require_tenant_admin."""
+    if not has_any_perm(x_admin_role, TENANT_WRITE, TENANT_BOOK_WRITE):
+        raise HTTPException(status_code=403, detail="Only an admin or the tenant's account manager can change this")
 
 
 def _admin_actor(x_admin_user_id: Optional[str]) -> str:
@@ -381,7 +417,18 @@ async def list_tenants(
             WHERE t.is_active = true OR $1::boolean
             ORDER BY t.created_at
         """, include_inactive)
+        # AA-1035 R2 (root ADR 0019 d4): a customer_success / support caller sees its book (and support the pool) only.
+        scope = await tenant_scope_filter(request, conn)
+        if scope is not None:
+            rows = [r for r in rows if str(r["tenant_id"]) in scope]
         publish_limits = await _publish_limit_overrides(conn)
+    # AA-1035 (S267 review): support reaches its book and the pool, but never the money columns (null for it). Only a
+    # scoped staff call (scope is not None) can lose them; the machine and the "all" roles keep them.
+    money = scope is None or sees_tenant_money(request.headers.get("x-admin-role"))
+
+    def _usd(value):
+        return float(value) if money and value is not None else None
+
     return {
         "tenants": [
             {
@@ -404,9 +451,7 @@ async def list_tenants(
                 "plan": {
                     "tours_quota_monthly":     r["tours_quota_monthly"],
                     "api_calls_quota_monthly": r["api_calls_quota_monthly"],
-                    "price_usd_monthly": (
-                        float(r["price_usd_monthly"]) if r["price_usd_monthly"] is not None else None
-                    ),
+                    "price_usd_monthly": _usd(r["price_usd_monthly"]),
                 },
                 "this_month": {
                     "tours_rewritten":  r["source_active"],
@@ -414,9 +459,9 @@ async def list_tenants(
                     "quota_tours_pct":  float(r["quota_tours_pct"]),
                     "quota_calls_pct":  float(r["quota_calls_pct"]),
                     "tours_overage":    r["tours_overage"],
-                    "overage_usd":      float(r["overage_usd"]),
+                    "overage_usd":      _usd(r["overage_usd"]),
                     # AA-798: the view's real llm_call_log month-to-date spend (migration 223)
-                    "llm_cost_usd":     float(r["llm_cost_usd"]),
+                    "llm_cost_usd":     _usd(r["llm_cost_usd"]),
                 },
                 "lifecycle": {
                     "source_active":     r["source_active"],
@@ -431,6 +476,43 @@ async def list_tenants(
         ],
         "total": len(rows),
     }
+
+# ── GET /admin/tenant-names — the tenant picker (AA-1035) ────────────────────
+
+TENANT_NAMES_SQL = """
+    SELECT tenant_id, name, slug, is_active, cancelled_at
+      FROM shared.tenants
+     ORDER BY lower(name), tenant_id
+"""
+
+
+@router.get("/tenant-names", summary="Tenant ids, names, slugs and status for the admin tenant picker")
+async def list_tenant_names(request: Request, x_admin_secret: str = Header(None)):
+    """AA-1035 (S267 fix pass): the shared admin tenant picker (frontend/lib/tenants.ts TENANTS_API) for every role
+    whose pages pick or name a tenant, including the ones the Tenants directory refuses (content_lead, tenant_qa on
+    Tenant QA, ai_ops on the Writing Lab and AI & spend). Names only: no plan, usage, money or counts. Active,
+    suspended and offboarded tenants (the derived ``status``), filtered to the caller's scope like the directory
+    (api/core/tenant_scope.py tenant_scope_filter: customer_success its book, support its book and the pool)."""
+    verify_admin_secret(x_admin_secret)
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(TENANT_NAMES_SQL)
+        scope = await tenant_scope_filter(request, conn)
+    if scope is not None:
+        rows = [r for r in rows if str(r["tenant_id"]) in scope]
+    return {
+        "tenants": [
+            {
+                "tenant_id": str(r["tenant_id"]),
+                "name": r["name"],
+                "slug": r["slug"],
+                "status": tenant_status(r["is_active"], r["cancelled_at"]),
+                "cancelled_at": r["cancelled_at"].isoformat() if r["cancelled_at"] else None,
+            }
+            for r in rows
+        ],
+    }
+
 
 # ── GET /admin/tenants/{id}/usage — Billing metrics ──────────────────────────
 
@@ -469,7 +551,7 @@ TENANT_USAGE_MONTHLY_SQL = """
 
 
 
-@router.get("/tenants/{tenant_id}/usage", summary="Tenant billing metrics")
+@router.get("/tenants/{tenant_id}/usage", summary="Tenant billing metrics", dependencies=TENANT_SCOPED)
 async def get_tenant_usage(
     tenant_id: UUID,
     request: Request,
@@ -554,7 +636,8 @@ class UpdateTenantRequest(BaseModel):
     daily_publish_limit: Optional[int] = Field(None, ge=1, le=daily_limit.DAILY_PUBLISH_LIMIT_MAX)
 
 
-@router.patch("/tenants/{tenant_id}", summary="Update tenant plan, rate limit, publish limit or status")
+@router.patch("/tenants/{tenant_id}", summary="Update tenant plan, rate limit, publish limit or status",
+              dependencies=TENANT_SCOPED)
 async def update_tenant(
     tenant_id: UUID,
     body: UpdateTenantRequest,
@@ -570,7 +653,7 @@ async def update_tenant(
     Each change writes one audit row with before/after, in the same transaction. Before migration 230
     the publish limit override is refused with 409 (the code default applies to every tenant)."""
     verify_admin_secret(x_admin_secret)
-    _require_tenant_admin(x_admin_role)
+    _require_tenant_patch(x_admin_role, set(body.model_fields_set))
     set_publish_limit = "daily_publish_limit" in body.model_fields_set
     if body.plan_tier is None and body.is_active is None and body.rate_limit_rpm is None and not set_publish_limit:
         raise HTTPException(status_code=422, detail="Nothing to update: send plan_tier, rate_limit_rpm, "
@@ -750,7 +833,7 @@ def _derive_run_display_status(
 # ── GET /admin/tenants/{id}/audit — AA-666 Tenant 360 Audit tab ─────────────
 
 
-@router.get("/tenants/{tenant_id}/audit", summary="A tenant's action timeline")
+@router.get("/tenants/{tenant_id}/audit", summary="A tenant's action timeline", dependencies=TENANT_SCOPED)
 async def get_tenant_audit(
     tenant_id: str,
     request: Request,
@@ -781,7 +864,7 @@ async def get_tenant_audit(
 # ── GET /admin/tenants/{id}/details — 4-tab detail view ─────────────────────
 
 
-@router.get("/tenants/{tenant_id}/details", summary="Tenant 4-tab detail view")
+@router.get("/tenants/{tenant_id}/details", summary="Tenant 4-tab detail view", dependencies=TENANT_SCOPED)
 async def get_tenant_details(
     tenant_id: UUID,
     request: Request,
@@ -804,11 +887,17 @@ async def get_tenant_details(
     # AA-882 (GĐ3 review) — this route has no POLICY entry because Master Content (every staff role)
     # reads the aa_internal catalog through it. Any other tenant's account, usage and LLM spend is
     # tenant.read, like the sibling /usage, /audit and /config routes.
-    if str(tenant_id) != AA_INTERNAL_TENANT and not has_perm(x_admin_role, TENANT_READ):
+    # AA-1035: tenant.book.read (customer_success / support) reads the tenants of its book; require_tenant_scope has
+    # already refused a tenant outside it.
+    # AA-1035 (S267 fix pass): finance (billing.read) opens Tenant 360 for its Billing / Subscription tabs on this read;
+    # it gets the header (plan, usage, cost) and no tenant text or catalog: no tours, pipeline runs or brand rules.
+    if str(tenant_id) != AA_INTERNAL_TENANT and not has_any_perm(x_admin_role, TENANT_READ, TENANT_BOOK_READ,
+                                                                 BILLING_READ):
         raise HTTPException(
             status_code=403,
             detail=f"Role '{x_admin_role or 'machine'}' lacks the '{TENANT_READ}' permission",
         )
+    header_only = not has_any_perm(x_admin_role, TENANT_READ, TENANT_BOOK_READ, CONTENT_READ)
     pool = request.app.state.pool
 
     # AA-718 — windowed LLM cost (reconcile with External Spend: rolling 30 days, UTC).
@@ -883,7 +972,9 @@ async def get_tenant_details(
         catalog_total = 0           # AA-718: true filtered COUNT (not len of a capped list)
         facet_countries: list = []  # AA-739
         catalog_avg_quality = None  # AA-718: avg over the SAME filter set as the table
-        if is_internal:
+        if header_only:
+            tours: list = []
+        elif is_internal:
             # AA-718 — server-side filter/sort/paginate the internal catalog (was ORDER BY
             # published_at DESC LIMIT 200, which silently dropped the newest rows past 200 and made
             # Total Tours / Avg Quality cap at 200). Filters are applied in SQL so the summary
@@ -964,7 +1055,7 @@ async def get_tenant_details(
 
         # UNION: direct tenant runs + runs containing this tenant's tours (covers B2B tenants
         # whose tours were processed under aa_internal pipeline)
-        runs = await conn.fetch("""
+        runs = [] if header_only else await conn.fetch("""
             SELECT * FROM (
                 SELECT pr.batch_id, pr.started_at, pr.tours_total, pr.tours_passed,
                        pr.llm_model, pr.cost_usd, pr.status
@@ -982,7 +1073,7 @@ async def get_tenant_details(
             ORDER BY started_at DESC LIMIT 20
         """, tenant_id)
 
-        brand_rows = await conn.fetch("""
+        brand_rows = [] if header_only else await conn.fetch("""
             SELECT
                 system_prompt, style_guide, forbidden_words, version, updated_at,
                 COALESCE(brand_name, '')         AS brand_name,
@@ -1028,12 +1119,15 @@ async def get_tenant_details(
                 return []
         return []
 
+    # AA-1035 (S267 review): support reads the Tenant 360 header of its book, without the LLM cost (null for it).
+    money = sees_tenant_money(x_admin_role)
+
     return {
         "summary": {
             "total_rewrites":       int(total_rewrites or 0),
-            "total_llm_cost_usd":   float(total_cost or 0),
+            "total_llm_cost_usd":   float(total_cost or 0) if money else None,
             # AA-718 bug 2: windowed cost + label, reconciled with External Spend's 30d window.
-            "llm_cost_window_usd":  float(cost_window or 0) if is_internal else None,
+            "llm_cost_window_usd":  float(cost_window or 0) if is_internal and money else None,
             "llm_cost_window_label": "last 30 days",
             # AA-718 bug 1 + 5: true filtered catalog count + filter-aware avg quality (internal).
             "catalog_total":        catalog_total if is_internal else int(total_rewrites or 0),
@@ -1080,7 +1174,7 @@ async def get_tenant_details(
                 "tours_processed": int(r["tours_total"] or 0),
                 "tours_passed":    int(r["tours_passed"] or 0),
                 "llm_model":       r["llm_model"],
-                "llm_cost_usd":    float(r["cost_usd"] or 0),
+                "llm_cost_usd":    float(r["cost_usd"] or 0) if money else None,
                 "status":          r["status"],
                 # AA-718 bug 3: an honest DISPLAY status derived read-only (never written back).
                 # A run stored 'ingesting' can be: actually finished (all tours passed → show
@@ -1142,7 +1236,7 @@ class TenantBrandIdentityUpdate(BaseModel):
     default_cta:        Optional[str] = None  # AA-771 (S233, migration 220)
 
 
-@router.put("/tenants/{tenant_id}/brand-identity")
+@router.put("/tenants/{tenant_id}/brand-identity", dependencies=TENANT_SCOPED)
 async def update_tenant_brand_identity(
     tenant_id: UUID,
     body: TenantBrandIdentityUpdate,
@@ -1159,7 +1253,7 @@ async def update_tenant_brand_identity(
     prompt_sanitize`) since these free-text fields feed straight into every future rewrite for
     this tenant, same as the tenant's own self-service path."""
     verify_admin_secret(x_admin_secret)
-    _require_tenant_admin(x_admin_role)
+    _require_tenant_book_write(x_admin_role)
     tenant_id_s = str(tenant_id)
 
     # AA-741 (S229): same rules as the tenant's own path — reject over-long, never cut silently.
@@ -1229,7 +1323,7 @@ async def update_tenant_brand_identity(
 # ── GET /admin/tenants/{id}/rewrite-activity ─────────────────────────────────
 
 
-@router.get("/tenants/{tenant_id}/rewrite-activity")
+@router.get("/tenants/{tenant_id}/rewrite-activity", dependencies=TENANT_SCOPED)
 async def get_rewrite_activity(
     tenant_id: UUID,
     request: Request,
@@ -1276,7 +1370,7 @@ async def get_rewrite_activity(
 # ── POST /admin/tenants/{id}/generate-key ────────────────────────────────────
 
 
-@router.post("/tenants/{tenant_id}/generate-key", response_model=GenerateKeyResponse)
+@router.post("/tenants/{tenant_id}/generate-key", response_model=GenerateKeyResponse, dependencies=TENANT_SCOPED)
 async def generate_api_key(
     tenant_id: UUID,
     request: Request,
@@ -1336,7 +1430,8 @@ class OffboardRequest(BaseModel):
     reason: str
 
 
-@router.post("/tenants/{tenant_id}/offboard", summary="Tenant offboarding — cancel tenant + revoke key (soft)")
+@router.post("/tenants/{tenant_id}/offboard", summary="Tenant offboarding — cancel tenant + revoke key (soft)",
+             dependencies=TENANT_SCOPED)
 async def offboard_tenant(
     tenant_id: str,
     body: OffboardRequest,
@@ -1461,7 +1556,8 @@ class RestoreTenantResponse(BaseModel):
 
 
 @router.post("/tenants/{tenant_id}/restore", response_model=RestoreTenantResponse,
-             summary="Restore an offboarded tenant with its data and settings")
+             summary="Restore an offboarded tenant with its data and settings",
+             dependencies=TENANT_SCOPED)
 async def restore_tenant(
     tenant_id: UUID,
     request: Request,
@@ -1578,7 +1674,8 @@ _VALID_CHANNELS = {
 }
 
 
-@router.get("/tenants/{tenant_id}/config", summary="N4-N6 markets/channels/capacity for one tenant")
+@router.get("/tenants/{tenant_id}/config", summary="N4-N6 markets/channels/capacity for one tenant",
+            dependencies=TENANT_SCOPED)
 async def get_tenant_config(
     tenant_id: UUID,
     request: Request,
@@ -1598,7 +1695,8 @@ async def get_tenant_config(
     }
 
 
-@router.put("/tenants/{tenant_id}/config", summary="Set N4-N6 markets/channels/capacity for one tenant")
+@router.put("/tenants/{tenant_id}/config", summary="Set N4-N6 markets/channels/capacity for one tenant",
+            dependencies=TENANT_SCOPED)
 async def update_tenant_config(
     tenant_id: UUID,
     body: TenantConfigRequest,
@@ -1608,7 +1706,7 @@ async def update_tenant_config(
     x_admin_role: Optional[str] = Header(None),
 ):
     verify_admin_secret(x_admin_secret)
-    _require_tenant_admin(x_admin_role)
+    _require_tenant_book_write(x_admin_role)
     invalid = [c for c in body.channels if c not in _VALID_CHANNELS]
     if invalid:
         raise HTTPException(

@@ -11,12 +11,31 @@
 //
 // Dependency-free: no React, no Node APIs (proxy.ts imports it).
 
-export type StaffRole = "admin" | "reviewer" | "content" | "viewer";
+// AA-1035 R2 (CIS 362, root ADR 0019 d3): six more roles. reviewer is an alias of content for one release (CIS 363
+// merged its rows; the group cis-reviewer still signs in as content). The matrix is root
+// docs/audits/2026-11-03-S265-ecosystem-restructure/clarifications.md section 3; the backend is the authority.
+export type StaffRole =
+  | "admin" | "reviewer" | "content" | "viewer"
+  | "content_lead" | "tenant_qa" | "customer_success" | "support" | "finance" | "ai_ops";
 
-export const STAFF_ROLES: readonly StaffRole[] = ["admin", "reviewer", "content", "viewer"];
-const ALL_STAFF: StaffRole[] = ["admin", "reviewer", "content", "viewer"];
-// Roles that do content work (upload, S1 rewrite, review actions): every staff role but the read-only one.
-const CONTENT_WORKERS: StaffRole[] = ["admin", "reviewer", "content"];
+export const STAFF_ROLES: readonly StaffRole[] = [
+  "admin", "reviewer", "content", "viewer", "content_lead", "tenant_qa", "customer_success", "support", "finance", "ai_ops",
+];
+// Every staff role: the BFF proxies let each through and the backend decides per route (api/core/staff_authz.py).
+const EVERY_STAFF: StaffRole[] = [...STAFF_ROLES];
+// AA-1035: the roles with content.read, which read the content pages (before R2 that was every staff role).
+const ALL_STAFF: StaffRole[] = ["admin", "reviewer", "content", "viewer", "content_lead", "tenant_qa", "ai_ops"];
+// Roles that do content work (upload, S1 rewrite, review actions): content.write.
+const CONTENT_WORKERS: StaffRole[] = ["admin", "reviewer", "content", "content_lead"];
+// AA-1035: tenant content QA (quality.write) and the Writing Lab readers.
+const TENANT_QA: StaffRole[] = ["admin", "content_lead", "tenant_qa"];
+// AA-1035 (S267 fix pass): the Writing Lab pages — the readers above plus ai_ops (Writing Lab W: lab.read and the
+// ai.admin writes; the tenant-text reads stay tenant_content.read in the backend, so those panels refuse ai_ops).
+const WRITING_LAB: StaffRole[] = [...TENANT_QA, "ai_ops"];
+// AA-1035: the Tenants directory (backend filters it to the caller's scope: api/core/tenant_scope.py).
+const TENANT_DESK: StaffRole[] = ["admin", "customer_success", "support", "finance"];
+// AA-1035: AI & spend.
+const AI_SPEND: StaffRole[] = ["admin", "ai_ops", "finance"];
 
 // AA-878 — the read-only role (the UI-smoke E2E account). It reads the content pages and is refused on every
 // write: requireAdmin() (lib/auth-server.ts) answers 403 to any non-GET from it before the admin secret is
@@ -33,8 +52,11 @@ export function isReadMethod(method: string): boolean {
   return m === "GET" || m === "HEAD" || m === "OPTIONS";
 }
 
-// The CIS roles the Staff page may assign (api/services/staff_directory.py CIS_ROLES): never the viewer.
-export const ASSIGNABLE_STAFF_ROLES: readonly StaffRole[] = ["admin", "reviewer", "content"];
+// The CIS roles the Staff page may assign (api/services/staff_directory.py CIS_ROLES): never the viewer, and since
+// AA-1035 never the reviewer alias.
+export const ASSIGNABLE_STAFF_ROLES: readonly StaffRole[] = [
+  "admin", "content_lead", "content", "tenant_qa", "customer_success", "support", "finance", "ai_ops",
+];
 
 export function isStaffRole(role: string | null | undefined): role is StaffRole {
   return !!role && (STAFF_ROLES as readonly string[]).includes(role);
@@ -56,24 +78,29 @@ export const PAGE_RULES: PageRule[] = [
   { prefix: "/admin/reports", roles: ["admin"] },          // AA-1003 — report register, KPI scorecard runs
   // AA-1039 (S266): also the Tenants group pages /admin/tenants/agencies (was /admin/platform/agencies) and
   // /admin/tenants/data-erasure (was /admin/data-erasure).
-  { prefix: "/admin/tenants", roles: ["admin"] },
-  { prefix: "/admin/ai-gateway", roles: ["admin"] },       // AA-804 — AI gateway (health, spend, job trace)
+  // AA-1035 R2: the more specific Tenants pages first (pageRule takes the first match); the directory and Tenant 360
+  // open for the tenant desk roles, whose rows the backend filters to their scope.
+  { prefix: "/admin/tenants/agencies", roles: ["admin"] },
+  { prefix: "/admin/tenants/data-erasure", roles: ["admin"] },
+  { prefix: "/admin/tenants/plans", roles: ["admin", "finance"] },
+  { prefix: "/admin/tenants", roles: TENANT_DESK },
+  { prefix: "/admin/ai-gateway", roles: AI_SPEND },        // AA-804 — AI gateway (health, spend, job trace)
   // AA-1039 R6 slice 3 — Spend (was Cost Operations at /admin/cost-ops, AA-505 / AA-665, and Cost per app at
   // /admin/platform/cost, AA-884; both 307 here from next.config.ts, which runs before proxy.ts).
-  { prefix: "/admin/spend", roles: ["admin"] },
+  { prefix: "/admin/spend", roles: AI_SPEND },
   { prefix: "/admin/jobs", roles: ["admin"] },              // AA-650
   { prefix: "/admin/decisions", roles: ["admin"] },         // AA-660
-  { prefix: "/admin/photos", roles: ["admin"] },            // AA-708
+  { prefix: "/admin/photos", roles: ["admin", "content_lead"] },            // AA-708
   { prefix: "/admin/places", roles: ["admin"] },            // AA-847 — coverage + content validity, fixes
-  { prefix: "/admin/seo-intelligence", roles: ["admin"] },  // AA-705
-  { prefix: "/admin/atom-curation", roles: ["admin"] },     // AA-527
+  { prefix: "/admin/seo-intelligence", roles: ["admin", "content_lead"] },  // AA-705
+  { prefix: "/admin/atom-curation", roles: ["admin", "content_lead"] },     // AA-527
   // AA-1039 (S266) — Tenant content QA: quality (was /admin/content-quality, AA-769), trace (was
   // /admin/tenant-activity, AA-551), review-log (was /admin/platform-stats, AA-560) and slate (was atom-curation
   // section 05). The old URLs are 307s in next.config.ts (lib/adminIa.ts), which run before proxy.ts.
-  { prefix: "/admin/tenant-qa", roles: ["admin"] },
+  { prefix: "/admin/tenant-qa", roles: TENANT_QA },
   // AA-1039 R6 slice 3 — Writing Lab: the stage pages (/admin/lab/<stage>) and the Writing memory tools (AA-917,
   // signals and candidate rules hold tenant text; was /admin/writing-memory, a 307 now).
-  { prefix: "/admin/lab", roles: ["admin"] },
+  { prefix: "/admin/lab", roles: WRITING_LAB },
   { prefix: "/admin/api-docs", roles: ["admin"] },          // AA-577 follow-up — OpenAPI reader
   { prefix: "/admin/data-model", roles: ["admin"] },        // AA-894 — live ERD from the nightly schema dump
   { prefix: "/admin/docs", roles: ["admin"] },              // AA-898 — docs catalog reader (synced by root CI)
@@ -111,7 +138,7 @@ export function canSeePage(role: string | null | undefined, pathname: string): b
 // BFF proxy routes that attach the backend admin secret. Each handler calls requireStaff() with its
 // own entry, so a valid staff JWT with the wrong role still gets 403.
 export const API_RULES = {
-  admin: ALL_STAFF,          // /api/admin/[...path]  → backend /admin/*
+  admin: EVERY_STAFF,        // /api/admin/[...path]  → backend /admin/* (AA-1035: the backend decides per route)
   pipeline: ALL_STAFF,       // /api/pipeline/[...path] → backend /v1/pipeline/*
   tourFull: ALL_STAFF,       // /api/tour-full/[id]
   brandIdentity: ALL_STAFF,  // /api/tenant/pipeline/brand-identity
@@ -123,21 +150,24 @@ export const API_RULES = {
 // re-checks the forwarded role). Today the Content Quality sentence actions (cut / rewrite) and the
 // per-request "regenerate angles".
 export const API_WRITE_RULES: { prefix: string; roles: StaffRole[] }[] = [
-  { prefix: "content-quality/pieces/", roles: ["admin"] },
-  { prefix: "content-quality/requests/", roles: ["admin"] },
+  // AA-1035: quality.write = admin, content_lead, tenant_qa (TENANT_QA).
+  { prefix: "content-quality/pieces/", roles: TENANT_QA },
+  { prefix: "content-quality/requests/", roles: TENANT_QA },
   // AA-802 — the T2 silent correction (sentence suggest / apply on a tenant's tour version)
-  { prefix: "content-quality/tour-versions/", roles: ["admin"] },
+  { prefix: "content-quality/tour-versions/", roles: TENANT_QA },
   // AA-923 WM-32 — the human label of an A1 (S1) rewrite (T2 version labels sit under tour-versions/ above)
-  { prefix: "content-quality/a1-content/", roles: ["admin"] },
+  { prefix: "content-quality/a1-content/", roles: TENANT_QA },
   // AA-774 (S235) — place-card writes (verdict, merge, build job, fact edits) change what every
   // tenant's T9 seed reads; the backend re-checks the role on the fact edit.
-  { prefix: "content-quality/place-cards", roles: ["admin"] },
-  // AA-1039 R6 — releasing a held piece (AA-subject gate) lets that text publish; admin only (backend: QUALITY_WRITE)
-  { prefix: "tenant-qa/compliance/", roles: ["admin"] },
+  { prefix: "content-quality/place-cards", roles: TENANT_QA },
+  // AA-1039 R6 — releasing a held piece (AA-subject gate) lets that text publish (backend: QUALITY_WRITE)
+  { prefix: "tenant-qa/compliance/", roles: TENANT_QA },
   // AA-797 — every write to a tenant account: POST tenants (create), PATCH tenants/{id}
   // (plan/status), generate-key, brand-identity, config, offboard, restore. Prefix "tenants" (no slash)
   // so the bare create path is covered; reads (GET) stay open to every staff role.
-  { prefix: "tenants", roles: ["admin"] },
+  // AA-1035: the tenant desk roles reach the writes the backend allows them (members, invitations; finance the plan
+  // and suspend / resume of PATCH tenants/{id}); every other tenant write stays admin in the backend.
+  { prefix: "tenants", roles: TENANT_DESK },
   // AA-816 C6 — staff directory writes (create, roles, disable/enable, sign-out, sync). The backend narrows
   // further: staff.write needs an owner on a Cognito session (api/core/staff_authz.py), see canWriteStaff().
   // "platform/" (with the slash) so the write rule never matches "platform-stats".
@@ -150,10 +180,10 @@ export const API_WRITE_RULES: { prefix: string; roles: StaffRole[] }[] = [
   { prefix: "job-runner/erasure", roles: ["admin"] },
   // AA-917 — writing memory writes (fact verdict, candidate edit / reject, job runs incl. the paid mining run); the
   // backend re-checks (ai.admin).
-  { prefix: "writing-memory", roles: ["admin"] },
+  { prefix: "writing-memory", roles: ["admin", "ai_ops"] },
   // AA-814 — platform fact writes (add / edit / delete) change what every tenant's T9 seed reads; the backend re-checks
   // (quality.write). "facts" also covers the bare create path.
-  { prefix: "facts", roles: ["admin"] },
+  { prefix: "facts", roles: TENANT_QA },
   // AA-1003 — "generate now" on /admin/reports; the backend re-checks (ops.write).
   { prefix: "reports/", roles: ["admin"] },
   // AA-1028 R1 slice 3 — the plan catalogue (create, edit, retire); the backend re-checks (tenant.write). Tenant 360
@@ -186,10 +216,11 @@ export const API_READ_RULES: { prefix: string; roles: StaffRole[] }[] = [
   { prefix: "job-runner/erasure", roles: ["admin"] },
   // AA-917 — backend /admin/writing-memory/* (signals and rules hold tenant text): admin only, re-checked by the
   // backend (staff_policy, tenant.read / ai.admin).
-  { prefix: "writing-memory", roles: ["admin"] },
+  { prefix: "writing-memory", roles: [...TENANT_QA, "ai_ops"] },
   // AA-804 — backend /admin/ai-gateway/* (every paid provider's spend, balance and the job trace): admin only,
   // re-checked by the backend (staff_policy, spend.read).
-  { prefix: "ai-gateway", roles: ["admin"] },
+  // AA-1035: customer_success reads the Tenant 360 budget tile of its book (tenant.book.account.read); support never.
+  { prefix: "ai-gateway", roles: [...AI_SPEND, "customer_success"] },
 ];
 
 /** May `role` call backend /admin/{path} at all (any method)? (path without the leading slash) */
@@ -218,7 +249,10 @@ export function canWriteAdminPath(role: string | null | undefined, method: strin
 
 /** Landing page after login / for the retired /admin/dashboard. */
 export function landingPage(role: string | null | undefined): string {
-  return role === "admin" ? "/admin/overview" : "/admin/review";
+  if (role === "admin") return "/admin/overview";
+  if (role === "customer_success" || role === "support" || role === "finance") return "/admin/tenants";   // AA-1035
+  if (role === "ai_ops") return "/admin/ai-gateway";
+  return "/admin/review";
 }
 
 // AA-882 (GĐ3 review) — the backend capability map (api/core/staff_authz.py ROLE_PERMS), mirrored so
@@ -229,17 +263,37 @@ export type Capability =
   | "content.read" | "content.write" | "review.act" | "master.admin" | "atoms.write" | "photos.write"
   | "a4.unpublish" | "quality.write" | "content.settings.write" | "tenant.read" | "tenant.write"
   | "ops.read" | "ops.write" | "ai.admin" | "spend.read" | "spend.write" | "staff.read" | "audit.read"
-  | "alerts.write";   // AA-913 — Platform › Alert recipients (changes also need a Cognito session)
+  | "alerts.write"    // AA-913 — Platform › Alert recipients (changes also need a Cognito session)
+  // AA-1035 R2 (root ADR 0019 d3 / d4)
+  | "tenant_content.read" | "catalog.read" | "tenant.book.read" | "tenant.member.write" | "tenant.assign"
+  | "billing.read" | "billing.write" | "wave.run" | "lab.read"
+  | "tenant.book.account.read"    // AA-1035: plans, usage, cost, Tenant QA, AI budget of the own book (not support)
+  | "tenant.member.resend"        // AA-1035: send a non-owner invitation again (support, customer_success)
+  | "tenant.book.write";          // AA-1035: non-billing Tenant 360 writes of the own book (customer_success)
 
 export const ROLE_PERMS: Record<StaffRole, readonly Capability[]> = {
   admin: [
     "content.read", "content.write", "review.act", "master.admin", "atoms.write", "photos.write",
     "a4.unpublish", "quality.write", "content.settings.write", "tenant.read", "tenant.write",
     "ops.read", "ops.write", "ai.admin", "spend.read", "spend.write", "staff.read", "audit.read",
-    "alerts.write",
+    "alerts.write", "tenant_content.read", "catalog.read", "tenant.book.read", "tenant.book.account.read",
+    "tenant.member.write", "tenant.assign", "billing.read", "billing.write", "wave.run", "lab.read",
+    "tenant.member.resend", "tenant.book.write",
   ],
-  reviewer: ["content.read", "content.write", "review.act"],
-  content: ["content.read", "content.write", "review.act"],
+  content_lead: [
+    "content.read", "content.write", "review.act", "master.admin", "atoms.write", "photos.write",
+    "a4.unpublish", "quality.write", "content.settings.write", "catalog.read", "tenant_content.read",
+    "lab.read", "wave.run",
+  ],
+  content: ["content.read", "content.write", "review.act", "catalog.read"],
+  reviewer: ["content.read", "content.write", "review.act", "catalog.read"],
+  tenant_qa: ["content.read", "catalog.read", "tenant_content.read", "quality.write", "a4.unpublish", "lab.read"],
+  customer_success: [
+    "tenant.book.read", "tenant.book.account.read", "tenant.book.write", "tenant.member.write", "tenant.member.resend",
+  ],
+  support: ["tenant.book.read", "tenant.member.resend"],
+  finance: ["billing.read", "billing.write", "spend.read"],
+  ai_ops: ["content.read", "catalog.read", "ai.admin", "spend.read", "spend.write", "lab.read"],
   viewer: ["content.read"],
 };
 
@@ -279,7 +333,13 @@ export function staffErrorMessage(
 /** English role names; the UI language's names are RBAC_MESSAGES in lib/rbac.messages.ts (same keys). */
 export const ROLE_LABEL: Record<StaffRole, string> = {
   admin: "Administrator",
-  reviewer: "Reviewer",
+  reviewer: "Content Team (reviewer)",
   content: "Content Team",
   viewer: "Viewer (read-only)",
+  content_lead: "Content Lead",
+  tenant_qa: "Tenant Content QA",
+  customer_success: "Customer Success",
+  support: "Support",
+  finance: "Finance",
+  ai_ops: "AI Operations",
 };

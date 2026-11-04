@@ -111,13 +111,13 @@ def _keys_pool(version, keys, keys_exc=None):
     return pool
 
 
-ALL_KEYS = list(readiness.REQUIRED_CIS_KEYS)
+ALL_KEYS = sorted(readiness.REQUIRED_CIS_KEYS)
 
 
 @pytest.mark.asyncio
 async def test_ready_lists_the_registered_keys_above_the_baseline():
     # One key newer than the required schema (a later migration already applied) is listed too.
-    newer = readiness.REQUIRED_CIS_SCHEMA + 1
+    newer = max(ALL_KEYS) + 1
     status, body = await readiness.readiness(_keys_pool(newer, ALL_KEYS + [newer]), now=0.0)
     assert status == 200 and body["status"] == "ok"
     assert body["registered_keys"] == [str(k) for k in ALL_KEYS] + [str(newer)]
@@ -142,7 +142,35 @@ async def test_a_failed_keys_read_keeps_the_version_rule():
 
 
 def test_required_keys_run_from_the_baseline_to_the_required_schema():
-    keys = readiness.REQUIRED_CIS_KEYS
+    gap = readiness.REQUIRED_CIS_ABOVE_GAP
+    keys = readiness.REQUIRED_CIS_KEYS[:len(readiness.REQUIRED_CIS_KEYS) - len(gap)]
     assert keys[0] == readiness.LEGACY_CIS_BASELINE + 1 and keys[-1] == readiness.REQUIRED_CIS_SCHEMA
     assert list(keys) == list(range(keys[0], keys[-1] + 1))
     assert set(readiness.OUT_OF_ORDER_CIS) <= set(keys)
+    assert readiness.REQUIRED_CIS_KEYS[len(keys):] == gap
+    assert all(k > readiness.REQUIRED_CIS_SCHEMA for k in gap) and list(gap) == sorted(set(gap))
+
+
+# AA-1035 (S267 review): CIS 336 (AA-1024 D8) is time-gated and not applied on Dev. Raising the strict prefix past it
+# would answer 503 schema_behind until it is; the R2 keys 362-364 are required above the gap instead.
+DEV_KEYS_WITHOUT_336 = [k for k in range(readiness.LEGACY_CIS_BASELINE + 1, 365) if k != 336]
+
+
+def test_the_time_gated_336_is_not_required_while_the_r2_keys_are():
+    assert 336 not in readiness.REQUIRED_CIS_KEYS
+    assert readiness.REQUIRED_CIS_SCHEMA < 336
+    assert {362, 363, 364} <= set(readiness.REQUIRED_CIS_ABOVE_GAP)
+
+
+@pytest.mark.asyncio
+async def test_dev_without_336_is_ready_once_the_r2_keys_are_registered():
+    status, body = await readiness.readiness(_keys_pool(364, DEV_KEYS_WITHOUT_336), now=0.0)
+    assert status == 200 and body["status"] == "ok" and "missing_schema_versions" not in body
+
+
+@pytest.mark.asyncio
+async def test_a_missing_key_above_the_gap_is_schema_behind():
+    keys = [k for k in DEV_KEYS_WITHOUT_336 if k != 364]
+    status, body = await readiness.readiness(_keys_pool(363, keys), now=0.0)
+    assert status == 503 and body["status"] == "schema_behind"
+    assert body["missing_schema_versions"] == ["364"]

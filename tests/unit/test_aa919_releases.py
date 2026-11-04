@@ -420,10 +420,12 @@ def test_unavailable_before_the_migration(client, monkeypatch):
 
 
 def test_policy_entries():
-    from api.core.staff_authz import AI_ADMIN, POLICY, TENANT_READ
+    from api.core.staff_authz import AI_ADMIN, LAB_READ, POLICY, TENANT_CONTENT_READ
     base = "/admin/writing-memory"
-    for path in ("/releases", "/releases/active", "/releases/{release_id}", "/writers"):
-        assert POLICY[("GET", base + path)] == TENANT_READ
+    # AA-1035 R2: release reads hold no tenant text (lab.read, ai_ops); the writer list stays tenant_content.read
+    for path in ("/releases", "/releases/active", "/releases/{release_id}"):
+        assert POLICY[("GET", base + path)] == (TENANT_CONTENT_READ, LAB_READ)
+    assert POLICY[("GET", base + "/writers")] == TENANT_CONTENT_READ
     for path in ("/releases", "/releases/reverify-scan", "/releases/{release_id}/evidence",
                  "/releases/{release_id}/approve", "/releases/{release_id}/activate",
                  "/releases/{release_id}/rollback", "/releases/{release_id}/reject"):

@@ -41,7 +41,7 @@ import asyncpg
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from api.core import e2e_staff
-from api.core.staff_authz import request_staff_identity, staff_policy
+from api.core.staff_authz import QUALITY_WRITE, has_perm, request_staff_identity, staff_policy
 from pydantic import BaseModel, ConfigDict, Field
 
 from api.routers.admin import verify_admin_secret
@@ -450,10 +450,10 @@ _SUGGEST_STAGE = "t9_repair"
 
 
 def _require_admin_role(x_admin_role: Optional[str]) -> None:
-    """Defense in depth behind the BFF's own check: the sentence actions change a tenant's piece,
-    so only the `admin` staff role (never reviewer / content) may call them."""
-    if x_admin_role != "admin":
-        raise HTTPException(status_code=403, detail="Only an admin can edit a piece")
+    """Defense in depth behind the BFF's own check: the sentence actions change a tenant's piece, so only a role
+    with quality.write (admin, and since AA-1035 R2 content_lead / tenant_qa; never content) may call them."""
+    if not has_perm(x_admin_role, QUALITY_WRITE):
+        raise HTTPException(status_code=403, detail="Your staff role can not edit a piece")
 
 
 def _resolve(content_text: str, start: int, end: int, text: str) -> tuple[int, int]:
@@ -892,8 +892,9 @@ class PieceLabelBody(BaseModel):
 
 
 def _require_label_admin(x_admin_role: Optional[str]) -> None:
-    if x_admin_role != "admin":
-        raise HTTPException(status_code=403, detail="Only an admin can see or set piece labels")
+    """quality.write (admin, content_lead, tenant_qa since AA-1035 R2) sees and sets piece labels."""
+    if not has_perm(x_admin_role, QUALITY_WRITE):
+        raise HTTPException(status_code=403, detail="Your staff role can not see or set piece labels")
 
 
 def _label_row(r) -> dict:
@@ -1837,8 +1838,8 @@ async def edit_place_card_facts(card_id: str, body: PlaceCardFactsEdit, request:
     with before/after per changed fact). A fact re-kinded to visiting/practical stays on the card but
     leaves the T9 writer seed (atom_seed.writer_facts). Status / verified_by are not touched."""
     verify_admin_secret(x_admin_secret)
-    if x_admin_role != "admin":
-        raise HTTPException(status_code=403, detail="Only an admin can edit place-card facts")
+    if not has_perm(x_admin_role, QUALITY_WRITE):
+        raise HTTPException(status_code=403, detail="Your staff role can not edit place-card facts")
     cid = _card_uuid(card_id)
     reason = " ".join(body.reason.split())
     if len(reason) < 3:

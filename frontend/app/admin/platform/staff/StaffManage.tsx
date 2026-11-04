@@ -61,7 +61,7 @@ export type InviteStatus = "sent" | "queued" | "not_sent";
 
 type InviteFields = Pick<StaffAccount, "invite_status" | "last_invited_at" | "last_invite_requested_at" | "last_invite_not_sent_at">;
 
-export const BOOKING_ROLES = ["admin", "sales", "contracting", "content_creator"] as const;
+export const BOOKING_ROLES = ["admin", "sales", "contracting", "content_creator", "finance"] as const;
 export type BookingRole = (typeof BOOKING_ROLES)[number];
 /** English Booking role names (the `en` side of ./messages.ts BOOKING_ROLE). */
 export const BOOKING_ROLE_LABEL: Record<BookingRole, string> = BOOKING_ROLE.en;

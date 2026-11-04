@@ -638,7 +638,7 @@ def test_set_goal_and_generate_never_overwrites_option_rows():
 def test_bff_write_rule_covers_regenerate_angles():
     from pathlib import Path
     rbac = (Path(__file__).resolve().parents[2] / "frontend/lib/rbac.ts").read_text()
-    assert '{ prefix: "content-quality/requests/", roles: ["admin"] }' in rbac
+    assert '{ prefix: "content-quality/requests/", roles: TENANT_QA }' in rbac
 
 
 @pytest.mark.asyncio

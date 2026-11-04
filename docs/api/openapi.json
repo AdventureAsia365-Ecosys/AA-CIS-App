@@ -614,6 +614,25 @@
         "title": "AssignRequest",
         "type": "object"
       },
+      "AssignmentBody": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "owner",
+              "backup",
+              "support"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "AssignmentBody",
+        "type": "object"
+      },
       "AtomPatchRequest": {
         "properties": {
           "deleted": {
@@ -1925,7 +1944,8 @@
                   "admin",
                   "sales",
                   "contracting",
-                  "content_creator"
+                  "content_creator",
+                  "finance"
                 ],
                 "type": "string"
               },
@@ -1972,8 +1992,13 @@
               {
                 "enum": [
                   "admin",
-                  "reviewer",
-                  "content"
+                  "content_lead",
+                  "content",
+                  "tenant_qa",
+                  "customer_success",
+                  "support",
+                  "finance",
+                  "ai_ops"
                 ],
                 "type": "string"
               },
@@ -2378,7 +2403,8 @@
                   "admin",
                   "sales",
                   "contracting",
-                  "content_creator"
+                  "content_creator",
+                  "finance"
                 ],
                 "type": "string"
               },
@@ -2421,8 +2447,13 @@
           "role": {
             "enum": [
               "admin",
-              "reviewer",
-              "content"
+              "content_lead",
+              "content",
+              "tenant_qa",
+              "customer_success",
+              "support",
+              "finance",
+              "ai_ops"
             ],
             "title": "Role",
             "type": "string"
@@ -34032,6 +34063,70 @@
         ]
       }
     },
+    "/admin/tenant-names": {
+      "get": {
+        "description": "AA-1035 (S267 fix pass): the shared admin tenant picker (frontend/lib/tenants.ts TENANTS_API) for every role\nwhose pages pick or name a tenant, including the ones the Tenants directory refuses (content_lead, tenant_qa on\nTenant QA, ai_ops on the Writing Lab and AI & spend). Names only: no plan, usage, money or counts. Active,\nsuspended and offboarded tenants (the derived ``status``), filtered to the caller's scope like the directory\n(api/core/tenant_scope.py tenant_scope_filter: customer_success its book, support its book and the pool).",
+        "operationId": "list_tenant_names_admin_tenant_names_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Tenant ids, names, slugs and status for the admin tenant picker",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/admin/tenant-qa/compliance": {
       "get": {
         "operationId": "list_flags_admin_tenant_qa_compliance_get",
@@ -34698,6 +34793,271 @@
         "summary": "Update tenant plan, rate limit, publish limit or status",
         "tags": [
           "admin"
+        ]
+      }
+    },
+    "/admin/tenants/{tenant_id}/assignments": {
+      "get": {
+        "operationId": "get_tenant_assignments_admin_tenants__tenant_id__assignments_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Who looks after this tenant (owner, backup, support)",
+        "tags": [
+          "admin-tenant360"
+        ]
+      }
+    },
+    "/admin/tenants/{tenant_id}/assignments/{admin_user_id}": {
+      "delete": {
+        "operationId": "delete_tenant_assignment_admin_tenants__tenant_id__assignments__admin_user_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "admin_user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Admin User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "title": "X-Admin-User-Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove a staff member from this tenant (audited)",
+        "tags": [
+          "admin-tenant360"
+        ]
+      },
+      "put": {
+        "operationId": "put_tenant_assignment_admin_tenants__tenant_id__assignments__admin_user_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "admin_user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Admin User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "title": "X-Admin-User-Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssignmentBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Assign a staff member to this tenant, or change the kind (audited)",
+        "tags": [
+          "admin-tenant360"
         ]
       }
     },

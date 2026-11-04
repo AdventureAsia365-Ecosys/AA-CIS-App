@@ -111,6 +111,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from api.core.staff_authz import staff_policy
+from api.core.tenant_scope import TENANT_SCOPED
 from api.routers.admin import verify_admin_secret
 from services.writing_memory import config as cfg
 from services.writing_memory import fact_filter as ff
@@ -1021,7 +1022,7 @@ _VOICE_RELEASES_SQL = """
 """
 
 
-@router.get("/tenants/{tenant_id}/voice")
+@router.get("/tenants/{tenant_id}/voice", dependencies=TENANT_SCOPED)
 async def tenant_voice(tenant_id: str, request: Request):
     """The Tenant 360 "Voice memory" card (admin only): what the writers learned for this tenant. Every read filters
     tenant_id explicitly (cis_app's policies are USING (true))."""

@@ -377,13 +377,16 @@ def _h(role="admin"):
 
 
 def test_policy_entries():
-    assert POLICY[("GET", "/admin/plans")] == POLICY[("GET", "/admin/plans/features")] == TENANT_READ
+    # AA-1035 R2: plans and a tenant's subscription read for customer_success too (book scoped; finance every tenant);
+    # never support (S267 review: tenant.book.account.read, not tenant.book.read)
+    desk = ("tenant.read", "tenant.book.account.read", "billing.read")
+    assert POLICY[("GET", "/admin/plans")] == POLICY[("GET", "/admin/plans/features")] == desk
     for key in (("POST", "/admin/plans"), ("PATCH", "/admin/plans/{plan_key}"),
                 ("POST", "/admin/plans/{plan_key}/retire"),
                 ("PUT", "/admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}"),
                 ("DELETE", "/admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}")):
         assert POLICY[key] == TENANT_WRITE
-    assert POLICY[("GET", "/admin/tenants/{tenant_id}/subscription")] == TENANT_READ
+    assert POLICY[("GET", "/admin/tenants/{tenant_id}/subscription")] == desk
 
 
 @pytest.mark.parametrize("role", ["content", "reviewer", None])

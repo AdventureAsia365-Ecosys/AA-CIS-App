@@ -198,4 +198,11 @@ test("10. AI & spend and Writing Lab (R6 slice 3): groups, moves, query merge", 
   for (const role of ["viewer", "content", "reviewer"]) {
     assert.ok(!canSeePage(role, "/admin/lab/t9-social") && !canSeePage(role, "/admin/spend"), role);
   }
+  // AA-1035 (S267 fix pass): Writing Lab W is ai_ops' (matrix), R content_lead's and tenant_qa's; never the tenant desk
+  for (const role of ["ai_ops", "content_lead", "tenant_qa"]) {
+    for (const href of ["/admin/lab", "/admin/lab/writing-memory", "/admin/lab/t9-social"]) {
+      assert.ok(canSeePage(role, href), `${role} may open ${href}`);
+    }
+  }
+  for (const role of ["customer_success", "support", "finance"]) assert.ok(!canSeePage(role, "/admin/lab"), role);
 });

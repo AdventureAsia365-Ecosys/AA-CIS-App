@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from api.core.staff_authz import MACHINE_ROUTES, POLICY, ROLE_PERMS
+from api.core.staff_authz import MACHINE_ROUTES, POLICY, ROLE_PERMS, policy_capabilities
 from api.main import app
 from api.routers import admin, admin_settings
 
@@ -134,7 +134,8 @@ def _expected(method, path, role) -> str:
         return "reached"
     if role is None:
         return "reached" if (method, path) in MACHINE_ROUTES else "denied"
-    return "reached" if capability in ROLE_PERMS[role] else "denied"
+    # AA-1035: an any_of entry passes with any of its capabilities
+    return "reached" if any(c in ROLE_PERMS[role] for c in policy_capabilities(capability)) else "denied"
 
 
 def test_every_router_with_routes_has_a_sample():

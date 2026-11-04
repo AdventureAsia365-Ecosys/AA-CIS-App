@@ -166,9 +166,9 @@ async def test_get_returns_every_label_and_mine():
 def test_policy_and_bff_write_rule():
     for path in ("/admin/content-quality/tour-versions/{version_id}/label",
                  "/admin/content-quality/a1-content/{content_id}/label"):
-        assert staff_authz.POLICY[("GET", path)] == staff_authz.TENANT_READ
+        assert staff_authz.POLICY[("GET", path)] == staff_authz.TENANT_CONTENT_READ   # AA-1035 R2 split
         assert staff_authz.POLICY[("POST", path)] == staff_authz.QUALITY_WRITE
     from pathlib import Path
     rbac = (Path(__file__).resolve().parents[2] / "frontend" / "lib" / "rbac.ts").read_text()
-    assert '{ prefix: "content-quality/a1-content/", roles: ["admin"] }' in rbac
-    assert '{ prefix: "content-quality/tour-versions/", roles: ["admin"] }' in rbac
+    assert '{ prefix: "content-quality/a1-content/", roles: TENANT_QA }' in rbac
+    assert '{ prefix: "content-quality/tour-versions/", roles: TENANT_QA }' in rbac

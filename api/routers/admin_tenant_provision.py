@@ -27,6 +27,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from api.core.staff_authz import staff_policy
+from api.core.tenant_scope import TENANT_SCOPED
 from api.routers.admin import _require_tenant_admin, verify_admin_secret
 from services.jobs import tenant_provision_job
 from services.tenant_account import provision as pv
@@ -129,7 +130,8 @@ async def provision_tenant(
 
 
 @router.post("/tenants/{tenant_id}/provision", status_code=202, response_model=ProvisionJobOut,
-             summary="Add or change add-on subscriptions of a tenant in one job")
+             summary="Add or change add-on subscriptions of a tenant in one job",
+             dependencies=TENANT_SCOPED)
 async def provision_add_ons(
     tenant_id: uuid.UUID,
     body: ProvisionAttachIn,
@@ -146,7 +148,8 @@ async def provision_add_ons(
 
 
 @router.post("/tenants/{tenant_id}/provision/cancel", status_code=202, response_model=ProvisionJobOut,
-             summary="Cancel add-on subscriptions of a tenant in one job")
+             summary="Cancel add-on subscriptions of a tenant in one job",
+             dependencies=TENANT_SCOPED)
 async def provision_cancel(
     tenant_id: uuid.UUID,
     body: ProvisionCancelIn,

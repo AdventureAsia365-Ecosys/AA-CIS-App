@@ -127,6 +127,10 @@ class AdminTenantAuditAction:
     # feature key, before / after, whether it applies, the resolved value; services/tenant_account/subscription.py)
     ENTITLEMENT_OVERRIDE_SET = "tenant.entitlement_override_set"
     ENTITLEMENT_OVERRIDE_REMOVED = "tenant.entitlement_override_removed"
+    # AA-1035 R2 (CIS 364, root ADR 0019 d4) — who looks after the tenant: a staff assignment set (added or its kind
+    # changed) / removed (details: the staff id, the kind before / after; no name, no e-mail).
+    ASSIGNMENT_SET = "tenant.assignment_set"
+    ASSIGNMENT_REMOVED = "tenant.assignment_removed"
 
 
 async def write_audit_log(

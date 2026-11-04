@@ -358,8 +358,9 @@ def test_group_role_maps_match_sign_in_and_the_grant_table():
     from api.core.staff_identity import GROUP_ROLES
 
     assert sr.CIS_GROUPS == tuple(g for g, _ in GROUP_ROLES)
-    mig = (REPO / "api" / "migrations" / "247_admin_users_identity.sql").read_text()
-    check = re.search(r"staff_app_grant_role_chk CHECK \(role IN \(([^)]*)\)\)", mig).group(1)
+    # AA-1035: CIS 363 replaced the 247 check (adds finance)
+    mig = (REPO / "api" / "migrations" / "363_staff_roles_reviewer_merge_finance_grant.sql").read_text()
+    check = re.search(r"staff_app_grant_role_chk CHECK \(\s*role IN \(([^)]*)\)\)", mig).group(1)
     assert {r for _, r in sr.BOOKING_GROUP_ROLES} == set(re.findall(r"'([a-z_]+)'", check))
     assert all(g == f"booking-{r}" for g, r in sr.BOOKING_GROUP_ROLES)
 

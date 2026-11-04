@@ -127,16 +127,24 @@ def test_role_comes_from_the_highest_group_and_drift_is_logged_not_denied(client
     with capture_logs() as logs:
         res = _verify(client, issuer.token(**{"cognito:groups": ["cis-content", "cis-reviewer", "booking-admin"]}))
     assert res.status_code == 200, res.text
-    assert res.json()["role"] == "reviewer"
+    assert res.json()["role"] == "content"   # AA-1035: cis-reviewer is an alias of content
     drift = [e for e in logs if e["event"] == "staff_role_drift"]
     assert drift == [{"event": "staff_role_drift", "log_level": "warning", "admin_id": uid,
-                      "group_role": "reviewer", "db_role": "admin", "sub": SUB}]
+                      "group_role": "content", "db_role": "admin", "sub": SUB}]
 
 
 @pytest.mark.parametrize("groups, role", [
     (["cis-content", "cis-admin"], "admin"),
     (["cis-content"], "content"),
-    (["booking-admin", "cis-content", "cis-reviewer"], "reviewer"),
+    (["booking-admin", "cis-content", "cis-reviewer"], "content"),   # AA-1035: reviewer alias
+    # AA-1035 R2 (root ADR 0019 d3): the six new groups, in the WORKFORCE precedence order (10-39)
+    (["cis-content", "cis-content_lead"], "content_lead"),
+    (["cis-support", "cis-customer_success"], "customer_success"),
+    (["cis-tenant_qa", "cis-finance"], "finance"),
+    (["cis-content", "cis-tenant_qa"], "tenant_qa"),
+    (["cis-support"], "support"),
+    (["cis-ai_ops", "cis-customer_success"], "ai_ops"),
+    (["cis-admin", "cis-ai_ops"], "admin"),
 ])
 def test_role_order_admin_reviewer_content(client, directory, issuer, groups, role):
     directory.add(role=role, iss=ISS, sub=SUB)

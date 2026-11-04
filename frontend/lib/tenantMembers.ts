@@ -134,6 +134,9 @@ export interface MembersAccess {
   read_only: boolean;
   actions: Partial<Record<MemberWriteAction, boolean>>;
   invite_roles?: string[];
+  /** AA-1035: may change the role of / remove an owner row (and pick owner as a new role). Missing = the older API,
+   *  which had no such limit. */
+  owner_writes?: boolean;
 }
 
 /** What the page may offer. `settled` is false while the access read is in flight (nothing is offered then). */
@@ -144,6 +147,8 @@ export interface MemberPermissions {
   changeRole: boolean;
   remove: boolean;
   inviteRoles: StudioRole[];
+  /** AA-1035: change role / remove on an owner row and "owner" in the role dialog (tenant.write only). */
+  ownerWrites: boolean;
 }
 
 /**
@@ -159,14 +164,18 @@ export function memberPermissions(
     const invite = a.invite === true;
     const sendAgain = a.send_again === true;
     const roles = access.invite_roles === undefined ? [...STUDIO_ROLES] : access.invite_roles.filter(isStudioRole);
+    const changeRole = a.change_role === true;
+    const remove = a.remove === true;
     return {
-      settled: true, invite, sendAgain, changeRole: a.change_role === true, remove: a.remove === true,
+      settled: true, invite, sendAgain, changeRole, remove,
       inviteRoles: invite || sendAgain ? roles : [],
+      ownerWrites: (changeRole || remove) && access.owner_writes !== false,
     };
   }
   const w = failed && roleCanWrite;
   return {
     settled: failed, invite: w, sendAgain: w, changeRole: w, remove: w, inviteRoles: w ? [...STUDIO_ROLES] : [],
+    ownerWrites: w,
   };
 }
 
@@ -176,16 +185,23 @@ export function anyMemberWrite(p: MemberPermissions): boolean {
 }
 
 /** The row actions of one membership for this session: what the row allows (memberActions) AND what the session may
- *  use. A send again re-seals the invitation with its stored role, so it needs that role in `inviteRoles`. */
+ *  use. A send again re-seals the invitation with its stored role, so it needs that role in `inviteRoles`; an owner
+ *  row changes or goes only with `ownerWrites` (AA-1035). */
 export function memberRowActions(
   m: Pick<TenantMember, "status" | "invitation_id" | "content_studio_role">, p: MemberPermissions,
 ): { changeRole: boolean; sendAgain: boolean; remove: boolean } {
   const a = memberActions(m);
+  const ownerOk = m.content_studio_role !== "owner" || p.ownerWrites;
   return {
-    changeRole: a.changeRole && p.changeRole,
+    changeRole: a.changeRole && p.changeRole && ownerOk,
     sendAgain: a.sendAgain && p.sendAgain && p.inviteRoles.includes(m.content_studio_role),
-    remove: a.remove && p.remove,
+    remove: a.remove && p.remove && ownerOk,
   };
+}
+
+/** The roles the role dialog may offer this session (AA-1035: owner only with `ownerWrites`). */
+export function roleChoices(p: MemberPermissions): StudioRole[] {
+  return STUDIO_ROLES.filter((r) => r !== "owner" || p.ownerWrites);
 }
 
 /** May this session send a NEW invitation with `role`? (the agency drawer's studio box invites as owner) */

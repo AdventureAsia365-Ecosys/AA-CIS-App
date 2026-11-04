@@ -36,11 +36,17 @@ def test_every_member_write_is_a_policy_write_route():
     assert set(router_mod.MEMBER_WRITES) == ALL_ACTIONS
     for key, (method, route) in router_mod.MEMBER_WRITES.items():
         assert method not in ("GET", "HEAD"), key
-        assert staff_authz.POLICY[(method, route)] == staff_authz.TENANT_WRITE, key
+        # AA-1035 R2: also the tenant desk roles' tenant.member.write (scoped to their tenants); the send-again also
+        # support's tenant.member.resend (S267 fix pass; an owner invitation needs tenant.write in the route)
+        expected = (staff_authz.TENANT_WRITE, staff_authz.TENANT_MEMBER_WRITE)
+        if key == "send_again":
+            expected += (staff_authz.TENANT_MEMBER_RESEND,)
+        assert staff_authz.POLICY[(method, route)] == expected, key
 
 
 def test_the_access_route_is_tenant_read():
-    assert staff_authz.POLICY[("GET", "/admin/tenants/{tenant_id}/members/access")] == staff_authz.TENANT_READ
+    assert staff_authz.POLICY[("GET", "/admin/tenants/{tenant_id}/members/access")] == (staff_authz.TENANT_READ,
+                                                                                         staff_authz.TENANT_BOOK_READ)
 
 
 def test_the_invitation_controls_are_the_e2e_allow_listed_routes():
@@ -52,12 +58,14 @@ def test_the_invitation_controls_are_the_e2e_allow_listed_routes():
 @pytest.mark.parametrize("synthetic", [True, False])
 def test_admin_may_use_every_control(synthetic):
     out = router_mod.members_access(_principal("admin"), synthetic_tenant=synthetic)
-    assert out == {"read_only": False, "actions": dict.fromkeys(ALL_ACTIONS, True), "invite_roles": ALL_ROLES}
+    assert out == {"read_only": False, "actions": dict.fromkeys(ALL_ACTIONS, True), "invite_roles": ALL_ROLES,
+                   "owner_writes": True}
 
 
 def test_e2e_admin_on_a_real_tenant_is_read_only_like_the_api():
     out = router_mod.members_access(_principal("admin", e2e_read_only=True), synthetic_tenant=False)
-    assert out == {"read_only": True, "actions": dict.fromkeys(ALL_ACTIONS, False), "invite_roles": []}
+    assert out == {"read_only": True, "actions": dict.fromkeys(ALL_ACTIONS, False), "invite_roles": [],
+                   "owner_writes": False}
 
 
 def test_e2e_admin_on_a_synthetic_tenant_may_only_invite_viewer_or_editor():
@@ -75,7 +83,8 @@ def test_e2e_admin_on_a_synthetic_tenant_may_only_invite_viewer_or_editor():
 @pytest.mark.parametrize("role", ["viewer", "content", "reviewer", "not-a-role"])
 def test_other_roles_get_no_control(role):
     out = router_mod.members_access(_principal(role), synthetic_tenant=True)
-    assert out == {"read_only": True, "actions": dict.fromkeys(ALL_ACTIONS, False), "invite_roles": []}
+    assert out == {"read_only": True, "actions": dict.fromkeys(ALL_ACTIONS, False), "invite_roles": [],
+                   "owner_writes": False}
 
 
 def test_the_machine_gets_no_control():
@@ -117,7 +126,7 @@ def test_route_normal_admin_sees_every_control_without_the_synthetic_read(real, 
     res = _access(client, REAL, {"Authorization": f"Bearer {token}"})
     assert res.status_code == 200, res.text
     assert res.json() == {"tenant_id": REAL, "read_only": False, "actions": dict.fromkeys(ALL_ACTIONS, True),
-                          "invite_roles": ALL_ROLES}
+                          "invite_roles": ALL_ROLES, "owner_writes": True}
     assert directory.synthetic_checks == 0
 
 

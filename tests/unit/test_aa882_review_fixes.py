@@ -101,11 +101,17 @@ def recording(secret, monkeypatch):
 
 # ── GET /admin/tenants/{tenant_id}/details ───────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("role", ["reviewer", "content", None])
-def test_tenant_details_of_another_tenant_needs_tenant_read(no_db_client, role):
+@pytest.mark.parametrize("role,detail", [
+    # AA-1035: the content roles are scoped to the aa_internal tenant (api/core/tenant_scope.py), before the endpoint;
+    # the route has a POLICY entry now, so the machine is refused by staff_policy.
+    ("reviewer", "Tenant outside your scope"),
+    ("content", "Tenant outside your scope"),
+    (None, "This route needs a staff role (x-admin-role); machine callers are not allowed"),
+])
+def test_tenant_details_of_another_tenant_needs_tenant_read(no_db_client, role, detail):
     resp = no_db_client.get(f"/admin/tenants/{_OTHER_TENANT}/details", headers=_headers(role))
     assert resp.status_code == 403, resp.text
-    assert resp.json()["detail"] == f"Role '{role or 'machine'}' lacks the '{TENANT_READ}' permission"
+    assert resp.json()["detail"] == detail
 
 
 @pytest.mark.parametrize("role", ["admin", "reviewer", "content"])
@@ -194,12 +200,13 @@ def test_marking_an_out_of_scope_row_read_is_a_404(recording):
 @pytest.mark.parametrize("path,capability", [
     ("/admin/decisions/jev-credit", SPEND_READ),
     ("/admin/llm-shadow/report", SPEND_READ),
-    ("/admin/waves", OPS_READ),
-    ("/admin/waves/{wave_id}/report", OPS_READ),
+    # AA-1035 R2: content_lead runs waves; tenant text is tenant_content.read; the atom store catalog.read
+    ("/admin/waves", (OPS_READ, "wave.run")),
+    ("/admin/waves/{wave_id}/report", (OPS_READ, "wave.run")),
     ("/admin/unmapped-market-requests", TENANT_READ),
-    ("/admin/a4/content-log", TENANT_READ),
-    ("/admin/content-quality/pieces", TENANT_READ),
-    ("/admin/atoms", TENANT_READ),
+    ("/admin/a4/content-log", "tenant_content.read"),
+    ("/admin/content-quality/pieces", "tenant_content.read"),
+    ("/admin/atoms", "catalog.read"),
 ])
 def test_admin_only_reads_are_gated(path, capability):
     assert POLICY[("GET", path)] == capability
@@ -207,7 +214,7 @@ def test_admin_only_reads_are_gated(path, capability):
 
 @pytest.mark.parametrize("path", ["/admin/decisions/jev-credit", "/admin/llm-shadow/report",
                                   "/admin/waves", "/admin/a4/content-log",
-                                  "/admin/content-quality/stats", "/admin/atoms/summary"])
+                                  "/admin/content-quality/stats"])   # AA-1035: atoms are catalog.read (content)
 def test_reviewer_is_refused_the_admin_only_reads(no_db_client, path):
     resp = no_db_client.get(path, headers=_headers("reviewer"))
     assert resp.status_code == 403, (path, resp.text)

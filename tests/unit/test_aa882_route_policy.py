@@ -26,6 +26,7 @@ from api.core.staff_authz import (
     AWAITING_ROUTE,
     POLICY,
     STAFF_PATH_PREFIXES,
+    policy_label,
     staff_policy,
     staff_policy_if_staff,
 )
@@ -60,7 +61,9 @@ def _staff_routes():
 def current_snapshot() -> dict[str, dict]:
     """"METHOD /path" -> {capability or None, module} for every staff route (None: open read)."""
     return {
-        f"{method} {path}": {"capability": POLICY.get((method, path)), "module": route.endpoint.__module__}
+        # AA-1035: an any_of entry is written "a|b" (staff_authz.policy_label)
+        f"{method} {path}": {"capability": policy_label(POLICY.get((method, path))),
+                             "module": route.endpoint.__module__}
         for method, path, route, _ in sorted(_staff_routes(), key=lambda r: (r[1], r[0]))
     }
 

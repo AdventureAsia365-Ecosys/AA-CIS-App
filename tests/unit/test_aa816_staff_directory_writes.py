@@ -210,6 +210,12 @@ def _user(email: str) -> dict:
     return {"UserPoolId": POOL, "Username": email}
 
 
+def _cis_but(group: str) -> tuple[str, ...]:
+    """Every CIS staff group the directory removes, in its order, but ``group`` (AA-1035: the R2 groups and the
+    cis-reviewer alias are in sd.CIS_GROUPS)."""
+    return tuple(g for g in sd.CIS_GROUPS if g != group)
+
+
 def _expect(stub: Stubber, op: str, params: dict, response: Optional[dict] = None) -> None:
     stub.add_response(op, response if response is not None else {}, params)
 
@@ -271,6 +277,24 @@ def test_missing_user_is_fine_for_disable_sign_out_and_group_removal(stubbed):
     cognito.disable(NEW_EMAIL)
     cognito.global_sign_out(NEW_EMAIL)
     cognito.remove_from_group(NEW_EMAIL, "cis-admin")
+
+
+def test_missing_group_is_fine_for_removal_only(stubbed):
+    """AA-1035 fix pass 2: Cognito answers ResourceNotFoundException for a group the pool does not have (the R2
+    groups before the AA-CIS-Infra apply). Removing a person from it is done; adding still fails, and any other
+    error on removal still raises."""
+    from botocore.exceptions import ClientError
+
+    cognito, stub = stubbed
+    _expect_error(stub, "admin_remove_user_from_group", "ResourceNotFoundException",
+                  _group(NEW_EMAIL, "cis-content_lead"))
+    cognito.remove_from_group(NEW_EMAIL, "cis-content_lead")
+    _expect_error(stub, "admin_add_user_to_group", "ResourceNotFoundException", _group(NEW_EMAIL, "cis-support"))
+    with pytest.raises(ClientError):
+        cognito.add_to_group(NEW_EMAIL, "cis-support")
+    _expect_error(stub, "admin_remove_user_from_group", "InternalErrorException", _group(NEW_EMAIL, "cis-admin"))
+    with pytest.raises(ClientError):
+        cognito.remove_from_group(NEW_EMAIL, "cis-admin")
 
 
 def test_sign_out_after_disable_tolerates_user_is_disabled_only_when_asked(stubbed):
@@ -404,7 +428,7 @@ async def test_re_post_of_the_same_create_is_an_idempotent_retry(db, stubbed):
     _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "cis-reviewer"))
     _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "booking-sales"))
     _expect(stub, "admin_enable_user", _user(NEW_EMAIL))
-    for g in ("cis-admin", "cis-content", "booking-admin", "booking-contracting", "booking-content_creator")\
+    for g in _cis_but("cis-reviewer") + tuple(g for g in sd.BOOKING_GROUPS if g != "booking-sales") \
             + sd.CRM_GROUPS:
         _expect(stub, "admin_remove_user_from_group", _group(NEW_EMAIL, g))
     result = await sd.create_staff(db, cognito, actor_id=db.owner, email=NEW_EMAIL, display_name="N",
@@ -421,7 +445,7 @@ async def test_create_over_an_existing_cognito_user_drops_its_stale_groups_and_e
     _expect_error(stub, "admin_create_user", "UsernameExistsException", _create())
     _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "cis-content"))   # add before any remove
     _expect(stub, "admin_enable_user", _user(NEW_EMAIL))
-    for g in ("cis-admin", "cis-reviewer") + sd.BOOKING_GROUPS + sd.CRM_GROUPS:
+    for g in _cis_but("cis-content") + sd.BOOKING_GROUPS + sd.CRM_GROUPS:
         _expect(stub, "admin_remove_user_from_group", _group(NEW_EMAIL, g))
     result = await sd.create_staff(db, cognito, actor_id=db.owner, email=NEW_EMAIL, display_name="N",
                                    role="content")
@@ -650,11 +674,60 @@ async def test_sync_makes_cognito_match_an_active_row(db, stubbed):
     _expect(stub, "admin_enable_user", _user(NEW_EMAIL))
     _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "cis-reviewer"))
     _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "booking-sales"))
-    for g in ("cis-admin", "cis-content", "booking-admin", "booking-contracting", "booking-content_creator")\
+    for g in _cis_but("cis-reviewer") + tuple(g for g in sd.BOOKING_GROUPS if g != "booking-sales") \
             + sd.CRM_GROUPS:
         _expect(stub, "admin_remove_user_from_group", _group(NEW_EMAIL, g))
     result = await sd.sync_staff(db, cognito, actor_id=db.owner, staff_id=uid)
     assert result.status == sd.STATUS_OK and db.actions() == [sd.StaffAudit.COGNITO_SYNCED]
+
+
+R2_GROUPS = ("cis-content_lead", "cis-tenant_qa", "cis-customer_success", "cis-support", "cis-finance",
+             "cis-ai_ops", "booking-finance")
+
+
+@pytest.mark.asyncio
+async def test_sync_and_existing_user_create_succeed_before_the_r2_groups_exist(db, stubbed):
+    """AA-1035 fix pass 2 (deploy order): if this code rolls before AA-CIS-Infra creates the R2 groups, a Sync or a
+    re-create of an existing user (neither giving an R2 role) still ends ok, not "saved, Cognito pending"."""
+    assert set(R2_GROUPS) <= set(sd.CIS_GROUPS + sd.BOOKING_GROUPS)
+    cognito, stub = stubbed
+
+    def _removals(wanted: tuple[str, ...]) -> None:
+        for g in sd.CIS_GROUPS + sd.BOOKING_GROUPS + sd.CRM_GROUPS:
+            if g in wanted:
+                continue
+            if g in R2_GROUPS:
+                _expect_error(stub, "admin_remove_user_from_group", "ResourceNotFoundException",
+                              _group(NEW_EMAIL, g))
+            else:
+                _expect(stub, "admin_remove_user_from_group", _group(NEW_EMAIL, g))
+
+    uid = db.add(email=NEW_EMAIL, role="reviewer")   # a merged reviewer: the post-deploy Sync moves it to content
+    _expect_error(stub, "admin_create_user", "UsernameExistsException", _create())
+    _expect(stub, "admin_enable_user", _user(NEW_EMAIL))
+    _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "cis-reviewer"))
+    _removals(("cis-reviewer",))
+    result = await sd.sync_staff(db, cognito, actor_id=db.owner, staff_id=uid)
+    assert result.status == sd.STATUS_OK and not result.pending
+    assert db.actions() == [sd.StaffAudit.COGNITO_SYNCED]
+
+    stub.assert_no_pending_responses()
+    other = "existing.person@adventure.asia"
+    _expect_error(stub, "admin_create_user", "UsernameExistsException", _create(other))
+
+    def _other(g: str) -> dict:
+        return _group(other, g)
+
+    _expect(stub, "admin_add_user_to_group", _other("cis-content"))   # add before any remove
+    _expect(stub, "admin_enable_user", _user(other))
+    for g in _cis_but("cis-content") + sd.BOOKING_GROUPS + sd.CRM_GROUPS:
+        if g in R2_GROUPS:
+            _expect_error(stub, "admin_remove_user_from_group", "ResourceNotFoundException", _other(g))
+        else:
+            _expect(stub, "admin_remove_user_from_group", _other(g))
+    created = await sd.create_staff(db, cognito, actor_id=db.owner, email=other, display_name="E", role="content")
+    assert created.status == sd.STATUS_OK and not created.pending
+    assert "remove_group:cis-content_lead" in created.steps
 
 
 @pytest.mark.asyncio
@@ -959,7 +1032,7 @@ async def test_sync_adds_the_granted_crm_groups_and_removes_the_others(db, stubb
     _expect(stub, "admin_enable_user", _user(NEW_EMAIL))
     _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "cis-content"))
     _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "crm-support"))
-    for g in ("cis-admin", "cis-reviewer") + sd.BOOKING_GROUPS + ("crm-platform-admin", "crm-ops"):
+    for g in _cis_but("cis-content") + sd.BOOKING_GROUPS + ("crm-platform-admin", "crm-ops"):
         _expect(stub, "admin_remove_user_from_group", _group(NEW_EMAIL, g))
     result = await sd.sync_staff(db, cognito, actor_id=db.owner, staff_id=uid)
     assert result.status == sd.STATUS_OK
@@ -990,7 +1063,7 @@ async def test_without_the_table_sync_and_role_changes_leave_crm_groups_alone(db
     _expect_error(stub, "admin_create_user", "UsernameExistsException", _create())
     _expect(stub, "admin_enable_user", _user(NEW_EMAIL))
     _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "cis-reviewer"))
-    for g in ("cis-admin", "cis-content") + sd.BOOKING_GROUPS:   # no crm-* removal
+    for g in _cis_but("cis-reviewer") + sd.BOOKING_GROUPS:   # no crm-* removal
         _expect(stub, "admin_remove_user_from_group", _group(NEW_EMAIL, g))
     assert (await sd.sync_staff(db, cognito, actor_id=db.owner, staff_id=uid)).status == sd.STATUS_OK
     _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "booking-sales"))
