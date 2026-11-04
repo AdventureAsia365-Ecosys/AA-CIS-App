@@ -33,6 +33,7 @@ Refusals are 403 ``Tenant outside your scope`` whether the tenant exists or not,
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
 from uuid import UUID
 
@@ -202,6 +203,37 @@ async def tenant_scope_filter(request: Request, conn: Any) -> Optional[frozenset
         logger.error("tenant_scope_unavailable", error=type(exc).__name__)
         raise HTTPException(status_code=503, detail=SCOPE_UNAVAILABLE) from exc
     return frozenset(ids)
+
+
+
+_SQL_COLUMN = re.compile(r"[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)?\Z")
+
+
+def tenant_scope_sql(scope: Optional[str], staff_id: Optional[str], column: str) -> str:
+    """A SQL predicate: the uuid ``column`` names a tenant ``scope`` reaches for this staff member — the rule of
+    :func:`in_scope` / :func:`tenant_scope_filter` (same book and pool queries as :data:`SQL_IN_BOOK` /
+    :data:`SQL_IN_POOL`) for a query over many rows (the desk roles' bell, api/routers/admin.py notification_scope).
+
+    Built from constants only: ``column`` must be a plain (optionally table-qualified) identifier, and ``staff_id`` is
+    re-validated as a UUID before it is inlined as a literal; a missing or invalid staff id reaches no book (FALSE),
+    an unknown scope no tenant."""
+    if not _SQL_COLUMN.match(column or ""):
+        raise ValueError(f"not a column identifier: {column!r}")
+    if scope == SCOPE_ALL:
+        return "TRUE"
+    if scope == SCOPE_INTERNAL:
+        return f"({column} = '{AA_INTERNAL_TENANT}'::uuid)"
+    staff = _uuid_text(staff_id) if staff_id is not None else None
+    if scope not in (SCOPE_BOOK, SCOPE_BOOK_POOL) or staff is None:
+        return "FALSE"
+    book = (f"EXISTS (SELECT 1 FROM shared.staff_tenant_assignment sa WHERE sa.admin_user_id = '{staff}'::uuid "
+            f"AND sa.tenant_id = {column})")
+    if scope == SCOPE_BOOK:
+        return f"({book})"
+    pool = (f"EXISTS (SELECT 1 FROM shared.tenants st WHERE st.tenant_id = {column} AND st.kind IN ('agency', 'demo') "
+            "AND (st.segment = 'tech_touch' OR NOT EXISTS (SELECT 1 FROM shared.staff_tenant_assignment so "
+            "WHERE so.tenant_id = st.tenant_id AND so.kind = 'owner')))")
+    return f"({book} OR {pool})"
 
 
 # The route-level dependency list every staff route with a {tenant_id} path parameter declares:

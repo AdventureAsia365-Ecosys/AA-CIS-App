@@ -8,9 +8,15 @@ from typing import List, Literal, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from api.core.staff_authz import (
     BILLING_READ, BILLING_WRITE, CONTENT_READ, MASTER_ADMIN, OPS_READ, TENANT_BOOK_READ, TENANT_BOOK_WRITE, TENANT_READ,
-    TENANT_WRITE, has_any_perm, has_perm, sees_tenant_money, staff_policy,
+    ROLE_PERMS, TENANT_WRITE, has_any_perm, has_perm, sees_tenant_money, staff_policy,
 )
-from api.core.tenant_scope import TENANT_SCOPED, tenant_scope_filter
+from api.core.tenant_scope import (
+    TENANT_SCOPED,
+    scope_for_role,
+    staff_id_of,
+    tenant_scope_filter,
+    tenant_scope_sql,
+)
 from pydantic import BaseModel, Field
 from api.core.secret_compare import secrets_equal
 from api.core.staff_credential import principal_verified
@@ -1918,11 +1924,39 @@ _NOTIF_CONTENT_SCOPE = (
 _NOTIF_STAFF_ROWS = "NOT (target_roles <@ ARRAY['tenant']::text[])"
 
 
-def notification_scope(x_admin_role: Optional[str]) -> str:
-    """SQL predicate on shared.notifications for the caller's role (a constant, never user input)."""
+# AA-1035 R2 slice 2: the bell of a role that reads neither ops nor content (customer_success, support, finance): only
+# the rows targeted at that role by name, never a platform.* or spend alert. No writer targets them yet, so their bell
+# is empty until one does; it no longer answers 403.
+# S268 fix round 2: and only the tenants the member's scope reaches (api/core/tenant_scope.py, the rule of
+# require_tenant_scope: customer_success its book, support its book and the pool, finance every tenant). A row of the
+# AA internal tenant (the platform rows: shared.notifications.tenant_id is NOT NULL) stays role-targeted only.
+_NOTIF_ROLE_SCOPE = (
+    "(target_roles && ARRAY['{role}']::text[]"
+    " AND event_type NOT LIKE 'platform.%'"
+    " AND event_type <> 'spend_budget_alert'"
+    " AND (notifications.tenant_id IS NULL OR notifications.tenant_id = '{internal}'::uuid OR {tenants}))"
+)
+
+
+def notification_scope(x_admin_role: Optional[str], staff_id: Optional[str] = None) -> str:
+    """SQL predicate on shared.notifications for the caller's role (a constant, never user input: a role is put into
+    the SQL only when it is one of the ROLE_PERMS keys, which are fixed lower-case identifiers; ``staff_id``, the
+    caller's admin_users.id for the desk roles' tenant scope, only re-validated as a UUID by tenant_scope_sql)."""
     if x_admin_role is None or has_perm(x_admin_role, OPS_READ):
         return _NOTIF_STAFF_ROWS
-    return _NOTIF_CONTENT_SCOPE
+    if has_perm(x_admin_role, CONTENT_READ):
+        return _NOTIF_CONTENT_SCOPE
+    if x_admin_role in ROLE_PERMS and x_admin_role.replace("_", "").isalpha() and x_admin_role.islower():
+        tenants = tenant_scope_sql(scope_for_role(x_admin_role), staff_id, "notifications.tenant_id")
+        return _NOTIF_ROLE_SCOPE.format(role=x_admin_role, internal=AA_INTERNAL_TENANT, tenants=tenants)
+    return "FALSE"
+
+
+def _bell_scope(request: Request, x_admin_role: Optional[str]) -> str:
+    """notification_scope for this request: the staff id is read only for a desk role (the only scope that needs it)."""
+    desk = (isinstance(x_admin_role, str) and x_admin_role in ROLE_PERMS
+            and not has_perm(x_admin_role, OPS_READ) and not has_perm(x_admin_role, CONTENT_READ))
+    return notification_scope(x_admin_role, staff_id_of(request) if desk else None)
 
 
 # ── GET /admin/notifications/count ────────────────────────────────────────────
@@ -1939,7 +1973,7 @@ async def notification_count(
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT COUNT(*) AS unread FROM shared.notifications "
-            f"WHERE is_read = FALSE AND {notification_scope(x_admin_role)}"
+            f"WHERE is_read = FALSE AND {_bell_scope(request, x_admin_role)}"
         )
     return {"unread": int(row["unread"])}
 
@@ -1958,7 +1992,7 @@ async def mark_all_read(
     async with pool.acquire() as conn:
         result = await conn.execute(
             "UPDATE shared.notifications SET is_read = TRUE "
-            f"WHERE is_read = FALSE AND {notification_scope(x_admin_role)}"
+            f"WHERE is_read = FALSE AND {_bell_scope(request, x_admin_role)}"
         )
     cleared = int(result.split()[-1])
     return {"cleared": cleared}
@@ -1977,7 +2011,7 @@ async def list_notifications(
     x_admin_role: Optional[str] = Header(None),
 ):
     verify_admin_secret(x_admin_secret)
-    scope = notification_scope(x_admin_role)
+    scope = _bell_scope(request, x_admin_role)
     where = f"WHERE is_read = FALSE AND {scope}" if unread_only else f"WHERE {scope}"
     pool = request.app.state.pool
     async with pool.acquire() as conn:
@@ -2046,7 +2080,7 @@ async def mark_read(
     async with pool.acquire() as conn:
         result = await conn.execute(
             "UPDATE shared.notifications SET is_read = TRUE "
-            f"WHERE id = $1 AND {notification_scope(x_admin_role)}",
+            f"WHERE id = $1 AND {_bell_scope(request, x_admin_role)}",
             notif_id,
         )
     if result.split()[-1] == "0":

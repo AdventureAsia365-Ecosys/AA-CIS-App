@@ -110,6 +110,7 @@ import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from api.core.lab_read_log import LAB_TEXT_LOGGED
 from api.core.staff_authz import staff_policy
 from api.core.tenant_scope import TENANT_SCOPED
 from api.routers.admin import verify_admin_secret
@@ -173,7 +174,7 @@ _LAST_JOBS_SQL = """
 """
 
 
-@router.get("/summary")
+@router.get("/summary", dependencies=LAB_TEXT_LOGGED)
 async def summary(request: Request):
     from services.writing_memory.budget import month_spend
     pool = _pool(request)
@@ -224,7 +225,7 @@ def _signal_out(r: dict, full: bool = False) -> dict:
     return out
 
 
-@router.get("/signals")
+@router.get("/signals", dependencies=LAB_TEXT_LOGGED)
 async def list_signals(request: Request, writer: Optional[str] = None, scope: Optional[str] = None,
                        tenant_id: Optional[str] = None, fact_status: Optional[str] = None,
                        actor_type: Optional[str] = None, action: Optional[str] = None,
@@ -257,7 +258,7 @@ _WEEKS_SQL = """
 """
 
 
-@router.get("/signals/clusters")
+@router.get("/signals/clusters", dependencies=LAB_TEXT_LOGGED)
 async def signal_clusters(request: Request):
     """The miner's view right now ($0): every cluster over threshold, its basis and support, whether it already has an
     open rule, and two masked samples (what the drafter would see)."""
@@ -288,7 +289,7 @@ async def signal_clusters(request: Request):
                            "min_cluster_for_draft": cfg.MIN_CLUSTER_FOR_DRAFT}}
 
 
-@router.get("/signals/{signal_id}")
+@router.get("/signals/{signal_id}", dependencies=LAB_TEXT_LOGGED)
 async def get_signal(signal_id: str, request: Request):
     sid = _uuid(signal_id, "signal")
     try:
@@ -338,7 +339,7 @@ async def set_signal_fact(signal_id: str, body: FactBody, request: Request,
 
 # ── candidates ──────────────────────────────────────────────────────────────────────────────────────────────────────
 
-@router.get("/candidates")
+@router.get("/candidates", dependencies=LAB_TEXT_LOGGED)
 async def list_candidates(request: Request, status: Optional[str] = None, writer: Optional[str] = None,
                           scope: Optional[str] = None, tenant_id: Optional[str] = None,
                           limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0)):
@@ -359,7 +360,7 @@ _PROVENANCE_SQL = f"SELECT {_SIGNAL_COLS} FROM shared.writing_signal WHERE signa
                   "ORDER BY created_at DESC"
 
 
-@router.get("/candidates/{rule_id}")
+@router.get("/candidates/{rule_id}", dependencies=LAB_TEXT_LOGGED)
 async def get_candidate(rule_id: str, request: Request):
     rid = _uuid(rule_id, "rule")
     try:
@@ -845,7 +846,7 @@ async def reject_release(release_id: str, body: ReleaseReasonBody, request: Requ
     return rel.serialise(row)
 
 
-@router.get("/writers")
+@router.get("/writers", dependencies=LAB_TEXT_LOGGED)
 async def writer_switches(request: Request):
     from services.writing_memory import releases as rel
     try:
@@ -904,7 +905,7 @@ def _owner(scope: str, tenant_id: Optional[str]) -> tuple[str, Optional[str]]:
     return scope, (_uuid(tenant_id, "tenant") if tenant_id else None)
 
 
-@router.get("/exemplars")
+@router.get("/exemplars", dependencies=LAB_TEXT_LOGGED)
 async def list_exemplars(request: Request, writer: Optional[_EXEMPLAR_WRITERS] = None, channel: Optional[str] = None,
                          scope: Optional[Literal["platform", "tenant"]] = None, tenant_id: Optional[str] = None,
                          status: Optional[Literal["candidate", "pinned", "never"]] = None,
@@ -926,7 +927,7 @@ async def list_exemplars(request: Request, writer: Optional[_EXEMPLAR_WRITERS] =
             "total": total, "limit": limit, "offset": offset}
 
 
-@router.get("/exemplars/selection")
+@router.get("/exemplars/selection", dependencies=LAB_TEXT_LOGGED)
 async def exemplar_selection(request: Request, writer: _EXEMPLAR_WRITERS,
                              scope: Literal["platform", "tenant"] = "platform", tenant_id: Optional[str] = None):
     """What a rules draft of this writer and owner would pin now (the function the draft itself calls)."""
@@ -1053,7 +1054,7 @@ async def tenant_voice(tenant_id: str, request: Request):
 
 # ── weekly KPIs, keeps and the disagreement queue (AA-922 WM-30 / WM-31) ────────────────────────────────────────────
 
-@router.get("/metrics")
+@router.get("/metrics", dependencies=LAB_TEXT_LOGGED)
 async def metrics(request: Request):
     """The stored weekly reports, newest first."""
     from services.writing_memory import kpi
@@ -1125,7 +1126,7 @@ async def keep_release(release_id: str, body: KeepBody, request: Request,
     return row
 
 
-@router.get("/disagreements")
+@router.get("/disagreements", dependencies=LAB_TEXT_LOGGED)
 async def list_disagreements(request: Request, status: Optional[Literal["open", "resolved"]] = "open",
                              limit: int = Query(50, ge=1, le=200)):
     from services.writing_memory import disagreements as dis

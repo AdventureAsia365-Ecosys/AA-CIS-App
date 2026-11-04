@@ -12,7 +12,7 @@
 /** Icon keys; app/_kit/adminNav.tsx maps each to a lucide icon (TypeScript checks the map is complete). */
 export type NavIcon =
   | "overview" | "appHealth" | "reports" | "dataCoverage"
-  | "tenants" | "agencies" | "erasure" | "plans"
+  | "tenants" | "agencies" | "erasure" | "plans" | "assignments"
   | "upload" | "rewrite" | "review" | "master" | "atoms" | "places" | "photos" | "facts" | "supply" | "aaContent"
   | "seo" | "settings"
   | "quality" | "trace" | "reviewLog" | "slate" | "compliance"
@@ -51,6 +51,8 @@ export const ADMIN_IA: IaGroup[] = [
   { label: "Tenants", items: [
     // The directory; a row opens the Tenant 360 drawer (?tenant=<id>).
     { href: "/admin/tenants", label: "Directory", icon: "tenants" },
+    // AA-1035 R2 slice 2: who looks after which tenant (owner, backup, support; the scope of the tenant desk roles).
+    { href: "/admin/tenants/assignments", label: "Assignments", icon: "assignments" },
     { href: "/admin/tenants/agencies", label: "CRM agencies", icon: "agencies" },
     { href: "/admin/tenants/data-erasure", label: "Data erasure", icon: "erasure" },
     // The plans and add-ons catalogue (AA-1028 R1 slice 3, tenant control plane).

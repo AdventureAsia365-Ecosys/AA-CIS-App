@@ -20,6 +20,8 @@ export const RULE_STATUS = defineMessages(
 export const M = defineMessages(
   {
     // tabs
+    // AA-1035 R2 slice 2: the logged Writing Lab read of tenant text (ai_ops)
+    loggedReadNotice: "Your role reads tenant text on this page only, and every read is recorded in the audit log.",
     tabSignals: "Signals",
     tabCandidates: "Candidates",
     tabReleases: "Releases",
@@ -175,6 +177,8 @@ export const M = defineMessages(
       + "month cap, the run stops before its first paid call but still counts as one of the 3.",
   },
   {
+    loggedReadNotice: "Vai trò của bạn chỉ đọc nội dung của tenant trên trang này, và mỗi lần đọc đều được ghi vào nhật "
+      + "ký kiểm toán.",
     tabSignals: "Tín hiệu",
     tabCandidates: "Ứng viên",
     tabReleases: "Bản phát hành",

@@ -74,6 +74,8 @@ from api.routers.admin_waves import router as admin_waves_router  # AA-727 — r
 from api.routers.admin_content_quality import router as admin_content_quality_router  # AA-769
 from api.routers.admin_tenant_compliance import router as admin_tenant_compliance_router  # AA-1039 R6
 from api.routers.admin_tenant360 import router as admin_tenant360_router  # AA-766
+from api.routers.admin_view_as import router as admin_view_as_router  # AA-1035 R2 slice 2 — view as tenant
+from api.routers.admin_tenant_assignments import router as admin_tenant_assignments_router  # AA-1035 R2 slice 2
 from api.routers.admin_platform_ops import router as admin_platform_ops_router  # AA-884
 from api.routers.admin_crm_console import router as admin_crm_console_router  # AA-941
 from api.routers.admin_alert_recipients import router as admin_alert_recipients_router  # AA-913
@@ -89,6 +91,7 @@ from api.routers.tenant_membership import router as tenant_membership_router  # 
 from api.routers.tenant_account import router as tenant_account_router  # AA-1028 — tenant.entitlements.v1
 from api.routers.tenant_session import router as tenant_session_router  # AA-979 P2b — partner-pool studio sign-in
 from api.middleware.tenant_role import tenant_role_middleware  # AA-979 P2b — Content studio roles (csr)
+from api.middleware.view_as import ViewAsGateMiddleware  # AA-1035 R2 slice 2 — read-only view-as tokens
 from api.middleware.rate_limit import rate_limit_middleware
 from api.middleware.sentry_context import sentry_context_middleware
 from api.middleware.staff_bearer import StaffBearerMiddleware  # AA-816 C3
@@ -321,6 +324,8 @@ app.include_router(v1_account_members_router)  # AA-978 — tenant Account › M
 app.include_router(v1_trip_page_router)  # AA-482 — GET /v1/trip/{tour_id}, public page data
 app.include_router(admin_trip_page_router)  # AA-482 — /admin/trip-pages/{publish,recheck}
 app.include_router(admin_tenant_provision_router)  # before admin_router: /tenants/provision is no tenant id
+app.include_router(admin_view_as_router)  # AA-1035 R2 slice 2 — /admin/tenants/{id}/view-as, /admin/view-as/sessions
+app.include_router(admin_tenant_assignments_router)  # AA-1035 R2 slice 2 — /admin/tenant-assignments (Assignments page)
 app.include_router(admin_tenant_subscription_router)  # AA-1028 R1 slice 3 (Tenant 360 › Subscription)
 app.include_router(admin_plans_router)  # AA-1028 R1 slice 3 (Tenants › Plans & add-ons)
 app.include_router(admin_router)
@@ -368,6 +373,10 @@ app.middleware("http")(rate_limit_middleware)
 # AA-979 P2b — registered after the rate limiter so it wraps it: a viewer / editor token refused for its Content studio
 # role (csr claim) is answered 403 before it reaches the rate limiter, the meter or the route.
 app.middleware("http")(tenant_role_middleware)
+# AA-1035 R2 slice 2 — registered after the tenant role middleware so it wraps it and the rate limiter: a request with a
+# staff view-as token (api/core/view_as.py) is refused unless it is an allowed read of an open session, and every
+# request it serves is logged before the route runs.
+app.add_middleware(ViewAsGateMiddleware)
 # AA-816 C3 — registered after the rate limiter so it wraps it (Starlette: last registered = outermost): a
 # Cognito Bearer on a staff path rewrites x-admin-role / x-admin-user-id before the rate limiter's admin
 # tracking and the routes read them. Legacy HS256 Bearer and secret-only requests pass through untouched, except the

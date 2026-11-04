@@ -107,6 +107,7 @@ const UNLISTED = new Set([
   "/admin/supply-content/[id]",      // Booking's "Edit in CIS" deep link
   "/admin/tenant-qa",                // index → /admin/tenant-qa/quality
   "/admin/lab/[stage]",              // Writing Lab › one stage (the stage bar of /admin/lab)
+  "/admin/tenants/view-as",          // AA-1035 R2 slice 2: opened from Tenant 360 › View as partner
 ]);
 
 test("5. every admin page is in the nav or reached from another page", () => {

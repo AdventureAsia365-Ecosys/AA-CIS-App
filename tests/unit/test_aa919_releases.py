@@ -425,7 +425,8 @@ def test_policy_entries():
     # AA-1035 R2: release reads hold no tenant text (lab.read, ai_ops); the writer list stays tenant_content.read
     for path in ("/releases", "/releases/active", "/releases/{release_id}"):
         assert POLICY[("GET", base + path)] == (TENANT_CONTENT_READ, LAB_READ)
-    assert POLICY[("GET", base + "/writers")] == TENANT_CONTENT_READ
+    # AA-1035 slice 2: tenant text of the Lab, also ai_ops through its logged read (lab.tenant_text.read)
+    assert POLICY[("GET", base + "/writers")] == (TENANT_CONTENT_READ, "lab.tenant_text.read")
     for path in ("/releases", "/releases/reverify-scan", "/releases/{release_id}/evidence",
                  "/releases/{release_id}/approve", "/releases/{release_id}/activate",
                  "/releases/{release_id}/rollback", "/releases/{release_id}/reject"):

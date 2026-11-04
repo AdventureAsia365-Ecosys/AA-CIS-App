@@ -33,17 +33,21 @@ ROLES = ("admin", "reviewer", "content", "viewer") + R2_ROLES
 EXPECTED_PERMS = {
     "content_lead": {"content.read", "content.write", "review.act", "master.admin", "atoms.write", "photos.write",
                      "a4.unpublish", "quality.write", "content.settings.write", "catalog.read", "tenant_content.read",
-                     "lab.read", "wave.run"},
-    "content": {"content.read", "content.write", "review.act", "catalog.read"},
-    "reviewer": {"content.read", "content.write", "review.act", "catalog.read"},
-    "tenant_qa": {"content.read", "catalog.read", "tenant_content.read", "quality.write", "a4.unpublish", "lab.read"},
+                     "lab.read", "wave.run", "notifications.read"},
+    "content": {"content.read", "content.write", "review.act", "catalog.read", "notifications.read"},
+    "reviewer": {"content.read", "content.write", "review.act", "catalog.read", "notifications.read"},
+    "tenant_qa": {"content.read", "catalog.read", "tenant_content.read", "quality.write", "a4.unpublish", "lab.read",
+                  "notifications.read"},
+    # slice 2: + read-only view-as of the own book (tenant.view_as) and the bell (notifications.read)
     "customer_success": {"tenant.book.read", "tenant.book.account.read", "tenant.book.write", "tenant.member.write",
-                         "tenant.member.resend"},
-    # S267 fix pass: support only sends a non-owner invitation again (no tenant.member.write)
-    "support": {"tenant.book.read", "tenant.member.resend"},
-    "finance": {"billing.read", "billing.write", "spend.read"},
-    "ai_ops": {"content.read", "catalog.read", "ai.admin", "spend.read", "spend.write", "lab.read"},
-    "viewer": {"content.read"},
+                         "tenant.member.resend", "tenant.view_as", "notifications.read"},
+    # S267 fix pass: support only sends a non-owner invitation again (no tenant.member.write); slice 2: + view-as
+    "support": {"tenant.book.read", "tenant.member.resend", "tenant.view_as", "notifications.read"},
+    "finance": {"billing.read", "billing.write", "spend.read", "notifications.read"},
+    # slice 2: the logged Writing Lab read of tenant text (lab.tenant_text.read, never tenant_content.read)
+    "ai_ops": {"content.read", "catalog.read", "ai.admin", "spend.read", "spend.write", "lab.read",
+               "lab.tenant_text.read", "notifications.read"},
+    "viewer": {"content.read", "notifications.read"},
 }
 
 
@@ -161,7 +165,13 @@ def test_customer_success_writes_its_book_and_support_does_not(route):
 
 def test_support_only_sends_invitations_again():
     writes = _any(_allowed("support"), "/admin", methods=("POST", "PUT", "PATCH", "DELETE"))
-    assert writes == ["POST /admin/tenants/{tenant_id}/members/{membership_id}/invitation/send"]
+    assert writes == [
+        "POST /admin/tenants/{tenant_id}/members/{membership_id}/invitation/send",
+        "POST /admin/tenants/{tenant_id}/view-as",                 # slice 2: read-only view-as (own book + pool)
+        "POST /admin/view-as/sessions/{session_id}/end",
+        "PUT /admin/notifications/read-all",                       # slice 2: the bell (own rows only)
+        "PUT /admin/notifications/{notif_id}/read",
+    ]
 
 
 # AA-1035 (S267 review): clarifications.md section 3 gives support "-" on plans / invoices, Tenant QA and AI & spend
@@ -239,7 +249,10 @@ def test_ai_ops_owns_ai_and_spend_but_no_tenant_text():
     allowed = _allowed("ai_ops")
     assert "PATCH /admin/llm-config/{stage}" in allowed and "PUT /admin/budgets/{provider}/{scope}" in allowed
     assert _any(allowed, "/admin/content-quality", "/admin/a4", "/admin/tenant-qa") == []
-    assert "GET /admin/writing-memory/signals" not in allowed          # tenant text: the logged Lab read is slice 2
+    # slice 2: the tenant text of the Writing Lab only, every read logged (lab.tenant_text.read,
+    # test_aa1035_s2_lab_read)
+    assert "GET /admin/writing-memory/signals" in allowed
+    assert "GET /admin/writing-memory/tenants/{tenant_id}/voice" not in allowed   # Tenant 360 voice: not the Lab
     assert "GET /admin/writing-memory/releases" in allowed            # ids, statuses, numbers
 
 

@@ -30,10 +30,13 @@ const CONTENT_WORKERS: StaffRole[] = ["admin", "reviewer", "content", "content_l
 // AA-1035: tenant content QA (quality.write) and the Writing Lab readers.
 const TENANT_QA: StaffRole[] = ["admin", "content_lead", "tenant_qa"];
 // AA-1035 (S267 fix pass): the Writing Lab pages — the readers above plus ai_ops (Writing Lab W: lab.read and the
-// ai.admin writes; the tenant-text reads stay tenant_content.read in the backend, so those panels refuse ai_ops).
+// ai.admin writes). Slice 2: ai_ops reads the tenant-text panels too, through lab.tenant_text.read, which the backend
+// logs per read (api/core/lab_read_log.py); the Writing memory page says so to that role.
 const WRITING_LAB: StaffRole[] = [...TENANT_QA, "ai_ops"];
 // AA-1035: the Tenants directory (backend filters it to the caller's scope: api/core/tenant_scope.py).
 const TENANT_DESK: StaffRole[] = ["admin", "customer_success", "support", "finance"];
+// AA-1035 R2 slice 2: the roles that work a tenant book (Assignments, view as tenant: tenant.view_as).
+const TENANT_BOOK: StaffRole[] = ["admin", "customer_success", "support"];
 // AA-1035: AI & spend.
 const AI_SPEND: StaffRole[] = ["admin", "ai_ops", "finance"];
 
@@ -83,6 +86,10 @@ export const PAGE_RULES: PageRule[] = [
   { prefix: "/admin/tenants/agencies", roles: ["admin"] },
   { prefix: "/admin/tenants/data-erasure", roles: ["admin"] },
   { prefix: "/admin/tenants/plans", roles: ["admin", "finance"] },
+  // AA-1035 R2 slice 2: who looks after which tenant (the backend filters to the caller's scope; only admin assigns)
+  // and the read-only view as tenant (backend capability tenant.view_as, scoped).
+  { prefix: "/admin/tenants/assignments", roles: TENANT_BOOK },
+  { prefix: "/admin/tenants/view-as", roles: TENANT_BOOK },
   { prefix: "/admin/tenants", roles: TENANT_DESK },
   { prefix: "/admin/ai-gateway", roles: AI_SPEND },        // AA-804 — AI gateway (health, spend, job trace)
   // AA-1039 R6 slice 3 — Spend (was Cost Operations at /admin/cost-ops, AA-505 / AA-665, and Cost per app at
@@ -269,7 +276,11 @@ export type Capability =
   | "billing.read" | "billing.write" | "wave.run" | "lab.read"
   | "tenant.book.account.read"    // AA-1035: plans, usage, cost, Tenant QA, AI budget of the own book (not support)
   | "tenant.member.resend"        // AA-1035: send a non-owner invitation again (support, customer_success)
-  | "tenant.book.write";          // AA-1035: non-billing Tenant 360 writes of the own book (customer_success)
+  | "tenant.book.write"           // AA-1035: non-billing Tenant 360 writes of the own book (customer_success)
+  // AA-1035 R2 slice 2
+  | "tenant.view_as"              // read-only "view as tenant" (admin, customer_success, support), scoped
+  | "lab.tenant_text.read"        // ai_ops: tenant text in the Writing Lab only, every read logged by the backend
+  | "notifications.read";         // the staff bell (every role)
 
 export const ROLE_PERMS: Record<StaffRole, readonly Capability[]> = {
   admin: [
@@ -278,23 +289,30 @@ export const ROLE_PERMS: Record<StaffRole, readonly Capability[]> = {
     "ops.read", "ops.write", "ai.admin", "spend.read", "spend.write", "staff.read", "audit.read",
     "alerts.write", "tenant_content.read", "catalog.read", "tenant.book.read", "tenant.book.account.read",
     "tenant.member.write", "tenant.assign", "billing.read", "billing.write", "wave.run", "lab.read",
-    "tenant.member.resend", "tenant.book.write",
+    "tenant.member.resend", "tenant.book.write", "tenant.view_as", "notifications.read",
   ],
   content_lead: [
     "content.read", "content.write", "review.act", "master.admin", "atoms.write", "photos.write",
     "a4.unpublish", "quality.write", "content.settings.write", "catalog.read", "tenant_content.read",
-    "lab.read", "wave.run",
+    "lab.read", "wave.run", "notifications.read",
   ],
-  content: ["content.read", "content.write", "review.act", "catalog.read"],
-  reviewer: ["content.read", "content.write", "review.act", "catalog.read"],
-  tenant_qa: ["content.read", "catalog.read", "tenant_content.read", "quality.write", "a4.unpublish", "lab.read"],
+  content: ["content.read", "content.write", "review.act", "catalog.read", "notifications.read"],
+  reviewer: ["content.read", "content.write", "review.act", "catalog.read", "notifications.read"],
+  tenant_qa: [
+    "content.read", "catalog.read", "tenant_content.read", "quality.write", "a4.unpublish", "lab.read",
+    "notifications.read",
+  ],
   customer_success: [
     "tenant.book.read", "tenant.book.account.read", "tenant.book.write", "tenant.member.write", "tenant.member.resend",
+    "tenant.view_as", "notifications.read",
   ],
-  support: ["tenant.book.read", "tenant.member.resend"],
-  finance: ["billing.read", "billing.write", "spend.read"],
-  ai_ops: ["content.read", "catalog.read", "ai.admin", "spend.read", "spend.write", "lab.read"],
-  viewer: ["content.read"],
+  support: ["tenant.book.read", "tenant.member.resend", "tenant.view_as", "notifications.read"],
+  finance: ["billing.read", "billing.write", "spend.read", "notifications.read"],
+  ai_ops: [
+    "content.read", "catalog.read", "ai.admin", "spend.read", "spend.write", "lab.read", "lab.tenant_text.read",
+    "notifications.read",
+  ],
+  viewer: ["content.read", "notifications.read"],
 };
 
 /** May `role` use `capability`? (UI hint from the display role; the backend re-checks every call.) */

@@ -33,6 +33,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.security.utils import get_authorization_scheme_param
 
+from api.core import view_as as _view_as
 from api.routers.auth import studio_role_of, verify_jwt
 
 logger = structlog.get_logger()
@@ -96,6 +97,12 @@ def enforce(request: Request | None, payload: dict) -> None:
     route just accepted may not make this request. ``request`` is None on a direct call (tests): no check."""
     if request is None:
         return
+    # AA-1035 R2 slice 2: a view-as token (staff "view as tenant", api/core/view_as.py) reaches only the allowed reads.
+    # ViewAsGateMiddleware refuses the rest first (and checks the session); this holds for a header shape it missed.
+    if _view_as.refusal(request.method, request.url.path, payload):
+        logger.warning("view_as_refused", reason="read_only", at="dependency", method=request.method,
+                       path=request.url.path)
+        raise HTTPException(status_code=403, detail=_view_as.READ_ONLY_DETAIL)
     role = studio_role_of(payload)
     if refusal(request.method, request.url.path, role):
         logger.info("tenant_role_refused", tenant_id=str(payload.get("sub")), role=role, method=request.method,
