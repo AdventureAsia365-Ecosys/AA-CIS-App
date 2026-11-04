@@ -24,6 +24,13 @@ Lab). Slices 1 and 2: `AA-1039-r6-admin-ia.md`, `AA-1039-r6-gate-fanout.md`.
   `shared/llm_client/prompt_versions.json` by a unit test (a renamed stage fails CI, not the page).
 - **Gate state is a read, not a rule.** `gate_state()` names one of `no_release`, `memory_off`, `reverify`,
   `regression`, `passing` from stored rows. The activation checks stay in `releases.py` and the CIS 287 guard.
+- **The gate state reads the ACTIVE release's evaluation only** (review fix, S267). `active_eval` is the newest
+  finished run of the live release: one of its stored evidence runs (eval / shadow / reverify run ids; this covers
+  release 0's baseline import, which has no `release_id`) or an r1 / r2 / reverify / shadow run whose `release_id`
+  is the live release's. An r2 counts only as `releases.release_link_problem` counts it (no seeded-fault operator
+  check, no `candidate: current` code-train run). The writer's newest run of any release stays on the page as
+  `last_eval` (tile "Newest evaluation, any release", with `for_active`) but never sets the state: a candidate
+  release failing its r1 / r2 is the gate working, while the live release keeps passing.
 - **No text on the Lab.** The SQL selects ids, labels, counts and hashes only (a unit test lists every `pii:free_text`
   column of these tables and fails if one is selected). The logged `ai_ops` read of tenant text is R2's lane; the
   Writing memory tools (which do show masked text, admin only) stay one click away.
@@ -39,6 +46,8 @@ Lab). Slices 1 and 2: `AA-1039-r6-admin-ia.md`, `AA-1039-r6-gate-fanout.md`.
   `api/routers/admin_writing_memory.py`, staff POLICY entry (tenant.read, admin only like every writing-memory read),
   route snapshot regenerated.
 - Tests: `tests/unit/test_aa1039_writing_lab.py`.
+- Tests on real Postgres: `tests/integration/test_aa1039_writing_lab_sql.py` (incl. a live release 0, a newer
+  failed candidate r1 = still passing, a seeded-fault r2 ignored, a failed reverify of the live release = regression).
 
 ## Tradeoffs
 

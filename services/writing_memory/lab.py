@@ -17,7 +17,9 @@ says so (`sections[name]`):
   prompts      the prompt register rows of its prompt stages (``shared.prompt_version``: hash and path, no text)
   gate         the eval gate as the release machinery sees it: the memory switch (``writing_memory_writer``), the
                active and newest platform releases, releases per status, tenant releases live, rules per status, the
-               newest finished evaluation run, and one plain state (`gate_state`)
+               newest finished evaluation run OF THE ACTIVE RELEASE (`active_eval`, what the state reads), the newest
+               finished evaluation run of any release (`last_eval`, for context only: a rejected candidate's failed r1
+               is the gate working, not the live release regressing), and one plain state (`gate_state`)
 
 Every SQL here names only columns of docs/architecture/db-schema-reference.md (live dump 04/11/2026).
 """
@@ -134,7 +136,8 @@ SWITCH_SQL = """
 _RELEASE_COLS = """
     release_id::text AS release_id, release_no, scope, train_kind, content_class, status,
     cardinality(rule_ids) AS rules, r0_run_id::text AS r0_run_id, eval_run_id::text AS eval_run_id,
-    shadow_run_id::text AS shadow_run_id, reverify, reverify_reasons, approved_at, activated_at, retired_at,
+    shadow_run_id::text AS shadow_run_id, reverify_run_id::text AS reverify_run_id, reverify, reverify_reasons,
+    approved_at, activated_at, retired_at,
     created_at, updated_at
 """
 ACTIVE_RELEASE_SQL = f"""
@@ -151,11 +154,30 @@ RELEASE_COUNTS_SQL = """
     SELECT scope, status, count(*) AS n FROM shared.writing_memory_release WHERE writer = $1 GROUP BY 1, 2
 """
 RULE_COUNTS_SQL = "SELECT status, count(*) AS n FROM shared.writing_rule WHERE writer = $1 GROUP BY 1"
-LAST_EVAL_SQL = """
-    SELECT id::text AS id, run_kind, verdict, stop_reason, regression_detected, cost_usd::float AS cost_usd,
-           tour_count, release_id::text AS release_id, created_at, finished_at
+_GATE_EVAL_COLS = """
+    id::text AS id, run_kind, verdict, stop_reason, regression_detected, cost_usd::float AS cost_usd,
+    tour_count, release_id::text AS release_id, created_at, finished_at
+"""
+# The writer's newest finished evaluation run of ANY release (or none): context on the page, never the gate state.
+LAST_EVAL_SQL = f"""
+    SELECT {_GATE_EVAL_COLS}
       FROM shared.prompt_eval_runs
      WHERE writer = $1 AND finished_at IS NOT NULL AND run_kind IN ('r1', 'r2', 'reverify', 'shadow')
+     ORDER BY finished_at DESC LIMIT 1
+"""
+# The newest finished evaluation run of the ACTIVE release ($2): a run the release stores as its evidence (eval /
+# shadow / reverify run ids, $3 — this also covers release 0's baseline import, which has no release_id), or an r1 /
+# r2 / reverify / shadow run whose release_id is the active release's. An r2 run counts only as releases.py
+# `release_link_problem` counts it: not a seeded-fault operator check, not a code-train run (`candidate: current`).
+ACTIVE_EVAL_SQL = f"""
+    SELECT {_GATE_EVAL_COLS}
+      FROM shared.prompt_eval_runs
+     WHERE writer = $1 AND finished_at IS NOT NULL
+       AND (id = ANY($3::uuid[])
+            OR (release_id = $2::uuid AND run_kind IN ('r1', 'r2', 'reverify', 'shadow')
+                AND NOT (run_kind = 'r2'
+                         AND (coalesce(details->>'seeded_fault', '') NOT IN ('', 'false')
+                              OR coalesce(details->>'candidate', 'release') <> 'release'))))
      ORDER BY finished_at DESC LIMIT 1
 """
 
@@ -186,16 +208,28 @@ def prompt_row(r: dict) -> dict:
     return {**row_out(r), "sha_short": sha[:12]}
 
 
-def gate_state(*, switch: Optional[dict], active: Optional[dict], last_eval: Optional[dict]) -> dict:
+def evidence_run_ids(release: Optional[dict]) -> list[str]:
+    """The evaluation runs a release stores as its own evidence (eval, shadow, reverify; not the per-writer r0
+    replay). Pure."""
+    if not release:
+        return []
+    return [str(release[k]) for k in ("eval_run_id", "shadow_run_id", "reverify_run_id") if release.get(k)]
+
+
+def gate_state(*, switch: Optional[dict], active: Optional[dict], active_eval: Optional[dict]) -> dict:
     """One plain state of the stage's eval gate from what the release machinery already stores (no new rule: the
     activation checks stay in releases.py and the CIS 287 guard). Pure.
+
+    `active_eval` is the newest finished evaluation run OF THE ACTIVE RELEASE (ACTIVE_EVAL_SQL), never the writer's
+    newest run of any release: a candidate release failing its r1 / r2 is the gate doing its job, while the live
+    release keeps passing.
 
       no_release   no active platform release: the writer runs without memory (its base prompt)
       memory_off   a platform release is active but the writer's memory switch is off
       reverify     the active release is flagged for reverification (golden set, model route, gate taxonomy or
                    prompt version changed); it keeps serving until reverified
-      regression   the newest finished evaluation run failed or saw a regression
-      passing      an active release, memory on, and the newest finished evaluation run did not fail
+      regression   the active release's newest finished evaluation run failed or saw a regression
+      passing      an active release, memory on, and its newest finished evaluation run did not fail
     """
     if not active:
         return {"code": "no_release", "ok": False}
@@ -203,7 +237,7 @@ def gate_state(*, switch: Optional[dict], active: Optional[dict], last_eval: Opt
         return {"code": "memory_off", "ok": False}
     if active.get("reverify"):
         return {"code": "reverify", "ok": False, "reasons": list(active.get("reverify_reasons") or [])}
-    if last_eval and (last_eval.get("verdict") == "fail" or last_eval.get("regression_detected")):
+    if active_eval and (active_eval.get("verdict") == "fail" or active_eval.get("regression_detected")):
         return {"code": "regression", "ok": False}
     return {"code": "passing", "ok": True}
 
@@ -276,13 +310,19 @@ async def _gate(conn, writer: str) -> dict:
     last = await conn.fetchrow(LAST_EVAL_SQL, writer)
     active_d = row_out(dict(active)) if active else None
     last_d = row_out(dict(last)) if last else None
+    active_eval = None
+    if active_d:
+        ae = await conn.fetchrow(ACTIVE_EVAL_SQL, writer, active_d["release_id"], evidence_run_ids(active_d))
+        active_eval = row_out(dict(ae)) if ae else None
+    if last_d:
+        last_d["for_active"] = bool(active_d) and last_d.get("release_id") == active_d["release_id"]
     return {"switch": switch, "active_release": active_d,
             "latest_release": row_out(dict(latest)) if latest else None,
             "releases": tally([r for r in rel_counts if r["scope"] == "platform"], "status"),
             "tenant_releases_active": sum(int(r["n"]) for r in rel_counts
                                           if r["scope"] == "tenant" and r["status"] == "active"),
-            "rules": tally(rule_counts, "status"), "last_eval": last_d,
-            "state": gate_state(switch=switch, active=active_d, last_eval=last_d)}
+            "rules": tally(rule_counts, "status"), "active_eval": active_eval, "last_eval": last_d,
+            "state": gate_state(switch=switch, active=active_d, active_eval=active_eval)}
 
 
 _READERS: dict[str, Callable[[Any, str], Awaitable[dict]]] = {

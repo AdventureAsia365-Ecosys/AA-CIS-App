@@ -7,9 +7,13 @@ type error or a GROUP BY mistake. Here the stage read runs against real rows of 
   * A1's experiments include the legacy S1 regression runs (writer NULL); T2's do not;
   * the model shadow reads only the writer's prompt stages, inside 30 days;
   * the prompt versions come from the register (CIS 325 seeds it), filtered to the writer's stages;
-  * the gate section reads without error and names a state.
+  * the gate section reads without error and names a state;
+  * the gate state reads the ACTIVE release's newest evaluation: a newer failed r1 of a candidate release leaves it
+    passing (shown apart as the newest evaluation of any release), a failed reverify of the active release is a
+    regression.
 Invented names and values only.
 """
+import json
 import os
 import sys
 import uuid
@@ -24,9 +28,11 @@ sys.path.insert(0, os.path.dirname(__file__))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 
 from services.writing_memory import lab  # noqa: E402
+from services.writing_memory import releases as rel  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 TAG = f"zz1039-{uuid.uuid4().hex[:6]}"
+ADMIN = "11111111-1111-1111-1111-111111111111"
 
 
 class _OneConnPool:
@@ -86,12 +92,28 @@ async def _signal(conn, *, writer="a1", fact="pass", reason="ai_phrasing", actio
         writer, action, fact, reason, f"{TAG}-{uuid.uuid4().hex[:6]}", days_ago)
 
 
-async def _run(conn, *, pipeline="writing_memory", writer="a1", kind="r2", verdict="pass"):
+async def _run(conn, *, pipeline="writing_memory", writer="a1", kind="r2", verdict="pass", details=None,
+               release=None, golden=None):
     return await conn.fetchval(
         "INSERT INTO shared.prompt_eval_runs (pipeline, prompt_version, tour_count, cost_usd, details, triggered_by, "
-        "run_kind, writer, finished_at, stop_reason, verdict) "
-        "VALUES ($1, $2, 3, 0.25, '{}', 'pytest', $3, $4, now(), 'completed', $5) RETURNING id::text",
-        pipeline, TAG, kind, writer, verdict)
+        "run_kind, writer, finished_at, stop_reason, verdict, release_id, golden_set_id) "
+        "VALUES ($1, $2, 3, 0.25, $6::jsonb, 'pytest', $3, $4, clock_timestamp(), 'completed', $5, $7::uuid, $8) "
+        "RETURNING id::text",
+        pipeline, TAG, kind, writer, verdict, json.dumps(details or {}), release, golden)
+
+
+async def _live_release0(conn, writer):
+    """Release 0 of the writer, activated the way the release machinery does it (its evidence: an r0 replay with no
+    byte diff and the baseline import), with the writer's memory switched on. Returns (release, baseline run id)."""
+    golden = await _golden(conn)
+    r0 = await _run(conn, writer=writer, kind="r0_replay", details={"inputs": 20, "byte_diffs": 0})
+    base = await _run(conn, writer=writer, kind="baseline_import", verdict="baseline", golden=golden)
+    d = await rel.create_draft(conn, writer=writer, created_by=f"admin:{ADMIN}")
+    await rel.attach_evidence(conn, d["release_id"], r0_run_id=r0, eval_run_id=base, actor=f"admin:{ADMIN}")
+    await rel.approve(conn, d["release_id"], approved_by=ADMIN, approval_ref="pytest")
+    live = await rel.activate(conn, d["release_id"], actor=f"admin:{ADMIN}")
+    await rel.set_memory_enabled(conn, writer, True, actor=f"admin:{ADMIN}")
+    return live, base
 
 
 async def _view(conn, writer):
@@ -174,3 +196,27 @@ async def test_prompts_and_gate_read_the_live_tables(conn):
     assert g["state"]["code"] in ("no_release", "memory_off", "reverify", "regression")
     if g["active_release"] is None:
         assert g["state"]["code"] == "no_release"
+
+
+@pytest.mark.asyncio
+async def test_the_gate_reads_the_active_releases_evaluation_not_a_newer_candidates(conn):
+    await conn.execute("UPDATE shared.writing_memory_writer SET memory_enabled = false WHERE writer = 't2'")
+    await conn.execute("DELETE FROM shared.writing_memory_release WHERE writer = 't2'")
+    live, base = await _live_release0(conn, "t2")
+    # a newer candidate release fails its r1 (the gate rejecting it), and an r2 code-train run of no release fails
+    cand = await rel.create_draft(conn, writer="t2", created_by=f"admin:{ADMIN}")
+    failed_r1 = await _run(conn, writer="t2", kind="r1", verdict="fail", release=cand["release_id"])
+    g = (await _view(conn, "t2"))["gate"]
+    assert g["active_release"]["release_id"] == live["release_id"]
+    assert g["active_eval"]["id"] == base and g["active_eval"]["run_kind"] == "baseline_import"
+    assert g["last_eval"]["id"] == failed_r1 and g["last_eval"]["for_active"] is False
+    assert g["state"] == {"code": "passing", "ok": True}
+    # a seeded-fault r2 on the live release is an operator check of the stop, never its evaluation
+    await _run(conn, writer="t2", kind="r2", verdict="fail", release=live["release_id"],
+               details={"seeded_fault": "zz_fault", "candidate": "release"})
+    assert (await _view(conn, "t2"))["gate"]["state"]["code"] == "passing"
+    # the live release itself failing its reverify run is a regression
+    bad = await _run(conn, writer="t2", kind="reverify", verdict="fail", release=live["release_id"])
+    g = (await _view(conn, "t2"))["gate"]
+    assert g["active_eval"]["id"] == bad and g["last_eval"]["for_active"] is True
+    assert g["state"]["code"] == "regression"

@@ -48,10 +48,16 @@ def test_row_out_and_prompt_row():
     ({"memory_enabled": True}, {"reverify": False}, None, "passing", True),
 ])
 def test_gate_state(switch, active, last, code, ok):
-    s = lab.gate_state(switch=switch, active=active, last_eval=last)
+    s = lab.gate_state(switch=switch, active=active, active_eval=last)
     assert s["code"] == code and s["ok"] is ok
     if code == "reverify":
         assert s["reasons"] == ["model_route"]
+
+
+def test_evidence_run_ids_are_the_releases_own_runs_without_r0():
+    assert lab.evidence_run_ids(None) == []
+    rel = {"r0_run_id": "r0", "eval_run_id": "ev", "shadow_run_id": None, "reverify_run_id": "rv"}
+    assert lab.evidence_run_ids(rel) == ["ev", "rv"]
 
 
 def test_every_writer_has_prompt_stages_from_the_register():
@@ -147,7 +153,8 @@ SIGNALS = [
      "n": 2, "n30": 2},
 ]
 ACTIVE = {"release_id": "r-1", "release_no": 3, "scope": "platform", "status": "active", "reverify": False,
-          "reverify_reasons": [], "activated_at": NOW}
+          "reverify_reasons": [], "activated_at": NOW, "r0_run_id": "e-0", "eval_run_id": "e-1",
+          "shadow_run_id": "sh-1", "reverify_run_id": None}
 
 
 def _answers(**over):
@@ -169,7 +176,9 @@ def _answers(**over):
                                {"scope": "tenant", "status": "active", "n": 3}],
         "RULE_COUNTS_SQL": [{"status": "candidate", "n": 4}, {"status": "active", "n": 1}],
         "LAST_EVAL_SQL": [{"id": "e-1", "run_kind": "r2", "verdict": "pass", "regression_detected": False,
-                           "finished_at": NOW}],
+                           "release_id": "r-1", "finished_at": NOW}],
+        "ACTIVE_EVAL_SQL": [{"id": "e-1", "run_kind": "r2", "verdict": "pass", "regression_detected": False,
+                             "release_id": "r-1", "finished_at": NOW}],
     }
     a.update(over)
     return a
@@ -203,6 +212,35 @@ def test_stage_view_end_to_end_shape():
             assert args[0] == list(lab.PROMPT_STAGES["t9_social"])
         else:
             assert args[0] == "t9_social", name
+
+
+def test_the_gate_reads_the_active_releases_evaluation_not_a_newer_candidates():
+    # The live release r-1 passed its r2; a newer candidate release r-2 then failed its r1 (the gate rejecting it).
+    cand = {"id": "e-9", "run_kind": "r1", "verdict": "fail", "regression_detected": True, "release_id": "r-2",
+            "finished_at": NOW}
+    conn = _Conn(_answers(LAST_EVAL_SQL=[cand]))
+    g = asyncio.run(lab.stage_view(_pool(conn), "t2"))["gate"]
+    assert g["state"] == {"code": "passing", "ok": True}
+    assert g["active_eval"]["id"] == "e-1" and g["active_eval"]["release_id"] == "r-1"
+    assert g["last_eval"]["id"] == "e-9" and g["last_eval"]["for_active"] is False
+    # ACTIVE_EVAL_SQL is scoped to the active release and its stored evidence runs (not the r0 replay)
+    args = next(a for n, a in conn.calls if n == "ACTIVE_EVAL_SQL")
+    assert args == ("t2", "r-1", ["e-1", "sh-1"])
+
+
+def test_a_failed_evaluation_of_the_active_release_is_a_regression():
+    bad = {"id": "e-5", "run_kind": "reverify", "verdict": "fail", "regression_detected": False, "release_id": "r-1",
+           "finished_at": NOW}
+    g = asyncio.run(lab.stage_view(_pool(_Conn(_answers(ACTIVE_EVAL_SQL=[bad], LAST_EVAL_SQL=[bad]))), "a1"))["gate"]
+    assert g["state"]["code"] == "regression" and g["last_eval"]["for_active"] is True
+
+
+def test_no_active_release_skips_the_active_evaluation_read():
+    conn = _Conn(_answers(ACTIVE_RELEASE_SQL=[]))
+    g = asyncio.run(lab.stage_view(_pool(conn), "t9_blog"))["gate"]
+    assert g["state"]["code"] == "no_release" and g["active_eval"] is None
+    assert g["last_eval"]["for_active"] is False
+    assert "ACTIVE_EVAL_SQL" not in [n for n, _ in conn.calls]
 
 
 def test_a1_reads_the_legacy_s1_regression_runs_too():
