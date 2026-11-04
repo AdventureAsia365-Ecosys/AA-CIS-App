@@ -8,8 +8,9 @@ Anthropic API). Every save is a new version with who / when / diff; any version 
 - ``read_state(pool)``: the page's read (GET /admin/ai-gateway/route-control).
 - ``preview(pool, proposal)``: what the proposed config would do, BEFORE saving: per active stage the first
   model@connection that would be called (``llm_route_chains.resolve_stage``, $0, no model call) now and with the
-  proposal, the rule check (errors block a save, warnings do not), whether the change needs eval evidence (AA-1026 D7)
-  and the diff.
+  proposal, the rule check (errors block a save, warnings do not), whether the change needs eval evidence (AA-1026 D7:
+  a writer / judge stage whose chain OR first serving model@connection changes, so a provider-order change or a
+  preset that moves such a stage to another deployment counts too) and the diff.
 - ``apply(pool, proposal, ...)``: the save, a preset or a revert: validated again, written in ONE transaction with its
   version row and its ``acp_shared.audit_log`` row (and the break-glass bell of each changed writer / judge stage).
 - ``preset_proposal`` / ``revert_proposal``: the proposal a preset or a version stands for.
@@ -442,11 +443,14 @@ async def preview_world(world: _World, target: dict, shape_errors: list) -> dict
         asyncio.to_thread(_resolve_all, rows_now, live["priorities"], live["order_mode"]),
         asyncio.to_thread(_resolve_all, rows_new, target["priorities"], target["order_mode"]))
     stages_out = []
+    serving_changed: set = set()
     for row in rows_new:
         stage = row["stage"]
         if row.get("is_active") is False:
             continue
         now, new = resolved_now.get(stage) or {}, resolved_new.get(stage) or {}
+        if now.get("first") != new.get("first"):
+            serving_changed.add(stage)
         if new.get("first") is None:
             had = now.get("first") is not None
             p = _problem("no_live_model", "no model of the chain would be called now (every deployment is off, "
@@ -455,11 +459,14 @@ async def preview_world(world: _World, target: dict, shape_errors: list) -> dict
         stages_out.append({"stage": stage, "role": row["role"],
                            "chain": route_versions.chain_of(target["routes"].get(stage)),
                            "changed": stage in changed_stages, "first": new.get("first"),
-                           "first_before": now.get("first"),
+                           "first_before": now.get("first"), "serving_changed": stage in serving_changed,
                            "attempts": [{k: a.get(k) for k in ("model", "scope", "status", "connection", "reason")}
                                         for a in new.get("attempts") or []]})
 
-    evidence_stages = [s for s in changed_stages if route_evidence.needs_evidence((by_stage.get(s) or {}).get("role"))]
+    # AA-1026 D7 evidence: a writer / judge stage whose chain changes, OR whose first serving model@connection changes
+    # (a provider-order change, a preset or the order mode moving it to another deployment), per the $0 resolver.
+    evidence_stages = sorted(s for s in set(changed_stages) | serving_changed
+                             if route_evidence.needs_evidence((by_stage.get(s) or {}).get("role")))
     return {"valid": not errors, "errors": errors, "warnings": warnings, "unchanged": not changes,
             "diff": changes, "needs_evidence": bool(evidence_stages), "evidence_stages": evidence_stages,
             "version": int(world.settings["current_version"]), "order_mode": target["order_mode"],
@@ -563,11 +570,14 @@ async def apply(pool, *, actor: str, action: str, expected_version: int, note: O
             await conn.execute(_AUDIT_SQL, actor[:128], audit_action, str(version["version"]), json.dumps(
                 {"version": version["version"], "diff": version["diff"], "note": version.get("note"),
                  "preset": preset, "reverted_from": revert_to, "evidence": evidence}, default=str))
+            served = {s["stage"]: s for s in result["stages"]}
             for stage in result["evidence_stages"]:
                 await route_evidence.record_break_glass(
                     conn, stage=stage, actor=actor, evidence=evidence,
                     change={"chain": route_versions.chain_of(target["routes"].get(stage)),
                             "before": route_versions.chain_of(live["routes"].get(stage)),
+                            "first": (served.get(stage) or {}).get("first"),
+                            "first_before": (served.get(stage) or {}).get("first_before"),
                             "route_config_version": version["version"]})
     _drop_caches()
     logger.info("llm_route_config_changed", version=version["version"], action=version["action"], actor=actor,

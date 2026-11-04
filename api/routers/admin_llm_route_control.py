@@ -19,9 +19,10 @@
 
 A body names only what changes: ``order_mode``, ``routes`` (stage -> chain, primary first), ``provider_order`` (model
 -> connection keys in order). Writes carry ``expected_version`` (409 when another change was saved since) and, when the
-preview says ``needs_evidence`` (a writer / judge chain changes), ``eval_run_id`` or ``break_glass_reason``. 503 until
-CIS migration 370 is applied. The logic: api/services/llm_route_control.py; the versions: shared/llm_client/
-route_versions.py. Every write keeps its own POLICY capability (api/core/staff_authz.py).
+preview says ``needs_evidence`` (a writer / judge stage changes its chain or the model@connection that serves it
+first), ``eval_run_id`` or ``break_glass_reason``. 503 until CIS migration 370 is applied. The logic:
+api/services/llm_route_control.py; the versions: shared/llm_client/route_versions.py. Every write keeps its own POLICY
+capability (api/core/staff_authz.py).
 """
 from __future__ import annotations
 

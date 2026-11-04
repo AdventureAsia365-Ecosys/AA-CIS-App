@@ -87,6 +87,8 @@ export interface PreviewStage {
   changed: boolean;
   first: string | null;
   first_before: string | null;
+  /** The first model@connection that would serve the stage differs from now (chain, provider order or order mode). */
+  serving_changed?: boolean;
   attempts: { model: string; scope: string; status: string; connection?: string | null; reason?: string | null }[];
 }
 

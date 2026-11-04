@@ -173,7 +173,7 @@ function StageEditor({ stage, chain, onChange, preview, canEdit, modelLabel, sta
           <span>{t("firstServes")}:</span>
           {p.first ? <span style={{ fontFamily: mono, color: K.ink }}>{p.first}</span>
             : <Badge tone="danger">{t("noLiveModel")}</Badge>}
-          {p.changed && p.first_before !== p.first && (
+          {p.first_before !== p.first && (
             <span>({t("firstBefore", p.first_before ?? t("noLiveModel"))})</span>
           )}
         </div>

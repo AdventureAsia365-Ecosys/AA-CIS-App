@@ -197,7 +197,8 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
             + "chuỗi (hoặc ngay sau chính model đó trên AWS).",
         ] },
         { kind: "paragraph", text: "Quy tắc đã bị vi phạm từ trước thay đổi của bạn chỉ hiện là cảnh báo, nên không "
-          + "chặn một thay đổi không liên quan. Chuỗi mới của stage writer hoặc judge cần eval run làm căn cứ, hoặc lý "
+          + "chặn một thay đổi không liên quan. Stage writer hoặc judge có chuỗi mới, hoặc bị thứ tự nhà cung cấp, "
+          + "preset hay kiểu thứ tự chuyển sang model hoặc nhà cung cấp khác, cần eval run làm căn cứ, hoặc lý "
           + "do break glass (kèm cảnh báo cho admin), như ở tab Điều hướng." },
         { kind: "control", label: "Ưu tiên API Anthropic cho Claude (tài trợ)", does: "Đưa API Anthropic lên đầu cho "
           + "mọi model Claude và đặt kiểu thứ tự thành cùng model trước. Chuỗi không đổi.",

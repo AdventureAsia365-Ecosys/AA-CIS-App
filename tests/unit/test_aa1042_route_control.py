@@ -317,6 +317,57 @@ def test_losing_the_last_live_model_blocks_but_an_already_dead_stage_only_warns(
     assert any(w["stage"] == "zz_judge" and w["rule"] == "no_live_model" and w["existing"] for w in out["warnings"])
 
 
+@pytest.fixture
+def served_by_priority(monkeypatch):
+    """resolve_stage without the registry: the first model of the chain on its lowest-priority connection."""
+    def fake(rows, priorities, order_mode):
+        out = {}
+        for r in rows:
+            if r.get("is_active") is False:
+                continue
+            key = r["model_id"]
+            prios = priorities.get(key) or {}
+            conn = min(prios, key=lambda c: (prios[c], c)) if prios else "acc3"
+            out[r["stage"]] = {"first": f"{key}@{conn}", "attempts": []}
+        return out
+    monkeypatch.setattr(rc, "_resolve_all", fake)
+    monkeypatch.setattr(rc, "chain_problems", lambda row, chain, models, reach: [])
+
+
+def test_a_provider_order_change_that_moves_a_writer_needs_evidence(served_by_priority):
+    live = _snap(routes={"zz_writer": _route("zz-claude", "zz-gpt"), "zz_judge": _route("zz-gpt")},
+                 prios={"zz-claude": {"acc3": 10, "api": 20}, "zz-gpt": {"acc3": 10, "oai": 20}})
+    world = _world(STAGES, live)
+    target, errors = rc.build_target(live, provider_order={"zz-claude": ["api", "acc3"]}, deployments=DEPS,
+                                     stages={"zz_writer", "zz_judge"})
+    out = asyncio.run(rc.preview_world(world, target, errors))
+    assert out["valid"] is True and out["needs_evidence"] is True and out["evidence_stages"] == ["zz_writer"]
+    writer = next(s for s in out["stages"] if s["stage"] == "zz_writer")
+    assert writer["changed"] is False and writer["serving_changed"] is True
+    assert (writer["first_before"], writer["first"]) == ("zz-claude@acc3", "zz-claude@api")
+
+
+def test_a_provider_order_change_of_a_fallback_only_model_needs_no_evidence(served_by_priority):
+    live = _snap(routes={"zz_writer": _route("zz-claude", "zz-gpt"), "zz_judge": _route("zz-gpt")},
+                 prios={"zz-claude": {"acc3": 10, "api": 20}, "zz-gpt": {"acc3": 10, "oai": 20}})
+    world = _world([STAGES[0]], {**live, "routes": {"zz_writer": live["routes"]["zz_writer"]}})
+    target, errors = rc.build_target(world.live, provider_order={"zz-gpt": ["oai", "acc3"]}, deployments=DEPS,
+                                     stages={"zz_writer"})
+    out = asyncio.run(rc.preview_world(world, target, errors))
+    assert out["unchanged"] is False and out["needs_evidence"] is False and out["evidence_stages"] == []
+
+
+def test_a_preset_that_moves_a_judge_needs_evidence(served_by_priority):
+    live = _snap(routes={"zz_writer": _route("zz-claude"), "zz_judge": _route("zz-gpt")},
+                 prios={"zz-claude": {"acc3": 10, "api": 20}, "zz-gpt": {"oai": 10, "acc3": 20}})
+    world = _world(STAGES, live)
+    changes = rc.preset_changes("prefer_aws", live, MODELS, CONNS)
+    target, errors = rc.build_target(live, provider_order=changes["provider_order"], deployments=DEPS,
+                                     stages={"zz_writer", "zz_judge"})
+    out = asyncio.run(rc.preview_world(world, target, errors))
+    assert out["needs_evidence"] is True and out["evidence_stages"] == ["zz_judge"]
+
+
 def test_the_attempt_cap_blocks_a_too_long_chain(resolved):
     models = [_model(f"zz-c{i}", "anthropic") for i in range(4)] + MODELS
     deps = [{"model_key": f"zz-c{i}", "connection_key": c} for i in range(4) for c in ("acc3", "api")] + DEPS

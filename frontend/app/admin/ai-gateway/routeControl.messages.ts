@@ -66,8 +66,8 @@ export const RC = defineMessages(
     saving: "Saving…",
     saved: (v: number) => `Saved as version ${v}`,
     conflict: "Someone saved a change since you opened this tab. Reload, then check the preview again.",
-    evidenceNeeded: (stages: string) => `A writer or judge chain changes (${stages}): name the eval run that backs it, `
-      + "or say why it cannot wait (break glass).",
+    evidenceNeeded: (stages: string) => `A writer or judge stage changes its chain or the model and provider that `
+      + `serves it (${stages}): name the eval run that backs it, or say why it cannot wait (break glass).`,
     colVersion: "Version",
     colWhen: "When",
     colBy: "By",
@@ -162,8 +162,8 @@ export const RC = defineMessages(
     saving: "Đang lưu…",
     saved: (v: number) => `Đã lưu thành phiên bản ${v}`,
     conflict: "Đã có người lưu thay đổi từ lúc bạn mở tab này. Tải lại rồi kiểm tra lại bản xem trước.",
-    evidenceNeeded: (stages: string) => `Chuỗi của writer hoặc judge thay đổi (${stages}): ghi eval run làm căn cứ, `
-      + "hoặc lý do không thể chờ (break glass).",
+    evidenceNeeded: (stages: string) => `Stage writer hoặc judge đổi chuỗi hoặc đổi model và nhà cung cấp phục vụ `
+      + `(${stages}): ghi eval run làm căn cứ, hoặc lý do không thể chờ (break glass).`,
     colVersion: "Phiên bản",
     colWhen: "Lúc",
     colBy: "Người sửa",

@@ -208,7 +208,8 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
             + "stays at the end of a chain (or right behind the same model on AWS).",
         ] },
         { kind: "paragraph", text: "A rule that was already broken before your change is shown as a warning, so it "
-          + "never blocks an unrelated change. A new chain for a writer or judge stage needs the eval run that backs "
+          + "never blocks an unrelated change. A writer or judge stage that gets a new chain, or that a provider "
+          + "order, preset or order mode change moves to another model or provider, needs the eval run that backs "
           + "it, or a break-glass reason (which also alerts the admins), as on the Routing tab." },
         { kind: "control", label: "Prefer Anthropic API for Claude (sponsored)", does: "Puts the Anthropic API "
           + "first for every Claude model and sets the order mode to same model first. Chains do not change.",
