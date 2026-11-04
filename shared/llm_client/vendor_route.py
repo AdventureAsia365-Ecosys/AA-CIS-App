@@ -132,9 +132,15 @@ def split_pin(key: str) -> Optional[tuple[str, str]]:
     return (model_key, connection_key) if model_key and connection_key else None
 
 
-def pinned_deployment(model: CatalogModel, connection_key: str) -> VendorDeployment:
+def pinned_deployment(model: CatalogModel, connection_key: str, *, allowed_scopes: Optional[tuple] = None,
+                      pii_class: Optional[str] = None) -> VendorDeployment:
     """The enabled deployment of ``model`` on ``connection_key`` (an Anthropic connection, enabled). Raises
-    RuntimeError naming what is missing."""
+    RuntimeError naming what is missing.
+
+    AA-1039 (review S268): a pin names one deployment, but it is still a call of the request's stage, so it keeps the
+    stage's data policy exactly as ``deployment_plan`` does: a connection whose data scope ``allowed_scopes`` does not
+    allow (None = no stage policy) is refused, and a ``pii`` stage is refused anywhere but our AWS accounts in the US
+    (``data_scope.pii_allows``). A probe with no stage passes None for both: unchanged."""
     rows = [d for d in deployments.deployments_for_sync(model.model_key, enabled_only=False)
             if d.connection_key == connection_key]
     if not rows:
@@ -147,6 +153,12 @@ def pinned_deployment(model: CatalogModel, connection_key: str) -> VendorDeploym
     found = _usable(model, VendorDeployment(rows[0], conn))
     if found is None:
         raise RuntimeError(f"connection {connection_key!r} ({conn.kind}) cannot serve {model.model_key!r} in S2")
+    if not data_scope.allows(allowed_scopes, conn.data_scope):
+        raise RuntimeError(f"data scope {conn.data_scope} of connection {connection_key!r} is not allowed for "
+                           "the stage")
+    if not data_scope.pii_allows(pii_class, conn.data_scope, rows[0].wire_id, conn.region):
+        raise RuntimeError(f"the deployment of {model.model_key!r} on {connection_key!r} is not one a personal-data "
+                           "stage may use (our AWS accounts, US only)")
     return found
 
 

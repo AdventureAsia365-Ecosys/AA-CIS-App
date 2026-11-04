@@ -1,7 +1,8 @@
 "use client";
 // app/admin/lab/WritingLabStage.tsx — AA-1039 R6 slice 3 (root ADR 0019 d13, TL-13 `regroup_lab`): Writing Lab › one
 // stage. A stage is a writing-memory writer (lib/writingLab.ts LAB_STAGES); the stage bar is the only navigation
-// between stages. Five tabs over ONE read, GET /api/admin/writing-memory/lab/<writer> (services/writing_memory/lab.py):
+// between stages. Seven tabs: the first five share ONE read, GET /api/admin/writing-memory/lab/<writer>
+// (services/writing_memory/lab.py); Releases and Metrics (S268) each make their own read, only when opened:
 //   Eval gate        the release machinery's state: memory switch, live / newest platform release with its evidence
 //                    runs, releases per status, tenant releases live, rules per status, the newest finished
 //                    evaluation, and one plain sentence for the state.
@@ -10,12 +11,12 @@
 //   Labels           golden labels (verdict, source) and the writing signals (fact check, reason, action, who, owner).
 //   Experiments      evaluation runs, release shadow runs, model shadow of the writer's prompt stages (30 days).
 //   Prompt versions  the prompt register rows of those stages (hash and file, no prompt text).
-//   Releases         (S268) every release of the writer, platform and tenant: status, training, evidence verdicts,
-//                    check-again flag and dates, from GET /releases?writer= (its own request); the actions stay in
-//                    Writing memory › Releases (one click away).
-//   Metrics          (S268) the stored weekly reports seen from the writer (GET /metrics): writes, re-flag, light
-//                    edits, minutes to fix, cost per write, replay hit, clean pairs, soft stops and what the weekly
-//                    job did. Run / keep stay in Writing memory › Metrics.
+//   Releases         every release of the writer, platform and tenant: status, training, evidence verdicts,
+//                    check-again flag and dates (GET /api/admin/writing-memory/releases?writer=); the actions stay
+//                    in Writing memory › Releases (one click away).
+//   Metrics          the stored weekly reports seen from the writer (GET /api/admin/writing-memory/metrics): writes,
+//                    re-flag, light edits, minutes to fix, cost per write, replay hit, clean pairs, soft stops and
+//                    what the weekly job did. Run / keep stay in Writing memory › Metrics.
 // Read-only and $0: no learning logic (the S262 TL-11 freeze stays); the Writing memory tools stay one click away
 // (/admin/lab/writing-memory). No tenant text on these pages (the logged ai_ops read of tenant text is R2's).
 // `?tab=` picks the tab (kept with history.replaceState). Admin only (lib/rbac.ts PAGE_RULES /admin/lab; BFF

@@ -88,6 +88,15 @@ def test_normalize_pii_class_fails_closed_on_unknown_text(value, expected):
     ("amazon.titan-embed-text-v2:0", "eu-west-1", "unknown"),
     ("claude-haiku-4-5", None, "unknown"),                       # a vendor API (no region)
     (None, None, "unknown"),
+    # review S268: only an explicit us. profile or an in-region <provider>.<model> id on a us-* connection is US
+    ("cohere.embed-v4:0", "us-west-2", "us"),
+    ("arn:aws:bedrock:us-west-2:111122223333:inference-profile/global.anthropic.claude-haiku-4-5", "us-west-2",
+     "unknown"),                                                 # a full ARN: its profile is not read here
+    ("arn:aws:bedrock:us-west-2::foundation-model/amazon.nova-lite-v1:0", "us-west-2", "unknown"),
+    ("zz.anthropic.claude-haiku-4-5", "us-west-1", "unknown"),   # an unknown geography prefix
+    ("claude-haiku-4-5", "us-west-1", "unknown"),                # not a Bedrock model id, even on a US connection
+    ("x", "us-west-1", "unknown"),
+    ("us.", "us-west-1", "unknown"),
 ])
 def test_deployment_geo(wire, region, geo):
     assert data_scope.deployment_geo(wire, region) == geo
@@ -102,10 +111,60 @@ def test_pii_allows_only_our_accounts_in_the_us():
     assert not data_scope.pii_allows("pii", "aws_only", "x", "eu-west-1")
 
 
+def test_pii_allows_refuses_an_arn_or_an_unknown_prefix_on_a_us_connection():
+    assert not data_scope.pii_allows("pii", "aws_only", "arn:aws:bedrock:us-west-2:1:inference-profile/us.x",
+                                     "us-west-2")
+    assert not data_scope.pii_allows("pii", "aws_only", "zz.anthropic.claude-haiku-4-5", "us-west-1")
+    assert data_scope.pii_allows("pii", "aws_only", "amazon.nova-lite-v1:0", "us-west-1")
+
+
 def test_safe_defaults_are_content():
-    """Every stage of today is content (migration 373's backfill); the DB-down fallback agrees."""
+    """Every stage of today is content (migration 373's backfill): a read that succeeds with no row stays content."""
     assert all(cfg.pii_class == "content" for cfg in SAFE_DEFAULTS.values())
     assert role_config._GENERIC_FALLBACK.pii_class == "content"
+
+
+# ── review S268: a failed read never downgrades a stage to content ───────────────────────────────────────────────
+
+@pytest.fixture
+def cold_cache(monkeypatch):
+    monkeypatch.setattr(role_config, "_cache", {})
+    monkeypatch.setattr(role_config, "_watch_route_version", lambda: None)
+
+
+@pytest.mark.asyncio
+async def test_cold_cache_read_failure_fails_closed_as_pii(cold_cache):
+    stage = next(iter(SAFE_DEFAULTS))
+    with patch.object(role_config, "_fetch_one", AsyncMock(side_effect=OSError("db down"))):
+        cfg = await role_config.get_stage_config(stage)
+        unknown = await role_config.get_stage_config("adhoc_no_row")
+    assert cfg.pii_class == "pii" and unknown.pii_class == "pii"
+    assert cfg.model_id == SAFE_DEFAULTS[stage].model_id                 # the route is still SAFE_DEFAULTS'
+    assert SAFE_DEFAULTS[stage].pii_class == "content"                     # the shared default is not mutated
+    assert stage not in role_config._cache                                 # not cached: the next call reads again
+
+
+def test_cold_cache_sync_read_failure_fails_closed_as_pii(cold_cache):
+    stage = next(iter(SAFE_DEFAULTS))
+    with patch.object(role_config, "_fetch_one", AsyncMock(side_effect=OSError("db down"))):
+        assert role_config.get_stage_config_sync(stage).pii_class == "pii"
+    with patch.object(role_config, "get_stage_config", MagicMock(return_value=None)):   # asyncio.run(None) raises
+        assert role_config.get_stage_config_sync(stage).pii_class == "pii"
+
+
+@pytest.mark.asyncio
+async def test_stale_cache_keeps_its_class_and_no_row_stays_content(cold_cache, monkeypatch):
+    real = StageConfig("x", "writer", "claude", "haiku-4-5", "acc3", pii_class="content")
+    role_config._cache["x"] = (real, 0.0)                                  # stale
+    with patch.object(role_config, "_fetch_one", AsyncMock(side_effect=OSError("db down"))):
+        assert (await role_config.get_stage_config("x")) is real
+    with patch.object(role_config, "_fetch_one", AsyncMock(return_value=None)):
+        assert (await role_config.get_stage_config("adhoc_no_row")).pii_class == "content"
+
+
+def test_stage_pii_class_fails_closed_when_the_read_raises():
+    with patch("shared.llm_client.client.get_stage_config_sync", side_effect=RuntimeError("boom")):
+        assert stage_pii_class(LLMRequest(system_prompt="s", user_prompt="u", stage="x")) == "pii"
 
 
 # ── the deployment plan ───────────────────────────────────────────────────────────────────────────────────────────
@@ -155,6 +214,56 @@ def test_pii_stage_never_takes_a_path_the_registry_does_not_describe():
             patch("shared.llm_client.client.stage_pii_class", return_value="pii"):
         with pytest.raises(RuntimeError, match="personal-data stage"):
             c._call_catalog_model(req, "haiku-4-5", "acc3")
+
+
+# ── review S268: a pinned model@connection keeps the stage's data policy ──────────────────────────────────────────
+
+SONNET_API = CatalogModel(model_key="sonnet-5-5", label="Sonnet 5.5", vendor="anthropic", provider="anthropic",
+                          api_style="anthropic_messages", bedrock_profile_ids={}, callable_via=("llm_client",),
+                          price_in_per_mtok=3.0, price_out_per_mtok=15.0, enabled=True)
+
+
+@pytest.fixture
+def pin_registry(registry):
+    registry["deps"].append(_dep("sonnet-5-5", "anthropic-direct", 10, "claude-sonnet-5-5"))
+    return registry
+
+
+@pytest.mark.parametrize("scopes, pii, refused", [
+    (None, None, None),                          # a probe with no stage policy: unchanged
+    (BOTH, "content", None),
+    (AWS, "content", "data scope vendor_direct"),
+    (AWS, "pii", "data scope vendor_direct"),
+    (None, "pii", "personal-data stage"),
+])
+def test_pinned_deployment_keeps_the_stage_scopes_and_class(pin_registry, scopes, pii, refused):
+    if refused is None:
+        found = vendor_route.pinned_deployment(SONNET_API, "anthropic-direct", allowed_scopes=scopes, pii_class=pii)
+        assert found.connection.connection_key == "anthropic-direct"
+    else:
+        with pytest.raises(RuntimeError, match=refused):
+            vendor_route.pinned_deployment(SONNET_API, "anthropic-direct", allowed_scopes=scopes, pii_class=pii)
+
+
+def test_pinned_call_passes_the_stage_policy(pin_registry):
+    """The client's pin path reads the stage's scopes and class (like deployment_plan) and never calls the vendor when
+    the stage may not use the pinned connection."""
+    c = _client()
+    req = LLMRequest(system_prompt="s", user_prompt="u", stage="x")
+    with patch("shared.llm_client.client.get_model_sync", return_value=SONNET_API), \
+            patch("shared.llm_client.client.stage_scopes", return_value=AWS), \
+            patch("shared.llm_client.client.stage_pii_class", return_value="pii"), \
+            patch.object(c, "_call_anthropic_messages") as call:
+        with pytest.raises(RuntimeError, match="not allowed for the stage"):
+            c._call_catalog_model(req, "sonnet-5-5@anthropic-direct", "acc3")
+    assert not call.called
+    with patch("shared.llm_client.client.get_model_sync", return_value=SONNET_API), \
+            patch("shared.llm_client.client.stage_scopes", return_value=None), \
+            patch("shared.llm_client.client.stage_pii_class", return_value="pii"), \
+            patch.object(c, "_call_anthropic_messages") as call:
+        with pytest.raises(RuntimeError, match="personal-data stage"):
+            c._call_catalog_model(req, "sonnet-5-5@anthropic-direct", "acc3")
+    assert not call.called
 
 
 def test_pii_stage_never_takes_the_legacy_chain():
@@ -307,3 +416,45 @@ def test_stage_pii_class_reads_the_binding_first():
             assert not read.called
     finally:
         _STAGE_SCOPES.reset(token)
+
+
+# ── the route preview = the runtime plan, refusal evidence (AA-1042) and the data class together ──────────────────────
+
+class _Refusals:
+    """A stage_coverage.RefusalEvidence stand-in: the (model, connection) pairs the account refuses."""
+
+    def __init__(self, *pairs):
+        self.pairs = set(pairs)
+
+    def refused(self, model_key, connection_key):
+        return "refused (access_denied)" if (model_key, connection_key) in self.pairs else None
+
+
+def _resolve(cfg, evidence):
+    from api.services import llm_route_chains
+    models = {"haiku-4-5": HAIKU, "nova-lite": NOVA}
+    with patch("shared.llm_client.catalog.get_model_sync", side_effect=models.get):
+        return llm_route_chains.resolve_stage(cfg, evidence)
+
+
+def test_preview_skips_both_the_refused_and_the_non_us_deployments_of_a_pii_stage(registry):
+    """haiku-4-5 on acc3 is a global. profile (left out of a pii plan, as the gateway does) and on acc2 the account
+    refuses it: the pii stage is served by nova-lite on acc2; the content stage by haiku-4-5 on acc3."""
+    ev = _Refusals(("haiku-4-5", "acc2"))
+    pii = StageConfig("x", "writer", "claude", "haiku-4-5", "acc3", fallback_model_ids=("sonnet", "nova-lite"),
+                      allowed_scopes=AWS, pii_class="pii")
+    out = _resolve(pii, ev)
+    assert out["pii_class"] == "pii" and out["first"] == "nova-lite@acc2"
+    assert out["called_first"] == "haiku-4-5@acc2"
+    haiku, sonnet, nova = out["attempts"]
+    assert haiku["status"] == "refused" and haiku["deployments"] == ["acc2"]
+    assert sonnet["status"] == "skip" and "personal-data" in sonnet["reason"]          # no hard-coded legacy chain
+    assert nova["status"] == "call" and nova["connection"] == "acc2"
+    assert [(s["model"], s["connection"]) for s in out["skipped"]] == [("haiku-4-5", "acc2"), ("sonnet", None)]
+    # the runtime plan of each model is the preview's deployments
+    assert _plan(HAIKU, AWS, "pii") == haiku["deployments"] and _plan(NOVA, AWS, "pii") == nova["deployments"]
+
+    content = _resolve(StageConfig("x", "writer", "claude", "haiku-4-5", "acc3", fallback_model_ids=("nova-lite",),
+                                   allowed_scopes=AWS, pii_class="content"), ev)
+    assert content["first"] == "haiku-4-5@acc3" and content["skipped"] == []
+    assert content["attempts"][0]["deployments"] == _plan(HAIKU, AWS, "content") == ["acc3", "acc2"]

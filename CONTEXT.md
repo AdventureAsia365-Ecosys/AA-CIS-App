@@ -399,9 +399,10 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
 - **Data class per stage** (AA-1039 R6, CIS 373 contract, root ADR 0019 d12): `shared.llm_role_config.pii_class`
   (`content` | `pii`, NOT NULL default `content`, migration-only). A `pii` stage must have `allowed_scopes = {aws_only}`
   (CHECK `llm_role_config_pii_scope_check`), and the gateway calls it only on a US deployment on our AWS accounts
-  (`data_scope.pii_allows`: a `us.` profile or an in-region id on a `us-*` connection, never `global.`, never a vendor
-  API) in `vendor_route.deployment_plan`, `embed`, the route invariant and the route preview; a path the registry does
-  not describe (legacy chain, catalog fallback) is refused for it. Every stage is `content` today (no CIS stage takes
+  (`data_scope.pii_allows`: a `us.` profile or an in-region `<provider>.<model>` id on a `us-*` connection, never
+  `global.`, a full ARN, an unknown prefix or a vendor API) in `vendor_route.deployment_plan`, a pinned
+  `model@connection`, `embed`, the route invariant and the route preview; a path the registry does not describe
+  (legacy chain, catalog fallback) is refused for it. A failed stage read with no cached row reads as `pii`. Every stage is `content` today (no CIS stage takes
   personal data; the CRM's PII stages run in the CRM gateway). Admin: `GET /admin/llm-config` returns `pii_class`
   (null before 373) for AI gateway › Routing › "Routing by data class"; the route PATCHes and Route control refuse a
   model with no US deployment for a pii stage.

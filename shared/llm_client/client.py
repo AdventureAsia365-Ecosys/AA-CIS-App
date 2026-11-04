@@ -317,8 +317,8 @@ def stage_scopes(request: LLMRequest) -> Optional[tuple]:
 def stage_pii_class(request: LLMRequest) -> Optional[str]:
     """AA-1039 (R6, CIS 373): the data class of ``request.stage`` (content | pii): the one bound for this call, else
     role_config (20 s cache); None for a call with no stage (no policy). A pii stage is called only on our AWS accounts
-    in the US (``vendor_route.deployment_plan``) and never on a path the deployment registry does not describe. Never
-    raises."""
+    in the US (``vendor_route.deployment_plan``) and never on a path the deployment registry does not describe. A
+    failed read fails closed as ``pii`` (review S268; role_config does the same on a cold cache). Never raises."""
     if not request.stage:
         return None
     bound = _STAGE_SCOPES.get()
@@ -328,7 +328,7 @@ def stage_pii_class(request: LLMRequest) -> Optional[str]:
         return data_scope.normalize_pii_class(getattr(get_stage_config_sync(request.stage), "pii_class", None))
     except Exception as e:  # noqa: BLE001 — role_config never raises; belt and braces on the call path
         logger.warning("llm_stage_pii_read_failed", stage=request.stage, error=str(e)[:200])
-        return None
+        return data_scope.PII_PERSONAL
 
 
 def _pii_refusal(model_key: str) -> RuntimeError:
@@ -1876,7 +1876,9 @@ class LLMClient:
         # empty table returns the same request object, so the provider request is byte-identical.
         request = stage_params.apply(request, model)
         if pin:
-            pinned = pinned_deployment(model, pin[1])
+            # AA-1039 (review S268): the pin keeps the stage's data scopes and data class (like deployment_plan).
+            pinned = pinned_deployment(model, pin[1], allowed_scopes=stage_scopes(request),
+                                       pii_class=stage_pii_class(request))
             return self._attempt(request, lambda: self._call_anthropic_messages(request, model, pinned),
                                  model=model.model_key, connection_key=pinned.connection.connection_key,
                                  wire_id=pinned.deployment.wire_id, provider="anthropic")

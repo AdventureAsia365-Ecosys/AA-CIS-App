@@ -138,7 +138,15 @@ def in_twin_slot(chain: list, i: int, twins: dict[str, frozenset]) -> bool:
 PII_CONTENT = "content"
 PII_PERSONAL = "pii"
 PII_CLASSES: tuple[str, ...] = (PII_CONTENT, PII_PERSONAL)
-_GEO_PREFIX = re.compile(r"^([a-z]{2,6})\.")
+# The geography prefixes of Bedrock cross-region inference profiles (``us.anthropic.…``, ``global.cohere.…``).
+_GEOS: frozenset = frozenset({"global", "us", "eu", "apac", "jp", "au", "ca"})
+# The provider prefixes of an in-region Bedrock model id (``amazon.titan-embed-text-v2:0``): the only ids, besides an
+# explicit ``us.`` profile, that count as US on a ``us-*`` connection. Anything else (a full ARN, an unknown prefix, a
+# vendor API id) is ``unknown``: a pii stage fails closed on it (review S268). Add a provider here when one is seeded.
+_BEDROCK_PROVIDERS: frozenset = frozenset({
+    "ai21", "amazon", "anthropic", "cohere", "deepseek", "google", "luma", "meta", "minimax", "mistral", "moonshot",
+    "moonshotai", "nvidia", "openai", "qwen", "stability", "twelvelabs", "writer",
+})
 
 
 def normalize_pii_class(value) -> str:
@@ -155,12 +163,18 @@ def normalize_pii_class(value) -> str:
 
 def deployment_geo(wire_id: Optional[str], region: Optional[str]) -> str:
     """Where a deployment runs the request: the Bedrock cross-region prefix of its wire id (``global``, ``us``, ``eu``,
-    ``apac`` …), else ``us`` for a connection region ``us-*`` (in-region call), else ``unknown`` (a vendor API, or a
-    region outside the US)."""
-    m = _GEO_PREFIX.match((wire_id or "").strip().lower())
-    if m and m.group(1) in ("global", "us", "eu", "apac", "jp", "au", "ca"):
-        return m.group(1)
-    if isinstance(region, str) and region.lower().startswith("us-"):
+    ``apac`` …); ``us`` for an in-region Bedrock model id (``<provider>.<model>``, a known provider) on a connection
+    region ``us-*``; else ``unknown``: a vendor API id, a region outside the US, a full ARN (its profile and region are
+    not read here) or an unknown prefix (``zz.anthropic.…``). Review S268: only those two forms count as US."""
+    wire = (wire_id or "").strip().lower()
+    if not wire or wire.startswith("arn:"):
+        return "unknown"
+    head, dot, rest = wire.partition(".")
+    if not dot or not rest:
+        return "unknown"
+    if head in _GEOS:
+        return head
+    if head in _BEDROCK_PROVIDERS and isinstance(region, str) and region.lower().startswith("us-"):
         return "us"
     return "unknown"
 

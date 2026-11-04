@@ -60,6 +60,24 @@ Plan: root ADR 0019 d12 / d13 / d20 / d21, clarifications TL-12 / TL-13 / TL-20 
   dates (no notes, no text); Metrics shows the writer's overall KPIs per stored week, the replay rate, clean pairs,
   soft stops and the weekly job's actions. Each tab has its own request (the stage read is not widened). Actions stay
   in Writing memory; its page now opens `?tab=` (Suspense boundary for `useSearchParams`).
+- **Review pass after the rebase on main (S268)**:
+  - The route preview (`llm_route_chains.resolve_stage`) keeps both rules: the data class goes into
+    `deployment_plan` (the same call the gateway makes, so a pii stage's planned deployments are the runtime's), then
+    AA-1042's refusal evidence picks the deployment that would serve. A legacy key skipped for a pii stage is listed in
+    `skipped` like any other skip before `first`.
+  - A pinned `model@connection` (`vendor_route.pinned_deployment`, probes and connection tests) keeps the request
+    stage's `allowed_scopes` and `pii_class` like `deployment_plan`: a stage that may not use the pinned connection
+    gets a RuntimeError before any vendor call. A pin with no stage (the probes) is unchanged.
+  - A failed role_config read with no cached row (cold cache, DB unreachable) returns SAFE_DEFAULTS' route with
+    `pii_class = pii` (`role_config._read_failed_default`, not cached), and `client.stage_pii_class` answers `pii` if
+    its own read raises. A read that succeeds with no row (an adhoc_* stage) or a DB before 373 stays `content`.
+    Consequence: while the DB is unreachable on a cold process, every stage runs only on US deployments of our AWS
+    accounts, and the legacy chain and the no-registry path refuse (they would need the DB for the registry anyway).
+    Four unit tests that left the read to an unreachable DB now state "read OK, no row" explicitly.
+  - `data_scope.deployment_geo` answers `us` only for an explicit `us.` profile, or for an in-region Bedrock id
+    `<provider>.<model>` of a known provider (`_BEDROCK_PROVIDERS`) on a `us-*` connection. A full ARN, an unknown
+    prefix (`zz.anthropic.…`) and an id that is not a Bedrock model id are `unknown` (a pii stage refuses them). A new
+    Bedrock provider must be added to that list before a pii stage can use its in-region ids.
 
 ## Changed
 
@@ -109,7 +127,10 @@ Proposed: A. Blocked until the tech lead picks A or B (Linear comment drafted fo
 ## Tradeoffs
 
 - **Geography by wire-id prefix**, not a new deployment column: the Bedrock cross-region prefix is the geography
-  (`global.` / `us.` / `eu.` …), and an id without a prefix runs in the connection's region. A vendor API is never
+  (`global.` / `us.` / `eu.` …), and an in-region `<provider>.<model>` id runs in the connection's region (a full ARN
+  or an unknown prefix is not parsed: unknown, fail closed).
+- **Fail closed on a failed stage read** costs availability during a cold-cache DB outage (US-only AWS deployments,
+  no legacy chain) in exchange for never sending a pii stage to `global.` or a vendor API on a guess. A vendor API is never
   US-pinned here (the Anthropic `inference_geo` request default exists, but a pii stage is aws_only anyway).
 - **Access changes of the fix pass, all toward the IA role table**: the UI kit page is admin only (was every
   content role through Settings); `/admin/settings?tab=tenant` lands on a Tenant 360 a content role may not open (the

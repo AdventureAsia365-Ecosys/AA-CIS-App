@@ -239,6 +239,16 @@ _GENERIC_FALLBACK = StageConfig("unknown", "writer", "claude", "haiku", "acc3")
 _cache: dict[str, tuple[StageConfig, float]] = {}
 
 
+def _read_failed_default(stage: str) -> StageConfig:
+    """The config of ``stage`` when the DB read FAILED and no cached row exists (a cold cache, the DB unreachable).
+    SAFE_DEFAULTS keeps the route, but the stage's data class is unknown then, so it fails closed as ``pii``
+    (AA-1039, review S268): a personal-data stage must never be downgraded to ``content`` (Bedrock ``global.``
+    profiles, vendor APIs) because the row could not be read. A content stage then runs only on a US deployment of our
+    AWS accounts until a read succeeds (not cached: the next call reads again). A read that succeeds with no row, or
+    before migration 373, is not a failure: SAFE_DEFAULTS / content as before."""
+    return dataclasses.replace(SAFE_DEFAULTS.get(stage, _GENERIC_FALLBACK), pii_class=data_scope.PII_PERSONAL)
+
+
 def _row_to_config(row) -> StageConfig:
     return StageConfig(
         stage=row["stage"], role=row["role"], provider=row["provider"],
@@ -373,7 +383,7 @@ async def get_stage_config(stage: str) -> StageConfig:
         logger.warning("llm_role_config_read_failed", stage=stage, error=str(e))
         if cached:
             return cached[0]  # stale-but-real beats a hardcoded default when the DB hiccups
-        return SAFE_DEFAULTS.get(stage, _GENERIC_FALLBACK)
+        return _read_failed_default(stage)
 
 
 def _watch_route_version() -> None:
@@ -422,7 +432,7 @@ def get_stage_config_sync(stage: str) -> StageConfig:
         return asyncio.run(get_stage_config(stage))
     except Exception as e:
         logger.warning("llm_role_config_sync_read_failed", stage=stage, error=str(e))
-        return cached[0] if cached else SAFE_DEFAULTS.get(stage, _GENERIC_FALLBACK)
+        return cached[0] if cached else _read_failed_default(stage)
 
 
 def invalidate(stage: Optional[str] = None) -> None:
