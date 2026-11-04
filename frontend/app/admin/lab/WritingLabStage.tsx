@@ -58,7 +58,7 @@ const usd = (n: number | null | undefined) => (n == null ? "—" : `$${n.toFixed
 const code = (v: React.ReactNode) => <span style={{ fontFamily: mono, fontSize: 12 }}>{v ?? "—"}</span>;
 const grid: React.CSSProperties = { display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 16 };
 const tiles: React.CSSProperties = {
-  display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 170px), 1fr))", gap: 12,
+  display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 210px), 1fr))", gap: 12,
 };
 
 export default function WritingLabStage({ slug }: { slug: string }) {
@@ -179,21 +179,21 @@ function GateTab({ g, t }: { g: NonNullable<LabStageView["gate"]>; t: T }) {
           )}
         </div>
         <div style={tiles}>
-          <KpiTile label={t("kpiMemory")} value={sw ? (sw.memory_enabled ? t("memoryOn") : t("memoryOff")) : t("noSwitch")}
+          <KpiTile size="sm" label={t("kpiMemory")} value={sw ? (sw.memory_enabled ? t("memoryOn") : t("memoryOff")) : t("noSwitch")}
             valueTone={sw?.memory_enabled ? "success" : "neutral"}
             hint={sw?.train_closed_month ? t("trainClosed", sw.train_closed_month.slice(0, 7)) : undefined} />
-          <KpiTile label={t("kpiLive")}
+          <KpiTile size="sm" label={t("kpiLive")}
             value={g.active_release ? t("releaseNo", g.active_release.release_no) : t("noneLive")}
             hint={g.active_release?.activated_at ? formatDateTime(g.active_release.activated_at) : undefined} />
-          <KpiTile label={t("kpiTenantLive")} value={g.tenant_releases_active} />
-          <KpiTile label={t("kpiActiveEval")} value={g.active_eval ? g.active_eval.verdict ?? "—" : t("noEval")}
+          <KpiTile size="sm" label={t("kpiTenantLive")} value={g.tenant_releases_active} />
+          <KpiTile size="sm" label={t("kpiActiveEval")} value={g.active_eval ? g.active_eval.verdict ?? "—" : t("noEval")}
             valueTone={evalTone(g.active_eval)}
             hint={g.active_eval ? `${g.active_eval.run_kind} · ${formatDateTime(g.active_eval.finished_at)}` : undefined} />
-          <KpiTile label={t("kpiLastEval")} value={g.last_eval ? g.last_eval.verdict ?? "—" : t("noEval")}
+          <KpiTile size="sm" label={t("kpiLastEval")} value={g.last_eval ? g.last_eval.verdict ?? "—" : t("noEval")}
             hint={g.last_eval ? `${g.last_eval.run_kind} · ${formatDateTime(g.last_eval.finished_at)} · ${
               g.last_eval.for_active ? t("evalOfLive") : g.last_eval.release_id ? t("evalOfOther") : t("evalOfNone")}`
               : undefined} />
-          <KpiTile label={t("kpiRules")} value={Object.values(g.rules).reduce((a, b) => a + b, 0)}
+          <KpiTile size="sm" label={t("kpiRules")} value={Object.values(g.rules).reduce((a, b) => a + b, 0)}
             hint={t("rulesHint", g.rules.candidate ?? 0, g.rules.active ?? 0)} />
         </div>
       </Section>
