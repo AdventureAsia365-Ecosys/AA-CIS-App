@@ -24,6 +24,8 @@ FILES = [
 ]
 E2E = "e2e@e2e-mail.lumiguides.it.com"
 NEW_ROLES = ("content_lead", "tenant_qa", "customer_success", "support", "finance", "ai_ops")
+DEV_DEFAULT_ACL = "ALTER DEFAULT PRIVILEGES IN SCHEMA shared GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO cis_app"
+DEV_DEFAULT_ACL_UNDO = "ALTER DEFAULT PRIVILEGES IN SCHEMA shared REVOKE ALL ON TABLES FROM cis_app"
 
 
 def _connect():
@@ -66,10 +68,17 @@ def applied():
     merged = _staff(cur, role="reviewer", email=f"aa1035-{uuid.uuid4().hex[:6]}@adventure.asia")
     e2e = _staff(cur, role="reviewer", email=E2E)
     cur.execute("DELETE FROM shared.schema_versions WHERE version IN ('362', '363', '364')")
-    for path in FILES:
-        _apply(path)
-    for path in FILES:          # re-runnable
-        _apply(path)
+    # The Dev default ACL of the migration runner in shared (CIS 245: cis_app DML on every new table) applies when 364
+    # creates its tables, so the narrowed grants are proven against it, not against an empty ACL (CI has no 245).
+    cur.execute("DROP TABLE IF EXISTS shared.staff_view_as_session, shared.staff_tenant_assignment")
+    cur.execute(DEV_DEFAULT_ACL)
+    try:
+        for path in FILES:
+            _apply(path)
+        for path in FILES:          # re-runnable
+            _apply(path)
+    finally:
+        cur.execute(DEV_DEFAULT_ACL_UNDO)
     yield {"merged": merged, "e2e": e2e}
     cur.execute("DELETE FROM shared.admin_users WHERE username LIKE 'aa1035-%%'")
     cur.execute("DELETE FROM shared.tenants WHERE slug LIKE 'zephyr-%%'")
@@ -98,10 +107,12 @@ def test_admin_role_has_the_six_r2_values(conn):
     assert set(NEW_ROLES) | {"admin", "reviewer", "content", "viewer"} == labels
 
 
-def test_362_has_no_expand_directive_and_364_has_one():
-    heads = [open(p, encoding="utf-8").readline().strip() for p in FILES]
-    assert heads[0].startswith("-- Migration 362") and heads[1].startswith("-- Migration 363")
-    assert heads[2] == "-- migrate: expand"
+def test_the_three_files_are_contract_without_a_directive():
+    # 364 needs REVOKE ALL (the Dev default ACL) and CREATE OR REPLACE, which the expand lint refuses (as CIS 353).
+    for path, num in zip(FILES, ("362", "363", "364")):
+        text = open(path, encoding="utf-8").read()
+        assert text.splitlines()[0].startswith(f"-- Migration {num}")
+        assert "-- migrate:" not in text
 
 
 def test_reviewers_merge_into_content_but_the_e2e_row_stays(conn, applied):
@@ -189,14 +200,105 @@ def test_view_as_window_is_at_most_60_minutes_and_needs_a_reason(conn):
 
 
 def test_runtime_grants(conn):
+    """Narrowed although the default ACL of the runner gave cis_app every DML right (fixture): REVOKE ALL first."""
     cur = conn.cursor()
     cur.execute(
         "SELECT has_table_privilege('cis_app', 'shared.staff_tenant_assignment', 'SELECT') AS a_sel, "
+        "has_table_privilege('cis_app', 'shared.staff_tenant_assignment', 'INSERT') AS a_ins, "
         "has_table_privilege('cis_app', 'shared.staff_tenant_assignment', 'DELETE') AS a_del, "
         "has_table_privilege('cis_app', 'shared.staff_tenant_assignment', 'UPDATE') AS a_upd, "
+        "has_table_privilege('cis_app', 'shared.staff_view_as_session', 'INSERT') AS v_ins, "
         "has_table_privilege('cis_app', 'shared.staff_view_as_session', 'UPDATE') AS v_upd, "
-        "has_table_privilege('cis_app', 'shared.staff_view_as_session', 'DELETE') AS v_del")
-    assert cur.fetchone() == (True, True, False, True, False)
+        "has_table_privilege('cis_app', 'shared.staff_view_as_session', 'DELETE') AS v_del, "
+        "has_table_privilege('cis_app', 'shared.staff_view_as_session', 'TRUNCATE') AS v_trunc")
+    assert cur.fetchone() == (True, True, True, False, True, True, True, False)
+    cur.execute("SELECT count(*) FROM information_schema.role_table_grants WHERE table_schema = 'shared' "
+                "AND table_name IN ('staff_tenant_assignment', 'staff_view_as_session') "
+                "AND grantee IN ('PUBLIC', 'aa_app_user', 'catalog_owner')")
+    assert cur.fetchone()[0] == 0
+
+
+def _session(cur, staff, tenant):
+    cur.execute("INSERT INTO shared.staff_view_as_session (admin_user_id, tenant_id, reason, expires_at) "
+                "VALUES (%s, %s, 'invented ticket follow-up', now() + interval '30 minutes') RETURNING session_id",
+                (staff, tenant))
+    return cur.fetchone()[0]
+
+
+def _as_cis_app(cur):
+    """Run the rest of the transaction as cis_app (rolled back by the conn fixture). USAGE, the tenants read (Dev: CIS
+    244) and the 353 helper are granted in the transaction: CI has no 244, and x1_244_undo revokes them."""
+    cur.execute("GRANT USAGE ON SCHEMA shared TO cis_app")
+    cur.execute("GRANT SELECT ON shared.tenants TO cis_app")
+    cur.execute("GRANT EXECUTE ON FUNCTION shared.tenant_account_closed(uuid) TO cis_app")
+    cur.execute("SET LOCAL ROLE cis_app")
+
+
+def test_the_view_as_log_is_append_only(conn):
+    cur = conn.cursor()
+    tenant, staff = _tenant(cur), _staff(cur)
+    sid = _session(cur, staff, tenant)
+    _as_cis_app(cur)
+    for sql in ("UPDATE shared.staff_view_as_session SET reason = 'rewritten reason' WHERE session_id = %s",
+                "UPDATE shared.staff_view_as_session SET expires_at = expires_at - interval '1 minute' "
+                "WHERE session_id = %s",
+                "DELETE FROM shared.staff_view_as_session WHERE session_id = %s"):
+        cur.execute("SAVEPOINT s")
+        with pytest.raises(psycopg2.errors.RestrictViolation):
+            cur.execute(sql, (sid,))
+        cur.execute("ROLLBACK TO SAVEPOINT s")
+    # Ending an open session is the one UPDATE; a second end is refused.
+    cur.execute("UPDATE shared.staff_view_as_session SET ended_at = now(), end_reason = 'ended' WHERE session_id = %s",
+                (sid,))
+    cur.execute("SAVEPOINT s")
+    with pytest.raises(psycopg2.errors.RestrictViolation):
+        cur.execute("UPDATE shared.staff_view_as_session SET end_reason = 'revoked' WHERE session_id = %s", (sid,))
+    cur.execute("ROLLBACK TO SAVEPOINT s")
+    cur.execute("RESET ROLE")
+    cur.execute("SAVEPOINT s")
+    with pytest.raises(psycopg2.errors.RestrictViolation):
+        cur.execute("TRUNCATE shared.staff_view_as_session")
+    cur.execute("ROLLBACK TO SAVEPOINT s")
+
+
+def test_the_erasure_deletes_as_cis_app_once_the_tenant_is_offboarded(conn):
+    """AA-839 runs `DELETE FROM <table> t WHERE (t.tenant_id = $1::uuid)` for every delete node as cis_app, rows or
+    not (Postgres checks DELETE before it looks at rows): both tables must take it for an offboarded tenant."""
+    cur = conn.cursor()
+    tenant, staff = _tenant(cur), _staff(cur)
+    _session(cur, staff, tenant)
+    cur.execute("INSERT INTO shared.staff_tenant_assignment (admin_user_id, tenant_id, kind, created_by) "
+                "VALUES (%s, %s, 'owner', 'admin:test')", (staff, tenant))
+    cur.execute("UPDATE shared.tenants SET is_active = false, cancelled_at = now() WHERE tenant_id = %s", (tenant,))
+    _as_cis_app(cur)
+    for table in ("shared.staff_view_as_session", "shared.staff_tenant_assignment"):
+        cur.execute(f"DELETE FROM {table} t WHERE (t.tenant_id = %s::uuid)", (tenant,))
+        assert cur.rowcount == 1, table
+    cur.execute("RESET ROLE")
+    # The tenant row itself then goes (here as the superuser); the FK cascade finds nothing left.
+    cur.execute("DELETE FROM shared.tenants WHERE tenant_id = %s", (tenant,))
+
+
+def test_a_deleted_tenant_cascades_through_the_guard(conn):
+    cur = conn.cursor()
+    tenant, staff = _tenant(cur), _staff(cur)
+    _session(cur, staff, tenant)
+    cur.execute("DELETE FROM shared.tenants WHERE tenant_id = %s", (tenant,))
+    cur.execute("SELECT count(*) FROM shared.staff_view_as_session WHERE tenant_id = %s", (tenant,))
+    assert cur.fetchone()[0] == 0
+
+
+def test_every_inventory_delete_table_is_deletable_by_cis_app(conn):
+    """The erasure apply DELETEs every delete node even with 0 rows: a table without DELETE for cis_app fails it."""
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+    from services.erasure.inventory import TENANT_TABLES
+
+    cur = conn.cursor()
+    for table in ("shared.staff_tenant_assignment", "shared.staff_view_as_session"):
+        entry = next(t for t in TENANT_TABLES if t.table == table)
+        assert entry.action == "delete"
+        cur.execute("SELECT has_table_privilege('cis_app', %s, 'DELETE') AS ok", (table,))
+        assert cur.fetchone()[0] is True, table
 
 
 def test_the_new_tables_are_in_the_erasure_inventory():
