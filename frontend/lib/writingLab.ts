@@ -3,8 +3,14 @@
 // /admin/lab/<slug>, its data GET /api/admin/writing-memory/lab/<writer> (services/writing_memory/lab.py; admin only,
 // $0, ids, labels, counts and hashes, never text). Dependency-free so `npm run test:unit` loads it directly.
 
+import type { KpiReport, Release as WmRelease, ReleaseStops, WriterKpi } from "./writingMemory";
+
 export const LAB_PATH = "/admin/lab";
 export const LAB_API = "/api/admin/writing-memory/lab";
+/** The Writing memory tools (the actions: approve, activate, roll back, keep) and their API. */
+export const WRITING_MEMORY_PATH = "/admin/lab/writing-memory";
+export const WM_RELEASES_API = "/api/admin/writing-memory/releases";
+export const WM_METRICS_API = "/api/admin/writing-memory/metrics";
 
 export type LabWriter = "a1" | "t2" | "t9_blog" | "t9_social";
 
@@ -33,7 +39,9 @@ export function stageHref(slug: string, tab?: string | null): string {
   return tab && tab !== "gate" ? `${LAB_PATH}/${slug}?tab=${encodeURIComponent(tab)}` : `${LAB_PATH}/${slug}`;
 }
 
-export const LAB_TABS = ["gate", "samples", "labels", "experiments", "prompts"] as const;
+// S268 (rest of R6): Releases and Metrics per stage (IA section 6.4: the Releases and Metrics tabs of a Lab stage),
+// over the existing Writing memory reads (GET /releases?writer=, GET /metrics), read-only here.
+export const LAB_TABS = ["gate", "samples", "labels", "experiments", "prompts", "releases", "metrics"] as const;
 export type LabTab = (typeof LAB_TABS)[number];
 
 export function parseLabTab(v: string | null | undefined): LabTab {
@@ -140,4 +148,73 @@ export function share(part: number, whole: number): string {
 /** Count rows of a {value: n} map, largest first (the API already sorts; kept for safety). */
 export function countRows(c: Counts | null | undefined): { key: string; n: number }[] {
   return Object.entries(c ?? {}).map(([key, n]) => ({ key, n })).sort((a, b) => b.n - a.n || a.key.localeCompare(b.key));
+}
+
+
+// ── Releases and Metrics per stage (S268) ─────────────────────────────────────────────────────────────────────────
+
+/** The Writing memory page on one of its tabs (it reads `?tab=`). */
+export function writingMemoryHref(tab?: "signals" | "candidates" | "releases" | "exemplars" | "metrics"): string {
+  return tab ? `${WRITING_MEMORY_PATH}?tab=${tab}` : WRITING_MEMORY_PATH;
+}
+
+/** GET /releases of one writer: every scope and status, newest first (the API orders them), up to `limit`. */
+export function releasesUrl(writer: LabWriter, limit = 50): string {
+  return `${WM_RELEASES_API}?writer=${encodeURIComponent(writer)}&limit=${limit}`;
+}
+
+export type LabRelease = WmRelease;
+
+/** "r0 pass · eval — · shadow fail": the evidence runs a release carries (a slot it does not need is not shown). */
+export function evidenceSummary(r: Pick<WmRelease, "evidence" | "r0_run_id" | "eval_run_id" | "shadow_run_id">): {
+  slot: "r0" | "eval" | "shadow"; verdict: string | null; finished: boolean;
+}[] {
+  const out: { slot: "r0" | "eval" | "shadow"; verdict: string | null; finished: boolean }[] = [];
+  for (const slot of ["r0", "eval", "shadow"] as const) {
+    const id = r[`${slot}_run_id` as const];
+    const run = r.evidence?.[slot] ?? null;
+    if (!id && !run) continue;
+    out.push({ slot, verdict: run?.verdict ?? null, finished: !!run?.finished });
+  }
+  return out;
+}
+
+/** Badge tone of a release status. */
+export function releaseTone(status: string): "success" | "danger" | "warning" | "info" | "neutral" {
+  return status === "active" ? "success" : status === "rejected" ? "danger"
+    : status === "approved" || status === "evaluated" ? "info" : status === "draft" ? "warning" : "neutral";
+}
+
+/** One weekly report row of a writer: its overall KPIs (null when the report did not measure it), the replay rate,
+ *  the clean pairs and the soft stops / job actions of the writer's releases. */
+export interface WriterWeek {
+  week_start: string;
+  trigger: string;
+  kpi: WriterKpi | null;
+  replay_rate: number | null;
+  clean_pairs: number | null;
+  stops: ReleaseStops[];
+  actions: { release_no: number; scope: string; action: string; codes: string[] }[];
+}
+
+/** The stored weekly reports (newest first) seen from one writer. Reports keep their order. */
+export function writerWeeks(reports: readonly KpiReport[] | null | undefined, writer: LabWriter): WriterWeek[] {
+  return (reports ?? []).map((r) => {
+    const block = r.kpis?.writers?.[writer] ?? null;
+    return {
+      week_start: r.week_start,
+      trigger: r.trigger,
+      kpi: block?.overall ?? null,
+      replay_rate: block?.replay?.rate ?? null,
+      clean_pairs: block ? block.clean_pairs : null,
+      stops: (r.soft_stops ?? []).filter((s) => s.writer === writer && (s.stops?.length ?? 0) > 0),
+      actions: (r.actions ?? []).filter((a) => a.writer === writer)
+        .map((a) => ({ release_no: a.release_no, scope: a.scope, action: a.action, codes: [...(a.codes ?? [])] })),
+    };
+  });
+}
+
+/** A rate as a whole-number-and-one-decimal percent, "—" when not measured (never 0 %). */
+export function pct(v: number | null | undefined): string {
+  return v === null || v === undefined ? "—" : `${(v * 100).toFixed(1)}%`;
 }

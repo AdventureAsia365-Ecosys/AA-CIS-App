@@ -32,6 +32,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Play, RefreshCw } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { PageFrame,
   Badge, Button, ConfirmModal, DataTable, Drawer, ErrorState, GuidePanel, K, PageHeader, StatusBadge, TableSkeleton,
@@ -468,7 +469,12 @@ export default function WritingMemory() {
   const tabs = [{ key: "signals", label: t("tabSignals") }, { key: "candidates", label: t("tabCandidates") },
     { key: "releases", label: t("tabReleases") }, { key: "exemplars", label: tx("tabExemplars") },
     { key: "metrics", label: tm("tabMetrics") }, { key: "guide", label: t("tabGuide") }];
-  const [tab, setTab] = useState("signals");
+  // S268: `?tab=` opens a tab (the Writing Lab's Releases / Metrics tabs link here); the page keeps no URL state else.
+  const params = useSearchParams();
+  const [tab, setTab] = useState(() => {
+    const asked = params.get("tab") ?? "";
+    return tabs.some((x) => x.key === asked) ? asked : "signals";
+  });
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmMine, setConfirmMine] = useState(false);
   const summary = useQuery({ queryKey: ["wm", "summary"], queryFn: () => apiGet<Summary>(`${WM_API}/summary`) });
