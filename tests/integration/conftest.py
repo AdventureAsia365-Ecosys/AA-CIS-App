@@ -454,10 +454,10 @@ def _apply_schema(conn):
         # needs 253 / 273 / 289's catalog part (skipped above). test_aa1040_migration_359 applies 253 ... 289 + 359
         # the DB Migrate way on the RDS-like state and rolls back.
         and not f.startswith('359')
-        # AA-1029 R4 (S267): 366 creates catalog.v_tour_price_reference_v1 (Booking's reviewed reference price) through
-        # the catalog recipe over 253's _live_tour (skipped above). test_aa1029_migration_366 applies 253 ... 289 + 366
+        # AA-1029 R4 (S267): 365 creates catalog.v_tour_price_reference_v1 (Booking's reviewed reference price) through
+        # the catalog recipe over 253's _live_tour (skipped above). test_aa1029_migration_365 applies 253 ... 289 + 365
         # the DB Migrate way on the RDS-like state and rolls back.
-        and not f.startswith('366')
+        and not f.startswith('365')
     ])
 
     for mf in migration_files:

@@ -1,9 +1,9 @@
-"""AA-1029 R4 (S267) — migration 366: catalog.v_tour_price_reference_v1, AA-Booking's read of the source price text
+"""AA-1029 R4 (S267) — migration 365: catalog.v_tour_price_reference_v1, AA-Booking's read of the source price text
 of the live published tours (the Booking trip plan keeps it as a reviewed reference price, root ADR 0005 d7).
 
-conftest skips 366 (catalog recipe over 253's _live_tour). Each test runs in ONE transaction on the RDS-like state of
+conftest skips 365 (catalog recipe over 253's _live_tour). Each test runs in ONE transaction on the RDS-like state of
 test_aa860_migration_245 (module fixture), the way test_aa1040_migration_359 builds it: 273's replayed column is
-dropped first, 253 / 256 / 257 / 258 / 273 / 289 and 366 are applied as cis_owner (DB Migrate's live-owner switch),
+dropped first, 253 / 256 / 257 / 258 / 273 / 289 and 365 are applied as cis_owner (DB Migrate's live-owner switch),
 the checks run, and the transaction is rolled back.
 
 Checks: registered once, re-runnable; catalog_owner's with security_barrier, SELECT to booking only, catalog_owner
@@ -26,7 +26,7 @@ from test_aa860_migration_245 import rds_like_245  # noqa: E402,F401  (module fi
 from test_aa990_migration_289 import migration_255  # noqa: E402,F401  (module autouse fixture)
 
 BEFORE = t289.BEFORE + (t289.MIGRATION,)
-MIGRATION = "366_tour_price_reference_view.sql"
+MIGRATION = "365_tour_price_reference_view.sql"
 VIEW = "catalog.v_tour_price_reference_v1"
 # The SELECT of AA-Booking backend/app/catalog/trip_plan_sync.py (REFERENCES_SQL).
 BK_REFERENCES_SQL = f"SELECT source_id, price_raw FROM {VIEW} WHERE source_system = 'cis'"
@@ -61,7 +61,7 @@ def _as(c, role, sql, *args):
 
 
 def test_registered_once(cur):
-    cur.execute("SELECT count(*) AS n FROM shared.schema_versions WHERE version = '366'")
+    cur.execute("SELECT count(*) AS n FROM shared.schema_versions WHERE version = '365'")
     assert cur.fetchone()[0] == 1
 
 
