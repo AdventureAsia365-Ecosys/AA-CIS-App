@@ -18,7 +18,9 @@ How it works
      other method or path answers 403 ``view_as_read_only`` — writes are refused on the server whatever the UI shows,
      and so are reads that start work (``GET /v1/slate`` enqueues a paid proposal job), exports and the brand branch;
    - the session must still be open (not ended, not expired), the staff account active, its role still holding
-     ``tenant.view_as`` and the tenant still in its scope (assignment removed = view ends): else 401 ``view_as_ended``;
+     ``tenant.view_as``, the tenant still viewable (:func:`tenant_refusal`, the same rule as the start: not the AA
+     internal tenant, not offboarded, live) and still in its scope (assignment removed = view ends): else 401
+     ``view_as_ended``, and the session is ended for good (:func:`close_session`, one ``tenant.view_as_ended`` row);
    - the read must be one the staff member's CURRENT role may see (:func:`role_may_read`, :data:`ROUTE_CAPS`): a read
      that carries the plan or usage (``/v1/quota``) needs a money capability of its own on top of ``tenant.view_as``,
      so support never sees it; else 403 ``view_as_not_for_role``. View-as never widens a role's own reads;
@@ -29,7 +31,9 @@ How it works
    refuses a view-as payload on anything but an allowed read too (:func:`refusal`), so a header shape the middleware
    did not foresee still cannot write.
 4. ``POST /admin/view-as/sessions/{session_id}/end`` ends it (``ended``; an admin ending someone else's: ``revoked``);
-   an expired session reads as ended and is closed as ``expired`` the next time it is touched.
+   an expired session reads as ended and is closed as ``expired`` the next time it is touched; a new start ends the
+   caller's other open sessions. Every path that ends a session writes one ``tenant.view_as_ended`` audit row under
+   that session's id with its end reason (:func:`ended_audit`).
 
 Only staff paths and the tenant read routes are involved; no tenant member ever sees a view-as row (the tenant
 activity trail is an allow-list of actions, api/services/tenant_account.TENANT_VISIBLE_ACTIONS).
@@ -43,6 +47,11 @@ from typing import Any, Optional
 from uuid import UUID
 
 import jwt
+import structlog
+
+from api.core.tenant_scope import AA_INTERNAL_TENANT
+
+logger = structlog.get_logger()
 
 VIEW_AS_CLAIM = "vas"
 STAFF_CLAIM = "stf"
@@ -202,26 +211,104 @@ def window(minutes: int, now: Optional[datetime] = None) -> tuple[datetime, date
     return start, start + timedelta(minutes=minutes)
 
 
+# ── The tenant a session may view (the start and the per-request gate apply the same rule) ─────────────────────────
+# CIS 354: is_active is true exactly for these statuses (the account-status trigger keeps them in step).
+TENANT_LIVE_STATUSES = frozenset({"trial", "active", "past_due"})
+TENANT_CLOSED_STATUSES = frozenset({"offboarding", "closed"})
+TENANT_REFUSAL_MESSAGES: dict[str, str] = {
+    "internal": "The AA internal tenant is not a partner; nothing to view as.",
+    "offboarded": "This tenant is offboarded; view as is not available.",
+    "inactive": "This tenant is not active (suspended or not live yet); view as is not available.",
+}
+
+
+def tenant_refusal(tenant_id: Any, *, cancelled_at: Any, account_status: Optional[str], kind: Optional[str],
+                   is_active: Optional[bool]) -> Optional[str]:
+    """Why this tenant may not be viewed as, or None. One rule for the start (409) and every request (the session
+    ends): the AA internal tenant (the sentinel id, or kind ``internal``) is not a partner; an offboarded one
+    (``cancelled_at`` set, status offboarding / closed) is gone; a tenant that is not live (suspended, lead, applied:
+    ``is_active`` false) would only answer 403 to its own reads (the tenant rate limiter's revocation)."""
+    if str(tenant_id) == AA_INTERNAL_TENANT or kind == "internal":
+        return "internal"
+    if cancelled_at is not None or account_status in TENANT_CLOSED_STATUSES:
+        return "offboarded"
+    if is_active is False or (account_status is not None and account_status not in TENANT_LIVE_STATUSES):
+        return "inactive"
+    return None
+
+
 # ── Session state (the gate re-checks it on every request) ──────────────────────────────────────────────────────────
-# $1 session, $2 tenant, $3 staff. Open = not ended and not past its expiry; the staff row must still be active.
+# $1 session, $2 tenant, $3 staff. Open = not ended and not past its expiry; the staff row must still be active and the
+# tenant still viewable (tenant_refusal).
 SESSION_STATE_SQL = (
     "SELECT s.ended_at IS NULL AND s.expires_at > now() AS open, s.ended_at IS NULL AS not_ended, "
-    "u.is_active AS staff_active, u.role::text AS staff_role "
+    "u.is_active AS staff_active, u.role::text AS staff_role, "
+    "t.cancelled_at AS tenant_cancelled_at, t.account_status AS tenant_status, t.kind AS tenant_kind, "
+    "t.is_active AS tenant_active "
     "FROM shared.staff_view_as_session s JOIN shared.admin_users u ON u.id = s.admin_user_id "
+    "JOIN shared.tenants t ON t.tenant_id = s.tenant_id "
     "WHERE s.session_id = $1::uuid AND s.tenant_id = $2::uuid AND s.admin_user_id = $3::uuid"
 )
-# Close an expired session the first time it is touched after its expiry (guard: UPDATE only ends an open session).
-EXPIRE_SQL = (
-    "UPDATE shared.staff_view_as_session SET ended_at = greatest(now(), started_at), end_reason = 'expired' "
-    "WHERE session_id = $1::uuid AND ended_at IS NULL AND expires_at <= now()"
+# End one open session ($2 = the end_reason when it is not past its expiry; one past it always ends 'expired'). The
+# guard lets an UPDATE only end an open session, and the WHERE makes it end once: two requests racing on the same
+# session close it once, and only the one that closed it writes the tenant.view_as_ended row.
+CLOSE_SQL = (
+    "UPDATE shared.staff_view_as_session SET ended_at = greatest(now(), started_at), "
+    "end_reason = CASE WHEN expires_at <= now() THEN 'expired' ELSE $2 END "
+    "WHERE session_id = $1::uuid AND ended_at IS NULL RETURNING end_reason"
 )
+# Why the gate ends a session (details.cause of its tenant.view_as_ended row). The end_reason column takes only
+# ended / expired / revoked (CIS 364 CHECK; no migration in this slice): a lost right ends the session 'revoked'.
+GATE_END_CAUSES = frozenset({"expired", "staff_inactive", "role_lost_view_as", "tenant_inactive", "out_of_scope"})
+GATE_ACTOR = "system:view_as_gate"
+
+
+def ended_audit(*, tenant_id: str, session_id: str, actor: str, end_reason: str, cause: str,
+                session_staff: Optional[str], **extra: Any) -> dict:
+    """The keyword arguments of write_audit_log for one tenant.view_as_ended row: one row per closed session, under
+    that session's own resource id, whatever path ended it (the end route, a new start, the gate)."""
+    from services.acp_shared.audit_log import AdminTenantAuditAction
+
+    return {
+        "tenant_id": tenant_id, "actor": actor[:64], "action": AdminTenantAuditAction.VIEW_AS_ENDED,
+        "resource_type": AUDIT_RESOURCE, "resource_id": session_id,
+        "details": {"session_id": session_id, "end_reason": end_reason, "cause": cause,
+                    "session_staff": session_staff, **extra},
+    }
+
+
+async def close_session(conn: Any, claims: ViewAsClaims, cause: str) -> Optional[str]:
+    """End the session of ``claims`` for ``cause`` (:data:`GATE_END_CAUSES`) and write its tenant.view_as_ended row,
+    in one transaction (the audit row last: the chain trigger's lock). The end_reason it got, or None when it was
+    already closed (another request ended it first: no second row). Best effort for the caller: the request is refused
+    whatever this does; a failure leaves the session open and the next request tries again."""
+    from services.acp_shared.audit_log import write_audit_log
+
+    try:
+        async with conn.transaction():
+            end_reason = await conn.fetchval(CLOSE_SQL, claims.session_id,
+                                             "expired" if cause == "expired" else "revoked")
+            if end_reason is None:
+                return None
+            await write_audit_log(conn, **ended_audit(
+                tenant_id=claims.tenant_id, session_id=claims.session_id, actor=GATE_ACTOR, end_reason=end_reason,
+                cause=cause, session_staff=claims.staff_id))
+    except Exception as e:  # noqa: BLE001 - the refusal stands; the next request retries the close
+        logger.warning("view_as_close_failed", error=repr(e)[:300], session_id=claims.session_id,
+                                       cause=cause)
+        return None
+    return end_reason
 
 
 async def session_open(conn: Any, claims: ViewAsClaims, template: Optional[str] = None) -> tuple[bool, str]:
     """(open, reason) for one request: the session row is open, the staff account active, its CURRENT role (the DB
-    row, not the token) still holds tenant.view_as and the tenant is still in that role's scope. With ``template``
-    (the matched READ_ROUTES entry) that role must also be allowed that read (:func:`role_may_read`); else
-    (False, :data:`NOT_FOR_ROLE_REASON`), which the gate answers 403, not "ended"."""
+    row, not the token) still holds tenant.view_as, the tenant is still viewable (:func:`tenant_refusal`, the rule of
+    the start) and still in that role's scope. With ``template`` (the matched READ_ROUTES entry) that role must also be
+    allowed that read (:func:`role_may_read`); else (False, :data:`NOT_FOR_ROLE_REASON`), which the gate answers 403,
+    not "ended", and the session stays open.
+
+    Every other refusal ends the session for good (:func:`close_session`: 'expired' past its expiry, else 'revoked',
+    with a tenant.view_as_ended row naming the cause): a right lost during the session never comes back to it."""
     from api.core.staff_authz import ROLE_PERMS, TENANT_VIEW_AS
     from api.core.tenant_scope import in_scope, scope_for_role
 
@@ -230,17 +317,25 @@ async def session_open(conn: Any, claims: ViewAsClaims, template: Optional[str] 
         return False, "unknown_session"
     if not row["open"]:
         if row["not_ended"]:
-            await conn.execute(EXPIRE_SQL, claims.session_id)
+            await close_session(conn, claims, "expired")
             return False, "expired"
         return False, "ended"
-    if not row["staff_active"]:
-        return False, "staff_inactive"
+    reason: Optional[str] = None
     role = row["staff_role"]
-    if TENANT_VIEW_AS not in ROLE_PERMS.get(role or "", frozenset()):
-        return False, "role_lost_view_as"
-    scope = scope_for_role(role)
-    if scope is None or not await in_scope(conn, scope, claims.staff_id, claims.tenant_id):
-        return False, "out_of_scope"
+    if not row["staff_active"]:
+        reason = "staff_inactive"
+    elif TENANT_VIEW_AS not in ROLE_PERMS.get(role or "", frozenset()):
+        reason = "role_lost_view_as"
+    elif tenant_refusal(claims.tenant_id, cancelled_at=row["tenant_cancelled_at"], account_status=row["tenant_status"],
+                        kind=row["tenant_kind"], is_active=row["tenant_active"]) is not None:
+        reason = "tenant_inactive"
+    else:
+        scope = scope_for_role(role)
+        if scope is None or not await in_scope(conn, scope, claims.staff_id, claims.tenant_id):
+            reason = "out_of_scope"
+    if reason is not None:
+        await close_session(conn, claims, reason)
+        return False, reason
     if template is not None and not role_may_read(role, template):
         return False, NOT_FOR_ROLE_REASON
     return True, "open"

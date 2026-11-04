@@ -14,7 +14,9 @@
 * ``POST /admin/view-as/sessions/{session_id}/end``      — end it: ``ended`` (own) or ``revoked`` (an admin ending
   another member's); an already-expired one is closed as ``expired``. Idempotent.
 
-Every start and end writes an ``acp_shared.audit_log`` row (``tenant.view_as_started`` / ``tenant.view_as_ended``; no
+Every start and every end writes an ``acp_shared.audit_log`` row (``tenant.view_as_started`` / one
+``tenant.view_as_ended`` per closed session, under that session's id, with its end reason and cause: the end route, a
+new start closing the caller's other sessions, or the gate closing an expired session or one whose right was lost; no
 reason text there, it is free text that may name a person and stays in the session row). Every request made with the
 token is logged by the gate (api/middleware/view_as.py).
 """
@@ -39,20 +41,22 @@ logger = structlog.get_logger()
 
 router = APIRouter(prefix="/admin", tags=["admin-view-as"], dependencies=[Depends(staff_policy)])
 
-AA_INTERNAL_TENANT = "00000000-0000-0000-0000-000000000001"
 NO_STAFF_ID = "View as tenant needs a verified staff identity"
 UNAVAILABLE = "View as tenant needs migration 364 (shared.staff_view_as_session)."
 NOT_FOUND = "View-as session not found"
 
 TENANT_SQL = (
-    "SELECT tenant_id, name, slug, plan_tier::text AS plan_tier, cancelled_at FROM shared.tenants WHERE tenant_id = $1"
+    "SELECT tenant_id, name, slug, plan_tier::text AS plan_tier, cancelled_at, account_status, kind, is_active "
+    "FROM shared.tenants WHERE tenant_id = $1"
 )
 STAFF_ACTIVE_SQL = "SELECT is_active FROM shared.admin_users WHERE id = $1::uuid"
-# The caller's other open sessions end when a new one starts (an expired one as 'expired').
+# The caller's other open sessions end when a new one starts (an expired one as 'expired'); each gets its own
+# tenant.view_as_ended row (cause 'replaced').
 END_OTHERS_SQL = (
     "UPDATE shared.staff_view_as_session SET ended_at = greatest(now(), started_at), "
     "end_reason = CASE WHEN expires_at <= now() THEN 'expired' ELSE 'ended' END "
-    "WHERE admin_user_id = $1::uuid AND ended_at IS NULL RETURNING session_id::text AS session_id"
+    "WHERE admin_user_id = $1::uuid AND ended_at IS NULL "
+    "RETURNING session_id::text AS session_id, tenant_id::text AS tenant_id, end_reason"
 )
 INSERT_SQL = (
     "INSERT INTO shared.staff_view_as_session (admin_user_id, tenant_id, reason, ticket_ref, started_at, expires_at) "
@@ -170,20 +174,29 @@ async def start_view_as(
         tenant = await conn.fetchrow(TENANT_SQL, tenant_id)
         if tenant is None:
             raise HTTPException(status_code=404, detail="Tenant not found")
-        if str(tenant_id) == AA_INTERNAL_TENANT:
-            raise HTTPException(status_code=409, detail="The AA internal tenant is not a partner; nothing to view as.")
-        if tenant["cancelled_at"] is not None:
-            raise HTTPException(status_code=409, detail="This tenant is offboarded; view as is not available.")
+        # The same rule the gate re-checks on every request (an offboarded or suspended tenant ends an open session).
+        refusal = view_as.tenant_refusal(
+            tenant_id, cancelled_at=tenant["cancelled_at"], account_status=tenant["account_status"],
+            kind=tenant["kind"], is_active=tenant["is_active"])
+        if refusal is not None:
+            raise HTTPException(status_code=409, detail=view_as.TENANT_REFUSAL_MESSAGES[refusal])
         await _refuse_e2e(request, conn, tenant_id)
         active = await conn.fetchval(STAFF_ACTIVE_SQL, staff_id)
         if not active:
             raise HTTPException(status_code=403, detail=NO_STAFF_ID)
         try:
-            ended = [r["session_id"] for r in await conn.fetch(END_OTHERS_SQL, staff_id)]
+            closed = await conn.fetch(END_OTHERS_SQL, staff_id)
             row = await conn.fetchrow(INSERT_SQL, staff_id, tenant_id, body.reason, body.ticket_ref, body.minutes)
         except asyncpg.UndefinedTableError as exc:
             raise _unavailable(exc) from exc
+        ended = [r["session_id"] for r in closed]
         actor = f"admin:{staff_id}"
+        # audit rows last (the chain trigger's lock): one tenant.view_as_ended per session this start closed, under
+        # that session's own id and tenant, then the start
+        for r in closed:
+            await write_audit_log(conn, **view_as.ended_audit(
+                tenant_id=r["tenant_id"], session_id=r["session_id"], actor=actor, end_reason=r["end_reason"],
+                cause="replaced", session_staff=staff_id, replaced_by=row["session_id"]))
         await write_audit_log(
             conn, tenant_id=str(tenant_id), actor=actor, action=AdminTenantAuditAction.VIEW_AS_STARTED,
             resource_type=view_as.AUDIT_RESOURCE, resource_id=row["session_id"],
@@ -265,12 +278,10 @@ async def end_view_as_session(
         own = staff_id is not None and row["admin_user_id"] == staff_id
         done = await conn.fetchrow(END_SQL, session_id, "ended" if own else "revoked")
         if done is not None:
-            await write_audit_log(
-                conn, tenant_id=row["tenant_id"], actor=f"admin:{staff_id or 'unknown'}"[:64],
-                action=AdminTenantAuditAction.VIEW_AS_ENDED, resource_type=view_as.AUDIT_RESOURCE,
-                resource_id=row["session_id"],
-                details={"session_id": row["session_id"], "end_reason": done["end_reason"],
-                         "session_staff": row["admin_user_id"]})
+            await write_audit_log(conn, **view_as.ended_audit(
+                tenant_id=row["tenant_id"], session_id=row["session_id"], actor=f"admin:{staff_id or 'unknown'}",
+                end_reason=done["end_reason"], cause="ended_by_staff" if own else "revoked_by_admin",
+                session_staff=row["admin_user_id"]))
         fresh = await conn.fetchrow(ONE_SQL, session_id)
     logger.info("view_as_ended", session_id=str(session_id), changed=done is not None,
                 end_reason=done["end_reason"] if done else row["end_reason"])

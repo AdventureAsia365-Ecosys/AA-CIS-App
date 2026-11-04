@@ -1992,13 +1992,18 @@ support): `GET /admin/tenant-assignments` (every partner tenant of the caller's 
 the pool flag) and `GET /admin/tenant-assignments/staff` (the assignable staff, `tenant.assign`); writes stay the
 per-tenant routes (admin only). *View as tenant* (root ADR 0019 d5, capability `tenant.view_as`: admin,
 customer_success own book, support own book + pool): `POST /admin/tenants/{tenant_id}/view-as` (scoped; reason 3-500,
-optional ticket, 5-60 minutes; one open session per staff member) writes `shared.staff_view_as_session` + audit
+optional ticket, 5-60 minutes; one open session per staff member; refused 409 for the AA internal tenant, an
+offboarded one or one that is not live, `view_as.tenant_refusal`) writes `shared.staff_view_as_session` + audit
 `tenant.view_as_started` and returns a short-lived tenant JWT (`api/core/view_as.py`: `csr` viewer, `client` portal,
 `vas` session, `stf` staff); `GET /admin/view-as/sessions[/{id}]` and `POST .../{id}/end` (own; admin every one, an
-admin end of another's is `revoked`). `api/middleware/view_as.py ViewAsGateMiddleware` (around the tenant role
-middleware and the rate limiter) lets such a token make only GET / HEAD on `view_as.READ_ROUTES` (12 side-effect-free
-tenant reads; never `/v1/slate`, `/v1/billing`, exports, integrations or the brand branch), re-checks the open session,
-the staff row's current role and the tenant scope on every request, and refuses (403 `view_as_not_for_role`) a read the
+admin end of another's is `revoked`). Every path that ends a session (the end route, a new start closing the caller's
+other sessions, the gate) writes one `tenant.view_as_ended` row under that session's id with its end reason and cause.
+`api/middleware/view_as.py ViewAsGateMiddleware` (around the tenant role middleware and the rate limiter; its own
+per-session limit, 120 requests a minute, answers 429 before any check or audit row) lets such a token make only GET /
+HEAD on `view_as.READ_ROUTES` (12 side-effect-free tenant reads; never `/v1/slate`, `/v1/billing`, exports,
+integrations or the brand branch), re-checks the open session, the staff row's current role, the tenant (the start's
+rule: offboarded / suspended / internal ends the view) and the tenant scope on every request (a lost right ends the
+session for good: `revoked`, or `expired` past its expiry), and refuses (403 `view_as_not_for_role`) a read the
 current role may not make (`view_as.ROUTE_CAPS`: `/v1/quota` needs `tenant.read` or `tenant.book.account.read`, so
 support never sees the plan or usage; view-as never widens a role's own reads), and writes one `acp_shared.audit_log` row per request
 (`tenant.view_as_request`, BEFORE a served read: no unlogged read, 503 when the row cannot be written); everything
@@ -2013,7 +2018,8 @@ forwards only the allowed reads of the signed-in member's role (`VIEW_AS_ROUTE_R
 GETs of `/admin/writing-memory/*` (not the Tenant 360 voice route); `api/core/lab_read_log.py LAB_TEXT_LOGGED` writes
 an audit row `lab.tenant_text_read` before each such read (503 when it cannot). *Bell*: `notifications.read` (every
 role) on the four `/admin/notifications` routes; customer_success / support / finance see only rows targeted at their
-role. Still open: the `crm.ops.v1` scope relay, Tenant QA reads of the own book for customer_success, removing the
+role, and of a tenant row only those of a tenant their scope reaches (`tenant_scope.tenant_scope_sql`: book; support
+also the pool; finance every tenant; the platform rows of the AA internal tenant stay role-targeted). Still open: the `crm.ops.v1` scope relay, Tenant QA reads of the own book for customer_success, removing the
 reviewer alias.
 
 **Dev-only E2E CIS admin (A10b, AA-816 S252, root ADR 0006a A10b).** The agent's own admin identity for evidence

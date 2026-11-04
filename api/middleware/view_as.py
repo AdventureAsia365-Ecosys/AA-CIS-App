@@ -7,6 +7,9 @@ A request is a view-as request when one credential its Authorization header(s) c
 tenant role middleware reads: the HTTPBearer value and every whitespace-separated part) is a valid HS256 JWT with the
 ``vas`` claim. Then, in this order:
 
+0. the session's own rate limit (:data:`VIEW_AS_RPM` requests a minute, Redis, before any DB read or audit row) ->
+   429 ``view_as_rate_limited``, not logged in the audit log (nothing is served; one warning line per session and
+   minute). Redis unreachable: fail open, the checks below and their audit rows still run;
 1. method + path not an allowed read (:func:`api.core.view_as.allowed_route`) -> 403 ``view_as_read_only``;
 2. the claims are not three UUIDs of a tenant token -> 401 ``view_as_ended``;
 3. the session is not open, or its staff member lost the account, the capability or the tenant (DB, per request)
@@ -18,10 +21,18 @@ tenant role middleware reads: the HTTPBearer value and every whitespace-separate
 
 The refusals of 1-3 are logged too (best effort, bounded: the refusal is answered whatever the log write does). Any
 other request passes through untouched; a token that does not verify is left to the route's own auth.
+
+Why the gate stays OUTSIDE the tenant role middleware and the tenant rate limiter (AA-1035 S268 fix round 2): inside
+them, the tenant role middleware would answer a view-as write 403 (csr viewer) before the gate, unlogged, and the
+tenant limiter counts the partner's own RPM bucket (a staff session would spend the partner's budget and the partner's
+traffic would 429 the staff view). Step 0 bounds the gate's own work instead: a refused request may be rate limited
+before it is logged; a served read is always logged before it runs (the tenant limiter inside may still answer 429
+after that row: logged, not served, never the reverse).
 """
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any, Optional
 
 import asyncpg
@@ -34,6 +45,12 @@ from api.core import view_as
 logger = structlog.get_logger()
 
 WRITE_TIMEOUT_S = 3.0
+# Requests one view-as session may make a minute (served and refused alike). A view-as page load is about ten reads;
+# a token replayed outside the staff BFF in a loop is cut off here before it costs a DB check and an audit row each.
+VIEW_AS_RPM = 120
+RATE_TIMEOUT_S = 0.5
+RATE_LIMITED_DETAIL = "view_as_rate_limited"
+RATE_LIMITED_MESSAGE = "Too many requests in this view-as session; wait a minute."
 
 
 def _authorization_headers(scope: Scope) -> list[str]:
@@ -84,8 +101,30 @@ async def _write_best_effort(pool: Any, row: dict) -> None:
         logger.warning("view_as_audit_write_failed", error=repr(e)[:300], outcome=row["details"]["outcome"])
 
 
-def _answer(status: int, detail: str, message: str) -> JSONResponse:
-    return JSONResponse(status_code=status, content={"detail": detail, "message": message})
+def _answer(status: int, detail: str, message: str, headers: Optional[dict] = None) -> JSONResponse:
+    return JSONResponse(status_code=status, content={"detail": detail, "message": message}, headers=headers)
+
+
+async def rate_limited(scope: Scope, bucket: str, now: Optional[float] = None) -> Optional[int]:
+    """Seconds to wait when the session ``bucket`` is over :data:`VIEW_AS_RPM` this minute, else None. Fails open (no
+    Redis, a Redis error or timeout): the gate's checks and audit rows still run, so nothing goes unlogged."""
+    redis = getattr(getattr(scope.get("app"), "state", None), "redis", None)
+    if redis is None:
+        return None
+    now = time.time() if now is None else now
+    key = f"view_as_rl:{bucket}:{int(now // 60)}"
+    try:
+        count = await asyncio.wait_for(redis.incr(key), timeout=RATE_TIMEOUT_S)
+        if count == 1:
+            await asyncio.wait_for(redis.expire(key, 120), timeout=RATE_TIMEOUT_S)
+    except Exception as e:  # noqa: BLE001 - fail open, see the docstring
+        logger.warning("view_as_rate_limit_unavailable", error=type(e).__name__)
+        return None
+    if count <= VIEW_AS_RPM:
+        return None
+    if count == VIEW_AS_RPM + 1:   # one line per session and minute, however long the loop
+        logger.warning("view_as_rate_limited", bucket=bucket, limit=VIEW_AS_RPM)
+    return max(1, 60 - int(now % 60))
 
 
 class ViewAsGateMiddleware:
@@ -110,6 +149,12 @@ class ViewAsGateMiddleware:
         def row(outcome: str, status: Optional[int], route: Optional[str] = None) -> dict:
             return view_as.audit_row(claims, method=method, path=path, route=route, status=status, outcome=outcome,
                                      query_keys=keys)
+
+        wait = await rate_limited(scope, claims.session_id if claims else "invalid")
+        if wait is not None:
+            await _answer(429, RATE_LIMITED_DETAIL, RATE_LIMITED_MESSAGE,
+                          {"Retry-After": str(wait)})(scope, receive, send)
+            return
 
         template = view_as.allowed_route(method, path)
         if template is None:

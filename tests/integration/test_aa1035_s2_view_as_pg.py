@@ -8,6 +8,10 @@
 - the Assignments overview is scoped per role and the PUT refuses a role that works no tenant book;
 - (S268 fix pass) the start answers a token only to the staff BFF (x-view-as-client: bff), and the reads depend on the
   role: support's token gets 403 view_as_not_for_role on /v1/quota and 403 view_as_read_only on /v1/billing (logged).
+- (S268 fix round 2) a tenant offboarded or suspended during a session ends it at the next request (401, end_reason
+  revoked, cause tenant_inactive) and the start refuses such a tenant (409); every path that ends a session writes one
+  tenant.view_as_ended row under that session (the end route, a new start, the gate on expiry or a lost right); the
+  bell of a desk role reaches only the tenant rows its scope covers.
 
 Calls carry the main admin secret + x-admin-role + x-admin-user-id (the machine / CI identity path of
 api/core/tenant_scope.py), as tests/integration/test_aa1035_tenant_scope_pg.py does.
@@ -198,6 +202,16 @@ async def test_scope_and_a_removed_assignment_end_the_view(world):
     assert gone.status_code == 401
     logged = await _audit(pool, "tenant.view_as_request", started.json()["session_id"])
     assert logged[-1]["details"]["outcome"] == "refused_out_of_scope"
+    # the view ended for good: the row is closed (revoked) with one ended row naming the cause; a re-assignment does
+    # not bring it back
+    sid = started.json()["session_id"]
+    assert await pool.fetchval("SELECT end_reason FROM shared.staff_view_as_session WHERE session_id = $1::uuid",
+                               sid) == "revoked"
+    (ended,) = await _audit(pool, "tenant.view_as_ended", sid)
+    assert ended["details"]["cause"] == "out_of_scope" and ended["actor"] == "system:view_as_gate"
+    assert (await _assign(client, s, roles, t["mine"], "csm", "backup")).status_code == 200
+    assert (await client.get("/v1/account/members", headers=bearer)).status_code == 401
+    assert len(await _audit(pool, "tenant.view_as_ended", sid)) == 1     # no second end of a closed session
 
 
 @pytest.mark.asyncio
@@ -217,6 +231,11 @@ async def test_an_expired_session_is_closed_as_expired(world):
     assert res.status_code == 401
     assert await pool.fetchval("SELECT end_reason FROM shared.staff_view_as_session WHERE session_id = $1::uuid",
                                sid) == "expired"
+    (ended,) = await _audit(pool, "tenant.view_as_ended", sid)        # the gate's close is logged too
+    assert ended["tenant_id"] == t["pooled"] and ended["details"]["end_reason"] == "expired"
+    assert ended["details"]["cause"] == "expired"
+    again = await client.get("/v1/account/members", headers={"Authorization": f"Bearer {started.json()['token']}"})
+    assert again.status_code == 401 and len(await _audit(pool, "tenant.view_as_ended", sid)) == 1
 
 
 @pytest.mark.asyncio
@@ -229,6 +248,12 @@ async def test_a_new_session_ends_the_previous_one(world):
     assert second.status_code == 201
     assert await pool.fetchval("SELECT end_reason FROM shared.staff_view_as_session WHERE session_id = $1::uuid",
                                first.json()["session_id"]) == "ended"
+    # the implicit end is logged under the FIRST session (its own tenant), naming the session that replaced it
+    (ended,) = await _audit(pool, "tenant.view_as_ended", first.json()["session_id"])
+    assert ended["tenant_id"] == t["pooled"] and ended["actor"] == f"admin:{s['admin']}"
+    assert ended["details"] == {"session_id": first.json()["session_id"], "end_reason": "ended", "cause": "replaced",
+                                "session_staff": s["admin"], "replaced_by": second.json()["session_id"]}
+    assert await _audit(pool, "tenant.view_as_ended", second.json()["session_id"]) == []
     listed = await client.get("/admin/view-as/sessions?open_only=true", headers=_as(s, roles, "admin"))
     ids = [x["session_id"] for x in listed.json()["sessions"]]
     assert second.json()["session_id"] in ids and first.json()["session_id"] not in ids
@@ -263,3 +288,82 @@ async def test_assignments_overview_is_scoped_and_the_put_refuses_a_content_role
     ids = {x["admin_user_id"] for x in staff.json()["staff"]}
     assert {s["admin"], s["csm"], s["support"]} <= ids and s["writer"] not in ids
     assert (await client.get("/admin/tenant-assignments/staff", headers=_as(s, roles, "csm"))).status_code == 403
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["offboard", "suspend"])
+async def test_a_tenant_offboarded_or_suspended_during_a_session_ends_it(world, change):
+    client, pool, t, s, roles = world
+    assert (await _assign(client, s, roles, t["mine"], "csm", "owner")).status_code == 200
+    started = await client.post(f"/admin/tenants/{t['mine']}/view-as", headers=_as(s, roles, "csm"),
+                                json={"reason": REASON})
+    assert started.status_code == 201
+    sid, bearer = started.json()["session_id"], {"Authorization": f"Bearer {started.json()['token']}"}
+    assert (await client.get("/v1/account/members", headers=bearer)).status_code == 200
+    if change == "offboard":
+        await pool.execute("UPDATE shared.tenants SET cancelled_at = now() WHERE tenant_id = $1::uuid", t["mine"])
+    else:
+        await pool.execute("UPDATE shared.tenants SET is_active = false WHERE tenant_id = $1::uuid", t["mine"])
+    gone = await client.get("/v1/account/members", headers=bearer)
+    assert gone.status_code == 401 and gone.json()["detail"] == "view_as_ended"
+    assert await pool.fetchval("SELECT end_reason FROM shared.staff_view_as_session WHERE session_id = $1::uuid",
+                               sid) == "revoked"
+    (ended,) = await _audit(pool, "tenant.view_as_ended", sid)
+    assert ended["tenant_id"] == t["mine"] and ended["details"]["cause"] == "tenant_inactive"
+    assert ended["details"]["end_reason"] == "revoked" and ended["details"]["session_staff"] == s["csm"]
+    logged = await _audit(pool, "tenant.view_as_request", sid)
+    assert [r["details"]["outcome"] for r in logged] == ["served", "refused_tenant_inactive"]
+    # the start applies the same rule: no new session on that tenant
+    again = await client.post(f"/admin/tenants/{t['mine']}/view-as", headers=_as(s, roles, "csm"),
+                              json={"reason": REASON})
+    assert again.status_code == 409
+    assert await pool.fetchval("SELECT count(*) FROM shared.staff_view_as_session WHERE tenant_id = $1::uuid",
+                               t["mine"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_bell_of_a_desk_role_reaches_only_its_tenants(world):
+    """customer_success: its book; support: its book and the pool; finance: every tenant. A platform row (the AA
+    internal tenant) stays role-targeted. Mark one / all never reaches a row outside the scope."""
+    client, pool, t, s, roles = world
+    internal = "00000000-0000-0000-0000-000000000001"
+    assert (await _assign(client, s, roles, t["mine"], "csm", "owner")).status_code == 200
+    assert (await _assign(client, s, roles, t["other"], "admin", "owner")).status_code == 200   # out of the pool
+    tag = f"aa1035s2.bell.{uuid.uuid4().hex[:8]}"
+    ids = {}
+    for key, tid in (("mine", t["mine"]), ("other", t["other"]), ("pooled", t["pooled"]), ("internal", internal)):
+        ids[key] = await pool.fetchval(
+            "INSERT INTO shared.notifications (tenant_id, actor_type, event_type, entity_type, entity_id, payload, "
+            "target_roles) VALUES ($1::uuid, 'system', $2, 'tenant', $3, '{}'::jsonb, "
+            "ARRAY['customer_success','support','finance']) RETURNING id", tid, tag, key)
+    try:
+        def headers(who, role=None):
+            return {"X-Admin-Secret": SECRET, "x-admin-role": role or roles[who], "x-admin-user-id": s[who]}
+
+        async def seen(h):
+            res = await client.get("/admin/notifications?limit=200", headers=h)
+            assert res.status_code == 200, res.text
+            return {x["entity_id"] for x in res.json()["items"] if x["event_type"] == tag}
+
+        assert await seen(headers("csm")) == {"mine", "internal"}
+        assert await seen(headers("support")) == {"pooled", "internal"}
+        assert await seen(headers("admin", "finance")) == {"mine", "other", "pooled", "internal"}
+        # no staff id: a desk role reaches no tenant row (fail closed), the platform row only
+        no_id = {"X-Admin-Secret": SECRET, "x-admin-role": "support"}
+        assert await seen(no_id) == {"internal"}
+
+        # marks: support cannot mark the csm's tenant row, read-all clears only its own scope
+        miss = await client.put(f"/admin/notifications/{ids['mine']}/read", headers=headers("support"))
+        assert miss.status_code == 404
+        cleared = await client.put("/admin/notifications/read-all", headers=headers("support"))
+        assert cleared.status_code == 200
+        unread = {r["entity_id"] for r in await pool.fetch(
+            "SELECT entity_id FROM shared.notifications WHERE event_type = $1 AND NOT is_read", tag)}
+        assert unread == {"mine", "other"}
+        # the count follows the same scope as the list (csm: its unread tenant row; the platform row is read now)
+        count = await client.get("/admin/notifications/count", headers=headers("csm"))
+        listed = await client.get("/admin/notifications?unread_only=true&limit=200", headers=headers("csm"))
+        assert count.status_code == 200 and count.json()["unread"] == len(listed.json()["items"])
+        assert {x["entity_id"] for x in listed.json()["items"] if x["event_type"] == tag} == {"mine"}
+    finally:
+        await pool.execute("DELETE FROM shared.notifications WHERE event_type = $1", tag)

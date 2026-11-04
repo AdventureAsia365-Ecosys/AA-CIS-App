@@ -10,7 +10,10 @@ Guards (lesson S267: the adversarial re-review found a privilege escalation; the
   pool; nobody else), need a staff identity, a reason, at most 60 minutes, a partner tenant that is not offboarded;
 - the Dev-only E2E admin starts a session on a synthetic tenant only;
 - (S268 fix pass) the reads depend on the role: view-as never shows a role more than its own staff pages (support never
-  reads /v1/quota; nobody reads /v1/billing), and only the staff BFF gets the token (x-view-as-client: bff).
+  reads /v1/quota; nobody reads /v1/billing), and only the staff BFF gets the token (x-view-as-client: bff);
+- (S268 fix round 2) the gate re-checks the tenant with the start's rule (offboarded, not live, internal: the view
+  ends); every path that ends a session writes one tenant.view_as_ended row under that session (end route, a new
+  start, the gate); the gate's own per-session rate limit cuts a loop off before any check or audit row.
 
 No network, no AWS, no DB: a fake connection answers exactly the SQL each path runs and fails the test on any other.
 """
@@ -65,9 +68,15 @@ class FakeDb:
     whose state the test sets; audit rows are recorded, never executed."""
 
     def __init__(self) -> None:
-        self.session = {"open": True, "not_ended": True, "staff_active": True, "staff_role": "customer_success"}
+        self.session = {"open": True, "not_ended": True, "staff_active": True, "staff_role": "customer_success",
+                        "tenant_cancelled_at": None, "tenant_status": "active", "tenant_kind": "agency",
+                        "tenant_active": True}
+        self.tenant_state: dict = {}            # TENANT_SQL overrides for the start (account_status, kind...)
+        self.others: list[dict] = []            # the caller's other open sessions END_OTHERS_SQL closes
         self.audit: list[tuple] = []
         self.expired: list[str] = []
+        self.closed: list[tuple] = []           # (session, end_reason asked) of every CLOSE_SQL
+        self.already_closed = False             # CLOSE_SQL finds no open row (another request closed it first)
         self.ended: list[tuple] = []
         self.inserted: list[tuple] = []
         self.synthetic = True
@@ -98,12 +107,17 @@ class FakeDb:
             return True
         if sql == e2e_staff.SYNTHETIC_TENANT_SQL:
             return self.synthetic
+        if sql == view_as.CLOSE_SQL:
+            self.closed.append(args)
+            if args[1] == "expired":
+                self.expired.append(args[0])
+            return None if self.already_closed else args[1]
         raise AssertionError(f"unexpected fetchval {sql}")
 
     async def fetch(self, sql: str, *args: Any) -> list:
         self.sql.append(sql)
         if sql == va.END_OTHERS_SQL:
-            return []
+            return [dict(r) for r in self.others]
         if sql == va.LIST_SQL:
             return [self._session_row()]
         raise AssertionError(f"unexpected fetch {sql}")
@@ -123,7 +137,9 @@ class FakeDb:
         if sql == va.TENANT_SQL:
             tid = str(args[0])
             return {"tenant_id": args[0], "name": "Quill Harbor", "slug": "quill-harbor", "plan_tier": "starter",
-                    "cancelled_at": NOW if tid == CLOSED else None}
+                    "cancelled_at": NOW if tid == CLOSED else None,
+                    "account_status": "offboarding" if tid == CLOSED else "active", "kind": "agency",
+                    "is_active": tid != CLOSED, **self.tenant_state}
         if sql == va.INSERT_SQL:
             self.inserted.append(args)
             return {"session_id": SESSION, "started_at": NOW, "expires_at": NOW + timedelta(minutes=args[4])}
@@ -142,9 +158,6 @@ class FakeDb:
             return "INSERT 0 1"
         if "shared.tenant_api_usage" in sql:
             return "INSERT 0 1"
-        if sql == view_as.EXPIRE_SQL:
-            self.expired.append(args[0])
-            return "UPDATE 1"
         raise AssertionError(f"unexpected execute {sql}")
 
 
@@ -158,6 +171,9 @@ def world(monkeypatch):
     monkeypatch.setattr(staff_credential, "principal_verified", lambda: False)
     db = FakeDb()
     monkeypatch.setattr(app.state, "pool", db, raising=False)
+    # no Redis: the gate's per-session limit fails open, so the whole-app walk (300+ refusals in one session) is never
+    # cut off by it, whatever an earlier test left on app.state (the limit has its own tests below)
+    monkeypatch.setattr(app.state, "redis", None, raising=False)
     return TestClient(app, raise_server_exceptions=False), db, app
 
 
@@ -312,12 +328,25 @@ def test_no_unlogged_read_when_the_audit_row_fails():
     assert status == 503 and inner.calls == 0
 
 
+def _requests(db: FakeDb) -> list[tuple]:
+    return [a for a in db.audit if a[2] == view_as.AUDIT_ACTION_REQUEST]
+
+
+def _ended(db: FakeDb) -> list[tuple]:
+    return [a for a in db.audit if a[2] == "tenant.view_as_ended"]
+
+
 @pytest.mark.parametrize("state,reason", [
     ({"open": False, "not_ended": False}, "ended"),
     ({"open": False, "not_ended": True}, "expired"),
     ({"staff_active": False}, "staff_inactive"),
     ({"staff_role": "finance"}, "role_lost_view_as"),
     ({"staff_role": "content"}, "role_lost_view_as"),
+    # S268 fix round 2: the tenant rule of the start, re-checked on every request
+    ({"tenant_cancelled_at": NOW, "tenant_status": "offboarding", "tenant_active": False}, "tenant_inactive"),
+    ({"tenant_status": "closed", "tenant_active": False}, "tenant_inactive"),
+    ({"tenant_status": "suspended", "tenant_active": False}, "tenant_inactive"),
+    ({"tenant_kind": "internal"}, "tenant_inactive"),
 ])
 def test_a_closed_session_or_a_lost_right_ends_the_view(state, reason):
     db = FakeDb()
@@ -325,8 +354,62 @@ def test_a_closed_session_or_a_lost_right_ends_the_view(state, reason):
     status, inner, sent = _run(db, f"Bearer {token()}")
     assert status == 401 and inner.calls == 0
     assert b"view_as_ended" in sent[1]["body"]
-    assert f'"outcome": "refused_{reason}"' in db.audit[0][5]
+    (req,) = _requests(db)
+    assert f'"outcome": "refused_{reason}"' in req[5]
     assert db.expired == ([SESSION] if reason == "expired" else [])
+    if reason == "ended":                     # already closed: nothing to end, no second ended row
+        assert db.closed == [] and _ended(db) == []
+        return
+    # the session is ended for good (a lost right never comes back to it) with one tenant.view_as_ended row
+    assert db.closed == [(SESSION, "expired" if reason == "expired" else "revoked")]
+    (ended,) = _ended(db)
+    assert ended[0] == MINE and ended[1] == view_as.GATE_ACTOR and ended[3] == "staff_view_as_session"
+    assert ended[4] == SESSION
+    assert f'"end_reason": "{db.closed[0][1]}"' in ended[5] and f'"cause": "{reason}"' in ended[5]
+    assert f'"session_staff": "{STAFF}"' in ended[5]
+    assert db.audit.index(ended) < db.audit.index(req)   # closed (and logged) before the refusal row
+
+
+def test_a_session_another_request_closed_first_gets_no_second_ended_row():
+    db = FakeDb()
+    db.session.update({"staff_active": False})
+    db.already_closed = True
+    status, inner, _ = _run(db, f"Bearer {token()}")
+    assert status == 401 and inner.calls == 0 and _ended(db) == [] and len(_requests(db)) == 1
+
+
+def test_a_failed_close_still_refuses_the_request():
+    db = FakeDb()
+    db.session.update({"tenant_status": "offboarding", "tenant_cancelled_at": NOW})
+
+    async def broken(sql, *a):
+        if sql == view_as.CLOSE_SQL:
+            raise OSError("db blip")
+        return await FakeDb.fetchval(db, sql, *a)
+    db.fetchval = broken
+    status, inner, _ = _run(db, f"Bearer {token()}")
+    assert status == 401 and inner.calls == 0 and _ended(db) == []
+    assert '"outcome": "refused_tenant_inactive"' in _requests(db)[0][5]
+
+
+@pytest.mark.parametrize("kw,expected", [
+    ({}, None),
+    ({"tenant_id": ts.AA_INTERNAL_TENANT}, "internal"),
+    ({"kind": "internal"}, "internal"),
+    ({"cancelled_at": NOW}, "offboarded"),
+    ({"account_status": "offboarding"}, "offboarded"),
+    ({"account_status": "closed", "is_active": False}, "offboarded"),
+    ({"account_status": "suspended", "is_active": False}, "inactive"),
+    ({"account_status": "applied", "is_active": False}, "inactive"),
+    ({"is_active": False}, "inactive"),
+    ({"account_status": "trial"}, None), ({"account_status": "past_due"}, None),
+    ({"account_status": None, "kind": None, "is_active": None}, None),
+])
+def test_tenant_refusal_is_one_rule_for_start_and_gate(kw, expected):
+    args = {"tenant_id": MINE, "cancelled_at": None, "account_status": "active", "kind": "agency", "is_active": True}
+    args.update(kw)
+    tid = args.pop("tenant_id")
+    assert view_as.tenant_refusal(tid, **args) == expected
 
 
 def test_a_customer_success_member_whose_assignment_was_removed_loses_the_view():
@@ -340,7 +423,9 @@ def test_a_customer_success_member_whose_assignment_was_removed_loses_the_view()
         return False if sql == ts.SQL_IN_BOOK else await FakeDb.fetchval(db2, sql, *a)
     db2.fetchval = not_in_book
     status, inner, _ = _run(db2, f"Bearer {token()}")
-    assert status == 401 and inner.calls == 0 and '"refused_out_of_scope"' in db2.audit[0][5]
+    assert status == 401 and inner.calls == 0 and '"refused_out_of_scope"' in _requests(db2)[0][5]
+    (ended,) = _ended(db2)                    # the view ends for good, logged under the session
+    assert ended[4] == SESSION and '"cause": "out_of_scope"' in ended[5] and '"end_reason": "revoked"' in ended[5]
 
 
 def _as_role(role: str) -> FakeDb:
@@ -419,6 +504,80 @@ def test_support_quota_is_refused_with_the_real_app(world):
         assert res.status_code == 403 and res.json()["detail"] == detail, path
     outcomes = [a[5] for a in db.audit if a[2] == view_as.AUDIT_ACTION_REQUEST]
     assert len(outcomes) == 2 and '"refused_route_not_for_role"' in outcomes[0] and '"refused_read_only"' in outcomes[1]
+
+
+# ── the gate's own rate limit (S268 fix round 2: a refused request may be limited before it is logged) ───────────
+
+class _Redis:
+    def __init__(self, fail: bool = False) -> None:
+        self.counts: dict[str, int] = {}
+        self.fail = fail
+
+    async def incr(self, key: str) -> int:
+        if self.fail:
+            raise ConnectionError("redis down")
+        self.counts[key] = self.counts.get(key, 0) + 1
+        return self.counts[key]
+
+    async def expire(self, key: str, seconds: int) -> bool:
+        return True
+
+
+def _run_with_redis(db: FakeDb, redis: Any, n: int, method: str = "GET", path: str = "/v1/marketplace") -> list[int]:
+    from api.middleware import view_as as gate_mod
+
+    statuses = []
+    inner = _Recorder()
+    gate = gate_mod.ViewAsGateMiddleware(inner)
+    for _ in range(n):
+        sent: list = []
+        scope = {"type": "http", "method": method, "path": path, "query_string": b"",
+                 "headers": [(b"authorization", f"Bearer {token()}".encode())],
+                 "app": SimpleNamespace(state=SimpleNamespace(pool=db, redis=redis))}
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        async def send(msg, sent=sent):
+            sent.append(msg)
+
+        asyncio.run(gate(scope, receive, send))
+        statuses.append(sent[0]["status"])
+    return statuses
+
+
+@pytest.mark.parametrize("method,path,ok", [("GET", "/v1/marketplace", 200), ("POST", "/v1/slate", 403)])
+def test_a_session_over_its_rate_is_cut_off_before_any_check_or_row(monkeypatch, method, path, ok):
+    from api.middleware import view_as as gate_mod
+
+    monkeypatch.setattr(gate_mod, "VIEW_AS_RPM", 3)
+    db = FakeDb()
+    statuses = _run_with_redis(db, _Redis(), 5, method, path)
+    assert statuses == [ok, ok, ok, 429, 429]
+    assert len(_requests(db)) == 3                 # the two limited requests: no audit row, no session read
+    assert db.sql.count(view_as.SESSION_STATE_SQL) == (3 if ok == 200 else 0)
+
+
+def test_the_rate_limit_fails_open_and_every_request_is_still_logged(monkeypatch):
+    from api.middleware import view_as as gate_mod
+
+    monkeypatch.setattr(gate_mod, "VIEW_AS_RPM", 1)
+    db = FakeDb()
+    assert _run_with_redis(db, _Redis(fail=True), 3) == [200, 200, 200]
+    assert len(_requests(db)) == 3
+
+
+def test_the_limit_is_per_session(monkeypatch):
+    from api.middleware import view_as as gate_mod
+
+    monkeypatch.setattr(gate_mod, "VIEW_AS_RPM", 1)
+    redis = _Redis()
+    scope = {"app": SimpleNamespace(state=SimpleNamespace(redis=redis))}
+    assert asyncio.run(gate_mod.rate_limited(scope, "a", now=120.0)) is None
+    assert asyncio.run(gate_mod.rate_limited(scope, "b", now=120.0)) is None
+    assert asyncio.run(gate_mod.rate_limited(scope, "a", now=150.0)) == 30
+    assert asyncio.run(gate_mod.rate_limited(scope, "a", now=180.0)) is None   # next minute
+    assert asyncio.run(gate_mod.rate_limited({"app": None}, "a")) is None    # no Redis: open
 
 
 @pytest.mark.parametrize("over", [{"vas": "not-a-uuid"}, {"stf": "x"}, {"sub": "y"}, {"role": "admin"}])
@@ -515,6 +674,50 @@ def test_start_refuses_the_internal_tenant_an_offboarded_one_and_no_staff_id(wor
     machine = {"X-Admin-Secret": SECRET, view_as.BFF_HEADER: view_as.BFF_HEADER_VALUE}
     assert client.post(f"/admin/tenants/{MINE}/view-as", json=BODY, headers=machine).status_code == 403
     assert db.inserted == []
+
+
+@pytest.mark.parametrize("state,detail", [
+    ({"account_status": "suspended", "is_active": False}, "not active"),
+    ({"account_status": "applied", "is_active": False}, "not active"),
+    ({"account_status": "closed", "is_active": False}, "offboarded"),
+    ({"kind": "internal"}, "not a partner"),
+])
+def test_start_refuses_a_tenant_the_gate_would_end(world, state, detail):
+    """The start and the gate apply one rule (view_as.tenant_refusal): a session the gate would end at once is never
+    opened."""
+    client, db, _ = world
+    db.tenant_state = state
+    res = client.post(f"/admin/tenants/{MINE}/view-as", json=BODY, headers=_h("admin"))
+    assert res.status_code == 409 and detail in res.json()["detail"] and db.inserted == []
+
+
+def test_a_new_start_writes_one_ended_row_per_session_it_closes(world):
+    client, db, _ = world
+    first, second = str(uuid.uuid4()), str(uuid.uuid4())
+    db.others = [{"session_id": first, "tenant_id": POOLED, "end_reason": "ended"},
+                 {"session_id": second, "tenant_id": OTHER, "end_reason": "expired"}]
+    res = client.post(f"/admin/tenants/{MINE}/view-as", json=BODY, headers=_h("admin"))
+    assert res.status_code == 201
+    ended = _ended(db)
+    # one row each, under that session's own id and tenant, with its end reason; then the start row
+    assert [(a[0], a[4]) for a in ended] == [(POOLED, first), (OTHER, second)]
+    assert '"end_reason": "ended"' in ended[0][5] and '"end_reason": "expired"' in ended[1][5]
+    assert all('"cause": "replaced"' in a[5] and f'"replaced_by": "{SESSION}"' in a[5] for a in ended)
+    assert all(a[1] == f"admin:{STAFF}" for a in ended)
+    started = [a for a in db.audit if a[2] == "tenant.view_as_started"]
+    assert len(started) == 1 and db.audit.index(started[0]) > db.audit.index(ended[-1])
+
+
+def test_the_end_route_names_its_cause(world):
+    client, db, _ = world
+    client.post(f"/admin/view-as/sessions/{SESSION}/end", headers=_h("customer_success"))
+    (own,) = _ended(db)
+    assert own[4] == SESSION and '"cause": "ended_by_staff"' in own[5]
+    db.session_owner = OTHER_STAFF            # an admin ending another member's session: revoked
+    db.audit.clear()
+    client.post(f"/admin/view-as/sessions/{SESSION}/end", headers=_h("admin"))
+    (revoked,) = _ended(db)
+    assert '"cause": "revoked_by_admin"' in revoked[5] and f'"session_staff": "{OTHER_STAFF}"' in revoked[5]
 
 
 @pytest.mark.parametrize("role", sorted(VIEW_AS_ROLES))

@@ -6,12 +6,14 @@ tenant_content.read, Lab pages only, every view logged." Pinned here:
   Content Trace, the A4 logs, Tenant 360 or the per-tenant voice of Tenant 360);
 - every route carrying it declares LAB_TEXT_LOGGED, and the dependency writes one audit row for ai_ops BEFORE the read
   (a failed write refuses the read, 503); admin / content_lead / tenant_qa read in their own right, unlogged as before.
-- the bell (notifications.read): every role; a tenant desk role sees only rows targeted at its role.
+- the bell (notifications.read): every role; a tenant desk role sees only rows targeted at its role, and (S268 fix
+  round 2) of a tenant row only those of a tenant its scope reaches (book; support also the pool; finance all).
 """
 from __future__ import annotations
 
 import asyncio
 import uuid
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any
 
@@ -159,3 +161,82 @@ def test_notification_scope_per_role(role, expected):
     assert expected in scope
     if role in ("customer_success", "support", "finance"):
         assert "platform.%" in scope and "spend_budget_alert" in scope   # never an admin alert
+
+
+# ── the bell of a desk role is tenant scoped (S268 fix round 2) ───────────────────────────────────────────────────
+
+def test_a_book_role_bell_only_reaches_its_book():
+    from api.core.tenant_scope import AA_INTERNAL_TENANT
+
+    scope = notification_scope("customer_success", STAFF)
+    assert "ARRAY['customer_success']" in scope
+    assert f"'{AA_INTERNAL_TENANT}'::uuid" in scope                        # platform rows stay role-targeted
+    assert f"sa.admin_user_id = '{STAFF}'::uuid AND sa.tenant_id = notifications.tenant_id" in scope
+    assert "st.kind IN ('agency', 'demo')" not in scope                    # no pool for customer_success
+
+
+def test_support_bell_reaches_its_book_and_the_pool():
+    scope = notification_scope("support", STAFF)
+    assert f"sa.admin_user_id = '{STAFF}'::uuid" in scope and "st.kind IN ('agency', 'demo')" in scope
+
+
+def test_finance_bell_reaches_every_tenant():
+    assert notification_scope("finance", STAFF).endswith("OR TRUE))")
+
+
+@pytest.mark.parametrize("staff", [None, "", "not-a-uuid", "x'::uuid OR TRUE --"])
+def test_a_desk_role_without_a_valid_staff_id_sees_no_tenant_row(staff):
+    scope = notification_scope("support", staff)
+    assert scope.endswith("OR FALSE))") and "--" not in scope and "OR TRUE" not in scope
+
+
+def test_tenant_scope_sql_takes_identifiers_only():
+    from api.core.tenant_scope import tenant_scope_sql
+
+    with pytest.raises(ValueError):
+        tenant_scope_sql("book", STAFF, "tenant_id; DROP TABLE x")
+    assert tenant_scope_sql("internal", None, "n.tenant_id").startswith("(n.tenant_id = ")
+    assert tenant_scope_sql(None, STAFF, "tenant_id") == "FALSE"
+
+
+@pytest.mark.parametrize("method,path", [
+    ("GET", "/admin/notifications"), ("GET", "/admin/notifications/count"),
+    ("PUT", "/admin/notifications/read-all"), ("PUT", "/admin/notifications/7/read"),
+])
+def test_every_bell_route_applies_the_callers_tenant_scope(secret, monkeypatch, method, path):
+    """The four bell routes build their WHERE from the caller's role AND staff id (x-admin-user-id under the main
+    secret; the verified Cognito id otherwise): a support member's list, count and marks never reach a row of a
+    tenant outside its book and the pool."""
+    from fastapi.testclient import TestClient
+
+    from api.main import app
+
+    seen: list[str] = []
+
+    class _Db:
+        def acquire(self):
+            @asynccontextmanager
+            async def ctx():
+                yield self
+            return ctx()
+
+        async def fetch(self, sql, *a):
+            seen.append(sql)
+            return []
+
+        async def fetchrow(self, sql, *a):
+            seen.append(sql)
+            return {"unread": 0}
+
+        async def execute(self, sql, *a):
+            if "shared.tenant_api_usage" in sql:
+                return "INSERT 0 1"
+            seen.append(sql)
+            return "UPDATE 1"
+
+    monkeypatch.setattr(app.state, "pool", _Db(), raising=False)
+    res = TestClient(app, raise_server_exceptions=False).request(
+        method, path, headers={"X-Admin-Secret": SECRET, "x-admin-role": "support", "x-admin-user-id": STAFF})
+    assert res.status_code == 200, res.text
+    (sql,) = [q for q in seen if "shared.notifications" in q]
+    assert f"sa.admin_user_id = '{STAFF}'::uuid" in sql and "notifications.tenant_id" in sql
