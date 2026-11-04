@@ -1,8 +1,9 @@
 """AA-1042 (S268) — the admin route control against real Postgres (CIS migration 370 applied by conftest): the live
 state read, a save as a version with its diff and audit row, a stale expected version (conflict), a revert, the
-"Prefer Anthropic API" preset, the rule check of a chain, and the Routing tab's PATCH writing a version (with an
-external change recorded first). api/services/llm_route_control.py, shared/llm_client/route_versions.py. Every row the
-tests change goes back as it was at the end (the shared DB is read by later modules).
+"Prefer Anthropic API" preset, the rule check of a chain, a revert of a chain and a provider-order change restoring the
+exact routes and priorities, and the Routing tab's PATCH writing a version (with an external change recorded first).
+api/services/llm_route_control.py, shared/llm_client/route_versions.py. Every row the tests change (shadow settings
+included) goes back as it was at the end (the shared DB is read by later modules).
 """
 import asyncio
 import json
@@ -61,7 +62,8 @@ def world(monkeypatch):
         conn = await real(DSN)
         try:
             routes = [dict(r) for r in await conn.fetch(
-                "SELECT stage, model_id, fallback_model_ids, updated_at, updated_by FROM shared.llm_role_config")]
+                "SELECT stage, model_id, fallback_model_ids, shadow_model_id, shadow_sample_pct, updated_at, "
+                "updated_by FROM shared.llm_role_config")]
             prios = [dict(r) for r in await conn.fetch(
                 "SELECT model_key, connection_key, priority, updated_at, updated_by FROM shared.llm_model_deployment")]
             mode = await conn.fetchval("SELECT order_mode FROM shared.llm_route_settings")
@@ -76,8 +78,10 @@ def world(monkeypatch):
             async with conn.transaction():
                 for r in routes:
                     await conn.execute("UPDATE shared.llm_role_config SET model_id = $2, fallback_model_ids = $3, "
-                                       "updated_at = $4, updated_by = $5 WHERE stage = $1", r["stage"], r["model_id"],
-                                       r["fallback_model_ids"], r["updated_at"], r["updated_by"])
+                                       "shadow_model_id = $4, shadow_sample_pct = $5, updated_at = $6, "
+                                       "updated_by = $7 WHERE stage = $1", r["stage"], r["model_id"],
+                                       r["fallback_model_ids"], r["shadow_model_id"], r["shadow_sample_pct"],
+                                       r["updated_at"], r["updated_by"])
                 for p in prios:
                     await conn.execute("UPDATE shared.llm_model_deployment SET priority = $3, updated_at = $4, "
                                        "updated_by = $5 WHERE model_key = $1 AND connection_key = $2", p["model_key"],
@@ -156,8 +160,17 @@ def test_preset_puts_the_anthropic_api_first_for_claude_models(world):
     moved = {c["model"] for c in preview["diff"] if c["kind"] == "provider_order"}
     assert "sonnet-5-5" in moved and not any(c["kind"] == "route" for c in preview["diff"])
     assert preview["valid"], preview["errors"]
+    # evidence exactly for the writer / judge stages the preset moves to another model@connection
+    moved_stages = sorted(s["stage"] for s in preview["stages"]
+                          if s["first_before"] != s["first"] and s["role"] in ("writer", "judge"))
+    assert preview["evidence_stages"] == moved_stages and preview["needs_evidence"] is bool(moved_stages)
+    if moved_stages:
+        with pytest.raises(rc.RouteControlRefused, match="needs evidence"):
+            asyncio.run(rc.apply(world, actor="admin:zz-aa1042", action="preset", expected_version=_version(world),
+                                 preset="prefer_anthropic_api"))
     out = asyncio.run(rc.apply(world, actor="admin:zz-aa1042", action="preset", expected_version=_version(world),
-                               preset="prefer_anthropic_api"))
+                               preset="prefer_anthropic_api", eval_run_id=None,
+                               break_glass_reason=_BREAK_GLASS if moved_stages else None))
     assert out["action"] == "preset" and out["preset"] == "prefer_anthropic_api"
     state = asyncio.run(rc.read_state(world))
     sonnet = next(p for p in state["provider_order"] if p["model_key"] == "sonnet-5-5")
@@ -179,6 +192,78 @@ def test_chain_save_is_validated_and_a_judge_of_the_writers_family_is_refused(wo
     with pytest.raises(rc.RouteControlRefused):
         asyncio.run(rc.apply(world, actor="admin:zz-aa1042", action="save", expected_version=_version(world),
                              routes={"s1_judge": [judge["chain"][0], "sonnet-4-6"]}))
+
+
+_BREAK_GLASS = "invented integration test change, reverted by the fixture at the end"
+
+
+async def _routes_and_priorities():
+    conn = await asyncpg.connect(DSN)
+    try:
+        routes = {r["stage"]: (r["model_id"], list(r["fallback_model_ids"] or [])) for r in await conn.fetch(
+            "SELECT stage, model_id, fallback_model_ids FROM shared.llm_role_config")}
+        prios = {(r["model_key"], r["connection_key"]): r["priority"] for r in await conn.fetch(
+            "SELECT model_key, connection_key, priority FROM shared.llm_model_deployment")}
+        return routes, prios
+    finally:
+        await conn.close()
+
+
+def _quiet_proposal(world, rc, candidates):
+    """The first candidate proposal whose preview is valid and needs no eval evidence (no bell row left behind), on a
+    stage that breaks no rule today: the revert puts its chain back, and a rule the live chain already breaks (e.g. the
+    attempt cap after an earlier module's replay) would be NEW for the revert, which is then refused (by design)."""
+    live = asyncio.run(rc.preview(world))                 # no change: the warnings are the rules broken today
+    broken = {w.get("stage") for w in live["warnings"]}
+    for kw in candidates:
+        if broken & set(kw.get("routes") or ()):
+            continue
+        out = asyncio.run(rc.preview(world, **kw))
+        if out["valid"] and not out["unchanged"] and not out["needs_evidence"]:
+            return kw
+    pytest.fail("no valid evidence-free candidate in the migrated test DB")
+
+
+def test_revert_restores_the_exact_chains_and_provider_order(world):
+    from api.services import llm_route_control as rc
+    state = asyncio.run(rc.read_state(world))
+    before_routes, before_prios = asyncio.run(_routes_and_priorities())
+    v_before = _version(world)
+
+    chain_kw = _quiet_proposal(world, rc, [
+        {"routes": {s["stage"]: s["chain"][:-1]}} for s in state["stages"]
+        if s.get("is_active") and s["role"] not in ("writer", "judge") and len(s["chain"] or []) >= 3])
+    order_kw = _quiet_proposal(world, rc, [
+        {"provider_order": {p["model_key"]: [d["connection_key"] for d in p["deployments"]][::-1]}}
+        for p in state["provider_order"] if len(p["deployments"]) >= 2])
+    (stage, chain), = chain_kw["routes"].items()
+    (model, order), = order_kw["provider_order"].items()
+
+    v1 = asyncio.run(rc.apply(world, actor="admin:zz-aa1042", action="save", expected_version=v_before,
+                              note="invented chain change", **chain_kw))["version"]
+    v2 = asyncio.run(rc.apply(world, actor="admin:zz-aa1042", action="save", expected_version=v1,
+                              note="invented provider order change", **order_kw))["version"]
+    mid_routes, mid_prios = asyncio.run(_routes_and_priorities())
+    assert mid_routes[stage] == (chain[0], chain[1:]) != before_routes[stage]
+    assert [c for (m, c), _ in sorted(((k, p) for k, p in mid_prios.items() if k[0] == model),
+                                      key=lambda kp: (kp[1], kp[0][1]))] == order
+    assert {k: v for k, v in mid_routes.items() if k != stage} == {k: v for k, v in before_routes.items()
+                                                                   if k != stage}
+
+    # the version right before the first save: v_before, or the "external" version begin() recorded first when an
+    # earlier test's fixture put rows back by hand (its snapshot is the live rows this test started from)
+    v_pre = v1 - 1
+    assert v_pre >= v_before
+    back = asyncio.run(rc.apply(world, actor="admin:zz-aa1042", action="revert", expected_version=v2,
+                                revert_to=v_pre))
+    assert back["action"] == "revert" and back["reverted_from"] == v_pre and back["version"] == v2 + 1
+    assert {c["kind"] for c in back["diff"]} == {"route", "provider_order"}
+    after_routes, after_prios = asyncio.run(_routes_and_priorities())
+    assert after_routes == before_routes                       # every stage, primary and fallbacks
+    assert after_prios == before_prios                         # every deployment's exact priority number
+    snap_before = asyncio.run(rc.read_version(world, v_pre))["snapshot"]
+    snap_after = asyncio.run(rc.read_version(world, back["version"]))["snapshot"]
+    assert snap_after["routes"] == snap_before["routes"] and snap_after["priorities"] == snap_before["priorities"]
 
 
 def test_a_routing_tab_patch_writes_a_version_and_a_migration_change_is_external(world):

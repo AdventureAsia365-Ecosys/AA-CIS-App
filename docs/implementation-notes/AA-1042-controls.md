@@ -33,6 +33,13 @@ DM-7.1 retention rows of the two new tables, merged before the Infra copy, and `
   caches reload within 20 s of a new version (`route_settings` sees the new number and invalidates the stage and
   deployment caches of its process), so a row written in those seconds can name the new version for a call routed
   by the old one; documented on the column.
+- **Every route resolution watches the version (review fix).** First draft: other processes noticed a new version
+  only through `order_mode_sync()`, reached only from `client.route_aws_first_enabled()` for chains of 2+ models, so
+  a provider-order change could wait the deployment cache's 5 minutes on a single-model stage. Now
+  `route_settings.watch_version()` runs first in `role_config.get_stage_config_sync` and `deployments._ensure_loaded`
+  (the two caches every route read goes through, whatever the stage or order mode). Inside its 20 s window it is a
+  clock read; after it, one small SELECT per process per 20 s, not per call. The watch runs BEFORE the deployment
+  cache reloads, so a process never routes with rows older than the version it recorded. Never raises.
 - **Order mode: DB wins, env var is the bootstrap default.** `route_aws_first_enabled()` reads
   `shared.llm_route_settings.order_mode` (20 s cache); with no readable row (before 370, DB down, unit tests) the env
   var `LLM_ROUTE_AWS_FIRST` and then model first, exactly as before.
@@ -43,7 +50,7 @@ DM-7.1 retention rows of the two new tables, merged before the Infra copy, and `
     Anthropic API deployments first, then the rest in their current order; order mode model first (with AWS first the
     API would only be tried after every AWS model of the route, which defeats the preset).
   - `prefer_aws` — every model puts its AWS (aws_only) deployments first, then the vendor APIs; order mode unchanged.
-  A preset needs no eval evidence (no stage changes model).
+  A preset needs eval evidence only when it moves a writer / judge stage to another model@connection (below).
 - **Validation (server, on preview and on every save / revert):** the per-stage rules of the Routing tab PATCH
   (selectable models, data scopes, vendor-only rungs last unless a twin, no duplicates) plus the chain rules of
   `llm_route_chains.violations` that the tech lead named: judge family ≠ writer family, check pairs on different
@@ -52,8 +59,14 @@ DM-7.1 retention rows of the two new tables, merged before the Infra copy, and `
   not an error: a save is refused only for what it breaks itself.
 - **Preview** reuses `llm_route_chains.resolve_stage` under two context-variable overrides (proposed priorities in
   `deployments`, proposed order mode in `route_settings`): per request, never seen by a concurrent gateway call.
-- **Evidence (AA-1026 D7) on chain changes of writer / judge stages**, once per save (eval run or break-glass reason),
-  the break-glass bell per changed stage. A revert that changes such a chain asks for it too (the preview says so).
+- **Evidence (AA-1026 D7) on writer / judge stages whose chain OR first serving model@connection changes**, once per
+  save (eval run or break-glass reason), the break-glass bell per such stage (its payload names the chain and the
+  first model@connection before / after). Review fix: the first draft counted chain changes only, so a provider-order
+  change or a preset that moved a writer from acc3 to the Anthropic API passed without evidence. The serving
+  comparison uses the preview resolver (`resolve_stage`, $0) before vs after for every active stage; a stage whose
+  first serving deployment is unchanged needs nothing (e.g. reordering a fallback-only model). A revert or the order
+  mode count the same way. The preview marks each stage `serving_changed`; the UI shows "before: …" whenever the
+  first serving model@connection changes, not only on chain edits.
 - **Access:** reads `spend.read` (like every AI gateway read), preview / save / preset / revert `ai.admin`. The page
   asks `GET /admin/ai-gateway/access` (`route_control`) and shows a read-only view otherwise.
 - **UI:** its own tab "Route control" (`RouteControlTab.tsx` + `routeControl.messages.ts` + `lib/routeControl.ts`);
@@ -84,12 +97,27 @@ DM-7.1 retention rows of the two new tables, merged before the Infra copy, and `
   `test_aa884_health` / `test_aa1035_s267_fix_pass` (370 above the gap), the fake-conn store tests of AA-686 /
   AA-1024 (version hook stubbed).
 
+- **Review fixes (S268):** version watch on every route read (above); evidence on serving changes (above);
+  integration test `test_revert_restores_the_exact_chains_and_provider_order` (a chain save + a provider-order save,
+  revert to the version right before the first save, every stage's route and every deployment priority equal to the
+  rows before); the integration fixture now also restores `shadow_model_id` / `shadow_sample_pct` (the Routing-tab
+  PATCH test set them on `a3_place_days`). Unit: the version watch reloads a "fresh" deployment cache 20 s after
+  another process saves; serving-change evidence for a provider order and a preset; `test_aa1002_s2_vendor_route`'s
+  concurrency double now answers the settings read (one settings read across 8 threads).
+
 ## Tradeoffs
 
 - Trigger vs explicit column in the gateway INSERT: explicit is the exact version the process used, but it changes the
   shared ledger core in three repos; the trigger is exact except for the cache window after a change.
 - One version for the whole config instead of one per stage: a revert restores the whole config at that point
   (including later unrelated changes being undone). The diff shown before a revert lists everything it changes.
+
+- Evidence on serving changes vs chain changes only: stricter (a sponsored-API preset on Dev now asks for an eval run
+  or a break-glass reason when it moves a writer / judge), but a provider switch is a model-quality and data-path
+  change for that stage, which is what D7 guards. A reorder that does not move the first serving deployment stays
+  evidence-free.
+- Version watch in the two caches vs one call in `LLMClient._generate`: the caches also serve embed, pricing and the
+  admin reads; hooking them covers every path without listing call sites.
 
 ## Should know
 
