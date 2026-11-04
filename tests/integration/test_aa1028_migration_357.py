@@ -155,13 +155,18 @@ def test_trade_book_follows_an_override(cur):
     assert _rows(cur, f"SELECT trade_book FROM {VIEW} WHERE tenant_id = %s", tid)[0]["trade_book"] is False
 
 
-def test_trade_book_ends_with_the_trial(cur):
-    """356: a trialing content subscription is live only until trial_ends_at, so Booking stops seeing trade.book."""
+def test_trade_book_follows_the_trial_tick(cur):
+    """CIS 361 (replacing 356's cut at trial_ends_at): an ended trial stays live until the hourly tenant_account_tick
+    moves it to active or past_due (both live), so Booking keeps trade.book through the trial end; a canceled
+    content subscription still ends it."""
     tid = _tenant(cur, "Saffron Bay synthetic")
     cur.execute("UPDATE shared.tenant_subscription SET status = 'trialing', trial_ends_at = now() + interval '2 days' "
                 "WHERE tenant_id = %s AND product = 'content'", (tid,))
     assert _rows(cur, f"SELECT trade_book FROM {VIEW} WHERE tenant_id = %s", tid)[0]["trade_book"] is True
     cur.execute("UPDATE shared.tenant_subscription SET trial_ends_at = now() - interval '1 day' "
+                "WHERE tenant_id = %s AND product = 'content'", (tid,))
+    assert _rows(cur, f"SELECT trade_book FROM {VIEW} WHERE tenant_id = %s", tid)[0]["trade_book"] is True
+    cur.execute("UPDATE shared.tenant_subscription SET status = 'canceled', canceled_at = now() "
                 "WHERE tenant_id = %s AND product = 'content'", (tid,))
     cur.execute("SET LOCAL ROLE booking")
     assert _rows(cur, f"SELECT trade_book FROM {VIEW} WHERE tenant_id = %s", tid)[0]["trade_book"] is False
