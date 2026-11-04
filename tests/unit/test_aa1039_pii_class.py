@@ -294,3 +294,16 @@ def test_invariant_reads_the_class_and_falls_back_before_migration_373():
     assert conn.sql[:2] == [invariant.ROUTES_V4_SQL, invariant.ROUTES_V3_SQL]
     assert "served_roles" in invariant.CONNECTIONS_V2_SQL and "region" in invariant.CONNECTIONS_V2_SQL
     assert "wire_id" in invariant.DEPLOYMENTS_SQL
+
+
+def test_stage_pii_class_reads_the_binding_first():
+    """The class comes from the stage row bound for the call (one role_config read per call, like the scopes)."""
+    from shared.llm_client.client import _STAGE_SCOPES
+    req = LLMRequest(system_prompt="s", user_prompt="u", stage="x")
+    token = _STAGE_SCOPES.set(("x", AWS, "writer", "pii"))
+    try:
+        with patch("shared.llm_client.client.get_stage_config_sync") as read:
+            assert stage_pii_class(req) == "pii"
+            assert not read.called
+    finally:
+        _STAGE_SCOPES.reset(token)

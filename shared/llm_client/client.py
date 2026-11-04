@@ -197,9 +197,9 @@ def openai_scope_allowed(allowed_scopes: Optional[tuple],
     return allowed_scopes is None or data_scope.allows(allowed_scopes, _openai_data_scope(conn))
 
 
-# AA-1002 (S5): (stage, allowed_scopes, role) of the call being generated, bound by LLMClient._generate / the shadow so
-# the gateway reads a stage's config once per call (the route, the scopes and, AA-642 A5, the role that the connections
-# must serve come from the same row; role None = the row states none).
+# AA-1002 (S5): (stage, allowed_scopes, role[, pii_class]) of the call being generated, bound by LLMClient._generate /
+# the shadow so the gateway reads a stage's config once per call (the route, the scopes and, AA-642 A5, the role that
+# the connections must serve come from the same row; role None = the row states none; AA-1039: the data class).
 _STAGE_SCOPES: ContextVar[Optional[tuple]] = ContextVar("llm_stage_scopes", default=None)
 
 # ── AA-1018 part 2: the route deadline ───────────────────────────────────────────────────────────────────────────
@@ -315,11 +315,15 @@ def stage_scopes(request: LLMRequest) -> Optional[tuple]:
 
 
 def stage_pii_class(request: LLMRequest) -> Optional[str]:
-    """AA-1039 (R6, CIS 373): the data class of ``request.stage`` (content | pii) from role_config (20 s cache); None
-    for a call with no stage (no policy). A pii stage is called only on our AWS accounts in the US
-    (``vendor_route.deployment_plan``) and never on a path the deployment registry does not describe. Never raises."""
+    """AA-1039 (R6, CIS 373): the data class of ``request.stage`` (content | pii): the one bound for this call, else
+    role_config (20 s cache); None for a call with no stage (no policy). A pii stage is called only on our AWS accounts
+    in the US (``vendor_route.deployment_plan``) and never on a path the deployment registry does not describe. Never
+    raises."""
     if not request.stage:
         return None
+    bound = _STAGE_SCOPES.get()
+    if bound is not None and bound[0] == request.stage and len(bound) > 3:
+        return bound[3]
     try:
         return data_scope.normalize_pii_class(getattr(get_stage_config_sync(request.stage), "pii_class", None))
     except Exception as e:  # noqa: BLE001 — role_config never raises; belt and braces on the call path
@@ -1171,7 +1175,8 @@ class LLMClient:
         if stage_cfg is None:
             return self._generate_with(request, stage_cfg)
         token = _STAGE_SCOPES.set((request.stage, data_scope.normalize(getattr(stage_cfg, "allowed_scopes", None)),
-                                   _row_role(stage_cfg)))
+                                   _row_role(stage_cfg),
+                                   data_scope.normalize_pii_class(getattr(stage_cfg, "pii_class", None))))
         try:
             return self._generate_with(request, stage_cfg)
         finally:
@@ -1448,6 +1453,7 @@ class LLMClient:
         all_unusable = True
         failures: list = []  # AA-900: one exception per model actually tried (skipped keys are not attempts)
         role_bound = stage_role(request)
+        pii_bound = stage_pii_class(request)         # AA-1039: kept in a narrowed binding
         for position, (key, narrowed) in enumerate(self._route_attempts(request, chain)):
             if key not in LEGACY_KEYS:
                 m = get_model_sync(key)
@@ -1460,7 +1466,7 @@ class LLMClient:
                 self._deadline_gate(request, key, f"route position {position} ({key})", errors)
             # AA-1026 (S267): with the AWS-first switch on, one pass calls this model only on the deployments of that
             # pass (model-first, the default: narrowed is None and the stage's own scopes apply).
-            scope_token = (_STAGE_SCOPES.set((request.stage, narrowed, role_bound))
+            scope_token = (_STAGE_SCOPES.set((request.stage, narrowed, role_bound, pii_bound))
                            if narrowed is not None else None)
             try:
                 resp = self._call_key_logged(request, key, primary_acct, role=role,
@@ -1544,7 +1550,7 @@ class LLMClient:
         t0 = time.monotonic()
         resp, error = None, None
         token = _STAGE_SCOPES.set((request.stage, data_scope.normalize(getattr(cfg, "allowed_scopes", None)),
-                                   _row_role(cfg)))
+                                   _row_role(cfg), data_scope.normalize_pii_class(getattr(cfg, "pii_class", None))))
         scope_token = _ATTEMPT_SCOPE.set(_scope_for(request, cfg.role or "writer", {"shadow": True}))
         try:
             resp = self._call_key_logged(request, cfg.shadow_model_id, primary_acct,

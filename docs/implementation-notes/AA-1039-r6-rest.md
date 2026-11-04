@@ -42,6 +42,9 @@ Plan: root ADR 0019 d12 / d13 / d20 / d21, clarifications TL-12 / TL-13 / TL-20 
 - **Fail closed for a pii stage on paths the registry does not describe**: the hard-coded legacy chain and the
   catalog's Converse / OpenAI fallback can call a `global.` profile or a vendor API, so a pii stage gets a
   RuntimeError there (the route moves to its next model) and `embed` returns no target.
+- **One role_config read per call**: the class is bound with the scopes and the role (`client._STAGE_SCOPES`, now
+  `(stage, scopes, role, pii_class)`) by `_generate`, the shadow, an AWS-first pass and the route preview;
+  `stage_pii_class` reads the binding first (`test_aa900_eval_label_keeps_route` counts the reads).
 - **An unknown text value reads as `pii`** (fail closed), a non-text value (a test double) or a missing column as
   `content`. `GET /admin/llm-config` sends `null` before CIS 373 so the Routing card keeps its empty state until the
   column exists (the gateway itself reads a missing column as content).

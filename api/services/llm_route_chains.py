@@ -223,7 +223,7 @@ def resolve_stage(cfg, evidence=None) -> dict:
     chain = [cfg.model_id, *(cfg.fallback_model_ids or ())]
     out = {"stage": stage, "role": cfg.role, "scopes": list(scopes) if scopes else None, "pii_class": pii,
            "chain": chain, "attempts": [], "first": None, "called_first": None, "skipped": []}
-    token = _STAGE_SCOPES.set((stage, scopes, role))
+    token = _STAGE_SCOPES.set((stage, scopes, role, pii))
 
     def skipped(key: str, connection: Optional[str], reason: str) -> None:
         if out["first"] is None:
