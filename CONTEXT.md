@@ -3343,6 +3343,20 @@ The ordered list of Model Keys a Stage tries (primary first, then fallbacks), pl
 shadow model that runs alongside for comparison and never changes the result. See ADR 0006.
 _Avoid_: fallback chain (the old hardcoded Haiku/Sonnet chain), routing.
 
+**Usage rollup** (AA-1045, CIS 372):
+`shared.ai_usage_hourly`, one row per UTC hour and dimension set (source llm / jev / dfs / geocoder, app, provider,
+account, model, stage, role, tenant, status, error class, traffic) with the summed requests, tokens, cost, latency sum
+and a latency histogram, built from the paid-call ledgers by job kind `ai_usage_rollup` (`api/services/usage_rollup.py`,
+`services/jobs/ai_usage_rollup_job.py`: queued by the api's ops sampler every quarter hour, re-rolling the last 6 hours
+for late rows, DELETE + INSERT per hour range, idempotent; a one-time backfill of the raw window; never an hour older
+than 175 days). Its totals equal the ledgers' for the same hours (`GET /admin/usage-explorer/rollup/check`,
+`scripts/aa1045/rollup_live_check.py`). One definition of each dimension per ledger, shared with the Calls tab's
+filters: `api/services/usage_dims.py`. The **Usage explorer** page (`/admin/usage`, AI & spend; spend.read: admin,
+finance, ai_ops) reads it (`api/services/usage_explorer.py`) plus the CRM's daily totals through crm.ops.v1 GET
+/llm/usage; its saved views are `shared.ai_usage_saved_view` (per staff member); a cell opens the Calls tab with the
+same range and dimensions (`since` / `until`, `tenant`, `model`, `account`, `role`, `error_class`, `product`).
+_Avoid_: usage report, analytics table.
+
 ### Jev decisions (platform)
 
 **Jev Question**:
