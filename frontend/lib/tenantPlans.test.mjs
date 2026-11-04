@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import {
   INT4_MAX, RATE_LIMIT_RPM_MAX, defaultOverrideMode, featuresFor, limitText, lockedLimitKeys, overrideBody,
   overrideDraftOf, overrideFeatures, overrideModes, planBody, planDraftOf, refusalOf, runSaga, tierChoices,
-  addOnDecisionPath, approveBody, requestTone, sortAddOnRequests,
+  addOnDecisionPath, addOnRequestPath, approveBody, requestShown, requestTone, sortAddOnRequests,
 } from "./tenantPlans.ts";
 
 const CATALOGUE = [
@@ -258,4 +258,36 @@ test("add-on requests: order, approve body, tone, paths", () => {
   assert.equal(requestTone("approved"), "success");
   assert.equal(requestTone("declined"), "neutral");
   assert.equal(addOnDecisionPath("t1", "r1", "decline"), "/api/admin/tenants/t1/addon-requests/r1/decline");
+  assert.equal(addOnRequestPath("t1", "r1"), "/api/admin/tenants/t1/addon-requests/r1");
+});
+
+// AA-1036 R3 review: an approval whose attach job failed is not shown as a bare "Approved"
+test("add-on requests: the setup of an approval decides the badge", () => {
+  assert.equal(requestShown({ status: "approved", setup: "failed" }), "setup_failed");
+  assert.equal(requestShown({ status: "approved", setup: "in_progress" }), "setting_up");
+  assert.equal(requestShown({ status: "approved", setup: "done" }), "approved");
+  assert.equal(requestShown({ status: "approved", setup: null }), "approved");
+  assert.equal(requestShown({ status: "declined", setup: null }), "declined");
+  assert.equal(requestShown({ status: "pending" }), "pending");
+  assert.equal(requestTone("setup_failed"), "danger");
+  assert.equal(requestTone("setting_up"), "warning");
+});
+
+test("runSaga polls the given path (an add-on approval polls its request route)", async () => {
+  const seen = [];
+  const replies = [{ job_id: "j1", status: "queued" }, { job_id: "j1", status: "failed", error: "boom" }];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    seen.push(`${init?.method ?? "GET"} ${url}`);
+    return new Response(JSON.stringify(replies.shift()), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const job = await runSaga("/api/admin/tenants/t1/addon-requests/r1/approve", { plan_key: "crm.core" },
+      { sleep: async () => {}, pollPath: () => "/api/admin/tenants/t1/addon-requests/r1" });
+    assert.equal(job.status, "failed");
+    assert.deepEqual(seen, ["POST /api/admin/tenants/t1/addon-requests/r1/approve",
+                            "GET /api/admin/tenants/t1/addon-requests/r1"]);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });

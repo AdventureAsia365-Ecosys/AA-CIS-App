@@ -113,6 +113,7 @@ TENANT_MEMBER_RESEND = "tenant.member.resend"
 # AA-1035 (S267 fix pass): the non-billing Tenant 360 writes of the caller's book (customer_success: config, brand
 # identity, the RPM and publish limit of PATCH /admin/tenants/{id}); plan, suspend, key, offboard / restore and the
 # entitlement overrides stay tenant.write / billing.write. Scoped by require_tenant_scope like every {tenant_id} route.
+# AA-1036 R3 (clarifications TL-7 step 4): also the decision on an agency's add-on request (approve / decline).
 TENANT_BOOK_WRITE = "tenant.book.write"
 TENANT_ASSIGN = "tenant.assign"              # who looks after which tenant (shared.staff_tenant_assignment)
 BILLING_READ = "billing.read"                # plan, usage and billing columns of every tenant
@@ -384,10 +385,13 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/tenants/{tenant_id}/subscription"): _TENANT_BILLING_READ,
     ("PUT", "/admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}"): TENANT_WRITE,
     ("DELETE", "/admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}"): TENANT_WRITE,
-    # AA-1036 R3 (root ADR 0019 d7): add-on requests; a decision attaches a paid add-on (admin only, as the saga)
+    # AA-1036 R3 (root ADR 0019 d7; clarifications TL-7 step 4: the account manager approves): add-on requests. A
+    # decision: admin, or customer_success for its own book (tenant.book.write; require_tenant_scope); never support or
+    # finance. The approval runs the tenant_provision saga; the drawer polls the request route, not the job route.
     ("GET", "/admin/tenants/{tenant_id}/addon-requests"): _TENANT_BILLING_READ,
-    ("POST", "/admin/tenants/{tenant_id}/addon-requests/{request_id}/approve"): TENANT_WRITE,
-    ("POST", "/admin/tenants/{tenant_id}/addon-requests/{request_id}/decline"): TENANT_WRITE,
+    ("GET", "/admin/tenants/{tenant_id}/addon-requests/{request_id}"): _TENANT_BILLING_READ,
+    ("POST", "/admin/tenants/{tenant_id}/addon-requests/{request_id}/approve"): _TENANT_BOOK_WRITE,
+    ("POST", "/admin/tenants/{tenant_id}/addon-requests/{request_id}/decline"): _TENANT_BOOK_WRITE,
     ("GET", "/admin/plans"): _TENANT_BILLING_READ,
     ("GET", "/admin/plans/features"): _TENANT_BILLING_READ,
     ("POST", "/admin/plans"): TENANT_WRITE,

@@ -17,9 +17,24 @@ Partner side (agency app page, sidebar, CRM AI pause banner, invited-user test):
 - **Who asks:** the Content studio owner. `/v1/account` writes are owner-only already (tenant role middleware,
   `ACCOUNT_WRITE_PREFIXES`); a "view as tenant" session is read-only. The actor is `membership:<mid>` from the token,
   never an e-mail.
-- **Who decides:** admin (`tenant.write`, re-checked with `_require_tenant_admin`), like the saga it runs, because an
-  approval attaches a paid add-on. The account manager (customer_success) reads the requests of their book (the
-  Subscription tab's permission) and gets the bell row.
+- **Who decides:** admin (`tenant.write`) or the tenant's account manager (customer_success, `tenant.book.write`,
+  kept to its own book by `require_tenant_scope`; clarifications TL-7 step 4 says the account manager approves),
+  re-checked in the route with `_require_tenant_book_write`. Support and finance never decide. Review fix (S268): the
+  first cut was admin only.
+- **The approve drawer polls the request, not the job route.** `GET /admin/tenants/provision/{job_id}` needs
+  `tenant.read` (admin only), which the account manager does not hold, so the drawer polls the new
+  `GET /admin/tenants/{tenant_id}/addon-requests/{request_id}` (same provision job shape + the request; Subscription
+  read permission, tenant-scoped). `runSaga` takes a `pollPath`.
+- **Not in service = no approval.** `approve()` reads the tenant row (`FOR SHARE`) after the request lock and refuses
+  409 `tenant_not_in_service` unless `account_status` is trial / active / past_due AND `is_active` AND no
+  `cancelled_at` (`in_service()`, also used by the request and the agency's list), before the request is marked or the
+  saga enqueued. A decline still works.
+- **Setup state.** An approved request carries `setup` from its job (LEFT JOIN `shared.job`): `in_progress`
+  (queued / running), `done` (succeeded), `failed` (failed / cancelled / stopped_budget: the add-on is NOT on), null
+  when the job row is gone (retention). Tenant 360 shows "Approved, setting up" / "Approved, setup failed"; the agency
+  API carries the same `setup` (optional field, no job id).
+- **Ordering:** the audit row is the last write of each transaction (QRY-4: the audit chain trigger holds a
+  transaction lock), as `provision.py` does; the request's staff bell row is written before it.
 - **Bell:** event `tenant.addon.requested`, target roles admin + customer_success. The bell's role scope already
   narrows customer_success to the tenants of their book (S268 fix round 2). Title "Add-on requested", message
   "<agency> (<slug>) asks for the <add-on> add-on: "<note>"".
@@ -49,6 +64,9 @@ Partner side (agency app page, sidebar, CRM AI pause banner, invited-user test):
   deploy before the apply degrades to "not available yet" instead of a 500.
 
 ## Should know
+
+- Cross-tenant: every decision and the single read look the request up by (request id, tenant id from the path), so
+  another tenant's id answers 404 `request_not_found` and leaves its row as it was (integration test).
 
 - Migration-only PR first (374, contract, applied by hand: the CIS auto-apply waits behind 336), then this code PR.
 - `docs/api/openapi.json` regenerated with the pinned FastAPI 0.161.1 / Pydantic 2.14.1; the staff route policy snapshot

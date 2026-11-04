@@ -11,7 +11,8 @@ from unittest.mock import AsyncMock, MagicMock
 import asyncpg
 import pytest
 
-from api.core.staff_authz import POLICY, TENANT_WRITE
+from api.core import tenant_scope as ts
+from api.core.staff_authz import POLICY, TENANT_BOOK_WRITE, TENANT_WRITE
 from api.routers.auth import _create_partner_session_jwt
 from services.tenant_account import addon_requests as ar
 from services.tenant_account.plans import PlanError
@@ -42,8 +43,30 @@ def test_states_active_wins_then_pending_then_available():
 
 def test_the_tenant_row_hides_the_staff_actor_and_the_job():
     row = ar.tenant_row(_req("crm", "approved"))
-    assert set(row) == {"request_id", "product", "status", "note", "requested_at", "decided_at", "decision_note"}
-    assert set(ar.staff_row(_req())) >= {"requested_by", "decided_by", "plan_key", "provision_job_id"}
+    assert set(row) == {"request_id", "product", "status", "note", "requested_at", "decided_at", "decision_note",
+                        "setup"}
+    assert set(ar.staff_row(_req())) >= {"requested_by", "decided_by", "plan_key", "provision_job_id", "setup"}
+
+
+@pytest.mark.parametrize("status,job_status,setup", [
+    ("approved", "queued", "in_progress"), ("approved", "running", "in_progress"), ("approved", "succeeded", "done"),
+    ("approved", "failed", "failed"), ("approved", "cancelled", "failed"), ("approved", "stopped_budget", "failed"),
+    ("approved", None, None), ("declined", "failed", None), ("pending", None, None),
+])
+def test_an_approval_shows_how_its_setup_went(status, job_status, setup):
+    """Review AA-1036: an approved request whose attach saga failed is not a silent "approved"."""
+    assert ar.setup_state(status, job_status) == setup
+    r = {**_req("crm", status), "job_status": job_status}
+    assert ar.staff_row(r)["setup"] == setup and ar.tenant_row(r)["setup"] == setup
+
+
+@pytest.mark.parametrize("status,is_active,cancelled,ok", [
+    ("active", True, None, True), ("trial", True, None, True), ("past_due", True, None, True),
+    ("suspended", False, None, False), ("active", False, None, False), ("active", True, T0, False),
+    ("offboarding", False, T0, False), ("closed", False, T0, False), ("lead", True, None, False),
+])
+def test_in_service_reads_every_lifecycle_column(status, is_active, cancelled, ok):
+    assert ar.in_service({"account_status": status, "is_active": is_active, "cancelled_at": cancelled}) is ok
 
 
 @pytest.mark.parametrize("value,required,code", [("  ", True, "reason_required"), ("x" * 501, False, "note_too_long")])
@@ -73,8 +96,13 @@ def test_message_names_the_agency_and_the_add_on():
 def test_policy_entries():
     assert POLICY[("GET", "/admin/tenants/{tenant_id}/addon-requests")] == \
         POLICY[("GET", "/admin/tenants/{tenant_id}/subscription")]
+    assert POLICY[("GET", "/admin/tenants/{tenant_id}/addon-requests/{request_id}")] == \
+        POLICY[("GET", "/admin/tenants/{tenant_id}/subscription")]
+    # clarifications TL-7 step 4: admin, or the account manager (tenant.book.write, its book through the scope)
     for verb in ("approve", "decline"):
-        assert POLICY[("POST", f"/admin/tenants/{{tenant_id}}/addon-requests/{{request_id}}/{verb}")] == TENANT_WRITE
+        cap = POLICY[("POST", f"/admin/tenants/{{tenant_id}}/addon-requests/{{request_id}}/{verb}")]
+        assert cap == POLICY[("PUT", "/admin/tenants/{tenant_id}/config")]
+        assert set(cap) == {TENANT_WRITE, TENANT_BOOK_WRITE}
 
 
 def test_the_staff_bell_event_targets_admin_and_the_account_manager():
@@ -106,8 +134,11 @@ def client(monkeypatch):
     return TestClient(app, raise_server_exceptions=True), conn
 
 
+STAFF_ID = "5b0c7d2e-1a3f-4c6d-8e9f-0a1b2c3d4e5f"
+
+
 def _staff(role="admin"):
-    h = {"X-Admin-Secret": _SECRET, "x-admin-user-id": "u-admin"}
+    h = {"X-Admin-Secret": _SECRET, "x-admin-user-id": STAFF_ID}
     if role is not None:
         h["x-admin-role"] = role
     return h
@@ -191,8 +222,8 @@ def test_tenant_routes_refuse_bad_input_and_map_refusals(tclient, monkeypatch):
     assert c.get("/v1/account/add-ons", headers=_tenant()).status_code == 503
 
 
-@pytest.mark.parametrize("role", ["content", "customer_success", "support", None])
-def test_decisions_refuse_non_admin(client, monkeypatch, role):
+@pytest.mark.parametrize("role", ["content", "support", "finance", "tenant_qa", None])
+def test_decisions_refuse_roles_without_a_book_write(client, monkeypatch, role):
     c, _ = client
     approve, decline = AsyncMock(), AsyncMock()
     monkeypatch.setattr(ar, "approve", approve)
@@ -202,6 +233,67 @@ def test_decisions_refuse_non_admin(client, monkeypatch, role):
     assert c.post(f"{base}/decline", json={"reason": "no"}, headers=_staff(role)).status_code == 403
     approve.assert_not_awaited()
     decline.assert_not_awaited()
+
+
+def _book(monkeypatch, ok: bool):
+    """The account manager's book: require_tenant_scope's lookup answers ``ok`` for any tenant."""
+    seen = []
+
+    async def in_scope(conn, scope, staff_id, tenant_id):
+        seen.append((scope, staff_id, tenant_id))
+        return ok
+    monkeypatch.setattr(ts, "in_scope", in_scope)
+    return seen
+
+
+def test_the_account_manager_decides_for_its_own_book(client, monkeypatch):
+    """Review AA-1036 (clarifications TL-7 step 4): customer_success approves and declines on a tenant of its book."""
+    c, _ = client
+    seen = _book(monkeypatch, True)
+    job = str(uuid.uuid4())
+    approve = AsyncMock(return_value=(ar.staff_row(_req("crm", "approved")), job))
+    decline = AsyncMock(return_value=ar.staff_row(_req("crm", "declined", decision_note="Later")))
+    monkeypatch.setattr(ar, "approve", approve)
+    monkeypatch.setattr(ar, "decline", decline)
+    base = f"/admin/tenants/{TID}/addon-requests/{RID}"
+    resp = c.post(f"{base}/approve", json={"plan_key": "crm.core"}, headers=_staff("customer_success"))
+    assert resp.status_code == 202 and resp.json()["job_id"] == job
+    assert approve.await_args.kwargs["actor"] == f"admin:{STAFF_ID}"
+    assert c.post(f"{base}/decline", json={"reason": "Later"}, headers=_staff("customer_success")).status_code == 200
+    assert seen and all(s[0] == ts.SCOPE_BOOK and s[2] == TID for s in seen)
+
+
+def test_the_account_manager_never_decides_outside_its_book(client, monkeypatch):
+    c, _ = client
+    _book(monkeypatch, False)
+    approve, decline = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(ar, "approve", approve)
+    monkeypatch.setattr(ar, "decline", decline)
+    base = f"/admin/tenants/{TID}/addon-requests/{RID}"
+    resp = c.post(f"{base}/approve", json={"plan_key": "crm.core"}, headers=_staff("customer_success"))
+    assert resp.status_code == 403 and resp.json()["detail"] == ts.OUT_OF_SCOPE
+    assert c.post(f"{base}/decline", json={"reason": "no"}, headers=_staff("customer_success")).status_code == 403
+    approve.assert_not_awaited()
+    decline.assert_not_awaited()
+
+
+def test_one_request_answers_the_job_shape_for_the_poll(client, monkeypatch):
+    c, _ = client
+    _book(monkeypatch, True)
+    job = str(uuid.uuid4())
+    row = {**ar.staff_row({**_req("crm", "approved"), "job_status": "failed"}), "provision_job_id": job}
+    one = AsyncMock(return_value=(row, "failed", "unknown_plan: no live plan crm.gone"))
+    monkeypatch.setattr(ar, "staff_one", one)
+    resp = c.get(f"/admin/tenants/{TID}/addon-requests/{RID}", headers=_staff("customer_success"))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert (body["job_id"], body["status"], body["request"]["setup"]) == (job, "failed", "failed")
+    assert body["error"].startswith("unknown_plan")
+    assert one.await_args.args[1:] == (TID, RID)
+    monkeypatch.setattr(ar, "staff_one", AsyncMock(side_effect=PlanError("request_not_found", "no", 404)))
+    missing = c.get(f"/admin/tenants/{TID}/addon-requests/{RID}", headers=_staff())
+    assert missing.status_code == 404 and missing.headers["X-Error-Code"] == "request_not_found"
+    assert c.get(f"/admin/tenants/{TID}/addon-requests/{RID}", headers=_staff("content")).status_code == 403
 
 
 def test_approve_answers_the_provision_job_shape(client, monkeypatch):
@@ -216,7 +308,7 @@ def test_approve_answers_the_provision_job_shape(client, monkeypatch):
     assert body["job_id"] == job and body["status"] == "queued" and body["request"]["status"] == "approved"
     assert approve.await_args.args[1:] == (TID, RID)
     kw = approve.await_args.kwargs
-    assert (kw["plan_key"], kw["seats"], kw["note"], kw["actor"]) == ("crm.core", 3, "ok", "admin:u-admin")
+    assert (kw["plan_key"], kw["seats"], kw["note"], kw["actor"]) == ("crm.core", 3, "ok", f"admin:{STAFF_ID}")
     bad = c.post(f"/admin/tenants/{TID}/addon-requests/{RID}/approve", json={"plan_key": "CRM"}, headers=_staff())
     assert bad.status_code == 422
 

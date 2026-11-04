@@ -212,10 +212,11 @@ def test_the_read_allow_list_is_exactly_the_reviewed_routes():
         "/v1/quota", "/v1/marketplace", "/v1/tours/my-versions", "/v1/tours/versions/{version_id}",
         "/v1/content-writing/reviews", "/v1/content-writing/pieces/{piece_id}", "/v1/publish-log",
         "/v1/publish-log/pending", "/v1/notifications", "/v1/facts", "/v1/account/members", "/v1/account/activity",
+        "/v1/account/add-ons",
     )
     for banned in ("/v1/slate", "/v1/tours/versions/{version_id}/export-docx", "/v1/account/activity/export",
                    "/v1/integrations/wordpress", "/v1/integrations/facebook", "/admin/brand-identity",
-                   "/v1/planning/trip-reallocation/suggest", "/v1/billing"):
+                   "/v1/planning/trip-reallocation/suggest", "/v1/billing", "/v1/account/add-on-requests"):
         assert banned not in view_as.READ_ROUTES
 
 
@@ -232,6 +233,9 @@ def test_every_allowed_read_is_a_real_get_route(world):
     ("PATCH", f"/v1/tours/versions/{MINE}", False), ("OPTIONS", "/v1/quota", False),
     ("GET", "/v1/slate", False), ("GET", "/admin/tenants", False), ("GET", "/v1/notifications", True),
     ("POST", "/v1/notifications/read-all", False),
+    # AA-1036 R3: the agency's add-ons are read; asking for one (the owner's POST) never goes through a view-as session
+    ("GET", "/v1/account/add-ons", True), ("POST", "/v1/account/add-ons", False),
+    ("POST", "/v1/account/add-on-requests", False), ("GET", "/v1/account/add-on-requests", False),
 ])
 def test_route_allowed(method, path, ok):
     assert view_as.route_allowed(method, path) is ok
@@ -757,6 +761,12 @@ def test_the_dependency_side_check_refuses_a_view_as_write():
     with pytest.raises(HTTPException):
         tenant_role.enforce(other_read, payload)
     tenant_role.enforce(SimpleNamespace(method="GET", url=SimpleNamespace(path="/v1/quota")), payload)
+    # AA-1036 R3: the add-ons list reads, the add-on request (a write) is refused
+    tenant_role.enforce(SimpleNamespace(method="GET", url=SimpleNamespace(path="/v1/account/add-ons")), payload)
+    ask = SimpleNamespace(method="POST", url=SimpleNamespace(path="/v1/account/add-on-requests"))
+    with pytest.raises(HTTPException) as exc:
+        tenant_role.enforce(ask, payload)
+    assert exc.value.status_code == 403 and exc.value.detail == view_as.READ_ONLY_DETAIL
 
 
 def test_the_token_is_a_read_only_unmetered_tenant_token():

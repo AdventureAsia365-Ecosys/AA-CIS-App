@@ -146,9 +146,9 @@ def _require_tenant_patch(x_admin_role: Optional[str], fields: set[str]) -> None
 
 
 def _require_tenant_book_write(x_admin_role: Optional[str]) -> None:
-    """AA-1035 (S267 fix pass): the non-billing Tenant 360 writes (config, brand identity): tenant.write (admin) or
-    tenant.book.write (customer_success; require_tenant_scope has already kept it to its book). Defense in depth behind
-    POLICY, like _require_tenant_admin."""
+    """AA-1035 (S267 fix pass): the non-billing Tenant 360 writes (config, brand identity; AA-1036 R3: the decision on
+    an add-on request): tenant.write (admin) or tenant.book.write (customer_success; require_tenant_scope has already
+    kept it to its book). Defense in depth behind POLICY, like _require_tenant_admin."""
     if not has_any_perm(x_admin_role, TENANT_WRITE, TENANT_BOOK_WRITE):
         raise HTTPException(status_code=403, detail="Only an admin or the tenant's account manager can change this")
 

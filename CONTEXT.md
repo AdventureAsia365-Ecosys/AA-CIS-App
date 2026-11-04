@@ -2545,9 +2545,12 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
 - `shared.tenant_addon_request` (CIS 374, AA-1036 R3, ADR 0019 d7): the add-on requests an agency sends from the agency
   app ("Request add-on": `POST /v1/account/add-on-requests`, Content studio owner only; `GET /v1/account/add-ons` is the
   app's active / requested / available list) and the staff decision in Tenant 360 › Subscription
-  (`api/routers/admin_tenant_addon_requests.py`, admin role): an approval attaches the plan through the
-  `tenant_provision` saga (attach mode, request key `addon-request:<id>`, enqueued in the same transaction), a decline
-  carries a reason the agency sees. At most one pending request per tenant and product; audited
+  (`api/routers/admin_tenant_addon_requests.py`; admin, or the tenant's account manager for its own book:
+  `tenant.book.write` + `require_tenant_scope`, clarifications TL-7 step 4): an approval (refused 409
+  `tenant_not_in_service` unless the account is in service: status, `is_active`, `cancelled_at`) attaches the plan
+  through the `tenant_provision` saga (attach mode, request key `addon-request:<id>`, enqueued in the same
+  transaction) and then shows its `setup` from the job (in_progress / done / failed), a decline carries a reason the
+  agency sees. "View as tenant" reads `GET /v1/account/add-ons` (never the POST). At most one pending request per tenant and product; audited
   (`tenant.addon_requested`, `tenant.addon_request_approved` / `_declined`); a new request rings the staff bell
   (`tenant.addon.requested`, admin + customer_success). Rules: `services/tenant_account/addon_requests.py`.
 

@@ -1,11 +1,14 @@
 "use client";
 // app/admin/tenants/_components/Tenant360AddOnRequests.tsx — AA-1036 R3 (root ADR 0019 d7; clarifications TL-7):
 // Tenant 360 › Subscription › Add-on requests. Staff only; the agency asks from its app ("Request add-on"), the staff
-// bell says so, and an admin decides here.
+// bell says so, and an admin or the tenant's account manager (customer_success, own book; clarifications TL-7 step 4)
+// decides here.
 //
 // GET /api/admin/tenants/{id}/addon-requests (pending first). Approve: a plan of the request's product (+ seats for the
 // CRM, + an optional note), POST …/{request_id}/approve, which enqueues the tenant_provision attach job; the drawer waits
-// for it like "Add an add-on" (runSaga polls the job). Decline: a reason the agency sees, POST …/decline. Both audited.
+// for it like "Add an add-on" (runSaga polls GET …/{request_id}, readable by the account manager too). An approval shows
+// its setup: "Setting up" while the job runs, "Approved, setup failed" when it failed for good (the add-on is not on).
+// Decline: a reason the agency sees, POST …/decline. Both audited.
 // Kit only (Section, DataTable, Drawer, Field, Select, Input, Textarea, Badge, Button, Toast).
 
 import { useMemo, useState } from "react";
@@ -15,8 +18,8 @@ import {
   type ColumnDef,
 } from "../../../_kit";
 import {
-  PLANS_KEY, addOnDecisionPath, addOnRequestsKey, addOnRequestsPath, approveBody, requestTone, runSaga, sagaFailed,
-  sendJson, sortAddOnRequests, subscriptionKey,
+  PLANS_KEY, addOnDecisionPath, addOnRequestPath, addOnRequestsKey, addOnRequestsPath, approveBody, requestShown,
+  requestTone, runSaga, sagaFailed, sendJson, sortAddOnRequests, subscriptionKey,
   type AddOnRequestRow, type AddOnRequestsResp, type SubscriptionResp,
 } from "@/lib/tenantPlans";
 import { T360_SUB } from "./subscription.messages";
@@ -48,7 +51,8 @@ function DecisionDrawer({ tenantId, data, decision, onClose }: {
         await sendJson(addOnDecisionPath(tenantId, row.request_id, "decline"), "POST", { reason });
         return null;
       }
-      return runSaga(addOnDecisionPath(tenantId, row.request_id, "approve"), approval.body);
+      return runSaga(addOnDecisionPath(tenantId, row.request_id, "approve"), approval.body,
+                     { pollPath: () => addOnRequestPath(tenantId, row.request_id) });
     },
     onSuccess: (job) => {
       refresh();
@@ -128,9 +132,10 @@ export function Tenant360AddOnRequests({ tenantId, data, canDecide }: {
         </span>
       ) },
     { accessorKey: "status", header: t("colStatus"),
-      cell: (c) => (
-        <Badge tone={requestTone(c.row.original.status)}>{t(`req_${c.row.original.status}`)}</Badge>
-      ) },
+      cell: (c) => {
+        const shown = requestShown(c.row.original);
+        return <Badge tone={requestTone(shown)}>{t(`req_${shown}`)}</Badge>;
+      } },
     { id: "decision", header: t("colDecision"),
       cell: (c) => {
         const r = c.row.original;

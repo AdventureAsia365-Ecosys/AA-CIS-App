@@ -118,6 +118,7 @@ READ_ROUTES: tuple[str, ...] = (
     "/v1/facts",
     "/v1/account/members",
     "/v1/account/activity",
+    "/v1/account/add-ons",          # AA-1036 R3: the agency's add-ons (read only; the request POST stays refused)
 )
 
 

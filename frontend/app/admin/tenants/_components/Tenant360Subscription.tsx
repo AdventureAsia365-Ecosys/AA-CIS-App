@@ -329,7 +329,8 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
         {acct.is_pilot && acct.pilot_ends_at && <Badge tone="purple">{t("pilot", acct.pilot_ends_at.slice(0, 10))}</Badge>}
       </div>
 
-      <Tenant360AddOnRequests tenantId={tenantId} data={data} canDecide={can(role, "tenant.write")} />
+      <Tenant360AddOnRequests tenantId={tenantId} data={data}
+        canDecide={can(role, "tenant.write") || can(role, "tenant.book.write")} />
 
       <Section title={t("subsTitle")} description={t("subsHint")} padded={false} testId="tenant-subscriptions"
         actions={<Button size="sm" variant="secondary" onClick={() => setAddOn({ start: null })}

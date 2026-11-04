@@ -49,6 +49,7 @@ export const VIEW_AS_READ_ROUTES = [
   "/v1/facts",
   "/v1/account/members",
   "/v1/account/activity",
+  "/v1/account/add-ons",
 ] as const;
 
 // The reads that need a capability of their own on top of tenant.view_as: the staff roles that may make each one

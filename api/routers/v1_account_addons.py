@@ -2,7 +2,8 @@
 /v1/account add-ons — AA-1036 R3 (root ADR 0019 d7): the agency app's add-on list and its "Request add-on" action.
 
   GET  /v1/account/add-ons            per add-on (crm, tripplanner): active | requested | available, the pending
-                                      request and the last decision (a decline shows its reason)
+                                      request and the last decision (a decline shows its reason; an approval its
+                                      setup: in_progress | done | failed); a "view as tenant" session reads it too
   POST /v1/account/add-on-requests    {"product": "crm" | "tripplanner", "note": optional, <= 500 characters}
                                       -> 201 the new request, 200 the request already pending (no second one);
                                       409 already_subscribed / tenant_not_in_service, 429 too_many_requests
@@ -49,6 +50,9 @@ class AddOnRequestOut(BaseModel):
     requested_at: str
     decided_at: Optional[str] = None
     decision_note: Optional[str] = None
+    # An approved request's setup (the attach job): in_progress, done, or failed (the add-on is not on; Adventure Asia
+    # finishes it). None when not approved or no longer known.
+    setup: Optional[Literal["in_progress", "done", "failed"]] = None
 
 
 class AddOnState(BaseModel):

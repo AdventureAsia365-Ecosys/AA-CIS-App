@@ -226,15 +226,28 @@ export interface AddOnRequestRow {
   request_id: string; product: Exclude<Product, "content">; status: "pending" | "approved" | "declined";
   note: string | null; requested_by: string; requested_at: string; decided_at: string | null;
   decided_by: string | null; decision_note: string | null; plan_key: string | null; provision_job_id: string | null;
+  /** An approved request's setup (its tenant_provision job): null when not approved or the job is gone. */
+  setup?: "in_progress" | "done" | "failed" | null;
 }
 export interface AddOnRequestsResp { items: AddOnRequestRow[]; pending: number }
 export const addOnRequestsPath = (tenantId: string) => `/api/admin/tenants/${tenantId}/addon-requests`;
 export const addOnRequestsKey = (tenantId: string) => ["tenant360", tenantId, "addon-requests"] as const;
+/** One request in the provision job shape: what the approve drawer polls (the account manager holds no tenant.read,
+ *  so it cannot read GET /tenants/provision/{job_id}). */
+export const addOnRequestPath = (tenantId: string, requestId: string) => `${addOnRequestsPath(tenantId)}/${requestId}`;
 export const addOnDecisionPath = (tenantId: string, requestId: string, verb: "approve" | "decline") =>
-  `${addOnRequestsPath(tenantId)}/${requestId}/${verb}`;
+  `${addOnRequestPath(tenantId, requestId)}/${verb}`;
 
-export function requestTone(status: AddOnRequestRow["status"]): "warning" | "success" | "neutral" {
-  return status === "pending" ? "warning" : status === "approved" ? "success" : "neutral";
+/** What the row's status badge says: an approval whose setup failed (or is still running) is not a bare "Approved". */
+export type RequestShown = AddOnRequestRow["status"] | "setting_up" | "setup_failed";
+export function requestShown(row: Pick<AddOnRequestRow, "status" | "setup">): RequestShown {
+  if (row.status !== "approved") return row.status;
+  return row.setup === "failed" ? "setup_failed" : row.setup === "in_progress" ? "setting_up" : "approved";
+}
+
+export function requestTone(status: RequestShown): "warning" | "success" | "neutral" | "danger" {
+  if (status === "setup_failed") return "danger";
+  return status === "pending" || status === "setting_up" ? "warning" : status === "approved" ? "success" : "neutral";
 }
 
 /** Pending requests first (oldest first: the longest wait on top), then the decided ones newest first. */
@@ -409,14 +422,17 @@ export function newRequestKey(prefix = "admin-ui"): string {
 
 const TERMINAL = new Set(["succeeded", "failed", "cancelled", "dead", "stopped_budget"]);
 
-/** Enqueue a saga request and wait for its job (at most ``timeoutMs``); returns the last job state. */
+/** Enqueue a saga request and wait for its job (at most ``timeoutMs``); returns the last job state. ``pollPath``: where
+ *  the job is read again (default the provision job route; an add-on approval polls its request route). */
 export async function runSaga(path: string, body: unknown, { timeoutMs = 30000, everyMs = 1000,
-                              sleep = (ms: number) => new Promise((r) => setTimeout(r, ms)) } = {}): Promise<ProvisionJob> {
+                              sleep = (ms: number) => new Promise((r) => setTimeout(r, ms)),
+                              pollPath = (jobId: string) => `/api/admin/tenants/provision/${jobId}` } = {}):
+  Promise<ProvisionJob> {
   let job = await sendJson<ProvisionJob>(path, "POST", body);
   const until = Date.now() + timeoutMs;
   while (!TERMINAL.has(job.status) && Date.now() < until) {
     await sleep(everyMs);
-    job = await sendJson<ProvisionJob>(`/api/admin/tenants/provision/${job.job_id}`, "GET");
+    job = await sendJson<ProvisionJob>(pollPath(job.job_id), "GET");
   }
   return job;
 }
