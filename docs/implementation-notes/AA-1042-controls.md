@@ -62,7 +62,27 @@ DM-7.1 retention rows of the two new tables, merged before the Infra copy, and `
 
 ## Changed
 
-- (filled in as the slice lands)
+- **CIS 370 (contract, migration-only PR):** `shared.llm_route_settings` (one row, seeded `model_first`),
+  `shared.llm_route_config_version` (baseline version 1 = the routes and priorities after 370), `llm_call_log.
+  route_config_version` + BEFORE INSERT trigger, cis_app grants (settings SELECT / UPDATE, versions SELECT / INSERT,
+  deployment UPDATE on priority / updated_at / updated_by), the `gpt-4.1` deployment off. Tests:
+  `tests/integration/test_aa1042_migration_370.py`; `test_aa1002_migration_304.py` (370 in LATER, gpt-4.1 excluded
+  from the pre-304 comparison) and `test_aa1026_migration_367.py` (priority now granted) adjusted.
+- **Gateway:** `route_settings.py` (order mode DB-first, env fallback, version watch, preview override),
+  `deployments.priority_override` (preview only), `client.route_aws_first_enabled` reads route_settings,
+  `route_versions.py` (snapshot / diff / begin / finish), `role_config.set_stage_config` / `set_stage_route` write a
+  version in their transaction (never fail the PATCH: savepoints).
+- **API:** `api/routers/admin_llm_route_control.py` + `api/services/llm_route_control.py`; POLICY (reads spend.read,
+  writes ai.admin), `PAGE_WRITES["route_control"]`; readiness requires 370 (`REQUIRED_CIS_ABOVE_GAP`).
+- **Writes apply only the proposal's diff** against the config the preview read, inside one transaction under the
+  settings lock with `expected_version` (required): an untouched stage keeps whatever it has now.
+- **Admin:** tab "Route control" (`?tab=controls`): `RouteControlTab.tsx`, `routeControl.messages.ts`,
+  `lib/routeControl.ts` (+ `.test.mjs`); `AiGateway.tsx` one tab entry; Guide section "Route control" (EN + VI) and
+  three glossary terms; `lib/guides.test.mjs` reads the new files.
+- **Guard tests updated:** route policy and role matrix snapshots, openapi.json, `test_aa1002_no_behaviour_change`
+  (two new gateway modules), `test_aa804_ai_gateway_api` and `test_aa882_gd3_router_samples` (new routes),
+  `test_aa884_health` / `test_aa1035_s267_fix_pass` (370 above the gap), the fake-conn store tests of AA-686 /
+  AA-1024 (version hook stubbed).
 
 ## Tradeoffs
 
@@ -72,6 +92,15 @@ DM-7.1 retention rows of the two new tables, merged before the Infra copy, and `
   (including later unrelated changes being undone). The diff shown before a revert lists everything it changes.
 
 ## Should know
+
+- Not in this slice (follow-ups): the Guide tab rendering the root `docs/architecture/ai-gateway.md` from the docs
+  catalog with live tables, and the CI drift guard of names in that doc (Linear comment "docs stay in sync"); a
+  `ai-gateway.vi.md` twin; a retention window for the version table before prod. Route trace, fallback alerts and the
+  quality guard are lane aa1042-trace.
+- Pre-existing, order-dependent integration failure on `main` (not from this change): running
+  `test_aa1002_migration_304.py` before `test_aa1002_deployment_wire_drift.py` / `test_aa1026_migration_366.py` in one
+  process fails them (the 304 replay drops the anthropic-direct deployments of 306, which LATER does not re-seed). CI's
+  sorted shard order runs wire drift first.
 
 - 370 is contract: Infra Migration Apply applies it on Dev when every job table is idle; the code PR merges after.
 - The code tolerates 370 missing: the tab shows "not set up", the gateway uses the env var, the Routing tab PATCHes

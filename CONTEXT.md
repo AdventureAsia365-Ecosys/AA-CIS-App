@@ -729,8 +729,18 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     deployment of a model (acc3 by priority, then the same model on the Anthropic API once its key exists) before the
     route's next model, so the family chains of migration 366 run e.g. Sonnet 5.5 on acc3, Sonnet 5.5 on the
     Anthropic API, Sonnet 4.6 on acc3, Haiku 4.5 on acc3, then GPT-6 Luna on the OpenAI API (5 attempts, within the
-    6 per request). `LLM_ROUTE_AWS_FIRST=on` (`client.route_attempts`, default off) runs every AWS deployment of the
-    route first instead. A model reached ONLY outside AWS stays the end of the route: both admin PATCH endpoints refuse
+    6 per request). The order mode `aws_first` (`client.route_attempts`) runs every AWS deployment of the route first
+    instead. AA-1042 (S268, CIS 370): the order mode is a DB setting (`shared.llm_route_settings`, read by
+    `shared/llm_client/route_settings.py`, 20 s cache; `LLM_ROUTE_AWS_FIRST` is only the bootstrap default while the
+    row cannot be read), and the admin's **Route control** tab (`/admin/ai-gateway?tab=controls`, router
+    `admin_llm_route_control.py`, service `api/services/llm_route_control.py`) edits the order mode, every stage's
+    chain (drag and drop) and every model's provider order (`llm_model_deployment.priority`), with two presets
+    ("Prefer Anthropic API for Claude", "Prefer AWS"), a $0 server preview (`llm_route_chains.resolve_stage` under
+    context-variable overrides) and the rules on every save (the PATCH rules, judge family, check pairs, attempt cap,
+    a live model per stage; a rule the live config already breaks is only a warning). Every route change, the Routing
+    tab's PATCHes included, is a version in `shared.llm_route_config_version` (who, when, snapshot, diff;
+    `shared/llm_client/route_versions.py`), revertible in one click; a change made outside the admin is recorded as
+    an `external` version; each CIS ledger row carries `route_config_version` (a BEFORE INSERT trigger). A model reached ONLY outside AWS stays the end of the route: both admin PATCH endpoints refuse
     an AWS model behind it (`_check_aws_before_vendor`, relaxed S267), except its VENDOR TWIN right behind the same
     model on AWS (`data_scope.vendor_twins`: same family and base model, today `gpt-6-luna-openai` behind `gpt-6-luna`,
     the "openai-direct for a GPT twin if one exists" of S267 Q2: every GPT route of migration 366 runs GPT-6 Luna on

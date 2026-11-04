@@ -19,8 +19,9 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
           + "Guardrails) cũng có ở đây, cùng bản đồ của TripPlanner (Mapbox) chạy trên gói miễn phí. Trang này đặt "
           + "tất cả cạnh nhau." },
         { kind: "paragraph", text: "Mọi con số lấy từ sổ ghi của mình và các lần kiểm số dư đã lưu; mở trang không gọi "
-          + "nhà cung cấp nào và không tốn tiền. Trang có sáu tab: Nhà cung cấp (sức khoẻ, chi tiêu, số dư, kèm cài "
-          + "đặt kết nối và sổ nạp Jev), Điều hướng (mỗi bước dùng model nào), Model và thử nghiệm (danh mục model và "
+          + "nhà cung cấp nào và không tốn tiền. Trang có bảy tab: Nhà cung cấp (sức khoẻ, chi tiêu, số dư, kèm cài "
+          + "đặt kết nối và sổ nạp Jev), Điều hướng (mỗi bước dùng model nào), Điều khiển route (thứ tự model và "
+          + "nhà cung cấp, preset và phiên bản), Model và thử nghiệm (danh mục model và "
           + "so sánh chạy bóng), Ngân sách (mọi mức trần), Lần gọi (từng lần gọi đã ghi) và Hướng dẫn này. Cài đặt › "
           + "LLM Models, Cài đặt › Số dư Jev và Spend › Ngân sách đã dời về đây; link cũ mở đúng tab mới. "
           + "Tổng chi theo tenant, model và thị trường vẫn ở Spend, tab Chi phí AI và dữ liệu." },
@@ -163,6 +164,61 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
       ],
     },
     {
+      id: "route-control",
+      heading: "Điều khiển route: chuỗi, thứ tự nhà cung cấp, preset và phiên bản",
+      blocks: [
+        { kind: "paragraph", text: "Điều khiển route là nơi đổi mọi thiết lập định tuyến mà không cần deploy. Chuỗi của "
+          + "một stage là danh sách model của nó: model đầu (model chính) phục vụ stage, các model sau lần lượt thay "
+          + "khi nó lỗi, bị từ chối hoặc chạm trần chi. Một yêu cầu thử tối đa sáu lần tất cả." },
+        { kind: "paragraph", text: "Nhiều model tới được bằng hơn một đường: Claude trên AWS (tài khoản LLM) hoặc qua "
+          + "API Anthropic, GPT trên AWS hoặc qua API OpenAI. Thứ tự nhà cung cấp của một model cho biết đường nào "
+          + "được thử trước. Kiểu thứ tự cho biết gateway đi theo chuỗi thế nào: cùng model trước (mọi nhà cung cấp "
+          + "của một model rồi tới model kế; mặc định) hoặc AWS trước (mọi model AWS của chuỗi, rồi tới API của "
+          + "hãng)." },
+        { kind: "flow", steps: ["Đổi một chuỗi, một thứ tự nhà cung cấp hoặc kiểu thứ tự", "Xem trước (máy chủ kiểm, "
+          + "miễn phí)", "Xem lại và lưu (một phiên bản mới)", "Gateway dùng nó trong khoảng 20 giây"] },
+        { kind: "terms", uiLabels: true, items: [
+          { term: "Phục vụ trước", text: "Model và nhà cung cấp sẽ được gọi đầu tiên cho stage lúc này, với thay đổi "
+            + "bạn đang làm. Nó đọc trạng thái thật (đang tắt, bị từ chối hay vượt trần thì bị bỏ qua) và không gọi "
+            + "model nào." },
+          { term: "Không còn model sống", text: "Không model nào của chuỗi sẽ được gọi lúc này. Lần lưu để một stage "
+            + "rơi vào cảnh này bị từ chối; stage vốn đã như vậy chỉ hiện cảnh báo." },
+          { term: "Đang dùng", text: "Phiên bản gateway đang dùng." },
+          { term: "Ngoài admin", text: "Thay đổi không làm qua trang này (ví dụ một migration cơ sở dữ liệu), được ghi "
+            + "thành phiên bản riêng trước lần thay đổi kế tiếp từ admin." },
+        ] },
+        { kind: "subheading", text: "Quy tắc máy chủ kiểm mỗi lần lưu" },
+        { kind: "list", items: [
+          "Judge không bao giờ dùng model cùng họ với writer (nó sẽ chấm bài của chính mình).",
+          "Hai bên của một cặp kiểm chéo (thẻ địa điểm, gộp địa điểm trùng) dùng model của hai hãng khác nhau.",
+          "Một chuỗi thử tối đa sáu lần mỗi yêu cầu, tính mọi nhà cung cấp của mọi model.",
+          "Mọi stage giữ ít nhất một model sẽ được gọi lúc này.",
+          "Stage không được rời AWS thì không nhận model chỉ tới được qua API của hãng, và model như vậy nằm cuối "
+            + "chuỗi (hoặc ngay sau chính model đó trên AWS).",
+        ] },
+        { kind: "paragraph", text: "Quy tắc đã bị vi phạm từ trước thay đổi của bạn chỉ hiện là cảnh báo, nên không "
+          + "chặn một thay đổi không liên quan. Chuỗi mới của stage writer hoặc judge cần eval run làm căn cứ, hoặc lý "
+          + "do break glass (kèm cảnh báo cho admin), như ở tab Điều hướng." },
+        { kind: "control", label: "Ưu tiên API Anthropic cho Claude (tài trợ)", does: "Đưa API Anthropic lên đầu cho "
+          + "mọi model Claude và đặt kiểu thứ tự thành cùng model trước. Chuỗi không đổi.",
+          cost: "Áp dụng miễn phí; lời gọi Claude sau đó tính tiền vào khoá API Anthropic khi kết nối đang bật.",
+          when: "API Anthropic đang được tài trợ hoặc rẻ hơn AWS." },
+        { kind: "control", label: "Ưu tiên AWS", does: "Đưa nhà cung cấp AWS lên đầu cho mọi model. Kiểu thứ tự và "
+          + "chuỗi không đổi.", cost: "Áp dụng miễn phí.",
+          when: "API của hãng lại chỉ nên là đường cuối cùng." },
+        { kind: "control", label: "Xem lại và lưu", does: "Hiện mọi thay đổi, lỗi quy tắc và cảnh báo, rồi lưu chúng "
+          + "thành một phiên bản mới kèm ghi chú của bạn.", cost: "Miễn phí; các lời gọi kế tiếp dùng route mới.",
+          avoid: "Bản xem trước còn lỗi: sửa trước đã." },
+        { kind: "control", label: "Hoàn tác", does: "Khôi phục chuỗi, thứ tự nhà cung cấp và kiểu thứ tự của một phiên "
+          + "bản cũ thành một phiên bản mới (lịch sử giữ mọi bước).", cost: "Miễn phí.",
+          when: "Một thay đổi làm mọi thứ tệ hơn." },
+        { kind: "callout", tone: "note", title: "Một phiên bản chứa gì",
+          text: "Kiểu thứ tự, chuỗi của mọi stage và thứ tự nhà cung cấp của mọi model. Model chạy bóng, công tắc "
+            + "stage, phạm vi dữ liệu và trần chi có điều khiển riêng và không bị hoàn tác thay đổi. Mỗi lần gọi model "
+            + "ghi lại phiên bản đang dùng lúc đó." },
+      ],
+    },
+    {
       id: "models",
       heading: "Model và thử nghiệm",
       blocks: [
@@ -271,6 +327,9 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
     { term: "Trần ngày", text: "Mức tối đa một nhà cung cấp được tốn trong một ngày UTC cho cả nền tảng." },
     { term: "Truy vết", text: "Mọi lần gọi trả phí đã ghi của một job, theo thời gian." },
     { term: "Dự phòng", text: "Model kế tiếp một bước thử khi model chính lỗi." },
+    { term: "Chuỗi", text: "Danh sách model có thứ tự mà một stage thử: model chính, rồi các model dự phòng." },
+    { term: "Thứ tự nhà cung cấp", text: "Nhà cung cấp nào của cùng một model được thử trước (AWS hay API của hãng)." },
+    { term: "Phiên bản route", text: "Một trạng thái đã lưu của mọi chuỗi, thứ tự nhà cung cấp và kiểu thứ tự." },
     { term: "Chạy bóng", text: "Model thứ hai trả lời cùng lượt gọi chỉ để so sánh; câu trả lời của nó không được dùng." },
   ],
 };
