@@ -178,7 +178,8 @@ ROLE_PERMS: dict[str, frozenset[str]] = {
     # AI & spend W, Writing Lab W, AA Catalogue R. Slice 2: the tenant text of the Writing Lab, logged per read
     # (lab.tenant_text.read; never tenant_content.read, which would open Tenant QA and Content Trace too).
     "ai_ops": frozenset({
-        CONTENT_READ, CATALOG_READ, AI_ADMIN, SPEND_READ, SPEND_WRITE, LAB_READ, LAB_TENANT_TEXT_READ, NOTIFICATIONS_READ,
+        CONTENT_READ, CATALOG_READ, AI_ADMIN, SPEND_READ, SPEND_WRITE, LAB_READ, LAB_TENANT_TEXT_READ,
+        NOTIFICATIONS_READ,
     }),
     # AA-878 — read-only staff (the UI-smoke E2E account, migration 249). Reads the content pages; refused on
     # every write (READ_ONLY_ROLES below, whatever the route's capability) and on every admin-only read. Not
@@ -428,7 +429,8 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/tenant-assignments"): _TENANT_ONE_READ,
     ("GET", "/admin/tenant-assignments/staff"): TENANT_ASSIGN,
     # AA-1035 R2 slice 2 (root ADR 0019 d5) — read-only "view as tenant" (admin_view_as.py, api/core/view_as.py): start
-    # one (scoped: require_tenant_scope), read / end the caller's own (admin: every session, ending another's revokes it)
+    # one (scoped: require_tenant_scope), read / end the caller's own (admin: every session; ending another's revokes
+    # it)
     ("POST", "/admin/tenants/{tenant_id}/view-as"): TENANT_VIEW_AS,
     ("GET", "/admin/view-as/sessions"): TENANT_VIEW_AS,
     ("GET", "/admin/view-as/sessions/{session_id}"): TENANT_VIEW_AS,

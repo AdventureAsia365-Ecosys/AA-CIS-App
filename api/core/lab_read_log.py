@@ -1,4 +1,5 @@
-"""AA-1035 R2 slice 2 — the logged Writing Lab read of tenant text (root ADR 0019, settled by the tech lead S265 item 1).
+"""AA-1035 R2 slice 2 — the logged Writing Lab read of tenant text (root ADR 0019, settled by the tech lead S265,
+item 1).
 
 "ai_ops may read tenant text in Writing Lab: permission tenant_content.read, Lab pages only, every view logged."
 

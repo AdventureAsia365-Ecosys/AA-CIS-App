@@ -1,8 +1,8 @@
 """AA-1035 R2 slice 2 (root ADR 0019 d5) — read-only "view as tenant" for AA staff.
 
 d5: "View as tenant is read-only, lasts at most 60 minutes, requires a reason or ticket, shows a banner and is logged in
-shared.staff_view_as_session." Matrix (clarifications.md section 3): admin, customer_success (own book), support (own book
-+ pool); nobody else.
+shared.staff_view_as_session." Matrix (clarifications.md section 3): admin, customer_success (own book), support
+(own book + pool); nobody else.
 
 How it works
 ------------

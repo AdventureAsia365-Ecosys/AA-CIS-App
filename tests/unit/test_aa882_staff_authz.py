@@ -70,7 +70,8 @@ def test_role_perms_match_the_s241_matrix():
         "tenant.member.resend", "tenant.book.write",   # AA-1035 S267 fix pass
         "tenant.view_as", "notifications.read",        # AA-1035 R2 slice 2 (lab.tenant_text.read: ai_ops only)
     }
-    # admin holds every role capability but the Lab-only logged read of ai_ops (admin reads tenant text in its own right)
+    # admin holds every role capability but the Lab-only logged read of ai_ops (admin reads tenant text in its own
+    # right)
     assert ROLE_PERMS["admin"] == CAPABILITIES - OWNER_PERMS - {"lab.tenant_text.read"}
 
 

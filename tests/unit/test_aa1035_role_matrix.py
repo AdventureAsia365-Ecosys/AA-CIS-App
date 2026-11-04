@@ -249,7 +249,8 @@ def test_ai_ops_owns_ai_and_spend_but_no_tenant_text():
     allowed = _allowed("ai_ops")
     assert "PATCH /admin/llm-config/{stage}" in allowed and "PUT /admin/budgets/{provider}/{scope}" in allowed
     assert _any(allowed, "/admin/content-quality", "/admin/a4", "/admin/tenant-qa") == []
-    # slice 2: the tenant text of the Writing Lab only, every read logged (lab.tenant_text.read; test_aa1035_s2_lab_read)
+    # slice 2: the tenant text of the Writing Lab only, every read logged (lab.tenant_text.read,
+    # test_aa1035_s2_lab_read)
     assert "GET /admin/writing-memory/signals" in allowed
     assert "GET /admin/writing-memory/tenants/{tenant_id}/voice" not in allowed   # Tenant 360 voice: not the Lab
     assert "GET /admin/writing-memory/releases" in allowed            # ids, statuses, numbers

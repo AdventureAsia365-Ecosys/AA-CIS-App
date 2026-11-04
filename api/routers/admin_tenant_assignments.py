@@ -19,7 +19,9 @@ import asyncpg
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
-from api.core.staff_authz import TENANT_ASSIGN, StaffPrincipal, principal_from_role, request_staff_identity, staff_policy
+from api.core.staff_authz import (
+    TENANT_ASSIGN, StaffPrincipal, principal_from_role, request_staff_identity, staff_policy,
+)
 from api.core.tenant_scope import AA_INTERNAL_TENANT, tenant_scope_filter
 from api.routers.admin import tenant_status, verify_admin_secret
 from api.routers.admin_tenant360 import ASSIGNABLE_ROLES
@@ -35,7 +37,8 @@ TENANTS_SQL = (
     "WHERE tenant_id <> $1::uuid ORDER BY lower(name), tenant_id"
 )
 ASSIGNMENTS_SQL = (
-    "SELECT a.tenant_id::text AS tenant_id, a.admin_user_id::text AS admin_user_id, a.kind, a.created_at, a.created_by, "
+    "SELECT a.tenant_id::text AS tenant_id, a.admin_user_id::text AS admin_user_id, a.kind, a.created_at, "
+    "a.created_by, "
     "u.display_name, u.role::text AS staff_role, u.is_active "
     "FROM shared.staff_tenant_assignment a JOIN shared.admin_users u ON u.id = a.admin_user_id "
     "ORDER BY a.tenant_id, a.kind, u.display_name NULLS LAST"
