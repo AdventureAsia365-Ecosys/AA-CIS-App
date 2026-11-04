@@ -19,10 +19,10 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
           + "Guardrails) cũng có ở đây, cùng bản đồ của TripPlanner (Mapbox) chạy trên gói miễn phí. Trang này đặt "
           + "tất cả cạnh nhau." },
         { kind: "paragraph", text: "Mọi con số lấy từ sổ ghi của mình và các lần kiểm số dư đã lưu; mở trang không gọi "
-          + "nhà cung cấp nào và không tốn tiền. Trang có bảy tab: Nhà cung cấp (sức khoẻ, chi tiêu, số dư, kèm cài "
+          + "nhà cung cấp nào và không tốn tiền. Trang có tám tab: Nhà cung cấp (sức khoẻ, chi tiêu, số dư, kèm cài "
           + "đặt kết nối và sổ nạp Jev), Điều hướng (mỗi bước dùng model nào), Điều khiển route (thứ tự model và "
           + "nhà cung cấp, preset và phiên bản), Model và thử nghiệm (danh mục model và "
-          + "so sánh chạy bóng), Ngân sách (mọi mức trần), Lần gọi (từng lần gọi đã ghi) và Hướng dẫn này. Cài đặt › "
+          + "so sánh chạy bóng), Ngân sách (mọi mức trần), Lần gọi (từng lần gọi đã ghi), Lộ trình (mọi lần thử của một yêu cầu, tỉ lệ mỗi bậc dự phòng đã phục vụ, cảnh báo route) và Hướng dẫn này. Cài đặt › "
           + "LLM Models, Cài đặt › Số dư Jev và Spend › Ngân sách đã dời về đây; link cũ mở đúng tab mới. "
           + "Tổng chi theo tenant, model và thị trường vẫn ở Spend, tab Chi phí AI và dữ liệu." },
       ],

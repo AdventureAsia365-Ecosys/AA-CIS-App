@@ -28,11 +28,11 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
           + "too, and so are TripPlanner's maps (Mapbox), which run on a free tier. This page shows all of them side "
           + "by side." },
         { kind: "paragraph", text: "Every number comes from our own logs and stored balance checks; opening the page "
-          + "calls no provider and costs nothing. The page has seven tabs: Providers (health, spend and balance, plus "
+          + "calls no provider and costs nothing. The page has eight tabs: Providers (health, spend and balance, plus "
           + "the connection settings and the Jev credit ledger), Routing (which model each stage uses), Route control "
           + "(the order of models and providers, presets and versions), Models & "
           + "trials (the model catalog and the shadow comparisons), Budgets (every spending cap), Calls (every "
-          + "logged call, one by one) and this Guide. Settings › LLM Models, Settings › Jev Credit and Cost "
+          + "logged call, one by one), Trace (every attempt of one request, the share served by each fallback rung, the route alerts) and this Guide. Settings › LLM Models, Settings › Jev Credit and Cost "
           + "Operations › Budgets moved here; their old links open the right tab. The spend totals by tenant, model "
           + "and market stay on Spend, in its AI & data spend tab." },
       ],
