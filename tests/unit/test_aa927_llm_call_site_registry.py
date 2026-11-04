@@ -41,6 +41,8 @@ def _self(path: str, fn: str) -> tuple:
 # (path, enclosing function) -> the function(s) that write the row. The canonical pattern is the call
 # site itself (row written right after generate() returns, billed_unusable row in the except branch).
 LOGGED_CALL_SITES: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
+    # AA-1042: the route test's tiny requests; run_route_test logs each answer (**billed_fields), the gateway the rest
+    ("api/services/llm_route_trace.py", "_test_one"): (("api/services/llm_route_trace.py", "run_route_test"),),
     ("services/acp_angle_gate/generate.py", "_generate_once"): _self(
         "services/acp_angle_gate/generate.py", "_generate_once"),
     ("services/acp_content_writing/generate.py", "_generate_full"): (

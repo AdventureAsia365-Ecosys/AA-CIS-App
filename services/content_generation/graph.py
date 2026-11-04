@@ -28,7 +28,7 @@ from .t2_repair import (
 )
 from .seo_meta_utils import (SEO_META_MIN, SEO_META_MAX, meta_complete_sentence, SEO_META_FORBIDDEN,
                              fit_seo_meta_final, fit_seo_title, meta_cut_signature, tour_days)
-from services.quality import day_oracle, degraded, repair_contract
+from services.quality import day_oracle, degraded, repair_contract, route_guard
 from .forbidden_words import (VALIDATE_FORBIDDEN, all_forbidden as all_forbidden_words, copy_text, has_word,
                               state_forbidden)
 from .forbidden_strip import SKIP_FIELDS as _FORBIDDEN_SCAN_SKIP, strip_forbidden
@@ -1285,7 +1285,8 @@ def _apply_grounding_recheck(state: ContentState) -> ContentState:
 
     AA-990 N3: and where the day structure of the final text is checked (final_day_guard), after the sentence
     re-repair below — the last edit of the graph."""
-    return degraded.apply_a1_hold(final_day_guard(_grounding_recheck(state)))
+    # AA-1042 (Quality guard): a writer answered by a fallback model is marked (or held, per the stage's policy)
+    return degraded.apply_a1_hold(route_guard.with_a1_entries(final_day_guard(_grounding_recheck(state))))
 
 
 def _grounding_recheck(state: ContentState) -> ContentState:

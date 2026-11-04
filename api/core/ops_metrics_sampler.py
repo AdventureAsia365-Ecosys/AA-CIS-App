@@ -67,6 +67,9 @@ The AA-832 chain (EventBridge -> ops-probe Lambda -> admin POST -> shared.job ->
   active stage has a model that answered within 36 h, no refusal or open circuit since); a stage without one raises
   the ops check ``llm_stage_coverage.<stage>`` (bell once a day per stage, one e-mail per stage and UTC day). Fields
   `stage_coverage_uncovered` (the stages) or `stage_coverage_error`.
+- AA-1042 (S268): each tick also queues the LLM route watch (`llm_route_watch`, $0) once per 15-min UTC bucket and its
+  daily digest once per UTC day from 01:00 UTC (idempotency keys), while the kind is registered and LLM_ROUTE_WATCH is
+  not off. Fields `llm_route_watch` / `llm_route_digest` (the job id, when created) or `llm_route_watch_error`.
 - AA-845: every JEV_CREDIT_CHECK_EVERY_S (shared/jev_credit.py, 30 min) the loop also runs the Jev low-credit
   check (estimated TypeSafe credit below the threshold -> throttled bell + operator e-mail). It runs after the
   tick, outside sample_once, under its own PART_TIMEOUT_S, and logs its own line (`jev_credit_low_checked` /
@@ -342,6 +345,22 @@ async def _llm_model_lifecycle_part(pool, kinds: dict, ts: datetime, out: dict) 
         out["llm_model_lifecycle_sync"] = {"job_id": job_id, "day": day.isoformat()}
 
 
+async def _llm_route_watch_part(pool, kinds: dict, ts: datetime, out: dict) -> None:
+    """AA-1042: the route watch once per 15-min UTC bucket and the route digest once per UTC day from its hour
+    (idempotency keys; one indexed EXISTS each a tick after the run exists). Only while the kind is registered;
+    LLM_ROUTE_WATCH=off stops both."""
+    from services.jobs.llm_route_watch_job import KIND, enqueue_digest, enqueue_watch, schedule_enabled
+
+    if KIND not in kinds or not schedule_enabled():
+        return
+    job_id, created, key = await enqueue_watch(pool, now=ts)
+    if created:
+        out["llm_route_watch"] = {"job_id": job_id, "key": key}
+    job_id, created, key = await enqueue_digest(pool, now=ts)
+    if created:
+        out["llm_route_digest"] = {"job_id": job_id, "key": key}
+
+
 async def _tenant_account_tick_part(pool, kinds: dict, ts: datetime, out: dict) -> None:
     """AA-1028 R1 slice 3: the hourly tenant lifecycle tick (trial end, expired overrides), once per UTC hour
     (idempotency key per hour; one indexed EXISTS a tick after the first). Only while the kind is registered;
@@ -458,6 +477,12 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
         await asyncio.wait_for(_llm_model_lifecycle_part(pool, kinds, ts, out), timeout=5.0)
     except Exception as e:
         out["llm_model_lifecycle_sync_error"] = _err(e)
+
+    # AA-1042: at most two idempotent INSERTs a tick (database only), same short budget
+    try:
+        await asyncio.wait_for(_llm_route_watch_part(pool, kinds, ts, out), timeout=5.0)
+    except Exception as e:
+        out["llm_route_watch_error"] = _err(e)
 
     # AA-1028 R1 slice 3: one idempotent INSERT an hour (database only), same short budget
     try:

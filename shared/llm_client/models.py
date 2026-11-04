@@ -100,3 +100,8 @@ class LLMResponse(BaseModel):
     reasoning_tokens: Optional[int] = None
     prompt_hash: Optional[str] = None
     prompt_version: Optional[str] = None
+    # AA-1042 (Route trace): the gateway request this reply answered (route_trace, a uuid shared by every attempt row
+    # of the request: quality_signal.route_trace) and the route position of the model that answered (0 = the stage's
+    # first model). Passed on by call_log.billed_fields(); None outside the gateway.
+    route_trace: Optional[str] = None
+    route_position: Optional[int] = None

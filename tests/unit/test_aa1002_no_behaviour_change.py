@@ -49,6 +49,8 @@ REGISTRY_READERS = {
     "app_profile.py": "AA-1025 H1a: the app profile read through connections.run_sync / _connect",
     "capacity.py": "AA-1025 H2: the TPM limits read through connections.run_sync / _connect; LLM_KINDS of a "
                    "connection an admin limit names",
+    "route_watch.py": "AA-1042: the route policy rows read through connections.run_sync / _connect (the hold switch "
+                      "cache); no connection or deployment is read",
 }
 CALL_PATH = ("client.py", "embed.py", "decide.py", "judge.py", "shadow.py", "bedrock_satellite.py",
              "bedrock_batch.py", "call_log.py", "catalog.py", "role_config.py", "pricing.py", "errors.py",
@@ -66,7 +68,8 @@ CALL_PATH = ("client.py", "embed.py", "decide.py", "judge.py", "shadow.py", "bed
              "app_profile.py",  # AA-1025 H1a: the app's AI switch (no row / unreadable = AI on)
              "capacity.py",  # AA-1025 H2: TPM limits and lines (no row / unreadable = no limit, nothing held)
              "model_lifecycle.py",  # AA-1024 D2: Bedrock model lifecycle (free control-plane list; no call path)
-             "stage_coverage.py")  # AA-1026 S267: report-only stage coverage (reads the tables by SQL, not a call)
+             "stage_coverage.py",  # AA-1026 S267: report-only stage coverage (reads the tables by SQL, not a call)
+             "route_watch.py")  # AA-1042: route alerts (ledger SQL) and the cached hold switch (no row = off)
 
 
 def _imported_modules(path: Path) -> set[str]:
