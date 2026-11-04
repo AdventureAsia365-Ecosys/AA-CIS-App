@@ -22,8 +22,8 @@ async def pool():
     p = await asyncpg.create_pool(DSN, min_size=1, max_size=3)
     await p.execute("""
         INSERT INTO shared.tenants (tenant_id, name, slug, plan_tier, rate_limit_rpm, is_active,
-                                    posts_per_week, api_key_hash)
-        VALUES ($1::uuid, 'Brand Test', $2, 'starter', 60, true, 3, 'h')""", TENANT, f"b-{TENANT[:8]}")
+                                    posts_per_week)
+        VALUES ($1::uuid, 'Brand Test', $2, 'starter', 60, true, 3)""", TENANT, f"b-{TENANT[:8]}")
     yield p
     await p.execute("DELETE FROM shared.tenant_seo_config WHERE tenant_id = $1::uuid", TENANT)
     await p.execute("DELETE FROM shared.tenant_brand_rules WHERE tenant_id = $1::uuid", TENANT)

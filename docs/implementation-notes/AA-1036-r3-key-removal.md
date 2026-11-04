@@ -75,9 +75,10 @@ Callers of `POST /auth/tenant-login` and of tenant API keys, and what happened t
   the partner session exchange already refuses an inactive or cancelled tenant (`services/tenant_membership/session.py`).
 - **Data in two steps.** CIS 368 (contract, MIG-4, after this code PR is deployed) sets the column NULL with a
   before/after check that no account state changed. The DROP is CIS 369 (`-- migrate: destructive`) on its own branch
-  with a read-only DRY RUN script (`scripts/aa1036/key_hash_dry_run.py`); it is a follow-up for the tech lead.
-- **No CHECK (api_key_hash IS NULL) in 368**: 13 integration-test fixtures still insert the column; the guard test
-  covers the code, and the DROP removes the column anyway. Those fixtures are listed in the 369 header.
+  with a read-only DRY RUN script (`scripts/aa1036/key_hash_dry_run.py`). DRY RUN on Dev 04/11 (S268): `verdict
+  ready=true`; the tech lead approved the apply the same day (see "CIS 369" below).
+- **No CHECK (api_key_hash IS NULL) in 368**: 13 integration-test fixtures still inserted the column; the guard test
+  covers the code, and the DROP removes the column anyway. The 369 PR cleaned those fixtures (see "CIS 369" below).
 - **openapi.json** regenerated with the pinned fastapi 0.161.1 / pydantic 2.14.1 (scratch venv): removing
   `/v1/account/api-key` and the tenant-login body is a breaking change on public paths, so the PR needs the
   `api-breaking` label for the API contract check.
@@ -104,3 +105,50 @@ aa761, aa1028 provision); deleted `test_auth_tenant_api_key.py`, `test_e2e_tenan
 - CIS 368 needs 366 and 367 (other S267 lanes) merged first, or it must be renumbered to main max + 1.
 - After the deploy: `curl -X POST .../auth/tenant-login` -> 410 with the body above; `audit_log` shows no
   `login_method = 'api_key'` row after the deploy time; Tenants page has no Key button.
+
+## CIS 369 — DROP COLUMN (lane aa1036-369, S268)
+
+The 369 file was prepared in S267 on `feat/aa-1036-r3-key-hash-drop-369`, a branch on an old main that also carried the
+pre-squash 368 commit. This PR starts again from main and brings over only `api/migrations/369_tenant_api_key_hash_drop.sql`
+(byte-identical, header and `-- migrate: destructive` kept), plus the DRY RUN script and the test clean-up.
+
+### Decisions
+
+- **Destructive, not contract.** `-- migrate: destructive` stays: DB Migrate takes the pre-apply RDS snapshot
+  (`db-migrate-369-<run>-<attempt>`) and Migration Apply never applies it on its own. No readiness raise
+  (`REQUIRED_CIS_SCHEMA` unchanged): no code needs the column gone, and the guard test keeps code from naming it.
+- **DRY RUN script committed verbatim** at `scripts/aa1036/key_hash_dry_run.py` (the path the 369 header names), so
+  the evidence of the Linear comment can be re-run. It reads the catalog and one count, as `cis_app`.
+- **Fixtures that insert or read the column**: the column is removed from the INSERT / UPDATE / SELECT (conftest seed,
+  aa741 x2, aa761, aa764, aa840, aa978 276, aa1028 356 / 361 / 353-355 / provision). The offboard / restore UPDATEs in
+  the 276 and 353-355 tests now mirror `api/routers/admin.py` (no key column). `test_007_rls_isolation.py` (excluded
+  from CI, runs against a live DB) swaps its two "tenant has a SHA-256 key hash" tests for one "the column is gone".
+  The stray tracked `tests/integration/conftest.py.bak` is deleted.
+- **Migration tests that re-run an older file whose body names the column** get a stand-in column, not a skip
+  (helpers in `tests/integration/_rls_fixture_helpers.py`): an applied file is never edited, and a skip would drop the
+  re-run coverage of 354 / 355 / 368.
+  - `KEY_HASH_STANDIN_SQL` (`ADD COLUMN IF NOT EXISTS api_key_hash VARCHAR(255)`, the 003 type) inside the test's own
+    rolled-back transaction: the 353-355 re-run and grants tests (354 / 355 guard 3 probe INSERT names the column).
+  - `key_hash_standin(cur)` around a file run with its own BEGIN / COMMIT (autocommit): the 320/321 teardown that
+    re-applies 355, and the 368 module (seeds hashes, re-runs 368). It adds the column only when absent and drops it
+    again after, so the shared test DB returns to the replay state.
+  - Found beyond the list in the 369 header: `test_aa1017_migration_320_321.py` re-applies 355 in its teardown.
+- **New `test_aa1036_migration_369.py`**, each test in a rolled-back transaction: the replay dropped the column and
+  registered 369; with a stand-in column (368 registered, value NULL) the file drops it and registers 369; a value
+  written after 368 stops it; a missing 368 stops it; a view on the column stops the DROP (RESTRICT) instead of
+  cascading; on a DB without the column it only registers, twice in a row. The 368 module also checks 368 is a no-op
+  without the column.
+
+### Tradeoffs
+
+- A stand-in column vs a skip when the column is absent: the stand-in keeps the re-run tests meaningful; its cost is a
+  short ACCESS EXCLUSIVE lock on `shared.tenants` in the test DB, which tests run serially anyway.
+
+### Should know
+
+- Order after merge: the Infra copy of 369 into `AA-CIS-Infra/db/migrations/cis/` (bot Migration Sync opens it; a
+  destructive copy does not auto-merge, merge it by hand), then DB Migrate `check` + `apply` of `cis/369_...` (snapshot
+  first, the workflow takes it), then `/health/ready` shows 369, then the snapshot id goes into the root
+  `docs/architecture/dead-table-registry.md`.
+- `scripts/aa729/common.py` still lists `api_key_hash` in a PII scrub list (harmless; left as is).
+- After 369 the DB Schema Dump bot PR drops the column from `db-schema-reference.md`.

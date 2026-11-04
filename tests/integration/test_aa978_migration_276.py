@@ -57,8 +57,8 @@ async def _tenant(conn, *, active=True, offboarded=False) -> uuid.UUID:
     """The INSERT of POST /admin/tenants (api/routers/admin.py), plus an offboarded variant for committed tests."""
     tid = uuid.uuid4()
     await conn.execute(
-        "INSERT INTO shared.tenants (tenant_id, name, slug, plan_tier, posts_per_week, api_key_hash, rate_limit_rpm, "
-        "is_active, cancelled_at) VALUES ($1, 'AA-978 synthetic', $2, 'starter', 3, NULL, 60, $3, "
+        "INSERT INTO shared.tenants (tenant_id, name, slug, plan_tier, posts_per_week, rate_limit_rpm, "
+        "is_active, cancelled_at) VALUES ($1, 'AA-978 synthetic', $2, 'starter', 3, 60, $3, "
         "CASE WHEN $4 THEN now() END)", tid, f"zz978-{tid.hex[:12]}", active, offboarded)
     return tid
 
@@ -205,13 +205,12 @@ async def test_every_tenant_write_path_emits_its_event(conn):
     # offboard (from locked or active), then restore
     await conn.execute("""
         UPDATE shared.tenants
-        SET cancelled_at = NOW(), cancellation_reason = $2, is_active = FALSE,
-            api_key_hash = 'REVOKED_' || tenant_id::text, updated_at = NOW()
+        SET cancelled_at = NOW(), cancellation_reason = $2, is_active = FALSE, updated_at = NOW()
         WHERE tenant_id = $1::uuid""", str(tid), "test")
     await conn.execute("""
         UPDATE shared.tenants
-        SET cancelled_at = NULL, cancellation_reason = NULL, is_active = TRUE, api_key_hash = $2, updated_at = NOW()
-        WHERE tenant_id = $1""", tid, "x" * 64)
+        SET cancelled_at = NULL, cancellation_reason = NULL, is_active = TRUE, updated_at = NOW()
+        WHERE tenant_id = $1""", tid)
     assert await _types(conn, tid) == ["tenant.created", "tenant.locked", "tenant.unlocked", "tenant.deleted",
                                        "tenant.unlocked"]
     rows = await conn.fetch(f"SELECT event_id, membership, occurred_at FROM {EVENTS} WHERE tenant_id = $1", tid)

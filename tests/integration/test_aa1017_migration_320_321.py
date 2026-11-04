@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 sys.path.insert(0, os.path.dirname(__file__))
 from _acc2_routes import candidates_off_routes  # noqa: E402
 from conftest import APP_USER_356_GRANTS, DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER, TENANT_ID  # noqa: E402
+from _rls_fixture_helpers import key_hash_standin  # noqa: E402
 
 MIGRATIONS = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations")
 M320 = os.path.join(MIGRATIONS, "320_llm_registry_v2_families_params.sql")
@@ -91,7 +92,11 @@ def cur():
             if c.fetchone():
                 if version == "356":
                     c.execute(APP_USER_356_GRANTS)  # 353's re-run re-created the resolver without app_user's grant
-                _run(c, path)
+                if version == "355":
+                    with key_hash_standin(c):       # AA-1036: 355's probe INSERT names the column CIS 369 dropped
+                        _run(c, path)
+                else:
+                    _run(c, path)
         conn.close()
 
 

@@ -33,9 +33,12 @@
 * `restore_266_catalog_owner_read(cur)`: the catalog tests drop and re-create catalog_owner (DROP OWNED also drops
   a policy whose only role it is); this puts 266's keep-alive policy on tour_atoms back, and 272's SELECT grants of
   catalog_owner on gold_aa_internal.v_tour_liveness / tour_lifecycle_event (the 274 catalog views read them).
+* `KEY_HASH_STANDIN_SQL` / `key_hash_standin(cur)` (AA-1036, CIS 369): a stand-in shared.tenants.api_key_hash for a
+  test that re-runs 354, 355 or 368 (their bodies name the column 369 dropped).
 """
 import glob
 import os
+from contextlib import contextmanager
 
 MIGRATIONS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations")
 
@@ -191,6 +194,34 @@ def migration_body(n) -> str:
     """The file without its own BEGIN/COMMIT, so a test can run it in a transaction it rolls back."""
     with open(migration_path(n)) as f:
         return "\n".join(line for line in f.read().splitlines() if line.strip() not in ("BEGIN;", "COMMIT;"))
+
+
+# AA-1036 (CIS 369): 369 dropped shared.tenants.api_key_hash, but the guard 3 probe INSERTs of 354 / 355 and the whole
+# of 368 still name it, and a file applied on Dev is never edited. A test that re-runs one of them on the fully migrated
+# DB puts a stand-in column back first: inside its own rolled-back transaction (KEY_HASH_STANDIN_SQL), or around a run
+# of the file with its own BEGIN / COMMIT (key_hash_standin). Same type as the dropped column (003: VARCHAR(255)).
+KEY_HASH_STANDIN_SQL = "ALTER TABLE shared.tenants ADD COLUMN IF NOT EXISTS api_key_hash VARCHAR(255)"
+KEY_HASH_PRESENT_SQL = ("SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'shared.tenants'::regclass "
+                        "AND attname = 'api_key_hash' AND NOT attisdropped) AS present")
+
+
+@contextmanager
+def key_hash_standin(cur):
+    """A psycopg2 cursor in autocommit: the stand-in column while the block runs, dropped after if this added it
+    (a DB that still has the real column, before 369, is left alone)."""
+    cur.execute(KEY_HASH_PRESENT_SQL)
+    row = cur.fetchone()
+    present = row["present"] if isinstance(row, dict) else row[0]
+    if not present:
+        cur.execute(KEY_HASH_STANDIN_SQL)
+    try:
+        yield
+    except BaseException:
+        cur.execute("ROLLBACK")        # a failed file leaves its own BEGIN open and aborted
+        raise
+    finally:
+        if not present:
+            cur.execute("ALTER TABLE shared.tenants DROP COLUMN IF EXISTS api_key_hash")
 
 
 # AA-850: the wave-1 objects CIS 294 quarantined in `retired` and CIS 296 dropped -> (pre-294 schema, kind). Tests that

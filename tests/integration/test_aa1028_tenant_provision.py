@@ -89,12 +89,12 @@ async def test_create_writes_the_tenant_subscriptions_and_events(conn):
     tid = out["tenant_id"]
     assert out["resumed"] is False and out["mode"] == "create" and "api_key" not in out
     assert out["steps"] == ["tenant_created", "content_active", "crm_subscribed", "tripplanner_subscribed"]
-    t = await conn.fetchrow("SELECT name, slug, plan_tier::text AS tier, rate_limit_rpm, api_key_hash, is_active, "
+    t = await conn.fetchrow("SELECT name, slug, plan_tier::text AS tier, rate_limit_rpm, is_active, "
                             "account_status, kind, is_canary, posts_per_week FROM shared.tenants "
                             "WHERE tenant_id = $1::uuid", tid)
     assert (t["name"], t["slug"], t["tier"], t["rate_limit_rpm"]) == ("Zephyr Trails synthetic", req.slug,
                                                                       "starter", 60)
-    assert t["api_key_hash"] is None and t["is_active"] is True and t["account_status"] == "active"
+    assert t["is_active"] is True and t["account_status"] == "active"
     assert t["kind"] == "demo" and t["is_canary"] is True and t["posts_per_week"] == 3
     # slice 3: the ACPv1 S2/S3/S4 10/10/50 ledger has no reader; the saga writes no row
     assert await conn.fetchval("SELECT count(*) FROM acp_shared.acp_quota_ledger WHERE tenant_id = $1::uuid",

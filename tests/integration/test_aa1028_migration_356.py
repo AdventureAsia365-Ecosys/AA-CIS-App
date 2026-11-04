@@ -47,8 +47,8 @@ async def _tenant(conn, *, tier="starter", rpm=60) -> uuid.UUID:
     """The INSERT of POST /admin/tenants (api/routers/admin.py)."""
     tid = uuid.uuid4()
     await conn.execute(
-        "INSERT INTO shared.tenants (tenant_id, name, slug, plan_tier, posts_per_week, api_key_hash, rate_limit_rpm, "
-        "is_active) VALUES ($1, 'Zephyr Trails synthetic', $2, $3::plan_tier_enum, 3, NULL, $4, true)",
+        "INSERT INTO shared.tenants (tenant_id, name, slug, plan_tier, posts_per_week, rate_limit_rpm, "
+        "is_active) VALUES ($1, 'Zephyr Trails synthetic', $2, $3::plan_tier_enum, 3, $4, true)",
         tid, f"zz356-{tid.hex[:12]}", tier, rpm)
     return tid
 

@@ -24,8 +24,8 @@ async def pool():
     p = await asyncpg.create_pool(DSN, min_size=1, max_size=2)
     await p.execute("""
         INSERT INTO shared.tenants (tenant_id, name, slug, plan_tier, rate_limit_rpm, is_active,
-                                    posts_per_week, api_key_hash)
-        VALUES ($1::uuid, 'AA-840 test', 'aa840-test', 'starter', 60, true, 3, 'h')
+                                    posts_per_week)
+        VALUES ($1::uuid, 'AA-840 test', 'aa840-test', 'starter', 60, true, 3)
         ON CONFLICT DO NOTHING""", TENANT)
     await p.execute("DELETE FROM acp_shared.tenant_config WHERE tenant_id = $1::uuid", TENANT)
     yield p
