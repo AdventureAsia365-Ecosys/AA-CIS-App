@@ -243,6 +243,28 @@ async def test_explore_groups_filters_series_crm_and_drill_down(pool):
 
 
 @pytest.mark.asyncio
+async def test_drill_down_of_a_cut_day_bucket_stays_inside_the_range(pool):
+    """A 24h range at day granularity cuts its day buckets: the cell and its Calls list count the same rows."""
+    async with pool.acquire() as c:
+        await _fixture_rows(c)
+        await _llm(c, _at(3), 0.070)         # 10:00 ICT: same ICT day and cell, after the range's end
+    await ur.roll_hours(pool, T0 - timedelta(hours=7), T1)
+    asked_at = _at(1, 15)                    # 08:15 ICT: the range is [08-09 09:00, 08-10 09:00) ICT
+    q = ue.parse_query({"range": "24h", "granularity": "day", "group": "provider,time", "f_stage": STAGE})
+    out = await ue.explore(pool, q, now=asked_at)
+    cell = next(r for r in out["rows"] if r["dims"]["provider"] == "bedrock")
+    assert cell["requests"] == 3
+    assert cell["bucket"] == {"start": "2024-08-10T00:00:00+07:00", "end": "2024-08-10T09:00:00+07:00",
+                              "label": "2024-08-10–2024-08-10 09:00", "partial": True}
+    assert cell["dims"]["time"] == cell["bucket"]["label"]
+    assert [p["partial"] for p in out["series"]] == [True]
+    f = calls.parse_filters(since=cell["bucket"]["start"], until=cell["bucket"]["end"], provider="bedrock",
+                            stage=STAGE)
+    listed = await calls.list_calls(pool, f, now=NOW, limit=200)    # opened later: the late row exists by then
+    assert len([r for r in listed["rows"] if r["source"] == "llm"]) == cell["requests"]
+
+
+@pytest.mark.asyncio
 async def test_options_invoices_and_saved_views(pool):
     async with pool.acquire() as c:
         await _fixture_rows(c)

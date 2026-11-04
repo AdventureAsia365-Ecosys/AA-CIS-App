@@ -249,6 +249,31 @@ def test_buckets_and_finish():
     assert ue.finish(ue.new_acc())["error_rate"] is None
 
 
+def test_bucket_span_clips_edge_buckets_to_the_range():
+    # 7d at day granularity, now 14:20 ICT: the range is [10-28 15:00, 11-04 15:00) ICT, so the first and the last day
+    # are cut; the drill-down must not reach outside the range (the Calls list would count rows the cell did not).
+    now = datetime(2026, 11, 4, 7, 20, tzinfo=timezone.utc)
+    since, until = ue.resolve_range(ue.parse_query({"range": "7d"}), now)
+    first = ue.bucket_span("2026-10-27T17:00:00+00:00", "day", since, until)
+    assert first == {"start": "2026-10-28T15:00:00+07:00", "end": "2026-10-29T00:00:00+07:00",
+                     "label": "2026-10-28 15:00–2026-10-29", "partial": True}
+    last = ue.bucket_span("2026-11-03T17:00:00+00:00", "day", since, until)
+    assert (last["start"], last["end"], last["partial"]) == ("2026-11-04T00:00:00+07:00", "2026-11-04T15:00:00+07:00",
+                                                             True)
+    assert last["label"] == "2026-11-04–2026-11-04 15:00"
+    mid = ue.bucket_span("2026-10-30T17:00:00+00:00", "day", since, until)
+    assert mid == {"start": "2026-10-31T00:00:00+07:00", "end": "2026-11-01T00:00:00+07:00", "label": "2026-10-31",
+                   "partial": False}
+    # a month bucket of a 30d range starts at the range, not at the first of the month
+    since, until = ue.resolve_range(ue.parse_query({"range": "30d"}), now)
+    m = ue.bucket_span("2026-09-30T17:00:00+00:00", "month", since, until)
+    assert m["start"] == since.astimezone(ue.TZ).isoformat() and m["end"] == "2026-11-01T00:00:00+07:00"
+    assert m["partial"] is True
+    # an hour bucket is never cut (ranges are whole hours)
+    h = ue.bucket_span("2026-11-04T02:00:00+00:00", "hour", since, until)
+    assert h["partial"] is False and h["label"] == "2026-11-04T09:00+07:00"
+
+
 def test_sort_rows_puts_missing_last():
     rows = [{"dims": {"stage": "b"}, "cost_usd": 1.0, "p95_latency_ms": None},
             {"dims": {"stage": "a"}, "cost_usd": 3.0, "p95_latency_ms": 900},

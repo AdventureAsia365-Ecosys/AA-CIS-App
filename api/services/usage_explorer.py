@@ -15,7 +15,9 @@ Query (``parse_query``; every value is checked, the router answers 422 on the fi
 
 Answer: ``rows`` (one per group, metrics below, at most ``MAX_GROUPS`` after sorting; ``truncated`` says so),
 ``series`` (per time bucket: requests, tokens, cost), ``totals``, ``labels`` (tenant names), ``crm`` (whether the CRM's
-daily totals were merged, or why not), ``rollup`` (the last rollup run) and ``notes``.
+daily totals were merged, or why not), ``rollup`` (the last rollup run) and ``notes``. A time bucket (``rows[].bucket``,
+``series[]``) carries ``start`` / ``end`` clipped to the range and ``partial`` (bucket_span): the drill-down to the
+Calls list uses them, so the list holds the rows the cell counted.
 
 Metrics per group: requests, ledger_rows, input / output / cache read / cache write / reasoning tokens, cost_usd,
 avg_latency_ms, p95_latency_ms (approximate: the latency histogram, usage_dims.percentile_ms), error_rate (requests with
@@ -329,6 +331,26 @@ def bucket_end(start_utc_iso: str, granularity: str) -> str:
     return e.isoformat()
 
 
+def _span_text(t: datetime) -> str:
+    """An ICT instant as a short label: the date at midnight, else the date and the time."""
+    return t.date().isoformat() if (t.hour, t.minute) == (0, 0) else t.strftime("%Y-%m-%d %H:%M")
+
+
+def bucket_span(start_utc_iso: str, granularity: str, since: datetime, until: datetime) -> dict:
+    """The bucket of ``start_utc_iso`` clipped to the query range [since, until): ``start`` / ``end`` (ISO, ICT) are
+    what the explorer counted, so the Calls list a drill-down opens holds the same rows. A day, week or month bucket
+    the range cuts (the first and last of a 7d range, say) is ``partial`` and labelled with its clipped span
+    (2026-10-28 14:00–2026-10-29); a whole bucket keeps bucket_label. Pure."""
+    b_start = datetime.fromisoformat(start_utc_iso)
+    b_end = datetime.fromisoformat(bucket_end(start_utc_iso, granularity))
+    start, end = max(b_start, since), min(b_end, until)
+    partial = start > b_start or end < b_end
+    label = (f"{_span_text(start.astimezone(TZ))}–{_span_text(end.astimezone(TZ))}" if partial
+             else bucket_label(start_utc_iso, granularity))
+    return {"start": start.astimezone(TZ).isoformat(), "end": end.astimezone(TZ).isoformat(), "label": label,
+            "partial": partial}
+
+
 def new_acc() -> dict:
     return {**{k: 0 for k in _SUMS}, "cost_usd": Decimal(0), "hist": [0] * ud.HIST_BUCKETS}
 
@@ -555,9 +577,7 @@ async def explore(pool, q: ExplorerQuery, *, crm_usage_rows: Optional[CrmUsageRo
         rows.append({"key": "|".join(k), "dims": dims_of[k], **finish(acc, units.get(k) if q.per_unit else None)})
     for r in rows:
         if "time" in r["dims"] and r["dims"]["time"]:
-            start = r["dims"]["time"]
-            r["bucket"] = {"start": datetime.fromisoformat(start).astimezone(TZ).isoformat(),
-                           "end": bucket_end(start, q.granularity), "label": bucket_label(start, q.granularity)}
+            r["bucket"] = bucket_span(r["dims"]["time"], q.granularity, since, until)
             r["dims"]["time"] = r["bucket"]["label"]
     rows = sort_rows(rows, q.sort, q.dir)
     truncated = len(rows) > MAX_GROUPS
@@ -566,8 +586,7 @@ async def explore(pool, q: ExplorerQuery, *, crm_usage_rows: Optional[CrmUsageRo
     series_out = []
     for t in sorted(series_acc):
         acc = series_acc[t]
-        series_out.append({"start": datetime.fromisoformat(t).astimezone(TZ).isoformat(),
-                           "end": bucket_end(t, q.granularity), "label": bucket_label(t, q.granularity),
+        series_out.append({**bucket_span(t, q.granularity, since, until),
                            "requests": int(acc["requests"]), "tokens": int(acc["tokens_in"]) + int(acc["tokens_out"]),
                            "tokens_in": int(acc["tokens_in"]), "tokens_out": int(acc["tokens_out"]),
                            "cost_usd": round(float(acc["cost_usd"]), 6)})

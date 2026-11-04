@@ -27,7 +27,8 @@ export const DEFAULTS = { range: "7d", granularity: "day", group: "provider", so
 export const QUERY_KEYS = ["range", "from", "to", "granularity", "group", "sort", "dir", "per_unit",
   ...DIMENSIONS.map((d) => `f_${d}`)] as const;
 
-export interface Bucket { start: string; end: string; label: string }
+/** A time bucket; the API clips start / end to the query range (partial: the range cuts the bucket). */
+export interface Bucket { start: string; end: string; label: string; partial?: boolean }
 
 export interface MetricsRow {
   requests: number;
@@ -169,6 +170,9 @@ const CALL_KEY: Partial<Record<Dimension, string>> = {
 const CALL_NONE_OK = new Set(["tenant", "model", "account", "role", "error_class"]);
 const CALL_PREFIX = "c_";
 
+const later = (a: string, b: string) => (Date.parse(a) >= Date.parse(b) ? a : b);
+const earlier = (a: string, b: string) => (Date.parse(a) <= Date.parse(b) ? a : b);
+
 export interface DrillLink {
   href: string;
   /** dimensions the Calls list cannot narrow on (it then shows a wider set) */
@@ -176,10 +180,10 @@ export interface DrillLink {
 }
 
 /**
- * The Calls tab link of one explorer cell: the cell's time range (its bucket, else the query's range), the cell's
- * dimension values and every single-valued filter. A dimension the Calls list cannot carry (family, traffic, a
- * multi-valued filter, an empty value it has no "(none)" for, a provider that is not a spend-budget provider) is
- * listed in `lost`.
+ * The Calls tab link of one explorer cell: the cell's time range (its bucket clipped to the query's range, else the
+ * query's range), the cell's dimension values and every single-valued filter. A dimension the Calls list cannot carry
+ * (family, traffic, a multi-valued filter, an empty value it has no "(none)" for, a provider that is not a
+ * spend-budget provider) is listed in `lost`.
  */
 export function drillHref(
   range: { from: string; to: string },
@@ -188,8 +192,9 @@ export function drillHref(
   bucket?: Bucket,
 ): DrillLink {
   const p = new URLSearchParams({ tab: "calls" });
-  p.set(`${CALL_PREFIX}since`, bucket?.start ?? range.from);
-  p.set(`${CALL_PREFIX}until`, bucket?.end ?? range.to);
+  // The cell counted rows inside the range only: a day / week / month bucket the range cuts must not widen the list.
+  p.set(`${CALL_PREFIX}since`, bucket ? later(bucket.start, range.from) : range.from);
+  p.set(`${CALL_PREFIX}until`, bucket ? earlier(bucket.end, range.to) : range.to);
   const lost: string[] = [];
   const fixed: Partial<Record<Dimension, string>> = {};
   for (const [d, v] of Object.entries(dims)) if (d !== "time") fixed[d as Dimension] = v ?? "";

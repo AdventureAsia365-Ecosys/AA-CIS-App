@@ -58,6 +58,24 @@ test("3. drill-down: the cell's range and dimensions, single filters carried, th
   assert.equal(params(drillHref(range, { source: "crm" }, {}).href).get("c_source"), "crm");
 });
 
+test("3b. drill-down: a 7d range at day granularity clips its first and last day buckets to the range", () => {
+  // the range starts and ends at 15:00 ICT; the day buckets start at midnight
+  const range = { from: "2026-10-28T15:00:00+07:00", to: "2026-11-04T15:00:00+07:00" };
+  const first = drillHref(range, { time: "2026-10-28" }, {},
+    { start: "2026-10-28T00:00:00+07:00", end: "2026-10-29T00:00:00+07:00", label: "2026-10-28" });
+  assert.equal(params(first.href).get("c_since"), range.from);
+  assert.equal(params(first.href).get("c_until"), "2026-10-29T00:00:00+07:00");
+  const last = drillHref(range, { time: "2026-11-04" }, {},
+    { start: "2026-11-04T00:00:00+07:00", end: "2026-11-05T00:00:00+07:00", label: "2026-11-04" });
+  assert.equal(params(last.href).get("c_since"), "2026-11-04T00:00:00+07:00");
+  assert.equal(params(last.href).get("c_until"), range.to);
+  // instants compare as times, not text: a UTC bucket end before the ICT range end is kept
+  const utc = drillHref(range, {}, {},
+    { start: "2026-11-01T17:00:00+00:00", end: "2026-11-02T17:00:00+00:00", label: "2026-11-02" });
+  assert.equal(params(utc.href).get("c_since"), "2026-11-01T17:00:00+00:00");
+  assert.equal(params(utc.href).get("c_until"), "2026-11-02T17:00:00+00:00");
+});
+
 test("4. CSV columns and name, number formats", () => {
   const row = { key: "k", dims: { tenant: "t-1", provider: "openai" }, requests: 3, cost_usd: 0.5,
     p95_latency_ms: null };
