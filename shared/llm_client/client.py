@@ -70,6 +70,8 @@ CONVERSE_CACHE_POINT_ENV = "LLM_CONVERSE_CACHE_POINT"
 #     before the route's next model, e.g. Sonnet 5.5 on acc3, Sonnet 5.5 on the Anthropic API, then Sonnet 4.6 on acc3.
 #     "on" runs a stage allowed both data scopes in two passes instead: every model on its AWS deployments (route
 #     order), then every model on its vendor API deployments (client.route_attempts). Kept as a switch, not the default.
+#     AA-1042 (S268): shared.llm_route_settings.order_mode (CIS 370, the admin's Route control) wins; this env var is
+#     only the bootstrap default while that row cannot be read (route_settings.order_mode_sync).
 ROUTE_AWS_FIRST_ENV = "LLM_ROUTE_AWS_FIRST"
 _ON = ("1", "true", "on", "yes")
 _OFF = ("0", "false", "off", "no")
@@ -114,9 +116,11 @@ def converse_cache_point_enabled() -> bool:
 
 def route_aws_first_enabled() -> bool:
     """AA-1026 (S267): a route that may leave AWS is tried on AWS first, model by model, then on the vendor APIs.
-    Default off: the tech lead chose the model-first order (the same model on its vendor API before the next model);
-    LLM_ROUTE_AWS_FIRST=on brings the two-pass order back."""
-    return _switch(ROUTE_AWS_FIRST_ENV, False)
+    Default off: the tech lead chose the model-first order (the same model on its vendor API before the next model).
+    AA-1042 (S268): the admin sets it (shared.llm_route_settings.order_mode, CIS 370, read by route_settings with a
+    20 s cache); LLM_ROUTE_AWS_FIRST=on is only the bootstrap default while that row cannot be read."""
+    from . import route_settings
+    return route_settings.order_mode_sync() == route_settings.AWS_FIRST
 
 
 def legacy_aliases_enabled() -> bool:

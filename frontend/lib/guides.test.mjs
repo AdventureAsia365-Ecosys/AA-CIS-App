@@ -36,11 +36,12 @@ const GUIDES = [
     page: "app/admin/ai-gateway/AiGateway.tsx",
     messages: ["app/admin/ai-gateway/messages.ts", "app/admin/jobs/messages.ts",
       "app/admin/ai-gateway/models.messages.ts", "app/admin/ai-gateway/budgets.messages.ts",
-      "app/admin/ai-gateway/calls.messages.ts", "app/admin/ai-gateway/experiments.messages.ts"],
+      "app/admin/ai-gateway/calls.messages.ts", "app/admin/ai-gateway/experiments.messages.ts",
+      "app/admin/ai-gateway/routeControl.messages.ts"],
     sources: ["app/admin/ai-gateway/ProvidersTab.tsx", "app/admin/ai-gateway/TraceDrawer.tsx",
       "app/admin/ai-gateway/CallsTab.tsx",
       "app/admin/ai-gateway/RoutingTab.tsx", "app/admin/ai-gateway/ModelsTab.tsx", "app/admin/ai-gateway/BudgetsTab.tsx",
-      "app/admin/jobs/JobDrawer.tsx"],
+      "app/admin/ai-gateway/RouteControlTab.tsx", "app/admin/jobs/JobDrawer.tsx"],
     vi: { module: "app/admin/ai-gateway/guide.vi.ts", exportName: "AI_GATEWAY_GUIDE_VI" } },
 ];
 

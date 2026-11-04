@@ -123,6 +123,18 @@
     "capability": "spend.read",
     "module": "api.routers.admin_ai_gateway"
   },
+  "GET /admin/ai-gateway/route-control": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_llm_route_control"
+  },
+  "GET /admin/ai-gateway/route-control/versions": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_llm_route_control"
+  },
+  "GET /admin/ai-gateway/route-control/versions/{version}": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_llm_route_control"
+  },
   "GET /admin/ai-gateway/route-policy": {
     "capability": "spend.read",
     "module": "api.routers.admin_llm_route"
@@ -1014,6 +1026,22 @@
   "POST /admin/ai-gateway/credit/{connection_key}/entries": {
     "capability": "spend.write",
     "module": "api.routers.admin_ai_gateway"
+  },
+  "POST /admin/ai-gateway/route-control/presets/{preset}": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_llm_route_control"
+  },
+  "POST /admin/ai-gateway/route-control/preview": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_llm_route_control"
+  },
+  "POST /admin/ai-gateway/route-control/save": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_llm_route_control"
+  },
+  "POST /admin/ai-gateway/route-control/versions/{version}/revert": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_llm_route_control"
   },
   "POST /admin/ai-gateway/route-trace/test": {
     "capability": "ai.admin",

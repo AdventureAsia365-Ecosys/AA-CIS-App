@@ -25,7 +25,7 @@ import structlog
 
 from shared.secrets import get_database_url
 
-from . import data_scope, route_evidence
+from . import data_scope, route_evidence, route_versions
 
 logger = structlog.get_logger()
 
@@ -362,6 +362,14 @@ async def get_stage_config(stage: str) -> StageConfig:
         return SAFE_DEFAULTS.get(stage, _GENERIC_FALLBACK)
 
 
+def _watch_route_version() -> None:
+    try:
+        from . import route_settings
+        route_settings.watch_version()
+    except Exception as e:  # noqa: BLE001 — the watch never fails a stage read
+        logger.warning("llm_route_version_watch_failed", error=str(e)[:200])
+
+
 def get_stage_config_sync(stage: str) -> StageConfig:
     """Sync wrapper for the many call sites that are plain `def`, not `async def`. Cache-hit
     path never touches asyncio at all — the common case (20s TTL).
@@ -378,7 +386,11 @@ def get_stage_config_sync(stage: str) -> StageConfig:
     raise "cannot be called from a running event loop" there. Detected via
     `asyncio.get_running_loop()` and handled by running the fetch in a throwaway worker thread
     (its own fresh loop) instead of either crashing or silently degrading to SAFE_DEFAULTS on
-    every single call from that one call site."""
+    every single call from that one call site.
+
+    AA-1042 (S268): it first asks ``route_settings.watch_version()`` (20 s cache, a clock read on a hit), which drops
+    this cache and the deployment cache when another process saved a new route config version."""
+    _watch_route_version()
     cached = _cache.get(stage)
     if cached and time.monotonic() - cached[1] < _CACHE_TTL_SECONDS:
         return cached[0]
@@ -449,6 +461,7 @@ async def set_stage_config(
     conn = await asyncpg.connect(get_database_url(), ssl="require")
     try:
         async with conn.transaction():
+            version_state = await route_versions.begin_safe(conn)    # AA-1042: every route change is a version
             before = await conn.fetchrow(
                 "SELECT model_id, account_route FROM shared.llm_role_config WHERE stage = $1",
                 stage,
@@ -476,6 +489,8 @@ async def set_stage_config(
                 await route_evidence.record_break_glass(
                     conn, stage=stage, actor=audit_actor, evidence=evidence,
                     change={"model_id": model_id, "before": dict(before) if before else None})
+            await route_versions.record_safe(conn, version_state, actor=audit_actor or updated_by,
+                                             note=f"Routing tab: primary model of {stage}")
         out = dict(row)
         out["fallback_model_ids"] = list(out["fallback_model_ids"] or [])
         return out
@@ -498,6 +513,7 @@ async def set_stage_route(
     conn = await asyncpg.connect(get_database_url(), ssl="require")
     try:
         async with conn.transaction():
+            version_state = await route_versions.begin_safe(conn)    # AA-1042: every route change is a version
             before = await conn.fetchrow(
                 f"SELECT model_id, {_ROUTE_COLUMNS} FROM shared.llm_role_config WHERE stage = $1",
                 stage,
@@ -529,6 +545,8 @@ async def set_stage_route(
             await route_evidence.record_break_glass(
                 conn, stage=stage, actor=audit_actor, evidence=evidence,
                 change={"fallback_model_ids": list(fallback_model_ids), "before": before_d})
+            await route_versions.record_safe(conn, version_state, actor=audit_actor,
+                                             note=f"Routing tab: fallbacks of {stage}")
         out = dict(row)
         out["fallback_model_ids"] = list(out["fallback_model_ids"] or [])
         return out

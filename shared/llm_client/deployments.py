@@ -24,8 +24,10 @@ from __future__ import annotations
 import json
 import threading
 import time
-from dataclasses import dataclass, field
-from typing import Optional
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field, replace
+from typing import Iterator, Optional
 
 import structlog
 
@@ -131,7 +133,15 @@ def _fresh(now: float) -> bool:
                 or (_failed_at and now - _failed_at < _FAILURE_TTL_SECONDS))
 
 
+def _watch_route_version() -> None:
+    """AA-1042 (S268): a new route config version (an admin provider-order change made in any process) drops this
+    cache within route_settings' 20 s instead of this module's 5 minutes. A clock read on a cache hit."""
+    from . import route_settings
+    route_settings.watch_version()
+
+
 def _ensure_loaded() -> None:
+    _watch_route_version()          # first: on a new version it clears _loaded_at, so the check below reloads
     if _fresh(time.monotonic()):
         return
     with _load_lock:
@@ -168,10 +178,30 @@ def _load(now: float) -> None:
         logger.warning("llm_deployment_registry_read_failed", error=str(e)[:300])
 
 
+# AA-1042 (S268): the admin preview of a proposed provider order (model key -> {connection key: priority}). Set for one
+# request with priority_override(); a concurrent gateway call (another context) never sees it.
+_priority_override: ContextVar[Optional[dict]] = ContextVar("llm_deployment_priority_override", default=None)
+
+
+@contextmanager
+def priority_override(priorities: Optional[dict]) -> Iterator[None]:
+    """For the admin preview: inside the block ``deployments_for_sync`` orders a model's rows by ``priorities[model]``
+    (a connection it does not name keeps its own priority). This context only."""
+    token = _priority_override.set(priorities or None)
+    try:
+        yield
+    finally:
+        _priority_override.reset(token)
+
+
 def deployments_for_sync(model_key: str, *, enabled_only: bool = True) -> list[ModelDeployment]:
     """A model's deployments, lowest priority first (connection_key breaks ties)."""
     _ensure_loaded()
     rows = _by_model.get(model_key, [])
+    override = (_priority_override.get() or {}).get(model_key)
+    if override:
+        rows = sorted((replace(d, priority=int(override.get(d.connection_key, d.priority))) for d in rows),
+                      key=lambda d: (d.priority, d.connection_key))
     return [d for d in rows if d.enabled] if enabled_only else list(rows)
 
 

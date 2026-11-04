@@ -112,6 +112,9 @@ const ADMIN_PAGES: PageSpec[] = [
   // is checked by aa663-admin-ia REDIRECTS and aa660-jev-decisions. `ai-gateway-routing-ready` renders only once
   // the stage routes loaded. The page is admin only (viewer refused).
   { id: 'ai-gateway-routing', label: 'AI gateway · Routing', path: '/admin/ai-gateway?tab=routing', readySelector: '[data-testid="ai-gateway-routing-ready"]', viewerRefused: true },
+  // AA-1042: the Route control tab (`route-control` renders once its read settled: the editor, or the not-set-up notice
+  // before CIS 370 is applied).
+  { id: 'ai-gateway-controls', label: 'AI gateway · Route control', path: '/admin/ai-gateway?tab=controls', readySelector: '[data-testid="route-control"]', viewerRefused: true },
   { id: 'ai-gateway-models', label: 'AI gateway · Models & trials', path: '/admin/ai-gateway?tab=models', readySelector: '[data-testid="ai-gateway-models-ready"]', viewerRefused: true },
   { id: 'ai-gateway-budgets', label: 'AI gateway · Budgets', path: '/admin/ai-gateway?tab=budgets', readySelector: '[data-testid="ai-gateway-budgets-ready"]', viewerRefused: true },
   // AA-804 UI part 3: the Calls tab (every logged paid call; `ai-gateway-calls-ready` once the first page answered) and

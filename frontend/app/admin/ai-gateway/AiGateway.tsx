@@ -5,6 +5,7 @@
 //   Providers        one row per paid source (ProvidersTab.tsx): health, spend today / this month, budget, balance;
 //                    its views Connections (connection settings and test call) and Jev credit (the top-up ledger).
 //   Routing          the model route of every stage (RoutingTab.tsx): primary, fallbacks, shadow, LLM availability.
+//   Route control    AA-1042: order mode, presets, chain editor, provider order, preview, versions (RouteControlTab.tsx).
 //   Models & trials  the model catalog (on / off; prices view-only) and the shadow comparisons (ModelsTab.tsx).
 //   Budgets          every spending cap by tier (BudgetsTab.tsx).
 //   Calls            every logged paid call, newest first, across the CIS ledgers and the CRM's (CallsTab.tsx).
@@ -40,6 +41,7 @@ import TraceTab from "./TraceTab";
 import { parseRouteTarget, type RouteTarget } from "@/lib/routeTrace";
 import ModelsTab from "./ModelsTab";
 import ProvidersTab from "./ProvidersTab";
+import RouteControlTab from "./RouteControlTab";
 import RoutingTab from "./RoutingTab";
 import TraceDrawer from "./TraceDrawer";
 
@@ -74,6 +76,7 @@ export default function AiGateway() {
   const tabs = [
     { key: "providers", label: t("tabProviders") },
     { key: "routing", label: t("tabRouting") },
+    { key: "controls", label: t("tabRouteControl") },
     { key: "models", label: t("tabModels") },
     { key: "budgets", label: t("tabBudgets") },
     { key: "calls", label: t("tabCalls") },
@@ -128,6 +131,7 @@ export default function AiGateway() {
         </div>
         {tab === "providers" && <ProvidersTab view={view} onView={setView} />}
         {tab === "routing" && <RoutingTab />}
+        {tab === "controls" && <RouteControlTab />}
         {tab === "models" && <ModelsTab />}
         {tab === "budgets" && <BudgetsTab onOpenConnections={() => { setTab("providers"); setView("connections"); }} />}
         {tab === "calls" && <CallsTab onTrace={openTrace} onRoute={openRouteTab} />}

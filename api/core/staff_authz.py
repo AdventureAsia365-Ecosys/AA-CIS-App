@@ -291,6 +291,14 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/ai-gateway/capacity"): SPEND_READ,               # AA-1025 H2: TPM limits, lines, claim hold
     ("PUT", "/admin/ai-gateway/capacity/{connection_key}/{model_key}"): AI_ADMIN,     # AA-1025 H2: audited
     ("DELETE", "/admin/ai-gateway/capacity/{connection_key}/{model_key}"): AI_ADMIN,  # AA-1025 H2: audited
+    # AA-1042 (S268): the Route control tab (order mode, chains, provider order, presets, versions); writes audited
+    ("GET", "/admin/ai-gateway/route-control"): SPEND_READ,
+    ("POST", "/admin/ai-gateway/route-control/preview"): AI_ADMIN,              # $0, no model call
+    ("POST", "/admin/ai-gateway/route-control/save"): AI_ADMIN,
+    ("POST", "/admin/ai-gateway/route-control/presets/{preset}"): AI_ADMIN,
+    ("GET", "/admin/ai-gateway/route-control/versions"): SPEND_READ,
+    ("GET", "/admin/ai-gateway/route-control/versions/{version}"): SPEND_READ,
+    ("POST", "/admin/ai-gateway/route-control/versions/{version}/revert"): AI_ADMIN,
     # AA-1042 (admin_llm_route) — AI gateway > Trace: route trace reads, the route alert policy, the route test
     ("GET", "/admin/ai-gateway/route-trace/requests"): SPEND_READ,
     ("GET", "/admin/ai-gateway/route-trace/requests/{trace_id}"): SPEND_READ,

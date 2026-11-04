@@ -29,6 +29,15 @@ from shared.llm_client.role_config import StageConfig
 from tests.unit.test_aa1002_s3_deployment_routing import World
 
 
+@pytest.fixture(autouse=True)
+def _no_route_versions(monkeypatch):
+    """AA-1042: the store helpers also write a route config version (shared/llm_client/route_versions.py, CIS 370)
+    through their connection; these fakes script only the route rows, so the version hook is a no-op here (its own
+    tests: tests/unit/test_aa1042_route_versions.py, tests/integration/test_aa1042_route_control_db.py)."""
+    monkeypatch.setattr(rc_mod.route_versions, "begin_safe", AsyncMock(return_value=None))
+    monkeypatch.setattr(rc_mod.route_versions, "record_safe", AsyncMock(return_value=None))
+
+
 def _m(key, vendor="anthropic", family=None, **kw):
     base = dict(model_key=key, label=key, vendor=vendor, family=family, provider="bedrock", api_style="converse",
                 bedrock_profile_ids={"acc3": f"global.{vendor}.{key}"}, callable_via=("llm_client",),

@@ -28,10 +28,11 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
           + "too, and so are TripPlanner's maps (Mapbox), which run on a free tier. This page shows all of them side "
           + "by side." },
         { kind: "paragraph", text: "Every number comes from our own logs and stored balance checks; opening the page "
-          + "calls no provider and costs nothing. The page has six tabs: Providers (health, spend and balance, plus "
-          + "the connection settings and the Jev credit ledger), Routing (which model each stage uses), Models & "
+          + "calls no provider and costs nothing. The page has eight tabs: Providers (health, spend and balance, plus "
+          + "the connection settings and the Jev credit ledger), Routing (which model each stage uses), Route control "
+          + "(the order of models and providers, presets and versions), Models & "
           + "trials (the model catalog and the shadow comparisons), Budgets (every spending cap), Calls (every "
-          + "logged call, one by one) and this Guide. Settings › LLM Models, Settings › Jev Credit and Cost "
+          + "logged call, one by one), Trace (every attempt of one request, the share served by each fallback rung, the route alerts) and this Guide. Settings › LLM Models, Settings › Jev Credit and Cost "
           + "Operations › Budgets moved here; their old links open the right tab. The spend totals by tenant, model "
           + "and market stay on Spend, in its AI & data spend tab." },
       ],
@@ -173,6 +174,63 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
       ],
     },
     {
+      id: "route-control",
+      heading: "Route control: chains, provider order, presets and versions",
+      blocks: [
+        { kind: "paragraph", text: "Route control is where every routing setting is changed without a deploy. A "
+          + "stage's chain is its list of models: the first one (the primary) serves the stage, and the next ones take "
+          + "over in order when it fails, is refused or reaches its spending cap. One request makes at most six "
+          + "attempts in all." },
+        { kind: "paragraph", text: "Many models can be reached in more than one way: Claude on AWS (the LLM account) "
+          + "or on the Anthropic API, GPT on AWS or on the OpenAI API. The provider order of a model says which way is "
+          + "tried first. The order mode says how the gateway walks a chain: same model first (every provider of a "
+          + "model, then the next model; the default) or AWS first (every AWS model of the chain, then the vendor "
+          + "APIs)." },
+        { kind: "flow", steps: ["Change a chain, a provider order or the order mode", "Preview (checked by the "
+          + "server, free)", "Review and save (a new version)", "The gateway uses it within about 20 seconds"] },
+        { kind: "terms", uiLabels: true, items: [
+          { term: "Serves first", text: "The model and provider that would be called first for the stage right now, "
+            + "for the change you are making. It reads the live state (switched off, refused or over its cap means "
+            + "skipped) and calls no model." },
+          { term: "No live model", text: "No model of the chain would be called now. A save that leaves a stage like "
+            + "this is refused; a stage that was already like this only shows a warning." },
+          { term: "In force", text: "The version the gateway uses now." },
+          { term: "Outside the admin", text: "A change made without this page (for example a database migration), "
+            + "recorded as its own version before the next change from the admin." },
+        ] },
+        { kind: "subheading", text: "Rules the server checks on every save" },
+        { kind: "list", items: [
+          "A judge never uses a model of the writers' family (it would mark its own work).",
+          "The two sides of a check pair (place cards, place duplicates) use models of different makers.",
+          "A chain makes at most six attempts per request, counting every provider of every model.",
+          "Every stage keeps at least one model that would be called now.",
+          "A stage that may not leave AWS cannot get a model reached only through a vendor API, and such a model "
+            + "stays at the end of a chain (or right behind the same model on AWS).",
+        ] },
+        { kind: "paragraph", text: "A rule that was already broken before your change is shown as a warning, so it "
+          + "never blocks an unrelated change. A writer or judge stage that gets a new chain, or that a provider "
+          + "order, preset or order mode change moves to another model or provider, needs the eval run that backs "
+          + "it, or a break-glass reason (which also alerts the admins), as on the Routing tab." },
+        { kind: "control", label: "Prefer Anthropic API for Claude (sponsored)", does: "Puts the Anthropic API "
+          + "first for every Claude model and sets the order mode to same model first. Chains do not change.",
+          cost: "Free to apply; Claude calls then bill on the Anthropic API key while its connection is on.",
+          when: "The Anthropic API is sponsored or cheaper than AWS." },
+        { kind: "control", label: "Prefer AWS", does: "Puts the AWS providers first for every model. The order mode "
+          + "and the chains do not change.", cost: "Free to apply.",
+          when: "The vendor APIs should only be the last resort again." },
+        { kind: "control", label: "Review and save", does: "Shows every change, the rule errors and warnings, then "
+          + "saves them as one new version with your note.", cost: "Free; the next calls use the new routes.",
+          avoid: "The preview lists an error: fix it first." },
+        { kind: "control", label: "Revert", does: "Restores the chains, provider order and order mode of an earlier "
+          + "version as a new version (the history keeps every step).", cost: "Free.",
+          when: "A change made things worse." },
+        { kind: "callout", tone: "note", title: "What a version holds",
+          text: "The order mode, every stage's chain and every model's provider order. The shadow model, the stage "
+            + "switch, the data scopes and the spending caps keep their own controls and are not changed by a revert. "
+            + "Every model call records the version that was in force." },
+      ],
+    },
+    {
       id: "models",
       heading: "Models & trials",
       blocks: [
@@ -282,6 +340,9 @@ export const AI_GATEWAY_GUIDE: GuideContent = {
     { term: "Daily cap", text: "The most a provider may cost in one UTC day across the whole platform." },
     { term: "Trace", text: "All the logged paid calls of one job, in time order." },
     { term: "Fallback", text: "The next model a stage tries when its primary fails." },
+    { term: "Chain", text: "The ordered list of models a stage tries: the primary, then its fallbacks." },
+    { term: "Provider order", text: "Which provider of the same model is tried first (AWS or the vendor API)." },
+    { term: "Route version", text: "One saved state of every chain, provider order and the order mode." },
     { term: "Shadow", text: "A second model that answers the same call only to be compared; its answer is never used." },
   ],
 };

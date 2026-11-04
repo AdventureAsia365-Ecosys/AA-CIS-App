@@ -66,8 +66,11 @@ REQUIRED_CIS_SCHEMA = 322
 # Keys this code needs above the 336 gap, required one by one (missing -> schema_behind + missing_schema_versions):
 # 362-364 (AA-1035 R2 — api/core/tenant_scope.py and the Tenants directory read shared.staff_tenant_assignment, the
 # assignment routes write it (364); the directory writes the R2 roles (362) and the Booking grant 'finance' (363)).
+# 370 (AA-1042 route control — the admin Route control tab reads / writes shared.llm_route_settings and
+# shared.llm_route_config_version, sets llm_model_deployment.priority; the gateway reads the order mode from the
+# settings row; each read falls back without it: the tab answers 503, the gateway uses the env var).
 # Not read by Deploy Dev schema-gate (it reads only the prefix): the migration-only PR is applied before the code PR.
-REQUIRED_CIS_ABOVE_GAP = (362, 363, 364)
+REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370)
 # Versions this code needs that were registered after a higher one (reserved numbers): 297 (AA-920 WM-25) was reserved
 # in S255 and applied after 299. max() is already 299 without it, so the version reported is capped below the lowest
 # listed version that is not registered (297 missing -> 296 -> "schema_behind").
