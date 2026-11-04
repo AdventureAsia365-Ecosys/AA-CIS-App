@@ -63,10 +63,12 @@ const ADMIN_PAGES: PageSpec[] = [
   { id: 'jobs', label: 'Jobs', path: '/admin/jobs', viewerRefused: true },
   // AA-839 — Jobs › Data erasure (admin only; DRY RUN by default, apply needs the env flag + a Cognito sign-in).
   { id: 'data-erasure', label: 'Data erasure', path: '/admin/tenants/data-erasure', readySelector: '[data-testid="data-erasure-ready"]', viewerRefused: true },
-  { id: 'cost-ops', label: 'Cost Operations', path: '/admin/cost-ops', viewerRefused: true },
-  // AA-804 — Platform › AI & spend › AI providers (admin only; backend spend.read). The tiles and three provider tables
-  // render once the providers answer; `ai-gateway-ready` marks that.
-  { id: 'ai-gateway', label: 'AI providers', path: '/admin/ai-gateway', readySelector: '[data-testid="ai-gateway-ready"]', viewerRefused: true },
+  // AA-1039 R6 slice 3 — AI & spend › Spend (was Cost Operations at /admin/cost-ops and Cost per app at
+  // /admin/platform/cost; both 307s, aa1039-admin-ia-redirects.spec.ts).
+  { id: 'spend', label: 'Spend', path: '/admin/spend', viewerRefused: true },
+  // AA-804 — AI & spend › AI gateway (was "AI providers"; admin only; backend spend.read). The tiles and three provider
+  // tables render once the providers answer; `ai-gateway-ready` marks that.
+  { id: 'ai-gateway', label: 'AI gateway', path: '/admin/ai-gateway', readySelector: '[data-testid="ai-gateway-ready"]', viewerRefused: true },
   { id: 'master-content', label: 'Master Content', path: '/admin/master-content' },
   { id: 'overview', label: 'Overview', path: '/admin/overview', viewerRefused: true },
   // AA-883 — Platform › People & access › Staff (backend live on Dev since CIS main c2f9e919).
@@ -76,7 +78,12 @@ const ADMIN_PAGES: PageSpec[] = [
   // Apps and Cost pages are cards / a custom table, so their ready marker renders only once data loaded.
   { id: 'platform-apps', label: 'Apps', path: '/admin/platform/apps', readySelector: '[data-testid="platform-apps-ready"]', viewerRefused: true },
   { id: 'platform-audit', label: 'Audit log', path: '/admin/platform/audit', viewerRefused: true },
-  { id: 'platform-cost', label: 'Cost per app', path: '/admin/platform/cost', readySelector: '[data-testid="platform-cost-ready"]', viewerRefused: true },
+  // AA-1039 R6 slice 3: Cost per app is the By app tab of Spend (was /admin/platform/cost).
+  { id: 'spend-by-app', label: 'Spend · By app', path: '/admin/spend?tab=apps', readySelector: '[data-testid="platform-cost-ready"]', viewerRefused: true },
+  // AA-1039 R6 slice 3 — Writing Lab: one stage end to end (eval gate tab; `writing-lab-ready` once the stage read
+  // answered) and the Writing memory tools (was /admin/writing-memory). Admin only.
+  { id: 'lab-stage', label: 'Writing Lab · A1 rewrite', path: '/admin/lab/a1-s1', readySelector: '[data-testid="writing-lab-ready"]', viewerRefused: true },
+  { id: 'lab-writing-memory', label: 'Writing memory', path: '/admin/lab/writing-memory', viewerRefused: true },
   // AA-913 — Platform › People & access › Alert recipients (admin only; changes need a Cognito sign-in).
   { id: 'platform-alerts', label: 'Alert recipients', path: '/admin/platform/alerts', readySelector: '[data-testid="alert-recipients-ready"]', viewerRefused: true },
   // AA-941 — Tenants › CRM agencies (AA-1039: was /admin/platform/agencies): the partner CRM's L1 console (admin only;
@@ -104,17 +111,17 @@ const ADMIN_PAGES: PageSpec[] = [
   // /admin/settings is open to every staff role, so the old `?tab=models` link cannot stand here. That redirect
   // is checked by aa663-admin-ia REDIRECTS and aa660-jev-decisions. `ai-gateway-routing-ready` renders only once
   // the stage routes loaded. The page is admin only (viewer refused).
-  { id: 'ai-gateway-routing', label: 'AI providers · Routing', path: '/admin/ai-gateway?tab=routing', readySelector: '[data-testid="ai-gateway-routing-ready"]', viewerRefused: true },
-  { id: 'ai-gateway-models', label: 'AI providers · Models & trials', path: '/admin/ai-gateway?tab=models', readySelector: '[data-testid="ai-gateway-models-ready"]', viewerRefused: true },
-  { id: 'ai-gateway-budgets', label: 'AI providers · Budgets', path: '/admin/ai-gateway?tab=budgets', readySelector: '[data-testid="ai-gateway-budgets-ready"]', viewerRefused: true },
+  { id: 'ai-gateway-routing', label: 'AI gateway · Routing', path: '/admin/ai-gateway?tab=routing', readySelector: '[data-testid="ai-gateway-routing-ready"]', viewerRefused: true },
+  { id: 'ai-gateway-models', label: 'AI gateway · Models & trials', path: '/admin/ai-gateway?tab=models', readySelector: '[data-testid="ai-gateway-models-ready"]', viewerRefused: true },
+  { id: 'ai-gateway-budgets', label: 'AI gateway · Budgets', path: '/admin/ai-gateway?tab=budgets', readySelector: '[data-testid="ai-gateway-budgets-ready"]', viewerRefused: true },
   // AA-804 UI part 3: the Calls tab (every logged paid call; `ai-gateway-calls-ready` once the first page answered) and
   // Cost Operations' merged "AI & data spend" tab with TripPlanner's stage caps (AA-1015; `cost-tp-caps` is the section).
   // S262 C4: the Experiments section of Models & trials (prompt versions + evaluation runs, read-only) and the
   // "Re-queue refused jobs" card of the Providers tab (no click here: the dry run is a write route).
-  { id: 'ai-gateway-experiments', label: 'AI providers · Experiments', path: '/admin/ai-gateway?tab=models', readySelector: '[data-testid="ai-gateway-experiments"]', viewerRefused: true },
-  { id: 'ai-gateway-requeue', label: 'AI providers · Re-queue refused jobs', path: '/admin/ai-gateway?tab=providers', readySelector: '[data-testid="ai-gateway-requeue"]', viewerRefused: true },
-  { id: 'ai-gateway-calls', label: 'AI providers · Calls', path: '/admin/ai-gateway?tab=calls', readySelector: '[data-testid="ai-gateway-calls-ready"]', viewerRefused: true },
-  { id: 'cost-ops-spend', label: 'Cost Operations · AI & data spend', path: '/admin/cost-ops?tab=spend', readySelector: '[data-testid="cost-tp-caps"]', viewerRefused: true },
+  { id: 'ai-gateway-experiments', label: 'AI gateway · Experiments', path: '/admin/ai-gateway?tab=models', readySelector: '[data-testid="ai-gateway-experiments"]', viewerRefused: true },
+  { id: 'ai-gateway-requeue', label: 'AI gateway · Re-queue refused jobs', path: '/admin/ai-gateway?tab=providers', readySelector: '[data-testid="ai-gateway-requeue"]', viewerRefused: true },
+  { id: 'ai-gateway-calls', label: 'AI gateway · Calls', path: '/admin/ai-gateway?tab=calls', readySelector: '[data-testid="ai-gateway-calls-ready"]', viewerRefused: true },
+  { id: 'spend-ai-data', label: 'Spend · AI & data spend', path: '/admin/spend?tab=spend', readySelector: '[data-testid="cost-tp-caps"]', viewerRefused: true },
   { id: 'tenant-qa-trace', label: 'Content Trace', path: '/admin/tenant-qa/trace', readySelector: '[data-testid="admin-content-ready"]', viewerRefused: true },
   { id: 'tenants', label: 'Tenants', path: '/admin/tenants', viewerRefused: true },
   { id: 'upload', label: 'Upload', path: '/admin/upload', viewerRefused: true },

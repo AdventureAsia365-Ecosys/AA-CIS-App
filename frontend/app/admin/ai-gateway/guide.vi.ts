@@ -5,7 +5,7 @@
 import type { GuideContent } from "../../_kit/guideContent";
 
 export const AI_GATEWAY_GUIDE_VI: GuideContent = {
-  title: "Cách dùng trang Nhà cung cấp AI",
+  title: "Cách dùng trang Cổng AI",
   intro: "Một trang cho mọi nguồn AI và dữ liệu trả phí. Đọc trang để trả lời bốn câu: từng nguồn còn trả lời không, "
     + "đã tốn bao nhiêu, mỗi bước dùng model nào, có gì sắp chạm giới hạn không.",
   sections: [
@@ -22,8 +22,8 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
           + "nhà cung cấp nào và không tốn tiền. Trang có sáu tab: Nhà cung cấp (sức khoẻ, chi tiêu, số dư, kèm cài "
           + "đặt kết nối và sổ nạp Jev), Điều hướng (mỗi bước dùng model nào), Model và thử nghiệm (danh mục model và "
           + "so sánh chạy bóng), Ngân sách (mọi mức trần), Lần gọi (từng lần gọi đã ghi) và Hướng dẫn này. Cài đặt › "
-          + "LLM Models, Cài đặt › Số dư Jev và Cost Operations › Ngân sách đã dời về đây; link cũ mở đúng tab mới. "
-          + "Tổng chi theo tenant, model và thị trường vẫn ở Cost Operations, tab Chi phí AI và dữ liệu." },
+          + "LLM Models, Cài đặt › Số dư Jev và Spend › Ngân sách đã dời về đây; link cũ mở đúng tab mới. "
+          + "Tổng chi theo tenant, model và thị trường vẫn ở Spend, tab Chi phí AI và dữ liệu." },
       ],
     },
     {
@@ -253,13 +253,13 @@ export const AI_GATEWAY_GUIDE_VI: GuideContent = {
           text: "Lần gọi ghi trước 31/10/2026 không có kết quả hay thời gian trả lời, và lần bị từ chối trước ngày đó "
             + "không được ghi. Từ đó mọi lần thử đều có dòng, lần bị từ chối với chi phí 0." },
         { kind: "list", items: [
-          "Lần gọi model của TripPlanner hiện từ sổ ghi chung; trần theo stage của nó ở Cost Operations › Chi phí AI "
+          "Lần gọi model của TripPlanner hiện từ sổ ghi chung; trần theo stage của nó ở Spend › Chi phí AI "
             + "và dữ liệu và bảng Ứng dụng.",
           "Mapbox không ghi sổ: dòng của nó không có chi tiêu hay thời gian trả lời; xem mức dùng trên Mapbox console.",
           "Các dòng của CRM đối tác cần đăng nhập nhân viên của bạn. Chúng chỉ đọc tổng theo ngày của CRM (trọn ngày "
             + "UTC, không có thời gian trả lời); từng lần gọi của CRM xem ở tab Lần gọi.",
           "Các lần chạy thử model mới (thử nhanh, kiểm model chấm, so sánh) chưa có trên tab Model và thử nghiệm.",
-          "Chi tiêu là số mình ghi theo giá của mình. Hoá đơn AWS có thể lệch chút; Cost Operations hiện hoá đơn.",
+          "Chi tiêu là số mình ghi theo giá của mình. Hoá đơn AWS có thể lệch chút; Spend hiện hoá đơn.",
         ] },
       ],
     },

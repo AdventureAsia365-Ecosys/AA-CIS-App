@@ -57,8 +57,10 @@ export const PAGE_RULES: PageRule[] = [
   // AA-1039 (S266): also the Tenants group pages /admin/tenants/agencies (was /admin/platform/agencies) and
   // /admin/tenants/data-erasure (was /admin/data-erasure).
   { prefix: "/admin/tenants", roles: ["admin"] },
-  { prefix: "/admin/ai-gateway", roles: ["admin"] },       // AA-804 — AI providers (health, spend, job trace)
-  { prefix: "/admin/cost-ops", roles: ["admin"] },         // AA-505; AA-665 (was /admin/llm-usage, redirected)
+  { prefix: "/admin/ai-gateway", roles: ["admin"] },       // AA-804 — AI gateway (health, spend, job trace)
+  // AA-1039 R6 slice 3 — Spend (was Cost Operations at /admin/cost-ops, AA-505 / AA-665, and Cost per app at
+  // /admin/platform/cost, AA-884; both 307 here from next.config.ts, which runs before proxy.ts).
+  { prefix: "/admin/spend", roles: ["admin"] },
   { prefix: "/admin/jobs", roles: ["admin"] },              // AA-650
   { prefix: "/admin/decisions", roles: ["admin"] },         // AA-660
   { prefix: "/admin/photos", roles: ["admin"] },            // AA-708
@@ -69,7 +71,9 @@ export const PAGE_RULES: PageRule[] = [
   // /admin/tenant-activity, AA-551), review-log (was /admin/platform-stats, AA-560) and slate (was atom-curation
   // section 05). The old URLs are 307s in next.config.ts (lib/adminIa.ts), which run before proxy.ts.
   { prefix: "/admin/tenant-qa", roles: ["admin"] },
-  { prefix: "/admin/writing-memory", roles: ["admin"] },    // AA-917 — signals and candidate rules (tenant text)
+  // AA-1039 R6 slice 3 — Writing Lab: the stage pages (/admin/lab/<stage>) and the Writing memory tools (AA-917,
+  // signals and candidate rules hold tenant text; was /admin/writing-memory, a 307 now).
+  { prefix: "/admin/lab", roles: ["admin"] },
   { prefix: "/admin/api-docs", roles: ["admin"] },          // AA-577 follow-up — OpenAPI reader
   { prefix: "/admin/data-model", roles: ["admin"] },        // AA-894 — live ERD from the nightly schema dump
   { prefix: "/admin/docs", roles: ["admin"] },              // AA-898 — docs catalog reader (synced by root CI)

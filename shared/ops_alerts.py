@@ -44,7 +44,7 @@ TEMPLATE_PLACE_DEDUPE_HELD = "place_dedupe_held"   # AA-847: the duplicate merge
 TEMPLATE_JEV_CREDIT_LOW = "jev_credit_low"                 # AA-845: estimated Jev credit below the threshold
 TEMPLATE_JEV_CREDIT_EXHAUSTED = "jev_credit_exhausted"     # AA-845: Jev returned 402 billing_error
 TEMPLATE_WRITING_MEMORY_ROLLBACK = "writing_memory_rollback"  # AA-920: a release failed its post-activation check
-WRITING_MEMORY_PAGE_PATH = "/admin/writing-memory"
+WRITING_MEMORY_PAGE_PATH = "/admin/lab/writing-memory"   # AA-1039 R6 slice 3 (was /admin/writing-memory)
 JEV_TEMPLATES = (TEMPLATE_JEV_CREDIT_LOW, TEMPLATE_JEV_CREDIT_EXHAUSTED)
 # AA-804 UI 2: the Jev credit ledger moved from Settings to AI providers › Providers › Jev credit. Mails already sent
 # keep working: the old /admin/settings?tab=jev-credit link is sent on to this page in the browser.
@@ -451,7 +451,7 @@ def render_llm_circuit_open(payload: dict, *, to: Recipients, base_url: Optional
 
 TEMPLATE_DFS_BALANCE_LOW = "dfs_balance_low"
 TEMPLATE_LLM_COST_MISMATCH = "llm_cost_mismatch"
-DFS_SPEND_PAGE_PATH = "/admin/cost-ops?tab=spend&view=dfs"
+DFS_SPEND_PAGE_PATH = "/admin/spend?tab=spend&view=dfs"   # AA-1039 R6 slice 3 (was /admin/cost-ops)
 LLM_CONNECTIONS_PAGE_PATH = "/admin/ai-gateway?tab=providers&view=connections"
 MISMATCH_ROWS_IN_MAIL = 10
 

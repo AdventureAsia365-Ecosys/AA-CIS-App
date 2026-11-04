@@ -47,10 +47,10 @@ export const NAV_MESSAGES = defineMessages(
     "Slate": "Slate",
     "Compliance": "Compliance",
     // AI & spend
-    "AI providers": "AI providers",
-    "Cost Operations": "Cost Operations",
-    "Cost per app": "Cost per app",
+    "AI gateway": "AI gateway",
+    "Spend": "Spend",
     // Writing Lab
+    "Stages": "Stages",
     "Writing memory": "Writing memory",
     "Jev Decisions": "Jev Decisions",
     // Platform
@@ -99,9 +99,9 @@ export const NAV_MESSAGES = defineMessages(
     "Review log": "Nhật ký duyệt",
     "Slate": "Slate",
     "Compliance": "Tuân thủ",
-    "AI providers": "Nhà cung cấp AI",
-    "Cost Operations": "Vận hành chi phí",
-    "Cost per app": "Chi phí theo ứng dụng",
+    "AI gateway": "Cổng AI",
+    "Spend": "Chi tiêu",
+    "Stages": "Các bước",
     "Writing memory": "Bộ nhớ viết",
     "Jev Decisions": "Quyết định Jev",
     "Staff & access": "Nhân sự & quyền",

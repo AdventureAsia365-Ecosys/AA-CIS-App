@@ -1,8 +1,8 @@
-// app/admin/platform/cost/messages.ts — AA-994: Platform › AI & spend › Cost per app in English and Vietnamese. The
+// app/admin/spend/byApp.messages.ts (was app/admin/platform/cost/messages.ts) — AA-994: AI & spend › Spend › By app in English and Vietnamese. The
 // shared cost column words are lib/costWording.messages.ts (COST_WORDING); row labels and hints, data-source notes
 // and error reasons come from the API and stay as sent.
 
-import { defineMessages } from "../../../_kit/core/i18n";
+import { defineMessages } from "../../_kit/core/i18n";
 
 export const COST = defineMessages(
   {
@@ -11,10 +11,9 @@ export const COST = defineMessages(
     kindShared: "Shared",
     kindOther: "Other tag",
     kindUntagged: "No App tag",
-    title: "Cost per app",
     description:
       "What each app cost in one UTC month: the AWS bill of the main account split by each resource's App tag, plus each app's AI spend outside that bill. The same numbers as the Overview card. Provider-level detail is on",
-    costOps: "Cost Operations",
+    costOps: "AI & data spend",
     month: "Month",
     monthAria: "Month (UTC)",
     refreshTitle:
@@ -64,7 +63,7 @@ export const COST = defineMessages(
     satLine: (aws: string, estimate: string) => `AWS ${aws} · estimate ${estimate}`,
     notFetched: "not fetched",
     ceFrom: (when: string) => `Cost Explorer data from ${when}.`,
-    perProvider: "Per provider and stage on Cost Operations",
+    perProvider: "Per provider and stage on the AI & data spend tab",
     otherAiAccounts: "Other AI accounts",
     dataSources: "Data sources",
   },
@@ -74,10 +73,9 @@ export const COST = defineMessages(
     kindShared: "Dùng chung",
     kindOther: "Thẻ khác",
     kindUntagged: "Không có thẻ App",
-    title: "Chi phí theo ứng dụng",
     description:
       "Chi phí của từng ứng dụng trong một tháng UTC: hoá đơn AWS của tài khoản chính chia theo thẻ App của từng tài nguyên, cộng chi phí AI của từng ứng dụng nằm ngoài hoá đơn đó. Cùng số liệu với thẻ ở trang Tổng quan. Chi tiết theo nhà cung cấp nằm ở",
-    costOps: "Vận hành chi phí",
+    costOps: "Chi phí AI và dữ liệu",
     month: "Tháng",
     monthAria: "Tháng (UTC)",
     refreshTitle:
@@ -128,7 +126,7 @@ export const COST = defineMessages(
     satLine: (aws: string, estimate: string) => `AWS ${aws} · ước tính ${estimate}`,
     notFetched: "chưa lấy",
     ceFrom: (when: string) => `Dữ liệu Cost Explorer lúc ${when}.`,
-    perProvider: "Theo nhà cung cấp và stage ở Vận hành chi phí",
+    perProvider: "Theo nhà cung cấp và stage ở tab Chi phí AI và dữ liệu",
     otherAiAccounts: "Các tài khoản AI khác",
     dataSources: "Nguồn dữ liệu",
   },

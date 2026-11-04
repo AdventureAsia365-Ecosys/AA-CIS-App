@@ -11,7 +11,7 @@
 //   (c) at 390 px, with real scrollbars (headless hides them by default, lesson S239), the page has no
 //       horizontal overflow; a table wrapper of the new cards may scroll sideways only inside its own box and
 //       then shows the kit ScrollX hint (S243: every column stays, e.g. Booking "Cancelled");
-//   (d) /admin/platform/cost (also admin-only): the four KPI values on screen add up,
+//   (d) /admin/spend?tab=apps (Spend › By app, was /admin/platform/cost; admin-only): the four KPI values on screen add up,
 //       AWS bill + AI estimate − AI already on the AWS bill = Total, to the cent (S243 review);
 //   (e) every number tile ([data-kpi]) and every number column ([data-num-col]) on the page, business view and CIS
 //       sections alike, names its source; at least one per card; every source text is plain words (no table or
@@ -136,7 +136,7 @@ test.describe('AA-858 — ops overview', { tag: '@staff' }, () => {
     await installBypassRoute(context);
     const page = await context.newPage();
     try {
-      await page.goto('/admin/platform/cost', { waitUntil: 'domcontentloaded' });
+      await page.goto('/admin/spend?tab=apps', { waitUntil: 'domcontentloaded' });
       await expect(page.getByTestId('platform-cost-kpis')).toBeVisible({ timeout: 30000 });
       const cents = async (id: string) => {
         const t = (await page.getByTestId(`${id}-value`).innerText()).trim();

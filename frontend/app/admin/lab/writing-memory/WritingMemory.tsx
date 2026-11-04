@@ -38,7 +38,7 @@ import { PageFrame,
   Tabs, apiGet, mono, useFormat, useLocalized, useT, useToast, type ColumnDef,
   Input, Select, Textarea,
   LinkButton,
-} from "../../_kit";
+} from "../../../_kit";
 import {
   L0_WRITERS, LINT_CHECKS, WM_API, factTone, lintCheck, r0Of, ruleTone, usd,
   type Cluster, type ClustersResponse, type Example, type FactStatus, type R0Result, type Rule, type RuleDetail,

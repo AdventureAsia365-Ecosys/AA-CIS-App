@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-const DIR = fileURLToPath(new URL("../app/admin/writing-memory", import.meta.url));
+const DIR = fileURLToPath(new URL("../app/admin/lab/writing-memory", import.meta.url));
 const FILES = readdirSync(DIR).filter((f) => f.endsWith(".tsx"));
 
 /** Source without comments, so a comment that quotes a style never satisfies or trips a check. */

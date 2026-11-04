@@ -1214,7 +1214,7 @@ function MasterContentPageInner() {
           )}
 
           {/* AA-718: stats are now filter-aware (match the table's current filter) + the cost is a
-              labelled 30-day window reconciled with Cost Operations, with the all-time figure as
+              labelled 30-day window reconciled with Spend, with the all-time figure as
               context. */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 160px), 1fr))", gap: 12 }}>
             <KpiTile icon={<BarChart2 size={16} />}    label={t("toursFiltered")}

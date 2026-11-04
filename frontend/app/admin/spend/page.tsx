@@ -1,16 +1,20 @@
 "use client";
-// app/admin/cost-ops/page.tsx — AA-665 Cost Operations (was AA-622 "External Spend" at /admin/llm-usage, which now
-// redirects here; ?tab= carries over). Real LLM + DataForSEO cost, viewable by TENANT and by ACCOUNT (both are
-// first-class filter/group dimensions), model, stage; the AA-505/AA-617 LLM tree (account/fallback/tokens) + AA-618 DFS
-// log. Tabs: Overview (+ AA-665 C3 month-end forecast vs budget, ForecastPanel), LLM, DataForSEO (+ C2 runs by job,
-// DfsRunsPanel), AWS bill (the AA-623 Cost Explorer reconciliation), Jev (JevPanel, the Jev Decisions endpoints),
-// Deep link: /admin/cost-ops?tab=<key>. AA-804 UI part 2: Budgets moved to AI providers › Budgets; the old
+// app/admin/spend/page.tsx — AI & spend › Spend (AA-1039 R6 slice 3, root ADR 0019 d13: one Spend page). It was AA-665
+// Cost Operations at /admin/cost-ops (and AA-622 "External Spend" at /admin/llm-usage before that); both old URLs
+// answer 307 here, the query string kept (lib/adminIa.ts ADMIN_ROUTE_MOVES, next.config.ts). The "Cost per app" page
+// (/admin/platform/cost, AA-884) is its By app tab (CostByApp.tsx; 307 to ?tab=apps).
+// Real LLM + DataForSEO cost, viewable by TENANT and by ACCOUNT (both are first-class filter/group dimensions), model,
+// stage; the AA-505/AA-617 LLM tree (account/fallback/tokens) + AA-618 DFS log. Tabs: Overview (+ AA-665 C3 month-end
+// forecast vs budget, ForecastPanel), AI & data spend (views LLM, DataForSEO (+ C2 runs by job, DfsRunsPanel), Jev
+// (JevPanel, the Jev Decisions endpoints)), AWS bill (the AA-623 Cost Explorer reconciliation), By app (one UTC month
+// per app, AWS and AI together; its own month picker, so the day window and filters are hidden there).
+// Deep link: /admin/spend?tab=<key>. AA-804 UI part 2: Budgets moved to AI gateway › Budgets; the old
 // `?tab=budgets` link is replaced in the browser by the new page (lib/aiGateway RETIRED_COST_OPS_TABS).
 // AA-804 UI part 3: the LLM, DataForSEO and Jev tabs became the views of one "AI & data spend" tab
 // (`?tab=spend&view=llm|dfs|jev`), which also shows TripPlanner's AI spend caps per stage (AA-1015); the old
 // `?tab=llm|dfs|jev` links are replaced in the browser by the merged tab (exactly one `tab` value).
-// AA-994: text in the UI language (messages.ts, panels.messages.ts); tenant labels, stages, roles, models, endpoints,
-// markets and AWS service names from the API stay as sent.
+// AA-994: text in the UI language (messages.ts, panels.messages.ts, byApp.messages.ts); tenant labels, stages, roles,
+// models, endpoints, markets and AWS service names from the API stay as sent.
 
 import { Suspense, useState, useEffect, useCallback, useMemo, type CSSProperties } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -32,8 +36,9 @@ import {
   LIVE_ACCOUNTS, LLM_ACCOUNT, MAIN_ACCOUNT, RETIRED_ACCOUNT, accountLabel, accountName, isLiveAccount,
 } from "@/lib/awsAccounts";
 import {
-  RETIRED_COST_OPS_TABS, SPEND_TAB, SPEND_VIEWS, parseSpendView, retiredTabTarget, type SpendView,
+  RETIRED_COST_OPS_TABS, SPEND_APPS_TAB, SPEND_TAB, SPEND_VIEWS, parseSpendView, retiredTabTarget, type SpendView,
 } from "@/lib/aiGateway";
+import CostByApp from "./CostByApp";
 import { TripPlannerCapsSection } from "../platform/apps/TpStageCaps";
 import { COST } from "./messages";
 
@@ -534,6 +539,7 @@ function FallbackModal({ tenantId, tenantLabel, rangeQs, rangeLabel, onClose }: 
 
 const TABS = [
   { key: "overview", label: "tabOverview" }, { key: SPEND_TAB, label: "tabSpend" }, { key: "aws", label: "tabAws" },
+  { key: SPEND_APPS_TAB, label: "tabApps" },
 ] as const;
 const VIEW_LABEL: Record<SpendView, "tabLlm" | "tabDfs" | "tabJev"> = { llm: "tabLlm", dfs: "tabDfs", jev: "tabJev" };
 
@@ -586,8 +592,11 @@ function CostOperationsInner() {
     setViewState(v);
     setParam("view", v === "llm" ? null : v);
   };
-  // The Jev view loads its own data (the page's spend fetch, its loading and error states do not apply).
-  const selfLoading = tab === SPEND_TAB && view === "jev";
+  // The Jev view and the By app tab load their own data (the page's spend fetch, its loading and error states, its
+  // day window and its tenant / account filters do not apply).
+  const jevView = tab === SPEND_TAB && view === "jev";
+  const byApp = tab === SPEND_APPS_TAB;
+  const selfLoading = jevView || byApp;
   const tabs = useMemo(() => TABS.map(x => ({ key: x.key, label: t(x.label) })), [t]);
   const [branches, setBranches] = useState<Branch[] | null>(null);
   const [dfs, setDfs] = useState<{ summary: DfsSummary; branches: DfsBranch[] } | null>(null);
@@ -810,7 +819,7 @@ function CostOperationsInner() {
         <PageHeader
           title={t("title")}
           description={t("description")}
-          actions={
+          actions={byApp ? undefined :
             <>
               {DAY_OPTIONS.map(d => (
                 <Button key={d} size="sm" variant={!custom && days === d ? "primary" : "secondary"}
@@ -828,8 +837,8 @@ function CostOperationsInner() {
           }
         />
 
-        {/* Filters — tenant + account, apply to all tabs */}
-        <Section style={{ marginBottom: 16 }} bodyStyle={{ padding: "12px 16px" }}>
+        {/* Filters — tenant + account, apply to every tab but By app (a month view of its own) */}
+        {!byApp && <Section style={{ marginBottom: 16 }} bodyStyle={{ padding: "12px 16px" }}>
           {/* S262 C4 (live finding F1): every part may wrap and shrink, so the account chips never push the page
               sideways on a phone (the row measured 747 px at 390). */}
           <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "center", minWidth: 0 }}>
@@ -854,7 +863,7 @@ function CostOperationsInner() {
               <Button size="sm" variant="ghost" onClick={() => { setTenantFilter(null); setAcctFilter(null); }}>{t("clear")}</Button>
             )}
           </div>
-        </Section>
+        </Section>}
 
         <div style={{ marginBottom: 20 }}>
           <Tabs tabs={tabs} active={tab} onChange={setTab} />
@@ -889,7 +898,10 @@ function CostOperationsInner() {
         )}
 
         {/* AA-665 C1 — Jev spend and credit from the Jev Decisions endpoints; the page's window (max 90 days) applies. */}
-        {selfLoading && <JevPanel days={windowDays} />}
+        {jevView && <JevPanel days={windowDays} />}
+
+        {/* AA-1039 R6 slice 3 — the "Cost per app" page, now this tab (its own month picker). */}
+        {byApp && <CostByApp onOpenSpend={() => setTab(SPEND_TAB)} />}
 
         {!selfLoading && loading && <LoadingScreen message={t("loadingSpend")} />}
         {!selfLoading && !loading && error && (

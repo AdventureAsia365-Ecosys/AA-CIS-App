@@ -2,7 +2,7 @@
 // keeps, the disagreement queue), English and Vietnamese. Writer, soft-stop and action codes stay as the API sends them.
 // The English texts are the page's own words that the Guide quotes (lib/guides.test.mjs reads this file).
 
-import { defineMessages } from "../../_kit/core/i18n";
+import { defineMessages } from "../../../_kit/core/i18n";
 
 export const MX = defineMessages(
   {

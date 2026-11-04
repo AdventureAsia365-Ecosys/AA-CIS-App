@@ -3,7 +3,7 @@
 // language (lib/writingMemory.messages.ts). English outside an I18nProvider.
 
 import { useMemo } from "react";
-import { useLang } from "../../_kit";
+import { useLang } from "../../../_kit";
 import { checkSentence, owner, wmSend, type PostActivationReport, type Scope } from "@/lib/writingMemory";
 import { CHECK_SENTENCE_MESSAGES, OWNER_MESSAGES, SEND_MESSAGES } from "@/lib/writingMemory.messages";
 

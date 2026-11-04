@@ -114,7 +114,7 @@ test("the Calls table has no inner height cap (N2)", () => {
 });
 
 test("the Cost Operations tree keeps the cost on the right of a wrapping row (N1)", () => {
-  const src = read(APP_DIR, "cost-ops/page.tsx");
+  const src = read(APP_DIR, "spend/page.tsx");
   assert.match(src, /const TREE_MID = \{[^}]*minWidth: 0[^}]*flexWrap: "wrap"/s);
   assert.match(src, /const TREE_COST = \{[^}]*flexShrink: 0[^}]*whiteSpace: "nowrap"/s);
   assert.equal([...src.matchAll(/style=\{\{ \.\.\.TREE_COST/g)].length, 2, "group and node cost both use TREE_COST");

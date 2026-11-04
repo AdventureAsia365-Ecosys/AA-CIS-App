@@ -594,7 +594,7 @@ def test_fi01_names_a_provisional_month_and_how_to_refresh(monkeypatch):
     facts["cost_by_app:2026-10"]["aws"]["fetched_at"] = "2026-11-01T02:00:00+00:00"
     out = money.render_fi01(reg, reg.report("FI-01"), date(2026, 10, 1), date(2026, 10, 31), facts, NOW)
     assert out.output["aws_status"] == "provisional"
-    assert "/admin/platform/cost?month=2026-10" in out.markdown
+    assert "/admin/spend?tab=apps&month=2026-10" in out.markdown
 
 
 @pytest.mark.parametrize("rid,fn,heading", [("FI-03", money.render_fi03, "## By app and stage"),

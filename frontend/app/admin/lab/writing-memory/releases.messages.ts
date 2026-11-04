@@ -1,7 +1,7 @@
 // app/admin/writing-memory/releases.messages.ts — AA-994: Writing memory › Releases (writers, the release list, the
 // release drawer, the new-draft modal), English and Vietnamese. Writer, run-kind and content-class codes stay as sent.
 
-import { defineMessages } from "../../_kit/core/i18n";
+import { defineMessages } from "../../../_kit/core/i18n";
 
 /** Status of a release (lib/writingMemory.ts RELEASE_STATUSES) and the reverify flag. */
 export const RELEASE_STATUS = defineMessages(

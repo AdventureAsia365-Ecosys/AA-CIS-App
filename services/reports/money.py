@@ -27,8 +27,9 @@ from services.reports import periods
 from services.reports.generate import GENERATED_BY, Rendered, fmt
 from services.reports.registry import Registry, Report
 
-COST_PAGE = "/admin/cost-ops"
-PLATFORM_COST_PAGE = "/admin/platform/cost"
+# AA-1039 R6 slice 3: Cost Operations and Cost per app are one Spend page (the old URLs answer 307 there).
+COST_PAGE = "/admin/spend"
+PLATFORM_COST_PAGE = "/admin/spend?tab=apps"
 WOW_FLAG_RATIO = 0.30            # K-COST-WOW: flag a change > 30 % ...
 WOW_FLAG_USD = 5.0               # ... and > 5 USD
 LLM_WEEK_FACTOR = 1.3            # K-LLM-COST-WEEK: flag > 1.3 x the 4-week average ...
@@ -477,8 +478,8 @@ def render_fi02(reg: Registry, report: Report, first: date, last: date, facts: d
     md += ["## Needs a look", ""] + ([f"- {i}" for i in attention] or ["- Nothing flagged."]) + [""]
     md += ["## KPIs", ""] + table(KPI_HEADERS, _kpi_rows(reg, kpis, {"K-COST-FCST": "ratio", "K-COST-WOW": "count"}))
     md += [""] + _money_week_md(w, first, last)
-    md += ["## 6. More", "", f"Platform › Cost operations ({COST_PAGE}) has the forecast, the budgets and the "
-           f"DataForSEO runs; Platform › Cost per app ({PLATFORM_COST_PAGE}) refreshes Cost Explorer.", ""]
+    md += ["## 6. More", "", f"AI & spend › Spend ({COST_PAGE}) has the forecast, the budgets and the "
+           f"DataForSEO runs; its By app tab ({PLATFORM_COST_PAGE}) refreshes Cost Explorer.", ""]
     out = _output(report, first, last, generated_at, headline, kpis=kpis, attention=attention, week=w,
                   sources_unreadable={k: failed(v) for k, v in facts.items() if failed(v)})
     return Rendered(headline[:1000], out, "\n".join(md))
@@ -1278,7 +1279,7 @@ def capacity_md(c: dict) -> list[str]:
 
 def _aws_line(status: str, covered_to: Any, fetched_at: Any, month: str) -> str:
     note = AWS_STATUS_NOTE[status]
-    tail = "" if status == "final" else (f" Open Platform › Cost per app ({PLATFORM_COST_PAGE}?month={month}) once to "
+    tail = "" if status == "final" else (f" Open Spend › By app ({PLATFORM_COST_PAGE}&month={month}) once to "
                                          "refresh it (one Cost Explorer request, about 0.01 USD), then generate this "
                                          "report again.")
     return (f"AWS data: **{status}** ({note}; covered to {covered_to or '—'}, fetched "
@@ -1364,7 +1365,7 @@ def render_fi01(reg, report, first, last, facts, generated_at) -> Rendered:
            "## Sources", "", "Stored rows only: the Cost Explorer snapshots, the LLM ledger, the vendor ledgers, "
            "shared.spend_budget and the budget bells (services/reports/money_sources.py). "
            + (f"Not readable this run: {', '.join(unreadable)}. " if unreadable else "")
-           + f"Pages: {PLATFORM_COST_PAGE}?month={key}, {COST_PAGE}.", ""]
+           + f"Pages: {PLATFORM_COST_PAGE}&month={key}, {COST_PAGE}.", ""]
     out = _output(report, first, last, generated_at, headline, draft=True, kpis=kpis, aws_status=status,
                   accounts=ac, by_app=ab, movers=mv, llm=lm, vendors=vd, units=un, budgets=bd,
                   sources_unreadable={k: failed(v) for k, v in facts.items() if failed(v)})

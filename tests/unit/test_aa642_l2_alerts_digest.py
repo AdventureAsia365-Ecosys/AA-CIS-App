@@ -80,7 +80,7 @@ def test_both_templates_render_and_are_known_to_the_job():
          "currency": "USD", "fetched_at": "2026-10-30T05:00:00Z"}, to="ops@example.com", base_url="https://x.test",
         environment="dev")
     assert "DataForSEO balance low" in msg.subject and "4.50" in msg.subject
-    assert "https://x.test/admin/cost-ops?tab=spend&view=dfs" in msg.text
+    assert "https://x.test/admin/spend?tab=spend&view=dfs" in msg.text
     rows = [{"connection_key": "openai-direct", "day": "2026-10-28", "logged_usd": 1.0, "provider_usd": 1.6,
              "diff_usd": -0.6}]
     msg = ops_alerts.render_llm_cost_mismatch(

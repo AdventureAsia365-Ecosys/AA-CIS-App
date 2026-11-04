@@ -114,7 +114,7 @@ export const M = defineMessages(
       + "version that passes publishes to Master Content and leaves this queue; one that fails replaces the current row.",
     whyAll: "Why (all rows)",
     why: "Why",
-    regenRouteNote: "The writer model comes from the s1_generate route (AI providers › Routing), as for every run.",
+    regenRouteNote: "The writer model comes from the s1_generate route (AI gateway › Routing), as for every run.",
     // editor
     revalPassed: "Re-validation passed",
     revalFailed: "Re-validation failed",
@@ -237,7 +237,7 @@ export const M = defineMessages(
       + "Master Content và rời hàng chờ này; phiên bản không đạt sẽ thay dòng hiện tại.",
     whyAll: "Lý do (mọi dòng)",
     why: "Lý do",
-    regenRouteNote: "Model viết lấy từ tuyến s1_generate (AI providers › Routing), như mọi lần chạy.",
+    regenRouteNote: "Model viết lấy từ tuyến s1_generate (AI gateway › Routing), như mọi lần chạy.",
     revalPassed: "Kiểm tra lại đạt",
     revalFailed: "Kiểm tra lại không đạt",
     needsReval: "Cần kiểm tra lại",

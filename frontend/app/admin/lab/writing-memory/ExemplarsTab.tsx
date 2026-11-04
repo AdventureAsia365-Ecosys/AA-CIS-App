@@ -20,9 +20,9 @@ import { useCallback, useMemo, useState } from "react";
 import {
   Badge, Button, DataTable, Drawer, ErrorState, Field, Input, K, Select, TableSkeleton, apiGet, mono,
   useAdminIdentity, useFormat, useT, useToast, type ColumnDef,
-} from "../../_kit";
+} from "../../../_kit";
 import { can } from "@/lib/rbac";
-import { TenantSelect, useTenants } from "../_components/TenantSelect";
+import { TenantSelect, useTenants } from "../../_components/TenantSelect";
 import {
   EXEMPLARS_PER_CHANNEL, EXEMPLAR_STATUSES, EXEMPLAR_WRITERS, WM_API, byChannel, exemplarActions, exemplarTone,
   type Exemplar, type ExemplarAction, type ExemplarSelection, type ExemplarsPage, type RefreshResult,

@@ -86,7 +86,7 @@ export function Tenant360VoiceMemory({ tenantId }: { tenantId: string }) {
           <DataTable tableId="tenant360-voice-releases" data={q.data.releases} columns={cols}
             getRowId={(r) => r.release_id} paginate={false} compact tableMinWidth={560}
             emptyTitle={t("noReleases")} />
-          <a href="/admin/writing-memory" style={{ fontSize: 12.5, color: K.accentDeep }}>{t("openWritingMemory")}</a>
+          <a href="/admin/lab/writing-memory" style={{ fontSize: 12.5, color: K.accentDeep }}>{t("openWritingMemory")}</a>
         </div>
       )}
     </section>
