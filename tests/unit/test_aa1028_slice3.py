@@ -323,6 +323,15 @@ def test_a_disabled_budget_override_is_a_zero_budget():
     assert b.monthly_usd == 0.0 and b.needs_approval
 
 
+def test_shadow_rows_do_not_count_towards_the_tenant_budget():
+    # S266 re-review: the gateway's spend follows the Tenant 360 › Cost rule (AA's own A/B shadow cost is not the
+    # tenant's), in both sub-selects of every budget read
+    rule = """AND NOT coalesce(l.is_shadow, l.quality_signal @> '{"shadow": true}'::jsonb)"""
+    assert cost_guard._SPEND_COLUMNS.count(rule) == 2
+    for sql in (cost_guard._TENANT_BUDGET_SQL, cost_guard._LEGACY_TENANT_BUDGET_SQL):
+        assert sql.count(rule) == 2
+
+
 def test_plan_budget_defaults():
     assert (cost_guard.PLAN_ALERT_PCT, cost_guard.PLAN_APPROVAL_PCT) == (80, 100)
     assert "coalesce(b.hard_stop, true)" in cost_guard._TENANT_BUDGET_SQL

@@ -571,10 +571,10 @@ async def maybe_alert_central(conn, summary: dict, *, alert_pct: int, stopped: b
 # else the ai.budget_usd_monthly of its content subscription's plan while that subscription is not canceled (S266
 # review: never "no budget" for a customer whose resolver rows are momentarily absent, e.g. a trial past its end
 # before CIS 361 or an unpaid / paused subscription). A budget of 0 USD always stops (hard stop on whatever the
-# AA-1016 row says: "0 = no AI"). Spend = the tenant's llm_call_log rows this UTC month (tenant_id = the tenant). Not
-# budgeted: the gateway reads nothing more (shared/llm_client/tenant_budget.py). No silent cut-off: the approval stop
-# always writes an admin bell (and queues the ops e-mail) naming the tenant and its spend. Before CIS 353 (no
-# resolver view) the AA-1016 row alone decides, as before.
+# AA-1016 row says: "0 = no AI"). Spend = the tenant's llm_call_log rows this UTC month (tenant_id = the tenant),
+# shadow rows out. Not budgeted: the gateway reads nothing more (shared/llm_client/tenant_budget.py). No silent
+# cut-off: the approval stop always writes an admin bell (and queues the ops e-mail) naming the tenant and its spend.
+# Before CIS 353 (no resolver view) the AA-1016 row alone decides, as before.
 
 AI_BUDGET_KEY = "ai.budget_usd_monthly"
 PLAN_ALERT_PCT = 80
@@ -614,13 +614,17 @@ TENANT_BUDGET_TENANTS_SQL = f"""
 """
 _LEGACY_TENANTS_SQL = ("SELECT tenant_id::text AS tenant_id FROM shared.tenant_ai_budget "
                        "WHERE monthly_usd IS NOT NULL")
-_SPEND_COLUMNS = """
-           (SELECT coalesce(sum(l.cost_usd), 0) FROM shared.llm_call_log l
+# The tenant's spend this UTC month, shadow rows out: the Tenant 360 › Cost rule (admin_tenant360._COST_WHERE, AA-798)
+# and the AI budget tile's MONTH_SPEND_SQL (api/services/tenant_ai_budget.py). A shadow call carries the tenant (the
+# LLM client re-binds it for the shadow run) but is AA's own A/B cost: counting it would hold the tenant's T-stage jobs
+# at half its real spend (S266 re-review). ``is_shadow`` is ledger v2 (CIS 319), ``quality_signal`` the older flag.
+_SPEND_WHERE = """
              WHERE l.tenant_id = $1::uuid
-               AND l.created_at >= date_trunc('month', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc') AS spent,
-           (SELECT count(*)::int FROM shared.llm_call_log l
-             WHERE l.tenant_id = $1::uuid
-               AND l.created_at >= date_trunc('month', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc') AS calls
+               AND l.created_at >= date_trunc('month', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc'
+               AND NOT coalesce(l.is_shadow, l.quality_signal @> '{"shadow": true}'::jsonb)"""
+_SPEND_COLUMNS = f"""
+           (SELECT coalesce(sum(l.cost_usd), 0) FROM shared.llm_call_log l{_SPEND_WHERE}) AS spent,
+           (SELECT count(*)::int FROM shared.llm_call_log l{_SPEND_WHERE}) AS calls
 """
 _TENANT_BUDGET_SQL = f"""
     SELECT $1::uuid::text AS tenant_id, x.monthly_usd, x.alert_pct, x.approval_pct,

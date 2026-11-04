@@ -141,6 +141,20 @@ grace until the tick, platform keys from the content plan only), with no readine
   AI providers › Budgets tenant tier (still lists only AA-1016 rows with their own amount; build it from
   `budgeted_tenants()` + `tenant_budget_check()` and label the source).
 
+### Review fix pass 3 (S266 final re-review, one major)
+
+- **Shadow spend never holds a tenant**: `cost_guard._SPEND_COLUMNS` (both sub-selects, so `_TENANT_BUDGET_SQL` and
+  `_LEGACY_TENANT_BUDGET_SQL`) now leaves out shadow rows with the Tenant 360 › Cost rule
+  (`NOT coalesce(l.is_shadow, l.quality_signal @> '{"shadow": true}')`). A shadow call carries the tenant (the LLM
+  client re-binds it for the shadow run) but is AA's own A/B cost; before this, a shadow route on a T stage made the
+  gateway stop a Starter tenant at about 7.5 USD of real spend while the tile showed 7.50 USD. The gateway, the
+  AI budget tile and Tenant 360 › Cost now read one spend. `is_experiment` / eval rows still count: they are real
+  calls made for the tenant's work, and Tenant 360 counts them too (one rule everywhere).
+- **Contract**: tenant.entitlements.v1 **1.2** (root PR first; byte copy here, sha256 pin updated) carries the
+  trial-grace and content-plan-only platform key sentences that CIS 361 implements.
+- **Migration split**: CIS 361 and its test ship in their own PR (`feat/aa1028-cis-361-trial-grace`), merged and
+  applied before this code PR; this branch is rebased on that main so it carries no migration.
+
 ## Changed (vs. the issue / design text)
 
 - Enterprise becomes assignable from the admin PATCH / create (its seeded plan sets RPM 1,000, so the data says it

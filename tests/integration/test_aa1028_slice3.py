@@ -441,6 +441,26 @@ async def test_the_ai_budget_is_the_entitlement(conn):
 
 
 @pytest.mark.asyncio
+async def test_shadow_spend_does_not_hold_the_tenant(conn):
+    # S266 re-review: a shadow call carries the tenant but is AA's own A/B cost; the gateway, the AI budget tile and
+    # Tenant 360 › Cost must read the same spend
+    from api.services import tenant_ai_budget as tb
+
+    tid = await _tenant(conn)                                              # starter: 15 USD, hard stop at 100 %
+    await _spend(conn, tid, 7.5)
+    for is_shadow, signal in ((True, "{}"), (None, '{"shadow": true}')):   # ledger v2 flag, then the older flag
+        await conn.execute("INSERT INTO shared.llm_call_log (tenant_id, stage, role, model, cost_usd, quality_signal, "
+                           "is_shadow) VALUES ($1::uuid, 'zz_aa1028', 'writer', 'zz-model', 7.5, $2::jsonb, $3)",
+                           tid, signal, is_shadow)
+    b = await cost_guard.tenant_budget_check(conn, tid)
+    assert (b.month_spent_usd, b.month_calls, b.used_pct, b.needs_approval) == (7.5, 1, 50.0, False)
+    out = await tb.read_one(_Pool(conn), tid)
+    assert out["effective"]["state"] == "ok" and out["effective"]["used_pct"] == 50.0
+    await _spend(conn, tid, 7.5)                                           # real spend reaches the 15 USD ceiling
+    assert (await cost_guard.tenant_budget_check(conn, tid)).needs_approval
+
+
+@pytest.mark.asyncio
 async def test_a_disabled_or_zero_ai_budget_fails_closed(conn):
     tid = await _tenant(conn)                                              # starter, no AA-1016 row
     # a disabled override (written before set_override refused it): the resolver drops the key, cost_guard serves 0
