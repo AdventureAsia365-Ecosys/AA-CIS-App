@@ -7,10 +7,12 @@ Anthropic API). Every save is a new version with who / when / diff; any version 
 
 - ``read_state(pool)``: the page's read (GET /admin/ai-gateway/route-control).
 - ``preview(pool, proposal)``: what the proposed config would do, BEFORE saving: per active stage the first
-  model@connection that would be called (``llm_route_chains.resolve_stage``, $0, no model call) now and with the
-  proposal, the rule check (errors block a save, warnings do not), whether the change needs eval evidence (AA-1026 D7:
-  a writer / judge stage whose chain OR first serving model@connection changes, so a provider-order change or a
-  preset that moves such a stage to another deployment counts too) and the diff.
+  model@connection that would SERVE it (``llm_route_chains.resolve_stage``, $0, no model call; AA-1042: a
+  deployment the account refuses on record, ``stage_coverage.refusal``, is skipped and listed with its reason in the
+  stage's ``skipped``) now and with the proposal, the rule check (errors block a save, warnings do not), whether the
+  change needs eval evidence (AA-1026 D7: a writer / judge stage whose chain OR first serving model@connection
+  changes, so a provider-order change or a preset that moves such a stage to another deployment counts too) and the
+  diff.
 - ``apply(pool, proposal, ...)``: the save, a preset or a revert: validated again, written in ONE transaction with its
   version row and its ``acp_shared.audit_log`` row (and the break-glass bell of each changed writer / judge stage).
 - ``preset_proposal`` / ``revert_proposal``: the proposal a preset or a version stands for.
@@ -37,7 +39,7 @@ import asyncpg
 import structlog
 
 from api.services import llm_route_chains
-from shared.llm_client import data_scope, family_rule, route_evidence, route_settings, route_versions
+from shared.llm_client import data_scope, family_rule, route_evidence, route_settings, route_versions, stage_coverage
 from shared.llm_client.errors import MAX_CHAIN_ATTEMPTS
 
 logger = structlog.get_logger()
@@ -114,6 +116,7 @@ class _World:
     deployments: list                       # dict rows of _DEPLOYMENTS_SQL
     connections: dict                       # connection_key -> dict row
     reach: dict = field(default_factory=dict)
+    evidence: Optional[object] = None       # stage_coverage.RefusalEvidence (AA-1042: refused deployments skipped)
 
     @property
     def by_stage(self) -> dict:
@@ -132,6 +135,7 @@ async def _world(pool) -> _World:
         live = await route_versions.read_live(conn, settings["order_mode"])
         deps = [dict(r) for r in await conn.fetch(_DEPLOYMENTS_SQL)]
         conns = {r["connection_key"]: dict(r) for r in await conn.fetch(_CONNECTIONS_SQL)}
+        evidence = await stage_coverage.load_evidence(conn)
     stages = await list_stage_configs()
     models = await list_models()
     reach: dict[str, frozenset] = {}
@@ -140,7 +144,7 @@ async def _world(pool) -> _World:
         if c is not None:
             reach[d["model_key"]] = reach.get(d["model_key"], frozenset()) | {c["data_scope"]}
     return _World(settings=settings, live=route_versions.normalize(live), stages=stages, models=models,
-                  deployments=deps, connections=conns, reach=reach)
+                  deployments=deps, connections=conns, reach=reach, evidence=evidence)
 
 
 def _provider_rows(world: _World, priorities: Optional[dict] = None) -> list[dict]:
@@ -402,16 +406,17 @@ def _config(row: dict):
                        enabled=row.get("is_active") is not False)
 
 
-def _resolve_all(rows: list[dict], priorities: dict, order_mode: str) -> dict:
+def _resolve_all(rows: list[dict], priorities: dict, order_mode: str, evidence=None) -> dict:
     """Sync: stage -> resolve_stage(...) for every active row, with the proposed priorities and order mode in force
-    for THIS context only (deployments.priority_override / route_settings.override_order_mode)."""
+    for THIS context only (deployments.priority_override / route_settings.override_order_mode). ``evidence``: the
+    refusals on record (AA-1042), the same for now and the proposal: "first" is the deployment that would serve."""
     from shared.llm_client import deployments
     out = {}
     with deployments.priority_override(priorities), route_settings.override_order_mode(order_mode):
         for row in rows:
             if row.get("is_active") is False:
                 continue
-            out[row["stage"]] = llm_route_chains.resolve_stage(_config(row))
+            out[row["stage"]] = llm_route_chains.resolve_stage(_config(row), evidence)
     return out
 
 
@@ -440,8 +445,8 @@ async def preview_world(world: _World, target: dict, shape_errors: list) -> dict
         (errors if rule in BLOCKING_CHAIN_RULES and not existing else warnings).append(p)
 
     resolved_now, resolved_new = await asyncio.gather(
-        asyncio.to_thread(_resolve_all, rows_now, live["priorities"], live["order_mode"]),
-        asyncio.to_thread(_resolve_all, rows_new, target["priorities"], target["order_mode"]))
+        asyncio.to_thread(_resolve_all, rows_now, live["priorities"], live["order_mode"], world.evidence),
+        asyncio.to_thread(_resolve_all, rows_new, target["priorities"], target["order_mode"], world.evidence))
     stages_out = []
     serving_changed: set = set()
     for row in rows_new:
@@ -460,7 +465,9 @@ async def preview_world(world: _World, target: dict, shape_errors: list) -> dict
                            "chain": route_versions.chain_of(target["routes"].get(stage)),
                            "changed": stage in changed_stages, "first": new.get("first"),
                            "first_before": now.get("first"), "serving_changed": stage in serving_changed,
-                           "attempts": [{k: a.get(k) for k in ("model", "scope", "status", "connection", "reason")}
+                           "skipped": list(new.get("skipped") or []),
+                           "attempts": [{k: a.get(k) for k in ("model", "scope", "status", "connection", "reason",
+                                                               "refused")}
                                         for a in new.get("attempts") or []]})
 
     # AA-1026 D7 evidence: a writer / judge stage whose chain changes, OR whose first serving model@connection changes

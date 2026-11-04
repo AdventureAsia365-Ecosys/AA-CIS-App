@@ -89,7 +89,24 @@ export interface PreviewStage {
   first_before: string | null;
   /** The first model@connection that would serve the stage differs from now (chain, provider order or order mode). */
   serving_changed?: boolean;
-  attempts: { model: string; scope: string; status: string; connection?: string | null; reason?: string | null }[];
+  /** The model@connection entries before `first` that will not serve the stage, in route order, each with why (switched
+   * off, circuit open, refused on record: the probe or the breaker). */
+  skipped?: SkippedDeployment[];
+  attempts: {
+    model: string; scope: string; status: string; connection?: string | null; reason?: string | null;
+    refused?: { connection: string; reason: string }[] | null;
+  }[];
+}
+
+export interface SkippedDeployment {
+  model: string;
+  connection: string | null;
+  reason: string;
+}
+
+/** "model@connection" of a skipped entry (the model alone when no deployment was planned for it). */
+export function skippedWhere(s: SkippedDeployment): string {
+  return s.connection ? `${s.model}@${s.connection}` : s.model;
 }
 
 export interface RoutePreview {

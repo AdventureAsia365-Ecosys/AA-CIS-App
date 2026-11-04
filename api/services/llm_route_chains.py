@@ -194,11 +194,23 @@ def _skip_reason(plan) -> str:
     return "no enabled deployment in this scope"
 
 
-def resolve_stage(cfg) -> dict:
+def resolve_stage(cfg, evidence=None) -> dict:
     """The gateway's attempts for one stage config (``role_config.StageConfig``) without calling a model: each attempt
     ``{"model", "scope", "status", "connection"|"reason"}`` in order, and ``first`` = "<model>@<connection>" of the
-    first attempt that has a callable deployment now (None when nothing would be called). Reads the registry, the
-    catalog and the breaker state (cached, read-only). Never raises: a failure is reported in ``error``."""
+    first deployment that would SERVE the stage now (None when none would). Reads the registry, the catalog and the
+    breaker state (cached, read-only). Never raises: a failure is reported in ``error``.
+
+    AA-1042 (S268 follow-up): "would serve", not "would be called". The gateway's plan (``deployment_plan``) already
+    leaves out a switched-off deployment or connection, a role or scope the stage may not use, an open circuit and a
+    budget stop; ``evidence`` (``stage_coverage.RefusalEvidence``, read once by the caller) adds the deployments the
+    account refuses (``stage_coverage.refusal``: the probe state of CIS 367, the breaker's refusals, the connection's
+    access state; the rule of the Stage coverage card). The gateway still tries such a deployment when its circuit is
+    half-open (one call per breaker period, its own recovery check), gets the refusal and moves on, so the request is
+    served by the next one: that one is ``first``. A planned deployment that is refused stays in the attempt's
+    ``deployments`` and is listed in its ``refused`` ({connection, reason}); an attempt whose every deployment is
+    refused has ``status`` "refused". ``skipped`` lists, in order, every model@connection before ``first`` that will
+    not serve it, with the reason (catalog off, plan skip, refused). ``called_first`` keeps the old answer: the first
+    model@connection the gateway would call. Without ``evidence`` nothing counts as refused (the old behaviour)."""
     from shared.llm_client.catalog import LEGACY_KEYS, get_model_sync
     from shared.llm_client.client import _STAGE_SCOPES, _row_role, deployment_routing_enabled, route_attempts
     from shared.llm_client.models import LLMRequest
@@ -209,8 +221,13 @@ def resolve_stage(cfg) -> dict:
     role = _row_role(cfg)
     chain = [cfg.model_id, *(cfg.fallback_model_ids or ())]
     out = {"stage": stage, "role": cfg.role, "scopes": list(scopes) if scopes else None, "chain": chain,
-           "attempts": [], "first": None}
+           "attempts": [], "first": None, "called_first": None, "skipped": []}
     token = _STAGE_SCOPES.set((stage, scopes, role))
+
+    def skipped(key: str, connection: Optional[str], reason: str) -> None:
+        if out["first"] is None:
+            out["skipped"].append({"model": key, "connection": connection, "reason": reason})
+
     try:
         request = LLMRequest(system_prompt="route check", user_prompt="route check", stage=stage)
         for key, narrowed in route_attempts(request, chain):
@@ -219,18 +236,37 @@ def resolve_stage(cfg) -> dict:
             if key in LEGACY_KEYS:
                 step.update(status="legacy", reason="legacy key: the hard-coded acc3 chain (not planned here)")
                 out["first"] = out["first"] or f"{key}@acc3 (legacy chain)"
+                out["called_first"] = out["called_first"] or out["first"]
                 continue
             model = get_model_sync(key)
             if model is None or not model.enabled:
                 step.update(status="skip", reason="not in the catalog" if model is None else "disabled in the catalog")
+                skipped(key, None, step["reason"])
                 continue
             plan = deployment_plan(model, narrowed or scopes, role=role) if deployment_routing_enabled() else None
-            if plan:
-                conns = [t.connection.connection_key for t in plan]
-                step.update(status="call", connection=conns[0], deployments=conns)
-                out["first"] = out["first"] or f"{key}@{conns[0]}"
-            else:
+            if not plan:
                 step.update(status="skip", reason=_skip_reason(plan))
+                skipped(key, None, step["reason"])
+                continue
+            conns = [t.connection.connection_key for t in plan]
+            out["called_first"] = out["called_first"] or f"{key}@{conns[0]}"
+            refused = []
+            for ck in conns:
+                why = evidence.refused(key, ck) if evidence is not None else None
+                if why is not None:
+                    refused.append({"connection": ck, "reason": why})
+            serving = [ck for ck in conns if ck not in {r["connection"] for r in refused}]
+            for r in refused:
+                if not serving or conns.index(r["connection"]) < conns.index(serving[0]):
+                    skipped(key, r["connection"], r["reason"])
+            if serving:
+                step.update(status="call", connection=serving[0], deployments=conns)
+                out["first"] = out["first"] or f"{key}@{serving[0]}"
+            else:
+                step.update(status="refused", deployments=conns,
+                            reason="refused: " + ", ".join(f"{r['connection']} ({r['reason']})" for r in refused))
+            if refused:
+                step["refused"] = refused
     except Exception as e:  # noqa: BLE001 — a report, never a failure
         out["error"] = f"{type(e).__name__}: {str(e)[:200]}"
     finally:

@@ -463,12 +463,13 @@ def test_the_check_script_prints_one_report_with_the_first_model_per_stage(capsy
     models = _models()
     reach, acc2_only = _reach_and_acc2_only()
 
-    def fake_resolve(cfg):
+    def fake_resolve(cfg, evidence=None):
+        assert evidence == "evidence"                                   # AA-1042: the refusals on record go along
         return {"stage": cfg.stage, "role": cfg.role, "scopes": list(cfg.allowed_scopes or ()), "attempts": [],
                 "first": f"{cfg.model_id}@acc3"}
 
     async def fake_load():
-        return rows, models
+        return rows, models, "evidence"
     with patch.object(script, "_load", fake_load), \
             patch.object(script, "_reach", return_value=(reach, acc2_only, _deployment_scopes())), \
             patch("api.services.llm_route_chains.resolve_stage", side_effect=fake_resolve), \

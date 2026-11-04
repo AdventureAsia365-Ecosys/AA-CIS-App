@@ -274,7 +274,7 @@ def resolved(monkeypatch):
     """resolve_stage without the registry: the first model of the chain unless it is marked dead."""
     dead: set = set()
 
-    def fake(rows, priorities, order_mode):
+    def fake(rows, priorities, order_mode, evidence=None):
         return {r["stage"]: {"first": next((f"{k}@acc3" for k in [r["model_id"], *r["fallback_model_ids"]]
                                             if k not in dead), None), "attempts": []}
                 for r in rows if r.get("is_active") is not False}
@@ -320,7 +320,7 @@ def test_losing_the_last_live_model_blocks_but_an_already_dead_stage_only_warns(
 @pytest.fixture
 def served_by_priority(monkeypatch):
     """resolve_stage without the registry: the first model of the chain on its lowest-priority connection."""
-    def fake(rows, priorities, order_mode):
+    def fake(rows, priorities, order_mode, evidence=None):
         out = {}
         for r in rows:
             if r.get("is_active") is False:

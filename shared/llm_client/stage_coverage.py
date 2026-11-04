@@ -36,6 +36,7 @@ Before migration 367 the deployment rows have no probe state: the breaker rows a
 """
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Iterable, Optional
 
@@ -62,6 +63,38 @@ def _latest(*values: Optional[datetime]) -> Optional[datetime]:
     return max(present) if present else None
 
 
+def _last_ok(dep: dict, health: Optional[Health]) -> Optional[datetime]:
+    """The deployment's newest answer: the breaker's ``last_ok_at`` or a probe that wrote ``access_state = 'ok'``."""
+    probe_at = dep.get("last_probe_at")
+    return _latest(health.last_ok_at if health else None,
+                   probe_at if (dep.get("access_state") or "unknown") == "ok" else None)
+
+
+def refusal(dep: dict, conn: dict, health: Optional[Health], now: datetime) -> Optional[str]:
+    """Why the account refuses this deployment (the ``refused`` state of the module docstring), or None (pure).
+
+    The one refusal rule: the Stage coverage card (``assess``) and the route preview / $0 route check
+    (``api/services/llm_route_chains.resolve_stage``, AA-1042) both call it, so the model a preview says serves first
+    is the one the card calls live."""
+    probe_state = dep.get("access_state") or "unknown"
+    probe_at = dep.get("last_probe_at")
+    last_ok = _last_ok(dep, health)
+    refused_health = health.last_error_at if health and health.last_error_class in REFUSING_CLASSES else None
+    last_bad = _latest(refused_health, probe_at if probe_state in DEPLOYMENT_REFUSED_STATES else None)
+    conn_state = conn.get("access_state") or "unknown"
+    recent_ok = last_ok is not None and now - last_ok <= PROOF_MAX_AGE
+    if conn_state == "unconfigured":
+        return "connection unconfigured"                         # a credential failure stops every model
+    if conn_state == "quota_exhausted" and not recent_ok:
+        return "connection quota_exhausted"
+    if conn_state == "access_denied" and last_ok is None:
+        return "connection access_denied"
+    if last_bad is not None and (last_ok is None or last_bad >= last_ok):
+        cls = health.last_error_class if refused_health == last_bad else probe_state
+        return f"refused ({cls})"
+    return None
+
+
 def assess(dep: dict, conn: Optional[dict], model_enabled: Optional[bool], health: Optional[Health], *,
            connection_open: bool, role: Optional[str], scopes, primary: bool, now: datetime) -> tuple[str, str]:
     """(state, why) of one deployment for one stage (pure). See the module docstring for the states."""
@@ -75,22 +108,11 @@ def assess(dep: dict, conn: Optional[dict], model_enabled: Optional[bool], healt
         return "role_skip", f"connection does not serve {role}"
     if not _allowed(scopes, conn.get("data_scope") or "", primary):
         return "scope_skip", f"data scope {conn.get('data_scope')} not allowed"
-    probe_state = dep.get("access_state") or "unknown"
-    probe_at = dep.get("last_probe_at")
-    last_ok = _latest(health.last_ok_at if health else None, probe_at if probe_state == "ok" else None)
-    refused_health = health.last_error_at if health and health.last_error_class in REFUSING_CLASSES else None
-    last_bad = _latest(refused_health, probe_at if probe_state in DEPLOYMENT_REFUSED_STATES else None)
-    conn_state = conn.get("access_state") or "unknown"
+    why = refusal(dep, conn, health, now)
+    if why is not None:
+        return "refused", why
+    last_ok = _last_ok(dep, health)
     recent_ok = last_ok is not None and now - last_ok <= PROOF_MAX_AGE
-    if conn_state == "unconfigured":
-        return "refused", "connection unconfigured"              # a credential failure stops every model
-    if conn_state == "quota_exhausted" and not recent_ok:
-        return "refused", "connection quota_exhausted"
-    if conn_state == "access_denied" and last_ok is None:
-        return "refused", "connection access_denied"
-    if last_bad is not None and (last_ok is None or last_bad >= last_ok):
-        cls = health.last_error_class if refused_health == last_bad else probe_state
-        return "refused", f"refused ({cls})"
     if connection_open:
         return "circuit_open", "connection circuit open"
     if health is not None and state_of(health, now) == OPEN:
@@ -168,6 +190,50 @@ def summary(report: dict) -> dict:
             "uncovered": report["uncovered"],
             "live": {s["stage"]: f"{s['live_model']}@{s['live_connection']}" for s in report["stages"]
                      if s["status"] == "live"}}
+
+
+@dataclass(frozen=True)
+class RefusalEvidence:
+    """AA-1042: the evidence ``refusal`` reads, keyed for a lookup per model@connection: the deployment rows (with the
+    CIS 367 probe state when present), the connection rows and the breaker rows, read once at ``now``. The route
+    preview and the $0 route check pass it to ``llm_route_chains.resolve_stage``."""
+    deployments: dict = field(default_factory=dict)     # (connection_key, model_key) -> llm_model_deployment row
+    connections: dict = field(default_factory=dict)     # connection_key -> llm_provider_connection row
+    health: dict = field(default_factory=dict)          # (connection_key, model_key) -> breaker Health
+    now: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @classmethod
+    def of(cls, deployments: Iterable[dict], connections: Iterable[dict], health: Iterable[Health],
+           now: Optional[datetime] = None) -> "RefusalEvidence":
+        return cls(deployments={(d["connection_key"], d["model_key"]): d for d in deployments},
+                   connections={c["connection_key"]: c for c in connections},
+                   health={(h.connection_key, h.model_key): h for h in health},
+                   now=now or datetime.now(timezone.utc))
+
+    def refused(self, model_key: str, connection_key: str) -> Optional[str]:
+        """``refusal`` of one deployment; None when it has no row here (nothing on record refuses it)."""
+        dep = self.deployments.get((connection_key, model_key))
+        conn = self.connections.get(connection_key)
+        if dep is None or conn is None:
+            return None
+        return refusal(dep, conn, self.health.get((connection_key, model_key)), self.now)
+
+
+async def load_evidence(conn, *, now: Optional[datetime] = None) -> Optional[RefusalEvidence]:
+    """The evidence from the live tables (three reads on ``conn``: an asyncpg connection, or a pool). None before the
+    registry migrations; before 367 the deployments carry no probe state (the breaker rows alone count)."""
+    import asyncpg
+
+    try:
+        try:
+            deps = [dict(r) for r in await conn.fetch(DEPLOYMENTS_V2_SQL)]
+        except asyncpg.exceptions.UndefinedColumnError:          # before migration 367: no probe state
+            deps = [dict(r) for r in await conn.fetch(DEPLOYMENTS_SQL)]
+        conns = [dict(r) for r in await conn.fetch(CONNECTIONS_SQL, list(LLM_KINDS))]
+        health = [row_to_health(r) for r in await conn.fetch(HEALTH_SQL)]
+    except (asyncpg.exceptions.UndefinedTableError, asyncpg.exceptions.UndefinedColumnError):
+        return None
+    return RefusalEvidence.of(deps, conns, health, now)
 
 
 async def read(conn, *, now: Optional[datetime] = None) -> dict:

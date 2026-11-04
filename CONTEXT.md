@@ -737,7 +737,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `admin_llm_route_control.py`, service `api/services/llm_route_control.py`) edits the order mode, every stage's
     chain (drag and drop) and every model's provider order (`llm_model_deployment.priority`), with two presets
     ("Prefer Anthropic API for Claude", "Prefer AWS"), a $0 server preview (`llm_route_chains.resolve_stage` under
-    context-variable overrides) and the rules on every save (the PATCH rules, judge family, check pairs, attempt cap,
+    context-variable overrides; "serves first" is the deployment that would SERVE: one the account refuses on record,
+    by the Stage coverage card's own rule `stage_coverage.refusal`, is skipped and listed with its reason) and the
+    rules on every save (the PATCH rules, judge family, check pairs, attempt cap,
     a live model per stage; a rule the live config already breaks is only a warning). Every route change, the Routing
     tab's PATCHes included, is a version in `shared.llm_route_config_version` (who, when, snapshot, diff;
     `shared/llm_client/route_versions.py`), revertible in one click; a change made outside the admin is recorded as

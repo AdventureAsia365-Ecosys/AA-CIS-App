@@ -22,8 +22,8 @@ import {
 } from "../../_kit";
 import {
   NOTE_MAX, ROUTE_CONTROL_API, ROUTE_CONTROL_KEY, ROUTE_VERSIONS_KEY, addableOptions, draftOf, groupStages,
-  isEmptyProposal, moveItem, presetPath, problemsOf, proposalBody, versionPath, type ControlStage, type DiffChange,
-  type OrderMode, type PresetKey, type Problem, type ProviderOrderRow, type RouteControlState, type RouteDraft,
+  isEmptyProposal, moveItem, presetPath, problemsOf, proposalBody, skippedWhere, versionPath, type ControlStage,
+  type DiffChange, type OrderMode, type PresetKey, type Problem, type ProviderOrderRow, type RouteControlState, type RouteDraft,
   type RoutePreview, type RouteVersion, type RouteVersionsResp,
 } from "@/lib/routeControl";
 import {
@@ -176,6 +176,17 @@ function StageEditor({ stage, chain, onChange, preview, canEdit, modelLabel, sta
           {p.first_before !== p.first && (
             <span>({t("firstBefore", p.first_before ?? t("noLiveModel"))})</span>
           )}
+        </div>
+      )}
+      {p && stage.is_active && (p.skipped?.length ?? 0) > 0 && (
+        <div data-testid={`route-control-skipped-${stage.stage}`}
+          style={{ ...small, marginBottom: 8, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "baseline" }}>
+          <span>{t("skippedTitle")}:</span>
+          {p.skipped!.map((s) => (
+            <span key={skippedWhere(s)} style={{ fontFamily: mono, color: K.muted, overflowWrap: "anywhere" }}>
+              {t("skippedItem", skippedWhere(s), s.reason)}
+            </span>
+          ))}
         </div>
       )}
       <OrderList testId={`route-control-chain-${stage.stage}`} disabled={!canEdit}

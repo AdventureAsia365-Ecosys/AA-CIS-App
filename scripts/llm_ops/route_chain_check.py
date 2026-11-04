@@ -12,13 +12,16 @@ nothing, and needs the code of ``api/services/llm_route_chains.py`` in the image
 For each active stage: its chain, the attempts in the gateway's order (``client.route_attempts``: model first by
 default, tech lead S267, each attempt listing the deployments in the order they would be tried, e.g. acc3 then the
 Anthropic API; the AWS-first passes only with ``LLM_ROUTE_AWS_FIRST=on``), each attempt's status (``call`` = a
-deployment would be called now, with its connection; ``skip`` = why not: circuit open with the class that opened it,
-budget reached, role not served, no enabled deployment in that scope), and FIRST = the first model@connection that
-would be called. "Would be called" is not "will answer": a circuit only opens after a refusal, so a model refused
-for the first time still shows as ``call``. Then the chain-rule violations (``llm_route_chains.violations``) of the
-live rows. Each stage also carries its ``product`` and ledger ``app`` (``llm_route_chains.product_of`` /
-``ledger_app``, S267: one Anthropic API key, per-product spend read from the ledger by stage); a stage no rule maps is
-listed under ``unmapped_stages``. Exit code 0 (a report).
+deployment would serve now, with its connection; ``skip`` = why not: circuit open with the class that opened it,
+budget reached, role not served, no enabled deployment in that scope; ``refused`` = every planned deployment of it is
+refused on record), and FIRST = the first model@connection that would SERVE the stage. AA-1042 (S268): a deployment
+the account refuses on record (``stage_coverage.refusal``: the CIS 367 probe state, the breaker's refusals, the
+connection's access state, the rule of the Stage coverage card) does not count as first: it is listed under the
+attempt's ``refused`` and the stage's ``skipped`` with its reason, and ``called_first`` keeps the first
+model@connection the gateway would call (it still tries a refused deployment once per breaker period). Then the
+chain-rule violations (``llm_route_chains.violations``) of the live rows. Each stage also carries its ``product``
+and ledger ``app`` (``llm_route_chains.product_of`` / ``ledger_app``, S267: one Anthropic API key, per-product
+spend read from the ledger by stage); a stage no rule maps is listed under ``unmapped_stages``. Exit code 0 (a report).
 
 Output markers: ``--- ROUTE CHAIN CHECK ---`` / ``--- END ---`` around the JSON object
 ``{"stages": [...], "violations": [[stage, rule, detail], ...], "first_by_stage": {stage: "model@connection"},
@@ -32,10 +35,21 @@ import json
 import sys
 
 
-async def _load() -> tuple[list[dict], list]:
+async def _load() -> tuple[list[dict], list, object]:
+    """The stage rows, the catalog and the refusals on record (``stage_coverage.RefusalEvidence``, None before the
+    registry migrations)."""
+    import asyncpg
+
+    from shared.llm_client import stage_coverage
     from shared.llm_client.catalog import list_models
     from shared.llm_client.role_config import list_stage_configs
-    return await list_stage_configs(), await list_models()
+    from shared.secrets import get_database_url
+    conn = await asyncpg.connect(get_database_url(), ssl="require")
+    try:
+        evidence = await stage_coverage.load_evidence(conn)
+    finally:
+        await conn.close()
+    return await list_stage_configs(), await list_models(), evidence
 
 
 def _config(row: dict):
@@ -75,14 +89,14 @@ def main() -> int:
 
     from api.services import llm_route_chains as route_chains
 
-    rows, models = asyncio.run(_load())
+    rows, models, evidence = asyncio.run(_load())
     stages = []
     for row in rows:
         if row.get("is_active") is False:
             stages.append({"stage": row["stage"], "role": row["role"], "switched_off": True,
                            "reason": row.get("disabled_reason")})
             continue
-        stages.append(route_chains.resolve_stage(_config(row)))
+        stages.append(route_chains.resolve_stage(_config(row), evidence))
     for s in stages:
         s.update(product=route_chains.product_of(s["stage"]), app=route_chains.ledger_app(s["stage"]))
     reach, acc2_only, per_row = _reach(models)
@@ -101,6 +115,8 @@ def main() -> int:
             for a in s["attempts"]:
                 where = a.get("connection") or a.get("reason")
                 print(f"    {a['model']:22} [{a['scope']}] {a['status']}: {where}")
+                for r in a.get("refused") or []:
+                    print(f"    {'':22}   refused on {r['connection']}: {r['reason']}")
             if s.get("error"):
                 print(f"    ERROR {s['error']}")
         print(f"violations: {len(found)}; stages with no product: {', '.join(report['unmapped_stages']) or 'none'}")
