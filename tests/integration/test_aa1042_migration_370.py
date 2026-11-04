@@ -172,3 +172,31 @@ def test_the_trigger_stamps_cis_rows_only(cur):
         assert got == {ids[0]: version, ids[1]: None, ids[2]: 7}
     finally:
         cur.execute("ROLLBACK")
+
+
+def test_cis_app_appends_a_version_but_never_rewrites_one(cur):
+    """The statements of shared/llm_client/route_versions.py run as cis_app (lock, append, move the pointer); an
+    UPDATE or DELETE of a version row, or a DELETE of the settings row, is refused."""
+    cur.execute("SELECT 1 AS ok FROM pg_roles WHERE rolname = 'cis_app'")
+    if cur.fetchone() is None:
+        pytest.skip("no cis_app role in this database")
+    cur.execute("BEGIN")
+    try:
+        cur.execute("GRANT USAGE ON SCHEMA shared TO cis_app")                    # rolled back with the test
+        cur.execute("SET LOCAL ROLE cis_app")
+        cur.execute("SELECT current_version AS v FROM shared.llm_route_settings WHERE singleton FOR UPDATE")
+        nxt = cur.fetchone()["v"] + 1
+        cur.execute("INSERT INTO shared.llm_route_config_version (version, created_by, action, note, snapshot, diff) "
+                    "VALUES (%s, 'admin:zz-tester', 'save', 'zz test', '{}', '[]') RETURNING version AS v", (nxt,))
+        assert cur.fetchone()["v"] == nxt
+        cur.execute("UPDATE shared.llm_route_settings SET current_version = %s, updated_at = now(), "
+                    "updated_by = 'admin:zz-tester' WHERE singleton", (nxt,))
+        for sql in ("UPDATE shared.llm_route_config_version SET note = 'rewritten' WHERE version = 1",
+                    "DELETE FROM shared.llm_route_config_version WHERE version = 1",
+                    "DELETE FROM shared.llm_route_settings"):
+            cur.execute("SAVEPOINT s")
+            with pytest.raises(psycopg2.errors.InsufficientPrivilege):
+                cur.execute(sql)
+            cur.execute("ROLLBACK TO SAVEPOINT s")
+    finally:
+        cur.execute("ROLLBACK")
