@@ -41127,6 +41127,79 @@
         ]
       }
     },
+    "/admin/writing-memory/lab/{writer}": {
+      "get": {
+        "description": "One Writing Lab stage: samples, labels, experiments, prompt versions and the eval gate of a writer ($0, read\nonly; no tenant text). Each section is read on its own: a missing table empties only that section.",
+        "operationId": "lab_stage_admin_writing_memory_lab__writer__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "writer",
+            "required": true,
+            "schema": {
+              "title": "Writer",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Lab Stage",
+        "tags": [
+          "admin-writing-memory"
+        ]
+      }
+    },
     "/admin/writing-memory/metrics": {
       "get": {
         "description": "The stored weekly reports, newest first.",

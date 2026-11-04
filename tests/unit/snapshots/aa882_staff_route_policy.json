@@ -771,6 +771,10 @@
     "capability": "tenant.read",
     "module": "api.routers.admin_writing_memory"
   },
+  "GET /admin/writing-memory/lab/{writer}": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_writing_memory"
+  },
   "GET /admin/writing-memory/metrics": {
     "capability": "tenant.read",
     "module": "api.routers.admin_writing_memory"
