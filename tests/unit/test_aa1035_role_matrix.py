@@ -37,7 +37,7 @@ EXPECTED_PERMS = {
     "content": {"content.read", "content.write", "review.act", "catalog.read"},
     "reviewer": {"content.read", "content.write", "review.act", "catalog.read"},
     "tenant_qa": {"content.read", "catalog.read", "tenant_content.read", "quality.write", "a4.unpublish", "lab.read"},
-    "customer_success": {"tenant.book.read", "tenant.member.write"},
+    "customer_success": {"tenant.book.read", "tenant.book.account.read", "tenant.member.write"},
     "support": {"tenant.book.read", "tenant.member.write"},
     "finance": {"billing.read", "billing.write", "spend.read"},
     "ai_ops": {"content.read", "catalog.read", "ai.admin", "spend.read", "spend.write", "lab.read"},
@@ -131,7 +131,7 @@ def test_the_tenant_desk_never_reaches_the_catalogue_or_tenant_text(role):
 @pytest.mark.parametrize("role", ["customer_success", "support"])
 def test_the_book_roles_reach_tenants_but_not_money_ai_or_account_writes(role):
     allowed = _allowed(role)
-    assert "GET /admin/tenants" in allowed and "GET /admin/tenants/{tenant_id}/usage" in allowed
+    assert "GET /admin/tenants" in allowed and "GET /admin/tenants/{tenant_id}/members" in allowed
     assert "POST /admin/tenants/{tenant_id}/members/invitations" in allowed
     assert _any(allowed, "/admin/ai-gateway", methods=("POST", "PUT", "PATCH", "DELETE")) == []
     assert _any(allowed, "/admin/budgets", "/admin/cost-explorer", "/admin/spend", "/admin/billing") == []
@@ -140,6 +140,38 @@ def test_the_book_roles_reach_tenants_but_not_money_ai_or_account_writes(role):
                   "PUT /admin/tenants/{tenant_id}/assignments/{admin_user_id}",
                   "PUT /admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}"):
         assert write not in allowed, write
+
+
+# AA-1035 (S267 review): clarifications.md section 3 gives support "-" on plans / invoices, Tenant QA and AI & spend
+# (Tenant 360 "R + member actions" only); customer_success has plans and add-ons R, AI & spend R and Tenant QA R.
+ACCOUNT_READS = ("GET /admin/tenants/{tenant_id}/usage", "GET /admin/tenants/{tenant_id}/subscription",
+                 "GET /admin/tenants/{tenant_id}/cost", "GET /admin/tenants/{tenant_id}/quality",
+                 "GET /admin/ai-gateway/tenant-budgets/{tenant_id}", "GET /admin/plans", "GET /admin/plans/features")
+SUPPORT_TENANT_360 = ("GET /admin/tenants/{tenant_id}/details", "GET /admin/tenants/{tenant_id}/config",
+                      "GET /admin/tenants/{tenant_id}/audit", "GET /admin/tenants/{tenant_id}/members",
+                      "GET /admin/tenants/{tenant_id}/members/access", "GET /admin/tenants/{tenant_id}/assignments",
+                      "GET /admin/tenants/{tenant_id}/markets", "GET /admin/tenants/{tenant_id}/rewrite-activity")
+
+
+@pytest.mark.parametrize("route", ACCOUNT_READS)
+def test_support_never_reads_plans_usage_cost_quality_or_ai_budget(route):
+    assert route not in _allowed("support")
+    assert route in _allowed("customer_success")
+
+
+@pytest.mark.parametrize("route", SUPPORT_TENANT_360)
+def test_support_reads_the_non_money_tenant_360_tabs(route):
+    assert route in _allowed("support") and route in _allowed("customer_success")
+
+
+def test_only_support_lacks_the_money_columns_of_the_directory():
+    from api.core.staff_authz import sees_tenant_money
+
+    assert sees_tenant_money(None)                    # the machine
+    assert not sees_tenant_money("support")
+    for role in ("admin", "customer_success", "finance", "content", "viewer", "ai_ops"):
+        assert sees_tenant_money(role), role
+    assert not sees_tenant_money("superuser")         # unknown role
 
 
 def test_finance_reads_billing_and_changes_only_billing_fields():

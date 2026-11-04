@@ -216,7 +216,8 @@ export const API_READ_RULES: { prefix: string; roles: StaffRole[] }[] = [
   { prefix: "writing-memory", roles: [...TENANT_QA, "ai_ops"] },
   // AA-804 — backend /admin/ai-gateway/* (every paid provider's spend, balance and the job trace): admin only,
   // re-checked by the backend (staff_policy, spend.read).
-  { prefix: "ai-gateway", roles: [...AI_SPEND, "customer_success", "support"] },   // AA-1035: the Tenant 360 budget tile
+  // AA-1035: customer_success reads the Tenant 360 budget tile of its book (tenant.book.account.read); support never.
+  { prefix: "ai-gateway", roles: [...AI_SPEND, "customer_success"] },
 ];
 
 /** May `role` call backend /admin/{path} at all (any method)? (path without the leading slash) */
@@ -262,15 +263,16 @@ export type Capability =
   | "alerts.write"    // AA-913 — Platform › Alert recipients (changes also need a Cognito session)
   // AA-1035 R2 (root ADR 0019 d3 / d4)
   | "tenant_content.read" | "catalog.read" | "tenant.book.read" | "tenant.member.write" | "tenant.assign"
-  | "billing.read" | "billing.write" | "wave.run" | "lab.read";
+  | "billing.read" | "billing.write" | "wave.run" | "lab.read"
+  | "tenant.book.account.read";   // AA-1035: plans, usage, cost, Tenant QA, AI budget of the own book (not support)
 
 export const ROLE_PERMS: Record<StaffRole, readonly Capability[]> = {
   admin: [
     "content.read", "content.write", "review.act", "master.admin", "atoms.write", "photos.write",
     "a4.unpublish", "quality.write", "content.settings.write", "tenant.read", "tenant.write",
     "ops.read", "ops.write", "ai.admin", "spend.read", "spend.write", "staff.read", "audit.read",
-    "alerts.write", "tenant_content.read", "catalog.read", "tenant.book.read", "tenant.member.write",
-    "tenant.assign", "billing.read", "billing.write", "wave.run", "lab.read",
+    "alerts.write", "tenant_content.read", "catalog.read", "tenant.book.read", "tenant.book.account.read",
+    "tenant.member.write", "tenant.assign", "billing.read", "billing.write", "wave.run", "lab.read",
   ],
   content_lead: [
     "content.read", "content.write", "review.act", "master.admin", "atoms.write", "photos.write",
@@ -280,7 +282,7 @@ export const ROLE_PERMS: Record<StaffRole, readonly Capability[]> = {
   content: ["content.read", "content.write", "review.act", "catalog.read"],
   reviewer: ["content.read", "content.write", "review.act", "catalog.read"],
   tenant_qa: ["content.read", "catalog.read", "tenant_content.read", "quality.write", "a4.unpublish", "lab.read"],
-  customer_success: ["tenant.book.read", "tenant.member.write"],
+  customer_success: ["tenant.book.read", "tenant.book.account.read", "tenant.member.write"],
   support: ["tenant.book.read", "tenant.member.write"],
   finance: ["billing.read", "billing.write", "spend.read"],
   ai_ops: ["content.read", "catalog.read", "ai.admin", "spend.read", "spend.write", "lab.read"],

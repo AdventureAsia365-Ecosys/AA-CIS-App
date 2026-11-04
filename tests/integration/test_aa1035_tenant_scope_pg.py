@@ -157,3 +157,39 @@ async def test_a_book_role_without_a_staff_id_is_refused(world):
     res = await client.get(f"/admin/tenants/{t['a']}/members",
                            headers={"X-Admin-Secret": SECRET, "x-admin-role": "customer_success"})
     assert res.status_code == 403 and res.json()["detail"] == "Tenant scope needs a verified staff identity"
+
+
+@pytest.mark.asyncio
+async def test_support_never_sees_the_money_of_its_tenants(world):
+    """S267 review: support (book + pool) reads the directory and the non-money Tenant 360 tabs only; the money
+    columns are null for it, and plans, usage, cost, quality and the AI budget tile are refused."""
+    client, pool, t, s, roles = world
+    assert (await _assign(client, s, roles, t["a"], "csm", "owner")).status_code == 200
+    assert (await _assign(client, s, roles, t["a"], "support", "support")).status_code == 200
+    for path in (f"/admin/tenants/{t['a']}/usage", f"/admin/tenants/{t['a']}/cost",
+                 f"/admin/tenants/{t['a']}/subscription", f"/admin/ai-gateway/tenant-budgets/{t['a']}"):
+        res = await client.get(path, headers=_as(s, roles, "support"))
+        assert res.status_code == 403, (path, res.text)
+    assert (await client.get(f"/admin/tenants/{t['a']}/audit", headers=_as(s, roles, "support"))).status_code == 200
+    # The directory and the details read shared.v_tenant_monthly_usage on its live columns, which the 007-shaped CI
+    # view lacks until 223 (as test_aa797_tenant_admin); the column nulling is also unit-tested (test_aa798).
+    has_live_view = await pool.fetchval(
+        "SELECT 1 FROM information_schema.columns WHERE table_schema = 'shared' "
+        "AND table_name = 'v_tenant_monthly_usage' AND column_name = 'api_calls_used'")
+    if not has_live_view:
+        return
+    rows = {r["tenant_id"]: r for r in
+            (await client.get("/admin/tenants", headers=_as(s, roles, "support"))).json()["tenants"]}
+    assert t["a"] in rows and t["b"] in rows          # its book and the pool
+    for row in rows.values():
+        assert row["plan"]["price_usd_monthly"] is None
+        assert row["this_month"]["overage_usd"] is None and row["this_month"]["llm_cost_usd"] is None
+    csm_rows = {r["tenant_id"]: r for r in
+                (await client.get("/admin/tenants", headers=_as(s, roles, "csm"))).json()["tenants"]}
+    assert set(csm_rows) == {t["a"]}
+    assert isinstance(csm_rows[t["a"]]["this_month"]["llm_cost_usd"], float)
+    details = await client.get(f"/admin/tenants/{t['a']}/details", headers=_as(s, roles, "support"))
+    assert details.status_code == 200
+    assert details.json()["summary"]["total_llm_cost_usd"] is None
+    csm_details = await client.get(f"/admin/tenants/{t['a']}/details", headers=_as(s, roles, "csm"))
+    assert isinstance(csm_details.json()["summary"]["total_llm_cost_usd"], float)

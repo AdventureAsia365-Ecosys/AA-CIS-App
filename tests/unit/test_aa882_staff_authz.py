@@ -65,7 +65,7 @@ def test_role_perms_match_the_s241_matrix():
         "spend.write", "staff.read", "audit.read", "alerts.write",   # alerts.write: AA-913
         # AA-1035 R2
         "tenant_content.read", "catalog.read", "tenant.book.read", "tenant.member.write", "tenant.assign",
-        "billing.read", "billing.write", "wave.run", "lab.read",
+        "billing.read", "billing.write", "wave.run", "lab.read", "tenant.book.account.read",
     }
     assert ROLE_PERMS["admin"] == CAPABILITIES - OWNER_PERMS   # admin holds every role capability
 

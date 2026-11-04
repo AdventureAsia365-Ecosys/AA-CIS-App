@@ -1927,7 +1927,10 @@ root `docs/audits/2026-11-03-S265-ecosystem-restructure/clarifications.md` secti
 is one capability or `any_of(...)`; a GET with no entry needs `content.read` (so `customer_success`, `support` and
 `finance` reach only their listed routes). `tenant.read` still means "every tenant" (admin); the split adds
 `tenant_content.read` (tenant text: Tenant QA, Content Trace, A4 logs, Writing Lab text), `catalog.read` (the atom
-store), `tenant.book.read` / `tenant.member.write` (the tenant desk), `tenant.assign`, `billing.read` / `billing.write`
+store), `tenant.book.read` / `tenant.member.write` (the tenant desk: directory and the non-money Tenant 360 tabs),
+`tenant.book.account.read` (customer_success only: plans and add-ons, subscription, usage, cost, Tenant QA verdicts,
+the AI budget tile of the own book; support never, and its directory rows and Tenant 360 header carry the price,
+overage and LLM cost as null, `staff_authz.sees_tenant_money`), `tenant.assign`, `billing.read` / `billing.write`
 (PATCH `/admin/tenants/{id}` is field-level: finance only `plan_tier` / `is_active`), `wave.run` and `lab.read`. The
 content-quality writes check `quality.write` (admin, content_lead, tenant_qa) instead of the literal admin role.
 **Tenant scope:** `api/core/tenant_scope.py require_tenant_scope` runs on every staff route with `{tenant_id}`

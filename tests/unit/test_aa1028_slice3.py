@@ -377,8 +377,9 @@ def _h(role="admin"):
 
 
 def test_policy_entries():
-    # AA-1035 R2: plans and a tenant's subscription read for the tenant desk too (book scoped; finance every tenant)
-    desk = ("tenant.read", "tenant.book.read", "billing.read")
+    # AA-1035 R2: plans and a tenant's subscription read for customer_success too (book scoped; finance every tenant);
+    # never support (S267 review: tenant.book.account.read, not tenant.book.read)
+    desk = ("tenant.read", "tenant.book.account.read", "billing.read")
     assert POLICY[("GET", "/admin/plans")] == POLICY[("GET", "/admin/plans/features")] == desk
     for key in (("POST", "/admin/plans"), ("PATCH", "/admin/plans/{plan_key}"),
                 ("POST", "/admin/plans/{plan_key}/retire"),

@@ -10,7 +10,7 @@ from typing import List, Literal, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from api.core.staff_authz import (
     BILLING_WRITE, MASTER_ADMIN, OPS_READ, TENANT_BOOK_READ, TENANT_READ, TENANT_WRITE, has_any_perm, has_perm,
-    staff_policy,
+    sees_tenant_money, staff_policy,
 )
 from api.core.tenant_scope import TENANT_SCOPED, tenant_scope_filter
 from pydantic import BaseModel, Field
@@ -408,6 +408,13 @@ async def list_tenants(
         if scope is not None:
             rows = [r for r in rows if str(r["tenant_id"]) in scope]
         publish_limits = await _publish_limit_overrides(conn)
+    # AA-1035 (S267 review): support reaches its book and the pool, but never the money columns (null for it). Only a
+    # scoped staff call (scope is not None) can lose them; the machine and the "all" roles keep them.
+    money = scope is None or sees_tenant_money(request.headers.get("x-admin-role"))
+
+    def _usd(value):
+        return float(value) if money and value is not None else None
+
     return {
         "tenants": [
             {
@@ -430,9 +437,7 @@ async def list_tenants(
                 "plan": {
                     "tours_quota_monthly":     r["tours_quota_monthly"],
                     "api_calls_quota_monthly": r["api_calls_quota_monthly"],
-                    "price_usd_monthly": (
-                        float(r["price_usd_monthly"]) if r["price_usd_monthly"] is not None else None
-                    ),
+                    "price_usd_monthly": _usd(r["price_usd_monthly"]),
                 },
                 "this_month": {
                     "tours_rewritten":  r["source_active"],
@@ -440,9 +445,9 @@ async def list_tenants(
                     "quota_tours_pct":  float(r["quota_tours_pct"]),
                     "quota_calls_pct":  float(r["quota_calls_pct"]),
                     "tours_overage":    r["tours_overage"],
-                    "overage_usd":      float(r["overage_usd"]),
+                    "overage_usd":      _usd(r["overage_usd"]),
                     # AA-798: the view's real llm_call_log month-to-date spend (migration 223)
-                    "llm_cost_usd":     float(r["llm_cost_usd"]),
+                    "llm_cost_usd":     _usd(r["llm_cost_usd"]),
                 },
                 "lifecycle": {
                     "source_active":     r["source_active"],
@@ -1057,12 +1062,15 @@ async def get_tenant_details(
                 return []
         return []
 
+    # AA-1035 (S267 review): support reads the Tenant 360 header of its book, without the LLM cost (null for it).
+    money = sees_tenant_money(x_admin_role)
+
     return {
         "summary": {
             "total_rewrites":       int(total_rewrites or 0),
-            "total_llm_cost_usd":   float(total_cost or 0),
+            "total_llm_cost_usd":   float(total_cost or 0) if money else None,
             # AA-718 bug 2: windowed cost + label, reconciled with External Spend's 30d window.
-            "llm_cost_window_usd":  float(cost_window or 0) if is_internal else None,
+            "llm_cost_window_usd":  float(cost_window or 0) if is_internal and money else None,
             "llm_cost_window_label": "last 30 days",
             # AA-718 bug 1 + 5: true filtered catalog count + filter-aware avg quality (internal).
             "catalog_total":        catalog_total if is_internal else int(total_rewrites or 0),
@@ -1109,7 +1117,7 @@ async def get_tenant_details(
                 "tours_processed": int(r["tours_total"] or 0),
                 "tours_passed":    int(r["tours_passed"] or 0),
                 "llm_model":       r["llm_model"],
-                "llm_cost_usd":    float(r["cost_usd"] or 0),
+                "llm_cost_usd":    float(r["cost_usd"] or 0) if money else None,
                 "status":          r["status"],
                 # AA-718 bug 3: an honest DISPLAY status derived read-only (never written back).
                 # A run stored 'ingesting' can be: actually finished (all tours passed → show

@@ -42,7 +42,11 @@ Roles and tenant scope (AA-1035 R2 slice 1, root ADR 0019 d3 / d4)
 - tenant.read keeps its meaning "read every tenant": only admin holds it. customer_success and support hold
   tenant.book.read instead, and api/core/tenant_scope.py require_tenant_scope (a dependency of every staff route with
   a {tenant_id} path parameter, enforced by tests/unit/test_aa1035_tenant_scope_routes.py) narrows them to their
-  assigned tenants (support also the pool).
+  assigned tenants (support also the pool). tenant.book.read opens only the non-money Tenant 360 reads (details,
+  config, audit, rewrite activity, markets, members, assignments); the account-manager reads of the book (plans and
+  add-ons, subscription, usage, LLM cost, Tenant QA verdicts, the AI budget tile) need tenant.book.account.read,
+  which customer_success holds and support does not (matrix: support has "-" on plans / invoices, Tenant QA and AI
+  & spend).
 - A GET with no POLICY entry needs content.read (the content pages). Before R2 it was open to every staff role; the
   roles that held content.read then are the roles that hold it now, so only the new roles without it are refused.
 
@@ -98,6 +102,9 @@ ALERTS_WRITE = "alerts.write"
 TENANT_CONTENT_READ = "tenant_content.read"  # tenant text: Tenant QA, Content Trace, A4 logs, Writing Lab text
 CATALOG_READ = "catalog.read"                # the AA atom store (Atoms & routes)
 TENANT_BOOK_READ = "tenant.book.read"        # Tenants directory / Tenant 360 of the caller's book (tenant_scope.py)
+# AA-1035 (S267 review): the account manager's reads of the own book: plans and add-ons, subscription, usage, LLM cost,
+# Tenant QA verdicts, the AI budget tile (customer_success; never support)
+TENANT_BOOK_ACCOUNT_READ = "tenant.book.account.read"
 TENANT_MEMBER_WRITE = "tenant.member.write"  # Content studio members: invite, send again, change role, remove
 TENANT_ASSIGN = "tenant.assign"              # who looks after which tenant (shared.staff_tenant_assignment)
 BILLING_READ = "billing.read"                # plan, usage and billing columns of every tenant
@@ -116,8 +123,8 @@ ROLE_PERMS: dict[str, frozenset[str]] = {
         MASTER_ADMIN, ATOMS_WRITE, PHOTOS_WRITE, A4_UNPUBLISH, QUALITY_WRITE, CONTENT_SETTINGS_WRITE,
         TENANT_READ, TENANT_WRITE, OPS_READ, OPS_WRITE, AI_ADMIN, SPEND_READ, SPEND_WRITE,
         STAFF_READ, AUDIT_READ, ALERTS_WRITE,
-        TENANT_CONTENT_READ, CATALOG_READ, TENANT_BOOK_READ, TENANT_MEMBER_WRITE, TENANT_ASSIGN,
-        BILLING_READ, BILLING_WRITE, WAVE_RUN, LAB_READ,
+        TENANT_CONTENT_READ, CATALOG_READ, TENANT_BOOK_READ, TENANT_BOOK_ACCOUNT_READ, TENANT_MEMBER_WRITE,
+        TENANT_ASSIGN, BILLING_READ, BILLING_WRITE, WAVE_RUN, LAB_READ,
     },
     # AA Catalogue W, Tenant QA W, Writing Lab R (wave, review queue, master content, atoms / photos, SEO).
     "content_lead": _CONTENT_WORK | {
@@ -130,9 +137,11 @@ ROLE_PERMS: dict[str, frozenset[str]] = {
     "reviewer": _CONTENT_WORK | {CATALOG_READ},
     # Tenant QA W, AA Catalogue R, Writing Lab R.
     "tenant_qa": frozenset({CONTENT_READ, CATALOG_READ, TENANT_CONTENT_READ, QUALITY_WRITE, A4_UNPUBLISH, LAB_READ}),
-    # Tenants directory R / Tenant 360 W of the own book (tenant_scope.py), members and invitations; plans R.
-    "customer_success": frozenset({TENANT_BOOK_READ, TENANT_MEMBER_WRITE}),
-    # Tenants directory R / Tenant 360 R of the own book and the pool, member actions.
+    # Tenants directory R / Tenant 360 W of the own book (tenant_scope.py), members and invitations; plans and add-ons
+    # R, AI & spend R and Tenant QA R of the own tenants (tenant.book.account.read).
+    "customer_success": frozenset({TENANT_BOOK_READ, TENANT_BOOK_ACCOUNT_READ, TENANT_MEMBER_WRITE}),
+    # Tenants directory R / Tenant 360 R of the own book and the pool, member actions. Never plans, billing, usage,
+    # cost, Tenant QA or AI spend (no tenant.book.account.read).
     "support": frozenset({TENANT_BOOK_READ, TENANT_MEMBER_WRITE}),
     # Billing columns and plans of every tenant, plan change and suspend for debt (field-level), AI & spend R.
     "finance": frozenset({BILLING_READ, BILLING_WRITE, SPEND_READ}),
@@ -201,8 +210,10 @@ STAFF_ROLES: tuple[str, ...] = tuple(ROLE_PERMS)
 # page that calls the route (frontend/lib/rbac.ts PAGE_RULES) — an every-staff content page (Upload,
 # S1, Review) keeps content.write / review.act, an admin-only page gets an admin capability.
 
-_TENANT_ONE_READ = any_of(TENANT_READ, TENANT_BOOK_READ)                 # Tenant 360 tab of one tenant (scoped)
-_TENANT_BILLING_READ = any_of(TENANT_READ, TENANT_BOOK_READ, BILLING_READ)  # directory, usage, plans, subscription
+_TENANT_ONE_READ = any_of(TENANT_READ, TENANT_BOOK_READ)                 # non-money Tenant 360 tab (scoped)
+_TENANT_ACCOUNT_READ = any_of(TENANT_READ, TENANT_BOOK_ACCOUNT_READ)     # cost, quality of one tenant (scoped)
+_TENANT_DIRECTORY_READ = any_of(TENANT_READ, TENANT_BOOK_READ, BILLING_READ)  # directory (money columns: admin.py)
+_TENANT_BILLING_READ = any_of(TENANT_READ, TENANT_BOOK_ACCOUNT_READ, BILLING_READ)  # usage, plans, subscription
 _TENANT_MEMBER_WRITE = any_of(TENANT_WRITE, TENANT_MEMBER_WRITE)
 _LAB_READ = any_of(TENANT_CONTENT_READ, LAB_READ)                          # Writing Lab reads without tenant text
 
@@ -253,8 +264,8 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/ai-gateway/calls"): SPEND_READ,     # AA-804 UI 3: every logged paid call (Calls tab)
     ("GET", "/admin/ai-gateway/experiments"): SPEND_READ,   # AA-900 UI (C4): prompt register + eval runs
     ("GET", "/admin/ai-gateway/access"): SPEND_READ,        # AA-1025 C1 follow-up: page writes this caller may use
-    # AA-1016 UI (C4): the Tenant 360 tile; AA-1035: also the caller's book (tenant_scope.py)
-    ("GET", "/admin/ai-gateway/tenant-budgets/{tenant_id}"): any_of(SPEND_READ, TENANT_BOOK_READ),
+    # AA-1016 UI (C4): the Tenant 360 tile; AA-1035: also customer_success for its book (tenant_scope.py), not support
+    ("GET", "/admin/ai-gateway/tenant-budgets/{tenant_id}"): any_of(SPEND_READ, TENANT_BOOK_ACCOUNT_READ),
     ("PUT", "/admin/ai-gateway/tenant-budgets/{tenant_id}"): SPEND_WRITE,     # AA-1016 UI (C4), audited
     ("DELETE", "/admin/ai-gateway/tenant-budgets/{tenant_id}"): SPEND_WRITE,  # AA-1016 UI (C4), audited
     ("GET", "/admin/ai-gateway/credit"): SPEND_READ,      # AA-1025 B5: vendor API credit ledger + estimate (money)
@@ -290,7 +301,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("PATCH", "/admin/settings/seo"): CONTENT_SETTINGS_WRITE,
 
     # ── admin (admin.py) — tenant accounts (Tenants page, admin-only; AA-797 already re-checks writes)
-    ("GET", "/admin/tenants"): _TENANT_BILLING_READ,       # AA-1035: filtered to the caller's scope
+    ("GET", "/admin/tenants"): _TENANT_DIRECTORY_READ,     # AA-1035: filtered to the caller's scope
     ("POST", "/admin/tenants"): TENANT_WRITE,
     # AA-1028 R1 slice 2 — the tenant_provision saga (admin_tenant_provision.py): create with subscriptions, add-ons
     ("POST", "/admin/tenants/provision"): TENANT_WRITE,
@@ -337,8 +348,8 @@ POLICY: dict[tuple[str, str], Any] = {
     ("PUT", "/admin/notifications/read-all"): CONTENT_READ,
     ("PUT", "/admin/notifications/{notif_id}/read"): CONTENT_READ,
     # ── admin_tenant360 — Tenant 360 tabs (admin-only)
-    ("GET", "/admin/tenants/{tenant_id}/cost"): _TENANT_ONE_READ,
-    ("GET", "/admin/tenants/{tenant_id}/quality"): _TENANT_ONE_READ,
+    ("GET", "/admin/tenants/{tenant_id}/cost"): _TENANT_ACCOUNT_READ,       # LLM cost, $/piece, margin
+    ("GET", "/admin/tenants/{tenant_id}/quality"): _TENANT_ACCOUNT_READ,    # T10 verdicts, held reasons
     ("GET", "/admin/tenants/{tenant_id}/markets"): _TENANT_ONE_READ,
     # AA-978 — Tenant 360 Members (CIS memberships; a removal also signs the person out of the partner CRM)
     ("GET", "/admin/tenants/{tenant_id}/members"): _TENANT_ONE_READ,
@@ -715,6 +726,16 @@ def has_any_perm(role: Optional[str], *capabilities: str) -> bool:
     """AA-1035: the role holds at least one of ``capabilities``."""
     perms = ROLE_PERMS.get(role or "", frozenset())
     return any(c in perms for c in capabilities)
+
+
+def sees_tenant_money(role: Optional[str]) -> bool:
+    """AA-1035 (S267 review): may a caller who reaches a tenant read see its money (plan price, overage, LLM cost)?
+    The machine (no role) and every role with a money or account read do; a role that reaches the tenant only through
+    tenant.book.read (support) gets those fields as null. content.read keeps the Master Content cost of the aa_internal
+    tenant it read before R2."""
+    if role is None:
+        return True
+    return has_any_perm(role, TENANT_READ, TENANT_BOOK_ACCOUNT_READ, BILLING_READ, SPEND_READ, CONTENT_READ)
 
 
 def docs_owner_read_via(principal: StaffPrincipal) -> Optional[str]:

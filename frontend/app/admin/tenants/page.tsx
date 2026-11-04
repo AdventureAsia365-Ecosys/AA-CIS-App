@@ -26,8 +26,9 @@ import {
   K, serif, mono, sans, Section, Eyebrow, Badge, LoadingScreen,
   DataTable, IconButton, KX, SegmentedControl, type ColumnDef,
   type Tone,
-  ButtonGroup, ChipButton, Drawer, Pressable,
+  ButtonGroup, ChipButton, Drawer, Pressable, useAdminIdentity,
 } from "../../_kit";
+import { can, isStaffRole } from "@/lib/rbac";
 import { Tenant360Settings } from "./_components/Tenant360Settings";
 import { Tenant360Cost } from "./_components/Tenant360Cost";
 import { Tenant360Quality } from "./_components/Tenant360Quality";
@@ -70,7 +71,8 @@ interface Tenant {
   this_month: {
     tours_rewritten: number; api_calls_used: number;
     quota_tours_pct: number; quota_calls_pct: number;
-    tours_overage: number; overage_usd: number; llm_cost_usd: number;
+    // AA-1035: null for a role that reaches the tenant without its money (support)
+    tours_overage: number; overage_usd: number | null; llm_cost_usd: number | null;
   };
   lifecycle: Lifecycle;
 }
@@ -303,11 +305,11 @@ interface RewrittenTour {
 interface PipelineRun {
   run_id: string; started_at: string; tours_processed: number;
   tours_passed: number; llm_model: string | null;
-  llm_cost_usd: number; status: string;
+  llm_cost_usd: number | null; status: string;   // AA-1035: null for support
 }
 interface TenantDetails {
   summary: {
-    total_rewrites: number; total_llm_cost_usd: number;
+    total_rewrites: number; total_llm_cost_usd: number | null;   // AA-1035: null for support
     api_calls_this_month: number; quota_pct: number;
     plan_name: string; member_since: string;
     tours_view?: string; pipeline_note?: string | null;
@@ -404,7 +406,7 @@ function PipelineTabContent({ runs, pipelineNote }: { runs: PipelineRun[]; pipel
               </span>
             ) },
           { id: "cost", header: t("colCost"), accessorKey: "llm_cost_usd", meta: { align: "right" },
-            cell: ({ row: { original: r } }) => <span style={{ color: K.accent }}>${r.llm_cost_usd.toFixed(4)}</span> },
+            cell: ({ row: { original: r } }) => <span style={{ color: K.accent }}>{r.llm_cost_usd == null ? "—" : `$${r.llm_cost_usd.toFixed(4)}`}</span> },
           { id: "status", header: t("colStatus"), accessorKey: "status", meta: { align: "right" },
             cell: ({ row: { original: r } }) => <StatusChip status={r.status} /> },
         ]}
@@ -731,6 +733,12 @@ function TenantDetail({ tenant, onChanged }: {
   const dplWords = T360_WORDS_MESSAGES[useLang()];
   const tenantId = tenant.tenant_id;
   const isInternal = tenant.plan_tier === "internal";
+  // AA-1035: support reaches the tenant without its plans, usage, cost or Tenant QA (the backend refuses them); hide
+  // those tabs for a known role that lacks the read. UI hint only.
+  const role = useAdminIdentity().role;
+  const known = isStaffRole(role);
+  const seesAccount = !known || can(role, "tenant.read") || can(role, "tenant.book.account.read");
+  const seesBilling = seesAccount || can(role, "billing.read");
 
   // C4 (S262): `?tenant=<id>&tab=cost` (AI providers › Budgets "Open the tenant") opens this tenant on that tab.
   const deepTab = useSearchParams();
@@ -780,11 +788,11 @@ function TenantDetail({ tenant, onChanged }: {
     // AA-557 I.22 — skeleton tab only, see SocialContentTabContent's own comment for why.
     { key: "social_content", label: tr("tabSocial") },
     // AA-666 — Tenant 360: the remaining management facets, added to the inline panel.
-    { key: "billing" as DTab,  label: tr("tabBilling") },
-    // AA-1028 R1 slice 3: plans, add-ons, entitlements with their source, overrides (root ADR 0019 d1 / d2)
-    { key: "subscription" as DTab, label: tr("tabSubscription") },
-    { key: "cost" as DTab,     label: tr("tabCost") },
-    { key: "quality" as DTab,  label: tr("tabQuality") },
+    ...(seesBilling ? [{ key: "billing" as DTab,  label: tr("tabBilling") },
+      // AA-1028 R1 slice 3: plans, add-ons, entitlements with their source, overrides (root ADR 0019 d1 / d2)
+      { key: "subscription" as DTab, label: tr("tabSubscription") }] : []),
+    ...(seesAccount ? [{ key: "cost" as DTab,     label: tr("tabCost") },
+      { key: "quality" as DTab,  label: tr("tabQuality") }] : []),
     { key: "markets" as DTab,  label: tr("tabMarkets") },
     // AA-1031 (S264): Content studio members (invite, send again, role, remove) — root ADR 0010a decision 4.
     { key: "members" as DTab,  label: tr("tabMembers") },
@@ -797,7 +805,7 @@ function TenantDetail({ tenant, onChanged }: {
       <div style={{ display: "flex", gap: 20, marginBottom: 14, flexWrap: "wrap" }}>
         {([
           [tr("totalRewrites"), String(s.total_rewrites),              K.accent],
-          [tr("llmCostAllTime"), `$${s.total_llm_cost_usd.toFixed(3)}`, K.body],
+          [tr("llmCostAllTime"), s.total_llm_cost_usd == null ? "—" : `$${s.total_llm_cost_usd.toFixed(3)}`, K.body],
           [tr("apiCallsMo"), s.api_calls_this_month.toLocaleString(), K.body],
           // AA-702: this is the API-call quota; the list row shows the tour quota — label both.
           [tr("apiQuotaShort"), `${s.quota_pct}%`,                     s.quota_pct > 80 ? K.danger : K.body],
