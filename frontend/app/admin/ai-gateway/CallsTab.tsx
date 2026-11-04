@@ -21,6 +21,7 @@ import {
   callTone, callsPath, usd, type CallRow, type CallsResp, type TraceTarget,
 } from "@/lib/aiGateway";
 import { accountName } from "@/lib/awsAccounts";
+import type { RouteTarget } from "@/lib/routeTrace";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import { APP, CALLS, WINDOW } from "./calls.messages";
 import { OUTCOME, SOURCE } from "./messages";
@@ -33,7 +34,11 @@ function short(id: string): string {
   return id.slice(0, 8);
 }
 
-export default function CallsTab({ onTrace }: { onTrace: (t: TraceTarget) => void }) {
+export default function CallsTab({ onTrace, onRoute }: {
+  onTrace: (t: TraceTarget) => void;
+  /** AA-1042: open the row's gateway request on the Trace tab */
+  onRoute?: (t: RouteTarget) => void;
+}) {
   const t = useT(CALLS);
   const tw = useT(WINDOW);
   const ta = useT(APP);
@@ -117,7 +122,16 @@ export default function CallsTab({ onTrace }: { onTrace: (t: TraceTarget) => voi
       cell: ({ row: { original: e } }) => <span style={{ fontFamily: mono }}>
         {e.tokens_in == null && e.tokens_out == null ? "—" : `${e.tokens_in ?? 0} / ${e.tokens_out ?? 0}`}</span> },
     { id: "trace", header: t("colTrace"), enableSorting: false,
-      cell: ({ row: { original: e } }) => e.job_id ? (
+      cell: ({ row: { original: e } }) => {
+        // AA-1042: the row's gateway request (every attempt it needed) on the Trace tab
+        const rt = typeof e.detail?.route_trace === "string" ? e.detail.route_trace : null;
+        const route = rt && onRoute ? (
+          <span data-testid="ai-gateway-calls-route" style={{ display: "inline-flex" }}>
+            <LinkButton tone="muted" onClick={() => onRoute({ id: rt, at: e.at })} title={t("openRouteTitle")}>
+              {t("openRoute")}</LinkButton>
+          </span>
+        ) : null;
+        return e.job_id ? (
         <span style={{ display: "inline-flex", gap: 10, whiteSpace: "nowrap" }}>
           <span data-testid="ai-gateway-calls-trace" style={{ display: "inline-flex" }}>
             <LinkButton onClick={() => onTrace({ kind: "job", id: e.job_id as string })}
@@ -127,9 +141,11 @@ export default function CallsTab({ onTrace }: { onTrace: (t: TraceTarget) => voi
             <LinkButton tone="muted" onClick={() => setMany({ [CALL_PARAM.job_id]: e.job_id })}>
               {t("onlyThisJob")}</LinkButton>
           )}
+          {route}
         </span>
-      ) : <span style={small}>{t("noJob")}</span> },
-  ], [t, ta, tsrc, tout, errorText, dir, accountText, onTrace, filters.job_id, setMany]);
+      ) : route ?? <span style={small}>{t("noJob")}</span>;
+      } },
+  ], [t, ta, tsrc, tout, errorText, dir, accountText, onTrace, onRoute, filters.job_id, setMany]);
 
   const cost = rows.reduce((s, r) => s + (r.cost_usd ?? 0), 0);
   const failed = rows.filter((r) => r.status === "refused" || r.status === "error").length;

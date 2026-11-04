@@ -354,7 +354,7 @@ export function groupRows<R extends Pick<ProviderRow, "group">>(rows: readonly R
 // ── tabs, views and the links of retired tabs (AA-804 UI part 2) ──────────────────────────────────────────────────
 
 /** The page's tabs, in order. `providers` is the default (no `tab` in the address). */
-export const TAB_KEYS = ["providers", "routing", "models", "budgets", "calls", "guide"] as const;
+export const TAB_KEYS = ["providers", "routing", "models", "budgets", "calls", "trace", "guide"] as const;
 export type TabKey = (typeof TAB_KEYS)[number];
 /** The views inside the Providers tab: the read-only overview, the connection settings, the Jev credit ledger and
  *  (AA-1025 B5) the credit ledger of the vendor API connections. */
@@ -1292,7 +1292,7 @@ export const ACCESS_API = "/api/admin/ai-gateway/access";
 
 export const PAGE_ACTIONS = [
   "provider_switch", "connections", "connection_test", "requeue", "routing", "catalog", "budgets", "jev_credit",
-  "credit", "app_profiles",
+  "credit", "app_profiles", "route_policy", "route_test",
 ] as const;
 export type PageAction = (typeof PAGE_ACTIONS)[number];
 
@@ -1314,6 +1314,8 @@ export const ACTION_CAPABILITY: Record<PageAction, "ai.admin" | "ops.write" | "s
   jev_credit: "spend.write",
   credit: "spend.write",
   app_profiles: "ai.admin",
+  route_policy: "ai.admin",   // AA-1042 Trace tab: the route alert settings and the fallback hold switch
+  route_test: "ai.admin",     // AA-1042 Trace tab: the route test (a few tiny paid calls) and Run check now
 };
 
 /**
