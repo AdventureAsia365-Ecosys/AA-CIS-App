@@ -362,6 +362,14 @@ async def get_stage_config(stage: str) -> StageConfig:
         return SAFE_DEFAULTS.get(stage, _GENERIC_FALLBACK)
 
 
+def _watch_route_version() -> None:
+    try:
+        from . import route_settings
+        route_settings.watch_version()
+    except Exception as e:  # noqa: BLE001 — the watch never fails a stage read
+        logger.warning("llm_route_version_watch_failed", error=str(e)[:200])
+
+
 def get_stage_config_sync(stage: str) -> StageConfig:
     """Sync wrapper for the many call sites that are plain `def`, not `async def`. Cache-hit
     path never touches asyncio at all — the common case (20s TTL).
@@ -378,7 +386,11 @@ def get_stage_config_sync(stage: str) -> StageConfig:
     raise "cannot be called from a running event loop" there. Detected via
     `asyncio.get_running_loop()` and handled by running the fetch in a throwaway worker thread
     (its own fresh loop) instead of either crashing or silently degrading to SAFE_DEFAULTS on
-    every single call from that one call site."""
+    every single call from that one call site.
+
+    AA-1042 (S268): it first asks ``route_settings.watch_version()`` (20 s cache, a clock read on a hit), which drops
+    this cache and the deployment cache when another process saved a new route config version."""
+    _watch_route_version()
     cached = _cache.get(stage)
     if cached and time.monotonic() - cached[1] < _CACHE_TTL_SECONDS:
         return cached[0]

@@ -8,9 +8,13 @@ and the route config version in force (``shared.llm_route_config_version``, writ
 - ``order_mode_sync()``: the DB value; while the row cannot be read (before 370, DB down, a unit test without a DB) the
   env var ``LLM_ROUTE_AWS_FIRST`` (on = aws_first) is the bootstrap default, then model_first. DB wins.
 - ``current_version_sync()``: the version this process routes with (None without the row).
-- When this process reads a NEW version number, it drops its stage cache (``role_config``) and its deployment cache
-  (``deployments``), so an admin change made on another task (api vs worker) reaches every process within
-  ``_CACHE_TTL_SECONDS`` instead of the 5 minutes of the deployment cache.
+- ``watch_version()``: every gateway route resolution calls it first (``role_config.get_stage_config_sync`` and
+  ``deployments._ensure_loaded``, the two caches that hold route rows), whatever the stage or order mode. Inside the
+  ``_CACHE_TTL_SECONDS`` window it is a clock read (no DB); after it, one small SELECT per process. When this process
+  reads a NEW version number, it drops its stage cache (``role_config``) and its deployment cache (``deployments``),
+  so an admin change made on another task (api vs worker) reaches every process and every stage within
+  ``_CACHE_TTL_SECONDS`` instead of the 5 minutes of the deployment cache. The watch runs before the deployment
+  cache reloads, so the first version a process reads is never newer than the rows it routes with.
 - ``override_order_mode(mode)``: a context-variable override for the admin preview (the proposed mode for one
   request; a concurrent gateway call never sees it).
 
@@ -106,6 +110,16 @@ def _ensure_loaded() -> None:
         _load(now)
 
 
+def watch_version() -> None:
+    """Called at the start of every gateway route resolution (stage config and deployment reads): re-read the settings
+    row when the cache is older than ``_CACHE_TTL_SECONDS`` and drop the route caches of this process on a new version.
+    A clock read on a cache hit; never raises (a failed read keeps the caches and their own TTLs)."""
+    try:
+        _ensure_loaded()
+    except Exception as e:  # noqa: BLE001 — the watch never fails a call
+        logger.warning("llm_route_version_watch_failed", error=str(e)[:200])
+
+
 def env_order_mode() -> str:
     """The bootstrap default: ``LLM_ROUTE_AWS_FIRST`` on = aws_first, anything else model_first."""
     return AWS_FIRST if os.environ.get(ROUTE_AWS_FIRST_ENV, "").strip().lower() in _ON else MODEL_FIRST
@@ -150,4 +164,4 @@ def invalidate() -> None:
 
 
 __all__ = ["AWS_FIRST", "MODEL_FIRST", "ORDER_MODES", "current_version_sync", "env_order_mode", "invalidate",
-           "order_mode_source", "order_mode_sync", "override_order_mode"]
+           "order_mode_source", "order_mode_sync", "override_order_mode", "watch_version"]

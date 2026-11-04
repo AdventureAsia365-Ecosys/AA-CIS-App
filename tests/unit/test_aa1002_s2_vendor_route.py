@@ -327,11 +327,15 @@ def test_an_expired_registry_is_reloaded_once_however_many_threads_ask(monkeypat
     import threading
     import time
 
-    loads = {"connections": 0, "deployments": 0, "aliases": 0}
+    from shared.llm_client import route_settings
+    loads = {"connections": 0, "deployments": 0, "aliases": 0, "route_settings": 0}
     gate = threading.Event()
 
     def slow_fetch(fn):
         gate.wait(2)
+        if fn is route_settings._fetch:               # AA-1042: the deployment read watches the route version first
+            loads["route_settings"] += 1
+            return None
         if fn is connections._fetch_all:
             loads["connections"] += 1
             return {"anthropic-direct": anthropic_connection()}
@@ -344,6 +348,7 @@ def test_an_expired_registry_is_reloaded_once_however_many_threads_ask(monkeypat
     monkeypatch.setattr(connections, "run_sync", slow_fetch)
     connections.invalidate()
     deployments.invalidate()
+    route_settings.invalidate()
     found = []
     threads = [threading.Thread(target=lambda: found.append(vendor_route.vendor_deployment_for(SONNET55)))
                for _ in range(8)]
@@ -353,5 +358,5 @@ def test_an_expired_registry_is_reloaded_once_however_many_threads_ask(monkeypat
     gate.set()
     for t in threads:
         t.join(5)
-    assert loads == {"connections": 1, "deployments": 1, "aliases": 1}
+    assert loads == {"connections": 1, "deployments": 1, "aliases": 1, "route_settings": 1}
     assert len(found) == 8 and all(f is not None and f.connection.connection_key == "anthropic-direct" for f in found)

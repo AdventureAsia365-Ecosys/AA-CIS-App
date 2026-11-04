@@ -122,6 +122,58 @@ def test_a_new_version_drops_the_route_caches_of_this_process(monkeypatch):
     assert calls == []
 
 
+def test_every_route_read_watches_the_version_so_another_process_change_lands_within_the_ttl(monkeypatch):
+    """A provider-order save in another task: this process's deployment cache (5 min) is fresh, but the next
+    deployment or stage read sees the new version (20 s cache) and reloads, whatever the stage or order mode."""
+    from shared.llm_client import role_config
+    state = {"version": 3, "prio": {"acc3": 10, "api": 20}}
+    fetches = {"settings": 0, "deployments": 0}
+
+    def run_sync(fn):
+        if fn is route_settings._fetch:
+            fetches["settings"] += 1
+            return {"order_mode": "model_first", "current_version": state["version"]}
+        if fn is deployments._fetch_all:
+            fetches["deployments"] += 1
+            return [_dep(c, p) for c, p in state["prio"].items()]
+        return []
+    monkeypatch.setattr(connections, "run_sync", run_sync)
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(route_settings.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(deployments.time, "monotonic", lambda: clock["t"])
+    route_settings.invalidate()
+    deployments.invalidate()
+
+    assert [d.connection_key for d in deployments.deployments_for_sync("zz-m")] == ["acc3", "api"]
+    for _ in range(5):                                   # cache hits: a clock read, no DB
+        deployments.deployments_for_sync("zz-m")
+    assert fetches == {"settings": 1, "deployments": 1}
+
+    state.update(version=4, prio={"acc3": 20, "api": 10})          # saved by the api task
+    clock["t"] += route_settings._CACHE_TTL_SECONDS - 1
+    assert [d.connection_key for d in deployments.deployments_for_sync("zz-m")] == ["acc3", "api"]  # within 20 s
+    clock["t"] += 2                                      # 21 s later, the deployment cache is still "fresh" (5 min)
+    assert [d.connection_key for d in deployments.deployments_for_sync("zz-m")] == ["api", "acc3"]
+    assert fetches == {"settings": 2, "deployments": 2}
+
+    dropped = []
+    monkeypatch.setattr(role_config, "invalidate", lambda stage=None: dropped.append(stage))
+    state["version"] = 5
+    clock["t"] += route_settings._CACHE_TTL_SECONDS + 1
+    route_settings.watch_version()
+    assert dropped == [None]
+
+
+def test_the_version_watch_never_fails_a_route_read(monkeypatch):
+    def boom():
+        raise RuntimeError("lock gone")
+    monkeypatch.setattr(route_settings, "_ensure_loaded", boom)
+    route_settings.watch_version()                       # logged, not raised
+    monkeypatch.setattr(deployments, "_by_model", {"zz-m": [_dep("acc3", 10)]})
+    monkeypatch.setattr(deployments, "_loaded_at", 1e18)
+    assert [d.connection_key for d in deployments.deployments_for_sync("zz-m")] == ["acc3"]
+
+
 # ── deployments: the preview's priority override ─────────────────────────────────────────────────────────────────
 
 def _dep(conn, prio, enabled=True):

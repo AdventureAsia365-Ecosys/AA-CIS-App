@@ -133,7 +133,15 @@ def _fresh(now: float) -> bool:
                 or (_failed_at and now - _failed_at < _FAILURE_TTL_SECONDS))
 
 
+def _watch_route_version() -> None:
+    """AA-1042 (S268): a new route config version (an admin provider-order change made in any process) drops this
+    cache within route_settings' 20 s instead of this module's 5 minutes. A clock read on a cache hit."""
+    from . import route_settings
+    route_settings.watch_version()
+
+
 def _ensure_loaded() -> None:
+    _watch_route_version()          # first: on a new version it clears _loaded_at, so the check below reloads
     if _fresh(time.monotonic()):
         return
     with _load_lock:
