@@ -107,13 +107,14 @@ def test_new_rows_are_on_no_route(cur):
     # (AA-1026 I6) appends an acc2 fallback to judge / validate routes that name these keys; 333 puts one before the
     # OpenAI API hop of the judge routes; 335 (AA-1024 A2) routes the two segment research stages on haiku-5-5; 336
     # (AA-1024 D8) switches off the dead s1_atom_writer / tp_extract routes; 344 (AA-1026, S264) puts the OpenAI API
-    # last on the six tenant writer routes.
+    # last on the six tenant writer routes; 366 (AA-1026, S267) sets the family fallback chains and opens every
+    # active text stage to vendor_direct.
     assert "supply_content_writer" in {r[0] for r in rows}
     # Rows a test admin switched (the AA-642 A1 stage-switch tests sign as admin:zz-*) are not migrations.
     migrated = {r[1] for r in rows if not str(r[1]).startswith("admin:zz-")}
     assert migrated <= {"migration-282-aa835", "migration-327-aa1026", "migration-331-aa1026", "migration-332-aa1026",
                         "migration-333-aa1026", "migration-335-aa1024", "migration-336-aa1024",
-                        "migration-344-aa1026"}
+                        "migration-344-aa1026", "migration-366-aa1026"}
 
 
 def test_sonnet_drops_the_legacy_acc2_profile_only(cur):
