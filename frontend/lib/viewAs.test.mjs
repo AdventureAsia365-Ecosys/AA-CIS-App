@@ -5,8 +5,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  VIEW_AS_BFF_HEADER, VIEW_AS_COOKIE_PATH, VIEW_AS_READ_ROUTES, VIEW_AS_ROLES, VIEW_AS_ROUTE_ROLES, cookieMaxAge,
-  formatCountdown, isViewAsStartPath, pickText, rowsOf, secondsLeft, startProblem, viewAsClaims, viewAsPathAllowed,
+  VIEW_AS_BFF_HEADER, VIEW_AS_COOKIE_PATH, VIEW_AS_READ_ROUTES, VIEW_AS_ROLES, VIEW_AS_ROLE_HEADER, VIEW_AS_ROUTE_ROLES,
+  cookieMaxAge, formatCountdown, isViewAsStartPath, pickText, rowsOf, secondsLeft, startProblem, viewAsClaims,
+  viewAsForward, viewAsPathAllowed,
   viewAsReadUrl, viewAsReadsForRole, viewAsRoleMayRead,
 } from "./viewAs.ts";
 import {
@@ -85,12 +86,29 @@ test("view-as roles are exactly the roles holding tenant.view_as", () => {
 });
 
 test("the token claims are read without trusting anything else", () => {
-  const t = jwtOf({ vas: "s-1", stf: "u-1", exp: 2_000_000_000, sub: "t-1" });
-  assert.deepEqual(viewAsClaims(t), { sessionId: "s-1", staffId: "u-1", exp: 2_000_000_000 });
-  assert.equal(viewAsClaims(jwtOf({ stf: "u-1", exp: 1 })), null);         // not a view-as token
-  assert.equal(viewAsClaims(jwtOf({ vas: 1, stf: "u-1", exp: 1 })), null);
+  const t = jwtOf({ vas: "s-1", stf: "u-1", srl: "support", exp: 2_000_000_000, sub: "t-1" });
+  assert.deepEqual(viewAsClaims(t), { sessionId: "s-1", staffId: "u-1", startRole: "support", exp: 2_000_000_000 });
+  assert.equal(viewAsClaims(jwtOf({ stf: "u-1", srl: "admin", exp: 1 })), null);   // not a view-as token
+  assert.equal(viewAsClaims(jwtOf({ vas: 1, stf: "u-1", srl: "admin", exp: 1 })), null);
+  assert.equal(viewAsClaims(jwtOf({ vas: "s-1", stf: "u-1", exp: 1 })), null);     // no start role: no session
   assert.equal(viewAsClaims("not-a-jwt"), null);
   assert.equal(viewAsClaims(undefined), null);
+});
+
+test("a role changed since the start is forwarded so the API ends the session; same role: the role's reads", () => {
+  assert.equal(VIEW_AS_ROLE_HEADER, "x-view-as-staff-role");
+  // same role: exactly viewAsPathAllowed
+  assert.ok(viewAsForward("/v1/account/members", "support", "support"));
+  assert.ok(!viewAsForward("/v1/quota", "support", "support"));
+  assert.ok(viewAsForward("/v1/quota", "customer_success", "customer_success"));
+  // role changed: any allowed read path goes to the API (with the role header), which ends and logs the session
+  assert.ok(viewAsForward("/v1/quota", "support", "customer_success"));
+  assert.ok(viewAsForward("/v1/account/members", "customer_success", "support"));
+  // never a path outside the allowed reads, whatever the roles
+  for (const no of ["/v1/slate", "/v1/billing", "/admin/tenants", "/v1/quota/"]) {
+    assert.ok(!viewAsForward(no, "support", "customer_success"), no);
+    assert.ok(!viewAsForward(no, "admin", "admin"), no);
+  }
 });
 
 test("countdown, seconds left and the cookie lifetime", () => {

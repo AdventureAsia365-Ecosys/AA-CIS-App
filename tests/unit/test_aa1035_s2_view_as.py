@@ -14,6 +14,10 @@ Guards (lesson S267: the adversarial re-review found a privilege escalation; the
 - (S268 fix round 2) the gate re-checks the tenant with the start's rule (offboarded, not live, internal: the view
   ends); every path that ends a session writes one tenant.view_as_ended row under that session (end route, a new
   start, the gate); the gate's own per-session rate limit cuts a loop off before any check or audit row.
+- (S268 fix round 3) the session is bound to the role it was started with (the signed srl claim, the verified group
+  role): the start refuses a member whose directory row differs from it; the gate evaluates scope and reads with it and
+  ends the session (cause role_changed) when the DB row or the role the staff BFF forwards is no longer it, so a row
+  that drifted above the group never keeps a view whose scope was lost.
 
 No network, no AWS, no DB: a fake connection answers exactly the SQL each path runs and fails the test on any other.
 """
@@ -57,7 +61,7 @@ VIEW_AS_ROLES = {"admin", "customer_success", "support"}
 
 def token(**over: Any) -> str:
     claims = {"sub": MINE, "name": "Quill Harbor", "plan_tier": "starter", "role": "tenant", "client": "portal",
-              "amr": view_as.VIEW_AS_AMR, "csr": "viewer", "vas": SESSION, "stf": STAFF,
+              "amr": view_as.VIEW_AS_AMR, "csr": "viewer", "vas": SESSION, "stf": STAFF, "srl": "customer_success",
               "iat": datetime.now(timezone.utc), "exp": datetime.now(timezone.utc) + timedelta(minutes=30)}
     claims.update(over)
     return jwt.encode({k: v for k, v in claims.items() if v is not None}, JWT_SECRET, algorithm=JWT_ALG)
@@ -83,6 +87,7 @@ class FakeDb:
         self.fail_audit = False
         self.sql: list[str] = []
         self.session_owner = STAFF
+        self.staff_db_role = "admin"            # shared.admin_users.role of the caller of the start (STAFF_STATE_SQL)
 
     def acquire(self):
         db = self
@@ -103,8 +108,6 @@ class FakeDb:
             return str(args[0]) == STAFF and str(args[1]) == MINE
         if sql == ts.SQL_IN_POOL:
             return str(args[0]) == POOLED
-        if sql == va.STAFF_ACTIVE_SQL:
-            return True
         if sql == e2e_staff.SYNTHETIC_TENANT_SQL:
             return self.synthetic
         if sql == view_as.CLOSE_SQL:
@@ -140,6 +143,8 @@ class FakeDb:
                     "cancelled_at": NOW if tid == CLOSED else None,
                     "account_status": "offboarding" if tid == CLOSED else "active", "kind": "agency",
                     "is_active": tid != CLOSED, **self.tenant_state}
+        if sql == va.STAFF_STATE_SQL:
+            return {"is_active": True, "role": self.staff_db_role}
         if sql == va.INSERT_SQL:
             self.inserted.append(args)
             return {"session_id": SESSION, "started_at": NOW, "expires_at": NOW + timedelta(minutes=args[4])}
@@ -291,12 +296,16 @@ class _Recorder:
         await send({"type": "http.response.body", "body": b"ok"})
 
 
-def _run(db: FakeDb, auth: str, method: str = "GET", path: str = "/v1/quota") -> tuple[int, _Recorder, list]:
+def _run(db: FakeDb, auth: str, method: str = "GET", path: str = "/v1/quota",
+         role_hint: str | None = None) -> tuple[int, _Recorder, list]:
     inner = _Recorder()
     gate = ViewAsGateMiddleware(inner)
     sent: list = []
+    headers = [(b"authorization", auth.encode())]
+    if role_hint is not None:
+        headers.append((view_as.ROLE_HINT_HEADER.encode(), role_hint.encode()))
     scope = {"type": "http", "method": method, "path": path, "query_string": b"limit=5",
-             "headers": [(b"authorization", auth.encode())], "app": SimpleNamespace(state=SimpleNamespace(pool=db))}
+             "headers": headers, "app": SimpleNamespace(state=SimpleNamespace(pool=db))}
 
     async def receive():
         return {"type": "http.request", "body": b""}
@@ -442,8 +451,108 @@ def _as_role(role: str) -> FakeDb:
 
 def test_support_keeps_the_view_of_a_pooled_tenant():
     db = _as_role("support")
-    status, inner, _ = _run(db, f"Bearer {token(sub=POOLED)}", path="/v1/marketplace")
+    status, inner, _ = _run(db, f"Bearer {token(sub=POOLED, srl='support')}", path="/v1/marketplace")
     assert status == 200 and inner.calls == 1
+
+
+# ── the session is bound to its start role (S268 fix round 3, review finding) ──────────────────────────────────────
+
+def _not_in_book(db: FakeDb) -> list:
+    """The tenant left the member's book; returns the list of scope checks made."""
+    checks: list = []
+
+    async def fetchval(sql, *a):
+        if sql == ts.SQL_IN_BOOK:
+            checks.append(a)
+            return False
+        return await FakeDb.fetchval(db, sql, *a)
+    db.fetchval = fetchval
+    return checks
+
+
+def test_a_db_role_above_the_start_role_never_keeps_a_view_whose_scope_was_lost():
+    """The reported exploit: a member demoted in Cognito (group customer_success) whose directory row still says admin
+    starts a view on a tenant of its book; the assignment is then removed. Before, the gate computed the scope of the
+    DB role (admin: every tenant) and kept serving. Now the session ends at the next request (role_changed), for
+    good."""
+    db = _as_role("admin")
+    checks = _not_in_book(db)
+    status, inner, sent = _run(db, f"Bearer {token(srl='customer_success')}", path="/v1/account/members")
+    assert status == 401 and inner.calls == 0 and view_as.ENDED_DETAIL.encode() in sent[1]["body"]
+    assert '"outcome": "refused_role_changed"' in _requests(db)[0][5]
+    assert db.closed == [(SESSION, "revoked")]
+    (ended,) = _ended(db)
+    assert ended[4] == SESSION and '"cause": "role_changed"' in ended[5] and '"end_reason": "revoked"' in ended[5]
+    assert checks == []                               # never evaluated with the drifted role's scope
+
+
+def test_scope_and_reads_come_from_the_start_role():
+    """DB role = start role: the start role's scope decides (customer_success: its book only) and its reads."""
+    db = _as_role("customer_success")
+    checks = _not_in_book(db)
+    status, inner, _ = _run(db, f"Bearer {token(srl='customer_success')}", path="/v1/account/members")
+    assert status == 401 and inner.calls == 0 and '"refused_out_of_scope"' in _requests(db)[0][5]
+    assert checks == [(STAFF, MINE)]
+
+
+@pytest.mark.parametrize("start,db_role,cause", [
+    ("customer_success", "admin", "role_changed"),     # the row drifted above the start role
+    ("admin", "customer_success", "role_changed"),     # demoted in the directory during the session
+    ("support", "customer_success", "role_changed"),
+    ("customer_success", "finance", "role_lost_view_as"),
+    ("customer_success", "reviewer", "role_lost_view_as"),
+])
+def test_a_role_other_than_the_start_role_ends_the_view(start, db_role, cause):
+    db = _as_role(db_role)
+    status, inner, _ = _run(db, f"Bearer {token(srl=start)}", path="/v1/marketplace")
+    assert status == 401 and inner.calls == 0
+    (ended,) = _ended(db)
+    assert f'"cause": "{cause}"' in ended[5]
+
+
+@pytest.mark.parametrize("hint,ok,cause", [
+    (None, True, None), ("", True, None), ("customer_success", True, None),
+    ("support", False, "role_changed"),               # the group moved during the session; the DB row did not
+    ("admin", False, "role_changed"),                 # a hint never widens: it can only end the view
+    ("finance", False, "role_lost_view_as"),          # the group lost tenant.view_as
+    ("nonsense", False, "role_lost_view_as"),
+])
+def test_the_role_the_bff_forwards_can_only_end_the_view(hint, ok, cause):
+    db = _as_role("customer_success")
+    status, inner, _ = _run(db, f"Bearer {token(srl='customer_success')}", path="/v1/marketplace", role_hint=hint)
+    if ok:
+        assert status == 200 and inner.calls == 1 and _ended(db) == []
+        return
+    assert status == 401 and inner.calls == 0
+    (ended,) = _ended(db)
+    assert f'"cause": "{cause}"' in ended[5] and '"end_reason": "revoked"' in ended[5]
+
+
+def test_the_role_hint_reaches_the_gate_through_the_real_app(world):
+    client, db, _ = world
+    bearer = {"Authorization": f"Bearer {token()}"}
+    res = client.get("/v1/marketplace", headers={**bearer, view_as.ROLE_HINT_HEADER: "support"})
+    assert res.status_code == 401 and res.json()["detail"] == view_as.ENDED_DETAIL
+    assert any('"cause": "role_changed"' in a[5] for a in _ended(db))
+
+
+@pytest.mark.parametrize("db_role", ["admin", "support", "finance", "content"])
+def test_start_refuses_a_member_whose_directory_role_differs_from_the_sign_in_role(world, db_role):
+    """The session would end at its first read: refused at the start (409, before any row, no token)."""
+    client, db, _ = world
+    db.staff_db_role = db_role
+    res = client.post(f"/admin/tenants/{MINE}/view-as", json=BODY, headers=_h("customer_success"))
+    assert res.status_code == 409 and res.json()["detail"] == view_as.ROLE_MISMATCH_MESSAGE
+    assert "token" not in res.json() and db.inserted == []
+    assert not any(str(a[2]).startswith("tenant.view_as") for a in db.audit)
+    assert va.END_OTHERS_SQL not in db.sql             # not even the caller's other sessions are touched
+
+
+def test_start_accepts_the_reviewer_alias_as_its_target_only():
+    assert view_as.start_role_mismatch("reviewer", "content") is False
+    assert view_as.start_role_mismatch("reviewer", "customer_success") is True
+    assert view_as.start_role_mismatch("customer_success", "customer_success") is False
+    assert view_as.start_role_mismatch(None, "admin") is True
 
 
 # ── the role x read matrix (S268 fix pass: view-as never widens a role's own reads) ───────────────────────────────
@@ -475,7 +584,7 @@ def test_every_route_cap_is_a_real_capability_and_an_allowed_read():
 def test_each_view_as_role_x_each_read_through_the_gate(role, template):
     """The gate (current DB role) serves exactly READS_BY_ROLE; any other read: 403 view_as_not_for_role, logged."""
     db = _as_role(role)
-    status, inner, sent = _run(db, f"Bearer {token()}", path=_concrete(template))
+    status, inner, sent = _run(db, f"Bearer {token(srl=role)}", path=_concrete(template))
     (row,) = db.audit
     if template in READS_BY_ROLE[role]:
         assert status == 200 and inner.calls == 1, (role, template)
@@ -490,7 +599,7 @@ def test_each_view_as_role_x_each_read_through_the_gate(role, template):
 @pytest.mark.parametrize("role,status", [("admin", 403), ("customer_success", 403), ("support", 403)])
 def test_nobody_reads_billing_in_a_view_as_session(role, status):
     db = _as_role(role)
-    got, inner, sent = _run(db, f"Bearer {token()}", path="/v1/billing")
+    got, inner, sent = _run(db, f"Bearer {token(srl=role)}", path="/v1/billing")
     assert got == status and inner.calls == 0 and view_as.READ_ONLY_DETAIL.encode() in sent[1]["body"]
     assert '"outcome": "refused_read_only"' in db.audit[0][5]
 
@@ -500,7 +609,7 @@ def test_support_quota_is_refused_with_the_real_app(world):
     client, db, _ = world
     db.session["staff_role"] = "support"
     for path, detail in (("/v1/quota", view_as.NOT_FOR_ROLE_DETAIL), ("/v1/billing", view_as.READ_ONLY_DETAIL)):
-        res = client.get(path, headers={"Authorization": f"Bearer {token()}"})
+        res = client.get(path, headers={"Authorization": f"Bearer {token(srl='support')}"})
         assert res.status_code == 403 and res.json()["detail"] == detail, path
     outcomes = [a[5] for a in db.audit if a[2] == view_as.AUDIT_ACTION_REQUEST]
     assert len(outcomes) == 2 and '"refused_route_not_for_role"' in outcomes[0] and '"refused_read_only"' in outcomes[1]
@@ -580,7 +689,8 @@ def test_the_limit_is_per_session(monkeypatch):
     assert asyncio.run(gate_mod.rate_limited({"app": None}, "a")) is None    # no Redis: open
 
 
-@pytest.mark.parametrize("over", [{"vas": "not-a-uuid"}, {"stf": "x"}, {"sub": "y"}, {"role": "admin"}])
+@pytest.mark.parametrize("over", [{"vas": "not-a-uuid"}, {"stf": "x"}, {"sub": "y"}, {"role": "admin"},
+                                  {"srl": None}, {"srl": "root"}, {"srl": ["admin"]}])
 def test_bad_claims_are_refused(over):
     db = FakeDb()
     status, inner, _ = _run(db, f"Bearer {token(**over)}")
@@ -607,11 +717,11 @@ def test_the_dependency_side_check_refuses_a_view_as_write():
 
 def test_the_token_is_a_read_only_unmetered_tenant_token():
     exp = datetime.now(timezone.utc) + timedelta(minutes=20)
-    t = view_as.mint_token(session_id=SESSION, tenant_id=MINE, staff_id=STAFF, name="Quill Harbor",
-                           plan_tier="starter", expires_at=exp)
+    t = view_as.mint_token(session_id=SESSION, tenant_id=MINE, staff_id=STAFF, start_role="support",
+                           name="Quill Harbor", plan_tier="starter", expires_at=exp)
     p = jwt.decode(t, JWT_SECRET, algorithms=[JWT_ALG])
     assert p["role"] == "tenant" and p["sub"] == MINE and p["csr"] == "viewer" and p["client"] == "portal"
-    assert p["vas"] == SESSION and p["stf"] == STAFF and p["amr"] == "staff_view_as"
+    assert p["vas"] == SESSION and p["stf"] == STAFF and p["amr"] == "staff_view_as" and p["srl"] == "support"
     assert p["exp"] == int(exp.timestamp())
     assert "mid" not in p
 
@@ -624,6 +734,7 @@ BODY = {"reason": "Partner asked why a tour is missing", "ticket_ref": "SUP-1", 
 @pytest.mark.parametrize("role", ROLES)
 def test_start_per_role_on_the_callers_book(world, role):
     client, db, _ = world
+    db.staff_db_role = role
     res = client.post(f"/admin/tenants/{MINE}/view-as", json=BODY, headers=_h(role))
     if role in VIEW_AS_ROLES:
         assert res.status_code == 201, res.text
@@ -632,6 +743,7 @@ def test_start_per_role_on_the_callers_book(world, role):
         assert set(body["allowed_reads"]) == READS_BY_ROLE[role]
         p = jwt.decode(body["token"], JWT_SECRET, algorithms=[JWT_ALG])
         assert p["vas"] == SESSION and p["stf"] == STAFF and p["sub"] == MINE
+        assert p["srl"] == role                          # the role the start was authorised with, signed
         assert any(a[2] == "tenant.view_as_started" for a in db.audit)
         assert db.inserted == [(STAFF, uuid.UUID(MINE), BODY["reason"], "SUP-1", 30)]
     else:
@@ -645,6 +757,7 @@ def test_start_per_role_on_the_callers_book(world, role):
 ])
 def test_start_is_scoped(world, role, tenant, ok):
     client, db, _ = world
+    db.staff_db_role = role
     res = client.post(f"/admin/tenants/{tenant}/view-as", json=BODY, headers=_h(role))
     assert (res.status_code == 201) is ok, res.text
     if not ok:
@@ -838,6 +951,12 @@ def test_the_frontend_mirror_of_the_read_allow_list_is_the_same():
     assert f'export const VIEW_AS_BFF_HEADER = "{view_as.BFF_HEADER}";' in src
     bff = (Path(__file__).resolve().parents[2] / "frontend" / "app" / "api" / "view-as" / "route.ts").read_text()
     assert f'[VIEW_AS_BFF_HEADER]: "{view_as.BFF_HEADER_VALUE}"' in bff
+    # every read carries the member's verified role (the gate ends a session whose role changed since the start)
+    assert f'export const VIEW_AS_ROLE_HEADER = "{view_as.ROLE_HINT_HEADER}";' in src
+    reads = (Path(__file__).resolve().parents[2] / "frontend" / "app" / "api" / "view-as" / "v1" / "[...path]"
+             / "route.ts").read_text()
+    assert "[VIEW_AS_ROLE_HEADER]: auth.role" in reads
+    assert "viewAsForward(backendPath, auth.role, claims.startRole)" in reads
     roles = re.search(r"export const VIEW_AS_ROLES = \[(.*?)\] as const;", src, re.S)
     assert set(re.findall(r'"([a-z_]+)"', roles.group(1))) == {
         r for r, perms in staff_authz.ROLE_PERMS.items() if staff_authz.TENANT_VIEW_AS in perms}

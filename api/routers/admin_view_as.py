@@ -4,8 +4,11 @@
   5-60 minutes, default 30). Capability ``tenant.view_as`` (admin, customer_success, support) and
   ``require_tenant_scope`` (a customer_success member only for its book, support also the pool). Needs a staff identity
   (the verified Cognito one, or ``x-admin-user-id`` under the main secret). Ends the caller's other open sessions
-  first (one view at a time). Answers the session, the reads the caller's role may make in it (``allowed_reads``) and
-  a short-lived read-only tenant token (api/core/view_as.py); the staff BFF keeps the token in an httpOnly cookie and
+  first (one view at a time). The caller's directory role must be its sign-in role (the verified group role the
+  start is authorised with): else 409 (``view_as.ROLE_MISMATCH_MESSAGE``) before any row (the gate would end such a
+  session at once; scope is evaluated with the start role, so a drifted row never widens a view). Answers the
+  session, the reads the caller's role may make in it (``allowed_reads``), and a short-lived read-only tenant token
+  (api/core/view_as.py; claim ``srl`` = that start role); the staff BFF keeps the token in an httpOnly cookie and
   never hands it to the browser. Only the BFF may start one: the call must carry ``x-view-as-client: bff`` (403
   ``view_as_bff_only`` before any row otherwise); the generic /api/admin proxy never sets it and refuses the path.
 * ``GET  /admin/view-as/sessions``                       — the caller's own sessions (admin: every session), newest
@@ -49,7 +52,7 @@ TENANT_SQL = (
     "SELECT tenant_id, name, slug, plan_tier::text AS plan_tier, cancelled_at, account_status, kind, is_active "
     "FROM shared.tenants WHERE tenant_id = $1"
 )
-STAFF_ACTIVE_SQL = "SELECT is_active FROM shared.admin_users WHERE id = $1::uuid"
+STAFF_STATE_SQL = "SELECT is_active, role::text AS role FROM shared.admin_users WHERE id = $1::uuid"
 # The caller's other open sessions end when a new one starts (an expired one as 'expired'); each gets its own
 # tenant.view_as_ended row (cause 'replaced').
 END_OTHERS_SQL = (
@@ -169,6 +172,9 @@ async def start_view_as(
         logger.warning("view_as_start_refused", reason="not_bff", tenant_id=str(tenant_id))
         raise HTTPException(status_code=403, detail=view_as.BFF_ONLY_DETAIL)
     staff_id = _require_staff_id(request)
+    # The role this start is authorised with (staff_policy: the x-admin-role the bearer middleware rewrote from the
+    # verified Cognito groups). It is signed into the token (srl): the gate evaluates scope and reads with it.
+    role = _caller(principal, request).role
     pool = request.app.state.pool
     async with pool.acquire() as conn, conn.transaction():
         tenant = await conn.fetchrow(TENANT_SQL, tenant_id)
@@ -181,9 +187,13 @@ async def start_view_as(
         if refusal is not None:
             raise HTTPException(status_code=409, detail=view_as.TENANT_REFUSAL_MESSAGES[refusal])
         await _refuse_e2e(request, conn, tenant_id)
-        active = await conn.fetchval(STAFF_ACTIVE_SQL, staff_id)
-        if not active:
+        staff = await conn.fetchrow(STAFF_STATE_SQL, staff_id)
+        if staff is None or not staff["is_active"]:
             raise HTTPException(status_code=403, detail=NO_STAFF_ID)
+        if view_as.start_role_mismatch(staff["role"], role):
+            logger.warning("view_as_start_refused", reason=view_as.ROLE_MISMATCH_DETAIL, tenant_id=str(tenant_id),
+                           staff_id=staff_id, role=role, db_role=staff["role"])
+            raise HTTPException(status_code=409, detail=view_as.ROLE_MISMATCH_MESSAGE)
         try:
             closed = await conn.fetch(END_OTHERS_SQL, staff_id)
             row = await conn.fetchrow(INSERT_SQL, staff_id, tenant_id, body.reason, body.ticket_ref, body.minutes)
@@ -203,9 +213,8 @@ async def start_view_as(
             details={"session_id": row["session_id"], "minutes": body.minutes, "ticket_ref": body.ticket_ref,
                      "expires_at": _iso(row["expires_at"]), "ended_sessions": ended})
     token = view_as.mint_token(
-        session_id=row["session_id"], tenant_id=str(tenant_id), staff_id=staff_id, name=tenant["name"],
-        plan_tier=tenant["plan_tier"], expires_at=row["expires_at"])
-    role = _caller(principal, request).role
+        session_id=row["session_id"], tenant_id=str(tenant_id), staff_id=staff_id, start_role=role,
+        name=tenant["name"], plan_tier=tenant["plan_tier"], expires_at=row["expires_at"])
     logger.info("view_as_started", session_id=row["session_id"], tenant_id=str(tenant_id), staff_id=staff_id,
                 minutes=body.minutes, role=role, ended_sessions=len(ended))
     return {

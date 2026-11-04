@@ -1993,18 +1993,20 @@ the pool flag) and `GET /admin/tenant-assignments/staff` (the assignable staff, 
 per-tenant routes (admin only). *View as tenant* (root ADR 0019 d5, capability `tenant.view_as`: admin,
 customer_success own book, support own book + pool): `POST /admin/tenants/{tenant_id}/view-as` (scoped; reason 3-500,
 optional ticket, 5-60 minutes; one open session per staff member; refused 409 for the AA internal tenant, an
-offboarded one or one that is not live, `view_as.tenant_refusal`) writes `shared.staff_view_as_session` + audit
+offboarded one or one that is not live, `view_as.tenant_refusal`; refused 409 when the caller's `shared.admin_users`
+row differs from its sign-in role) writes `shared.staff_view_as_session` + audit
 `tenant.view_as_started` and returns a short-lived tenant JWT (`api/core/view_as.py`: `csr` viewer, `client` portal,
-`vas` session, `stf` staff); `GET /admin/view-as/sessions[/{id}]` and `POST .../{id}/end` (own; admin every one, an
+`vas` session, `stf` staff, `srl` the start role = the verified group role the start was authorised with); `GET /admin/view-as/sessions[/{id}]` and `POST .../{id}/end` (own; admin every one, an
 admin end of another's is `revoked`). Every path that ends a session (the end route, a new start closing the caller's
 other sessions, the gate) writes one `tenant.view_as_ended` row under that session's id with its end reason and cause.
 `api/middleware/view_as.py ViewAsGateMiddleware` (around the tenant role middleware and the rate limiter; its own
 per-session limit, 120 requests a minute, answers 429 before any check or audit row) lets such a token make only GET /
 HEAD on `view_as.READ_ROUTES` (12 side-effect-free tenant reads; never `/v1/slate`, `/v1/billing`, exports,
-integrations or the brand branch), re-checks the open session, the staff row's current role, the tenant (the start's
-rule: offboarded / suspended / internal ends the view) and the tenant scope on every request (a lost right ends the
-session for good: `revoked`, or `expired` past its expiry), and refuses (403 `view_as_not_for_role`) a read the
-current role may not make (`view_as.ROUTE_CAPS`: `/v1/quota` needs `tenant.read` or `tenant.book.account.read`, so
+integrations or the brand branch), re-checks the open session, that the staff row's current role (and the verified
+group role the BFF forwards in `x-view-as-staff-role`, which can only end a session) is still the start role `srl`
+(else cause `role_changed`), the tenant (the start's rule: offboarded / suspended / internal ends the view) and the
+start role's tenant scope on every request (a lost right ends the session for good: `revoked`, or `expired` past its
+expiry), and refuses (403 `view_as_not_for_role`) a read the start role may not make (`view_as.ROUTE_CAPS`: `/v1/quota` needs `tenant.read` or `tenant.book.account.read`, so
 support never sees the plan or usage; view-as never widens a role's own reads), and writes one `acp_shared.audit_log` row per request
 (`tenant.view_as_request`, BEFORE a served read: no unlogged read, 503 when the row cannot be written); everything
 else is 403 `view_as_read_only` (logged), an ended session 401 `view_as_ended`. `tenant_role.enforce` repeats the

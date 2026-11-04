@@ -12,6 +12,10 @@
   revoked, cause tenant_inactive) and the start refuses such a tenant (409); every path that ends a session writes one
   tenant.view_as_ended row under that session (the end route, a new start, the gate on expiry or a lost right); the
   bell of a desk role reaches only the tenant rows its scope covers.
+- (S268 fix round 3) the session is bound to its start role (signed srl): a directory row that differs from the
+  sign-in role is refused at the start (409, no row); a row that moves away from it during the session (the reported
+  case: still admin in the table while the group says customer_success, then the assignment removed) ends the view at
+  the next request (cause role_changed), and so does a different role forwarded by the staff BFF.
 
 Calls carry the main admin secret + x-admin-role + x-admin-user-id (the machine / CI identity path of
 api/core/tenant_scope.py), as tests/integration/test_aa1035_tenant_scope_pg.py does.
@@ -367,3 +371,52 @@ async def test_the_bell_of_a_desk_role_reaches_only_its_tenants(world):
         assert {x["entity_id"] for x in listed.json()["items"] if x["event_type"] == tag} == {"mine"}
     finally:
         await pool.execute("DELETE FROM shared.notifications WHERE event_type = $1", tag)
+
+
+@pytest.mark.asyncio
+async def test_a_directory_role_other_than_the_sign_in_role_never_widens_a_view(world):
+    client, pool, t, s, roles = world
+    assert (await _assign(client, s, roles, t["mine"], "csm", "owner")).status_code == 200
+    # drift at the start (the table says admin, the sign-in group customer_success): refused before any row
+    await pool.execute("UPDATE shared.admin_users SET role = 'admin' WHERE id = $1::uuid", s["csm"])
+    refused = await client.post(f"/admin/tenants/{t['mine']}/view-as", headers=_as(s, roles, "csm"),
+                                json={"reason": REASON})
+    assert refused.status_code == 409 and "token" not in refused.json()
+    assert await pool.fetchval("SELECT count(*) FROM shared.staff_view_as_session WHERE admin_user_id = $1::uuid",
+                               s["csm"]) == 0
+
+    # the reported case: a session started while the two agreed, then the row drifts ABOVE the sign-in role and the
+    # assignment is removed. Before the fix the gate took admin's scope (every tenant) and kept serving.
+    await pool.execute("UPDATE shared.admin_users SET role = 'customer_success' WHERE id = $1::uuid", s["csm"])
+    started = await client.post(f"/admin/tenants/{t['mine']}/view-as", headers=_as(s, roles, "csm"),
+                                json={"reason": REASON})
+    assert started.status_code == 201, started.text
+    sid, bearer = started.json()["session_id"], {"Authorization": f"Bearer {started.json()['token']}"}
+    assert (await client.get("/v1/account/members", headers=bearer)).status_code == 200
+    await pool.execute("UPDATE shared.admin_users SET role = 'admin' WHERE id = $1::uuid", s["csm"])
+    await client.delete(f"/admin/tenants/{t['mine']}/assignments/{s['csm']}", headers=_as(s, roles, "admin"))
+    gone = await client.get("/v1/account/members", headers=bearer)
+    assert gone.status_code == 401 and gone.json()["detail"] == "view_as_ended"
+    assert await pool.fetchval("SELECT end_reason FROM shared.staff_view_as_session WHERE session_id = $1::uuid",
+                               sid) == "revoked"
+    (ended,) = await _audit(pool, "tenant.view_as_ended", sid)
+    assert ended["details"]["cause"] == "role_changed" and ended["actor"] == "system:view_as_gate"
+    logged = await _audit(pool, "tenant.view_as_request", sid)
+    assert [r["details"]["outcome"] for r in logged] == ["served", "refused_role_changed"]
+
+
+@pytest.mark.asyncio
+async def test_a_different_role_forwarded_by_the_bff_ends_the_view(world):
+    client, pool, t, s, roles = world
+    started = await client.post(f"/admin/tenants/{t['pooled']}/view-as", headers=_as(s, roles, "support"),
+                                json={"reason": REASON})
+    assert started.status_code == 201, started.text
+    sid, bearer = started.json()["session_id"], {"Authorization": f"Bearer {started.json()['token']}"}
+    same = await client.get("/v1/account/members", headers={**bearer, "x-view-as-staff-role": "support"})
+    assert same.status_code == 200
+    # the sign-in group moved to customer_success (the table did not): the next read ends the view, never widens it
+    moved = await client.get("/v1/account/members", headers={**bearer, "x-view-as-staff-role": "customer_success"})
+    assert moved.status_code == 401
+    (ended,) = await _audit(pool, "tenant.view_as_ended", sid)
+    assert ended["details"]["cause"] == "role_changed" and ended["details"]["end_reason"] == "revoked"
+    assert (await client.get("/v1/account/members", headers=bearer)).status_code == 401

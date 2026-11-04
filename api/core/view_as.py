@@ -10,7 +10,10 @@ How it works
    ``require_tenant_scope``) writes one ``shared.staff_view_as_session`` row (reason, optional ticket, at most 60
    minutes) and returns a short-lived tenant JWT minted here (:func:`mint_token`): the usual tenant shape (``role``
    tenant, ``sub`` the tenant, ``client`` portal so it is never metered as the tenant's API calls, ``csr`` viewer) plus
-   ``vas`` (the session id), ``stf`` (the staff member) and ``amr`` ``staff_view_as``. It expires with the session.
+   ``vas`` (the session id), ``stf`` (the staff member), ``srl`` (the staff role the start was authorised with: the
+   verified Cognito group role, never ``shared.admin_users.role``) and ``amr`` ``staff_view_as``. It expires with the
+   session. The start refuses a staff member whose directory role differs from that role (409,
+   :data:`ROLE_MISMATCH_MESSAGE`): a session is only opened when the two agree.
    The start answers the token only to the staff BFF that asked for it (request header :data:`BFF_HEADER`, never
    set by the generic admin proxy, which also refuses this path): the token never reaches a browser.
 2. Every request that carries such a token passes :class:`api.middleware.view_as.ViewAsGateMiddleware` first:
@@ -18,10 +21,13 @@ How it works
      other method or path answers 403 ``view_as_read_only`` — writes are refused on the server whatever the UI shows,
      and so are reads that start work (``GET /v1/slate`` enqueues a paid proposal job), exports and the brand branch;
    - the session must still be open (not ended, not expired), the staff account active, its role still holding
-     ``tenant.view_as``, the tenant still viewable (:func:`tenant_refusal`, the same rule as the start: not the AA
-     internal tenant, not offboarded, live) and still in its scope (assignment removed = view ends): else 401
-     ``view_as_ended``, and the session is ended for good (:func:`close_session`, one ``tenant.view_as_ended`` row);
-   - the read must be one the staff member's CURRENT role may see (:func:`role_may_read`, :data:`ROUTE_CAPS`): a read
+     ``tenant.view_as`` and still the role the session was started with (``srl``; the DB row and, when the staff BFF
+     forwards it, the verified group role of the reader, :data:`ROLE_HINT_HEADER`), the tenant still viewable
+     (:func:`tenant_refusal`, the same rule as the start: not the AA internal tenant, not offboarded, live) and still
+     in the START role's scope (assignment removed = view ends; a directory row that drifted above the group never
+     widens it): else 401 ``view_as_ended``, and the session is ended for good (:func:`close_session`, one
+     ``tenant.view_as_ended`` row);
+   - the read must be one the session's start role may see (:func:`role_may_read`, :data:`ROUTE_CAPS`): a read
      that carries the plan or usage (``/v1/quota``) needs a money capability of its own on top of ``tenant.view_as``,
      so support never sees it; else 403 ``view_as_not_for_role``. View-as never widens a role's own reads;
    - every request, refused or served, writes one ``acp_shared.audit_log`` row (:func:`audit_row`, action
@@ -55,6 +61,12 @@ logger = structlog.get_logger()
 
 VIEW_AS_CLAIM = "vas"
 STAFF_CLAIM = "stf"
+# The staff role the start was authorised with (the verified group role, the x-admin-role the bearer middleware
+# rewrote). The gate evaluates scope and ROUTE_CAPS with it, and ends the session when the role changes.
+START_ROLE_CLAIM = "srl"
+# The staff BFF forwards the verified group role of the member making each read (frontend app/api/view-as/v1/...).
+# Not a credential: it can only END a session (a role other than the start role), never widen one.
+ROLE_HINT_HEADER = "x-view-as-staff-role"
 VIEW_AS_AMR = "staff_view_as"
 
 MAX_MINUTES = 60          # root ADR 0019 d5; CIS 364 staff_view_as_session_window_chk enforces it in the table too
@@ -71,6 +83,9 @@ BFF_ONLY_DETAIL = "view_as_bff_only"
 BFF_HEADER = "x-view-as-client"
 BFF_HEADER_VALUE = "bff"
 ENDED_DETAIL = "view_as_ended"
+ROLE_MISMATCH_DETAIL = "view_as_role_mismatch"
+ROLE_MISMATCH_MESSAGE = ("Your staff role in the directory differs from your sign-in group; ask an admin to align them "
+                         "before viewing as a partner.")
 READ_ONLY_MESSAGE = "View as tenant is read-only: this request is not allowed."
 ENDED_MESSAGE = "This view-as session has ended. Start a new one from Tenant 360."
 
@@ -111,7 +126,8 @@ ROUTE_CAPS: dict[str, tuple[str, ...]] = {
 
 
 def role_may_read(role: Optional[str], template: str) -> bool:
-    """May a staff member of ``role`` (its CURRENT role, read from the DB) make the view-as read ``template``?
+    """May a staff member of ``role`` (the session's start role, which the gate keeps equal to the current one) make
+    the view-as read ``template``?
     Needs ``tenant.view_as`` and, for a :data:`ROUTE_CAPS` read, one of its capabilities."""
     from api.core.staff_authz import ROLE_PERMS, TENANT_VIEW_AS
 
@@ -155,6 +171,7 @@ class ViewAsClaims:
     session_id: str
     tenant_id: str
     staff_id: str
+    start_role: str
 
 
 def _uuid(value: Any) -> Optional[str]:
@@ -170,13 +187,18 @@ def is_view_as(payload: Any) -> bool:
 
 
 def claims_of(payload: dict) -> Optional[ViewAsClaims]:
-    """The session, tenant and staff ids of a view-as payload; None when one of them is not a UUID (then the request
-    is refused like an ended session)."""
+    """The session, tenant and staff ids and the start role of a view-as payload; None when an id is not a UUID or the
+    start role is missing / not a staff role (then the request is refused like an ended session)."""
+    from api.core.staff_authz import ROLE_PERMS
+
     session_id, tenant_id, staff_id = (_uuid(payload.get(VIEW_AS_CLAIM)), _uuid(payload.get("sub")),
                                        _uuid(payload.get(STAFF_CLAIM)))
+    start_role = payload.get(START_ROLE_CLAIM)
     if session_id is None or tenant_id is None or staff_id is None or payload.get("role") != "tenant":
         return None
-    return ViewAsClaims(session_id=session_id, tenant_id=tenant_id, staff_id=staff_id)
+    if not isinstance(start_role, str) or start_role not in ROLE_PERMS:
+        return None
+    return ViewAsClaims(session_id=session_id, tenant_id=tenant_id, staff_id=staff_id, start_role=start_role)
 
 
 def refusal(method: str, path: str, payload: dict) -> bool:
@@ -184,7 +206,7 @@ def refusal(method: str, path: str, payload: dict) -> bool:
     return is_view_as(payload) and not route_allowed(method, path)
 
 
-def mint_token(*, session_id: str, tenant_id: str, staff_id: str, name: str, plan_tier: str,
+def mint_token(*, session_id: str, tenant_id: str, staff_id: str, start_role: str, name: str, plan_tier: str,
                expires_at: datetime, now: Optional[datetime] = None) -> str:
     """The tenant JWT of one view-as session (see the module docstring). Same secret and algorithm as every tenant
     token, so the tenant read routes accept it unchanged; the gate decides what it may do."""
@@ -200,6 +222,7 @@ def mint_token(*, session_id: str, tenant_id: str, staff_id: str, name: str, pla
         "csr": "viewer",
         VIEW_AS_CLAIM: session_id,
         STAFF_CLAIM: staff_id,
+        START_ROLE_CLAIM: start_role,
         "iat": now or datetime.now(timezone.utc),
         "exp": expires_at,
     }
@@ -259,7 +282,8 @@ CLOSE_SQL = (
 )
 # Why the gate ends a session (details.cause of its tenant.view_as_ended row). The end_reason column takes only
 # ended / expired / revoked (CIS 364 CHECK; no migration in this slice): a lost right ends the session 'revoked'.
-GATE_END_CAUSES = frozenset({"expired", "staff_inactive", "role_lost_view_as", "tenant_inactive", "out_of_scope"})
+GATE_END_CAUSES = frozenset({"expired", "staff_inactive", "role_lost_view_as", "role_changed", "tenant_inactive",
+                             "out_of_scope"})
 GATE_ACTOR = "system:view_as_gate"
 
 
@@ -300,16 +324,31 @@ async def close_session(conn: Any, claims: ViewAsClaims, cause: str) -> Optional
     return end_reason
 
 
-async def session_open(conn: Any, claims: ViewAsClaims, template: Optional[str] = None) -> tuple[bool, str]:
-    """(open, reason) for one request: the session row is open, the staff account active, its CURRENT role (the DB
-    row, not the token) still holds tenant.view_as, the tenant is still viewable (:func:`tenant_refusal`, the rule of
-    the start) and still in that role's scope. With ``template`` (the matched READ_ROUTES entry) that role must also be
-    allowed that read (:func:`role_may_read`); else (False, :data:`NOT_FOR_ROLE_REASON`), which the gate answers 403,
-    not "ended", and the session stays open.
+def start_role_mismatch(db_role: Optional[str], start_role: Optional[str]) -> bool:
+    """True when the directory role (``shared.admin_users.role``, the reviewer alias read as its target) is not the
+    role a view-as start is authorised with (the verified group role). The start refuses such a member (409) and the
+    gate ends a session whose member's row moved away from it: scope and reads are evaluated with the start role
+    only, and only while the two agree, so a row that drifted ABOVE the group never widens a view."""
+    from api.core.staff_identity import canonical_role
+
+    return canonical_role(db_role) != start_role
+
+
+async def session_open(conn: Any, claims: ViewAsClaims, template: Optional[str] = None,
+                       role_hint: Optional[str] = None) -> tuple[bool, str]:
+    """(open, reason) for one request: the session row is open, the staff account active, the role still holds
+    tenant.view_as and is still the role the session was started with (``claims.start_role``, the signed ``srl``
+    claim): the CURRENT DB role must equal it and, when the staff BFF forwarded the reader's verified group role
+    (``role_hint``, :data:`ROLE_HINT_HEADER`), so must that one. The tenant is still viewable (:func:`tenant_refusal`,
+    the rule of the start) and still in the START role's scope. With ``template`` (the matched READ_ROUTES entry)
+    the start role must also be allowed that read (:func:`role_may_read`); else (False, :data:`NOT_FOR_ROLE_REASON`),
+    which the gate answers 403, not "ended", and the session stays open.
 
     Every other refusal ends the session for good (:func:`close_session`: 'expired' past its expiry, else 'revoked',
-    with a tenant.view_as_ended row naming the cause): a right lost during the session never comes back to it."""
+    with a tenant.view_as_ended row naming the cause): a right lost during the session never comes back to it.
+    ``role_hint`` can only end a session (a role other than the start role); scope and reads never come from it."""
     from api.core.staff_authz import ROLE_PERMS, TENANT_VIEW_AS
+    from api.core.staff_identity import canonical_role
     from api.core.tenant_scope import in_scope, scope_for_role
 
     row = await conn.fetchrow(SESSION_STATE_SQL, claims.session_id, claims.tenant_id, claims.staff_id)
@@ -320,23 +359,29 @@ async def session_open(conn: Any, claims: ViewAsClaims, template: Optional[str] 
             await close_session(conn, claims, "expired")
             return False, "expired"
         return False, "ended"
+    start_role = claims.start_role
+    current = [canonical_role(row["staff_role"])]
+    hint = (role_hint or "").strip()
+    if hint:
+        current.append(canonical_role(hint))
     reason: Optional[str] = None
-    role = row["staff_role"]
     if not row["staff_active"]:
         reason = "staff_inactive"
-    elif TENANT_VIEW_AS not in ROLE_PERMS.get(role or "", frozenset()):
+    elif any(TENANT_VIEW_AS not in ROLE_PERMS.get(r or "", frozenset()) for r in [start_role, *current]):
         reason = "role_lost_view_as"
+    elif any(r != start_role for r in current):
+        reason = "role_changed"
     elif tenant_refusal(claims.tenant_id, cancelled_at=row["tenant_cancelled_at"], account_status=row["tenant_status"],
                         kind=row["tenant_kind"], is_active=row["tenant_active"]) is not None:
         reason = "tenant_inactive"
     else:
-        scope = scope_for_role(role)
+        scope = scope_for_role(start_role)
         if scope is None or not await in_scope(conn, scope, claims.staff_id, claims.tenant_id):
             reason = "out_of_scope"
     if reason is not None:
         await close_session(conn, claims, reason)
         return False, reason
-    if template is not None and not role_may_read(role, template):
+    if template is not None and not role_may_read(start_role, template):
         return False, NOT_FOR_ROLE_REASON
     return True, "open"
 

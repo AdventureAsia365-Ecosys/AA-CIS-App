@@ -80,6 +80,19 @@ export function viewAsPathAllowed(path: string, role: string | null | undefined)
   return i >= 0 && viewAsRoleMayRead(role, VIEW_AS_READ_ROUTES[i]);
 }
 
+/** The request header the view-as BFF sets on every read: the signed-in member's verified staff role (requireAdmin).
+ *  The API ends the session when it is not the role the session was started with (the token's `srl`). */
+export const VIEW_AS_ROLE_HEADER = "x-view-as-staff-role";
+
+/** Does the BFF forward GET `path` of a session started as `startRole` for a member now signed in as `role`?
+ *  Same role: only the reads that role may make (viewAsPathAllowed). Role changed since the start: any allowed read
+ *  path is forwarded with VIEW_AS_ROLE_HEADER so the API ends the session (cause role_changed) and logs it; the API
+ *  never serves such a read. Never a path outside the allowed reads. */
+export function viewAsForward(path: string, role: string | null | undefined, startRole: string | null | undefined): boolean {
+  if (role && startRole && role !== startRole) return READ_PATTERNS.some((re) => re.test(path));
+  return viewAsPathAllowed(path, role);
+}
+
 /** The request header the view-as BFF sets on the start call; the backend answers the token only with it. */
 export const VIEW_AS_BFF_HEADER = "x-view-as-client";
 
@@ -112,16 +125,20 @@ export interface ViewAsSession {
 export type CurrentViewAs = { active: false } | ({ active: true; allowed_reads?: string[] } & ViewAsSession);
 
 /** The claims of a view-as token the BFF reads (WITHOUT checking the signature: the backend verifies it on every
- *  request). Only used to know which session the cookie belongs to and whose it is. */
-export function viewAsClaims(token: string | undefined | null): { sessionId: string; staffId: string; exp: number } | null {
+ *  request). Only used to know which session the cookie belongs to, whose it is and the staff role it was started
+ *  with (`srl`). */
+export function viewAsClaims(
+  token: string | undefined | null,
+): { sessionId: string; staffId: string; startRole: string; exp: number } | null {
   if (!token) return null;
   try {
     const part = token.split(".")[1];
     if (!part) return null;
     const b64 = part.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(part.length / 4) * 4, "=");
-    const p = JSON.parse(atob(b64)) as { vas?: unknown; stf?: unknown; exp?: unknown };
-    if (typeof p.vas !== "string" || typeof p.stf !== "string" || typeof p.exp !== "number") return null;
-    return { sessionId: p.vas, staffId: p.stf, exp: p.exp };
+    const p = JSON.parse(atob(b64)) as { vas?: unknown; stf?: unknown; srl?: unknown; exp?: unknown };
+    if (typeof p.vas !== "string" || typeof p.stf !== "string" || typeof p.srl !== "string"
+      || typeof p.exp !== "number") return null;
+    return { sessionId: p.vas, staffId: p.stf, startRole: p.srl, exp: p.exp };
   } catch {
     return null;
   }

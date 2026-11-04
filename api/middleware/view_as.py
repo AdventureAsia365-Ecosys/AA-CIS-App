@@ -11,11 +11,12 @@ tenant role middleware reads: the HTTPBearer value and every whitespace-separate
    429 ``view_as_rate_limited``, not logged in the audit log (nothing is served; one warning line per session and
    minute). Redis unreachable: fail open, the checks below and their audit rows still run;
 1. method + path not an allowed read (:func:`api.core.view_as.allowed_route`) -> 403 ``view_as_read_only``;
-2. the claims are not three UUIDs of a tenant token -> 401 ``view_as_ended``;
-3. the session is not open, or its staff member lost the account, the capability or the tenant (DB, per request)
-   -> 401 ``view_as_ended``; the DB unreachable / the table missing -> 503;
-   the staff member's current role may not make this read (:func:`api.core.view_as.role_may_read`, e.g. support on
-   ``/v1/quota``) -> 403 ``view_as_not_for_role``;
+2. the claims are not three UUIDs of a tenant token with a staff start role (``srl``) -> 401 ``view_as_ended``;
+3. the session is not open, or its staff member lost the account, the capability or the tenant, or its role is no
+   longer the start role (the DB row, and the verified group role the staff BFF forwards in
+   :data:`api.core.view_as.ROLE_HINT_HEADER`; DB, per request) -> 401 ``view_as_ended``; the DB unreachable / the
+   table missing -> 503; the start role may not make this read (:func:`api.core.view_as.role_may_read`, e.g. support
+   on ``/v1/quota``) -> 403 ``view_as_not_for_role``;
 4. the audit row is written (``acp_shared.audit_log``, action ``tenant.view_as_request``) and only then is the request
    served. If the row cannot be written the request is NOT served (503): no unlogged read (root ADR 0019 d5).
 
@@ -72,6 +73,14 @@ def view_as_payload(scope: Scope) -> Optional[dict]:
             continue
         if view_as.is_view_as(payload):
             return payload
+    return None
+
+
+def _header(scope: Scope, name: str) -> Optional[str]:
+    key = name.lower().encode("latin-1")
+    for k, v in scope.get("headers") or []:
+        if k == key:
+            return v.decode("latin-1")
     return None
 
 
@@ -173,7 +182,8 @@ class ViewAsGateMiddleware:
             return
         try:
             async with pool.acquire() as conn:
-                is_open, reason = await view_as.session_open(conn, claims, template)
+                is_open, reason = await view_as.session_open(
+                    conn, claims, template, role_hint=_header(scope, view_as.ROLE_HINT_HEADER))
         except (asyncpg.UndefinedTableError, asyncpg.PostgresError, OSError, asyncio.TimeoutError) as exc:
             logger.error("view_as_check_failed", error=type(exc).__name__, session_id=claims.session_id)
             await _answer(503, "view_as_unavailable", "View as tenant is unavailable.")(scope, receive, send)
