@@ -13,9 +13,12 @@ caller's answered row share ``quality_signal.route_trace`` (``call_log.ROUTE_KEY
                      the last ``TRACE_DEFAULT_WINDOW`` (the ``created_at`` index, never a full scan).
 - ``read_rungs``     per stage over a window: the share of answered requests per rung (model @ connection, primary or
                      fallback), the fallback share, the requests with no answer, and the stage's route.
-- ``read_fallback_content``  the newest content a fallback model wrote (A1 / T2 tour versions with
-                     ``generated_content.fallback_used``; T9 pieces whose ``flags`` carry ``fallback_writer``), so QA
-                     sees them in one list (the tenant never sees these marks).
+- ``read_fallback_content``  the newest A1 tour versions a fallback model wrote (``generated_content.fallback_used``).
+- ``read_fallback_tenant_content``  the same for tenant content: T2 tour versions whose admin-only
+                     ``judge_breakdown`` carries ``fallback_writer`` and T9 pieces whose ``flags`` carry it, with the
+                     tenant name and the held / marked label. Tenant QA data: its route
+                     (/admin/content-quality/fallback-writes) is gated by tenant_content.read, not spend.read (the
+                     tenant never sees these marks).
 - ``run_route_test`` the live check: 1-6 tiny real requests on one stage (16 output tokens), optionally with the
                      stage's first model refused for those requests only (``client.forced_primary_refusal``: a
                      ``refused`` / ``access_denied`` row, no provider call, no breaker or circuit change). Each answered
@@ -35,7 +38,7 @@ from typing import Any, Optional
 import structlog
 
 from shared.llm_client import route_watch
-from shared.llm_client.route_watch import LEDGER_FILTER, OK, POSITION_EXPR
+from shared.llm_client.route_watch import FALLBACK_RUNG, LEDGER_FILTER, OK, POSITION_EXPR, PRIMARY_RUNG
 
 logger = structlog.get_logger()
 
@@ -92,7 +95,7 @@ def requests_sql(*, stage: Optional[str], fallback_only: bool) -> str:
     """The request list ($1 since, [$2 stage], last $n limit). Pure."""
     stage_clause = "AND stage = $2" if stage else ""
     limit_arg = "$3" if stage else "$2"
-    keep = "WHERE NOT answered OR coalesce(served_attempt, 1) > 1 OR failed_attempts > 0" if fallback_only else ""
+    keep = "WHERE NOT answered OR served_fallback OR failed_attempts > 0" if fallback_only else ""
     return f"""
     WITH t AS (
         SELECT quality_signal ->> 'route_trace' AS trace, min(stage) AS stage, min(role) AS role,
@@ -104,6 +107,7 @@ def requests_sql(*, stage: Optional[str], fallback_only: bool) -> str:
                (array_agg(coalesce(connection_key, account) ORDER BY created_at DESC)
                     FILTER (WHERE {OK}))[1] AS served_connection,
                max(attempt_no) FILTER (WHERE {OK}) AS served_attempt,
+               coalesce(bool_or({FALLBACK_RUNG}) FILTER (WHERE {OK}), false) AS served_fallback,
                max({POSITION_EXPR}) AS max_position,
                bool_or(coalesce(quality_signal ->> 'route_test', '') = 'true') AS route_test,
                (array_agg(job_id::text) FILTER (WHERE job_id IS NOT NULL))[1] AS job_id
@@ -121,7 +125,7 @@ def request_view(r: dict) -> dict:
     answered = bool(r.get("answered"))
     served_attempt = r.get("served_attempt")
     outcome = ("no_answer" if not answered else
-               "fallback" if (served_attempt or 1) > 1 else "primary")
+               "fallback" if r.get("served_fallback") else "primary")
     return {"trace_id": r["trace"], "stage": r.get("stage"), "role": r.get("role"),
             "first_at": _iso(r.get("first_at")), "last_at": _iso(r.get("last_at")), "outcome": outcome,
             "attempts": r.get("attempts") or r.get("rows"), "failed_attempts": r.get("failed_attempts") or 0,
@@ -153,7 +157,7 @@ TRACE_SQL = f"""
            coalesce(quality_signal ->> 'billed_unusable', '') = 'true' AS billed_unusable
       FROM shared.llm_call_log
      WHERE created_at >= $1 AND created_at <= $2 AND quality_signal ->> 'route_trace' = $3
-     ORDER BY coalesce(attempt_no, 1000), created_at
+     ORDER BY coalesce({POSITION_EXPR}, 1000), coalesce(attempt_no, 1000), created_at
      LIMIT {TRACE_ROWS_MAX}
 """
 
@@ -173,15 +177,16 @@ def trace_view(trace_id: str, rows: list[dict], route: Optional[dict]) -> Option
     if not rows:
         return None
     attempts = [attempt_view(r) for r in rows]
-    answered = [a for a in attempts if a["status"] == "ok"]
-    served = answered[-1] if answered else None
+    answered = [(a, r) for a, r in zip(attempts, rows) if a["status"] == "ok"]
+    served, served_row = answered[-1] if answered else (None, None)
     first = rows[0]
     return {"trace_id": trace_id, "stage": first.get("stage"), "role": first.get("role"),
             "job_id": next((r.get("job_id") for r in rows if r.get("job_id")), None),
             "tour_id": next((r.get("tour_id") for r in rows if r.get("tour_id")), None),
             "route_test": any(r.get("route_test") for r in rows),
-            "outcome": ("no_answer" if served is None else
-                        "fallback" if (served.get("attempt_no") or 1) > 1 else "primary"),
+            "outcome": ("no_answer" if served_row is None else
+                        "fallback" if route_watch.is_fallback(served_row.get("attempt_no"), served_row.get("position"),
+                                                              served_row.get("fallback_used")) else "primary"),
             "served": served, "attempts": attempts,
             "cost_usd": round(sum(a["cost_usd"] or 0.0 for a in attempts), 6),
             "latency_ms": sum(a["latency_ms"] or 0 for a in attempts),
@@ -206,7 +211,7 @@ async def read_trace(pool, trace_id: str, *, at: Optional[datetime] = None,
 
 RUNGS_SQL = f"""
     SELECT stage, model, coalesce(connection_key, account) AS connection,
-           CASE WHEN attempt_no IS NULL THEN 'unknown' WHEN attempt_no = 1 THEN 'primary' ELSE 'fallback' END AS rung,
+           CASE WHEN {FALLBACK_RUNG} THEN 'fallback' WHEN {PRIMARY_RUNG} THEN 'primary' ELSE 'unknown' END AS rung,
            min({POSITION_EXPR}) AS position, count(*) AS answered, coalesce(sum(cost_usd), 0)::float AS cost_usd,
            avg(latency_ms)::float AS avg_latency_ms
       FROM shared.llm_call_log
@@ -271,6 +276,17 @@ FALLBACK_TOURS_SQL = """
      ORDER BY gc.created_at DESC
      LIMIT $2
 """
+FALLBACK_VERSIONS_SQL = """
+    SELECT ttv.id::text AS id, ttv.version_number, ttv.status, ttv.created_at, t.name AS tenant_name,
+           pt.aa_name AS tour_name,
+           coalesce(ttv.judge_breakdown -> 'fallback_writer' ->> 'held', '') = 'true' AS held
+      FROM gold_aa_internal.tenant_tour_versions ttv
+      LEFT JOIN shared.tenants t ON t.tenant_id = ttv.tenant_id
+      LEFT JOIN gold_aa_internal.published_tours pt ON pt.id = ttv.published_tour_id
+     WHERE ttv.created_at >= $1 AND ttv.judge_breakdown ? 'fallback_writer'
+     ORDER BY ttv.created_at DESC
+     LIMIT $2
+"""
 FALLBACK_PIECES_SQL = """
     SELECT cp.piece_id::text AS piece_id, cp.channel, cp.status, cp.held_reason, cp.created_at, t.name AS tenant_name
       FROM acp_shared.content_piece cp
@@ -304,16 +320,31 @@ async def _content_rows(db, sql: str, since: datetime) -> list[dict]:
 
 
 async def read_fallback_content(pool, *, window: Optional[str] = None, now: Optional[datetime] = None) -> dict:
+    """A1 (catalog) tour versions a fallback model wrote. No tenant data (spend.read)."""
     key, span = window_of(window or "7d")
     now = now or datetime.now(timezone.utc)
     since = now - span
     async with pool.acquire() as db:
         tours = await _content_rows(db, FALLBACK_TOURS_SQL, since)
-        pieces = await _content_rows(db, FALLBACK_PIECES_SQL, since)
     return {"window": key,
             "tours": [{"id": t["id"], "tour_id": t["tour_id"], "tour_name": t.get("tour_name"),
                        "version": t.get("version_num"), "status": t.get("status"), "at": _iso(t.get("created_at")),
-                       "held": _held(t.get("degraded"))} for t in tours],
+                       "held": _held(t.get("degraded"))} for t in tours]}
+
+
+async def read_fallback_tenant_content(pool, *, window: Optional[str] = None,
+                                       now: Optional[datetime] = None) -> dict:
+    """T2 tour versions and T9 pieces a fallback model wrote, every tenant (Tenant QA data: tenant_content.read)."""
+    key, span = window_of(window or "7d")
+    now = now or datetime.now(timezone.utc)
+    since = now - span
+    async with pool.acquire() as db:
+        versions = await _content_rows(db, FALLBACK_VERSIONS_SQL, since)
+        pieces = await _content_rows(db, FALLBACK_PIECES_SQL, since)
+    return {"window": key,
+            "versions": [{"id": v["id"], "tenant_name": v.get("tenant_name"), "tour_name": v.get("tour_name"),
+                          "version": v.get("version_number"), "status": v.get("status"),
+                          "held": bool(v.get("held")), "at": _iso(v.get("created_at"))} for v in versions],
             "pieces": [{"piece_id": p["piece_id"], "tenant_name": p.get("tenant_name"), "channel": p.get("channel"),
                         "status": p.get("status"), "held": p.get("status") == "held"
                         and "fallback_writer" in (p.get("held_reason") or ""), "at": _iso(p.get("created_at"))}
@@ -393,15 +424,15 @@ async def run_route_test(pool, *, stage: str, refuse_primary: bool, count: int, 
 
 
 class PolicyUnavailable(RuntimeError):
-    """shared.llm_route_policy does not exist yet (CIS 373 not applied)."""
+    """shared.llm_route_policy does not exist yet (api/migrations/*_llm_route_policy.sql not applied)."""
 
 
-POLICY_MISSING = "the route alert policy needs migration 373"
+POLICY_MISSING = "the route alert policy needs the llm_route_policy migration"
 
 
 async def write_policy(pool, stage: str, fields: dict, *, actor: str) -> dict:
     """Create or replace one policy row (``*`` = the defaults), audited ``llm_route_policy_set``. ValueError on a bad
-    value; PolicyUnavailable before 373."""
+    value; PolicyUnavailable before the llm_route_policy migration."""
     import asyncpg
 
     from services.acp_shared.audit_log import write_audit_log

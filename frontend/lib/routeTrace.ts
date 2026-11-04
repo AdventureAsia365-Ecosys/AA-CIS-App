@@ -3,7 +3,9 @@
 //   GET  /admin/ai-gateway/route-trace/requests            one line per gateway request (route trace)
 //   GET  /admin/ai-gateway/route-trace/requests/{id}?at=   every attempt of one request
 //   GET  /admin/ai-gateway/route-trace/rungs               per stage, the share of answers per rung
-//   GET  /admin/ai-gateway/route-trace/fallback-content    content a fallback model wrote (marked / held)
+//   GET  /admin/ai-gateway/route-trace/fallback-content    A1 tour versions a fallback model wrote (marked / held)
+//   GET  /admin/content-quality/fallback-writes            tenant T2 versions / T9 pieces a fallback model wrote
+//                                                          (Tenant QA data: tenant_content.read only)
 //   POST /admin/ai-gateway/route-trace/test                the route test (a few tiny real requests)
 //   GET / PUT / DELETE /admin/ai-gateway/route-policy[/{stage}]   alert thresholds + the fallback hold switch
 //   POST /admin/ai-gateway/route-watch/run                 run the route watch (alerts) or the digest now
@@ -12,6 +14,7 @@
 export const ROUTE_REQUESTS_API = "/api/admin/ai-gateway/route-trace/requests";
 export const ROUTE_RUNGS_API = "/api/admin/ai-gateway/route-trace/rungs";
 export const FALLBACK_CONTENT_API = "/api/admin/ai-gateway/route-trace/fallback-content";
+export const FALLBACK_TENANT_CONTENT_API = "/api/admin/content-quality/fallback-writes";
 export const ROUTE_TEST_API = "/api/admin/ai-gateway/route-trace/test";
 export const ROUTE_POLICY_API = "/api/admin/ai-gateway/route-policy";
 export const ROUTE_WATCH_API = "/api/admin/ai-gateway/route-watch/run";
@@ -136,6 +139,21 @@ export interface FallbackPiece {
 export interface FallbackContentResp {
   window: RouteWindow;
   tours: FallbackTour[];
+}
+
+export interface FallbackTenantVersion {
+  id: string;
+  tenant_name: string | null;
+  tour_name: string | null;
+  version: number | null;
+  status: string | null;
+  held: boolean;
+  at: string | null;
+}
+
+export interface FallbackTenantContentResp {
+  window: RouteWindow;
+  versions: FallbackTenantVersion[];
   pieces: FallbackPiece[];
 }
 

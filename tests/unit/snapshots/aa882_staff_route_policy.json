@@ -199,6 +199,10 @@
     "capability": "tenant_content.read",
     "module": "api.routers.admin_content_quality"
   },
+  "GET /admin/content-quality/fallback-writes": {
+    "capability": "tenant_content.read",
+    "module": "api.routers.admin_llm_route"
+  },
   "GET /admin/content-quality/pieces": {
     "capability": "tenant_content.read",
     "module": "api.routers.admin_content_quality"

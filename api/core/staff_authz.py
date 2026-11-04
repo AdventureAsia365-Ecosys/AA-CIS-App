@@ -295,7 +295,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/ai-gateway/route-trace/requests"): SPEND_READ,
     ("GET", "/admin/ai-gateway/route-trace/requests/{trace_id}"): SPEND_READ,
     ("GET", "/admin/ai-gateway/route-trace/rungs"): SPEND_READ,
-    ("GET", "/admin/ai-gateway/route-trace/fallback-content"): SPEND_READ,
+    ("GET", "/admin/ai-gateway/route-trace/fallback-content"): SPEND_READ,          # A1 catalog versions only
     ("POST", "/admin/ai-gateway/route-trace/test"): AI_ADMIN,          # a few tiny paid calls, audited
     ("GET", "/admin/ai-gateway/route-policy"): SPEND_READ,
     ("PUT", "/admin/ai-gateway/route-policy/{stage}"): AI_ADMIN,       # audited llm_route_policy_set
@@ -451,6 +451,8 @@ POLICY: dict[tuple[str, str], Any] = {
     # ── admin_content_quality — T2/T9 quality (admin-only page; the BFF API_WRITE_RULES agree).
     # The reads show every tenant's pieces and tour versions: tenant.read.
     ("GET", "/admin/content-quality/pieces"): TENANT_CONTENT_READ,
+    # AA-1042 (admin_llm_route.quality_router): every tenant's T2 versions / T9 pieces a fallback model wrote
+    ("GET", "/admin/content-quality/fallback-writes"): TENANT_CONTENT_READ,
     ("GET", "/admin/content-quality/pieces/{piece_id}"): TENANT_CONTENT_READ,
     ("GET", "/admin/content-quality/pieces/{piece_id}/label"): TENANT_CONTENT_READ,
     ("GET", "/admin/content-quality/place-cards"): TENANT_CONTENT_READ,

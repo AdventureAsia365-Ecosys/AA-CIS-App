@@ -7,7 +7,9 @@
 //     primary; any later model or provider = fallback), the fallback share and the requests with no answer;
 //   - Requests: one line per gateway request (filter by stage, only the ones that needed a fallback); a line opens
 //     RouteTraceDrawer with every attempt, its reason, latency and cost;
-//   - Content written by a fallback model (QA, admin only: tenants never see it): marked, or held for review;
+//   - Content written by a fallback model (QA, admin only: tenants never see it): marked, or held for review. The
+//     catalog (A1) list is open to the tab's readers; the tenant lists (T2 versions, T9 pieces) come from the Tenant
+//     QA read /admin/content-quality/fallback-writes and show only to a role with tenant_content.read;
 //   - Route alerts (RouteAlertsCard): thresholds, the hold switch, Run check now, the route test.
 // The drawer also opens from the address (?tab=trace&rt=<trace id>&rt_at=<time>), which a Calls row's "Route" link
 // sets. Built on the kit only (Section, SegmentedControl, DataTable, Badge, Select, Checkbox, LinkButton).
@@ -16,13 +18,15 @@ import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import {
   Badge, Checkbox, DataTable, DateText, K, LinkButton, Section, SegmentedControl, Select, Spinner, apiGet, mono,
-  useT, type ColumnDef,
+  useAdminIdentity, useT, type ColumnDef,
 } from "../../_kit";
 import { usd } from "@/lib/aiGateway";
+import { can } from "@/lib/rbac";
 import {
-  FALLBACK_CONTENT_API, ROUTE_KEY, ROUTE_WINDOWS, outcomeTone, pct, requestsPath, rungLabel, rungsPath,
-  type FallbackContentResp, type FallbackPiece, type FallbackTour, type RouteRequest, type RouteRequestsResp,
-  type RouteTarget, type RouteWindow, type RungsResp, type StageRungs,
+  FALLBACK_CONTENT_API, FALLBACK_TENANT_CONTENT_API, ROUTE_KEY, ROUTE_WINDOWS, outcomeTone, pct, requestsPath,
+  rungLabel, rungsPath, type FallbackContentResp, type FallbackPiece, type FallbackTenantContentResp,
+  type FallbackTenantVersion, type FallbackTour, type RouteRequest, type RouteRequestsResp, type RouteTarget,
+  type RouteWindow, type RungsResp, type StageRungs,
 } from "@/lib/routeTrace";
 import RouteAlertsCard from "./RouteAlertsCard";
 import RouteTraceDrawer from "./RouteTraceDrawer";
@@ -75,6 +79,16 @@ export default function TraceTab({ target, onOpen }: {
   const contentQ = useQuery({
     queryKey: [...ROUTE_KEY, "content", period],
     queryFn: () => apiGet<FallbackContentResp>(`${FALLBACK_CONTENT_API}?window=${period}`, { admin: true }),
+    retry: false,
+  });
+  // Tenant QA data (every tenant's versions and pieces): only a role with tenant_content.read asks for it (the
+  // backend refuses the others).
+  const canTenant = can(useAdminIdentity().role, "tenant_content.read");
+  const tenantQ = useQuery({
+    queryKey: [...ROUTE_KEY, "tenant-content", period],
+    queryFn: () => apiGet<FallbackTenantContentResp>(`${FALLBACK_TENANT_CONTENT_API}?window=${period}`,
+      { admin: true }),
+    enabled: canTenant,
     retry: false,
   });
 
@@ -149,6 +163,22 @@ export default function TraceTab({ target, onOpen }: {
         {row.original.held ? t("held") : t("marked")}</Badge> },
   ], [t]);
 
+  const versionCols = useMemo<ColumnDef<FallbackTenantVersion, unknown>[]>(() => [
+    { id: "at", header: t("colWhen"), accessorFn: (r) => r.at ?? "",
+      cell: ({ row }) => <span style={{ whiteSpace: "nowrap" }}>
+        {row.original.at ? <DateText value={row.original.at} withTime /> : "—"}</span> },
+    { id: "tenant", header: t("colTenant"), accessorFn: (r) => r.tenant_name ?? "",
+      cell: ({ row }) => <span style={{ fontSize: 12.5 }}>{row.original.tenant_name ?? "—"}</span> },
+    { id: "tour", header: t("colTour"), accessorFn: (r) => r.tour_name ?? "",
+      cell: ({ row }) => <span style={{ fontSize: 12.5, overflowWrap: "anywhere" }}>{row.original.tour_name ?? "—"}
+      </span> },
+    { id: "version", header: t("colVersion"), accessorFn: (r) => r.version ?? 0, meta: { align: "right" },
+      cell: ({ row }) => <span style={num}>{row.original.version ?? "—"}</span> },
+    { id: "state", header: t("colStatus"), accessorFn: (r) => (r.held ? 1 : 0),
+      cell: ({ row }) => <Badge tone={row.original.held ? "warning" : "info"} dot={false}>
+        {row.original.held ? t("held") : t("marked")}</Badge> },
+  ], [t]);
+
   const pieceCols = useMemo<ColumnDef<FallbackPiece, unknown>[]>(() => [
     { id: "at", header: t("colWhen"), accessorFn: (r) => r.at ?? "",
       cell: ({ row }) => <span style={{ whiteSpace: "nowrap" }}>
@@ -168,6 +198,9 @@ export default function TraceTab({ target, onOpen }: {
   );
 
   const content = contentQ.data;
+  const tenant = canTenant ? tenantQ.data : undefined;
+  const nothing = !!content && content.tours.length === 0
+    && (!canTenant || (!!tenant && tenant.versions.length === 0 && tenant.pieces.length === 0));
   return (
     <div data-testid="ai-gateway-trace-tab" style={{ display: "grid", gap: 16, minWidth: 0 }}>
       <Section testId="route-rungs" title={t("rungsTitle")} description={t("rungsIntro")} actions={windowControl}>
@@ -196,12 +229,13 @@ export default function TraceTab({ target, onOpen }: {
       </Section>
 
       <Section testId="route-fallback-content" title={t("contentTitle")} description={t("contentIntro")}
-        actions={<a href="/admin/tenant-qa/quality" style={{ color: K.accent, fontSize: 12.5 }}>{t("openQuality")}</a>}>
-        {contentQ.isLoading && <Spinner />}
-        {contentQ.isError && <div style={{ fontSize: 12.5, color: K.danger }}>{t("loadError")}</div>}
-        {content && content.tours.length === 0 && content.pieces.length === 0 && (
-          <div style={small}>{t("contentEmpty")}</div>
+        actions={canTenant ? <a href="/admin/tenant-qa/quality" style={{ color: K.accent, fontSize: 12.5 }}>
+          {t("openQuality")}</a> : undefined}>
+        {(contentQ.isLoading || (canTenant && tenantQ.isLoading)) && <Spinner />}
+        {(contentQ.isError || (canTenant && tenantQ.isError)) && (
+          <div style={{ fontSize: 12.5, color: K.danger }}>{t("loadError")}</div>
         )}
+        {nothing && <div style={small}>{t("contentEmpty")}</div>}
         {content && content.tours.length > 0 && (
           <div style={{ marginBottom: 12 }}>
             <div style={{ fontSize: 12.5, fontWeight: 600, color: K.ink, marginBottom: 6 }}>{t("contentTours")}</div>
@@ -209,10 +243,18 @@ export default function TraceTab({ target, onOpen }: {
               getRowId={(r) => r.id} compact tableMinWidth={560} />
           </div>
         )}
-        {content && content.pieces.length > 0 && (
+        {tenant && tenant.versions.length > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: K.ink, marginBottom: 6 }}>
+              {t("contentTenantVersions")}</div>
+            <DataTable tableId="route-fallback-versions" data={tenant.versions} columns={versionCols}
+              getRowId={(r) => r.id} compact tableMinWidth={640} />
+          </div>
+        )}
+        {tenant && tenant.pieces.length > 0 && (
           <div>
             <div style={{ fontSize: 12.5, fontWeight: 600, color: K.ink, marginBottom: 6 }}>{t("contentPieces")}</div>
-            <DataTable tableId="route-fallback-pieces" data={content.pieces} columns={pieceCols}
+            <DataTable tableId="route-fallback-pieces" data={tenant.pieces} columns={pieceCols}
               getRowId={(r) => r.piece_id} compact tableMinWidth={560} />
           </div>
         )}

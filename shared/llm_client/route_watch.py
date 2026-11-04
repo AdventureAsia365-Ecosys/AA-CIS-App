@@ -8,12 +8,17 @@ only) and decides the alerts; the job kind ``llm_route_watch`` (services/jobs/ll
 through the ops-check plumbing (``shared/ops_checks.raise_alert``: admin bell + at most one e-mail per check and UTC
 day).
 
-A request's **rung**: the answered row's ``attempt_no`` (1 = the primary rung: the stage's first model on its first
-deployment; > 1 = a fallback rung: a later deployment of that model or a later model). Rows written before ledger v2
-have no attempt number and count as ``unknown``. Shadow, eval and Jev (``typesafe``) rows are left out.
+A request's **rung** (``FALLBACK_RUNG`` / ``PRIMARY_RUNG`` / ``UNKNOWN_RUNG``, one rule for every read here and in
+api/services/llm_route_trace.py): an answered row is a FALLBACK answer when its route position is > 0 (a later model,
+also when the earlier ones were skipped without an attempt: open circuit, disabled catalog row, budget, role not
+served), its ``attempt_no`` is > 1 (a later deployment of the first model) or its ``fallback_used`` is set; it is the
+PRIMARY answer when ``attempt_no`` is 1 and none of those holds. The attempt number alone is not enough: it counts only
+the calls that reached a provider, so a fallback model answering after a skipped primary has ``attempt_no`` 1. Rows
+written before ledger v2 with no attempt number and no fallback mark count as ``unknown``. Shadow, eval and Jev
+(``typesafe``) rows are left out.
 
-Alerts per stage (thresholds: ``shared.llm_route_policy``, CIS 373; the ``*`` row and then ``DEFAULTS`` fill a
-missing value):
+Alerts per stage (thresholds: ``shared.llm_route_policy``, api/migrations/*_llm_route_policy.sql; the ``*`` row and
+then ``DEFAULTS`` fill a missing value):
 
 - ``route_fb.<stage>`` — at least ``fallback_alert_pct`` % of the answered requests of the last ``WATCH_WINDOW`` came
   from a fallback rung, with at least ``min_requests`` answered. Bell at most hourly.
@@ -105,13 +110,19 @@ POSITION_EXPR = """CASE WHEN quality_signal ? 'route_trace'
                  AND coalesce(quality_signal ->> 'route_position', quality_signal ->> 'position') ~ '^[0-9]{1,3}$'
                 THEN coalesce(quality_signal ->> 'route_position', quality_signal ->> 'position')::int END"""
 OK = "coalesce(status, 'ok') = 'ok'"
+# The rung of an answered row (see the module doc). One SQL rule for every read; ``is_fallback`` is the same rule in
+# Python (the Trace drawer).
+FALLBACK_RUNG = f"""(coalesce(fallback_used, false) OR coalesce(attempt_no, 1) > 1
+       OR coalesce({POSITION_EXPR}, 0) > 0)"""
+PRIMARY_RUNG = f"(attempt_no = 1 AND NOT {FALLBACK_RUNG})"
+UNKNOWN_RUNG = f"(attempt_no IS NULL AND NOT {FALLBACK_RUNG})"
 
 # Per stage since $1: answered requests by rung, the fallback cost, the furthest route position reached and the
 # requests (route traces) with no answered row.
 STATS_SQL = f"""
     WITH rows AS (
-        SELECT stage, status, attempt_no, cost_usd, created_at, quality_signal ->> 'route_trace' AS trace,
-               {POSITION_EXPR} AS position
+        SELECT stage, status, attempt_no, fallback_used, quality_signal, cost_usd, created_at,
+               quality_signal ->> 'route_trace' AS trace, {POSITION_EXPR} AS position
           FROM shared.llm_call_log
          WHERE created_at >= $1 AND {LEDGER_FILTER}
     ), lost AS (
@@ -123,15 +134,15 @@ STATS_SQL = f"""
     )
     SELECT r.stage,
            count(*) FILTER (WHERE {OK}) AS answered,
-           count(*) FILTER (WHERE {OK} AND attempt_no = 1) AS primary_answered,
-           count(*) FILTER (WHERE {OK} AND attempt_no > 1) AS fallback_answered,
-           count(*) FILTER (WHERE {OK} AND attempt_no IS NULL) AS unknown_answered,
-           coalesce(sum(cost_usd) FILTER (WHERE {OK} AND attempt_no > 1), 0)::float AS fallback_cost_usd,
+           count(*) FILTER (WHERE {OK} AND {PRIMARY_RUNG}) AS primary_answered,
+           count(*) FILTER (WHERE {OK} AND {FALLBACK_RUNG}) AS fallback_answered,
+           count(*) FILTER (WHERE {OK} AND {UNKNOWN_RUNG}) AS unknown_answered,
+           coalesce(sum(cost_usd) FILTER (WHERE {OK} AND {FALLBACK_RUNG}), 0)::float AS fallback_cost_usd,
            coalesce(sum(cost_usd) FILTER (WHERE {OK}), 0)::float AS cost_usd,
            count(*) FILTER (WHERE status IN ('refused', 'error')) AS failed_attempts,
            max(position) AS max_position,
-           max(created_at) FILTER (WHERE {OK} AND attempt_no = 1) AS last_primary_at,
-           max(created_at) FILTER (WHERE {OK} AND attempt_no > 1) AS last_fallback_at,
+           max(created_at) FILTER (WHERE {OK} AND {PRIMARY_RUNG}) AS last_primary_at,
+           max(created_at) FILTER (WHERE {OK} AND {FALLBACK_RUNG}) AS last_fallback_at,
            coalesce(max(l.lost), 0) AS lost
       FROM rows r LEFT JOIN lost l ON l.stage = r.stage
      GROUP BY r.stage
@@ -140,7 +151,7 @@ STATS_SQL = f"""
 BASELINE_SQL = f"""
     SELECT stage, count(*) AS n, avg(cost_usd)::float AS avg_cost_usd
       FROM shared.llm_call_log
-     WHERE created_at >= $1 AND {LEDGER_FILTER} AND {OK} AND attempt_no = 1 AND cost_usd IS NOT NULL
+     WHERE created_at >= $1 AND {LEDGER_FILTER} AND {OK} AND {PRIMARY_RUNG} AND cost_usd IS NOT NULL
      GROUP BY stage
 """
 # The newest route bell of each check name since $1 (the alert state: degraded / primary back).
@@ -181,7 +192,8 @@ def effective(rows: dict[str, dict], stage: str) -> Policy:
 
 
 async def read_policies(db) -> tuple[bool, dict[str, dict]]:
-    """(ready, {stage: row}) through ``db`` (a pool or a connection). ready False before migration 373."""
+    """(ready, {stage: row}) through ``db`` (a pool or a connection). ready False before the llm_route_policy
+    migration."""
     import asyncpg
     try:
         rows = await db.fetch(POLICY_SQL)
@@ -273,6 +285,11 @@ def validate_policy(fields: dict) -> dict:
 
 
 # ── stats ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+def is_fallback(attempt_no: Any, position: Any, fallback_used: Any) -> bool:
+    """``FALLBACK_RUNG`` in Python: an answer from a later model or deployment, or one the gateway marked. Pure."""
+    return bool(fallback_used) or (attempt_no or 1) > 1 or (position or 0) > 0
+
 
 def _iso(v: Any) -> Any:
     return v.isoformat() if isinstance(v, datetime) else v

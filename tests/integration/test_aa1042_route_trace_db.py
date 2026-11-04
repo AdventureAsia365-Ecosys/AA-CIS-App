@@ -1,6 +1,7 @@
-"""AA-1042 (S268, lane trace) — on real Postgres: CIS 373 (shared.llm_route_policy) and cis_app's grant on it, the
-route trace reads (requests, one trace, rungs) and the route watch stats over llm_call_log rows tagged with
-quality_signal.route_trace, the policy write / reset with their audit rows, and the fallback content list query.
+"""AA-1042 (S268, lane trace) — on real Postgres: the llm_route_policy migration (shared.llm_route_policy) and
+cis_app's grant on it, the route trace reads (requests, one trace, rungs) and the route watch stats over llm_call_log
+rows tagged with quality_signal.route_trace (a skipped primary included), the policy write / reset with their audit
+rows, and the fallback content list queries (catalog, tenant).
 
 Invented stage names only (zz1042_*); every row sits in 2099 so the rows of other tests never count.
 """
@@ -26,7 +27,10 @@ DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 NOW = datetime(2099, 1, 1, 12, 0, tzinfo=timezone.utc)
 STAGE = "zz1042_writer"
 OTHER = "zz1042_judge"
-MIGRATION = Path(__file__).resolve().parents[2] / "api" / "migrations" / "373_llm_route_policy.sql"
+# Found by name, so a renumber at merge time (ADR 0017 d1: main max + 1) touches only the file and its body.
+MIGRATIONS = Path(__file__).resolve().parents[2] / "api" / "migrations"
+(MIGRATION,) = MIGRATIONS.glob("[0-9][0-9][0-9]_llm_route_policy.sql")
+VERSION = MIGRATION.name.split("_", 1)[0]
 
 
 @pytest_asyncio.fixture
@@ -57,7 +61,8 @@ async def _clean(c):
 
 
 async def _row(c, *, stage=STAGE, trace=None, model="zz-model-one", status="ok", attempt=1, position=0,
-               cost=0.01, at=NOW - timedelta(minutes=10), error_class=None, shadow=False, connection="acc3"):
+               cost=0.01, at=NOW - timedelta(minutes=10), error_class=None, shadow=False, connection="acc3",
+               fallback_used=None):
     signal = {}
     if trace:
         signal["route_trace"] = trace
@@ -66,10 +71,12 @@ async def _row(c, *, stage=STAGE, trace=None, model="zz-model-one", status="ok",
         signal.update(gateway_attempt=True, error=f"{model} refused")
     await c.execute(
         "INSERT INTO shared.llm_call_log (stage, role, model, tokens_in, tokens_out, cost_usd, quality_signal, "
-        "created_at, status, error_class, attempt_no, latency_ms, connection_key, provider, is_shadow, app) "
-        "VALUES ($1, 'writer', $2, 10, 5, $3, $4::jsonb, $5, $6, $7, $8, 120, $9, 'bedrock-satellite', $10, 'cis')",
+        "created_at, status, error_class, attempt_no, latency_ms, connection_key, provider, is_shadow, app, "
+        "fallback_used) "
+        "VALUES ($1, 'writer', $2, 10, 5, $3, $4::jsonb, $5, $6, $7, $8, 120, $9, 'bedrock-satellite', $10, 'cis', "
+        "$11)",
         stage, model, cost if status == "ok" else 0.0, json.dumps(signal), at, status, error_class, attempt,
-        connection, shadow)
+        connection, shadow, fallback_used)
 
 
 async def _scene(c):
@@ -89,7 +96,7 @@ async def _scene(c):
 
 
 @pytest.mark.asyncio
-async def test_migration_373_shape_and_cis_app_grant(pool):
+async def test_migration_shape_and_cis_app_grant(pool):
     async with pool.acquire() as c:
         cols = {r["column_name"] for r in await c.fetch(
             "SELECT column_name FROM information_schema.columns WHERE table_schema = 'shared' "
@@ -104,7 +111,7 @@ async def test_migration_373_shape_and_cis_app_grant(pool):
             ok = await c.fetchval("SELECT has_table_privilege('cis_app', 'shared.llm_route_policy', "
                                   "'SELECT, INSERT, UPDATE, DELETE') AS ok")
             assert ok is True
-        assert await c.fetchval("SELECT count(*) AS n FROM shared.schema_versions WHERE version = '373'") == 1
+        assert await c.fetchval("SELECT count(*) AS n FROM shared.schema_versions WHERE version = $1", VERSION) == 1
 
 
 @pytest.mark.asyncio
@@ -153,6 +160,50 @@ async def test_the_watch_raises_fallback_and_last_model_then_primary_back(pool):
     assert f"route_back.{STAGE}" in {f.check for f in back}
 
 
+async def _circuit_open_scene(c, n=3, start=NOW - timedelta(minutes=30)):
+    """The primary's circuit is open: each request has the gateway's net row for the first model (refused, NO attempt
+    number, position 0: no provider call; the class of the refusals that opened the circuit) and the 2nd model's
+    answer with attempt_no 1 at route position 1."""
+    traces = []
+    for i in range(n):
+        t = str(uuid.uuid4())
+        at = start + timedelta(minutes=i)
+        await _row(c, trace=t, status="refused", error_class="access_denied", attempt=None, position=0, at=at)
+        await _row(c, trace=t, model="zz-model-two", attempt=1, position=1, fallback_used=True, cost=0.02,
+                   at=at + timedelta(seconds=2))
+        traces.append(t)
+    return traces
+
+
+@pytest.mark.asyncio
+async def test_a_skipped_primary_counts_as_fallback_everywhere(pool):
+    # review fix: attempt_no 1 is not the primary when the earlier models were skipped without an attempt
+    async with pool.acquire() as c:
+        traces = await _circuit_open_scene(c)
+        stats = await rw.read_stats(c, NOW - rw.WATCH_WINDOW)
+        base = await rw.read_baseline(c, NOW - rw.BASELINE_WINDOW)
+        routes = await rw.read_routes(c)
+    st = stats[STAGE]
+    assert (st["answered"], st["primary_answered"], st["fallback_answered"], st["unknown_answered"]) == (3, 0, 3, 0)
+    assert st["last_primary_at"] is None and st["fallback_cost_usd"] == pytest.approx(0.06)
+    assert STAGE not in base                                                  # no primary answer to average
+    # degraded since a fallback bell 40 min ago: the fallback answers do NOT raise "primary back"
+    state = {f"route_fb.{STAGE}": NOW - timedelta(minutes=40)}
+    checks = {f.check for f in rw.watch_findings(stats, {}, {}, routes, {STAGE: {"min_requests": 2}}, state)}
+    assert f"route_back.{STAGE}" not in checks and f"route_fb.{STAGE}" in checks
+
+    out = await svc.read_requests(pool, stage=STAGE, window="1h", now=NOW)
+    assert {r["trace_id"]: r["outcome"] for r in out["requests"]} == {t: "fallback" for t in traces}
+    only = await svc.read_requests(pool, stage=STAGE, window="1h", fallback_only=True, now=NOW)
+    assert {r["trace_id"] for r in only["requests"]} == set(traces)
+    tr = await svc.read_trace(pool, traces[0], at=NOW - timedelta(minutes=30), now=NOW)
+    assert tr["outcome"] == "fallback" and [a["status"] for a in tr["attempts"]] == ["refused", "ok"]
+    rungs = await svc.read_rungs(pool, window="1h", stage=STAGE, now=NOW)
+    (s,) = rungs["stages"]
+    assert [(r["rung"], r["model"], r["share_pct"]) for r in s["rungs"]] == [("fallback", "zz-model-two", 100.0)]
+    assert s["fallback_pct"] == 100.0
+
+
 @pytest.mark.asyncio
 async def test_the_cost_baseline_reads_primary_answers_only(pool):
     async with pool.acquire() as c:
@@ -188,4 +239,6 @@ async def test_policy_write_and_reset_are_audited_and_change_the_effective_value
 @pytest.mark.asyncio
 async def test_the_fallback_content_queries_run(pool):
     out = await svc.read_fallback_content(pool, window="7d", now=NOW)
-    assert out == {"window": "7d", "tours": [], "pieces": []}
+    assert out == {"window": "7d", "tours": []}
+    tenant = await svc.read_fallback_tenant_content(pool, window="7d", now=NOW)
+    assert tenant == {"window": "7d", "versions": [], "pieces": []}

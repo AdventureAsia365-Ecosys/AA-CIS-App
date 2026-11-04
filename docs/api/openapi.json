@@ -11780,7 +11780,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "The newest content a fallback model wrote (read-only, $0)",
+        "summary": "The newest A1 tour versions a fallback model wrote (read-only, $0)",
         "tags": [
           "admin-ai-gateway"
         ]
@@ -14652,6 +14652,90 @@
           }
         },
         "summary": "Set A1 Content Label",
+        "tags": [
+          "admin-content-quality"
+        ]
+      }
+    },
+    "/admin/content-quality/fallback-writes": {
+      "get": {
+        "operationId": "get_fallback_tenant_content_admin_content_quality_fallback_writes_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "window",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^(1h|24h|7d)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Window"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Fallback Tenant Content Admin Content Quality Fallback Writes Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "The newest tenant tour versions and pieces a fallback model wrote (read-only, $0)",
         "tags": [
           "admin-content-quality"
         ]

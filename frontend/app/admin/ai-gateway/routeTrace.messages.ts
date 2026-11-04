@@ -63,7 +63,8 @@ export const RT = defineMessages(
     contentTitle: "Content written by a fallback model",
     contentIntro: "Tour versions and pieces whose writer was answered by a fallback model, newest first. They are "
       + "marked in QA; when the stage holds fallback writes they wait for review. Tenants never see these marks.",
-    contentTours: "Tour versions",
+    contentTours: "Catalog tour versions",
+    contentTenantVersions: "Tenant tour versions",
     contentPieces: "Tenant pieces",
     colTour: "Tour",
     colVersion: "Version",
@@ -184,7 +185,8 @@ export const RT = defineMessages(
     contentIntro: "Phiên bản tour và bài viết mà bước viết được model dự phòng trả lời, mới nhất trước. Chúng được "
       + "đánh dấu trong QA; khi stage giữ bài viết dự phòng thì chúng chờ duyệt. Khách hàng không bao giờ thấy dấu "
       + "này.",
-    contentTours: "Phiên bản tour",
+    contentTours: "Phiên bản tour của catalog",
+    contentTenantVersions: "Phiên bản tour của khách hàng",
     contentPieces: "Bài viết của khách hàng",
     colTour: "Tour",
     colVersion: "Phiên bản",

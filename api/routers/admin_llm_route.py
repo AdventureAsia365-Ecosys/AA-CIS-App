@@ -9,8 +9,13 @@
   GET    /admin/ai-gateway/route-trace/rungs               per stage over a window: the share of answered requests
                                                            per rung (model @ connection, primary / fallback), the
                                                            fallback share, requests with no answer            spend.read
-  GET    /admin/ai-gateway/route-trace/fallback-content    the newest content a fallback model wrote (A1 / T2 tour
-                                                           versions, T9 pieces), marked or held               spend.read
+  GET    /admin/ai-gateway/route-trace/fallback-content    the newest A1 tour versions a fallback model wrote,
+                                                           marked or held (catalog, no tenant data)           spend.read
+  GET    /admin/content-quality/fallback-writes            the same for tenant content: T2 tour versions and T9
+                                                           pieces, with the tenant and the admin-only held / marked
+                                                           label. Tenant QA data, so it sits with the Tenant QA reads
+                                                           (quality_router), not under /admin/ai-gateway
+                                                                                                      tenant_content.read
   POST   /admin/ai-gateway/route-trace/test                the live check: 1-6 tiny real requests on one chat stage,
                                                            optionally with its first model refused for those
                                                            requests only (no stored switch; audited)            ai.admin
@@ -23,7 +28,8 @@
                                                            dry_run): the alerts without waiting for the 15-min tick
                                                                                                                 ai.admin
 
-$0 except the route test (16 output tokens per request). The policy writes answer 503 before migration 373.
+$0 except the route test (16 output tokens per request). The policy writes answer 503 before the llm_route_policy
+migration.
 Admin only (POLICY in api/core/staff_authz.py; the page in frontend/lib/rbac.ts PAGE_RULES / API_READ_RULES under
 /admin/ai-gateway). Rules: api/services/llm_route_trace.py, shared/llm_client/route_watch.py.
 """
@@ -45,6 +51,10 @@ logger = structlog.get_logger()
 
 router = APIRouter(prefix="/admin/ai-gateway", tags=["admin-ai-gateway"],
                    dependencies=[Depends(verify_admin_secret), Depends(staff_policy)])
+# The tenant content list: every tenant's T2 versions / T9 pieces and their admin-only QA mark, gated like the other
+# Tenant QA reads (/admin/content-quality/*: tenant_content.read). The AI & spend roles never reach it.
+quality_router = APIRouter(prefix="/admin/content-quality", tags=["admin-content-quality"],
+                           dependencies=[Depends(verify_admin_secret), Depends(staff_policy)])
 
 _STAGE = Path(..., pattern=r"^(\*|[a-z0-9][a-z0-9_.-]{0,63})$")
 _TRACE_ID = Path(..., pattern=r"^[0-9a-fA-F-]{32,36}$")
@@ -92,9 +102,16 @@ async def get_route_rungs(request: Request, window: Optional[str] = _WINDOW,
     return await svc.read_rungs(request.app.state.pool, window=window, stage=_stage_or_422(stage))
 
 
-@router.get("/route-trace/fallback-content", summary="The newest content a fallback model wrote (read-only, $0)")
+@router.get("/route-trace/fallback-content",
+            summary="The newest A1 tour versions a fallback model wrote (read-only, $0)")
 async def get_fallback_content(request: Request, window: Optional[str] = _WINDOW) -> dict:
     return await svc.read_fallback_content(request.app.state.pool, window=window)
+
+
+@quality_router.get("/fallback-writes",
+                    summary="The newest tenant tour versions and pieces a fallback model wrote (read-only, $0)")
+async def get_fallback_tenant_content(request: Request, window: Optional[str] = _WINDOW) -> dict:
+    return await svc.read_fallback_tenant_content(request.app.state.pool, window=window)
 
 
 class RouteTestBody(BaseModel):

@@ -255,10 +255,55 @@ def test_requests_sql_has_its_filters():
 
 
 def test_request_view_outcomes():
-    base = {"trace": "t", "answered": True, "served_attempt": 1, "rows": 1}
+    base = {"trace": "t", "answered": True, "served_attempt": 1, "served_fallback": False, "rows": 1}
     assert svc.request_view(base)["outcome"] == "primary"
-    assert svc.request_view({**base, "served_attempt": 2})["outcome"] == "fallback"
+    assert svc.request_view({**base, "served_attempt": 2, "served_fallback": True})["outcome"] == "fallback"
+    # a fallback model after a skipped primary (open circuit): attempt 1, but the SQL rung says fallback
+    assert svc.request_view({**base, "served_fallback": True})["outcome"] == "fallback"
     assert svc.request_view({**base, "answered": False})["outcome"] == "no_answer"
+
+
+# ── the rung rule (review fix: the attempt number alone misses a skipped primary) ───────────────────────────────────
+
+@pytest.mark.parametrize("attempt_no, position, fallback_used, expected", [
+    (1, 0, False, False),        # the primary, first deployment
+    (1, 0, None, False),
+    (2, 0, False, True),         # a later deployment of the first model
+    (1, 1, True, True),          # the 2nd model after the 1st was skipped without an attempt (circuit open)
+    (1, 1, None, True),          # same, a caller that did not pass fallback_used
+    (1, None, True, True),       # a row without the route keys, marked by the gateway
+    (None, None, None, False),   # before ledger v2: unknown, not a fallback
+])
+def test_is_fallback_reads_position_attempt_and_mark(attempt_no, position, fallback_used, expected):
+    assert rw.is_fallback(attempt_no, position, fallback_used) is expected
+
+
+def test_every_rung_read_uses_the_one_rule():
+    for sql in (rw.STATS_SQL, rw.BASELINE_SQL, svc.RUNGS_SQL, svc.requests_sql(stage=None, fallback_only=True)):
+        assert "attempt_no = 1)" not in sql.replace(rw.PRIMARY_RUNG, "")     # no bare attempt-number test left
+        assert "attempt_no > 1)" not in sql.replace(rw.FALLBACK_RUNG, "")
+    assert rw.PRIMARY_RUNG in rw.STATS_SQL and rw.FALLBACK_RUNG in rw.STATS_SQL
+    assert rw.PRIMARY_RUNG in rw.BASELINE_SQL
+    assert rw.FALLBACK_RUNG in svc.RUNGS_SQL and rw.PRIMARY_RUNG in svc.RUNGS_SQL
+    assert "served_fallback" in svc.requests_sql(stage=None, fallback_only=True)
+
+
+def test_trace_view_counts_a_skipped_primary_as_fallback():
+    net = {"created_at": NOW, "stage": "stage_a", "role": "writer", "model": "model-one", "status": "refused",
+           "error_class": "access_denied", "attempt_no": None, "latency_ms": 0, "cost_usd": 0.0, "position": 0}
+    ok = {"created_at": NOW, "stage": "stage_a", "role": "writer", "model": "model-two", "status": "ok",
+          "attempt_no": 1, "latency_ms": 700, "cost_usd": 0.0002, "position": 1, "fallback_used": True}
+    v = svc.trace_view("t", [net, ok], ROUTES["stage_a"])
+    assert v["outcome"] == "fallback" and v["served"]["model"] == "model-two"
+
+
+def test_a_skipped_primary_never_raises_primary_back():
+    # the fallback answers while the primary's circuit is open are fallback answers: no "primary back"
+    stats = {"stage_a": _st(answered=6, fb=6, fallback_at=NOW - timedelta(minutes=1))}
+    state = {f"{ops_checks.ROUTE_FALLBACK_PREFIX}stage_a": NOW - timedelta(minutes=30)}
+    found = {f.check for f in rw.watch_findings(stats, {}, {}, ROUTES, {}, state)}
+    assert f"{ops_checks.ROUTE_BACK_PREFIX}stage_a" not in found
+    assert f"{ops_checks.ROUTE_FALLBACK_PREFIX}stage_a" in found
 
 
 def test_trace_view_orders_and_sums():
@@ -347,7 +392,7 @@ def _request():
 
 def test_policy_write_errors_map_to_http(monkeypatch):
     from api.routers import admin_llm_route as route
-    monkeypatch.setattr(svc, "write_policy", AsyncMock(side_effect=svc.PolicyUnavailable("needs 373")))
+    monkeypatch.setattr(svc, "write_policy", AsyncMock(side_effect=svc.PolicyUnavailable("needs the migration")))
     with pytest.raises(HTTPException) as e:
         asyncio.run(route.put_route_policy(route.RoutePolicyBody(), _request(), stage="stage_a"))
     assert e.value.status_code == 503
@@ -385,6 +430,53 @@ def test_route_test_is_audited_and_refusals_are_422(monkeypatch):
     with pytest.raises(HTTPException) as e:
         asyncio.run(route.post_route_test(route.RouteTestBody(stage="stage_a"), _request()))
     assert e.value.status_code == 422
+
+
+# ── content a fallback model wrote: catalog vs tenant data (review fix) ────────────────────────────────────────────
+
+def _content_pool(rows_by_sql):
+    db = MagicMock()
+
+    async def fetch(sql, *args):
+        return next((rows for key, rows in rows_by_sql.items() if key in sql), [])
+    db.fetch = fetch
+    pool = MagicMock()
+    pool.acquire.return_value = MagicMock(__aenter__=AsyncMock(return_value=db), __aexit__=AsyncMock())
+    return pool
+
+
+def test_the_spend_read_list_carries_no_tenant_data():
+    pool = _content_pool({"generated_content": [{"id": "g1", "tour_id": "t1", "tour_name": "Ridge walk",
+                                                 "version_num": 2, "status": "approved", "created_at": NOW,
+                                                 "degraded": None}],
+                          "content_piece": [{"piece_id": "p1", "tenant_name": "Zz Tenant", "channel": "blog",
+                                             "status": "held", "held_reason": "degraded: fallback_writer",
+                                             "created_at": NOW}]})
+    out = asyncio.run(svc.read_fallback_content(pool, window="7d", now=NOW))
+    assert set(out) == {"window", "tours"} and out["tours"][0]["tour_name"] == "Ridge walk"
+    tenant = asyncio.run(svc.read_fallback_tenant_content(pool, window="7d", now=NOW))
+    assert set(tenant) == {"window", "versions", "pieces"}
+    assert tenant["pieces"][0]["held"] is True and tenant["pieces"][0]["tenant_name"] == "Zz Tenant"
+
+
+def test_the_tenant_version_list_reads_the_admin_only_mark():
+    pool = _content_pool({"tenant_tour_versions": [{"id": "v1", "tenant_name": "Zz Tenant", "tour_name": "Ridge",
+                                                    "version_number": 3, "status": "ai_generated", "held": True,
+                                                    "created_at": NOW}]})
+    (v,) = asyncio.run(svc.read_fallback_tenant_content(pool, window="7d", now=NOW))["versions"]
+    assert (v["id"], v["version"], v["held"]) == ("v1", 3, True)
+    assert "judge_breakdown ? 'fallback_writer'" in svc.FALLBACK_VERSIONS_SQL
+
+
+@pytest.mark.parametrize("role, allowed", [("admin", True), ("tenant_qa", True), ("content_lead", True),
+                                           ("finance", False), ("ai_ops", False), ("support", False),
+                                           ("viewer", False)])
+def test_only_tenant_content_readers_get_the_tenant_fallback_list(role, allowed):
+    from api.core.staff_authz import denial_reason, principal_from_role
+    who = principal_from_role(role)
+    assert (denial_reason(who, "GET", "/admin/content-quality/fallback-writes") is None) is allowed
+    if role in ("finance", "ai_ops", "admin"):   # the catalog list stays on the Trace tab's spend.read
+        assert denial_reason(who, "GET", "/admin/ai-gateway/route-trace/fallback-content") is None
 
 
 def test_the_page_access_lists_the_trace_writes():
