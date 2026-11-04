@@ -19,9 +19,15 @@ Parallel lane of AA-1042. The admin chain editor, provider order, presets and ro
     changed except `BrandFitResult`, which takes `**billed_fields` as constructor keywords.
   - A single trace is looked up inside a +-15 min window of the clicked row's `created_at` (the `created_at`
     index), never by a full scan.
-- **Rung share needs no trace id.** It is read from the answered rows: `attempt_no = 1` is the primary rung,
-  `> 1` a fallback rung (another model, or the same model on another connection). Rows without `attempt_no`
-  (before ledger v2) count as "unknown".
+- **Rung share needs no trace id.** It is read from the answered rows with ONE rule (`route_watch.FALLBACK_RUNG` /
+  `PRIMARY_RUNG` / `UNKNOWN_RUNG`, `is_fallback` in Python), used by the watch stats, the cost baseline, the rung
+  share, the request list and the trace drawer: a FALLBACK answer has route position > 0, or `attempt_no > 1` (a later
+  deployment of the first model), or `fallback_used`; the PRIMARY answer has `attempt_no = 1` and none of those.
+  Rows with no attempt number and no fallback mark (before ledger v2) count as "unknown". (Review fix, S268: the first
+  version used `attempt_no` alone. `attempt_no` counts only calls that reached a provider, so when the first model is
+  skipped without an attempt — every circuit open, catalog row disabled, budget skip, role not served — the fallback
+  model's answer has `attempt_no = 1`: it was counted as primary, the fallback alert went quiet and the fallback
+  answers raised a false "primary back".)
 - **Alerts reuse the ops-check plumbing of CIS #1296** (`shared/ops_checks.raise_alert`: bell + one e-mail per
   check and UTC day, advisory lock). `check_for` now also answers the route prefixes (`llm_route_fallback.`,
   `llm_route_last_rung.`, `llm_route_primary_back.`, `llm_route_cost_shift.`) and `llm_route_digest`.
@@ -39,6 +45,18 @@ Parallel lane of AA-1042. The admin chain editor, provider order, presets and ro
   hold → Review Queue path), T9 labels the piece `held` (admin-only, the tenant still receives it). A1 reads
   the writer's own `fallback_used`; T9 binds a per-piece collector that the gateway fills when a writer-role
   request is answered by a fallback model (route position > 0).
+- **T2 (review fix).** The T2 job binds the same collector around the rewrite and the T3 repair rounds and stores
+  `judge_breakdown.fallback_writer = {held, entries}` on the version (`route_guard.t2_mark`; `judge_breakdown` is
+  admin-only, `_tenant_projection` drops it). `held` = the stage holds fallback writes: an admin-only review label
+  like T9's, the version status stays score-based and the tenant still receives the text. Inside the T2 graph the
+  entry is always `count`, so the hold never adds `DEGRADED_DETECTOR` to a tenant rewrite. The job result keeps the
+  graph's own `degraded[]` next to T3's (`t3.graph_degraded`) and the mark (`fallback_writer`).
+- **Tenant fallback list (review fix).** Every tenant's T2 versions / T9 pieces with the admin-only held mark are
+  Tenant QA data, so they moved off the Trace tab's spend.read route to `GET /admin/content-quality/fallback-writes`
+  (`tenant_content.read`: admin, content_lead, tenant_qa; `quality_router` in `admin_llm_route.py`). The finance and
+  ai_ops roles keep the catalog (A1) list only; the Trace tab asks for the tenant lists only when the viewer holds
+  `tenant_content.read`. The path sits under `/admin/content-quality`, not `/admin/ai-gateway`, because the role
+  matrix forbids the content side any `/admin/ai-gateway` route.
 - **Forced refusal for the live check**: `POST /admin/ai-gateway/route-trace/test` runs 1-6 tiny real requests
   on one stage (16 output tokens each); with `refuse_primary` the gateway refuses the stage's first model for
   those requests only (a context variable, never a stored switch): a `refused` / `access_denied` ledger row,
@@ -47,6 +65,9 @@ Parallel lane of AA-1042. The admin chain editor, provider order, presets and ro
 ## Changed
 
 - Migration 373 (expand): `shared.llm_route_policy` (per-stage thresholds + hold switch; `*` row = defaults).
+- T2 (`services/jobs/t2_rewrite_job.py`): the fallback mark on the version (`judge_breakdown.fallback_writer`).
+- `GET /admin/content-quality/fallback-writes` (tenant list) split from `/admin/ai-gateway/route-trace/fallback-content`
+  (catalog list, spend.read).
 - Gateway (`shared/llm_client/client.py`, `models.py`, `call_log.py`): route trace id + position on every row.
 - New: `shared/llm_client/route_watch.py` (policy, stats, findings), `services/jobs/llm_route_watch_job.py`,
   `api/services/llm_route_trace.py`, `api/routers/admin_llm_route.py`.
@@ -58,19 +79,21 @@ Parallel lane of AA-1042. The admin chain editor, provider order, presets and ro
 - A JSON key is weaker than a column (no index of its own). Lookups always carry a time window, and the rung
   share does not need it, so the cost is small; a column can come later with the next ledger contract file.
 - The digest is skipped on a quiet day; the job result keeps it, so the Jobs page still shows the run.
-- Content of T2 (tenant tour rewrite) is marked only through the job-level degraded counter, not held: its QA
-  flow has no hold step today.
+- T2 has no hold step in its QA flow, so its "held" is a label for QA, not a block (same as T9's).
 
 ## Should know
 
 - Rows written before this change have no `route_trace`: the Trace tab shows them as single-attempt requests
   only through the Calls list, not in the request list.
 - The test endpoint makes real (tiny) paid calls: about 0.0001 USD each on today's routes.
-- **Migration number.** 373 follows the orchestrator's hint (369-372 held by parallel lanes); the CIS preflight
-  refuses it until main reaches 372. Renumbering touches: the file name and body, `api/routers/admin_llm_route.py`,
-  `api/services/llm_route_trace.py`, `services/quality/route_guard.py`, `shared/llm_client/route_watch.py`,
-  `tests/integration/test_aa1042_route_trace_db.py`, this file, and the root docs (`ai-gateway.md`, the S268
-  retention row). Check with `git grep '373_'` and `git grep 'CIS 373'`.
+- **Migration number.** 373 follows the orchestrator's hint (370-372 held by parallel lanes; main is at 369). The
+  CIS preflight (ADR 0017 d1) accepts only main max + 1, so the file is renumbered at merge time to the then-current
+  main max + 1. The code no longer names the number (it says "the llm_route_policy migration"; the integration test
+  finds the file by name and reads its version from the file name), so a renumber touches only: the file name, the
+  number inside its body (header, step 3, `updated_by` default `migration:NNN`, the COMMENTs, the `schema_versions`
+  INSERT), this file, and the root retention row (`02-data-management.md`: "AA-1042, CIS 373" and the S268 note).
+  Check with `git grep -n '373' -- api/migrations/373_llm_route_policy.sql docs/implementation-notes/AA-1042-trace.md`
+  and in the root worktree `git grep -n 'CIS 373'`.
 - **No readiness raise.** Every read falls back when 373 is missing (`ready: false`, defaults; policy writes 503), so
   the migration and the code ship in one PR (ADR 0017 d1, expand file).
 - **Live check (Dev).** Pick an active judge / validate stage with at least two models, then
