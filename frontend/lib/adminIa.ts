@@ -13,7 +13,8 @@
 export type NavIcon =
   | "overview" | "appHealth" | "reports" | "dataCoverage"
   | "tenants" | "agencies" | "erasure" | "plans" | "assignments"
-  | "upload" | "rewrite" | "review" | "master" | "atoms" | "places" | "photos" | "facts" | "supply" | "aaContent"
+  | "upload" | "rewrite" | "review" | "master" | "atoms" | "places" | "placeCards" | "photos" | "facts" | "supply"
+  | "aaContent"
   | "seo" | "settings"
   | "quality" | "trace" | "reviewLog" | "slate" | "compliance"
   | "aiGateway" | "spend" | "usage"
@@ -65,6 +66,9 @@ export const ADMIN_IA: IaGroup[] = [
     { href: "/admin/master-content", label: "Master Content", icon: "master" },
     { href: "/admin/atom-curation", label: "Atoms & routes", icon: "atoms" },
     { href: "/admin/places", label: "Places", icon: "places" },
+    // AA-1039 R6 rest (IA §6.2, Places & photos): the place cards (was the Cards tab of Content quality), TENANT_QA
+    // roles on their own route (lib/rbac.ts), so content_lead and tenant_qa keep the card review.
+    { href: "/admin/places/cards", label: "Place cards", icon: "placeCards" },
     { href: "/admin/photos", label: "Photos", icon: "photos" },
     { href: "/admin/facts", label: "Facts", icon: "facts" },
     { href: "/admin/supply-content", label: "Supply copy", icon: "supply" },
@@ -124,6 +128,10 @@ export interface RouteMove {
 
 // 307 (permanent: false), not 308: browsers cache a 308 for good, and the later R6 slices may move these again.
 export const ADMIN_ROUTE_MOVES: RouteMove[] = [
+  // AA-1039 R6 rest: the Cards tab of Content quality is AA Catalogue › Place cards (tech lead, option A, 05/11/2026).
+  // The old Content quality URL with that tab goes there in one hop too (the first matching move wins).
+  { from: "/admin/content-quality", query: { key: "tab", value: "cards" }, to: "/admin/places/cards" },
+  { from: "/admin/tenant-qa/quality", query: { key: "tab", value: "cards" }, to: "/admin/places/cards" },
   { from: "/admin/content-quality", to: "/admin/tenant-qa/quality" },
   { from: "/admin/tenant-activity", to: "/admin/tenant-qa/trace" },
   { from: "/admin/platform-stats", to: "/admin/tenant-qa/review-log" },

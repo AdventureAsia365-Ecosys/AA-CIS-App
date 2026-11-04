@@ -107,6 +107,9 @@ const ADMIN_PAGES: PageSpec[] = [
   { id: 'tenant-qa-review-log', label: 'Review log', path: '/admin/tenant-qa/review-log', readySelector: '[data-testid="admin-content-ready"]', viewerRefused: true },
   // AA-769 — Content quality (T2/T9 quality signals for every tenant; tenants never see them).
   { id: 'tenant-qa-quality', label: 'Content quality', path: '/admin/tenant-qa/quality', readySelector: '[data-testid="content-quality-ready"]', viewerRefused: true },
+  // AA-1039 R6 rest (tech lead, option A): Place cards, was Content quality's Cards tab (?tab=cards is a 307 here, see
+  // aa1039-admin-ia-redirects.spec.ts); TENANT_QA roles, the viewer refused. `place-cards-ready` wraps the table.
+  { id: 'place-cards', label: 'Place cards', path: '/admin/places/cards', readySelector: '[data-testid="place-cards-ready"]', viewerRefused: true },
   { id: 'tenant-qa-slate', label: 'Slate', path: '/admin/tenant-qa/slate', readySelector: '[data-testid="tenant-qa-slate-ready"]', viewerRefused: true },
   { id: 'review', label: 'Review Queue', path: '/admin/review' },
   { id: 's1-rewrite', label: 'S1 Rewrite', path: '/admin/s1-rewrite', viewerRefused: true },

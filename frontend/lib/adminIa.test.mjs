@@ -13,7 +13,9 @@
 //  10. AA-1039 R6 slice 3: the AI & spend group (AI gateway, one Spend page) and the Writing Lab (stages, Writing
 //      memory moved under it), their moves and the query merge of a move whose target names a tab;
 //  11. AA-1039 R6 rest: Tenant 360 as a route (old ?tenant= links replaced), Catalogue settings without its tenant and
-//      UI kit tabs (UI kit a Platform page), SEO Intelligence's Spend tab folded into Spend › DataForSEO.
+//      UI kit tabs (UI kit a Platform page), SEO Intelligence's Spend tab folded into Spend › DataForSEO;
+//  12. AA-1039 R6 rest (tech lead, option A): Place cards is an AA Catalogue route with the Cards tab's roles; nobody
+//      gains or loses access, the old tab URLs move there in one hop.
 // Run: npm run test:unit.
 
 import assert from "node:assert/strict";
@@ -26,7 +28,7 @@ import {
   AA_INTERNAL_TENANT_ID, ADMIN_GROUP_LABELS, ADMIN_IA, ADMIN_ROUTE_MOVES, PRE_R6_ADMIN_ROUTES, adminIaRedirects,
   legacyTenantLinkTarget, resolveAdminRoute, tenant360Href,
 } from "./adminIa.ts";
-import { canSeePage } from "./rbac.ts";
+import { API_WRITE_RULES, PAGE_RULES, STAFF_ROLES, canReadAdminPath, canSeePage, canWriteAdminPath, pageRule } from "./rbac.ts";
 
 const FRONTEND = fileURLToPath(new URL("..", import.meta.url));
 const APP = join(FRONTEND, "app");
@@ -269,4 +271,47 @@ test("11. R6 rest: Tenant 360 route, Catalogue settings split, SEO Spend folded 
   walk(APP);
   walk(join(FRONTEND, "lib"));
   assert.deepEqual(offenders, []);
+});
+
+test("12. Place cards (option A): its own route, the Cards tab's roles, nobody gains or loses access", () => {
+  const cards = "/admin/places/cards";
+  assert.ok(pageExists(cards));
+  const item = items.find((i) => i.href === cards);
+  assert.equal(item?.label, "Place cards");
+  assert.equal(ADMIN_IA.find((g) => g.items.includes(item))?.label, "AA Catalogue");
+  // The role matrix: exactly the roles that opened Content quality's Cards tab (TENANT_QA), every role checked.
+  const before = (role) => canSeePage(role, "/admin/tenant-qa/quality");
+  for (const role of STAFF_ROLES) {
+    assert.equal(canSeePage(role, cards), before(role), `${role}: Place cards = the old Cards tab`);
+    assert.equal(canSeePage(role, "/admin/tenant-qa/quality"), before(role), `${role}: Content quality unchanged`);
+    // The Places pages stay admin only; only the cards route opened up.
+    assert.equal(canSeePage(role, "/admin/places"), role === "admin", `${role}: /admin/places`);
+    assert.equal(canSeePage(role, "/admin/places/other"), role === "admin", `${role}: other Places sub-pages`);
+    // The API the page calls is unchanged (read and write rules of the BFF).
+    assert.equal(canReadAdminPath(role, "content-quality/place-cards"), canReadAdminPath(role, "content-quality/pieces"), role);
+    assert.equal(canWriteAdminPath(role, "PATCH", "content-quality/place-cards/x"),
+      canWriteAdminPath(role, "PATCH", "content-quality/pieces/x"), role);
+  }
+  assert.deepEqual(STAFF_ROLES.filter((r) => canSeePage(r, cards)), ["admin", "content_lead", "tenant_qa"]);
+  // The specific rule sits before the admin-only /admin/places rule (pageRule takes the first match).
+  const at = (prefix) => PAGE_RULES.findIndex((r) => r.prefix === prefix);
+  assert.ok(at(cards) >= 0 && at(cards) < at("/admin/places"));
+  assert.equal(pageRule(cards)?.prefix, cards);
+  assert.equal(pageRule("/admin/places")?.prefix, "/admin/places");
+  assert.ok(API_WRITE_RULES.some((r) => r.prefix === "content-quality/place-cards"));
+  // The old tab URLs: one hop, 307, the other keys kept; the other Content quality tabs stay.
+  assert.equal(resolveAdminRoute("/admin/tenant-qa/quality?tab=cards"), "/admin/places/cards?tab=cards");
+  assert.equal(resolveAdminRoute("/admin/tenant-qa/quality?tab=cards&status=verified&page=2"),
+    "/admin/places/cards?tab=cards&status=verified&page=2");
+  assert.equal(resolveAdminRoute("/admin/content-quality?tab=cards"), "/admin/places/cards?tab=cards");
+  assert.equal(resolveAdminRoute("/admin/tenant-qa/quality?tab=versions"), "/admin/tenant-qa/quality?tab=versions");
+  assert.equal(resolveAdminRoute("/admin/tenant-qa/quality"), "/admin/tenant-qa/quality");
+  for (const source of ["/admin/tenant-qa/quality", "/admin/content-quality"]) {
+    const r = adminIaRedirects().find((x) => x.source === source && x.destination === cards);
+    assert.deepEqual(r?.has, [{ type: "query", key: "tab", value: "cards" }], source);
+  }
+  // The Cards UI left Content quality.
+  const quality = read("app/admin/tenant-qa/quality/page.tsx");
+  assert.doesNotMatch(quality, /key: "cards"|PlaceCardsTab|place-cards/);
+  assert.match(read("app/admin/places/cards/page.tsx"), /\/api\/admin\/content-quality\/place-cards/);
 });

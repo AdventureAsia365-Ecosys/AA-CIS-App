@@ -1,5 +1,6 @@
-// app/admin/tenant-qa/quality/drawer.messages.ts — AA-994: the Content Quality drawers (T9 piece, T2 tour version,
-// place-card facts), their sentence actions, label form, judge breakdown and severity lines, English and Vietnamese.
+// app/admin/tenant-qa/quality/drawer.messages.ts — AA-994: the Content Quality drawers (T9 piece, T2 tour version),
+// their sentence actions, label form, judge breakdown and severity lines, English and Vietnamese. AA-1039: the
+// place-card facts drawer moved with the Cards tab (app/admin/places/cards/messages.ts).
 // The gate problems, held reasons and edit-block reasons are API text and stay as sent.
 
 import { defineMessages } from "../../../_kit/core/i18n";
@@ -205,27 +206,6 @@ export const D = defineMessages(
     claimsChecked: (n: number) => ` (${n} checked, report only)`,
     noClaims: "No age, group-size or brand-ethos claim outside the source tour.",
     alsoInPack: "· also in the brand profile",
-    // place-card facts drawer
-    savedFacts: (n: number) => `Saved ${n} fact change(s)`,
-    noFacts: "This card has no facts.",
-    factsHelp: "Only what_it_is, history, setting and naming facts reach the T9 writer. Re-kind an access, permit or "
-      + "duration line to visiting / practical, fix its wording, or drop it.",
-    kindAria: (n: number) => `Kind of fact ${n}`,
-    inWriterSeed: "in writer seed",
-    adminOnly: "admin only",
-    keep: "Keep",
-    drop: "Drop",
-    textAria: (n: number) => `Text of fact ${n}`,
-    factReason: "Reason (required, kept in the audit log)",
-    factReasonPlaceholder: "e.g. access line is a visiting fact, not setting",
-    factEmpty: "A fact cannot be empty — drop it instead.",
-    couldNotSave: (e: string) => `Could not save: ${e}`,
-    onlyAdminFacts: "Only an admin can edit facts.",
-    saveN: (n: number) => `Save ${n} change${n > 1 ? "s" : ""}`,
-    save: "Save",
-    reset: "Reset",
-    placeCard: "Place card",
-    couldNotLoadCard: (e: string) => `Could not load the card: ${e}`,
   },
   {
     loading: "Đang tải…",
@@ -402,25 +382,5 @@ export const D = defineMessages(
     claimsChecked: (n: number) => ` (đã kiểm ${n}, chỉ báo cáo)`,
     noClaims: "Không có khẳng định nào về độ tuổi, quy mô nhóm hay tinh thần thương hiệu nằm ngoài tour nguồn.",
     alsoInPack: "· cũng có trong hồ sơ thương hiệu",
-    savedFacts: (n: number) => `Đã lưu ${n} thay đổi dữ kiện`,
-    noFacts: "Thẻ này không có dữ kiện nào.",
-    factsHelp: "Chỉ dữ kiện what_it_is, history, setting và naming đến được trình viết T9. Đổi loại một dòng về lối "
-      + "vào, giấy phép hay thời lượng sang visiting / practical, sửa cách viết, hoặc bỏ nó.",
-    kindAria: (n: number) => `Loại của dữ kiện ${n}`,
-    inWriterSeed: "trong seed của trình viết",
-    adminOnly: "chỉ admin",
-    keep: "Giữ",
-    drop: "Bỏ",
-    textAria: (n: number) => `Nội dung của dữ kiện ${n}`,
-    factReason: "Lý do (bắt buộc, lưu trong nhật ký kiểm tra)",
-    factReasonPlaceholder: "vd. dòng lối vào là dữ kiện tham quan, không phải bối cảnh",
-    factEmpty: "Dữ kiện không được để trống — hãy bỏ nó.",
-    couldNotSave: (e: string) => `Không lưu được: ${e}`,
-    onlyAdminFacts: "Chỉ admin mới sửa dữ kiện được.",
-    saveN: (n: number) => `Lưu ${n} thay đổi`,
-    save: "Lưu",
-    reset: "Đặt lại",
-    placeCard: "Thẻ địa điểm",
-    couldNotLoadCard: (e: string) => `Không tải được thẻ: ${e}`,
   },
 );

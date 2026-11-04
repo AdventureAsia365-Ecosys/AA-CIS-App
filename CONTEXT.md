@@ -402,10 +402,17 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   (`data_scope.pii_allows`: a `us.` profile or an in-region `<provider>.<model>` id on a `us-*` connection, never
   `global.`, a full ARN, an unknown prefix or a vendor API) in `vendor_route.deployment_plan`, a pinned
   `model@connection`, `embed`, the route invariant and the route preview; a path the registry does not describe
-  (legacy chain, catalog fallback) is refused for it. A failed stage read with no cached row reads as `pii`. The
-  decision path never sends a `pii` stage's state to TypeSafe (a vendor outside our accounts): `decide()` reads the pii
-  stages with its questions and answers every question `skipped` ("pii stage: no vendor decision"; an unreadable class
-  = `error`, no call), so the stage keeps its own rule. Every stage is `content` today (no CIS stage takes
+  (legacy chain, catalog fallback, the OpenAI adapter and the GPT-4.1 last resort check the class themselves) is
+  refused for it, and so is Bedrock Batch (`s1_batch`: on demand instead). `pii_allows` also needs an AWS connection
+  kind (`bedrock`, `bedrock_guardrails`, `mock`), not only the `aws_only` scope. A failed stage read with no cached row
+  keeps the class of the stage's last successful read in the process (`role_config._pii_known`, never cleared by
+  `invalidate()`: a class changes only by migration); a stage never read reads as `data_scope.PII_UNREAD` (`pii`, with
+  `allowed_scopes = {aws_only}`; logs and errors say "stage class unknown (role_config read failed): US AWS
+  deployments only"). The decision path never sends a `pii` stage's state to TypeSafe (a vendor outside our accounts):
+  `decide()` reads the pii stages with its questions and answers every question `skipped` ("pii stage: no vendor
+  decision"; a class read that fails before any good read skips every stage the same way, a later failed refresh keeps
+  the last set), so the stage keeps its own rule. The route preview plans a legacy key of a pii stage through its alias
+  targets, as `_legacy_call` does. Every stage is `content` today (no CIS stage takes
   personal data; the CRM's PII stages run in the CRM gateway). Admin: `GET /admin/llm-config` returns `pii_class`
   (null before 373) for AI gateway › Routing › "Routing by data class"; the route PATCHes and Route control refuse a
   model with no US deployment for a pii stage.
@@ -2234,7 +2241,9 @@ footer Settings entry):
   (`/admin/tenants/agencies`), Data erasure (`/admin/tenants/data-erasure`), Plans & add-ons
   (`/admin/tenants/plans`, AA-1028 R1 slice 3: the plan catalogue, see "Tenant control plane");
 - **AA Catalogue** — Upload (S0), Rewrite (S1), Review Queue, Master Content, Atoms & routes (`/admin/atom-curation`),
-  Places, Photos, Facts, Supply copy, AA content, SEO Intelligence (no Spend tab since R6 rest: DataForSEO spend is
+  Places, Place cards (`/admin/places/cards`, R6 rest option A: was Content quality's Cards tab; its own page rule =
+  admin, content_lead, tenant_qa, before the admin-only `/admin/places` rule; API `/admin/content-quality/place-cards*`
+  unchanged), Photos, Facts, Supply copy, AA content, SEO Intelligence (no Spend tab since R6 rest: DataForSEO spend is
   Spend › DataForSEO; `GET /admin/seo-intelligence` no longer sends `spend`), Catalogue settings (`/admin/settings`);
 - **Tenant content QA** — Content quality, Content Trace, Review log, Slate (`/admin/tenant-qa/*`, admin only);
 - **AI & spend** — AI gateway (`/admin/ai-gateway`, was "AI providers": tabs Providers, Routing incl. "Routing by data
@@ -2254,7 +2263,8 @@ Moved pages answer **307** from their old URL with the query string kept (`ADMIN
 `/admin/tenants/agencies`, `/admin/data-erasure` → `/admin/tenants/data-erasure`; R6 slice 3: `/admin/writing-memory`
 → `/admin/lab/writing-memory`, `/admin/cost-ops` → `/admin/spend`, `/admin/platform/cost` → `/admin/spend?tab=apps`; R6 rest:
 `/admin/seo-intelligence?tab=spend` → `/admin/spend?tab=spend&view=dfs`, `/admin/settings?tab=tenant` → the aa_internal
-Tenant 360 `?tab=settings`, `/admin/settings?tab=ui-kit` → `/admin/platform/ui-kit`
+Tenant 360 `?tab=settings`, `/admin/settings?tab=ui-kit` → `/admin/platform/ui-kit`,
+`/admin/tenant-qa/quality?tab=cards` (and `/admin/content-quality?tab=cards`, one hop) → `/admin/places/cards`
 (a query of the target wins over the request's, as Next.js merges them). BFF and backend paths keep their
 names (`/api/admin/content-quality/*`, `/admin/platform/crm/*`). `frontend/lib/adminIa.test.mjs` checks that every
 page URL of the S265 nav still opens a page, nav items never point at an old URL and every admin page has a nav

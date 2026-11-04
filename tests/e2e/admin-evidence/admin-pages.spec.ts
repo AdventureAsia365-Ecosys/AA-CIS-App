@@ -40,6 +40,8 @@ const PAGES = [
   // Spend › DataForSEO (where SEO's Spend tab went).
   '/admin/tenants/00000000-0000-0000-0000-000000000001', '/admin/settings', '/admin/platform/ui-kit',
   '/admin/seo-intelligence', '/admin/spend?tab=spend&view=dfs',
+  // AA-1039 R6 rest (option A): AA Catalogue › Place cards (was Content quality's Cards tab).
+  '/admin/places/cards',
 ] as const;
 // A page whose loaded content is not a table row: its ready marker (rendered only once its data answered).
 const READY: Partial<Record<(typeof PAGES)[number], string>> = {

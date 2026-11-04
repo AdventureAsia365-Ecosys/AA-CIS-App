@@ -1,5 +1,6 @@
 "use client";
-// app/admin/tenant-qa/quality/PlaceCardFactsDrawer.tsx — AA-774 (S235). Correct one place card's facts:
+// app/admin/places/cards/PlaceCardFactsDrawer.tsx — AA-774 (S235). Correct one place card's facts (AA-1039: moved
+// from Content quality with the Cards tab):
 // per fact a kind select + text, or Drop; one Save with a required reason →
 // PATCH /admin/content-quality/place-cards/{id}/facts (admin role only, audited with before/after).
 // A fact whose kind is visiting / practical stays on the card but is not shown to the T9 writer.
@@ -11,7 +12,7 @@ import {
   K, ApiError, Badge, Button, Drawer, apiGet, apiSend, useAdminIdentity, useT, useToast, Input, Select, Textarea,
 } from "../../../_kit";
 import type { FactEdit, PlaceCardDetail, PlaceCardFactRow } from "./shared";
-import { D } from "./drawer.messages";
+import { FD } from "./messages";
 
 const fieldStyle: React.CSSProperties = {
   fontSize: 12.5, padding: "6px 8px", border: `1px solid ${K.line}`, borderRadius: 6, background: K.card,
@@ -35,7 +36,7 @@ function editsFrom(rows: PlaceCardFactRow[], drafts: Record<number, Draft>): Fac
 }
 
 function FactsForm({ card, onSaved }: { card: PlaceCardDetail; onSaved: (c: PlaceCardDetail) => void }) {
-  const t = useT(D);
+  const t = useT(FD);
   const toast = useToast();
   const qc = useQueryClient();
   const { isAdmin } = useAdminIdentity();
@@ -111,7 +112,7 @@ function FactsForm({ card, onSaved }: { card: PlaceCardDetail; onSaved: (c: Plac
 }
 
 export default function PlaceCardFactsDrawer({ cardId, onClose }: { cardId: string; onClose: () => void }) {
-  const t = useT(D);
+  const t = useT(FD);
   const qc = useQueryClient();
   const key = ["cq-card", cardId];
   const { data, isLoading, error } = useQuery({

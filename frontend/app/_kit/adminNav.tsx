@@ -15,7 +15,7 @@ import {
   Cpu, Gauge, Users, Upload, Wand2, ClipboardList, Library, Settings, Wallet, UserCog, Radio,
   Puzzle, ListChecks, Scale, Search, Image as ImageIcon, BookOpen, BarChart3, ShieldAlert, ShieldCheck,
   Boxes, ScrollText, FlaskConical, BellRing, MapPin, Network, Eraser, Building2, FileText, Hotel, Table2, BookMarked, Quote,
-  Newspaper, CreditCard, FileStack, PenLine, UserCheck, ChartColumn, Palette,
+  Newspaper, CreditCard, FileStack, PenLine, UserCheck, ChartColumn, Palette, MapPinned,
 } from "lucide-react";
 import { useCallback } from "react";
 import { canSeePage } from "@/lib/rbac";
@@ -52,6 +52,7 @@ const ICONS: Record<NavIcon, React.ReactNode> = {
   master: <Library size={16} />,
   atoms: <Puzzle size={16} />,
   places: <MapPin size={16} />,
+  placeCards: <MapPinned size={16} />,
   photos: <ImageIcon size={16} />,
   facts: <Quote size={16} />,
   supply: <Hotel size={16} />,
