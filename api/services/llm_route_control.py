@@ -330,9 +330,12 @@ def revert_changes(snapshot: dict) -> dict:
 
 # ── validation ───────────────────────────────────────────────────────────────────────────────────────────────────
 
-def chain_problems(row: dict, chain: list, models: list, reach: dict) -> list[dict]:
+def chain_problems(row: dict, chain: list, models: list, reach: dict,
+                   pii_usable: Optional[frozenset] = None) -> list[dict]:
     """The Routing tab's PATCH rules on one stage's proposed chain (``admin_llm_ops``): selectable models, data
-    scopes, the vendor-only rungs, no model twice. Pure but for the catalog objects it is given."""
+    scopes, the vendor-only rungs, no model twice. Pure but for the catalog objects it is given and, for a pii stage,
+    ``pii_usable`` (``admin_llm_ops._pii_usable_models``: a registry read, so an async caller computes it once in a
+    thread and passes it; None = read it here)."""
     from fastapi import HTTPException
 
     from api.routers import admin_llm_ops as ops
@@ -368,7 +371,7 @@ def chain_problems(row: dict, chain: list, models: list, reach: dict) -> list[di
         out.append(_problem("vendor_not_last", str(e.detail), stage=stage))
     # AA-1039 (CIS 373): a personal-data stage names only models with a deployment on our AWS accounts in the US.
     if data_scope.normalize_pii_class(row.get("pii_class")) == data_scope.PII_PERSONAL:
-        usable = ops._pii_usable_models(models)
+        usable = pii_usable if pii_usable is not None else ops._pii_usable_models(models)
         no_us = [k for k in chain if k not in usable]
         if no_us:
             out.append(_problem("pii_class", f"{', '.join(no_us)} has no deployment on our AWS accounts in the US, "
@@ -437,11 +440,18 @@ async def preview_world(world: _World, target: dict, shape_errors: list) -> dict
     warnings: list = []
     by_stage = world.by_stage
     changed_stages = sorted({c["stage"] for c in changes if c["kind"] == "route"})
+    # AA-1039 (review S268): the pii-usable models are a registry read (sync, cached): once, off the event loop, and
+    # only when a changed stage is pii.
+    pii_usable = None
+    if any(data_scope.normalize_pii_class((by_stage.get(s) or {}).get("pii_class")) == data_scope.PII_PERSONAL
+           for s in changed_stages):
+        from api.routers import admin_llm_ops as ops
+        pii_usable = await asyncio.to_thread(ops._pii_usable_models, world.models)
     for stage in changed_stages:
         row = by_stage.get(stage)
         chain = route_versions.chain_of(target["routes"].get(stage)) or []
         if row is not None:
-            errors.extend(chain_problems(row, chain, world.models, world.reach))
+            errors.extend(chain_problems(row, chain, world.models, world.reach, pii_usable))
 
     acc2_only, per_row = _deployment_maps(world)
     rows_now = _rows_with(world.stages, live["routes"])

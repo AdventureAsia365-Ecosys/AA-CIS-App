@@ -156,9 +156,9 @@ def pinned_deployment(model: CatalogModel, connection_key: str, *, allowed_scope
     if not data_scope.allows(allowed_scopes, conn.data_scope):
         raise RuntimeError(f"data scope {conn.data_scope} of connection {connection_key!r} is not allowed for "
                            "the stage")
-    if not data_scope.pii_allows(pii_class, conn.data_scope, rows[0].wire_id, conn.region):
-        raise RuntimeError(f"the deployment of {model.model_key!r} on {connection_key!r} is not one a personal-data "
-                           "stage may use (our AWS accounts, US only)")
+    if not data_scope.pii_allows(pii_class, conn.data_scope, rows[0].wire_id, conn.region, conn.kind):
+        raise RuntimeError(f"the deployment of {model.model_key!r} on {connection_key!r} is refused: "
+                           f"{data_scope.pii_reason(pii_class)}")
     return found
 
 
@@ -327,8 +327,9 @@ def deployment_plan(model: CatalogModel, allowed_scopes: Optional[tuple] = None,
                 role_skips.append((c.connection.connection_key, role))
                 continue
             scope = c.connection.data_scope
-            if not data_scope.pii_allows(pii_class, scope, c.deployment.wire_id, c.connection.region):
-                _skip(model, c.deployment, "a personal-data stage runs only on our AWS accounts in the US")
+            if not data_scope.pii_allows(pii_class, scope, c.deployment.wire_id, c.connection.region,
+                                         c.connection.kind):
+                _skip(model, c.deployment, data_scope.pii_reason(pii_class))
                 continue
             if allowed_scopes is not None:
                 if not data_scope.allows(allowed_scopes, scope):

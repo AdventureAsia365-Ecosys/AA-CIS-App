@@ -6,6 +6,7 @@ an in-region id on a ``us-*`` connection; never ``global.``, never a vendor API,
 Every row is ``content`` today, so this file also proves nothing changes for a content stage. No AWS, no vendor, no DB.
 """
 import asyncio
+import dataclasses
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import asyncpg
@@ -103,19 +104,58 @@ def test_deployment_geo(wire, region, geo):
 
 
 def test_pii_allows_only_our_accounts_in_the_us():
-    assert data_scope.pii_allows("content", "vendor_direct", "claude-haiku-4-5", None)
-    assert data_scope.pii_allows(None, "aws_only", "global.x", "us-west-1")
-    assert data_scope.pii_allows("pii", "aws_only", "us.x", "us-west-1")
-    assert not data_scope.pii_allows("pii", "aws_only", "global.x", "us-west-1")
-    assert not data_scope.pii_allows("pii", "vendor_direct", "us.x", "us-west-1")
-    assert not data_scope.pii_allows("pii", "aws_only", "x", "eu-west-1")
+    assert data_scope.pii_allows("content", "vendor_direct", "claude-haiku-4-5", None, "anthropic")
+    assert data_scope.pii_allows(None, "aws_only", "global.x", "us-west-1", "bedrock")
+    assert data_scope.pii_allows("pii", "aws_only", "us.x", "us-west-1", "bedrock")
+    assert not data_scope.pii_allows("pii", "aws_only", "global.x", "us-west-1", "bedrock")
+    assert not data_scope.pii_allows("pii", "vendor_direct", "us.x", "us-west-1", "bedrock")
+    assert not data_scope.pii_allows("pii", "aws_only", "x", "eu-west-1", "bedrock")
 
 
 def test_pii_allows_refuses_an_arn_or_an_unknown_prefix_on_a_us_connection():
     assert not data_scope.pii_allows("pii", "aws_only", "arn:aws:bedrock:us-west-2:1:inference-profile/us.x",
-                                     "us-west-2")
-    assert not data_scope.pii_allows("pii", "aws_only", "zz.anthropic.claude-haiku-4-5", "us-west-1")
-    assert data_scope.pii_allows("pii", "aws_only", "amazon.nova-lite-v1:0", "us-west-1")
+                                     "us-west-2", "bedrock")
+    assert not data_scope.pii_allows("pii", "aws_only", "zz.anthropic.claude-haiku-4-5", "us-west-1", "bedrock")
+    assert data_scope.pii_allows("pii", "aws_only", "amazon.nova-lite-v1:0", "us-west-1", "bedrock")
+
+
+@pytest.mark.parametrize("kind, allowed", [
+    ("bedrock", True), ("bedrock_guardrails", True), ("mock", True),
+    ("anthropic", False), ("openai", False), ("azure_openai", False), ("typesafe", False), (None, False),
+])
+def test_pii_allows_needs_an_aws_connection_kind(kind, allowed):
+    """Review S268 (item 4): the data scope is a row value; a pii stage also needs a connection kind that runs inside
+    our AWS accounts. A content stage does not look at the kind."""
+    assert data_scope.pii_allows("pii", "aws_only", "us.anthropic.claude-haiku-4-5", "us-west-1", kind) is allowed
+    assert data_scope.pii_allows("content", "aws_only", "us.anthropic.claude-haiku-4-5", "us-west-1", kind)
+
+
+def test_a_vendor_kind_marked_aws_only_is_refused_everywhere(registry, monkeypatch):
+    """A vendor connection whose row says aws_only (an edit or seed slip) with a us. wire id: the plan, the pin, the
+    invariant and the admin's usable set all refuse it for a pii stage."""
+    from api.routers import admin_llm_ops as ops
+    slip = ProviderConnection(connection_key="slip", kind="anthropic", auth_mode="api_key", label="slip",
+                              data_scope="aws_only", enabled=True, secret_name="aa-llm/dev/slip",
+                              base_url="https://api.anthropic.com", region="us-west-1")
+    conns = dict(CONNS, slip=slip)
+    monkeypatch.setattr(connections, "registry_rows_sync", lambda: dict(conns))
+    monkeypatch.setattr(connections, "get_connection_sync", lambda key: conns.get(key))
+    registry["deps"] = [_dep("sonnet-5-5", "slip", 10, "us.anthropic.claude-sonnet-5-5")]
+    assert [t.connection.connection_key for t in
+            vendor_route.deployment_plan(SONNET_API, AWS, pii_class="content")] == ["slip"]
+    assert vendor_route.deployment_plan(SONNET_API, AWS, pii_class="pii") == []
+    with pytest.raises(RuntimeError, match="personal-data stage"):
+        vendor_route.pinned_deployment(SONNET_API, "slip", allowed_scopes=AWS, pii_class="pii")
+    assert ops._pii_usable_models([SONNET_API]) == frozenset()
+    route = {"stage": "x", "role": "writer", "model_id": "sonnet-5-5", "fallback_model_ids": [],
+             "allowed_scopes": ["aws_only"], "pii_class": "pii"}
+    conn_row = {"connection_key": "slip", "kind": "anthropic", "enabled": True, "data_scope": "aws_only",
+                "region": "us-west-1", "failure_domain": "vendor:anthropic"}
+    dep = {"model_key": "sonnet-5-5", "connection_key": "slip", "priority": 10, "enabled": True,
+           "wire_id": "us.anthropic.claude-sonnet-5-5"}
+    assert invariant.check_stage(route, {}, {"sonnet-5-5": [dep]}, {"slip": conn_row}, {}).primary is None
+    assert invariant.check_stage(dict(route, pii_class="content"), {}, {"sonnet-5-5": [dep]}, {"slip": conn_row},
+                                 {}).primary.startswith("slip")
 
 
 def test_safe_defaults_are_content():
@@ -129,6 +169,7 @@ def test_safe_defaults_are_content():
 @pytest.fixture
 def cold_cache(monkeypatch):
     monkeypatch.setattr(role_config, "_cache", {})
+    monkeypatch.setattr(role_config, "_pii_known", {})
     monkeypatch.setattr(role_config, "_watch_route_version", lambda: None)
 
 
@@ -139,6 +180,8 @@ async def test_cold_cache_read_failure_fails_closed_as_pii(cold_cache):
         cfg = await role_config.get_stage_config(stage)
         unknown = await role_config.get_stage_config("adhoc_no_row")
     assert cfg.pii_class == "pii" and unknown.pii_class == "pii"
+    assert data_scope.pii_class_unread(cfg.pii_class) and data_scope.pii_class_unread(unknown.pii_class)
+    assert cfg.allowed_scopes == unknown.allowed_scopes == ("aws_only",)  # 373's invariant: pii = aws_only
     assert cfg.model_id == SAFE_DEFAULTS[stage].model_id                 # the route is still SAFE_DEFAULTS'
     assert SAFE_DEFAULTS[stage].pii_class == "content"                     # the shared default is not mutated
     assert stage not in role_config._cache                                 # not cached: the next call reads again
@@ -458,3 +501,180 @@ def test_preview_skips_both_the_refused_and_the_non_us_deployments_of_a_pii_stag
                                    allowed_scopes=AWS, pii_class="content"), ev)
     assert content["first"] == "haiku-4-5@acc3" and content["skipped"] == []
     assert content["attempts"][0]["deployments"] == _plan(HAIKU, AWS, "content") == ["acc3", "acc2"]
+
+
+# ── review S268 (items 2, 3): the class of a failed read ──────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_a_failed_read_keeps_the_class_last_read_after_invalidate(cold_cache):
+    """invalidate() and the route-version watch drop _cache, not the class: a stage read before keeps its real class
+    on a failed read; only a stage never read in this process fails closed (marked unread)."""
+    vendor_stage = next(s for s, c in SAFE_DEFAULTS.items() if c.allowed_scopes == data_scope.ALL_SCOPES)
+    content_row = dataclasses.replace(SAFE_DEFAULTS[vendor_stage], pii_class="content")
+    pii_row = StageConfig("p", "writer", "claude", "haiku-4-5", "acc3", allowed_scopes=AWS, pii_class="pii")
+    with patch.object(role_config, "_fetch_one", AsyncMock(side_effect=[content_row, pii_row])):
+        await role_config.get_stage_config(vendor_stage)
+        await role_config.get_stage_config("p")
+    role_config.invalidate()
+    with patch.object(role_config, "_fetch_one", AsyncMock(side_effect=OSError("db down"))):
+        content = await role_config.get_stage_config(vendor_stage)
+        pii = await role_config.get_stage_config("p")
+        never = await role_config.get_stage_config("never_read")
+    assert content.pii_class == "content" and content.allowed_scopes == data_scope.ALL_SCOPES   # SAFE_DEFAULTS'
+    assert pii.pii_class == "pii" and not data_scope.pii_class_unread(pii.pii_class)
+    assert pii.allowed_scopes == ("aws_only",)
+    assert data_scope.pii_class_unread(never.pii_class) and never.allowed_scopes == ("aws_only",)
+    with patch.object(role_config, "_fetch_one", AsyncMock(side_effect=OSError("db down"))):
+        assert role_config.get_stage_config_sync(vendor_stage).pii_class == "content"
+
+
+@pytest.mark.asyncio
+async def test_a_read_with_no_row_is_remembered_as_content(cold_cache):
+    with patch.object(role_config, "_fetch_one", AsyncMock(return_value=None)):
+        await role_config.get_stage_config("adhoc_x")
+    role_config.invalidate("adhoc_x")
+    with patch.object(role_config, "_fetch_one", AsyncMock(side_effect=OSError("db down"))):
+        assert (await role_config.get_stage_config("adhoc_x")).pii_class == "content"
+
+
+def test_the_unread_class_is_pii_everywhere_and_says_unknown(pin_registry):
+    unread = data_scope.PII_UNREAD
+    assert unread == "pii" and data_scope.normalize_pii_class(unread) is unread
+    assert not data_scope.pii_class_unread("pii") and not data_scope.pii_class_unread("content")
+    assert data_scope.pii_reason(unread) == ("stage class unknown (role_config read failed): US AWS deployments "
+                                             "only")
+    assert "personal-data" in data_scope.pii_reason("pii")
+    assert _plan(HAIKU, AWS, unread) == _plan(HAIKU, AWS, "pii") == ["acc2"]
+    with pytest.raises(RuntimeError, match=r"stage class unknown \(role_config read failed\)"):
+        vendor_route.pinned_deployment(SONNET_API, "anthropic-direct", allowed_scopes=None, pii_class=unread)
+    with patch("shared.llm_client.client.get_stage_config_sync", side_effect=RuntimeError("boom")):
+        got = stage_pii_class(LLMRequest(system_prompt="s", user_prompt="u", stage="x"))
+    assert got == "pii" and data_scope.pii_class_unread(got)
+
+
+def test_an_unread_class_names_itself_in_the_client_refusal():
+    c = _client()
+    req = LLMRequest(system_prompt="s", user_prompt="u", stage="x")
+    with patch("shared.llm_client.client.legacy_aliases_enabled", return_value=False), \
+            patch("shared.llm_client.client.stage_pii_class", return_value=data_scope.PII_UNREAD), \
+            patch.object(c, "_legacy_chain") as chain:
+        with pytest.raises(RuntimeError, match="stage class unknown"):
+            c._legacy_call(req, "haiku", "acc3")
+    assert not chain.called
+
+
+def test_call_openai_refuses_a_pii_stage_whatever_its_scopes():
+    """Item 2: the OpenAI adapter checks the class itself; a pii stage with (wrongly) both scopes is still refused
+    before any request."""
+    from shared.llm_client.client import OpenAIPlatformBlocked
+    c = _client()
+    req = LLMRequest(system_prompt="s", user_prompt="u", stage="x")
+    with patch("shared.llm_client.client.openai_platform_allowed", return_value=True), \
+            patch("shared.llm_client.client.stage_scopes", return_value=BOTH), \
+            patch("shared.llm_client.client.stage_pii_class", return_value="pii"):
+        with pytest.raises(OpenAIPlatformBlocked, match="personal-data stage"):
+            c._call_openai(req, model="gpt-4.1")
+    assert not c._openai.chat.completions.create.called
+
+
+def test_legacy_last_resort_never_calls_gpt41_for_a_pii_stage():
+    c = _client()
+    req = LLMRequest(system_prompt="s", user_prompt="u", stage="x")
+    with patch("shared.llm_client.client.openai_platform_allowed", return_value=True), \
+            patch("shared.llm_client.client.openai_scope_allowed", return_value=True), \
+            patch("shared.llm_client.client.stage_pii_class", return_value="pii"), \
+            patch.object(c, "_legacy_tier") as tier:
+        with pytest.raises(RuntimeError, match="no OpenAI last resort: a personal-data stage"):
+            c._legacy_last_resort(req, "haiku", [RuntimeError("bedrock down")])
+    assert not tier.called
+    with patch("shared.llm_client.client.openai_platform_allowed", return_value=True), \
+            patch("shared.llm_client.client.openai_scope_allowed", return_value=True), \
+            patch("shared.llm_client.client.stage_pii_class", return_value="content"), \
+            patch.object(c, "_legacy_tier", return_value=MagicMock()) as tier:
+        c._legacy_last_resort(req, "haiku", [RuntimeError("bedrock down")])
+    assert tier.called                                         # a content stage: unchanged
+
+
+# ── review S268 (item 5): the preview of a legacy key on a pii stage mirrors _legacy_call ─────────────────────────
+
+def test_preview_plans_the_alias_targets_of_a_legacy_key_on_a_pii_stage(registry):
+    pii = StageConfig("x", "writer", "claude", "sonnet", "acc3", allowed_scopes=AWS, pii_class="pii")
+    models = {"haiku-4-5": HAIKU, "nova-lite": NOVA}
+    with patch("shared.llm_client.client.legacy_aliases_enabled", return_value=True), \
+            patch("shared.llm_client.client.legacy_acc2_native_enabled", return_value=False), \
+            patch("shared.llm_client.client.alias_targets_sync", return_value=["haiku-4-5", "nova-lite"]), \
+            patch("shared.llm_client.client.get_model_sync", side_effect=models.get):
+        out = _resolve(pii, _Refusals(("haiku-4-5", "acc2")))
+        free = _resolve(pii, None)
+    (step,) = out["attempts"]
+    assert step["deployments"] == ["haiku-4-5@acc2", "nova-lite@acc2"]          # no global. profile, no vendor API
+    assert step["status"] == "call" and out["first"] == "nova-lite@acc2"
+    assert out["called_first"] == "haiku-4-5@acc2"
+    assert [(s["model"], s["connection"]) for s in out["skipped"]] == [("haiku-4-5", "acc2")]
+    assert free["first"] == "haiku-4-5@acc2" and free["skipped"] == []
+    with patch("shared.llm_client.client.legacy_aliases_enabled", return_value=False):
+        off = _resolve(pii, None)
+    assert off["attempts"][0]["status"] == "skip" and off["first"] is None       # the hard-coded chain: refused
+
+
+def test_route_control_preview_reads_the_pii_models_once_in_a_thread(registry, monkeypatch):
+    """Item 5: chain_problems takes the pii-usable set; preview_world computes it once (not per stage)."""
+    from api.routers import admin_llm_ops as ops
+    from api.services import llm_route_control as rc
+    registry["deps"] = [_dep("haiku-4-5", "acc3", 10, "global.anthropic.claude-haiku-4-5"),
+                        _dep("nova-lite", "acc2", 10, "us.amazon.nova-lite-v1:0")]
+    row = {"stage": "x", "role": "writer", "allowed_scopes": ["aws_only"], "pii_class": "pii"}
+    with patch("api.routers.admin_llm_ops._options_for", return_value=[
+            {"model_id": "haiku-4-5", "available": True}, {"model_id": "nova-lite", "available": True}]), \
+            patch("api.routers.admin_llm_ops._pii_usable_models", side_effect=AssertionError("read again")):
+        problems = rc.chain_problems(row, ["nova-lite", "haiku-4-5"], [HAIKU, NOVA], {}, frozenset({"nova-lite"}))
+    assert [p["rule"] for p in problems] == ["pii_class"]
+    calls = []
+    real = ops._pii_usable_models
+    monkeypatch.setattr(ops, "_pii_usable_models", lambda models: calls.append(1) or real(models))
+    seen = []
+    monkeypatch.setattr(rc, "chain_problems", lambda row, chain, models, reach, pii_usable=None: seen.append(
+        pii_usable) or [])
+
+    class World:
+        live = {"routes": {}, "priorities": {}, "order_mode": "model_first"}
+        by_stage = {"x": row, "y": dict(row, stage="y")}
+        stages, models, reach, evidence = [], [HAIKU, NOVA], {}, None
+
+    target = {"routes": {"x": {"model_id": "nova-lite", "fallback_model_ids": []},
+                         "y": {"model_id": "nova-lite", "fallback_model_ids": []}},
+              "priorities": {}, "order_mode": "model_first"}
+    monkeypatch.setattr(rc.route_versions, "diff", lambda live, tgt: [{"kind": "route", "stage": "x"},
+                                                                      {"kind": "route", "stage": "y"}])
+    try:
+        asyncio.run(rc.preview_world(World(), target, []))
+    except Exception:  # noqa: BLE001 — only the validation part matters here
+        pass
+    assert calls == [1] and seen == [frozenset({"nova-lite"})] * 2
+
+
+# ── review S268 (item 6): Bedrock Batch never runs a pii writer stage ───────────────────────────────────────────
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pii_class", ["pii", data_scope.PII_UNREAD])
+async def test_s1_batch_refuses_a_pii_stage_before_reading_any_prompt(pii_class):
+    from services.content_generation import s1_batch
+    from shared.llm_client.bedrock_batch import BatchUnavailable
+    cfg = dataclasses.replace(SAFE_DEFAULTS["s1_generate"], pii_class=pii_class, allowed_scopes=AWS)
+    with patch.object(role_config, "get_stage_config", AsyncMock(return_value=cfg)), \
+            patch.object(s1_batch.asyncpg, "connect", AsyncMock()) as connect, \
+            patch.object(s1_batch.bedrock_batch, "submit_batch_job") as submit:
+        with pytest.raises(BatchUnavailable, match="run the tours on demand"):
+            await s1_batch.submit_s1_batch(["t1"] * 200)
+    assert not connect.called and not submit.called
+
+
+@pytest.mark.asyncio
+async def test_s1_batch_goes_on_for_a_content_stage():
+    from services.content_generation import s1_batch
+    from shared.llm_client.bedrock_batch import BatchUnavailable
+    with patch.object(role_config, "get_stage_config", AsyncMock(return_value=SAFE_DEFAULTS["s1_generate"])), \
+            patch.object(s1_batch.asyncpg, "connect", AsyncMock(return_value=AsyncMock())), \
+            patch.object(s1_batch, "_load_prompt_state", AsyncMock(return_value=None)):
+        with pytest.raises(BatchUnavailable, match="no eligible tours"):      # past the class check
+            await s1_batch.submit_s1_batch(["t1"])

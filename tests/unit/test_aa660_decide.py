@@ -91,6 +91,7 @@ def _conn(questions, allowlist=(), cached=(), pii_stages=()):
 def _fresh_cache():
     d._questions_loaded_at = 0.0
     d._allowlist_loaded_at = 0.0
+    d._pii_stages = None                          # AA-1039: the classes are read again by each test
     d.reset_decision_memo()
     yield
     d.reset_decision_memo()
@@ -469,7 +470,8 @@ async def test_before_migration_373_every_stage_is_content():
 
 @pytest.mark.asyncio
 async def test_an_unreadable_data_class_fails_closed_without_calling_jev():
-    """Any other failure reading the pii stages: every question is an error verdict and nothing goes to TypeSafe."""
+    """Any other failure reading the pii stages, never read before in this process: the class is unknown, so every
+    question is skipped as a pii stage's (review S268) and nothing goes to TypeSafe."""
     conn = _conn([_q()])
     plain = conn.fetch.side_effect
 
@@ -483,5 +485,34 @@ async def test_an_unreadable_data_class_fails_closed_without_calling_jev():
          patch.object(d, "record_call_with_pool", new=AsyncMock()):
         dec = await d._decide(d._SingleConn(conn), "t9_pii", "piece:1", "text", ["kw_belongs"], None)
     m_call.assert_not_awaited()
-    assert dec.verdicts["kw_belongs"].zone == "error"
+    v = dec.verdicts["kw_belongs"]
+    assert (v.zone, v.error) == ("skipped", d.PII_STAGE_SKIP_ERROR)
     assert d._questions_loaded_at == 0.0          # not cached: the next call reads the class again
+    assert d.stage_is_pii("a3_research")          # every stage, until a read succeeds
+
+
+@pytest.mark.asyncio
+async def test_a_failed_refresh_keeps_the_last_classes_read():
+    """A class changes only by a migration: once read, a failed refresh keeps the last set (a content stage is still
+    asked), and the questions are timestamped as usual."""
+    conn = _conn([_q()], pii_stages=["t9_pii"])
+    await d._load_config(conn)
+    plain = conn.fetch.side_effect
+
+    async def fetch(sql, *args):
+        if "FROM shared.llm_role_config" in sql:
+            raise ConnectionError("db went away")
+        return await plain(sql, *args)
+
+    conn.fetch = AsyncMock(side_effect=fetch)
+    d._questions_loaded_at = 0.0
+    answer = {"model": "jev", "usage": {"input_tokens": 1}, "answers": {"kw_belongs": {"type": "noul", "noul": 0.9}}}
+    with patch.object(d, "_call_jev", new=AsyncMock(return_value=answer)) as m_call, \
+         patch.object(d, "_price_in_per_mtok", return_value=0.042), \
+         patch.object(d, "record_call_with_pool", new=AsyncMock()):
+        asked = await d._decide(d._SingleConn(conn), "a3_research", "kw:1", "text", ["kw_belongs"], None)
+        kept = await d._decide(d._SingleConn(conn), "t9_pii", "piece:1", "text", ["kw_belongs"], None)
+    m_call.assert_awaited_once()
+    assert asked.accepted("kw_belongs")
+    assert kept.verdicts["kw_belongs"].error == d.PII_STAGE_SKIP_ERROR
+    assert d._questions_loaded_at > 0.0

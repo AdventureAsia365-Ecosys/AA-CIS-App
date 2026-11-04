@@ -279,7 +279,7 @@ def resolved(monkeypatch):
                                             if k not in dead), None), "attempts": []}
                 for r in rows if r.get("is_active") is not False}
     monkeypatch.setattr(rc, "_resolve_all", fake)
-    monkeypatch.setattr(rc, "chain_problems", lambda row, chain, models, reach: [])
+    monkeypatch.setattr(rc, "chain_problems", lambda row, chain, models, reach, pii_usable=None: [])
     return dead
 
 
@@ -331,7 +331,7 @@ def served_by_priority(monkeypatch):
             out[r["stage"]] = {"first": f"{key}@{conn}", "attempts": []}
         return out
     monkeypatch.setattr(rc, "_resolve_all", fake)
-    monkeypatch.setattr(rc, "chain_problems", lambda row, chain, models, reach: [])
+    monkeypatch.setattr(rc, "chain_problems", lambda row, chain, models, reach, pii_usable=None: [])
 
 
 def test_a_provider_order_change_that_moves_a_writer_needs_evidence(served_by_priority):

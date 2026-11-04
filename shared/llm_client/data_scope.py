@@ -138,6 +138,35 @@ def in_twin_slot(chain: list, i: int, twins: dict[str, frozenset]) -> bool:
 PII_CONTENT = "content"
 PII_PERSONAL = "pii"
 PII_CLASSES: tuple[str, ...] = (PII_CONTENT, PII_PERSONAL)
+
+
+class UnreadPii(str):
+    """The class of a stage whose role_config read FAILED in a process that never read it (review S268, item 3): it
+    is ``pii`` (equal to PII_PERSONAL, so every rule treats it as a personal-data stage), and its type marks that the
+    class is unknown, not stated, so the logs and errors say so instead of "personal-data stage"."""
+
+    __slots__ = ()
+
+
+# The one value role_config and the client use for a class they could not read.
+PII_UNREAD = UnreadPii(PII_PERSONAL)
+# What a refusal says (logs, RuntimeError texts): a stated pii class, or one that could not be read.
+PII_STAGE_REASON = "a personal-data stage runs only on our AWS accounts in the US"
+PII_UNREAD_REASON = "stage class unknown (role_config read failed): US AWS deployments only"
+# AA-1039 (review S268, item 4): the connection kinds that run inside our AWS accounts. A pii stage needs one of them
+# besides the aws_only data scope: the scope is a row value an admin edit or a seed slip could set on a vendor kind.
+AWS_KINDS: frozenset = frozenset({"bedrock", "bedrock_guardrails", "mock"})
+
+
+def pii_class_unread(pii_class) -> bool:
+    """True when ``pii_class`` is the fail-closed class of a failed read (PII_UNREAD), not one a row states."""
+    return isinstance(pii_class, UnreadPii)
+
+
+def pii_reason(pii_class) -> str:
+    """Why a deployment is refused for a pii stage: PII_UNREAD_REASON when the class could not be read, else
+    PII_STAGE_REASON."""
+    return PII_UNREAD_REASON if pii_class_unread(pii_class) else PII_STAGE_REASON
 # The geography prefixes of Bedrock cross-region inference profiles (``us.anthropic.…``, ``global.cohere.…``).
 _GEOS: frozenset = frozenset({"global", "us", "eu", "apac", "jp", "au", "ca"})
 # The provider prefixes of an in-region Bedrock model id (``amazon.titan-embed-text-v2:0``): the only ids, besides an
@@ -152,7 +181,7 @@ _BEDROCK_PROVIDERS: frozenset = frozenset({
 def normalize_pii_class(value) -> str:
     """A stored ``pii_class`` as one of PII_CLASSES. A missing column / no row / a value that is not text (a test
     double) reads as ``content`` (every row before migration 373 is content); an unknown text fails closed as ``pii``
-    (the CHECK of 373 makes it impossible in the table)."""
+    (the CHECK of 373 makes it impossible in the table). PII_UNREAD comes back as itself (the mark survives)."""
     if value is None or not isinstance(value, str):
         return PII_CONTENT
     if value in PII_CLASSES:
@@ -180,10 +209,11 @@ def deployment_geo(wire_id: Optional[str], region: Optional[str]) -> str:
 
 
 def pii_allows(pii_class: Optional[str], connection_scope: str, wire_id: Optional[str],
-               region: Optional[str]) -> bool:
-    """True when a stage of ``pii_class`` may be called on a deployment (its connection's data scope, wire id and
-    region). A content stage: always (its allowed_scopes decide). A pii stage: only an ``aws_only`` connection and a
-    US deployment (``deployment_geo`` == ``us``)."""
+               region: Optional[str], kind: Optional[str]) -> bool:
+    """True when a stage of ``pii_class`` may be called on a deployment (its connection's data scope, wire id, region
+    and kind). A content stage: always (its allowed_scopes decide). A pii stage: only an ``aws_only`` connection of an
+    AWS kind (``AWS_KINDS``; a missing kind is refused) and a US deployment (``deployment_geo`` == ``us``)."""
     if normalize_pii_class(pii_class) != PII_PERSONAL:
         return True
-    return connection_scope == AWS_ONLY and deployment_geo(wire_id, region) == "us"
+    return (connection_scope == AWS_ONLY and kind in AWS_KINDS
+            and deployment_geo(wire_id, region) == "us")

@@ -286,9 +286,9 @@ def _check_scopes(stage: str, scopes: Optional[tuple], reach: dict, keys: list) 
 
 def _pii_usable_models(models: Optional[list]) -> frozenset:
     """AA-1039 (CIS 373): the model keys with at least one deployment a personal-data stage may use (an aws_only
-    connection, a US deployment: ``data_scope.pii_allows``), every row enabled or not (the switch is an operation, the
-    class a policy). A model the registry does not describe is not usable (the gateway refuses that path for a pii
-    stage). Sync (registry caches): run in a thread. Never raises."""
+    connection of an AWS kind, a US deployment: ``data_scope.pii_allows``), every row enabled or not (the switch is an
+    operation, the class a policy). A model the registry does not describe is not usable (the gateway refuses that
+    path for a pii stage). Sync (registry caches): run in a thread. Never raises."""
     try:
         rows = llm_connections.registry_rows_sync()
     except Exception as e:  # noqa: BLE001
@@ -299,7 +299,8 @@ def _pii_usable_models(models: Optional[list]) -> frozenset:
         try:
             for d in llm_deployments.deployments_for_sync(m.model_key, enabled_only=False):
                 c = rows.get(d.connection_key)
-                if c is not None and data_scope.pii_allows(data_scope.PII_PERSONAL, c.data_scope, d.wire_id, c.region):
+                if c is not None and data_scope.pii_allows(data_scope.PII_PERSONAL, c.data_scope, d.wire_id, c.region,
+                                                           c.kind):
                     out.add(m.model_key)
                     break
         except Exception as e:  # noqa: BLE001

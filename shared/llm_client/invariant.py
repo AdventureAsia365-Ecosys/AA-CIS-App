@@ -121,9 +121,9 @@ def check_stage(route: dict, aliases: dict[str, list[str]], deployments: dict[st
                 continue
             if not _allowed(route.get("allowed_scopes"), conn["data_scope"], first=not usable):
                 continue
-            # AA-1039 (CIS 373): a personal-data stage counts only US deployments on our AWS accounts.
+            # AA-1039 (CIS 373): a personal-data stage counts only US deployments on our AWS accounts (an AWS kind).
             if not data_scope.pii_allows(route.get("pii_class"), conn["data_scope"], dep.get("wire_id"),
-                                         conn.get("region")):
+                                         conn.get("region"), conn.get("kind")):
                 continue
             usable.append((conn["connection_key"], failure_domain(conn)))
     if not usable:

@@ -238,15 +238,33 @@ _GENERIC_FALLBACK = StageConfig("unknown", "writer", "claude", "haiku", "acc3")
 # stage -> (StageConfig, fetched_at_monotonic)
 _cache: dict[str, tuple[StageConfig, float]] = {}
 
+# AA-1039 (review S268, item 3): stage -> the pii_class of its last SUCCESSFUL read in this process (a row, or no row =
+# content). A class changes only by a migration (no runtime grant on the column), so ``invalidate()`` and the route
+# version watch, which drop ``_cache``, never clear this map: after a route save on a cold DB, a stage read before
+# keeps its real class instead of failing closed.
+_pii_known: dict[str, str] = {}
+
 
 def _read_failed_default(stage: str) -> StageConfig:
     """The config of ``stage`` when the DB read FAILED and no cached row exists (a cold cache, the DB unreachable).
-    SAFE_DEFAULTS keeps the route, but the stage's data class is unknown then, so it fails closed as ``pii``
-    (AA-1039, review S268): a personal-data stage must never be downgraded to ``content`` (Bedrock ``global.``
-    profiles, vendor APIs) because the row could not be read. A content stage then runs only on a US deployment of our
-    AWS accounts until a read succeeds (not cached: the next call reads again). A read that succeeds with no row, or
-    before migration 373, is not a failure: SAFE_DEFAULTS / content as before."""
-    return dataclasses.replace(SAFE_DEFAULTS.get(stage, _GENERIC_FALLBACK), pii_class=data_scope.PII_PERSONAL)
+    SAFE_DEFAULTS keeps the route; the data class is the stage's last successful read in this process (``_pii_known``)
+    or, for a stage never read here, unknown: it fails closed as ``data_scope.PII_UNREAD`` (``pii``, marked as not
+    read so the logs say "stage class unknown"). AA-1039 (review S268): a personal-data stage is never downgraded to
+    ``content`` (Bedrock ``global.`` profiles, vendor APIs) because its row could not be read. A pii class (read or
+    not) also gets ``allowed_scopes = (aws_only,)``, the invariant migration 373's CHECK holds in the table, so no
+    path that reads only the scopes (``_call_openai``, the legacy last resort) can send it out of AWS. Not cached: the
+    next call reads again. A read that succeeds with no row, or before migration 373, is not a failure (content)."""
+    base = SAFE_DEFAULTS.get(stage, _GENERIC_FALLBACK)
+    known = _pii_known.get(stage)
+    if known == data_scope.PII_CONTENT:
+        return base
+    return dataclasses.replace(base, pii_class=known or data_scope.PII_UNREAD,
+                               allowed_scopes=data_scope.AWS_ONLY_SCOPES)
+
+
+def _remember_class(stage: str, cfg: StageConfig) -> None:
+    """Record the class of a successful read (``_pii_known``)."""
+    _pii_known[stage] = data_scope.normalize_pii_class(getattr(cfg, "pii_class", None))
 
 
 def _row_to_config(row) -> StageConfig:
@@ -378,12 +396,17 @@ async def get_stage_config(stage: str) -> StageConfig:
             logger.warning("llm_role_config_stage_missing", stage=stage,
                             hint="no row — using SAFE_DEFAULTS, check migration 137 seeded")
         _cache[stage] = (cfg, now)
+        _remember_class(stage, cfg)
         return cfg
     except Exception as e:
-        logger.warning("llm_role_config_read_failed", stage=stage, error=str(e))
         if cached:
+            logger.warning("llm_role_config_read_failed", stage=stage, error=str(e))
             return cached[0]  # stale-but-real beats a hardcoded default when the DB hiccups
-        return _read_failed_default(stage)
+        cfg = _read_failed_default(stage)
+        logger.warning("llm_role_config_read_failed", stage=stage, error=str(e),
+                       pii_class=(data_scope.PII_UNREAD_REASON if data_scope.pii_class_unread(cfg.pii_class)
+                                  else cfg.pii_class))
+        return cfg
 
 
 def _watch_route_version() -> None:
@@ -437,7 +460,8 @@ def get_stage_config_sync(stage: str) -> StageConfig:
 
 def invalidate(stage: Optional[str] = None) -> None:
     """Called by PATCH /admin/llm-config/{stage} right after a successful write. `stage=None`
-    clears everything (used by tests / a full reseed)."""
+    clears everything (used by tests / a full reseed). AA-1039: ``_pii_known`` is kept (a class changes only by a
+    migration)."""
     if stage is None:
         _cache.clear()
     else:

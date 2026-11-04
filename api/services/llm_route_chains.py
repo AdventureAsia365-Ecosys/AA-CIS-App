@@ -212,7 +212,8 @@ def resolve_stage(cfg, evidence=None) -> dict:
     not serve it, with the reason (catalog off, plan skip, refused). ``called_first`` keeps the old answer: the first
     model@connection the gateway would call. Without ``evidence`` nothing counts as refused (the old behaviour)."""
     from shared.llm_client.catalog import LEGACY_KEYS, get_model_sync
-    from shared.llm_client.client import _STAGE_SCOPES, _row_role, deployment_routing_enabled, route_attempts
+    from shared.llm_client.client import (_STAGE_SCOPES, LLMClient, _row_role, deployment_routing_enabled,
+                                          legacy_aliases_enabled, route_attempts)
     from shared.llm_client.models import LLMRequest
     from shared.llm_client.vendor_route import deployment_plan
 
@@ -235,8 +236,39 @@ def resolve_stage(cfg, evidence=None) -> dict:
             step = {"model": key, "scope": (narrowed or ("stage",))[0]}
             out["attempts"].append(step)
             if key in LEGACY_KEYS and pii == data_scope.PII_PERSONAL:
-                step.update(status="skip", reason="legacy key: a personal-data stage never takes the hard-coded chain")
-                skipped(key, None, step["reason"])
+                # AA-1039 (review S268): as LLMClient._legacy_call does for a pii stage: the alias targets planned with
+                # the class (LLM_LEGACY_ALIASES on and an alias the registry describes), else refused (the
+                # hard-coded chain calls global. profiles; its GPT-4.1 last resort is a vendor API).
+                steps = (LLMClient._alias_steps(key, narrowed or scopes, role=role, pii_class=pii)
+                         if legacy_aliases_enabled() else None)
+                if steps is None:
+                    step.update(status="skip",
+                                reason="legacy key: a personal-data stage never takes the hard-coded chain")
+                    skipped(key, None, step["reason"])
+                    continue
+                pairs = [(m.model_key, t.connection.connection_key) for m, t in steps]
+                if not pairs:
+                    step.update(status="skip", reason=("legacy key: no alias target has a deployment a personal-data "
+                                                       "stage may use"))
+                    skipped(key, None, step["reason"])
+                    continue
+                refused = [{"model": mk, "connection": ck, "reason": why} for mk, ck in pairs
+                           if evidence is not None and (why := evidence.refused(mk, ck)) is not None]
+                refused_set = {(r["model"], r["connection"]) for r in refused}
+                serving = [p for p in pairs if p not in refused_set]
+                out["called_first"] = out["called_first"] or f"{pairs[0][0]}@{pairs[0][1]}"
+                for r in refused:
+                    if not serving or pairs.index((r["model"], r["connection"])) < pairs.index(serving[0]):
+                        skipped(r["model"], r["connection"], r["reason"])
+                step["deployments"] = [f"{mk}@{ck}" for mk, ck in pairs]
+                if serving:
+                    step.update(status="call", connection=serving[0][1], alias_model=serving[0][0])
+                    out["first"] = out["first"] or f"{serving[0][0]}@{serving[0][1]}"
+                else:
+                    step.update(status="refused", reason="refused: " + ", ".join(
+                        f"{r['model']}@{r['connection']} ({r['reason']})" for r in refused))
+                if refused:
+                    step["refused"] = refused
                 continue
             if key in LEGACY_KEYS:
                 step.update(status="legacy", reason="legacy key: the hard-coded acc3 chain (not planned here)")
