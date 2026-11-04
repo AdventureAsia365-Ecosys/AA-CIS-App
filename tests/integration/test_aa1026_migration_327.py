@@ -175,7 +175,9 @@ def test_a_legacy_shadow_maps_and_is_cleared_when_it_becomes_the_primary(cur):
 
 
 def test_openai_budget_and_policy_set_once_an_admin_value_is_kept(cur):
-    # Start from the pre-327 state (no budget, no policy row): other modules may have changed the connection.
+    # Start from the pre-327 state (no budget, no policy row): other modules may have changed the connection. The
+    # routes too: migration 366 (S267) opened every active text stage to vendor_direct, which 327's guard refuses.
+    _load_fixture_routes(cur)
     cur.execute("UPDATE shared.llm_provider_connection SET monthly_budget_usd = NULL "
                 "WHERE connection_key = 'openai-direct'")
     cur.execute("DELETE FROM shared.llm_connection_cost_policy WHERE connection_key = 'openai-direct'")

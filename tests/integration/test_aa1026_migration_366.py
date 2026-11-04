@@ -1,11 +1,12 @@
-"""AA-1026 (tech lead S267) — migration 366 (family fallback chains: Converse rows sonnet-4-6 / haiku-4-5 on acc3 and
-the ordered chains of 23 stage routes) against real Postgres.
+"""AA-1026 (tech lead S267) — migration 366 (family fallback chains: Converse rows sonnet-4-6 / haiku-4-5 on acc3, the
+ordered chains of 27 stage routes, every active text stage opened to vendor_direct ("AWS preferred, not AWS only"),
+monthly caps acc3 100 USD and anthropic-direct 150 USD) against real Postgres.
 
 conftest applies every migration, 366 included. The main test loads the live routes of 04/11/2026
 (``tests/unit/snapshots/aa1026_routes_before_366.json``), runs the file's body inside one transaction and compares
 every row with ``tests/unit/snapshots/aa1026_routes_after_366.json`` (the table the unit tests walk through the gateway
-and check with ``llm_route_chains.violations``). Every test rolls back what it wrote. The body re-inserts its two catalog
-rows and deployments ON CONFLICT DO NOTHING, so the file runs the same after the 304 replay test re-created the
+and check with ``llm_route_chains.violations``). Every test rolls back what it wrote. The body re-inserts its two
+catalog rows and deployments ON CONFLICT DO NOTHING, so the file runs the same after the 304 replay test re-created the
 deployment table.
 """
 import json
@@ -31,6 +32,7 @@ COLUMNS = ("stage, role, provider, model_id, account_route, is_active, fallback_
            "shadow_sample_pct, allowed_scopes")
 ACTOR = "migration-366-aa1026"
 NEW_ROWS = {"sonnet-4-6": "sonnet", "haiku-4-5": "haiku"}
+CAPS = {"acc3": 100, "anthropic-direct": 150}
 
 
 def _body() -> str:
@@ -75,7 +77,22 @@ def _expected() -> list[dict]:
 
 def _decided() -> list[str]:
     before = {r["stage"]: r for r in json.loads(BEFORE.read_text(encoding="utf-8"))["routes"]}
-    return sorted(r["stage"] for r in _expected() if r["fallback_model_ids"] != before[r["stage"]]["fallback_model_ids"])
+    return sorted(r["stage"] for r in _expected()
+                  if r["fallback_model_ids"] != before[r["stage"]]["fallback_model_ids"])
+
+
+def _widened() -> list[str]:
+    """The active writer / judge / validate stages of the 04/11 table without vendor_direct (T-3's aws_only stages)."""
+    return sorted(r["stage"] for r in json.loads(BEFORE.read_text(encoding="utf-8"))["routes"]
+                  if r["is_active"] and r["role"] != "embed" and "vendor_direct" not in r["allowed_scopes"])
+
+
+def _budget(c, conn: str):
+    c.execute("SELECT c.monthly_budget_usd AS b, p.alert_pct AS a, p.hard_stop AS h "
+              "FROM shared.llm_provider_connection c LEFT JOIN shared.llm_connection_cost_policy p "
+              "ON p.connection_key = c.connection_key WHERE c.connection_key = %s", (conn,))
+    r = c.fetchone()
+    return (float(r["b"]) if r["b"] is not None else None, r["a"], r["h"])
 
 
 def _changed(c) -> list[str]:
@@ -120,8 +137,9 @@ def test_the_routes_become_the_expected_routes_and_a_second_run_changes_nothing(
     _load_routes(cur)
     cur.execute(_body())
     assert _routes(cur) == _expected()
+    assert len(_decided()) == 27 and len(_widened()) == 15
+    assert set(_widened()) <= set(_decided())
     assert _changed(cur) == _decided()
-    assert len(_decided()) == 23
     cur.execute("UPDATE shared.llm_role_config SET updated_by = 'test-aa1026-366-done' WHERE updated_by = %s",
                 (ACTOR,))
     cur.execute(_body())
@@ -154,6 +172,58 @@ def test_a_switched_off_or_missing_stage_is_skipped(cur):
     cur.execute(_body())
     assert _fallbacks(cur, "tp_compose") == []
     assert set(_decided()) - set(_changed(cur)) == {"tp_compose", "t2_flag_fix"}
+    cur.execute("SELECT allowed_scopes AS s FROM shared.llm_role_config WHERE stage = 'tp_compose'")
+    assert list(cur.fetchone()["s"]) == ["aws_only"]                       # switched off: not opened either
+
+
+def test_s267_every_active_text_stage_is_opened_and_the_embed_stages_stay_inside_aws(cur):
+    _load_routes(cur)
+    cur.execute("UPDATE shared.llm_role_config SET fallback_model_ids = ARRAY['haiku-4-5', 'nova-lite'] "
+                "WHERE stage = 't9_faq_filter'")                           # an admin's chain: kept, still opened
+    cur.execute(_body())
+    cur.execute("SELECT stage, role, is_active, allowed_scopes AS s FROM shared.llm_role_config ORDER BY stage")
+    rows = cur.fetchall()
+    for r in rows:
+        if r["is_active"] and r["role"] != "embed":
+            assert list(r["s"]) == ["aws_only", "vendor_direct"], r["stage"]
+        else:
+            assert list(r["s"]) == ["aws_only"], r["stage"]
+    assert _fallbacks(cur, "t9_faq_filter") == ["haiku-4-5", "nova-lite"]
+    assert "t9_faq_filter" in _changed(cur)                                # opened (updated_by), chain kept
+    notices = " ".join(cur.connection.notices)
+    assert "text stages opened to vendor_direct (AWS preferred, not AWS only): a3_atomize" in notices
+
+
+def test_s267_the_connection_caps_and_their_cost_policies(cur):
+    _load_routes(cur)
+    cur.execute("UPDATE shared.llm_provider_connection SET monthly_budget_usd = NULL "
+                "WHERE connection_key = ANY (%s)", (list(CAPS),))
+    cur.execute("DELETE FROM shared.llm_connection_cost_policy WHERE connection_key = ANY (%s)", (list(CAPS),))
+    cur.execute(_body())
+    for conn, cap in CAPS.items():
+        assert _budget(cur, conn) == (cap, 80, True), conn
+
+
+def test_s267_a_lower_cap_and_an_admin_policy_are_kept_a_higher_cap_is_lowered(cur):
+    _load_routes(cur)
+    cur.execute("UPDATE shared.llm_provider_connection SET monthly_budget_usd = 40 WHERE connection_key = 'acc3'")
+    cur.execute("UPDATE shared.llm_provider_connection SET monthly_budget_usd = 900 "
+                "WHERE connection_key = 'anthropic-direct'")
+    cur.execute("DELETE FROM shared.llm_connection_cost_policy WHERE connection_key = 'anthropic-direct'")
+    cur.execute("INSERT INTO shared.llm_connection_cost_policy (connection_key, alert_pct, hard_stop, updated_by) "
+                "VALUES ('anthropic-direct', 50, false, 'test-aa1026-366')")
+    cur.execute(_body())
+    assert _budget(cur, "acc3")[0] == 40
+    assert _budget(cur, "anthropic-direct") == (150, 50, False)
+    assert "the cost policy of anthropic-direct is kept" in " ".join(cur.connection.notices)
+
+
+def test_guard_refuses_without_the_anthropic_api_connection(cur):
+    _load_routes(cur)
+    cur.execute("UPDATE shared.llm_provider_connection SET data_scope = 'aws_only' "
+                "WHERE connection_key = 'anthropic-direct'")
+    with pytest.raises(psycopg2.errors.RaiseException, match="anthropic-direct is not an anthropic vendor_direct"):
+        cur.execute(_body())
 
 
 def test_no_unlisted_stage_changes(cur):
@@ -173,7 +243,7 @@ def test_a_rule_break_on_an_unchanged_route_is_only_a_notice(cur):
                 "WHERE stage = 's1_brand_audit'")                         # a judge on a Claude fallback (admin's)
     cur.execute(_body())
     notices = " ".join(cur.connection.notices)
-    assert "route s1_brand_audit (not changed here) breaks the chain rule judge_writer_family" in notices
+    assert "route s1_brand_audit (fallbacks not changed here) breaks the chain rule judge_writer_family" in notices
 
 
 # ── guards ──────────────────────────────────────────────────────────────────────────────────────────────────────────
