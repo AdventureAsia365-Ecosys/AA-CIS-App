@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { ACTION_CAPABILITY, PAGE_ACTIONS, TAB_KEYS, parseTab } from "./aiGateway.ts";
 import {
   addableOptions, chainText, draftOf, groupStages, isEmptyProposal, moveItem, presetPath, problemsOf, proposalBody,
-  versionPath,
+  skippedWhere, versionPath,
 } from "./routeControl.ts";
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
@@ -106,4 +106,15 @@ test("the messages have the same keys in English and Vietnamese and name no issu
   const en = keys(src.slice(at, split));
   assert.ok(en.length > 50);
   assert.deepEqual(keys(src.slice(split)), en);
+});
+
+test("a skipped entry reads model@connection, or the model alone when nothing was planned", () => {
+  assert.equal(skippedWhere({ model: "m1", connection: "acc3", reason: "refused (access_denied)" }), "m1@acc3");
+  assert.equal(skippedWhere({ model: "m2", connection: null, reason: "disabled in the catalog" }), "m2");
+});
+
+test("the stage editor lists the skipped deployments with their reason", () => {
+  const src = read("../app/admin/ai-gateway/RouteControlTab.tsx");
+  assert.match(src, /route-control-skipped-\$\{stage\.stage\}/);
+  assert.match(src, /t\("skippedItem", skippedWhere\(s\), s\.reason\)/);
 });

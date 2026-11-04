@@ -293,3 +293,46 @@ def test_a_routing_tab_patch_writes_a_version_and_a_migration_change_is_external
     v0, rows = asyncio.run(go())
     assert [(r["action"], r["created_by"]) for r in rows] == [("external", "external"), ("save", "admin:zz-aa1042")]
     assert rows[-1]["version"] == v0 + 2
+
+
+def test_a_deployment_refused_on_record_is_not_named_first(world):
+    """AA-1042 (S268 follow-up): the probe state of CIS 367 (access_denied, newer than any answer) moves the preview's
+    "first" to the deployment that would serve, and the refused one is listed in the stage's "skipped"."""
+    from datetime import datetime, timezone
+
+    from api.services import llm_route_control as rc
+    before = asyncio.run(rc.preview(world))
+    stage = next(s for s in before["stages"] if s["first"] and "@" in s["first"] and "legacy" not in s["first"])
+    model, conn_key = stage["first"].split("@", 1)
+
+    async def mark(state, probed):
+        conn = await world.connect(DSN)
+        try:
+            return await conn.fetchrow(
+                "UPDATE shared.llm_model_deployment d SET access_state = $3, last_probe_at = $4 "
+                "FROM (SELECT access_state, last_probe_at FROM shared.llm_model_deployment "
+                "      WHERE model_key = $1 AND connection_key = $2) old "
+                "WHERE d.model_key = $1 AND d.connection_key = $2 "
+                "RETURNING old.access_state AS was_state, old.last_probe_at AS was_probed",
+                model, conn_key, state, probed)
+        finally:
+            await conn.close()
+
+    async def no_answer_on_record():
+        conn = await world.connect(DSN)
+        try:
+            return await conn.fetchval("SELECT last_ok_at FROM shared.llm_provider_health "
+                                       "WHERE connection_key = $1 AND model_key = $2", conn_key, model)
+        finally:
+            await conn.close()
+    assert asyncio.run(no_answer_on_record()) is None
+    old = asyncio.run(mark("access_denied", datetime.now(timezone.utc)))
+    try:
+        after = asyncio.run(rc.preview(world))
+        moved = next(s for s in after["stages"] if s["stage"] == stage["stage"])
+        assert moved["first"] != stage["first"]
+        assert {"model": model, "connection": conn_key, "reason": "refused (access_denied)"} in moved["skipped"]
+        assert moved["first_before"] == moved["first"]               # now and the proposal read the same refusals
+        assert after["unchanged"] is True and after["evidence_stages"] == []
+    finally:
+        asyncio.run(mark(old["was_state"], old["was_probed"]))
