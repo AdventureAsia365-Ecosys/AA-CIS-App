@@ -54,7 +54,7 @@ function setParam(name: string, value: string | null): void {
   }
 }
 
-const usd = (n: number | null | undefined) => (n == null ? "—" : `$${n.toFixed(n < 1 ? 4 : 2)}`);
+const usd = (n: number | null | undefined) => (n == null ? "—" : `$${n.toFixed(n > 0 && n < 1 ? 4 : 2)}`);
 const code = (v: React.ReactNode) => <span style={{ fontFamily: mono, fontSize: 12 }}>{v ?? "—"}</span>;
 const grid: React.CSSProperties = { display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 16 };
 const tiles: React.CSSProperties = {
@@ -166,7 +166,7 @@ function ReleaseFacts({ r, t }: { r: Release; t: T }) {
 }
 
 function GateTab({ g, t }: { g: NonNullable<LabStageView["gate"]>; t: T }) {
-  const { formatDate, formatDateTime } = useFormat();
+  const { formatDateTime } = useFormat();
   const state = g.state;
   const sw = g.switch;
   return (
@@ -181,7 +181,7 @@ function GateTab({ g, t }: { g: NonNullable<LabStageView["gate"]>; t: T }) {
         <div style={tiles}>
           <KpiTile label={t("kpiMemory")} value={sw ? (sw.memory_enabled ? t("memoryOn") : t("memoryOff")) : t("noSwitch")}
             valueTone={sw?.memory_enabled ? "success" : "neutral"}
-            hint={sw?.train_closed_month ? t("trainClosed", formatDate(sw.train_closed_month)) : undefined} />
+            hint={sw?.train_closed_month ? t("trainClosed", sw.train_closed_month.slice(0, 7)) : undefined} />
           <KpiTile label={t("kpiLive")}
             value={g.active_release ? t("releaseNo", g.active_release.release_no) : t("noneLive")}
             hint={g.active_release?.activated_at ? formatDateTime(g.active_release.activated_at) : undefined} />

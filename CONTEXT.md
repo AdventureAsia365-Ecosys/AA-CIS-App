@@ -68,8 +68,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     status, via react-query — see A3 note below), `atom-curation` (**Atoms & routes**, sections
     01 Atomize · 02 Segment · 03 Score · 04 Route/Hub; was "Social Content"), `tenant-qa/*` (AA-1039: `quality` =
     Content quality, `trace` = Content Trace, `review-log` = review log with gate telemetry per tenant and channel,
-    AA-615, `slate` = the per-tenant Slate that was atom-curation section 05), `cost-ops` (the **Cost Operations** page, AA-622/623/665: tabs Overview, **AI & data spend** (views LLM, DataForSEO, Jev, from the ledger) and AWS bill; the old `/admin/llm-usage` redirects to it),
-    `ai-gateway` (**AI providers**, AA-804: tabs Providers (+ views Connections, Jev credit, Credit (AA-1025 B5); warm-path labels, the
+    AA-615, `slate` = the per-tenant Slate that was atom-curation section 05), `spend` (the **Spend** page, AA-622/623/665, was Cost Operations at `cost-ops`: tabs Overview, **AI & data spend** (views LLM, DataForSEO, Jev, from the ledger), AWS bill and By app (AA-1039 R6 slice 3, was `platform/cost`); the old `/admin/llm-usage` and `/admin/cost-ops` redirect to it), `lab/[stage]` (**Writing Lab**, AA-1039 R6 slice 3) and `lab/writing-memory`,
+    `ai-gateway` (**AI gateway**, was "AI providers", AA-804: tabs Providers (+ views Connections, Jev credit, Credit (AA-1025 B5); warm-path labels, the
     "Re-queue refused jobs" card; AA-1025 C1: errors and p50 / p95 latency per row over 24 h / 7 d from the ledgers,
     the Jev / DataForSEO / Geoapify switch (PATCH /admin/llm-connections/{key}), the partner CRM AI and Bedrock
     Guardrails rows from the CRM's daily totals (crm.ops.v1 GET /llm/usage only, with the staff member's own
@@ -863,8 +863,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     through `frontend/lib/awsAccounts.ts` (`accountName` / `accountLabel`, hook `useAwsAccounts`); a guard test
     fails on a key spelled anywhere else in the frontend. Labels built by the API (Settings › Models "via",
     the account-route option, the forecast and Cost per app lines) use the same module.
-  - The admin **Cost Operations** page (`/admin/cost-ops`, AA-665; was External Spend at `/admin/llm-usage`, which
-    redirects to its LLM tab) has the tabs Overview, LLM, DataForSEO, AWS bill and Jev (Budgets moved to AI providers ›
+  - The admin **Spend** page (`/admin/spend`; AA-665 Cost Operations at `/admin/cost-ops` until AA-1039 R6 slice 3,
+    External Spend at `/admin/llm-usage` before that, both redirect) has the tabs Overview, AI & data spend (views LLM,
+    DataForSEO, Jev), AWS bill and By app (the former Cost per app page) (Budgets moved to AI providers ›
     Budgets in AA-804 UI part 2: `GET /admin/ai-gateway/budgets` lists every cap by tier, edits still go through
     `PUT /admin/budgets/{provider}/{scope}`). It compares estimated spend (token
     logs) with the real AWS bill (AWS bill tab), splitting Bedrock from infrastructure per account, over any date range.
@@ -2096,16 +2097,23 @@ footer Settings entry):
 - **AA Catalogue** — Upload (S0), Rewrite (S1), Review Queue, Master Content, Atoms & routes (`/admin/atom-curation`),
   Places, Photos, Facts, Supply copy, AA content, SEO Intelligence, Settings;
 - **Tenant content QA** — Content quality, Content Trace, Review log, Slate (`/admin/tenant-qa/*`, admin only);
-- **AI & spend** — AI providers (tabs Providers, Routing incl. "Routing by data class", Models & trials, Budgets,
-  Calls, Guide), Cost Operations, Cost per app;
-- **Writing Lab** — Writing memory, Jev Decisions (the per-stage lab comes later; S262 TL-11 freeze unchanged);
+- **AI & spend** — AI gateway (`/admin/ai-gateway`, was "AI providers": tabs Providers, Routing incl. "Routing by data
+  class", Models & trials, Budgets, Calls, Guide), Spend (`/admin/spend`, R6 slice 3: was Cost Operations at
+  `/admin/cost-ops` and Cost per app at `/admin/platform/cost`, now its By app tab `?tab=apps`);
+- **Writing Lab** — Stages (`/admin/lab` opens `/admin/lab/a1-s1`; one page per writing-memory writer `a1-s1`,
+  `t2-rewrite`, `t9-blog`, `t9-social` with the tabs Eval gate, Samples, Labels, Experiments, Prompt versions, one read
+  `GET /admin/writing-memory/lab/{writer}` over the existing learning tables, ids / labels / counts / hashes only, no
+  new learning logic: S262 TL-11 freeze unchanged), Writing memory (`/admin/lab/writing-memory`, was
+  `/admin/writing-memory`), Jev Decisions;
 - **Platform** — Staff & access, Audit log, Jobs, Alert recipients, API Docs, Data model, Docs.
 
 Moved pages answer **307** from their old URL with the query string kept (`ADMIN_ROUTE_MOVES`, served by
 `next.config.ts` before `proxy.ts`): `/admin/content-quality` → `/admin/tenant-qa/quality`, `/admin/tenant-activity`
 → `/admin/tenant-qa/trace`, `/admin/platform-stats` → `/admin/tenant-qa/review-log`,
 `/admin/atom-curation?section=slate` → `/admin/tenant-qa/slate`, `/admin/platform/agencies` →
-`/admin/tenants/agencies`, `/admin/data-erasure` → `/admin/tenants/data-erasure`. BFF and backend paths keep their
+`/admin/tenants/agencies`, `/admin/data-erasure` → `/admin/tenants/data-erasure`; R6 slice 3: `/admin/writing-memory`
+→ `/admin/lab/writing-memory`, `/admin/cost-ops` → `/admin/spend`, `/admin/platform/cost` → `/admin/spend?tab=apps`
+(a query of the target wins over the request's, as Next.js merges them). BFF and backend paths keep their
 names (`/api/admin/content-quality/*`, `/admin/platform/crm/*`). `frontend/lib/adminIa.test.mjs` checks that every
 page URL of the S265 nav still opens a page, nav items never point at an old URL and every admin page has a nav
 entry; `tests/e2e/smoke/aa1039-admin-ia-redirects.spec.ts` checks the 307s on the deployed host.
@@ -2224,8 +2232,8 @@ entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
 - **Pages** (admin only, kit + react-query, no polling; types in `frontend/lib/platform.ts`, links from
   `frontend/lib/apps.ts` `APP_REGISTRY`): `/admin/platform/apps` (nav group **Apps**; one card per app, Refresh =
   `?refresh=1`), `/admin/platform/audit` (People & access › **Audit log**; server filters, keyset "load older", chain
-  badge, Legacy badge for `legacy_unverified` rows, link to Booking's own audit log) and `/admin/platform/cost`
-  (AI & spend › **Cost per app**; month picker, "Refresh from AWS" = `POST /admin/cost-explorer/check` for the month,
+  badge, Legacy badge for `legacy_unverified` rows, link to Booking's own audit log) and Cost per app (since AA-1039
+  R6 slice 3 the By app tab of AI & spend › **Spend**, `/admin/spend?tab=apps`, `?month=YYYY-MM` opens a month; month picker, "Refresh from AWS" = `POST /admin/cost-explorer/check` for the month,
   ~$0.04). Notes: `docs/implementation-notes/AA-884-ui.md`.
 
 **Ops overview (AA-858).** `GET /admin/overview/ops` (`ops.read`, not a machine route; the CI smoke keeps
@@ -3317,7 +3325,8 @@ api ops sampler while signals are pending): an edit that adds a number, time, pr
 the source lack fails (quarantined), an added name is grey (admin confirms), a style edit passes. The backfill
 (`writing_signal_backfill`, `backfill.py`) copies the pre-AA-916 admin sentence audit rows, T2 tenant-edit versions,
 T9 failed attempts (system signals, evidence for R0) and A1 brand-audit lessons, idempotently. Admin page
-`/admin/writing-memory` (Signals and Candidates tabs, plus a Guide tab: `frontend/app/admin/writing-memory/guide.ts`
+`/admin/lab/writing-memory` (was `/admin/writing-memory`; Signals and Candidates tabs, plus a Guide tab:
+`frontend/app/admin/lab/writing-memory/guide.ts`
 on the kit GuidePanel; `api/routers/admin_writing_memory.py`, admin only). A rule
 reaches a writer through a release (AA-919), except an L0 lexicon rule (below).
 **R0** (AA-918, `services/writing_memory/replay.py`, job `writing_memory_r0`, $0, no model call): the replay of one
