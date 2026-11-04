@@ -62,6 +62,19 @@ OpenAI API; the validate stages answer on Haiku 4.5 / Sonnet 4.6 on acc3 before 
   (`llm_route_chains.CHECK_PAIRS`); t10_claims and a3_place_card get no Claude hop.
 - **Judges unchanged.** They already chain GPT-5.6 Luna ↔ GPT-6 Luna, then Nova Lite on acc2, then (vendor_direct) the
   OpenAI API; Claude is the writer family (TL-10), so no 4.x hop.
+- **Connection circuit: a model refused on its own no longer blocks its siblings (review fix).** The connection
+  circuit (AA-1018) trips on `access_denied` from 2 distinct models newer than the connection's last answered call.
+  acc3 refuses Sonnet 5.5, Haiku 5.5, GPT-6 Luna and GPT-5.6 Luna one by one, and a route walks two of them before the
+  4.x sibling (a3_atomize: three), so every half-open round the probes re-tripped the connection inside the request
+  and Sonnet 4.6 / Haiku 4.5 on acc3 were skipped: the chains would still end on the OpenAI API or acc2, and once
+  tripped no 4.x call could ever close it again. Fix in `shared/llm_client/breaker.py`: (1) a failed half-open probe
+  keeps `opened_at` = the start of the refusal streak (`after_failure(keep_streak_start=True)`, LLM breaker only; the
+  provider circuit keeps the old move because its reopen alerts read it); (2) an `access_denied` row whose streak
+  began before the connection's last answered call is one model's refusal and does not count toward the trip. Two
+  fresh refusals after an answer (an account-wide block such as Error 002) still trip it at once. The circuit closes
+  only after one answered call on acc3: the live step is the admin Test connection on `sonnet-4-6` and `haiku-4-5`
+  (`LLMClient.probe` counts on the breaker; a success sets the connection's last answered call). Rows written before
+  this change carry the opened_at of their last reopening, which is still before that test, so they stop counting too.
 - **Rule set as code.** `llm_route_chains.violations` (no_fallback, vendor_on_aws_only, vendor_not_last,
   judge_writer_family, writer_family, writer_acc2, check_pair_family, attempt_cap) runs in the unit tests on the decided
   table and in `scripts/llm_ops/route_chain_check.py` on the live rows; migration 366 RAISEs on the same rules for the
@@ -70,11 +83,15 @@ OpenAI API; the validate stages answer on Haiku 4.5 / Sonnet 4.6 on acc3 before 
 ## Changed
 
 - `shared/llm_client/client.py`: `route_attempts` + `ROUTE_AWS_FIRST_ENV`; `_call_route` binds the pass scope per attempt.
+- `shared/llm_client/breaker.py`: failed probe keeps the streak start; model-scoped refusals do not trip the
+  connection (review fix, see Decisions).
 - `shared/llm_client/vendor_route.py`: `route_reach` (usable / described scopes of a model, no circuit or budget read).
 - `api/routers/admin_llm_ops.py`: `_check_aws_before_vendor` returns early with the AWS-first order on.
 - `api/services/llm_route_chains.py` (new): `violations`, `resolve_stage`.
 - `scripts/llm_ops/route_chain_check.py` (new): $0 live check (FIRST model@connection per stage + violations).
-- Tests: `tests/unit/test_aa1026_family_fallback_chains.py` (new), `test_aa1026_admin_writer_last_resort.py`
+- Tests: `tests/unit/test_aa1026_family_fallback_chains.py` (new; its last section runs the REAL breaker with acc3's
+  refusals: before a 4.x success the chain ends on acc2, after one it reaches haiku-4-5@acc3 even after a quiet
+  night, two fresh refusals still trip), `test_aa1018_connection_circuit.py` (pure cases of the new rule), `test_aa1026_admin_writer_last_resort.py`
   (refusal cases run with the switch off; new cases with it on); snapshots `aa1026_routes_before_366.json` /
   `aa1026_routes_after_366.json`.
 - PR B: `api/migrations/366_llm_family_fallback_chains.sql`, `tests/integration/test_aa1026_migration_366.py`.
@@ -92,6 +109,44 @@ OpenAI API; the validate stages answer on Haiku 4.5 / Sonnet 4.6 on acc3 before 
   refuses 5.x the writers spend that instead of the OpenAI API; the OpenAI API 10 USD cap is no longer their daily
   path. A wave on Sonnet 4.6 costs more per tour than one on GPT-6 Luna: report it per wave as usual.
 
+## Cost estimate (review: quantify before the apply)
+
+No DB read from this lane (no ECS exec), so the per-tour figures scale MEASURED costs by the catalog price ratio
+(input and output ratios are equal for each pair below; token counts per call assumed unchanged across models).
+Sources: wave of 50 tours on Sonnet 5.5 (`docs/audits/2026-10-24-S249-s1-wave50/README.md`, via the S257 Anthropic API
+evaluation): `s1_generate` 0.0600 USD/tour, judge (Luna) 0.0054, flag_fix 0.0030, Jev 0.0032, atomize (Luna) 0.0052;
+October gateway totals (`docs/audits/2026-11-01-S262-capacity-review/README.md`). Prices per 1M tokens in / out:
+Sonnet 5.5 2 / 10, Sonnet 4.6 3 / 15, Haiku 5.5 0.10 / 0.50, Haiku 4.5 1 / 5, GPT-6 Luna (acc3 and OpenAI API)
+0.10 / 0.50, Nova Lite 0.077 / 0.308.
+
+| Per tour (USD) | Intended (5.x / Luna on acc3) | Today, before 366 (acc3 refuses: OpenAI API / acc2) | After 366 while acc3 refuses 5.x (Sonnet 4.6 / Haiku 4.5 on acc3) |
+|---|---:|---:|---:|
+| S1 writer `s1_generate` | 0.060 | 0.003 (GPT-6 Luna, OpenAI API) | **0.090** (Sonnet 4.6) |
+| S1 `s1_flag_fix` / nudge | 0.0003 (Haiku 5.5) | 0.0003 (OpenAI API) | 0.003 (Haiku 4.5) |
+| S1 judge + Jev | 0.009 | ~0.007 (Nova Lite + Jev) | ~0.007 (unchanged) |
+| A3 `a3_atomize` | 0.005 (Luna) | ~0.004 (Nova Lite) | **0.052** (Haiku 4.5) |
+| **S1 + A3** | **~0.075** | **~0.015** | **~0.15** |
+
+`s1_source_facts` is not itemised in the wave report; it is Luna-priced, so the same x10 applies on Haiku 4.5.
+Monthly: since 29/10 acc3 answers nothing and LLM spend is ~0. At October's volume (a catalogue rewrite of 810 tours
+plus re-runs) S1 + A3 would be ~0.15 x 810 = ~120 USD for one full rewrite (vs ~12 USD on today's fallbacks and ~60 USD
+on the intended 5.x path); a routine month of 100-200 regenerated tours is ~15-30 USD. Tenant writers (`t9_write`,
+`t2_generate`, October 29 USD on Sonnet) move the same way (x1.5 vs Sonnet 5.5, x30 vs the OpenAI API). acc3 bills the
+remaining AWS Lift credit (~250 USD, expires 31/12), then the card; the AWS budget `aa3-llm-monthly-total` (250 USD) only
+e-mails. The gateway hard stop is `shared.llm_provider_connection.monthly_budget_usd` of `acc3` (cost policy, 317):
+its live value is not checked from this lane. A hard stop on acc3 is itself a safe degrade: the chains then fall to
+the OpenAI API (10 USD cap) or acc2.
+
+## Questions for the tech lead (yes / no)
+
+1. **Cost delta.** While acc3 refuses 5.x, the writers spend ~0.09 USD/tour on Sonnet 4.6 instead of ~0.003 on the
+   OpenAI API (S1 + A3 ~0.15 vs ~0.015 USD/tour). Accept? (No = keep 366 but put `gpt-6-luna-openai` before the 4.x rows
+   on the writer routes, question 2.)
+2. **Writer order.** Should large-tier writers (s1_generate) prefer GPT-6 Luna on the OpenAI API over Sonnet 4.6 /
+   Haiku 4.5 on acc3? Today's table puts the Claude 4.x rows first (AWS first, same family).
+3. **acc3 cap.** Set `monthly_budget_usd` on `acc3` to 100 USD (proposed; hard stop -> chains fall to the OpenAI API /
+   acc2) if it is NULL?
+
 ## Should know
 
 - Merge order: PR A (code) deployed BEFORE migration 366 is applied. Without the AWS-first order a vendor_direct
@@ -101,5 +156,10 @@ OpenAI API; the validate stages answer on Haiku 4.5 / Sonnet 4.6 on acc3 before 
   itself and stays on AWS, so the two new rows need no TripPlanner change.
 - After the apply: POST /admin/writing-memory/releases/reverify-scan (writer routes changed outside the admin PATCH)
   and the root route page (`tools/docs/gen_llm_routes.py`).
-- Open question for the tech lead: should large-tier writers (s1_generate) prefer GPT-6 Luna on the OpenAI API over
-  Haiku 4.5 on acc3? Today's table puts Haiku 4.5 first (AWS first, same family).
+- After the apply (live steps): admin Test connection on acc3 with `sonnet-4-6` and with `haiku-4-5` (ok=true; this
+  records the answered call that closes the connection circuit), then the $0 report
+  (`scripts/llm_ops/route_chain_check.py` through the ECS exec runner) must show FIRST = `sonnet-4-6@acc3` on
+  s1_generate and `haiku-4-5@acc3` on a3_atomize, with no attempt reading "circuit open: acc3".
+- ADR 0009 decision 5 amended (root PR, S267): the AWS-first order lets a same-family AWS degrade sit behind a model
+  that has a vendor API deployment; `LLM_ROUTE_AWS_FIRST=off` brings back the old rule.
+- Tech lead questions: see "Questions for the tech lead" above (cost delta, writer order, acc3 cap).
