@@ -314,6 +314,27 @@ def stage_scopes(request: LLMRequest) -> Optional[tuple]:
         return None
 
 
+def stage_pii_class(request: LLMRequest) -> Optional[str]:
+    """AA-1039 (R6, CIS 373): the data class of ``request.stage`` (content | pii) from role_config (20 s cache); None
+    for a call with no stage (no policy). A pii stage is called only on our AWS accounts in the US
+    (``vendor_route.deployment_plan``) and never on a path the deployment registry does not describe. Never raises."""
+    if not request.stage:
+        return None
+    try:
+        return data_scope.normalize_pii_class(getattr(get_stage_config_sync(request.stage), "pii_class", None))
+    except Exception as e:  # noqa: BLE001 — role_config never raises; belt and braces on the call path
+        logger.warning("llm_stage_pii_read_failed", stage=request.stage, error=str(e)[:200])
+        return None
+
+
+def _pii_refusal(model_key: str) -> RuntimeError:
+    """The error of a personal-data stage that reached a path the registry does not describe (a legacy chain, the
+    catalog's Converse / OpenAI fallback): those paths may call a ``global.`` profile or a vendor API, so the model
+    fails and the route moves on (AA-1039, fail closed)."""
+    return RuntimeError(f"Model {model_key!r} has no deployment a personal-data stage may use (our AWS accounts, US "
+                        "only) in the deployment registry")
+
+
 def _row_role(cfg) -> Optional[str]:
     """The role a stage config states (a llm_role_config row or SAFE_DEFAULTS); None for role_config's generic fallback
     (stage 'unknown') or no config."""
@@ -1286,14 +1307,17 @@ class LLMClient:
     def _legacy_call(self, request: LLMRequest, tier: str, primary_acct: str) -> LLMResponse:
         """AA-1002 (S3): a legacy key through its alias (LLM_LEGACY_ALIASES on, an alias row and a registry that
         describes every target), else the hard-coded _legacy_chain, unchanged (the rollback path)."""
-        steps = (self._alias_steps(tier, stage_scopes(request), role=stage_role(request))
+        pii = stage_pii_class(request)
+        steps = (self._alias_steps(tier, stage_scopes(request), role=stage_role(request), pii_class=pii)
                  if legacy_aliases_enabled() else None)
         if steps is None:
+            if pii == data_scope.PII_PERSONAL:
+                raise _pii_refusal(tier)        # AA-1039: the hard-coded chain calls global. profiles
             return self._legacy_chain(request, tier, primary_acct)
         return self._run_alias(request, tier, steps)
 
     def _alias_steps(self, tier: str, allowed_scopes: Optional[tuple] = None,
-                     role: Optional[str] = None) -> Optional[list]:
+                     role: Optional[str] = None, pii_class: Optional[str] = None) -> Optional[list]:
         """The (catalog model, deployment) attempts of legacy key ``tier``, in order: each alias target (shared.
         llm_model_alias) on each of its deployments (vendor_route.deployment_plan). None = take _legacy_chain: gpt-4.1,
         acc2-native on (its order is the chain's own), no alias row, or a target the catalog / registry cannot describe
@@ -1312,7 +1336,7 @@ class LLMClient:
             if not model.enabled:
                 logger.info("llm_alias_target_skip", alias=tier, target=key, reason=model.blocked_reason or "disabled")
                 continue
-            plan = deployment_plan(model, allowed_scopes, role=role)
+            plan = deployment_plan(model, allowed_scopes, role=role, pii_class=pii_class)
             if plan is None:
                 logger.warning("llm_alias_fallback_legacy_chain", alias=tier, target=key, reason="no registry rows")
                 return None
@@ -1855,9 +1879,13 @@ class LLMClient:
         # AA-1002 (S5): only deployments on connections whose data scope the stage allows.
         scopes = stage_scopes(request)
         role = stage_role(request)              # AA-642 A5: a connection that does not serve the role is left out
-        plan = deployment_plan(model, scopes, role=role) if deployment_routing_enabled() else None
+        pii = stage_pii_class(request)          # AA-1039: a personal-data stage stays on our AWS accounts in the US
+        plan = (deployment_plan(model, scopes, role=role, pii_class=pii)
+                if deployment_routing_enabled() else None)
         if plan is not None:
             return self._call_plan(request, model, plan)
+        if pii == data_scope.PII_PERSONAL:
+            raise _pii_refusal(model.model_key)
         # AA-1002 (S2): an enabled deployment on an enabled Anthropic connection, first by priority, serves the
         # model through the Messages API. None (every other registry state) = today's path below, unchanged.
         # AA-1002 (S10): an Anthropic deployment left out by its connection's hard budget is named in budget_skips.

@@ -28,7 +28,7 @@ test("stages per class, order kept, the rest listed as not set", () => {
   });
 });
 
-test("the card copy: both languages, no issue id, the empty state says routes are not checked yet", () => {
+test("the card copy: both languages, no issue id, the empty state says every stage counts as content", () => {
   const src = readFileSync(fileURLToPath(new URL("../app/admin/ai-gateway/models.messages.ts", import.meta.url)), "utf8");
   for (const key of ["dataClassTitle", "dataClassIntro", "dataClassEmptyTitle", "dataClassEmptyBody", "dataClassPii",
     "dataClassContent", "dataClassUnset", "dataClassNone"]) {
@@ -39,7 +39,9 @@ test("the card copy: both languages, no issue id, the empty state says routes ar
     const end = src.indexOf("\n", src.indexOf("\n", src.indexOf("dataClassEmptyBody", start)) + 1);
     assert.doesNotMatch(src.slice(start, end), /AA-\d+/);
   }
-  assert.match(src, /dataClassEmptyBody:\s*\n\s*"The gateway does not record a data class per stage yet, so routes are not checked/);
+  assert.match(src, /dataClassEmptyBody:\s*\n\s*"The database does not hold a data class per stage yet \(its update is not applied\), so every stage is treated as content only/);
+  // CIS 373: personal data stays on our own AWS accounts, and the class is not set on the page.
+  assert.match(src, /dataClassIntro:\s*\n\s*"The rule: a stage that handles personal data runs only on our own AWS accounts, on routes kept in the United States/);
   const tab = readFileSync(fileURLToPath(new URL("../app/admin/ai-gateway/RoutingTab.tsx", import.meta.url)), "utf8");
   assert.match(tab, /<DataClassCard rows=\{rows\} \/>/);
   assert.match(tab, /<EmptyState title=\{t\("dataClassEmptyTitle"\)\}/);

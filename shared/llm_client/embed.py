@@ -125,14 +125,18 @@ def _targets(model: CatalogModel, account_route: Optional[str],
     return [(account, wire_id) for account, wire_id, _ in _plan_targets(model, account_route, allowed_scopes)[0]]
 
 
-def _plan_targets(model: CatalogModel, account_route: Optional[str], allowed_scopes: Optional[tuple] = None):
+def _plan_targets(model: CatalogModel, account_route: Optional[str], allowed_scopes: Optional[tuple] = None,
+                  pii_class: Optional[str] = None):
     """([(connection_key, wire id, connection or None)], circuit skips, role refusal or None). The connection is None
     on the no-registry path (today's path, no breaker); circuit skips name the deployments the S4 breaker left out.
     AA-1002 (S5): only deployments on connections whose data scope the stage's ``allowed_scopes`` allow (None = no
     stage policy). AA-642 A5 (review S263): the refusal (errors.RouteRoleNotServed) when the plan is empty only because
-    no connection serves the embed role."""
-    plan = deployment_plan(model, allowed_scopes, role=EMBED_ROLE)
+    no connection serves the embed role. AA-1039 (CIS 373): a ``pii`` stage only on our AWS accounts in the US, and
+    never on the no-registry path (its profile may be ``global.``)."""
+    plan = deployment_plan(model, allowed_scopes, role=EMBED_ROLE, pii_class=pii_class)
     if plan is None:
+        if data_scope.normalize_pii_class(pii_class) == data_scope.PII_PERSONAL:
+            return [], [], None
         account = model.account_for(account_route)
         return ([(account, model.bedrock_profile_ids[account], None)] if account else []), [], None
     return ([(t.connection.connection_key, t.deployment.wire_id, t.connection) for t in plan],
@@ -360,7 +364,8 @@ def embed(stage: str, texts: list[str], *, input_type: Optional[str] = "search_d
             _log_failure(stage, key, _RouteSkip(f"{key}: skipped ({reason})"), position=position)
             continue
         targets, skips, role_refused = _plan_targets(model, cfg.account_route,
-                                                     data_scope.normalize(getattr(cfg, "allowed_scopes", None)))
+                                                     data_scope.normalize(getattr(cfg, "allowed_scopes", None)),
+                                                     getattr(cfg, "pii_class", None))
         if not targets:
             # AA-642 A5 (review S263): a plan emptied by the served_roles filter is refused with that reason (ledger
             # 'refused' / 'role_not_served'), not "no Bedrock profile".

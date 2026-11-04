@@ -126,3 +126,50 @@ def in_twin_slot(chain: list, i: int, twins: dict[str, frozenset]) -> bool:
     """True when ``chain[i]`` is a model reached only outside AWS sitting right behind its AWS twin (``vendor_twins``):
     the same model on its vendor API, part of that model's slot in a model-first route (tech lead S267 Q2)."""
     return 0 < i < len(chain) and chain[i - 1] in (twins or {}).get(chain[i], ())
+
+
+# ── AA-1039 (R6, CIS 373; root ADR 0019 d12 / TL-12) — the data class of a stage ─────────────────────────────────────
+# ``shared.llm_role_config.pii_class``: ``content`` (no personal data: any route the stage's allowed_scopes allow,
+# Bedrock ``global.`` profiles included) or ``pii`` (personal data: our own AWS accounts and the US only). A CHECK of
+# migration 373 holds a pii stage to allowed_scopes = {aws_only}; the gateway adds the geography: a pii stage is called
+# only on a deployment whose wire id is a ``us.`` profile, or an id with no region prefix on a ``us-*`` connection
+# (in-region Bedrock). Built on the scopes above, not beside them: a pii stage is first an aws_only stage.
+
+PII_CONTENT = "content"
+PII_PERSONAL = "pii"
+PII_CLASSES: tuple[str, ...] = (PII_CONTENT, PII_PERSONAL)
+_GEO_PREFIX = re.compile(r"^([a-z]{2,6})\.")
+
+
+def normalize_pii_class(value) -> str:
+    """A stored ``pii_class`` as one of PII_CLASSES. A missing column / no row / a value that is not text (a test
+    double) reads as ``content`` (every row before migration 373 is content); an unknown text fails closed as ``pii``
+    (the CHECK of 373 makes it impossible in the table)."""
+    if value is None or not isinstance(value, str):
+        return PII_CONTENT
+    if value in PII_CLASSES:
+        return value
+    logger.warning("llm_stage_pii_class_unknown", value=str(value)[:40])
+    return PII_PERSONAL
+
+
+def deployment_geo(wire_id: Optional[str], region: Optional[str]) -> str:
+    """Where a deployment runs the request: the Bedrock cross-region prefix of its wire id (``global``, ``us``, ``eu``,
+    ``apac`` …), else ``us`` for a connection region ``us-*`` (in-region call), else ``unknown`` (a vendor API, or a
+    region outside the US)."""
+    m = _GEO_PREFIX.match((wire_id or "").strip().lower())
+    if m and m.group(1) in ("global", "us", "eu", "apac", "jp", "au", "ca"):
+        return m.group(1)
+    if isinstance(region, str) and region.lower().startswith("us-"):
+        return "us"
+    return "unknown"
+
+
+def pii_allows(pii_class: Optional[str], connection_scope: str, wire_id: Optional[str],
+               region: Optional[str]) -> bool:
+    """True when a stage of ``pii_class`` may be called on a deployment (its connection's data scope, wire id and
+    region). A content stage: always (its allowed_scopes decide). A pii stage: only an ``aws_only`` connection and a
+    US deployment (``deployment_geo`` == ``us``)."""
+    if normalize_pii_class(pii_class) != PII_PERSONAL:
+        return True
+    return connection_scope == AWS_ONLY and deployment_geo(wire_id, region) == "us"

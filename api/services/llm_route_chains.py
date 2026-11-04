@@ -219,9 +219,10 @@ def resolve_stage(cfg, evidence=None) -> dict:
     stage = cfg.stage
     scopes = data_scope.normalize(getattr(cfg, "allowed_scopes", None))
     role = _row_role(cfg)
+    pii = data_scope.normalize_pii_class(getattr(cfg, "pii_class", None))     # AA-1039: content | pii (CIS 373)
     chain = [cfg.model_id, *(cfg.fallback_model_ids or ())]
-    out = {"stage": stage, "role": cfg.role, "scopes": list(scopes) if scopes else None, "chain": chain,
-           "attempts": [], "first": None, "called_first": None, "skipped": []}
+    out = {"stage": stage, "role": cfg.role, "scopes": list(scopes) if scopes else None, "pii_class": pii,
+           "chain": chain, "attempts": [], "first": None, "called_first": None, "skipped": []}
     token = _STAGE_SCOPES.set((stage, scopes, role))
 
     def skipped(key: str, connection: Optional[str], reason: str) -> None:
@@ -233,6 +234,10 @@ def resolve_stage(cfg, evidence=None) -> dict:
         for key, narrowed in route_attempts(request, chain):
             step = {"model": key, "scope": (narrowed or ("stage",))[0]}
             out["attempts"].append(step)
+            if key in LEGACY_KEYS and pii == data_scope.PII_PERSONAL:
+                step.update(status="skip", reason="legacy key: a personal-data stage never takes the hard-coded chain")
+                skipped(key, None, step["reason"])
+                continue
             if key in LEGACY_KEYS:
                 step.update(status="legacy", reason="legacy key: the hard-coded acc3 chain (not planned here)")
                 out["first"] = out["first"] or f"{key}@acc3 (legacy chain)"
@@ -243,7 +248,8 @@ def resolve_stage(cfg, evidence=None) -> dict:
                 step.update(status="skip", reason="not in the catalog" if model is None else "disabled in the catalog")
                 skipped(key, None, step["reason"])
                 continue
-            plan = deployment_plan(model, narrowed or scopes, role=role) if deployment_routing_enabled() else None
+            plan = (deployment_plan(model, narrowed or scopes, role=role, pii_class=pii)
+                    if deployment_routing_enabled() else None)
             if not plan:
                 step.update(status="skip", reason=_skip_reason(plan))
                 skipped(key, None, step["reason"])

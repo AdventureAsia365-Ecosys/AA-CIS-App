@@ -1498,8 +1498,9 @@ export function appProfilePath(app: string): string {
 
 // ── AA-1039 R6 slice 1 (S266): routing by data class ───────────────────────────────────────────────────────────────
 // Root ADR 0019 (TL-12): each stage gets a `pii_class` — `content` (AA or tenant content, no personal data: a global
-// route is fine) or `pii` (personal data: US-only routes). The field does not exist yet (no column, no API field); the
-// Routing tab shows an empty state until GET /api/admin/llm-config carries it, then lists the stages per class.
+// route is fine) or `pii` (personal data: our AWS accounts, US-only routes). CIS 373 adds the column
+// (shared.llm_role_config.pii_class, migration-only); GET /api/admin/llm-config sends it (null before 373: the Routing
+// tab shows its empty state), and the gateway calls a pii stage only on US deployments (vendor_route.deployment_plan).
 
 export type PiiClass = "content" | "pii";
 

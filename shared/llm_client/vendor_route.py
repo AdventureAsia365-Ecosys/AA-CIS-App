@@ -252,7 +252,8 @@ def _callable(model: CatalogModel, conn: connections.ProviderConnection) -> Opti
 
 
 def deployment_plan(model: CatalogModel, allowed_scopes: Optional[tuple] = None, *,
-                    role: Optional[str] = None) -> Optional[list[VendorDeployment]]:
+                    role: Optional[str] = None,
+                    pii_class: Optional[str] = None) -> Optional[list[VendorDeployment]]:
     """AA-1002 (S3) — where ``model`` is called, in order. The model's deployment rows (``shared.llm_model_deployment``,
     lowest ``priority`` first, ``connection_key`` breaks ties) that the gateway can call — a Bedrock connection
     (assume_role / task_role) for converse / anthropic_native / embed rows, an Anthropic connection for Anthropic
@@ -265,7 +266,10 @@ def deployment_plan(model: CatalogModel, allowed_scopes: Optional[tuple] = None,
       never counts as the first row of the S3 vendor rule nor as a circuit / budget skip;
     - data scope (slice S5, ``data_scope.py``): with the stage's ``allowed_scopes``, a connection whose ``data_scope``
       is in them (an ``aws_only`` stage never leaves AWS, whatever the priorities; a stage that allows
-      ``vendor_direct`` may fall back to a vendor API behind acc3). With no stage policy (``allowed_scopes`` None: the
+      ``vendor_direct`` may fall back to a vendor API behind acc3). A ``pii`` stage (AA-1039, ``pii_class``, CIS 373)
+      also needs an ``aws_only`` connection and a US deployment (``data_scope.pii_allows``: a ``us.`` profile or an
+      in-region id on a ``us-*`` connection, never ``global.``), whatever its scopes say. With no stage policy
+      (``allowed_scopes`` None: the
       column not migrated, a stage with no row) the S3 rule: a ``vendor_direct`` connection only when it is the FIRST
       enabled callable row (the admin deliberately put a vendor API ahead, S2's rule), never a same-model fallback
       behind an ``aws_only`` one (migration 306 seeds enabled Anthropic API rows behind acc3 for every Anthropic
@@ -311,6 +315,9 @@ def deployment_plan(model: CatalogModel, allowed_scopes: Optional[tuple] = None,
                 role_skips.append((c.connection.connection_key, role))
                 continue
             scope = c.connection.data_scope
+            if not data_scope.pii_allows(pii_class, scope, c.deployment.wire_id, c.connection.region):
+                _skip(model, c.deployment, "a personal-data stage runs only on our AWS accounts in the US")
+                continue
             if allowed_scopes is not None:
                 if not data_scope.allows(allowed_scopes, scope):
                     _skip(model, c.deployment, f"data scope {scope} is not allowed for the stage")

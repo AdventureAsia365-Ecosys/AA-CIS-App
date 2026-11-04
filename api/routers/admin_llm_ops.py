@@ -284,6 +284,43 @@ def _check_scopes(stage: str, scopes: Optional[tuple], reach: dict, keys: list) 
             "migration (shared.llm_role_config.allowed_scopes), not an admin setting"))
 
 
+def _pii_usable_models(models: Optional[list]) -> frozenset:
+    """AA-1039 (CIS 373): the model keys with at least one deployment a personal-data stage may use (an aws_only
+    connection, a US deployment: ``data_scope.pii_allows``), every row enabled or not (the switch is an operation, the
+    class a policy). A model the registry does not describe is not usable (the gateway refuses that path for a pii
+    stage). Sync (registry caches): run in a thread. Never raises."""
+    try:
+        rows = llm_connections.registry_rows_sync()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("llm_admin_pii_registry_failed", error=str(e)[:200])
+        return frozenset()
+    out: set[str] = set()
+    for m in models or []:
+        try:
+            for d in llm_deployments.deployments_for_sync(m.model_key, enabled_only=False):
+                c = rows.get(d.connection_key)
+                if c is not None and data_scope.pii_allows(data_scope.PII_PERSONAL, c.data_scope, d.wire_id, c.region):
+                    out.add(m.model_key)
+                    break
+        except Exception as e:  # noqa: BLE001
+            logger.warning("llm_admin_pii_deployments_failed", model=m.model_key, error=str(e)[:200])
+    return frozenset(out)
+
+
+async def _check_pii(stage: str, current: dict, models: Optional[list], keys: list) -> None:
+    """AA-1039 (root ADR 0019 d12): 422 when a personal-data stage (pii_class 'pii') names a model with no deployment
+    on our AWS accounts in the US: the gateway would never call it for that stage. A content stage is not checked."""
+    if data_scope.normalize_pii_class(current.get("pii_class")) != data_scope.PII_PERSONAL:
+        return
+    usable = await asyncio.to_thread(_pii_usable_models, models)
+    blocked = [k for k in keys if k and k not in usable]
+    if blocked:
+        raise HTTPException(status_code=422, detail=(
+            f"stage {stage!r} handles personal data (pii_class pii): {', '.join(blocked)} has no deployment on our "
+            "AWS accounts in the US (a us. profile or an in-region model), so the gateway would never call it. "
+            "A stage's data class is a migration (shared.llm_role_config.pii_class), not an admin setting"))
+
+
 def _check_aws_before_vendor(stage: str, scopes: Optional[tuple], reach: dict, chain: list,
                              twins: Optional[dict] = None) -> None:
     """AA-1026 (S263, tech lead T-3: go outside AWS only as the last resort; relaxed S267). 422 when a stage open to
@@ -408,6 +445,8 @@ async def get_llm_config():
         r["updated_at"] = r["updated_at"].isoformat() if r["updated_at"] else None
         # AA-1002 (S5): read-only here (a migration sets it); None until migration 311 is applied
         r["allowed_scopes"] = r.get("allowed_scopes")
+        # AA-1039 (CIS 373): the stage's data class, read-only (None before 373); AI gateway > Routing by data class
+        r["pii_class"] = r.get("pii_class")
         r["options"] = _options_for(r["role"], r["stage"], models,
                                     data_scope.normalize(r["allowed_scopes"]), reach)
         r["account_route_options"] = _account_route_options() if r["provider"] == "claude" else []
@@ -435,6 +474,7 @@ async def patch_llm_config(
     scopes = data_scope.normalize(current.get("allowed_scopes"))
     # AA-1002 (S5): the stage's data scopes first (the clearer refusal), then the S235 last-resort rule.
     _check_scopes(stage, scopes, reach, [body.model_id])
+    await _check_pii(stage, current, models, [body.model_id])        # AA-1039: personal data stays US / our accounts
     if body.model_id in data_scope.outside_aws_only(reach):
         raise HTTPException(status_code=422, detail=_VENDOR_DIRECT_LAST_RESORT_ONLY)
     allowed = {o["model_id"] for o in _options_for(current["role"], stage, models, scopes, reach) if o["available"]}
@@ -515,6 +555,7 @@ async def patch_llm_route(
     # AA-1002 (S5): every model the route names must be callable within the stage's data scopes; a model reached only
     # outside AWS stays the S235 last resort (never a non-last fallback, never the shadow).
     _check_scopes(stage, scopes, reach, [*fallbacks, shadow])
+    await _check_pii(stage, current, models, [*fallbacks, shadow])  # AA-1039: personal data stays US / our accounts
     allowed = {o["model_id"] for o in _options_for(current["role"], stage, models, scopes, reach) if o["available"]}
     outside = data_scope.outside_aws_only(reach)
     # S267 (model first): a vendor-only model right behind its AWS twin is part of that model's slot, not a mid-chain

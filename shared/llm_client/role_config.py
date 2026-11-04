@@ -78,6 +78,10 @@ class StageConfig:
     enabled: bool = True
     disabled_reason: Optional[str] = None
     degrade_mode: Optional[str] = None
+    # AA-1039 (R6, migration 373; root ADR 0019 d12): the stage's data class, content | pii (data_scope.PII_CLASSES).
+    # A pii stage is called only on our AWS accounts in the US (vendor_route.deployment_plan). Column missing / no row
+    # = content (every row before 373).
+    pii_class: str = "content"
 
 
 # S235 (Nghiệp, 14/10/2026): Bedrock first; the OpenAI platform API is only the LAST-RESORT fallback for
@@ -247,6 +251,7 @@ def _row_to_config(row) -> StageConfig:
         enabled=_column(row, "is_active", True) is not False,
         disabled_reason=_column(row, "disabled_reason", None),
         degrade_mode=_column(row, "degrade_mode", None),
+        pii_class=data_scope.normalize_pii_class(_column(row, "pii_class", None)),
     )
 
 
@@ -287,11 +292,14 @@ _deadline_column_missing_at = 0.0
 # AA-642 A1: migration 326 adds degrade_mode / disabled_reason, read the same way (missing = none declared, no reason).
 _SWITCH_COLUMNS = ", degrade_mode, disabled_reason"
 _switch_column_missing_at = 0.0
+# AA-1039 (R6): migration 373 adds pii_class, read the same way (missing = content, retried later).
+_PII_COLUMN = ", pii_class"
+_pii_column_missing_at = 0.0
 
 
 def _scope_select() -> str:
-    """", allowed_scopes[, route_deadline_s[, degrade_mode, disabled_reason]]" for the optional columns believed to
-    exist, else ""."""
+    """", allowed_scopes[, route_deadline_s[, degrade_mode, disabled_reason[, pii_class]]]" for the optional columns
+    believed to exist, else ""."""
     now = time.monotonic()
     if _scope_column_missing_at and now - _scope_column_missing_at < _SCOPE_RETRY_SECONDS:
         return ""
@@ -299,21 +307,27 @@ def _scope_select() -> str:
         return ", allowed_scopes"
     if _switch_column_missing_at and now - _switch_column_missing_at < _SCOPE_RETRY_SECONDS:
         return ", allowed_scopes, route_deadline_s"
-    return ", allowed_scopes, route_deadline_s" + _SWITCH_COLUMNS
+    if _pii_column_missing_at and now - _pii_column_missing_at < _SCOPE_RETRY_SECONDS:
+        return ", allowed_scopes, route_deadline_s" + _SWITCH_COLUMNS
+    return ", allowed_scopes, route_deadline_s" + _SWITCH_COLUMNS + _PII_COLUMN
 
 
 async def _fetch_scoped(fetch, sql_for):
-    """``fetch(sql_for(optional_cols))``; on a missing optional column (degrade_mode / disabled_reason before migration
-    326, route_deadline_s before 320, allowed_scopes before 311), once more without it."""
-    global _scope_column_missing_at, _deadline_column_missing_at, _switch_column_missing_at
-    for _ in range(4):
+    """``fetch(sql_for(optional_cols))``; on a missing optional column (pii_class before migration 373, degrade_mode /
+    disabled_reason before 326, route_deadline_s before 320, allowed_scopes before 311), once more without it."""
+    global _scope_column_missing_at, _deadline_column_missing_at, _switch_column_missing_at, _pii_column_missing_at
+    for _ in range(5):
         cols = _scope_select()
         try:
             return await fetch(sql_for(cols))
         except asyncpg.exceptions.UndefinedColumnError as e:
             if not cols:
                 raise
-            if "degrade_mode" in cols and ("degrade_mode" in str(e) or "disabled_reason" in str(e)):
+            if "pii_class" in cols and "pii_class" in str(e):
+                _pii_column_missing_at = time.monotonic()
+                logger.warning("llm_role_config_pii_column_missing",
+                               hint="migration 373 not applied: every stage reads as content")
+            elif "degrade_mode" in cols and ("degrade_mode" in str(e) or "disabled_reason" in str(e)):
                 _switch_column_missing_at = time.monotonic()
                 logger.warning("llm_role_config_switch_columns_missing",
                                hint="migration 326 not applied: no degrade modes, no switch reasons")
@@ -436,6 +450,9 @@ async def list_stage_configs() -> list[StageConfig]:
             r["allowed_scopes"] = list(scopes) if scopes is not None else None
             r.setdefault("degrade_mode", None)                          # AA-642 A1: None before migration 326
             r.setdefault("disabled_reason", None)
+            # AA-1039 (R6): content | pii; None before migration 373 (AI gateway > Routing by data class then shows
+            # "no class yet"; the gateway itself reads a missing column as content)
+            r["pii_class"] = data_scope.normalize_pii_class(r["pii_class"]) if "pii_class" in r else None
         return out
     finally:
         await conn.close()
