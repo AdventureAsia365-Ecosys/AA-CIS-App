@@ -1,5 +1,5 @@
 -- migrate: expand
--- Migration 373: AA-1042 (S268, AI gateway route control center: Route trace, Alerts, Quality guard) — the per-stage
+-- Migration 371: AA-1042 (S268, AI gateway route control center: Route trace, Alerts, Quality guard) — the per-stage
 -- route alert thresholds and the hold-for-review switch of content written by a fallback model.
 --
 -- Why. Tech lead decision S267: "every fallback is logged, traced and alerted". The gateway now tags every attempt row
@@ -23,7 +23,7 @@
 --                              NULL = '*' row, else false (off by default, tech lead S267);
 --        notes, updated_at, updated_by.
 --   2. GRANT cis_app SELECT, INSERT, UPDATE, DELETE (GET / PUT / DELETE /admin/ai-gateway/route-policy/{stage}).
---   3. Register 373.
+--   3. Register 371.
 --
 -- Behaviour. None on apply: no row = the code defaults (fallback >= 20 % of >= 5 requests, last model on, cost
 -- shift 1 USD, hold off). Before this file is applied the code reads no row (it catches the missing table) and the
@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS shared.llm_route_policy (
     hold_fallback_writes  boolean,
     notes                 text,
     updated_at            timestamptz   NOT NULL DEFAULT now(),
-    updated_by            text          NOT NULL DEFAULT 'migration:373',
+    updated_by            text          NOT NULL DEFAULT 'migration:371',
     CONSTRAINT llm_route_policy_pkey PRIMARY KEY (stage),
     CONSTRAINT llm_route_policy_stage_check CHECK (stage = '*' OR stage ~ '^[a-z0-9][a-z0-9_.-]{0,63}$'),
     CONSTRAINT llm_route_policy_pct_check CHECK (fallback_alert_pct IS NULL OR fallback_alert_pct BETWEEN 1 AND 100),
@@ -65,28 +65,28 @@ CREATE TABLE IF NOT EXISTS shared.llm_route_policy (
 );
 
 COMMENT ON TABLE shared.llm_route_policy IS
-    'AA-1042 (CIS 373): per LLM stage (or * = the defaults) the route alert thresholds of the llm_route_watch job '
+    'AA-1042 (CIS 371): per LLM stage (or * = the defaults) the route alert thresholds of the llm_route_watch job '
     '(fallback rate, last model reached, cost shift) and whether content written by a fallback model is held for '
     'review. Read by shared/llm_client/route_watch.py (30 s cache per process); edited by PUT / DELETE '
     '/admin/ai-gateway/route-policy/{stage}. No row = the code defaults.';
 COMMENT ON COLUMN shared.llm_route_policy.fallback_alert_pct IS
-    'AA-1042 (373): alert when at least this share (%) of the stage''s requests in the 60 min watch window was served '
+    'AA-1042 (371): alert when at least this share (%) of the stage''s requests in the 60 min watch window was served '
     'by a fallback rung (not the first attempt). NULL = the * row, else 20.';
 COMMENT ON COLUMN shared.llm_route_policy.min_requests IS
-    'AA-1042 (373): the fallback rate alerts only from this many requests in the window. NULL = the * row, else 5.';
+    'AA-1042 (371): the fallback rate alerts only from this many requests in the window. NULL = the * row, else 5.';
 COMMENT ON COLUMN shared.llm_route_policy.alert_last_rung IS
-    'AA-1042 (373): alert when a request reached the last model of the stage''s route. NULL = the * row, else true.';
+    'AA-1042 (371): alert when a request reached the last model of the stage''s route. NULL = the * row, else true.';
 COMMENT ON COLUMN shared.llm_route_policy.cost_shift_usd IS
-    'AA-1042 (373): alert when fallback-served requests cost at least this many USD more than the primary would have '
+    'AA-1042 (371): alert when fallback-served requests cost at least this many USD more than the primary would have '
     '(its 7 day average) over the last 24 h. NULL = the * row, else 1.00.';
 COMMENT ON COLUMN shared.llm_route_policy.hold_fallback_writes IS
-    'AA-1042 (373): content written by a fallback model is held for review (A1 Review Queue, T9 admin-only held '
+    'AA-1042 (371): content written by a fallback model is held for review (A1 Review Queue, T9 admin-only held '
     'label; the tenant still receives it) instead of only marked. NULL = the * row, else false.';
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON shared.llm_route_policy TO cis_app;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('373', now(), 'AA-1042: shared.llm_route_policy (route alert thresholds and the fallback hold switch per '
+VALUES ('371', now(), 'AA-1042: shared.llm_route_policy (route alert thresholds and the fallback hold switch per '
                       'stage)')
 ON CONFLICT (version) DO NOTHING;
 

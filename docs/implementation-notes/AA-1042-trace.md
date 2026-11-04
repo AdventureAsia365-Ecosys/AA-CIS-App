@@ -64,7 +64,7 @@ Parallel lane of AA-1042. The admin chain editor, provider order, presets and ro
 
 ## Changed
 
-- Migration 373 (expand): `shared.llm_route_policy` (per-stage thresholds + hold switch; `*` row = defaults).
+- Migration 371 (expand): `shared.llm_route_policy` (per-stage thresholds + hold switch; `*` row = defaults).
 - T2 (`services/jobs/t2_rewrite_job.py`): the fallback mark on the version (`judge_breakdown.fallback_writer`).
 - `GET /admin/content-quality/fallback-writes` (tenant list) split from `/admin/ai-gateway/route-trace/fallback-content`
   (catalog list, spend.read).
@@ -86,15 +86,15 @@ Parallel lane of AA-1042. The admin chain editor, provider order, presets and ro
 - Rows written before this change have no `route_trace`: the Trace tab shows them as single-attempt requests
   only through the Calls list, not in the request list.
 - The test endpoint makes real (tiny) paid calls: about 0.0001 USD each on today's routes.
-- **Migration number.** 373 follows the orchestrator's hint (370-372 held by parallel lanes; main is at 369). The
+- **Migration number.** Renumbered 373 -> 371 by the orchestrator after CIS 370 merged (main max + 1). The
   CIS preflight (ADR 0017 d1) accepts only main max + 1, so the file is renumbered at merge time to the then-current
   main max + 1. The code no longer names the number (it says "the llm_route_policy migration"; the integration test
   finds the file by name and reads its version from the file name), so a renumber touches only: the file name, the
   number inside its body (header, step 3, `updated_by` default `migration:NNN`, the COMMENTs, the `schema_versions`
-  INSERT), this file, and the root retention row (`02-data-management.md`: "AA-1042, CIS 373" and the S268 note).
-  Check with `git grep -n '373' -- api/migrations/373_llm_route_policy.sql docs/implementation-notes/AA-1042-trace.md`
-  and in the root worktree `git grep -n 'CIS 373'`.
-- **No readiness raise.** Every read falls back when 373 is missing (`ready: false`, defaults; policy writes 503), so
+  INSERT), this file, and the root retention row (`02-data-management.md`: "AA-1042, CIS 371" and the S268 note).
+  Check with `git grep -n '371' -- api/migrations/371_llm_route_policy.sql docs/implementation-notes/AA-1042-trace.md`
+  and in the root worktree `git grep -n 'CIS 371'`.
+- **No readiness raise.** Every read falls back when 371 is missing (`ready: false`, defaults; policy writes 503), so
   the migration and the code ship in one PR (ADR 0017 d1, expand file).
 - **Live check (Dev).** Pick an active judge / validate stage with at least two models, then
   `POST /admin/ai-gateway/route-trace/test {"stage": "...", "refuse_primary": true, "count": 6}`, run
