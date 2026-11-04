@@ -98,9 +98,62 @@ def test_cis_app_grants(cur):
     for col, want in (("priority", True), ("updated_by", True), ("enabled", False), ("wire_id", False)):
         cur.execute("SELECT has_column_privilege('cis_app', 'shared.llm_model_deployment', %s, 'UPDATE') AS ok", (col,))
         assert cur.fetchone()["ok"] is want, col
-    cur.execute("SELECT has_function_privilege('public', 'shared.llm_call_log_stamp_route_version()', 'EXECUTE') "
-                "AS ok")
-    assert cur.fetchone()["ok"] is False
+    for role in ("public", "cis_app"):
+        cur.execute("SELECT has_function_privilege(%s, 'shared.llm_call_log_stamp_route_version()', 'EXECUTE') "
+                    "AS ok", (role,))
+        assert cur.fetchone()["ok"] is False, role
+
+
+def test_grants_narrowed_under_the_dev_default_privileges(cur):
+    """On Dev DB Migrate creates the objects as cis_owner, whose default privileges (245) give cis_app every table
+    right and EXECUTE on new functions; the CI superuser replay has no such default ACL. Simulate it: hand out those
+    rights, re-run the file, and the file must narrow them again (its after-guard RAISEs otherwise)."""
+    cur.execute("SELECT count(*) AS n FROM pg_roles WHERE rolname IN ('cis_app', 'aa_app_user', 'catalog_owner')")
+    if cur.fetchone()["n"] != 3:
+        pytest.skip("the runtime roles are not in this database")
+    cur.execute("GRANT ALL ON shared.llm_route_settings, shared.llm_route_config_version "
+                "TO cis_app, aa_app_user, catalog_owner")
+    cur.execute("GRANT EXECUTE ON FUNCTION shared.llm_call_log_stamp_route_version() TO PUBLIC, cis_app")
+    _run(cur)
+    for table, priv, want in (
+        ("shared.llm_route_settings", "SELECT", True), ("shared.llm_route_settings", "UPDATE", True),
+        ("shared.llm_route_settings", "INSERT", False), ("shared.llm_route_settings", "DELETE", False),
+        ("shared.llm_route_config_version", "SELECT", True), ("shared.llm_route_config_version", "INSERT", True),
+        ("shared.llm_route_config_version", "UPDATE", False), ("shared.llm_route_config_version", "DELETE", False),
+        ("shared.llm_route_config_version", "TRUNCATE", False),
+    ):
+        cur.execute("SELECT has_table_privilege('cis_app', %s, %s) AS ok", (table, priv))
+        assert cur.fetchone()["ok"] is want, (table, priv)
+    for role in ("aa_app_user", "catalog_owner"):
+        for table in ("shared.llm_route_settings", "shared.llm_route_config_version"):
+            cur.execute("SELECT has_table_privilege(%s, %s, 'SELECT') AS ok", (role, table))
+            assert cur.fetchone()["ok"] is False, (role, table)
+    for role in ("public", "cis_app"):
+        cur.execute("SELECT has_function_privilege(%s, 'shared.llm_call_log_stamp_route_version()', 'EXECUTE') "
+                    "AS ok", (role,))
+        assert cur.fetchone()["ok"] is False, role
+
+
+def test_the_trigger_stamps_a_row_cis_app_inserts(cur):
+    """A trigger function needs no EXECUTE right of the inserting role: cis_app's ledger INSERT is stamped."""
+    cur.execute("SELECT 1 AS ok FROM pg_roles WHERE rolname = 'cis_app'")
+    if cur.fetchone() is None:
+        pytest.skip("no cis_app role in this database")
+    cur.execute("SELECT current_version AS v FROM shared.llm_route_settings")
+    version = cur.fetchone()["v"]
+    row_id = str(uuid.uuid4())
+    cur.execute("BEGIN")
+    try:
+        cur.execute("GRANT USAGE ON SCHEMA shared TO cis_app")                    # rolled back with the test
+        cur.execute("GRANT SELECT, INSERT ON shared.llm_call_log TO cis_app")
+        cur.execute("SET LOCAL ROLE cis_app")
+        cur.execute("INSERT INTO shared.llm_call_log (id, stage, role, model, quality_signal, created_at, app) "
+                    "VALUES (%s, 'zz_aa1042_stage', 'validate', 'zz-model', '{}', now(), 'cis')", (row_id,))
+        cur.execute("RESET ROLE")
+        cur.execute("SELECT route_config_version AS v FROM shared.llm_call_log WHERE id = %s", (row_id,))
+        assert cur.fetchone()["v"] == version
+    finally:
+        cur.execute("ROLLBACK")
 
 
 def test_the_trigger_stamps_cis_rows_only(cur):

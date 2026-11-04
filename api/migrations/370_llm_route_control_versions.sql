@@ -41,6 +41,9 @@
 --   4. cis_app: SELECT, UPDATE on shared.llm_route_settings; SELECT, INSERT on shared.llm_route_config_version (no
 --      UPDATE / DELETE: the history is append-only for the app); UPDATE (priority, updated_at, updated_by) on
 --      shared.llm_model_deployment (the provider order per model; enabled, wire_id and prices stay migration-only).
+--      REVOKE ALL from PUBLIC, cis_app, aa_app_user and catalog_owner first (and EXECUTE on the trigger function from
+--      PUBLIC and cis_app): on Dev cis_owner's default privileges (245) would give cis_app every table right and
+--      EXECUTE on the function. A guard checks the result.
 --   5. The gpt-4.1 deployment on openai-direct: enabled = false (catalog row disabled since 224, model retired S235;
 --      the daily probe calls every enabled deployment). No route names gpt-4.1 (guard).
 --   6. Register 370.
@@ -52,7 +55,9 @@
 --
 -- Guards (RAISE rolls the whole file back):
 --   before: shared.llm_role_config, shared.llm_model_deployment, shared.llm_call_log exist; 367 registered.
---   after:  one settings row with a version row behind it; no enabled gpt-4.1 deployment; no stage route names gpt-4.1.
+--   after:  one settings row with a version row behind it; no enabled gpt-4.1 deployment; no stage route names gpt-4.1;
+--           cis_app holds exactly the step 4 rights (no UPDATE / DELETE on the versions, no EXECUTE on the trigger
+--           function), aa_app_user and catalog_owner read neither table.
 
 BEGIN;
 
@@ -181,8 +186,6 @@ BEGIN
 END
 $fn$;
 
-REVOKE ALL ON FUNCTION shared.llm_call_log_stamp_route_version() FROM PUBLIC;
-
 COMMENT ON FUNCTION shared.llm_call_log_stamp_route_version() IS
     'AA-1042 (CIS 370): BEFORE INSERT on shared.llm_call_log: a CIS row (app cis or NULL) without a value gets '
     'shared.llm_route_settings.current_version when the inserting role may read it (else NULL: a ledger row is '
@@ -195,7 +198,13 @@ CREATE TRIGGER llm_call_log_route_version
 
 -- ── 4. grants ────────────────────────────────────────────────────────────────────────────────────────────────────
 
-REVOKE ALL ON shared.llm_route_settings, shared.llm_route_config_version FROM PUBLIC;
+-- REVOKE from cis_app, aa_app_user and catalog_owner too (the 345 / 353 pattern): on Dev DB Migrate creates these
+-- objects as cis_owner, whose default privileges (245) give cis_app SELECT, INSERT, UPDATE, DELETE on every new table
+-- and EXECUTE on every new function. Without it the app could rewrite or delete the version history.
+REVOKE ALL ON shared.llm_route_settings, shared.llm_route_config_version
+    FROM PUBLIC, cis_app, aa_app_user, catalog_owner;
+-- A trigger function needs no EXECUTE right of the inserting role (X1 rule, test_aa860_migration_244).
+REVOKE ALL ON FUNCTION shared.llm_call_log_stamp_route_version() FROM PUBLIC, cis_app;
 GRANT SELECT, UPDATE ON shared.llm_route_settings TO cis_app;
 GRANT SELECT, INSERT ON shared.llm_route_config_version TO cis_app;
 GRANT UPDATE (priority, updated_at, updated_by) ON shared.llm_model_deployment TO cis_app;
@@ -221,6 +230,31 @@ BEGIN
      WHERE model_id = 'gpt-4.1' OR 'gpt-4.1' = ANY (fallback_model_ids) OR shadow_model_id = 'gpt-4.1';
     IF routed IS NOT NULL THEN
         RAISE EXCEPTION 'migration 370: stages still route to the retired gpt-4.1: %', routed;
+    END IF;
+    -- the grants as step 4 leaves them, checked here so Dev (cis_owner default privileges) fails loudly
+    IF NOT has_table_privilege('cis_app', 'shared.llm_route_settings', 'SELECT')
+       OR NOT has_table_privilege('cis_app', 'shared.llm_route_settings', 'UPDATE')
+       OR NOT has_table_privilege('cis_app', 'shared.llm_route_config_version', 'SELECT')
+       OR NOT has_table_privilege('cis_app', 'shared.llm_route_config_version', 'INSERT') THEN
+        RAISE EXCEPTION 'migration 370: cis_app lacks a right step 4 grants';
+    END IF;
+    IF has_table_privilege('cis_app', 'shared.llm_route_config_version', 'UPDATE')
+       OR has_table_privilege('cis_app', 'shared.llm_route_config_version', 'DELETE')
+       OR has_table_privilege('cis_app', 'shared.llm_route_config_version', 'TRUNCATE')
+       OR has_table_privilege('cis_app', 'shared.llm_route_settings', 'INSERT')
+       OR has_table_privilege('cis_app', 'shared.llm_route_settings', 'DELETE')
+       OR has_table_privilege('cis_app', 'shared.llm_route_settings', 'TRUNCATE')
+       OR has_column_privilege('cis_app', 'shared.llm_model_deployment', 'enabled', 'UPDATE')
+       OR has_function_privilege('cis_app', 'shared.llm_call_log_stamp_route_version()', 'EXECUTE')
+       OR has_function_privilege('public', 'shared.llm_call_log_stamp_route_version()', 'EXECUTE') THEN
+        RAISE EXCEPTION 'migration 370: cis_app or PUBLIC holds a right this file does not grant (default privileges '
+                        'of the creating role?)';
+    END IF;
+    IF has_table_privilege('aa_app_user', 'shared.llm_route_config_version', 'SELECT')
+       OR has_table_privilege('catalog_owner', 'shared.llm_route_config_version', 'SELECT')
+       OR has_table_privilege('aa_app_user', 'shared.llm_route_settings', 'SELECT')
+       OR has_table_privilege('catalog_owner', 'shared.llm_route_settings', 'SELECT') THEN
+        RAISE EXCEPTION 'migration 370: aa_app_user or catalog_owner may read the route control tables';
     END IF;
 END $$;
 
