@@ -5,7 +5,9 @@
   with the token is refused and logged; ending the session closes it (guard: once) and the token stops working;
 - a tenant outside the member's book: 403, no row; removing the assignment ends the view at the next request;
 - an expired session reads as ended and is closed as 'expired';
-- the Assignments overview is scoped per role and the PUT refuses a role that works no tenant book.
+- the Assignments overview is scoped per role and the PUT refuses a role that works no tenant book;
+- (S268 fix pass) the start answers a token only to the staff BFF (x-view-as-client: bff), and the reads depend on the
+  role: support's token gets 403 view_as_not_for_role on /v1/quota and 403 view_as_read_only on /v1/billing (logged).
 
 Calls carry the main admin secret + x-admin-role + x-admin-user-id (the machine / CI identity path of
 api/core/tenant_scope.py), as tests/integration/test_aa1035_tenant_scope_pg.py does.
@@ -82,8 +84,11 @@ async def world(monkeypatch):
     await pool.close()
 
 
-def _as(s, roles, who):
-    return {"X-Admin-Secret": SECRET, "x-admin-role": roles[who], "x-admin-user-id": s[who]}
+def _as(s, roles, who, bff=True):
+    h = {"X-Admin-Secret": SECRET, "x-admin-role": roles[who], "x-admin-user-id": s[who]}
+    if bff:
+        h["x-view-as-client"] = "bff"   # api/core/view_as.py BFF_HEADER: the view-as BFF sets it on the start call
+    return h
 
 
 async def _assign(client, s, roles, tenant, who, kind):
@@ -156,10 +161,28 @@ async def test_scope_and_a_removed_assignment_end_the_view(world):
     assert refused.status_code == 403
     assert await pool.fetchval("SELECT count(*) FROM shared.staff_view_as_session WHERE tenant_id = $1::uuid",
                                t["other"]) == 0
-    # support reaches the pool
+    # not through the BFF: refused before any row (no token for a page)
+    not_bff = await client.post(f"/admin/tenants/{t['pooled']}/view-as", headers=_as(s, roles, "support", bff=False),
+                                json={"reason": REASON})
+    assert not_bff.status_code == 403 and not_bff.json()["detail"] == "view_as_bff_only"
+    assert "token" not in not_bff.json()
+    assert await pool.fetchval("SELECT count(*) FROM shared.staff_view_as_session WHERE tenant_id = $1::uuid",
+                               t["pooled"]) == 0
+    # support reaches the pool, but never the plan / usage read nor billing
     pooled = await client.post(f"/admin/tenants/{t['pooled']}/view-as", headers=_as(s, roles, "support"),
                                json={"reason": REASON})
     assert pooled.status_code == 201
+    assert "/v1/quota" not in pooled.json()["allowed_reads"] and "/v1/billing" not in pooled.json()["allowed_reads"]
+    support_bearer = {"Authorization": f"Bearer {pooled.json()['token']}"}
+    quota = await client.get("/v1/quota", headers=support_bearer)
+    assert quota.status_code == 403 and quota.json()["detail"] == "view_as_not_for_role"
+    billing = await client.get("/v1/billing", headers=support_bearer)
+    assert billing.status_code == 403 and billing.json()["detail"] == "view_as_read_only"
+    assert (await client.get("/v1/account/members", headers=support_bearer)).status_code == 200
+    support_log = await _audit(pool, "tenant.view_as_request", pooled.json()["session_id"])
+    assert [(r["details"]["outcome"], r["route"], r["status"]) for r in support_log] == [
+        ("refused_route_not_for_role", "/v1/quota", 403), ("refused_read_only", None, 403),
+        ("served", "/v1/account/members", None)]
     # the content role never
     writer = await client.post(f"/admin/tenants/{t['mine']}/view-as", headers=_as(s, roles, "writer"),
                                json={"reason": REASON})

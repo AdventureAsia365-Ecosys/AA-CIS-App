@@ -8,7 +8,9 @@ Guards (lesson S267: the adversarial re-review found a privilege escalation; the
 - the dependency-side check (tenant_role.enforce) refuses a view-as payload on anything but an allowed read;
 - the start / read / end routes answer each role per the matrix (admin, customer_success own book, support own book +
   pool; nobody else), need a staff identity, a reason, at most 60 minutes, a partner tenant that is not offboarded;
-- the Dev-only E2E admin starts a session on a synthetic tenant only.
+- the Dev-only E2E admin starts a session on a synthetic tenant only;
+- (S268 fix pass) the reads depend on the role: view-as never shows a role more than its own staff pages (support never
+  reads /v1/quota; nobody reads /v1/billing), and only the staff BFF gets the token (x-view-as-client: bff).
 
 No network, no AWS, no DB: a fake connection answers exactly the SQL each path runs and fails the test on any other.
 """
@@ -159,8 +161,11 @@ def world(monkeypatch):
     return TestClient(app, raise_server_exceptions=False), db, app
 
 
-def _h(role: str, staff: str = STAFF) -> dict:
-    return {"X-Admin-Secret": SECRET, "x-admin-role": role, "x-admin-user-id": staff}
+def _h(role: str, staff: str = STAFF, bff: bool = True) -> dict:
+    h = {"X-Admin-Secret": SECRET, "x-admin-role": role, "x-admin-user-id": staff}
+    if bff:
+        h[view_as.BFF_HEADER] = view_as.BFF_HEADER_VALUE
+    return h
 
 
 def _concrete(path: str) -> str:
@@ -183,13 +188,13 @@ def test_the_read_allow_list_is_exactly_the_reviewed_routes():
     # Guard: a new entry must be a reviewed change of this test. Never a read that starts work (GET /v1/slate enqueues a
     # paid t7_slate job), an export, channel credentials or the brand branch of /admin/brand-identity.
     assert view_as.READ_ROUTES == (
-        "/v1/quota", "/v1/billing", "/v1/marketplace", "/v1/tours/my-versions", "/v1/tours/versions/{version_id}",
+        "/v1/quota", "/v1/marketplace", "/v1/tours/my-versions", "/v1/tours/versions/{version_id}",
         "/v1/content-writing/reviews", "/v1/content-writing/pieces/{piece_id}", "/v1/publish-log",
         "/v1/publish-log/pending", "/v1/notifications", "/v1/facts", "/v1/account/members", "/v1/account/activity",
     )
     for banned in ("/v1/slate", "/v1/tours/versions/{version_id}/export-docx", "/v1/account/activity/export",
                    "/v1/integrations/wordpress", "/v1/integrations/facebook", "/admin/brand-identity",
-                   "/v1/planning/trip-reallocation/suggest"):
+                   "/v1/planning/trip-reallocation/suggest", "/v1/billing"):
         assert banned not in view_as.READ_ROUTES
 
 
@@ -338,17 +343,82 @@ def test_a_customer_success_member_whose_assignment_was_removed_loses_the_view()
     assert status == 401 and inner.calls == 0 and '"refused_out_of_scope"' in db2.audit[0][5]
 
 
-def test_support_keeps_the_view_of_a_pooled_tenant():
+def _as_role(role: str) -> FakeDb:
     db = FakeDb()
-    db.session["staff_role"] = "support"
+    db.session["staff_role"] = role
 
     async def state(sql, *a):
         if sql == view_as.SESSION_STATE_SQL:
             return dict(db.session)
         return await FakeDb.fetchrow(db, sql, *a)
     db.fetchrow = state
-    status, inner, _ = _run(db, f"Bearer {token(sub=POOLED)}")
+    return db
+
+
+def test_support_keeps_the_view_of_a_pooled_tenant():
+    db = _as_role("support")
+    status, inner, _ = _run(db, f"Bearer {token(sub=POOLED)}", path="/v1/marketplace")
     assert status == 200 and inner.calls == 1
+
+
+# ── the role x read matrix (S268 fix pass: view-as never widens a role's own reads) ───────────────────────────────
+
+# Every view-as role x every allowed read. support holds no money capability: never the plan / usage read.
+READS_BY_ROLE = {
+    "admin": set(view_as.READ_ROUTES),
+    "customer_success": set(view_as.READ_ROUTES),
+    "support": set(view_as.READ_ROUTES) - {"/v1/quota"},
+}
+
+
+@pytest.mark.parametrize("role", ROLES)
+def test_reads_for_role_matches_the_matrix(role):
+    assert set(view_as.reads_for_role(role)) == READS_BY_ROLE.get(role, set()), role
+    for template in view_as.READ_ROUTES:
+        assert view_as.role_may_read(role, template) is (template in READS_BY_ROLE.get(role, set()))
+    assert view_as.role_may_read("admin", "/v1/billing") is False      # not an allowed read at all
+
+
+def test_every_route_cap_is_a_real_capability_and_an_allowed_read():
+    for template, caps in view_as.ROUTE_CAPS.items():
+        assert template in view_as.READ_ROUTES
+        assert caps and set(caps) <= staff_authz.CAPABILITIES
+
+
+@pytest.mark.parametrize("role", sorted(VIEW_AS_ROLES))
+@pytest.mark.parametrize("template", view_as.READ_ROUTES)
+def test_each_view_as_role_x_each_read_through_the_gate(role, template):
+    """The gate (current DB role) serves exactly READS_BY_ROLE; any other read: 403 view_as_not_for_role, logged."""
+    db = _as_role(role)
+    status, inner, sent = _run(db, f"Bearer {token()}", path=_concrete(template))
+    (row,) = db.audit
+    if template in READS_BY_ROLE[role]:
+        assert status == 200 and inner.calls == 1, (role, template)
+        assert '"outcome": "served"' in row[5]
+    else:
+        assert status == 403 and inner.calls == 0, (role, template)
+        assert view_as.NOT_FOR_ROLE_DETAIL.encode() in sent[1]["body"]
+        assert row[8] == template and row[9] == 403
+        assert f'"outcome": "refused_{view_as.NOT_FOR_ROLE_REASON}"' in row[5]
+
+
+@pytest.mark.parametrize("role,status", [("admin", 403), ("customer_success", 403), ("support", 403)])
+def test_nobody_reads_billing_in_a_view_as_session(role, status):
+    db = _as_role(role)
+    got, inner, sent = _run(db, f"Bearer {token()}", path="/v1/billing")
+    assert got == status and inner.calls == 0 and view_as.READ_ONLY_DETAIL.encode() in sent[1]["body"]
+    assert '"outcome": "refused_read_only"' in db.audit[0][5]
+
+
+def test_support_quota_is_refused_with_the_real_app(world):
+    """The real app: a support view-as token gets 403 on /v1/quota and /v1/billing (logged), 200-path reads pass."""
+    client, db, _ = world
+    db.session["staff_role"] = "support"
+    for path, detail in (("/v1/quota", view_as.NOT_FOR_ROLE_DETAIL), ("/v1/billing", view_as.READ_ONLY_DETAIL)):
+        res = client.get(path, headers={"Authorization": f"Bearer {token()}"})
+        assert res.status_code == 403 and res.json()["detail"] == detail, path
+    outcomes = [a[5] for a in db.audit if a[2] == view_as.AUDIT_ACTION_REQUEST]
+    assert len(outcomes) == 2 and '"refused_route_not_for_role"' in outcomes[0] and '"refused_read_only"' in outcomes[1]
 
 
 @pytest.mark.parametrize("over", [{"vas": "not-a-uuid"}, {"stf": "x"}, {"sub": "y"}, {"role": "admin"}])
@@ -400,6 +470,7 @@ def test_start_per_role_on_the_callers_book(world, role):
         assert res.status_code == 201, res.text
         body = res.json()
         assert body["read_only"] is True and body["session_id"] == SESSION
+        assert set(body["allowed_reads"]) == READS_BY_ROLE[role]
         p = jwt.decode(body["token"], JWT_SECRET, algorithms=[JWT_ALG])
         assert p["vas"] == SESSION and p["stf"] == STAFF and p["sub"] == MINE
         assert any(a[2] == "tenant.view_as_started" for a in db.audit)
@@ -438,12 +509,27 @@ def test_start_refuses_the_internal_tenant_an_offboarded_one_and_no_staff_id(wor
     assert client.post(f"/admin/tenants/{ts.AA_INTERNAL_TENANT}/view-as", json=BODY,
                        headers=_h("admin")).status_code == 409
     assert client.post(f"/admin/tenants/{CLOSED}/view-as", json=BODY, headers=_h("admin")).status_code == 409
-    no_id = {"X-Admin-Secret": SECRET, "x-admin-role": "admin"}
+    no_id = {"X-Admin-Secret": SECRET, "x-admin-role": "admin", view_as.BFF_HEADER: view_as.BFF_HEADER_VALUE}
     res = client.post(f"/admin/tenants/{MINE}/view-as", json=BODY, headers=no_id)
     assert res.status_code == 403 and res.json()["detail"] == va.NO_STAFF_ID
-    machine = {"X-Admin-Secret": SECRET}
+    machine = {"X-Admin-Secret": SECRET, view_as.BFF_HEADER: view_as.BFF_HEADER_VALUE}
     assert client.post(f"/admin/tenants/{MINE}/view-as", json=BODY, headers=machine).status_code == 403
     assert db.inserted == []
+
+
+@pytest.mark.parametrize("role", sorted(VIEW_AS_ROLES))
+@pytest.mark.parametrize("value", [None, "", "browser", "BFF "])
+def test_only_the_staff_bff_gets_a_token(world, role, value):
+    """The start answers the token only with x-view-as-client: bff (set by the view-as BFF, never by the generic admin
+    proxy): otherwise 403 view_as_bff_only before any row, any audit row or any token."""
+    client, db, _ = world
+    headers = _h(role, bff=False)
+    if value is not None:
+        headers[view_as.BFF_HEADER] = value
+    res = client.post(f"/admin/tenants/{POOLED if role == 'support' else MINE}/view-as", json=BODY, headers=headers)
+    assert res.status_code == 403 and res.json()["detail"] == view_as.BFF_ONLY_DETAIL
+    assert "token" not in res.json() and db.inserted == []
+    assert not any(a[2] == "tenant.view_as_started" for a in db.audit)
 
 
 def test_the_e2e_admin_starts_a_view_on_a_synthetic_tenant_only(world, monkeypatch):
@@ -538,6 +624,17 @@ def test_the_frontend_mirror_of_the_read_allow_list_is_the_same():
     block = re.search(r"export const VIEW_AS_READ_ROUTES = \[(.*?)\] as const;", src, re.S)
     assert block, "VIEW_AS_READ_ROUTES not found"
     assert tuple(re.findall(r'"([^"]+)"', block.group(1))) == view_as.READ_ROUTES
+    # VIEW_AS_ROUTE_ROLES: the staff roles of each ROUTE_CAPS read (the BFF refuses the others, the page hides them)
+    caps = re.search(r"export const VIEW_AS_ROUTE_ROLES: [^=]+= \{(.*?)\};", src, re.S)
+    assert caps, "VIEW_AS_ROUTE_ROLES not found"
+    mirror = {k: set(re.findall(r'"([a-z_]+)"', v))
+              for k, v in re.findall(r'"(/v1/[^"]+)":\s*\[([^\]]*)\]', caps.group(1))}
+    assert mirror == {t: {r for r in staff_authz.ROLE_PERMS if view_as.role_may_read(r, t)}
+                      for t in view_as.ROUTE_CAPS}
+    # the BFF start call carries the header the backend requires (same name and value)
+    assert f'export const VIEW_AS_BFF_HEADER = "{view_as.BFF_HEADER}";' in src
+    bff = (Path(__file__).resolve().parents[2] / "frontend" / "app" / "api" / "view-as" / "route.ts").read_text()
+    assert f'[VIEW_AS_BFF_HEADER]: "{view_as.BFF_HEADER_VALUE}"' in bff
     roles = re.search(r"export const VIEW_AS_ROLES = \[(.*?)\] as const;", src, re.S)
     assert set(re.findall(r'"([a-z_]+)"', roles.group(1))) == {
         r for r, perms in staff_authz.ROLE_PERMS.items() if staff_authz.TENANT_VIEW_AS in perms}

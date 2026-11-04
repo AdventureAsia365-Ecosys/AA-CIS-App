@@ -11,12 +11,17 @@ How it works
    minutes) and returns a short-lived tenant JWT minted here (:func:`mint_token`): the usual tenant shape (``role``
    tenant, ``sub`` the tenant, ``client`` portal so it is never metered as the tenant's API calls, ``csr`` viewer) plus
    ``vas`` (the session id), ``stf`` (the staff member) and ``amr`` ``staff_view_as``. It expires with the session.
+   The start answers the token only to the staff BFF that asked for it (request header :data:`BFF_HEADER`, never
+   set by the generic admin proxy, which also refuses this path): the token never reaches a browser.
 2. Every request that carries such a token passes :class:`api.middleware.view_as.ViewAsGateMiddleware` first:
    - only GET / HEAD on :data:`READ_ROUTES` (an exact allow-list of side-effect-free tenant reads) is let through; any
      other method or path answers 403 ``view_as_read_only`` — writes are refused on the server whatever the UI shows,
      and so are reads that start work (``GET /v1/slate`` enqueues a paid proposal job), exports and the brand branch;
    - the session must still be open (not ended, not expired), the staff account active, its role still holding
      ``tenant.view_as`` and the tenant still in its scope (assignment removed = view ends): else 401 ``view_as_ended``;
+   - the read must be one the staff member's CURRENT role may see (:func:`role_may_read`, :data:`ROUTE_CAPS`): a read
+     that carries the plan or usage (``/v1/quota``) needs a money capability of its own on top of ``tenant.view_as``,
+     so support never sees it; else 403 ``view_as_not_for_role``. View-as never widens a role's own reads;
    - every request, refused or served, writes one ``acp_shared.audit_log`` row (:func:`audit_row`, action
      ``tenant.view_as_request``: actor the staff member, the session, method, route, status). A request is served only
      after its session check; its row is written once the response status is known.
@@ -48,6 +53,14 @@ DEFAULT_MINUTES = 30
 MIN_MINUTES = 5
 
 READ_ONLY_DETAIL = "view_as_read_only"
+NOT_FOR_ROLE_DETAIL = "view_as_not_for_role"
+NOT_FOR_ROLE_MESSAGE = "Your staff role cannot see this part of the partner's account in a view-as session."
+NOT_FOR_ROLE_REASON = "route_not_for_role"
+BFF_ONLY_DETAIL = "view_as_bff_only"
+# The staff BFF (frontend app/api/view-as/route.ts) sets this header on the start call; the generic /api/admin proxy
+# builds its upstream headers from a fixed list and never sets it. Without it the start answers 403 before any row.
+BFF_HEADER = "x-view-as-client"
+BFF_HEADER_VALUE = "bff"
 ENDED_DETAIL = "view_as_ended"
 READ_ONLY_MESSAGE = "View as tenant is read-only: this request is not allowed."
 ENDED_MESSAGE = "This view-as session has ended. Start a new one from Tenant 360."
@@ -61,9 +74,10 @@ READ_METHODS = frozenset({"GET", "HEAD"})
 # own rows with no side effect: no job, no paid call, no export, no write. Never add a route that starts work (GET
 # /v1/slate enqueues t7_slate), streams a file (export-docx, activity/export), or shows channel credentials
 # (/v1/integrations/*). tests/unit/test_aa1035_s2_view_as.py walks the app: every other route is refused.
+# /v1/billing (plan price, overage, quotas, daily usage) is NOT here: no view-as page reads it, and support may never
+# see billing (S265 role table). A read that carries plan or usage data is listed in ROUTE_CAPS too.
 READ_ROUTES: tuple[str, ...] = (
     "/v1/quota",
-    "/v1/billing",
     "/v1/marketplace",
     "/v1/tours/my-versions",
     "/v1/tours/versions/{version_id}",
@@ -76,6 +90,32 @@ READ_ROUTES: tuple[str, ...] = (
     "/v1/account/members",
     "/v1/account/activity",
 )
+
+
+# Reads that need a capability of their own on top of tenant.view_as (any one of the listed): the role x read matrix.
+# View-as must never show a role more than its own staff pages do. /v1/quota carries the plan tier and the rewrites
+# used: the Tenant 360 account / usage reads (tenant.read: admin; tenant.book.account.read: customer_success), never
+# support. A read not listed here needs tenant.view_as only.
+ROUTE_CAPS: dict[str, tuple[str, ...]] = {
+    "/v1/quota": ("tenant.read", "tenant.book.account.read"),
+}
+
+
+def role_may_read(role: Optional[str], template: str) -> bool:
+    """May a staff member of ``role`` (its CURRENT role, read from the DB) make the view-as read ``template``?
+    Needs ``tenant.view_as`` and, for a :data:`ROUTE_CAPS` read, one of its capabilities."""
+    from api.core.staff_authz import ROLE_PERMS, TENANT_VIEW_AS
+
+    perms = ROLE_PERMS.get(role or "", frozenset())
+    if TENANT_VIEW_AS not in perms or template not in READ_ROUTES:
+        return False
+    needed = ROUTE_CAPS.get(template)
+    return needed is None or any(cap in perms for cap in needed)
+
+
+def reads_for_role(role: Optional[str]) -> list[str]:
+    """The :data:`READ_ROUTES` templates ``role`` may read in a view-as session (start answer, BFF mirror)."""
+    return [t for t in READ_ROUTES if role_may_read(role, t)]
 
 
 def _template_regex(template: str) -> re.Pattern[str]:
@@ -177,9 +217,11 @@ EXPIRE_SQL = (
 )
 
 
-async def session_open(conn: Any, claims: ViewAsClaims) -> tuple[bool, str]:
+async def session_open(conn: Any, claims: ViewAsClaims, template: Optional[str] = None) -> tuple[bool, str]:
     """(open, reason) for one request: the session row is open, the staff account active, its CURRENT role (the DB
-    row, not the token) still holds tenant.view_as and the tenant is still in that role's scope."""
+    row, not the token) still holds tenant.view_as and the tenant is still in that role's scope. With ``template``
+    (the matched READ_ROUTES entry) that role must also be allowed that read (:func:`role_may_read`); else
+    (False, :data:`NOT_FOR_ROLE_REASON`), which the gate answers 403, not "ended"."""
     from api.core.staff_authz import ROLE_PERMS, TENANT_VIEW_AS
     from api.core.tenant_scope import in_scope, scope_for_role
 
@@ -199,6 +241,8 @@ async def session_open(conn: Any, claims: ViewAsClaims) -> tuple[bool, str]:
     scope = scope_for_role(role)
     if scope is None or not await in_scope(conn, scope, claims.staff_id, claims.tenant_id):
         return False, "out_of_scope"
+    if template is not None and not role_may_read(role, template):
+        return False, NOT_FOR_ROLE_REASON
     return True, "open"
 
 

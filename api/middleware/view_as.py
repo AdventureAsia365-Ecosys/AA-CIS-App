@@ -11,6 +11,8 @@ tenant role middleware reads: the HTTPBearer value and every whitespace-separate
 2. the claims are not three UUIDs of a tenant token -> 401 ``view_as_ended``;
 3. the session is not open, or its staff member lost the account, the capability or the tenant (DB, per request)
    -> 401 ``view_as_ended``; the DB unreachable / the table missing -> 503;
+   the staff member's current role may not make this read (:func:`api.core.view_as.role_may_read`, e.g. support on
+   ``/v1/quota``) -> 403 ``view_as_not_for_role``;
 4. the audit row is written (``acp_shared.audit_log``, action ``tenant.view_as_request``) and only then is the request
    served. If the row cannot be written the request is NOT served (503): no unlogged read (root ADR 0019 d5).
 
@@ -126,10 +128,15 @@ class ViewAsGateMiddleware:
             return
         try:
             async with pool.acquire() as conn:
-                is_open, reason = await view_as.session_open(conn, claims)
+                is_open, reason = await view_as.session_open(conn, claims, template)
         except (asyncpg.UndefinedTableError, asyncpg.PostgresError, OSError, asyncio.TimeoutError) as exc:
             logger.error("view_as_check_failed", error=type(exc).__name__, session_id=claims.session_id)
             await _answer(503, "view_as_unavailable", "View as tenant is unavailable.")(scope, receive, send)
+            return
+        if not is_open and reason == view_as.NOT_FOR_ROLE_REASON:
+            logger.info("view_as_refused", reason=reason, route=template, session_id=claims.session_id)
+            await _write_best_effort(pool, row(f"refused_{reason}", 403, template))
+            await _answer(403, view_as.NOT_FOR_ROLE_DETAIL, view_as.NOT_FOR_ROLE_MESSAGE)(scope, receive, send)
             return
         if not is_open:
             logger.info("view_as_refused", reason=reason, session_id=claims.session_id)

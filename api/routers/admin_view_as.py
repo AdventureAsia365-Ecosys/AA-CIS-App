@@ -4,8 +4,10 @@
   5-60 minutes, default 30). Capability ``tenant.view_as`` (admin, customer_success, support) and
   ``require_tenant_scope`` (a customer_success member only for its book, support also the pool). Needs a staff identity
   (the verified Cognito one, or ``x-admin-user-id`` under the main secret). Ends the caller's other open sessions
-  first (one view at a time). Answers the session and a short-lived read-only tenant token (api/core/view_as.py); the
-  staff BFF keeps the token in an httpOnly cookie and never hands it to the browser.
+  first (one view at a time). Answers the session, the reads the caller's role may make in it (``allowed_reads``) and
+  a short-lived read-only tenant token (api/core/view_as.py); the staff BFF keeps the token in an httpOnly cookie and
+  never hands it to the browser. Only the BFF may start one: the call must carry ``x-view-as-client: bff`` (403
+  ``view_as_bff_only`` before any row otherwise); the generic /api/admin proxy never sets it and refuses the path.
 * ``GET  /admin/view-as/sessions``                       — the caller's own sessions (admin: every session), newest
   first; ``?tenant_id=``, ``?open_only=true``.
 * ``GET  /admin/view-as/sessions/{session_id}``          — one session (the banner reads it): own, or any for admin.
@@ -157,6 +159,11 @@ async def start_view_as(
     x_admin_secret: str = Header(None),
 ):
     verify_admin_secret(x_admin_secret)
+    if request.headers.get(view_as.BFF_HEADER) != view_as.BFF_HEADER_VALUE:
+        # Defence in depth: the token is answered only to the staff BFF that keeps it in an httpOnly cookie, never to
+        # a page through a generic proxy (which would hand a JS-readable bearer to the browser).
+        logger.warning("view_as_start_refused", reason="not_bff", tenant_id=str(tenant_id))
+        raise HTTPException(status_code=403, detail=view_as.BFF_ONLY_DETAIL)
     staff_id = _require_staff_id(request)
     pool = request.app.state.pool
     async with pool.acquire() as conn, conn.transaction():
@@ -185,12 +192,13 @@ async def start_view_as(
     token = view_as.mint_token(
         session_id=row["session_id"], tenant_id=str(tenant_id), staff_id=staff_id, name=tenant["name"],
         plan_tier=tenant["plan_tier"], expires_at=row["expires_at"])
+    role = _caller(principal, request).role
     logger.info("view_as_started", session_id=row["session_id"], tenant_id=str(tenant_id), staff_id=staff_id,
-                minutes=body.minutes, role=_caller(principal, request).role, ended_sessions=len(ended))
+                minutes=body.minutes, role=role, ended_sessions=len(ended))
     return {
         "session_id": row["session_id"], "tenant_id": str(tenant_id), "tenant_name": tenant["name"],
         "tenant_slug": tenant["slug"], "started_at": _iso(row["started_at"]), "expires_at": _iso(row["expires_at"]),
-        "read_only": True, "allowed_reads": list(view_as.READ_ROUTES), "token": token,
+        "read_only": True, "allowed_reads": view_as.reads_for_role(role), "token": token,
     }
 
 
