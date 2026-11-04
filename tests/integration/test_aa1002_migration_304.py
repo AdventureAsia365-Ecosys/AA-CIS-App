@@ -62,7 +62,9 @@ LATER = [os.path.join(os.path.dirname(MIGRATION), f) for f in
           # API balance source on the rows 322 re-creates
           "342_provider_health_and_credit_ledger.sql", "343_vendor_api_balance_from_ledger.sql",
           # AA-1025 H2: 348's capacity table references the connection table (dropped by _undo)
-          "348_llm_capacity_limit.sql")]
+          "348_llm_capacity_limit.sql",
+          # AA-1026 (S267): 367's probe-state columns and acc3 candidate rows live on the deployment table _undo drops
+          "367_llm_candidate_models_probe_state.sql")]
 # The LLM connection kinds of 304 (322 adds typesafe, dataforseo, geoapify and bedrock_guardrails rows).
 LLM_KINDS = ("bedrock", "anthropic", "openai", "azure_openai", "mock")
 
@@ -110,8 +112,9 @@ def _undo(c):
     # 324's rows (333 / AA-1026 re-signs the llama4-scout row when it records the model's forced tool choice, 337 /
     # AA-1024 both Llama 4 rows when it records their structured output mode)
     c.execute("DELETE FROM shared.llm_model_catalog "
-              "WHERE updated_by IN ('migration-324-aa1017', 'migration-333-aa1026', 'migration-337-aa1024')")
-    c.execute("DELETE FROM shared.schema_versions WHERE version = '324'")
+              "WHERE updated_by IN ('migration-324-aa1017', 'migration-333-aa1026', 'migration-337-aa1024', "
+              "'migration-367-aa1026')")
+    c.execute("DELETE FROM shared.schema_versions WHERE version IN ('324', '367')")
     c.execute("DROP TABLE IF EXISTS shared.llm_provider_connection")
     c.execute("ALTER TABLE shared.llm_model_catalog DROP COLUMN IF EXISTS capabilities")
     for (table, name), check in OLD_CHECKS.items():
@@ -123,7 +126,8 @@ def _undo(c):
 def _profiles(c):
     # 324's catalog rows leave with _undo (they come back with LATER), so they are not part of 304's profiles
     c.execute("SELECT model_key, bedrock_profile_ids FROM shared.llm_model_catalog "
-              "WHERE updated_by NOT IN ('migration-324-aa1017', 'migration-333-aa1026', 'migration-337-aa1024') "
+              "WHERE updated_by NOT IN ('migration-324-aa1017', 'migration-333-aa1026', 'migration-337-aa1024', "
+              "'migration-367-aa1026') "
               "ORDER BY model_key")
     return [(r["model_key"], r["bedrock_profile_ids"]) for r in c.fetchall()]
 
@@ -133,7 +137,7 @@ def _deployments(c):
     # rows a 304 re-run does not recreate
     c.execute("SELECT model_key, connection_key, wire_id, priority, enabled, origin "
               "FROM shared.llm_model_deployment "
-              "WHERE updated_by NOT IN ('migration-306-aa1002', 'migration-324-aa1017') "
+              "WHERE updated_by NOT IN ('migration-306-aa1002', 'migration-324-aa1017', 'migration-367-aa1026') "
               "ORDER BY model_key, priority, connection_key")
     return [tuple(r.values()) for r in c.fetchall()]
 
@@ -206,6 +210,8 @@ def test_first_enabled_deployment_is_the_path_the_gateway_takes_today(cur):
         first.setdefault(r["model_key"], (r["connection_key"], r["wire_id"]))
     checked = 0
     for m in models:
+        if not m.enabled and m.model_key not in first:
+            continue                                         # AA-1026: a disabled candidate (CIS 367), no path
         if m.provider == "typesafe":
             assert m.model_key not in first                  # Jev stays outside the registry in S1
             continue

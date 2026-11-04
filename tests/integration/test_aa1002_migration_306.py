@@ -27,7 +27,18 @@ M310 = os.path.join(MIGRATIONS, "310_llm_connection_admin_edit_grant.sql")   # S
 M322 = os.path.join(MIGRATIONS, "322_provider_connection_v2.sql")            # AA-1017: re-revokes what 310 re-grants
 
 
+# AA-1026 (S267): CIS 367's disabled acc3 candidates (Claude Sonnet 4.5, Opus 4.5 / 4.6) are Anthropic Converse rows
+# that did not exist when 306 ran on Dev, so they have no Anthropic API deployment. A 306 re-run here would give them
+# one: it is taken out again right after, and they are left out of what 306 seeded.
+CANDIDATES_367 = "SELECT model_key FROM shared.llm_model_catalog WHERE updated_by = 'migration-367-aa1026'"
+
+
 def _run(c, path):
+    if path == M306:
+        c.execute(open(path, encoding="utf-8").read())
+        c.execute("DELETE FROM shared.llm_model_deployment WHERE connection_key = 'anthropic-direct' "
+                  f"AND model_key IN ({CANDIDATES_367})")
+        return
     if path == M304:
         # AA-1017: 304's closing guard refuses a secret outside aa-llm/: the decide / data rows 322 seeds leave before a
         # 304 re-run, and the 322 re-run below puts them back.
@@ -69,7 +80,8 @@ def _expected_wire(profile: str):
 def test_one_api_deployment_per_anthropic_converse_model(cur):
     cur.execute("SELECT model_key, bedrock_profile_ids ->> 'acc3' AS acc3 FROM shared.llm_model_catalog "
                 "WHERE vendor = 'anthropic' AND provider = 'bedrock' AND api_style = 'converse' "
-                "AND coalesce(bedrock_profile_ids ->> 'acc3', '') <> ''")
+                "AND coalesce(bedrock_profile_ids ->> 'acc3', '') <> '' "
+                "AND updated_by IS DISTINCT FROM 'migration-367-aa1026'")
     expected = {r["model_key"]: _expected_wire(r["acc3"]) for r in cur.fetchall()}
     expected = {k: v for k, v in expected.items() if v}
     cur.execute("SELECT model_key, wire_id, priority, enabled, origin FROM shared.llm_model_deployment "

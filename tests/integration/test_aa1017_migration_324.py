@@ -99,7 +99,7 @@ def test_each_model_has_one_enabled_acc2_deployment_on_its_profile(cur):
     cur.execute("SELECT d.model_key, d.connection_key, d.wire_id, d.priority, d.enabled, d.origin, "
                 "c.bedrock_profile_ids ->> 'acc2' AS profile "
                 "FROM shared.llm_model_deployment d JOIN shared.llm_model_catalog c USING (model_key) "
-                "WHERE d.model_key = ANY (%s)", (list(KEYS),))
+                "WHERE d.model_key = ANY (%s) AND d.connection_key = 'acc2'", (list(KEYS),))   # 367: acc3 rows
     rows = cur.fetchall()
     assert sorted(r["model_key"] for r in rows) == sorted(KEYS)
     for r in rows:
@@ -139,7 +139,9 @@ def test_route_snapshot_gains_exactly_the_ten_candidate_lines(cur):
         without = _q0_lines(cur)
     finally:
         cur.execute("ROLLBACK")
-    added = with_rows - without
+    # CIS 367 (AA-1026) adds disabled acc3 deployments of kimi-k3 / llama4-maverick, which the catalog DELETE above
+    # cascades too: they are 367's lines, not 324's
+    added = {t for t in with_rows - without if not t.startswith("dp|") or t.split("|")[2] != "acc3"}
     assert without <= with_rows
     assert len(added) == 10
     assert {t.split("|")[0] for t in added} == {"ct", "dp"}
