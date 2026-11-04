@@ -202,7 +202,9 @@ primary on acc3 with no change.
   `test_aa1002_migration_311.py` (an active text stage is vendor_direct since 366), `test_aa1026_migration_327.py`
   (the budget test starts from the 327 fixture routes: 327's guard refuses the post-366 scopes),
   `test_aa784_migration_286.py`, `test_aa803_migration_259.py`, `test_aa835_migration_278.py`,
-  `test_aa835_migration_282.py` (its restore sets the post-366 row instead of re-running 327).
+  `test_aa835_migration_282.py` (its restore sets the post-366 row instead of re-running 327); fix pass 2:
+  `test_aa917_migration_280.py` (writing_memory_mine's post-366 route) and `test_aa1017_migration_324.py` (an acc2
+  candidate still ends a judge / validate route; the OpenAI API twin may now stand before it).
 
 ## Tradeoffs
 
@@ -348,11 +350,11 @@ unless its eval says otherwise. No change proposed for the judges (GPT-5.6 Luna 
   - **`pii_class` per stage** (ADR 0019) is not in the CIS gateway yet; nothing in this change relaxes a PII control.
 - The AA-CIS-Infra byte copy of 366 (`db/migrations/cis/`) must be taken from the FINAL file of PR B (S267 rewrote it:
   scopes, chains, caps); an older copy fails the Copy Guard.
-- Tests run in this lane (S267, private Postgres 16 under the scratchpad): the related unit files (73 files, 2 385
-  tests) green; the full integration suite green except the same 7 failures / 16 errors the code branch WITHOUT 366
-  shows (`test_007_rls_isolation`, `test_aa645_promote_through_lifecycle`, `test_aa986_migration_271`: local role
-  passwords / `DATABASE_URL`, environment only). CI's flake8 (`api/ services/ shared/`) clean; gitleaks 8.30.1 clean
-  on the three branches.
+- Tests run in this lane (S267 fix pass 2, private Postgres 16 under the scratchpad, CI's integration env): the related
+  unit files (92 files, 7 731 tests after the rebase) green; the full integration suite 2 370 passed, 3 skipped, 16 errors, all in
+  `test_007_rls_isolation` (CI excludes it: local role passwords). CI's flake8 (`api/ services/ shared/`) clean;
+  gitleaks 8.30.1 clean on the three branches. Code and root branches rebased on the latest `origin/main` /
+  `origin/master`; the migration branch on the code branch.
 - Merge order: PR A (code) deployed BEFORE migration 366 is applied: without the connection-circuit fix acc3's
   refusals of the 5.x / GPT rows keep the acc3 connection circuit open and the new 4.x rows are skipped; without the
   relaxed admin rule the admin route PATCH refuses 366's writer chains (sonnet-5-5 has an Anthropic API deployment).
