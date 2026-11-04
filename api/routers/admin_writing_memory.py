@@ -83,6 +83,13 @@ AA-922 (WM-30 / WM-31) — the weekly KPIs (services/writing_memory/kpi.py) and 
   GET   /admin/writing-memory/disagreements?status=open|resolved   the queue
   POST  /admin/writing-memory/disagreements/{item_id}/resolve   {resolution: judge_right | human_right | unclear, note?}
 
+AA-1039 R6 slice 3 — Writing Lab (root ADR 0019 d13, TL-13 `regroup_lab`; services/writing_memory/lab.py): one read per
+stage over the existing tables, $0, no text (ids, labels, counts, hashes); no new learning logic (TL-11 freeze):
+  GET   /admin/writing-memory/lab/{writer}            samples (active golden sets), labels, experiments (eval runs,
+                                                      release shadow runs, model shadow of its prompt stages), prompt
+                                                      versions and the eval gate of one writer; each section read on
+                                                      its own (`sections[name]` {ready, error})
+
 Who may call (api/core/staff_authz.py POLICY): every read needs tenant.read and every write ai.admin (admin only).
 Approval of a non-lexicon rule is not here: it reaches a writer only through a release (AA-919), one human click. A
 lexicon rule may take the L0 path (ADR 0010 decision 6, D11): R0 + the activate click, no release.
@@ -1150,3 +1157,15 @@ async def resolve_disagreement(item_id: str, body: ResolveBody, request: Request
     except dis.DisagreementError as e:
         raise HTTPException(status_code=e.status, detail={"detail": e.detail, "code": e.code})
     return row
+
+
+# ── Writing Lab (AA-1039 R6 slice 3) ───────────────────────────────────────────────────────────────────────────────
+
+@router.get("/lab/{writer}")
+async def lab_stage(writer: str, request: Request):
+    """One Writing Lab stage: samples, labels, experiments, prompt versions and the eval gate of a writer ($0, read
+    only; no tenant text). Each section is read on its own: a missing table empties only that section."""
+    from services.writing_memory import lab
+    if writer not in lab.WRITERS:
+        raise HTTPException(status_code=404, detail="Unknown writer")
+    return await lab.stage_view(_pool(request), writer)
