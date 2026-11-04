@@ -1,0 +1,269 @@
+"""AA-1035 R2 slice 2 (root ADR 0019 d5) — start, read and end a read-only "view as tenant" session.
+
+* ``POST /admin/tenants/{tenant_id}/view-as``            — open a session (reason 3-500 characters, optional ticket,
+  5-60 minutes, default 30). Capability ``tenant.view_as`` (admin, customer_success, support) and
+  ``require_tenant_scope`` (a customer_success member only for its book, support also the pool). Needs a staff identity
+  (the verified Cognito one, or ``x-admin-user-id`` under the main secret). Ends the caller's other open sessions
+  first (one view at a time). Answers the session and a short-lived read-only tenant token (api/core/view_as.py); the
+  staff BFF keeps the token in an httpOnly cookie and never hands it to the browser.
+* ``GET  /admin/view-as/sessions``                       — the caller's own sessions (admin: every session), newest
+  first; ``?tenant_id=``, ``?open_only=true``.
+* ``GET  /admin/view-as/sessions/{session_id}``          — one session (the banner reads it): own, or any for admin.
+* ``POST /admin/view-as/sessions/{session_id}/end``      — end it: ``ended`` (own) or ``revoked`` (an admin ending
+  another member's); an already-expired one is closed as ``expired``. Idempotent.
+
+Every start and end writes an ``acp_shared.audit_log`` row (``tenant.view_as_started`` / ``tenant.view_as_ended``; no
+reason text there, it is free text that may name a person and stays in the session row). Every request made with the
+token is logged by the gate (api/middleware/view_as.py).
+"""
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Optional
+from uuid import UUID
+
+import asyncpg
+import structlog
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from api.core import e2e_staff, view_as
+from api.core.staff_authz import TENANT_READ, StaffPrincipal, principal_from_role, request_staff_identity, staff_policy
+from api.core.tenant_scope import TENANT_SCOPED, staff_id_of
+from api.routers.admin import verify_admin_secret
+from services.acp_shared.audit_log import AdminTenantAuditAction, write_audit_log
+
+logger = structlog.get_logger()
+
+router = APIRouter(prefix="/admin", tags=["admin-view-as"], dependencies=[Depends(staff_policy)])
+
+AA_INTERNAL_TENANT = "00000000-0000-0000-0000-000000000001"
+NO_STAFF_ID = "View as tenant needs a verified staff identity"
+UNAVAILABLE = "View as tenant needs migration 364 (shared.staff_view_as_session)."
+NOT_FOUND = "View-as session not found"
+
+TENANT_SQL = (
+    "SELECT tenant_id, name, slug, plan_tier::text AS plan_tier, cancelled_at FROM shared.tenants WHERE tenant_id = $1"
+)
+STAFF_ACTIVE_SQL = "SELECT is_active FROM shared.admin_users WHERE id = $1::uuid"
+# The caller's other open sessions end when a new one starts (an expired one as 'expired').
+END_OTHERS_SQL = (
+    "UPDATE shared.staff_view_as_session SET ended_at = greatest(now(), started_at), "
+    "end_reason = CASE WHEN expires_at <= now() THEN 'expired' ELSE 'ended' END "
+    "WHERE admin_user_id = $1::uuid AND ended_at IS NULL RETURNING session_id::text AS session_id"
+)
+INSERT_SQL = (
+    "INSERT INTO shared.staff_view_as_session (admin_user_id, tenant_id, reason, ticket_ref, started_at, expires_at) "
+    "VALUES ($1::uuid, $2::uuid, $3, $4, now(), now() + make_interval(mins => $5::int)) "
+    "RETURNING session_id::text AS session_id, started_at, expires_at"
+)
+_SESSION_COLUMNS = (
+    "s.session_id::text AS session_id, s.admin_user_id::text AS admin_user_id, s.tenant_id::text AS tenant_id, "
+    "t.name AS tenant_name, t.slug AS tenant_slug, u.display_name AS staff_name, s.reason, s.ticket_ref, "
+    "s.started_at, s.expires_at, s.ended_at, s.end_reason, (s.ended_at IS NULL AND s.expires_at > now()) AS open"
+)
+_SESSION_FROM = (
+    "FROM shared.staff_view_as_session s JOIN shared.tenants t ON t.tenant_id = s.tenant_id "
+    "JOIN shared.admin_users u ON u.id = s.admin_user_id"
+)
+ONE_SQL = f"SELECT {_SESSION_COLUMNS} {_SESSION_FROM} WHERE s.session_id = $1::uuid"
+# $1 staff filter (NULL = every session: admin), $2 tenant filter, $3 open only, $4 limit
+LIST_SQL = (
+    f"SELECT {_SESSION_COLUMNS} {_SESSION_FROM} "
+    "WHERE ($1::uuid IS NULL OR s.admin_user_id = $1::uuid) AND ($2::uuid IS NULL OR s.tenant_id = $2::uuid) "
+    "AND (NOT $3::boolean OR (s.ended_at IS NULL AND s.expires_at > now())) "
+    "ORDER BY s.started_at DESC LIMIT $4"
+)
+END_SQL = (
+    "UPDATE shared.staff_view_as_session SET ended_at = greatest(now(), started_at), "
+    "end_reason = CASE WHEN expires_at <= now() THEN 'expired' ELSE $2 END "
+    "WHERE session_id = $1::uuid AND ended_at IS NULL RETURNING end_reason, ended_at"
+)
+
+
+class StartBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(..., min_length=3, max_length=500)
+    ticket_ref: Optional[str] = Field(None, max_length=120)
+    minutes: int = Field(view_as.DEFAULT_MINUTES, ge=view_as.MIN_MINUTES, le=view_as.MAX_MINUTES)
+
+    @field_validator("reason")
+    @classmethod
+    def _reason(cls, v: str) -> str:
+        v = v.strip()
+        if not 3 <= len(v) <= 500:
+            raise ValueError("Give a reason of 3 to 500 characters")
+        return v
+
+    @field_validator("ticket_ref")
+    @classmethod
+    def _ticket(cls, v: Optional[str]) -> Optional[str]:
+        v = (v or "").strip()
+        return v or None
+
+
+def _caller(principal: Any, request: Request) -> StaffPrincipal:
+    if isinstance(principal, StaffPrincipal):
+        return principal
+    return principal_from_role(request.headers.get("x-admin-role"), request_staff_identity(request))
+
+
+def _iso(v: Any) -> Optional[str]:
+    return v.isoformat() if isinstance(v, datetime) else None
+
+
+def session_view(r: Any) -> dict:
+    return {
+        "session_id": r["session_id"], "admin_user_id": r["admin_user_id"], "staff_name": r["staff_name"],
+        "tenant_id": r["tenant_id"], "tenant_name": r["tenant_name"], "tenant_slug": r["tenant_slug"],
+        "reason": r["reason"], "ticket_ref": r["ticket_ref"], "started_at": _iso(r["started_at"]),
+        "expires_at": _iso(r["expires_at"]), "ended_at": _iso(r["ended_at"]), "end_reason": r["end_reason"],
+        "open": bool(r["open"]), "read_only": True,
+    }
+
+
+def _unavailable(exc: Exception) -> HTTPException:
+    logger.error("view_as_unavailable", reason=type(exc).__name__)
+    return HTTPException(status_code=503, detail=UNAVAILABLE)
+
+
+def _require_staff_id(request: Request) -> str:
+    staff_id = staff_id_of(request)
+    if staff_id is None:
+        raise HTTPException(status_code=403, detail=NO_STAFF_ID)
+    return staff_id
+
+
+async def _refuse_e2e(request: Request, conn: Any, tenant_id: Any) -> None:
+    """The Dev-only E2E CIS admin (A10b, read-only) may start / end a view-as session on a synthetic tenant only
+    (``is_canary IS TRUE``); 403 ``e2e_read_only`` otherwise, before any row. Every other staff member is unaffected."""
+    if not getattr(request_staff_identity(request), "e2e_read_only", False):
+        return
+    if not await e2e_staff.is_synthetic_tenant(conn, tenant_id):
+        logger.warning("view_as_e2e_refused", tenant_id=str(tenant_id), reason="tenant_not_synthetic")
+        raise HTTPException(status_code=403, detail=e2e_staff.E2E_READ_ONLY)
+
+
+def _sees_every_session(principal: StaffPrincipal) -> bool:
+    """admin (tenant.read: every tenant) reads and ends every member's session; the others only their own."""
+    return TENANT_READ in principal.perms
+
+
+@router.post("/tenants/{tenant_id}/view-as", status_code=201, dependencies=TENANT_SCOPED,
+             summary="Start a read-only view-as session on this tenant (at most 60 minutes, logged)")
+async def start_view_as(
+    tenant_id: UUID, body: StartBody, request: Request,
+    principal: StaffPrincipal = Depends(staff_policy),
+    x_admin_secret: str = Header(None),
+):
+    verify_admin_secret(x_admin_secret)
+    staff_id = _require_staff_id(request)
+    pool = request.app.state.pool
+    async with pool.acquire() as conn, conn.transaction():
+        tenant = await conn.fetchrow(TENANT_SQL, tenant_id)
+        if tenant is None:
+            raise HTTPException(status_code=404, detail="Tenant not found")
+        if str(tenant_id) == AA_INTERNAL_TENANT:
+            raise HTTPException(status_code=409, detail="The AA internal tenant is not a partner; nothing to view as.")
+        if tenant["cancelled_at"] is not None:
+            raise HTTPException(status_code=409, detail="This tenant is offboarded; view as is not available.")
+        await _refuse_e2e(request, conn, tenant_id)
+        active = await conn.fetchval(STAFF_ACTIVE_SQL, staff_id)
+        if not active:
+            raise HTTPException(status_code=403, detail=NO_STAFF_ID)
+        try:
+            ended = [r["session_id"] for r in await conn.fetch(END_OTHERS_SQL, staff_id)]
+            row = await conn.fetchrow(INSERT_SQL, staff_id, tenant_id, body.reason, body.ticket_ref, body.minutes)
+        except asyncpg.UndefinedTableError as exc:
+            raise _unavailable(exc) from exc
+        actor = f"admin:{staff_id}"
+        await write_audit_log(
+            conn, tenant_id=str(tenant_id), actor=actor, action=AdminTenantAuditAction.VIEW_AS_STARTED,
+            resource_type=view_as.AUDIT_RESOURCE, resource_id=row["session_id"],
+            details={"session_id": row["session_id"], "minutes": body.minutes, "ticket_ref": body.ticket_ref,
+                     "expires_at": _iso(row["expires_at"]), "ended_sessions": ended})
+    token = view_as.mint_token(
+        session_id=row["session_id"], tenant_id=str(tenant_id), staff_id=staff_id, name=tenant["name"],
+        plan_tier=tenant["plan_tier"], expires_at=row["expires_at"])
+    logger.info("view_as_started", session_id=row["session_id"], tenant_id=str(tenant_id), staff_id=staff_id,
+                minutes=body.minutes, role=_caller(principal, request).role, ended_sessions=len(ended))
+    return {
+        "session_id": row["session_id"], "tenant_id": str(tenant_id), "tenant_name": tenant["name"],
+        "tenant_slug": tenant["slug"], "started_at": _iso(row["started_at"]), "expires_at": _iso(row["expires_at"]),
+        "read_only": True, "allowed_reads": list(view_as.READ_ROUTES), "token": token,
+    }
+
+
+@router.get("/view-as/sessions", summary="View-as sessions: the caller's own (admin: every member's)")
+async def list_view_as_sessions(
+    request: Request,
+    tenant_id: Optional[UUID] = None,
+    open_only: bool = False,
+    limit: int = Query(50, ge=1, le=200),
+    principal: StaffPrincipal = Depends(staff_policy),
+    x_admin_secret: str = Header(None),
+):
+    verify_admin_secret(x_admin_secret)
+    caller = _caller(principal, request)
+    staff_filter = None if _sees_every_session(caller) else _require_staff_id(request)
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        try:
+            rows = await conn.fetch(LIST_SQL, staff_filter, tenant_id, open_only, limit)
+        except asyncpg.UndefinedTableError as exc:
+            raise _unavailable(exc) from exc
+    return {"sessions": [session_view(r) for r in rows], "scope": "all" if staff_filter is None else "own"}
+
+
+async def _visible_session(conn: Any, request: Request, caller: StaffPrincipal, session_id: UUID) -> Any:
+    try:
+        row = await conn.fetchrow(ONE_SQL, session_id)
+    except asyncpg.UndefinedTableError as exc:
+        raise _unavailable(exc) from exc
+    if row is None:
+        raise HTTPException(status_code=404, detail=NOT_FOUND)
+    if not _sees_every_session(caller) and row["admin_user_id"] != _require_staff_id(request):
+        raise HTTPException(status_code=404, detail=NOT_FOUND)   # another member's session: same answer as unknown
+    return row
+
+
+@router.get("/view-as/sessions/{session_id}", summary="One view-as session (own; admin: any)")
+async def get_view_as_session(
+    session_id: UUID, request: Request,
+    principal: StaffPrincipal = Depends(staff_policy),
+    x_admin_secret: str = Header(None),
+):
+    verify_admin_secret(x_admin_secret)
+    caller = _caller(principal, request)
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        row = await _visible_session(conn, request, caller, session_id)
+    return session_view(row)
+
+
+@router.post("/view-as/sessions/{session_id}/end", summary="End a view-as session (own: ended; admin: revoked)")
+async def end_view_as_session(
+    session_id: UUID, request: Request,
+    principal: StaffPrincipal = Depends(staff_policy),
+    x_admin_secret: str = Header(None),
+):
+    verify_admin_secret(x_admin_secret)
+    caller = _caller(principal, request)
+    staff_id = staff_id_of(request)
+    pool = request.app.state.pool
+    async with pool.acquire() as conn, conn.transaction():
+        row = await _visible_session(conn, request, caller, session_id)
+        await _refuse_e2e(request, conn, UUID(row["tenant_id"]))
+        own = staff_id is not None and row["admin_user_id"] == staff_id
+        done = await conn.fetchrow(END_SQL, session_id, "ended" if own else "revoked")
+        if done is not None:
+            await write_audit_log(
+                conn, tenant_id=row["tenant_id"], actor=f"admin:{staff_id or 'unknown'}"[:64],
+                action=AdminTenantAuditAction.VIEW_AS_ENDED, resource_type=view_as.AUDIT_RESOURCE,
+                resource_id=row["session_id"],
+                details={"session_id": row["session_id"], "end_reason": done["end_reason"],
+                         "session_staff": row["admin_user_id"]})
+        fresh = await conn.fetchrow(ONE_SQL, session_id)
+    logger.info("view_as_ended", session_id=str(session_id), changed=done is not None,
+                end_reason=done["end_reason"] if done else row["end_reason"])
+    return {**session_view(fresh), "changed": done is not None}

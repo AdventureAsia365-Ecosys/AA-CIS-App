@@ -119,13 +119,27 @@ BILLING_READ = "billing.read"                # plan, usage and billing columns o
 BILLING_WRITE = "billing.write"              # plan change and suspend / resume of a tenant (PATCH, field-level)
 WAVE_RUN = "wave.run"                        # rerun waves (create, pause, resume, close, report)
 LAB_READ = "lab.read"                        # Writing Lab reads without tenant text (releases: ids, statuses, numbers)
+# AA-1035 R2 slice 2 (root ADR 0019 d5): open a read-only "view as tenant" session (shared.staff_view_as_session, at
+# most 60 minutes, reason required, every request logged; api/core/view_as.py). Matrix: admin, customer_success (own
+# book), support (own book + pool); require_tenant_scope narrows the tenant.
+TENANT_VIEW_AS = "tenant.view_as"
+# AA-1035 R2 slice 2 (root ADR 0019, settled by the tech lead S265 item 1): "ai_ops may read tenant text in Writing Lab:
+# permission tenant_content.read, Lab pages only, every view logged". A capability of its own so it opens ONLY the
+# Writing Lab tenant-text reads (/admin/writing-memory/*, never Tenant QA, Content Trace or Tenant 360), and every read
+# through it writes an audit row first (api/core/lab_read_log.py; the route refuses with 503 when it cannot).
+LAB_TENANT_TEXT_READ = "lab.tenant_text.read"
+# AA-1035 R2 slice 2: the staff notification bell (Topbar, every staff role). Before R2 it rode on content.read; the
+# tenant desk roles (customer_success, support, finance) hold no content.read, so the bell answered them 403. Each
+# role sees only the rows meant for it (api/routers/admin.py notification_scope).
+NOTIFICATIONS_READ = "notifications.read"
 
 _CONTENT_WORK = frozenset({CONTENT_READ, CONTENT_WRITE, REVIEW_ACT})
 
 # AA-1035 R2: one explicit set per role (deny by default: a capability a role does not list here is refused). The
 # matrix is root docs/audits/2026-11-03-S265-ecosystem-restructure/clarifications.md section 3; the column a row
-# implements is named after it. Slice 1 leaves out: customer_success / ai_ops reads of tenant text (Tenant QA of their
-# own tenants, the logged Writing Lab read) and view-as (slice 2).
+# implements is named after it. Slice 2 (S268) adds view-as (tenant.view_as), the logged Writing Lab read of ai_ops
+# (lab.tenant_text.read) and the bell of every role (notifications.read). Still left out: Tenant QA reads of the own
+# tenants for customer_success (matrix "Tenant QA R (own)").
 ROLE_PERMS: dict[str, frozenset[str]] = {
     "admin": _CONTENT_WORK | {
         MASTER_ADMIN, ATOMS_WRITE, PHOTOS_WRITE, A4_UNPUBLISH, QUALITY_WRITE, CONTENT_SETTINGS_WRITE,
@@ -133,36 +147,43 @@ ROLE_PERMS: dict[str, frozenset[str]] = {
         STAFF_READ, AUDIT_READ, ALERTS_WRITE,
         TENANT_CONTENT_READ, CATALOG_READ, TENANT_BOOK_READ, TENANT_BOOK_ACCOUNT_READ, TENANT_MEMBER_WRITE,
         TENANT_ASSIGN, BILLING_READ, BILLING_WRITE, WAVE_RUN, LAB_READ, TENANT_MEMBER_RESEND, TENANT_BOOK_WRITE,
+        TENANT_VIEW_AS, NOTIFICATIONS_READ,
     },
     # AA Catalogue W, Tenant QA W, Writing Lab R (wave, review queue, master content, atoms / photos, SEO).
     "content_lead": _CONTENT_WORK | {
         MASTER_ADMIN, ATOMS_WRITE, PHOTOS_WRITE, A4_UNPUBLISH, QUALITY_WRITE, CONTENT_SETTINGS_WRITE,
-        CATALOG_READ, TENANT_CONTENT_READ, LAB_READ, WAVE_RUN,
+        CATALOG_READ, TENANT_CONTENT_READ, LAB_READ, WAVE_RUN, NOTIFICATIONS_READ,
     },
     # AA Catalogue R + W of the writing (upload, S1 rewrite, review); never master lifecycle, atoms or tenants.
-    "content": _CONTENT_WORK | {CATALOG_READ},
+    "content": _CONTENT_WORK | {CATALOG_READ, NOTIFICATIONS_READ},
     # ALIAS of content for one release (root ADR 0019 d3; group cis-reviewer). Same set as content.
-    "reviewer": _CONTENT_WORK | {CATALOG_READ},
+    "reviewer": _CONTENT_WORK | {CATALOG_READ, NOTIFICATIONS_READ},
     # Tenant QA W, AA Catalogue R, Writing Lab R.
-    "tenant_qa": frozenset({CONTENT_READ, CATALOG_READ, TENANT_CONTENT_READ, QUALITY_WRITE, A4_UNPUBLISH, LAB_READ}),
+    "tenant_qa": frozenset({CONTENT_READ, CATALOG_READ, TENANT_CONTENT_READ, QUALITY_WRITE, A4_UNPUBLISH, LAB_READ,
+                            NOTIFICATIONS_READ}),
     # Tenants directory R / Tenant 360 W of the own book except billing (tenant_scope.py; tenant.book.write), members
     # and invitations but never the owner role (tenant.write); plans and add-ons R, AI & spend R and Tenant QA R of the
-    # own tenants (tenant.book.account.read).
+    # own tenants (tenant.book.account.read). Slice 2: read-only view-as of the own book (tenant.view_as).
     "customer_success": frozenset({
         TENANT_BOOK_READ, TENANT_BOOK_ACCOUNT_READ, TENANT_BOOK_WRITE, TENANT_MEMBER_WRITE, TENANT_MEMBER_RESEND,
+        TENANT_VIEW_AS, NOTIFICATIONS_READ,
     }),
     # Tenants directory R / Tenant 360 R of the own book and the pool; sends an existing non-owner invitation again
     # (tenant.member.resend), nothing else. Never plans, billing, usage, cost, Tenant QA or AI spend (no
-    # tenant.book.account.read). Reset MFA of a tenant member has no CIS route (the CRM owns it).
-    "support": frozenset({TENANT_BOOK_READ, TENANT_MEMBER_RESEND}),
+    # tenant.book.account.read). Reset MFA of a tenant member has no CIS route (the CRM owns it). Slice 2: read-only
+    # view-as of the own book and the pool (tenant.view_as; matrix "R (own + pool)").
+    "support": frozenset({TENANT_BOOK_READ, TENANT_MEMBER_RESEND, TENANT_VIEW_AS, NOTIFICATIONS_READ}),
     # Billing columns and plans of every tenant, plan change and suspend for debt (field-level), AI & spend R.
-    "finance": frozenset({BILLING_READ, BILLING_WRITE, SPEND_READ}),
-    # AI & spend W, Writing Lab W (writes; reads without tenant text), AA Catalogue R.
-    "ai_ops": frozenset({CONTENT_READ, CATALOG_READ, AI_ADMIN, SPEND_READ, SPEND_WRITE, LAB_READ}),
+    "finance": frozenset({BILLING_READ, BILLING_WRITE, SPEND_READ, NOTIFICATIONS_READ}),
+    # AI & spend W, Writing Lab W, AA Catalogue R. Slice 2: the tenant text of the Writing Lab, logged per read
+    # (lab.tenant_text.read; never tenant_content.read, which would open Tenant QA and Content Trace too).
+    "ai_ops": frozenset({
+        CONTENT_READ, CATALOG_READ, AI_ADMIN, SPEND_READ, SPEND_WRITE, LAB_READ, LAB_TENANT_TEXT_READ, NOTIFICATIONS_READ,
+    }),
     # AA-878 — read-only staff (the UI-smoke E2E account, migration 249). Reads the content pages; refused on
     # every write (READ_ONLY_ROLES below, whatever the route's capability) and on every admin-only read. Not
     # assignable from the Staff page (api/services/staff_directory.py CIS_ROLES) and no Booking token.
-    "viewer": frozenset({CONTENT_READ}),
+    "viewer": frozenset({CONTENT_READ, NOTIFICATIONS_READ}),
 }
 
 # AA-1035: the capability an unlisted GET needs (deny by default for a role without it).
@@ -230,6 +251,10 @@ _TENANT_MEMBER_WRITE = any_of(TENANT_WRITE, TENANT_MEMBER_WRITE)
 _TENANT_MEMBER_RESEND = any_of(TENANT_WRITE, TENANT_MEMBER_WRITE, TENANT_MEMBER_RESEND)
 _TENANT_BOOK_WRITE = any_of(TENANT_WRITE, TENANT_BOOK_WRITE)                 # non-billing Tenant 360 writes (scoped)
 _LAB_READ = any_of(TENANT_CONTENT_READ, LAB_READ)                          # Writing Lab reads without tenant text
+# AA-1035 slice 2: Writing Lab reads WITH tenant text. ai_ops passes through lab.tenant_text.read, and each such read is
+# logged before it runs (api/core/lab_read_log.py LAB_TEXT_LOGGED on the route; tests/unit/test_aa1035_s2_lab_read.py
+# keeps the two in step and keeps this capability off every route outside /admin/writing-memory/).
+_LAB_TEXT_READ = any_of(TENANT_CONTENT_READ, LAB_TENANT_TEXT_READ)
 
 POLICY: dict[tuple[str, str], Any] = {
     # ── admin_llm_ops — stage model, fallback route, catalog (GĐ1)
@@ -374,8 +399,12 @@ POLICY: dict[tuple[str, str], Any] = {
     ("PATCH", "/admin/tours/{tour_id}/trash"): CONTENT_WRITE,
     ("PATCH", "/admin/tours/{tour_id}/restore"): CONTENT_WRITE,
     # admin — the notification bell (Topbar, every staff role)
-    ("PUT", "/admin/notifications/read-all"): CONTENT_READ,
-    ("PUT", "/admin/notifications/{notif_id}/read"): CONTENT_READ,
+    # AA-1035 slice 2: its own capability (every role holds it); each role sees only its rows (admin.py
+    # notification_scope). The viewer still never marks a row read (READ_ONLY_ROLES).
+    ("GET", "/admin/notifications"): NOTIFICATIONS_READ,
+    ("GET", "/admin/notifications/count"): NOTIFICATIONS_READ,
+    ("PUT", "/admin/notifications/read-all"): NOTIFICATIONS_READ,
+    ("PUT", "/admin/notifications/{notif_id}/read"): NOTIFICATIONS_READ,
     # ── admin_tenant360 — Tenant 360 tabs (admin-only)
     ("GET", "/admin/tenants/{tenant_id}/cost"): _TENANT_ACCOUNT_READ,       # LLM cost, $/piece, margin
     ("GET", "/admin/tenants/{tenant_id}/quality"): _TENANT_ACCOUNT_READ,    # T10 verdicts, held reasons
@@ -394,6 +423,16 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/tenants/{tenant_id}/assignments"): _TENANT_ONE_READ,
     ("PUT", "/admin/tenants/{tenant_id}/assignments/{admin_user_id}"): TENANT_ASSIGN,
     ("DELETE", "/admin/tenants/{tenant_id}/assignments/{admin_user_id}"): TENANT_ASSIGN,
+    # AA-1035 R2 slice 2 — the Assignments page (admin_tenant_assignments.py): every assignment of the caller's scope
+    # (tenant_scope_filter) and, for whoever assigns, the staff members that may be assigned.
+    ("GET", "/admin/tenant-assignments"): _TENANT_ONE_READ,
+    ("GET", "/admin/tenant-assignments/staff"): TENANT_ASSIGN,
+    # AA-1035 R2 slice 2 (root ADR 0019 d5) — read-only "view as tenant" (admin_view_as.py, api/core/view_as.py): start
+    # one (scoped: require_tenant_scope), read / end the caller's own (admin: every session, ending another's revokes it)
+    ("POST", "/admin/tenants/{tenant_id}/view-as"): TENANT_VIEW_AS,
+    ("GET", "/admin/view-as/sessions"): TENANT_VIEW_AS,
+    ("GET", "/admin/view-as/sessions/{session_id}"): TENANT_VIEW_AS,
+    ("POST", "/admin/view-as/sessions/{session_id}/end"): TENANT_VIEW_AS,
 
     # ── admin_pipeline — Upload (S0), every staff role
     ("POST", "/admin/upload-url"): CONTENT_WRITE,
@@ -606,13 +645,13 @@ POLICY: dict[tuple[str, str], Any] = {
     # ── admin_writing_memory (AA-917 WM-14) — Quality › Writing memory: signals and tenant rules hold tenant text, so
     # every read is admin only (tenant.read); every write (fact verdict, candidate edit / reject, a job run — the mining
     # run is paid) is ai.admin, the tier of the LLM stage config. Non-lexicon rules activate through releases (AA-919).
-    ("GET", "/admin/writing-memory/summary"): TENANT_CONTENT_READ,
-    ("GET", "/admin/writing-memory/signals"): TENANT_CONTENT_READ,
-    ("GET", "/admin/writing-memory/signals/clusters"): TENANT_CONTENT_READ,
-    ("GET", "/admin/writing-memory/signals/{signal_id}"): TENANT_CONTENT_READ,
+    ("GET", "/admin/writing-memory/summary"): _LAB_TEXT_READ,
+    ("GET", "/admin/writing-memory/signals"): _LAB_TEXT_READ,
+    ("GET", "/admin/writing-memory/signals/clusters"): _LAB_TEXT_READ,
+    ("GET", "/admin/writing-memory/signals/{signal_id}"): _LAB_TEXT_READ,
     ("PATCH", "/admin/writing-memory/signals/{signal_id}/fact"): AI_ADMIN,
-    ("GET", "/admin/writing-memory/candidates"): TENANT_CONTENT_READ,
-    ("GET", "/admin/writing-memory/candidates/{rule_id}"): TENANT_CONTENT_READ,
+    ("GET", "/admin/writing-memory/candidates"): _LAB_TEXT_READ,
+    ("GET", "/admin/writing-memory/candidates/{rule_id}"): _LAB_TEXT_READ,
     ("PATCH", "/admin/writing-memory/candidates/{rule_id}"): AI_ADMIN,
     ("POST", "/admin/writing-memory/candidates/{rule_id}/reject"): AI_ADMIN,
     ("POST", "/admin/writing-memory/run"): AI_ADMIN,
@@ -635,22 +674,22 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/writing-memory/releases/{release_id}/rollback"): AI_ADMIN,
     ("POST", "/admin/writing-memory/releases/{release_id}/post-activation-check"): AI_ADMIN,   # AA-920
     ("POST", "/admin/writing-memory/releases/{release_id}/reject"): AI_ADMIN,
-    ("GET", "/admin/writing-memory/writers"): TENANT_CONTENT_READ,
+    ("GET", "/admin/writing-memory/writers"): _LAB_TEXT_READ,
     ("PATCH", "/admin/writing-memory/writers/{writer}"): AI_ADMIN,
     # AA-921 (WM-27 / WM-29): pinned exemplars (tenant text: reads tenant.read, every change ai.admin) and the Tenant
     # 360 voice card
-    ("GET", "/admin/writing-memory/exemplars"): TENANT_CONTENT_READ,
-    ("GET", "/admin/writing-memory/exemplars/selection"): TENANT_CONTENT_READ,
+    ("GET", "/admin/writing-memory/exemplars"): _LAB_TEXT_READ,
+    ("GET", "/admin/writing-memory/exemplars/selection"): _LAB_TEXT_READ,
     ("POST", "/admin/writing-memory/exemplars/refresh"): AI_ADMIN,
     ("POST", "/admin/writing-memory/exemplars/{exemplar_id}/pin"): AI_ADMIN,
     ("POST", "/admin/writing-memory/exemplars/{exemplar_id}/unpin"): AI_ADMIN,
     ("POST", "/admin/writing-memory/exemplars/{exemplar_id}/never"): AI_ADMIN,
     ("GET", "/admin/writing-memory/tenants/{tenant_id}/voice"): TENANT_CONTENT_READ,
     # AA-922 (WM-30 / WM-31): the weekly KPI reports, keeps and the disagreement queue
-    ("GET", "/admin/writing-memory/metrics"): TENANT_CONTENT_READ,
+    ("GET", "/admin/writing-memory/metrics"): _LAB_TEXT_READ,
     ("POST", "/admin/writing-memory/metrics/run"): AI_ADMIN,
     ("POST", "/admin/writing-memory/releases/{release_id}/keep"): AI_ADMIN,
-    ("GET", "/admin/writing-memory/disagreements"): TENANT_CONTENT_READ,
+    ("GET", "/admin/writing-memory/disagreements"): _LAB_TEXT_READ,
     ("POST", "/admin/writing-memory/disagreements/{item_id}/resolve"): AI_ADMIN,
     # AA-1039 R6 slice 3: the Writing Lab stage read (ids, labels, counts, hashes; no text). AA-1035 R2: Writing Lab R
     # without tenant text, like the release reads (content_lead, tenant_qa, ai_ops, admin)

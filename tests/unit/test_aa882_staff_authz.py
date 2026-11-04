@@ -56,8 +56,9 @@ def test_role_perms_match_the_s241_matrix():
     Catalogue R) and reviewer stays its alias."""
     content_work = {"content.read", "content.write", "review.act"}
     assert set(ROLE_PERMS) == set(_STAFF_ROLES) | {"viewer"} | set(_R2_ROLES)
-    assert ROLE_PERMS["viewer"] == {"content.read"}   # AA-878 read-only role (tests/unit/test_aa878_viewer_role.py)
-    assert ROLE_PERMS["reviewer"] == ROLE_PERMS["content"] == content_work | {"catalog.read"}
+    # AA-878 read-only role (tests/unit/test_aa878_viewer_role.py); AA-1035 slice 2: every role holds the bell
+    assert ROLE_PERMS["viewer"] == {"content.read", "notifications.read"}
+    assert ROLE_PERMS["reviewer"] == ROLE_PERMS["content"] == content_work | {"catalog.read", "notifications.read"}
     assert ROLE_PERMS["admin"] == content_work | {
         "master.admin", "atoms.write", "photos.write", "a4.unpublish", "quality.write",
         "content.settings.write",
@@ -67,8 +68,10 @@ def test_role_perms_match_the_s241_matrix():
         "tenant_content.read", "catalog.read", "tenant.book.read", "tenant.member.write", "tenant.assign",
         "billing.read", "billing.write", "wave.run", "lab.read", "tenant.book.account.read",
         "tenant.member.resend", "tenant.book.write",   # AA-1035 S267 fix pass
+        "tenant.view_as", "notifications.read",        # AA-1035 R2 slice 2 (lab.tenant_text.read: ai_ops only)
     }
-    assert ROLE_PERMS["admin"] == CAPABILITIES - OWNER_PERMS   # admin holds every role capability
+    # admin holds every role capability but the Lab-only logged read of ai_ops (admin reads tenant text in its own right)
+    assert ROLE_PERMS["admin"] == CAPABILITIES - OWNER_PERMS - {"lab.tenant_text.read"}
 
 
 def test_staff_write_is_owner_only():
@@ -106,9 +109,11 @@ def test_policy_reads_are_admin_only_and_the_s1_reads_stay_open():
     assert gets and content_gets == {
         ("GET", "/admin/atoms"), ("GET", "/admin/atoms/summary"), ("GET", "/admin/atoms/unatomized-tours"),
         ("GET", "/admin/tenants/{tenant_id}/details"),
+        # AA-1035 slice 2: the bell has its own capability (every role) so the tenant desk roles read it too
+        ("GET", "/admin/notifications"), ("GET", "/admin/notifications/count"),
     }
     for open_read in ["/admin/llm-config", "/admin/job-runner/jobs/{job_id}", "/admin/review-queue",
-                      "/admin/notifications", "/admin/search"]:
+                      "/admin/search"]:
         assert ("GET", open_read) not in POLICY, open_read
 
 
@@ -178,6 +183,7 @@ def test_content_work_routes_are_the_every_staff_pages():
         "/admin/tours/{tour_id}/versions/{version_num}/promote",
         "/admin/tours/{tour_id}/trash", "/admin/tours/{tour_id}/restore",
         "/admin/notifications/read-all", "/admin/notifications/{notif_id}/read",
+        "/admin/notifications", "/admin/notifications/count",           # AA-1035 slice 2: notifications.read
         "/admin/aa-content", "/admin/aa-content/{content_id}/draft",      # AA-977: drafts are content work
         "/v1/pipeline/review-queue/{review_id}/approve",
         "/v1/pipeline/review-queue/{review_id}/reject",

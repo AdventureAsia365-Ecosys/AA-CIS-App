@@ -269,7 +269,11 @@ export type Capability =
   | "billing.read" | "billing.write" | "wave.run" | "lab.read"
   | "tenant.book.account.read"    // AA-1035: plans, usage, cost, Tenant QA, AI budget of the own book (not support)
   | "tenant.member.resend"        // AA-1035: send a non-owner invitation again (support, customer_success)
-  | "tenant.book.write";          // AA-1035: non-billing Tenant 360 writes of the own book (customer_success)
+  | "tenant.book.write"           // AA-1035: non-billing Tenant 360 writes of the own book (customer_success)
+  // AA-1035 R2 slice 2
+  | "tenant.view_as"              // read-only "view as tenant" (admin, customer_success, support), scoped
+  | "lab.tenant_text.read"        // ai_ops: tenant text in the Writing Lab only, every read logged by the backend
+  | "notifications.read";         // the staff bell (every role)
 
 export const ROLE_PERMS: Record<StaffRole, readonly Capability[]> = {
   admin: [
@@ -278,23 +282,30 @@ export const ROLE_PERMS: Record<StaffRole, readonly Capability[]> = {
     "ops.read", "ops.write", "ai.admin", "spend.read", "spend.write", "staff.read", "audit.read",
     "alerts.write", "tenant_content.read", "catalog.read", "tenant.book.read", "tenant.book.account.read",
     "tenant.member.write", "tenant.assign", "billing.read", "billing.write", "wave.run", "lab.read",
-    "tenant.member.resend", "tenant.book.write",
+    "tenant.member.resend", "tenant.book.write", "tenant.view_as", "notifications.read",
   ],
   content_lead: [
     "content.read", "content.write", "review.act", "master.admin", "atoms.write", "photos.write",
     "a4.unpublish", "quality.write", "content.settings.write", "catalog.read", "tenant_content.read",
-    "lab.read", "wave.run",
+    "lab.read", "wave.run", "notifications.read",
   ],
-  content: ["content.read", "content.write", "review.act", "catalog.read"],
-  reviewer: ["content.read", "content.write", "review.act", "catalog.read"],
-  tenant_qa: ["content.read", "catalog.read", "tenant_content.read", "quality.write", "a4.unpublish", "lab.read"],
+  content: ["content.read", "content.write", "review.act", "catalog.read", "notifications.read"],
+  reviewer: ["content.read", "content.write", "review.act", "catalog.read", "notifications.read"],
+  tenant_qa: [
+    "content.read", "catalog.read", "tenant_content.read", "quality.write", "a4.unpublish", "lab.read",
+    "notifications.read",
+  ],
   customer_success: [
     "tenant.book.read", "tenant.book.account.read", "tenant.book.write", "tenant.member.write", "tenant.member.resend",
+    "tenant.view_as", "notifications.read",
   ],
-  support: ["tenant.book.read", "tenant.member.resend"],
-  finance: ["billing.read", "billing.write", "spend.read"],
-  ai_ops: ["content.read", "catalog.read", "ai.admin", "spend.read", "spend.write", "lab.read"],
-  viewer: ["content.read"],
+  support: ["tenant.book.read", "tenant.member.resend", "tenant.view_as", "notifications.read"],
+  finance: ["billing.read", "billing.write", "spend.read", "notifications.read"],
+  ai_ops: [
+    "content.read", "catalog.read", "ai.admin", "spend.read", "spend.write", "lab.read", "lab.tenant_text.read",
+    "notifications.read",
+  ],
+  viewer: ["content.read", "notifications.read"],
 };
 
 /** May `role` use `capability`? (UI hint from the display role; the backend re-checks every call.) */

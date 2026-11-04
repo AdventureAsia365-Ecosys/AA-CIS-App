@@ -793,6 +793,12 @@ ORDER BY CASE a.kind WHEN 'owner' THEN 0 WHEN 'backup' THEN 1 ELSE 2 END, u.disp
 """
 
 
+# AA-1035 slice 2: the roles an assignment means something for (tenant_scope.py book / book_pool; admin may be the named
+# owner of an account). The Assignments page picker reads the same tuple (admin_tenant_assignments.ASSIGNABLE_ROLES).
+ASSIGNABLE_ROLES: tuple[str, ...] = ("admin", "customer_success", "support")
+ASSIGN_STAFF_SQL = "SELECT id, is_active, role::text AS role FROM shared.admin_users WHERE id = $1"
+
+
 class AssignmentBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: AssignmentKind
@@ -834,11 +840,14 @@ async def put_tenant_assignment(
     pool = request.app.state.pool
     async with pool.acquire() as conn, conn.transaction():
         await _require_tenant(conn, tenant_id)
-        staff = await conn.fetchrow("SELECT id, is_active FROM shared.admin_users WHERE id = $1", admin_user_id)
+        staff = await conn.fetchrow(ASSIGN_STAFF_SQL, admin_user_id)
         if staff is None:
             raise HTTPException(status_code=404, detail="Staff member not found")
         if not staff["is_active"]:
             raise HTTPException(status_code=409, detail="This staff account is disabled; enable it first.")
+        if staff["role"] not in ASSIGNABLE_ROLES:   # AA-1035 slice 2: an assignment would give this role nothing
+            raise HTTPException(status_code=409, detail=(
+                "Only Administrator, Customer Success or Support staff can be assigned to a tenant."))
         try:
             before = await conn.fetchval(
                 "SELECT kind FROM shared.staff_tenant_assignment WHERE admin_user_id = $1 AND tenant_id = $2",

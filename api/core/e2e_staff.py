@@ -66,16 +66,25 @@ E2E_STUDIO_INVITATION_WRITES: frozenset[tuple[str, str]] = frozenset({
     ("POST", "/admin/tenants/{tenant_id}/members/invitations"),
     ("POST", "/admin/tenants/{tenant_id}/members/{membership_id}/invitation/send"),
 })
+# AA-1035 R2 slice 2 (proposed root ADR 0006a A10b-2): start and end a read-only view-as session, synthetic tenants only
+# (checked by api/routers/admin_view_as.py), so the agent's admin-evidence run can show the banner and the audit row.
+# The session itself is read-only whoever opens it (api/core/view_as.py).
+E2E_VIEW_AS_WRITES: frozenset[tuple[str, str]] = frozenset({
+    ("POST", "/admin/tenants/{tenant_id}/view-as"),
+    ("POST", "/admin/view-as/sessions/{session_id}/end"),
+})
 E2E_ALLOWED_WRITES: frozenset[tuple[str, str]] = frozenset({
     ("POST", "/admin/content-quality/pieces/{piece_id}/sentences/apply"),
     ("POST", "/admin/content-quality/tour-versions/{version_id}/sentences/apply"),
-}) | E2E_STUDIO_INVITATION_WRITES
+}) | E2E_STUDIO_INVITATION_WRITES | E2E_VIEW_AS_WRITES
 _UUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 E2E_ALLOWED_WRITE_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("POST", re.compile(rf"/admin/content-quality/pieces/{_UUID}/sentences/apply")),
     ("POST", re.compile(rf"/admin/content-quality/tour-versions/{_UUID}/sentences/apply")),
     ("POST", re.compile(rf"/admin/tenants/{_UUID}/members/invitations")),
     ("POST", re.compile(rf"/admin/tenants/{_UUID}/members/{_UUID}/invitation/send")),
+    ("POST", re.compile(rf"/admin/tenants/{_UUID}/view-as")),
+    ("POST", re.compile(rf"/admin/view-as/sessions/{_UUID}/end")),
 )
 # The sentence-apply modes an A10b session may use (Cut, manual Edit). Not "rewrite".
 E2E_SENTENCE_MODES: frozenset[str] = frozenset({"cut", "manual"})

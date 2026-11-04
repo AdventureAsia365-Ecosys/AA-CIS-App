@@ -448,11 +448,11 @@
     "module": "api.routers.admin_pipeline"
   },
   "GET /admin/notifications": {
-    "capability": null,
+    "capability": "notifications.read",
     "module": "api.routers.admin"
   },
   "GET /admin/notifications/count": {
-    "capability": null,
+    "capability": "notifications.read",
     "module": "api.routers.admin"
   },
   "GET /admin/openapi.json": {
@@ -655,6 +655,14 @@
     "capability": null,
     "module": "api.routers.admin_supply_content"
   },
+  "GET /admin/tenant-assignments": {
+    "capability": "tenant.read|tenant.book.read",
+    "module": "api.routers.admin_tenant_assignments"
+  },
+  "GET /admin/tenant-assignments/staff": {
+    "capability": "tenant.assign",
+    "module": "api.routers.admin_tenant_assignments"
+  },
   "GET /admin/tenant-names": {
     "capability": "tenant.read|tenant_content.read|tenant.book.read|billing.read|lab.read|spend.read",
     "module": "api.routers.admin"
@@ -783,6 +791,14 @@
     "capability": null,
     "module": "api.routers.admin_pipeline"
   },
+  "GET /admin/view-as/sessions": {
+    "capability": "tenant.view_as",
+    "module": "api.routers.admin_view_as"
+  },
+  "GET /admin/view-as/sessions/{session_id}": {
+    "capability": "tenant.view_as",
+    "module": "api.routers.admin_view_as"
+  },
   "GET /admin/waves": {
     "capability": "ops.read|wave.run",
     "module": "api.routers.admin_waves"
@@ -792,23 +808,23 @@
     "module": "api.routers.admin_waves"
   },
   "GET /admin/writing-memory/candidates": {
-    "capability": "tenant_content.read",
+    "capability": "tenant_content.read|lab.tenant_text.read",
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/candidates/{rule_id}": {
-    "capability": "tenant_content.read",
+    "capability": "tenant_content.read|lab.tenant_text.read",
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/disagreements": {
-    "capability": "tenant_content.read",
+    "capability": "tenant_content.read|lab.tenant_text.read",
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/exemplars": {
-    "capability": "tenant_content.read",
+    "capability": "tenant_content.read|lab.tenant_text.read",
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/exemplars/selection": {
-    "capability": "tenant_content.read",
+    "capability": "tenant_content.read|lab.tenant_text.read",
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/lab/{writer}": {
@@ -816,7 +832,7 @@
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/metrics": {
-    "capability": "tenant_content.read",
+    "capability": "tenant_content.read|lab.tenant_text.read",
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/releases": {
@@ -832,19 +848,19 @@
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/signals": {
-    "capability": "tenant_content.read",
+    "capability": "tenant_content.read|lab.tenant_text.read",
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/signals/clusters": {
-    "capability": "tenant_content.read",
+    "capability": "tenant_content.read|lab.tenant_text.read",
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/signals/{signal_id}": {
-    "capability": "tenant_content.read",
+    "capability": "tenant_content.read|lab.tenant_text.read",
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/summary": {
-    "capability": "tenant_content.read",
+    "capability": "tenant_content.read|lab.tenant_text.read",
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/tenants/{tenant_id}/voice": {
@@ -852,7 +868,7 @@
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/writers": {
-    "capability": "tenant_content.read",
+    "capability": "tenant_content.read|lab.tenant_text.read",
     "module": "api.routers.admin_writing_memory"
   },
   "GET /v1/pipeline/execution/{execution_id:path}": {
@@ -1439,6 +1455,10 @@
     "capability": "tenant.write",
     "module": "api.routers.admin"
   },
+  "POST /admin/tenants/{tenant_id}/view-as": {
+    "capability": "tenant.view_as",
+    "module": "api.routers.admin_view_as"
+  },
   "POST /admin/tours/{tour_id}/generated/{content_id}/revalidate": {
     "capability": "content.write",
     "module": "api.routers.admin_pipeline"
@@ -1462,6 +1482,10 @@
   "POST /admin/upload-url": {
     "capability": "content.write",
     "module": "api.routers.admin_pipeline"
+  },
+  "POST /admin/view-as/sessions/{session_id}/end": {
+    "capability": "tenant.view_as",
+    "module": "api.routers.admin_view_as"
   },
   "POST /admin/waves": {
     "capability": "ops.write|wave.run",
@@ -1600,11 +1624,11 @@
     "module": "api.routers.admin_decisions"
   },
   "PUT /admin/notifications/read-all": {
-    "capability": "content.read",
+    "capability": "notifications.read",
     "module": "api.routers.admin"
   },
   "PUT /admin/notifications/{notif_id}/read": {
-    "capability": "content.read",
+    "capability": "notifications.read",
     "module": "api.routers.admin"
   },
   "PUT /admin/places/{destination_id}/shape": {

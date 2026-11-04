@@ -69,6 +69,10 @@ def test_the_write_allow_list_is_exactly_the_reviewed_routes():
         ("POST", "/admin/content-quality/tour-versions/{version_id}/sentences/apply"),
         ("POST", "/admin/tenants/{tenant_id}/members/invitations"),
         ("POST", "/admin/tenants/{tenant_id}/members/{membership_id}/invitation/send"),
+        # AA-1035 R2 slice 2 (proposed A10b-2): start / end a read-only view-as session, synthetic tenants only
+        # (test_aa1035_s2_view_as.py)
+        ("POST", "/admin/tenants/{tenant_id}/view-as"),
+        ("POST", "/admin/view-as/sessions/{session_id}/end"),
     }
     # Both are real routes of the app, with a POLICY entry, admin-only by capability. Read from the app's OpenAPI
     # document, not by walking app.routes: FastAPI >= 0.14x keeps included routers as opaque entries there.

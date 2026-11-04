@@ -131,6 +131,12 @@ class AdminTenantAuditAction:
     # changed) / removed (details: the staff id, the kind before / after; no name, no e-mail).
     ASSIGNMENT_SET = "tenant.assignment_set"
     ASSIGNMENT_REMOVED = "tenant.assignment_removed"
+    # AA-1035 R2 slice 2 (root ADR 0019 d5) — a staff member started / ended a read-only "view as tenant" session
+    # (details: session id, minutes, ticket reference, end reason; never the reason text, which stays in
+    # shared.staff_view_as_session). Each request made in the session is a tenant.view_as_request row
+    # (api/core/view_as.py AUDIT_ACTION_REQUEST, written by api/middleware/view_as.py).
+    VIEW_AS_STARTED = "tenant.view_as_started"
+    VIEW_AS_ENDED = "tenant.view_as_ended"
 
 
 async def write_audit_log(

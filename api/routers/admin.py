@@ -8,7 +8,7 @@ from typing import List, Literal, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from api.core.staff_authz import (
     BILLING_READ, BILLING_WRITE, CONTENT_READ, MASTER_ADMIN, OPS_READ, TENANT_BOOK_READ, TENANT_BOOK_WRITE, TENANT_READ,
-    TENANT_WRITE, has_any_perm, has_perm, sees_tenant_money, staff_policy,
+    ROLE_PERMS, TENANT_WRITE, has_any_perm, has_perm, sees_tenant_money, staff_policy,
 )
 from api.core.tenant_scope import TENANT_SCOPED, tenant_scope_filter
 from pydantic import BaseModel, Field
@@ -1918,11 +1918,26 @@ _NOTIF_CONTENT_SCOPE = (
 _NOTIF_STAFF_ROWS = "NOT (target_roles <@ ARRAY['tenant']::text[])"
 
 
+# AA-1035 R2 slice 2: the bell of a role that reads neither ops nor content (customer_success, support, finance): only
+# the rows targeted at that role by name, never a platform.* or spend alert. No writer targets them yet, so their bell
+# is empty until one does; it no longer answers 403.
+_NOTIF_ROLE_SCOPE = (
+    "(target_roles && ARRAY['{role}']::text[]"
+    " AND event_type NOT LIKE 'platform.%'"
+    " AND event_type <> 'spend_budget_alert')"
+)
+
+
 def notification_scope(x_admin_role: Optional[str]) -> str:
-    """SQL predicate on shared.notifications for the caller's role (a constant, never user input)."""
+    """SQL predicate on shared.notifications for the caller's role (a constant, never user input: a role is put into
+    the SQL only when it is one of the ROLE_PERMS keys, which are fixed lower-case identifiers)."""
     if x_admin_role is None or has_perm(x_admin_role, OPS_READ):
         return _NOTIF_STAFF_ROWS
-    return _NOTIF_CONTENT_SCOPE
+    if has_perm(x_admin_role, CONTENT_READ):
+        return _NOTIF_CONTENT_SCOPE
+    if x_admin_role in ROLE_PERMS and x_admin_role.replace("_", "").isalpha() and x_admin_role.islower():
+        return _NOTIF_ROLE_SCOPE.format(role=x_admin_role)
+    return "FALSE"
 
 
 # ── GET /admin/notifications/count ────────────────────────────────────────────
