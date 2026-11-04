@@ -37,8 +37,9 @@ import { PageFrame,
   Badge, Button, ConfirmModal, DataTable, Drawer, ErrorState, GuidePanel, K, PageHeader, StatusBadge, TableSkeleton,
   Tabs, apiGet, mono, useFormat, useLocalized, useT, useToast, type ColumnDef,
   Input, Select, Textarea,
-  LinkButton,
+  LinkButton, useAdminIdentity,
 } from "../../../_kit";
+import { can } from "@/lib/rbac";
 import {
   L0_WRITERS, LINT_CHECKS, WM_API, factTone, lintCheck, r0Of, ruleTone, usd,
   type Cluster, type ClustersResponse, type Example, type FactStatus, type R0Result, type Rule, type RuleDetail,
@@ -472,6 +473,9 @@ export default function WritingMemory() {
   const [confirmMine, setConfirmMine] = useState(false);
   const summary = useQuery({ queryKey: ["wm", "summary"], queryFn: () => apiGet<Summary>(`${WM_API}/summary`) });
   const budget = summary.data?.budget;
+  // AA-1035 R2 slice 2: ai_ops reads the tenant text here through lab.tenant_text.read; the API logs each read.
+  const role = useAdminIdentity().role;
+  const loggedRead = can(role, "lab.tenant_text.read") && !can(role, "tenant_content.read");
 
   async function run(kind: "backfill" | "fact_filter" | "mine" | "r0_baseline", dryRun = false) {
     setBusy(kind);
@@ -504,6 +508,13 @@ export default function WritingMemory() {
           <Button variant="primary" onClick={() => setConfirmMine(true)} disabled={!!busy} title={t("mineRulesTitle")}>
             <Play size={14} /> {t("mineRules")}</Button>
         </>} />
+      {loggedRead && (
+        <div role="note" data-testid="wm-logged-read"
+          style={{ marginBottom: 12, padding: "8px 12px", borderRadius: 8, fontSize: 13, color: K.ink,
+            background: K.amberSoft, border: `1px solid ${K.amber}` }}>
+          {t("loggedReadNotice")}
+        </div>
+      )}
       <ConfirmModal open={confirmMine} onClose={() => setConfirmMine(false)} onConfirm={() => run("mine")}
         busy={busy === "mine"} title={t("mineConfirmTitle")} confirmLabel={t("mineRules")}
         body={<div style={{ fontSize: 13, lineHeight: 1.5 }}>

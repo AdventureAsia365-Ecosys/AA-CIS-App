@@ -30,10 +30,13 @@ const CONTENT_WORKERS: StaffRole[] = ["admin", "reviewer", "content", "content_l
 // AA-1035: tenant content QA (quality.write) and the Writing Lab readers.
 const TENANT_QA: StaffRole[] = ["admin", "content_lead", "tenant_qa"];
 // AA-1035 (S267 fix pass): the Writing Lab pages — the readers above plus ai_ops (Writing Lab W: lab.read and the
-// ai.admin writes; the tenant-text reads stay tenant_content.read in the backend, so those panels refuse ai_ops).
+// ai.admin writes). Slice 2: ai_ops reads the tenant-text panels too, through lab.tenant_text.read, which the backend
+// logs per read (api/core/lab_read_log.py); the Writing memory page says so to that role.
 const WRITING_LAB: StaffRole[] = [...TENANT_QA, "ai_ops"];
 // AA-1035: the Tenants directory (backend filters it to the caller's scope: api/core/tenant_scope.py).
 const TENANT_DESK: StaffRole[] = ["admin", "customer_success", "support", "finance"];
+// AA-1035 R2 slice 2: the roles that work a tenant book (Assignments, view as tenant: tenant.view_as).
+const TENANT_BOOK: StaffRole[] = ["admin", "customer_success", "support"];
 // AA-1035: AI & spend.
 const AI_SPEND: StaffRole[] = ["admin", "ai_ops", "finance"];
 
@@ -83,6 +86,10 @@ export const PAGE_RULES: PageRule[] = [
   { prefix: "/admin/tenants/agencies", roles: ["admin"] },
   { prefix: "/admin/tenants/data-erasure", roles: ["admin"] },
   { prefix: "/admin/tenants/plans", roles: ["admin", "finance"] },
+  // AA-1035 R2 slice 2: who looks after which tenant (the backend filters to the caller's scope; only admin assigns)
+  // and the read-only view as tenant (backend capability tenant.view_as, scoped).
+  { prefix: "/admin/tenants/assignments", roles: TENANT_BOOK },
+  { prefix: "/admin/tenants/view-as", roles: TENANT_BOOK },
   { prefix: "/admin/tenants", roles: TENANT_DESK },
   { prefix: "/admin/ai-gateway", roles: AI_SPEND },        // AA-804 — AI gateway (health, spend, job trace)
   // AA-1039 R6 slice 3 — Spend (was Cost Operations at /admin/cost-ops, AA-505 / AA-665, and Cost per app at

@@ -36,6 +36,7 @@ import { Tenant360Markets } from "./_components/Tenant360Markets";
 import { Tenant360VoiceMemory } from "./_components/Tenant360VoiceMemory";
 import { Tenant360Members } from "./_components/Tenant360Members";
 import { Tenant360Subscription } from "./_components/Tenant360Subscription";
+import { ViewAsStart } from "./_components/ViewAsStart";
 import { useContentTiers } from "./_components/useContentTiers";
 import { fmtDailyPublishLimit } from "./_components/tenant360";
 import { T360_WORDS_MESSAGES } from "./_components/tenant360.messages";
@@ -714,6 +715,9 @@ function TenantDetail({ tenant, onChanged }: {
   // AA-1035 (S267 fix pass): finance reaches Tenant 360 for its Billing / Subscription tabs only (matrix: "R (Billing
   // tab)"); /details answers it the header without tours, runs or brand text, and every other tab would be refused.
   const billingOnly = known && !can(role, "tenant.read") && !can(role, "tenant.book.read") && can(role, "billing.read");
+  // AA-1035 R2 slice 2: read-only "view as partner" (tenant.view_as: admin, customer_success, support; the backend
+  // re-checks the scope). Not for the AA internal tenant or an offboarded one (the API answers 409).
+  const viewAs = can(role, "tenant.view_as") && !isInternal && (tenant.status ?? "active") !== "offboarded";
 
   // C4 (S262): `?tenant=<id>&tab=cost` (AI providers › Budgets "Open the tenant") opens this tenant on that tab.
   const deepTab = useSearchParams();
@@ -802,6 +806,11 @@ function TenantDetail({ tenant, onChanged }: {
           </div>
         ))}
       </div>
+      {viewAs && (
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+          <ViewAsStart tenantId={tenantId} tenantName={tenant.name} />
+        </div>
+      )}
       {/* S235: the tab row scrolls sideways on phones. C4 polish (N3, S262): kit Tabs (underline), which fades the
           edge with more tabs and scrolls the active tab into view, so a deep link (`?tab=cost`) shows its tab at 390. */}
       <div style={{ borderBottom: `1px solid ${K.line}`, marginBottom: 14 }}>

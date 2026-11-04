@@ -527,3 +527,17 @@ def test_the_view_as_routes_are_tenant_scoped(world):
             assert any(d.call is ts.require_tenant_scope for d in route.dependant.dependencies)
             return
     raise AssertionError("view-as start route not found")
+
+
+def test_the_frontend_mirror_of_the_read_allow_list_is_the_same():
+    """frontend/lib/viewAs.ts VIEW_AS_READ_ROUTES: the BFF forwards only these (the backend stays the authority)."""
+    import re
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[2] / "frontend" / "lib" / "viewAs.ts").read_text()
+    block = re.search(r"export const VIEW_AS_READ_ROUTES = \[(.*?)\] as const;", src, re.S)
+    assert block, "VIEW_AS_READ_ROUTES not found"
+    assert tuple(re.findall(r'"([^"]+)"', block.group(1))) == view_as.READ_ROUTES
+    roles = re.search(r"export const VIEW_AS_ROLES = \[(.*?)\] as const;", src, re.S)
+    assert set(re.findall(r'"([a-z_]+)"', roles.group(1))) == {
+        r for r, perms in staff_authz.ROLE_PERMS.items() if staff_authz.TENANT_VIEW_AS in perms}

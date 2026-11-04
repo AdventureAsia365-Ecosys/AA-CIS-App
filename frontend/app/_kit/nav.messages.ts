@@ -24,6 +24,7 @@ export const NAV_MESSAGES = defineMessages(
     "Data coverage": "Data coverage",
     // Tenants
     "Directory": "Directory",
+    "Assignments": "Assignments",
     "CRM agencies": "CRM agencies",
     "Data erasure": "Data erasure",
     "Plans & add-ons": "Plans & add-ons",
@@ -79,6 +80,7 @@ export const NAV_MESSAGES = defineMessages(
     "Reports": "Báo cáo",
     "Data coverage": "Độ phủ dữ liệu",
     "Directory": "Danh bạ",
+    "Assignments": "Phân công",
     "CRM agencies": "Đại lý CRM",
     "Data erasure": "Xoá dữ liệu",
     "Plans & add-ons": "Gói & add-on",
