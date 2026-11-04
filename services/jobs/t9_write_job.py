@@ -20,6 +20,7 @@ import structlog
 
 from services.acp_content_writing import service
 from services.acp_shared.writing_progress import WritingProgress
+from services.quality import route_guard
 from shared.jobs.registry import JobContext, NonRetryable, job_kind
 from shared.llm_client import stream_sink
 from shared.llm_client.errors import is_stage_switch_hold, stage_disabled_in
@@ -47,7 +48,8 @@ async def _run_write_with_progress(request_id: UUID, piece_id: UUID, context: di
     progress.step("prepare")
     on_hold = False
     try:
-        with stream_sink.bind(progress):
+        # AA-1042 (Quality guard): the piece's own collector of writer calls answered by a fallback model
+        with stream_sink.bind(progress), route_guard.collect_output():
             await service.run_write_background(request_id, piece_id, context, pool)
     except Exception as e:
         progress.fail()

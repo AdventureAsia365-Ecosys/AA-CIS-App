@@ -90,6 +90,8 @@ def test_background_kind_never_claimed_with_two_or_fewer_free_slots(free):
                           "llm_connection_probe",
                           # AA-1024 D2: the nightly model lifecycle sync ($0: Bedrock control-plane lists)
                           "llm_model_lifecycle_sync",
+                          # AA-1042: the route watch every 15 min and the daily route digest ($0: DB reads, bells)
+                          "llm_route_watch",
                           # AA-1026 D5: re-embed of one vector column (dry run $0; a fill is capped, resumable)
                           "embedding_reembed",
                           # AA-1026 I6: the acc2 fallback contract smoke (dry run $0; live about 0.01 USD, cap 0.10)

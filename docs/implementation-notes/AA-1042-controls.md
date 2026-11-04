@@ -142,3 +142,10 @@ DM-7.1 retention rows of the two new tables, merged before the Infra copy, and `
   still work (no version row).
 - `tests/integration/test_aa1002_migration_304.py` and `test_aa1026_migration_367.py` were adjusted: 370 grants
   priority UPDATE and switches gpt-4.1 off on the deployment table they rebuild.
+- Merged with the Trace lane (CIS #1301, migration 371) by a merge commit, not a rebase (this branch was already
+  pushed). Both routers, capability entries, page actions (`route_control`, `route_policy`, `route_test`) and tabs
+  (Route control, Trace) are kept. The two lanes touch different gateway seams: this lane's
+  `route_settings.watch_version()` (route resolution) and the 370 trigger stamping `route_config_version`, the Trace
+  lane's `route_trace` / `position` in `quality_signal` and `call_log.ROUTE_KEYS` (ledger rows). Route positions in the
+  trace are positions of the route the gateway actually tried, so they follow the order mode set here.
+  `docs/api/openapi.json` and the two route-policy snapshots were regenerated (fastapi 0.161.1 / pydantic 2.14.1).

@@ -51,6 +51,8 @@ REGISTRY_READERS = {
                    "connection an admin limit names",
     "route_settings.py": "AA-1042: the route order mode / config version read through connections.run_sync / "
                          "_connect; drops the deployment cache (deployments.invalidate) when the version changes",
+    "route_watch.py": "AA-1042: the route policy rows read through connections.run_sync / _connect (the hold switch "
+                      "cache); no connection or deployment is read",
 }
 CALL_PATH = ("client.py", "embed.py", "decide.py", "judge.py", "shadow.py", "bedrock_satellite.py",
              "bedrock_batch.py", "call_log.py", "catalog.py", "role_config.py", "pricing.py", "errors.py",
@@ -70,7 +72,8 @@ CALL_PATH = ("client.py", "embed.py", "decide.py", "judge.py", "shadow.py", "bed
              "model_lifecycle.py",  # AA-1024 D2: Bedrock model lifecycle (free control-plane list; no call path)
              "stage_coverage.py",  # AA-1026 S267: report-only stage coverage (reads the tables by SQL, not a call)
              "route_settings.py",  # AA-1042: the route order mode (no row / unreadable = the env var, as before 370)
-             "route_versions.py")  # AA-1042: route config versions, written inside the admin route writes (no call)
+             "route_versions.py",  # AA-1042: route config versions, written inside the admin route writes (no call)
+             "route_watch.py")  # AA-1042: route alerts (ledger SQL) and the cached hold switch (no row = off)
 
 
 def _imported_modules(path: Path) -> set[str]:

@@ -94,7 +94,17 @@ def test_routes_are_served_and_run_the_policy():
                           ("POST", "/admin/ai-gateway/route-control/presets/{preset}"),
                           ("GET", "/admin/ai-gateway/route-control/versions"),
                           ("GET", "/admin/ai-gateway/route-control/versions/{version}"),
-                          ("POST", "/admin/ai-gateway/route-control/versions/{version}/revert")}
+                          ("POST", "/admin/ai-gateway/route-control/versions/{version}/revert"),
+                          # AA-1042: the Trace tab (admin_llm_route.py)
+                          ("GET", "/admin/ai-gateway/route-trace/requests"),
+                          ("GET", "/admin/ai-gateway/route-trace/requests/{trace_id}"),
+                          ("GET", "/admin/ai-gateway/route-trace/rungs"),
+                          ("GET", "/admin/ai-gateway/route-trace/fallback-content"),
+                          ("POST", "/admin/ai-gateway/route-trace/test"),
+                          ("GET", "/admin/ai-gateway/route-policy"),
+                          ("PUT", "/admin/ai-gateway/route-policy/{stage}"),
+                          ("DELETE", "/admin/ai-gateway/route-policy/{stage}"),
+                          ("POST", "/admin/ai-gateway/route-watch/run")}
     for (_m, p), (r, inh) in found.items():
         assert r.path == p and _runs_policy(r, inh, p)
 

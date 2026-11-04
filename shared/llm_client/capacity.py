@@ -95,6 +95,7 @@ KIND_LINES: dict[str, Optional[str]] = {
     "llm_connection_probe": DEV, "llm_contract_smoke": DEV, "llm_model_lifecycle_sync": DEV,
     # no LLM call
     "data_erasure": None, "inquiry_handoff_check": None, "kpi_snapshot_daily": None, "llm_cost_reconcile": None,
+    "llm_route_watch": None,     # AA-1042: route alerts and digest from the ledger (database reads only)
     "ops_alert_email": None, "photo_destination_match": None, "photo_medium_backfill": None, "photo_sync": None,
     "place_geocode": None, "place_relocate": None, "place_shape": None, "recompute": None, "report_email": None,
     "report_generate": None, "retention_cost_explorer_snapshot": None, "retention_decision_log": None,

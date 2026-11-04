@@ -9,6 +9,8 @@
 //   Models & trials  the model catalog (on / off; prices view-only) and the shadow comparisons (ModelsTab.tsx).
 //   Budgets          every spending cap by tier (BudgetsTab.tsx).
 //   Calls            every logged paid call, newest first, across the CIS ledgers and the CRM's (CallsTab.tsx).
+//   Trace            AA-1042: how each stage's route behaved, every attempt of a request, the route alerts and the
+//                    content a fallback model wrote (TraceTab.tsx); `?rt=<trace id>&rt_at=<time>` opens one request.
 //   Guide            how to read the page (guide.ts / guide.vi.ts), the kit GuidePanel like every admin guide.
 // UI part 2 moved Routing, Models & trials, the connection settings and the Jev credit ledger here from Settings
 // (LLM Models, Jev Credit) and Budgets from Cost Operations; the old links are sent on here by those pages
@@ -35,6 +37,8 @@ import CallsTab from "./CallsTab";
 import { AI_GATEWAY_GUIDE } from "./guide";
 import { AI_GATEWAY_GUIDE_VI } from "./guide.vi";
 import { M } from "./messages";
+import TraceTab from "./TraceTab";
+import { parseRouteTarget, type RouteTarget } from "@/lib/routeTrace";
 import ModelsTab from "./ModelsTab";
 import ProvidersTab from "./ProvidersTab";
 import RouteControlTab from "./RouteControlTab";
@@ -67,6 +71,8 @@ export default function AiGateway() {
   const [tab, setTabState] = useState<TabKey>(() => parseTab(params.get("tab")));
   const [view, setViewState] = useState<ProviderView>(() => parseView(params.get("view")));
   const [trace, setTraceState] = useState<TraceTarget | null>(() => parseTraceTarget(params.get("trace")));
+  const [route, setRouteState] = useState<RouteTarget | null>(
+    () => parseRouteTarget(params.get("rt"), params.get("rt_at")));
   const tabs = [
     { key: "providers", label: t("tabProviders") },
     { key: "routing", label: t("tabRouting") },
@@ -74,6 +80,7 @@ export default function AiGateway() {
     { key: "models", label: t("tabModels") },
     { key: "budgets", label: t("tabBudgets") },
     { key: "calls", label: t("tabCalls") },
+    { key: "trace", label: t("tabTrace") },
     { key: "guide", label: t("tabGuide") },
   ];
 
@@ -91,6 +98,15 @@ export default function AiGateway() {
   const openTrace = (target: TraceTarget) => {
     setTraceState(target);
     setParam("trace", traceParam(target));
+  };
+  const openRoute = (target: RouteTarget | null) => {
+    setRouteState(target);
+    setParam("rt", target?.id ?? null);
+    setParam("rt_at", target?.at ?? null);
+  };
+  const openRouteTab = (target: RouteTarget) => {
+    setTab("trace");
+    openRoute(target);
   };
   const closeTrace = () => {
     setTraceState(null);
@@ -118,7 +134,8 @@ export default function AiGateway() {
         {tab === "controls" && <RouteControlTab />}
         {tab === "models" && <ModelsTab />}
         {tab === "budgets" && <BudgetsTab onOpenConnections={() => { setTab("providers"); setView("connections"); }} />}
-        {tab === "calls" && <CallsTab onTrace={openTrace} />}
+        {tab === "calls" && <CallsTab onTrace={openTrace} onRoute={openRouteTab} />}
+        {tab === "trace" && <TraceTab target={route} onOpen={openRoute} />}
         {tab === "guide" && <GuidePanel content={guide} testId="ai-gateway-guide" />}
         {trace && <TraceDrawer key={traceParam(trace)} target={trace} onClose={closeTrace} />}
       </PageFrame>

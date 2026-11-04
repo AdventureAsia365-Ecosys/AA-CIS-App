@@ -354,8 +354,9 @@ export function groupRows<R extends Pick<ProviderRow, "group">>(rows: readonly R
 // ── tabs, views and the links of retired tabs (AA-804 UI part 2) ──────────────────────────────────────────────────
 
 /** The page's tabs, in order. `providers` is the default (no `tab` in the address). */
-// AA-1042 (S268): "controls" = Route control (order mode, presets, chain editor, provider order, versions).
-export const TAB_KEYS = ["providers", "routing", "controls", "models", "budgets", "calls", "guide"] as const;
+// AA-1042 (S268): "controls" = Route control (order mode, presets, chain editor, provider order, versions);
+// "trace" = Trace (route trace, route alerts, fallback quality guard).
+export const TAB_KEYS = ["providers", "routing", "controls", "models", "budgets", "calls", "trace", "guide"] as const;
 export type TabKey = (typeof TAB_KEYS)[number];
 /** The views inside the Providers tab: the read-only overview, the connection settings, the Jev credit ledger and
  *  (AA-1025 B5) the credit ledger of the vendor API connections. */
@@ -1293,7 +1294,7 @@ export const ACCESS_API = "/api/admin/ai-gateway/access";
 
 export const PAGE_ACTIONS = [
   "provider_switch", "connections", "connection_test", "requeue", "routing", "catalog", "budgets", "jev_credit",
-  "credit", "app_profiles", "route_control",
+  "credit", "app_profiles", "route_control", "route_policy", "route_test",
 ] as const;
 export type PageAction = (typeof PAGE_ACTIONS)[number];
 
@@ -1316,6 +1317,8 @@ export const ACTION_CAPABILITY: Record<PageAction, "ai.admin" | "ops.write" | "s
   credit: "spend.write",
   app_profiles: "ai.admin",
   route_control: "ai.admin",
+  route_policy: "ai.admin",   // AA-1042 Trace tab: the route alert settings and the fallback hold switch
+  route_test: "ai.admin",     // AA-1042 Trace tab: the route test (a few tiny paid calls) and Run check now
 };
 
 /**

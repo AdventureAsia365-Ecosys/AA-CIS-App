@@ -106,6 +106,32 @@ ERROR_CLASSES = core_ledger.ERROR_CLASSES
 # The gateway facts of one reply that billed_fields() passes on (besides the S6 four).
 V2_BILLED_KEYS = ("latency_ms", "attempt_no", "deployment_wire_id", "request_id", "effort", "reasoning_tokens",
                   "prompt_hash", "prompt_version")
+# AA-1042 (Route trace): the gateway request a reply answered and the route position that answered it. Not columns:
+# record_call* fold them into quality_signal ("route_trace", "route_position"), the keys the gateway's own attempt rows
+# carry too (route_trace, position), so every row of one request shares its route_trace.
+ROUTE_KEYS = ("route_trace", "route_position")
+_ROUTE_TRACE_MAX = 64
+
+
+def route_signal(route_trace=None, route_position=None) -> dict:
+    """The quality_signal keys of a reply's route facts ({} when there are none). Defensive like billed_fields."""
+    out: dict = {}
+    if isinstance(route_trace, str) and route_trace and len(route_trace) <= _ROUTE_TRACE_MAX:
+        out["route_trace"] = route_trace
+    if isinstance(route_position, int) and not isinstance(route_position, bool) and route_position >= 0:
+        out["route_position"] = route_position
+    return out
+
+
+def _with_route(quality_signal, route_trace=None, route_position=None):
+    """``quality_signal`` with the route keys added (a key the signal already has wins). Unchanged without them."""
+    extra = route_signal(route_trace, route_position)
+    if not extra:
+        return quality_signal
+    base = dict(quality_signal) if isinstance(quality_signal, dict) else {}
+    for k, v in extra.items():
+        base.setdefault(k, v)
+    return base
 
 
 def _s6_extras(model: str, cache_read_tokens, cache_write_tokens, pricing_mode) -> Optional[tuple]:
@@ -400,12 +426,17 @@ def billed_fields(resp) -> dict:
             out[key] = _int_or_none(value)
         else:
             out[key] = value if isinstance(value, str) and value else None
+    # AA-1042 (Route trace): which gateway request this reply answered, and the route position that answered it.
+    route = route_signal(getattr(resp, "route_trace", None), getattr(resp, "route_position", None))
+    out["route_trace"] = route.get("route_trace")
+    out["route_position"] = route.get("route_position")
     return out
 
 
 # Every key billed_fields() returns: a structure that carries a reply's billing (brand_fit.RUN_BILLING_KEYS, the T10
 # judge's raw dict) keeps them all.
-BILLED_FIELD_KEYS = ("cache_read_tokens", "cache_write_tokens", "pricing_mode", "connection_key", *V2_BILLED_KEYS)
+BILLED_FIELD_KEYS = ("cache_read_tokens", "cache_write_tokens", "pricing_mode", "connection_key", *V2_BILLED_KEYS,
+                     *ROUTE_KEYS)
 
 
 async def record_call(
@@ -417,6 +448,7 @@ async def record_call(
     provider: Optional[str] = None,
     cache_read_tokens: Optional[int] = None, cache_write_tokens: Optional[int] = None,
     pricing_mode: Optional[str] = None, connection_key: Optional[str] = None,
+    route_trace: Optional[str] = None, route_position: Optional[int] = None,
     **v2,
 ) -> None:
     """Opens its own short-lived connection — the call sites this is used from (S1 graph nodes,
@@ -449,6 +481,7 @@ async def record_call(
     caller may state itself (status, error_class, tour_id, prompt_version, units, unit_kind, is_shadow,
     is_experiment, app). Anything else is a TypeError, as before. Unset ones are derived (``_v2_values``)."""
     _check_v2(v2)
+    quality_signal = _with_route(quality_signal, route_trace, route_position)   # AA-1042
     account = _row_account(account, connection_key)
     clean_model, provider = _normalize_model_provider(model, provider)
     # The connection column: the vendor connection, else the row's account (a Bedrock account key is its connection).
@@ -481,6 +514,7 @@ async def record_call_with_pool(
     provider: Optional[str] = None,
     cache_read_tokens: Optional[int] = None, cache_write_tokens: Optional[int] = None,
     pricing_mode: Optional[str] = None, connection_key: Optional[str] = None,
+    route_trace: Optional[str] = None, route_position: Optional[int] = None,
     **v2,
 ) -> None:
     """Same as record_call() but reuses an already-open asyncpg.Pool (T5/T9's async orchestrators
@@ -491,6 +525,7 @@ async def record_call_with_pool(
     (record_call). The call was already billed — 347k Jev calls (30/09–09/10) went unlogged when
     a single shared connection rejected the write with "another operation is in progress"."""
     _check_v2(v2)
+    quality_signal = _with_route(quality_signal, route_trace, route_position)   # AA-1042
     account = _row_account(account, connection_key)
     clean_model, provider = _normalize_model_provider(model, provider)
     # The connection column: the vendor connection, else the row's account (a Bedrock account key is its connection).
@@ -515,7 +550,7 @@ async def record_call_with_pool(
             content_piece_id=content_piece_id, angle_gate_request_id=angle_gate_request_id,
             stop_reason=stop_reason, account=account, fallback_used=fallback_used, provider=provider,
             cache_read_tokens=cache_read_tokens, cache_write_tokens=cache_write_tokens, pricing_mode=pricing_mode,
-            connection_key=connection_key, **v2,
+            connection_key=connection_key, **v2,       # quality_signal already carries the route keys (AA-1042)
         )
 
 
@@ -591,7 +626,17 @@ V2_FIELDS = tuple(c for c in V2_COLUMNS if c != "connection_key")
 _ROW_FIELDS = ("stage", "role", "model", "tokens_in", "tokens_out", "cost_usd", "quality_signal",
                "tenant_id", "content_piece_id", "angle_gate_request_id", "stop_reason", "account",
                "fallback_used", "provider", "cache_read_tokens", "cache_write_tokens", "pricing_mode",
-               "connection_key", *V2_FIELDS)
+               "connection_key", *V2_FIELDS, *ROUTE_KEYS)
+
+
+def _fold_route(row: dict) -> dict:
+    """AA-1042: a record_calls row with its route keys folded into quality_signal (removed as fields)."""
+    if not any(k in row for k in ROUTE_KEYS):
+        return row
+    out = {k: v for k, v in row.items() if k not in ROUTE_KEYS}
+    out["quality_signal"] = _with_route(row.get("quality_signal") or {}, row.get("route_trace"),
+                                        row.get("route_position"))
+    return out
 
 
 def _check_v2(v2: dict) -> None:
@@ -630,6 +675,7 @@ async def record_calls(rows: list[dict]) -> None:
         unknown = set(r) - set(_ROW_FIELDS)
         if unknown:
             raise TypeError(f"record_calls: unknown field(s) {sorted(unknown)}")
+    rows = [_fold_route(r) for r in rows]
     try:
         conn = await asyncpg.connect(get_database_url(), ssl="require", timeout=15)
         try:
@@ -684,6 +730,7 @@ def billed_record(resp, **overrides) -> dict:
     # AA-804 (ledger v2): the attempt facts of the reply (latency, attempt position, wire id, request id, ...).
     v2 = billed_fields(resp)
     rec.update({k: v2[k] for k in V2_BILLED_KEYS})
+    rec.update({k: v2[k] for k in ROUTE_KEYS if v2.get(k) is not None})   # AA-1042 (Route trace)
     if v2["connection_key"]:
         rec["connection_key"] = v2["connection_key"]
     rec.update(overrides)
@@ -700,7 +747,8 @@ def billed_unusable_rows(*, stage: str, role: str, billed: Optional[list], error
     signal.update({"billed_unusable": True, "error": str(error or "")[:300]})
     # AA-804 (ledger v2): status billed_unusable; the attempt facts the gateway put on the billed record pass through.
     return [dict(stage=stage, role=role, model=b.get("model") or "unknown", tokens_in=b.get("tokens_in"),
-                 tokens_out=b.get("tokens_out"), cost_usd=b.get("cost_usd"), quality_signal=dict(signal),
+                 tokens_out=b.get("tokens_out"), cost_usd=b.get("cost_usd"),
+                 quality_signal=_with_route(dict(signal), b.get("route_trace"), b.get("route_position")),
                  tenant_id=tenant_id, content_piece_id=content_piece_id,
                  angle_gate_request_id=angle_gate_request_id, stop_reason=b.get("stop_reason"),
                  account=_row_account(b.get("account"), b.get("connection_key")),

@@ -145,13 +145,53 @@ STAGE_COVERAGE_CHECK = Check(
     ROUTING_PAGE, bell_every=timedelta(hours=24))
 
 
+# AA-1042 (S268): the route alerts of the llm_route_watch job (shared/llm_client/route_watch.py), one check per stage
+# (the stage name follows the prefix; short prefixes: notifications.event_type is varchar(100)) plus the daily digest.
+ROUTE_FALLBACK_PREFIX = "route_fb."
+ROUTE_LAST_PREFIX = "route_last."
+ROUTE_BACK_PREFIX = "route_back."
+ROUTE_COST_PREFIX = "route_cost."
+ROUTE_DIGEST_CHECK = "route_digest"
+TRACE_PAGE = "/admin/ai-gateway?tab=trace"
+PREFIX_CHECKS: dict[str, Check] = {
+    ROUTE_FALLBACK_PREFIX: Check(
+        "LLM stage served by a fallback model", "The stage's first model refused or failed for a large share of its "
+        "requests, so a later model or provider answered them. Open AI gateway > Trace to see every attempt and its "
+        "reason; check the provider (refusal, quota, outage) before changing the route. Thresholds: Trace > Alert "
+        "settings.", TRACE_PAGE, bell_every=timedelta(hours=1)),
+    ROUTE_LAST_PREFIX: Check(
+        "LLM stage reached the last model of its route", "A request needed the last model of its stage's route: one "
+        "more failure and the stage stops. Open AI gateway > Trace, then fix the refusing provider or add a model to "
+        "the route.", TRACE_PAGE, bell_every=timedelta(hours=1)),
+    ROUTE_BACK_PREFIX: Check(
+        "LLM stage primary model is back", "The stage's first model answers again after a fallback alert. Nothing to "
+        "do; AI gateway > Trace shows the share per rung.", TRACE_PAGE, bell_every=timedelta(minutes=1)),
+    ROUTE_COST_PREFIX: Check(
+        "LLM fallback raised a stage's cost", "Requests answered by a fallback model cost more than the primary "
+        "would have over the last 24 hours. Check AI gateway > Trace and the provider of the primary.", TRACE_PAGE,
+        bell_every=timedelta(hours=24)),
+}
+PREFIX_CHECKS_EXACT: dict[str, Check] = {
+    ROUTE_DIGEST_CHECK: Check(
+        "LLM route digest", "The daily summary of the stage routes: stages answered by a fallback model or with "
+        "requests that got no answer in the last 24 hours. Details on AI gateway > Trace.", TRACE_PAGE,
+        bell_every=timedelta(hours=20)),
+}
+
+
 def check_for(name: str) -> Check:
-    """The Check of a finding: a fixed one of :data:`CHECKS`, or the stage coverage check for
-    ``llm_stage_coverage.<stage>``. KeyError for anything else."""
+    """The Check of a finding: a fixed one of :data:`CHECKS`, the stage coverage check for
+    ``llm_stage_coverage.<stage>``, or (AA-1042) a route alert (:data:`PREFIX_CHECKS`, the digest). KeyError for
+    anything else."""
     if name in CHECKS:
         return CHECKS[name]
     if name.startswith(STAGE_COVERAGE_PREFIX) and len(name) > len(STAGE_COVERAGE_PREFIX):
         return STAGE_COVERAGE_CHECK
+    if name in PREFIX_CHECKS_EXACT:
+        return PREFIX_CHECKS_EXACT[name]
+    for prefix, chk in PREFIX_CHECKS.items():
+        if name.startswith(prefix) and len(name) > len(prefix):
+            return chk
     raise KeyError(name)
 
 

@@ -131,9 +131,14 @@ def _llm_breaker_off(request, monkeypatch):
     async def _no_limits(db):
         return []
     monkeypatch.setattr(capacity, "loader_async", _no_limits)
+    # AA-1042: no route policy row in unit tests (hold of fallback writes off; tests that need one set the loader).
+    from shared.llm_client import route_watch
+    route_watch.reset()
+    monkeypatch.setattr(route_watch, "loader", lambda: {})
     yield
     breaker.reset()
     capacity.reset()
+    route_watch.reset()
     tenant_budget.invalidate()
     prompt_registry.invalidate()
     central_budget.invalidate()

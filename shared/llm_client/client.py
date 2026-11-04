@@ -4,6 +4,8 @@ import json
 import random
 import threading
 import time
+import uuid
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 import boto3
@@ -767,6 +769,56 @@ def log_gateway_billed_failure(request: LLMRequest, *, role: str, billed: list[d
 # like the billed-failure rows: a slow or down database never delays the route's next model.
 
 
+
+# ── AA-1042 (S268): the route test's forced refusal and the quality guard's writer note ─────────────────────────────
+
+_FORCED_PRIMARY_REFUSAL: ContextVar[Optional[str]] = ContextVar("llm_forced_primary_refusal", default=None)
+
+
+class ForcedPrimaryRefusal(RuntimeError):
+    """The route test's stand-in for a provider refusing the stage's first model (``forced_primary_refusal``).
+    Classified access_denied (ledger 'refused'); raised before any provider call, so no breaker, circuit, limiter
+    or stage coverage state moves."""
+    llm_error_class = "access_denied"
+
+
+@contextmanager
+def forced_primary_refusal(stage: str):
+    """While bound (one context: one route test request), the gateway refuses route position 0 of ``stage`` with
+    ``ForcedPrimaryRefusal`` and moves on to the next model. Never a stored switch: nothing outside this context
+    (other requests, other tasks, shadow calls) is affected."""
+    token = _FORCED_PRIMARY_REFUSAL.set(stage)
+    try:
+        yield
+    finally:
+        _FORCED_PRIMARY_REFUSAL.reset(token)
+
+
+def _primary_refusal_forced(request: LLMRequest, scope) -> bool:
+    stage = _FORCED_PRIMARY_REFUSAL.get()
+    if not stage or stage != getattr(request, "stage", None):
+        return False
+    return not (scope is not None and scope.extra.get("shadow"))
+
+
+def _forced_refusal_call(request: LLMRequest, key: str):
+    def call():
+        raise ForcedPrimaryRefusal(f"forced refusal of {key} for stage {request.stage!r} (route test, nothing sent)")
+    return call
+
+
+def _note_fallback_write(request: LLMRequest, role: str, key: str, position: int) -> None:
+    """AA-1042 (Quality guard): a writer-role request answered by route position > 0 (a fallback model). Tells
+    services/quality/route_guard (the per-output and per-job degraded collectors). Never raises."""
+    if role != "writer":
+        return
+    try:
+        from services.quality import route_guard
+        route_guard.note_fallback_write(request.stage, key, position)
+    except Exception as e:  # noqa: BLE001 — a QA mark never breaks the call it marks
+        logger.warning("llm_fallback_write_note_failed", stage=request.stage, error=str(e)[:200])
+
+
 @dataclass
 class _AttemptScope:
     """The ledger context of one gateway request (generate, a shadow call, the admin probe): its role, the route
@@ -777,6 +829,8 @@ class _AttemptScope:
     attempts: int = 0
     prompt_hash: Optional[str] = None
     prompt_version: Optional[str] = None      # AA-900: the stage's registered prompt version (prompt_registry)
+    # AA-1042 (Route trace): the id every ledger row of this request carries (quality_signal.route_trace)
+    trace_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     def next_attempt(self) -> int:
         self.attempts += 1
@@ -896,7 +950,7 @@ def log_gateway_failed_attempt(request: LLMRequest, exc: BaseException, *, model
             error=f"{type(exc).__name__}: {exc}", provider=provider, connection_key=connection_key,
             latency_ms=latency_ms, attempt_no=attempt_no, deployment_wire_id=wire_id, prompt_hash=scope.prompt_hash,
             prompt_version=scope.prompt_version, is_shadow=bool(scope.extra.get("shadow")),
-            quality_signal_extra={**scope.extra, "position": scope.position})
+            quality_signal_extra={**scope.extra, "position": scope.position, "route_trace": scope.trace_id})
         _in_background(record_calls, {"rows": [row]})
     except Exception as e:  # noqa: BLE001 — a log write never breaks the call it records
         logger.warning("llm_gateway_failed_attempt_log_failed", stage=request.stage, error=str(e)[:200])
@@ -1071,6 +1125,10 @@ class LLMClient:
                 resp.prompt_hash = scope.prompt_hash
             if scope is not None and not resp.prompt_version:
                 resp.prompt_version = scope.prompt_version
+            if scope is not None:
+                # AA-1042 (Route trace): the request this reply answered and the route position that answered it
+                resp.route_trace = scope.trace_id
+                resp.route_position = scope.position
         except Exception:  # noqa: BLE001 — a test double that is not an LLMResponse
             pass
         return resp
@@ -1342,12 +1400,17 @@ class LLMClient:
         if scope is not None:
             scope.position = position          # AA-804: the route position on this key's attempt rows
         try:
+            if position == 0 and _primary_refusal_forced(request, scope):
+                # AA-1042: the route test's forced refusal of the stage's first model (one ledger row, no provider call)
+                return self._attempt(request, _forced_refusal_call(request, key),
+                                     model=split_pin(key)[0] if split_pin(key) else key)
             return self._call_key(request, key, primary_acct)
         except Exception as e:
             billed = _billed_usage_of(e)
             if billed:
+                trace = {"route_trace": scope.trace_id} if scope is not None else {}
                 log_gateway_billed_failure(request, role=role, billed=billed, error=str(e),
-                                           extra={"position": position, **(extra or {})})
+                                           extra={"position": position, **trace, **(extra or {})})
             else:
                 self._logged_failure_net(request, e, model=split_pin(key)[0] if split_pin(key) else key)
             raise
@@ -1396,6 +1459,8 @@ class LLMClient:
                     _STAGE_SCOPES.reset(scope_token)
             if position > 0:
                 resp.fallback_used = True
+                # AA-1042 (Quality guard): a writer answered by a fallback model marks (or holds) the output it wrote
+                _note_fallback_write(request, role, key, position)
             if resp.provider in OPENAI_FORMAT_PROVIDERS:
                 # S235 — the OpenAI platform API is a last resort for a Bedrock outage: tenant
                 # content left AWS. Fixed event name for a CloudWatch metric filter / alarm
