@@ -83,7 +83,8 @@ def test_cis_app_may_update_only_the_probe_columns(cur):
         cur.execute("SELECT has_column_privilege('cis_app', 'shared.llm_model_deployment', %s, 'UPDATE') AS ok",
                     (col,))
         assert cur.fetchone()["ok"] is True, col
-    for col in ("enabled", "wire_id", "priority"):
+    # AA-1042 (S268): 370 adds UPDATE on priority (the admin's provider order); enabled and wire_id stay migration-only
+    for col in ("enabled", "wire_id"):
         cur.execute("SELECT has_column_privilege('cis_app', 'shared.llm_model_deployment', %s, 'UPDATE') AS ok",
                     (col,))
         assert cur.fetchone()["ok"] is False, col
