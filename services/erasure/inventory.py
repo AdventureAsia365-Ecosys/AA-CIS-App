@@ -116,6 +116,10 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     _d("shared.tenant_entitlement_override", "per-tenant entitlement exceptions"),
     _d("shared.tenant_entitlement", "the tenant's materialised entitlements"),
     _d("shared.tenant_account_event", "the tenant's tenant.entitlements.v1 account events"),
+    # AA-1035 R2 (364): which staff member looks after the tenant, and the read-only view-as log of the tenant (both
+    # also cascade from the tenant row).
+    _d("shared.staff_tenant_assignment", "the staff members assigned to the tenant (owner / backup / support)"),
+    _d("shared.staff_view_as_session", "the read-only view-as sessions staff opened on the tenant"),
     # AA-916 (277, ADR 0010 decision 11): tenant text lives only in deletable tables. Platform rows have no tenant.
     _d("shared.writing_signal", "writing-memory signals (before/after text) of the tenant"),
     # AA-917 (280): tenant-scoped learned writing rules (derived from the tenant's text). Platform rules have no tenant.

@@ -47,8 +47,10 @@ def _apply(sql, user=DB_USER):
 
 
 def _labels(cur, regtype="shared.admin_role"):
+    """The first four labels: 249 leaves admin, reviewer, content, viewer in that order; CIS 362 (AA-1035) appends the
+    R2 roles after them, which this file neither adds nor removes."""
     cur.execute("SELECT enumlabel FROM pg_enum WHERE enumtypid = %s::regtype ORDER BY enumsortorder", (regtype,))
-    return [r[0] for r in cur.fetchall()]
+    return [r[0] for r in cur.fetchall()][:4]
 
 
 def _drop_role(cur, name):
