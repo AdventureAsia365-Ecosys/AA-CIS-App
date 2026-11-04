@@ -1,6 +1,7 @@
 // frontend/app/api/view-as/v1/[...path]/route.ts — AA-1035 R2 slice 2 (root ADR 0019 d5): the reads of a read-only
 // "view as tenant" session. GET only (no other method is exported: Next answers 405), only the allowed tenant reads
-// (lib/viewAs.ts VIEW_AS_READ_ROUTES, the mirror of api/core/view_as.py READ_ROUTES), only for the signed-in staff
+// (lib/viewAs.ts VIEW_AS_READ_ROUTES, the mirror of api/core/view_as.py READ_ROUTES) that the signed-in member's role
+// may make (VIEW_AS_ROUTE_ROLES, the mirror of ROUTE_CAPS: support never reads the plan / usage), only for the staff
 // member whose session the httpOnly aa_view_as cookie holds. Forwards the token as the Bearer to CIS /v1/<path>; the
 // API's view-as gate checks the session on every request, refuses anything else and logs each read.
 import { NextRequest, NextResponse } from "next/server";
@@ -23,7 +24,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ path
   const { path } = await params;
   const safe = proxyPath(path);
   const backendPath = safe === null ? null : `/v1/${safe}`;
-  if (backendPath === null || !viewAsPathAllowed(backendPath)) {
+  if (backendPath === null || !viewAsPathAllowed(backendPath, auth.role)) {
     return NextResponse.json({ detail: "view_as_read_only" }, { status: 403 });
   }
   try {

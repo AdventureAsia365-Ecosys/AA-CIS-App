@@ -5,29 +5,77 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  VIEW_AS_COOKIE_PATH, VIEW_AS_READ_ROUTES, VIEW_AS_ROLES, cookieMaxAge, formatCountdown, pickText, rowsOf,
-  secondsLeft, startProblem, viewAsClaims, viewAsPathAllowed, viewAsReadUrl,
+  VIEW_AS_BFF_HEADER, VIEW_AS_COOKIE_PATH, VIEW_AS_READ_ROUTES, VIEW_AS_ROLES, VIEW_AS_ROUTE_ROLES, cookieMaxAge,
+  formatCountdown, isViewAsStartPath, pickText, rowsOf, secondsLeft, startProblem, viewAsClaims, viewAsPathAllowed,
+  viewAsReadUrl, viewAsReadsForRole, viewAsRoleMayRead,
 } from "./viewAs.ts";
 import {
   addableStaff, assignmentPath, availableKinds, filterTenants, ofKind, staffLabel,
 } from "./tenantAssignments.ts";
-import { ROLE_PERMS, canSeePage, can } from "./rbac.ts";
+import { ROLE_PERMS, canSeePage, can, canWriteAdminPath } from "./rbac.ts";
 
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
 const jwtOf = (payload) => `${b64({ alg: "HS256", typ: "JWT" })}.${b64(payload)}.signature`;
 
 test("the BFF forwards only the allowed reads, matched in full", () => {
   for (const ok of ["/v1/quota", "/v1/tours/my-versions", "/v1/tours/versions/abc", "/v1/account/members"]) {
-    assert.ok(viewAsPathAllowed(ok), ok);
+    assert.ok(viewAsPathAllowed(ok, "admin"), ok);
   }
   for (const no of ["/v1/slate", "/v1/quota/", "/v1/quotas", "/v1/tours/versions/abc/export-docx",
     "/v1/account/activity/export", "/v1/integrations/wordpress", "/admin/tenants", "/v1/tours/versions/",
-    "/v1/tours/versions/a/b", "/v1/quota?x=1"]) {
-    assert.ok(!viewAsPathAllowed(no), no);
+    "/v1/tours/versions/a/b", "/v1/quota?x=1", "/v1/billing"]) {
+    assert.ok(!viewAsPathAllowed(no, "admin"), no);
   }
-  assert.equal(VIEW_AS_READ_ROUTES.length, 13);
+  assert.equal(VIEW_AS_READ_ROUTES.length, 12);
+  assert.ok(!VIEW_AS_READ_ROUTES.includes("/v1/billing"));
   assert.equal(viewAsReadUrl("/v1/quota"), "/api/view-as/v1/quota");
   assert.equal(VIEW_AS_COOKIE_PATH, "/api/view-as");
+});
+
+test("the reads depend on the role: view-as never widens a role's own reads (S268 fix pass)", () => {
+  const all = [...VIEW_AS_READ_ROUTES];
+  assert.deepEqual(viewAsReadsForRole("admin"), all);
+  assert.deepEqual(viewAsReadsForRole("customer_success"), all);
+  assert.deepEqual(viewAsReadsForRole("support"), all.filter((t) => t !== "/v1/quota"));
+  for (const role of ["finance", "content", "content_lead", "tenant_qa", "ai_ops", "viewer", null, undefined]) {
+    assert.deepEqual(viewAsReadsForRole(role), [], String(role));
+  }
+  assert.ok(!viewAsPathAllowed("/v1/quota", "support"));
+  assert.ok(viewAsPathAllowed("/v1/marketplace", "support"));
+  assert.ok(viewAsPathAllowed("/v1/quota", "customer_success"));
+  assert.ok(!viewAsPathAllowed("/v1/marketplace", "finance"));
+  assert.ok(!viewAsPathAllowed("/v1/marketplace", undefined));
+  assert.ok(!viewAsRoleMayRead("admin", "/v1/billing"));
+  for (const [template, roles] of Object.entries(VIEW_AS_ROUTE_ROLES)) {
+    assert.ok(VIEW_AS_READ_ROUTES.includes(template), template);
+    for (const r of roles) assert.ok(VIEW_AS_ROLES.includes(r), r);
+  }
+});
+
+test("the generic admin proxy may never start a view-as session (the token stays out of the page)", () => {
+  const id = "22222222-2222-4222-8222-222222222222";
+  for (const p of [`tenants/${id}/view-as`, `tenants/${id}/view-as/`, `Tenants/${id}/VIEW-AS`, `tenants/x/view-as/extra`,
+    `/tenants/${id}/view-as`]) {
+    assert.ok(isViewAsStartPath(p), p);
+  }
+  for (const p of ["tenants", `tenants/${id}`, `tenants/${id}/assignments`, "view-as/sessions", `view-as/sessions/${id}/end`,
+    `tenants/${id}/view-as-x`, "tenants/view-as"]) {
+    assert.ok(!isViewAsStartPath(p), p);
+  }
+  // the write rule alone would let the tenant desk through: the explicit refusal is what keeps the token out
+  assert.ok(canWriteAdminPath("support", "POST", `tenants/${id}/view-as`));
+  assert.equal(VIEW_AS_BFF_HEADER, "x-view-as-client");
+});
+
+test("the generic admin proxy source refuses the start path before forwarding", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const src = await readFile(new URL("../app/api/admin/[...path]/route.ts", import.meta.url), "utf8");
+  const guard = src.indexOf("isViewAsStartPath(pathStr)");
+  assert.ok(guard > 0, "the generic proxy must call isViewAsStartPath");
+  assert.ok(guard < src.indexOf("await fetch(url"), "the refusal must come before the upstream call");
+  const bff = await readFile(new URL("../app/api/view-as/route.ts", import.meta.url), "utf8");
+  assert.ok(bff.includes('[VIEW_AS_BFF_HEADER]: "bff"'), "the view-as BFF sets the header on the start call");
+  assert.ok(!src.includes("VIEW_AS_BFF_HEADER"), "the generic proxy never sets the BFF header");
 });
 
 test("view-as roles are exactly the roles holding tenant.view_as", () => {

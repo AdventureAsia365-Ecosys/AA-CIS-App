@@ -5,7 +5,10 @@
 //          backend checks tenant.view_as + the tenant scope and logs the session). The read-only tenant token it returns
 //          goes into the httpOnly cookie aa_view_as (path /api/view-as, SameSite=Strict, Secure, at most 60 minutes) and
 //          is NEVER sent to the page; the page gets the session without it.
-//   GET    → the current session of this browser ({ active: false } when none, ended or not this staff member's).
+//          The start call carries "x-view-as-client": "bff" (VIEW_AS_BFF_HEADER): the backend answers the token only
+//          with it, and the generic /api/admin proxy (which never sets it) refuses the start path too.
+//   GET    → the current session of this browser ({ active: false } when none, ended or not this staff member's),
+//          with `allowed_reads`: the reads the signed-in member's role may make (lib/viewAs.ts viewAsReadsForRole).
 //   DELETE → CIS POST /admin/view-as/sessions/{id}/end, then the cookie is cleared (also when the API call fails).
 //
 // The token's reads go through app/api/view-as/v1/[...path]/route.ts. Every staff check is the backend's; this route
@@ -14,7 +17,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { refuseCrossSiteWrite } from "@/lib/crossSiteGuard";
 import { requireAdmin, secretNotConfigured, staffCredentialHeaders } from "@/lib/auth-server";
 import {
-  VIEW_AS_COOKIE, VIEW_AS_COOKIE_PATH, VIEW_AS_ROLES, cookieMaxAge, viewAsClaims, type CurrentViewAs,
+  VIEW_AS_BFF_HEADER, VIEW_AS_COOKIE, VIEW_AS_COOKIE_PATH, VIEW_AS_ROLES, cookieMaxAge, viewAsClaims,
+  viewAsReadsForRole, type CurrentViewAs,
 } from "@/lib/viewAs";
 import type { StaffRole } from "@/lib/rbac";
 
@@ -56,7 +60,7 @@ export async function POST(req: NextRequest) {
   try {
     res = await fetch(`${API_URL}/admin/tenants/${tenantId}/view-as`, {
       method: "POST",
-      headers: { ...headers, "Content-Type": "application/json" },
+      headers: { ...headers, "Content-Type": "application/json", [VIEW_AS_BFF_HEADER]: "bff" },
       body: JSON.stringify({ reason: body.reason, ticket_ref: body.ticket_ref ?? null, minutes: body.minutes ?? 30 }),
     });
   } catch {
@@ -69,7 +73,8 @@ export async function POST(req: NextRequest) {
   if (!token || !claims || claims.staffId !== auth.adminId) {
     return NextResponse.json({ detail: "The view-as session could not be opened" }, { status: 502 });
   }
-  const out = NextResponse.json({ active: true, open: true, ...session }, { status: 201 });
+  const out = NextResponse.json(
+    { active: true, open: true, ...session, allowed_reads: viewAsReadsForRole(auth.role) }, { status: 201 });
   out.cookies.set(VIEW_AS_COOKIE, token, {
     httpOnly: true, secure: SECURE, sameSite: "strict", path: VIEW_AS_COOKIE_PATH,
     maxAge: cookieMaxAge(session.expires_at),
@@ -92,7 +97,7 @@ export async function GET(req: NextRequest) {
     if (!res.ok) return clearCookie(NextResponse.json(none));
     const s = await res.json();
     if (!s.open) return clearCookie(NextResponse.json(none));
-    return NextResponse.json({ active: true, ...s });
+    return NextResponse.json({ active: true, ...s, allowed_reads: viewAsReadsForRole(auth.role) });
   } catch {
     return NextResponse.json({ detail: "Upstream connection error" }, { status: 502 });
   }

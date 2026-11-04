@@ -9,6 +9,11 @@
 // The backend is the authority (api/core/view_as.py READ_ROUTES, the gate refuses everything else and logs every
 // request); VIEW_AS_READ_ROUTES mirrors it so the BFF never forwards anything else (tests/unit/test_aa1035_s2_view_as.py
 // reads this file and keeps the two lists equal). Dependency-free: no React, no Node APIs.
+//
+// S268 fix pass: (1) the reads depend on the staff role (VIEW_AS_ROUTE_ROLES, the mirror of api/core/view_as.py
+// ROUTE_CAPS): view-as never shows a role more than its own staff pages (support never sees the plan / usage read).
+// (2) Only app/api/view-as/route.ts may start a session: the generic /api/admin proxy refuses the start path
+// (isViewAsStartPath), and the backend answers the token only with the header VIEW_AS_BFF_HEADER.
 
 /** The staff roles that may open a view (backend capability tenant.view_as). */
 export const VIEW_AS_ROLES = ["admin", "customer_success", "support"] as const;
@@ -30,9 +35,9 @@ export const REASON_MAX = 500;
 export const TICKET_MAX = 120;
 
 // The tenant reads a view-as session may make (route templates; api/core/view_as.py READ_ROUTES, same order).
+// No /v1/billing: no view-as page reads it, and support may never see billing.
 export const VIEW_AS_READ_ROUTES = [
   "/v1/quota",
-  "/v1/billing",
   "/v1/marketplace",
   "/v1/tours/my-versions",
   "/v1/tours/versions/{version_id}",
@@ -46,12 +51,44 @@ export const VIEW_AS_READ_ROUTES = [
   "/v1/account/activity",
 ] as const;
 
+// The reads that need a capability of their own on top of tenant.view_as: the staff roles that may make each one
+// (api/core/view_as.py ROUTE_CAPS; /v1/quota carries the plan tier and usage). A read not listed: every view-as role.
+export const VIEW_AS_ROUTE_ROLES: Readonly<Record<string, readonly string[]>> = {
+  "/v1/quota": ["admin", "customer_success"],
+};
+
 const READ_PATTERNS = VIEW_AS_READ_ROUTES.map((t) =>
   new RegExp("^" + t.split(/(\{[^}]+\})/).map((p) => (p.startsWith("{") ? "[^/]+" : p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))).join("") + "$"));
 
-/** May the BFF forward GET `path` (e.g. "/v1/quota") for a view-as session? Matched in full. */
-export function viewAsPathAllowed(path: string): boolean {
-  return READ_PATTERNS.some((re) => re.test(path));
+/** May a staff member of `role` make the view-as read `template` (a VIEW_AS_READ_ROUTES entry)? */
+export function viewAsRoleMayRead(role: string | null | undefined, template: string): boolean {
+  if (!role || !(VIEW_AS_ROLES as readonly string[]).includes(role)) return false;
+  if (!(VIEW_AS_READ_ROUTES as readonly string[]).includes(template)) return false;
+  const roles = VIEW_AS_ROUTE_ROLES[template];
+  return !roles || roles.includes(role);
+}
+
+/** The reads `role` may make in a view-as session (the page shows only these). */
+export function viewAsReadsForRole(role: string | null | undefined): string[] {
+  return VIEW_AS_READ_ROUTES.filter((t) => viewAsRoleMayRead(role, t));
+}
+
+/** May the BFF forward GET `path` (e.g. "/v1/quota") for a view-as session of a staff member of `role`? The path is
+ *  matched in full against the allowed reads, then the read must be one that role may make. */
+export function viewAsPathAllowed(path: string, role: string | null | undefined): boolean {
+  const i = READ_PATTERNS.findIndex((re) => re.test(path));
+  return i >= 0 && viewAsRoleMayRead(role, VIEW_AS_READ_ROUTES[i]);
+}
+
+/** The request header the view-as BFF sets on the start call; the backend answers the token only with it. */
+export const VIEW_AS_BFF_HEADER = "x-view-as-client";
+
+/** Is `path` (a backend /admin sub-path, no leading slash, as the generic /api/admin proxy sees it) the view-as start
+ *  route? The generic proxy refuses it for every method and role, so the raw token can only come back to
+ *  app/api/view-as/route.ts, which keeps it in an httpOnly cookie. Generous on purpose: any case, any trailing part. */
+export function isViewAsStartPath(path: string): boolean {
+  const parts = path.split("/").filter((p) => p !== "");
+  return parts.length >= 3 && parts[0].toLowerCase() === "tenants" && parts[2].toLowerCase() === "view-as";
 }
 
 export interface ViewAsSession {
@@ -70,8 +107,9 @@ export interface ViewAsSession {
   read_only: true;
 }
 
-/** The answer of GET /api/view-as: the current session of this browser, or none. */
-export type CurrentViewAs = { active: false } | ({ active: true } & ViewAsSession);
+/** The answer of GET /api/view-as: the current session of this browser, or none. `allowed_reads`: the reads the
+ *  signed-in staff member's role may make (viewAsReadsForRole). */
+export type CurrentViewAs = { active: false } | ({ active: true; allowed_reads?: string[] } & ViewAsSession);
 
 /** The claims of a view-as token the BFF reads (WITHOUT checking the signature: the backend verifies it on every
  *  request). Only used to know which session the cookie belongs to and whose it is. */

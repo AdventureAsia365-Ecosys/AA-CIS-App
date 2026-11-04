@@ -2,7 +2,8 @@
 // app/admin/tenants/view-as/ViewAsPartner.tsx — AA-1035 R2 slice 2 (root ADR 0019 d5): the read-only "view as
 // partner" page. The banner stays on top for the whole session (tenant, time left, reason, ticket, End view); below,
 // the partner's own reads through the view-as BFF (GET /api/view-as/v1/<path>, lib/viewAs.ts). Nothing on this page
-// writes: there is no control that could, and the API refuses every write of the token anyway.
+// writes: there is no control that could, and the API refuses every write of the token anyway. Only the reads the
+// staff member's role may make are shown (session `allowed_reads`; support: no plan / usage card).
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -17,6 +18,9 @@ import {
   VIEW_AS_API, VIEW_AS_QUERY_KEY, formatCountdown, pickText, rowsOf, secondsLeft, viewAsReadUrl,
   type CurrentViewAs, type ViewAsSession,
 } from "@/lib/viewAs";
+
+const QUOTA_READ = "/v1/quota";
+const MARKETPLACE_READ = "/v1/marketplace";
 import { VIEW_AS } from "./messages";
 
 type Row = Record<string, unknown>;
@@ -120,19 +124,21 @@ function ReadList({ spec, onEnded }: { spec: ListSpec; onEnded: () => void }) {
   );
 }
 
-function Overview({ onEnded }: { onEnded: () => void }) {
+function Overview({ onEnded, allowed }: { onEnded: () => void; allowed: (path: string) => boolean }) {
   const t = useT(VIEW_AS);
-  const quota = useQuery({ queryKey: ["view-as", "read", "/v1/quota"], retry: false,
+  const showQuota = allowed(QUOTA_READ);
+  const showMarket = allowed(MARKETPLACE_READ);
+  const quota = useQuery({ queryKey: ["view-as", "read", QUOTA_READ], retry: false, enabled: showQuota,
     queryFn: () => getJson<{ plan_tier: string; tours_per_month: number; rewrites_used: number; resets_at: string }>(
-      viewAsReadUrl("/v1/quota")) });
-  const market = useQuery({ queryKey: ["view-as", "read", "/v1/marketplace"], retry: false,
-    queryFn: () => getJson<unknown>(viewAsReadUrl("/v1/marketplace")) });
+      viewAsReadUrl(QUOTA_READ)) });
+  const market = useQuery({ queryKey: ["view-as", "read", MARKETPLACE_READ], retry: false, enabled: showMarket,
+    queryFn: () => getJson<unknown>(viewAsReadUrl(MARKETPLACE_READ)) });
   useEffect(() => {
     for (const e of [quota.error, market.error]) if ((e as { status?: number } | null)?.status === 401) onEnded();
   }, [quota.error, market.error, onEnded]);
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
-      <Section title={t("quotaTitle")}>
+      {showQuota && <Section title={t("quotaTitle")}>
         {quota.error ? <span style={{ color: K.danger, fontSize: 13 }}>{t("loadError")}</span> : quota.data ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13, color: K.body }}>
             <KpiTile label={t("planLabel")} value={quota.data.plan_tier} />
@@ -140,12 +146,12 @@ function Overview({ onEnded }: { onEnded: () => void }) {
             <span style={{ color: K.muted }}>{t("quotaResets", quota.data.resets_at)}</span>
           </div>
         ) : null}
-      </Section>
-      <Section title={t("marketplaceTitle")}>
+      </Section>}
+      {showMarket && <Section title={t("marketplaceTitle")}>
         {market.error ? <span style={{ color: K.danger, fontSize: 13 }}>{t("loadError")}</span> : market.data ? (
           <span style={{ fontSize: 13, color: K.body }}>{t("marketplaceLine", rowsOf(market.data).length)}</span>
         ) : null}
-      </Section>
+      </Section>}
     </div>
   );
 }
@@ -211,12 +217,16 @@ export default function ViewAsPartner() {
       </>
     );
   }
-  const tabs: { key: TabKey; label: string }[] = [
+  // The reads this member's role may make (the BFF and the API refuse the others anyway); an older answer without
+  // the list falls back to every read, which the BFF still filters per role.
+  const allowedReads = s.allowed_reads;
+  const allowed = (path: string) => !allowedReads || allowedReads.includes(path);
+  const tabs: { key: TabKey; label: string }[] = ([
     { key: "overview", label: t("tabOverview") }, { key: "tours", label: t("tabTours") },
     { key: "content", label: t("tabContent") }, { key: "published", label: t("tabPublished") },
     { key: "notifications", label: t("tabNotifications") }, { key: "members", label: t("tabMembers") },
     { key: "activity", label: t("tabActivity") },
-  ];
+  ] as { key: TabKey; label: string }[]).filter((x) => x.key === "overview" || allowed(specs[x.key].path));
   return (
     <>
       <ViewAsBanner session={s} onEnded={endAndRefresh} />
@@ -225,7 +235,7 @@ export default function ViewAsPartner() {
         <Tabs variant="underline" gap={18} ariaLabel={t("title")} testId="view-as-tabs" tabs={tabs} active={tab}
           onChange={(k) => setTab(k as TabKey)} style={{ marginBottom: -1 }} />
       </div>
-      {tab === "overview" ? <Overview onEnded={onEnded} />
+      {tab === "overview" ? <Overview onEnded={onEnded} allowed={allowed} />
         : <Section padded={false}><ReadList key={tab} spec={specs[tab]} onEnded={onEnded} /></Section>}
     </>
   );

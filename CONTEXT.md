@@ -1996,13 +1996,18 @@ optional ticket, 5-60 minutes; one open session per staff member) writes `shared
 `tenant.view_as_started` and returns a short-lived tenant JWT (`api/core/view_as.py`: `csr` viewer, `client` portal,
 `vas` session, `stf` staff); `GET /admin/view-as/sessions[/{id}]` and `POST .../{id}/end` (own; admin every one, an
 admin end of another's is `revoked`). `api/middleware/view_as.py ViewAsGateMiddleware` (around the tenant role
-middleware and the rate limiter) lets such a token make only GET / HEAD on `view_as.READ_ROUTES` (13 side-effect-free
-tenant reads; never `/v1/slate`, exports, integrations or the brand branch), re-checks the open session, the staff
-row's current role and the tenant scope on every request, and writes one `acp_shared.audit_log` row per request
+middleware and the rate limiter) lets such a token make only GET / HEAD on `view_as.READ_ROUTES` (12 side-effect-free
+tenant reads; never `/v1/slate`, `/v1/billing`, exports, integrations or the brand branch), re-checks the open session,
+the staff row's current role and the tenant scope on every request, and refuses (403 `view_as_not_for_role`) a read the
+current role may not make (`view_as.ROUTE_CAPS`: `/v1/quota` needs `tenant.read` or `tenant.book.account.read`, so
+support never sees the plan or usage; view-as never widens a role's own reads), and writes one `acp_shared.audit_log` row per request
 (`tenant.view_as_request`, BEFORE a served read: no unlogged read, 503 when the row cannot be written); everything
 else is 403 `view_as_read_only` (logged), an ended session 401 `view_as_ended`. `tenant_role.enforce` repeats the
-read-only check on the dependency side. The admin BFF (`frontend/app/api/view-as/*`) keeps the token in the httpOnly
-cookie `aa_view_as` (path `/api/view-as`) and forwards only the allowed reads; Tenant 360 › "View as partner" opens
+read-only check on the dependency side. The token never reaches the browser: the start answers it only with the
+request header `x-view-as-client: bff` (403 `view_as_bff_only` before any row otherwise), which only the view-as BFF
+sets, and the generic `/api/admin/[...path]` proxy refuses the start path (`lib/viewAs.ts isViewAsStartPath`). The
+admin BFF (`frontend/app/api/view-as/*`) keeps the token in the httpOnly cookie `aa_view_as` (path `/api/view-as`) and
+forwards only the allowed reads of the signed-in member's role (`VIEW_AS_ROUTE_ROLES`, the mirror of `ROUTE_CAPS`); Tenant 360 › "View as partner" opens
 `/admin/tenants/view-as` (banner: tenant, time left, reason, End view; tabs over the partner's reads).
 *Logged Lab read*: ai_ops holds `lab.tenant_text.read` (never `tenant_content.read`), which opens only the tenant-text
 GETs of `/admin/writing-memory/*` (not the Tenant 360 voice route); `api/core/lab_read_log.py LAB_TEXT_LOGGED` writes
