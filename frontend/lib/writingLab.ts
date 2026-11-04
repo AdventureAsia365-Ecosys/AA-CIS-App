@@ -76,11 +76,18 @@ export interface PromptVersion {
 export interface Release {
   release_id: string; release_no: number; scope: string; train_kind: string; content_class: string; status: string;
   rules: number; r0_run_id: string | null; eval_run_id: string | null; shadow_run_id: string | null;
-  reverify: boolean; reverify_reasons: string[]; approved_at: string | null; activated_at: string | null;
+  reverify_run_id: string | null; reverify: boolean; reverify_reasons: string[]; approved_at: string | null; activated_at: string | null;
   retired_at: string | null; created_at: string; updated_at: string;
 }
 
 export type Counts = Record<string, number>;
+
+/** The short evaluation run the gate section returns (active_eval / last_eval). */
+export interface GateEval {
+  id: string; run_kind: string; verdict: string | null; stop_reason: string | null; regression_detected: boolean;
+  cost_usd: number | null; tour_count: number; release_id: string | null; created_at: string;
+  finished_at: string | null;
+}
 
 export interface LabStageView {
   writer: LabWriter;
@@ -96,7 +103,11 @@ export interface LabStageView {
   prompts: { stages: string[]; versions: PromptVersion[]; limit: number } | null;
   gate: { switch: { memory_enabled: boolean; train_closed_month: string | null; updated_at: string } | null;
     active_release: Release | null; latest_release: Release | null; releases: Counts;
-    tenant_releases_active: number; rules: Counts; last_eval: EvalRun | null;
+    tenant_releases_active: number; rules: Counts;
+    /** The newest finished evaluation run of the ACTIVE release: what `state` reads. */
+    active_eval: GateEval | null;
+    /** The writer's newest finished evaluation run of any release: context only, never the state. */
+    last_eval: (GateEval & { for_active: boolean }) | null;
     state: { code: GateCode; ok: boolean; reasons?: string[] } } | null;
 }
 
@@ -110,6 +121,15 @@ export function gateTone(code: GateCode): "success" | "warning" | "danger" | "ne
 export function verdictTone(v: string | null | undefined): "success" | "danger" | "warning" | "neutral" | "info" {
   return v === "pass" ? "success" : v === "fail" || v === "invalid" ? "danger" : v === "baseline" ? "info"
     : v == null ? "warning" : "neutral";
+}
+
+/** Value tone of an evaluation tile: red when the run failed or saw a regression, green when it passed (or is the
+ *  baseline import of release 0), grey when there is no run or another verdict. */
+export function evalTone(run: Pick<GateEval, "verdict" | "regression_detected"> | null | undefined):
+  "success" | "danger" | "neutral" {
+  if (!run) return "neutral";
+  if (run.verdict === "fail" || run.verdict === "invalid" || run.regression_detected) return "danger";
+  return run.verdict === "pass" || run.verdict === "baseline" ? "success" : "neutral";
 }
 
 /** Share of `part` in `whole` as a whole percent, or "—" when there is nothing to divide. */

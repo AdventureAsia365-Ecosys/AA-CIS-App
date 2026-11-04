@@ -7,7 +7,8 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import {
-  DEFAULT_STAGE, LAB_STAGES, LAB_TABS, countRows, gateTone, parseLabTab, share, stageBySlug, stageHref, verdictTone,
+  DEFAULT_STAGE, LAB_STAGES, LAB_TABS, countRows, evalTone, gateTone, parseLabTab, share, stageBySlug, stageHref,
+  verdictTone,
 } from "./writingLab.ts";
 
 test("four stages, one per writing-memory writer, unique slugs that never shadow a Lab page", () => {
@@ -42,6 +43,13 @@ test("tones, shares and count rows", () => {
   assert.equal(verdictTone("fail"), "danger");
   assert.equal(verdictTone("baseline"), "info");
   assert.equal(verdictTone(null), "warning");
+  // the live-release evaluation tile: release 0's baseline import is green, a fail or a regression red
+  assert.equal(evalTone(null), "neutral");
+  assert.equal(evalTone({ verdict: "baseline", regression_detected: false }), "success");
+  assert.equal(evalTone({ verdict: "pass", regression_detected: false }), "success");
+  assert.equal(evalTone({ verdict: "pass", regression_detected: true }), "danger");
+  assert.equal(evalTone({ verdict: "fail", regression_detected: false }), "danger");
+  assert.equal(evalTone({ verdict: "informative", regression_detected: false }), "neutral");
   assert.equal(share(1, 4), "25%");
   assert.equal(share(1, 0), "—");
   assert.deepEqual(countRows({ b: 2, a: 2, c: 5 }), [{ key: "c", n: 5 }, { key: "a", n: 2 }, { key: "b", n: 2 }]);

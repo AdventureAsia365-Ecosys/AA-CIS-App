@@ -31,6 +31,9 @@ Lab). Slices 1 and 2: `AA-1039-r6-admin-ia.md`, `AA-1039-r6-gate-fanout.md`.
   check, no `candidate: current` code-train run). The writer's newest run of any release stays on the page as
   `last_eval` (tile "Newest evaluation, any release", with `for_active`) but never sets the state: a candidate
   release failing its r1 / r2 is the gate working, while the live release keeps passing.
+  On the page: tile "Live release evaluation" (`active_eval`, red on fail / regression, green on pass or release 0's
+  baseline import, `lib/writingLab.evalTone`) and tile "Newest evaluation, any release" (`last_eval`, no colour, hint
+  says whether it ran the live release, another release or none).
 - **No text on the Lab.** The SQL selects ids, labels, counts and hashes only (a unit test lists every `pii:free_text`
   column of these tables and fails if one is selected). The logged `ai_ops` read of tenant text is R2's lane; the
   Writing memory tools (which do show masked text, admin only) stay one click away.

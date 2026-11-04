@@ -25,7 +25,7 @@ import {
 } from "../../_kit";
 import {
   DEFAULT_STAGE, LAB_API, LAB_STAGES, LAB_TABS, countRows, gateTone, parseLabTab, share, stageBySlug, stageHref,
-  verdictTone, type Counts, type EvalRun, type GoldenItem, type LabStageView, type LabTab, type LabWriter,
+  evalTone, verdictTone, type Counts, type EvalRun, type GoldenItem, type LabStageView, type LabTab, type LabWriter,
   type ModelShadow, type PromptVersion, type Release, type SectionStatus, type ShadowRun,
 } from "@/lib/writingLab";
 import type { Translator } from "../../_kit/core/i18n";
@@ -186,9 +186,13 @@ function GateTab({ g, t }: { g: NonNullable<LabStageView["gate"]>; t: T }) {
             value={g.active_release ? t("releaseNo", g.active_release.release_no) : t("noneLive")}
             hint={g.active_release?.activated_at ? formatDateTime(g.active_release.activated_at) : undefined} />
           <KpiTile label={t("kpiTenantLive")} value={g.tenant_releases_active} />
+          <KpiTile label={t("kpiActiveEval")} value={g.active_eval ? g.active_eval.verdict ?? "—" : t("noEval")}
+            valueTone={evalTone(g.active_eval)}
+            hint={g.active_eval ? `${g.active_eval.run_kind} · ${formatDateTime(g.active_eval.finished_at)}` : undefined} />
           <KpiTile label={t("kpiLastEval")} value={g.last_eval ? g.last_eval.verdict ?? "—" : t("noEval")}
-            valueTone={g.last_eval ? (verdictTone(g.last_eval.verdict) === "success" ? "success" : "danger") : "neutral"}
-            hint={g.last_eval ? `${g.last_eval.run_kind} · ${formatDateTime(g.last_eval.finished_at)}` : undefined} />
+            hint={g.last_eval ? `${g.last_eval.run_kind} · ${formatDateTime(g.last_eval.finished_at)} · ${
+              g.last_eval.for_active ? t("evalOfLive") : g.last_eval.release_id ? t("evalOfOther") : t("evalOfNone")}`
+              : undefined} />
           <KpiTile label={t("kpiRules")} value={Object.values(g.rules).reduce((a, b) => a + b, 0)}
             hint={t("rulesHint", g.rules.candidate ?? 0, g.rules.active ?? 0)} />
         </div>
