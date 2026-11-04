@@ -344,3 +344,30 @@ def deployment_plan(model: CatalogModel, allowed_scopes: Optional[tuple] = None,
     except Exception as e:  # noqa: BLE001 — a registry problem must never break today's path
         logger.warning("llm_deployment_plan_failed", model=model.model_key, error=str(e)[:200])
         return None
+
+
+# ── AA-1026 (S267): AWS first across the whole route ───────────────────────────────────────────────────────────────
+
+def route_reach(model: CatalogModel, role: Optional[str] = None) -> Optional[tuple[frozenset, frozenset]]:
+    """AA-1026 (S267, tech lead: family fallback chains) — ``(usable, described)``: the data scopes of the connections
+    ``model`` may be called on right now, ignoring circuits and budgets (its CALLABLE deployment rows, ``_callable``,
+    that are enabled, on an enabled connection that serves ``role``), and the data scopes of every callable row
+    (enabled or not). ``LLMClient._route_attempts`` splits a route that may leave AWS into an AWS pass and a vendor
+    pass with it. None when the registry does not describe the model (no registry rows, no callable row, a registry
+    error): the caller keeps the model where it is. Never raises."""
+    try:
+        if not connections.registry_rows_sync() or not deployments.has_rows_sync(model.model_key):
+            return None
+        usable: set[str] = set()
+        described: set[str] = set()
+        for d in deployments.deployments_for_sync(model.model_key, enabled_only=False):
+            conn = connections.get_connection_sync(d.connection_key)
+            if conn is None or _callable(model, conn):
+                continue
+            described.add(conn.data_scope)
+            if d.enabled and conn.enabled and serves_role(conn, role):
+                usable.add(conn.data_scope)
+        return (frozenset(usable), frozenset(described)) if described else None
+    except Exception as e:  # noqa: BLE001 — a registry problem must never break the route
+        logger.warning("llm_route_reach_failed", model=model.model_key, error=str(e)[:200])
+        return None

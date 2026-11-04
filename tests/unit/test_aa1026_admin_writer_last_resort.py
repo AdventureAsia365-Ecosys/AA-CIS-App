@@ -9,6 +9,10 @@ another maker reached only outside AWS. Everything else keeps the old answer.
 Review S263: T-3 holds for the whole route, not per model. The gateway tries every deployment of a model (acc3, then
 the Anthropic API) before the route's next model, so a vendor_direct stage may not name a model reached inside AWS
 after a model that also has a vendor API deployment (``_check_aws_before_vendor``, on both PATCH endpoints).
+
+AA-1026 (S267): the gateway now runs such a route AWS first across all its models (``LLM_ROUTE_AWS_FIRST``, default
+on, ``LLMClient._route_attempts``), so the interleaving the rule refused cannot happen and the family chains of
+migration 366 save. The refusals below run with that order switched off (``aws_first_off``), where the rule still holds.
 """
 from unittest.mock import AsyncMock, patch
 
@@ -35,6 +39,12 @@ MODELS = [
 REACH = {"haiku-5-5": frozenset({"aws_only", "vendor_direct"}), "sonnet-5-5": frozenset({"aws_only", "vendor_direct"}),
          "gpt-6-luna": frozenset({"aws_only"}), "gpt-6-luna-openai": frozenset({"vendor_direct"})}
 BOTH = ["aws_only", "vendor_direct"]
+
+
+@pytest.fixture
+def aws_first_off(monkeypatch):
+    """The gateway's per-model route order (AA-1026 S267 switch off): the admin's aws-before-vendor rule applies."""
+    monkeypatch.setenv("LLM_ROUTE_AWS_FIRST", "off")
 
 
 def _writer_row(scopes, fallbacks=("gpt-6-luna-openai",), stage="supply_content_writer"):
@@ -110,7 +120,7 @@ def test_the_helper_answers_only_for_a_vendor_direct_writer():
 
 
 @pytest.mark.asyncio
-async def test_an_aws_fallback_behind_a_model_with_a_vendor_api_is_refused():
+async def test_an_aws_fallback_behind_a_model_with_a_vendor_api_is_refused(aws_first_off):
     """sonnet-5-5 -> haiku-5-5 -> GPT-6 Luna (OpenAI API): the gateway would call sonnet-5-5 on the Anthropic API
     before haiku-5-5 on acc3, i.e. leave AWS while an AWS path is still untried."""
     with pytest.raises(HTTPException) as exc:
@@ -121,7 +131,7 @@ async def test_an_aws_fallback_behind_a_model_with_a_vendor_api_is_refused():
 
 
 @pytest.mark.asyncio
-async def test_a_primary_change_that_would_put_a_vendor_api_ahead_of_an_aws_fallback_is_refused():
+async def test_a_primary_change_that_would_put_a_vendor_api_ahead_of_an_aws_fallback_is_refused(aws_first_off):
     from api.routers import admin_llm_ops as ops
     # a writer whose primary is served only on acc3 (an invented key with no registry row) and whose route goes on to
     # haiku-5-5 and GPT-6 Luna: making sonnet-5-5 the primary would put its Anthropic API ahead of haiku-5-5 on acc3
@@ -147,10 +157,37 @@ async def test_a_primary_change_that_would_put_a_vendor_api_ahead_of_an_aws_fall
     (("aws_only",), ["sonnet-5-5", "haiku-5-5"], False),                          # never reaches a vendor API
     (None, ["sonnet-5-5", "haiku-5-5"], False),                                   # no stage policy: the S3 rule
 ], ids=["writer", "aws_model_ahead", "interleaved", "unknown_after", "duplicate", "aws_only_stage", "no_policy"])
-def test_the_aws_before_vendor_rule(scopes, chain, refused):
+def test_the_aws_before_vendor_rule(aws_first_off, scopes, chain, refused):
     from api.routers.admin_llm_ops import _check_aws_before_vendor
     if refused:
         with pytest.raises(HTTPException):
             _check_aws_before_vendor("s", scopes, REACH, chain)
     else:
         _check_aws_before_vendor("s", scopes, REACH, chain)
+
+
+@pytest.mark.parametrize("chain", [
+    ["sonnet-5-5", "haiku-5-5", "gpt-6-luna-openai"],
+    ["sonnet-5-5", "unknown-model"],
+], ids=["family_chain", "unknown_after"])
+def test_with_the_aws_first_order_the_gateway_keeps_aws_ahead_so_nothing_is_refused(chain):
+    from api.routers.admin_llm_ops import _check_aws_before_vendor
+    _check_aws_before_vendor("s", ("aws_only", "vendor_direct"), REACH, chain)
+
+
+def test_with_deployment_routing_off_the_rule_applies_again(monkeypatch):
+    from api.routers.admin_llm_ops import _check_aws_before_vendor
+    monkeypatch.setenv("LLM_DEPLOYMENT_ROUTING", "off")
+    with pytest.raises(HTTPException):
+        _check_aws_before_vendor("s", ("aws_only", "vendor_direct"), REACH,
+                                 ["sonnet-5-5", "haiku-5-5", "gpt-6-luna-openai"])
+
+
+@pytest.mark.asyncio
+async def test_a_family_chain_on_a_vendor_direct_writer_saves():
+    """S267: Sonnet 5.5 -> Haiku 5.5 -> GPT-6 Luna on the OpenAI API (the shape of migration 366's writer chains)."""
+    from api.routers import admin_llm_ops as ops
+    with patch.object(ops, "_change_evidence", AsyncMock(return_value={"eval_run_id": "run-1"})):
+        out = await _patch_route({"fallback_model_ids": ["haiku-5-5", "gpt-6-luna-openai"], "eval_run_id": "run-1"},
+                                 _writer_row(BOTH))
+    assert out["fallback_model_ids"] == ["haiku-5-5", "gpt-6-luna-openai"]

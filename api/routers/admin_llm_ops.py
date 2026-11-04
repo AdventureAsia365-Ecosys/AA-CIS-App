@@ -52,7 +52,8 @@ from shared.llm_client import connections as llm_connections
 from shared.llm_client import data_scope
 from shared.llm_client import deployments as llm_deployments
 from shared.llm_client import family_rule, invariant, route_evidence
-from shared.llm_client.client import legacy_acc2_native_enabled
+from shared.llm_client.client import (deployment_routing_enabled, legacy_acc2_native_enabled,
+                                      route_aws_first_enabled)
 from shared.llm_client.role_config import (
     list_stage_configs,
     set_stage_config,
@@ -290,8 +291,16 @@ def _check_aws_before_vendor(stage: str, scopes: Optional[tuple], reach: dict, c
     (vendor_route.deployment_plan), so that vendor API would be called before the later AWS deployment. ``reach``
     counts every deployment, enabled or not (the switch is an operation, the scope a policy); a model the registry
     does not describe counts as inside AWS (the gateway calls it on acc3). An aws_only stage (or no stage policy) never
-    reaches a vendor API behind another deployment, so it is not checked."""
+    reaches a vendor API behind another deployment, so it is not checked.
+
+    AA-1026 (S267): with the gateway's AWS-first route order on (``LLM_ROUTE_AWS_FIRST``, default on, and deployment
+    routing on) the gateway itself tries every AWS deployment of the whole route before any vendor API
+    (``LLMClient._route_attempts``), so a family chain such as [sonnet-5-5, sonnet-4-6, haiku-5-5, gpt-6-luna-openai]
+    can no longer call a vendor API before a later AWS deployment: nothing to refuse. The rule still applies while
+    that order is switched off."""
     if scopes is None or data_scope.VENDOR_DIRECT not in scopes:
+        return
+    if route_aws_first_enabled() and deployment_routing_enabled():
         return
     keys = [k for k in chain if k]
     for i, first in enumerate(keys):
