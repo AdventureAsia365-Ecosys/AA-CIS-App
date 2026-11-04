@@ -11,8 +11,8 @@
   (api/core/view_as.py; claim ``srl`` = that start role); the staff BFF keeps the token in an httpOnly cookie and
   never hands it to the browser. Only the BFF may start one: the call must carry ``x-view-as-client: bff`` (403
   ``view_as_bff_only`` before any row otherwise); the generic /api/admin proxy never sets it and refuses the path.
-* ``GET  /admin/view-as/sessions``                       — the caller's own sessions (admin: every session), newest
-  first; ``?tenant_id=``, ``?open_only=true``.
+* ``GET  /admin/view-as/sessions``                       — the caller's own sessions (admin: every session; the
+  Dev-only E2E admin: its own only), newest first; ``?tenant_id=``, ``?open_only=true``.
 * ``GET  /admin/view-as/sessions/{session_id}``          — one session (the banner reads it): own, or any for admin.
 * ``POST /admin/view-as/sessions/{session_id}/end``      — end it: ``ended`` (own) or ``revoked`` (an admin ending
   another member's); an already-expired one is closed as ``expired``. Idempotent.
@@ -153,8 +153,12 @@ async def _refuse_e2e(request: Request, conn: Any, tenant_id: Any) -> None:
         raise HTTPException(status_code=403, detail=e2e_staff.E2E_READ_ONLY)
 
 
-def _sees_every_session(principal: StaffPrincipal) -> bool:
-    """admin (tenant.read: every tenant) reads and ends every member's session; the others only their own."""
+def _sees_every_session(principal: StaffPrincipal, request: Request) -> bool:
+    """admin (tenant.read: every tenant) reads and ends every member's session; the others only their own. The Dev-only
+    E2E CIS admin (A10b-2, read-only) only its own: its evidence run never lists, reads or ends a real member's
+    session."""
+    if getattr(request_staff_identity(request), "e2e_read_only", False):
+        return False
     return TENANT_READ in principal.perms
 
 
@@ -235,7 +239,7 @@ async def list_view_as_sessions(
 ):
     verify_admin_secret(x_admin_secret)
     caller = _caller(principal, request)
-    staff_filter = None if _sees_every_session(caller) else _require_staff_id(request)
+    staff_filter = None if _sees_every_session(caller, request) else _require_staff_id(request)
     pool = request.app.state.pool
     async with pool.acquire() as conn:
         try:
@@ -252,7 +256,7 @@ async def _visible_session(conn: Any, request: Request, caller: StaffPrincipal, 
         raise _unavailable(exc) from exc
     if row is None:
         raise HTTPException(status_code=404, detail=NOT_FOUND)
-    if not _sees_every_session(caller) and row["admin_user_id"] != _require_staff_id(request):
+    if not _sees_every_session(caller, request) and row["admin_user_id"] != _require_staff_id(request):
         raise HTTPException(status_code=404, detail=NOT_FOUND)   # another member's session: same answer as unknown
     return row
 

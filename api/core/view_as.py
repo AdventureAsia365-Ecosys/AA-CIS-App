@@ -38,8 +38,11 @@ How it works
    did not foresee still cannot write.
 4. ``POST /admin/view-as/sessions/{session_id}/end`` ends it (``ended``; an admin ending someone else's: ``revoked``);
    an expired session reads as ended and is closed as ``expired`` the next time it is touched; a new start ends the
-   caller's other open sessions. Every path that ends a session writes one ``tenant.view_as_ended`` audit row under
-   that session's id with its end reason (:func:`ended_audit`).
+   caller's other open sessions; offboarding the tenant and disabling or signing out the staff member (the staff
+   member's own sign-out included, through the staff BFF) end every open session at once (:func:`close_open_sessions`).
+   Every path that ends a session writes one ``tenant.view_as_ended`` audit row under that session's id with its end
+   reason (:func:`ended_audit`).
+5. A view-as token is not a tenant session: ``POST /auth/verify-tenant`` refuses it (403, :data:`NOT_A_TENANT_SESSION`).
 
 Only staff paths and the tenant read routes are involved; no tenant member ever sees a view-as row (the tenant
 activity trail is an allow-list of actions, api/services/tenant_account.TENANT_VISIBLE_ACTIONS).
@@ -52,6 +55,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from uuid import UUID
 
+import asyncpg
 import jwt
 import structlog
 
@@ -83,6 +87,7 @@ BFF_ONLY_DETAIL = "view_as_bff_only"
 BFF_HEADER = "x-view-as-client"
 BFF_HEADER_VALUE = "bff"
 ENDED_DETAIL = "view_as_ended"
+NOT_A_TENANT_SESSION = "A view-as token is not a tenant session"
 ROLE_MISMATCH_DETAIL = "view_as_role_mismatch"
 ROLE_MISMATCH_MESSAGE = ("Your staff role in the directory differs from your sign-in group; ask an admin to align them "
                          "before viewing as a partner.")
@@ -322,6 +327,53 @@ async def close_session(conn: Any, claims: ViewAsClaims, cause: str) -> Optional
                                        cause=cause)
         return None
     return end_reason
+
+
+# AA-1035 follow-up (S268): the paths outside the gate that end every open session of a tenant or of a staff member
+# at once, so nothing waits for the next request or the expiry. $1 = the tenant / the staff id, $2 = the end_reason of
+# a session not yet past its expiry (one past it ends 'expired'). Each closed row comes back for its own ended row.
+_CLOSE_ALL_SQL = (
+    "UPDATE shared.staff_view_as_session SET ended_at = greatest(now(), started_at), "
+    "end_reason = CASE WHEN expires_at <= now() THEN 'expired' ELSE $2 END "
+    "WHERE {column} = $1::uuid AND ended_at IS NULL "
+    "RETURNING session_id::text AS session_id, tenant_id::text AS tenant_id, admin_user_id::text AS session_staff, "
+    "end_reason"
+)
+CLOSE_TENANT_SESSIONS_SQL = _CLOSE_ALL_SQL.format(column="tenant_id")
+CLOSE_STAFF_SESSIONS_SQL = _CLOSE_ALL_SQL.format(column="admin_user_id")
+# details.cause of the ended rows these paths write (the end route and a new start have their own, see ended_audit)
+BULK_END_CAUSES = frozenset({"tenant_offboarded", "staff_disabled", "staff_signed_out"})
+
+
+async def close_open_sessions(conn: Any, *, actor: str, cause: str, tenant_id: Optional[str] = None,
+                              staff_id: Optional[str] = None, end_reason: str = "revoked") -> list[dict]:
+    """End every open view-as session of ``tenant_id`` (offboarding) or of ``staff_id`` (the staff member disabled or
+    signed out) in the caller's transaction, and write one ``tenant.view_as_ended`` row per closed session (cause
+    ``cause``, actor ``actor``). Exactly one of the two ids. Returns the closed sessions ({session_id, tenant_id,
+    session_staff, end_reason}).
+
+    The UPDATE runs in a savepoint: before CIS 364 (no table) nothing is closed and the caller's transaction goes on.
+    The ended rows are audit rows: the caller writes its own audit rows around them, every UPDATE of the transaction
+    first (the audit chain trigger's lock)."""
+    from services.acp_shared.audit_log import write_audit_log
+
+    if (tenant_id is None) == (staff_id is None):
+        raise ValueError("close_open_sessions needs exactly one of tenant_id / staff_id")
+    sql, key = (CLOSE_TENANT_SESSIONS_SQL, tenant_id) if tenant_id is not None else (CLOSE_STAFF_SESSIONS_SQL,
+                                                                                      staff_id)
+    try:
+        async with conn.transaction():
+            rows = [dict(r) for r in await conn.fetch(sql, str(key), end_reason)]
+    except asyncpg.UndefinedTableError:                 # before CIS 364: nothing to close
+        logger.warning("view_as_close_all_unavailable", cause=cause)
+        return []
+    for r in rows:
+        await write_audit_log(conn, **ended_audit(
+            tenant_id=r["tenant_id"], session_id=r["session_id"], actor=actor, end_reason=r["end_reason"],
+            cause=cause, session_staff=r["session_staff"]))
+    if rows:
+        logger.info("view_as_sessions_closed", cause=cause, sessions=len(rows))
+    return rows
 
 
 def start_role_mismatch(db_role: Optional[str], start_role: Optional[str]) -> bool:

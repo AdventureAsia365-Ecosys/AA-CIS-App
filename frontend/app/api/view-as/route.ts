@@ -9,7 +9,9 @@
 //          with it, and the generic /api/admin proxy (which never sets it) refuses the start path too.
 //   GET    → the current session of this browser ({ active: false } when none, ended or not this staff member's),
 //          with `allowed_reads`: the reads the signed-in member's role may make (lib/viewAs.ts viewAsReadsForRole).
-//   DELETE → CIS POST /admin/view-as/sessions/{id}/end, then the cookie is cleared (also when the API call fails).
+//   DELETE → CIS POST /admin/view-as/sessions/{id}/end for the signed-in member's OWN session (the token's stf, like
+//          GET), then the cookie is cleared (also when the API call fails). A cookie of another member (a shared
+//          browser) is only cleared: never ended through this member (an admin's end would revoke it).
 //
 // The token's reads go through app/api/view-as/v1/[...path]/route.ts. Every staff check is the backend's; this route
 // adds the verified staff session (requireAdmin) and that the cookie belongs to the signed-in staff member.
@@ -17,7 +19,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { refuseCrossSiteWrite } from "@/lib/crossSiteGuard";
 import { requireAdmin, secretNotConfigured, staffCredentialHeaders } from "@/lib/auth-server";
 import {
-  VIEW_AS_BFF_HEADER, VIEW_AS_COOKIE, VIEW_AS_COOKIE_PATH, VIEW_AS_ROLES, cookieMaxAge, viewAsClaims,
+  VIEW_AS_BFF_HEADER, VIEW_AS_COOKIE, VIEW_AS_COOKIE_PATH, VIEW_AS_ROLES, cookieMaxAge, ownViewAsClaims, viewAsClaims,
   viewAsReadsForRole, type CurrentViewAs,
 } from "@/lib/viewAs";
 import type { StaffRole } from "@/lib/rbac";
@@ -86,12 +88,11 @@ export async function GET(req: NextRequest) {
   const { auth, headers } = await staffHeaders(req, "admin");
   if (!auth.ok) return auth.response;
   if (!headers) return secretNotConfigured();
-  const claims = viewAsClaims(req.cookies.get(VIEW_AS_COOKIE)?.value);
+  const cookie = req.cookies.get(VIEW_AS_COOKIE)?.value;
+  const claims = ownViewAsClaims(cookie, auth.adminId);
   const none: CurrentViewAs = { active: false };
   // A cookie of another staff member (a shared browser) is never used: cleared.
-  if (!claims || claims.staffId !== auth.adminId || !UUID_RE.test(claims.sessionId)) {
-    return claims ? clearCookie(NextResponse.json(none)) : NextResponse.json(none);
-  }
+  if (!claims) return viewAsClaims(cookie) ? clearCookie(NextResponse.json(none)) : NextResponse.json(none);
   try {
     const res = await fetch(`${API_URL}/admin/view-as/sessions/${claims.sessionId}`, { headers });
     if (!res.ok) return clearCookie(NextResponse.json(none));
@@ -109,8 +110,8 @@ export async function DELETE(req: NextRequest) {
   const { auth, headers } = await staffHeaders(req, "admin");
   if (!auth.ok) return auth.response;
   if (!headers) return secretNotConfigured();
-  const claims = viewAsClaims(req.cookies.get(VIEW_AS_COOKIE)?.value);
-  if (!claims || !UUID_RE.test(claims.sessionId)) return clearCookie(NextResponse.json({ ended: false }));
+  const claims = ownViewAsClaims(req.cookies.get(VIEW_AS_COOKIE)?.value, auth.adminId);
+  if (!claims) return clearCookie(NextResponse.json({ ended: false }));
   let ended = false;
   try {
     const res = await fetch(`${API_URL}/admin/view-as/sessions/${claims.sessionId}/end`, { method: "POST", headers });

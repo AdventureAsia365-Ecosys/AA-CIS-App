@@ -6,8 +6,8 @@ import { test } from "node:test";
 
 import {
   VIEW_AS_BFF_HEADER, VIEW_AS_COOKIE_PATH, VIEW_AS_READ_ROUTES, VIEW_AS_ROLES, VIEW_AS_ROLE_HEADER, VIEW_AS_ROUTE_ROLES,
-  cookieMaxAge, formatCountdown, isViewAsStartPath, pickText, rowsOf, secondsLeft, startProblem, viewAsClaims,
-  viewAsForward, viewAsPathAllowed,
+  cookieMaxAge, formatCountdown, isViewAsStartPath, ownOpenSessionIds, ownViewAsClaims, pickText, rowsOf, secondsLeft,
+  startProblem, viewAsClaims, viewAsForward, viewAsPathAllowed,
   viewAsReadUrl, viewAsReadsForRole, viewAsRoleMayRead,
 } from "./viewAs.ts";
 import {
@@ -182,4 +182,59 @@ test("assignments: kinds, labels, filters, who can still be added", () => {
     { admin_user_id: "u-new-000003", display_name: "Moss Example", email: null, role: "support" }];
   assert.deepEqual(addableStaff(staff, T).map((s) => s.admin_user_id), ["u-new-000003"]);
   assert.equal(assignmentPath("t 1", "u/1"), "/api/admin/tenants/t%201/assignments/u%2F1");
+});
+
+// ── S268 follow-ups: the session owner on every BFF path, the sign-out ends the member's own sessions ──────────────
+
+const SID = "0b5b6a52-3c1f-4d8e-9a77-2f1e0c9d8b11";
+const OTHER_SID = "6c2d9e10-7a4b-4f3e-8d21-5b9c0a7e6f33";
+const ME = "9a1f3c22-5d6e-4b7a-8c9d-0e1f2a3b4c5d";
+const SOMEONE = "1e2d3c4b-5a69-4788-97a6-b5c4d3e2f1a0";
+
+test("the BFF uses a view-as cookie only for the member it was started by", () => {
+  const mine = jwtOf({ vas: SID, stf: ME, srl: "support", exp: 2_000_000_000 });
+  assert.deepEqual(ownViewAsClaims(mine, ME), { sessionId: SID, staffId: ME, startRole: "support", exp: 2_000_000_000 });
+  assert.equal(ownViewAsClaims(mine, SOMEONE), null);                                     // a shared browser
+  assert.equal(ownViewAsClaims(mine, ""), null);
+  assert.equal(ownViewAsClaims(mine, undefined), null);
+  assert.equal(ownViewAsClaims(jwtOf({ vas: "not-a-uuid", stf: ME, srl: "admin", exp: 1 }), ME), null);
+  assert.equal(ownViewAsClaims(undefined, ME), null);
+});
+
+test("DELETE ends only the member's own session: the owner check comes before the end call", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const src = await readFile(new URL("../app/api/view-as/route.ts", import.meta.url), "utf8");
+  const del = src.slice(src.indexOf("export async function DELETE"));
+  const check = del.indexOf("ownViewAsClaims(req.cookies.get(VIEW_AS_COOKIE)?.value, auth.adminId)");
+  assert.ok(check > 0, "DELETE must read the cookie through ownViewAsClaims with the signed-in member's id");
+  assert.ok(check < del.indexOf("/end`"), "the owner check must come before the end call");
+  const get = src.slice(src.indexOf("export async function GET"), src.indexOf("export async function DELETE"));
+  assert.ok(get.includes("ownViewAsClaims(cookie, auth.adminId)"), "GET keeps the same owner rule");
+});
+
+test("the sign-out keeps only the member's own open sessions of the list", () => {
+  const answer = { scope: "all", sessions: [
+    { session_id: SID, admin_user_id: ME, open: true },
+    { session_id: OTHER_SID, admin_user_id: SOMEONE, open: true },          // an admin's list: another member's
+    { session_id: OTHER_SID, admin_user_id: ME, open: false },              // already ended
+    { session_id: "x", admin_user_id: ME, open: true },                     // not a session id
+  ] };
+  assert.deepEqual(ownOpenSessionIds(answer, ME), [SID]);
+  assert.deepEqual(ownOpenSessionIds(answer, ""), []);
+  assert.deepEqual(ownOpenSessionIds({ sessions: "no" }, ME), []);
+  assert.deepEqual(ownOpenSessionIds(null, ME), []);
+});
+
+test("the staff sign-out ends the own view-as sessions before the revoke and clears the view-as cookie", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const src = await readFile(new URL("../app/api/auth/admin-logout/route.ts", import.meta.url), "utf8");
+  const post = src.slice(src.indexOf("export async function POST"));
+  const end = post.indexOf("await endOwnViewAsSessions(request)");
+  assert.ok(end > 0, "the sign-out must end the member's view-as sessions");
+  assert.ok(end > post.indexOf("isSameOrigin(request"), "a cross-site sign-out changes nothing");
+  assert.ok(end < post.indexOf("revokeRefreshToken("), "before the revoke (it invalidates the access token)");
+  assert.ok(src.includes("ownOpenSessionIds(await res.json(), auth.adminId)"), "only the member's own sessions");
+  assert.ok(src.includes("/admin/view-as/sessions?open_only=true"));
+  assert.match(post, /cookies\.set\(VIEW_AS_COOKIE, "", \{[^}]*path: VIEW_AS_COOKIE_PATH, maxAge: 0/s);
+  assert.ok(src.includes("AbortSignal.timeout(VIEW_AS_END_TIMEOUT_MS)"), "a slow API never holds the sign-out");
 });

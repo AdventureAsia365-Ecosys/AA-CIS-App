@@ -18,6 +18,7 @@ from api.core.tenant_scope import (
     tenant_scope_sql,
 )
 from pydantic import BaseModel, Field
+from api.core import view_as
 from api.core.secret_compare import secrets_equal
 from api.core.staff_credential import principal_verified
 
@@ -1449,6 +1450,10 @@ async def offboard_tenant(
                 """,
                 tenant_id,
             )
+            # AA-1035 follow-up (S268): every open view-as session on this tenant ends now ('revoked', one
+            # tenant.view_as_ended row each, cause tenant_offboarded), not at its next request or its expiry.
+            closed_views = await view_as.close_open_sessions(
+                conn, actor=_admin_actor(x_admin_user_id), cause="tenant_offboarded", tenant_id=tenant_id)
             await write_audit_log(
                 conn, tenant_id=tenant_id, actor=_admin_actor(x_admin_user_id),
                 action=AdminTenantAuditAction.OFFBOARD, resource_type="tenant", resource_id=tenant_id,
@@ -1456,6 +1461,7 @@ async def offboard_tenant(
                     "reason": body.reason,
                     "name": tenant["name"],
                     "cancelled_jobs": [{"id": r["id"], "kind": r["kind"]} for r in cancelled],
+                    "ended_view_as_sessions": [r["session_id"] for r in closed_views],
                     "jev_allowlist": ({"reason": allow["reason"], "added_at": allow["added_at"].isoformat(),
                                        "added_by": allow["added_by"]} if allow else None),
                     "note": "Nothing is deleted; POST /admin/tenants/{id}/restore brings the tenant back",
@@ -1476,6 +1482,7 @@ async def offboard_tenant(
         "tenant_id": tenant_id,
         "status": "offboarded",
         "cancelled_jobs": len(cancelled),
+        "ended_view_as_sessions": len(closed_views),
         "note": "Tenant data and settings are kept; POST /admin/tenants/{id}/restore brings the tenant back.",
     }
 

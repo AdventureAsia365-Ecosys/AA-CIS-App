@@ -23,7 +23,7 @@ import pytest
 from botocore.stub import Stubber
 from fastapi.testclient import TestClient
 
-from api.core import identity_config, staff_identity
+from api.core import identity_config, staff_identity, view_as
 from api.main import app
 from api.routers import admin, admin_platform, admin_settings
 from api.services import staff_directory as sd
@@ -52,6 +52,7 @@ class StaffDB(Directory):
         self.crm_table = True
         self.audit: list[dict[str, Any]] = []
         self.locked_owners = 0
+        self.view_as: list[dict[str, Any]] = []     # open view-as sessions (AA-1035: closed by disable / sign-out)
 
     def add(self, *, owner: bool = False, booking: Optional[str] = None,  # type: ignore[override]
             crm: tuple[str, ...] = (), **kw: Any) -> str:
@@ -95,6 +96,10 @@ class StaffDB(Directory):
 
     async def fetch(self, sql: str, *args: Any) -> list[dict[str, Any]]:
         self.sql.append(sql)
+        if sql == view_as.CLOSE_STAFF_SESSIONS_SQL:
+            closed = [{**v, "end_reason": args[1]} for v in self.view_as if v["session_staff"] == args[0]]
+            self.view_as = [v for v in self.view_as if v["session_staff"] != args[0]]
+            return closed
         if sql == sd.SQL_LOCK_OWNERS:
             self.locked_owners += 1
             return [{"id": r["id"]} for r in self.rows if r.get("is_owner")]
@@ -651,6 +656,32 @@ async def test_sign_out_ends_sessions_and_re_enables_a_disabled_account(db, stub
     assert result.steps == ["enable_user", "global_sign_out"]
     assert db.row(uid)["is_active"] is True
     assert db.audit[0]["action"] == sd.StaffAudit.SIGNED_OUT and db.audit[0]["details"] == {"reenabled": True}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("op,cause,action", [("disable_staff", "staff_disabled", sd.StaffAudit.DISABLED),
+                                             ("sign_out_staff", "staff_signed_out", sd.StaffAudit.SIGNED_OUT)])
+async def test_disable_and_sign_out_end_the_members_open_view_as_session(db, stubbed, op, cause, action):
+    """AA-1035 follow-up (S268): the member's open view-as sessions end with the write (one tenant.view_as_ended row
+    each, before the staff row); another member's stay open."""
+    cognito, stub = stubbed
+    uid = db.add(email=NEW_EMAIL, role="support")
+    other = db.add(email="someone.else@adventure.asia", role="support")
+    db.view_as = [{"session_id": "s-mine", "tenant_id": "t-1", "session_staff": uid},
+                  {"session_id": "s-other", "tenant_id": "t-2", "session_staff": other}]
+    if op == "disable_staff":
+        _expect(stub, "admin_disable_user", _user(NEW_EMAIL))
+    else:
+        _expect(stub, "admin_enable_user", _user(NEW_EMAIL))
+    _expect(stub, "admin_user_global_sign_out", _user(NEW_EMAIL))
+    await getattr(sd, op)(db, cognito, actor_id=db.owner, staff_id=uid)
+    assert db.actions() == ["tenant.view_as_ended", action]
+    ended = db.audit[0]
+    assert ended["actor"] == f"admin:{db.owner}" and ended["tenant_id"] == "t-1" and ended["resource_id"] == "s-mine"
+    assert ended["details"] == {"session_id": "s-mine", "end_reason": "revoked", "cause": cause,
+                                "session_staff": uid}
+    assert db.audit[1]["details"]["ended_view_as_sessions"] == ["s-mine"]
+    assert [v["session_id"] for v in db.view_as] == ["s-other"]
 
 
 @pytest.mark.asyncio
