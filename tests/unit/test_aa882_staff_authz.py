@@ -446,7 +446,8 @@ def test_app_tenant_proxy_staff_branch_admin_reaches_retention_schedule(client, 
 
 _SECRET_BFFS = ["frontend/app/api/tenant/[...path]/route.ts", "frontend/app/api/admin/[...path]/route.ts",
                 "frontend/app/api/pipeline/[...path]/route.ts", "frontend/app/api/tour-full/[id]/route.ts",
-                "frontend/app/api/tenant/pipeline/brand-identity/route.ts"]
+                "frontend/app/api/tenant/pipeline/brand-identity/route.ts",
+                "frontend/app/api/view-as/route.ts"]   # AA-1035 slice 2: start / read / end a view-as session
 
 
 @pytest.mark.parametrize("bff", _SECRET_BFFS)

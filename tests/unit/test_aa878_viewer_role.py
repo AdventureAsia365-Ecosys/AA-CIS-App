@@ -52,13 +52,16 @@ ADMIN_ID = "6f1c2c4e-8a51-4c1e-9d0b-2f3c4d5e6f71"
 _WRITE_KEYS = sorted(k for k in POLICY if k[0] != "GET")
 # AA-1035: the aa_internal details read is a POLICY GET the viewer passes (content.read; tenant_scope keeps it on the
 # aa_internal tenant), so it is not an admin-only GET.
-_ADMIN_GET_KEYS = sorted(k for k in POLICY if k[0] == "GET" and k != ("GET", "/admin/tenants/{tenant_id}/details"))
+# AA-1035 slice 2: the bell reads (notifications.read, every role) are POLICY GETs the viewer passes too.
+_VIEWER_POLICY_GETS = {("GET", "/admin/tenants/{tenant_id}/details"), ("GET", "/admin/notifications"),
+                       ("GET", "/admin/notifications/count")}
+_ADMIN_GET_KEYS = sorted(k for k in POLICY if k[0] == "GET" and k not in _VIEWER_POLICY_GETS)
 
 
 # ── Capability map ───────────────────────────────────────────────────────────────────────────────
 
 def test_viewer_holds_content_read_only():
-    assert ROLE_PERMS[VIEWER] == frozenset({CONTENT_READ})
+    assert ROLE_PERMS[VIEWER] == frozenset({CONTENT_READ, staff_authz.NOTIFICATIONS_READ})   # + the bell (AA-1035 s2)
     assert VIEWER in STAFF_ROLES
     assert READ_ONLY_ROLES == frozenset({VIEWER})
     # AA-1035 R2: none of the new roles gets a bridge token either (Booking reads booking-* groups only)
@@ -105,7 +108,7 @@ def test_viewer_is_refused_every_policy_write(key):
 
 def test_viewer_is_refused_the_notification_puts_although_it_holds_their_capability():
     for key in (("PUT", "/admin/notifications/read-all"), ("PUT", "/admin/notifications/{notif_id}/read")):
-        assert POLICY[key] == CONTENT_READ
+        assert POLICY[key] == staff_authz.NOTIFICATIONS_READ   # AA-1035 slice 2 (was content.read)
         assert denial_reason(principal_from_role(VIEWER), *key) == "Role 'viewer' is read-only"
         assert denial_reason(principal_from_role("reviewer"), *key) is None
 
@@ -124,10 +127,12 @@ def test_read_only_rule_covers_a_write_without_a_policy_entry(method):
 
 @pytest.mark.parametrize("method", ["GET", "HEAD", "OPTIONS"])
 def test_viewer_reads_the_open_routes(method):
-    for path in ("/admin/llm-config", "/admin/review-queue", "/admin/notifications", "/admin/search",
-                 "/admin/tours/{tour_id}/detail"):
+    for path in ("/admin/llm-config", "/admin/review-queue", "/admin/search", "/admin/tours/{tour_id}/detail"):
         assert (method, path) not in POLICY
         assert denial_reason(principal_from_role(VIEWER), method, path) is None
+    # AA-1035 slice 2: the bell has its own capability, which the viewer holds
+    if method == "GET":
+        assert denial_reason(principal_from_role(VIEWER), method, "/admin/notifications") is None
     # AA-1035: the aa_internal details read is in POLICY (content.read among its capabilities) and tenant-scoped
     if method == "GET":
         assert denial_reason(principal_from_role(VIEWER), method, "/admin/tenants/{tenant_id}/details") is None

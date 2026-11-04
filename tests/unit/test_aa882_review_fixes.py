@@ -152,11 +152,14 @@ def test_notification_scope_per_role():
     # AA-986 L3: every staff row (not "TRUE" any more: the tenant-only rows belong to the tenant's bell)
     assert notification_scope("admin") == "NOT (target_roles <@ ARRAY['tenant']::text[])"
     assert notification_scope(None) == notification_scope("admin")          # the machine (holds the secret)
-    for role in ("reviewer", "content", "tenant", ""):
+    for role in ("reviewer", "content"):
         scope = notification_scope(role)
         assert "NOT LIKE 'platform.%'" in scope
         assert "spend_budget_alert" in scope
         assert "target_roles && ARRAY['content','reviewer']" in scope
+    # AA-1035 slice 2: a value that is no staff role sees no row (was the content rows); staff_policy refuses it anyway
+    for role in ("tenant", ""):
+        assert notification_scope(role) == "FALSE"
 
 
 @pytest.mark.parametrize("role", ["reviewer", "content"])

@@ -27,6 +27,8 @@ SAMPLES = [
     ("admin", "PUT", "/admin/notifications/read-all", None),
     ("admin", "GET", "/admin/tenants", None),
     ("admin_tenant360", "GET", "/admin/tenants/{tenant_id}/cost", None),
+    ("admin_view_as", "POST", "/admin/tenants/{tenant_id}/view-as", {"reason": "Checking a held piece"}),  # AA-1035 s2
+    ("admin_tenant_assignments", "GET", "/admin/tenant-assignments", None),                       # AA-1035 s2
     ("admin_tenant_provision", "POST", "/admin/tenants/{tenant_id}/provision", {}),
     ("admin_tenant_subscription", "PUT", "/admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}", {}),
     ("admin_plans", "POST", "/admin/plans", {}),
