@@ -11,7 +11,7 @@ the Anthropic API) before the route's next model, so a vendor_direct stage may n
 after a model that also has a vendor API deployment (``_check_aws_before_vendor``, on both PATCH endpoints).
 
 AA-1026 (S267): the gateway now runs such a route AWS first across all its models (``LLM_ROUTE_AWS_FIRST``, default
-on, ``LLMClient._route_attempts``), so the interleaving the rule refused cannot happen and the family chains of
+on, ``client.route_attempts``), so the interleaving the rule refused cannot happen and the family chains of
 migration 366 save. The refusals below run with that order switched off (``aws_first_off``), where the rule still holds.
 """
 from unittest.mock import AsyncMock, patch

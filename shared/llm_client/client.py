@@ -66,7 +66,7 @@ CONVERSE_CACHE_POINT_ENV = "LLM_CONVERSE_CACHE_POINT"
 #   LLM_ROUTE_AWS_FIRST (default ON, AA-1026 S267): a stage allowed both data scopes runs its route twice: first every
 #     model on its AWS deployments (route order), then every model on its vendor API deployments (route order), so no
 #     vendor API outside AWS is called while an AWS deployment of a later model is still untried
-#     (LLMClient._route_attempts). "off" restores the per-model order (all deployments of a model, then the next).
+#     (client.route_attempts). "off" restores the per-model order (all deployments of a model, then the next).
 ROUTE_AWS_FIRST_ENV = "LLM_ROUTE_AWS_FIRST"
 _ON = ("1", "true", "on", "yes")
 _OFF = ("0", "false", "off", "no")
@@ -923,6 +923,57 @@ def estimate_call_usd(request: LLMRequest, model_key: Optional[str]) -> float:
         return 0.0
 
 
+def route_attempts(request: LLMRequest, chain: list) -> list[tuple[str, Optional[tuple]]]:
+    """AA-1026 (S267, tech lead: family fallback chains; ADR 0009 decision 5 / T-3: "outside AWS only when every AWS
+    path is blocked") — the (model key, data scopes of this attempt) pairs a route is tried in.
+
+    A stage allowed both ``aws_only`` and ``vendor_direct`` gets two passes: first each model of the route on its
+    AWS deployments (``(aws_only,)``), in route order, then each model on its vendor API deployments
+    (``(vendor_direct,)``), in route order. So [sonnet-5-5, sonnet-4-6, gpt-6-luna-openai] with the Anthropic API
+    switched on runs Sonnet 5.5 on acc3, Sonnet 4.6 on acc3, then Sonnet 5.5 on the Anthropic API, then GPT-6 Luna
+    on the OpenAI API, where the per-model order called the Anthropic API before Sonnet 4.6 on acc3 (the reason
+    migrations 327 / 344 dropped the same-family degrade on those routes). A model appears in a pass only when it
+    has a usable deployment in that scope now (``vendor_route.route_reach``: enabled, connection enabled, serves
+    the role; circuits and budgets are left to the call, which records them as today). A model with nothing usable
+    keeps one attempt with the stage's own scopes, in the pass of what it is deployed on (it fails as today). A
+    legacy key, a key the catalog or the registry does not describe, keeps one attempt in the AWS pass.
+
+    Every other stage (aws_only, no stage policy, the switch off, deployment routing off): one attempt per key, in
+    route order, with the stage's scopes (``None``), i.e. the per-model order, unchanged. With the routes of
+    migration 344 both orders make the same calls (no vendor_direct route had an AWS model after a model with a
+    vendor API deployment)."""
+    plain = [(k, None) for k in chain]
+    if len(chain) < 2 or not route_aws_first_enabled() or not deployment_routing_enabled():
+        return plain
+    scopes = stage_scopes(request)
+    if scopes is None or data_scope.VENDOR_DIRECT not in scopes or data_scope.AWS_ONLY not in scopes:
+        return plain
+    role = stage_role(request)
+    aws: list = []
+    vendor: list = []
+    for key in chain:
+        model = None if key in LEGACY_KEYS or split_pin(key) else get_model_sync(key)
+        reach = route_reach(model, role) if model is not None and model.enabled else None
+        if reach is None:
+            aws.append((key, None))
+            continue
+        usable, described = reach
+        if usable:
+            if data_scope.AWS_ONLY in usable:
+                aws.append((key, data_scope.AWS_ONLY_SCOPES))
+            if data_scope.VENDOR_DIRECT in usable:
+                vendor.append((key, (data_scope.VENDOR_DIRECT,)))
+        elif data_scope.AWS_ONLY in described:
+            aws.append((key, None))
+        else:
+            vendor.append((key, None))
+    attempts = aws + vendor
+    if [k for k, _ in attempts] != list(chain):
+        logger.info("llm_route_aws_first", stage=request.stage,
+                    attempts=[f"{k}@{(s or ('stage',))[0]}" for k, s in attempts])
+    return attempts
+
+
 class LLMClient:
     """
     Legacy haiku/sonnet chain (acc3 is the only satellite account — AA-998 removed the
@@ -1350,54 +1401,7 @@ class LLMClient:
         raise _all_failed(message, failures)
 
     def _route_attempts(self, request: LLMRequest, chain: list) -> list[tuple[str, Optional[tuple]]]:
-        """AA-1026 (S267, tech lead: family fallback chains; ADR 0009 decision 5 / T-3: "outside AWS only when every AWS
-        path is blocked") — the (model key, data scopes of this attempt) pairs a route is tried in.
-
-        A stage allowed both ``aws_only`` and ``vendor_direct`` gets two passes: first each model of the route on its
-        AWS deployments (``(aws_only,)``), in route order, then each model on its vendor API deployments
-        (``(vendor_direct,)``), in route order. So [sonnet-5-5, sonnet-4-6, gpt-6-luna-openai] with the Anthropic API
-        switched on runs Sonnet 5.5 on acc3, Sonnet 4.6 on acc3, then Sonnet 5.5 on the Anthropic API, then GPT-6 Luna
-        on the OpenAI API, where the per-model order called the Anthropic API before Sonnet 4.6 on acc3 (the reason
-        migrations 327 / 344 dropped the same-family degrade on those routes). A model appears in a pass only when it
-        has a usable deployment in that scope now (``vendor_route.route_reach``: enabled, connection enabled, serves
-        the role; circuits and budgets are left to the call, which records them as today). A model with nothing usable
-        keeps one attempt with the stage's own scopes, in the pass of what it is deployed on (it fails as today). A
-        legacy key, a key the catalog or the registry does not describe, keeps one attempt in the AWS pass.
-
-        Every other stage (aws_only, no stage policy, the switch off, deployment routing off): one attempt per key, in
-        route order, with the stage's scopes (``None``), i.e. the per-model order, unchanged. With the routes of
-        migration 344 both orders make the same calls (no vendor_direct route had an AWS model after a model with a
-        vendor API deployment)."""
-        plain = [(k, None) for k in chain]
-        if len(chain) < 2 or not route_aws_first_enabled() or not deployment_routing_enabled():
-            return plain
-        scopes = stage_scopes(request)
-        if scopes is None or data_scope.VENDOR_DIRECT not in scopes or data_scope.AWS_ONLY not in scopes:
-            return plain
-        role = stage_role(request)
-        aws: list = []
-        vendor: list = []
-        for key in chain:
-            model = None if key in LEGACY_KEYS or split_pin(key) else get_model_sync(key)
-            reach = route_reach(model, role) if model is not None and model.enabled else None
-            if reach is None:
-                aws.append((key, None))
-                continue
-            usable, described = reach
-            if usable:
-                if data_scope.AWS_ONLY in usable:
-                    aws.append((key, data_scope.AWS_ONLY_SCOPES))
-                if data_scope.VENDOR_DIRECT in usable:
-                    vendor.append((key, (data_scope.VENDOR_DIRECT,)))
-            elif data_scope.AWS_ONLY in described:
-                aws.append((key, None))
-            else:
-                vendor.append((key, None))
-        attempts = aws + vendor
-        if [k for k, _ in attempts] != list(chain):
-            logger.info("llm_route_aws_first", stage=request.stage,
-                        attempts=[f"{k}@{(s or ('stage',))[0]}" for k, s in attempts])
-        return attempts
+        return route_attempts(request, chain)
 
     def _deadline_gate(self, request: LLMRequest, model: str, before: str, errors: Optional[list] = None) -> None:
         """AA-1018 part 2: ``check_deadline`` before a later attempt; when it passed, the request's 0 USD 'deadline'

@@ -295,7 +295,7 @@ def _check_aws_before_vendor(stage: str, scopes: Optional[tuple], reach: dict, c
 
     AA-1026 (S267): with the gateway's AWS-first route order on (``LLM_ROUTE_AWS_FIRST``, default on, and deployment
     routing on) the gateway itself tries every AWS deployment of the whole route before any vendor API
-    (``LLMClient._route_attempts``), so a family chain such as [sonnet-5-5, sonnet-4-6, haiku-5-5, gpt-6-luna-openai]
+    (``client.route_attempts``), so a family chain such as [sonnet-5-5, sonnet-4-6, haiku-5-5, gpt-6-luna-openai]
     can no longer call a vendor API before a later AWS deployment: nothing to refuse. The rule still applies while
     that order is switched off."""
     if scopes is None or data_scope.VENDOR_DIRECT not in scopes:

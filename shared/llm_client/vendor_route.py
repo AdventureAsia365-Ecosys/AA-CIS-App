@@ -352,7 +352,7 @@ def route_reach(model: CatalogModel, role: Optional[str] = None) -> Optional[tup
     """AA-1026 (S267, tech lead: family fallback chains) — ``(usable, described)``: the data scopes of the connections
     ``model`` may be called on right now, ignoring circuits and budgets (its CALLABLE deployment rows, ``_callable``,
     that are enabled, on an enabled connection that serves ``role``), and the data scopes of every callable row
-    (enabled or not). ``LLMClient._route_attempts`` splits a route that may leave AWS into an AWS pass and a vendor
+    (enabled or not). ``client.route_attempts`` splits a route that may leave AWS into an AWS pass and a vendor
     pass with it. None when the registry does not describe the model (no registry rows, no callable row, a registry
     error): the caller keeps the model where it is. Never raises."""
     try:
