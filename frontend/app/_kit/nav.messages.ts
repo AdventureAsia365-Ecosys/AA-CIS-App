@@ -41,6 +41,7 @@ export const NAV_MESSAGES = defineMessages(
     "AA content": "AA content",
     "SEO Intelligence": "SEO Intelligence",
     "Settings": "Settings",
+    "Catalogue settings": "Catalogue settings",
     // Tenant content QA
     "Content quality": "Content quality",
     "Content Trace": "Content Trace",
@@ -63,6 +64,7 @@ export const NAV_MESSAGES = defineMessages(
     "API Docs": "API Docs",
     "Data model": "Data model",
     "Docs": "Docs",
+    "UI kit": "UI kit",
     "Admin": "Admin",
     // bottom nav (phone)
     "Review": "Review",
@@ -97,6 +99,7 @@ export const NAV_MESSAGES = defineMessages(
     "AA content": "Nội dung AA",
     "SEO Intelligence": "Phân tích SEO",
     "Settings": "Cài đặt",
+    "Catalogue settings": "Cài đặt kho nội dung",
     "Content quality": "Chất lượng nội dung",
     "Content Trace": "Truy vết nội dung",
     "Review log": "Nhật ký duyệt",
@@ -115,6 +118,7 @@ export const NAV_MESSAGES = defineMessages(
     "API Docs": "Tài liệu API",
     "Data model": "Mô hình dữ liệu",
     "Docs": "Tài liệu",
+    "UI kit": "Bộ UI",
     "Admin": "Quản trị",
     "Review": "Duyệt",
     "Master": "Master",

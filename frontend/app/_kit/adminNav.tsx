@@ -15,7 +15,7 @@ import {
   Cpu, Gauge, Users, Upload, Wand2, ClipboardList, Library, Settings, Wallet, UserCog, Radio,
   Puzzle, ListChecks, Scale, Search, Image as ImageIcon, BookOpen, BarChart3, ShieldAlert, ShieldCheck,
   Boxes, ScrollText, FlaskConical, BellRing, MapPin, Network, Eraser, Building2, FileText, Hotel, Table2, BookMarked, Quote,
-  Newspaper, CreditCard, FileStack, PenLine, UserCheck, ChartColumn,
+  Newspaper, CreditCard, FileStack, PenLine, UserCheck, ChartColumn, Palette,
 } from "lucide-react";
 import { useCallback } from "react";
 import { canSeePage } from "@/lib/rbac";
@@ -76,6 +76,7 @@ const ICONS: Record<NavIcon, React.ReactNode> = {
   apiDocs: <BookOpen size={16} />,
   dataModel: <Network size={16} />,
   docs: <BookMarked size={16} />,
+  uiKit: <Palette size={16} />,
 };
 
 /** The navigation groups in display order, reserved (`hidden`) slots left out. */

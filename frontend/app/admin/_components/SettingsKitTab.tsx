@@ -1,5 +1,5 @@
 "use client";
-// app/admin/_components/SettingsKitTab.tsx
+// app/admin/_components/SettingsKitTab.tsx (rendered by /admin/platform/ui-kit since AA-1039 R6 rest)
 // AA-662 — the UI-kit "living reference" rendered as a tab inside admin Settings (not a standalone
 // nav page). Shows every kit primitive with static data so the design system can be reviewed in
 // the running admin shell without hitting the backend; one section proves the app-wide
