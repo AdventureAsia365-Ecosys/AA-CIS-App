@@ -343,3 +343,91 @@ def test_the_check_script_prints_one_report_with_the_first_model_per_stage(capsy
     assert "tp_extract" not in report["first_by_stage"]                      # switched off: listed, not resolved
     assert {s["stage"] for s in report["stages"] if s.get("switched_off")} == {
         "s1_atom_writer", "tp_extract", "tp_component_embed"}
+
+
+# ── the real connection circuit with acc3's refusals (shared/llm_client/breaker.py) ─────────────────────────────────
+# acc3 refuses the 5.x Claude and GPT models one by one ("not available for this account") while the 4.x Claude
+# models answer. The connection circuit trips on access_denied of two distinct models, so these refusals alone keep
+# it open and would skip the 4.x siblings too. What the tests below pin: before any 4.x success the circuit is open
+# and the chain still ends on acc2 (the live step is the admin Test connection on sonnet-4-6 / haiku-4-5, which records
+# a success); after one success, the old refusals (a streak that began before it: a failed probe keeps opened_at) no
+# longer trip the connection, so half-open probes of refused models do not skip the sibling, even after a quiet night;
+# two fresh refusals after the success still trip it (an account-wide block).
+
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+from shared.llm_client import breaker  # noqa: E402
+from shared.llm_client.breaker import Health  # noqa: E402
+
+T_NOW = datetime(2026, 11, 4, 9, 0, tzinfo=timezone.utc)
+NOT_AVAILABLE = RuntimeError("AccessDeniedException: The model is not available for this account.")
+ATOMIZE_ON_ACC3 = ["gpt-6-luna", "gpt-5.6-luna", "haiku-5-5", "haiku-4-5"]     # a3_atomize before nova-lite (acc2)
+STILL_REFUSED = ("gpt-6-luna", "gpt-5.6-luna", "haiku-5-5", "sonnet-5-5")
+
+
+def _refused_for_days(model: str, last_open: datetime) -> Health:
+    """A deployment row refused since 29/10 and probed ever since (streak 9, last reopened at ``last_open``; a row
+    written before AA-1026 has opened_at = that reopening)."""
+    return Health("acc3", model, last_error_at=last_open, last_error_class="access_denied", last_error="refused",
+                  consecutive_failures=9, circuit_open_until=last_open + timedelta(seconds=1800), open_streak=9,
+                  opened_at=last_open)
+
+
+def _walk_acc3(chain: list[str]) -> str:
+    """The gateway's acc3 part of a route, the way the plan (``is_open``, ``connection_open``) and ``guarded``
+    (``admit``) see it: the first model admitted and not refused answers; a refused one records its failure."""
+    for model in chain:
+        if breaker.connection_open("acc3") or breaker.is_open("acc3", model) or not breaker.admit("acc3", model):
+            continue
+        if model in STILL_REFUSED:
+            breaker.record_failure("acc3", model, NOT_AVAILABLE)
+            continue
+        breaker.record_success("acc3", model)
+        return f"{model}@acc3"
+    return "acc2 (nova-lite)"
+
+
+@pytest.fixture
+def acc3_rows(monkeypatch):
+    clock = {"now": T_NOW}
+    monkeypatch.setattr(breaker, "_now", lambda: clock["now"])
+    with breaker._lock:
+        breaker._rows.update({("acc3", m): _refused_for_days(m, T_NOW - timedelta(seconds=600))
+                              for m in STILL_REFUSED})
+    return clock
+
+
+@pytest.mark.real_breaker
+def test_before_any_4x_success_the_refusals_keep_acc3_closed_to_the_siblings(acc3_rows):
+    assert breaker.connection_open("acc3") == "access_denied"
+    assert _walk_acc3(ATOMIZE_ON_ACC3) == "acc2 (nova-lite)"
+    acc3_rows["now"] = T_NOW + timedelta(seconds=1300)          # every row half-open: the first probe re-trips it
+    assert breaker.connection_open("acc3") is None
+    assert _walk_acc3(ATOMIZE_ON_ACC3) == "acc2 (nova-lite)"
+    assert breaker.connection_open("acc3") == "access_denied"
+
+
+@pytest.mark.real_breaker
+def test_after_one_4x_success_the_old_refusals_no_longer_skip_the_sibling(acc3_rows):
+    breaker.record_success("acc3", "sonnet-4-6")                 # the admin Test connection (LLMClient.probe)
+    assert breaker.connection_open("acc3") is None
+    assert _walk_acc3(ATOMIZE_ON_ACC3) == "haiku-4-5@acc3"       # 5.x / GPT rows still open: skipped one by one
+    acc3_rows["now"] = T_NOW + timedelta(seconds=1300)          # half-open: each refused row is probed and fails
+    assert _walk_acc3(ATOMIZE_ON_ACC3) == "haiku-4-5@acc3"
+    assert breaker.connection_open("acc3") is None
+    assert all(breaker.is_open("acc3", m) for m in ("gpt-6-luna", "gpt-5.6-luna", "haiku-5-5"))
+    assert breaker.connection_snapshot("acc3") is None          # the admin card does not call acc3 blocked
+    probed = breaker._get(("acc3", "gpt-6-luna"))
+    assert probed.open_streak == 10 and probed.opened_at == T_NOW - timedelta(seconds=600)   # the streak start kept
+    acc3_rows["now"] = T_NOW + timedelta(hours=10)               # a quiet night, then the next request
+    assert _walk_acc3(ATOMIZE_ON_ACC3) == "haiku-4-5@acc3"
+    assert breaker.connection_open("acc3") is None
+
+
+@pytest.mark.real_breaker
+def test_two_fresh_refusals_after_the_success_still_trip_the_connection(acc3_rows):
+    breaker.record_success("acc3", "sonnet-4-6")
+    acc3_rows["now"] = T_NOW + timedelta(seconds=60)
+    for model in ("sonnet-4-6", "haiku-4-5"):                    # the account itself blocked (Error 002)
+        breaker.record_failure("acc3", model, NOT_AVAILABLE)
+    assert breaker.connection_open("acc3") == "access_denied"

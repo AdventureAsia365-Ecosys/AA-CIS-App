@@ -42,7 +42,12 @@ one circuit per connection (shown with ``model_key "*"``, ``CONNECTION_MODEL``) 
 already shares: it trips on account-wide signals only — a non-closed deployment circuit of class ``credential`` or
 ``quota_exhausted``, or ``access_denied`` on at least ``CONNECTION_DENIED_MODELS`` distinct models (one model's refusal,
 e.g. acc2 refusing one Claude model, never stops acc2's embeddings) — newer than the connection's last answered call
-(any success on the connection closes it). While it is OPEN (until the newest open period of its tripping rows ends)
+(any success on the connection closes it). AA-1026 (S267): an ``access_denied`` row whose refusal streak began before
+that answered call (its ``opened_at``, which a failed probe keeps: ``after_failure(keep_streak_start=True)``) is a
+refusal of that one model, not of the account, and never counts toward the trip. Without this, the acc3 models refused
+for weeks re-trip the connection on every half-open probe (two of them fail in the same request) and the siblings that
+answer behind them (Claude Sonnet 4.6 / Haiku 4.5 after the refused 5.x models) are never reached.
+While it is OPEN (until the newest open period of its tripping rows ends)
 ``connection_open`` makes ``vendor_route.deployment_plan`` and ``admit`` (every ``guarded`` call) skip every deployment
 of the connection; afterwards the per-deployment circuits decide alone (a failed probe reopens its row for twice as
 long, which reopens the connection). It is derived, not stored: ``llm_provider_health.model_key`` references the model
@@ -162,23 +167,30 @@ def open_seconds(error_class: str, streak: int) -> float:
     return min(rule.open_s * (2 ** max(streak - 1, 0)), rule.max_open_s)
 
 
-def after_failure(h: Health, error_class: str, message: str, now: datetime) -> Health:
+def after_failure(h: Health, error_class: str, message: str, now: datetime, *,
+                  keep_streak_start: bool = False) -> Health:
     """A failed call. Open while open: nothing moves (a call that started before the circuit opened). Half-open: the
-    probe failed, open again for twice as long. Closed: open once the class's threshold of failures in a row is met."""
+    probe failed, open again for twice as long. Closed: open once the class's threshold of failures in a row is met.
+    ``keep_streak_start`` (the LLM breaker, AA-1026): a failed probe keeps ``opened_at`` = when the streak of
+    openings began, so the connection circuit can tell a model refused since before another model answered
+    (``_tripping``); the default moves it to the reopening (the provider circuit's alerts read that move)."""
     cls = error_class if error_class in RULES else OTHER
     before = state_of(h, now)
     base = replace(h, last_error_at=now, last_error_class=cls, last_error=(message or "")[:ERROR_CHARS],
                    consecutive_failures=h.consecutive_failures + 1, probe_until=None)
     if before == OPEN:
         return base
+    opened_at = now
     if before == HALF_OPEN:
         streak = h.open_streak + 1
+        if keep_streak_start and h.opened_at is not None:
+            opened_at = h.opened_at
     elif base.consecutive_failures >= RULES[cls].threshold:
         streak = 1
     else:
         return base
     return replace(base, circuit_open_until=now + timedelta(seconds=open_seconds(cls, streak)), open_streak=streak,
-                   opened_at=now)
+                   opened_at=opened_at)
 
 
 def after_success(h: Health, now: datetime) -> Health:
@@ -213,7 +225,10 @@ def _tripping(rows: Iterable[Health], connection_key: str, now: datetime) -> tup
                if h.last_error_class in CONNECTION_CLASSES and state_of(h, now) != CLOSED
                and h.last_error_at is not None and (last_ok is None or h.last_error_at > last_ok)]
     solo = [h for h in signals if h.last_error_class in CONNECTION_SOLO_CLASSES]
-    denied = [h for h in signals if h.last_error_class == ACCESS_DENIED]
+    # AA-1026: a model refused since before the connection last answered (its streak began earlier) is refused on its
+    # own; the account answered meanwhile, so it says nothing about the account.
+    denied = [h for h in signals if h.last_error_class == ACCESS_DENIED
+              and not (last_ok is not None and h.opened_at is not None and h.opened_at < last_ok)]
     if len({h.model_key for h in denied}) < CONNECTION_DENIED_MODELS:
         denied = []
     return solo + denied, last_ok
@@ -222,7 +237,9 @@ def _tripping(rows: Iterable[Health], connection_key: str, now: datetime) -> tup
 def connection_health(rows: Iterable[Health], connection_key: str, now: datetime) -> Optional[Health]:
     """The connection-level circuit of ``connection_key`` from its deployment rows, or None when nothing account-wide
     is on record. Tripping rows: a non-closed deployment circuit of a ``CONNECTION_CLASSES`` class whose failure is
-    newer than the connection's last answered call (any deployment). Trips on one ``CONNECTION_SOLO_CLASSES`` row, or
+    newer than the connection's last answered call (any deployment); an ``access_denied`` row refused since before that
+    call (its ``opened_at``, the start of its streak) is one model's refusal and does not count (AA-1026).
+    Trips on one ``CONNECTION_SOLO_CLASSES`` row, or
     on ``access_denied`` rows of at least ``CONNECTION_DENIED_MODELS`` distinct models. The result (``model_key "*"``,
     ``consecutive_failures`` = the number of tripping rows) is open until the newest open period of its tripping rows
     ends (``state_of``), then half-open: not blocking, the deployment circuits decide (module docstring)."""
@@ -539,9 +556,10 @@ def record_failure(connection_key: str, model_key: str, exc: BaseException) -> N
         message = f"{type(exc).__name__}: {exc}"
         now_fn = _now
         before, after = _transition((connection_key, model_key),
-                                    lambda cur: after_failure(cur, cls, message, now_fn()))
+                                    lambda cur: after_failure(cur, cls, message, now_fn(), keep_streak_start=True))
         opened = after is not None and after.opened_at is not None
-        if opened and (before is None or before.opened_at != after.opened_at):
+        if opened and (before is None or before.opened_at != after.opened_at
+                       or before.open_streak != after.open_streak):
             logger.warning("llm_circuit_opened", connection=connection_key, model=model_key, error_class=cls,
                            until=after.circuit_open_until.isoformat(), streak=after.open_streak,
                            consecutive_failures=after.consecutive_failures)
