@@ -258,6 +258,27 @@ def test_every_route_but_the_allowed_reads_is_refused_with_a_view_as_token(world
     assert all(db.sql.count(s) == 0 for s in (view_as.SESSION_STATE_SQL,))   # refused before any session read
 
 
+# AA-1042 (CIS #1301) added these staff routes after slice 2 was written: pinned so the walk above provably covers them.
+AA1042_ROUTES = (
+    ("GET", "/admin/ai-gateway/route-trace/requests"), ("GET", "/admin/ai-gateway/route-trace/requests/{trace_id}"),
+    ("GET", "/admin/ai-gateway/route-trace/rungs"), ("GET", "/admin/ai-gateway/route-trace/fallback-content"),
+    ("POST", "/admin/ai-gateway/route-trace/test"), ("GET", "/admin/ai-gateway/route-policy"),
+    ("PUT", "/admin/ai-gateway/route-policy/{stage}"), ("DELETE", "/admin/ai-gateway/route-policy/{stage}"),
+    ("GET", "/admin/content-quality/fallback-writes"),
+)
+
+
+def test_the_route_trace_and_route_policy_routes_are_refused_under_view_as(world):
+    client, db, app = world
+    assert set(AA1042_ROUTES) <= set(_all_routes(app))
+    for method, path in AA1042_ROUTES:
+        res = client.request(method, _concrete(path), headers={"Authorization": f"Bearer {token()}"},
+                             json={} if method not in ("GET", "DELETE") else None)
+        assert res.status_code == 403, (method, path, res.status_code)
+        assert res.json()["detail"] == view_as.READ_ONLY_DETAIL, (method, path)
+    assert len(db.audit) == len(AA1042_ROUTES)
+
+
 @pytest.mark.parametrize("header", [
     lambda t: f"Bearer {t}", lambda t: f"bearer {t}", lambda t: f"Bearer  {t}", lambda t: f"Token {t}",
     lambda t: f"Bearer junk {t}",
