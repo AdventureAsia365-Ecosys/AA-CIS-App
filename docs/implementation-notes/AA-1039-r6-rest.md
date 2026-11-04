@@ -23,7 +23,10 @@ Plan: root ADR 0019 d12 / d13 / d20 / d21, clarifications TL-12 / TL-13 / TL-20 
 | Fan-out: cancels pending publishes, flags posts, WordPress draft after notice | Done (slice 2) | Live retire → restore check needs a live WordPress test site (orchestrator / next session) |
 | Fan-out: tenant bell + e-mail | E-mail digest done (slice 2); the bell rows `tour.discontinued` / `tour.reinstated` for tenants exist since AA-986 L3 (`GET /v1/notifications`) | — (live check with the WP site) |
 | Fan-out: CRM agent task, portal `needs_change` view | Follow-ups of slice 2 (AA-Partner) | Not here |
-| IA leftovers: Places & photos takes the Cards tab of Content quality; Catalogue settings split from tenant tabs; Tenant 360 as a route `/admin/tenants/[id]`; SEO Spend tab folded into Spend | Not done | Not built: see Tradeoffs |
+| IA: Tenant 360 as a route `/admin/tenants/[id]` | A drawer of the Directory (`?tenant=<id>`) | **Built** (fix pass): route page, panel moved to `_components/TenantDetail.tsx`, every link builder points at the route, old `?tenant=` links replaced in the browser |
+| IA: Catalogue settings split from the tenant tabs | Settings had Pipeline Gates, Brand Identity, SEO Config, Tenant Info, UI Kit | **Built** (fix pass): "Catalogue settings" = Pipeline gates, AA house style, SEO config; Tenant Info → aa_internal Tenant 360 › Settings; UI kit → `/admin/platform/ui-kit`; both old tabs 307 |
+| IA: SEO Spend tab folded into Spend | SEO had a Spend tab (same `dfs_call_log` rollup as Spend › DataForSEO) | **Built** (fix pass): tab and API key removed, link to Spend › DataForSEO for spend roles, `?tab=spend` 307 |
+| IA: Places & photos takes the Cards tab of Content quality | Cards is `?tab=cards` of `/admin/tenant-qa/quality` (TENANT_QA roles) | **Blocked on a role decision** (proposed below, "Proposed decision: Cards") |
 | Screenshots 1440/390 light/dark | Slices 1–3 | Orchestrator after deploy (pages in the PR live steps) |
 
 ## Decisions
@@ -72,17 +75,48 @@ Plan: root ADR 0019 d12 / d13 / d20 / d21, clarifications TL-12 / TL-13 / TL-20 
   `lib/aiGatewayDataClass.test.mjs`, stub signatures in `test_aa1026_embedding_space.py`, the invariant SQL in
   `test_aa642_a1_stage_switch.py`. `CONTEXT.md`.
 
+- **Fix pass (S268): the three IA moves that need no decision are built.** The earlier reasons did not hold:
+  AA-1035 slice 2 is on main, Spend › DataForSEO already had the per-endpoint table (`cost-dfs-by-endpoint`, the
+  same `_DFS_TREE_SQL` rows SEO showed), and the Tenant 360 route is in this issue's own scope (AA-1028, named
+  before, is Done and never covered the route).
+- **Tenant 360 route reads the scoped tenant list** (`GET /admin/tenants?include_inactive=true`, filtered to the
+  caller's book by the backend) and picks its row: no new backend read, and a tenant outside the book shows "not
+  found" instead of a 403 page. Status / offboard / restore stay on the Directory row. `?tab=` alone picks the tab
+  (the tenant is the route's). Old `?tenant=<id>[&tab=]` links (bookmarks) are replaced client-side by
+  `legacyTenantLinkTarget` (a Next.js redirect through `ADMIN_ROUTE_MOVES` cannot move a query value into the path).
+- **Catalogue settings keeps `/admin/settings`** (slice 1 rule: AA Catalogue pages keep their URLs; Upload links
+  `?tab=brand`). Tenant Info goes to the aa_internal Tenant 360 Settings tab (plan, limits); the UI kit becomes an
+  admin-only Platform page (all Platform pages are admin only; a content role has no use for the design reference,
+  and the nav test "a content worker sees the AA Catalogue group only" stays true).
+- **SEO's Spend fold removes `spend` from `GET /admin/seo-intelligence`** (two dfs queries less): content_lead reads
+  that route and has no `spend.read` (root audit S265 §4.1), so the page shows the Spend link only to a role that may
+  open Spend. `days` stays an accepted parameter so the OpenAPI contract is unchanged.
+
+## Proposed decision: Cards (blocked)
+
+The IA puts Content quality's **Cards** tab (place cards: verify / reject, merge duplicates, facts drawer;
+`/api/admin/content-quality/place-cards*`, TENANT_QA = admin, content_lead, tenant_qa) under AA Catalogue › Places
+& photos. `/admin/places` is admin only. Choice:
+
+- **A (proposed): a route `/admin/places/cards` with its own page rule = TENANT_QA**, placed before the
+  `/admin/places` rule; backend routes unchanged; `/admin/tenant-qa/quality?tab=cards` 307 there. Nobody gains or
+  loses access; one PR.
+- **B: a tab of `/admin/places`** (admin only): content_lead and tenant_qa lose the card review. Matches §4.1 only
+  partly (content_lead has quality.write on the catalogue).
+
+Proposed: A. Blocked until the tech lead picks A or B (Linear comment drafted for the orchestrator).
+
 ## Tradeoffs
 
 - **Geography by wire-id prefix**, not a new deployment column: the Bedrock cross-region prefix is the geography
   (`global.` / `us.` / `eu.` …), and an id without a prefix runs in the connection's region. A vendor API is never
   US-pinned here (the Anthropic `inference_geo` request default exists, but a pii stage is aws_only anyway).
-- **No IA page moves in this lane.** The Cards tab of Content quality belongs to AA Catalogue › Places & photos per
-  the IA, but `/admin/places` is admin-only while the Cards tab serves `TENANT_QA` roles today; moving it changes who
-  sees it, which is the R2 roles lane's (AA-1035) decision, and both lanes would edit `lib/rbac.ts`. Same for the
-  Settings split (brand/SEO of `aa_internal` vs tenant tabs) and the Tenant 360 route (AA-1028's tenant control
-  plane). The SEO Intelligence Spend tab shows DataForSEO spend by endpoint, which Spend › DataForSEO does not show
-  per endpoint yet: folding it in first needs that view.
+- **Access changes of the fix pass, all toward the IA role table**: the UI kit page is admin only (was every
+  content role through Settings); `/admin/settings?tab=tenant` lands on a Tenant 360 a content role may not open (the
+  aa_internal row is tenant management); content_lead no longer sees DataForSEO spend on SEO Intelligence (no
+  spend.read). Nobody loses a write.
+- **Tenant 360 as a page, not a drawer**: the Directory loses the side-by-side view; in exchange the URL is
+  shareable and the browser back button works, which the IA asks for.
 
 ## Should know
 
@@ -95,5 +129,13 @@ Plan: root ADR 0019 d12 / d13 / d20 / d21, clarifications TL-12 / TL-13 / TL-20 
   `admin_llm_ops.py`, `llm_route_chains.py`, `llm_route_control.py`, `lib/aiGateway.ts`, `llmShared.ts`, the unit
   test, `CONTEXT.md` and these notes (`git grep -n '373'`).
 - No new table: no DM-7.1 retention row, no ERD design page change.
+- Fix pass files: `frontend/app/admin/tenants/[id]/page.tsx` (new), `tenants/_components/TenantDetail.tsx` and
+  `tenantRow.ts` (moved out of the Directory page), `tenants/page.tsx`, `tenants/messages.ts`;
+  `app/admin/settings/{page,messages}.ts(x)`; `app/admin/platform/ui-kit/{page.tsx,messages.ts}` (new);
+  `app/admin/seo-intelligence/{page,messages}.ts(x)`, `api/routers/admin_seo.py`; `lib/adminIa.ts` (moves,
+  `tenant360Href`, `legacyTenantLinkTarget`, `AA_INTERNAL_TENANT_ID`), `app/_kit/{adminNav,nav.messages,CommandPalette}.ts(x)`,
+  `app/admin/jobs/JobDrawer.tsx`, `lib/aiGateway.ts` (`tenantCostHref`). Tests: `lib/adminIa.test.mjs` (test 11),
+  `lib/aiGatewayC4.test.mjs`, `lib/aiGatewayPolish.test.mjs`, `lib/tenantPlans.test.mjs`,
+  `tests/unit/test_aa1039_r6_rest_ia.py`; smoke `ui-smoke.spec.ts` (UI kit, Tenant 360) and `admin-evidence` pages.
 - TripPlanner's own gateway (`backend/shared/llm_gateway.py`) does not read `pii_class`; no TripPlanner stage is pii.
   A pii TripPlanner stage would need its catalog view and gateway to apply the same rule first.

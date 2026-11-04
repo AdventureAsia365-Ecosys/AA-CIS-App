@@ -111,7 +111,11 @@ const ADMIN_PAGES: PageSpec[] = [
   { id: 'review', label: 'Review Queue', path: '/admin/review' },
   { id: 's1-rewrite', label: 'S1 Rewrite', path: '/admin/s1-rewrite', viewerRefused: true },
   { id: 'seo-intelligence', label: 'SEO Intelligence', path: '/admin/seo-intelligence', viewerRefused: true },
-  { id: 'settings', label: 'Settings', path: '/admin/settings', readySelector: '[data-testid="admin-content-ready"]' },
+  { id: 'settings', label: 'Catalogue settings', path: '/admin/settings', readySelector: '[data-testid="admin-content-ready"]' },
+  // AA-1039 R6 rest: the UI kit reference moved from Settings to Platform (admin only, like every Platform page), and
+  // Tenant 360 is a route (the AA internal tenant always exists; `tenant360-ready` once its row and details loaded).
+  { id: 'platform-ui-kit', label: 'UI kit', path: '/admin/platform/ui-kit', readySelector: '[data-testid="admin-content-ready"]', viewerRefused: true },
+  { id: 'tenant-360', label: 'Tenant 360', path: '/admin/tenants/00000000-0000-0000-0000-000000000001', readySelector: '[data-testid="tenant360-ready"]', viewerRefused: true },
   // AA-686 / AA-804 UI part 2 — the stage route editor moved from Settings › LLM Models to AI providers › Routing.
   // The row opens the new tab itself: the page matrix (roleMaySeePage) reads only the asked pathname, and
   // /admin/settings is open to every staff role, so the old `?tab=models` link cannot stand here. That redirect

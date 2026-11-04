@@ -36,6 +36,10 @@ const PAGES = [
   '/admin/lab/t9-social', '/admin/ai-gateway', '/admin/spend', '/admin/spend?tab=apps',
   // AA-1039 R6 rest (S268): the Lab's Releases and Metrics tabs, and the Routing tab (Routing by data class).
   '/admin/lab/t9-social?tab=releases', '/admin/lab/t9-social?tab=metrics', '/admin/ai-gateway?tab=routing',
+  // + the IA moves of the fix pass: Tenant 360 route, Catalogue settings, the UI kit page, SEO without Spend, and
+  // Spend › DataForSEO (where SEO's Spend tab went).
+  '/admin/tenants/00000000-0000-0000-0000-000000000001', '/admin/settings', '/admin/platform/ui-kit',
+  '/admin/seo-intelligence', '/admin/spend?tab=spend&view=dfs',
 ] as const;
 // A page whose loaded content is not a table row: its ready marker (rendered only once its data answered).
 const READY: Partial<Record<(typeof PAGES)[number], string>> = {
@@ -44,6 +48,9 @@ const READY: Partial<Record<(typeof PAGES)[number], string>> = {
   '/admin/lab/t9-social?tab=metrics': '[data-testid="lab-metrics-ready"]',
   '/admin/ai-gateway?tab=routing': '[data-testid="ai-gateway-data-class"]',
   '/admin/spend?tab=apps': '[data-testid="platform-cost-ready"]',
+  '/admin/tenants/00000000-0000-0000-0000-000000000001': '[data-testid="tenant360-ready"]',
+  '/admin/settings': '[data-testid="admin-content-ready"]',
+  '/admin/platform/ui-kit': '[data-testid="admin-content-ready"]',
 };
 // Ids that do not exist: nothing is ever written by this spec.
 const MISSING_CARD = '00000000-0000-4000-8000-00000000a10b';

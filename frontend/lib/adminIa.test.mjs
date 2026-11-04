@@ -11,7 +11,9 @@
 //   8. every nav label has an English and a Vietnamese row (nav.messages.ts);
 //   9. a content worker sees the AA Catalogue group only;
 //  10. AA-1039 R6 slice 3: the AI & spend group (AI gateway, one Spend page) and the Writing Lab (stages, Writing
-//      memory moved under it), their moves and the query merge of a move whose target names a tab.
+//      memory moved under it), their moves and the query merge of a move whose target names a tab;
+//  11. AA-1039 R6 rest: Tenant 360 as a route (old ?tenant= links replaced), Catalogue settings without its tenant and
+//      UI kit tabs (UI kit a Platform page), SEO Intelligence's Spend tab folded into Spend › DataForSEO.
 // Run: npm run test:unit.
 
 import assert from "node:assert/strict";
@@ -21,7 +23,8 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
-  ADMIN_GROUP_LABELS, ADMIN_IA, ADMIN_ROUTE_MOVES, PRE_R6_ADMIN_ROUTES, adminIaRedirects, resolveAdminRoute,
+  AA_INTERNAL_TENANT_ID, ADMIN_GROUP_LABELS, ADMIN_IA, ADMIN_ROUTE_MOVES, PRE_R6_ADMIN_ROUTES, adminIaRedirects,
+  legacyTenantLinkTarget, resolveAdminRoute, tenant360Href,
 } from "./adminIa.ts";
 import { canSeePage } from "./rbac.ts";
 
@@ -108,6 +111,7 @@ const UNLISTED = new Set([
   "/admin/tenant-qa",                // index → /admin/tenant-qa/quality
   "/admin/lab/[stage]",              // Writing Lab › one stage (the stage bar of /admin/lab)
   "/admin/tenants/view-as",          // AA-1035 R2 slice 2: opened from Tenant 360 › View as partner
+  "/admin/tenants/[id]",             // AA-1039 R6 rest: Tenant 360, opened from a Directory row (and ⌘K, Jobs, Budgets)
 ]);
 
 test("5. every admin page is in the nav or reached from another page", () => {
@@ -207,4 +211,62 @@ test("10. AI & spend and Writing Lab (R6 slice 3): groups, moves, query merge", 
     }
   }
   for (const role of ["customer_success", "support", "finance"]) assert.ok(!canSeePage(role, "/admin/lab"), role);
+});
+
+test("11. R6 rest: Tenant 360 route, Catalogue settings split, SEO Spend folded into Spend", () => {
+  // Tenant 360 is a route every tenant desk role may open; the old drawer link goes there with its other keys.
+  const t = "11111111-2222-3333-4444-555555555555";
+  assert.equal(tenant360Href(t), `/admin/tenants/${t}`);
+  assert.equal(tenant360Href(t, "cost"), `/admin/tenants/${t}?tab=cost`);
+  assert.ok(pageExists(tenant360Href(t)));
+  for (const role of ["admin", "customer_success", "support", "finance"]) assert.ok(canSeePage(role, tenant360Href(t)), role);
+  for (const role of ["viewer", "content", "tenant_qa"]) assert.ok(!canSeePage(role, tenant360Href(t)), role);
+  assert.equal(legacyTenantLinkTarget(`tenant=${t}`), `/admin/tenants/${t}`);
+  assert.equal(legacyTenantLinkTarget(`tenant=${t}&tab=cost`), `/admin/tenants/${t}?tab=cost`);
+  assert.equal(legacyTenantLinkTarget(""), null);
+  assert.equal(legacyTenantLinkTarget("tab=cost"), null);
+  // The static Tenants sub-pages keep winning over the [id] segment.
+  for (const sub of ["assignments", "agencies", "data-erasure", "plans", "view-as"]) {
+    assert.ok(existsSync(join(APP, "admin", "tenants", sub, "page.tsx")), sub);
+  }
+
+  // Catalogue settings: the nav label, its old tenant / UI kit tabs moved (307, one hop, page exists).
+  const settings = items.find((i) => i.href === "/admin/settings");
+  assert.equal(settings?.label, "Catalogue settings");
+  assert.equal(ADMIN_IA.find((g) => g.items.includes(settings))?.label, "AA Catalogue");
+  assert.equal(resolveAdminRoute("/admin/settings?tab=tenant"), `/admin/tenants/${AA_INTERNAL_TENANT_ID}?tab=settings`);
+  assert.equal(resolveAdminRoute("/admin/settings?tab=ui-kit"), "/admin/platform/ui-kit?tab=ui-kit");
+  assert.equal(resolveAdminRoute("/admin/settings?tab=seo"), "/admin/settings?tab=seo");
+  assert.equal(resolveAdminRoute("/admin/settings"), "/admin/settings");
+  const uiKit = items.find((i) => i.href === "/admin/platform/ui-kit");
+  assert.equal(ADMIN_IA.find((g) => g.items.includes(uiKit))?.label, "Platform");
+  assert.ok(canSeePage("admin", "/admin/platform/ui-kit") && !canSeePage("content", "/admin/platform/ui-kit"));
+  const settingsSrc = read("app/admin/settings/page.tsx");
+  assert.doesNotMatch(settingsSrc, /key: "(tenant|ui-kit)"/, "Settings still lists a moved tab");
+
+  // SEO Intelligence: no Spend tab; its tab link lands on Spend › DataForSEO; the page links there only for a role
+  // that may open Spend (content_lead reads SEO, holds no spend.read).
+  assert.equal(resolveAdminRoute("/admin/seo-intelligence?tab=spend"), "/admin/spend?tab=spend&view=dfs");
+  assert.equal(resolveAdminRoute("/admin/seo-intelligence"), "/admin/seo-intelligence");
+  const seoSrc = read("app/admin/seo-intelligence/page.tsx");
+  assert.doesNotMatch(seoSrc, /key: "spend"/);
+  assert.match(seoSrc, /canSeePage\(useAdminIdentity\(\)\.role, "\/admin\/spend"\)/);
+  assert.ok(canSeePage("content_lead", "/admin/seo-intelligence") && !canSeePage("content_lead", "/admin/spend"));
+  const r = adminIaRedirects().find((x) => x.source === "/admin/seo-intelligence");
+  assert.deepEqual(r?.has, [{ type: "query", key: "tab", value: "spend" }]);
+
+  // No code builds the old drawer link any more (lib/adminIa.ts keeps the reader of it).
+  const offenders = [];
+  const walk = (dir) => {
+    for (const d of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, d.name);
+      if (d.isDirectory()) { if (d.name !== "node_modules" && !d.name.startsWith(".")) walk(p); continue; }
+      if (!/\.(ts|tsx)$/.test(d.name) || p.endsWith(join("lib", "adminIa.ts"))) continue;
+      const code = readFileSync(p, "utf8").split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(l)).join("\n");
+      if (/admin\/tenants\?tenant=/.test(code)) offenders.push(p.slice(FRONTEND.length));
+    }
+  };
+  walk(APP);
+  walk(join(FRONTEND, "lib"));
+  assert.deepEqual(offenders, []);
 });

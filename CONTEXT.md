@@ -81,8 +81,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     there in UI part 2 and their old `?tab=` links are sent on in the browser), `tenants`,
     `jobs`, `decisions` (**Jev Decisions**, AA-660), `facts` (**Facts**, AA-814: platform Facts Entries the T9 writer cites; every staff role reads, `quality.write` edits), `photos` (**Photos**, AA-708 — Drive photo sync, unmatched queue), `api-docs` (**API Docs**,
     admin-only read-only OpenAPI reader built on the kit: `GET /admin/openapi.json` through the BFF, since the
-    AA-577 `/docs`, `/redoc`, `/openapi.json` need the X-Admin-Secret header on ECS), `settings` (pipeline gates, **Brand
-    Identity** editor, SEO config, LLM model per stage + read-only Jev questions per stage). `run-health` was removed with N7/N8 (AA-603).
+    AA-577 `/docs`, `/redoc`, `/openapi.json` need the X-Admin-Secret header on ECS), `settings` (**Catalogue settings** since AA-1039 R6 rest:
+    pipeline gates, the **AA house style** (Brand Identity editor of aa_internal), SEO config; the tenant row moved to
+    its Tenant 360, the UI kit to `/admin/platform/ui-kit`). `run-health` was removed with N7/N8 (AA-603).
   - Admin navigation: see **Admin console layout** below (AA-1039, seven groups). Admin-only items are hidden for
     other roles (same list as `lib/rbac.ts` PAGE_RULES, enforced by `proxy.ts`). The legacy `(internal)` route group
     (`/upload`, `/review`, `/catalog`, `/brand`) is deleted; those URLs and `/admin/brand`
@@ -128,7 +129,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `formatMoney`, `formatDay`, `parseDayInput`, `relativeParts`), the one confirm dialog `ConfirmModal` (absorbed
     Booking's `ConfirmDialog`: Figma layout, optional reason, `message` / `danger` aliases), `PageFrame` `width`
     ("full" default, "wide" 1440, "narrow" 880) + header props, and `KitGallery.tsx` (every S4a component in its states,
-    admin Settings → UI kit → Gallery; the gated gallery route of the visual job, S1d, will render it too),
+    admin Platform → UI kit → Gallery; the gated gallery route of the visual job, S1d, will render it too),
     **AA-994 S6a:** `FormControls.tsx` — the form controls every form uses: `Field` (label above, required mark, hint
     or error below, lock icon; a `<label>` that gives its control `aria-describedby` / `aria-invalid` /
     `aria-required`; `as="div"` = a labelled group) around native `Input`, `Select` (`options` / `placeholder` or
@@ -257,8 +258,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     from `app/_kit`. Every CIS admin page is on the kit (AA-1006, S263): the legacy `admin/_components/adminUi.tsx`
     is deleted and `frontend/eslint-suppressions.json` is empty, so any new kit-rule violation fails CI. The admin
     `_components` that remain (`auditPanels.tsx`, `FilterBar.tsx`, `Pagination.tsx`, …) are page parts built from
-    kit components, not a second primitive layer. Living reference: the **UI Kit tab in admin Settings** (`/admin/settings?tab=ui-kit`,
-    `app/admin/_components/SettingsKitTab.tsx`) — renders every primitive with static data.
+    kit components, not a second primitive layer. Living reference: the **UI kit page of Platform** (`/admin/platform/ui-kit`,
+    admin only, was the UI Kit tab of Settings until AA-1039 R6 rest; `app/admin/_components/SettingsKitTab.tsx`) —
+    renders every primitive with static data.
   - **Data fetching (AA-662)**: `@tanstack/react-query` is the standard for UI v2, wired app-wide
     via a single `QueryClientProvider` in `app/_kit/core/Providers.tsx`, mounted from the server root
     layout (`app/layout.tsx`) around all routes. Defaults: no refetch-on-focus, one retry, 30s
@@ -2222,11 +2224,14 @@ One console (`aa-cis-frontend`). The nav model is plain data in `frontend/lib/ad
 in `frontend/app/_kit/adminNav.tsx`), seven groups, each folding on its own (kit NavGroup, S264; no sections, no
 footer Settings entry):
 - **Home** — Overview, App health (`/admin/platform/apps`), Reports, Data coverage;
-- **Tenants** — Directory (`/admin/tenants`, a row opens the Tenant 360 drawer), CRM agencies
+- **Tenants** — Directory (`/admin/tenants`, a row opens **Tenant 360**, a route since AA-1039 R6 rest:
+  `/admin/tenants/<id>[?tab=cost]`, panel in `tenants/_components/TenantDetail.tsx`; an old `?tenant=<id>` link is
+  replaced in the browser by the route), CRM agencies
   (`/admin/tenants/agencies`), Data erasure (`/admin/tenants/data-erasure`), Plans & add-ons
   (`/admin/tenants/plans`, AA-1028 R1 slice 3: the plan catalogue, see "Tenant control plane");
 - **AA Catalogue** — Upload (S0), Rewrite (S1), Review Queue, Master Content, Atoms & routes (`/admin/atom-curation`),
-  Places, Photos, Facts, Supply copy, AA content, SEO Intelligence, Settings;
+  Places, Photos, Facts, Supply copy, AA content, SEO Intelligence (no Spend tab since R6 rest: DataForSEO spend is
+  Spend › DataForSEO; `GET /admin/seo-intelligence` no longer sends `spend`), Catalogue settings (`/admin/settings`);
 - **Tenant content QA** — Content quality, Content Trace, Review log, Slate (`/admin/tenant-qa/*`, admin only);
 - **AI & spend** — AI gateway (`/admin/ai-gateway`, was "AI providers": tabs Providers, Routing incl. "Routing by data
   class", Models & trials, Budgets, Calls, Guide), Spend (`/admin/spend`, R6 slice 3: was Cost Operations at
@@ -2236,14 +2241,16 @@ footer Settings entry):
   `GET /admin/writing-memory/lab/{writer}` over the existing learning tables, ids / labels / counts / hashes only, no
   new learning logic: S262 TL-11 freeze unchanged), Writing memory (`/admin/lab/writing-memory`, was
   `/admin/writing-memory`), Jev Decisions;
-- **Platform** — Staff & access, Audit log, Jobs, Alert recipients, API Docs, Data model, Docs.
+- **Platform** — Staff & access, Audit log, Jobs, Alert recipients, API Docs, Data model, Docs, UI kit.
 
 Moved pages answer **307** from their old URL with the query string kept (`ADMIN_ROUTE_MOVES`, served by
 `next.config.ts` before `proxy.ts`): `/admin/content-quality` → `/admin/tenant-qa/quality`, `/admin/tenant-activity`
 → `/admin/tenant-qa/trace`, `/admin/platform-stats` → `/admin/tenant-qa/review-log`,
 `/admin/atom-curation?section=slate` → `/admin/tenant-qa/slate`, `/admin/platform/agencies` →
 `/admin/tenants/agencies`, `/admin/data-erasure` → `/admin/tenants/data-erasure`; R6 slice 3: `/admin/writing-memory`
-→ `/admin/lab/writing-memory`, `/admin/cost-ops` → `/admin/spend`, `/admin/platform/cost` → `/admin/spend?tab=apps`
+→ `/admin/lab/writing-memory`, `/admin/cost-ops` → `/admin/spend`, `/admin/platform/cost` → `/admin/spend?tab=apps`; R6 rest:
+`/admin/seo-intelligence?tab=spend` → `/admin/spend?tab=spend&view=dfs`, `/admin/settings?tab=tenant` → the aa_internal
+Tenant 360 `?tab=settings`, `/admin/settings?tab=ui-kit` → `/admin/platform/ui-kit`
 (a query of the target wins over the request's, as Next.js merges them). BFF and backend paths keep their
 names (`/api/admin/content-quality/*`, `/admin/platform/crm/*`). `frontend/lib/adminIa.test.mjs` checks that every
 page URL of the S265 nav still opens a page, nav items never point at an old URL and every admin page has a nav
