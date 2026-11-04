@@ -780,7 +780,7 @@
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/lab/{writer}": {
-    "capability": "tenant.read",
+    "capability": "tenant_content.read|lab.read",
     "module": "api.routers.admin_writing_memory"
   },
   "GET /admin/writing-memory/metrics": {
