@@ -10,7 +10,7 @@ the Anthropic API connection off and ON. No provider, AWS or database is reached
 
 What this proves:
 - only the fallbacks of the decided stages change; primary, shadow, scopes, role and the switched-off rows do not;
-- every active route keeps the chain rules (``route_chains.violations``), which the old table broke (no fallback on
+- every active route keeps the chain rules (``llm_route_chains.violations``), which the old table broke (no fallback on
   tp_compose / segment_research*);
 - a changed stage still calls its primary on acc3 first, then the new Claude 4.x rows on acc3 by Converse, and, on a
   vendor_direct stage, every AWS call before any vendor API call even with the Anthropic API switched on (the
@@ -175,7 +175,7 @@ def test_every_decided_chain_keeps_the_stage_primary_and_adds_the_working_siblin
 
 
 def test_the_chain_rules_hold_after_366_and_name_the_gaps_before():
-    from shared.llm_client.route_chains import violations
+    from api.services.llm_route_chains import violations
     reach, acc2_only = _reach_and_acc2_only()
     after = violations(_routes(AFTER).values(), _models(), reach, acc2_only, _deployment_scopes())
     assert after == []
@@ -196,7 +196,7 @@ def test_the_chain_rules_hold_after_366_and_name_the_gaps_before():
 ], ids=["judge_claude", "writer_acc2_model", "aws_only_vendor", "vendor_mid_chain", "check_pair", "no_fallback",
         "attempt_cap"])
 def test_each_rule_catches_its_break(stage, change, rule):
-    from shared.llm_client.route_chains import violations
+    from api.services.llm_route_chains import violations
     reach, acc2_only = _reach_and_acc2_only()
     routes = _routes(AFTER)
     routes[stage] = {**routes[stage], **change}
@@ -205,7 +205,7 @@ def test_each_rule_catches_its_break(stage, change, rule):
 
 
 def test_a_switched_off_route_is_not_checked():
-    from shared.llm_client.route_chains import violations
+    from api.services.llm_route_chains import violations
     reach, acc2_only = _reach_and_acc2_only()
     assert not [v for v in violations(_routes(AFTER).values(), _models(), reach, acc2_only)
                 if v[0] in ("tp_extract", "s1_atom_writer", "tp_component_embed")]
@@ -266,7 +266,8 @@ REFUSED_ON_ACC3 = {"sonnet-5-5", "haiku-5-5", "gpt-6-luna", "gpt-5.6-luna", "opu
 def _resolve(stage: str, anthropic_on: bool = False) -> dict:
     import time
 
-    from shared.llm_client import catalog, connections, route_chains, vendor_route
+    from api.services import llm_route_chains as route_chains
+    from shared.llm_client import catalog, connections, vendor_route
     routes = _routes(AFTER)
     fixture = _fixture(routes)
     models = rc.catalog_models(fixture)
@@ -313,3 +314,32 @@ def test_the_resolver_shows_the_aws_first_passes_of_a_vendor_direct_writer():
         ("sonnet-5-5", "vendor_direct"), (OPENAI_HOP, "vendor_direct")]
     assert out["attempts"][3] == {"model": "sonnet-5-5", "scope": "vendor_direct", "status": "call",
                                   "connection": "anthropic-direct", "deployments": ["anthropic-direct"]}
+
+
+def test_the_check_script_prints_one_report_with_the_first_model_per_stage(capsys):
+    """scripts/llm_ops/route_chain_check.py: the live rows go through the same resolver and rules (readers stubbed)."""
+    import sys
+
+    from scripts.llm_ops import route_chain_check as script
+    rows = [{**r, "fallback_model_ids": list(r["fallback_model_ids"])} for r in _routes(AFTER).values()]
+    models = _models()
+    reach, acc2_only = _reach_and_acc2_only()
+
+    def fake_resolve(cfg):
+        return {"stage": cfg.stage, "role": cfg.role, "scopes": list(cfg.allowed_scopes or ()), "attempts": [],
+                "first": f"{cfg.model_id}@acc3"}
+
+    async def fake_load():
+        return rows, models
+    with patch.object(script, "_load", fake_load), \
+            patch.object(script, "_reach", return_value=(reach, acc2_only, _deployment_scopes())), \
+            patch("api.services.llm_route_chains.resolve_stage", side_effect=fake_resolve), \
+            patch.object(sys, "argv", ["route_chain_check.py", "--json"]):
+        assert script.main() == 0
+    out = capsys.readouterr().out
+    report = json.loads(out.split("--- ROUTE CHAIN CHECK ---\n", 1)[1].split("\n--- END ---", 1)[0])
+    assert report["violations"] == []
+    assert report["first_by_stage"]["s1_generate"] == "sonnet-5-5@acc3"
+    assert "tp_extract" not in report["first_by_stage"]                      # switched off: listed, not resolved
+    assert {s["stage"] for s in report["stages"] if s.get("switched_off")} == {
+        "s1_atom_writer", "tp_extract", "tp_component_embed"}

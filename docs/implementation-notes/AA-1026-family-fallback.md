@@ -6,7 +6,7 @@ Embed v4 answer; every 5.x Claude, GPT-6 Luna, GPT-5.6 Luna and GPT-6 Astra are 
 account", AWS case open). acc2 Nova / Llama / Kimi and the OpenAI API answer; the Anthropic API is off (no key).
 
 Two PRs: (A) the gateway runs a `vendor_direct` route AWS first across all its models, the chain rules as code
-(`shared/llm_client/route_chains.py`), the $0 check script and the tests; (B) migration 366: two catalog rows and the
+(`api/services/llm_route_chains.py`), the $0 check script and the tests; (B) migration 366: two catalog rows and the
 new chains.
 
 ## Decision table (stage -> old chain -> new chain -> why)
@@ -59,10 +59,10 @@ OpenAI API; the validate stages answer on Haiku 4.5 / Sonnet 4.6 on acc3 before 
   (`errors.MAX_CHAIN_ATTEMPTS`, ADR 0009 d5), so the OpenAI API last rung would never run. The `attempt_cap` rule pins it.
 - **Families stay apart where a stage checks another's output.** a3_place_card (GPT, Amazon) / a3_place_card_check
   (Claude, Meta) and a3_place_dedupe (GPT, Meta) / a3_place_dedupe_check (Claude, Amazon) keep disjoint makers
-  (`route_chains.CHECK_PAIRS`); t10_claims and a3_place_card get no Claude hop.
+  (`llm_route_chains.CHECK_PAIRS`); t10_claims and a3_place_card get no Claude hop.
 - **Judges unchanged.** They already chain GPT-5.6 Luna ↔ GPT-6 Luna, then Nova Lite on acc2, then (vendor_direct) the
   OpenAI API; Claude is the writer family (TL-10), so no 4.x hop.
-- **Rule set as code.** `route_chains.violations` (no_fallback, vendor_on_aws_only, vendor_not_last,
+- **Rule set as code.** `llm_route_chains.violations` (no_fallback, vendor_on_aws_only, vendor_not_last,
   judge_writer_family, writer_family, writer_acc2, check_pair_family, attempt_cap) runs in the unit tests on the decided
   table and in `scripts/llm_ops/route_chain_check.py` on the live rows; migration 366 RAISEs on the same rules for the
   rows it changes.
@@ -72,7 +72,7 @@ OpenAI API; the validate stages answer on Haiku 4.5 / Sonnet 4.6 on acc3 before 
 - `shared/llm_client/client.py`: `route_attempts` + `ROUTE_AWS_FIRST_ENV`; `_call_route` binds the pass scope per attempt.
 - `shared/llm_client/vendor_route.py`: `route_reach` (usable / described scopes of a model, no circuit or budget read).
 - `api/routers/admin_llm_ops.py`: `_check_aws_before_vendor` returns early with the AWS-first order on.
-- `shared/llm_client/route_chains.py` (new): `violations`, `resolve_stage`.
+- `api/services/llm_route_chains.py` (new): `violations`, `resolve_stage`.
 - `scripts/llm_ops/route_chain_check.py` (new): $0 live check (FIRST model@connection per stage + violations).
 - Tests: `tests/unit/test_aa1026_family_fallback_chains.py` (new), `test_aa1026_admin_writer_last_resort.py`
   (refusal cases run with the switch off; new cases with it on); snapshots `aa1026_routes_before_366.json` /

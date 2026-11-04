@@ -1,5 +1,6 @@
 """AA-1026 (S267, tech lead: family fallback chains) — the chain rules every stage route keeps, and a $0 resolver that
-says which model would serve each stage right now.
+says which model would serve each stage right now. A report module beside ``llm_availability`` (not on the gateway's
+call path: ``shared/llm_client`` never imports it).
 
 Since migration 366 every active stage route is an ordered chain by model family: the stage's primary, then the
 working sibling of each family tier on the route (Claude Sonnet 5.5 -> Sonnet 4.6, Claude Haiku 5.5 -> Haiku 4.5,
@@ -27,7 +28,7 @@ and ``scripts/llm_ops/route_chain_check.py`` on the live rows:
   starts per request (``errors.MAX_CHAIN_ATTEMPTS``, ADR 0009 decision 5), counting every deployment of every model
   in the stage's scopes (the Anthropic API included, on or off): its last rungs (the OpenAI API) would never run.
 
-``resolve(...)`` walks every active stage the way the gateway would (``client.route_attempts`` for the order and the
+``resolve_stage(...)`` walks a stage the way the gateway would (``client.route_attempts`` for the order and the
 pass scopes, ``vendor_route.deployment_plan`` for the deployments a model would be called on now: enabled, connection
 on, role served, data scope allowed, circuit not open, budget not reached) WITHOUT calling any model, and returns the
 first (model, connection) that would be called, plus why each earlier attempt is skipped. The first entry is "would be
@@ -37,8 +38,8 @@ from __future__ import annotations
 
 from typing import Iterable, Optional
 
-from . import data_scope, family_rule
-from .errors import MAX_CHAIN_ATTEMPTS
+from shared.llm_client import data_scope, family_rule
+from shared.llm_client.errors import MAX_CHAIN_ATTEMPTS
 
 # A check stage -> the stage whose output it checks: their routes keep disjoint model families (migrations 331, 339).
 CHECK_PAIRS: dict[str, str] = {
@@ -139,10 +140,10 @@ def resolve_stage(cfg) -> dict:
     ``{"model", "scope", "status", "connection"|"reason"}`` in order, and ``first`` = "<model>@<connection>" of the
     first attempt that has a callable deployment now (None when nothing would be called). Reads the registry, the
     catalog and the breaker state (cached, read-only). Never raises: a failure is reported in ``error``."""
-    from .catalog import LEGACY_KEYS, get_model_sync
-    from .client import _STAGE_SCOPES, _row_role, deployment_routing_enabled, route_attempts
-    from .models import LLMRequest
-    from .vendor_route import deployment_plan
+    from shared.llm_client.catalog import LEGACY_KEYS, get_model_sync
+    from shared.llm_client.client import _STAGE_SCOPES, _row_role, deployment_routing_enabled, route_attempts
+    from shared.llm_client.models import LLMRequest
+    from shared.llm_client.vendor_route import deployment_plan
 
     stage = cfg.stage
     scopes = data_scope.normalize(getattr(cfg, "allowed_scopes", None))
