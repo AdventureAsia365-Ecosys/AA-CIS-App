@@ -4,7 +4,7 @@
 // the partner's own reads through the view-as BFF (GET /api/view-as/v1/<path>, lib/viewAs.ts). Nothing on this page
 // writes: there is no control that could, and the API refuses every write of the token anyway.
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -43,10 +43,11 @@ function Countdown({ expiresAt, onExpired }: { expiresAt: string | null; onExpir
   const t = useT(VIEW_AS);
   const [left, setLeft] = useState(() => secondsLeft(expiresAt));
   useEffect(() => {
+    let fired = false;   // tell the page once, not every second after the expiry
     const id = setInterval(() => {
       const s = secondsLeft(expiresAt);
       setLeft(s);
-      if (s <= 0) onExpired();
+      if (s <= 0 && !fired) { fired = true; onExpired(); }
     }, 1000);
     return () => clearInterval(id);
   }, [expiresAt, onExpired]);
@@ -159,6 +160,7 @@ export default function ViewAsPartner() {
     void qc.invalidateQueries({ queryKey: VIEW_AS_QUERY_KEY });
     qc.removeQueries({ queryKey: ["view-as", "read"] });
   }, [qc]);
+  const endAndRefresh = useCallback(() => { onEnded(); router.refresh(); }, [onEnded, router]);
 
   const specs: Record<Exclude<TabKey, "overview">, ListSpec> = useMemo(() => ({
     tours: { path: "/v1/tours/my-versions", columns: [
@@ -217,7 +219,7 @@ export default function ViewAsPartner() {
   ];
   return (
     <>
-      <ViewAsBanner session={s} onEnded={() => { onEnded(); router.refresh(); }} />
+      <ViewAsBanner session={s} onEnded={endAndRefresh} />
       {header}
       <div style={{ borderBottom: `1px solid ${K.line}`, marginBottom: 14 }}>
         <Tabs variant="underline" gap={18} ariaLabel={t("title")} testId="view-as-tabs" tabs={tabs} active={tab}

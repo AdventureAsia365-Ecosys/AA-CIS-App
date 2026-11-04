@@ -90,7 +90,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   - **The admin host and the portal (AA-885, AA-979)**: the admin answers `/portal`, `/portal/*` and `/tenant-login`
     with **308** to the same path on `https://portal.lumiguides.it.com` (`frontend/next.config.ts`, `PORTAL_BASE_URL`
     in `frontend/lib/apps.ts`) and serves no portal page or tenant BFF. Staff have **no** access to the tenant portal
-    (no staff session there; a support view is future work); the staff login does not link to it.
+    (no staff session there; AA-1035 slice 2 gives staff a read-only "view as partner" inside the admin instead,
+    `/admin/tenants/view-as`); the staff login does not link to it.
     - No CORS is needed for the portal: its BFF calls the API server to server. The API sends no CORS grant on a
       deployed task (AA-876, `cors_allow_origins()` in `api/main.py`: empty when `AWS_EXECUTION_ENV` is set, only
       `localhost:3000/3001` off ECS); a browser preflight from any origin gets no `Access-Control-Allow-Origin`.
@@ -1982,10 +1983,33 @@ content, reviewer and viewer only the aa_internal tenant (Master Content). The s
 identity, or with the main admin secret the `x-admin-user-id` header; a book role without one gets 403. Refusals are
 403 `Tenant outside your scope` whether the tenant exists or not. `GET /admin/tenants` lists only the caller's scope.
 Assignments: `GET|PUT|DELETE /admin/tenants/{tenant_id}/assignments[/{admin_user_id}]` (writes `tenant.assign`,
-audited `tenant.assignment_set` / `_removed`). `shared.staff_view_as_session` exists (schema only); view-as, the
-Assignments page, the logged ai_ops Lab read and the `crm.ops.v1` scope relay are slice 2. The frontend matrix
-(`frontend/lib/rbac.ts`) mirrors the roles and capabilities; the role x route decisions are pinned in
-`tests/unit/snapshots/aa1035_role_route_matrix.json`.
+audited `tenant.assignment_set` / `_removed`; since slice 2 the PUT takes only admin / customer_success / support
+staff). The frontend matrix (`frontend/lib/rbac.ts`) mirrors the roles and capabilities; the role x route decisions
+are pinned in `tests/unit/snapshots/aa1035_role_route_matrix.json`.
+
+**R2 slice 2 (AA-1035, S268; no migration).** *Assignments page* `/admin/tenants/assignments` (admin, customer_success,
+support): `GET /admin/tenant-assignments` (every partner tenant of the caller's scope with owner / backup / support and
+the pool flag) and `GET /admin/tenant-assignments/staff` (the assignable staff, `tenant.assign`); writes stay the
+per-tenant routes (admin only). *View as tenant* (root ADR 0019 d5, capability `tenant.view_as`: admin,
+customer_success own book, support own book + pool): `POST /admin/tenants/{tenant_id}/view-as` (scoped; reason 3-500,
+optional ticket, 5-60 minutes; one open session per staff member) writes `shared.staff_view_as_session` + audit
+`tenant.view_as_started` and returns a short-lived tenant JWT (`api/core/view_as.py`: `csr` viewer, `client` portal,
+`vas` session, `stf` staff); `GET /admin/view-as/sessions[/{id}]` and `POST .../{id}/end` (own; admin every one, an
+admin end of another's is `revoked`). `api/middleware/view_as.py ViewAsGateMiddleware` (around the tenant role
+middleware and the rate limiter) lets such a token make only GET / HEAD on `view_as.READ_ROUTES` (13 side-effect-free
+tenant reads; never `/v1/slate`, exports, integrations or the brand branch), re-checks the open session, the staff
+row's current role and the tenant scope on every request, and writes one `acp_shared.audit_log` row per request
+(`tenant.view_as_request`, BEFORE a served read: no unlogged read, 503 when the row cannot be written); everything
+else is 403 `view_as_read_only` (logged), an ended session 401 `view_as_ended`. `tenant_role.enforce` repeats the
+read-only check on the dependency side. The admin BFF (`frontend/app/api/view-as/*`) keeps the token in the httpOnly
+cookie `aa_view_as` (path `/api/view-as`) and forwards only the allowed reads; Tenant 360 › "View as partner" opens
+`/admin/tenants/view-as` (banner: tenant, time left, reason, End view; tabs over the partner's reads).
+*Logged Lab read*: ai_ops holds `lab.tenant_text.read` (never `tenant_content.read`), which opens only the tenant-text
+GETs of `/admin/writing-memory/*` (not the Tenant 360 voice route); `api/core/lab_read_log.py LAB_TEXT_LOGGED` writes
+an audit row `lab.tenant_text_read` before each such read (503 when it cannot). *Bell*: `notifications.read` (every
+role) on the four `/admin/notifications` routes; customer_success / support / finance see only rows targeted at their
+role. Still open: the `crm.ops.v1` scope relay, Tenant QA reads of the own book for customer_success, removing the
+reviewer alias.
 
 **Dev-only E2E CIS admin (A10b, AA-816 S252, root ADR 0006a A10b).** The agent's own admin identity for evidence
 screenshots of the admin-only pages and the AA-916 WM-07 sentence-action sample. `api/core/e2e_staff.py` holds the
@@ -2000,7 +2024,10 @@ S252), POST `/admin/tenants/{id}/members/invitations` and `/admin/tenants/{id}/m
 (the phase 2 re-enrolment E2E); those two routes then refuse it (403 `e2e_read_only`, before any row, audit or relay)
 unless the tenant is synthetic (`shared.tenants.is_canary IS TRUE`), the address is on the E2E mailbox domain
 (`e2e-mail.lumiguides.it.com`) and the invited role is `viewer` / `editor`; `staff_authz.denial_reason` refuses the same
-writes again by route template. `/auth/verify-admin` returns `admin`, so the BFF opens the admin pages. Its sign-in
+writes again by route template. AA-1035 slice 2 (proposed A10b-2) adds POST `/admin/tenants/{id}/view-as` and
+`/admin/view-as/sessions/{id}/end`, synthetic tenants only (the routes refuse any other with 403 `e2e_read_only`), so
+the evidence run can show the view-as banner; the session it opens is read-only like every view-as session.
+`/auth/verify-admin` returns `admin`, so the BFF opens the admin pages. Its sign-in
 codes land in the mailbox prefix `inbound-admin/`, readable only by the MFA admin role, so only the orchestrator signs
 in with it, locally (Playwright project `admin-evidence`, `E2EADMIN=1`, never CI). Removed with A10 / A10a at the end
 of project code.
