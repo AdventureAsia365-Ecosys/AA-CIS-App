@@ -94,6 +94,7 @@ KIND_LINES: dict[str, Optional[str]] = {
     # dev: the probes (never held: a held probe could not close a circuit)
     "llm_connection_probe": DEV, "llm_contract_smoke": DEV, "llm_model_lifecycle_sync": DEV,
     # no LLM call
+    "ai_usage_rollup": None,     # AA-1045: the hourly usage rollup of the paid-call ledgers (database only)
     "data_erasure": None, "inquiry_handoff_check": None, "kpi_snapshot_daily": None, "llm_cost_reconcile": None,
     "llm_route_watch": None,     # AA-1042: route alerts and digest from the ledger (database reads only)
     "ops_alert_email": None, "photo_destination_match": None, "photo_medium_backfill": None, "photo_sync": None,
