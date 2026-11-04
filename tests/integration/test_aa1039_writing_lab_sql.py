@@ -186,6 +186,11 @@ async def test_experiments_read_the_writers_runs_and_a1_legacy_s1_runs(conn):
 @pytest.mark.asyncio
 async def test_prompts_and_gate_read_the_live_tables(conn):
     run = await _run(conn, writer="t9_social", kind="r1", verdict="fail")
+    # Own register row: the CIS 325 seed is gone when another test of the shard rebuilt shared.prompt_version (AA-1017).
+    await conn.execute(
+        "INSERT INTO shared.prompt_version (stage, version, prompt_sha256, source_path, created_by) "
+        "VALUES ('t9_write', 'zz-lab-1', $1, 'prompts/zz_lab.txt', 'pytest') ON CONFLICT DO NOTHING",
+        "c" * 64)
     v = await _view(conn, "t9_social")
     assert all(v["sections"][s]["ready"] for s in lab.SECTIONS), v["sections"]
     stages = {p["stage"] for p in v["prompts"]["versions"]}
