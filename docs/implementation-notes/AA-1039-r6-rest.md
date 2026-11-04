@@ -1,0 +1,96 @@
+# AA-1039 — R6 rest: gap list, routing by data class (CIS 373), Writing Lab Releases and Metrics (lane aa1039-r6-rest, S268)
+
+Plan: root ADR 0019 d12 / d13 / d20 / d21, clarifications TL-12 / TL-13 / TL-20 / TL-21, root audit
+`docs/audits/2026-11-03-S265-ecosystem-restructure/README.md` §5.5 and §6. Earlier slices: `AA-1039-r6-admin-ia.md`,
+`AA-1039-r6-gate-fanout.md`, `AA-1039-r6-writing-lab.md`.
+
+## Gap list (Scope and Done-when vs CIS main on 04/11, TripPlanner for the hide-on-retire part)
+
+| Item | On main before this lane | This lane |
+|---|---|---|
+| Nav groups (seven) | Done (slice 1) | — |
+| Every old route redirects | Done: `ADMIN_ROUTE_MOVES` + `PRE_R6_ADMIN_ROUTES` (node test), `aa1039-admin-ia-redirects.spec.ts` (smoke: every move is a 307 with the query kept) | No new move, so nothing to add |
+| AI & spend: providers, routing, budgets, calls together | Done (slice 3: AI gateway + one Spend page) | — |
+| AI & spend: routing by `pii_class` (PII → us) | Card only, empty state; no column, no API field, no gateway rule | **Built**: CIS 373 + gateway + admin (below) |
+| Anthropic line | The `anthropic-direct` connection row exists (CIS 304/306), Connections shows its access state; `unconfigured` reads "no key set up"; the Providers overview marks it as a warm path (AA-1024/1026) | Nothing to add: no hard-coded key, the row is the slot. Live check by the orchestrator |
+| Writing Lab per stage: samples, labels, experiments, prompt versions, eval gate | Done (slice 3) | — |
+| Writing Lab: Releases, Metrics (IA §6.4 tabs) | In Writing memory only | **Built**: two Lab tabs over the existing reads |
+| Writing Lab: Hypotheses, Regression set (IA §6.4) | Rule counts on the gate tab; golden sets on Samples | Not split out (Samples already is the regression set; candidates hold tenant text and stay in Writing memory) |
+| Writing Lab: `ai_ops` logged read of tenant text | — | R2 (AA-1035 lane), not here |
+| Writing Lab stages `place_card`, `tp_compose` | Not stages: every learning table CHECKs the writer to a1 / t2 / t9_blog / t9_social | Freeze (TL-11) per stage; not here |
+| AA-subject gate | Done (slice 2), verified live in a rolled-back transaction | — |
+| Fan-out: TripPlanner hides the tour | Done (AA-987 purge + `catalog.v_tour`, tour page 410) | — |
+| Fan-out: cancels pending publishes, flags posts, WordPress draft after notice | Done (slice 2) | Live retire → restore check needs a live WordPress test site (orchestrator / next session) |
+| Fan-out: tenant bell + e-mail | E-mail digest done (slice 2); the bell rows `tour.discontinued` / `tour.reinstated` for tenants exist since AA-986 L3 (`GET /v1/notifications`) | — (live check with the WP site) |
+| Fan-out: CRM agent task, portal `needs_change` view | Follow-ups of slice 2 (AA-Partner) | Not here |
+| IA leftovers: Places & photos takes the Cards tab of Content quality; Catalogue settings split from tenant tabs; Tenant 360 as a route `/admin/tenants/[id]`; SEO Spend tab folded into Spend | Not done | Not built: see Tradeoffs |
+| Screenshots 1440/390 light/dark | Slices 1–3 | Orchestrator after deploy (pages in the PR live steps) |
+
+## Decisions
+
+- **`pii_class` extends the existing stage data policy instead of adding a parallel one.** The gateway already had
+  `allowed_scopes` per stage (CIS 311: `aws_only` = our Bedrock accounts, `vendor_direct` = a vendor API) and
+  `data_scope` per connection. A `pii` stage is held to `allowed_scopes = {aws_only}` by a CHECK (not NULL: NULL is
+  "no policy", which lets a vendor API be a model's first deployment), so "PII stays on our accounts" is data the
+  database enforces; the gateway adds the geography of ADR 0019 d12 ("PII routes to us"): only a `us.` profile or an
+  in-region id on a `us-*` connection, never `global.` (`data_scope.deployment_geo` / `pii_allows`).
+- **Every stage is `content` today.** No CIS stage receives personal data: A-series and place stages write AA
+  catalogue text, T-series write tenant brand content, `tp_compose` narrates catalogue tours, the embed stages embed
+  catalogue text and search words. The CRM stages that read traveller messages run in the CRM's own gateway after its
+  PII scrub (root ADR 0008a §5). So the change is behaviour-neutral on Dev; the CHECK protects a future pii stage from
+  a bulk "open every writer to vendor APIs" migration like 366.
+- **Fail closed for a pii stage on paths the registry does not describe**: the hard-coded legacy chain and the
+  catalog's Converse / OpenAI fallback can call a `global.` profile or a vendor API, so a pii stage gets a
+  RuntimeError there (the route moves to its next model) and `embed` returns no target.
+- **An unknown text value reads as `pii`** (fail closed), a non-text value (a test double) or a missing column as
+  `content`. `GET /admin/llm-config` sends `null` before CIS 373 so the Routing card keeps its empty state until the
+  column exists (the gateway itself reads a missing column as content).
+- **Admin**: the class is migration-only (no `cis_app` grant on the column). The model and route PATCHes and Route
+  control's `chain_problems` refuse a model with no US deployment for a pii stage (422 / problem `pii_class`); the
+  route invariant (`invariant.check_stage`) and the route preview (`llm_route_chains.resolve_stage`) count only US
+  deployments for it.
+- **Writing Lab Releases and Metrics** reuse `GET /admin/writing-memory/releases?writer=` and `GET .../metrics` (no
+  new backend). Releases shows ids, status, class, training, rules count, evidence verdicts, check-again flag and
+  dates (no notes, no text); Metrics shows the writer's overall KPIs per stored week, the replay rate, clean pairs,
+  soft stops and the weekly job's actions. Each tab has its own request (the stage read is not widened). Actions stay
+  in Writing memory; its page now opens `?tab=` (Suspense boundary for `useSearchParams`).
+
+## Changed
+
+- Migration-only PR: `api/migrations/373_llm_stage_pii_class.sql` (contract), `tests/integration/test_aa1039_migration_373.py`.
+- Code PR: `shared/llm_client/data_scope.py` (PII_CLASSES, `normalize_pii_class`, `deployment_geo`, `pii_allows`),
+  `role_config.py` (`StageConfig.pii_class`, optional column read with the 373 fallback; admin list sends it),
+  `vendor_route.deployment_plan(pii_class=)`, `client.py` (`stage_pii_class`, the plan / alias / legacy paths),
+  `embed.py`, `invariant.py` (ROUTES_V4_SQL; wire id and region read), `api/routers/admin_llm_ops.py`
+  (`_pii_usable_models`, `_check_pii`, `pii_class` in GET), `api/services/llm_route_chains.py`,
+  `api/services/llm_route_control.py`; frontend card copy (`models.messages.ts`), `lib/aiGateway.ts`,
+  `llmShared.ts`; Writing Lab (`lib/writingLab.ts`, `app/admin/lab/WritingLabStage.tsx`, `messages.ts`),
+  Writing memory `?tab=`. Tests: `tests/unit/test_aa1039_pii_class.py` (new), `lib/writingLab.test.mjs`,
+  `lib/aiGatewayDataClass.test.mjs`, stub signatures in `test_aa1026_embedding_space.py`, the invariant SQL in
+  `test_aa642_a1_stage_switch.py`. `CONTEXT.md`.
+
+## Tradeoffs
+
+- **Geography by wire-id prefix**, not a new deployment column: the Bedrock cross-region prefix is the geography
+  (`global.` / `us.` / `eu.` …), and an id without a prefix runs in the connection's region. A vendor API is never
+  US-pinned here (the Anthropic `inference_geo` request default exists, but a pii stage is aws_only anyway).
+- **No IA page moves in this lane.** The Cards tab of Content quality belongs to AA Catalogue › Places & photos per
+  the IA, but `/admin/places` is admin-only while the Cards tab serves `TENANT_QA` roles today; moving it changes who
+  sees it, which is the R2 roles lane's (AA-1035) decision, and both lanes would edit `lib/rbac.ts`. Same for the
+  Settings split (brand/SEO of `aa_internal` vs tenant tabs) and the Tenant 360 route (AA-1028's tenant control
+  plane). The SEO Intelligence Spend tab shows DataForSEO spend by endpoint, which Spend › DataForSEO does not show
+  per endpoint yet: folding it in first needs that view.
+
+## Should know
+
+- **Order**: the migration-only PR (373, contract) and the code PR may ship in either order: the code reads a missing
+  column as content and the admin sends `null`. The Routing card fills once 373 is applied.
+- **Number**: 373 because 372 is held by the AA-1045 lane. The preflight refuses 373 until 372 is on main
+  ("not the next one"); if AA-1045 does not land first, renumber to main max + 1: the number is in the file name,
+  its header and registration (`'373'`), the integration test (`MIGRATION`, `version = '373'`), the comments
+  ("CIS 373", "migration 373") in `data_scope.py`, `role_config.py`, `client.py`, `embed.py`, `invariant.py`,
+  `admin_llm_ops.py`, `llm_route_chains.py`, `llm_route_control.py`, `lib/aiGateway.ts`, `llmShared.ts`, the unit
+  test, `CONTEXT.md` and these notes (`git grep -n '373'`).
+- No new table: no DM-7.1 retention row, no ERD design page change.
+- TripPlanner's own gateway (`backend/shared/llm_gateway.py`) does not read `pii_class`; no TripPlanner stage is pii.
+  A pii TripPlanner stage would need its catalog view and gateway to apply the same rule first.

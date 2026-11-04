@@ -69,7 +69,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     status, via react-query — see A3 note below), `atom-curation` (**Atoms & routes**, sections
     01 Atomize · 02 Segment · 03 Score · 04 Route/Hub; was "Social Content"), `tenant-qa/*` (AA-1039: `quality` =
     Content quality, `trace` = Content Trace, `review-log` = review log with gate telemetry per tenant and channel,
-    AA-615, `slate` = the per-tenant Slate that was atom-curation section 05), `spend` (the **Spend** page, AA-622/623/665, was Cost Operations at `cost-ops`: tabs Overview, **AI & data spend** (views LLM, DataForSEO, Jev, from the ledger), AWS bill and By app (AA-1039 R6 slice 3, was `platform/cost`); the old `/admin/llm-usage` and `/admin/cost-ops` redirect to it), `lab/[stage]` (**Writing Lab**, AA-1039 R6 slice 3) and `lab/writing-memory`,
+    AA-615, `slate` = the per-tenant Slate that was atom-curation section 05), `spend` (the **Spend** page, AA-622/623/665, was Cost Operations at `cost-ops`: tabs Overview, **AI & data spend** (views LLM, DataForSEO, Jev, from the ledger), AWS bill and By app (AA-1039 R6 slice 3, was `platform/cost`); the old `/admin/llm-usage` and `/admin/cost-ops` redirect to it), `lab/[stage]` (**Writing Lab**, AA-1039 R6 slice 3; tabs Eval gate, Samples, Labels, Experiments, Prompt versions, Releases and Metrics) and `lab/writing-memory` (opens a tab from `?tab=`),
     `ai-gateway` (**AI gateway**, was "AI providers", AA-804: tabs Providers (+ views Connections, Jev credit, Credit (AA-1025 B5); warm-path labels, the
     "Re-queue refused jobs" card; AA-1025 C1: errors and p50 / p95 latency per row over 24 h / 7 d from the ledgers,
     the Jev / DataForSEO / Geoapify switch (PATCH /admin/llm-connections/{key}), the partner CRM AI and Bedrock
@@ -394,6 +394,15 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   unavailable with a reason, and the PATCHes refuse such a model (422) and keep the S235 position rule in scope terms
   (a model reached only outside AWS: last fallback only). A new stage seeded with an OpenAI-API last resort must set
   both scopes in its seed migration.
+- **Data class per stage** (AA-1039 R6, CIS 373 contract, root ADR 0019 d12): `shared.llm_role_config.pii_class`
+  (`content` | `pii`, NOT NULL default `content`, migration-only). A `pii` stage must have `allowed_scopes = {aws_only}`
+  (CHECK `llm_role_config_pii_scope_check`), and the gateway calls it only on a US deployment on our AWS accounts
+  (`data_scope.pii_allows`: a `us.` profile or an in-region id on a `us-*` connection, never `global.`, never a vendor
+  API) in `vendor_route.deployment_plan`, `embed`, the route invariant and the route preview; a path the registry does
+  not describe (legacy chain, catalog fallback) is refused for it. Every stage is `content` today (no CIS stage takes
+  personal data; the CRM's PII stages run in the CRM gateway). Admin: `GET /admin/llm-config` returns `pii_class`
+  (null before 373) for AI gateway › Routing › "Routing by data class"; the route PATCHes and Route control refuse a
+  model with no US deployment for a pii stage.
 - **Cost parity** (AA-1002 slice S6, migration 312 contract): `pricing.quote(model, Usage, deployment)` prices one
   billed request from its full usage (uncached input, output, cache reads, 5-minute writes 1.25x, 1-hour writes 2x,
   Message Batches 50% off every token, Anthropic `inference_geo: "us"` 1.1x, Claude Haiku 5.5 x5 above 100K prompt
