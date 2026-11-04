@@ -201,6 +201,10 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     TenantTable("geo.geocode_call", "detach", "Geoapify cost history"),
     TenantTable("shared.llm_call_daily", "merge",
                 "daily LLM rollup; added into the NULL-tenant row of the same key, then deleted"),
+    # AA-1045 (372): the hourly usage rollup of the four ledgers above. A re-roll after the erasure recomputes the
+    # hours still in the raw window from the detached ledger rows (NULL tenant), which is what this merge leaves.
+    TenantTable("shared.ai_usage_hourly", "merge",
+                "hourly usage rollup; summed into the NULL-tenant row of the same key, then deleted"),
     # ── kept
     TenantTable("acp_shared.audit_log", "keep",
                 "append-only hash chain (triggers refuse UPDATE/DELETE); the erasure keeps the audit row"),
@@ -226,6 +230,36 @@ MERGE_SQL: dict[str, str] = {
                tokens_out = d.tokens_out + EXCLUDED.tokens_out,
                cost_usd = d.cost_usd + EXCLUDED.cost_usd,
                updated_at = now()
+    """,
+    # One tenant row per key at most (the unique key includes tenant_id), so no GROUP BY: each row lands on the
+    # NULL-tenant row of its key, the latency histograms added bucket by bucket.
+    "shared.ai_usage_hourly": """
+        INSERT INTO shared.ai_usage_hourly AS h
+               (hour, source, app, provider, account, model, stage, role, tenant_id, status, error_class, traffic,
+                requests, ledger_rows, fallback_requests, tokens_in, tokens_out, cache_read_tokens,
+                cache_write_tokens, reasoning_tokens, cost_usd, latency_ms_sum, latency_ms_count, latency_hist,
+                refreshed_at)
+        SELECT hour, source, app, provider, account, model, stage, role, NULL, status, error_class, traffic,
+               requests, ledger_rows, fallback_requests, tokens_in, tokens_out, cache_read_tokens,
+               cache_write_tokens, reasoning_tokens, cost_usd, latency_ms_sum, latency_ms_count, latency_hist, now()
+          FROM shared.ai_usage_hourly
+         WHERE tenant_id = $1::uuid
+        ON CONFLICT (hour, source, app, provider, account, model, stage, role, tenant_id, status, error_class,
+                     traffic) DO UPDATE SET
+               requests = h.requests + EXCLUDED.requests,
+               ledger_rows = h.ledger_rows + EXCLUDED.ledger_rows,
+               fallback_requests = h.fallback_requests + EXCLUDED.fallback_requests,
+               tokens_in = h.tokens_in + EXCLUDED.tokens_in,
+               tokens_out = h.tokens_out + EXCLUDED.tokens_out,
+               cache_read_tokens = h.cache_read_tokens + EXCLUDED.cache_read_tokens,
+               cache_write_tokens = h.cache_write_tokens + EXCLUDED.cache_write_tokens,
+               reasoning_tokens = h.reasoning_tokens + EXCLUDED.reasoning_tokens,
+               cost_usd = h.cost_usd + EXCLUDED.cost_usd,
+               latency_ms_sum = h.latency_ms_sum + EXCLUDED.latency_ms_sum,
+               latency_ms_count = h.latency_ms_count + EXCLUDED.latency_ms_count,
+               latency_hist = (SELECT array_agg(a + b ORDER BY k)
+                                 FROM unnest(h.latency_hist, EXCLUDED.latency_hist) WITH ORDINALITY AS u(a, b, k)),
+               refreshed_at = now()
     """,
 }
 

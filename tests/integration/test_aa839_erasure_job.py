@@ -211,6 +211,17 @@ async def _seed(pools, tid: str, stage: str) -> dict:
                                                calls, fallback_calls, tokens_in, tokens_out, cost_usd, updated_at)
             VALUES (DATE '2026-01-01', 'cis', $1::uuid, $2, 'writer', 'm1', 'bedrock', 'acc3', false,
                     $3, 0, 100, 10, 1.5, now())""", tenant, stage, calls)
+    # AA-1045 (372): the hourly usage rollup (merge). The tenant has an ok row whose NULL-tenant twin exists and an
+    # error row that has none (the merge inserts it).
+    for tenant, status, n in ((tid, "ok", 3), (None, "ok", 5), (tid, "error", 1)):
+        await admin.execute("""
+            INSERT INTO shared.ai_usage_hourly (hour, source, app, provider, account, model, stage, role, tenant_id,
+                                                status, traffic, requests, ledger_rows, tokens_in, cost_usd,
+                                                latency_ms_sum, latency_ms_count, latency_hist)
+            VALUES (TIMESTAMPTZ '2026-01-01 05:00+00', 'llm', 'cis', 'bedrock', 'acc3', 'm1', $2, 'writer',
+                    $1::uuid, $3, 'live', $4::integer, $4::integer, 10 * $4::integer, 0.5 * $4::integer,
+                    100 * $4::integer, $4::integer, array_fill(0, ARRAY[1]) || $4::integer || array_fill(0, ARRAY[18]))
+            """, tenant, stage, status, n)
     job_id, _ = await queue.enqueue(admin, "t9_write", {"tenant_id": tid, "piece_id": piece})
     await admin.execute("UPDATE shared.job SET status = 'succeeded', finished_at = now() WHERE id = $1::uuid", job_id)
     await admin.execute("""INSERT INTO acp_shared.audit_log (id, tenant_id, actor, action, resource_type, resource_id,
@@ -404,6 +415,7 @@ async def test_tenant_dry_run_counts_and_writes_nothing(pool):
     assert rows[("acp_shared.quarter_plan", "null_first:current_version_id")] == 1
     assert rows[("shared.llm_call_log", "detach")] == 2
     assert rows[("shared.llm_call_daily", "merge")] == 1
+    assert rows[("shared.ai_usage_hourly", "merge")] == 2            # AA-1045: the ok and the error row
     assert rows[("shared.job", "delete")] == 1
     assert rows[("acp_shared.audit_log", "keep")] == 1
     # review round: T2 chain, its review row and A3 fingerprint, owner_scope + tour-path atoms, retired run-tour jobs
@@ -534,6 +546,13 @@ async def test_tenant_apply_erases_children_first_and_leaves_other_tenants(pool)
     assert len(log) == 2 and all(r["tenant_id"] is None and r["content_piece_id"] is None for r in log)
     daily = await admin.fetch("SELECT tenant_id, calls FROM shared.llm_call_daily WHERE stage = $1", stage)
     assert [(r["tenant_id"], r["calls"]) for r in daily] == [(None, 8)]
+    # AA-1045: the hourly rollup summed into the NULL-tenant rows (histograms bucket by bucket), the tenant rows gone
+    hourly = await admin.fetch("SELECT tenant_id, status, requests, tokens_in, cost_usd, latency_ms_count, "
+                               "latency_hist[2] AS b2, cardinality(latency_hist) AS n FROM shared.ai_usage_hourly "
+                               "WHERE stage = $1 ORDER BY status", stage)
+    assert [(r["tenant_id"], r["status"], r["requests"], r["tokens_in"], float(r["cost_usd"]), r["latency_ms_count"],
+             r["b2"], r["n"]) for r in hourly] == [(None, "error", 1, 10, 0.5, 1, 1, 20),
+                                                    (None, "ok", 8, 80, 4.0, 8, 8, 20)]
     # audit chain kept + one erasure row, counts only
     actions = [r["action"] for r in await admin.fetch(
         "SELECT action FROM acp_shared.audit_log WHERE tenant_id = $1::text ORDER BY created_at", tid)]
