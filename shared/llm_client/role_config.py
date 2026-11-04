@@ -25,7 +25,7 @@ import structlog
 
 from shared.secrets import get_database_url
 
-from . import data_scope, route_evidence
+from . import data_scope, route_evidence, route_versions
 
 logger = structlog.get_logger()
 
@@ -449,6 +449,7 @@ async def set_stage_config(
     conn = await asyncpg.connect(get_database_url(), ssl="require")
     try:
         async with conn.transaction():
+            version_state = await route_versions.begin_safe(conn)    # AA-1042: every route change is a version
             before = await conn.fetchrow(
                 "SELECT model_id, account_route FROM shared.llm_role_config WHERE stage = $1",
                 stage,
@@ -476,6 +477,8 @@ async def set_stage_config(
                 await route_evidence.record_break_glass(
                     conn, stage=stage, actor=audit_actor, evidence=evidence,
                     change={"model_id": model_id, "before": dict(before) if before else None})
+            await route_versions.record_safe(conn, version_state, actor=audit_actor or updated_by,
+                                             note=f"Routing tab: primary model of {stage}")
         out = dict(row)
         out["fallback_model_ids"] = list(out["fallback_model_ids"] or [])
         return out
@@ -498,6 +501,7 @@ async def set_stage_route(
     conn = await asyncpg.connect(get_database_url(), ssl="require")
     try:
         async with conn.transaction():
+            version_state = await route_versions.begin_safe(conn)    # AA-1042: every route change is a version
             before = await conn.fetchrow(
                 f"SELECT model_id, {_ROUTE_COLUMNS} FROM shared.llm_role_config WHERE stage = $1",
                 stage,
@@ -529,6 +533,8 @@ async def set_stage_route(
             await route_evidence.record_break_glass(
                 conn, stage=stage, actor=audit_actor, evidence=evidence,
                 change={"fallback_model_ids": list(fallback_model_ids), "before": before_d})
+            await route_versions.record_safe(conn, version_state, actor=audit_actor,
+                                             note=f"Routing tab: fallbacks of {stage}")
         out = dict(row)
         out["fallback_model_ids"] = list(out["fallback_model_ids"] or [])
         return out

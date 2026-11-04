@@ -22,6 +22,15 @@ from shared.llm_client import role_config as rc_mod
 from shared.llm_client.catalog import CatalogModel, CatalogPriceRequired
 
 
+@pytest.fixture(autouse=True)
+def _no_route_versions(monkeypatch):
+    """AA-1042: the store helpers also write a route config version (shared/llm_client/route_versions.py, CIS 370)
+    through their connection; these fakes script only the route rows, so the version hook is a no-op here (its own
+    tests: tests/unit/test_aa1042_route_versions.py, tests/integration/test_aa1042_route_control_db.py)."""
+    monkeypatch.setattr(rc_mod.route_versions, "begin_safe", AsyncMock(return_value=None))
+    monkeypatch.setattr(rc_mod.route_versions, "record_safe", AsyncMock(return_value=None))
+
+
 # ── catalog fixtures (mirrors test_aa658_model_catalog.py) ──────────────────────────────────────
 
 def _model(key, **kw):

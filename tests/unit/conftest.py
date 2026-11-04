@@ -224,11 +224,16 @@ def _empty_llm_connection_registry(monkeypatch):
     def _empty(fn):
         return {} if fn is connections._fetch_all else []
 
+    from shared.llm_client import route_settings
+
     def _reset():
         connections.invalidate()
         deployments.invalidate()
         connections._connections = {}
         deployments._by_model = {}
+        route_settings.invalidate()          # AA-1042: no settings row = the env var decides (as before 370)
+        route_settings._state = None
+        route_settings._seen_version = None
     _reset()
     monkeypatch.setattr(connections, "run_sync", _empty)
     yield

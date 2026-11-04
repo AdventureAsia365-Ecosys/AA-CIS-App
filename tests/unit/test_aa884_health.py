@@ -153,7 +153,8 @@ def test_required_keys_run_from_the_baseline_to_the_required_schema():
 
 # AA-1035 (S267 review): CIS 336 (AA-1024 D8) is time-gated and not applied on Dev. Raising the strict prefix past it
 # would answer 503 schema_behind until it is; the R2 keys 362-364 are required above the gap instead.
-DEV_KEYS_WITHOUT_336 = [k for k in range(readiness.LEGACY_CIS_BASELINE + 1, 365) if k != 336]
+# AA-1042 (S268): 370 (route control) is required above the gap too; 365-369 are not needed by this code.
+DEV_KEYS_WITHOUT_336 = [k for k in range(readiness.LEGACY_CIS_BASELINE + 1, 371) if k != 336]
 
 
 def test_the_time_gated_336_is_not_required_while_the_r2_keys_are():
@@ -164,13 +165,20 @@ def test_the_time_gated_336_is_not_required_while_the_r2_keys_are():
 
 @pytest.mark.asyncio
 async def test_dev_without_336_is_ready_once_the_r2_keys_are_registered():
-    status, body = await readiness.readiness(_keys_pool(364, DEV_KEYS_WITHOUT_336), now=0.0)
+    status, body = await readiness.readiness(_keys_pool(370, DEV_KEYS_WITHOUT_336), now=0.0)
     assert status == 200 and body["status"] == "ok" and "missing_schema_versions" not in body
+
+
+@pytest.mark.asyncio
+async def test_dev_without_370_is_schema_behind():
+    keys = [k for k in DEV_KEYS_WITHOUT_336 if k != 370]
+    status, body = await readiness.readiness(_keys_pool(369, keys), now=0.0)
+    assert status == 503 and body["missing_schema_versions"] == ["370"]
 
 
 @pytest.mark.asyncio
 async def test_a_missing_key_above_the_gap_is_schema_behind():
     keys = [k for k in DEV_KEYS_WITHOUT_336 if k != 364]
-    status, body = await readiness.readiness(_keys_pool(363, keys), now=0.0)
+    status, body = await readiness.readiness(_keys_pool(370, keys), now=0.0)
     assert status == 503 and body["status"] == "schema_behind"
     assert body["missing_schema_versions"] == ["364"]

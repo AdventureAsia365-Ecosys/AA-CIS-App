@@ -86,7 +86,15 @@ def test_routes_are_served_and_run_the_policy():
                           # AA-1025 H2: TPM limits, line shares and prod guards
                           ("GET", "/admin/ai-gateway/capacity"),
                           ("PUT", "/admin/ai-gateway/capacity/{connection_key}/{model_key}"),
-                          ("DELETE", "/admin/ai-gateway/capacity/{connection_key}/{model_key}")}
+                          ("DELETE", "/admin/ai-gateway/capacity/{connection_key}/{model_key}"),
+                          # AA-1042: the Route control tab (its own router, admin_llm_route_control.py)
+                          ("GET", "/admin/ai-gateway/route-control"),
+                          ("POST", "/admin/ai-gateway/route-control/preview"),
+                          ("POST", "/admin/ai-gateway/route-control/save"),
+                          ("POST", "/admin/ai-gateway/route-control/presets/{preset}"),
+                          ("GET", "/admin/ai-gateway/route-control/versions"),
+                          ("GET", "/admin/ai-gateway/route-control/versions/{version}"),
+                          ("POST", "/admin/ai-gateway/route-control/versions/{version}/revert")}
     for (_m, p), (r, inh) in found.items():
         assert r.path == p and _runs_policy(r, inh, p)
 

@@ -193,6 +193,8 @@ PAGE_WRITES: dict[str, tuple[str, str]] = {
     "credit": ("POST", "/admin/ai-gateway/credit/{connection_key}/entries"),
     # AA-1025 H1a App profiles card: the AI switch, bulk pause, default budget and degrade mode of each app (ai.admin)
     "app_profiles": ("PATCH", "/admin/ai-gateway/app-profiles/{app}"),
+    # AA-1042 Route control tab: save, presets, revert (ai.admin; the preview needs the same capability)
+    "route_control": ("POST", "/admin/ai-gateway/route-control/save"),
 }
 
 
