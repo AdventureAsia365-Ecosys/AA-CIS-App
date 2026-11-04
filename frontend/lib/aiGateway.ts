@@ -852,11 +852,27 @@ export interface TenantBudgetRow {
 }
 
 /** GET /api/admin/ai-gateway/tenant-budgets/{tenant_id} (Tenant 360 › Cost). */
+/** Where the budget the gateway applies comes from (api/services/tenant_ai_budget.effective_source). */
+export type TenantBudgetSource = "subscription_override" | "budget_row" | "plan" | "none";
+
+/** What the gateway applies this month (AA-1028: override > the row edited here > the plan's included spend). */
+export interface TenantBudgetEffective {
+  source: TenantBudgetSource;
+  monthly_usd: number | null;
+  alert_pct: number | null;
+  approval_pct: number | null;
+  hard_stop: boolean | null;
+  used_pct: number | null;
+  state: TenantBudgetState;
+}
+
 export interface TenantBudgetResp {
   ready: boolean;
   tenant_id: string;
   tenant_name: string | null;
   budget: TenantBudgetRow | null;
+  /** null before the plan catalogue exists in the database: ``budget`` alone decides then. */
+  effective?: TenantBudgetEffective | null;
   month_spent_usd: number;
   month_calls: number;
   month_start: string;

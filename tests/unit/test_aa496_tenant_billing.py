@@ -20,6 +20,9 @@ import pytest
 
 from api.routers import v1_tours
 
+# AA-1028 R1 slice 3: the plan readers that replaced PLAN_LIMITS answer with the CIS 355 seed (tests/unit/conftest.py)
+pytestmark = pytest.mark.usefixtures("seeded_plans")
+
 
 def _make_pool(row=None, activity=None, plans=None, rpm=300, daily=None):
     conn = AsyncMock()
@@ -146,7 +149,7 @@ class TestAA636BillingPlanFields:
         assert [p["plan_name"] for p in result["plans"]] == ["starter", "enterprise"]
         starter = result["plans"][0]
         assert starter["price_usd_monthly"] == 299.0
-        assert starter["rate_limit_rpm"] == 60  # PLAN_LIMITS["starter"]["rpm"]
+        assert starter["rate_limit_rpm"] == 60  # content.starter content.rate_limit_rpm (CIS 355 seed)
         # enterprise's stored 0.00 means "negotiated" -> None ("Custom"), never "$0/mo"
         assert result["plans"][1]["price_usd_monthly"] is None
         assert result["plans"][1]["rate_limit_rpm"] is None

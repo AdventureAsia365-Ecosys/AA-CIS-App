@@ -3,8 +3,8 @@
 The saga runs on a test connection inside one outer transaction that is rolled back (a pool shim hands it out, so
 the saga's own transaction is a savepoint). Covers:
 
-  * create: the tenant row as POST /admin/tenants writes it (quota ledger, default brand rules row, no API key), the
-    content subscription from the 355 bridge (active: a trial is refused until the slice 3 trial-end tick), add-ons
+  * create: the tenant row as POST /admin/tenants writes it (default brand rules row, no API key, no quota ledger
+    row since slice 3), the content subscription from the 355 bridge (active; trials: test_aa1028_slice3), add-ons
     with seats, the feed events carrying the job's actor, the ONBOARD audit row with the request key;
   * idempotency: the same request again returns the stored outcome (resumed) and writes nothing; a slug that exists
     without this key's audit row is refused (slug_taken);
@@ -96,8 +96,9 @@ async def test_create_writes_the_tenant_subscriptions_and_events(conn):
                                                                       "starter", 60)
     assert t["api_key_hash"] is None and t["is_active"] is True and t["account_status"] == "active"
     assert t["kind"] == "demo" and t["is_canary"] is True and t["posts_per_week"] == 3
-    assert await conn.fetchval("SELECT s2_runs_limit FROM acp_shared.acp_quota_ledger WHERE tenant_id = $1::uuid",
-                               tid) == 10
+    # slice 3: the ACPv1 S2/S3/S4 10/10/50 ledger has no reader; the saga writes no row
+    assert await conn.fetchval("SELECT count(*) FROM acp_shared.acp_quota_ledger WHERE tenant_id = $1::uuid",
+                               tid) == 0
     assert await conn.fetchval("SELECT count(*) FROM shared.tenant_brand_rules WHERE tenant_id = $1::uuid "
                                "AND brand_name = 'default'", tid) == 1
     assert await _subs(conn, tid) == {"content": ("content.starter", "active", None),
@@ -117,10 +118,7 @@ async def test_create_writes_the_tenant_subscriptions_and_events(conn):
                                 "AND action = 'agency.onboard'", tid)
     details = json.loads(audit["details"])
     assert audit["actor"] == actor and details["provision_request_key"] == req.request_key
-    assert details["job_id"] == job and "trial_days" not in details
-    with pytest.raises(pv.ProvisionError) as refused:
-        _create(trial_days=14)
-    assert refused.value.code == "trial_not_supported_yet"
+    assert details["job_id"] == job and details["trial_days"] is None and details["pilot_weeks"] is None
 
 
 @pytest.mark.asyncio

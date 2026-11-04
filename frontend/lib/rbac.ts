@@ -152,6 +152,9 @@ export const API_WRITE_RULES: { prefix: string; roles: StaffRole[] }[] = [
   { prefix: "facts", roles: ["admin"] },
   // AA-1003 — "generate now" on /admin/reports; the backend re-checks (ops.write).
   { prefix: "reports/", roles: ["admin"] },
+  // AA-1028 R1 slice 3 — the plan catalogue (create, edit, retire); the backend re-checks (tenant.write). Tenant 360
+  // overrides and the add-on saga are under "tenants" above.
+  { prefix: "plans", roles: ["admin"] },
 ];
 
 // AA-577 follow-up — /api/admin/ paths that NO method may reach unless the role is listed (reads

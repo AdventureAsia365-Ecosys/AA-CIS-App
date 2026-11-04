@@ -11,6 +11,8 @@
 // Cost, Quality (per T10 gate + edit rate) and Markets tabs, in ./_components (admin-only data).
 // AA-994: text in the UI language (messages.ts, _components/tenant360.messages.ts); values from the API stay as sent.
 // AA-1031 (S264): Members tab (Content studio memberships: invite, send again, change role, remove), ./_components.
+// AA-1028 R1 slice 3: Subscription tab (subscriptions, entitlements, overrides, add-ons); the create modal's tier choices
+// come from the plan catalogue (useContentTiers), not a hard-coded list.
 
 import { Suspense, useState, useEffect, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -32,6 +34,8 @@ import { Tenant360Quality } from "./_components/Tenant360Quality";
 import { Tenant360Markets } from "./_components/Tenant360Markets";
 import { Tenant360VoiceMemory } from "./_components/Tenant360VoiceMemory";
 import { Tenant360Members } from "./_components/Tenant360Members";
+import { Tenant360Subscription } from "./_components/Tenant360Subscription";
+import { useContentTiers } from "./_components/useContentTiers";
 import { fmtDailyPublishLimit } from "./_components/tenant360";
 import { T360_WORDS_MESSAGES } from "./_components/tenant360.messages";
 import { SCORE_BANDS } from "@/lib/quality-registry.generated";
@@ -92,7 +96,6 @@ interface UnmappedMarketRequest {
   first_seen_at: string | null; last_requested_at: string | null; tenant_ids: string[];
 }
 
-const PLAN_OPTIONS = ["starter", "growth", "business"];
 const PLAN_BADGE: Record<string, Tone> = {
   starter: "info", growth: "purple", business: "success", internal: "accent",
 };
@@ -155,6 +158,7 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
   const [name, setName]   = useState("");
   const [slug, setSlug]   = useState("");
   const [plan, setPlan]   = useState("starter");
+  const { tiers } = useContentTiers(plan);
   // AA-384: posts_per_week is a free tenant choice now, not implied by plan — caller states its
   // own posting cadence at creation (1-14, no default that matches a tier).
   const [postsPerWeek, setPostsPerWeek] = useState("3");
@@ -212,7 +216,7 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
             label={t("plan")}
             value={plan}
             onChange={setPlan}
-            options={PLAN_OPTIONS.map(p => ({ value: p, label: p }))}
+            options={tiers.map(p => ({ value: p, label: p }))}
           />
         </div>
         <div style={{ marginBottom: 24 }}>
@@ -709,10 +713,10 @@ function SocialContentTabContent({ tenantId }: { tenantId: string }) {
 // separate page. Added tabs: Usage & Billing, Quality (gate telemetry), Audit, Settings.
 // AA-766: + Cost and Markets; Quality and Settings rebuilt (./_components).
 type DTab = "tours" | "pipeline" | "activity" | "api" | "brand" | "social_content"
-          | "billing" | "cost" | "quality" | "markets" | "members" | "audit" | "settings";
+          | "billing" | "subscription" | "cost" | "quality" | "markets" | "members" | "audit" | "settings";
 
 const DETAIL_TABS: readonly DTab[] = ["tours", "pipeline", "activity", "api", "brand", "social_content", "billing",
-  "cost", "quality", "markets", "members", "audit", "settings"];
+  "subscription", "cost", "quality", "markets", "members", "audit", "settings"];
 
 /** The tab a deep link asks for, only for the tenant it names; "tours" otherwise. */
 function initialDetailTab(linkTenant: string | null, linkTab: string | null, tenantId: string): DTab {
@@ -777,6 +781,8 @@ function TenantDetail({ tenant, onChanged }: {
     { key: "social_content", label: tr("tabSocial") },
     // AA-666 — Tenant 360: the remaining management facets, added to the inline panel.
     { key: "billing" as DTab,  label: tr("tabBilling") },
+    // AA-1028 R1 slice 3: plans, add-ons, entitlements with their source, overrides (root ADR 0019 d1 / d2)
+    { key: "subscription" as DTab, label: tr("tabSubscription") },
     { key: "cost" as DTab,     label: tr("tabCost") },
     { key: "quality" as DTab,  label: tr("tabQuality") },
     { key: "markets" as DTab,  label: tr("tabMarkets") },
@@ -824,6 +830,7 @@ function TenantDetail({ tenant, onChanged }: {
       {tab === "brand"    && <BrandTabContent    rules={data.brand_rules} tenantId={tenantId} />}
       {tab === "social_content" && <SocialContentTabContent tenantId={tenantId} />}
       {tab === "billing"  && <BillingTabContent  tenantId={tenantId} />}
+      {tab === "subscription" && <Tenant360Subscription tenantId={tenantId} />}
       {tab === "cost"     && <Tenant360Cost      tenantId={tenantId} />}
       {tab === "quality"  && <Tenant360Quality   tenantId={tenantId} byChannel={<ChannelGateTelemetry tenantId={tenantId} />} />}
       {tab === "quality"  && <Tenant360VoiceMemory tenantId={tenantId} />}

@@ -29,6 +29,13 @@
   fails open, logged. When the budgeted-tenant set itself was never readable (no database at all), nothing is known
   and the check fails open as before. Platform (A-stage) calls always fail open. Nothing else is raised.
 - ``LLM_TENANT_BUDGETS=off`` (ECS env, read per call) switches the check off.
+
+AA-1028 R1 slice 3 (root ADR 0019 d2): the budget is the tenant's entitlement ``ai.budget_usd_monthly`` (its plan's
+included AI spend, or an override; ``shared.cost_guard`` reads the resolver), so every Content studio tenant on a
+priced plan is budgeted, with the hard stop at 100 % unless its AA-1016 row says otherwise. "T-stage" above means a
+**tenant-spend stage** (``is_tenant_spend_stage``): the T0-T11 stages and the ad-hoc stages (``adhoc_<issue>``,
+CLAUDE.md: a hand-run script bound to a tenant spends that tenant's budget; the AA-1028 fail-closed proof runs one).
+Platform (A-stage) calls stay outside every tenant budget.
 """
 from __future__ import annotations
 
@@ -59,6 +66,7 @@ UNREADABLE_RECHECK_SECONDS = 15.0
 MISSING_TABLE_TTL_SECONDS = 300.0
 # The Content studio stages (T0-T11, ADR 0006): t2_generate, t5_atomize, t9_write, t10_judge ...
 T_STAGE = re.compile(r"^t\d+_")
+ADHOC_STAGE_PREFIX = "adhoc_"
 
 _tenants: Optional[frozenset] = None
 _tenants_at = 0.0
@@ -124,6 +132,11 @@ def enabled() -> bool:
 
 def is_t_stage(stage: Optional[str]) -> bool:
     return bool(stage) and T_STAGE.match(stage) is not None
+
+
+def is_tenant_spend_stage(stage: Optional[str]) -> bool:
+    """A stage whose calls spend the bound tenant's AI budget: a T-stage or an ad-hoc stage (module docstring)."""
+    return is_t_stage(stage) or (bool(stage) and stage.startswith(ADHOC_STAGE_PREFIX))
 
 
 # What the tenant's live progress view says while a job waits for staff approval (plain words: no budget figures,
@@ -245,7 +258,7 @@ def counter_unreadable(tenant_id: str) -> bool:
     if not failed or time.monotonic() - failed >= FAILURE_TTL_SECONDS:
         return False
     last = _state.get(tenant_id)
-    if last is not None and (last[0] is None or not last[0].hard_stop):
+    if last is not None and (last[0] is None or not last[0].stops):
         return False
     return True
 
@@ -259,17 +272,17 @@ def check(stage: Optional[str]) -> Optional[cost_guard.TenantAIBudget]:
         tenant_id = _bound_tenant()
         if tenant_id is None:
             return None
-        t_stage = is_t_stage(stage)
+        t_stage = is_tenant_spend_stage(stage)
         budget = budget_of(tenant_id,
                            recheck_after=UNREADABLE_RECHECK_SECONDS if t_stage else FAILURE_TTL_SECONDS)
         unreadable = budget is None and counter_unreadable(tenant_id)
     except Exception as e:  # noqa: BLE001 — never on the call path
         logger.warning("tenant_ai_budget_check_failed", stage=stage, error=str(e)[:200])
         return None
-    if unreadable and is_t_stage(stage):
+    if unreadable and is_tenant_spend_stage(stage):
         logger.warning("tenant_ai_budget_unreadable_fail_closed", stage=stage, tenant_id=tenant_id)
         raise counter_unavailable(tenant_id)
-    if budget is not None and budget.needs_approval and is_t_stage(stage):
+    if budget is not None and budget.needs_approval and is_tenant_spend_stage(stage):
         logger.warning("tenant_ai_budget_approval_wait", stage=stage, **budget.summary())
         raise approval_required(budget)
     return budget

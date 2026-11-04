@@ -16,6 +16,11 @@ export const T360_BUDGET = defineMessages(
     state_alert: "Near the budget",
     state_approval: "Needs approval",
     state_over: "Over the approval level",
+    noAiSpend: "no AI spend allowed",
+    source_plan: "From the plan's included AI spend",
+    source_budget_row: "Set here (replaces the plan's included spend)",
+    source_subscription_override: "Set by an override on the Subscription tab: it wins over the budget set here",
+    source_none: "No budget from the plan or here",
     staffMember: "a staff member",
     staffLogin: (ref: string) => `staff (${ref})`,
     readOnlySession: "This is a read-only session: nothing was saved.",
@@ -24,10 +29,12 @@ export const T360_BUDGET = defineMessages(
     edit: "Edit",
     editTitle: (name: string) => `AI budget: ${name}`,
     editIntro: "A monthly AI spend budget for this tenant, in USD, counted from the tenant's logged AI calls this "
-      + "month. Staff only: the tenant never sees it. It is stored and shown now; holding new jobs at the approval "
-      + "level comes with the gateway check.",
+      + "month. Staff only: the tenant never sees it. It replaces the plan's included AI spend for this tenant; an "
+      + "override on the Subscription tab wins over it. At the approval level, new AI jobs wait for staff approval "
+      + "when they are held.",
     fieldMonthly: "Monthly budget (USD)",
-    fieldMonthlyHint: "Empty means no amount: the tenant is capped only by the platform caps.",
+    fieldMonthlyHint: "Empty means no amount: no AI budget for this tenant, the plan's included spend no longer "
+      + "applies. 0 means no AI spend at all.",
     noAmount: "no amount",
     fieldAlert: "Alert at (%)",
     fieldAlertHint: "The admin bell rings at this share of the budget.",
@@ -52,9 +59,11 @@ export const T360_BUDGET = defineMessages(
     confirmSaveTitle: (name: string) => `Save the AI budget of ${name}?`,
     confirmSaveBody: (amount: string, alert: number, approval: number, at: string) =>
       `${amount} a month; the bell at ${alert} %, approval at ${approval} % (${at}). The change is logged.`,
-    confirmNoAmount: "No amount: the tenant stays capped only by the platform caps. The change is logged.",
+    confirmNoAmount: "No amount: the plan's included AI spend no longer applies and only the platform caps do. The "
+      + "change is logged.",
     confirmRemoveTitle: (name: string) => `Remove the AI budget of ${name}?`,
-    confirmRemoveBody: "The tenant goes back to no budget: only the platform caps apply. The change is logged.",
+    confirmRemoveBody: "The tenant falls back to its plan's included AI spend (no budget when the plan sets none). "
+      + "The change is logged.",
   },
   {
     tileLabel: "Ngân sách AI (tháng này)",
@@ -68,6 +77,11 @@ export const T360_BUDGET = defineMessages(
     state_alert: "Gần hết ngân sách",
     state_approval: "Cần duyệt",
     state_over: "Vượt mức duyệt",
+    noAiSpend: "không được chi cho AI",
+    source_plan: "Theo mức chi AI kèm theo gói",
+    source_budget_row: "Đặt ở đây (thay cho mức kèm theo gói)",
+    source_subscription_override: "Đặt bằng một ngoại lệ ở tab Gói đăng ký: thắng ngân sách đặt ở đây",
+    source_none: "Không có ngân sách từ gói hay ở đây",
     staffMember: "một nhân viên",
     staffLogin: (ref: string) => `nhân viên (${ref})`,
     readOnlySession: "Phiên này chỉ được xem: chưa lưu gì.",
@@ -76,10 +90,11 @@ export const T360_BUDGET = defineMessages(
     edit: "Sửa",
     editTitle: (name: string) => `Ngân sách AI: ${name}`,
     editIntro: "Ngân sách chi tiêu AI hằng tháng của đại lý này, bằng USD, tính từ các lần gọi AI đã ghi của đại lý "
-      + "trong tháng. Chỉ nhân viên thấy: đại lý không bao giờ thấy. Hiện được lưu và hiển thị; việc giữ job mới ở "
-      + "mức duyệt sẽ có khi cổng AI bắt đầu kiểm ngân sách.",
+      + "trong tháng. Chỉ nhân viên thấy: đại lý không bao giờ thấy. Nó thay cho mức chi AI kèm theo gói của đại lý "
+      + "này; một ngoại lệ ở tab Gói đăng ký thắng nó. Ở mức duyệt, job AI mới chờ nhân viên duyệt khi chọn giữ job.",
     fieldMonthly: "Ngân sách tháng (USD)",
-    fieldMonthlyHint: "Để trống là không đặt số tiền: đại lý chỉ bị giới hạn bởi các trần của nền tảng.",
+    fieldMonthlyHint: "Để trống là không đặt số tiền: đại lý không có ngân sách AI, mức kèm theo gói không còn áp "
+      + "dụng. 0 nghĩa là không chi cho AI.",
     noAmount: "không đặt",
     fieldAlert: "Cảnh báo ở (%)",
     fieldAlertHint: "Chuông quản trị kêu ở mức này của ngân sách.",
@@ -104,8 +119,10 @@ export const T360_BUDGET = defineMessages(
     confirmSaveTitle: (name: string) => `Lưu ngân sách AI của ${name}?`,
     confirmSaveBody: (amount: string, alert: number, approval: number, at: string) =>
       `${amount} mỗi tháng; chuông ở ${alert} %, duyệt ở ${approval} % (${at}). Thay đổi được ghi lại.`,
-    confirmNoAmount: "Không đặt số tiền: đại lý chỉ bị giới hạn bởi các trần của nền tảng. Thay đổi được ghi lại.",
+    confirmNoAmount: "Không đặt số tiền: mức chi AI kèm theo gói không còn áp dụng, chỉ còn các trần của nền tảng. "
+      + "Thay đổi được ghi lại.",
     confirmRemoveTitle: (name: string) => `Bỏ ngân sách AI của ${name}?`,
-    confirmRemoveBody: "Đại lý quay về không có ngân sách: chỉ có các trần của nền tảng. Thay đổi được ghi lại.",
+    confirmRemoveBody: "Đại lý quay về mức chi AI kèm theo gói (không có ngân sách nếu gói không đặt). Thay đổi "
+      + "được ghi lại.",
   },
 );
