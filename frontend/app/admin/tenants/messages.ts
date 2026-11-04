@@ -1,5 +1,5 @@
-// app/admin/tenants/messages.ts — AA-994: Tenants (list, create / offboard / restore dialogs, the inline
-// Tenant 360 panel and its older tabs) in English and Vietnamese. The Tenant 360 Settings / Cost / Quality / Markets
+// app/admin/tenants/messages.ts — AA-994: Tenants (list, create / offboard / restore dialogs, the
+// Tenant 360 route and its older tabs) in English and Vietnamese. The Tenant 360 Settings / Cost / Quality / Markets
 // tabs have _components/tenant360.messages.ts. Tenant names, slugs, plan tiers, tour names, statuses from the API,
 // model ids, channels, audit actions and brand rule values stay as sent.
 
@@ -200,6 +200,11 @@ export const TEN = defineMessages(
     colLifecycle: "Lifecycle",
     colSourceActive: "Source Active",
     colQuota: "Quota",
+    // Tenant 360 route (AA-1039 R6 rest)
+    directory: "Directory",
+    loadingTenant: "Loading tenant…",
+    tenantNotFound: "Tenant not found",
+    tenantNotFoundBody: "No tenant with this id is in your list. It may not exist, or it is outside your tenant book.",
   },
   {
     statusActive: "Đang hoạt động",
@@ -381,5 +386,9 @@ export const TEN = defineMessages(
     colLifecycle: "Vòng đời",
     colSourceActive: "Nguồn đang hoạt động",
     colQuota: "Hạn mức",
+    directory: "Danh bạ",
+    loadingTenant: "Đang tải đại lý…",
+    tenantNotFound: "Không tìm thấy đại lý",
+    tenantNotFoundBody: "Không có đại lý mang id này trong danh sách của bạn. Có thể nó không tồn tại, hoặc nằm ngoài nhóm đại lý bạn phụ trách.",
   },
 );

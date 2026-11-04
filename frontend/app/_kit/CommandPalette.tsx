@@ -8,7 +8,7 @@
 //
 // Deep-link targets:
 //   tour   → /admin/master-content?tour=<tour_id>   (opens TourDetailPanelV2)
-//   tenant → /admin/tenants?tenant=<tenant_id>       (expands the tenant's inline 360 panel)
+//   tenant → /admin/tenants/<tenant_id>              (its Tenant 360 route, AA-1039 R6 rest)
 //   job    → /admin/jobs?job=<id>                    (already supported)
 //
 // No external dependency (no cmdk): built on a small modal + the kit tokens. The debounce lives in
@@ -25,6 +25,7 @@ import { useT } from "./core/useI18n";
 import { SHELL_MESSAGES } from "./shell.messages";
 import { useAdminIdentity } from "./useAdminIdentity";
 import { apiGet } from "./api";
+import { tenant360Href } from "@/lib/adminIa";
 
 interface TourHit { tour_id: string; name: string; src_name: string; country: string | null; master: boolean; trashed: boolean; }
 interface TenantHit { tenant_id: string; name: string; slug: string; is_active: boolean; }
@@ -94,7 +95,7 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
       kind: "tenant" as const,
       label: tn.name,
       sub: [tn.slug, tn.is_active ? t("tenantActive") : t("tenantInactive")].filter(Boolean).join(" · "),
-      href: `/admin/tenants?tenant=${encodeURIComponent(tn.tenant_id)}`,
+      href: tenant360Href(tn.tenant_id),
     }));
     const jobs: Row[] = (data?.jobs ?? []).map((j) => ({
       kind: "job" as const,

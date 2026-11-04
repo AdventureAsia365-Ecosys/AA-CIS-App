@@ -49,7 +49,8 @@ test("tier choices come from the live public content plans, cheapest first, plus
 });
 
 test("no hard-coded tier list is left in the tenant pages", () => {
-  for (const f of ["../app/admin/tenants/page.tsx", "../app/admin/tenants/_components/Tenant360Settings.tsx"]) {
+  for (const f of ["../app/admin/tenants/page.tsx", "../app/admin/tenants/_components/TenantDetail.tsx",
+    "../app/admin/tenants/_components/Tenant360Settings.tsx"]) {
     const src = readFileSync(fileURLToPath(new URL(f, import.meta.url)), "utf8");
     assert.ok(!/PLAN_OPTIONS|PLAN_CHOICES/.test(src), `${f} still lists the plans`);
     assert.ok(!/\["starter", "growth", "business"\]/.test(src), `${f} still lists the tiers`);
