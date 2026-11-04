@@ -1,14 +1,18 @@
 "use client";
 // app/admin/seo-intelligence/page.tsx
-// AA-705 — SEO Intelligence: 5 tabs (Overview / Keywords / Questions / Gaps / Spend) merging
-// search_demand + seo_context + published_tours + dfs_call_log. UI kit + react-query (AA-662).
+// AA-705 — SEO Intelligence: 4 tabs (Overview / Keywords / Questions / Gaps) merging
+// search_demand + seo_context + published_tours. UI kit + react-query (AA-662).
+// AA-1039 R6 rest (IA §6.2): the Spend tab (DataForSEO cost by endpoint) folded into Spend › DataForSEO, which shows
+// the same dfs_call_log rollup with the balance, the runs by job and the markets; a link there replaces it for the
+// roles that may open Spend (`?tab=spend` answers 307 there, lib/adminIa.ts).
 // Data: GET /api/admin/seo-intelligence (BFF -> /admin/seo-intelligence).
 // AA-994: text in the UI language (messages.ts); keywords, questions and markets from the API stay as sent.
 
 import type { ColumnDef } from "@tanstack/react-table";
 import { useQuery } from "@tanstack/react-query";
+import Link from "next/link";
 import { useMemo, useState } from "react";
-import { BarChart3, HelpCircle, Search, TriangleAlert, Wallet } from "lucide-react";
+import { Wallet } from "lucide-react";
 import {
   apiGet,
   Badge,
@@ -17,16 +21,20 @@ import {
   ErrorState,
   K,
   LoadingScreen,
-  mono,
   PageHeader,
   SkeletonStyle,
   Tabs, PageFrame,
   useT,
   type Translator,
+  useAdminIdentity,
 } from "../../_kit";
+import { canSeePage } from "@/lib/rbac";
 import { SEO } from "./messages";
 
 type T = Translator<typeof SEO.en>;
+
+/** Spend › AI & data spend › DataForSEO: cost by endpoint and tenant, balance, runs by job, markets. */
+const DFS_SPEND_HREF = "/admin/spend?tab=spend&view=dfs";
 
 interface DemandRow {
   market: string;
@@ -46,16 +54,6 @@ interface GapRow {
   name: string;
   country: string;
   has_research: boolean;
-}
-interface SpendBranch {
-  endpoint: string;
-  tenant_label: string;
-  call_count: number;
-  live_count: number;
-  cache_hit_count: number;
-  total_cost_usd: number;
-  keywords_total: number;
-  cache_hit_rate: number | null;
 }
 interface SeoData {
   overview: {
@@ -77,16 +75,6 @@ interface SeoData {
   keywords: KeywordRow[];
   questions: { question: string; markets: string[] }[];
   gaps: GapRow[];
-  spend: {
-    summary: {
-      total_calls?: number;
-      live_calls?: number;
-      cache_hits?: number;
-      total_cost_usd?: number;
-      cache_hit_rate?: number | null;
-    };
-    branches: SpendBranch[];
-  };
 }
 
 const TABS = [
@@ -94,7 +82,6 @@ const TABS = [
   { key: "keywords", label: "tabKeywords" },
   { key: "questions", label: "tabQuestions" },
   { key: "gaps", label: "tabGaps" },
-  { key: "spend", label: "tabSpend" },
 ] as const;
 
 function Stat({ label, value, sub, color = K.ink }: {
@@ -112,10 +99,6 @@ function Stat({ label, value, sub, color = K.ink }: {
     </div>
   );
 }
-
-const usd = (n: number | undefined | null) =>
-  n == null ? "—" : `$${Number(n).toLocaleString(undefined, { maximumFractionDigits: 4 })}`;
-const pct = (n: number | null | undefined) => (n == null ? "—" : `${Math.round(n * 100)}%`);
 
 function OverviewTab({ d }: { d: SeoData["overview"] }) {
   const t = useT(SEO);
@@ -219,59 +202,17 @@ function GapsTab({ gaps }: { gaps: GapRow[] }) {
   );
 }
 
-function SpendTab({ spend }: { spend: SeoData["spend"] }) {
-  const t = useT(SEO);
-  const s = spend.summary;
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
-        <Stat label={t("dfsCost")} value={usd(s.total_cost_usd)} color={K.accentDeep} />
-        <Stat label={t("calls")} value={(s.total_calls ?? 0).toLocaleString()} />
-        <Stat label={t("liveCalls")} value={(s.live_calls ?? 0).toLocaleString()} />
-        <Stat label={t("cacheHitRate")} value={pct(s.cache_hit_rate)} color={K.success} />
-      </div>
-      <div style={{ background: K.card, border: `1px solid ${K.line}`, borderRadius: 12, padding: "16px 18px" }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: K.ink, marginBottom: 10 }}>{t("spendByEndpoint")}</div>
-        <DataTable<SpendBranch & { rowId: string }>
-          tableId="seo-spend-by-endpoint"
-          data={spend.branches.map((b, i) => ({ ...b, rowId: String(i) }))}
-          getRowId={(b) => b.rowId}
-          searchable={false}
-          paginate={false}
-          compact
-          emptyTitle={t("noSpend")}
-          columns={[
-            { id: "endpoint", header: t("endpoint"), accessorKey: "endpoint",
-              cell: ({ row }) => <span style={{ fontFamily: mono, fontSize: 12 }}>{row.original.endpoint}</span> },
-            { id: "tenant", header: t("tenant"), accessorKey: "tenant_label" },
-            { id: "calls", header: t("calls"), accessorKey: "call_count", meta: { align: "right" },
-              cell: ({ row }) => row.original.call_count.toLocaleString() },
-            { id: "cacheHit", header: t("cacheHit"), accessorKey: "cache_hit_rate", meta: { align: "right" },
-              cell: ({ row }) => pct(row.original.cache_hit_rate) },
-            { id: "keywords", header: t("keywords"), accessorKey: "keywords_total", meta: { align: "right" },
-              cell: ({ row }) => row.original.keywords_total.toLocaleString() },
-            { id: "cost", header: t("cost"), accessorKey: "total_cost_usd", meta: { align: "right" },
-              cell: ({ row }) => usd(row.original.total_cost_usd) },
-          ]}
-        />
-      </div>
-    </div>
-  );
-}
-
 export default function SeoIntelligencePage() {
   const t = useT(SEO);
   const kwCols = useMemo(() => kwColumns(t), [t]);
   const [tab, setTab] = useState("overview");
+  // AA-1039 R6 rest: DataForSEO spend lives on Spend (AI & spend roles); content_lead, who also reads this page, has no
+  // spend.read (root audit S265 §4.1), so the link shows only to a role that may open Spend.
+  const seesSpend = canSeePage(useAdminIdentity().role, "/admin/spend");
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["admin-seo-intelligence"],
-    queryFn: () => apiGet<SeoData>("/api/admin/seo-intelligence?days=30", { admin: true }),
+    queryFn: () => apiGet<SeoData>("/api/admin/seo-intelligence", { admin: true }),
   });
-
-  const icon: Record<string, React.ReactNode> = {
-    overview: <BarChart3 size={14} />, keywords: <Search size={14} />,
-    questions: <HelpCircle size={14} />, gaps: <TriangleAlert size={14} />, spend: <Wallet size={14} />,
-  };
 
   return (
     <>
@@ -280,6 +221,12 @@ export default function SeoIntelligencePage() {
           <PageHeader
             title={t("title")}
             description={t("description")}
+            actions={seesSpend ? (
+              <Link href={DFS_SPEND_HREF} data-testid="seo-dfs-spend-link"
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, color: K.accentDeep }}>
+                <Wallet size={14} /> {t("dfsSpendLink")}
+              </Link>
+            ) : undefined}
           />
           <div style={{ marginBottom: 20 }}>
             <Tabs tabs={TABS.map((x) => ({ key: x.key, label: t(x.label) }))} active={tab} onChange={setTab} />
@@ -323,7 +270,6 @@ export default function SeoIntelligencePage() {
                 )
               )}
               {tab === "gaps" && <GapsTab gaps={data.gaps} />}
-              {tab === "spend" && <SpendTab spend={data.spend} />}
             </>
           )}
         </PageFrame>
