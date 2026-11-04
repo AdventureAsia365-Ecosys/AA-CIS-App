@@ -352,12 +352,15 @@ def test_router_maps_errors_and_passes_the_actor(api):
     assert r.status_code == 200 and calls[-1]["actor"] == "admin:zz-staff" and calls[-1]["action"] == "save"
     assert client.post("/admin/ai-gateway/route-control/save",
                        json={"order_mode": "aws_first", "expected_version": 99}).status_code == 409
-    assert client.post("/admin/ai-gateway/route-control/save", json={}).status_code == 422
-    assert client.post("/admin/ai-gateway/route-control/save", json={"order_mode": "sideways"}).status_code == 422
-    assert client.post("/admin/ai-gateway/route-control/presets/zz_unknown", json={}).status_code == 404
+    assert client.post("/admin/ai-gateway/route-control/save", json={"expected_version": 3}).status_code == 422
+    assert client.post("/admin/ai-gateway/route-control/save",
+                       json={"order_mode": "sideways", "expected_version": 3}).status_code == 422
+    assert client.post("/admin/ai-gateway/route-control/presets/zz_unknown",
+                       json={"expected_version": 3}).status_code == 404
     r = client.post("/admin/ai-gateway/route-control/presets/prefer_aws", json={"expected_version": 3})
     assert r.status_code == 200 and calls[-1]["preset"] == "prefer_aws" and calls[-1]["action"] == "preset"
-    r = client.post("/admin/ai-gateway/route-control/versions/4/revert", json={"note": "back"})
+    assert client.post("/admin/ai-gateway/route-control/versions/4/revert", json={"note": "back"}).status_code == 422
+    r = client.post("/admin/ai-gateway/route-control/versions/4/revert", json={"note": "back", "expected_version": 5})
     assert r.status_code == 200 and calls[-1]["revert_to"] == 4 and calls[-1]["action"] == "revert"
 
 

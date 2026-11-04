@@ -498,7 +498,7 @@ async def _proposal(pool, *, order_mode=None, routes=None, provider_order=None, 
 
 # ── the write ────────────────────────────────────────────────────────────────────────────────────────────────────
 
-async def apply(pool, *, actor: str, action: str, expected_version: Optional[int], note: Optional[str] = None,
+async def apply(pool, *, actor: str, action: str, expected_version: int, note: Optional[str] = None,
                 eval_run_id: Optional[str] = None, break_glass_reason: Optional[str] = None,
                 order_mode: Optional[str] = None, routes: Optional[dict] = None,
                 provider_order: Optional[dict] = None, preset: Optional[str] = None,
@@ -528,31 +528,32 @@ async def apply(pool, *, actor: str, action: str, expected_version: Optional[int
             state = await route_versions.begin(conn)
             if state is None:
                 raise RouteControlUnavailable("route control is not set up on this server yet (migration 370)")
-            if expected_version is not None and state["before_external"] != expected_version:
+            if state["before_external"] != expected_version:
                 raise RouteControlConflict(
                     f"the route config changed since you opened it (version {state['before_external']} is in force, "
                     f"you edited version {expected_version}): reload and check the preview again")
+            # Apply ONLY what the proposal changes against the config the preview read (result["diff"]): a stage or a
+            # model the admin did not touch keeps whatever it has now, even if a migration changed it in between
+            # (begin() recorded that as an external version).
             live = route_versions.normalize(await route_versions.read_live(conn))
-            for stage in sorted(target["routes"]):
-                if stage not in by_stage:
-                    continue
-                want = target["routes"][stage]
-                if route_versions.chain_of(live["routes"].get(stage)) == route_versions.chain_of(want):
-                    continue
-                await conn.execute(
-                    "UPDATE shared.llm_role_config SET model_id = $2, fallback_model_ids = $3, updated_at = now(), "
-                    "updated_by = $4 WHERE stage = $1",
-                    stage, want["model_id"], list(want["fallback_model_ids"]), actor[:128])
-            for model, prio in sorted(target["priorities"].items()):
-                now = live["priorities"].get(model) or {}
-                for conn_key, p in sorted(prio.items()):
-                    if conn_key in now and now[conn_key] != p:
-                        await conn.execute(
-                            "UPDATE shared.llm_model_deployment SET priority = $3, updated_at = now(), updated_by = $4 "
-                            "WHERE model_key = $1 AND connection_key = $2", model, conn_key, p, actor[:128])
-            if target["order_mode"] != live["order_mode"]:
-                await conn.execute("UPDATE shared.llm_route_settings SET order_mode = $1 WHERE singleton",
-                                   target["order_mode"])
+            for change in result["diff"]:
+                if change["kind"] == "route" and change["stage"] in by_stage and change["after"]:
+                    want = target["routes"][change["stage"]]
+                    await conn.execute(
+                        "UPDATE shared.llm_role_config SET model_id = $2, fallback_model_ids = $3, updated_at = now(), "
+                        "updated_by = $4 WHERE stage = $1",
+                        change["stage"], want["model_id"], list(want["fallback_model_ids"]), actor[:128])
+                elif change["kind"] == "provider_order":
+                    now = live["priorities"].get(change["model"]) or {}
+                    for conn_key, p in sorted((target["priorities"].get(change["model"]) or {}).items()):
+                        if conn_key in now and now[conn_key] != p:
+                            await conn.execute(
+                                "UPDATE shared.llm_model_deployment SET priority = $3, updated_at = now(), "
+                                "updated_by = $4 WHERE model_key = $1 AND connection_key = $2",
+                                change["model"], conn_key, p, actor[:128])
+                elif change["kind"] == "order_mode" and change["after"] in ORDER_MODES:
+                    await conn.execute("UPDATE shared.llm_route_settings SET order_mode = $1 WHERE singleton",
+                                       change["after"])
             version = await route_versions.finish(conn, state, actor=actor,
                                                   action="revert" if revert_to is not None else action,
                                                   note=note, preset=preset, reverted_from=revert_to)

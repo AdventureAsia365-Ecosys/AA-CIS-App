@@ -71,7 +71,7 @@ class PreviewBody(Proposal):
 
 class _WriteMeta(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    expected_version: Optional[int] = Field(None, ge=1)
+    expected_version: int = Field(..., ge=1)    # the version the caller looked at (409 when another was saved)
     note: Optional[str] = Field(None, max_length=route_versions.NOTE_MAX)
     eval_run_id: Optional[str] = Field(None, max_length=64)
     break_glass_reason: Optional[str] = Field(None, max_length=route_evidence.BREAK_GLASS_MAX_CHARS)

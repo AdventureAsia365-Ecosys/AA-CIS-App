@@ -6474,16 +6474,9 @@
             "title": "Eval Run Id"
           },
           "expected_version": {
-            "anyOf": [
-              {
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Expected Version"
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
           },
           "note": {
             "anyOf": [
@@ -6544,6 +6537,9 @@
             "title": "Routes"
           }
         },
+        "required": [
+          "expected_version"
+        ],
         "title": "SaveBody",
         "type": "object"
       },
@@ -8694,16 +8690,9 @@
             "title": "Eval Run Id"
           },
           "expected_version": {
-            "anyOf": [
-              {
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Expected Version"
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
           },
           "note": {
             "anyOf": [
@@ -8718,6 +8707,9 @@
             "title": "Note"
           }
         },
+        "required": [
+          "expected_version"
+        ],
         "title": "_WriteMeta",
         "type": "object"
       }
