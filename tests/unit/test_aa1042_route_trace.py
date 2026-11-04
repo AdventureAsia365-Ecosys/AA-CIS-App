@@ -5,7 +5,8 @@
   no provider call; a writer answered by a fallback model notes it for the quality guard (a judge does not).
 - call_log: billed_fields passes the route keys; record_call / record_calls fold them into quality_signal.
 - Quality guard: the fallback_writer degraded entry is "count" by default and "hard" with the stage's hold switch;
-  A1 / T2 hold through DEGRADED_DETECTOR, T9 through the held label.
+  A1 holds through DEGRADED_DETECTOR, T9 through the held label, T2 through the version's admin-only mark
+  (judge_breakdown.fallback_writer).
 No AWS, no vendor, no DB, no paid call.
 """
 import asyncio
@@ -234,11 +235,76 @@ def test_a1_marks_a_fallback_writer_and_holds_it_with_the_switch(monkeypatch):
     assert "written by a fallback model" in held["feedback"] and "did not run" not in held["feedback"]
 
 
-def test_t2_uses_its_own_stage_switch(monkeypatch):
+def test_t2_graph_state_is_marked_never_blocked(monkeypatch):
+    # review fix: the T2 hold is the version's admin-only label (t2_mark), never a hard code inside the graph
     _hold(monkeypatch, "t2_generate")
-    state = {"fallback_used": True, "generate_stage": "t2_generate", "degraded": []}
-    (e,) = route_guard.with_a1_entries(state)["degraded"]
-    assert (e["detector"], e["severity"]) == ("route:t2_generate", "hard")
+    state = {"fallback_used": True, "generate_stage": "t2_generate", "is_tenant_rewrite": True, "degraded": [],
+             "failure_codes": []}
+    out = degraded.apply_a1_hold(route_guard.with_a1_entries(state))
+    (e,) = out["degraded"]
+    assert (e["detector"], e["severity"]) == ("route:t2_generate", "count")
+    assert degraded.HOLD_CODE not in out["failure_codes"]
+
+
+def test_t2_mark_is_held_with_the_stage_switch():
+    assert route_guard.t2_mark([]) is None and route_guard.t2_mark(None) is None
+    count = route_guard.t2_mark([{"stage": "t2_generate", "model": "m2", "position": 1, "severity": "count"}])
+    assert count["held"] is False and count["entries"][0]["detector"] == "route:t2_generate"
+    hard = route_guard.t2_mark([{"stage": "t2_generate", "model": "m2", "position": 1, "severity": "count"},
+                                {"stage": "t2_repair", "model": "m3", "position": 2, "severity": "hard"}])
+    assert hard["held"] is True and len(hard["entries"]) == 2
+
+
+def _t2_save(monkeypatch, *, fallback: bool, hold: bool = False):
+    """Run the T2 save (tests/unit/test_aa795_t2_judge_breakdown harness) with a writer the gateway reports as
+    answered by a fallback model (route_guard.note_fallback_write, as client._note_fallback_write does)."""
+    from unittest.mock import patch
+    from tests.unit.test_aa778_t2_em_dash import SOURCE as T2_SOURCE, _pool
+    from services.jobs import t2_rewrite_job as t2
+    if hold:
+        _hold(monkeypatch, "t2_generate")
+    result = {"status": "success", "quality_score": 8.0, "degraded": [],
+              "generated": {"name": "Ridge walk", "subtitle": "s", "summary": "Two quiet days.",
+                            "highlights": ["A ridge"], "itineraries": "Day 1: Walk.", "seo_title": "t",
+                            "seo_meta": "m", "trip_type": "a"}}
+
+    async def rewrite(*a, **k):
+        if fallback:
+            route_guard.note_fallback_write("t2_generate", "zz-model-two", 1)
+        return result
+    qa = {"result": result, "passed": True, "attempts": 0, "structural_issues": [], "grounding_issues": [],
+          "chosen_attempt": 0}
+    conn = AsyncMock()
+    conn.fetchrow.return_value = None
+    conn.fetchval.return_value = 5.0
+    tour = dict(T2_SOURCE, subtitle="", description="", seo_title="", seo_meta="", country="Nepal", duration="2 Days")
+    with patch("api.routers.v1_pipeline._rewrite_tour", AsyncMock(side_effect=rewrite)), \
+         patch("services.acp_produce.tenant_pipeline.run_t3_qa_gate", AsyncMock(return_value=qa)), \
+         patch("services.seo_intelligence.s1_prefetch.tenant_market_seo", AsyncMock(return_value=("US", None))), \
+         patch("services.writing_memory.insertion.resolve", AsyncMock(return_value=None)):
+        diag = asyncio.run(t2._rewrite_and_save(_pool(conn), {"tour_id": "tour-1"}, tour, {}, "tenant-1", "v-1",
+                                                "p-1"))
+    [save] = [c.args for c in conn.execute.call_args_list if "SET rewritten_content" in c.args[0]]
+    return save, diag
+
+
+def test_t2_version_written_by_a_fallback_model_stores_the_admin_only_mark(monkeypatch):
+    save, diag = _t2_save(monkeypatch, fallback=True)
+    stored = json.loads(save[9])
+    assert stored["fallback_writer"]["held"] is False
+    assert stored["fallback_writer"]["entries"][0]["detector"] == "route:t2_generate"
+    assert diag["fallback_writer"]["held"] is False and diag["t3"]["graph_degraded"] == []
+    assert save[2] == "ai_generated"                   # the status stays score-based: the tenant gets the text
+    assert "fallback_writer" not in save[1]            # never in the tenant-facing text
+
+
+def test_t2_version_is_held_with_the_switch_and_unmarked_without_a_fallback(monkeypatch):
+    save, _ = _t2_save(monkeypatch, fallback=True, hold=True)
+    assert json.loads(save[9])["fallback_writer"]["held"] is True and save[2] == "ai_generated"
+    route_watch.reset()
+    save, diag = _t2_save(monkeypatch, fallback=False)
+    assert save[9] is None or "fallback_writer" not in json.loads(save[9])
+    assert "fallback_writer" not in diag
 
 
 def test_with_a1_entries_replaces_its_own_entry_and_leaves_others():

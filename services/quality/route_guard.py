@@ -8,16 +8,18 @@ name ``fallback_writer``:
 - severity ``count`` (the default): the output is MARKED — A1 stores it in ``generated_content.metadata.degraded``,
   T9 adds the non-blocking ``degraded`` flag (``content_piece.flags``, shown on Tenant QA > Content quality) and a
   ``repair_log`` entry; the running job counts it in ``shared.job.result.degraded``;
-- severity ``hard`` when the stage's ``hold_fallback_writes`` is on (``shared.llm_route_policy``, CIS 373, default
-  off): A1 adds ``DEGRADED_DETECTOR`` (the existing hold → Review Queue path), T9 labels the piece ``held``
-  (admin-only: the tenant still receives it, product rule S232).
+- severity ``hard`` when the stage's ``hold_fallback_writes`` is on (``shared.llm_route_policy``, default off): A1
+  adds ``DEGRADED_DETECTOR`` (the existing hold → Review Queue path); T9 labels the piece ``held`` and T2 marks the
+  version held (``tenant_tour_versions.judge_breakdown.fallback_writer``) — both admin-only: the tenant still
+  receives the content (product rule S232), the label only asks QA to review it.
 
 Who tells it: the gateway (``shared/llm_client/client.py`` ``_note_fallback_write``) calls
 ``note_fallback_write(stage, model, position)`` when a WRITER-role request is answered by route position > 0 (a
 later model of the route; the same model on another provider is not a fallback model). The note goes to the job's
-degraded collector and, when one is bound (``collect_output``, T9 binds one per piece), to the output's collector.
-The A1 / T2 graph does not need the collector: its writer state already carries ``fallback_used`` and its stage
-(``generate_stage``: ``s1_generate``, or ``t2_generate`` on a tenant rewrite; ``a1_entries``).
+degraded collector and, when one is bound (``collect_output``), to the output's collector: T9 binds one per piece,
+T2 one per version (the graph's writer and every T3 repair round; ``t2_mark``). The A1 graph does not need the
+collector: its writer state already carries ``fallback_used`` (``a1_entries``). In a T2 graph state the entry is
+always ``count``: the T2 hold is the version's admin-only label, never a block inside the graph.
 
 Pure apart from the cached policy read (``route_watch.hold_fallback_writes``, never raises).
 """
@@ -84,15 +86,31 @@ def writer_stage(state: dict) -> str:
     return state.get("generate_stage") or A1_WRITER_STAGE
 
 
+def is_tenant_rewrite(state: dict) -> bool:
+    """A T2 graph state (a tenant rewrite: its own writer stage)."""
+    return bool(state.get("is_tenant_rewrite")) or writer_stage(state) != A1_WRITER_STAGE
+
+
 def a1_entries(state: dict) -> list[dict]:
     """A1 / T2: the ``fallback_writer`` entry when the graph's writer was answered by a fallback model
-    (``fallback_used``, set by the gateway for route position > 0). Pure apart from the cached policy read."""
+    (``fallback_used``, set by the gateway for route position > 0). ``count`` in a T2 state (its hold is the
+    version's label, ``t2_mark``). Pure apart from the cached policy read."""
     if not state.get("fallback_used"):
         return []
     stage = writer_stage(state)
     model = state.get("model_used") or "?"
+    sev = "count" if is_tenant_rewrite(state) else severity(stage)
     return [degraded.entry(FALLBACK_WRITER, detector=f"{DETECTOR_PREFIX}{stage}",
-                           detail=f"{model} (fallback model)", severity=severity(stage))]
+                           detail=f"{model} (fallback model)", severity=sev)]
+
+
+def t2_mark(notes: Optional[Iterable[dict]]) -> Optional[dict]:
+    """T2: the admin-only mark a version stores in ``judge_breakdown.fallback_writer`` from its collector's notes
+    (None when no fallback model wrote it). ``held`` when one of the writer stages holds fallback writes. Pure."""
+    lst = entries(notes or [])
+    if not lst:
+        return None
+    return {"held": degraded.is_hard(lst), "entries": lst}
 
 
 def with_a1_entries(state: dict) -> dict:

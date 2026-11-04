@@ -451,4 +451,6 @@ async def test_job_result_records_the_chosen_draft_and_every_score():
     assert diag["t3"] == {"chosen_attempt": 1, "chosen_via": "sentence_repair", "drafts": qa["drafts"],
                           "sentence_repairs": 1, "background_cleared": 0,
                           "graph_draft_scores": [{"attempt": 0, "score": 7.0}], "best_draft_restored": True,
-                          "degraded": qa["degraded"]}
+                          "degraded": qa["degraded"],
+                          # AA-1042: the writer graph's own degraded[] sits next to T3's
+                          "graph_degraded": _res(GROUNDING_BAD, 7.0).get("degraded") or []}

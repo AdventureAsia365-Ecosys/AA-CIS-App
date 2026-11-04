@@ -13,6 +13,8 @@ cancelled), `on_terminal` marks the version 'failed' so the portal shows Failed 
 """
 from __future__ import annotations
 
+from contextlib import ExitStack
+
 import structlog
 
 from services.acp_shared.writing_progress import (
@@ -22,6 +24,7 @@ from shared.jobs.registry import JobContext, NonRetryable, job_kind
 from shared.llm_client import stream_sink
 from shared.llm_client.errors import is_stage_switch_hold, stage_disabled_in
 from shared.llm_client.tenant_budget import ON_HOLD_MESSAGE, approval_stop_in, is_approval_stop
+from services.quality import route_guard
 from services.quality.registry import threshold
 
 logger = structlog.get_logger()
@@ -226,6 +229,10 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
     if writing_memory:
         diag["writing_release"] = _wm_stamp(writing_memory)
 
+    # AA-1042 (Quality guard): this version's collector of writer calls a fallback model answered (the graph's writer
+    # and every T3 repair round); the version stores the admin-only mark in judge_breakdown.fallback_writer.
+    fb_scope = ExitStack()
+    fb_notes = fb_scope.enter_context(route_guard.collect_output())
     try:
         result = await _do_rewrite(
             tour_dict, idx=0, total=1,
@@ -243,6 +250,7 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
             # tenant rewrite must not introduce new numbers/measurements beyond.
             from services.acp_produce.tenant_pipeline import run_t3_qa_gate
             source_texts = [str(v) for v in tour_dict.values() if v]
+            graph_degraded = result.get("degraded") or []   # AA-1042: the writer graph's own degraded[] entries
             progress_step("check")  # AA-637
             qa = await run_t3_qa_gate(
                 tour_dict, source_texts, result, brand_rules,
@@ -262,6 +270,8 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
                 # AA-925: T3's fail-open paths (Jev outages while clearing hits, repair-contract reverts) —
                 # job.result is where they are read; the log event alone was invisible outside CloudWatch.
                 "degraded": qa.get("degraded") or [],
+                # AA-1042: the writer graph's degraded[] (fallback_writer and the fail-open detectors)
+                "graph_degraded": graph_degraded,
             }
 
             import json as _j3
@@ -308,6 +318,12 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
                 result, rewritten, tour_dict, brand_rules, final_score=final_score,
                 score_source="rewrite" if rewrite_score else "source_fallback",
                 chosen_attempt=qa.get("chosen_attempt"))
+            # AA-1042 (Quality guard): a fallback model wrote this version (marked; held for review when the stage
+            # holds fallback writes). Admin-only like the rest of judge_breakdown: the tenant still receives the text.
+            fb_mark = route_guard.t2_mark(fb_notes)
+            if fb_mark is not None:
+                judge_breakdown = {**(judge_breakdown or {}), "fallback_writer": fb_mark}
+                diag["fallback_writer"] = fb_mark
             if judge_breakdown is not None:
                 diag["judge"] = {"binding": judge_breakdown.get("binding"),
                                  "brand_claims_unsupported": len(
@@ -387,6 +403,8 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
     except Exception:
         progress_fail()  # AA-637
         raise
+    finally:
+        fb_scope.close()
     return diag
 
 
