@@ -890,6 +890,7 @@ _LLM_COLS = """created_at AS at, stage, role, model, provider, account, connecti
            tour_id::text AS tour_id, tokens_in, tokens_out, cache_read_tokens, cache_write_tokens,
            cost_usd::float AS cost_usd, stop_reason, fallback_used, pricing_mode, status, error_class, latency_ms,
            attempt_no, coalesce(app, quality_signal ->> 'app', 'cis') AS app,
+           quality_signal ->> 'route_trace' AS route_trace,
            coalesce(is_shadow, coalesce(quality_signal ->> 'shadow', '') = 'true') AS shadow"""
 _DFS_COLS = """created_at AS at, endpoint, keyword, location_code, keyword_count, cost_usd::float AS cost_usd,
            cache_hit, fetched_live, tour_id::text AS tour_id, job_id::text AS job_id, status, latency_ms, error,
@@ -1016,7 +1017,9 @@ def llm_event(r: dict) -> dict:
             "detail": {"stop_reason": r.get("stop_reason"), "pricing_mode": r.get("pricing_mode"),
                        "cache_read_tokens": r.get("cache_read_tokens"),
                        "cache_write_tokens": r.get("cache_write_tokens"), "attempt_no": r.get("attempt_no"),
-                       "connection_key": r.get("connection_key"), "tour_id": r.get("tour_id")}}
+                       "connection_key": r.get("connection_key"), "tour_id": r.get("tour_id"),
+                       # AA-1042: the gateway request of the row (AI gateway > Trace opens it)
+                       "route_trace": r.get("route_trace")}}
 
 
 # AA-1025 D3: the decision_log error texts of a Jev ask that the gateway or the provider refused with nothing answered

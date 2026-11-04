@@ -84,6 +84,7 @@ from services.acp_produce.brand import fetch_brand_rubric_text
 from services.acp_content_writing.gate_eval import ledger_snapshot  # AA-791
 from services.quality import degraded  # AA-925
 from services.quality import repair_contract  # AA-790
+from services.quality import route_guard  # AA-1042
 from services.quality import registry as qr
 from services.writing_memory import l0 as wm_l0  # AA-918
 from services.writing_memory import insertion as wm_insertion  # AA-919 (WM-18 / WM-20)
@@ -1069,12 +1070,16 @@ class _StepGuard:
 def _degraded_final(gate_ledger: list[dict], flags: list[dict], repair_log: list[dict], status: str,
                     held_reason: Optional[str], *, piece_id=None, step_reverts: Optional[list[str]] = None) -> tuple:
     """AA-925 — the final attempt's `degraded[]` (services/quality/degraded.py): the F9 outage marker on its
-    ledger result and the job's repair-contract reverts (sentence repairs, and with ``step_reverts`` the AA-790
+    ledger result, AA-1042 the writer calls a fallback model answered (services/quality/route_guard.py), and the job's
+    repair-contract reverts (sentence repairs, and with ``step_reverts`` the AA-790
     deterministic-step reverts). Adds the admin flag + a repair_log entry, logs one
     `quality_degraded` event and holds an approved piece on a hard entry. Returns
     (status, held_reason, flags, repair_log)."""
     contract = sum(int(e.get("contract_reverts") or 0) for e in repair_log if isinstance(e, dict))
     lst = degraded.t9_entries(gate_ledger, contract)
+    # AA-1042 (Quality guard): a writer call of this piece answered by a fallback model (the t9_write job binds the
+    # collector; marked, or held when the stage holds fallback writes — admin-only, the tenant still receives it)
+    lst = lst + route_guard.entries()
     if step_reverts:  # AA-790 — deterministic edits reverted by repair-contract invariant 7
         lst = degraded.add(lst, degraded.REPAIR_CONTRACT, detector="t9_step", count=len(step_reverts),
                            detail=", ".join(dict.fromkeys(step_reverts)))

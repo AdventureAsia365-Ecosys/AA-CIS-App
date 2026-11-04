@@ -291,6 +291,16 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/ai-gateway/capacity"): SPEND_READ,               # AA-1025 H2: TPM limits, lines, claim hold
     ("PUT", "/admin/ai-gateway/capacity/{connection_key}/{model_key}"): AI_ADMIN,     # AA-1025 H2: audited
     ("DELETE", "/admin/ai-gateway/capacity/{connection_key}/{model_key}"): AI_ADMIN,  # AA-1025 H2: audited
+    # AA-1042 (admin_llm_route) — AI gateway > Trace: route trace reads, the route alert policy, the route test
+    ("GET", "/admin/ai-gateway/route-trace/requests"): SPEND_READ,
+    ("GET", "/admin/ai-gateway/route-trace/requests/{trace_id}"): SPEND_READ,
+    ("GET", "/admin/ai-gateway/route-trace/rungs"): SPEND_READ,
+    ("GET", "/admin/ai-gateway/route-trace/fallback-content"): SPEND_READ,
+    ("POST", "/admin/ai-gateway/route-trace/test"): AI_ADMIN,          # a few tiny paid calls, audited
+    ("GET", "/admin/ai-gateway/route-policy"): SPEND_READ,
+    ("PUT", "/admin/ai-gateway/route-policy/{stage}"): AI_ADMIN,       # audited llm_route_policy_set
+    ("DELETE", "/admin/ai-gateway/route-policy/{stage}"): AI_ADMIN,    # audited llm_route_policy_cleared
+    ("POST", "/admin/ai-gateway/route-watch/run"): AI_ADMIN,           # enqueue llm_route_watch ($0)
     # ── admin_job_runner — job control + retention
     ("POST", "/admin/job-runner/jobs/{job_id}/cancel"): OPS_WRITE,
     ("POST", "/admin/job-runner/jobs/{job_id}/retry"): OPS_WRITE,
