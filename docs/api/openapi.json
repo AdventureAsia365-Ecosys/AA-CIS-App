@@ -36302,7 +36302,7 @@
     },
     "/admin/tenants/{tenant_id}/offboard": {
       "post": {
-        "description": "Tenant offboarding: cancel tenant (account_status offboarding), write the audit row. PRD v1.0 §3.2.\nSoft state only (AA-797, Nghiệp 14/10/2026): no tenant data or setting is deleted or\noverwritten (brand rules, planning config, T2 versions, content, markets, plan_id, users), so\nPOST /tenants/{id}/restore brings the tenant back whole. PATCH on an offboarded tenant returns 409.\nAA-1036: there is no API key to revoke any more; account_status is the one offboarded marker (the 354\ntrigger keeps is_active / cancelled_at in step, and the studio session exchange refuses the tenant). The tenant's QUEUED jobs are cancelled (running ones finish).\nThe Jev allow-list row is removed (AA-741) but snapshotted into the audit row so restore can\nput it back. Tenant data erasure is a separate step (AA-839: after offboarding plus a retention\nwindow, with explicit approval, per the data-erasure runbook), not automated here.",
+        "description": "Tenant offboarding: cancel tenant (account_status offboarding), write the audit row. PRD v1.0 §3.2.\nSoft state only (AA-797, Nghiệp 14/10/2026): no tenant data or setting is deleted or\noverwritten (brand rules, planning config, T2 versions, content, markets, plan_id, users), so\nPOST /tenants/{id}/restore brings the tenant back whole. PATCH on an offboarded tenant returns 409.\nAA-1036: there is no API key to revoke any more; account_status is the one offboarded marker (the 354\ntrigger keeps is_active / cancelled_at in step, and the studio session exchange refuses the tenant).\nThe tenant's QUEUED jobs are cancelled (running ones finish).\nThe Jev allow-list row is removed (AA-741) but snapshotted into the audit row so restore can\nput it back. Tenant data erasure is a separate step (AA-839: after offboarding plus a retention\nwindow, with explicit approval, per the data-erasure runbook), not automated here.",
         "operationId": "offboard_tenant_admin_tenants__tenant_id__offboard_post",
         "parameters": [
           {
@@ -36688,7 +36688,7 @@
     },
     "/admin/tenants/{tenant_id}/restore": {
       "post": {
-        "description": "Nghiệp (14/10/2026): an offboarded tenant must come back quickly with its data and settings.\nOffboard deletes nothing, so restore only clears the offboard markers (cancelled_at,\ncancellation_reason), sets account_status active, re-adds the Jev allow-list row offboard snapshotted\n(AA-1036: no API key is issued; members sign in with the partner pool as before). plan_tier / plan_id / rate limit and every\nsetting are left exactly as they were. Jobs offboard cancelled are NOT re-enqueued; they are\nlisted so the admin can re-run them. 409 unless the tenant is offboarded.",
+        "description": "Nghiệp (14/10/2026): an offboarded tenant must come back quickly with its data and settings.\nOffboard deletes nothing, so restore only clears the offboard markers (cancelled_at,\ncancellation_reason), sets account_status active, re-adds the Jev allow-list row offboard snapshotted\n(AA-1036: no API key is issued; members sign in with the partner pool as before).\nplan_tier / plan_id / rate limit and every\nsetting are left exactly as they were. Jobs offboard cancelled are NOT re-enqueued; they are\nlisted so the admin can re-run them. 409 unless the tenant is offboarded.",
         "operationId": "restore_tenant_admin_tenants__tenant_id__restore_post",
         "parameters": [
           {

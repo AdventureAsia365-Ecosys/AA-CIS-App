@@ -53,7 +53,7 @@ def _runs_scope(route, inherited, path) -> bool:
 
 def test_the_scan_sees_the_tenant_routes():
     staff = [(m, p) for m, p, _, _ in _tenant_routes() if _is_staff_path(p)]
-    assert len(staff) >= 50, staff        # 47 before R2 + the three assignment routes
+    assert len(staff) >= 49, staff        # 47 before R2 + the three assignment routes - generate-key (AA-1036)
     assert ("GET", "/admin/tenants/{tenant_id}/usage") in staff
     assert ("PUT", "/admin/tenants/{tenant_id}/assignments/{admin_user_id}") in staff
 

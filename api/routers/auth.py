@@ -87,11 +87,12 @@ def _create_partner_session_jwt(tenant_id: str, name: str, plan_tier: str, *, me
                                 content_studio_role: str, not_after: Optional[datetime] = None) -> tuple[str, datetime]:
     """AA-979 P2b — the tenant JWT of a partner-pool sign-in (``POST /auth/tenant-session``).
 
-    Same shape and secret as the legacy tenant token (``_create_jwt``: ``role=tenant``, ``sub`` = tenant id), so every
-    ``/v1/*`` route and ``/auth/verify-tenant`` accept it unchanged, plus: ``client=portal`` (an unmetered portal session, AA-760),
-    ``amr=partner`` (how the session was opened), ``mid`` (the membership) and ``csr`` (the Content studio role the
-    tenant role middleware enforces). Lives at most :data:`PARTNER_SESSION_MAX_S` and never past ``not_after`` (the
-    partner access token's own expiry), so a removed member or a disabled account loses the studio within 15 min."""
+    Same shape and secret as the legacy tenant token (``_create_jwt``: ``role=tenant``, ``sub`` = tenant id), so
+    every ``/v1/*`` route and ``/auth/verify-tenant`` accept it unchanged, plus: ``client=portal`` (an unmetered
+    portal session, AA-760), ``amr=partner`` (how the session was opened), ``mid`` (the membership) and ``csr`` (the
+    Content studio role the tenant role middleware enforces). Lives at most :data:`PARTNER_SESSION_MAX_S` and never
+    past ``not_after`` (the partner access token's own expiry), so a removed member or a disabled account loses the
+    studio within 15 min."""
     if content_studio_role not in STUDIO_ROLES:
         raise ValueError("unknown Content studio role")
     now = datetime.now(timezone.utc)
