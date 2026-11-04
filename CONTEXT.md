@@ -1910,13 +1910,39 @@ CHECK + `api/core/e2e_staff.py` / `staff_directory.require_e2e_test_scope` / `re
 the WORKFORCE triggers' dev-only map) —, `display_name`, `cognito_iss` + `cognito_sub`, `last_login_at`
 ("last seen"), `is_owner`; `password_hash` nullable, NULL fails closed). A staff member's role in another app
 lives in `shared.staff_app_grant (admin_user_id, app, role)` (`app` = `booking`, roles `admin` / `sales` /
-`contracting` / `content_creator`). AA-Partner (CRM) staff roles are a set per person in
+`contracting` / `content_creator` / `finance` (CIS 363, group `booking-finance`)). AA-Partner (CRM) staff roles are a set per person in
 `shared.staff_crm_grant (admin_user_id, role)` (AA-1031, migration 330: `platform_admin` / `ops` / `support` =
 WORKFORCE groups `crm-platform-admin` / `crm-ops` / `crm-support`, root ADR 0006b decision 6), written by the same
 directory writer with its own audit field and synced (added and removed) like the CIS / Booking groups; the E2E
 directory addresses hold none, and the A10c CRM staff E2E user stays outside the directory. The Staff page's "Platform
 owner" preset sets CIS admin + Booking admin + CRM `platform_admin` in one change (never the owner flag). Root ADR 0006 +
 amendments 0006a / 0006b are the design; tenants are separate (`cis_tenant_token`, role `tenant`).
+
+**R2 roles and tenant scope (AA-1035 slice 1, root ADR 0019 d3 / d4; CIS 362-364).** `shared.admin_role` also has
+`content_lead`, `tenant_qa`, `customer_success`, `support`, `finance` and `ai_ops` (WORKFORCE groups `cis-<role>`,
+ranked 10-39; `api/core/staff_identity.py GROUP_ROLES`). `reviewer` merged into `content` (CIS 363; the group
+`cis-reviewer` signs in as `content` for one release, the A10 E2E row stays `reviewer` until then; the Staff page no
+longer offers it). Each role is one explicit capability set in `api/core/staff_authz.py ROLE_PERMS` (the matrix of
+root `docs/audits/2026-11-03-S265-ecosystem-restructure/clarifications.md` section 3), deny by default: a POLICY entry
+is one capability or `any_of(...)`; a GET with no entry needs `content.read` (so `customer_success`, `support` and
+`finance` reach only their listed routes). `tenant.read` still means "every tenant" (admin); the split adds
+`tenant_content.read` (tenant text: Tenant QA, Content Trace, A4 logs, Writing Lab text), `catalog.read` (the atom
+store), `tenant.book.read` / `tenant.member.write` (the tenant desk), `tenant.assign`, `billing.read` / `billing.write`
+(PATCH `/admin/tenants/{id}` is field-level: finance only `plan_tier` / `is_active`), `wave.run` and `lab.read`. The
+content-quality writes check `quality.write` (admin, content_lead, tenant_qa) instead of the literal admin role.
+**Tenant scope:** `api/core/tenant_scope.py require_tenant_scope` runs on every staff route with `{tenant_id}`
+(`dependencies=TENANT_SCOPED`; `tests/unit/test_aa1035_tenant_scope_routes.py` fails CI on a route without it):
+admin, finance, ai_ops, content_lead and tenant_qa reach every tenant (their capabilities still decide the routes);
+`customer_success` only tenants in `shared.staff_tenant_assignment` for them (kind owner / backup / support, one owner
+per tenant), `support` those plus the pool (agency / demo tenants without an owner or in the `tech_touch` segment);
+content, reviewer and viewer only the aa_internal tenant (Master Content). The staff member is the verified Cognito
+identity, or with the main admin secret the `x-admin-user-id` header; a book role without one gets 403. Refusals are
+403 `Tenant outside your scope` whether the tenant exists or not. `GET /admin/tenants` lists only the caller's scope.
+Assignments: `GET|PUT|DELETE /admin/tenants/{tenant_id}/assignments[/{admin_user_id}]` (writes `tenant.assign`,
+audited `tenant.assignment_set` / `_removed`). `shared.staff_view_as_session` exists (schema only); view-as, the
+Assignments page, the logged ai_ops Lab read and the `crm.ops.v1` scope relay are slice 2. The frontend matrix
+(`frontend/lib/rbac.ts`) mirrors the roles and capabilities; the role x route decisions are pinned in
+`tests/unit/snapshots/aa1035_role_route_matrix.json`.
 
 **Dev-only E2E CIS admin (A10b, AA-816 S252, root ADR 0006a A10b).** The agent's own admin identity for evidence
 screenshots of the admin-only pages and the AA-916 WM-07 sentence-action sample. `api/core/e2e_staff.py` holds the

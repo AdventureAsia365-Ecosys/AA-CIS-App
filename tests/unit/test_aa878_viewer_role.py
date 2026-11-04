@@ -50,7 +50,9 @@ VIEWER = "viewer"
 ADMIN_ID = "6f1c2c4e-8a51-4c1e-9d0b-2f3c4d5e6f71"
 
 _WRITE_KEYS = sorted(k for k in POLICY if k[0] != "GET")
-_ADMIN_GET_KEYS = sorted(k for k in POLICY if k[0] == "GET")
+# AA-1035: the aa_internal details read is a POLICY GET the viewer passes (content.read; tenant_scope keeps it on the
+# aa_internal tenant), so it is not an admin-only GET.
+_ADMIN_GET_KEYS = sorted(k for k in POLICY if k[0] == "GET" and k != ("GET", "/admin/tenants/{tenant_id}/details"))
 
 
 # ── Capability map ───────────────────────────────────────────────────────────────────────────────
@@ -59,7 +61,9 @@ def test_viewer_holds_content_read_only():
     assert ROLE_PERMS[VIEWER] == frozenset({CONTENT_READ})
     assert VIEWER in STAFF_ROLES
     assert READ_ONLY_ROLES == frozenset({VIEWER})
-    assert NO_BOOKING_ROLES == frozenset({VIEWER})
+    # AA-1035 R2: none of the new roles gets a bridge token either (Booking reads booking-* groups only)
+    assert NO_BOOKING_ROLES == frozenset({VIEWER, "content_lead", "tenant_qa", "customer_success", "support",
+                                          "finance", "ai_ops"})
 
 
 def test_viewer_is_a_staff_role_for_the_legacy_login():
@@ -73,7 +77,8 @@ def test_viewer_is_not_assignable_from_the_staff_page():
     from api.services import staff_directory
 
     assert VIEWER not in staff_directory.CIS_ROLES
-    assert set(staff_directory.CIS_ROLES) == set(ROLE_PERMS) - {VIEWER}
+    # AA-1035: nor the reviewer alias (merged into content, CIS 363)
+    assert set(staff_directory.CIS_ROLES) == set(ROLE_PERMS) - {VIEWER, "reviewer"}
     with pytest.raises(staff_directory.StaffDirectoryError) as exc:
         staff_directory.require_cis_role(VIEWER)
     assert exc.value.status == 400
@@ -120,9 +125,12 @@ def test_read_only_rule_covers_a_write_without_a_policy_entry(method):
 @pytest.mark.parametrize("method", ["GET", "HEAD", "OPTIONS"])
 def test_viewer_reads_the_open_routes(method):
     for path in ("/admin/llm-config", "/admin/review-queue", "/admin/notifications", "/admin/search",
-                 "/admin/tenants/{tenant_id}/details", "/admin/tours/{tour_id}/detail"):
+                 "/admin/tours/{tour_id}/detail"):
         assert (method, path) not in POLICY
         assert denial_reason(principal_from_role(VIEWER), method, path) is None
+    # AA-1035: the aa_internal details read is in POLICY (content.read among its capabilities) and tenant-scoped
+    if method == "GET":
+        assert denial_reason(principal_from_role(VIEWER), method, "/admin/tenants/{tenant_id}/details") is None
 
 
 def test_padded_role_header_is_still_read_only():
@@ -255,8 +263,9 @@ def test_staff_list_counts_viewers():
 
 @pytest.mark.asyncio
 async def test_role_change_away_from_viewer_skips_the_missing_cognito_group(monkeypatch):
-    """A viewer row with an email (never created by the Staff page, but possible by hand) changed to reviewer:
-    Cognito gets add_group:cis-reviewer only, never remove_group:cis-viewer (no such group)."""
+    """A viewer row with an email (never created by the Staff page, but possible by hand) changed to content:
+    Cognito gets add_group:cis-content only, never remove_group:cis-viewer (no such group). (AA-1035: reviewer is no
+    longer assignable.)"""
     from api.services import staff_directory
 
     actor = "00000000-0000-0000-0000-0000000000a1"
@@ -291,8 +300,8 @@ async def test_role_change_away_from_viewer_skips_the_missing_cognito_group(monk
         async def acquire(self):
             yield _TxConn()
 
-    await staff_directory.change_roles(_P(), object(), actor_id=actor, staff_id=ADMIN_ID, role="reviewer")
-    assert captured["steps"] == ["add_group:cis-reviewer"]
+    await staff_directory.change_roles(_P(), object(), actor_id=actor, staff_id=ADMIN_ID, role="content")
+    assert captured["steps"] == ["add_group:cis-content"]
 
 
 def test_reconcile_serialises_a_viewer_row():

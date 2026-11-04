@@ -564,5 +564,6 @@ def test_provider_rows_take_the_registry_facts():
 # ── readiness ────────────────────────────────────────────────────────────────────────────────────────────────────
 
 def test_readiness_needs_322():
-    assert readiness.REQUIRED_CIS_SCHEMA == 322 and {320, 321, 322} <= set(readiness.REQUIRED_CIS_KEYS)
+    # AA-1035 raised it to 364 (the R2 batch); 320-322 stay required
+    assert readiness.REQUIRED_CIS_SCHEMA >= 322 and {320, 321, 322} <= set(readiness.REQUIRED_CIS_KEYS)
     assert M320.exists() and (MIGRATIONS / "321_tenant_ai_budget_prompt_registry.sql").exists() and M322.exists()

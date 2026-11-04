@@ -344,7 +344,7 @@ async def test_re_post_of_an_existing_create_queues_no_second_invite(db, stubbed
     c6._expect_error(stub, "admin_create_user", "UsernameExistsException", c6._create())
     c6._expect(stub, "admin_add_user_to_group", c6._group(NEW_EMAIL, "cis-content"))
     c6._expect(stub, "admin_enable_user", c6._user(NEW_EMAIL))
-    for g in ("cis-admin", "cis-reviewer") + sd.BOOKING_GROUPS:
+    for g in c6._cis_but("cis-content") + sd.BOOKING_GROUPS:
         c6._expect(stub, "admin_remove_user_from_group", c6._group(NEW_EMAIL, g))
     result = await sd.create_staff(db, cognito, actor_id=db.owner, email=NEW_EMAIL, display_name="N",
                                    role="content", send_invite=True)

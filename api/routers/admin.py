@@ -8,7 +8,11 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 from typing import List, Literal, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from api.core.staff_authz import MASTER_ADMIN, OPS_READ, TENANT_READ, has_perm, staff_policy
+from api.core.staff_authz import (
+    BILLING_WRITE, MASTER_ADMIN, OPS_READ, TENANT_BOOK_READ, TENANT_READ, TENANT_WRITE, has_any_perm, has_perm,
+    staff_policy,
+)
+from api.core.tenant_scope import TENANT_SCOPED, tenant_scope_filter
 from pydantic import BaseModel, Field
 from api.core.secret_compare import secrets_equal
 from api.core.staff_credential import principal_verified
@@ -111,6 +115,24 @@ def _require_tenant_admin(x_admin_role: Optional[str]) -> None:
     always forwards the verified role as x-admin-role; a direct call must send it too."""
     if x_admin_role != "admin":
         raise HTTPException(status_code=403, detail="Only an admin can change a tenant")
+
+
+# AA-1035 R2 (root ADR 0019 d3, clarifications.md section 3: "PATCH /admin/tenants/{tenant_id} checks per field:
+# finance only changes billing fields"). The plan and suspend / resume are billing; RPM and the publish limit are not.
+BILLING_PATCH_FIELDS = frozenset({"plan_tier", "is_active"})
+
+
+def _require_tenant_patch(x_admin_role: Optional[str], fields: set[str]) -> None:
+    """PATCH /admin/tenants/{id}: tenant.write (admin) may send every field; billing.write (finance) only the billing
+    fields. Defense in depth behind POLICY (any of the two), like _require_tenant_admin."""
+    if has_perm(x_admin_role, TENANT_WRITE):
+        return
+    if has_perm(x_admin_role, BILLING_WRITE) and fields <= BILLING_PATCH_FIELDS:
+        return
+    if has_perm(x_admin_role, BILLING_WRITE):
+        raise HTTPException(status_code=403, detail=(
+            "Your role may change only the plan and suspend / resume of a tenant (plan_tier, is_active)"))
+    raise HTTPException(status_code=403, detail="Only an admin can change a tenant")
 
 
 def _admin_actor(x_admin_user_id: Optional[str]) -> str:
@@ -381,6 +403,10 @@ async def list_tenants(
             WHERE t.is_active = true OR $1::boolean
             ORDER BY t.created_at
         """, include_inactive)
+        # AA-1035 R2 (root ADR 0019 d4): a customer_success / support caller sees its book (and support the pool) only.
+        scope = await tenant_scope_filter(request, conn)
+        if scope is not None:
+            rows = [r for r in rows if str(r["tenant_id"]) in scope]
         publish_limits = await _publish_limit_overrides(conn)
     return {
         "tenants": [
@@ -469,7 +495,7 @@ TENANT_USAGE_MONTHLY_SQL = """
 
 
 
-@router.get("/tenants/{tenant_id}/usage", summary="Tenant billing metrics")
+@router.get("/tenants/{tenant_id}/usage", summary="Tenant billing metrics", dependencies=TENANT_SCOPED)
 async def get_tenant_usage(
     tenant_id: UUID,
     request: Request,
@@ -554,7 +580,8 @@ class UpdateTenantRequest(BaseModel):
     daily_publish_limit: Optional[int] = Field(None, ge=1, le=daily_limit.DAILY_PUBLISH_LIMIT_MAX)
 
 
-@router.patch("/tenants/{tenant_id}", summary="Update tenant plan, rate limit, publish limit or status")
+@router.patch("/tenants/{tenant_id}", summary="Update tenant plan, rate limit, publish limit or status",
+              dependencies=TENANT_SCOPED)
 async def update_tenant(
     tenant_id: UUID,
     body: UpdateTenantRequest,
@@ -570,7 +597,7 @@ async def update_tenant(
     Each change writes one audit row with before/after, in the same transaction. Before migration 230
     the publish limit override is refused with 409 (the code default applies to every tenant)."""
     verify_admin_secret(x_admin_secret)
-    _require_tenant_admin(x_admin_role)
+    _require_tenant_patch(x_admin_role, set(body.model_fields_set))
     set_publish_limit = "daily_publish_limit" in body.model_fields_set
     if body.plan_tier is None and body.is_active is None and body.rate_limit_rpm is None and not set_publish_limit:
         raise HTTPException(status_code=422, detail="Nothing to update: send plan_tier, rate_limit_rpm, "
@@ -750,7 +777,7 @@ def _derive_run_display_status(
 # ── GET /admin/tenants/{id}/audit — AA-666 Tenant 360 Audit tab ─────────────
 
 
-@router.get("/tenants/{tenant_id}/audit", summary="A tenant's action timeline")
+@router.get("/tenants/{tenant_id}/audit", summary="A tenant's action timeline", dependencies=TENANT_SCOPED)
 async def get_tenant_audit(
     tenant_id: str,
     request: Request,
@@ -781,7 +808,7 @@ async def get_tenant_audit(
 # ── GET /admin/tenants/{id}/details — 4-tab detail view ─────────────────────
 
 
-@router.get("/tenants/{tenant_id}/details", summary="Tenant 4-tab detail view")
+@router.get("/tenants/{tenant_id}/details", summary="Tenant 4-tab detail view", dependencies=TENANT_SCOPED)
 async def get_tenant_details(
     tenant_id: UUID,
     request: Request,
@@ -804,7 +831,9 @@ async def get_tenant_details(
     # AA-882 (GĐ3 review) — this route has no POLICY entry because Master Content (every staff role)
     # reads the aa_internal catalog through it. Any other tenant's account, usage and LLM spend is
     # tenant.read, like the sibling /usage, /audit and /config routes.
-    if str(tenant_id) != AA_INTERNAL_TENANT and not has_perm(x_admin_role, TENANT_READ):
+    # AA-1035: tenant.book.read (customer_success / support) reads the tenants of its book; require_tenant_scope has
+    # already refused a tenant outside it.
+    if str(tenant_id) != AA_INTERNAL_TENANT and not has_any_perm(x_admin_role, TENANT_READ, TENANT_BOOK_READ):
         raise HTTPException(
             status_code=403,
             detail=f"Role '{x_admin_role or 'machine'}' lacks the '{TENANT_READ}' permission",
@@ -1142,7 +1171,7 @@ class TenantBrandIdentityUpdate(BaseModel):
     default_cta:        Optional[str] = None  # AA-771 (S233, migration 220)
 
 
-@router.put("/tenants/{tenant_id}/brand-identity")
+@router.put("/tenants/{tenant_id}/brand-identity", dependencies=TENANT_SCOPED)
 async def update_tenant_brand_identity(
     tenant_id: UUID,
     body: TenantBrandIdentityUpdate,
@@ -1229,7 +1258,7 @@ async def update_tenant_brand_identity(
 # ── GET /admin/tenants/{id}/rewrite-activity ─────────────────────────────────
 
 
-@router.get("/tenants/{tenant_id}/rewrite-activity")
+@router.get("/tenants/{tenant_id}/rewrite-activity", dependencies=TENANT_SCOPED)
 async def get_rewrite_activity(
     tenant_id: UUID,
     request: Request,
@@ -1276,7 +1305,7 @@ async def get_rewrite_activity(
 # ── POST /admin/tenants/{id}/generate-key ────────────────────────────────────
 
 
-@router.post("/tenants/{tenant_id}/generate-key", response_model=GenerateKeyResponse)
+@router.post("/tenants/{tenant_id}/generate-key", response_model=GenerateKeyResponse, dependencies=TENANT_SCOPED)
 async def generate_api_key(
     tenant_id: UUID,
     request: Request,
@@ -1336,7 +1365,8 @@ class OffboardRequest(BaseModel):
     reason: str
 
 
-@router.post("/tenants/{tenant_id}/offboard", summary="Tenant offboarding — cancel tenant + revoke key (soft)")
+@router.post("/tenants/{tenant_id}/offboard", summary="Tenant offboarding — cancel tenant + revoke key (soft)",
+             dependencies=TENANT_SCOPED)
 async def offboard_tenant(
     tenant_id: str,
     body: OffboardRequest,
@@ -1461,7 +1491,8 @@ class RestoreTenantResponse(BaseModel):
 
 
 @router.post("/tenants/{tenant_id}/restore", response_model=RestoreTenantResponse,
-             summary="Restore an offboarded tenant with its data and settings")
+             summary="Restore an offboarded tenant with its data and settings",
+             dependencies=TENANT_SCOPED)
 async def restore_tenant(
     tenant_id: UUID,
     request: Request,
@@ -1578,7 +1609,8 @@ _VALID_CHANNELS = {
 }
 
 
-@router.get("/tenants/{tenant_id}/config", summary="N4-N6 markets/channels/capacity for one tenant")
+@router.get("/tenants/{tenant_id}/config", summary="N4-N6 markets/channels/capacity for one tenant",
+            dependencies=TENANT_SCOPED)
 async def get_tenant_config(
     tenant_id: UUID,
     request: Request,
@@ -1598,7 +1630,8 @@ async def get_tenant_config(
     }
 
 
-@router.put("/tenants/{tenant_id}/config", summary="Set N4-N6 markets/channels/capacity for one tenant")
+@router.put("/tenants/{tenant_id}/config", summary="Set N4-N6 markets/channels/capacity for one tenant",
+            dependencies=TENANT_SCOPED)
 async def update_tenant_config(
     tenant_id: UUID,
     body: TenantConfigRequest,

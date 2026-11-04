@@ -31,6 +31,7 @@ from fastapi import APIRouter, Body, Depends, Query, Request
 from fastapi.responses import JSONResponse
 
 from api.core.staff_authz import staff_policy
+from api.core.tenant_scope import TENANT_SCOPED
 from api.routers.admin import verify_admin_secret
 from api.services import crm_console
 from api.services.platform_apps import relay_authorization
@@ -71,32 +72,35 @@ async def list_agencies(request: Request, cursor: Optional[str] = Query(None, ma
     return await _relay(request, "GET", "/tenants", params={"cursor": cursor, "limit": limit})
 
 
-@router.get("/agencies/{tenant_id}", summary="One CRM agency")
+@router.get("/agencies/{tenant_id}", summary="One CRM agency", dependencies=TENANT_SCOPED)
 async def get_agency(request: Request, tenant_id: uuid.UUID):
     return await _relay(request, "GET", _t(tenant_id))
 
 
-@router.get("/agencies/{tenant_id}/usage", summary="Usage meters of one agency")
+@router.get("/agencies/{tenant_id}/usage", summary="Usage meters of one agency", dependencies=TENANT_SCOPED)
 async def get_usage(request: Request, tenant_id: uuid.UUID):
     return await _relay(request, "GET", f"{_t(tenant_id)}/usage")
 
 
-@router.get("/agencies/{tenant_id}/entitlements", summary="Plan, seats, allowed features, insights opt-out")
+@router.get("/agencies/{tenant_id}/entitlements", summary="Plan, seats, allowed features, insights opt-out",
+            dependencies=TENANT_SCOPED)
 async def get_entitlements(request: Request, tenant_id: uuid.UUID):
     return await _relay(request, "GET", f"{_t(tenant_id)}/entitlements")
 
 
-@router.get("/agencies/{tenant_id}/data-requests", summary="Agency export / deletion requests")
+@router.get("/agencies/{tenant_id}/data-requests", summary="Agency export / deletion requests",
+            dependencies=TENANT_SCOPED)
 async def get_data_requests(request: Request, tenant_id: uuid.UUID):
     return await _relay(request, "GET", f"{_t(tenant_id)}/data-requests")
 
 
-@router.get("/agencies/{tenant_id}/members", summary="Member ids, roles, statuses, pending owner recovery")
+@router.get("/agencies/{tenant_id}/members", summary="Member ids, roles, statuses, pending owner recovery",
+            dependencies=TENANT_SCOPED)
 async def get_members(request: Request, tenant_id: uuid.UUID):
     return await _relay(request, "GET", f"{_t(tenant_id)}/members")
 
 
-@router.get("/agencies/{tenant_id}/jobs", summary="Failed jobs of one agency (last 7 days)")
+@router.get("/agencies/{tenant_id}/jobs", summary="Failed jobs of one agency (last 7 days)", dependencies=TENANT_SCOPED)
 async def get_jobs(request: Request, tenant_id: uuid.UUID):
     return await _relay(request, "GET", f"{_t(tenant_id)}/jobs")
 
@@ -108,67 +112,76 @@ async def create_agency(request: Request, payload: dict[str, Any] = Body(...)):
     return await _relay(request, "POST", "/tenants", json=payload)
 
 
-@router.post("/agencies/{tenant_id}/lock", summary="Lock an agency")
+@router.post("/agencies/{tenant_id}/lock", summary="Lock an agency", dependencies=TENANT_SCOPED)
 async def lock(request: Request, tenant_id: uuid.UUID, payload: dict[str, Any] = Body(...)):
     return await _relay(request, "POST", f"{_t(tenant_id)}/lock", json=payload)
 
 
-@router.post("/agencies/{tenant_id}/unlock", summary="Unlock an agency")
+@router.post("/agencies/{tenant_id}/unlock", summary="Unlock an agency", dependencies=TENANT_SCOPED)
 async def unlock(request: Request, tenant_id: uuid.UUID, payload: dict[str, Any] = Body(...)):
     return await _relay(request, "POST", f"{_t(tenant_id)}/unlock", json=payload)
 
 
-@router.post("/agencies/{tenant_id}/owner-invite", summary="Invite the first owner (empty agency only)")
+@router.post("/agencies/{tenant_id}/owner-invite", summary="Invite the first owner (empty agency only)",
+             dependencies=TENANT_SCOPED)
 async def owner_invite(request: Request, tenant_id: uuid.UUID, payload: dict[str, Any] = Body(...)):
     return await _relay(request, "POST", f"{_t(tenant_id)}/owner-invite", json=payload)
 
 
 @router.post("/agencies/{tenant_id}/owner-invite/withdraw",
-             summary="Withdraw the first-owner invitation AA sent (pending, or claimed and not accepted)")
+             summary="Withdraw the first-owner invitation AA sent (pending, or claimed and not accepted)",
+             dependencies=TENANT_SCOPED)
 async def owner_invite_withdraw(request: Request, tenant_id: uuid.UUID, payload: dict[str, Any] = Body(...)):
     return await _relay(request, "POST", f"{_t(tenant_id)}/owner-invite/withdraw", json=payload)
 
 
 @router.post("/agencies/{tenant_id}/delete",
-             summary="Delete a synthetic (test) agency without members or travellers (typed name + ticket)")
+             summary="Delete a synthetic (test) agency without members or travellers (typed name + ticket)",
+             dependencies=TENANT_SCOPED)
 async def delete_test_agency(request: Request, tenant_id: uuid.UUID, payload: dict[str, Any] = Body(...)):
     return await _relay(request, "POST", f"{_t(tenant_id)}/delete", json=payload)
 
 
-@router.post("/agencies/{tenant_id}/data-requests", summary="Raise an export / deletion request")
+@router.post("/agencies/{tenant_id}/data-requests", summary="Raise an export / deletion request",
+             dependencies=TENANT_SCOPED)
 async def raise_data_request(request: Request, tenant_id: uuid.UUID, payload: dict[str, Any] = Body(...)):
     return await _relay(request, "POST", f"{_t(tenant_id)}/data-requests", json=payload)
 
 
-@router.post("/agencies/{tenant_id}/owner-recovery", summary="Start an owner recovery (14 days)")
+@router.post("/agencies/{tenant_id}/owner-recovery", summary="Start an owner recovery (14 days)",
+             dependencies=TENANT_SCOPED)
 async def open_recovery(request: Request, tenant_id: uuid.UUID, payload: dict[str, Any] = Body(...)):
     return await _relay(request, "POST", f"{_t(tenant_id)}/owner-recovery", json=payload)
 
 
 @router.post("/agencies/{tenant_id}/owner-recovery/{request_id}/complete",
-             summary="Complete a due owner recovery")
+             summary="Complete a due owner recovery",
+             dependencies=TENANT_SCOPED)
 async def complete_recovery(request: Request, tenant_id: uuid.UUID, request_id: uuid.UUID,
                             payload: Optional[dict[str, Any]] = Body(None)):
     return await _relay(request, "POST", f"{_t(tenant_id)}/owner-recovery/{request_id}/complete", json=payload)
 
 
-@router.post("/agencies/{tenant_id}/members/{member_id}/deactivate", summary="Disable a member")
+@router.post("/agencies/{tenant_id}/members/{member_id}/deactivate", summary="Disable a member",
+             dependencies=TENANT_SCOPED)
 async def deactivate_member(request: Request, tenant_id: uuid.UUID, member_id: uuid.UUID,
                             payload: Optional[dict[str, Any]] = Body(None)):
     return await _relay(request, "POST", f"{_t(tenant_id)}/members/{member_id}/deactivate", json=payload)
 
 
-@router.put("/agencies/{tenant_id}/entitlements-allowed", summary="Allow features (the owner switches on)")
+@router.put("/agencies/{tenant_id}/entitlements-allowed", summary="Allow features (the owner switches on)",
+            dependencies=TENANT_SCOPED)
 async def put_entitlements_allowed(request: Request, tenant_id: uuid.UUID, payload: dict[str, Any] = Body(...)):
     return await _relay(request, "PUT", f"{_t(tenant_id)}/entitlements-allowed", json=payload)
 
 
-@router.put("/agencies/{tenant_id}/insights-opt-out", summary="Insights opt-out on the owner's request")
+@router.put("/agencies/{tenant_id}/insights-opt-out", summary="Insights opt-out on the owner's request",
+            dependencies=TENANT_SCOPED)
 async def put_insights_opt_out(request: Request, tenant_id: uuid.UUID, payload: dict[str, Any] = Body(...)):
     return await _relay(request, "PUT", f"{_t(tenant_id)}/insights-opt-out", json=payload)
 
 
-@router.post("/agencies/{tenant_id}/jobs/{job_id}/retry", summary="Re-queue one failed job")
+@router.post("/agencies/{tenant_id}/jobs/{job_id}/retry", summary="Re-queue one failed job", dependencies=TENANT_SCOPED)
 async def retry_job(request: Request, tenant_id: uuid.UUID, job_id: uuid.UUID,
                     payload: dict[str, Any] = Body(...)):
     return await _relay(request, "POST", f"{_t(tenant_id)}/jobs/{job_id}/retry", json=payload)

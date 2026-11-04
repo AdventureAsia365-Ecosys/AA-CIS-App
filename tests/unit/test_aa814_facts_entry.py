@@ -489,10 +489,11 @@ def _staff(role):
 
 
 def test_admin_write_routes_need_quality_write_which_only_admin_holds():
+    """AA-1035 R2: quality.write also belongs to content_lead and tenant_qa (Tenant QA W)."""
     for key in (("POST", "/admin/facts"), ("PATCH", "/admin/facts/{fact_id}"), ("DELETE", "/admin/facts/{fact_id}")):
         assert staff_authz.POLICY[key] == staff_authz.QUALITY_WRITE
     holders = {r for r, perms in staff_authz.ROLE_PERMS.items() if staff_authz.QUALITY_WRITE in perms}
-    assert holders == {"admin"}
+    assert holders == {"admin", "content_lead", "tenant_qa"}
 
 
 @pytest.mark.parametrize("role", ["admin", "reviewer", "content", "viewer"])

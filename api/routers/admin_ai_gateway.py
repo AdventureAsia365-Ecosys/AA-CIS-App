@@ -82,6 +82,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Requ
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from api.core.staff_authz import StaffPrincipal, denial_reason, staff_policy
+from api.core.tenant_scope import TENANT_SCOPED
 from api.routers.admin import verify_admin_secret
 from api.services import (ai_gateway, ai_gateway_calls, ai_gateway_experiments, crm_console, platform_apps,
                           tenant_ai_budget)
@@ -237,7 +238,8 @@ def _actor(x_admin_user_id: Optional[str]) -> str:
     return f"admin:{x_admin_user_id}" if x_admin_user_id else "admin"
 
 
-@router.get("/tenant-budgets/{tenant_id}", summary="One tenant's monthly AI budget and this month's spend ($0)")
+@router.get("/tenant-budgets/{tenant_id}", summary="One tenant's monthly AI budget and this month's spend ($0)",
+            dependencies=TENANT_SCOPED)
 async def get_tenant_budget(request: Request, tenant_id: str = _TENANT_ID) -> dict:
     out = await tenant_ai_budget.read_one(request.app.state.pool, tenant_id.lower())
     if out is None:
@@ -245,7 +247,8 @@ async def get_tenant_budget(request: Request, tenant_id: str = _TENANT_ID) -> di
     return out
 
 
-@router.put("/tenant-budgets/{tenant_id}", summary="Set one tenant's monthly AI budget (audited)")
+@router.put("/tenant-budgets/{tenant_id}", summary="Set one tenant's monthly AI budget (audited)",
+            dependencies=TENANT_SCOPED)
 async def put_tenant_budget(body: TenantBudgetBody, request: Request, tenant_id: str = _TENANT_ID,
                             x_admin_user_id: Optional[str] = Header(None)) -> dict:
     try:
@@ -257,7 +260,8 @@ async def put_tenant_budget(body: TenantBudgetBody, request: Request, tenant_id:
         raise HTTPException(status_code=503, detail=str(e))
 
 
-@router.delete("/tenant-budgets/{tenant_id}", summary="Remove one tenant's monthly AI budget (audited)")
+@router.delete("/tenant-budgets/{tenant_id}", summary="Remove one tenant's monthly AI budget (audited)",
+               dependencies=TENANT_SCOPED)
 async def delete_tenant_budget(request: Request, tenant_id: str = _TENANT_ID,
                                x_admin_user_id: Optional[str] = Header(None)) -> dict:
     try:

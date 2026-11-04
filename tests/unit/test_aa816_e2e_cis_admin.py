@@ -75,7 +75,8 @@ def test_the_write_allow_list_is_exactly_the_reviewed_routes():
     paths = real_app.openapi()["paths"]
     for method, route in e2e_staff.E2E_ALLOWED_WRITES:
         assert method.lower() in paths.get(route, {})
-        assert staff_authz.POLICY[(method, route)] in staff_authz.ROLE_PERMS["admin"]
+        assert set(staff_authz.policy_capabilities(staff_authz.POLICY[(method, route)])) & \
+            staff_authz.ROLE_PERMS["admin"]   # AA-1035: an any_of entry (member writes) passes for admin
     # The path regexes and the templates name the same routes.
     assert len(e2e_staff.E2E_ALLOWED_WRITE_PATHS) == len(e2e_staff.E2E_ALLOWED_WRITES)
 
@@ -369,7 +370,8 @@ async def test_the_a10_reviewer_is_not_flagged_and_not_env_gated(issuer, directo
     directory.add(role="reviewer", email=REVIEWER_E2E, iss=ISS, sub=SUB)
     identity = await staff_identity.authenticate(
         directory, issuer.token(email=REVIEWER_E2E, **{"cognito:groups": ["cis-reviewer"]}))
-    assert (identity.role, identity.e2e_read_only) == ("reviewer", False)
+    # AA-1035: the cis-reviewer group signs in as content (the alias), the row stays reviewer (CIS 363)
+    assert (identity.role, identity.e2e_read_only) == ("content", False)
 
 
 # ── Bearer middleware ────────────────────────────────────────────────────────────────────────────

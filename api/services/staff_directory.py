@@ -103,9 +103,16 @@ MAX_DISPLAY_NAME_LEN = 120
 MAX_USERNAME_LEN = 100            # shared.admin_users.username varchar(100)
 _USERNAME_SUFFIX_TRIES = 50
 
-# shared.admin_role minus 'viewer' (AA-878, migration 249): the read-only E2E role is never assigned from here.
-CIS_ROLES: tuple[str, ...] = ("admin", "reviewer", "content")
-BOOKING_ROLES: tuple[str, ...] = ("admin", "sales", "contracting", "content_creator")  # staff_app_grant_role_chk
+# shared.admin_role minus 'viewer' (AA-878, migration 249: the read-only E2E role is never assigned from here) and minus
+# the 'reviewer' alias (AA-1035 R2, CIS 363 merged it into content; root ADR 0019 d3). Group cis-<role>.
+CIS_ROLES: tuple[str, ...] = (
+    "admin", "content_lead", "content", "tenant_qa", "customer_success", "support", "finance", "ai_ops",
+)
+# Roles a row may still hold but the Staff page no longer assigns: their group is removed when the person moves to an
+# assignable role (the A10 E2E account keeps cis-reviewer until the alias is removed).
+CIS_ALIAS_ROLES: tuple[str, ...] = ("reviewer",)
+# staff_app_grant_role_chk (CIS 363 added finance: Booking reads it from the group booking-finance, root ADR 0019 d9)
+BOOKING_ROLES: tuple[str, ...] = ("admin", "sales", "contracting", "content_creator", "finance")
 APP_BOOKING = "booking"
 # AA-1031 (migration 330, staff_crm_grant_role_chk): the AA-Partner staff roles, a SET per person, and their WORKFORCE
 # groups (root ADR 0006b decision 6). Spelled out: the group names carry a hyphen the role codes do not.
@@ -193,7 +200,7 @@ def crm_group(role: str) -> str:
     return CRM_ROLE_GROUPS[role]
 
 
-CIS_GROUPS: tuple[str, ...] = tuple(cis_group(r) for r in CIS_ROLES)
+CIS_GROUPS: tuple[str, ...] = tuple(cis_group(r) for r in CIS_ROLES + CIS_ALIAS_ROLES)
 BOOKING_GROUPS: tuple[str, ...] = tuple(booking_group(r) for r in BOOKING_ROLES)
 CRM_GROUPS: tuple[str, ...] = tuple(crm_group(r) for r in CRM_ROLES)
 
@@ -269,7 +276,9 @@ def require_display_name(name: Any) -> str:
 
 
 def require_cis_role(role: Any) -> str:
-    if role not in CIS_ROLES:
+    """A role the directory may write: an assignable one, or (AA-1035, for the alias release only) the deprecated
+    ``reviewer`` alias, which the Staff page no longer offers (the A10 E2E account still holds it)."""
+    if role not in CIS_ROLES + CIS_ALIAS_ROLES:
         raise StaffDirectoryError(400, f"CIS role must be one of {', '.join(CIS_ROLES)}", "cis_role")
     return role
 
@@ -809,7 +818,7 @@ async def change_roles(pool: Any, cognito: CognitoDirectory, *, actor_id: str, s
     steps: list[Step] = []
     if new_role is not None:
         steps.append((f"add_group:{cis_group(new_role)}", lambda: cognito.add_to_group(email, cis_group(new_role))))
-        if old_role != new_role and old_role in CIS_ROLES:   # AA-878: 'viewer' has no Cognito group
+        if old_role != new_role and old_role in CIS_ROLES + CIS_ALIAS_ROLES:   # AA-878: 'viewer' has no group
             steps.append((f"remove_group:{cis_group(old_role)}",
                           lambda: cognito.remove_from_group(email, cis_group(old_role))))
     if booking_role is not _UNSET:

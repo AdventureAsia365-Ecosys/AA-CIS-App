@@ -52,7 +52,7 @@ from typing import Any, Iterable, Optional
 
 from api.core import e2e_staff
 from api.core.identity_config import workforce_issuer
-from api.core.staff_identity import GROUP_ROLES, role_from_groups
+from api.core.staff_identity import GROUP_ROLES, canonical_role, role_from_groups
 
 # ── configuration ────────────────────────────────────────────────────────────────────────────────
 
@@ -69,6 +69,7 @@ BOOKING_GROUP_ROLES: tuple[tuple[str, str], ...] = (
     ("booking-sales", "sales"),
     ("booking-contracting", "contracting"),
     ("booking-content_creator", "content_creator"),
+    ("booking-finance", "finance"),   # AA-1035 R2 (CIS 363, root ADR 0019 d3 / d9)
 )
 BOOKING_GROUPS: tuple[str, ...] = tuple(g for g, _ in BOOKING_GROUP_ROLES)
 # AA-1031: the AA-Partner staff groups (root ADR 0006b decision 6) and their staff_crm_grant role codes; a person may
@@ -464,7 +465,10 @@ def _row_drift(row: dict, u: CognitoUser, grant_role: Optional[str],
     base = {"username": row["username"], "email": u.email or row.get("email")}
     cis_groups = [g for g in _sorted_groups(u.groups) if g in CIS_GROUPS]
     group_role = role_from_groups(u.groups)
-    if group_role != row.get("role") or len(cis_groups) > 1:
+    # AA-1035: the reviewer alias reads as content, but the group must still be the row's own (cis-<role>): a merged
+    # reviewer (row content, group cis-reviewer) is drift, so the Staff page "Sync" moves them to cis-content.
+    wrong_group = bool(cis_groups) and cis_groups != [f"cis-{row.get('role')}"]
+    if group_role != canonical_role(row.get("role")) or len(cis_groups) > 1 or wrong_group:
         out.append({**base, "kind": "cis_role", "directory": row.get("role"), "cognito": group_role,
                     "cognito_groups": cis_groups})
     booking_groups = [g for g in _sorted_groups(u.groups) if g in BOOKING_GROUPS]

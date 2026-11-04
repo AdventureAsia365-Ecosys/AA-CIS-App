@@ -68,7 +68,8 @@ async def test_first_sign_in_binds_once_and_sets_last_login(db):
     sub = str(uuid.uuid4())
     identity = await staff_identity.resolve_staff(
         db.pool, _principal(sub, email.upper(), ["cis-reviewer"]), touch_login=True)
-    assert (identity.admin_id, identity.role, identity.db_role) == (uid, "reviewer", "reviewer")
+    # AA-1035: cis-reviewer signs in as content (the alias); the row keeps its value
+    assert (identity.admin_id, identity.role, identity.db_role) == (uid, "content", "reviewer")
     assert identity.email == email and identity.display_name == "Test Person"
     row = await db.get(uid)
     assert (row["cognito_iss"], row["cognito_sub"]) == (ISS, sub)

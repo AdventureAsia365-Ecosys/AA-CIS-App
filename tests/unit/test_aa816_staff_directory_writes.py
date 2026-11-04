@@ -210,6 +210,12 @@ def _user(email: str) -> dict:
     return {"UserPoolId": POOL, "Username": email}
 
 
+def _cis_but(group: str) -> tuple[str, ...]:
+    """Every CIS staff group the directory removes, in its order, but ``group`` (AA-1035: the R2 groups and the
+    cis-reviewer alias are in sd.CIS_GROUPS)."""
+    return tuple(g for g in sd.CIS_GROUPS if g != group)
+
+
 def _expect(stub: Stubber, op: str, params: dict, response: Optional[dict] = None) -> None:
     stub.add_response(op, response if response is not None else {}, params)
 
@@ -404,7 +410,7 @@ async def test_re_post_of_the_same_create_is_an_idempotent_retry(db, stubbed):
     _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "cis-reviewer"))
     _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "booking-sales"))
     _expect(stub, "admin_enable_user", _user(NEW_EMAIL))
-    for g in ("cis-admin", "cis-content", "booking-admin", "booking-contracting", "booking-content_creator")\
+    for g in _cis_but("cis-reviewer") + tuple(g for g in sd.BOOKING_GROUPS if g != "booking-sales") \
             + sd.CRM_GROUPS:
         _expect(stub, "admin_remove_user_from_group", _group(NEW_EMAIL, g))
     result = await sd.create_staff(db, cognito, actor_id=db.owner, email=NEW_EMAIL, display_name="N",
@@ -421,7 +427,7 @@ async def test_create_over_an_existing_cognito_user_drops_its_stale_groups_and_e
     _expect_error(stub, "admin_create_user", "UsernameExistsException", _create())
     _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "cis-content"))   # add before any remove
     _expect(stub, "admin_enable_user", _user(NEW_EMAIL))
-    for g in ("cis-admin", "cis-reviewer") + sd.BOOKING_GROUPS + sd.CRM_GROUPS:
+    for g in _cis_but("cis-content") + sd.BOOKING_GROUPS + sd.CRM_GROUPS:
         _expect(stub, "admin_remove_user_from_group", _group(NEW_EMAIL, g))
     result = await sd.create_staff(db, cognito, actor_id=db.owner, email=NEW_EMAIL, display_name="N",
                                    role="content")
@@ -650,7 +656,7 @@ async def test_sync_makes_cognito_match_an_active_row(db, stubbed):
     _expect(stub, "admin_enable_user", _user(NEW_EMAIL))
     _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "cis-reviewer"))
     _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "booking-sales"))
-    for g in ("cis-admin", "cis-content", "booking-admin", "booking-contracting", "booking-content_creator")\
+    for g in _cis_but("cis-reviewer") + tuple(g for g in sd.BOOKING_GROUPS if g != "booking-sales") \
             + sd.CRM_GROUPS:
         _expect(stub, "admin_remove_user_from_group", _group(NEW_EMAIL, g))
     result = await sd.sync_staff(db, cognito, actor_id=db.owner, staff_id=uid)
@@ -959,7 +965,7 @@ async def test_sync_adds_the_granted_crm_groups_and_removes_the_others(db, stubb
     _expect(stub, "admin_enable_user", _user(NEW_EMAIL))
     _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "cis-content"))
     _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "crm-support"))
-    for g in ("cis-admin", "cis-reviewer") + sd.BOOKING_GROUPS + ("crm-platform-admin", "crm-ops"):
+    for g in _cis_but("cis-content") + sd.BOOKING_GROUPS + ("crm-platform-admin", "crm-ops"):
         _expect(stub, "admin_remove_user_from_group", _group(NEW_EMAIL, g))
     result = await sd.sync_staff(db, cognito, actor_id=db.owner, staff_id=uid)
     assert result.status == sd.STATUS_OK
@@ -990,7 +996,7 @@ async def test_without_the_table_sync_and_role_changes_leave_crm_groups_alone(db
     _expect_error(stub, "admin_create_user", "UsernameExistsException", _create())
     _expect(stub, "admin_enable_user", _user(NEW_EMAIL))
     _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "cis-reviewer"))
-    for g in ("cis-admin", "cis-content") + sd.BOOKING_GROUPS:   # no crm-* removal
+    for g in _cis_but("cis-reviewer") + sd.BOOKING_GROUPS:   # no crm-* removal
         _expect(stub, "admin_remove_user_from_group", _group(NEW_EMAIL, g))
     assert (await sd.sync_staff(db, cognito, actor_id=db.owner, staff_id=uid)).status == sd.STATUS_OK
     _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "booking-sales"))

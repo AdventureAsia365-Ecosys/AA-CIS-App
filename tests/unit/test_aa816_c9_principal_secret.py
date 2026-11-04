@@ -149,10 +149,11 @@ def test_cognito_without_the_secret_on_v1_pipeline(real, pool, issuer):
 
 
 def test_cognito_without_the_secret_on_admin_atoms_goes_through_policy(real, pool, issuer):
-    pool.add(role="reviewer", iss=ISS, sub=SUB)
-    res = real.get("/admin/atoms/summary", headers=_cognito(issuer, "cis-reviewer"))
+    # AA-1035: the content roles read the atom store (catalog.read); customer_success does not.
+    pool.add(role="customer_success", iss=ISS, sub=SUB)
+    res = real.get("/admin/atoms/summary", headers=_cognito(issuer, "cis-customer_success"))
     assert res.status_code == 403
-    assert res.json()["detail"] == "Role 'reviewer' lacks the 'tenant.read' permission"
+    assert res.json()["detail"] == "Role 'customer_success' lacks the 'catalog.read' permission"
 
 
 def test_cognito_without_the_secret_on_brand_identity_is_the_staff_call(real, pool, issuer):
@@ -259,7 +260,8 @@ def test_preview_is_never_the_machine(real, key, role):
     method, path = key
     res = real.request(method, _concrete(path), json={}, headers=_preview(role))
     assert res.status_code == 403, (key, res.text)
-    assert res.json()["detail"] in ("Role 'viewer' is read-only", f"Role 'viewer' lacks the '{POLICY[key]}' permission")
+    label = staff_authz.policy_label(POLICY[key])
+    assert res.json()["detail"] in ("Role 'viewer' is read-only", f"Role 'viewer' lacks the '{label}' permission")
 
 
 def test_preview_on_v1_pipeline_read(real, pool):

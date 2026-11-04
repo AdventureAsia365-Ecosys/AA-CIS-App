@@ -57,7 +57,10 @@ logger = structlog.get_logger()
 # llm_model_deployment.api_style (320), the gateway reads shared.stage_model_params (320), the connection read and the
 # Jev / DataForSEO / Geoapify settings read the 322 columns and rows; each read falls back without them, so a missing
 # apply degrades to today's behaviour, and readiness says so; strict prefix: 320 and 321 too).
-REQUIRED_CIS_SCHEMA = 322
+# 364 (AA-1035 R2 — api/core/tenant_scope.py and the Tenants directory read shared.staff_tenant_assignment, the
+# assignment routes write it (364); the directory writes the R2 roles (362) and the Booking grant 'finance' (363);
+# strict prefix: 323-363 too, all applied on Dev before this raise).
+REQUIRED_CIS_SCHEMA = 364
 # Versions this code needs that were registered after a higher one (reserved numbers): 297 (AA-920 WM-25) was reserved
 # in S255 and applied after 299. max() is already 299 without it, so the version reported is capped below the lowest
 # listed version that is not registered (297 missing -> 296 -> "schema_behind").

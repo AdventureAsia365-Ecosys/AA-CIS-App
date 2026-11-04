@@ -144,7 +144,10 @@ def test_admin_lists_staff_with_counts(client):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["total"] == 2 and body["active"] == 1
-    assert body["active_by_role"] == {"admin": 1, "reviewer": 0, "content": 0, "viewer": 0}   # viewer: AA-878
+    assert body["active_by_role"] == {"admin": 1, "reviewer": 0, "content": 0, "viewer": 0,   # viewer: AA-878
+                                      # AA-1035 R2
+                                      "content_lead": 0, "tenant_qa": 0, "customer_success": 0, "support": 0,
+                                      "finance": 0, "ai_ops": 0}
     first = body["staff"][0]
     assert first == {
         "id": _ID_A, "username": "nghiep", "role": "admin", "is_active": True,

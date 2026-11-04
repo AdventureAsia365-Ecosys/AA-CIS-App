@@ -36,11 +36,13 @@ def test_every_member_write_is_a_policy_write_route():
     assert set(router_mod.MEMBER_WRITES) == ALL_ACTIONS
     for key, (method, route) in router_mod.MEMBER_WRITES.items():
         assert method not in ("GET", "HEAD"), key
-        assert staff_authz.POLICY[(method, route)] == staff_authz.TENANT_WRITE, key
+        # AA-1035 R2: also the tenant desk roles' tenant.member.write (scoped to their tenants)
+        assert staff_authz.POLICY[(method, route)] == (staff_authz.TENANT_WRITE, staff_authz.TENANT_MEMBER_WRITE), key
 
 
 def test_the_access_route_is_tenant_read():
-    assert staff_authz.POLICY[("GET", "/admin/tenants/{tenant_id}/members/access")] == staff_authz.TENANT_READ
+    assert staff_authz.POLICY[("GET", "/admin/tenants/{tenant_id}/members/access")] == (staff_authz.TENANT_READ,
+                                                                                         staff_authz.TENANT_BOOK_READ)
 
 
 def test_the_invitation_controls_are_the_e2e_allow_listed_routes():

@@ -332,7 +332,9 @@ async def verify_tenant_api_key(
 
 # AA-656: every staff role in shared.admin_role (migration 218 added 'content', 249 the read-only 'viewer',
 # AA-878). Mirrors api/core/staff_authz.py ROLE_PERMS and the frontend matrix in frontend/lib/rbac.ts.
-STAFF_ROLES = ("admin", "reviewer", "content", "viewer")
+STAFF_ROLES = ("admin", "reviewer", "content", "viewer",
+               # AA-1035 R2 (CIS 362, root ADR 0019 d3)
+               "content_lead", "tenant_qa", "customer_success", "support", "finance", "ai_ops")
 
 
 class AdminLoginRequest(BaseModel):

@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Path, Request
 from pydantic import BaseModel, Field
 
 from api.core.staff_authz import staff_policy
+from api.core.tenant_scope import TENANT_SCOPED
 from api.routers.admin import _admin_actor, _require_tenant_admin, verify_admin_secret
 from services.tenant_account import subscription as sub
 from services.tenant_account.plans import PlanError
@@ -41,7 +42,8 @@ def _refuse(e: PlanError) -> HTTPException:
                          headers={"X-Error-Code": e.code})
 
 
-@router.get("/tenants/{tenant_id}/subscription", summary="A tenant's subscriptions, entitlements and overrides")
+@router.get("/tenants/{tenant_id}/subscription", summary="A tenant's subscriptions, entitlements and overrides",
+            dependencies=TENANT_SCOPED)
 async def get_subscription(tenant_id: uuid.UUID, request: Request, x_admin_secret: str = Header(None)) -> dict:
     verify_admin_secret(x_admin_secret)
     async with request.app.state.pool.acquire() as conn:
@@ -52,7 +54,8 @@ async def get_subscription(tenant_id: uuid.UUID, request: Request, x_admin_secre
 
 
 @router.put("/tenants/{tenant_id}/entitlement-overrides/{feature_key}",
-            summary="Set a per-tenant entitlement override (audited)")
+            summary="Set a per-tenant entitlement override (audited)",
+            dependencies=TENANT_SCOPED)
 async def put_override(tenant_id: uuid.UUID, body: OverrideIn, request: Request, feature_key: str = FEATURE_KEY,
                        x_admin_secret: str = Header(None), x_admin_user_id: Optional[str] = Header(None),
                        x_admin_role: Optional[str] = Header(None)) -> dict:
@@ -68,7 +71,8 @@ async def put_override(tenant_id: uuid.UUID, body: OverrideIn, request: Request,
 
 
 @router.delete("/tenants/{tenant_id}/entitlement-overrides/{feature_key}",
-               summary="Remove a per-tenant entitlement override (audited)")
+               summary="Remove a per-tenant entitlement override (audited)",
+               dependencies=TENANT_SCOPED)
 async def delete_override(tenant_id: uuid.UUID, request: Request, feature_key: str = FEATURE_KEY,
                           x_admin_secret: str = Header(None), x_admin_user_id: Optional[str] = Header(None),
                           x_admin_role: Optional[str] = Header(None)) -> dict:

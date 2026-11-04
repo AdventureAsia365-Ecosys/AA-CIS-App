@@ -227,4 +227,4 @@ def test_patch_facts_route():
 def test_bff_write_rule_is_admin_only():
     from pathlib import Path
     rbac = (Path(__file__).resolve().parents[2] / "frontend" / "lib" / "rbac.ts").read_text()
-    assert '{ prefix: "content-quality/place-cards", roles: ["admin"] }' in rbac
+    assert '{ prefix: "content-quality/place-cards", roles: TENANT_QA }' in rbac

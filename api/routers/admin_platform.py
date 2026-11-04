@@ -77,8 +77,9 @@ _CRM_COLUMN = (
 )
 _SELECT_WITH_CRM = _SELECT.replace("g.role AS booking_role, ", "g.role AS booking_role, " + _CRM_COLUMN, 1)
 
-CisRole = Literal["admin", "reviewer", "content"]
-BookingRole = Literal["admin", "sales", "contracting", "content_creator"]
+# AA-1035 R2: staff_directory.CIS_ROLES / BOOKING_ROLES (root ADR 0019 d3; reviewer is no longer assignable).
+CisRole = Literal["admin", "content_lead", "content", "tenant_qa", "customer_success", "support", "finance", "ai_ops"]
+BookingRole = Literal["admin", "sales", "contracting", "content_creator", "finance"]
 CrmRole = Literal["platform_admin", "ops", "support"]
 Preset = Literal["platform_owner"]
 

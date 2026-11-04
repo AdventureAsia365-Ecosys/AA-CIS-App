@@ -127,7 +127,9 @@ ROW = {"tenant_id": TENANT, "tenant_name": "Lotus Trails", "monthly_usd": 20.0, 
 def test_policy_reads_are_spend_read_and_writes_spend_write():
     p = staff_authz.POLICY
     assert p[("GET", "/admin/ai-gateway/experiments")] == staff_authz.SPEND_READ
-    assert p[("GET", "/admin/ai-gateway/tenant-budgets/{tenant_id}")] == staff_authz.SPEND_READ
+    # AA-1035 R2: the Tenant 360 tile also reads for the caller's book (tenant.book.read, scoped)
+    assert p[("GET", "/admin/ai-gateway/tenant-budgets/{tenant_id}")] == (staff_authz.SPEND_READ,
+                                                                          staff_authz.TENANT_BOOK_READ)
     assert p[("PUT", "/admin/ai-gateway/tenant-budgets/{tenant_id}")] == staff_authz.SPEND_WRITE
     assert p[("DELETE", "/admin/ai-gateway/tenant-budgets/{tenant_id}")] == staff_authz.SPEND_WRITE
     for role in ("reviewer", "content", "viewer"):

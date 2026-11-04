@@ -7,8 +7,14 @@
 import { defineMessages } from "../../../_kit/core/i18n";
 
 export const BOOKING_ROLE = defineMessages(
-  { admin: "Booking admin", sales: "Sales", contracting: "Contracting", content_creator: "Content creator" },
-  { admin: "Quản trị Booking", sales: "Kinh doanh", contracting: "Hợp đồng", content_creator: "Người tạo nội dung" },
+  {
+    admin: "Booking admin", sales: "Sales", contracting: "Contracting", content_creator: "Content creator",
+    finance: "Finance",
+  },
+  {
+    admin: "Quản trị Booking", sales: "Kinh doanh", contracting: "Hợp đồng", content_creator: "Người tạo nội dung",
+    finance: "Tài chính",
+  },
 );
 
 // AA-1031: the CRM staff roles (shared.staff_crm_grant role codes; WORKFORCE groups crm-platform-admin / crm-ops /

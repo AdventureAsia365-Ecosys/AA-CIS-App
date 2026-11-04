@@ -64,9 +64,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from api.core import e2e_staff
 from api.core.staff_authz import StaffPrincipal, denial_reason, request_staff_identity, staff_policy
+from api.core.tenant_scope import TENANT_SCOPED
 
 from api.routers._billing import usage_row_to_dict
 from api.routers.admin import _admin_actor, verify_admin_secret
+from services.acp_shared.audit_log import AdminTenantAuditAction, write_audit_log
 from services.tenant_membership import session as members_session
 from services.tenant_membership import writer as members_writer
 from api.services import crm_console
@@ -340,7 +342,8 @@ async def _require_tenant(conn, tenant_id: UUID) -> dict:
 
 # ── routes ────────────────────────────────────────────────────────────────────────────────────
 
-@router.get("/{tenant_id}/cost", summary="Tenant month-to-date LLM cost, $/piece, $/tour, margin")
+@router.get("/{tenant_id}/cost", summary="Tenant month-to-date LLM cost, $/piece, $/tour, margin",
+            dependencies=TENANT_SCOPED)
 async def get_tenant_cost(tenant_id: UUID, request: Request, x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
@@ -377,7 +380,8 @@ async def get_tenant_cost(tenant_id: UUID, request: Request, x_admin_secret: str
     }
 
 
-@router.get("/{tenant_id}/quality", summary="Tenant T10 gate verdicts, held reasons, edit rate")
+@router.get("/{tenant_id}/quality", summary="Tenant T10 gate verdicts, held reasons, edit rate",
+            dependencies=TENANT_SCOPED)
 async def get_tenant_quality(
     tenant_id: UUID, request: Request,
     days: int = Query(30, ge=1, le=365),
@@ -414,7 +418,8 @@ async def get_tenant_quality(
     }
 
 
-@router.get("/{tenant_id}/markets", summary="Tenant markets, research coverage, unmapped requests")
+@router.get("/{tenant_id}/markets", summary="Tenant markets, research coverage, unmapped requests",
+            dependencies=TENANT_SCOPED)
 async def get_tenant_markets(tenant_id: UUID, request: Request, x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
@@ -468,7 +473,8 @@ def _members_unavailable(exc: Exception) -> HTTPException:
     return HTTPException(status_code=503, detail="Memberships need migration 276 (shared.tenant_members).")
 
 
-@router.get("/{tenant_id}/members", summary="The tenant's CIS memberships (Content studio roles)")
+@router.get("/{tenant_id}/members", summary="The tenant's CIS memberships (Content studio roles)",
+            dependencies=TENANT_SCOPED)
 async def get_tenant_members(tenant_id: UUID, request: Request, x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
@@ -502,7 +508,8 @@ async def _member_write(request: Request, tenant_id: UUID, op) -> dict:
 
 
 @router.patch("/{tenant_id}/members/{membership_id}",
-              summary="Change a member's Content studio role (owner / editor / viewer)")
+              summary="Change a member's Content studio role (owner / editor / viewer)",
+              dependencies=TENANT_SCOPED)
 async def patch_tenant_member(
     tenant_id: UUID, membership_id: UUID, body: MemberRoleChange, request: Request,
     x_admin_secret: str = Header(None), x_admin_user_id: str = Header(None),
@@ -517,7 +524,8 @@ async def patch_tenant_member(
 
 
 @router.post("/{tenant_id}/members/{membership_id}/remove",
-             summary="Remove a member (final; the partner CRM signs them out within a minute)")
+             summary="Remove a member (final; the partner CRM signs them out within a minute)",
+             dependencies=TENANT_SCOPED)
 async def remove_tenant_member(
     tenant_id: UUID, membership_id: UUID, request: Request,
     x_admin_secret: str = Header(None), x_admin_user_id: str = Header(None),
@@ -605,7 +613,8 @@ async def _deliver(request: Request, tenant_id: UUID, invitation_id: str, email:
 
 
 @router.post("/{tenant_id}/members/invitations", status_code=201,
-             summary="Invite a Content studio member (CIS row + CRM-delivered AA system mail)")
+             summary="Invite a Content studio member (CIS row + CRM-delivered AA system mail)",
+             dependencies=TENANT_SCOPED)
 async def invite_tenant_member(
     tenant_id: UUID, body: MemberInvite, request: Request,
     x_admin_secret: str = Header(None), x_admin_user_id: str = Header(None),
@@ -630,7 +639,8 @@ async def invite_tenant_member(
 
 
 @router.post("/{tenant_id}/members/{membership_id}/invitation/send",
-             summary="Send a Content studio invitation again (invited members only)")
+             summary="Send a Content studio invitation again (invited members only)",
+             dependencies=TENANT_SCOPED)
 async def resend_tenant_member_invitation(
     tenant_id: UUID, membership_id: UUID, body: MemberInviteResend, request: Request,
     x_admin_secret: str = Header(None),
@@ -687,7 +697,8 @@ def members_access(principal: StaffPrincipal, *, synthetic_tenant: bool) -> dict
 
 
 @router.get("/{tenant_id}/members/access",
-            summary="Which member write controls of this tenant the caller may use (UI hint, $0)")
+            summary="Which member write controls of this tenant the caller may use (UI hint, $0)",
+            dependencies=TENANT_SCOPED)
 async def get_tenant_members_access(
     tenant_id: UUID, request: Request, principal: StaffPrincipal = Depends(staff_policy),
     x_admin_secret: str = Header(None),
@@ -699,3 +710,123 @@ async def get_tenant_members_access(
         # Only the E2E session's answer depends on the tenant (its invitations are for synthetic tenants only).
         synthetic = principal.e2e_read_only and await e2e_staff.is_synthetic_tenant(conn, tenant_id)
     return {"tenant_id": str(tenant_id), **members_access(principal, synthetic_tenant=bool(synthetic))}
+
+
+# ── AA-1035 R2 (CIS 364, root ADR 0019 d4): who looks after the tenant ─────────────────────────────────────────────
+# shared.staff_tenant_assignment rows (owner / backup / support; one owner per tenant) feed api/core/tenant_scope.py:
+# a customer_success member reaches exactly its assigned tenants, support also the pool. Reads: tenant.read or the
+# caller's own book (tenant.book.read, scoped). Writes: tenant.assign (admin), audited in acp_shared.audit_log. The
+# Assignments page is R2 slice 2; these routes are what it (and the live isolation check) calls.
+
+AssignmentKind = Literal["owner", "backup", "support"]
+
+_ASSIGNMENTS_SQL = """
+SELECT a.admin_user_id::text AS admin_user_id, a.kind, a.created_at, a.created_by,
+       u.display_name, u.role::text AS staff_role, u.is_active
+FROM shared.staff_tenant_assignment a
+JOIN shared.admin_users u ON u.id = a.admin_user_id
+WHERE a.tenant_id = $1
+ORDER BY CASE a.kind WHEN 'owner' THEN 0 WHEN 'backup' THEN 1 ELSE 2 END, u.display_name NULLS LAST
+"""
+
+
+class AssignmentBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: AssignmentKind
+
+
+def _assignments_unavailable(exc: Exception) -> HTTPException:
+    logger.error("tenant_assignments_unavailable", reason=type(exc).__name__)
+    return HTTPException(status_code=503, detail="Assignments need migration 364 (shared.staff_tenant_assignment).")
+
+
+def _assignment_row(r: Any) -> dict:
+    return {"admin_user_id": r["admin_user_id"], "kind": r["kind"], "display_name": r["display_name"],
+            "staff_role": r["staff_role"], "is_active": r["is_active"], "created_at": _iso(r["created_at"]),
+            "created_by": r["created_by"]}
+
+
+@router.get("/{tenant_id}/assignments", summary="Who looks after this tenant (owner, backup, support)",
+            dependencies=TENANT_SCOPED)
+async def get_tenant_assignments(tenant_id: UUID, request: Request, x_admin_secret: str = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        await _require_tenant(conn, tenant_id)
+        try:
+            rows = await conn.fetch(_ASSIGNMENTS_SQL, tenant_id)
+        except asyncpg.UndefinedTableError as exc:
+            raise _assignments_unavailable(exc) from exc
+    return {"tenant_id": str(tenant_id), "assignments": [_assignment_row(r) for r in rows]}
+
+
+@router.put("/{tenant_id}/assignments/{admin_user_id}",
+            summary="Assign a staff member to this tenant, or change the kind (audited)", dependencies=TENANT_SCOPED)
+async def put_tenant_assignment(
+    tenant_id: UUID, admin_user_id: UUID, body: AssignmentBody, request: Request,
+    x_admin_secret: str = Header(None), x_admin_user_id: str = Header(None),
+):
+    verify_admin_secret(x_admin_secret)
+    actor = _admin_actor(x_admin_user_id)
+    pool = request.app.state.pool
+    async with pool.acquire() as conn, conn.transaction():
+        await _require_tenant(conn, tenant_id)
+        staff = await conn.fetchrow("SELECT id, is_active FROM shared.admin_users WHERE id = $1", admin_user_id)
+        if staff is None:
+            raise HTTPException(status_code=404, detail="Staff member not found")
+        if not staff["is_active"]:
+            raise HTTPException(status_code=409, detail="This staff account is disabled; enable it first.")
+        try:
+            before = await conn.fetchval(
+                "SELECT kind FROM shared.staff_tenant_assignment WHERE admin_user_id = $1 AND tenant_id = $2",
+                admin_user_id, tenant_id)
+            changed = before != body.kind
+            if changed:   # a new assignment, or another kind: delete + insert (cis_app has no UPDATE on the table)
+                await conn.execute(
+                    "DELETE FROM shared.staff_tenant_assignment WHERE admin_user_id = $1 AND tenant_id = $2",
+                    admin_user_id, tenant_id)
+                await conn.execute(
+                    "INSERT INTO shared.staff_tenant_assignment (admin_user_id, tenant_id, kind, created_by) "
+                    "VALUES ($1, $2, $3, $4)", admin_user_id, tenant_id, body.kind, actor)
+        except asyncpg.UndefinedTableError as exc:
+            raise _assignments_unavailable(exc) from exc
+        except asyncpg.UniqueViolationError as exc:
+            if getattr(exc, "constraint_name", None) == "staff_tenant_assignment_one_owner_key":
+                raise HTTPException(status_code=409, detail=(
+                    "This tenant already has an owner; make the current owner a backup or remove them first.")) from exc
+            raise HTTPException(status_code=409, detail="The assignment changed at the same time; try again.") from exc
+        if changed:
+            await write_audit_log(
+                conn, tenant_id=str(tenant_id), actor=actor, action=AdminTenantAuditAction.ASSIGNMENT_SET,
+                resource_type="staff_tenant_assignment", resource_id=str(admin_user_id),
+                details={"admin_user_id": str(admin_user_id), "before": before, "after": body.kind})
+    logger.info("tenant_assignment_set", tenant_id=str(tenant_id), admin_user_id=str(admin_user_id),
+                kind=body.kind, changed=changed)
+    return {"tenant_id": str(tenant_id), "admin_user_id": str(admin_user_id), "kind": body.kind, "changed": changed}
+
+
+@router.delete("/{tenant_id}/assignments/{admin_user_id}",
+               summary="Remove a staff member from this tenant (audited)", dependencies=TENANT_SCOPED)
+async def delete_tenant_assignment(
+    tenant_id: UUID, admin_user_id: UUID, request: Request,
+    x_admin_secret: str = Header(None), x_admin_user_id: str = Header(None),
+):
+    verify_admin_secret(x_admin_secret)
+    actor = _admin_actor(x_admin_user_id)
+    pool = request.app.state.pool
+    async with pool.acquire() as conn, conn.transaction():
+        await _require_tenant(conn, tenant_id)
+        try:
+            before = await conn.fetchval(
+                "DELETE FROM shared.staff_tenant_assignment WHERE admin_user_id = $1 AND tenant_id = $2 RETURNING kind",
+                admin_user_id, tenant_id)
+        except asyncpg.UndefinedTableError as exc:
+            raise _assignments_unavailable(exc) from exc
+        if before is None:
+            raise HTTPException(status_code=404, detail="This staff member is not assigned to the tenant")
+        await write_audit_log(
+            conn, tenant_id=str(tenant_id), actor=actor, action=AdminTenantAuditAction.ASSIGNMENT_REMOVED,
+            resource_type="staff_tenant_assignment", resource_id=str(admin_user_id),
+            details={"admin_user_id": str(admin_user_id), "before": before, "after": None})
+    logger.info("tenant_assignment_removed", tenant_id=str(tenant_id), admin_user_id=str(admin_user_id))
+    return {"tenant_id": str(tenant_id), "admin_user_id": str(admin_user_id), "removed": before}
