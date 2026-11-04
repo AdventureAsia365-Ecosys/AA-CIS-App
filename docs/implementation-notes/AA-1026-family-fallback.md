@@ -161,7 +161,15 @@ primary on acc3 with no change.
   (the relaxed rule in both switch states); snapshots `aa1026_routes_before_366.json` /
   `aa1026_routes_after_366.json` (S267: new chains and the text-stage scopes; the route capture now runs each stage
   with the snapshot's own `allowed_scopes` instead of 311's backfill).
-- PR B: `api/migrations/366_llm_family_fallback_chains.sql`, `tests/integration/test_aa1026_migration_366.py`.
+- PR B: `api/migrations/366_llm_family_fallback_chains.sql` (S267: the scope widening of every active text stage, the
+  adjusted validate chains, the OpenAI API rung on a3_place_card / t10_claims / the brand audits, the acc3 100 USD and
+  anthropic-direct 150 USD caps with their cost policy rows, the `aws_only_text_stage` rule in its guard),
+  `tests/integration/test_aa1026_migration_366.py` (27 decided stages, 15 widened, the caps, an admin's lower cap and
+  policy kept, the anthropic-direct guard). Older migration tests that assert the replay's end state follow 366:
+  `test_aa1002_migration_311.py` (an active text stage is vendor_direct since 366), `test_aa1026_migration_327.py`
+  (the budget test starts from the 327 fixture routes: 327's guard refuses the post-366 scopes),
+  `test_aa784_migration_286.py`, `test_aa803_migration_259.py`, `test_aa835_migration_278.py`,
+  `test_aa835_migration_282.py` (its restore sets the post-366 row instead of re-running 327).
 
 ## Tradeoffs
 
@@ -267,6 +275,13 @@ unless its eval says otherwise. No change proposed for the judges (GPT-5.6 Luna 
     "by product" grouping on the page (stage -> `product_of`) is a small follow-up if the business owner wants it
     there; `supply_content_writer` is Booking's product but CIS's app.
   - **`pii_class` per stage** (ADR 0019) is not in the CIS gateway yet; nothing in this change relaxes a PII control.
+- The AA-CIS-Infra byte copy of 366 (`db/migrations/cis/`) must be taken from the FINAL file of PR B (S267 rewrote it:
+  scopes, chains, caps); an older copy fails the Copy Guard.
+- Tests run in this lane (S267, private Postgres 16 under the scratchpad): the related unit files (73 files, 2 385
+  tests) green; the full integration suite green except the same 7 failures / 16 errors the code branch WITHOUT 366
+  shows (`test_007_rls_isolation`, `test_aa645_promote_through_lifecycle`, `test_aa986_migration_271`: local role
+  passwords / `DATABASE_URL`, environment only). CI's flake8 (`api/ services/ shared/`) clean; gitleaks 8.30.1 clean
+  on the three branches.
 - Merge order: PR A (code) deployed BEFORE migration 366 is applied: without the connection-circuit fix acc3's
   refusals of the 5.x / GPT rows keep the acc3 connection circuit open and the new 4.x rows are skipped; without the
   relaxed admin rule the admin route PATCH refuses 366's writer chains (sonnet-5-5 has an Anthropic API deployment).
