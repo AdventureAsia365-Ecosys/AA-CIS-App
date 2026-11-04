@@ -64,7 +64,9 @@ LATER = [os.path.join(os.path.dirname(MIGRATION), f) for f in
           # AA-1025 H2: 348's capacity table references the connection table (dropped by _undo)
           "348_llm_capacity_limit.sql",
           # AA-1026 (S267): 367's probe-state columns and acc3 candidate rows live on the deployment table _undo drops
-          "367_llm_candidate_models_probe_state.sql")]
+          "367_llm_candidate_models_probe_state.sql",
+          # AA-1042 (S268): 370 grants cis_app UPDATE on the deployment priority and switches the gpt-4.1 row off
+          "370_llm_route_control_versions.sql")]
 # The LLM connection kinds of 304 (322 adds typesafe, dataforseo, geoapify and bedrock_guardrails rows).
 LLM_KINDS = ("bedrock", "anthropic", "openai", "azure_openai", "mock")
 
@@ -134,10 +136,12 @@ def _profiles(c):
 
 def _deployments(c):
     # the rows 304 writes: 306 (AA-1002 S2) adds anthropic-direct seeds and 324 (AA-1017) the acc2 candidate models,
-    # rows a 304 re-run does not recreate
+    # rows a 304 re-run does not recreate; 370 (AA-1042) switches the retired gpt-4.1 row off, which a 304 re-run from
+    # the pre-304 state seeds on again (LATER puts 370 back)
     c.execute("SELECT model_key, connection_key, wire_id, priority, enabled, origin "
               "FROM shared.llm_model_deployment "
               "WHERE updated_by NOT IN ('migration-306-aa1002', 'migration-324-aa1017', 'migration-367-aa1026') "
+              "AND model_key <> 'gpt-4.1' "
               "ORDER BY model_key, priority, connection_key")
     return [tuple(r.values()) for r in c.fetchall()]
 
