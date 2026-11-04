@@ -348,7 +348,9 @@ def test_read_without_the_tables_says_so():
     import asyncpg
     conn = MagicMock()
     missing = asyncpg.exceptions.UndefinedTableError("missing")
-    conn.fetch = AsyncMock(side_effect=[[], [], missing, missing])      # AA-1018: + the failure-domain report
+    # AA-1018: + the failure-domain report; AA-1026: + the stage coverage report
+    conn.fetch = AsyncMock(side_effect=[[], [], missing, missing, missing])
     out = asyncio.run(av.read(conn, hours=6, now=NOW))
     assert out["health_ready"] is False and out["connections"] == []
     assert out["invariant"] == {"ready": False, "report_only": True}
+    assert out["stage_coverage"] == {"ready": False}

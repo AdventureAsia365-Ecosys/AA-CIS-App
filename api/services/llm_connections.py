@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import functools
 import json
 import os
 import re
@@ -442,14 +443,16 @@ def _pick(pairs: list, model_key: Optional[str]):
 
 
 async def test_connection(pool, connection_key: str, *, model_key: Optional[str] = None, actor: str,
-                          client=None, max_tokens: Optional[int] = None) -> dict:
+                          client=None, max_tokens: Optional[int] = None, count_outcome: bool = True) -> dict:
     """AA-1002 (S4): one small real call (``TEST_MAX_TOKENS`` output tokens) of one text model on the connection,
     through ``LLMClient.probe`` (the gateway's own adapters: same credential resolver, same limiter; the outcome
     counts on the deployment's circuit, a success closes it). Works on a switched-off connection or deployment: the
     point is to test before enabling. An answered call writes its ``shared.llm_call_log`` row (stage
     ``adhoc_conn_test``, role ``validate``, account = the connection); a billed but unusable reply is logged by the
     gateway. One audit row (``llm_connection_tested``). Raises LookupError (404) and ConnectionToggleRefused (422);
-    a provider failure is the result (``ok: false`` + its class), not an exception."""
+    a provider failure is the result (``ok: false`` + its class), not an exception. AA-1026 (S267): ``count_outcome``
+    False (the availability sweep of a disabled candidate) keeps the outcome off the circuit breaker
+    (``LLMClient.probe(count=False)``)."""
     from shared.llm_client.call_log import billed_fields, record_call_with_pool
     from shared.llm_client.client import LLMClient, UnusableReply, unusable_reply_cost
     from shared.llm_client.models import LLMRequest
@@ -481,7 +484,10 @@ async def test_connection(pool, connection_key: str, *, model_key: Optional[str]
     result = {"connection_key": connection_key, "kind": conn.kind, "model_key": model.model_key,
               "wire_id": dep.wire_id, "deployment_enabled": dep.enabled, "connection_enabled": conn.enabled}
     try:
-        resp = await asyncio.to_thread(client.probe, request, model, target)
+        if count_outcome:
+            resp = await asyncio.to_thread(client.probe, request, model, target)
+        else:
+            resp = await asyncio.to_thread(functools.partial(client.probe, count=False), request, model, target)
     except UnusableReply as e:      # the provider answered and billed; the gateway logged the billed row
         result.update(ok=True, reply_usable=False, error_class=None, error=str(e)[:300],
                       cost_usd=round(unusable_reply_cost(e), 6))

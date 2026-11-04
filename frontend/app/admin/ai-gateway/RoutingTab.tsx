@@ -36,6 +36,7 @@ import {
 } from "./llmShared";
 import { STAGE_GROUP_LABELS_VI, STAGE_LABELS_VI } from "./llmShared.vi";
 import { LlmAvailabilityCard } from "./LlmAvailabilityCard";
+import { StageCoverageCard } from "./StageCoverageCard";
 import { MODELS } from "./models.messages";
 import {
   BREAK_GLASS_MIN_CHARS, ChangeEvidenceFields, EMPTY_EVIDENCE, evidenceBody, evidenceReady, needsEvidence,
@@ -358,6 +359,7 @@ export default function RoutingTab() {
     <div data-testid="ai-gateway-routing-ready"
       style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 16 }}>
       <LlmAvailabilityCard />
+      <StageCoverageCard />
       <p style={{ ...small, margin: 0 }}>
         {t("stagesIntroA")} <b>{t("stagesIntroB")}</b>{t("stagesIntroC")} <b>{t("stagesIntroD")}</b>{" "}
         {t("stagesIntroE")}

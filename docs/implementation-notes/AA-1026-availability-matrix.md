@@ -33,6 +33,33 @@ on AI gateway › Routing). Infra: the acc3 invoker role must allow the candidat
   refused candidates would trip acc3's connection circuit (bell + e-mail + every acc3 deployment skipped) while Sonnet
   4.6 / Haiku 4.5 still answer. Its outcome is written to the deployment row instead.
 
+- **Sweep = the probe job in candidate mode, not a new job kind.** `llm_connection_probe` payload `"mode":
+  "candidates"` (manual only): every DISABLED text deployment (or any deployment of a switched-off connection), optional
+  `connection_keys` / `model_keys`, at most `MAX_PROBES` (30), 16 output tokens each (`CANDIDATE_MAX_TOKENS`: an
+  unusable or cut reply still proves the deployment answers). Same switch as a live daily run (`LLM_DAILY_PROBE`, on on
+  Dev). Each call goes through the gateway's own `LLMClient.probe` (via `test_connection`), so a refused call is a 0 USD
+  `shared.llm_call_log` row (ledger v2 attempt row) and an answered one its billed row with `**billed_fields(resp)`.
+- **`LLMClient.probe(count=False)`** keeps the connection limiter but skips `breaker.guarded`: no health row, no
+  connection circuit, no access_state write for a candidate. Daily probe and admin Test connection keep counting.
+- **The deployment row gets every probe's outcome** (daily and sweep): `access_state` from the breaker class
+  (credential -> unconfigured, request / other -> error), `last_probe_at`, `last_probe_error` (300 chars, ARNs /
+  account IDs masked). The connection is stamped `last_probe_at` by the daily probe only.
+- **Stage coverage = proof, not configuration.** `shared/llm_client/stage_coverage.py`: a stage is live when one
+  deployment on its route (aliases expanded, role and data-scope rules as the gateway routes) answered within 36 h
+  (`PROOF_MAX_AGE`: daily probe + margin) with no account refusal since (breaker row or probe state) and no open
+  deployment / connection circuit. A connection `access_state` of quota_exhausted / unconfigured refuses every model;
+  `access_denied` only refuses deployments without an answer of their own (it is set when several models are refused,
+  not necessarily this one).
+- **Alarm through the existing ops checks** (`shared/ops_checks.py`): one check per stage, `llm_stage_coverage.<stage>`
+  (`check_for`, the stage names are data), bell at most once per 24 h per stage (`Check.bell_every`), e-mail on the
+  alerts topic once per stage and UTC day. Evaluated on every api sampler tick (5 min, six small reads through
+  `pool.fetch`), and summarised in the result of every live probe run.
+- **No readiness raise.** Every read and write of the 367 columns falls back without them (deployments read without
+  probe state; the state write is a logged no-op), so the code PR cannot break before the apply; MIG-4 order still
+  applies.
+- **No admin route change** (no openapi regeneration): the manual sweep is the job queued by
+  `scripts/llm_ops/llm_availability_sweep.py`, run in the api container with `tools/ecs/ecsx.sh`.
+
 ## Changed
 
 - `api/migrations/367_llm_candidate_models_probe_state.sql` (contract) + `tests/integration/test_aa1026_migration_367.py`.
@@ -42,13 +69,40 @@ on AI gateway › Routing). Infra: the acc3 invoker role must allow the candidat
   removed again and they are left out of 306's expected seed), `test_aa1017_migration_324.py` (acc3 rows of kimi-k3 /
   llama4-maverick are 367's).
 
+- Code PR: `services/jobs/llm_probe_job.py` (candidate mode, `build_candidate_plan`, `record_deployment_states`,
+  `matrix`, `coverage_summary`, `enqueue_manual(mode=...)`), `shared/llm_client/client.py` (`probe(count=)`,
+  `_call_target(count=)`), `api/services/llm_connections.py` (`test_connection(count_outcome=)`),
+  `shared/llm_client/stage_coverage.py` (new), `shared/ops_checks.py` (`check_for`, `Check.bell_every`,
+  `coverage_findings`, `stage_coverage_findings`), `api/core/ops_metrics_sampler.py` (the ops checks part),
+  `api/services/llm_availability.py` (`stage_coverage` in `GET /admin/llm-availability`), frontend
+  `StageCoverageCard.tsx` on the Routing tab + `lib/llmAvailability.ts` helpers + messages (EN / VI),
+  `scripts/llm_ops/llm_availability_sweep.py` (force-added: `scripts/` is ignored).
+- Tests: `tests/unit/test_aa1026_availability_sweep.py`, `tests/unit/test_aa1026_stage_coverage.py`,
+  `tests/integration/test_aa1026_stage_coverage_db.py`, `frontend/lib/llmAvailability.test.mjs`; read-count updates in
+  `test_aa900_llm_availability.py` / `test_aa1002_s4_admin_connections.py`; `stage_coverage.py` classified in
+  `test_aa1002_no_behaviour_change.py`.
+
 ## Tradeoffs
 
 - Disabled acc3 deployments of kimi-k3 / llama4-maverick without touching their catalog `bedrock_profile_ids` (acc2
   only): enabling one later needs the catalog's acc3 profile too (wire drift test), but 367 changes no existing row.
+
+- One alert per uncovered stage (as asked), not one digest: on a bad day several stages bell and mail at once. The
+  card shows them on one page.
+- 36 h proof window: a model that answered yesterday but is refused now is caught by the breaker row of the refusal
+  (newer than the answer), not by the window.
 
 ## Should know
 
 - MIG-4: migration-only PR → Infra byte copy → Infra Migration Apply (contract, jobs idle) → schema dump PR → code PR.
 - The acc3 IAM statement (AA-CIS-Infra `accounts/acc3-bedrock/main.tf`) must be applied (human, MFA) before the live
   sweep; otherwise every candidate answers AccessDenied from IAM, which says nothing about the account's model access.
+- Cost of a live sweep of the eight 367 candidates on acc3: about 0.0068 USD upper bound (60 tokens in, 16 out;
+  the three unpriced GPT-6 rows estimated at the GPT-6 Astra Global price 10 / 50 USD per 1M; a refused call is 0 USD).
+- The llm-family-fallback lane edits the same CALL_PATH tuple in `test_aa1002_no_behaviour_change.py`
+  (route_chains.py): a one-line merge on rebase.
+- Migration number: 367 assumes the llm-family-fallback lane's 366 merges first (the preflight refuses 367 while main
+  max is 365). If 366 is dropped, renumber to 366 (`git grep '367_'` and `'367'`, `migration-367-aa1026` stays a
+  label only if renamed consistently).
+- Stacked branches: the code branch carries the migration commit; after the migration-only PR squash-merges, rebase
+  the code branch on main (the identical change drops out).
