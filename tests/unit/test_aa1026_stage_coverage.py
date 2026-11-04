@@ -110,9 +110,34 @@ def test_account_states_of_the_connection():
     rep = _report([_route("s1", "m-a"), _route("s2", "m-b"), _route("s3", "m-c")],
                   [_dep("m-a", "acc3"), _dep("m-b", "acc2"), _dep("m-c", "acc2")],
                   [_ok("acc3", "m-a"), _ok("acc2", "m-c")], conns=conns)
-    assert _stage(rep, "s1")["models"][0]["why"] == "connection quota_exhausted"
+    # a quota of 0 on other models of the account stamps the connection: this model's own recent answer wins
+    assert _stage(rep, "s1")["status"] == "live"
     assert _stage(rep, "s2")["models"][0]["why"] == "connection access_denied"   # no answer of its own on record
     assert _stage(rep, "s3")["status"] == "live"                                 # it answered: one model refused
+
+
+def test_a_quota_exhausted_connection_refuses_a_deployment_without_recent_evidence_of_its_own():
+    conns = [_conn("acc3", state="quota_exhausted")]
+    deps = [_dep("m-a", "acc3"), _dep("m-b", "acc3"), _dep("m-c", "acc3", state="ok", probed=NOW - H1)]
+    health = [_ok("acc3", "m-b", at=NOW - sc.PROOF_MAX_AGE - H1)]
+    rep = _report([_route("s1", "m-a"), _route("s2", "m-b"), _route("s3", "m-c")], deps, health, conns=conns)
+    assert _stage(rep, "s1")["models"][0] == {"model_key": "m-a", "connection_key": "acc3", "state": "refused",
+                                              "why": "connection quota_exhausted"}     # no answer on record
+    assert _stage(rep, "s2")["models"][0]["why"] == "connection quota_exhausted"     # its answer is too old
+    assert _stage(rep, "s3")["status"] == "live"                                     # the probe's 'ok' counts
+
+
+def test_a_quota_exhausted_connection_still_loses_to_the_deployments_own_newer_refusal():
+    conns = [_conn("acc3", state="quota_exhausted")]
+    h = Health("acc3", "m-a", last_ok_at=NOW - 2 * H1, last_error_at=NOW - H1, last_error_class="quota_exhausted")
+    st = _stage(_report([_route("s1", "m-a")], [_dep("m-a", "acc3")], [h], conns=conns), "s1")
+    assert st["models"][0]["why"] == "refused (quota_exhausted)" and st["status"] == "none"
+
+
+def test_an_unconfigured_connection_refuses_every_model_even_one_that_answered():
+    conns = [_conn("acc3", state="unconfigured")]
+    st = _stage(_report([_route("s1", "m-a")], [_dep("m-a", "acc3")], [_ok("acc3", "m-a")], conns=conns), "s1")
+    assert st["models"][0]["why"] == "connection unconfigured" and st["status"] == "none"
 
 
 def test_switched_off_role_and_scope_rules():

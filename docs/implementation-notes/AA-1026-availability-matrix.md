@@ -47,9 +47,9 @@ on AI gateway › Routing). Infra: the acc3 invoker role must allow the candidat
 - **Stage coverage = proof, not configuration.** `shared/llm_client/stage_coverage.py`: a stage is live when one
   deployment on its route (aliases expanded, role and data-scope rules as the gateway routes) answered within 36 h
   (`PROOF_MAX_AGE`: daily probe + margin) with no account refusal since (breaker row or probe state) and no open
-  deployment / connection circuit. A connection `access_state` of quota_exhausted / unconfigured refuses every model;
-  `access_denied` only refuses deployments without an answer of their own (it is set when several models are refused,
-  not necessarily this one).
+  deployment / connection circuit. The connection `access_state` is only a fallback for a deployment without
+  evidence of its own: `unconfigured` refuses every model (a credential failure), `quota_exhausted` refuses a
+  deployment with no answer of its own within 36 h, `access_denied` one with no answer on record at all.
 - **Alarm through the existing ops checks** (`shared/ops_checks.py`): one check per stage, `llm_stage_coverage.<stage>`
   (`check_for`, the stage names are data), bell at most once per 24 h per stage (`Check.bell_every`), e-mail on the
   alerts topic once per stage and UTC day. Evaluated on every api sampler tick (5 min, six small reads through
@@ -106,3 +106,17 @@ on AI gateway › Routing). Infra: the acc3 invoker role must allow the candidat
   label only if renamed consistently).
 - Stacked branches: the code branch carries the migration commit; after the migration-only PR squash-merges, rebase
   the code branch on main (the identical change drops out).
+
+## Review fix (S267)
+
+- **Connection `quota_exhausted` no longer overrides a deployment's own answer.** Reviewer finding: acc3 sets quotas
+  per model (Claude 5.x, GPT-5.6 and others at 0, Sonnet 4.6 / Haiku 4.5 / Cohere answering). The daily probe's refusals
+  on the 0-quota models trip the connection circuit, and `breaker.note_access_state` stamps the connection
+  `quota_exhausted` (no timestamp, once per change and process, so an `ok` from another process may never overwrite
+  it). The gateway does not route on that column, so it kept calling Sonnet 4.6 / Haiku 4.5 while the card said NO LIVE
+  MODEL and the alarm fired. Now: `unconfigured` stays account-wide; `quota_exhausted` refuses only a deployment with
+  no answer of its own within `PROOF_MAX_AGE`; a deployment's own newer refusal still wins over its answer (unchanged).
+- Tradeoff: a real account-wide quota cut shows a deployment as live until its own call or the next probe refuses it
+  (at most one probe cycle), instead of a false alarm on every acc3 stage every morning. The connection circuit (OPEN
+  for minutes after the trip) still marks every model `circuit_open` meanwhile.
+

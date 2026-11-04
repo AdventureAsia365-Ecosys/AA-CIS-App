@@ -13,10 +13,15 @@ deployment is in one of these states (the first that applies):
 - ``role_skip`` / ``scope_skip``: its connection does not serve the stage's role (``served_roles``), or the stage's
   ``allowed_scopes`` refuse its data scope (no stage policy: the primary model may use any scope, a fallback
   ``aws_only`` only, as ``vendor_route.deployment_plan`` routes);
-- ``refused``: the account refuses it: the connection's ``access_state`` is ``quota_exhausted`` / ``unconfigured``
-  (account-wide by nature), or ``access_denied`` while this deployment has no answer of its own on record; or the
-  deployment's newest refusal (breaker row ``llm_provider_health`` of class access_denied / quota_exhausted /
-  credential, or the probe's ``llm_model_deployment.access_state``, CIS 367) is newer than its newest answer;
+- ``refused``: the account refuses it: the connection's ``access_state`` is ``unconfigured`` (a credential failure
+  stops every model), ``quota_exhausted`` while this deployment has no answer of its own within ``PROOF_MAX_AGE``, or
+  ``access_denied`` while it has no answer on record at all; or the deployment's newest refusal (breaker row
+  ``llm_provider_health`` of class access_denied / quota_exhausted / credential, or the probe's
+  ``llm_model_deployment.access_state``, CIS 367) is newer than its newest answer. The connection state is only a
+  fallback for a deployment without evidence of its own: it is written without a time (``breaker.note_access_state``,
+  once per change and process) and a quota of 0 on a few models of one account (acc3 sets quotas per model) trips the
+  connection circuit and stamps ``quota_exhausted`` although its other models still answer; the gateway does not
+  route on it either;
 - ``circuit_open``: its breaker circuit, or its connection's circuit (``breaker.connection_health``), is OPEN now;
 - ``live``: it answered (breaker ``last_ok_at``, or a probe that wrote ``access_state = 'ok'``) within
   ``PROOF_MAX_AGE`` and nothing above applies;
@@ -40,7 +45,6 @@ from .invariant import ALIASES_SQL, ROUTES_SQL, ROUTES_V3_SQL, _allowed, _keys, 
 PROOF_MAX_AGE = timedelta(hours=36)        # the daily probe (05:00 UTC) plus a margin: older proof is "unproven"
 REFUSING_CLASSES = ("access_denied", "quota_exhausted", "credential")
 DEPLOYMENT_REFUSED_STATES = ("access_denied", "quota_exhausted", "unconfigured")
-CONNECTION_ACCOUNT_STATES = ("quota_exhausted", "unconfigured")
 LLM_KINDS = ("bedrock", "anthropic", "openai", "azure_openai", "mock")
 STATES = ("live", "unproven", "circuit_open", "refused", "role_skip", "scope_skip", "off")
 MAX_MODELS_LISTED = 12
@@ -77,8 +81,11 @@ def assess(dep: dict, conn: Optional[dict], model_enabled: Optional[bool], healt
     refused_health = health.last_error_at if health and health.last_error_class in REFUSING_CLASSES else None
     last_bad = _latest(refused_health, probe_at if probe_state in DEPLOYMENT_REFUSED_STATES else None)
     conn_state = conn.get("access_state") or "unknown"
-    if conn_state in CONNECTION_ACCOUNT_STATES:
-        return "refused", f"connection {conn_state}"
+    recent_ok = last_ok is not None and now - last_ok <= PROOF_MAX_AGE
+    if conn_state == "unconfigured":
+        return "refused", "connection unconfigured"              # a credential failure stops every model
+    if conn_state == "quota_exhausted" and not recent_ok:
+        return "refused", "connection quota_exhausted"
     if conn_state == "access_denied" and last_ok is None:
         return "refused", "connection access_denied"
     if last_bad is not None and (last_ok is None or last_bad >= last_ok):
@@ -88,7 +95,7 @@ def assess(dep: dict, conn: Optional[dict], model_enabled: Optional[bool], healt
         return "circuit_open", "connection circuit open"
     if health is not None and state_of(health, now) == OPEN:
         return "circuit_open", f"circuit open ({health.last_error_class or 'other'})"
-    if last_ok is not None and now - last_ok <= PROOF_MAX_AGE:
+    if recent_ok:
         return "live", "answered " + last_ok.isoformat()
     return "unproven", "no recent answer on record" if last_ok is None else "last answer " + last_ok.isoformat()
 
