@@ -24,9 +24,9 @@ and with ``per_unit`` cost_per_tour / cost_per_piece (LLM rows with a tour / pie
 
 The CRM (AA-Partner) keeps its own ledger, which CIS cannot read; its gateway's daily totals per UTC day, stage and
 model (crm.ops.v1 GET /llm/usage, with the staff member's own token: no agency, no personal data) are merged as source
-``crm`` when the granularity is a day or longer and no filter or grouping needs a value the CRM does not send
-(provider, account, role, tenant, error class, traffic: the rows then show no value there). A CRM UTC day is put in
-the ICT day of the same date.
+``crm`` when the granularity is a day or longer and no filter needs a value the CRM does not send (provider, account,
+role, tenant, error class, traffic); grouped by one of those, the CRM's rows show no value there. A CRM UTC day is put
+in the ICT day of the same date.
 """
 from __future__ import annotations
 
@@ -389,9 +389,6 @@ def crm_eligible(q: ExplorerQuery) -> Optional[str]:
     """None when the CRM's daily totals can be merged into this query, else the reason. Pure."""
     if q.granularity == "hour":
         return "hour_granularity"
-    for d in q.group:
-        if d not in CRM_DIMS:
-            return f"group_{d}"
     for d in q.filters:
         if d not in CRM_DIMS:
             return f"filter_{d}"

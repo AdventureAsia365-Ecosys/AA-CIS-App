@@ -260,7 +260,7 @@ def test_sort_rows_puts_missing_last():
 
 def test_crm_merge_rules():
     assert ue.crm_eligible(ue.parse_query({"granularity": "hour"})) == "hour_granularity"
-    assert ue.crm_eligible(ue.parse_query({"group": "tenant"})) == "group_tenant"
+    assert ue.crm_eligible(ue.parse_query({"group": "tenant"})) is None      # its rows show no tenant
     assert ue.crm_eligible(ue.parse_query({"group": "stage", "f_account": "x"})) == "filter_account"
     assert ue.crm_eligible(ue.parse_query({"group": "stage,model", "f_source": "crm"})) is None
     w = ue.crm_windows(_utc(2026, 1, 1), _utc(2026, 7, 1))
