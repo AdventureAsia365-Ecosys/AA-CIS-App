@@ -402,7 +402,10 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   (`data_scope.pii_allows`: a `us.` profile or an in-region `<provider>.<model>` id on a `us-*` connection, never
   `global.`, a full ARN, an unknown prefix or a vendor API) in `vendor_route.deployment_plan`, a pinned
   `model@connection`, `embed`, the route invariant and the route preview; a path the registry does not describe
-  (legacy chain, catalog fallback) is refused for it. A failed stage read with no cached row reads as `pii`. Every stage is `content` today (no CIS stage takes
+  (legacy chain, catalog fallback) is refused for it. A failed stage read with no cached row reads as `pii`. The
+  decision path never sends a `pii` stage's state to TypeSafe (a vendor outside our accounts): `decide()` reads the pii
+  stages with its questions and answers every question `skipped` ("pii stage: no vendor decision"; an unreadable class
+  = `error`, no call), so the stage keeps its own rule. Every stage is `content` today (no CIS stage takes
   personal data; the CRM's PII stages run in the CRM gateway). Admin: `GET /admin/llm-config` returns `pii_class`
   (null before 373) for AI gateway › Routing › "Routing by data class"; the route PATCHes and Route control refuse a
   model with no US deployment for a pii stage.

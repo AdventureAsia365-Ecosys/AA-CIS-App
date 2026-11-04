@@ -79,9 +79,23 @@ Plan: root ADR 0019 d12 / d13 / d20 / d21, clarifications TL-12 / TL-13 / TL-20 
     prefix (`zz.anthropic.…`) and an id that is not a Bedrock model id are `unknown` (a pii stage refuses them). A new
     Bedrock provider must be added to that list before a pii stage can use its in-region ids.
 
+- **The decision path keeps the data class too (review S268).** `decide()` sends a stage's state to TypeSafe (Jev,
+  api.typesafe.ai), a vendor outside our AWS accounts, and its question stages share names with `llm_role_config`.
+  A `pii` stage now answers every question `skipped` with `pii stage: no vendor decision` before the tenant guard,
+  the verdict cache and the call (the stage keeps its own rule, as for any skip). The pii stages are one query
+  (`SELECT stage FROM shared.llm_role_config WHERE pii_class = 'pii'`) read with the questions on the connection
+  `_decide` already holds, same 20 s TTL, rather than `role_config.get_stage_config` per stage: that opens its own
+  connection on a miss and warns for every decide stage with no `llm_role_config` row (`a1_seo`, `a0_ingest` ...).
+  Before 373 (column missing) every stage is content; any other read failure fails closed (all verdicts `error`, no
+  TypeSafe call, not cached). A decide stage with no `llm_role_config` row is content, as the gateway reads it.
+
 ## Changed
 
 - Migration-only PR: `api/migrations/373_llm_stage_pii_class.sql` (contract), `tests/integration/test_aa1039_migration_373.py`.
+- Decision path: `shared/llm_client/decide.py` (`_load_pii_stages`, `stage_is_pii`, `PII_STAGE_SKIP_ERROR`, the skip
+  in `_decide`); tests `tests/unit/test_aa660_decide.py` (5 tests; the `_conn` double answers the pii query, as do the
+  doubles in `test_aa741_g1_tenant_binding.py` and `test_aa982_a3_place_paa_filter.py`) and
+  `test_aa1039_migration_373.py::test_the_decision_path_reads_the_pii_stages` (real table).
 - Code PR: `shared/llm_client/data_scope.py` (PII_CLASSES, `normalize_pii_class`, `deployment_geo`, `pii_allows`),
   `role_config.py` (`StageConfig.pii_class`, optional column read with the 373 fallback; admin list sends it),
   `vendor_route.deployment_plan(pii_class=)`, `client.py` (`stage_pii_class`, the plan / alias / legacy paths),
