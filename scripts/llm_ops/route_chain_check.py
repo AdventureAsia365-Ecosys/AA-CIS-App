@@ -9,9 +9,10 @@ nothing, and needs the code of ``api/services/llm_route_chains.py`` in the image
     python3 route_chain_check.py              # every stage, human-readable, then one JSON object
     python3 route_chain_check.py --json       # the JSON object only
 
-For each active stage: its chain, the attempts in the gateway's order (``client.route_attempts``: a vendor_direct
-route runs on AWS first across all its models), each attempt's status (``call`` = a deployment would be called now,
-with its connection; ``skip`` = why not: circuit open with the class that opened it, budget reached, role not served,
+For each active stage: its chain, the attempts in the gateway's order (``client.route_attempts``: model first by
+default, tech lead S267, each attempt listing the deployments in the order they would be tried, e.g. acc3 then the
+Anthropic API; the AWS-first passes only with ``LLM_ROUTE_AWS_FIRST=on``), each attempt's status (``call`` = a
+deployment would be called now, with its connection; ``skip`` = why not: circuit open with the class that opened it, budget reached, role not served,
 no enabled deployment in that scope), and FIRST = the first model@connection that would be called. "Would be called"
 is not "will answer": a circuit only opens after a refusal, so a model refused for the first time still shows as
 ``call``. Then the chain-rule violations (``llm_route_chains.violations``) of the live rows. Exit code 0 (a report).

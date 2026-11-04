@@ -12,9 +12,11 @@ What this proves:
 - only the fallbacks of the decided stages change; primary, shadow, scopes, role and the switched-off rows do not;
 - every active route keeps the chain rules (``llm_route_chains.violations``), which the old table broke (no fallback on
   tp_compose / segment_research*);
-- a changed stage still calls its primary on acc3 first, then the new Claude 4.x rows on acc3 by Converse, and, on a
-  vendor_direct stage, every AWS call before any vendor API call even with the Anthropic API switched on (the
-  gateway's AWS-first order); with that order switched off the Anthropic API would come before Sonnet 4.6 on acc3;
+- a changed stage still calls its primary on acc3 first, then the new Claude 4.x rows on acc3 by Converse; on a
+  vendor_direct stage the gateway runs MODEL FIRST (tech lead S267, root ADR 0009 decision 5 amendment): with the
+  Anthropic API switched on, Sonnet 5.5 on acc3, then Sonnet 5.5 on the Anthropic API, then Sonnet 4.6 on acc3, ...,
+  the OpenAI API last, within the gateway's 6 attempts; with the AWS-first switch on (``LLM_ROUTE_AWS_FIRST``, kept,
+  default off) every AWS call comes before any vendor API call; an aws_only stage never leaves AWS in either order;
 - every stage not changed makes exactly the calls it made before.
 """
 import dataclasses
@@ -122,7 +124,7 @@ def calls() -> dict:
     if not _CALLS:
         _CALLS["before"] = _capture(_routes(BEFORE), {})
         _CALLS["after"] = _capture(_routes(AFTER), {})
-        _CALLS["after_per_model"] = _capture(_routes(AFTER), {"LLM_ROUTE_AWS_FIRST": "off"})
+        _CALLS["after_aws_first"] = _capture(_routes(AFTER), {"LLM_ROUTE_AWS_FIRST": "on"})
     return _CALLS
 
 
@@ -217,17 +219,27 @@ def _is_aws(call) -> bool:
     return call[0] in (*BEDROCK_APIS, "invoke_model") and call[1] in ("acc3", "acc2")
 
 
+def _same_model(vendor_call, aws_call) -> bool:
+    """The vendor API call is the same model as the acc3 call (wire "claude-sonnet-5-5" vs
+    "global.anthropic.claude-sonnet-5-5")."""
+    return _is_aws(aws_call) and aws_call[1] == "acc3" and aws_call[2].endswith("." + vendor_call[2])
+
+
 @pytest.mark.parametrize("state", ["seed", "seed_anthropic_on"])
 @pytest.mark.parametrize("stage", sorted(DECIDED))
-def test_a_changed_stage_calls_its_primary_first_then_the_family_on_aws_before_any_vendor_api(calls, state, stage):
+def test_a_changed_stage_calls_its_primary_first_then_each_model_on_every_deployment(calls, state, stage):
+    """Model first (S267): a vendor API call is either the same model as the acc3 call right before it, or the
+    route's vendor-only last rung (the OpenAI API); the new 4.x rows are called on acc3 by Converse."""
     route = _routes(AFTER)[stage]
     for variant in ("plain", "structured"):
         old = calls["before"][state][stage][variant]["calls"]
         new = calls["after"][state][stage][variant]["calls"]
         assert new[:1] == old[:1], (variant, new)                       # the primary on acc3, unchanged and first
-        first_vendor = next((i for i, c in enumerate(new) if not _is_aws(c)), len(new))
-        assert all(not _is_aws(c) for c in new[first_vendor:]), (variant, new)   # no AWS call after a vendor call
-        wires = [c[2] for c in new]
+        for i, c in enumerate(new):
+            if not _is_aws(c):
+                assert (i > 0 and _same_model(c, new[i - 1])) or (i == len(new) - 1 and c[:2] == ["openai",
+                                                                                                "openai-direct"]), \
+                    (variant, new)
         for key in route["fallback_model_ids"]:
             if key in NEW_MODELS:
                 assert ["converse", "acc3", NEW_MODELS[key][1]] in [c[:3] for c in new] or \
@@ -236,20 +248,27 @@ def test_a_changed_stage_calls_its_primary_first_then_the_family_on_aws_before_a
             assert all(_is_aws(c) for c in new), (variant, new)            # aws_only: never leaves AWS
         else:
             assert new[-1][:2] == ["openai", "openai-direct"], (variant, new)     # the OpenAI API last
-        assert len(wires) >= len(old)
+        assert len(new) >= len(old)
+        assert len(new) <= 6                                                # errors.MAX_CHAIN_ATTEMPTS: last rung runs
+        # the AWS-first switch makes the same calls (only the order may move)
+        other = calls["after_aws_first"][state][stage][variant]["calls"]
+        assert sorted(map(tuple, other)) == sorted(map(tuple, new)), (variant, other, new)
 
 
-@pytest.mark.parametrize("stage", ["s1_generate", "t9_write", "a0_column_map"])
-def test_with_the_anthropic_api_on_it_comes_after_every_aws_deployment(calls, stage):
-    new = calls["after"]["seed_anthropic_on"][stage]["plain"]["calls"]
-    apis = [c[0] for c in new]
-    assert "anthropic" in apis
-    first_anthropic = apis.index("anthropic")
-    assert all(_is_aws(c) for c in new[:first_anthropic]) and len(new[:first_anthropic]) >= 3
-    # the per-model order (switch off) would call the Anthropic API right after the primary on acc3
-    old_order = calls["after_per_model"]["seed_anthropic_on"][stage]["plain"]["calls"]
-    assert [c[0] for c in old_order].index("anthropic") == 1
-    assert sorted(map(tuple, old_order)) == sorted(map(tuple, new))           # the same calls, only the order moves
+@pytest.mark.parametrize("stage,large", [("s1_generate", True), ("t9_write", True), ("a0_column_map", False)])
+def test_with_the_anthropic_api_on_the_same_model_goes_outside_before_the_next_model(calls, stage, large):
+    """The tech lead's example (S267): acc3 Sonnet 5.5 >> API Sonnet 5.5 >> acc3 Sonnet 4.6 >> acc3 Haiku 4.5 >> the
+    OpenAI API (small writers: Haiku 5.5 on acc3, then on the Anthropic API, Haiku 4.5, Sonnet 4.6, the OpenAI API)."""
+    new = [c[:3] for c in calls["after"]["seed_anthropic_on"][stage]["plain"]["calls"]]
+    first, second = ("sonnet-5-5", ("sonnet-4-6", "haiku-4-5")) if large else ("haiku-5-5", ("haiku-4-5", "sonnet-4-6"))
+    assert new == [["converse", "acc3", f"global.anthropic.claude-{first}"],
+                   ["anthropic", "anthropic-direct", f"claude-{first}"],
+                   ["converse", "acc3", NEW_MODELS[second[0]][1]],
+                   ["converse", "acc3", NEW_MODELS[second[1]][1]],
+                   ["openai", "openai-direct", "gpt-6-luna"]]
+    # the AWS-first switch (kept, default off) would call the Anthropic API only after every AWS deployment
+    aws_first = calls["after_aws_first"]["seed_anthropic_on"][stage]["plain"]["calls"]
+    assert [c[0] for c in aws_first].index("anthropic") == 3
 
 
 @pytest.mark.parametrize("state", ["seed", "seed_anthropic_on"])
@@ -307,7 +326,18 @@ def test_the_resolver_names_the_first_model_that_would_be_called_without_calling
     assert skipped and all("circuit open: acc3 (access_denied)" in a["reason"] for a in skipped), out
 
 
-def test_the_resolver_shows_the_aws_first_passes_of_a_vendor_direct_writer():
+def test_the_resolver_shows_the_model_first_order_of_a_vendor_direct_writer():
+    """Anthropic API on, acc3 refusing 5.x: Sonnet 5.5 is called on the Anthropic API before Sonnet 4.6 on acc3."""
+    out = _resolve("s1_generate", anthropic_on=True)
+    assert [(a["model"], a["scope"]) for a in out["attempts"]] == [
+        ("sonnet-5-5", "stage"), ("sonnet-4-6", "stage"), ("haiku-4-5", "stage"), (OPENAI_HOP, "stage")]
+    assert out["attempts"][0] == {"model": "sonnet-5-5", "scope": "stage", "status": "call",
+                                  "connection": "anthropic-direct", "deployments": ["anthropic-direct"]}
+    assert out["first"] == "sonnet-5-5@anthropic-direct"
+
+
+def test_the_resolver_shows_the_aws_first_passes_with_the_switch_on(monkeypatch):
+    monkeypatch.setenv("LLM_ROUTE_AWS_FIRST", "on")
     out = _resolve("s1_generate", anthropic_on=True)
     assert [(a["model"], a["scope"]) for a in out["attempts"]] == [
         ("sonnet-5-5", "aws_only"), ("sonnet-4-6", "aws_only"), ("haiku-4-5", "aws_only"),

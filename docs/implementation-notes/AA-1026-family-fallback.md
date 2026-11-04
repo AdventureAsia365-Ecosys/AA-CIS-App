@@ -5,9 +5,10 @@ fails falls to the next one. Live facts of the probe (04/11): on acc3, Claude So
 Embed v4 answer; every 5.x Claude, GPT-6 Luna, GPT-5.6 Luna and GPT-6 Astra are refused ("not available for this
 account", AWS case open). acc2 Nova / Llama / Kimi and the OpenAI API answer; the Anthropic API is off (no key).
 
-Two PRs: (A) the gateway runs a `vendor_direct` route AWS first across all its models, the chain rules as code
-(`api/services/llm_route_chains.py`), the $0 check script and the tests; (B) migration 366: two catalog rows and the
-new chains.
+Two PRs: (A) the gateway's route order (model first, the tech lead's S267 answer; the AWS-first order kept behind a
+switch, default off), the relaxed admin order rule, the connection-circuit fix, the chain rules as code
+(`api/services/llm_route_chains.py`), the $0 check script and the tests; (B) migration 366: two catalog rows, the new
+chains and the acc3 monthly cap (100 USD).
 
 ## Decision table (stage -> old chain -> new chain -> why)
 
@@ -44,19 +45,33 @@ OpenAI API; the validate stages answer on Haiku 4.5 / Sonnet 4.6 on acc3 before 
   to Haiku by itself. Migration 366 adds `sonnet-4-6` / `haiku-4-5`: api_style converse, family anthropic, copied
   prices / capabilities / temperature from the legacy rows, ONE deployment on acc3 with the legacy row's acc3 wire id.
   No Anthropic API deployment for them (306 ran before; the Anthropic API path stays the 5.x models).
-- **AWS first across the whole route (gateway change).** The gateway tried every deployment of a model before the next
-  model, so on a vendor_direct route `sonnet-5-5 → sonnet-4-6` would call Sonnet 5.5 on the Anthropic API (once its key
-  is in) before Sonnet 4.6 on acc3 — against T-3 / ADR 0009 d5 ("outside only after every AWS deployment failed").
-  That is why 327 / 344 had to drop the same-family degrade on the writers. `client.route_attempts` now splits a
-  route of a stage allowed both scopes into an AWS pass (each model on its aws_only deployments, route order) and a
-  vendor pass (each model on its vendor_direct deployments, route order). Switch `LLM_ROUTE_AWS_FIRST=off` restores
-  the per-model order. With the routes before 366 both orders make the same calls (all route snapshot tests pass
-  unchanged).
-- **The admin rule `_check_aws_before_vendor` stands down while the AWS-first order is on** (it refused exactly the
-  interleaving the gateway no longer makes). It still applies when the switch or deployment routing is off.
+- **Route order: MODEL FIRST (tech lead S267, Q2).** The tech lead's answer: "prefer the same model first, then go
+  outside; e.g. acc3 Sonnet 5.5 >> API Sonnet 5.5 >> acc3 Sonnet 4.6 / Haiku ...". So the gateway keeps its per-model
+  order as the default: every deployment of a model (`vendor_route.deployment_plan`: acc3 by priority, then the same
+  model on its vendor API) before the route's next model. With the Anthropic API on, s1_generate runs Sonnet 5.5 on
+  acc3, Sonnet 5.5 on the Anthropic API, Sonnet 4.6 on acc3, Haiku 4.5 on acc3, then GPT-6 Luna on the OpenAI API.
+  The lane's first version made the AWS-first order (every AWS deployment of the whole route before any vendor API)
+  the default; it is kept behind `LLM_ROUTE_AWS_FIRST=on` (`client.route_attempts`, default OFF) rather than removed:
+  a one-line roll-back if the tech lead wants AWS first again, and it costs nothing while off (the function returns
+  the plain chain). aws_only routes (tenant T-stages, tp_*, CRM, segment research, the validate stages) never leave
+  AWS in either order (their scopes leave no vendor deployment in the plan): T-3 stands for them. Today the only
+  model with both an AWS and a vendor deployment on a vendor_direct route is the Claude 5.x primary (306 seeded
+  Anthropic API rows for the 5.x rows); GPT-6 Luna on acc3 has no OpenAI API twin deployment (the OpenAI API is the
+  separate key `gpt-6-luna-openai`), so the GPT routes are unchanged by the order.
+- **Admin rule `_check_aws_before_vendor` relaxed (S267).** S263 refused an AWS model behind any model with a vendor API
+  deployment: exactly the model-first interleaving now decided. It now refuses only a model reached ONLY outside AWS
+  (every deployment on a vendor API, e.g. `gpt-6-luna-openai`) ahead of a model served inside AWS, the same rule as
+  `llm_route_chains` `vendor_not_last` and migration 366's guard; independent of the switch and of deployment routing.
+  Both PATCH endpoints already refuse a vendor-only model as primary or non-last fallback, so the rule is the backstop.
 - **Large-tier writers skip Haiku 5.5.** Haiku 5.5 is refused together with Sonnet 5.5 (same generation, same AWS
   case), and with the Anthropic API switched on a five-model chain would pass the gateway's 6 attempts per request
   (`errors.MAX_CHAIN_ATTEMPTS`, ADR 0009 d5), so the OpenAI API last rung would never run. The `attempt_cap` rule pins it.
+- **Attempt cap re-checked with the Anthropic API ON, model first (S267).** Large writers: sonnet-5-5@acc3,
+  sonnet-5-5@anthropic-direct, sonnet-4-6@acc3, haiku-4-5@acc3, gpt-6-luna-openai@openai-direct = 5 attempts; small
+  writers (haiku-5-5 first) the same 5; tp_compose / segment research (aws_only) 3; the widest validate chains
+  (a3_atomize, a3_place_locate, a3_place_days ...) 5, all on AWS. All within 6, so the last rung runs: no chain or cap
+  change. The order does not change the count (model first and AWS first make the same attempts); the unit test
+  asserts at most 6 captured calls per decided stage in both connection states.
 - **Families stay apart where a stage checks another's output.** a3_place_card (GPT, Amazon) / a3_place_card_check
   (Claude, Meta) and a3_place_dedupe (GPT, Meta) / a3_place_dedupe_check (Claude, Amazon) keep disjoint makers
   (`llm_route_chains.CHECK_PAIRS`); t10_claims and a3_place_card get no Claude hop.
@@ -82,11 +97,13 @@ OpenAI API; the validate stages answer on Haiku 4.5 / Sonnet 4.6 on acc3 before 
 
 ## Changed
 
-- `shared/llm_client/client.py`: `route_attempts` + `ROUTE_AWS_FIRST_ENV`; `_call_route` binds the pass scope per attempt.
+- `shared/llm_client/client.py`: `route_attempts` + `ROUTE_AWS_FIRST_ENV` (default off since the S267 answer: model
+  first); `_call_route` binds the pass scope per attempt when the switch is on.
 - `shared/llm_client/breaker.py`: failed probe keeps the streak start; model-scoped refusals do not trip the
   connection (review fix, see Decisions).
 - `shared/llm_client/vendor_route.py`: `route_reach` (usable / described scopes of a model, no circuit or budget read).
-- `api/routers/admin_llm_ops.py`: `_check_aws_before_vendor` returns early with the AWS-first order on.
+- `api/routers/admin_llm_ops.py`: `_check_aws_before_vendor` relaxed (only a vendor-only model ahead of an AWS model).
+- `CONTEXT.md`: the A-series writers paragraph states the model-first order.
 - `api/services/llm_route_chains.py` (new): `violations`, `resolve_stage`.
 - `scripts/llm_ops/route_chain_check.py` (new): $0 live check (FIRST model@connection per stage + violations).
 - Tests: `tests/unit/test_aa1026_family_fallback_chains.py` (new; its last section runs the REAL breaker with acc3's
@@ -99,8 +116,12 @@ OpenAI API; the validate stages answer on Haiku 4.5 / Sonnet 4.6 on acc3 before 
 ## Tradeoffs
 
 - Writers degrading to Haiku 4.5 before the OpenAI API: a Claude reply of a smaller tier over GPT-6 Luna of another
-  maker. Picked for the family rule (writers stay Anthropic, ADR 0009 d12) and AWS-first; the judges score whatever
-  answered, as before.
+  maker. Picked for the family rule (writers stay Anthropic, ADR 0009 d12); the judges score whatever answered, as
+  before.
+- Model first vs AWS first (Q2): the same model on the Anthropic API keeps the primary's writing quality (TL-11 eval
+  freeze holds: no prompt change, and the writing-memory release was evaluated on Sonnet 5.5), at the price of
+  sending the writer's content to Anthropic before the AWS 4.x siblings are tried. The tech lead chose quality. Until
+  the Anthropic API key is stored the connection is off and both orders make the same calls.
 - No contract smoke gate in 366 (unlike 331-333): the new rows are the same Claude models the legacy keys called on
   acc3 for months, and every chain degrades safely (a refused or unusable reply moves on). A connection test of the two
   rows is a live step after the apply.
@@ -134,24 +155,38 @@ on the intended 5.x path); a routine month of 100-200 regenerated tours is ~15-3
 `t2_generate`, October 29 USD on Sonnet) move the same way (x1.5 vs Sonnet 5.5, x30 vs the OpenAI API). acc3 bills the
 remaining AWS Lift credit (~250 USD, expires 31/12), then the card; the AWS budget `aa3-llm-monthly-total` (250 USD) only
 e-mails. The gateway hard stop is `shared.llm_provider_connection.monthly_budget_usd` of `acc3` (cost policy, 317):
-its live value is not checked from this lane. A hard stop on acc3 is itself a safe degrade: the chains then fall to
-the OpenAI API (10 USD cap) or acc2.
+its live value is not checked from this lane; migration 366 sets it to 100 USD (tech lead Q3, S267) when it is NULL or
+higher. A hard stop on acc3 is itself a safe degrade: the chains then fall to the Anthropic API (when on), the OpenAI
+API (10 USD cap) or acc2. With the Anthropic API on (no key yet), model first sends the writers to Sonnet 5.5 / Haiku 5.5
+on the Anthropic API while acc3 refuses 5.x, at the 5.5 catalog prices (~0.060 USD/tour for `s1_generate`, the intended
+column above) instead of Sonnet 4.6 on acc3 (~0.090). No migration sets a `monthly_budget_usd` on `anthropic-direct`
+(304 / 306 leave it NULL): set one together with the key, as 327 did for the OpenAI API.
 
-## Questions for the tech lead (yes / no)
+## Questions for the tech lead — answered S267 (04/11/2026)
 
 1. **Cost delta.** While acc3 refuses 5.x, the writers spend ~0.09 USD/tour on Sonnet 4.6 instead of ~0.003 on the
-   OpenAI API (S1 + A3 ~0.15 vs ~0.015 USD/tour). Accept? (No = keep 366 but put `gpt-6-luna-openai` before the 4.x rows
-   on the writer routes, question 2.)
+   OpenAI API (S1 + A3 ~0.15 vs ~0.015 USD/tour). Accept? **Answer: ACCEPTED** (Claude 4.x on acc3 while 5.x is
+   refused, ~0.15 USD/tour).
 2. **Writer order.** Should large-tier writers (s1_generate) prefer GPT-6 Luna on the OpenAI API over Sonnet 4.6 /
-   Haiku 4.5 on acc3? Today's table puts the Claude 4.x rows first (AWS first, same family).
-3. **acc3 cap.** Set `monthly_budget_usd` on `acc3` to 100 USD (proposed; hard stop -> chains fall to the OpenAI API /
-   acc2) if it is NULL?
+   Haiku 4.5 on acc3? **Answer: no; prefer the SAME MODEL first, then go outside** ("acc3 Sonnet 5.5 >> API Sonnet
+   5.5 >> acc3 Sonnet 4.6 / Haiku ..."). Done: model-first is the default route order on vendor_direct routes, the
+   AWS-first order is a switch (default off), the admin rule is relaxed, the chains stay as decided (Claude 4.x on acc3
+   before the OpenAI API). aws_only routes unchanged (T-3 stays). See Decisions.
+3. **acc3 cap.** Set `monthly_budget_usd` on `acc3` to 100 USD (hard stop -> chains fall to the OpenAI API / acc2)?
+   **Answer: YES.** Migration 366 sets `shared.llm_provider_connection.monthly_budget_usd = 100` on `acc3` when it is
+   NULL or higher (a lower admin value is kept), and inserts the cost policy row (alert 80 %, hard stop) like the
+   OpenAI API cap of 327 (`ON CONFLICT DO NOTHING`; an existing policy row is kept and reported in a NOTICE when it
+   is not alert 80 % / hard stop). Recorded in the root AI Use Register.
 
 ## Should know
 
-- Merge order: PR A (code) deployed BEFORE migration 366 is applied. Without the AWS-first order a vendor_direct
-  writer would call the Anthropic API before Sonnet 4.6 on acc3 once that connection is switched on (today it is off,
-  so nothing would leak, but the order rule must hold before the key arrives).
+- Merge order: PR A (code) deployed BEFORE migration 366 is applied: without the connection-circuit fix acc3's
+  refusals of the 5.x / GPT rows keep the acc3 connection circuit open and the new 4.x rows are skipped; without the
+  relaxed admin rule the admin route PATCH refuses 366's writer chains (sonnet-5-5 has an Anthropic API deployment).
+  The route order itself needs no code (model first is the gateway's existing per-model order).
+- acc3 hard stop at 100 USD a month (366): it covers EVERY call on acc3 (writers, validate, cohere-embed-v4-acc3,
+  the judges' acc3 rows). At 100 % the gateway leaves acc3 out of every route: vendor_direct routes fall to the
+  Anthropic API (when on) / the OpenAI API (10 USD cap), aws_only routes to acc2 or stop as a budget stop.
 - The TripPlanner gateway reads tp_compose's route through `catalog.v_llm_gateway_config_v1`; it calls Converse rows
   itself and stays on AWS, so the two new rows need no TripPlanner change.
 - After the apply: POST /admin/writing-memory/releases/reverify-scan (writer routes changed outside the admin PATCH)
@@ -160,6 +195,7 @@ the OpenAI API (10 USD cap) or acc2.
   records the answered call that closes the connection circuit), then the $0 report
   (`scripts/llm_ops/route_chain_check.py` through the ECS exec runner) must show FIRST = `sonnet-4-6@acc3` on
   s1_generate and `haiku-4-5@acc3` on a3_atomize, with no attempt reading "circuit open: acc3".
-- ADR 0009 decision 5 amended (root PR, S267): the AWS-first order lets a same-family AWS degrade sit behind a model
-  that has a vendor API deployment; `LLM_ROUTE_AWS_FIRST=off` brings back the old rule.
-- Tech lead questions: see "Questions for the tech lead" above (cost delta, writer order, acc3 cap).
+- ADR 0009 decision 5 amended (root PR, S267, tech lead): on vendor_direct routes the order is model first (the same
+  model on its vendor API before the next model); a vendor-only model stays the end of the route; aws_only routes
+  never leave AWS. `LLM_ROUTE_AWS_FIRST=on` gives the AWS-first order.
+- Tech lead questions: answered S267 (see above): cost delta accepted, model first, acc3 cap 100 USD.

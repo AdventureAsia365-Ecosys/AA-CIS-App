@@ -723,12 +723,14 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   - `s1_brand_audit`, `t2_brand_audit`: GPT-5.6 Luna → GPT-6 Luna (no OpenAI last resort).
   - **A-series writers** (AA-1026, migration 327, tech lead T-3 in S263): `s1_generate`, `s1_flag_fix`,
     `s1_itinerary_nudge`, `a0_column_map`, `supply_content_writer` have `allowed_scopes = {aws_only, vendor_direct}`
-    and end on GPT-6 Luna (OpenAI API) as the LAST fallback. "Outside AWS only when the AWS paths are blocked" holds
-    for the whole route: the gateway tries every deployment of a model (acc3, then the Anthropic API once its key
-    exists) before the route's next model, so a vendor_direct stage names no model reached inside AWS after a model
-    with a vendor API deployment (migration 327 dropped `supply_content_writer`'s `haiku-5-5` for that; each writer is
-    [one Anthropic model, GPT-6 Luna]). Both admin PATCH endpoints refuse that order (`_check_aws_before_vendor`), and
-    the route PATCH accepts the one other-maker last fallback on a vendor_direct writer (`_writer_last_resort`); the
+    and end on GPT-6 Luna (OpenAI API) as the LAST fallback. Route order is MODEL FIRST (tech lead S267, root ADR 0009
+    decision 5 amendment, AA-1026; it replaced S263's "every AWS path before any vendor API"): the gateway tries every
+    deployment of a model (acc3 by priority, then the same model on the Anthropic API once its key exists) before the
+    route's next model, so the family chains of migration 366 run e.g. Sonnet 5.5 on acc3, Sonnet 5.5 on the
+    Anthropic API, Sonnet 4.6 on acc3, Haiku 4.5 on acc3, then GPT-6 Luna on the OpenAI API (5 attempts, within the
+    6 per request). `LLM_ROUTE_AWS_FIRST=on` (`client.route_attempts`, default off) runs every AWS deployment of the
+    route first instead. A model reached ONLY outside AWS stays the end of the route: both admin PATCH endpoints refuse
+    an AWS model behind it (`_check_aws_before_vendor`, relaxed S267), and the route PATCH accepts the one other-maker last fallback on a vendor_direct writer (`_writer_last_resort`); the
     writer / judge family rule holds for the primary, every other fallback and the shadow. A draft written by that last resort is judged by a GPT judge
     (same maker): its ledger row says `provider = 'openai'`, `fallback_used = true`; an eval run refuses that verdict
     ("Route governance" above). T-stages, `tp_*` and the CRM stay

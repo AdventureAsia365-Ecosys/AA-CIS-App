@@ -52,8 +52,7 @@ from shared.llm_client import connections as llm_connections
 from shared.llm_client import data_scope
 from shared.llm_client import deployments as llm_deployments
 from shared.llm_client import family_rule, invariant, route_evidence
-from shared.llm_client.client import (deployment_routing_enabled, legacy_acc2_native_enabled,
-                                      route_aws_first_enabled)
+from shared.llm_client.client import legacy_acc2_native_enabled
 from shared.llm_client.role_config import (
     list_stage_configs,
     set_stage_config,
@@ -285,34 +284,31 @@ def _check_scopes(stage: str, scopes: Optional[tuple], reach: dict, keys: list) 
 
 
 def _check_aws_before_vendor(stage: str, scopes: Optional[tuple], reach: dict, chain: list) -> None:
-    """AA-1026 (S263, tech lead T-3: go outside AWS only when the AWS paths are blocked). 422 when a stage open to
-    vendor_direct names a model reached inside AWS AFTER a model that also has a deployment outside AWS: the gateway
-    tries every deployment of a model (acc3, then its vendor API) before the route's next model
-    (vendor_route.deployment_plan), so that vendor API would be called before the later AWS deployment. ``reach``
-    counts every deployment, enabled or not (the switch is an operation, the scope a policy); a model the registry
-    does not describe counts as inside AWS (the gateway calls it on acc3). An aws_only stage (or no stage policy) never
-    reaches a vendor API behind another deployment, so it is not checked.
+    """AA-1026 (S263, tech lead T-3: go outside AWS only as the last resort; relaxed S267). 422 when a stage open to
+    vendor_direct names a model reachable inside AWS AFTER a model reached ONLY outside AWS (every deployment on a
+    vendor API, e.g. gpt-6-luna-openai): the vendor-only rungs are the end of the route (the ``vendor_not_last`` rule
+    of ``api/services/llm_route_chains.py``). ``reach`` counts every deployment, enabled or not (the switch is an
+    operation, the scope a policy); a model the registry does not describe counts as inside AWS (the gateway calls it
+    on acc3). An aws_only stage (or no stage policy) never reaches a vendor API, so it is not checked.
 
-    AA-1026 (S267): with the gateway's AWS-first route order on (``LLM_ROUTE_AWS_FIRST``, default on, and deployment
-    routing on) the gateway itself tries every AWS deployment of the whole route before any vendor API
-    (``client.route_attempts``), so a family chain such as [sonnet-5-5, sonnet-4-6, haiku-5-5, gpt-6-luna-openai]
-    can no longer call a vendor API before a later AWS deployment: nothing to refuse. The rule still applies while
-    that order is switched off."""
+    S267 (tech lead, root ADR 0009 decision 5 amendment: "prefer the same model first, then go outside"): a model
+    with BOTH an AWS and a vendor API deployment may now sit before an AWS model. The gateway's default model-first
+    order calls that model on acc3, then on its vendor API, then the next model on acc3 (e.g. [sonnet-5-5, sonnet-4-6,
+    haiku-4-5, gpt-6-luna-openai]); S263 refused exactly that interleaving."""
     if scopes is None or data_scope.VENDOR_DIRECT not in scopes:
-        return
-    if route_aws_first_enabled() and deployment_routing_enabled():
         return
     keys = [k for k in chain if k]
     for i, first in enumerate(keys):
-        if not (reach.get(first, frozenset()) - {data_scope.AWS_ONLY}):
+        first_reach = reach.get(first, frozenset({data_scope.AWS_ONLY}))
+        if not first_reach or data_scope.AWS_ONLY in first_reach:
             continue
         later = [k for k in dict.fromkeys(keys[i + 1:])
                  if k != first and data_scope.AWS_ONLY in reach.get(k, frozenset({data_scope.AWS_ONLY}))]
         if later:
             raise HTTPException(status_code=422, detail=(
-                f"stage {stage!r} may leave AWS only when every AWS path of its route is blocked: {first} is also "
-                f"served by a vendor API, which the gateway tries before the next model, so it would be called before "
-                f"the AWS deployment of {', '.join(later)}. Put {', '.join(later)} ahead of {first}, or leave it out"))
+                f"stage {stage!r} may leave AWS only as the last resort of its route: {first} is reached only through "
+                f"a vendor API, so it must come after every model served inside AWS ({', '.join(later)}). Put "
+                f"{', '.join(later)} ahead of {first}, or leave it out"))
 
 
 def _writer_last_resort(role: str, scopes: Optional[tuple], models: Optional[list], outside: frozenset,

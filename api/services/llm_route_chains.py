@@ -6,8 +6,11 @@ Since migration 366 every active stage route is an ordered chain by model family
 working sibling of each family tier on the route (Claude Sonnet 5.5 -> Sonnet 4.6, Claude Haiku 5.5 -> Haiku 4.5,
 GPT-6 Luna <-> GPT-5.6 Luna), then (writers) the other Claude tier, then the AWS models of the OTHER failure domain the
 route already had (acc2: Nova / Llama, migrations 331-333 / 339), then the vendor API last resort (GPT-6 Luna on the
-OpenAI API) only on a stage allowed ``vendor_direct``. The gateway runs a ``vendor_direct`` route on AWS first across
-all its models (``client.route_attempts``), so a vendor API outside AWS is called only after every AWS deployment.
+OpenAI API) only on a stage allowed ``vendor_direct``. The gateway runs a route MODEL FIRST (tech lead S267, root ADR
+0009 decision 5 amendment: "prefer the same model first, then go outside"): every deployment of a model (acc3 by
+priority, then the same model on its vendor API, e.g. Sonnet 5.5 on the Anthropic API) before the route's next model;
+``LLM_ROUTE_AWS_FIRST=on`` (``client.route_attempts``) runs every AWS deployment of the route first instead. An
+``aws_only`` stage never leaves AWS in either order.
 
 ``violations(routes, models, reach)`` (pure) checks the rules a route must keep, whatever an admin or a later
 migration does; the unit tests run it on the decided routes (``tests/unit/snapshots/aa1026_routes_after_366.json``)
@@ -15,8 +18,8 @@ and ``scripts/llm_ops/route_chain_check.py`` on the live rows:
 
 - ``no_fallback``: an active route with no fallback at all (one refused model stops the stage);
 - ``vendor_on_aws_only``: an ``aws_only`` stage names a model reached only outside AWS;
-- ``vendor_not_last``: a model reached only outside AWS is followed by a model reachable inside AWS (the vendor API
-  rung is the suffix of the chain);
+- ``vendor_not_last``: a model reached only outside AWS is followed by a model reachable inside AWS (the vendor-only
+  rung is the suffix of the chain; a model with an AWS AND a vendor API deployment may sit anywhere, S267);
 - ``judge_writer_family``: a judge route names a model of the writers' family (``family_rule.WRITER_FAMILY``, ADR 0009
   decision 12 / TL-10: a judge never scores text of its own family);
 - ``writer_family``: a writer route names a model of another family, except a model reached only outside AWS at the
@@ -27,6 +30,7 @@ and ``scripts/llm_ops/route_chain_check.py`` on the live rows:
 - ``attempt_cap`` (when ``deployment_scopes`` is given): the route could make more provider attempts than the gateway
   starts per request (``errors.MAX_CHAIN_ATTEMPTS``, ADR 0009 decision 5), counting every deployment of every model
   in the stage's scopes (the Anthropic API included, on or off): its last rungs (the OpenAI API) would never run.
+  The count does not depend on the order (model first or AWS first make the same attempts).
 
 ``resolve_stage(...)`` walks a stage the way the gateway would (``client.route_attempts`` for the order and the
 pass scopes, ``vendor_route.deployment_plan`` for the deployments a model would be called on now: enabled, connection
