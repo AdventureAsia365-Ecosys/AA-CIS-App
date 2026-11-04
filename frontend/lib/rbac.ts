@@ -95,6 +95,7 @@ export const PAGE_RULES: PageRule[] = [
   // AA-1039 R6 slice 3 — Spend (was Cost Operations at /admin/cost-ops, AA-505 / AA-665, and Cost per app at
   // /admin/platform/cost, AA-884; both 307 here from next.config.ts, which runs before proxy.ts).
   { prefix: "/admin/spend", roles: AI_SPEND },
+  { prefix: "/admin/usage", roles: AI_SPEND },             // AA-1045 — usage explorer (AI & spend)
   { prefix: "/admin/jobs", roles: ["admin"] },              // AA-650
   { prefix: "/admin/decisions", roles: ["admin"] },         // AA-660
   { prefix: "/admin/photos", roles: ["admin", "content_lead"] },            // AA-708
@@ -228,6 +229,9 @@ export const API_READ_RULES: { prefix: string; roles: StaffRole[] }[] = [
   // re-checked by the backend (staff_policy, spend.read).
   // AA-1035: customer_success reads the Tenant 360 budget tile of its book (tenant.book.account.read); support never.
   { prefix: "ai-gateway", roles: [...AI_SPEND, "customer_success"] },
+  // AA-1045 — backend /admin/usage-explorer/* (usage, cost and the caller's saved views): the AI & spend roles, re-checked
+  // by the backend (staff_policy, spend.read; a re-roll ops.write).
+  { prefix: "usage-explorer", roles: AI_SPEND },
 ];
 
 /** May `role` call backend /admin/{path} at all (any method)? (path without the leading slash) */

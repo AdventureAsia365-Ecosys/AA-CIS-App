@@ -17,7 +17,8 @@ import {
   useT, useUrlFilters, type ColumnDef, type FilterSelect,
 } from "../../_kit";
 import {
-  CALL_APPS, CALL_PARAM, CALL_PROVIDERS, CALL_SOURCES, CALL_STATUSES, budgetProviderLabel, callFiltersFrom,
+  CALL_APPS, CALL_DRILL_KEYS, CALL_PARAM, CALL_PROVIDERS, CALL_SOURCES, CALL_STATUSES, budgetProviderLabel,
+  callFiltersFrom,
   callTone, callsPath, usd, type CallRow, type CallsResp, type TraceTarget,
 } from "@/lib/aiGateway";
 import { accountName } from "@/lib/awsAccounts";
@@ -156,7 +157,25 @@ export default function CallsTab({ onTrace, onRoute }: {
       data-testid={list.data || list.isError ? "ai-gateway-calls-ready" : "ai-gateway-calls"}>
       <div style={small}>{t("intro")}</div>
       <FilterBar search={{ key: CALL_PARAM.stage, placeholder: t("stageSearch") }} selects={selects}
-        extraKeys={[CALL_PARAM.job_id, CALL_PARAM.tour_id]} testId="ai-gateway-calls-filters" />
+        extraKeys={[CALL_PARAM.job_id, CALL_PARAM.tour_id, ...CALL_DRILL_KEYS.map((k) => CALL_PARAM[k])]}
+        testId="ai-gateway-calls-filters" />
+      {CALL_DRILL_KEYS.some((k) => filters[k]) && (
+        // AA-1045: the usage explorer's drill-down (a cell's range and dimensions), cleared in one click
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}
+          data-testid="ai-gateway-calls-drill">
+          <span style={small}>{t("drillTitle")}</span>
+          {filters.since && filters.until && (
+            <Badge tone="accent" dot={false}>
+              <DateText value={filters.since} withTime /> – <DateText value={filters.until} withTime />
+            </Badge>
+          )}
+          {CALL_DRILL_KEYS.filter((k) => k !== "since" && k !== "until" && filters[k]).map((k) => (
+            <Badge key={k} tone="accent" dot={false}>{t("drillDim", k, filters[k] as string)}</Badge>
+          ))}
+          <LinkButton tone="muted" onClick={() => setMany(Object.fromEntries(
+            CALL_DRILL_KEYS.map((k) => [CALL_PARAM[k], null])))}>{t("clearFilter")}</LinkButton>
+        </div>
+      )}
       {(filters.job_id || filters.tour_id) && (
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           {filters.job_id && (

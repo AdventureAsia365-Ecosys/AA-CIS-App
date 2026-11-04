@@ -185,7 +185,8 @@ test("9. a content worker sees the AA Catalogue group only; the viewer sees its 
 
 test("10. AI & spend and Writing Lab (R6 slice 3): groups, moves, query merge", () => {
   const group = (label) => ADMIN_IA.find((g) => g.label === label).items.map((i) => i.href);
-  assert.deepEqual(group("AI & spend"), ["/admin/ai-gateway", "/admin/spend"]);
+  // AA-1045: + the usage explorer
+  assert.deepEqual(group("AI & spend"), ["/admin/ai-gateway", "/admin/spend", "/admin/usage"]);
   assert.deepEqual(group("Writing Lab"), ["/admin/lab", "/admin/lab/writing-memory", "/admin/decisions"]);
   assert.equal(resolveAdminRoute("/admin/writing-memory"), "/admin/lab/writing-memory");
   assert.equal(resolveAdminRoute("/admin/cost-ops?tab=spend&view=dfs"), "/admin/spend?tab=spend&view=dfs");

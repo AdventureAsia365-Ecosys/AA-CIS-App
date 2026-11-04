@@ -50,6 +50,7 @@ export const NAV_MESSAGES = defineMessages(
     // AI & spend
     "AI gateway": "AI gateway",
     "Spend": "Spend",
+    "Usage explorer": "Usage explorer",
     // Writing Lab
     "Stages": "Stages",
     "Writing memory": "Writing memory",
@@ -103,6 +104,7 @@ export const NAV_MESSAGES = defineMessages(
     "Compliance": "Tuân thủ",
     "AI gateway": "Cổng AI",
     "Spend": "Chi tiêu",
+    "Usage explorer": "Phân tích sử dụng",
     "Stages": "Các bước",
     "Writing memory": "Bộ nhớ viết",
     "Jev Decisions": "Quyết định Jev",

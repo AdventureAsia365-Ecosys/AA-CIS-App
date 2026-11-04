@@ -16,7 +16,7 @@ export type NavIcon =
   | "upload" | "rewrite" | "review" | "master" | "atoms" | "places" | "photos" | "facts" | "supply" | "aaContent"
   | "seo" | "settings"
   | "quality" | "trace" | "reviewLog" | "slate" | "compliance"
-  | "aiGateway" | "spend"
+  | "aiGateway" | "spend" | "usage"
   | "lab" | "writingMemory" | "decisions"
   | "staff" | "audit" | "jobs" | "alerts" | "apiDocs" | "dataModel" | "docs";
 
@@ -86,6 +86,8 @@ export const ADMIN_IA: IaGroup[] = [
     // Cost per app; /admin/cost-ops and /admin/platform/cost redirect).
     { href: "/admin/ai-gateway", label: "AI gateway", icon: "aiGateway" },
     { href: "/admin/spend", label: "Spend", icon: "spend" },
+    // AA-1045: requests, tokens, cost and latency of every paid AI and data provider by any one or two dimensions.
+    { href: "/admin/usage", label: "Usage explorer", icon: "usage" },
   ] },
   { label: "Writing Lab", items: [
     // AA-1039 R6 slice 3: one page per pipeline stage (/admin/lab/<stage>; /admin/lab opens the first) over the
