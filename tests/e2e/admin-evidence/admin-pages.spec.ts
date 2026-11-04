@@ -34,10 +34,15 @@ const SHOTS_DIR = 'tests/e2e/results/admin-evidence';
 const PAGES = [
   '/admin/tenant-qa/quality', '/admin/lab/writing-memory', '/admin/docs',
   '/admin/lab/t9-social', '/admin/ai-gateway', '/admin/spend', '/admin/spend?tab=apps',
+  // AA-1039 R6 rest (S268): the Lab's Releases and Metrics tabs, and the Routing tab (Routing by data class).
+  '/admin/lab/t9-social?tab=releases', '/admin/lab/t9-social?tab=metrics', '/admin/ai-gateway?tab=routing',
 ] as const;
 // A page whose loaded content is not a table row: its ready marker (rendered only once its data answered).
 const READY: Partial<Record<(typeof PAGES)[number], string>> = {
   '/admin/lab/t9-social': '[data-testid="writing-lab-ready"]',
+  '/admin/lab/t9-social?tab=releases': '[data-testid="lab-releases-ready"]',
+  '/admin/lab/t9-social?tab=metrics': '[data-testid="lab-metrics-ready"]',
+  '/admin/ai-gateway?tab=routing': '[data-testid="ai-gateway-data-class"]',
   '/admin/spend?tab=apps': '[data-testid="platform-cost-ready"]',
 };
 // Ids that do not exist: nothing is ever written by this spec.

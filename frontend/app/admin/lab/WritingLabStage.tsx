@@ -466,8 +466,10 @@ function ReleasesTab({ writer, t }: { writer: LabWriter; t: T }) {
       {q.isLoading ? <TableSkeleton rows={4} cols={6} /> : q.error ? (
         <ErrorState message={t("sectionError")} onRetry={() => q.refetch()} />
       ) : (
-        <DataTable tableId="lab-releases-list" data={q.data?.items ?? []} columns={cols}
-          getRowId={(r) => r.release_id} compact tableMinWidth={980} emptyTitle={t("relEmpty")} />
+        <div data-testid="lab-releases-ready">
+          <DataTable tableId="lab-releases-list" data={q.data?.items ?? []} columns={cols}
+            getRowId={(r) => r.release_id} compact tableMinWidth={980} emptyTitle={t("relEmpty")} />
+        </div>
       )}
     </Section>
   );
@@ -517,8 +519,10 @@ function MetricsTab({ writer, t }: { writer: LabWriter; t: T }) {
       {q.isLoading ? <TableSkeleton rows={4} cols={6} /> : q.error ? (
         <ErrorState message={t("sectionError")} onRetry={() => q.refetch()} />
       ) : (
-        <DataTable tableId="lab-metrics" data={weeks} columns={cols} getRowId={(r) => `${r.week_start}:${r.trigger}`}
-          compact tableMinWidth={900} emptyTitle={t("metEmpty")} />
+        <div data-testid="lab-metrics-ready">
+          <DataTable tableId="lab-metrics" data={weeks} columns={cols}
+            getRowId={(r) => `${r.week_start}:${r.trigger}`} compact tableMinWidth={900} emptyTitle={t("metEmpty")} />
+        </div>
       )}
     </Section>
   );

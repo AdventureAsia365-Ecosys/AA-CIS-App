@@ -87,6 +87,9 @@ const ADMIN_PAGES: PageSpec[] = [
   // answered) and the Writing memory tools (was /admin/writing-memory). Admin only.
   { id: 'lab-stage', label: 'Writing Lab · A1 rewrite', path: '/admin/lab/a1-s1', readySelector: '[data-testid="writing-lab-ready"]', viewerRefused: true },
   { id: 'lab-writing-memory', label: 'Writing memory', path: '/admin/lab/writing-memory', viewerRefused: true },
+  // AA-1039 R6 rest (S268): the Releases and Metrics tabs of a stage (their own reads of the Writing memory API).
+  { id: 'lab-releases', label: 'Writing Lab · Releases', path: '/admin/lab/t2-rewrite?tab=releases', readySelector: '[data-testid="lab-releases-ready"]', viewerRefused: true },
+  { id: 'lab-metrics', label: 'Writing Lab · Metrics', path: '/admin/lab/a1-s1?tab=metrics', readySelector: '[data-testid="lab-metrics-ready"]', viewerRefused: true },
   // AA-913 — Platform › People & access › Alert recipients (admin only; changes need a Cognito sign-in).
   { id: 'platform-alerts', label: 'Alert recipients', path: '/admin/platform/alerts', readySelector: '[data-testid="alert-recipients-ready"]', viewerRefused: true },
   // AA-941 — Tenants › CRM agencies (AA-1039: was /admin/platform/agencies): the partner CRM's L1 console (admin only;
