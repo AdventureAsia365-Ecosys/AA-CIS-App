@@ -101,6 +101,7 @@ from api.core import readiness  # AA-884 — /health git_sha, /health/ready
 from api.version import __version__  # AA-891 — release version (release-please bumps it)
 from api.core import staff_identity  # AA-816 C3
 from api.core import login_throttle  # AA-876
+from api.core import view_as  # AA-1035 — a view-as token is not a tenant session (verify-tenant)
 from api.core.staff_authz import NO_BOOKING_ROLES  # AA-878
 from api.core.sentry import init_sentry
 from api.schemas.public_api import Health, Jwks, Readiness, TenantSession  # AA-899
@@ -441,6 +442,11 @@ async def verify_tenant(request: Request):
     # verify_tenant_jwt, not verify_jwt: staff HS256 tokens share JWT_SECRET but carry no name / plan_tier, so a
     # staff token used to end in a KeyError (500); it is now refused with 403 "Tenant token required".
     payload = verify_tenant_jwt(await _session_token_from_body(request))
+    # AA-1035 follow-up (S268): a staff view-as token (amr staff_view_as, root ADR 0019 d5) is a read-only staff view,
+    # not a tenant session: whatever asks "is this a tenant session?" must not be told yes. The gate never sees it here
+    # (the token is in the body, not the Authorization header).
+    if view_as.is_view_as(payload) or payload.get("amr") == view_as.VIEW_AS_AMR:
+        raise HTTPException(status_code=403, detail=view_as.NOT_A_TENANT_SESSION)
     return {
         "valid": True,
         "tenant_id": payload["sub"],

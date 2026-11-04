@@ -882,6 +882,59 @@ def test_the_e2e_admin_starts_a_view_on_a_synthetic_tenant_only(world, monkeypat
     assert client.post(f"/admin/tenants/{MINE}/view-as", json=BODY, headers=_h("admin")).status_code == 201
 
 
+def _e2e_admin(monkeypatch):
+    ident = SimpleNamespace(auth="cognito", admin_id=STAFF, role="admin", is_owner=False, e2e_read_only=True)
+    monkeypatch.setattr(staff_authz, "request_staff_identity", lambda r: ident)
+    monkeypatch.setattr(va, "request_staff_identity", lambda r: ident)
+    monkeypatch.setattr(ts, "request_staff_identity", lambda r: ident)
+
+
+def test_the_e2e_admin_lists_reads_and_ends_only_its_own_sessions(world, monkeypatch):
+    """S268 follow-up (A10b-2): the Dev-only E2E admin holds the admin role, but its evidence run never lists, reads or
+    ends a real member's session: its list is filtered to its own id and another member's session is a 404."""
+    client, db, _ = world
+    _e2e_admin(monkeypatch)
+    asked: list = []
+    real_fetch = db.fetch
+
+    async def fetch(sql, *args):
+        if sql == va.LIST_SQL:
+            asked.append(args)
+        return await real_fetch(sql, *args)
+    monkeypatch.setattr(db, "fetch", fetch)
+    listed = client.get("/admin/view-as/sessions?open_only=true", headers=_h("admin"))
+    assert listed.status_code == 200 and listed.json()["scope"] == "own"
+    assert asked and asked[0][0] == STAFF                                        # the staff filter: its own id
+    db.session_owner = OTHER_STAFF                                               # a real member's session
+    assert client.get(f"/admin/view-as/sessions/{SESSION}", headers=_h("admin")).status_code == 404
+    assert client.post(f"/admin/view-as/sessions/{SESSION}/end", headers=_h("admin")).status_code == 404
+    assert db.ended == []
+    db.session_owner = STAFF                                                     # its own: read and end as usual
+    assert client.get(f"/admin/view-as/sessions/{SESSION}", headers=_h("admin")).status_code == 200
+
+
+def test_a_real_admin_still_sees_and_revokes_every_session(world):
+    client, db, _ = world
+    db.session_owner = OTHER_STAFF
+    assert client.get("/admin/view-as/sessions", headers=_h("admin")).json()["scope"] == "all"
+    end = client.post(f"/admin/view-as/sessions/{SESSION}/end", headers=_h("admin"))
+    assert end.status_code == 200 and db.ended == [(uuid.UUID(SESSION), "revoked")]
+
+
+def test_verify_tenant_refuses_a_view_as_token_and_still_answers_a_tenant_session(world):
+    """S268 follow-up: POST /auth/verify-tenant reads the token from the body, so the gate never sees it; a view-as
+    token (vas / amr staff_view_as) is answered 403 "not a tenant session", never valid."""
+    client, db, _ = world
+    for tok in (token(), token(vas=None, stf=None, srl=None), token(amr=None)):
+        res = client.post("/auth/verify-tenant", json={"token": tok})
+        assert res.status_code == 403 and res.json()["detail"] == view_as.NOT_A_TENANT_SESSION, tok
+    plain = token(vas=None, stf=None, srl=None, amr=None, csr=None)
+    ok = client.post("/auth/verify-tenant", json={"token": plain})
+    assert ok.status_code == 200 and ok.json() == {"valid": True, "tenant_id": MINE, "name": "Quill Harbor",
+                                                   "plan_tier": "starter"}
+    assert not any(a[2] == view_as.AUDIT_ACTION_REQUEST for a in db.audit)
+
+
 @pytest.mark.parametrize("role", ROLES)
 def test_read_and_end_per_role(world, role):
     client, db, _ = world

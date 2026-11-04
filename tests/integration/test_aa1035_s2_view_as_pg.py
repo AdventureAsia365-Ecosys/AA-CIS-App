@@ -420,3 +420,92 @@ async def test_a_different_role_forwarded_by_the_bff_ends_the_view(world):
     (ended,) = await _audit(pool, "tenant.view_as_ended", sid)
     assert ended["details"]["cause"] == "role_changed" and ended["details"]["end_reason"] == "revoked"
     assert (await client.get("/v1/account/members", headers=bearer)).status_code == 401
+
+
+# ── S268 follow-ups: offboarding and the staff sign-out end the open views at once; verify-tenant; E2E admin ─────────
+
+async def _start(client, s, roles, tenant, who):
+    res = await client.post(f"/admin/tenants/{tenant}/view-as", headers=_as(s, roles, who), json={"reason": REASON})
+    assert res.status_code == 201, res.text
+    return res.json()
+
+
+@pytest.mark.asyncio
+async def test_offboarding_a_tenant_ends_every_open_view_on_it_at_once(world):
+    client, pool, t, s, roles = world
+    assert (await _assign(client, s, roles, t["mine"], "csm", "owner")).status_code == 200
+    csm = await _start(client, s, roles, t["mine"], "csm")
+    admin = await _start(client, s, roles, t["mine"], "admin")
+    elsewhere = await _start(client, s, roles, t["pooled"], "support")          # another tenant: stays open
+    res = await client.post(f"/admin/tenants/{t['mine']}/offboard", headers=_as(s, roles, "admin"),
+                            json={"reason": "Partner closed the account"})
+    assert res.status_code == 200, res.text
+    assert res.json()["ended_view_as_sessions"] == 2
+    for sess, staff in ((csm, "csm"), (admin, "admin")):
+        # closed by the offboarding itself: no request with the token was needed
+        assert await pool.fetchval("SELECT end_reason FROM shared.staff_view_as_session WHERE session_id = $1::uuid",
+                                   sess["session_id"]) == "revoked"
+        (ended,) = await _audit(pool, "tenant.view_as_ended", sess["session_id"])
+        assert ended["tenant_id"] == t["mine"] and ended["actor"] == f"admin:{s['admin']}"
+        assert ended["details"] == {"session_id": sess["session_id"], "end_reason": "revoked",
+                                    "cause": "tenant_offboarded", "session_staff": s[staff]}
+        assert await _audit(pool, "tenant.view_as_request", sess["session_id"]) == []
+    offboard = await pool.fetchval("SELECT details FROM acp_shared.audit_log WHERE action = 'agency.offboard' "
+                                   "AND resource_id = $1", t["mine"])
+    details = json.loads(offboard) if isinstance(offboard, str) else offboard
+    assert sorted(details["ended_view_as_sessions"]) == sorted([csm["session_id"], admin["session_id"]])
+    assert await pool.fetchval("SELECT ended_at IS NULL FROM shared.staff_view_as_session WHERE session_id = $1::uuid",
+                               elsewhere["session_id"]) is True
+    gone = await client.get("/v1/account/members", headers={"Authorization": f"Bearer {csm['token']}"})
+    assert gone.status_code == 401 and gone.json()["detail"] == "view_as_ended"
+
+
+class _Cognito:
+    """Stands in for CognitoDirectory (records nothing that matters here, never touches AWS)."""
+
+    def disable(self, email):
+        pass
+
+    def enable(self, email):
+        pass
+
+    def global_sign_out(self, email, user_disabled=False):
+        pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("op,cause", [("disable_staff", "staff_disabled"), ("sign_out_staff", "staff_signed_out")])
+async def test_disabling_or_signing_out_a_member_ends_its_open_view_at_once(world, op, cause):
+    from api.services import staff_directory as sd
+
+    client, pool, t, s, roles = world
+    await pool.execute("UPDATE shared.admin_users SET is_owner = true WHERE id = $1::uuid", s["admin"])
+    assert (await _assign(client, s, roles, t["mine"], "csm", "owner")).status_code == 200
+    mine = await _start(client, s, roles, t["mine"], "csm")
+    other = await _start(client, s, roles, t["pooled"], "support")                # another member: stays open
+    await getattr(sd, op)(pool, _Cognito(), actor_id=s["admin"], staff_id=s["csm"])
+    assert await pool.fetchval("SELECT end_reason FROM shared.staff_view_as_session WHERE session_id = $1::uuid",
+                               mine["session_id"]) == "revoked"
+    (ended,) = await _audit(pool, "tenant.view_as_ended", mine["session_id"])
+    assert ended["actor"] == f"admin:{s['admin']}" and ended["tenant_id"] == t["mine"]
+    assert ended["details"]["cause"] == cause and ended["details"]["session_staff"] == s["csm"]
+    staff_row = await pool.fetchval("SELECT details FROM acp_shared.audit_log WHERE resource_type = 'admin_user' "
+                                    "AND resource_id = $1 ORDER BY created_at DESC LIMIT 1", s["csm"])
+    staff_details = json.loads(staff_row) if isinstance(staff_row, str) else staff_row
+    assert staff_details["ended_view_as_sessions"] == [mine["session_id"]]
+    assert await pool.fetchval("SELECT ended_at IS NULL FROM shared.staff_view_as_session WHERE session_id = $1::uuid",
+                               other["session_id"]) is True
+    # a second sign-out finds nothing open: no second ended row
+    if op == "sign_out_staff":
+        await sd.sign_out_staff(pool, _Cognito(), actor_id=s["admin"], staff_id=s["csm"])
+        assert len(await _audit(pool, "tenant.view_as_ended", mine["session_id"])) == 1
+    await delete_audit_rows(pool, "resource_type = 'admin_user' AND resource_id = $1", s["csm"])
+
+
+@pytest.mark.asyncio
+async def test_verify_tenant_refuses_a_view_as_token(world):
+    client, pool, t, s, roles = world
+    assert (await _assign(client, s, roles, t["mine"], "csm", "owner")).status_code == 200
+    sess = await _start(client, s, roles, t["mine"], "csm")
+    res = await client.post("/auth/verify-tenant", json={"token": sess["token"]})
+    assert res.status_code == 403 and res.json()["detail"] == "A view-as token is not a tenant session"

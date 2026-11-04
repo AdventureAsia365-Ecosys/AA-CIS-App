@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import HTTPException
 
+from api.core import view_as
 from api.routers import admin
 from services.acp_shared.audit_log import AdminTenantAuditAction
 from shared.llm_client.bedrock_satellite import ACC3_ACCOUNT_ID
@@ -245,17 +246,25 @@ class TestOffboard:
             {"tenant_id": TENANT_ID, "name": "T", "cancelled_at": None},
             {"reason": "AA test tenant", "added_at": CANCELLED, "added_by": "migration-181"},
         ]
-        conn.fetch.return_value = [{"id": "j1", "kind": "t2_rewrite"}]
+        view = {"session_id": "s-1", "tenant_id": str(TENANT_ID), "session_staff": "u-9", "end_reason": "revoked"}
+        conn.fetch.side_effect = lambda sql, *a: (
+            [view] if sql == view_as.CLOSE_TENANT_SESSIONS_SQL else [{"id": "j1", "kind": "t2_rewrite"}])
         hook = AsyncMock()
         monkeypatch.setattr("shared.jobs.registry.run_terminal_hook", hook)
         out = await admin.offboard_tenant(str(TENANT_ID), admin.OffboardRequest(reason="left"),
                                           _request(conn), x_admin_secret=_SECRET,
                                           x_admin_user_id="u-2", x_admin_role="admin")
-        assert out["cancelled_jobs"] == 1
+        assert out["cancelled_jobs"] == 1 and out["ended_view_as_sessions"] == 1
         assert ACC3_ACCOUNT_ID not in json.dumps(out) and "acp-cis" not in json.dumps(out)
-        cancel_sql = conn.fetch.call_args.args[0]
+        cancel_sql = conn.fetch.call_args_list[0].args[0]
         assert "WHERE status = 'queued'" in cancel_sql and "running" not in cancel_sql
-        [(action, actor, details)] = _audit_rows(conn)
+        # AA-1035 follow-up (S268): the open view-as sessions on the tenant end in the same transaction
+        assert conn.fetch.call_args_list[1].args == (view_as.CLOSE_TENANT_SESSIONS_SQL, str(TENANT_ID), "revoked")
+        [(ended_action, ended_actor, ended), (action, actor, details)] = _audit_rows(conn)
+        assert ended_action == AdminTenantAuditAction.VIEW_AS_ENDED and ended_actor == "admin:u-2"
+        assert ended == {"session_id": "s-1", "end_reason": "revoked", "cause": "tenant_offboarded",
+                         "session_staff": "u-9"}
+        assert details["ended_view_as_sessions"] == ["s-1"]
         assert action == AdminTenantAuditAction.OFFBOARD and actor == "admin:u-2"
         assert ACC3_ACCOUNT_ID not in json.dumps(details)
         assert details["cancelled_jobs"] == [{"id": "j1", "kind": "t2_rewrite"}]
@@ -277,7 +286,9 @@ class TestOffboard:
         deletes = [q for q in sqls if "DELETE" in q.upper()]
         assert deletes == ["DELETE FROM shared.jev_tenant_allowlist WHERE tenant_id = $1::uuid"]
         updates = [q for q in sqls if "UPDATE" in q.upper()]
-        assert len(updates) == 2 and "shared.tenants" in updates[0] and "shared.job" in updates[1]
+        # the tenant, its queued jobs and (AA-1035) its open view-as sessions: nothing else
+        assert len(updates) == 3 and "shared.tenants" in updates[0] and "shared.job" in updates[1]
+        assert updates[2] == view_as.CLOSE_TENANT_SESSIONS_SQL
         tenant_upd = updates[0]
         for kept in ("plan_id", "plan_tier", "posts_per_week", "rate_limit_rpm"):
             assert kept not in tenant_upd

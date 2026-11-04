@@ -89,7 +89,7 @@ import structlog
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import BotoCoreError, ClientError
 
-from api.core import e2e_staff, identity_config, staff_identity
+from api.core import e2e_staff, identity_config, staff_identity, view_as
 from api.services import staff_invite
 from services.acp_shared.audit_log import write_audit_log
 
@@ -847,8 +847,14 @@ async def change_roles(pool: Any, cognito: CognitoDirectory, *, actor_id: str, s
     return await _finish(pool, actor_id, result, steps, has_email=bool(email))
 
 
+def _ended_views(closed: list[dict]) -> dict[str, Any]:
+    """The staff audit row's note of the view-as sessions the write ended (AA-1035; nothing when none was open)."""
+    return {"ended_view_as_sessions": [r["session_id"] for r in closed]} if closed else {}
+
+
 async def disable_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, staff_id: str) -> WriteResult:
-    """``is_active = false``, then AdminDisableUser, then AdminUserGlobalSignOut (in that order, ADR 0006 §7)."""
+    """``is_active = false``, then AdminDisableUser, then AdminUserGlobalSignOut (in that order, ADR 0006 §7). The
+    member's open view-as sessions end in the same transaction (AA-1035, ``view_as.close_open_sessions``)."""
     async with pool.acquire() as conn:
         async with conn.transaction():
             await _require_owner(conn, actor_id)
@@ -859,8 +865,13 @@ async def disable_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, 
             await _guard_last_owner(conn, target)
             if target["is_active"]:
                 await conn.execute(SQL_SET_ACTIVE, staff_id, False)
-                await _audit(conn, actor_id, StaffAudit.DISABLED, staff_id, {"is_active": {"before": True,
-                                                                                            "after": False}})
+            # AA-1035 follow-up (S268): the member's open view-as sessions end now (also when the row was already
+            # inactive: a session the gate has not touched yet), one tenant.view_as_ended row each.
+            closed = await view_as.close_open_sessions(conn, actor=_actor_tag(actor_id), cause="staff_disabled",
+                                                       staff_id=staff_id)
+            if target["is_active"]:
+                await _audit(conn, actor_id, StaffAudit.DISABLED, staff_id, {
+                    "is_active": {"before": True, "after": False}, **_ended_views(closed)})
     email = target["email"]
     steps: list[Step] = _disable_steps(cognito, email)
     return await _finish(pool, actor_id, WriteResult(staff_id=staff_id, operation="disable"), steps,
@@ -897,7 +908,8 @@ async def sign_out_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str,
 
     AdminEnableUser always runs, and BEFORE the sign-out: the writer may not read the pool's state (AdminGetUser is
     not allowed and counts as MAU), enabling an enabled user is a no-op, and a sign-out on a still-disabled Cognito
-    user may be refused, which must not leave the row active and the pool disabled."""
+    user may be refused, which must not leave the row active and the pool disabled. The member's open view-as sessions
+    end in the same transaction (AA-1035, ``view_as.close_open_sessions``)."""
     async with pool.acquire() as conn:
         async with conn.transaction():
             await _require_owner(conn, actor_id)
@@ -907,7 +919,11 @@ async def sign_out_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str,
             reenabled = not target["is_active"]
             if reenabled:
                 await conn.execute(SQL_SET_ACTIVE, staff_id, True)
-            await _audit(conn, actor_id, StaffAudit.SIGNED_OUT, staff_id, {"reenabled": reenabled})
+            # AA-1035 follow-up (S268): "end every session" includes the member's open view-as sessions.
+            closed = await view_as.close_open_sessions(conn, actor=_actor_tag(actor_id), cause="staff_signed_out",
+                                                       staff_id=staff_id)
+            await _audit(conn, actor_id, StaffAudit.SIGNED_OUT, staff_id, {"reenabled": reenabled,
+                                                                             **_ended_views(closed)})
     email = target["email"]
     steps: list[Step] = [("enable_user", lambda: cognito.enable(email)),
                          ("global_sign_out", lambda: cognito.global_sign_out(email))]

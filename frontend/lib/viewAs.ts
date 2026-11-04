@@ -144,6 +144,38 @@ export function viewAsClaims(
   }
 }
 
+const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The claims of the view-as cookie `token` when it is a session of the signed-in staff member `adminId` (its `stf`),
+ * else null. The BFF reads, shows and ENDS only such a session: a cookie another member left in a shared browser is
+ * never used, not even to end that member's session (an admin's end would revoke it).
+ */
+export function ownViewAsClaims(
+  token: string | undefined | null,
+  adminId: string | undefined | null,
+): { sessionId: string; staffId: string; startRole: string; exp: number } | null {
+  const claims = viewAsClaims(token);
+  if (!claims || !adminId || claims.staffId !== adminId || !SESSION_ID_RE.test(claims.sessionId)) return null;
+  return claims;
+}
+
+/**
+ * The ids of the OPEN sessions of `adminId` in a GET /admin/view-as/sessions answer (an admin's list holds every
+ * member's sessions; only the caller's own are ended at its sign-out).
+ */
+export function ownOpenSessionIds(answer: unknown, adminId: string | undefined | null): string[] {
+  const sessions = (answer as { sessions?: unknown } | null)?.sessions;
+  if (!adminId || !Array.isArray(sessions)) return [];
+  return sessions
+    .filter((s): s is { session_id: string; admin_user_id: string; open: boolean } =>
+      !!s && typeof s === "object" && (s as { open?: unknown }).open === true
+      && (s as { admin_user_id?: unknown }).admin_user_id === adminId
+      && typeof (s as { session_id?: unknown }).session_id === "string"
+      && SESSION_ID_RE.test((s as { session_id: string }).session_id))
+    .map((s) => s.session_id);
+}
+
 /** Seconds until `expiresAt` (never below 0); 0 for a missing or bad date. */
 export function secondsLeft(expiresAt: string | null | undefined, nowMs: number = Date.now()): number {
   const t = expiresAt ? Date.parse(expiresAt) : NaN;
