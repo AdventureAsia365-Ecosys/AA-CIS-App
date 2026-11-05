@@ -24,11 +24,19 @@ On Dev only synthetic tenants (``kind`` ``demo``) are moved (root ADR 0019 d16: 
 row are counted ``skipped_real``); AA itself (``internal``) never. Without the Booking view (bk-042 not applied, or no
 grant) the run answers ``skipped``. Each tenant is its own transaction (one bad row never holds the others), with
 ``aa.actor`` = ``job:tenant_billing_tick:<job id>``.
+
+AA-1037 (root ADR 0019 d9 "Screens now") adds :func:`tenant_snapshot`, the read behind Tenant 360 › Billing ›
+Booking invoices (``GET /admin/tenants/{tenant_id}/booking-billing``): the same view row for one tenant (status, the
+overdue figures, paid through, the warn / suspend days), next to the CIS side it drives (account status and suspend
+reason, the live subscriptions' paid through). Read only, no invoice line, bill-to or person; the view unreadable ->
+``available: false`` with the CIS side still filled.
 """
 from __future__ import annotations
 
 import json
+import re
 from datetime import date
+from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 
 import asyncpg
@@ -73,6 +81,20 @@ NOTIFIED_TODAY_SQL = """
 LIVE_ACCOUNT = ("trial", "active", "past_due")
 BILLING = "billing"
 
+# AA-1037 Tenant 360 read: one tenant's row of the view, its account and its live subscriptions.
+TENANT_STATUS_SQL = """
+    SELECT status, oldest_overdue_days, overdue_invoices, overdue_amount, paid_through, warn_after_days,
+           suspend_after_days
+      FROM booking.v_tenant_billing_status WHERE tenant_id = $1::uuid
+"""
+TENANT_ACCOUNT_SQL = "SELECT account_status, suspend_reason FROM shared.tenants WHERE tenant_id = $1::uuid"
+LIVE_SUBSCRIPTIONS_SQL = """
+    SELECT product, status, paid_through FROM shared.tenant_subscription
+     WHERE tenant_id = $1::uuid AND status IN ('trialing', 'active', 'past_due') ORDER BY product
+"""
+VIEW_UNREADABLE = (asyncpg.UndefinedTableError, asyncpg.InsufficientPrivilegeError, asyncpg.InvalidSchemaNameError)
+_CURRENCY = re.compile(r"^[A-Z]{3}$")
+
 
 def actor_for(job_id: str) -> str:
     return f"job:tenant_billing_tick:{job_id}"[:64]
@@ -106,7 +128,7 @@ async def read_status(pool) -> Optional[list[dict[str, Any]]]:
     try:
         async with pool.acquire() as conn:
             rows = await conn.fetch(STATUS_SQL)
-    except (asyncpg.UndefinedTableError, asyncpg.InsufficientPrivilegeError, asyncpg.InvalidSchemaNameError) as e:
+    except VIEW_UNREADABLE as e:
         logger.warning("tenant_billing_status_unreadable", error=type(e).__name__)
         return None
     return [dict(r) for r in rows]
@@ -119,6 +141,72 @@ def _amount(value: Any) -> dict:
         except ValueError:
             return {}
     return dict(value or {})
+
+
+def overdue_amounts(value: Any) -> dict[str, str]:
+    """The view's ``overdue_amount`` ({currency: amount}) as {ISO code: decimal string}, sorted by code. A key that is
+    not a 3-letter code or an amount that is not a finite number is dropped (the screen formats, never computes)."""
+    try:
+        raw = _amount(value)
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, str] = {}
+    for code, amount in raw.items():
+        if not isinstance(code, str) or not _CURRENCY.match(code) or isinstance(amount, bool):
+            continue
+        try:
+            d = Decimal(str(amount))
+        except (InvalidOperation, ValueError):
+            continue
+        if d.is_finite():
+            out[code] = format(d, "f")
+    return dict(sorted(out.items()))
+
+
+def _day(value: Any) -> Optional[str]:
+    return value.isoformat() if isinstance(value, date) else None
+
+
+def booking_block(row: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    """One view row as the Tenant 360 answer shows it; None when Booking has no row for the tenant (no agency
+    invoice terms yet)."""
+    if row is None:
+        return None
+    return {
+        "status": row["status"],
+        "oldest_overdue_days": row["oldest_overdue_days"],
+        "overdue_invoices": row["overdue_invoices"],
+        "overdue_amount": overdue_amounts(row["overdue_amount"]),
+        "paid_through": _day(row["paid_through"]),
+        "warn_after_days": row["warn_after_days"],
+        "suspend_after_days": row["suspend_after_days"],
+    }
+
+
+async def tenant_snapshot(conn, tenant_id: str) -> dict[str, Any]:
+    """Tenant 360 › Billing › Booking invoices for one tenant (the caller has checked the tenant exists and is in the
+    caller's scope). ``available`` is false when the view cannot be read (bk-042 not applied, or no grant); the CIS
+    side (account, subscriptions) is filled either way. The view is read last, so a refusal leaves nothing undone."""
+    account = await conn.fetchrow(TENANT_ACCOUNT_SQL, tenant_id)
+    subscriptions = [{"product": r["product"], "status": r["status"], "paid_through": _day(r["paid_through"])}
+                     for r in await conn.fetch(LIVE_SUBSCRIPTIONS_SQL, tenant_id)]
+    available = True
+    booking: Optional[dict[str, Any]] = None
+    try:
+        row = await conn.fetchrow(TENANT_STATUS_SQL, tenant_id)
+        booking = booking_block(dict(row) if row is not None else None)
+    except VIEW_UNREADABLE as e:
+        logger.warning("tenant_billing_status_unreadable", error=type(e).__name__, where="tenant360")
+        available = False
+    return {
+        "available": available,
+        "booking": booking,
+        "account": {"account_status": account["account_status"] if account else None,
+                    "suspend_reason": account["suspend_reason"] if account else None},
+        "subscriptions": subscriptions,
+    }
 
 
 async def _apply(conn, row: dict[str, Any], actor: str, out: dict[str, Any]) -> None:

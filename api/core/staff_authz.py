@@ -407,6 +407,10 @@ POLICY: dict[tuple[str, str], Any] = {
     # admin.py _require_tenant_patch)
     ("PATCH", "/admin/tenants/{tenant_id}"): any_of(TENANT_WRITE, BILLING_WRITE, TENANT_BOOK_WRITE),
     ("GET", "/admin/tenants/{tenant_id}/usage"): _TENANT_BILLING_READ,
+    # AA-1037 (root ADR 0019 d9 "Screens now"): Tenant 360 › Billing › Booking invoices, the agency's billing status
+    # from Booking's contract view (read only). The Billing tab's rule: billing.read on every tenant, or
+    # tenant.book.account.read on the caller's book (require_tenant_scope); never support.
+    ("GET", "/admin/tenants/{tenant_id}/booking-billing"): _TENANT_BILLING_READ,
     ("GET", "/admin/tenants/{tenant_id}/audit"): _TENANT_ONE_READ,
     ("GET", "/admin/tenants/{tenant_id}/rewrite-activity"): _TENANT_ONE_READ,
     ("GET", "/admin/tenants/{tenant_id}/config"): _TENANT_ONE_READ,

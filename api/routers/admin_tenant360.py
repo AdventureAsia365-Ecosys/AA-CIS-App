@@ -56,6 +56,10 @@ AA-1031 (S264 live check F3) adds the read the page uses to show only the writes
   own refusal of the Dev-only E2E CIS admin (synthetic tenant only, viewer / editor only), so a read-only session sees
   no Invite button and no row menu. UI hint only: every write keeps its own checks.
 
+AA-1037 (root ADR 0019 d9) adds ``GET /admin/tenants/{id}/booking-billing``: the agency billing status AA-Booking
+publishes in ``booking.v_tenant_billing_status`` next to the CIS account and live subscriptions it drives (read only,
+fail soft; ``services/tenant_account/billing.tenant_snapshot``).
+
 Cost definition is the AA-798 one (migration 223): ``shared.llm_call_log.cost_usd`` for the
 tenant, current calendar month (``date_trunc('month', now())``), Jev included, shadow rows
 (``quality_signal @> {"shadow": true}``) excluded — so the totals here add up to the
@@ -82,6 +86,7 @@ from api.core.tenant_scope import TENANT_SCOPED
 from api.routers._billing import usage_row_to_dict
 from api.routers.admin import _admin_actor, verify_admin_secret
 from services.acp_shared.audit_log import AdminTenantAuditAction, write_audit_log
+from services.tenant_account import billing as tenant_billing
 from services.tenant_membership import session as members_session
 from services.tenant_membership import writer as members_writer
 from api.services import crm_console
@@ -471,6 +476,28 @@ async def get_tenant_markets(tenant_id: UUID, request: Request, x_admin_secret: 
             "requested_at": _iso(r["requested_at"]), "resolved_at": _iso(r["resolved_at"]),
         } for r in unmapped_rows],
     }
+
+
+# ── Booking invoices (AA-1037) ────────────────────────────────────────────────────────────────
+
+@router.get("/{tenant_id}/booking-billing", summary="Tenant's agency billing status from AA-Booking (read only)",
+            dependencies=TENANT_SCOPED)
+async def get_tenant_booking_billing(tenant_id: UUID, request: Request, x_admin_secret: str = Header(None)):
+    """Tenant 360 › Billing › Booking invoices (root ADR 0019 d9 "Screens now"). Booking issues every agency invoice and
+    publishes the agency's billing status in its contract view ``booking.v_tenant_billing_status`` (bk-042, SELECT
+    to ``cis_app``); the hourly ``tenant_billing_tick`` moves the account from it. This read shows both sides: the
+    view row (status, overdue invoices and amount per currency, paid through, the warn / suspend days; ``booking``
+    null when Booking has no row for the tenant) and the CIS account and live subscriptions. No invoice line, bill-to
+    or person. ``available`` false when the view cannot be read (fail soft, like the tick).
+
+    Who: the existing Billing tab's rule (POLICY ``_TENANT_BILLING_READ``): billing.read on every tenant (admin,
+    finance), tenant.book.account.read on the caller's book only (customer_success; require_tenant_scope)."""
+    verify_admin_secret(x_admin_secret)
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        await _require_tenant(conn, tenant_id)
+        snap = await tenant_billing.tenant_snapshot(conn, str(tenant_id))
+    return {"tenant_id": str(tenant_id), **snap}
 
 
 # ── members (AA-978) ──────────────────────────────────────────────────────────────────────────
