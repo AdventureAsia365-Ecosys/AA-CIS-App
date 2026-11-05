@@ -16726,7 +16726,7 @@
     },
     "/admin/content-quality/pieces/{piece_id}/sentences/suggest": {
       "post": {
-        "description": "A proposed rewrite of one sentence: ONE call on the `t9_repair` stage (Haiku, max 400\ntokens, about $0.001-0.006), logged to llm_call_log with this piece's id. Nothing is saved —\nthe admin reviews (or edits) it and sends it to /apply. The suggestion is run through the same\ndeterministic checks /apply uses, so the drawer can show what would block it.",
+        "description": "A proposed rewrite of one sentence: ONE call on the `t9_repair` stage (Haiku, the\nt9_repair ceiling, one budget retry on a cut reply; about $0.001-0.006), logged to llm_call_log\nwith this piece's id. Nothing is saved —\nthe admin reviews (or edits) it and sends it to /apply. The suggestion is run through the same\ndeterministic checks /apply uses, so the drawer can show what would block it.",
         "operationId": "suggest_sentence_admin_content_quality_pieces__piece_id__sentences_suggest_post",
         "parameters": [
           {
