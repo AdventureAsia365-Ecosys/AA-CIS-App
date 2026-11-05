@@ -9,8 +9,11 @@
 // role customer_success -> BFF -> API scope. Screenshots: tests/e2e/results/admin-evidence/cs-*.png. Writes nothing:
 // both write attempts (an assignment through /api/admin, a view-as start through the /api/view-as BFF route, which is
 // on the A10b allow-list for the E2E admin only) are refused 403 e2e_read_only by the API.
+// AA-1035 (directory capability UI): on /admin/tenants the role sees no write control it cannot use (no New tenant, no
+// Offboard / Restore, a read-only status pill), Detail still opens Tenant 360, and the page makes no 4xx call (the
+// admin-only unmapped-markets banner is not fetched).
 // Hygiene as admin-pages.spec.ts: retries 0, one sign-in per run, run specs one at a time.
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page, type Response as PwResponse } from '@playwright/test';
 import fs from 'fs';
 import path from 'path';
 import { E2E_CIS_CS_EMAIL, MAILBOX_ADMIN_PREFIX } from '../helpers/mailbox';
@@ -89,9 +92,28 @@ test.describe('AA-1035 — customer_success E2E staff sees only its book', () =>
     expect(v.body).toContain('e2e_read_only');
 
     // ── Pages ──
+    // The Directory: every same-origin response while it loads, to prove it made no refused (4xx) call.
+    const dirErrors: string[] = [];
+    const onResponse = (r: PwResponse) => {
+      const u = new URL(r.url());
+      if (u.origin === CIS && r.status() >= 400) dirErrors.push(`${r.status()} ${u.pathname}`);
+    };
+    page.on('response', onResponse);
     await page.goto('/admin/tenants', { waitUntil: 'domcontentloaded' });
     await expect(page.locator('table tbody tr')).toHaveCount(1, { timeout: 30000 });
+    const row = page.locator('table tbody tr').first();
+    await expect(row.getByRole('button', { name: /^detail$/i })).toBeVisible();
+    await page.waitForTimeout(2000);   // let the page's other reads settle before counting
+    await expect(page.getByRole('button', { name: /new tenant/i }), 'no create for customer_success').toHaveCount(0);
+    await expect(page.getByRole('button', { name: /^(offboard|restore)$/i }), 'no offboard / restore').toHaveCount(0);
+    await expect(row.getByRole('button', { name: /^(active|suspended|offboarded)$/i }), 'status pill read-only')
+      .toHaveCount(0);
+    page.off('response', onResponse);
+    expect(dirErrors, 'the Directory made no 4xx call (no unmapped-market-requests)').toEqual([]);
     await shot(page, 'tenants-directory');
+    // Detail still opens Tenant 360 of the own tenant
+    await row.getByRole('button', { name: /^detail$/i }).click();
+    await page.waitForURL((u) => u.pathname === `/admin/tenants/${A}`, { timeout: 30000 });
     await page.goto(`/admin/tenants/${A}`, { waitUntil: 'domcontentloaded' });
     await expect(page.locator('[data-testid="tenant360-ready"]').first()).toBeVisible({ timeout: 30000 });
     await shot(page, 'tenant360-own');

@@ -9,6 +9,8 @@
 // _require_tenant_admin) and each writes an acp_shared.audit_log row with before/after (AA-797),
 // which the Audit tab shows. Optimistic: the saved values switch immediately and roll back with
 // an error toast if the server refuses. AA-994: text in the UI language (tenant360.messages.ts).
+// AA-1035 (directory capability UI): the plan select is disabled for a role that may not send plan_tier (neither
+// tenant.write nor billing.write, e.g. customer_success, whose PATCH may still change the RPM); lib/tenantDirectory.ts.
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -16,6 +18,7 @@ import { AlertCircle } from "lucide-react";
 import {
   K, mono, sans,
   Badge, Button, ErrorState, Section, Spinner, ToastProvider, apiGet, apiSend, useLang, useT, useToast,
+  useAdminIdentity,
   Input, Select,
   ChipButton,
 } from "../../../_kit";
@@ -26,6 +29,7 @@ import {
 } from "./tenant360";
 import { T360, T360_WORDS_MESSAGES } from "./tenant360.messages";
 import { useContentTiers } from "./useContentTiers";
+import { canPatchBillingFields } from "@/lib/tenantDirectory";
 
 
 const labelStyle: React.CSSProperties = {
@@ -65,6 +69,7 @@ function PlanForm({ tenantId, planTier, rateLimitRpm, locked, onChanged }: {
   const rpmDirty = Number(rpm) !== saved.rpm;
   // AA-1028 R1 slice 3: the tiers of the plan catalogue (live public content plans), plus the tenant's own
   const { tiers: choices } = useContentTiers(saved.plan);
+  const mayChangePlan = canPatchBillingFields(useAdminIdentity().role);
 
   const m = useMutation({
     mutationFn: (body: { plan_tier?: string; rate_limit_rpm?: number }) =>
@@ -100,7 +105,7 @@ function PlanForm({ tenantId, planTier, rateLimitRpm, locked, onChanged }: {
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
         <div>
           <label style={labelStyle} htmlFor={`plan-${tenantId}`}>{t("plan")}</label>
-          <Select id={`plan-${tenantId}`} value={plan} disabled={locked || m.isPending}
+          <Select id={`plan-${tenantId}`} value={plan} disabled={locked || m.isPending || !mayChangePlan}
             onChange={e => setPlan(e.target.value)} style={{ ...inputStyle, minWidth: 140 }}>
             {choices.map(p => <option key={p} value={p}>{p}</option>)}
           </Select>

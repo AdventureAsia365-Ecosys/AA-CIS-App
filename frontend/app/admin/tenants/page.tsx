@@ -13,6 +13,9 @@
 // AA-1031 (S264): Members tab (Content studio memberships: invite, send again, change role, remove), ./_components.
 // AA-1028 R1 slice 3: Subscription tab (subscriptions, entitlements, overrides, add-ons); the create modal's tier choices
 // come from the plan catalogue (useContentTiers), not a hard-coded list.
+// AA-1035 (directory capability UI): the write controls follow the role (lib/tenantDirectory.ts): New tenant and
+// Offboard / Restore need tenant.write, the status pill toggles for tenant.write or billing.write, and the
+// unmapped-markets banner (tenant.read) is not even fetched for the desk roles. The backend stays the authority.
 
 import { Suspense, useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -25,9 +28,10 @@ import {
   K, serif, mono, sans, Section, Eyebrow, Badge, LoadingScreen,
   DataTable, SegmentedControl, type ColumnDef,
   type Tone,
-  ButtonGroup, ChipButton, Pressable,
+  ButtonGroup, ChipButton, Pressable, useAdminIdentity,
 } from "../../_kit";
 import { legacyTenantLinkTarget, tenant360Href } from "@/lib/adminIa";
+import { tenantDirectoryControls, type TenantDirectoryControls } from "@/lib/tenantDirectory";
 import { useContentTiers } from "./_components/useContentTiers";
 import type { Lifecycle, Tenant, TenantStatus } from "./_components/tenantRow";
 import { TEN } from "./messages";
@@ -339,8 +343,11 @@ function tenantLifecycle(tenant: Tenant): Lifecycle {
   };
 }
 
-/** Status pill that toggles active <-> suspended (AA-797; offboarded is read-only). */
-function TenantStatusToggle({ tenant, onChanged }: { tenant: Tenant; onChanged: () => void }) {
+/** Status pill that toggles active <-> suspended (AA-797; offboarded is read-only). A role that may not suspend or
+ *  resume (AA-1035: neither tenant.write nor billing.write) gets the pill as read-only text. */
+function TenantStatusToggle({ tenant, onChanged, canToggle }: {
+  tenant: Tenant; onChanged: () => void; canToggle: boolean;
+}) {
   const t = useT(TEN);
   const [toggling, setToggling] = useState(false);
   const [rowError, setRowError] = useState("");
@@ -361,6 +368,7 @@ function TenantStatusToggle({ tenant, onChanged }: { tenant: Tenant; onChanged: 
     } catch { setRowError(t("connectionError")); } finally { setToggling(false); }
   }
 
+  if (!canToggle) return <Badge tone={chip.tone} dot={false}>{t(chip.label)}</Badge>;
   const toggleTitle = offboarded ? t("offboardedHint")
     : status === "active" ? t("suspendHint") : t("resumeHint");
   return (
@@ -378,12 +386,13 @@ function TenantStatusToggle({ tenant, onChanged }: { tenant: Tenant; onChanged: 
   );
 }
 
-/** Offboard / restore (same slot) and Detail. */
-function TenantActions({ tenant, onChanged, onRestored, onOpen }: {
+/** Offboard / restore (same slot, AA-1035: tenant.write only) and Detail (every role). */
+function TenantActions({ tenant, onChanged, onRestored, onOpen, canOffboardRestore }: {
   tenant: Tenant;
   onChanged: () => void;
   onRestored: (r: RestoreResult) => void;
   onOpen: (tenantId: string) => void;
+  canOffboardRestore: boolean;
 }) {
   const t = useT(TEN);
   const [offboarding, setOffboarding] = useState(false);
@@ -392,7 +401,7 @@ function TenantActions({ tenant, onChanged, onRestored, onOpen }: {
   return (
     <div onClick={e => e.stopPropagation()}>
       <ButtonGroup label={t("actionsFor", tenant.name)} gap="sm">
-        {offboarded ? (
+        {canOffboardRestore && (offboarded ? (
           <Button size="sm" variant="ghost" onClick={() => setRestoring(true)} title={t("restoreHint")}>
             <RotateCcw size={12} /> {t("restore")}
           </Button>
@@ -400,16 +409,16 @@ function TenantActions({ tenant, onChanged, onRestored, onOpen }: {
           <Button size="sm" variant="danger" onClick={() => setOffboarding(true)} title={t("offboardHint")}>
             <Ban size={12} /> {t("offboard")}
           </Button>
-        )}
+        ))}
         <Button size="sm" variant="ghost" onClick={() => onOpen(tenant.tenant_id)}>
           <ChevronRight size={12} /> {t("detail")}
         </Button>
       </ButtonGroup>
-      {offboarding && (
+      {canOffboardRestore && offboarding && (
         <OffboardModal tenant={tenant} onClose={() => setOffboarding(false)}
           onDone={() => { setOffboarding(false); onChanged(); }} />
       )}
-      {restoring && (
+      {canOffboardRestore && restoring && (
         <RestoreModal tenant={tenant} onClose={() => setRestoring(false)}
           onDone={r => { setRestoring(false); onRestored(r); }} />
       )}
@@ -417,11 +426,12 @@ function TenantActions({ tenant, onChanged, onRestored, onOpen }: {
   );
 }
 
-function TenantsTable({ tenants, onChanged, onRestored, onOpen }: {
+function TenantsTable({ tenants, onChanged, onRestored, onOpen, controls }: {
   tenants: Tenant[];
   onChanged: () => void;
   onRestored: (r: RestoreResult) => void;
   onOpen: (tenantId: string) => void;
+  controls: TenantDirectoryControls;
 }) {
   const t = useT(TEN);
   const columns: ColumnDef<Tenant, unknown>[] = [
@@ -459,10 +469,13 @@ function TenantsTable({ tenants, onChanged, onRestored, onOpen }: {
     { id: "quota", header: t("colQuota"), accessorFn: (x) => x.this_month.quota_tours_pct, meta: { align: "right" },
       cell: ({ row: { original: x } }) => <span style={{ fontSize: 12, color: K.muted }}>{t("tourQuota", x.this_month.quota_tours_pct)}</span> },
     { id: "status", header: t("colStatus"), accessorFn: (x) => tenantStatus(x),
-      cell: ({ row: { original: x } }) => <TenantStatusToggle tenant={x} onChanged={onChanged} /> },
+      cell: ({ row: { original: x } }) => (
+        <TenantStatusToggle tenant={x} onChanged={onChanged} canToggle={controls.statusToggle} />
+      ) },
     { id: "actions", header: "", enableSorting: false, enableHiding: false, meta: { hideLabelOnCard: true },
       cell: ({ row: { original: x } }) => (
-        <TenantActions tenant={x} onChanged={onChanged} onRestored={onRestored} onOpen={onOpen} />
+        <TenantActions tenant={x} onChanged={onChanged} onRestored={onRestored} onOpen={onOpen}
+          canOffboardRestore={controls.offboardRestore} />
       ) },
   ];
   return (
@@ -507,6 +520,9 @@ function TenantsPageInner() {
   // (/admin/tenants?tenant=<id>[&tab=cost]: bookmarks, the ⌘K palette and Job drawer links before this change) is replaced
   // by the route (TenantsRouter below), so it never lands on the bare Directory.
   const openTenant = useCallback((tenantId: string) => router.push(tenant360Href(tenantId)), [router]);
+  // AA-1035: the controls this role may use (the role reads "" until the identity cookie is read: no controls).
+  const controls = tenantDirectoryControls(useAdminIdentity().role);
+  const showUnmapped = controls.unmappedMarkets;
   const [tenants, setTenants]       = useState<Tenant[]>([]);
   const [loading, setLoading]       = useState(true);
   const [showCreate, setShowCreate] = useState(false);
@@ -517,7 +533,7 @@ function TenantsPageInner() {
   const [unmappedMarkets, setUnmappedMarkets] = useState<UnmappedMarketRequest[]>([]);
 
   // The fetches alone (state set only once an answer arrives), so the mount effect can call it; `loading` starts true.
-  const fetchAll = useCallback(() => {
+  const fetchTenants = useCallback(() => {
     // AA-797 — this page manages suspended/offboarded tenants too; other callers stay active-only.
     const tenantsP = fetch("/api/admin/tenants?include_inactive=true")
       .then(async (res) => {
@@ -528,19 +544,23 @@ function TenantsPageInner() {
       })
       .catch(() => setError(tr("connectionError")))
       .finally(() => setLoading(false));
-    fetch("/api/admin/unmapped-market-requests")
-      .then(r => r.ok ? r.json() : null)
-      .then(d => setUnmappedMarkets(d?.requests ?? []))
-      .catch(() => setUnmappedMarkets([]));
     return tenantsP;
   }, [tr]);
+  // AA-1035: only a role with tenant.read asks (the API answers 403 to every desk role); its own effect, so the call
+  // goes out once the role is known and never for a role without the read.
+  const fetchUnmapped = useCallback(() => fetch("/api/admin/unmapped-market-requests")
+    .then(r => r.ok ? r.json() : null)
+    .then(d => setUnmappedMarkets(d?.requests ?? []))
+    .catch(() => setUnmappedMarkets([])), []);
   // silent = refresh in place after a row action (keeps expanded rows; no loading screen).
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
-    await fetchAll();
-  }, [fetchAll]);
+    if (showUnmapped) fetchUnmapped();
+    await fetchTenants();
+  }, [fetchTenants, fetchUnmapped, showUnmapped]);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  useEffect(() => { fetchTenants(); }, [fetchTenants]);
+  useEffect(() => { if (showUnmapped) fetchUnmapped(); }, [showUnmapped, fetchUnmapped]);
 
   function restored(r: RestoreResult) {
     const n = r.cancelled_jobs?.length ?? 0;
@@ -569,7 +589,9 @@ function TenantsPageInner() {
             actions={
               <>
                 <Button variant="secondary" onClick={() => load()}><RefreshCw size={13} /> {tr("refresh")}</Button>
-                <Button variant="primary" onClick={() => setShowCreate(true)}><Plus size={14} /> {tr("newTenant")}</Button>
+                {controls.create && (
+                  <Button variant="primary" onClick={() => setShowCreate(true)}><Plus size={14} /> {tr("newTenant")}</Button>
+                )}
               </>
             }
           />
@@ -583,7 +605,7 @@ function TenantsPageInner() {
           {/* AA-629 Tier 2 — tenants waiting on a market outside DFS_LOCATION_MAP. Data-driven
               visibility for the Tier 3 decision (add the market? worth the DFS spend?) — no
               action here, just the queue. */}
-          {unmappedMarkets.length > 0 && (
+          {showUnmapped && unmappedMarkets.length > 0 && (
             <div style={{ marginBottom: 16, padding: "10px 14px", background: K.amberSoft, border: `1px solid ${K.amber}`, borderRadius: 8, fontSize: 13, color: K.ink, display: "flex", alignItems: "flex-start", gap: 8 }}>
               <Globe size={14} style={{ marginTop: 1, flexShrink: 0, color: K.amber }} />
               <span>
@@ -629,13 +651,13 @@ function TenantsPageInner() {
           <Section padded={false} style={{ overflow: "hidden" }} bodyStyle={{ padding: loading ? 0 : 12 }}>
             {loading ? <LoadingScreen message={tr("loadingTenants")} /> : (
               <TenantsTable tenants={shown} onChanged={() => load(true)} onRestored={restored}
-                onOpen={openTenant} />
+                onOpen={openTenant} controls={controls} />
             )}
           </Section>
         </PageFrame>
 
 
-      {showCreate && <CreateModal onClose={() => setShowCreate(false)} onCreated={k => { setShowCreate(false); setNotice(k); load(); }} />}
+      {controls.create && showCreate && <CreateModal onClose={() => setShowCreate(false)} onCreated={k => { setShowCreate(false); setNotice(k); load(); }} />}
       {notice && <TenantNoticeModal notice={notice} onClose={() => setNotice(null)} />}
     </>
   );
