@@ -42,7 +42,7 @@ def _request(conn):
 
 
 VIEW_ROW = {"status": "warn", "oldest_overdue_days": 9, "overdue_invoices": 2,
-            "overdue_amount": '{"USD": 120.5, "EUR": "80.00"}', "paid_through": date(2026, 11, 30),
+            "overdue_amount": '{"USD": 120.50, "EUR": "80.00"}', "paid_through": date(2026, 11, 30),
             "warn_after_days": 7, "suspend_after_days": 30}
 
 
@@ -83,7 +83,7 @@ async def test_answer_has_the_view_row_and_the_cis_side():
         "tenant_id": str(TENANT_ID),
         "available": True,
         "booking": {"status": "warn", "oldest_overdue_days": 9, "overdue_invoices": 2,
-                    "overdue_amount": {"EUR": "80.00", "USD": "120.5"}, "paid_through": "2026-11-30",
+                    "overdue_amount": {"EUR": "80.00", "USD": "120.50"}, "paid_through": "2026-11-30",
                     "warn_after_days": 7, "suspend_after_days": 30},
         "account": {"account_status": "past_due", "suspend_reason": None},
         "subscriptions": [{"product": "content", "status": "active", "paid_through": "2026-11-30"},

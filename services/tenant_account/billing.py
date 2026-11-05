@@ -146,8 +146,8 @@ def _amount(value: Any) -> dict:
 def overdue_amounts(value: Any) -> dict[str, str]:
     """The view's ``overdue_amount`` ({currency: amount}) as {ISO code: decimal string}, sorted by code. A key that is
     not a 3-letter code or an amount that is not a finite number is dropped (the screen formats, never computes)."""
-    try:
-        raw = _amount(value)
+    try:   # parse_float=Decimal keeps the amount's scale (240.50 stays "240.50", never the float 240.5)
+        raw = json.loads(value, parse_float=Decimal) if isinstance(value, str) else dict(value or {})
     except (TypeError, ValueError):
         return {}
     if not isinstance(raw, dict):
