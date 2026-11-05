@@ -1,0 +1,5 @@
+{
+  "_comment": "Known noise the visual run ignores (AA-1008, root ADR 0016 decision 9). Each entry: `match` (a substring of the console message or of the failed request URL) and `why` (with the issue that tracks it). Keep it empty unless a run shows harmless noise.",
+  "console": [],
+  "requests": []
+}

@@ -51,6 +51,8 @@ export {
   formatMoney, minorUnits, formatDay, isIsoDay, parseDayInput, relativeParts, type RelativeParts,
 } from "./core/format";
 export { KitGallery } from "./core/KitGallery";
+// AA-1008 (S6e): the shell frame every app shell configures (CIS: ./AdminShell).
+export { ShellFrame, useShell, isPaletteShortcut, type ShellControls, type ShellFrameProps, type ShellBreakpoint } from "./core/ShellFrame";
 export { useSidebarCollapsed, useNavGroups, type NavGroups } from "./core/useSidebar";
 // S264 — collapsible sidebar nav groups (the same component and store in every app's sidebar).
 export { NavGroup, NavGroupHeader, navBadgeText, type NavGroupProps, type NavGroupHeaderProps } from "./core/NavGroup";

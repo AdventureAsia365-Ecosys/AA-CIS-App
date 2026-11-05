@@ -783,8 +783,10 @@ jobs:
       # AA-994 (button variants): render the kit core with react-dom/server and check the accessible markup (roles,
       # aria-checked / selected / pressed, one tab stop), the focus styles, and that primitives re-exports every
       # Buttons export (the consumer barrels `export *` from primitives). Needs typescript + react, so after npm ci.
+      # AA-1008: the ShellFrame (markup, drawer CSS, CIS AdminShell is a configuration of it) and the visual run's
+      # page list (every app route listed or excluded, changed-pages mapping, run selection).
       - name: Kit button render tests
-        run: node --test --experimental-strip-types --no-warnings lib/kitButtons.test.mjs
+        run: node --test --experimental-strip-types --no-warnings lib/kitButtons.test.mjs lib/kitShellFrame.test.mjs lib/visualPages.test.mjs
 
       - name: Type-check (tsc --noEmit)
         run: npx tsc --noEmit -p .
