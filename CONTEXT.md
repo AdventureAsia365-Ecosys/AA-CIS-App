@@ -76,7 +76,12 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     Guardrails rows from the CRM's daily totals (crm.ops.v1 GET /llm/usage only, with the staff member's own
     token; never the row ledger /llm/calls, which audits every agency), a static Mapbox row), Routing (with the LLM availability card), Models & trials (families, shadow report,
     the read-only Experiments section: prompt versions and eval runs), Budgets (every cap layer and the tenant AI
-    budgets of AA-1016, also shown as a tile on Tenant 360), Calls (ledger v2 search), Guide, and the Trace drawer
+    budgets of AA-1016, also shown as a tile on Tenant 360), Calls (ledger v2 search), Guide (AA-1042 S270: the root page
+    `docs/architecture/ai-gateway.md` / `.vi.md` (catalog id ARCH-01-ai-gateway, staff tier only) from the Docs sync bundle
+    through `docs_reader.load_staff_page_by_id`, plus live tables from `GET /admin/ai-gateway/guide` (spend.read,
+    `api/services/ai_gateway_guide.py`: routes with the serving deployment of `llm_route_control.serving`, model x
+    connection matrix, connection register with secret NAMES only, connection caps, stage coverage); finance and
+    ai_ops read that one docs page here although they cannot open /admin/docs), and the Trace drawer
     opened from a Calls row, the job drawer, tour detail and decisions; Settings › LLM Models / Jev Credit and Cost Operations › Budgets moved
     there in UI part 2 and their old `?tab=` links are sent on in the browser), `tenants`,
     `jobs`, `decisions` (**Jev Decisions**, AA-660), `facts` (**Facts**, AA-814: platform Facts Entries the T9 writer cites; every staff role reads, `quality.write` edits), `photos` (**Photos**, AA-708 — Drive photo sync, unmatched queue), `api-docs` (**API Docs**,
