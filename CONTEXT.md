@@ -2663,6 +2663,14 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
   trial stays live in the resolver (CIS 361: source `trial`, `expires_at` in the past), so nothing (the AI budget
   included) drops at `trial_ends_at`; CIS 361 also takes a platform key from the content plan only (tie-break on
   `plan_key`).
+- **Billing from Booking** (AA-1037 R4, root ADR 0019 d9): every agency invoice is issued in AA-Booking. Booking reads
+  `catalog.v_tenant_billing_v1` (CIS 381: subscriptions with plan prices and the bill-to fields, SELECT to `booking`
+  only) and publishes `booking.v_tenant_billing_status` (bk-042, SELECT to `cis_app`). The hourly job
+  `tenant_billing_tick` (`services/tenant_account/billing.py`, queued by the api's ops sampler, key per UTC hour,
+  `TENANT_BILLING_TICK=off` stops it) writes a newer `paid_through` to the live subscriptions, moves `warn` -> account
+  `past_due` + the bell `tenant.billing.overdue` (once a day; tenant, admin, finance), `past_due` -> `suspended` with
+  `suspend_reason` `billing` (`tenant.billing.suspended`), and `ok` again -> back in service (only a billing suspension
+  is lifted). On Dev only `demo` tenants move. Fail-soft without the Booking view (`skipped`).
 - **No hard-coded plans**: `PLAN_LIMITS`, the ACPv1 quota ledger write (10/10/50, no reader) and the UI
   `PLAN_OPTIONS` / `PLAN_CHOICES` are gone; RPM per tier, the rewrite quota and the UI tier choices read the plans /
   entitlements (`useContentTiers`: the live public content plans).
