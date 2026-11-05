@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import {
   INT4_MAX, RATE_LIMIT_RPM_MAX, defaultOverrideMode, featuresFor, limitText, lockedLimitKeys, overrideBody,
   overrideDraftOf, overrideFeatures, overrideModes, planBody, planDraftOf, refusalOf, runSaga, tierChoices,
+  addOnDecisionPath, addOnRequestPath, approveBody, requestShown, requestTone, sortAddOnRequests,
 } from "./tenantPlans.ts";
 
 const CATALOGUE = [
@@ -238,4 +239,55 @@ test("override rules: no 'off' for a limit, no override of the request rate, a n
   const rules = { not_overridable: [], limit_required: [] };
   assert.equal(overrideBody({ feature_key: "content.rewrite", mode: "on", limit: "", reason: "r", expires: "" },
                             CATALOGUE, today, rules).error, null);
+});
+
+// AA-1036 R3: the add-on requests section (pending first, oldest first; the approve body; the decision paths)
+test("add-on requests: order, approve body, tone, paths", () => {
+  const r = (id, status, requested_at, decided_at = null) => ({ request_id: id, product: "crm", status, requested_at,
+    decided_at, note: null, requested_by: "membership:x", decided_by: null, decision_note: null, plan_key: null,
+    provision_job_id: null });
+  const rows = [r("a", "declined", "2026-11-01T00:00:00Z", "2026-11-02T00:00:00Z"),
+                r("b", "pending", "2026-11-04T00:00:00Z"), r("c", "pending", "2026-11-03T00:00:00Z"),
+                r("d", "approved", "2026-11-01T00:00:00Z", "2026-11-04T00:00:00Z")];
+  assert.deepEqual(sortAddOnRequests(rows).map((x) => x.request_id), ["c", "b", "d", "a"]);
+  assert.deepEqual(approveBody("crm.core", "", "  ").body, { plan_key: "crm.core", seats: null, note: null });
+  assert.deepEqual(approveBody("crm.core", "3", " ok ").body, { plan_key: "crm.core", seats: 3, note: "ok" });
+  assert.equal(approveBody("", "", "").error, "plan");
+  for (const bad of ["0", "501", "2.5", "x"]) assert.equal(approveBody("crm.core", bad, "").error, "seats");
+  assert.equal(requestTone("pending"), "warning");
+  assert.equal(requestTone("approved"), "success");
+  assert.equal(requestTone("declined"), "neutral");
+  assert.equal(addOnDecisionPath("t1", "r1", "decline"), "/api/admin/tenants/t1/addon-requests/r1/decline");
+  assert.equal(addOnRequestPath("t1", "r1"), "/api/admin/tenants/t1/addon-requests/r1");
+});
+
+// AA-1036 R3 review: an approval whose attach job failed is not shown as a bare "Approved"
+test("add-on requests: the setup of an approval decides the badge", () => {
+  assert.equal(requestShown({ status: "approved", setup: "failed" }), "setup_failed");
+  assert.equal(requestShown({ status: "approved", setup: "in_progress" }), "setting_up");
+  assert.equal(requestShown({ status: "approved", setup: "done" }), "approved");
+  assert.equal(requestShown({ status: "approved", setup: null }), "approved");
+  assert.equal(requestShown({ status: "declined", setup: null }), "declined");
+  assert.equal(requestShown({ status: "pending" }), "pending");
+  assert.equal(requestTone("setup_failed"), "danger");
+  assert.equal(requestTone("setting_up"), "warning");
+});
+
+test("runSaga polls the given path (an add-on approval polls its request route)", async () => {
+  const seen = [];
+  const replies = [{ job_id: "j1", status: "queued" }, { job_id: "j1", status: "failed", error: "boom" }];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    seen.push(`${init?.method ?? "GET"} ${url}`);
+    return new Response(JSON.stringify(replies.shift()), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const job = await runSaga("/api/admin/tenants/t1/addon-requests/r1/approve", { plan_key: "crm.core" },
+      { sleep: async () => {}, pollPath: () => "/api/admin/tenants/t1/addon-requests/r1" });
+    assert.equal(job.status, "failed");
+    assert.deepEqual(seen, ["POST /api/admin/tenants/t1/addon-requests/r1/approve",
+                            "GET /api/admin/tenants/t1/addon-requests/r1"]);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });

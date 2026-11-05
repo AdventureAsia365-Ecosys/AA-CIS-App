@@ -38,11 +38,13 @@ from api.routers.v1_integrations import router as v1_integrations_router
 from api.routers.v1_facts import router as v1_facts_router  # AA-814
 from api.routers.v1_account import router as v1_account_router
 from api.routers.v1_account_members import router as v1_account_members_router  # AA-978
+from api.routers.v1_account_addons import router as v1_account_addons_router  # AA-1036 R3 add-on requests
 from api.routers.v1_trip_page import router as v1_trip_page_router  # AA-482
 from api.routers.v1_trip_page import admin_router as admin_trip_page_router  # AA-482
 from api.routers.admin import router as admin_router
 from api.routers.admin_tenant_provision import router as admin_tenant_provision_router  # AA-1028 R1 slice 2
 from api.routers.admin_tenant_subscription import router as admin_tenant_subscription_router  # AA-1028 R1 slice 3
+from api.routers.admin_tenant_addon_requests import router as admin_tenant_addon_requests_router  # AA-1036 R3
 from api.routers.admin_plans import router as admin_plans_router  # AA-1028 R1 slice 3
 from api.routers.admin_api_docs import router as admin_api_docs_router  # AA-577 — /admin/openapi.json
 from api.routers.admin_data_model import router as admin_data_model_router  # AA-894 — /admin/data-model
@@ -323,12 +325,14 @@ app.include_router(v1_integrations_router)  # AA-457 [T11 PR1] — tenant WordPr
 app.include_router(v1_facts_router)  # AA-814 — tenant Facts Entries: /v1/facts (tenant pool)
 app.include_router(v1_account_router)  # AA-761 — tenant Account pages: activity trail + CSV, API key facts
 app.include_router(v1_account_members_router)  # AA-978 — tenant Account › Members (CIS 276 directory)
+app.include_router(v1_account_addons_router)  # AA-1036 R3 — the agency app's add-ons and "Request add-on"
 app.include_router(v1_trip_page_router)  # AA-482 — GET /v1/trip/{tour_id}, public page data
 app.include_router(admin_trip_page_router)  # AA-482 — /admin/trip-pages/{publish,recheck}
 app.include_router(admin_tenant_provision_router)  # before admin_router: /tenants/provision is no tenant id
 app.include_router(admin_view_as_router)  # AA-1035 R2 slice 2 — /admin/tenants/{id}/view-as, /admin/view-as/sessions
 app.include_router(admin_tenant_assignments_router)  # AA-1035 R2 slice 2 — /admin/tenant-assignments (Assignments page)
 app.include_router(admin_tenant_subscription_router)  # AA-1028 R1 slice 3 (Tenant 360 › Subscription)
+app.include_router(admin_tenant_addon_requests_router)  # AA-1036 R3 (Tenant 360 › Subscription › requests)
 app.include_router(admin_plans_router)  # AA-1028 R1 slice 3 (Tenants › Plans & add-ons)
 app.include_router(admin_router)
 app.include_router(admin_pipeline_router)

@@ -146,9 +146,9 @@ def _require_tenant_patch(x_admin_role: Optional[str], fields: set[str]) -> None
 
 
 def _require_tenant_book_write(x_admin_role: Optional[str]) -> None:
-    """AA-1035 (S267 fix pass): the non-billing Tenant 360 writes (config, brand identity): tenant.write (admin) or
-    tenant.book.write (customer_success; require_tenant_scope has already kept it to its book). Defense in depth behind
-    POLICY, like _require_tenant_admin."""
+    """AA-1035 (S267 fix pass): the non-billing Tenant 360 writes (config, brand identity; AA-1036 R3: the decision on
+    an add-on request): tenant.write (admin) or tenant.book.write (customer_success; require_tenant_scope has already
+    kept it to its book). Defense in depth behind POLICY, like _require_tenant_admin."""
     if not has_any_perm(x_admin_role, TENANT_WRITE, TENANT_BOOK_WRITE):
         raise HTTPException(status_code=403, detail="Only an admin or the tenant's account manager can change this")
 
@@ -2046,6 +2046,7 @@ async def list_notifications(
         "tour.master.trashed":      "Master tour trashed",
         "tour.master.restored":     "Master tour restored",
         "tenant.cta.review_claim":  "Tenant CTA mentions reviews or ratings",  # AA-819 follow-up
+        "tenant.addon.requested":   "Add-on requested",  # AA-1036 R3 (Tenant 360 › Subscription decides)
         "llm_circuit_open":         "LLM connection paused",  # AA-1018 (connection-level circuit)
         "provider_circuit_open":    "Provider paused",        # AA-1025 B3 (Jev / DataForSEO / Geoapify circuit)
         "platform.provider_credit.low": "Provider credit low",  # AA-1025 B5 (vendor API credit ledger)

@@ -212,10 +212,11 @@ def test_the_read_allow_list_is_exactly_the_reviewed_routes():
         "/v1/quota", "/v1/marketplace", "/v1/tours/my-versions", "/v1/tours/versions/{version_id}",
         "/v1/content-writing/reviews", "/v1/content-writing/pieces/{piece_id}", "/v1/publish-log",
         "/v1/publish-log/pending", "/v1/notifications", "/v1/facts", "/v1/account/members", "/v1/account/activity",
+        "/v1/account/add-ons",
     )
     for banned in ("/v1/slate", "/v1/tours/versions/{version_id}/export-docx", "/v1/account/activity/export",
                    "/v1/integrations/wordpress", "/v1/integrations/facebook", "/admin/brand-identity",
-                   "/v1/planning/trip-reallocation/suggest", "/v1/billing"):
+                   "/v1/planning/trip-reallocation/suggest", "/v1/billing", "/v1/account/add-on-requests"):
         assert banned not in view_as.READ_ROUTES
 
 
@@ -232,6 +233,9 @@ def test_every_allowed_read_is_a_real_get_route(world):
     ("PATCH", f"/v1/tours/versions/{MINE}", False), ("OPTIONS", "/v1/quota", False),
     ("GET", "/v1/slate", False), ("GET", "/admin/tenants", False), ("GET", "/v1/notifications", True),
     ("POST", "/v1/notifications/read-all", False),
+    # AA-1036 R3: the agency's add-ons are read; asking for one (the owner's POST) never goes through a view-as session
+    ("GET", "/v1/account/add-ons", True), ("POST", "/v1/account/add-ons", False),
+    ("POST", "/v1/account/add-on-requests", False), ("GET", "/v1/account/add-on-requests", False),
 ])
 def test_route_allowed(method, path, ok):
     assert view_as.route_allowed(method, path) is ok
@@ -605,7 +609,8 @@ def test_start_accepts_the_reviewer_alias_as_its_target_only():
 READS_BY_ROLE = {
     "admin": set(view_as.READ_ROUTES),
     "customer_success": set(view_as.READ_ROUTES),
-    "support": set(view_as.READ_ROUTES) - {"/v1/quota"},
+    # AA-1036 review: the add-ons read carries subscription statuses and staff decision notes (Subscription tab data)
+    "support": set(view_as.READ_ROUTES) - {"/v1/quota", "/v1/account/add-ons"},
 }
 
 
@@ -649,14 +654,17 @@ def test_nobody_reads_billing_in_a_view_as_session(role, status):
 
 
 def test_support_quota_is_refused_with_the_real_app(world):
-    """The real app: a support view-as token gets 403 on /v1/quota and /v1/billing (logged), 200-path reads pass."""
+    """The real app: a support view-as token gets 403 on /v1/quota, /v1/account/add-ons and /v1/billing (logged)."""
     client, db, _ = world
     db.session["staff_role"] = "support"
-    for path, detail in (("/v1/quota", view_as.NOT_FOR_ROLE_DETAIL), ("/v1/billing", view_as.READ_ONLY_DETAIL)):
+    for path, detail in (("/v1/quota", view_as.NOT_FOR_ROLE_DETAIL),
+                         ("/v1/account/add-ons", view_as.NOT_FOR_ROLE_DETAIL),
+                         ("/v1/billing", view_as.READ_ONLY_DETAIL)):
         res = client.get(path, headers={"Authorization": f"Bearer {token(srl='support')}"})
         assert res.status_code == 403 and res.json()["detail"] == detail, path
     outcomes = [a[5] for a in db.audit if a[2] == view_as.AUDIT_ACTION_REQUEST]
-    assert len(outcomes) == 2 and '"refused_route_not_for_role"' in outcomes[0] and '"refused_read_only"' in outcomes[1]
+    assert len(outcomes) == 3 and all('"refused_route_not_for_role"' in o for o in outcomes[:2])
+    assert '"refused_read_only"' in outcomes[2]
 
 
 # ── the gate's own rate limit (S268 fix round 2: a refused request may be limited before it is logged) ───────────
@@ -757,6 +765,12 @@ def test_the_dependency_side_check_refuses_a_view_as_write():
     with pytest.raises(HTTPException):
         tenant_role.enforce(other_read, payload)
     tenant_role.enforce(SimpleNamespace(method="GET", url=SimpleNamespace(path="/v1/quota")), payload)
+    # AA-1036 R3: the add-ons list reads, the add-on request (a write) is refused
+    tenant_role.enforce(SimpleNamespace(method="GET", url=SimpleNamespace(path="/v1/account/add-ons")), payload)
+    ask = SimpleNamespace(method="POST", url=SimpleNamespace(path="/v1/account/add-on-requests"))
+    with pytest.raises(HTTPException) as exc:
+        tenant_role.enforce(ask, payload)
+    assert exc.value.status_code == 403 and exc.value.detail == view_as.READ_ONLY_DETAIL
 
 
 def test_the_token_is_a_read_only_unmetered_tenant_token():

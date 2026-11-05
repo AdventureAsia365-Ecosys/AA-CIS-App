@@ -2018,8 +2018,8 @@ integrations or the brand branch), re-checks the open session, that the staff ro
 group role the BFF forwards in `x-view-as-staff-role`, which can only end a session) is still the start role `srl`
 (else cause `role_changed`), the tenant (the start's rule: offboarded / suspended / internal ends the view) and the
 start role's tenant scope on every request (a lost right ends the session for good: `revoked`, or `expired` past its
-expiry), and refuses (403 `view_as_not_for_role`) a read the start role may not make (`view_as.ROUTE_CAPS`: `/v1/quota` needs `tenant.read` or `tenant.book.account.read`, so
-support never sees the plan or usage; view-as never widens a role's own reads), and writes one `acp_shared.audit_log` row per request
+expiry), and refuses (403 `view_as_not_for_role`) a read the start role may not make (`view_as.ROUTE_CAPS`: `/v1/quota` and `/v1/account/add-ons` need `tenant.read` or `tenant.book.account.read`, so
+support never sees the plan, usage or add-on subscriptions and decisions; view-as never widens a role's own reads), and writes one `acp_shared.audit_log` row per request
 (`tenant.view_as_request`, BEFORE a served read: no unlogged read, 503 when the row cannot be written); everything
 else is 403 `view_as_read_only` (logged), an ended session 401 `view_as_ended`. `tenant_role.enforce` repeats the
 read-only check on the dependency side. The token never reaches the browser: the start answers it only with the
@@ -2542,6 +2542,20 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
   writer's label from the transaction setting `aa.actor`, never served). A new writer of `shared.tenants`,
   `tenant_subscription`, `tenant_entitlement_override`, `plan_feature` or `tenant_ai_budget` needs the CIS 353 grants
   (the triggers run as the writer, MIG-6).
+- `shared.tenant_addon_request` (CIS 374, AA-1036 R3, ADR 0019 d7): the add-on requests an agency sends from the agency
+  app ("Request add-on": `POST /v1/account/add-on-requests`, Content studio owner only; `GET /v1/account/add-ons` is the
+  app's active / requested / available list) and the staff decision in Tenant 360 › Subscription
+  (`api/routers/admin_tenant_addon_requests.py`; admin, or the tenant's account manager for its own book:
+  `tenant.book.write` + `require_tenant_scope`, clarifications TL-7 step 4): an approval (refused 409
+  `tenant_not_in_service` unless the account is in service: status, `is_active`, `cancelled_at`; 409
+  `already_subscribed` when the add-on is live by now) attaches the plan through the `tenant_provision` saga (attach
+  mode with `only_new`: a live add-on is never changed, its plan and seats stay `tenant.write` / `billing.write`;
+  request key `addon-request:<id>`, enqueued in the same transaction) and then shows its `setup` from the job
+  (in_progress / done / failed), a decline carries a reason the agency sees. Every attach saga closes the pending
+  requests of the products it made live (approved by the saga actor). "View as tenant" reads
+  `GET /v1/account/add-ons` (admin and customer_success only, `ROUTE_CAPS`; never the POST). At most one pending request per tenant and product; audited
+  (`tenant.addon_requested`, `tenant.addon_request_approved` / `_declined`); a new request rings the staff bell
+  (`tenant.addon.requested`, admin + customer_success). Rules: `services/tenant_account/addon_requests.py`.
 
 - CIS 356 (slice 2, review fixes): a non-plan candidate of a platform key (an override, the legacy AI budget) needs a
   live **content** subscription (an offboarded tenant keeps no `ai.budget_usd_monthly`); `shared.tenants.rate_limit_rpm`

@@ -19,15 +19,16 @@ const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
 const jwtOf = (payload) => `${b64({ alg: "HS256", typ: "JWT" })}.${b64(payload)}.signature`;
 
 test("the BFF forwards only the allowed reads, matched in full", () => {
-  for (const ok of ["/v1/quota", "/v1/tours/my-versions", "/v1/tours/versions/abc", "/v1/account/members"]) {
+  for (const ok of ["/v1/quota", "/v1/tours/my-versions", "/v1/tours/versions/abc", "/v1/account/members",
+    "/v1/account/add-ons"]) {
     assert.ok(viewAsPathAllowed(ok, "admin"), ok);
   }
   for (const no of ["/v1/slate", "/v1/quota/", "/v1/quotas", "/v1/tours/versions/abc/export-docx",
     "/v1/account/activity/export", "/v1/integrations/wordpress", "/admin/tenants", "/v1/tours/versions/",
-    "/v1/tours/versions/a/b", "/v1/quota?x=1", "/v1/billing"]) {
+    "/v1/tours/versions/a/b", "/v1/quota?x=1", "/v1/billing", "/v1/account/add-on-requests", "/v1/account/add-ons/x"]) {
     assert.ok(!viewAsPathAllowed(no, "admin"), no);
   }
-  assert.equal(VIEW_AS_READ_ROUTES.length, 12);
+  assert.equal(VIEW_AS_READ_ROUTES.length, 13);
   assert.ok(!VIEW_AS_READ_ROUTES.includes("/v1/billing"));
   assert.equal(viewAsReadUrl("/v1/quota"), "/api/view-as/v1/quota");
   assert.equal(VIEW_AS_COOKIE_PATH, "/api/view-as");
@@ -37,7 +38,10 @@ test("the reads depend on the role: view-as never widens a role's own reads (S26
   const all = [...VIEW_AS_READ_ROUTES];
   assert.deepEqual(viewAsReadsForRole("admin"), all);
   assert.deepEqual(viewAsReadsForRole("customer_success"), all);
-  assert.deepEqual(viewAsReadsForRole("support"), all.filter((t) => t !== "/v1/quota"));
+  // AA-1036 review: support never reads the add-ons (subscription statuses, staff decision notes) either
+  assert.deepEqual(viewAsReadsForRole("support"), all.filter((t) => t !== "/v1/quota" && t !== "/v1/account/add-ons"));
+  assert.ok(!viewAsPathAllowed("/v1/account/add-ons", "support"));
+  assert.ok(viewAsPathAllowed("/v1/account/add-ons", "customer_success"));
   for (const role of ["finance", "content", "content_lead", "tenant_qa", "ai_ops", "viewer", null, undefined]) {
     assert.deepEqual(viewAsReadsForRole(role), [], String(role));
   }

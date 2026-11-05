@@ -451,19 +451,19 @@ def test_schema_gate_requires_the_above_gap_keys_and_not_the_gap():
 def test_schema_gate_holds_the_deploy_until_362_to_364_are_registered():
     required = sg.required_keys("cis", _source(), [])
     below = [str(k) for k in range(readiness.LEGACY_CIS_BASELINE + 1, readiness.REQUIRED_CIS_SCHEMA + 1)]
-    assert sg.evaluate("cis", required, {"registered_keys": below}).missing == ["362", "363", "364", "370"]
-    assert sg.evaluate("cis", required, {"registered_keys": below + ["362", "363", "364"]}).missing == ["370"]
-    assert sg.evaluate("cis", required, {"registered_keys": below + ["362", "363", "364", "370"]}).missing == []
+    assert sg.evaluate("cis", required, {"registered_keys": below}).missing == ["362", "363", "364", "370", "374"]
+    assert sg.evaluate("cis", required, {"registered_keys": below + ["362", "363", "364"]}).missing == ["370", "374"]
+    assert sg.evaluate("cis", required, {"registered_keys": below + ["362", "363", "364", "370", "374"]}).missing == []
 
 
 def test_preflight_rule_3_sees_an_above_gap_raise():
     """A code PR that raises readiness to a contract file it also adds is refused (MIG-4), above the gap too."""
-    base_src = _source().replace("REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370)", "REQUIRED_CIS_ABOVE_GAP = ()")
+    base_src = _source().replace("REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374)", "REQUIRED_CIS_ABOVE_GAP = ()")
     assert base_src != _source()
     base_req, head_req = sg.readiness_keys("cis", base_src), sg.readiness_keys("cis", _source())
     rep = mp.FileReport("364_x.sql", "364", header="none")
     r = mp.assess("cis", ["362_a.sql", "363_b.sql"], ["362_a.sql", "363_b.sql", "364_x.sql"],
                   {"A": ["364_x.sql"], "M": [], "D": []}, base_req, head_req, {"364_x.sql": rep},
                   {"362_a.sql", "363_b.sql"})
-    assert r.raised == ["362", "363", "364", "370"]
+    assert r.raised == ["362", "363", "364", "370", "374"]
     assert any("keeps the MIG-4 order" in e for e in r.errors)

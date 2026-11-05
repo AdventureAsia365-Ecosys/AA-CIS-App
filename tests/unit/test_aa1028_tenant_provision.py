@@ -45,7 +45,22 @@ def test_parse_attach_round_trips():
     assert req.tenant_id == TID and req.add_ons[0].seats is None
     payload = req.to_payload()
     assert set(payload) == {"request_key", "mode", "tenant_id", "add_ons"}
-    assert pv.parse(payload) == req
+    assert pv.parse(payload) == req and req.only_new is False
+
+
+def test_parse_only_new_round_trips_and_needs_a_real_true():
+    """AA-1036 review: an approved add-on request's attach carries only_new (never change a live add-on) through
+    the stored job payload; anything but a JSON true is the ordinary attach."""
+    base = {"request_key": KEY, "mode": "attach", "tenant_id": TID,
+            "add_ons": [{"product": "crm", "plan_key": "crm.core", "seats": 2}]}
+    req = pv.parse({**base, "only_new": True})
+    assert req.only_new is True and req.to_payload()["only_new"] is True
+    assert pv.parse(json.loads(json.dumps(req.to_payload()))) == req
+    for value in ("true", 1, None, False):
+        assert pv.parse({**base, "only_new": value}).only_new is False, value
+    # create and detach never carry it
+    assert pv.parse(_create(only_new=True)).only_new is False
+    assert pv.parse({**base, "mode": "detach", "products": ["crm"], "only_new": True}).only_new is False
 
 
 @pytest.mark.parametrize("body,code", [
@@ -266,6 +281,10 @@ def test_attach_enqueues_and_status_reads_the_job(client, monkeypatch):
     resp = c.post(f"/admin/tenants/{TID}/provision", headers=_h(),
                   json={"request_key": KEY, "add_ons": payload["add_ons"]})
     assert resp.status_code == 202 and resp.json()["created"] is False
+    # AA-1036 review: only_new is set by an add-on request approval only; the admin body cannot carry it
+    resp = c.post(f"/admin/tenants/{TID}/provision", headers=_h(),
+                  json={"request_key": KEY, "add_ons": payload["add_ons"], "only_new": True})
+    assert resp.status_code == 202 and job.enqueue_request.await_args.args[1].only_new is False
     got = c.get("/admin/tenants/provision/8a1f2b3c-4d5e-4f60-8a1b-2c3d4e5f6a7b", headers=_h()).json()
     assert got["status"] == "succeeded" and got["tenant_id"] == TID and got["steps"] == ["crm_subscribed"]
     assert pool.fetchrow.await_args.args[2] == pv.KIND

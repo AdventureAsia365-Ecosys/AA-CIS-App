@@ -695,6 +695,14 @@
     "capability": "tenant.read",
     "module": "api.routers.admin_tenant_provision"
   },
+  "GET /admin/tenants/{tenant_id}/addon-requests": {
+    "capability": "tenant.read|tenant.book.account.read|billing.read",
+    "module": "api.routers.admin_tenant_addon_requests"
+  },
+  "GET /admin/tenants/{tenant_id}/addon-requests/{request_id}": {
+    "capability": "tenant.read|tenant.book.account.read|billing.read",
+    "module": "api.routers.admin_tenant_addon_requests"
+  },
   "GET /admin/tenants/{tenant_id}/assignments": {
     "capability": "tenant.read|tenant.book.read",
     "module": "api.routers.admin_tenant360"
@@ -1478,6 +1486,14 @@
   "POST /admin/tenants/provision": {
     "capability": "tenant.write",
     "module": "api.routers.admin_tenant_provision"
+  },
+  "POST /admin/tenants/{tenant_id}/addon-requests/{request_id}/approve": {
+    "capability": "tenant.write|tenant.book.write",
+    "module": "api.routers.admin_tenant_addon_requests"
+  },
+  "POST /admin/tenants/{tenant_id}/addon-requests/{request_id}/decline": {
+    "capability": "tenant.write|tenant.book.write",
+    "module": "api.routers.admin_tenant_addon_requests"
   },
   "POST /admin/tenants/{tenant_id}/members/invitations": {
     "capability": "tenant.write|tenant.member.write",
