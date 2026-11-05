@@ -15,7 +15,8 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
-import { K, mono, Badge, Drawer, StatusBadge, apiGet, useLang, useT, LinkButton } from "../../../_kit";
+import { K, mono, Badge, Drawer, StatusBadge, apiGet, useAdminIdentity, useLang, useT, LinkButton } from "../../../_kit";
+import { can } from "@/lib/rbac";
 import { SeedLine, seedSkipText } from "../../_components/SeedLine";
 import { PieceLabelSection } from "./PieceLabel";
 import { AdminEdits, FlaggedSentences, TenantCopyNotice } from "./SentenceActions";
@@ -179,6 +180,8 @@ export default function PieceDrawer({ pieceId, onClose }: { pieceId: string; onC
   const lang = useLang();
   const status = useLookup(STATUS);
   const { severityLabel } = useCqText();
+  // AA-1035: labels are quality.write's (customer_success reads its book's pieces without them)
+  const canLabel = can(useAdminIdentity().role, "quality.write");
   const { data: p, isError, error } = useQuery({
     queryKey: ["cq-piece", pieceId],
     queryFn: () => apiGet<PieceDetail>(`/api/admin/content-quality/pieces/${pieceId}`, { admin: true }),
@@ -245,7 +248,7 @@ export default function PieceDrawer({ pieceId, onClose }: { pieceId: string; onC
             </Section>
           )}
 
-          <Section title={t("labelSection")}><PieceLabelSection piece={p} /></Section>
+          {canLabel && <Section title={t("labelSection")}><PieceLabelSection piece={p} /></Section>}
 
           <Section title={t("gatesSection")}><GateTable gates={p.gate_ledger || []} /></Section>
           {(p.flags || []).some((f) => !p.gate_ledger.find((g) => g.gate === f.gate)) && (

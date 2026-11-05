@@ -86,7 +86,7 @@ export async function POST(req: NextRequest) {
     // admin_id are not secrets (used only for UI display + redirect), the
     // JWT itself now lives ONLY in the httpOnly cookie below.
     const response = NextResponse.json({
-      role: data.role,   // 'admin' | 'reviewer' | 'content'
+      role: data.role,   // a staff role (lib/rbac.ts StaffRole)
       name: data.username,
       admin_id: data.admin_id,
     });

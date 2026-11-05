@@ -7,7 +7,6 @@ import { defineMessages } from "../app/_kit/core/i18n";
 export const RBAC_MESSAGES = defineMessages(
   {
     admin: "Administrator",
-    reviewer: "Content Team (reviewer)",
     content: "Content Team",
     viewer: "Viewer (read-only)",
     content_lead: "Content Lead",
@@ -20,7 +19,6 @@ export const RBAC_MESSAGES = defineMessages(
   },
   {
     admin: "Quản trị viên",
-    reviewer: "Nhóm nội dung (người duyệt)",
     content: "Nhóm nội dung",
     viewer: "Người xem (chỉ đọc)",
     content_lead: "Trưởng nhóm nội dung",

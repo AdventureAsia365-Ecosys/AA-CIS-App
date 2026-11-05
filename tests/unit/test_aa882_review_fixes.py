@@ -104,7 +104,7 @@ def recording(secret, monkeypatch):
 @pytest.mark.parametrize("role,detail", [
     # AA-1035: the content roles are scoped to the aa_internal tenant (api/core/tenant_scope.py), before the endpoint;
     # the route has a POLICY entry now, so the machine is refused by staff_policy.
-    ("reviewer", "Tenant outside your scope"),
+    ("content", "Tenant outside your scope"),
     ("content", "Tenant outside your scope"),
     (None, "This route needs a staff role (x-admin-role); machine callers are not allowed"),
 ])
@@ -114,7 +114,7 @@ def test_tenant_details_of_another_tenant_needs_tenant_read(no_db_client, role, 
     assert resp.json()["detail"] == detail
 
 
-@pytest.mark.parametrize("role", ["admin", "reviewer", "content"])
+@pytest.mark.parametrize("role", ["admin", "content", "content"])
 def test_tenant_details_of_aa_internal_stays_open(no_db_client, role):
     """Master Content (every staff role) reads the aa_internal catalog: past the check, into the DB."""
     resp = no_db_client.get(f"/admin/tenants/{AA_INTERNAL_TENANT}/details", headers=_headers(role))
@@ -128,7 +128,7 @@ def test_tenant_details_of_another_tenant_is_open_to_admin(no_db_client):
 
 # ── GET /admin/search ────────────────────────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("role", ["reviewer", "content"])
+@pytest.mark.parametrize("role", ["content"])
 def test_search_hides_tenants_and_jobs_without_the_capability(recording, role):
     client, conn = recording()
     resp = client.get("/admin/search?q=trail", headers=_headers(role))
@@ -152,7 +152,7 @@ def test_notification_scope_per_role():
     # AA-986 L3: every staff row (not "TRUE" any more: the tenant-only rows belong to the tenant's bell)
     assert notification_scope("admin") == "NOT (target_roles <@ ARRAY['tenant']::text[])"
     assert notification_scope(None) == notification_scope("admin")          # the machine (holds the secret)
-    for role in ("reviewer", "content"):
+    for role in ("content",):
         scope = notification_scope(role)
         assert "NOT LIKE 'platform.%'" in scope
         assert "spend_budget_alert" in scope
@@ -162,7 +162,7 @@ def test_notification_scope_per_role():
         assert notification_scope(role) == "FALSE"
 
 
-@pytest.mark.parametrize("role", ["reviewer", "content"])
+@pytest.mark.parametrize("role", ["content"])
 def test_reviewer_read_all_leaves_admin_alerts_unread(recording, role):
     client, conn = recording("UPDATE 3")
     resp = client.put("/admin/notifications/read-all", headers=_headers(role))
@@ -183,9 +183,9 @@ def test_admin_read_all_clears_every_staff_row(recording):
                                   "/admin/notifications/count"])
 def test_reviewer_bell_reads_are_scoped(recording, path):
     client, conn = recording()
-    assert client.get(path, headers=_headers("reviewer")).status_code == 200
+    assert client.get(path, headers=_headers("content")).status_code == 200
     (sql,) = _bell_sql(conn)
-    assert notification_scope("reviewer") in sql
+    assert notification_scope("content") in sql
 
 
 def test_marking_an_out_of_scope_row_read_is_a_404(recording):
@@ -208,7 +208,8 @@ def test_marking_an_out_of_scope_row_read_is_a_404(recording):
     ("/admin/waves/{wave_id}/report", (OPS_READ, "wave.run")),
     ("/admin/unmapped-market-requests", TENANT_READ),
     ("/admin/a4/content-log", "tenant_content.read"),
-    ("/admin/content-quality/pieces", "tenant_content.read"),
+    # AA-1035 close-out: customer_success reads the Tenant QA lists of its book (filtered in the route)
+    ("/admin/content-quality/pieces", ("tenant_content.read", "tenant_content.book.read")),
     ("/admin/atoms", "catalog.read"),
 ])
 def test_admin_only_reads_are_gated(path, capability):
@@ -219,6 +220,6 @@ def test_admin_only_reads_are_gated(path, capability):
                                   "/admin/waves", "/admin/a4/content-log",
                                   "/admin/content-quality/stats"])   # AA-1035: atoms are catalog.read (content)
 def test_reviewer_is_refused_the_admin_only_reads(no_db_client, path):
-    resp = no_db_client.get(path, headers=_headers("reviewer"))
+    resp = no_db_client.get(path, headers=_headers("content"))
     assert resp.status_code == 403, (path, resp.text)
-    assert resp.json()["detail"].startswith("Role 'reviewer' lacks the ")
+    assert resp.json()["detail"].startswith("Role 'content' lacks the ")

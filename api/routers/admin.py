@@ -1912,11 +1912,12 @@ async def deactivate_master_tour(
 # AA-882 (GĐ3 review). shared.notifications is one global list with one is_read flag (no per-user read
 # state yet), and it carries admin-only alerts: platform.* events (DFS balance, Jev credit, rerun
 # waves, retention), spend budget alerts, tenant CTA review claims, master lifecycle. A role without
-# ops.read (reviewer, content) sees, counts and clears only the rows targeted at a content role and
+# ops.read (content) sees, counts and clears only the rows targeted at a content role and
 # never a platform.* / spend alert, so one click on "Mark all read" can not hide an admin's alert.
 # Admin (and a machine caller, which holds the secret) sees every row. Longer term: per-user read
 # state (a notification_reads table), so one user's click never clears another user's bell.
 
+# 'reviewer' stays in the array for rows written before CIS 363 merged that role into content (no writer targets it).
 _NOTIF_CONTENT_SCOPE = (
     "(target_roles && ARRAY['content','reviewer']::text[]"
     " AND event_type NOT LIKE 'platform.%'"

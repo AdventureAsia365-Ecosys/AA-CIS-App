@@ -67,7 +67,7 @@ interface StaffListResp {
 const LIST_KEY = ["platform-staff"] as const;
 const BASE_PATH = "/admin/platform/staff";
 
-const ROLE_TONE: Record<string, Tone> = { admin: "accent", reviewer: "info", content: "purple" };
+const ROLE_TONE: Record<string, Tone> = { admin: "accent", content: "purple" };
 
 function RoleBadge({ role }: { role: string }) {
   const { roleLabel } = useStaffWords();

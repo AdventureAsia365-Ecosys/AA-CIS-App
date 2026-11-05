@@ -28,16 +28,17 @@ from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator
 
 from api.core import m2m_auth
+from api.core import tenant_scope as ts
 from api.routers.tenant_membership import router
 from services.tenant_membership import feed, reader
 from tests.unit.aa976_m2m import CRM, OTHER_CLIENT, install_m2m
 
 CONTRACT = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "tenant.membership.v1.openapi.yaml"
 DOC = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
-# sha256 of AA-Ecosys docs/contracts/tenant.membership.v1.openapi.yaml (info.version 1.2, AA-979:
-# TenantMembers.is_synthetic for the CRM's A10b check; 1.1 added activateInvitation).
+# sha256 of AA-Ecosys docs/contracts/tenant.membership.v1.openapi.yaml (info.version 1.3, AA-1035: getStaffTenantScope;
+# 1.2 TenantMembers.is_synthetic for the CRM's A10b check; 1.1 added activateInvitation).
 # Update the root file first, copy it here byte for byte, then set this to `sha256sum` of the root file.
-ROOT_CONTRACT_SHA256 = "1a2d5fc97bfae930fc92ff6e2fa44ae921a396b18325458aeaef9b9fd9807145"
+ROOT_CONTRACT_SHA256 = "608035012e2c1a9e02bca13184dafb0c4e38ac5b4a8691669a6703a7cf1c38ba"
 
 # AA-993: fixed UUIDs. TENANT and UNKNOWN_TENANT appear in parametrize IDs; a uuid4() there gives a different test ID
 # on every collection, and pytest-xdist refuses to run when its workers collect different IDs.
@@ -66,6 +67,16 @@ class FakeConn:
         self.events: list[dict] = []
         self.fail: Optional[BaseException] = None
         self.feed_args: list[tuple] = []
+        # AA-1035 staff-scope: active staff rows by (iss, sub), their assignments and the pool
+        self.staff: dict[tuple[str, str], str] = {}
+        self.book: dict[str, list[str]] = {}
+        self.pool_tenants: list[str] = []
+
+    async def fetchval(self, sql: str, *args: Any):
+        if self.fail:
+            raise self.fail
+        assert sql == ts.SQL_ACTIVE_STAFF_BY_IDENTITY
+        return self.staff.get(args)
 
     def transaction(self, readonly: bool = False):
         conn = self
@@ -93,6 +104,10 @@ class FakeConn:
         if sql == reader.IDENTITY_SQL:
             return [m for m in self.members
                     if (m["cognito_iss"], m["cognito_sub"]) == args and m["status"] != "removed"]
+        if sql == ts.SQL_BOOK:
+            return [{"tenant_id": t} for t in self.book.get(args[0], [])]
+        if sql == ts.SQL_POOL:
+            return [{"tenant_id": t} for t in self.pool_tenants]
         assert sql == feed.FEED_SQL
         self.feed_args.append(args)
         txid, seq, limit = int(args[0]), args[1], args[2]
@@ -424,3 +439,65 @@ def test_storage_outage_is_503(client, issuer, conn, exc):
 
 def test_crm_client_constant_is_the_dev_client():
     assert CRM == m2m_auth.DEV_M2M_CRM_CLIENT_ID
+
+
+# ── AA-1035 R2 close-out (1.3): getStaffTenantScope ──────────────────────────────────────────────────────────────
+
+WORKFORCE = "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_zz1035staff"
+STAFF_ID = "1035a000-0000-4000-8000-000000000001"
+BOOK_A = "1035b000-0000-4000-8000-00000000000a"
+BOOK_B = "1035b000-0000-4000-8000-00000000000b"
+POOLED = "1035c000-0000-4000-8000-00000000000c"
+
+
+def _scope(client, issuer, desk_role="customer_success", sub="staff-sub", iss=WORKFORCE, **kw):
+    q = f"iss={iss}&sub={sub}" + (f"&desk_role={desk_role}" if desk_role is not None else "")
+    return client.get(f"/tenant/membership/v1/staff-scope?{q}", headers=_auth(issuer, **kw))
+
+
+@pytest.fixture
+def staffed(conn):
+    conn.staff[(WORKFORCE, "staff-sub")] = STAFF_ID
+    conn.book[STAFF_ID] = [BOOK_B, BOOK_A]
+    conn.pool_tenants = [POOLED, BOOK_A]
+    return conn
+
+
+def test_customer_success_gets_its_book_only(client, issuer, staffed):
+    r = _scope(client, issuer)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    _valid("StaffTenantScope", body)
+    assert (body["desk_role"], body["scope"], body["tenant_ids"]) == ("customer_success", "book", [BOOK_A, BOOK_B])
+    assert body["identity"] == {"iss": WORKFORCE, "sub": "staff-sub"}
+    assert r.headers["Cache-Control"] == "no-store"
+
+
+def test_support_gets_its_book_and_the_pool(client, issuer, staffed):
+    body = _scope(client, issuer, desk_role="support").json()
+    _valid("StaffTenantScope", body)
+    assert (body["scope"], body["tenant_ids"]) == ("book_pool", [BOOK_A, BOOK_B, POOLED])
+
+
+def test_an_unknown_or_inactive_identity_reaches_nothing(client, issuer, staffed):
+    body = _scope(client, issuer, sub="someone-else").json()
+    _valid("StaffTenantScope", body)
+    assert (body["scope"], body["tenant_ids"]) == ("none", [])
+
+
+@pytest.mark.parametrize("desk_role", [None, "admin", "content", "finance", "role"])
+def test_any_other_desk_role_is_400(client, issuer, staffed, desk_role):
+    r = _scope(client, issuer, desk_role=desk_role)
+    assert r.status_code == 400 and r.json()["error"] == "invalid"
+    _valid("Problem", r.json())
+
+
+def test_the_scope_needs_the_tenant_read_scope(client, issuer, staffed):
+    r = _scope(client, issuer, scope=m2m_auth.SCOPE_CATALOG_READ)
+    assert r.status_code == 403
+    assert _scope(client, issuer, iss="http://not-https").status_code == 400
+
+
+def test_the_scope_answers_503_before_364(client, issuer, staffed, conn):
+    conn.fail = asyncpg.UndefinedTableError("relation shared.staff_tenant_assignment does not exist")
+    assert _scope(client, issuer).status_code == 503

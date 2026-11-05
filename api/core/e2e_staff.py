@@ -40,10 +40,10 @@ E2E_CIS_ADMIN_TEST_STAFF_EMAIL = "e2e-cis-admin@e2e-mail.lumiguides.it.com"
 E2E_CIS_ADMIN_TEST_STAFF_ROLE = "admin"
 
 # The two other WORKFORCE E2E identities of root ADR 0006a, named here for the staff directory reconcile's "known E2E
-# exceptions" block (services/staff_reconcile.py, AA-816 follow-up S253). A10: the reviewer E2E account (the staff
+# exceptions" block (services/staff_reconcile.py, AA-816 follow-up S253). A10: the content E2E account (the staff
 # directory's own constant is api/services/staff_directory.E2E_TEST_STAFF_EMAIL; a test keeps the two equal).
 # A10a: the Booking staff admin E2E account, never in the CIS directory.
-E2E_REVIEWER_TEST_STAFF_EMAIL = "e2e@e2e-mail.lumiguides.it.com"
+E2E_CONTENT_TEST_STAFF_EMAIL = "e2e@e2e-mail.lumiguides.it.com"
 E2E_BOOKING_TEST_STAFF_EMAIL = "e2e-booking@e2e-mail.lumiguides.it.com"
 # A10c (AA-1019, S262; named here for the reconcile by AA-1031): the Dev-only AA-Partner staff E2E account, groups
 # exactly crm-ops + crm-support, never in the CIS directory (same address as AA-CIS-Infra workforce.py

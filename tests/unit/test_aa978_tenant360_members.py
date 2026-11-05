@@ -84,7 +84,7 @@ def _audit_rows(conn):
     return out
 
 
-@pytest.mark.parametrize("role", ["reviewer", "content", "viewer"])
+@pytest.mark.parametrize("role", ["content", "viewer"])
 def test_only_tenant_admins_reach_the_members_routes(role):
     for method, route in ROUTES:
         assert denial_reason(principal_from_role(role), method, route) is not None, (role, method)

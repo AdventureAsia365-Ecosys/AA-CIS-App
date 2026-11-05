@@ -12,6 +12,10 @@ locked / unlocked / deleted agencies), never to grant a CRM role.
   GET /tenant/membership/v1/events?after=&limit=           cursor feed of tenant.* and membership.* events, oldest
                                                            first, never skipping a late commit (services/
                                                            tenant_membership/feed.py)
+  GET /tenant/membership/v1/staff-scope?iss=&sub=&desk_role=  (contract 1.3, AA-1035 R2 close-out, root ADR 0019 d4) the
+                                                           tenants an AA desk staff member (customer_success / support,
+                                                           the role the CRM read from the token's groups) may reach in
+                                                           the CRM L1 console: its book (support: and the pool)
   POST /tenant/membership/v1/invitations/{invitation_id}/activate   (contract 1.1, AA-979 P2b) the CRM binds the
                                                            partner-pool identity of an accepted studio invitation:
                                                            body {"identity": {iss, sub}}, scope cis.tenant/activate
@@ -44,8 +48,9 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from api.core import m2m_auth
 from api.core.m2m_auth import M2MProblem
+from api.core import tenant_scope
 from api.schemas.public_api import (  # AA-899: doc only
-    MembershipActivated, MembershipEventPage, MembershipIdentityMemberships, MembershipTenantMembers,
+    MembershipActivated, MembershipEventPage, MembershipIdentityMemberships, MembershipTenantMembers, StaffTenantScope,
 )
 from services.tenant_membership import feed
 from services.tenant_membership import reader
@@ -143,6 +148,38 @@ async def find_memberships(request: Request, iss: Optional[str] = None, sub: Opt
     # No identity in the log line: the count says what was served.
     logger.info("tenant_membership_served", op="findMemberships", client_id=caller.client_id,
                 memberships=len(body["memberships"]))
+    return JSONResponse(content=body, headers={"Cache-Control": NO_STORE})
+
+
+@router.get("/staff-scope", responses={200: {"model": StaffTenantScope}})
+async def get_staff_tenant_scope(request: Request, iss: Optional[str] = None, sub: Optional[str] = None,
+                                 desk_role: Optional[str] = None,
+                                 caller: m2m_auth.M2MCaller = Depends(require_tenant_reader)) -> Response:
+    """AA-1035 R2 close-out (contract 1.3, root ADR 0019 d4 "the crm.ops.v1 relay forwards the staff member's scope").
+
+    The CRM asks for the scope of a WORKFORCE caller of its L1 console whose groups make it a desk role
+    (``cis-customer_success`` -> ``customer_success``, ``cis-support`` -> ``support``), and serves that caller only
+    these tenants. CIS answers from its own directory and assignments (``shared.admin_users`` by ``(cognito_iss,
+    cognito_sub)``, ``shared.staff_tenant_assignment``, the pool rule of api/core/tenant_scope.py), never from a value
+    the caller sent: the staff member holds the access token, so a scope it forwarded could be forged. An unknown or
+    inactive identity: scope ``none``, no tenant. 400 another desk_role or a malformed identity. The key is
+    ``desk_role``, never ``role``: this contract carries no role key (the root checker policy)."""
+    try:
+        iss_value, sub_value = reader.check_identity(iss, sub)
+    except reader.InvalidRequest as exc:
+        raise _invalid(exc) from exc
+    if desk_role not in tenant_scope.DESK_ROLES:
+        raise M2MProblem(400, "invalid", f"desk_role must be one of {', '.join(tenant_scope.DESK_ROLES)}")
+    try:
+        async with reader.membership_connection(_pool(request)) as conn:
+            scope, tenant_ids = await tenant_scope.desk_scope_of_identity(conn, iss_value, sub_value, desk_role)
+    except reader.MembershipUnavailable as exc:
+        raise _unavailable(exc) from exc
+    # No identity in the log line (pii online_id): the role, the scope and the count say what was served.
+    logger.info("tenant_membership_served", op="getStaffTenantScope", client_id=caller.client_id,
+                desk_role=desk_role, scope=scope, tenants=len(tenant_ids))
+    body = {"identity": {"iss": iss_value, "sub": sub_value}, "desk_role": desk_role, "scope": scope,
+            "tenant_ids": tenant_ids, "as_of": _now()}
     return JSONResponse(content=body, headers={"Cache-Control": NO_STORE})
 
 

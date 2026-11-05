@@ -133,7 +133,7 @@ async def test_support_reaches_its_book_and_the_pool():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("role", ["content", "reviewer", "viewer"])
+@pytest.mark.parametrize("role", ["content", "viewer"])
 async def test_content_roles_reach_the_aa_internal_tenant_only(role):
     assert await _check(role=role, tenant=ts.AA_INTERNAL_TENANT) is None
     assert await _check(role=role, tenant=MINE) == (403, ts.OUT_OF_SCOPE)

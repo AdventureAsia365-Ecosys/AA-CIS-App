@@ -21,7 +21,7 @@ def test_preview_needs_master_admin_like_the_actions_it_previews():
         assert POLICY[("PATCH", f"/admin/master/{{tour_id}}/{action}")] == MASTER_ADMIN
 
 
-@pytest.mark.parametrize("role", ["viewer", "reviewer", "content"])
+@pytest.mark.parametrize("role", ["viewer", "content"])
 def test_preview_decision_refuses_non_admin_roles(role):
     assert denial_reason(principal_from_role(role), *KEY) == f"Role '{role}' lacks the 'master.admin' permission"
     assert denial_reason(principal_from_role("admin"), *KEY) is None
@@ -31,7 +31,7 @@ def test_preview_decision_refuses_the_machine():
     assert "machine" in denial_reason(MACHINE, *KEY)
 
 
-@pytest.mark.parametrize("role", ["viewer", "reviewer", "content", None])
+@pytest.mark.parametrize("role", ["viewer", "content", None])
 def test_app_refuses_the_preview_before_the_endpoint(client, role):  # noqa: F811
     path = _concrete(KEY[1]) + "?action=retire_source"
     resp = client.get(path, headers=_headers(role))

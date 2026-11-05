@@ -44,7 +44,7 @@ def test_dev_e2e_admin_is_read_only_like_the_api():
 
 
 def test_viewer_and_content_roles_get_no_control():
-    for role in ("viewer", "content", "reviewer", "not-a-role"):
+    for role in ("viewer", "content", "not-a-role"):
         out = router_mod.page_access(_principal(role))
         assert out["read_only"] is True, role
         assert not any(out["actions"].values()), role

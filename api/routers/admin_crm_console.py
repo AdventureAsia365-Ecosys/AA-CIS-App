@@ -17,7 +17,12 @@ crm-platform-admin writes) and returns only L1 data (no trip, pipeline or revenu
   POST …/agencies/{tid}/jobs/{jid}/retry
 
 Staff policy (api/core/staff_authz.py): GETs tenant.read, writes tenant.write (admin role; the read-only viewer is
-refused on every write). Included in main.py WITHOUT an include prefix (staff_policy reads the route template).
+refused on every write). AA-1035 R2 close-out (root ADR 0019 d4): the desk roles read their book too (tenant.book.read;
+usage and entitlements tenant.book.account.read, customer_success only). Their {tenant_id} reads pass
+require_tenant_scope; the agency list is filtered here to the caller's scope (defence in depth: the CRM itself serves
+a desk caller only the tenants CIS reports for that identity through tenant.membership.v1 getStaffTenantScope, since
+the staff member's own token reaches the CRM and a header CIS added could be forged).
+Included in main.py WITHOUT an include prefix (staff_policy reads the route template).
 Request bodies are passed on as JSON objects without a CIS model: the CRM validates them (``extra="forbid"``) and its
 422/409 codes reach the page as they are. Bodies are never logged (the owner invite carries an e-mail address).
 """
@@ -31,7 +36,7 @@ from fastapi import APIRouter, Body, Depends, Query, Request
 from fastapi.responses import JSONResponse
 
 from api.core.staff_authz import staff_policy
-from api.core.tenant_scope import TENANT_SCOPED
+from api.core.tenant_scope import TENANT_SCOPED, tenant_scope_filter
 from api.routers.admin import verify_admin_secret
 from api.services import crm_console
 from api.services.platform_apps import relay_authorization
@@ -69,7 +74,15 @@ async def console(request: Request):
 @router.get("/agencies", summary="The CRM agencies (keyset page)")
 async def list_agencies(request: Request, cursor: Optional[str] = Query(None, max_length=64),
                         limit: int = Query(50, ge=1, le=200)):
-    return await _relay(request, "GET", "/tenants", params={"cursor": cursor, "limit": limit})
+    status, body = await crm_console.crm_ops_call("GET", "/tenants", relay_authorization(request),
+                                                  params={"cursor": cursor, "limit": limit})
+    if status == 200 and isinstance(body.get("items"), list):
+        async with request.app.state.pool.acquire() as conn:
+            allowed = await tenant_scope_filter(request, conn)
+        if allowed is not None:   # AA-1035: a desk role sees its book only (the CRM filters as well)
+            body = {**body, "items": [i for i in body["items"]
+                                      if isinstance(i, dict) and str(i.get("tenant_id")) in allowed]}
+    return JSONResponse(body, status_code=status)
 
 
 @router.get("/agencies/{tenant_id}", summary="One CRM agency", dependencies=TENANT_SCOPED)

@@ -379,7 +379,7 @@ def test_activate_maps_the_mirror_and_the_db_refusals(client, monkeypatch):
 def test_release_writes_need_an_admin_id_and_ai_admin(client, monkeypatch):
     monkeypatch.setattr(rel, "activate", AsyncMock(side_effect=AssertionError("must not be reached")))
     assert client.post(f"/admin/writing-memory/releases/{RID}/activate", headers=_h(user=None)).status_code == 403
-    for role in ("reviewer", "content"):
+    for role in ("content",):
         r = client.post(f"/admin/writing-memory/releases/{RID}/activate", headers=_h(role=role))
         assert r.status_code == 403, role
     assert client.post(f"/admin/writing-memory/releases/{RID}/rollback", json={"reason": "x"},

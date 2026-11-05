@@ -133,7 +133,7 @@ def test_policy_reads_are_spend_read_and_writes_spend_write():
                                                                           staff_authz.TENANT_BOOK_ACCOUNT_READ)
     assert p[("PUT", "/admin/ai-gateway/tenant-budgets/{tenant_id}")] == staff_authz.SPEND_WRITE
     assert p[("DELETE", "/admin/ai-gateway/tenant-budgets/{tenant_id}")] == staff_authz.SPEND_WRITE
-    for role in ("reviewer", "content", "viewer"):
+    for role in ("content", "viewer"):
         assert staff_authz.SPEND_WRITE not in staff_authz.ROLE_PERMS[role]
 
 

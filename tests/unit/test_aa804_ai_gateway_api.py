@@ -63,7 +63,7 @@ def test_routes_are_spend_read_and_admin_only():
                  "/admin/ai-gateway/calls"):
         assert staff_authz.POLICY[("GET", path)] == staff_authz.SPEND_READ
     assert staff_authz.SPEND_READ in staff_authz.ROLE_PERMS["admin"]
-    for role in ("reviewer", "content", "viewer"):
+    for role in ("content", "viewer"):
         assert staff_authz.SPEND_READ not in staff_authz.ROLE_PERMS[role]
 
 

@@ -522,8 +522,8 @@ def test_route_resend_policy_refuses_legacy_non_owner_and_reviewer(api, db):
     resp = client.post(f"/admin/platform/staff/{uid}/invite", headers=c6._h(token))
     assert resp.status_code == 403 and resp.json()["detail"] == "Only a platform owner can change staff accounts"
     sub2 = "cccccccc-0000-4000-8000-00000000000c"
-    db.add(owner=True, email="rev@adventure.asia", role="reviewer", iss=ISS, sub=sub2)
-    token = iss.token(sub=sub2, email="rev@adventure.asia", **{"cognito:groups": ["cis-reviewer"]})
+    db.add(owner=True, email="rev@adventure.asia", role="content", iss=ISS, sub=sub2)
+    token = iss.token(sub=sub2, email="rev@adventure.asia", **{"cognito:groups": ["cis-content"]})
     assert client.post(f"/admin/platform/staff/{uid}/invite", headers=c6._h(token, role="admin")).status_code == 403
     assert db.jobs == []
 
@@ -583,7 +583,7 @@ def test_kind_is_registered():
 
 @pytest.mark.asyncio
 async def test_handler_sends_through_ses_as_the_terraform_sender(db, mail_env):
-    uid = db.add(email=NEW_EMAIL, role="reviewer", booking="sales", display_name="Thu <Le>")
+    uid = db.add(email=NEW_EMAIL, role="content", booking="sales", display_name="Thu <Le>")
     ses = StubSes()
     ctx = _ctx(db, uid, ses)
     result = await job_mod.run(ctx)

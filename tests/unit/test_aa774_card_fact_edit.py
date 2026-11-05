@@ -154,7 +154,7 @@ async def test_edit_updates_facts_and_writes_one_audit_row():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("role", ["content", "reviewer", None])
+@pytest.mark.parametrize("role", ["content", None])
 async def test_edit_requires_admin_role(role):
     conn = _conn()
     with pytest.raises(HTTPException) as e:
@@ -216,7 +216,7 @@ def test_patch_facts_route():
     assert r.json()["fact_rows"][1]["kind"] == "visiting"
     # reason required, role required, unknown secret refused
     assert client.patch(url, json={"edits": body["edits"]}, headers=headers).status_code == 422
-    assert client.patch(url, json=body, headers={**headers, "x-admin-role": "reviewer"}).status_code == 403
+    assert client.patch(url, json=body, headers={**headers, "x-admin-role": "content"}).status_code == 403
     assert client.patch(url, json=body, headers={**headers, "x-admin-secret": "nope"}).status_code in (401, 403)
     # GET detail resolves to the card route, not /duplicates
     # (AA-882: the content-quality reads are tenant.read, so the GET carries the admin role too)

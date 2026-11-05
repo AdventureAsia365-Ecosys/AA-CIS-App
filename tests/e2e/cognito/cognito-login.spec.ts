@@ -12,7 +12,7 @@
 //
 // Runs ONLY in the `cognito` project with E2ECOGNITO=1 (set by .github/workflows/e2e-cognito.yml, which also
 // assumes the read-only mailbox role). The E2E user is "E2E Cognito" (e2e@e2e-mail.lumiguides.it.com — the SES
-// test mailbox itself, a TEMPORARY exception to the @adventure.asia rule, S243 option B; CIS role reviewer,
+// test mailbox itself, a TEMPORARY exception to the @adventure.asia rule, S243 option B; CIS role content since CIS 375 (reviewer before),
 // Booking none). Never the break-glass client.
 // Only the production CIS host is a registered cis-admin callback used here, so the CIS half never runs against a
 // preview. AA-911: the Booking half runs on booking.lumiguides.it.com (default) or the fixed Preview host
@@ -105,7 +105,7 @@ test.describe('AA-816 — Cognito email-code sign-in (production host)', () => {
       timeout: 30000,
     });
     // The shell (AdminShell: sidebar + topbar) wraps every /admin page; the account menu is in its topbar.
-    // The landing page is role-aware (reviewer → /admin/review), so only the shell is asserted.
+    // The landing page is role-aware (content → /admin/review), so only the shell is asserted.
     await expect(page.locator('main').first()).toBeVisible({ timeout: 20000 });
     const account = page.getByRole('button', { name: 'Account menu' });
     await expect(account).toBeVisible({ timeout: 15000 });

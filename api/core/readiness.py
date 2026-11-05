@@ -72,7 +72,9 @@ REQUIRED_CIS_SCHEMA = 322
 # Not read by Deploy Dev schema-gate (it reads only the prefix): the migration-only PR is applied before the code PR.
 # 374 (AA-1036 R3 — GET /v1/account/add-ons, POST /v1/account/add-on-requests and the Tenant 360 add-on request routes
 # read and write shared.tenant_addon_request; each answers 503 without it).
-REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374)
+# 375 (AA-1035 R2 close-out — the reviewer alias is gone from the code: the A10 E2E row must be 'content', which the
+# directory now writes for that address, and no row may be 'reviewer', which no role map reads any more).
+REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375)
 # Versions this code needs that were registered after a higher one (reserved numbers): 297 (AA-920 WM-25) was reserved
 # in S255 and applied after 299. max() is already 299 without it, so the version reported is capped below the lowest
 # listed version that is not registered (297 missing -> 296 -> "schema_behind").

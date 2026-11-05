@@ -18,9 +18,8 @@ Rules
 2. **A ``cis-*`` group is required.** The pre token trigger is not client-aware, so a user with only
    ``booking-*`` groups still gets a cis-admin token: no CIS group -> 403.
 3. **Role = the highest ``cis-*`` group** (:data:`GROUP_ROLES`, same order as the WORKFORCE group precedence
-   10-39; ``cis-reviewer`` maps to ``content``, AA-1035). The DB role is not used for authorisation (ADR 0006
-   phase 1: "staff routes authorise from ``cognito:groups``"); a difference (the reviewer alias counted as content)
-   is logged as ``staff_role_drift`` (the C7 reconcile job reports it).
+   10-39, AA-1035). The DB role is not used for authorisation (ADR 0006 phase 1: "staff routes authorise from
+   ``cognito:groups``"); a difference is logged as ``staff_role_drift`` (the C7 reconcile job reports it).
 4. **Row by ``(cognito_iss, cognito_sub)``** (ADR 0006 §9). When no row is bound yet, the first sign-in binds
    the token identity to the ACTIVE row whose ``lower(email)`` equals the token's ``email`` and whose identity
    is still empty, once (``UPDATE … WHERE cognito_sub IS NULL``; a row bound to another identity is never
@@ -92,28 +91,19 @@ PREVIEW_ROLE = "viewer"
 
 # WORKFORCE group -> shared.admin_role, highest first: the WORKFORCE group precedence (AA-CIS-Infra identity.tf;
 # ADR 0006 §3; AA-1035 R2, root ADR 0019 d3: the six new groups sit in 10-39, Booking starts at 40). Each person
-# holds one CIS role; the order only decides when a pool edit left two. cis-reviewer is an ALIAS of content for one
-# release (CIS 363 merged the reviewer rows; the A10 E2E account still holds only cis-reviewer).
+# holds one CIS role; the order only decides when a pool edit left two. The cis-reviewer alias of content is gone (CIS
+# 363 merged the reviewer rows, CIS 375 the last one, the A10 E2E account; root ADR 0019 d3): a token with only
+# cis-reviewer holds no CIS role (403 no_cis_group).
 GROUP_ROLES: tuple[tuple[str, str], ...] = (
     ("cis-admin", "admin"),                        # 10
     ("cis-content_lead", "content_lead"),          # 12
     ("cis-ai_ops", "ai_ops"),                      # 14
     ("cis-customer_success", "customer_success"),  # 16
     ("cis-finance", "finance"),                    # 18
-    ("cis-reviewer", "content"),                   # 20 (alias)
     ("cis-tenant_qa", "tenant_qa"),                # 24
     ("cis-support", "support"),                    # 26
     ("cis-content", "content"),                    # 30
 )
-
-# AA-1035: a directory role that is an alias of another for one release (CIS 363). Compared as its target.
-ROLE_ALIASES: dict[str, str] = {"reviewer": "content"}
-
-
-def canonical_role(role: Optional[str]) -> Optional[str]:
-    """The role a directory value means: the alias target for ``reviewer``, else the value itself."""
-    return ROLE_ALIASES.get(role or "", role)
-
 
 STAFF_STATE_TTL_S = 60.0
 STAFF_STATE_MAX = 2048
@@ -352,7 +342,7 @@ async def resolve_staff(db: Any, principal: Principal, *, touch_login: bool = Fa
     row, loaded_now = await _cached_row(db, principal, touch_login=touch_login)
     if row is None:
         raise StaffAuthError(401, "Staff user is inactive or unknown", "inactive_or_unknown")
-    if loaded_now and canonical_role(row.db_role) != role:
+    if loaded_now and row.db_role != role:
         # The group decides (ADR 0006); the reconcile job (C7) reports the difference.
         logger.warning("staff_role_drift", admin_id=row.admin_id, group_role=role, db_role=row.db_role,
                        sub=principal.sub)

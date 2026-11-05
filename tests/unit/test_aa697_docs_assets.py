@@ -116,7 +116,7 @@ def test_policy_is_admin_only():
 def test_non_admin_403_without_storage_reads(client):
     fake = FakeS3(_objects())
     with _use(fake):
-        for role in ("viewer", "reviewer", "content", "tenant"):
+        for role in ("viewer", "content", "tenant"):
             res = client.get(ASSET, params={"path": SVG_PATH}, headers={"X-Admin-Secret": SECRET, "x-admin-role": role})
             assert res.status_code == 403
     assert fake.calls == []

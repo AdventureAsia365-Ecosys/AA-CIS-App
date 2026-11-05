@@ -323,7 +323,7 @@ async def test_apply_manual_without_writer_input_uses_rest_of_piece_as_source():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("role", ["content", "reviewer", None])
+@pytest.mark.parametrize("role", ["content", None])
 async def test_write_endpoints_require_admin_role_header(role):
     conn = _conn(_piece_row())
     with pytest.raises(HTTPException) as e:

@@ -180,10 +180,12 @@ test("8. every nav label has an English and a Vietnamese row", () => {
 });
 
 test("9. a content worker sees the AA Catalogue group only; the viewer sees its read pages", () => {
-  for (const role of ["reviewer", "content"]) {
+  for (const role of ["content"]) {
     const groups = ADMIN_IA.filter((g) => g.items.some((i) => !i.hidden && canSeePage(role, i.href))).map((g) => g.label);
     assert.deepEqual(groups, ["AA Catalogue"], role);
   }
+  // AA-1035: the reviewer alias is gone (CIS 375): the value opens no page at all
+  assert.deepEqual(visible.filter((i) => canSeePage("reviewer", i.href)), []);
   const viewer = visible.filter((i) => canSeePage("viewer", i.href)).map((i) => i.href);
   assert.ok(viewer.includes("/admin/review") && viewer.includes("/admin/settings"));
   assert.ok(!viewer.includes("/admin/upload"), "the viewer never gets the upload page");
@@ -280,10 +282,13 @@ test("12. Place cards (option A): its own route, the Cards tab's roles, nobody g
   assert.equal(item?.label, "Place cards");
   assert.equal(ADMIN_IA.find((g) => g.items.includes(item))?.label, "AA Catalogue");
   // The role matrix: exactly the roles that opened Content quality's Cards tab (TENANT_QA), every role checked.
-  const before = (role) => canSeePage(role, "/admin/tenant-qa/quality");
+  // (the TENANT_QA rule: every Tenant QA page but Content quality, which customer_success also reads since the AA-1035
+  // close-out: its book's lists, no Cards tab)
+  const before = (role) => canSeePage(role, "/admin/tenant-qa/compliance");
   for (const role of STAFF_ROLES) {
     assert.equal(canSeePage(role, cards), before(role), `${role}: Place cards = the old Cards tab`);
-    assert.equal(canSeePage(role, "/admin/tenant-qa/quality"), before(role), `${role}: Content quality unchanged`);
+    assert.equal(canSeePage(role, "/admin/tenant-qa/quality"), before(role) || role === "customer_success",
+      `${role}: Content quality = TENANT_QA + customer_success`);
     // The Places pages stay admin only; only the cards route opened up.
     assert.equal(canSeePage(role, "/admin/places"), role === "admin", `${role}: /admin/places`);
     assert.equal(canSeePage(role, "/admin/places/other"), role === "admin", `${role}: other Places sub-pages`);

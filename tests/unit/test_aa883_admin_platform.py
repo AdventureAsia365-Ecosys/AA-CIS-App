@@ -27,7 +27,7 @@ _T1 = datetime(2026, 10, 17, 9, 30, tzinfo=timezone.utc)
 
 _ROWS = [
     {"id": _ID_A, "username": "nghiep", "role": "admin", "is_active": True, "created_at": _T0, "updated_at": _T1},
-    {"id": _ID_B, "username": "reviewer-1", "role": "reviewer", "is_active": False,
+    {"id": _ID_B, "username": "reviewer-1", "role": "content", "is_active": False,
      "created_at": _T0, "updated_at": _T0},
 ]
 
@@ -112,7 +112,7 @@ def test_both_routes_need_staff_read():
 
 
 @pytest.mark.parametrize("path", ["/admin/platform/staff", f"/admin/platform/staff/{_ID_A}"])
-@pytest.mark.parametrize("role", ["reviewer", "content", "tenant", "", None])
+@pytest.mark.parametrize("role", ["content", "tenant", "", None])
 def test_non_admin_and_machine_are_refused_before_the_db(no_db_client, role, path):
     resp = no_db_client.get(path, headers=_headers(role))
     assert resp.status_code == 403, (role, path, resp.text)
@@ -133,8 +133,8 @@ def test_machine_detail_names_the_reason(no_db_client):
 
 
 def test_reviewer_detail_names_the_capability(no_db_client):
-    resp = no_db_client.get("/admin/platform/staff", headers=_headers("reviewer"))
-    assert resp.json()["detail"] == "Role 'reviewer' lacks the 'staff.read' permission"
+    resp = no_db_client.get("/admin/platform/staff", headers=_headers("content"))
+    assert resp.json()["detail"] == "Role 'content' lacks the 'staff.read' permission"
 
 
 # ── List ─────────────────────────────────────────────────────────────────────────────────────────
@@ -144,7 +144,7 @@ def test_admin_lists_staff_with_counts(client):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["total"] == 2 and body["active"] == 1
-    assert body["active_by_role"] == {"admin": 1, "reviewer": 0, "content": 0, "viewer": 0,   # viewer: AA-878
+    assert body["active_by_role"] == {"admin": 1, "content": 0, "viewer": 0,   # viewer: AA-878
                                       # AA-1035 R2
                                       "content_lead": 0, "tenant_qa": 0, "customer_success": 0, "support": 0,
                                       "finance": 0, "ai_ops": 0}

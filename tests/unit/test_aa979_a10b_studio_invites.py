@@ -271,6 +271,16 @@ def test_send_again_on_a_synthetic_tenant_is_allowed(real, issuer):  # noqa: F81
     assert relays[0][3]["cis_invitation_id"] == str(directory.invited["invitation_id"])
 
 
+def test_send_again_to_the_kept_address_is_refused_for_the_e2e_admin(real, issuer):  # noqa: F811
+    """AA-1035 close-out: the A10b session names an E2E mailbox address; it never uses the CRM's kept address (which a
+    real admin's invitation on a synthetic tenant may hold)."""
+    client, directory, relays, _ = real
+    res = client.post(f"/admin/tenants/{SYNTHETIC}/members/{directory.invited['membership_id']}/invitation/send",
+                      json={"locale": "en"}, headers=_headers(issuer))
+    assert (res.status_code, res.json()) == (403, {"detail": "e2e_read_only"})
+    assert relays == [] and directory.writes == []
+
+
 @pytest.mark.parametrize("tenant", [REAL, NULL_FLAG])
 def test_send_again_on_a_real_tenant_is_refused(real, issuer, tenant):  # noqa: F811
     client, directory, relays, _ = real

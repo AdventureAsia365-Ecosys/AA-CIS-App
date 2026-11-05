@@ -38,6 +38,11 @@ AA-979 P2b adds the Content studio invitation (re-enrolment in the partner pool,
   failed: the row stays ``invited`` and the answer says ``delivery.status = failed`` (send again).
 * ``POST /admin/tenants/{id}/members/{membership_id}/invitation/send`` — send the invitation of an ``invited`` row
   again (the CRM is idempotent on ``cis_invitation_id``: it re-issues the same invitation with a new link).
+  AA-1035 R2 close-out (crm.ops.v1 1.12): without ``email`` the CRM sends it again to the address it kept sealed
+  under its own data key (``keep_address``), so nobody types it again and nobody can redirect it; support
+  (tenant.member.resend) may only do that. With ``email`` it goes to the new address (tenant.member.write or
+  tenant.write: customer_success, admin). An invitation the CRM issued before 1.12 kept no address: 409
+  ``address_not_kept`` from the CRM, shown in the delivery answer; then a new address is the only way.
 
 Both invitation routes are on the write allow-list of the Dev-only E2E CIS admin (root ADR 0006a A10b-1, AA-979 phase
 2 automation): :func:`_refuse_e2e_invitation` answers that session 403 ``e2e_read_only`` before any write or relay
@@ -69,7 +74,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from api.core import e2e_staff
 from api.core.staff_authz import (
-    TENANT_WRITE, StaffPrincipal, denial_reason, principal_from_role, request_staff_identity, staff_policy,
+    TENANT_MEMBER_WRITE, TENANT_WRITE, StaffPrincipal, denial_reason, principal_from_role, request_staff_identity,
+    staff_policy,
 )
 from api.core.tenant_scope import TENANT_SCOPED
 
@@ -605,8 +611,19 @@ class MemberInvite(BaseModel):
 
 class MemberInviteResend(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    email: str = Field(min_length=6, max_length=254, pattern=_EMAIL)
+    # AA-1035 close-out: None = send again to the address the CRM kept (crm.ops.v1 1.12 keep_address).
+    email: Optional[str] = Field(None, min_length=6, max_length=254, pattern=_EMAIL)
     locale: Literal["en", "vi"] = "en"
+
+
+def may_readdress(principal: StaffPrincipal) -> bool:
+    """AA-1035 close-out: may this caller send an invitation again to a NEW address? tenant.write or
+    tenant.member.write (admin, customer_success). support (tenant.member.resend only) sends again to the kept address
+    only, so it can never hand an invitation to an address of its choosing."""
+    return principal.is_machine or bool({TENANT_WRITE, TENANT_MEMBER_WRITE} & principal.perms)
+
+
+READDRESS_REFUSED = "Your role sends an invitation again to the same address only (leave the address empty)."
 
 
 async def _refuse_e2e_invitation(request: Request, conn, tenant_id: UUID, email: str,
@@ -644,11 +661,16 @@ def _refuse_e2e_resend_role(request: Request, tenant_id: UUID, member: dict) -> 
         raise HTTPException(status_code=403, detail=e2e_staff.E2E_READ_ONLY)
 
 
-async def _deliver(request: Request, tenant_id: UUID, invitation_id: str, email: str, locale: str) -> dict:
-    """Relay the invitation to the CRM (crm.ops.v1). Never raises: the outcome goes into the answer."""
+async def _deliver(request: Request, tenant_id: UUID, invitation_id: str, email: Optional[str], locale: str) -> dict:
+    """Relay the invitation to the CRM (crm.ops.v1). Never raises: the outcome goes into the answer. ``email`` None:
+    send again to the address the CRM kept (1.12 ``keep_address``)."""
+    payload: dict[str, Any] = {"cis_invitation_id": invitation_id, "locale": locale}
+    if email is None:
+        payload["keep_address"] = True
+    else:
+        payload["email"] = email
     status, body = await crm_console.crm_ops_call(
-        "POST", f"/tenants/{tenant_id}/studio-invitations", relay_authorization(request),
-        json={"email": email, "cis_invitation_id": invitation_id, "locale": locale})
+        "POST", f"/tenants/{tenant_id}/studio-invitations", relay_authorization(request), json=payload)
     ok = 200 <= status < 300
     logger.info("tenant_member_invitation_relayed", tenant_id=str(tenant_id), invitation_id=invitation_id,
                 crm_status=status, delivered=ok)
@@ -700,10 +722,18 @@ async def resend_tenant_member_invitation(
 ):
     verify_admin_secret(x_admin_secret)
     principal = _caller(principal, request)
+    if body.email is None and principal.e2e_read_only:
+        # A10b-1: the Dev E2E admin sends only to an E2E mailbox address it names (checked below), never to a kept one.
+        logger.warning("tenant_member_invitation_e2e_refused", tenant_id=str(tenant_id), reason="address_required")
+        raise HTTPException(status_code=403, detail=e2e_staff.E2E_READ_ONLY)
+    if body.email is not None and not may_readdress(principal):
+        logger.warning("tenant_member_readdress_refused", tenant_id=str(tenant_id), role=principal.role)
+        raise HTTPException(status_code=403, detail=READDRESS_REFUSED)
     pool = request.app.state.pool
     async with pool.acquire() as conn:
         await _require_tenant(conn, tenant_id)
-        await _refuse_e2e_invitation(request, conn, tenant_id, body.email)
+        if body.email is not None:
+            await _refuse_e2e_invitation(request, conn, tenant_id, body.email)
         try:
             members = await members_writer.list_members(conn, str(tenant_id))
         except asyncpg.UndefinedTableError as exc:
@@ -714,8 +744,9 @@ async def resend_tenant_member_invitation(
     if member["status"] != "invited" or not member["invitation_id"]:
         raise HTTPException(status_code=409, detail="Only an invited membership has an invitation to send.")
     _refuse_e2e_resend_role(request, tenant_id, member)
-    # AA-1035: the body's address replaces the first one (nothing can read that back), so an owner invitation is sent
-    # again only by tenant.write; support / customer_success send again editor and viewer invitations.
+    # AA-1035: an owner invitation is sent again only by tenant.write (a new address would hand the owner seat to it;
+    # kept unchanged for the kept address too, the conservative S267 rule); support / customer_success send again
+    # editor and viewer invitations.
     _require_owner_tier(principal, member.get("content_studio_role"))
     delivery = await _deliver(request, tenant_id, member["invitation_id"], body.email, body.locale)
     return {"tenant_id": str(tenant_id), "member": member, "delivery": delivery}
@@ -755,8 +786,13 @@ def members_access(principal: StaffPrincipal, *, synthetic_tenant: bool) -> dict
         roles = [r for r in roles if r in e2e_staff.E2E_INVITE_ROLES]
     if not (actions["invite"] or actions["send_again"]):
         roles = []
+    # AA-1035 close-out: how a send again may address the mail. same_address: the CRM's kept address (never the Dev
+    # E2E admin, which must name an E2E mailbox address); new_address: a typed one (not support).
+    send_again_to = {"same_address": actions["send_again"] and not principal.e2e_read_only,
+                     "new_address": actions["send_again"] and may_readdress(principal)}
     return {"read_only": not any(actions.values()), "actions": actions, "invite_roles": roles,
-            "owner_writes": owner_writes and (actions["change_role"] or actions["remove"])}
+            "owner_writes": owner_writes and (actions["change_role"] or actions["remove"]),
+            "send_again_to": send_again_to}
 
 
 @router.get("/{tenant_id}/members/access",

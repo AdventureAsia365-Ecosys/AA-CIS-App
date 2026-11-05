@@ -28,19 +28,19 @@ from tests.unit.test_s241_admin_routes_require_auth import _served_routes, _walk
 SNAPSHOT = Path(__file__).parent / "snapshots" / "aa1035_role_route_matrix.json"
 
 R2_ROLES = ("content_lead", "tenant_qa", "customer_success", "support", "finance", "ai_ops")
-ROLES = ("admin", "reviewer", "content", "viewer") + R2_ROLES
+ROLES = ("admin", "content", "viewer") + R2_ROLES
 
 EXPECTED_PERMS = {
     "content_lead": {"content.read", "content.write", "review.act", "master.admin", "atoms.write", "photos.write",
                      "a4.unpublish", "quality.write", "content.settings.write", "catalog.read", "tenant_content.read",
                      "lab.read", "wave.run", "notifications.read"},
     "content": {"content.read", "content.write", "review.act", "catalog.read", "notifications.read"},
-    "reviewer": {"content.read", "content.write", "review.act", "catalog.read", "notifications.read"},
     "tenant_qa": {"content.read", "catalog.read", "tenant_content.read", "quality.write", "a4.unpublish", "lab.read",
                   "notifications.read"},
     # slice 2: + read-only view-as of the own book (tenant.view_as) and the bell (notifications.read)
+    # close-out: + the Tenant QA reads of the own book (tenant_content.book.read)
     "customer_success": {"tenant.book.read", "tenant.book.account.read", "tenant.book.write", "tenant.member.write",
-                         "tenant.member.resend", "tenant.view_as", "notifications.read"},
+                         "tenant.member.resend", "tenant.view_as", "notifications.read", "tenant_content.book.read"},
     # S267 fix pass: support only sends a non-owner invitation again (no tenant.member.write); slice 2: + view-as
     "support": {"tenant.book.read", "tenant.member.resend", "tenant.view_as", "notifications.read"},
     "finance": {"billing.read", "billing.write", "spend.read", "notifications.read"},
@@ -112,13 +112,28 @@ def _any(allowed: set[str], *prefixes: str, methods: tuple[str, ...] = ()) -> li
 
 ADMIN_ONLY_AREAS = ("/admin/platform/staff", "/admin/platform/audit", "/admin/platform/alert-recipients",
                     "/admin/job-runner/erasure", "/admin/data-model", "/admin/docs", "/admin/overview",
-                    "/admin/reports", "/admin/platform/crm")
+                    "/admin/reports")
+
+# AA-1035 R2 close-out (root ADR 0019 d4): the CRM L1 console reads of the book. The desk roles read, never write;
+# support never the account reads (usage, entitlements).
+CRM_CONSOLE_BOOK_READS = (
+    "GET /admin/platform/crm/agencies", "GET /admin/platform/crm/agencies/{tenant_id}",
+    "GET /admin/platform/crm/agencies/{tenant_id}/data-requests", "GET /admin/platform/crm/agencies/{tenant_id}/jobs",
+    "GET /admin/platform/crm/agencies/{tenant_id}/members", "GET /admin/platform/crm/console",
+)
+CRM_CONSOLE_ACCOUNT_READS = (
+    "GET /admin/platform/crm/agencies/{tenant_id}/entitlements", "GET /admin/platform/crm/agencies/{tenant_id}/usage",
+)
 
 
 @pytest.mark.parametrize("role", [r for r in ROLES if r != "admin"])
 def test_only_admin_reaches_staff_ops_and_platform_pages(role):
     allowed = _allowed(role)
     assert _any(allowed, *ADMIN_ONLY_AREAS) == []
+    crm = _any(allowed, "/admin/platform/crm")
+    expected = {"customer_success": sorted(CRM_CONSOLE_BOOK_READS + CRM_CONSOLE_ACCOUNT_READS),
+                "support": sorted(CRM_CONSOLE_BOOK_READS)}.get(role, [])
+    assert crm == expected
     # place fixes and job control change what every app reads (ops.write)
     writes = _any(allowed, "/admin/places/", "/admin/job-runner/", methods=("POST", "PUT", "PATCH", "DELETE"))
     # ai_ops runs the AI jobs (ai.admin: the LLM probe, re-embed, contract smoke, model lifecycle), nothing else
@@ -126,12 +141,22 @@ def test_only_admin_reaches_staff_ops_and_platform_pages(role):
         else writes == []
 
 
+# AA-1035 R2 close-out (matrix "Tenant QA: customer_success R (own)"): the reads the routes filter to the book.
+TENANT_QA_BOOK_READS = (
+    "GET /admin/content-quality/pieces", "GET /admin/content-quality/pieces/{piece_id}",
+    "GET /admin/content-quality/stats", "GET /admin/content-quality/tour-versions",
+    "GET /admin/content-quality/tour-versions/{version_id}",
+)
+
+
 @pytest.mark.parametrize("role", ["customer_success", "support", "finance"])
 def test_the_tenant_desk_never_reaches_the_catalogue_or_tenant_text(role):
     allowed = _allowed(role)
     assert _any(allowed, "/admin/tours", "/admin/review-queue", "/admin/run-tour", "/admin/atoms", "/admin/master",
-                "/admin/content-quality", "/admin/a4", "/admin/writing-memory", "/admin/tenant-qa",
-                "/admin/llm-config", "/v1/pipeline") == []
+                "/admin/a4", "/admin/writing-memory", "/admin/tenant-qa", "/admin/llm-config", "/v1/pipeline") == []
+    # customer_success: the Tenant QA lists / details of its book only (no labels, place cards or writes)
+    assert _any(allowed, "/admin/content-quality") == (sorted(TENANT_QA_BOOK_READS) if role == "customer_success"
+                                                       else [])
 
 
 @pytest.mark.parametrize("role", ["customer_success", "support"])
@@ -222,7 +247,7 @@ def test_finance_reads_billing_and_changes_only_billing_fields():
         assert refused not in allowed, refused
 
 
-@pytest.mark.parametrize("role", ["content", "reviewer", "viewer", "tenant_qa", "content_lead", "ai_ops"])
+@pytest.mark.parametrize("role", ["content", "viewer", "tenant_qa", "content_lead", "ai_ops"])
 def test_the_content_side_never_reads_the_tenants_directory_or_money(role):
     allowed = _allowed(role)
     assert "GET /admin/tenants" not in allowed
@@ -240,7 +265,7 @@ def test_the_tenant_picker_is_open_to_every_role_that_picks_a_tenant(role):
     assert "GET /admin/tenant-names" in _allowed(role)
 
 
-@pytest.mark.parametrize("role", ["content", "reviewer", "viewer"])
+@pytest.mark.parametrize("role", ["content", "viewer"])
 def test_the_pure_content_roles_get_no_tenant_names(role):
     assert "GET /admin/tenant-names" not in _allowed(role)
 

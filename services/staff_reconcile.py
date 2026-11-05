@@ -52,7 +52,7 @@ from typing import Any, Iterable, Optional
 
 from api.core import e2e_staff
 from api.core.identity_config import workforce_issuer
-from api.core.staff_identity import GROUP_ROLES, canonical_role, role_from_groups
+from api.core.staff_identity import GROUP_ROLES, role_from_groups
 
 # ── configuration ────────────────────────────────────────────────────────────────────────────────
 
@@ -126,10 +126,10 @@ class KnownE2E:
 # Read-only, code constant (never configuration), exact addresses: the same allow-list the WORKFORCE pre token trigger
 # (AA-CIS-Infra identity_triggers/workforce.py) and CIS migrations 250 / 283 hold. TEMPORARY with A10 (AA-816).
 KNOWN_E2E_STAFF: "MappingProxyType[str, KnownE2E]" = MappingProxyType({
-    e2e_staff.E2E_REVIEWER_TEST_STAFF_EMAIL: KnownE2E(
+    e2e_staff.E2E_CONTENT_TEST_STAFF_EMAIL: KnownE2E(
         clause="ADR 0006a A10",
-        reason="Cognito email-code E2E test account: reviewer only, no Booking access.",
-        groups=frozenset({"cis-reviewer"}), directory_role="reviewer"),
+        reason="Cognito email-code E2E test account: content only, no Booking access.",
+        groups=frozenset({"cis-content"}), directory_role="content"),
     e2e_staff.E2E_BOOKING_TEST_STAFF_EMAIL: KnownE2E(
         clause="ADR 0006a A10a",
         reason="Booking staff admin E2E account (read-only in Booking); never in the CIS staff directory.",
@@ -465,10 +465,10 @@ def _row_drift(row: dict, u: CognitoUser, grant_role: Optional[str],
     base = {"username": row["username"], "email": u.email or row.get("email")}
     cis_groups = [g for g in _sorted_groups(u.groups) if g in CIS_GROUPS]
     group_role = role_from_groups(u.groups)
-    # AA-1035: the reviewer alias reads as content, but the group must still be the row's own (cis-<role>): a merged
-    # reviewer (row content, group cis-reviewer) is drift, so the Staff page "Sync" moves them to cis-content.
+    # AA-1035: the group must be the row's own (cis-<role>); a leftover cis-reviewer (no CIS role since the alias went)
+    # is drift too, so the Staff page "Sync" moves the person to the group of the row.
     wrong_group = bool(cis_groups) and cis_groups != [f"cis-{row.get('role')}"]
-    if group_role != canonical_role(row.get("role")) or len(cis_groups) > 1 or wrong_group:
+    if group_role != row.get("role") or len(cis_groups) > 1 or wrong_group:
         out.append({**base, "kind": "cis_role", "directory": row.get("role"), "cognito": group_role,
                     "cognito_groups": cis_groups})
     booking_groups = [g for g in _sorted_groups(u.groups) if g in BOOKING_GROUPS]

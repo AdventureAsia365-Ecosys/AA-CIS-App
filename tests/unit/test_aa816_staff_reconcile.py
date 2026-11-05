@@ -182,10 +182,10 @@ def test_a_cognito_user_without_an_active_row():
     done = _user("done@adventure.asia", "s-done", enabled=False)        # row inactive, Cognito disabled: fine
     recreated = _user("re@adventure.asia", "s-new")                     # row bound to an older sub
     users += [orphan, gone, done, recreated]
-    groups["cis-reviewer"] = [orphan, gone, done, recreated]
-    rows += [_row("left", role="reviewer", active=False, email="left@adventure.asia", sub="s-left"),
-             _row("done", role="reviewer", active=False, email="done@adventure.asia", sub="s-done"),
-             _row("re", role="reviewer", email="re@adventure.asia", sub="s-old")]
+    groups["cis-content"] = [orphan, gone, done, recreated]
+    rows += [_row("left", role="content", active=False, email="left@adventure.asia", sub="s-left"),
+             _row("done", role="content", active=False, email="done@adventure.asia", sub="s-done"),
+             _row("re", role="content", email="re@adventure.asia", sub="s-old")]
     report = _run(users, groups, rows, grants)
     reasons = {f["email"]: f["reason"] for f in report["cognito_without_row"]}
     assert reasons == {"ghost@adventure.asia": "no_row", "left@adventure.asia": "row_inactive",
@@ -211,10 +211,10 @@ def test_an_unlinked_row_matches_by_email_and_is_not_an_orphan():
 
 def test_an_active_row_unknown_to_cognito():
     users, groups, rows, grants = _clean_world()
-    rows += [_row("deleted", role="reviewer", email="deleted@adventure.asia", sub="s-deleted"),
-             _row("otherpool", role="reviewer", email="op@adventure.asia", sub="s-op",
+    rows += [_row("deleted", role="content", email="deleted@adventure.asia", sub="s-deleted"),
+             _row("otherpool", role="content", email="op@adventure.asia", sub="s-op",
                   iss="https://cognito-idp.us-west-1.amazonaws.com/us-west-1_OTHER"),
-             _row("inactive", role="reviewer", active=False, email="in@adventure.asia", sub="s-in")]
+             _row("inactive", role="content", active=False, email="in@adventure.asia", sub="s-in")]
     report = _run(users, groups, rows, grants)
     assert sorted((u["username"], u["reason"]) for u in report["rows_unknown_to_cognito"]) == [
         ("deleted", "unknown_sub"), ("otherpool", "other_issuer")]
@@ -231,13 +231,13 @@ def test_group_and_role_drift():
     groups["booking-sales"] = [NGHIEP]
     groups["cis-admin"] = [NGHIEP, BREAKGLASS, rev]
     groups["cis-content"] = [off]
-    rows += [_row("rev", role="reviewer", email="rev@adventure.asia", sub="s-rev"),
+    rows += [_row("rev", role="content", email="rev@adventure.asia", sub="s-rev"),
              _row("off", role="content", email="off@adventure.asia", sub="s-off")]
     report = _run(users, groups, rows, grants)
     got = sorted((d["username"], d["kind"], d["directory"], d["cognito"]) for d in report["group_drift"])
     assert got == [("nghiep", "booking_role", "admin", "sales"),
                    ("off", "cognito_disabled", "active", "disabled"),
-                   ("rev", "cis_role", "reviewer", "admin")]
+                   ("rev", "cis_role", "content", "admin")]
     assert report["counts"]["group_drift"] == 3
 
 
@@ -254,10 +254,10 @@ def test_booking_group_without_a_grant_and_no_cis_group_are_drift():
 
 def test_two_cis_groups_are_drift_even_when_the_highest_matches():
     users, groups, rows, grants = _clean_world()
-    groups["cis-reviewer"] = [NGHIEP]
+    groups["cis-content"] = [NGHIEP]
     report = _run(users, groups, rows, grants)
     assert [(d["kind"], d["cognito_groups"]) for d in report["group_drift"]] == [
-        ("cis_role", ["cis-admin", "cis-reviewer"])]
+        ("cis_role", ["cis-admin", "cis-content"])]
 
 
 def test_status_other_than_confirmed_is_reported_except_breakglass():
@@ -312,7 +312,7 @@ def test_email_changed_on_one_side_is_drift():
 
 def test_cutover_readiness_counts_and_usernames():
     users, groups, rows, grants = _clean_world()
-    rows += [_row("legacy1", role="reviewer"), _row("legacy2", role="content"),
+    rows += [_row("legacy1", role="content"), _row("legacy2", role="content"),
              _row("emailonly", role="content", email="eo@adventure.asia"),
              _row("gone", role="content", active=False)]
     report = _run(users, groups, rows, grants)
@@ -381,10 +381,10 @@ def _e2e_world():
     bk = _user(E2E_BOOKING, "s-e2e-bk", status="FORCE_CHANGE_PASSWORD")
     adm = _user(E2E_CIS_ADMIN, "s-e2e-adm", status="FORCE_CHANGE_PASSWORD")
     users += [rev, bk, adm]
-    groups["cis-reviewer"] = [rev]
+    groups["cis-content"] = [rev]
     groups["booking-admin"] = groups["booking-admin"] + [bk]
     groups["cis-admin"] = groups["cis-admin"] + [adm]
-    rows += [_row("e2e", role="reviewer", email=E2E_REV, sub="s-e2e"),
+    rows += [_row("e2e", role="content", email=E2E_REV, sub="s-e2e"),
              _row("e2e-cis-admin", role="admin", email=E2E_CIS_ADMIN, sub="s-e2e-adm")]
     return users, groups, rows, grants
 
@@ -397,7 +397,7 @@ def test_known_e2e_addresses_match_the_directory_and_the_a10b_module():
     from api.core import e2e_staff
     from api.services import staff_directory
 
-    assert e2e_staff.E2E_REVIEWER_TEST_STAFF_EMAIL == staff_directory.E2E_TEST_STAFF_EMAIL
+    assert e2e_staff.E2E_CONTENT_TEST_STAFF_EMAIL == staff_directory.E2E_TEST_STAFF_EMAIL
     assert sr.KNOWN_E2E_STAFF[E2E_REV].directory_role == staff_directory.E2E_TEST_STAFF_ROLE
     assert sr.KNOWN_E2E_STAFF[E2E_CIS_ADMIN].directory_role == staff_directory.E2E_CIS_ADMIN_TEST_STAFF_ROLE
     assert set(sr.KNOWN_E2E_STAFF) == {E2E_REV, E2E_BOOKING, E2E_CIS_ADMIN, E2E_CRM_STAFF}
@@ -451,7 +451,7 @@ def test_known_e2e_is_on_only_where_environment_is_exactly_dev(monkeypatch, valu
     assert sr.known_e2e_enabled() is enabled
 
 
-@pytest.mark.parametrize("extra", ["cis-reviewer", "cis-admin", "booking-sales"])
+@pytest.mark.parametrize("extra", ["cis-content", "cis-admin", "booking-sales"])
 def test_a10a_with_an_unexpected_group_stays_drift(extra):
     users, groups, rows, grants = _e2e_world()
     bk = next(u for u in users if u["Username"] == "s-e2e-bk")
@@ -483,11 +483,11 @@ def test_a10b_with_another_group_or_a_booking_group_stays_drift():
 def test_a10_with_cis_admin_instead_of_cis_reviewer_stays_drift():
     users, groups, rows, grants = _e2e_world()
     rev = next(u for u in users if u["Username"] == "s-e2e")
-    groups["cis-reviewer"] = []
+    groups["cis-content"] = []
     groups["cis-admin"] = groups["cis-admin"] + [rev]
     report = _run_e2e(users, groups, rows, grants)
     assert [(d["username"], d["kind"], d["directory"], d["cognito"]) for d in report["group_drift"]] == [
-        ("e2e", "cis_role", "reviewer", "admin")]
+        ("e2e", "cis_role", "content", "admin")]
     assert E2E_REV not in {k["email"] for k in report["known_e2e_exceptions"]}
 
 
@@ -505,7 +505,7 @@ def test_a10b_row_with_the_wrong_role_stays_drift():
     users, groups, rows, grants = _e2e_world()
     for r in rows:
         if r["username"] == "e2e-cis-admin":
-            r["role"] = "reviewer"
+            r["role"] = "content"
     report = _run_e2e(users, groups, rows, grants)
     assert [(d["username"], d["kind"]) for d in report["group_drift"]] == [("e2e-cis-admin", "cis_role")]
     assert E2E_CIS_ADMIN not in {k["email"] for k in report["known_e2e_exceptions"]}
@@ -800,7 +800,7 @@ def test_policy_entries():
 
 @pytest.mark.parametrize("method,path", [("GET", "/admin/platform/staff-directory/health"),
                                          ("POST", "/admin/platform/staff-directory/reconcile")])
-@pytest.mark.parametrize("role", ["reviewer", "content", None])
+@pytest.mark.parametrize("role", ["content", None])
 def test_directory_routes_refuse_non_admin_and_machine(client, method, path, role):
     assert client.request(method, path, headers=_h(role)).status_code == 403
 
@@ -825,7 +825,7 @@ def test_schedule_is_a_machine_route_keyed_per_utc_day(client, monkeypatch):
     resp = client.post("/admin/job-runner/staff-reconcile/schedule", headers=_h(None))
     assert resp.status_code == 200, resp.text
     assert resp.json()["day"] == datetime.now(timezone.utc).date().isoformat() and resp.json()["created"] is False
-    assert client.post("/admin/job-runner/staff-reconcile/schedule", headers=_h("reviewer")).status_code == 403
+    assert client.post("/admin/job-runner/staff-reconcile/schedule", headers=_h("content")).status_code == 403
     assert client.post("/admin/job-runner/staff-reconcile/schedule",
                        headers={"x-admin-role": "admin"}).status_code == 403
 
@@ -843,7 +843,7 @@ def job_reads(monkeypatch):
     monkeypatch.setattr(queue, "count_jobs", AsyncMock(return_value=2))
 
 
-@pytest.mark.parametrize("role", ["reviewer", "content", None])
+@pytest.mark.parametrize("role", ["content", None])
 def test_job_runner_reads_redact_the_report_without_staff_read(client, job_reads, role):
     one = client.get("/admin/job-runner/jobs/j-rec", headers=_h(role))
     assert one.status_code == 200, one.text

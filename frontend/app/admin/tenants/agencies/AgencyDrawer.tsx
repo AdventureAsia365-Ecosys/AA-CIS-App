@@ -41,11 +41,13 @@ import {
   mono,
   sans,
   useFormat,
+  useAdminIdentity,
   useT,
   useToast,
   type ColumnDef,
   Checkbox, Input, Select,
 } from "../../../_kit";
+import { can } from "@/lib/rbac";
 import {
   CRM_API,
   LOCK_REASONS,
@@ -119,6 +121,9 @@ export default function AgencyDrawer({ agency, canWrite, onClose, onChanged }: P
   const toast = useToast();
   const tid = agency.tenant_id;
   const base = `${CRM_API}/agencies/${encodeURIComponent(tid)}`;
+  // AA-1035: usage and entitlements are account reads (admin, customer_success); support never loads them.
+  const role = useAdminIdentity().role;
+  const accountReads = can(role, "tenant.read") || can(role, "tenant.book.account.read");
 
   const summary = useQuery({
     queryKey: key(tid, "summary"),
@@ -128,9 +133,12 @@ export default function AgencyDrawer({ agency, canWrite, onClose, onChanged }: P
     retry: false,
   });
   const a = summary.data ?? agency;
-  const usage = useQuery({ queryKey: key(tid, "usage"), queryFn: () => apiGet<AgencyUsage>(`${base}/usage`), retry: false });
+  const usage = useQuery({
+    queryKey: key(tid, "usage"), queryFn: () => apiGet<AgencyUsage>(`${base}/usage`), retry: false, enabled: accountReads,
+  });
   const ent = useQuery({
     queryKey: key(tid, "entitlements"), queryFn: () => apiGet<AgencyEntitlements>(`${base}/entitlements`), retry: false,
+    enabled: accountReads,
   });
   const requests = useQuery({
     queryKey: key(tid, "data-requests"),
@@ -185,11 +193,11 @@ export default function AgencyDrawer({ agency, canWrite, onClose, onChanged }: P
           <div style={noteStyle}>{t("readOnly")}</div>
         )}
 
-        <UsageSection q={usage} />
+        {accountReads && <UsageSection q={usage} />}
         <AccessSection agency={a} canWrite={canWrite && lockable} base={base} onDone={done} />
         <FirstOwnerSection agency={a} canWrite={canWrite} base={base} onDone={done} />
-        <FeaturesSection q={ent} canWrite={canWrite && lockable} base={base} onDone={done} />
-        <InsightsSection q={ent} canWrite={canWrite && lockable} base={base} onDone={done} />
+        {accountReads && <FeaturesSection q={ent} canWrite={canWrite && lockable} base={base} onDone={done} />}
+        {accountReads && <InsightsSection q={ent} canWrite={canWrite && lockable} base={base} onDone={done} />}
         <DataRequestsSection q={requests} canWrite={canWrite} active={active} base={base} onDone={done} />
         <RecoverySection q={members} canWrite={canWrite} active={active} base={base} onDone={done} />
         <JobsSection q={jobs} canWrite={canWrite} locked={a.state === "locked"} base={base} onDone={done} />

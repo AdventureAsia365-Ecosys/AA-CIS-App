@@ -107,7 +107,7 @@ class TestUpdateTenant:
 
     @pytest.mark.asyncio
     async def test_non_admin_role_is_403(self):
-        for role in (None, "reviewer", "content"):
+        for role in (None, "content", "content"):
             with pytest.raises(HTTPException) as e:
                 await self._patch(_conn(), {"is_active": False}, role=role)
             assert e.value.status_code == 403
@@ -236,7 +236,7 @@ class TestOffboard:
     async def test_requires_admin_role(self):
         with pytest.raises(HTTPException) as e:
             await admin.offboard_tenant(str(TENANT_ID), admin.OffboardRequest(reason="x"),
-                                        _request(_conn()), x_admin_secret=_SECRET, x_admin_role="reviewer")
+                                        _request(_conn()), x_admin_secret=_SECRET, x_admin_role="content")
         assert e.value.status_code == 403
 
     @pytest.mark.asyncio
@@ -328,7 +328,7 @@ class TestRestore:
     @pytest.mark.asyncio
     async def test_requires_admin_role(self):
         with pytest.raises(HTTPException) as e:
-            await self._restore(_conn(), role="reviewer")
+            await self._restore(_conn(), role="content")
         assert e.value.status_code == 403
 
     @pytest.mark.asyncio

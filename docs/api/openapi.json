@@ -4419,11 +4419,18 @@
         "additionalProperties": false,
         "properties": {
           "email": {
-            "maxLength": 254,
-            "minLength": 6,
-            "pattern": "^[^@\\s]{1,64}@[^@\\s]{1,189}\\.[^@\\s]{2,63}$",
-            "title": "Email",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 254,
+                "minLength": 6,
+                "pattern": "^[^@\\s]{1,64}@[^@\\s]{1,189}\\.[^@\\s]{2,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
           },
           "locale": {
             "default": "en",
@@ -4435,9 +4442,6 @@
             "type": "string"
           }
         },
-        "required": [
-          "email"
-        ],
         "title": "MemberInviteResend",
         "type": "object"
       },
@@ -7319,6 +7323,52 @@
           "reads"
         ],
         "title": "SourceStatus",
+        "type": "object"
+      },
+      "StaffTenantScope": {
+        "additionalProperties": false,
+        "description": "GET /tenant/membership/v1/staff-scope?iss=&sub=&desk_role= (contract 1.3, AA-1035): the tenants an AA desk\nstaff member (customer_success: its book; support: its book and the pool) may reach in the CRM L1 console.",
+        "properties": {
+          "as_of": {
+            "title": "As Of",
+            "type": "string"
+          },
+          "desk_role": {
+            "enum": [
+              "customer_success",
+              "support"
+            ],
+            "title": "Desk Role",
+            "type": "string"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/MembershipIdentity"
+          },
+          "scope": {
+            "enum": [
+              "book",
+              "book_pool",
+              "none"
+            ],
+            "title": "Scope",
+            "type": "string"
+          },
+          "tenant_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tenant Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "identity",
+          "desk_role",
+          "scope",
+          "tenant_ids",
+          "as_of"
+        ],
+        "title": "StaffTenantScope",
         "type": "object"
       },
       "StartBody": {
@@ -47977,6 +48027,88 @@
           }
         },
         "summary": "Find Memberships",
+        "tags": [
+          "tenant-membership"
+        ]
+      }
+    },
+    "/tenant/membership/v1/staff-scope": {
+      "get": {
+        "description": "AA-1035 R2 close-out (contract 1.3, root ADR 0019 d4 \"the crm.ops.v1 relay forwards the staff member's scope\").\n\nThe CRM asks for the scope of a WORKFORCE caller of its L1 console whose groups make it a desk role\n(``cis-customer_success`` -> ``customer_success``, ``cis-support`` -> ``support``), and serves that caller only\nthese tenants. CIS answers from its own directory and assignments (``shared.admin_users`` by ``(cognito_iss,\ncognito_sub)``, ``shared.staff_tenant_assignment``, the pool rule of api/core/tenant_scope.py), never from a value\nthe caller sent: the staff member holds the access token, so a scope it forwarded could be forged. An unknown or\ninactive identity: scope ``none``, no tenant. 400 another desk_role or a malformed identity. The key is\n``desk_role``, never ``role``: this contract carries no role key (the root checker policy).",
+        "operationId": "get_staff_tenant_scope_tenant_membership_v1_staff_scope_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "iss",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Iss"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sub",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sub"
+            }
+          },
+          {
+            "in": "query",
+            "name": "desk_role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Desk Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffTenantScope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Staff Tenant Scope",
         "tags": [
           "tenant-membership"
         ]

@@ -127,12 +127,15 @@ async def test_support_only_sends_a_non_owner_invitation_again(world):
     owner_inv = await _member(pool, t["mine"], "owner")
     editor = await _member(pool, t["mine"], "editor", active=True)
     h = _as(s, roles, "support")
-    sent = await client.post(f"/admin/tenants/{t['mine']}/members/{editor_inv}/invitation/send", headers=h,
-                             json={"email": ADDRESS})
+    # AA-1035 close-out: support sends again to the address the CRM kept (no address in the body), never a new one
+    sent = await client.post(f"/admin/tenants/{t['mine']}/members/{editor_inv}/invitation/send", headers=h, json={})
     assert sent.status_code == 200, sent.text
     assert len(relays) == 1
+    readdressed = await client.post(f"/admin/tenants/{t['mine']}/members/{editor_inv}/invitation/send", headers=h,
+                                    json={"email": ADDRESS})
+    assert readdressed.status_code == 403 and "same address only" in readdressed.json()["detail"]
     assert _owner_refused(await client.post(f"/admin/tenants/{t['mine']}/members/{owner_inv}/invitation/send",
-                                            headers=h, json={"email": ADDRESS}))
+                                            headers=h, json={}))
     assert len(relays) == 1                                     # nothing relayed for the owner invitation
     before = await pool.fetchval("SELECT count(*) FROM shared.tenant_members WHERE tenant_id = $1",
                                  uuid.UUID(t["mine"]))

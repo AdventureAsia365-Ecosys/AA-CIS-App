@@ -383,13 +383,11 @@ async def close_open_sessions(conn: Any, *, actor: str, cause: str, tenant_id: O
 
 
 def start_role_mismatch(db_role: Optional[str], start_role: Optional[str]) -> bool:
-    """True when the directory role (``shared.admin_users.role``, the reviewer alias read as its target) is not the
+    """True when the directory role (``shared.admin_users.role``) is not the
     role a view-as start is authorised with (the verified group role). The start refuses such a member (409) and the
     gate ends a session whose member's row moved away from it: scope and reads are evaluated with the start role
     only, and only while the two agree, so a row that drifted ABOVE the group never widens a view."""
-    from api.core.staff_identity import canonical_role
-
-    return canonical_role(db_role) != start_role
+    return db_role != start_role
 
 
 async def session_open(conn: Any, claims: ViewAsClaims, template: Optional[str] = None,
@@ -406,7 +404,6 @@ async def session_open(conn: Any, claims: ViewAsClaims, template: Optional[str] 
     with a tenant.view_as_ended row naming the cause): a right lost during the session never comes back to it.
     ``role_hint`` can only end a session (a role other than the start role); scope and reads never come from it."""
     from api.core.staff_authz import ROLE_PERMS, TENANT_VIEW_AS
-    from api.core.staff_identity import canonical_role
     from api.core.tenant_scope import in_scope, scope_for_role
 
     row = await conn.fetchrow(SESSION_STATE_SQL, claims.session_id, claims.tenant_id, claims.staff_id)
@@ -418,10 +415,10 @@ async def session_open(conn: Any, claims: ViewAsClaims, template: Optional[str] 
             return False, "expired"
         return False, "ended"
     start_role = claims.start_role
-    current = [canonical_role(row["staff_role"])]
+    current = [row["staff_role"]]
     hint = (role_hint or "").strip()
     if hint:
-        current.append(canonical_role(hint))
+        current.append(hint)
     reason: Optional[str] = None
     if not row["staff_active"]:
         reason = "staff_inactive"

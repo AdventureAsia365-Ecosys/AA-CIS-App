@@ -18,6 +18,7 @@ import { K, mono, ApiError, Badge, Button, ConfirmModal, Drawer, Spinner, apiGet
 import { AdminEdits, ProblemList, RewritePanel, TenantCopyNotice, type Editor } from "./SentenceActions";
 import { JudgeBreakdownPanel } from "./JudgeBreakdownPanel";
 import { SubjectLabelSection } from "./PieceLabel";
+import { can } from "@/lib/rbac";
 import { SEVERITY_TONE, worstOf } from "@/lib/gateSeverity";
 import { ReasonTag, WritingReasonChips } from "../../_components/WritingReasonChips";
 import { preselect, type ReasonCode } from "@/lib/writingReasons";
@@ -101,7 +102,8 @@ export default function TourVersionDrawer({ id, onClose }: { id: string; onClose
   const { gateLabel, sectionLabel } = useCqText();
   const toast = useToast();
   const qc = useQueryClient();
-  const { isAdmin } = useAdminIdentity();
+  const { isAdmin, role } = useAdminIdentity();
+  const canLabel = can(role, "quality.write");   // AA-1035: customer_success reads its book's versions without labels
   const { data: v, isError, error } = useQuery({
     queryKey: ["cq-version", id],
     queryFn: () => apiGet<TourVersionDetail>(`/api/admin/content-quality/tour-versions/${id}`, { admin: true }).then((d) => withDefaults(d, t("needsNewerApi"))),
@@ -279,7 +281,9 @@ export default function TourVersionDrawer({ id, onClose }: { id: string; onClose
           )}
 
           {/* AA-923 WM-32 — the human label of this version (same criteria as a T9 piece) */}
-          <Section title={t("labelSection")}><SubjectLabelSection subjectType="t2_version" subjectId={String(v.id)} /></Section>
+          {canLabel && (
+            <Section title={t("labelSection")}><SubjectLabelSection subjectType="t2_version" subjectId={String(v.id)} /></Section>
+          )}
 
           <Section title={t("escalations", v.reviews.length)}>
             {v.reviews.length === 0 ? <div style={{ fontSize: 12, color: K.muted }}>{t("noneDot")}</div> : <pre style={pre}>{JSON.stringify(v.reviews, null, 2)}</pre>}

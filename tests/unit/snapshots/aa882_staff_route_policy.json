@@ -220,11 +220,11 @@
     "module": "api.routers.admin_llm_route"
   },
   "GET /admin/content-quality/pieces": {
-    "capability": "tenant_content.read",
+    "capability": "tenant_content.read|tenant_content.book.read",
     "module": "api.routers.admin_content_quality"
   },
   "GET /admin/content-quality/pieces/{piece_id}": {
-    "capability": "tenant_content.read",
+    "capability": "tenant_content.read|tenant_content.book.read",
     "module": "api.routers.admin_content_quality"
   },
   "GET /admin/content-quality/pieces/{piece_id}/label": {
@@ -244,15 +244,15 @@
     "module": "api.routers.admin_content_quality"
   },
   "GET /admin/content-quality/stats": {
-    "capability": "tenant_content.read",
+    "capability": "tenant_content.read|tenant_content.book.read",
     "module": "api.routers.admin_content_quality"
   },
   "GET /admin/content-quality/tour-versions": {
-    "capability": "tenant_content.read",
+    "capability": "tenant_content.read|tenant_content.book.read",
     "module": "api.routers.admin_content_quality"
   },
   "GET /admin/content-quality/tour-versions/{version_id}": {
-    "capability": "tenant_content.read",
+    "capability": "tenant_content.read|tenant_content.book.read",
     "module": "api.routers.admin_content_quality"
   },
   "GET /admin/content-quality/tour-versions/{version_id}/label": {
@@ -568,35 +568,35 @@
     "module": "api.routers.admin_platform_ops"
   },
   "GET /admin/platform/crm/agencies": {
-    "capability": "tenant.read",
+    "capability": "tenant.read|tenant.book.read",
     "module": "api.routers.admin_crm_console"
   },
   "GET /admin/platform/crm/agencies/{tenant_id}": {
-    "capability": "tenant.read",
+    "capability": "tenant.read|tenant.book.read",
     "module": "api.routers.admin_crm_console"
   },
   "GET /admin/platform/crm/agencies/{tenant_id}/data-requests": {
-    "capability": "tenant.read",
+    "capability": "tenant.read|tenant.book.read",
     "module": "api.routers.admin_crm_console"
   },
   "GET /admin/platform/crm/agencies/{tenant_id}/entitlements": {
-    "capability": "tenant.read",
+    "capability": "tenant.read|tenant.book.account.read",
     "module": "api.routers.admin_crm_console"
   },
   "GET /admin/platform/crm/agencies/{tenant_id}/jobs": {
-    "capability": "tenant.read",
+    "capability": "tenant.read|tenant.book.read",
     "module": "api.routers.admin_crm_console"
   },
   "GET /admin/platform/crm/agencies/{tenant_id}/members": {
-    "capability": "tenant.read",
+    "capability": "tenant.read|tenant.book.read",
     "module": "api.routers.admin_crm_console"
   },
   "GET /admin/platform/crm/agencies/{tenant_id}/usage": {
-    "capability": "tenant.read",
+    "capability": "tenant.read|tenant.book.account.read",
     "module": "api.routers.admin_crm_console"
   },
   "GET /admin/platform/crm/console": {
-    "capability": "tenant.read",
+    "capability": "tenant.read|tenant.book.read",
     "module": "api.routers.admin_crm_console"
   },
   "GET /admin/platform/staff": {
