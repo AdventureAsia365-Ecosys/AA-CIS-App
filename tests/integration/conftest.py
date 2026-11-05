@@ -458,10 +458,10 @@ def _apply_schema(conn):
         # the catalog recipe over 253's _live_tour (skipped above). test_aa1029_migration_365 applies 253 ... 289 + 365
         # the DB Migrate way on the RDS-like state and rolls back.
         and not f.startswith('365')
-        # AA-1037 R4 (S269): 381 creates catalog.v_tenant_billing_v1 (Booking's agency invoice read) through the
-        # catalog recipe (needs 245's owners and 357's column grants). test_aa1037_migration_381 applies 357 + 381 the
+        # AA-1037 R4 (S269): 377 creates catalog.v_tenant_billing_v1 (Booking's agency invoice read) through the
+        # catalog recipe (needs 245's owners and 357's column grants). test_aa1037_migration_377 applies 357 + 377 the
         # DB Migrate way on the RDS-like state and undoes both at teardown.
-        and not f.startswith('381')
+        and not f.startswith('377')
     ])
 
     for mf in migration_files:

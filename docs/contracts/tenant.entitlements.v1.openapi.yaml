@@ -49,7 +49,7 @@ info:
     never gives one (CIS refuses such a plan feature), and a tie between plan rows is broken by plan_key, so the
     served value is deterministic.
     1.3 (AA-1037 R4 slice 1, additive; no HTTP shape change): a third view part for Booking, catalog.v_tenant_billing_v1
-    (CIS 381, SELECT to role booking only), for the agency invoices Booking issues (root ADR 0019 d9): one row per
+    (CIS 377, SELECT to role booking only), for the agency invoices Booking issues (root ADR 0019 d9): one row per
     tenant and subscription (NULL subscription columns for a tenant without one) with tenant_id, name, kind, the
     bill-to fields (legal_entity_name, tax_id, billing_email, billing_address, billing_country; personal data,
     snapshotted on an issued invoice only), product, plan_key, plan_name, price_usd_monthly, price_unit,

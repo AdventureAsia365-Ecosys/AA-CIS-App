@@ -1,4 +1,4 @@
--- Migration 381: AA-1037 R4 slice 1 (root ADR 0019 d1, d9) — Booking's read of what it invoices an agency for: the
+-- Migration 377: AA-1037 R4 slice 1 (root ADR 0019 d1, d9) — Booking's read of what it invoices an agency for: the
 -- contract view catalog.v_tenant_billing_v1 (tenant.entitlements.v1 1.3, the billing part for Booking).
 --
 -- Why. ADR 0019 d9 ("every invoice is issued from Booking"): the Booking job bk_saas_invoice_draft drafts the software
@@ -17,7 +17,7 @@
 --      tenant without a subscription has one row with NULL subscription columns): tenant_id, name, kind, the bill-to
 --      fields, product, plan_key, plan_name, price_usd_monthly, price_unit, seats_included, price_extra_seat_usd,
 --      seats, subscription_status. SELECT to booking only. Contract v1: columns are only appended.
---   3. Register 381.
+--   3. Register 377.
 --
 -- Personal data (DM-6.1): the bill-to columns are tagged on shared.tenants (pii:name, pii:government_id,
 -- pii:contact, pii:address, CIS 354); Booking keeps them only as the issued invoice's snapshot
@@ -40,11 +40,12 @@
 -- Recipe. The X1 S22 catalog recipe (as 323 / 329 / 341 / 347 / 357): GRANT CREATE ON SCHEMA catalog TO
 -- catalog_owner; SET LOCAL ROLE catalog_owner; the view DDL; SET LOCAL ROLE cis_owner; REVOKE CREATE. DB Migrate runs
 -- the file as cis_owner (login db_migrator). Never RESET ROLE, no SECURITY DEFINER, no role DDL, no dynamic SQL. The
--- conftest replay skips this file (catalog recipe, 245's owners); tests/integration/test_aa1037_migration_381.py
+-- conftest replay skips this file (catalog recipe, 245's owners); tests/integration/test_aa1037_migration_377.py
 -- applies it the DB Migrate way and undoes it.
 --
--- Number. 375 is the highest on main (05/11) and the S269 lanes took 376-380. If the owner main max + 1 differs at
--- merge, renumber (git grep '381_' and '381' in this file, the test, conftest and the AA-Booking test stub).
+-- Number. 376 is the highest on main (05/11, after 375 and 376 merged); written as 381, renumbered to 377. If the owner
+-- main max + 1 differs at merge, renumber (git grep '377_' and '377' in this file, the test, conftest and the
+-- AA-Booking test stub).
 --
 -- Locks. Column GRANTs and one CREATE VIEW. lock_timeout 5s, statement_timeout 1min. Idempotent (CREATE OR REPLACE
 -- with the same column list, re-runnable grants, ON CONFLICT DO NOTHING), one transaction, self-registering.
@@ -61,10 +62,10 @@ SET LOCAL statement_timeout = '1min';
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM shared.schema_versions WHERE version = '357') THEN
-        RAISE EXCEPTION 'migration 381: apply 357 (catalog.v_tenant_account_v1) first';
+        RAISE EXCEPTION 'migration 377: apply 357 (catalog.v_tenant_account_v1) first';
     END IF;
     IF (SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = 'catalog') <> 'cis_owner' THEN
-        RAISE EXCEPTION 'migration 381: schema catalog is not owned by cis_owner (apply 245 first)';
+        RAISE EXCEPTION 'migration 377: schema catalog is not owned by cis_owner (apply 245 first)';
     END IF;
 END $$;
 
@@ -102,7 +103,7 @@ SELECT t.tenant_id,
   LEFT JOIN shared.plan p ON p.plan_key = s.plan_key;
 
 COMMENT ON VIEW catalog.v_tenant_billing_v1 IS
-    'AA-1037 R4 (381, contract tenant.entitlements.v1 1.3, root ADR 0019 d1 / d9): what AA-Booking invoices an agency '
+    'AA-1037 R4 (377, contract tenant.entitlements.v1 1.3, root ADR 0019 d1 / d9): what AA-Booking invoices an agency '
     'for: one row per tenant and subscription (NULL subscription columns for a tenant without one) with the plan''s '
     'monthly USD price, unit, included seats and extra-seat price, the seats and the subscription status, and the '
     'bill-to fields CIS holds (snapshotted on an issued invoice). Booking only. Contract v1: columns are only appended.';
@@ -112,7 +113,7 @@ GRANT SELECT ON catalog.v_tenant_billing_v1 TO booking;
 -- ── Closing check as catalog_owner: the view answers ─────────────────────────────────────────────────────────────
 DO $$
 BEGIN
-    RAISE NOTICE 'migration 381: as catalog_owner, % row(s), % live subscription(s)',
+    RAISE NOTICE 'migration 377: as catalog_owner, % row(s), % live subscription(s)',
         (SELECT count(*) FROM catalog.v_tenant_billing_v1),
         (SELECT count(*) FROM catalog.v_tenant_billing_v1 WHERE subscription_status IN ('active', 'past_due'));
 END $$;
@@ -129,19 +130,19 @@ DECLARE
     cols text;
 BEGIN
     IF (SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid = v::regclass) <> 'catalog_owner' THEN
-        RAISE EXCEPTION 'migration 381: % is not catalog_owner''s', v;
+        RAISE EXCEPTION 'migration 377: % is not catalog_owner''s', v;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_class WHERE oid = v::regclass AND 'security_barrier=true' = ANY(reloptions)) THEN
-        RAISE EXCEPTION 'migration 381: % is not security_barrier', v;
+        RAISE EXCEPTION 'migration 377: % is not security_barrier', v;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'booking')
        AND NOT pg_catalog.has_table_privilege('booking', v, 'SELECT') THEN
-        RAISE EXCEPTION 'migration 381: booking cannot read %', v;
+        RAISE EXCEPTION 'migration 377: booking cannot read %', v;
     END IF;
     FOREACH r IN ARRAY ARRAY['tripplanner', 'aa_app_user', 'cis_app', 'crm_app'] LOOP
         IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = r)
            AND pg_catalog.has_table_privilege(r, v, 'SELECT') THEN
-            RAISE EXCEPTION 'migration 381: % can read % (booking only)', r, v;
+            RAISE EXCEPTION 'migration 377: % can read % (booking only)', r, v;
         END IF;
     END LOOP;
     SELECT string_agg(a.attname || ' ' || format_type(a.atttypid, a.atttypmod), ', ' ORDER BY a.attnum) INTO cols
@@ -151,31 +152,31 @@ BEGIN
                              'plan_key text, plan_name text, price_usd_monthly numeric(10,2), price_unit text, '
                              'seats_included integer, price_extra_seat_usd numeric(10,2), seats integer, '
                              'subscription_status text' THEN
-        RAISE EXCEPTION 'migration 381: % columns are %', v, cols;
+        RAISE EXCEPTION 'migration 377: % columns are %', v, cols;
     END IF;
     FOREACH t IN ARRAY ARRAY['shared.tenants', 'shared.tenant_subscription', 'shared.plan'] LOOP
         IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'booking')
            AND (pg_catalog.has_any_column_privilege('booking', t, 'SELECT')
                 OR pg_catalog.has_any_column_privilege('booking', t, 'UPDATE')) THEN
-            RAISE EXCEPTION 'migration 381: booking can read or change % directly', t;
+            RAISE EXCEPTION 'migration 377: booking can read or change % directly', t;
         END IF;
         IF pg_catalog.has_table_privilege('catalog_owner', t, 'SELECT')
            OR pg_catalog.has_any_column_privilege('catalog_owner', t, 'INSERT')
            OR pg_catalog.has_any_column_privilege('catalog_owner', t, 'UPDATE')
            OR pg_catalog.has_table_privilege('catalog_owner', t, 'DELETE') THEN
-            RAISE EXCEPTION 'migration 381: catalog_owner has more than column SELECT on %', t;
+            RAISE EXCEPTION 'migration 377: catalog_owner has more than column SELECT on %', t;
         END IF;
     END LOOP;
     IF pg_catalog.has_column_privilege('catalog_owner', 'shared.tenant_subscription', 'billing_ref', 'SELECT') THEN
-        RAISE EXCEPTION 'migration 381: catalog_owner reads tenant_subscription.billing_ref';
+        RAISE EXCEPTION 'migration 377: catalog_owner reads tenant_subscription.billing_ref';
     END IF;
     IF pg_catalog.has_schema_privilege('catalog_owner', 'catalog', 'CREATE') THEN
-        RAISE EXCEPTION 'migration 381: catalog_owner still has CREATE on schema catalog';
+        RAISE EXCEPTION 'migration 377: catalog_owner still has CREATE on schema catalog';
     END IF;
 END $$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('381', now(), 'AA-1037 R4: catalog.v_tenant_billing_v1 (subscriptions, plan prices, bill-to) for the Booking '
+VALUES ('377', now(), 'AA-1037 R4: catalog.v_tenant_billing_v1 (subscriptions, plan prices, bill-to) for the Booking '
                       'agency invoices; column SELECT for catalog_owner on tenants, tenant_subscription, plan')
 ON CONFLICT (version) DO NOTHING;
 

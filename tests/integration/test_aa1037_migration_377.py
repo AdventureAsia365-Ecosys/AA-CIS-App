@@ -1,10 +1,10 @@
-"""AA-1037 R4 slice 1 (S269) — migration 381: catalog.v_tenant_billing_v1, Booking's read of the subscriptions, plan
+"""AA-1037 R4 slice 1 (S269) — migration 377: catalog.v_tenant_billing_v1, Booking's read of the subscriptions, plan
 prices and bill-to fields it invoices an agency for (root ADR 0019 d9), applied the way DB Migrate applies a cis/
 file since X1 S22.
 
-conftest skips 357 and 381 in the replay (catalog recipe, 245's owners). This module builds on
+conftest skips 357 and 377 in the replay (catalog recipe, 245's owners). This module builds on
 test_aa860_migration_246's module fixture (Dev after 244 + 245, db_migrator with rl-002's memberships), applies 357 and
-381 as db_migrator under the live-owner switch (errors NOT swallowed), 381 twice. Teardown drops both views and revokes
+377 as db_migrator under the live-owner switch (errors NOT swallowed), 377 twice. Teardown drops both views and revokes
 the grants, so later modules see the replay state.
 
   * the migration: registered once; the exact columns and types; owner catalog_owner, security_barrier, booking only;
@@ -30,9 +30,9 @@ from test_aa860_migration_245 import rds_like_245  # noqa: E402,F401  (module fi
 from test_aa860_migration_246 import db_migrator_login  # noqa: E402,F401  (module fixture: db_migrator, 246)
 
 HERE = os.path.dirname(__file__)
-M381 = os.path.join(HERE, "..", "..", "api", "migrations", "381_tenant_billing_catalog_view.sql")
+M377 = os.path.join(HERE, "..", "..", "api", "migrations", "377_tenant_billing_catalog_view.sql")
 VIEW = "catalog.v_tenant_billing_v1"
-# Copied verbatim into AA-Booking backend/tests/integration/test_aa1037_agency_billing.py (CIS_381_COLUMNS).
+# Copied verbatim into AA-Booking backend/tests/integration/test_aa1037_agency_billing.py (CIS_377_COLUMNS).
 COLUMNS = (
     "tenant_id uuid, name text, kind text, legal_entity_name text, tax_id text, billing_email text, "
     "billing_address text, billing_country text, product text, plan_key text, plan_name text, "
@@ -52,29 +52,29 @@ BK_BILL_TO_SQL = (f"SELECT legal_entity_name, tax_id, billing_email, billing_add
                   "WHERE tenant_id = %s::uuid LIMIT 1")
 
 
-def undo_381(a):
+def undo_377(a):
     a.execute(f"DROP VIEW IF EXISTS {VIEW}")
     a.execute(f"REVOKE SELECT ({', '.join(TENANT_COLUMNS)}) ON shared.tenants FROM catalog_owner")
     a.execute(f"REVOKE SELECT ({', '.join(SUB_COLUMNS)}) ON shared.tenant_subscription FROM catalog_owner")
     a.execute(f"REVOKE SELECT ({', '.join(PLAN_COLUMNS)}) ON shared.plan FROM catalog_owner")
-    a.execute("DELETE FROM shared.schema_versions WHERE version = '381'")
+    a.execute("DELETE FROM shared.schema_versions WHERE version = '377'")
     a.execute("REVOKE CREATE ON SCHEMA catalog FROM catalog_owner")
 
 
 @pytest.fixture(scope="module", autouse=True)
-def applied_381(db_migrator_login):  # noqa: F811
+def applied_377(db_migrator_login):  # noqa: F811
     admin = t245._connect()
     admin.autocommit = True
     a = admin.cursor()
     try:
-        undo_381(a)
+        undo_377(a)
         t357.undo_357(a)
         t323._apply(t357.M357)
-        t323._apply(M381)
-        t323._apply(M381)                                     # idempotent re-run
+        t323._apply(M377)
+        t323._apply(M377)                                     # idempotent re-run
         yield
     finally:
-        undo_381(a)
+        undo_377(a)
         t357.undo_357(a)
         admin.close()
 
@@ -100,13 +100,13 @@ def _tenant(cur, name):
     tid = uuid.uuid4()
     cur.execute("INSERT INTO shared.tenants (tenant_id, name, slug, plan_tier, posts_per_week, rate_limit_rpm, "
                 "is_active, legal_entity_name, tax_id, billing_country) VALUES (%s, %s, %s, 'starter'::plan_tier_enum, "
-                "3, 60, true, %s, 'TX-381', 'TH')",
-                (str(tid), name, f"zz381-{tid.hex[:12]}", f"{name} Co"))
+                "3, 60, true, %s, 'TX-377', 'TH')",
+                (str(tid), name, f"zz377-{tid.hex[:12]}", f"{name} Co"))
     return str(tid)
 
 
 def test_registered_once(cur):
-    cur.execute("SELECT count(*) AS n FROM shared.schema_versions WHERE version = '381'")
+    cur.execute("SELECT count(*) AS n FROM shared.schema_versions WHERE version = '377'")
     assert cur.fetchone()[0] == 1
 
 
@@ -152,7 +152,7 @@ def test_rows_per_subscription_and_booking_reads(cur):
     assert rows and all(r["product"] for r in rows)
     content = next(r for r in rows if r["product"] == "content")
     assert content["plan_key"].startswith("content.") and content["subscription_status"] in ("active", "trialing")
-    assert content["legal_entity_name"] == "Zephyr Trails synthetic Co" and content["tax_id"] == "TX-381"
+    assert content["legal_entity_name"] == "Zephyr Trails synthetic Co" and content["tax_id"] == "TX-377"
     lone = _rows(cur, f"SELECT * FROM {VIEW} WHERE tenant_id = %s::uuid", bare)
     assert len(lone) == 1 and lone[0]["product"] is None and lone[0]["subscription_status"] is None
     subs = _rows(cur, BK_SUBS_SQL, ["active", "past_due", "trialing"])
