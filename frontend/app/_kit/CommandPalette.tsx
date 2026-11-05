@@ -20,7 +20,7 @@ import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Search, FileText, Users, ListChecks, CornerDownLeft } from "lucide-react";
 import { K, RADIUS, sans, serif, alpha } from "./core/tokens";
-import { allEntries, useNavLabel, type NavEntry } from "./adminNav";
+import { allEntries, followExternal, useNavLabel, type NavEntry } from "./adminNav";
 import { useT } from "./core/useI18n";
 import { SHELL_MESSAGES } from "./shell.messages";
 import { useAdminIdentity } from "./useAdminIdentity";
@@ -33,7 +33,7 @@ interface JobHit { id: string; kind: string; status: string; created_at: string 
 interface SearchResult { tours: TourHit[]; tenants: TenantHit[]; jobs: JobHit[]; }
 
 type Row =
-  | { kind: "page"; label: string; href: string; icon: React.ReactNode }
+  | { kind: "page"; label: string; href: string; icon: React.ReactNode; external?: boolean }
   | { kind: "tour"; label: string; sub: string; href: string }
   | { kind: "tenant"; label: string; sub: string; href: string }
   | { kind: "job"; label: string; sub: string; href: string };
@@ -83,7 +83,7 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
       ? allEntries(role).filter((e) => e.label.toLowerCase().includes(q) || navLabel(e.label).toLowerCase().includes(q))
       : [];
     const pages: Row[] = pageEntries.map((e) => ({
-      kind: "page" as const, label: navLabel(e.label), href: e.href, icon: e.icon,
+      kind: "page" as const, label: navLabel(e.label), href: e.href, icon: e.icon, ...(e.external ? { external: true } : {}),
     }));
     const tours: Row[] = (data?.tours ?? []).map((tr) => ({
       kind: "tour" as const,
@@ -119,6 +119,8 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
   function activate(row: Row | undefined) {
     if (!row) return;
     onClose();
+    // AA-1037: a Trade entry is a page of Booking admin: same tab, full page load (not the Next router).
+    if (row.kind === "page" && followExternal(row)) return;
     router.push(row.href);
   }
 

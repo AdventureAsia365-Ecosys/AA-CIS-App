@@ -2,8 +2,8 @@
 // AA-994 — the admin navigation labels (lib/adminIa.ts groups and entries; BottomNav), English and Vietnamese.
 // The key IS the English label the nav model carries (lib/adminIa.ts stays English data, matched by tests and the
 // command palette), so `useNavLabel()` (adminNav.tsx) maps any nav label to the UI language; an unknown label is
-// shown as is. AA-1039 (S266): the seven groups of root ADR 0019 d13; lib/adminIa.test.mjs checks every label of the
-// model has a row here.
+// shown as is. AA-1039 (S266): the seven groups of root ADR 0019 d13, plus Trade (AA-1037, d9); lib/adminIa.test.mjs
+// checks every label of the model has a row here.
 
 import { defineMessages } from "./core/i18n";
 
@@ -16,6 +16,7 @@ export const NAV_MESSAGES = defineMessages(
     "Tenant content QA": "Tenant content QA",
     "AI & spend": "AI & spend",
     "Writing Lab": "Writing Lab",
+    "Trade": "Trade",
     "Platform": "Platform",
     // Home
     "Overview": "Overview",
@@ -57,6 +58,11 @@ export const NAV_MESSAGES = defineMessages(
     "Stages": "Stages",
     "Writing memory": "Writing memory",
     "Jev Decisions": "Jev Decisions",
+    // Trade (AA-1037, root ADR 0019 d9): pages of Booking admin
+    "Booking admin": "Booking admin",
+    "Agency billing": "Agency billing",
+    "Agency tiers": "Agency tiers",
+    "B2B desk": "B2B desk",
     // Platform
     "Staff & access": "Staff & access",
     "Audit log": "Audit log",
@@ -78,6 +84,7 @@ export const NAV_MESSAGES = defineMessages(
     "Tenant content QA": "Kiểm nội dung tenant",
     "AI & spend": "AI & chi phí",
     "Writing Lab": "Phòng thử viết",
+    "Trade": "Thương mại",
     "Platform": "Nền tảng",
     "Overview": "Tổng quan",
     "App health": "Sức khoẻ ứng dụng",
@@ -113,6 +120,10 @@ export const NAV_MESSAGES = defineMessages(
     "Stages": "Các bước",
     "Writing memory": "Bộ nhớ viết",
     "Jev Decisions": "Quyết định Jev",
+    "Booking admin": "Quản trị Booking",
+    "Agency billing": "Hoá đơn đại lý",
+    "Agency tiers": "Hạng đại lý",
+    "B2B desk": "Bàn B2B",
     "Staff & access": "Nhân sự & quyền",
     "Audit log": "Nhật ký kiểm tra",
     "Jobs": "Job",

@@ -1,6 +1,6 @@
 // frontend/lib/adminIa.test.mjs
 // AA-1039 R6 slice 1 (S266) — the CIS admin information architecture (lib/adminIa.ts, root ADR 0019 d13). Checks:
-//   1. the seven groups, in order, and unique hrefs;
+//   1. the seven groups of d13 plus Trade (d9, AA-1037), in order, and unique hrefs;
 //   2. every admin page URL the S265 navigation linked still opens a page after the moves (no page dropped without a
 //      redirect), and an admin may open it;
 //   3. every nav item points at a real page the PAGE_RULES allow, never at a moved (old) URL;
@@ -16,6 +16,9 @@
 //      UI kit tabs (UI kit a Platform page), SEO Intelligence's Spend tab folded into Spend › DataForSEO;
 //  12. AA-1039 R6 rest (tech lead, option A): Place cards is an AA Catalogue route with the Cards tab's roles; nobody
 //      gains or loses access, the old tab URLs move there in one hop.
+//  13. AA-1037 (root ADR 0019 d9 "Screens now"): the Trade group opens Booking admin pages through the app registry
+//      (external, same tab, never active), shown to billing.read / tenant.book.account.read; the Tenant 360 "Open in
+//      Booking" deep link.
 // Run: npm run test:unit.
 
 import assert from "node:assert/strict";
@@ -28,7 +31,10 @@ import {
   AA_INTERNAL_TENANT_ID, ADMIN_GROUP_LABELS, ADMIN_IA, ADMIN_ROUTE_MOVES, PRE_R6_ADMIN_ROUTES, adminIaRedirects,
   legacyTenantLinkTarget, resolveAdminRoute, tenant360Href,
 } from "./adminIa.ts";
-import { API_WRITE_RULES, PAGE_RULES, STAFF_ROLES, canReadAdminPath, canSeePage, canWriteAdminPath, pageRule } from "./rbac.ts";
+import {
+  API_WRITE_RULES, PAGE_RULES, STAFF_ROLES, can, canReadAdminPath, canSeeNavItem, canSeePage, canWriteAdminPath, pageRule,
+} from "./rbac.ts";
+import { BOOKING_ADMIN_URL, appPageUrl, bookingAgencyInvoicesUrl } from "./apps.ts";
 
 const FRONTEND = fileURLToPath(new URL("..", import.meta.url));
 const APP = join(FRONTEND, "app");
@@ -51,10 +57,15 @@ function pageExists(url) {
 
 const items = ADMIN_IA.flatMap((g) => g.items);
 const visible = items.filter((i) => !i.hidden);
+// CIS pages (the Trade group's items are pages of another app: test 13)
+const visibleCis = visible.filter((i) => !i.external);
 
-test("1. seven groups in the ADR 0019 d13 order, every href once", () => {
+test("1. the seven ADR 0019 d13 groups in order, plus Trade (d9) before Platform, every href once", () => {
   assert.deepEqual(ADMIN_IA.map((g) => g.label), [...ADMIN_GROUP_LABELS]);
-  assert.equal(ADMIN_IA.length, 7);
+  // AA-1037: d9 "Screens now" adds the eighth group, Trade, to the seven of d13.
+  assert.equal(ADMIN_IA.length, 8);
+  assert.deepEqual(ADMIN_IA.map((g) => g.label).filter((l) => l !== "Trade"),
+    ["Home", "Tenants", "AA Catalogue", "Tenant content QA", "AI & spend", "Writing Lab", "Platform"]);
   const hrefs = items.map((i) => i.href);
   assert.deepEqual(hrefs.filter((h, i) => hrefs.indexOf(h) !== i), [], "duplicate hrefs");
   for (const g of ADMIN_IA) assert.ok(g.items.some((i) => !i.hidden), `${g.label} has a visible item`);
@@ -73,7 +84,7 @@ test("2. every route the S265 nav linked still resolves to a page an admin may o
 
 test("3. nav items point at real pages the PAGE_RULES allow, never at a moved URL", () => {
   const sources = new Set(ADMIN_ROUTE_MOVES.filter((m) => !m.query).map((m) => m.from));
-  for (const it of visible) {
+  for (const it of visibleCis) {
     assert.ok(pageExists(it.href), `${it.label}: ${it.href} has a page`);
     assert.ok(canSeePage("admin", it.href), `${it.label}: an admin may open ${it.href}`);
     assert.ok(!sources.has(it.href), `${it.label}: ${it.href} is an old URL`);
@@ -117,7 +128,7 @@ const UNLISTED = new Set([
 ]);
 
 test("5. every admin page is in the nav or reached from another page", () => {
-  const navHrefs = new Set(visible.map((i) => i.href));
+  const navHrefs = new Set(visibleCis.map((i) => i.href));
   const pages = [];
   const walk = (dir, url) => {
     for (const d of readdirSync(dir, { withFileTypes: true })) {
@@ -181,12 +192,12 @@ test("8. every nav label has an English and a Vietnamese row", () => {
 
 test("9. a content worker sees the AA Catalogue group only; the viewer sees its read pages", () => {
   for (const role of ["content"]) {
-    const groups = ADMIN_IA.filter((g) => g.items.some((i) => !i.hidden && canSeePage(role, i.href))).map((g) => g.label);
+    const groups = ADMIN_IA.filter((g) => g.items.some((i) => !i.hidden && canSeeNavItem(role, i))).map((g) => g.label);
     assert.deepEqual(groups, ["AA Catalogue"], role);
   }
   // AA-1035: the reviewer alias is gone (CIS 375): the value opens no page at all
-  assert.deepEqual(visible.filter((i) => canSeePage("reviewer", i.href)), []);
-  const viewer = visible.filter((i) => canSeePage("viewer", i.href)).map((i) => i.href);
+  assert.deepEqual(visible.filter((i) => canSeeNavItem("reviewer", i)), []);
+  const viewer = visible.filter((i) => canSeeNavItem("viewer", i)).map((i) => i.href);
   assert.ok(viewer.includes("/admin/review") && viewer.includes("/admin/settings"));
   assert.ok(!viewer.includes("/admin/upload"), "the viewer never gets the upload page");
 });
@@ -319,4 +330,54 @@ test("12. Place cards (option A): its own route, the Cards tab's roles, nobody g
   const quality = read("app/admin/tenant-qa/quality/page.tsx");
   assert.doesNotMatch(quality, /key: "cards"|PlaceCardsTab|place-cards/);
   assert.match(read("app/admin/places/cards/page.tsx"), /\/api\/admin\/content-quality\/place-cards/);
+});
+
+test("13. Trade (AA-1037, ADR 0019 d9): Booking admin pages through the app registry, the billing roles, the deep link", () => {
+  const trade = ADMIN_IA.find((g) => g.label === "Trade");
+  assert.ok(trade, "the Trade group exists");
+  assert.deepEqual(trade.items.map((i) => [i.label, i.href]), [
+    ["Booking admin", "/"], ["Agency billing", "/agency-billing"], ["Agency tiers", "/pricing/agency-tiers"],
+    ["B2B desk", "/b2b-desk"],
+  ]);
+  for (const it of trade.items) {
+    assert.equal(it.external, "booking", `${it.label} opens Booking admin`);
+    assert.ok(!it.hidden);
+    // built only through the registry: the Booking admin origin plus the item's path
+    assert.equal(appPageUrl("booking", it.href), it.href === "/" ? `${BOOKING_ADMIN_URL}/` : `${BOOKING_ADMIN_URL}${it.href}`);
+  }
+  // Only the Trade group is external; no CIS item names another app.
+  assert.deepEqual(items.filter((i) => i.external).map((i) => i.label), trade.items.map((i) => i.label));
+
+  // Who sees it: billing.read or tenant.book.account.read (the Tenant 360 › Billing roles), never the others.
+  const sees = STAFF_ROLES.filter((r) => trade.items.every((i) => canSeeNavItem(r, i)));
+  assert.deepEqual(sees, STAFF_ROLES.filter((r) => can(r, "billing.read") || can(r, "tenant.book.account.read")));
+  assert.deepEqual([...sees].sort(), ["admin", "customer_success", "finance"]);
+  for (const role of ["support", "viewer", "content", "content_lead", "tenant_qa", "ai_ops", "reviewer", "", null]) {
+    assert.ok(trade.items.every((i) => !canSeeNavItem(role, i)), String(role));
+  }
+  // An external item with no capabilities shows to nobody; a CIS item still follows its PAGE_RULE.
+  assert.equal(canSeeNavItem("admin", { href: "/x", external: "booking" }), false);
+  assert.equal(canSeeNavItem("admin", { href: "/admin/jobs" }), canSeePage("admin", "/admin/jobs"));
+
+  // The registry refuses anything that is not a path of the app (no open redirect through a nav entry).
+  for (const bad of ["https://elsewhere.example", "//elsewhere.example", "agency-billing", "/\\elsewhere", ""]) {
+    assert.throws(() => appPageUrl("booking", bad), /not an app path/, bad);
+  }
+
+  // Tenant 360 › Billing › "Open in Booking": Agency billing, Invoices tab, this tenant (the id is encoded).
+  const t = "11111111-2222-3333-4444-555555555555";
+  assert.equal(bookingAgencyInvoicesUrl(t), `${BOOKING_ADMIN_URL}/agency-billing?tab=invoices&tenant=${t}`);
+  assert.equal(bookingAgencyInvoicesUrl("a&b=c"), `${BOOKING_ADMIN_URL}/agency-billing?tab=invoices&tenant=a%26b%3Dc`);
+
+  // adminNav.tsx: external entries are built through the registry, never active, followed in the same tab.
+  const nav = read("app/_kit/adminNav.tsx");
+  assert.match(nav, /it\.external \? appPageUrl\(it\.external, it\.href\)/);
+  assert.match(nav, /canSeeNavItem\(role, n\)/);
+  assert.match(nav, /if \(entry\.external\) continue;/);
+  assert.match(nav, /window\.location\.assign\(entry\.href\)/);
+  assert.doesNotMatch(nav, /target="_blank"|window\.open\(/, "same tab");
+  assert.match(read("app/_kit/Sidebar.tsx"), /followExternal\(entry\)/);
+  assert.match(read("app/_kit/CommandPalette.tsx"), /followExternal\(row\)/);
+  // The Booking URL is built in lib/apps.ts only.
+  assert.doesNotMatch(read("app/admin/tenants/_components/Tenant360BookingBilling.tsx"), /agency-billing/);
 });

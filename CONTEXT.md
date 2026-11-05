@@ -84,7 +84,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     AA-577 `/docs`, `/redoc`, `/openapi.json` need the X-Admin-Secret header on ECS), `settings` (**Catalogue settings** since AA-1039 R6 rest:
     pipeline gates, the **AA house style** (Brand Identity editor of aa_internal), SEO config; the tenant row moved to
     its Tenant 360, the UI kit to `/admin/platform/ui-kit`). `run-health` was removed with N7/N8 (AA-603).
-  - Admin navigation: see **Admin console layout** below (AA-1039, seven groups). Admin-only items are hidden for
+  - Admin navigation: see **Admin console layout** below (AA-1039, seven groups; AA-1037 adds Trade). Admin-only items are hidden for
     other roles (same list as `lib/rbac.ts` PAGE_RULES, enforced by `proxy.ts`). The legacy `(internal)` route group
     (`/upload`, `/review`, `/catalog`, `/brand`) is deleted; those URLs and `/admin/brand`
     redirect in `next.config.ts` (AA-663).
@@ -2267,8 +2267,8 @@ shows only when the role may open its page).
 
 **Admin console layout (AA-883, S241 design option A; regrouped by AA-1039 R6 slice 1, S266, root ADR 0019 d13).**
 One console (`aa-cis-frontend`). The nav model is plain data in `frontend/lib/adminIa.ts` (`ADMIN_IA`; icons added
-in `frontend/app/_kit/adminNav.tsx`), seven groups, each folding on its own (kit NavGroup, S264; no sections, no
-footer Settings entry):
+in `frontend/app/_kit/adminNav.tsx`), seven groups (d13) plus Trade (d9, AA-1037), each folding on its own (kit
+NavGroup, S264; no sections, no footer Settings entry):
 - **Home** — Overview, App health (`/admin/platform/apps`), Reports, Data coverage;
 - **Tenants** — Directory (`/admin/tenants`, a row opens **Tenant 360**, a route since AA-1039 R6 rest:
   `/admin/tenants/<id>[?tab=cost]`, panel in `tenants/_components/TenantDetail.tsx`; an old `?tenant=<id>` link is
@@ -2289,6 +2289,9 @@ footer Settings entry):
   `GET /admin/writing-memory/lab/{writer}` over the existing learning tables, ids / labels / counts / hashes only, no
   new learning logic: S262 TL-11 freeze unchanged), Writing memory (`/admin/lab/writing-memory`, was
   `/admin/writing-memory`), Jev Decisions;
+- **Trade** (AA-1037, root ADR 0019 d9 "Screens now") — Booking admin, Agency billing, Agency tiers, B2B desk: pages of
+  AA-Booking's admin (`external` items; the URL comes from `lib/apps.ts appPageUrl`; same tab, never the active item),
+  shown to `billing.read` or `tenant.book.account.read` (`lib/rbac.ts canSeeNavItem`); Booking checks its own grant;
 - **Platform** — Staff & access, Audit log, Jobs, Alert recipients, API Docs, Data model, Docs, UI kit.
 
 Moved pages answer **307** from their old URL with the query string kept (`ADMIN_ROUTE_MOVES`, served by
@@ -2680,7 +2683,12 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
   `TENANT_BILLING_TICK=off` stops it) writes a newer `paid_through` to the live subscriptions, moves `warn` -> account
   `past_due` + the bell `tenant.billing.overdue` (once a day; tenant, admin, finance), `past_due` -> `suspended` with
   `suspend_reason` `billing` (`tenant.billing.suspended`), and `ok` again -> back in service (only a billing suspension
-  is lifted). On Dev only `demo` tenants move. Fail-soft without the Booking view (`skipped`).
+  is lifted). On Dev only `demo` tenants move. Fail-soft without the Booking view (`skipped`). Tenant 360 › Billing
+  shows the same view row for one tenant above the usage meters (`GET /admin/tenants/{id}/booking-billing`,
+  `billing.tenant_snapshot`: status, overdue amount per currency, paid through, warn / suspend days, next to the
+  account and live subscriptions; read only, `available: false` without the view; the Billing tab's rule:
+  billing.read, or tenant.book.account.read on the own book) with "Open in Booking" (`lib/apps.ts
+  bookingAgencyInvoicesUrl`).
 - **No hard-coded plans**: `PLAN_LIMITS`, the ACPv1 quota ledger write (10/10/50, no reader) and the UI
   `PLAN_OPTIONS` / `PLAN_CHOICES` are gone; RPM per tier, the rewrite quota and the UI tier choices read the plans /
   entitlements (`useContentTiers`: the live public content plans).
