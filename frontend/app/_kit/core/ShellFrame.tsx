@@ -74,6 +74,8 @@ export interface ShellFrameProps {
   testId?: string;
   /** Extra data-* hooks on the frame (an app's existing CSS or tests). */
   frameProps?: Record<`data-${string}`, string | undefined>;
+  /** Extra data-* hooks on the shell's <main> (main="shell"). */
+  mainProps?: Record<`data-${string}`, string | undefined>;
 }
 
 const ShellContext = createContext<ShellControls | null>(null);
@@ -143,6 +145,7 @@ export function ShellFrame({
   style,
   testId,
   frameProps,
+  mainProps,
 }: ShellFrameProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -212,7 +215,7 @@ export function ShellFrame({
           {renderSlot(topbar, controls)}
           {renderSlot(banner, controls)}
           {main === "shell" ? (
-            <main data-kit-shell="main" id={mainId} style={{ ...mainBase, ...mainStyle }}>
+            <main {...mainProps} data-kit-shell="main" id={mainId} style={{ ...mainBase, ...mainStyle }}>
               {children}
             </main>
           ) : (

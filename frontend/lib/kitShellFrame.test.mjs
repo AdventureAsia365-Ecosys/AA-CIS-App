@@ -131,9 +131,9 @@ test("the server markup: frame hooks, sidebar wrapper, slot order, the slots get
 });
 
 test("main=shell renders one <main> with its id; main=page leaves the <main> to the page", () => {
-  const own = shell({ sidebar: h("nav"), mainId: "main", mainStyle: { padding: 20 } });
+  const own = shell({ sidebar: h("nav"), mainId: "main", mainStyle: { padding: 20 }, mainProps: { "data-pshell": "main" } });
   assert.equal((own.match(/<main /g) ?? []).length, 1);
-  assert.match(own, /<main data-kit-shell="main" id="main" style="[^"]*overflow-y:auto[^"]*padding:20px/);
+  assert.match(own, /<main data-pshell="main" data-kit-shell="main" id="main" style="[^"]*overflow-y:auto[^"]*padding:20px/);
   const page = shell({ sidebar: h("nav"), main: "page" }, h("main", { "data-kit-frame": "page" }, "x"));
   assert.equal((page.match(/<main /g) ?? []).length, 1);
   assert.ok(!page.includes('data-kit-shell="main"'));
