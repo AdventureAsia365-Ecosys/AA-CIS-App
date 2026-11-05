@@ -52,7 +52,9 @@ def test_the_invitation_routes_are_on_the_allow_list():
 
 def test_synthetic_sql_needs_an_explicit_true():
     # is_canary is nullable on Dev (migration 281): NULL must not count as synthetic.
-    assert e2e_staff.SYNTHETIC_TENANT_SQL == "SELECT is_canary IS TRUE FROM shared.tenants WHERE tenant_id = $1"
+    assert e2e_staff.SYNTHETIC_TENANT_SQL == (
+        "SELECT is_canary IS TRUE AND is_pilot IS NOT TRUE FROM shared.tenants WHERE tenant_id = $1"
+    )
 
 
 class _Val:

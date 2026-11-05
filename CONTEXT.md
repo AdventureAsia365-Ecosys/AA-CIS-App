@@ -1015,7 +1015,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `shared.llm_call_daily`), `retention_tenant_api_usage` (90 d, monthly rollup
     `shared.tenant_api_usage_monthly`), `retention_job` (succeeded 30 d; failed/cancelled/stopped_budget
     90 d), `retention_decision_log` (180 d = Jev `CACHE_MAX_AGE_DAYS`; rows with a human `outcome`
-    kept), `retention_cost_explorer_snapshot` (rows superseded by a newer fetch of the same day).
+    kept), `retention_cost_explorer_snapshot` (rows superseded by a newer fetch of the same day). The two
+    tenant-row kinds skip the pilot tenant (`NOT_PILOT`, AA-969 d16).
     Policies in `services/retention/policy.py`. Rollups are written before raw rows are deleted;
     batches of <= 5,000 rows by (ts, id) keyset, archived first to
     `s3://<bronze bucket>/archive/<table>/yyyy/mm/` (`shared/aws_client/bronze.py`) as gzipped JSONL (pyarrow is not a
@@ -2668,6 +2669,13 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
 - **Dev guard** (root ADR 0019 d16, `services/tenant_account/dev_guard.py`): on Dev (`ENVIRONMENT` exactly `dev`) a new
   tenant defaults to `demo` (synthetic) in `POST /admin/tenants` and the saga; an `agency` is refused unless the saga
   creates it as the one pilot (`pilot_weeks` 1-8). Existing rows keep their kind.
+- **Pilot protections** (AA-969 part 2, root ADR 0019 d16): clean-up never touches the pilot tenant. The retention
+  kinds of tenant rows (`retention_llm_call_log`, `retention_tenant_api_usage`) leave its rows out
+  (`services/retention/policy.py` `NOT_PILOT`; the rollups still count them), and the E2E identity's "synthetic
+  tenant" check (`api/core/e2e_staff.py`) is false for it whatever its canary flag. Not changed, with reasons in
+  `docs/implementation-notes/AA-969-l1-aa969-d16.md`: the A1-A3 waves (AA's own catalogue, not tenant data), the
+  tenant's own T2 / T7-T9 jobs, the ADR 0015 retirement propagation, `data_erasure` (approved DRY RUN process),
+  the platform retention kinds (`retention_job`, `retention_decision_log`, `retention_cost_explorer_snapshot`).
 
 Not yet: retiring `shared.tenant_ai_budget` into overrides, the billing tick (`past_due` -> `suspended` after the
 grace), moving the limiter onto the entitlement (it still reads `shared.tenants.rate_limit_rpm`, mirrored by CIS 356).
