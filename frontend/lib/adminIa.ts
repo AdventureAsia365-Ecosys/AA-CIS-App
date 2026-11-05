@@ -8,6 +8,15 @@
 // Visibility still follows lib/rbac.ts PAGE_RULES (an item shows only when the role may open its page). An item marked
 // `hidden` is a reserved slot: it is in the model (so its place is decided) but no sidebar, palette or breadcrumb shows
 // it until its page ships.
+//
+// AA-1037 (root ADR 0019 d9 "Screens now"): an eighth group, Trade, next to the seven of d13. Its items are `external`:
+// pages of AA-Booking's admin (same WORKFORCE sign-in), `href` being the path in that app; adminNav.tsx builds the URL
+// through the app registry (lib/apps.ts appPageUrl) and opens it in the same tab; an external item never matches the
+// current route. It has no CIS page rule, so it shows to a role holding one of its `capabilities` (lib/rbac.ts
+// canSeeNavItem); Booking checks its own grant (shared.staff_app_grant is not in the CIS session) and answers 403 to a
+// person without one.
+
+import type { Capability } from "./rbac";
 
 /** Icon keys; app/_kit/adminNav.tsx maps each to a lucide icon (TypeScript checks the map is complete). */
 export type NavIcon =
@@ -19,7 +28,8 @@ export type NavIcon =
   | "quality" | "trace" | "reviewLog" | "slate" | "compliance"
   | "aiGateway" | "spend" | "usage"
   | "lab" | "writingMemory" | "decisions"
-  | "staff" | "audit" | "jobs" | "alerts" | "apiDocs" | "dataModel" | "docs" | "uiKit";
+  | "staff" | "audit" | "jobs" | "alerts" | "apiDocs" | "dataModel" | "docs" | "uiKit"
+  | "bookingAdmin" | "agencyBilling" | "agencyTiers" | "b2bDesk";
 
 export interface IaItem {
   href: string;
@@ -29,6 +39,10 @@ export interface IaItem {
   also?: string[];
   /** A reserved slot: kept in the model, shown nowhere until its page ships. */
   hidden?: boolean;
+  /** AA-1037: a page of another app of the registry (lib/apps.ts AppId); `href` is its path in that app. */
+  external?: "booking";
+  /** AA-1037: an external item shows to a role holding any of these (it has no CIS page rule). */
+  capabilities?: readonly Capability[];
 }
 
 export interface IaGroup {
@@ -36,9 +50,14 @@ export interface IaGroup {
   items: IaItem[];
 }
 
-/** The seven groups in display order (root ADR 0019 d13). */
+/** AA-1037: who sees the Trade group: billing.read (admin, finance) or tenant.book.account.read (customer_success), the
+ *  roles that read Tenant 360 › Billing. Booking admin decides the rest from its own grant. */
+export const TRADE_CAPABILITIES: readonly Capability[] = ["billing.read", "tenant.book.account.read"];
+
+/** The groups in display order: the seven of root ADR 0019 d13, plus Trade (d9 "Screens now", AA-1037) before
+ *  Platform. */
 export const ADMIN_GROUP_LABELS = [
-  "Home", "Tenants", "AA Catalogue", "Tenant content QA", "AI & spend", "Writing Lab", "Platform",
+  "Home", "Tenants", "AA Catalogue", "Tenant content QA", "AI & spend", "Writing Lab", "Trade", "Platform",
 ] as const;
 
 export const ADMIN_IA: IaGroup[] = [
@@ -101,6 +120,16 @@ export const ADMIN_IA: IaGroup[] = [
     { href: "/admin/lab", label: "Stages", icon: "lab" },
     { href: "/admin/lab/writing-memory", label: "Writing memory", icon: "writingMemory" },
     { href: "/admin/decisions", label: "Jev Decisions", icon: "decisions" },
+  ] },
+  // AA-1037 (root ADR 0019 d9 "Screens now"): Booking admin's B2B screens, opened through the app registry (same tab).
+  // Merging them into this frontend is deferred to R8 (d9).
+  { label: "Trade", items: [
+    { href: "/", label: "Booking admin", icon: "bookingAdmin", external: "booking", capabilities: TRADE_CAPABILITIES },
+    { href: "/agency-billing", label: "Agency billing", icon: "agencyBilling", external: "booking",
+      capabilities: TRADE_CAPABILITIES },
+    { href: "/pricing/agency-tiers", label: "Agency tiers", icon: "agencyTiers", external: "booking",
+      capabilities: TRADE_CAPABILITIES },
+    { href: "/b2b-desk", label: "B2B desk", icon: "b2bDesk", external: "booking", capabilities: TRADE_CAPABILITIES },
   ] },
   { label: "Platform", items: [
     { href: "/admin/platform/staff", label: "Staff & access", icon: "staff" },

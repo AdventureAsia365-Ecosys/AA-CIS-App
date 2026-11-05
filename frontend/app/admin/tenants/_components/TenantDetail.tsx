@@ -23,6 +23,7 @@ import { Tenant360Markets } from "./Tenant360Markets";
 import { Tenant360VoiceMemory } from "./Tenant360VoiceMemory";
 import { Tenant360Members } from "./Tenant360Members";
 import { Tenant360Subscription } from "./Tenant360Subscription";
+import { Tenant360BookingBilling } from "./Tenant360BookingBilling";
 import { ViewAsStart } from "./ViewAsStart";
 import { fmtDailyPublishLimit } from "./tenant360";
 import { T360_WORDS_MESSAGES } from "./tenant360.messages";
@@ -586,6 +587,8 @@ export function TenantDetail({ tenant, onChanged }: {
       {tab === "api"      && <ApiTabContent      usage={data.api_usage} />}
       {tab === "brand"    && <BrandTabContent    rules={data.brand_rules} tenantId={tenantId} />}
       {tab === "social_content" && <SocialContentTabContent tenantId={tenantId} />}
+      {/* AA-1037 (root ADR 0019 d9): Booking's agency billing status above the AA-666 meters (not for AA itself) */}
+      {tab === "billing" && !isInternal && <Tenant360BookingBilling tenantId={tenantId} />}
       {tab === "billing"  && <BillingTabContent  tenantId={tenantId} />}
       {tab === "subscription" && <Tenant360Subscription tenantId={tenantId} />}
       {tab === "cost"     && <Tenant360Cost      tenantId={tenantId} />}

@@ -37883,6 +37883,80 @@
         ]
       }
     },
+    "/admin/tenants/{tenant_id}/booking-billing": {
+      "get": {
+        "description": "Tenant 360 › Billing › Booking invoices (root ADR 0019 d9 \"Screens now\"). Booking issues every agency invoice and\npublishes the agency's billing status in its contract view ``booking.v_tenant_billing_status`` (bk-042, SELECT\nto ``cis_app``); the hourly ``tenant_billing_tick`` moves the account from it. This read shows both sides: the\nview row (status, overdue invoices and amount per currency, paid through, the warn / suspend days; ``booking``\nnull when Booking has no row for the tenant) and the CIS account and live subscriptions. No invoice line, bill-to\nor person. ``available`` false when the view cannot be read (fail soft, like the tick).\n\nWho: the existing Billing tab's rule (POLICY ``_TENANT_BILLING_READ``): billing.read on every tenant (admin,\nfinance), tenant.book.account.read on the caller's book only (customer_success; require_tenant_scope).",
+        "operationId": "get_tenant_booking_billing_admin_tenants__tenant_id__booking_billing_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Tenant's agency billing status from AA-Booking (read only)",
+        "tags": [
+          "admin-tenant360"
+        ]
+      }
+    },
     "/admin/tenants/{tenant_id}/brand-identity": {
       "put": {
         "description": "Admin-side write for a SPECIFIC tenant's brand identity (AA-557 J.24) — same table, same\ncolumns, same NOT-scoped-by-brand_name \"1 active row per tenant\" invariant as\nadmin_pipeline.py's tenant-facing `update_brand_identity()` (kept identical deliberately, see\nthat function's own comment for why: avoids 2 simultaneously-active rows if brand_name\nchanges mid-flow). Prompt-injection sanitized the same way (AA-487's `shared.validators.\nprompt_sanitize`) since these free-text fields feed straight into every future rewrite for\nthis tenant, same as the tenant's own self-service path.",

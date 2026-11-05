@@ -25,12 +25,15 @@
 // AI & spend, Writing Lab, Platform) from lib/adminIa.ts; the two foldable sections of S241 (Platform / CIS Content)
 // and the footer Settings entry are gone (Settings is in AA Catalogue). Hrefs nest (/admin/tenants and
 // /admin/tenants/agencies), so the active item is the longest match (adminNav isActiveEntry), never two at once.
+//
+// AA-1037 (root ADR 0019 d9): the Trade group's items are pages of Booking admin; they open in the same tab (adminNav
+// followExternal, a full page load) with the arrow mark of an outside link, and are never the active item.
 
 import { useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { ArrowUpRight, CalendarCheck, ChevronsLeft, ChevronsRight, Map as MapIcon } from "lucide-react";
 import { LOGO_SRC } from "./core/brand";
-import { activeGroup, isActiveEntry, visibleGroups, type NavEntry, type NavGroup } from "./adminNav";
+import { activeGroup, followExternal, isActiveEntry, visibleGroups, type NavEntry, type NavGroup } from "./adminNav";
 import { APP_LINKS, type AppId, type AppLink } from "@/lib/apps";
 import { useNavGroups, useSidebarCollapsed } from "./core/useSidebar";
 import { NavGroup as KitNavGroup } from "./core/NavGroup";
@@ -83,6 +86,12 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
     onNavigate?.();
   }
 
+  // A nav entry: a CIS route through the router, another app's page (AA-1037 Trade) as a same-tab full load.
+  function openEntry(entry: NavEntry) {
+    if (!followExternal(entry)) router.push(entry.href);
+    onNavigate?.();
+  }
+
   return (
     <aside
       className="aa-admin-sidebar aa-shell-sidebar"
@@ -129,7 +138,7 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
         {groups.map((group, i) => {
           const id = navGroupId(group.label);
           return (
-            <NavGroupBlock key={group.label} group={group} pathname={pathname} pending={pending} go={go}
+            <NavGroupBlock key={group.label} group={group} pathname={pathname} pending={pending} go={openEntry}
               open={navGroups.isOpen(id)} onToggle={() => navGroups.toggle(id)} rail={rail}
               spaceAbove={groupSpaceAbove(group, groups[i - 1], rail)} />
           );
@@ -185,7 +194,7 @@ function groupSpaceAbove(group: NavGroup, prev: NavGroup | undefined, rail: bool
 }
 
 function NavGroupBlock({ group, pathname, pending, go, spaceAbove, open, onToggle, rail }: {
-  group: NavGroup; pathname: string; pending: number | null | undefined; go: (href: string) => void;
+  group: NavGroup; pathname: string; pending: number | null | undefined; go: (entry: NavEntry) => void;
   spaceAbove: number; open: boolean; onToggle: () => void; rail: boolean;
 }) {
   const navLabel = useNavLabel();
@@ -208,7 +217,7 @@ function NavGroupBlock({ group, pathname, pending, go, spaceAbove, open, onToggl
           entry={n}
           active={isActiveEntry(n, pathname)}
           badge={badgeOf(n)}
-          onClick={() => go(n.href)}
+          onClick={() => go(n)}
         />
       ))}
     </KitNavGroup>
@@ -265,6 +274,8 @@ function NavItem({ entry, active, badge, onClick }: {
     <button
       onClick={onClick}
       aria-current={active ? "page" : undefined}
+      data-external={entry.external ? "true" : undefined}
+      data-href={entry.external ? entry.href : undefined}
       title={label}
       aria-label={label}
       style={{
@@ -295,6 +306,11 @@ function NavItem({ entry, active, badge, onClick }: {
       <span className="aa-sidebar-label" style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
         {label}
       </span>
+      {entry.external && (
+        <span className="aa-sidebar-label" aria-hidden="true" style={{ flexShrink: 0, opacity: 0.6, display: "flex" }}>
+          <ArrowUpRight size={12} />
+        </span>
+      )}
       {badge != null && (
         <span className="aa-sidebar-badge-pill" style={{
           background: K.accent, color: "var(--aa-on-accent)",

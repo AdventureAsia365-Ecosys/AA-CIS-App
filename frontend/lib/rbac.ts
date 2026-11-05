@@ -150,6 +150,17 @@ export function canSeePage(role: string | null | undefined, pathname: string): b
   return !!rule && !!role && (rule.roles as string[]).includes(role);
 }
 
+/** AA-1037 — may `role` see this admin nav item (lib/adminIa.ts IaItem)? A CIS page: its PAGE_RULE. A page of another
+ *  app (`external`, root ADR 0019 d9 Trade group): a role holding one of the item's `capabilities`; none listed: no
+ *  role. The other app still checks its own grant. */
+export function canSeeNavItem(
+  role: string | null | undefined,
+  item: { href: string; external?: string | boolean; capabilities?: readonly Capability[] },
+): boolean {
+  if (item.external) return (item.capabilities ?? []).some((c) => can(role, c));
+  return canSeePage(role, item.href);
+}
+
 // BFF proxy routes that attach the backend admin secret. Each handler calls requireStaff() with its
 // own entry, so a valid staff JWT with the wrong role still gets 403.
 export const API_RULES = {

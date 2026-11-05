@@ -711,6 +711,10 @@
     "capability": "tenant.read|tenant.book.read",
     "module": "api.routers.admin"
   },
+  "GET /admin/tenants/{tenant_id}/booking-billing": {
+    "capability": "tenant.read|tenant.book.account.read|billing.read",
+    "module": "api.routers.admin_tenant360"
+  },
   "GET /admin/tenants/{tenant_id}/config": {
     "capability": "tenant.read|tenant.book.read",
     "module": "api.routers.admin"

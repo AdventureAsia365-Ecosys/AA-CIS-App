@@ -66,6 +66,23 @@ export const APP_LINKS: AppLink[] = [
   },
 ];
 
+/** AA-1037 (root ADR 0019 d9 "Screens now") — a page of another app of the registry, by its path in that app (the
+ *  admin nav's Trade group: Booking admin, Agency billing, Agency tiers, B2B desk). Only the registry origin is used:
+ *  `path` must be an app path ("/" or "/x/y"), never a URL, so no nav entry can point anywhere else. */
+export function appPageUrl(app: AppId, path: string): string {
+  if (!/^\/(?!\/)[A-Za-z0-9\-/._~?=&]*$/.test(path)) throw new Error(`not an app path: ${path}`);
+  const origin = app === "booking" ? BOOKING_ADMIN_URL : TRIPPLANNER_URL;
+  return path === "/" ? `${origin}/` : `${origin}${path}`;
+}
+
+/** AA-1037 — Tenant 360 › Billing › "Open in Booking": Booking admin's Agency billing, Invoices tab, filtered to this
+ *  tenant. Booking reads `tenant` from the AA-1037 fixture slice on; before it Booking ignores the key and shows
+ *  every agency's invoices (the link degrades to the unfiltered list, never to an error). */
+export function bookingAgencyInvoicesUrl(tenantId: string): string {
+  const q = new URLSearchParams({ tab: "invoices", tenant: tenantId });
+  return `${BOOKING_ADMIN_URL}/agency-billing?${q.toString()}`;
+}
+
 /** Booking admin page of one staff account (Booking route app/(staff)/staff/[cisUserId]). */
 export function bookingStaffUrl(cisUserId: string): string {
   return `${BOOKING_ADMIN_URL}/staff/${encodeURIComponent(cisUserId)}`;
@@ -120,5 +137,8 @@ export function isPlatformAppId(id: string): id is PlatformAppId {
   return (PLATFORM_APP_IDS as string[]).includes(id);
 }
 
-/** Booking admin's own audit log (Booking writes its own trail; CIS never reads the booking schema). */
+/** Booking admin's own audit log (Booking writes its own trail). CIS never reads Booking's tables: only the contract
+ *  views Booking grants it (bk-017 / bk-025 ops counts, bk-023 supply facts, bk-040 from prices, and since AA-1037
+ *  bk-042 `booking.v_tenant_billing_status`, the agency billing status Tenant 360 › Billing shows), never the audit
+ *  trail. */
 export const BOOKING_AUDIT_LOG_URL = `${BOOKING_ADMIN_URL}/audit-log`;
