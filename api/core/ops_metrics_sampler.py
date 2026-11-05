@@ -378,6 +378,18 @@ async def _tenant_account_tick_part(pool, kinds: dict, ts: datetime, out: dict) 
         out["tenant_account_tick"] = {"job_id": job_id, "key": key}
 
 
+async def _tenant_billing_tick_part(pool, kinds: dict, ts: datetime, out: dict) -> None:
+    """AA-1037 R4: the hourly billing tick (Booking's billing status -> the account state), once per UTC hour
+    (idempotency key per hour). Only while the kind is registered; TENANT_BILLING_TICK=off stops it."""
+    from services.jobs.tenant_billing_tick_job import KIND, enqueue_hourly, schedule_enabled
+
+    if KIND not in kinds or not schedule_enabled():
+        return
+    job_id, created, key = await enqueue_hourly(pool, now=ts)
+    if created:
+        out["tenant_billing_tick"] = {"job_id": job_id, "key": key}
+
+
 async def _ai_usage_rollup_part(pool, kinds: dict, ts: datetime, out: dict) -> None:
     """AA-1045: the usage rollup every quarter hour and its one-time backfill (idempotency keys; one to_regclass and at
     most two indexed EXISTS a tick). Only while the kind is registered; AI_USAGE_ROLLUP=off stops it."""
@@ -505,6 +517,12 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
         await asyncio.wait_for(_tenant_account_tick_part(pool, kinds, ts, out), timeout=5.0)
     except Exception as e:
         out["tenant_account_tick_error"] = _err(e)
+
+    # AA-1037 R4: one idempotent INSERT an hour (database only), same short budget
+    try:
+        await asyncio.wait_for(_tenant_billing_tick_part(pool, kinds, ts, out), timeout=5.0)
+    except Exception as e:
+        out["tenant_billing_tick_error"] = _err(e)
 
     # AA-1045: at most two idempotent INSERTs a quarter hour (database only), same short budget
     try:
