@@ -98,6 +98,9 @@ export function isPaletteShortcut(e: { key: string; metaKey: boolean; ctrlKey: b
 // The drawer rules for one breakpoint. Below it the sidebar wrapper leaves the row: fixed, slid out of view and
 // hidden (a closed drawer is not focusable), slid in while the frame says data-drawer="open"; the backdrop covers the
 // page behind it. At and above it the backdrop never shows (a drawer opened on a phone, then the window widened).
+// The slot inside the drawer fills the drawer, not the screen: a slot sized 100vh in its own inline style (the CIS
+// and Booking sidebars) is the large viewport on a phone browser, so its last rows (account, sign-out) would sit under
+// the browser toolbar. !important because an inline height otherwise wins over a stylesheet rule.
 function drawerCss(bp: ShellBreakpoint): string {
   const f = `[data-kit-shell="frame"][data-kit-shell-bp="${bp}"]`;
   return `@media (max-width: ${bp - 1}px) {
@@ -107,6 +110,7 @@ function drawerCss(bp: ShellBreakpoint): string {
     transition: transform .22s ease, visibility .22s ease;
     box-shadow: 0 0 40px rgba(0, 0, 0, 0.5);
   }
+  ${f} > [data-kit-shell="sidebar"] > * { height: 100% !important; max-height: 100%; }
   ${f}[data-drawer="open"] > [data-kit-shell="sidebar"] { transform: translateX(0); visibility: visible; }
   ${f} > [data-kit-shell="backdrop"] { display: block; }
 }`;

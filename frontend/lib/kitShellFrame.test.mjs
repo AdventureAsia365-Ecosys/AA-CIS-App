@@ -71,6 +71,9 @@ test("the drawer CSS has one block per breakpoint: out of view and hidden, in wh
     assert.match(block, /transform: translateX\(-100%\); visibility: hidden;/);
     assert.ok(block.includes(`${f}[data-drawer="open"] > [data-kit-shell="sidebar"] { transform: translateX(0); visibility: visible; }`));
     assert.ok(block.includes(`${f} > [data-kit-shell="backdrop"] { display: block; }`));
+    // The slot fills the drawer (100dvh), never a 100vh of its own inline style (the large viewport on a phone,
+    // whose last rows would sit under the browser toolbar); !important beats the inline height.
+    assert.ok(block.includes(`${f} > [data-kit-shell="sidebar"] > * { height: 100% !important; max-height: 100%; }`));
   }
   // The backdrop is hidden outside the phone blocks (a drawer opened on a phone, then the window widened).
   assert.match(css.slice(0, css.indexOf("@media")), /\[data-kit-shell="backdrop"\] \{ display: none;/);
