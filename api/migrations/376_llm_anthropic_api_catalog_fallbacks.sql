@@ -108,8 +108,11 @@
 -- refused or capped, a writer falls to Sonnet 4.6 / Haiku 4.5 on acc3 as today; when acc3 is also refused, to the same
 -- 4.x model on the API (new) and then the OpenAI API. The new 4.x API rows sit behind acc3 (priority 100): applying
 -- the preset again moves them API-first like the four 5.x rows. The daily probe calls each new enabled deployment
--- (a few tokens: well under 0.01 USD a day, Fable included). No stage routes Opus or Fable, so they cost nothing
--- until a stage adopts one.
+-- (60 tokens in, 32 out: about 0.011 USD a day for the nine, Fable 5.1 / 5 about 0.002 each; the whole post-376
+-- plan about 0.02 USD a day). Its cap (MAX_PROBES) was 30, under the post-376 count of 33 enabled deployments on
+-- enabled connections (the last rows, openai-direct, would go unprobed): the companion code PR raised it to 50
+-- and merges BEFORE this file. No stage routes Opus or Fable, so beyond the probe they cost nothing until a stage
+-- adopts one.
 --
 -- Class: contract (root ADR 0017 d3: INSERT of config rows, UPDATE of catalog and route rows), no migrate directive
 -- line. Migration-only PR (MIG-4: no code needs this file; the code already reads every column it writes). On Dev

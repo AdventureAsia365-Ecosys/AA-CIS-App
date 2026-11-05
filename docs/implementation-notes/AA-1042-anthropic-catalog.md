@@ -78,7 +78,16 @@ existing replay tests taught about 376's rows.
 
 ## Should know
 
-- The daily probe calls each new enabled deployment with a few tokens (Fable included: well under 0.01 USD a day).
+- The daily probe calls each new enabled deployment (60 tokens in, 32 out): about 0.011 USD a day for the nine
+  (Fable 5.1 / 5 about 0.002 each, each Opus about 0.001), about 0.02 USD a day for the whole post-376 plan.
+- **Probe cap (review fix, S269).** 376 brings the enabled deployments on enabled connections to 33 (test
+  registry: acc2 6 incl. 2 embedding, acc3 12, anthropic-direct 13, openai-direct 2), over the probe's old
+  `MAX_PROBES` of 30: walked in connection-name order, the last anthropic-direct row and both openai-direct rows (the
+  GPT-6 Luna last-resort writer rung) would have been skipped as `over_limit` with a stale `access_state`. The
+  companion code PR (`fix/aa-1042-probe-cap`, notes `AA-1042-probe-cap.md`) raises it to 50 and merges first;
+  this branch is stacked on it. `test_the_daily_probe_plans_every_enabled_deployment_after_376` builds the probe
+  plan on this registry and asserts nothing is skipped. Rejected: seeding the five API-only Opus / Fable rows
+  disabled (the tech lead asked for them as usable fallbacks, selectable in the route control).
 - Guards RAISE (rolling the file back) when an admin route that 376 does not change would be pushed over the six
   attempts by the new deployments: change that route in the admin route control first.
 - The admin "via" label (`admin_llm_ops.model_via`) shows "Bedrock" for a provider `anthropic` row (no account): a

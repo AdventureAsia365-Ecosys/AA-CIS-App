@@ -296,3 +296,23 @@ def test_a_revert_to_the_366_chains_is_refused_by_the_attempt_cap():
     out = _preview(live, routes={s: [r["model_id"], *r["fallback_model_ids"]] for s, r in _routes(BEFORE).items()})
     assert out["valid"] is False
     assert {e["stage"] for e in out["errors"] if e["rule"] == "attempt_cap"} == set(DECIDED)
+
+
+# ── the daily probe (services/jobs/llm_probe_job.py) ───────────────────────────────────────────────────────────────
+
+def test_the_daily_probe_plans_every_enabled_deployment_after_376():
+    """Review fix (S269): 376's nine API rows bring the enabled deployments on enabled connections to 33; at the old
+    cap of 30 the probe skipped the last anthropic-direct row and both openai-direct rows (the last-resort writer
+    rung) as over_limit, and their access_state went stale. The companion PR raised MAX_PROBES to 50."""
+    from api.services.llm_connections import _testable
+    from services.jobs import llm_probe_job as probe
+    _, conns, deps, _, _, _ = _registry()
+    with _gateway_registry():
+        plan = probe.build_plan(conns, deps, _testable, probe._embeddable)
+    over = [(s["connection_key"], s["model_key"]) for s in plan["skipped"] if s["why"].startswith("over_limit")]
+    assert over == []
+    planned = {(p["connection_key"], p["model_key"]) for p in plan["probes"]}
+    assert {("anthropic-direct", k) for k in API_WIRES} <= planned
+    assert ("openai-direct", OPENAI_HOP) in planned
+    assert len(plan["probes"]) == 33 and len(plan["probes"]) <= probe.MAX_PROBES - 10     # room for the next rows
+    assert plan["estimated_usd"] < 0.03                                                  # the S262 daily bound
