@@ -30,7 +30,7 @@ const reasons = (r) => {
   if (r.appliedTheme !== r.theme) out.push(`theme ${r.appliedTheme}`);
   if (docOverflow(r)) out.push(`overflow ${r.overflow.doc - r.overflow.vw}px`);
   if (frameOverflow(r)) out.push(`frame overflow ${r.overflow.frames[0].scrollWidth - r.overflow.frames[0].clientWidth}px`);
-  if (r.hasFrame === false && !["login", "not-found"].includes(r.page)) out.push("no kit frame");
+  if (r.hasFrame === false && r.frameExpected !== false) out.push("no kit frame");
   if (r.consoleErrors.length) out.push(`${r.consoleErrors.length} console error(s)`);
   if (r.failedRequests.length) out.push(`${r.failedRequests.length} failed request(s)`);
   return out.length ? `❌ ${out.join(", ")}` : "ok";

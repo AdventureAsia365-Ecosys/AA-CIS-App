@@ -42,8 +42,11 @@ if (AUTH === 'staff') test.use({ storageState: ADMIN_STATE });
 
 /** The overflow probe: the document and every kit scroll frame, with the five widest offenders. */
 async function probeOverflow(page: Page) {
-  return page.evaluate(() => {
-    const vw = window.innerWidth;
+  // The configured viewport width, not window.innerWidth: a mobile (isMobile) page that overflows widens its layout
+  // viewport to the content, so innerWidth grows with the overflow and the document never looks wider than it.
+  const width = page.viewportSize()?.width ?? 0;
+  return page.evaluate((configured) => {
+    const vw = configured || window.innerWidth;
     const doc = Math.max(document.documentElement.scrollWidth, document.body.scrollWidth);
     const name = (el: Element) =>
       el.tagName.toLowerCase() + (el.id ? `#${el.id}` : '') +
@@ -62,7 +65,7 @@ async function probeOverflow(page: Page) {
       .slice(0, 5)
       .map((el) => `${name(el)} (right ${Math.round(el.getBoundingClientRect().right)})`);
     return { doc, vw, frames, offenders };
-  });
+  }, width);
 }
 
 for (const p of selectPages(PAGES, { auth: AUTH, slugs: SLUGS, gallery: GALLERY, selftest: SELFTEST })) {
@@ -101,6 +104,8 @@ for (const p of selectPages(PAGES, { auth: AUTH, slugs: SLUGS, gallery: GALLERY,
       });
       page.on('response', (r) => {
         const url = r.url();
+        // A redirect is not a failure ("/" sends a visitor on); the page it lands on is checked by its own answer.
+        if (r.status() >= 300 && r.status() < 400) return;
         if (!url.startsWith(origin) || allowed(ALLOW.requests, url)) return;
         const expected = url === docUrl ? (p.status ?? 200) : null;
         if (expected !== null ? r.status() !== expected : r.status() >= 400) failed.push(`${r.status()} ${url}`);
@@ -137,6 +142,7 @@ for (const p of selectPages(PAGES, { auth: AUTH, slugs: SLUGS, gallery: GALLERY,
         status: res?.status() ?? null,
         appliedTheme,
         hasFrame,
+        frameExpected: p.frame !== false,
         overflow,
         consoleErrors,
         failedRequests: failed,
