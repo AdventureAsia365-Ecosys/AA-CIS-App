@@ -91,7 +91,9 @@ E2E_SENTENCE_MODES: frozenset[str] = frozenset({"cut", "manual"})
 
 # AA-979 (A10b-1): what makes a tenant synthetic. ``is_canary`` (CIS migration 058: "TRUE for synthetic canary tenant")
 # is nullable on Dev since migration 281, so only an explicit TRUE counts; a missing tenant reads as not synthetic.
-SYNTHETIC_TENANT_SQL = "SELECT is_canary IS TRUE FROM shared.tenants WHERE tenant_id = $1"
+# AA-969 (root ADR 0019 d16): the pilot tenant (``is_pilot``, CIS 354) is never synthetic, whatever its canary flag, so
+# the E2E identity never writes to it.
+SYNTHETIC_TENANT_SQL = "SELECT is_canary IS TRUE AND is_pilot IS NOT TRUE FROM shared.tenants WHERE tenant_id = $1"
 # The invitee must be a recipient of the E2E mailbox (AA-CIS-Infra e2e_mailbox.tf), the domain of the A10b address.
 E2E_MAIL_DOMAIN = E2E_CIS_ADMIN_TEST_STAFF_EMAIL.split("@", 1)[1]
 # The Content studio roles an A10b session may invite (the AA-979 §6a role check): never ``owner``.
@@ -135,5 +137,6 @@ def is_e2e_mailbox_address(email: Any) -> bool:
 
 
 async def is_synthetic_tenant(conn: Any, tenant_id: Any) -> bool:
-    """True only when ``shared.tenants.is_canary`` is TRUE for ``tenant_id`` (NULL, FALSE or no row: False)."""
+    """True only when ``shared.tenants.is_canary`` is TRUE for ``tenant_id`` and it is not the pilot tenant (NULL,
+    FALSE, the pilot or no row: False)."""
     return (await conn.fetchval(SYNTHETIC_TENANT_SQL, tenant_id)) is True

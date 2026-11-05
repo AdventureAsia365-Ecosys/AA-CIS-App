@@ -50,17 +50,22 @@ class TableSpec:
 # labels, read up to 365 days by /admin/decisions/outcomes/summary) are kept.
 DECISION_LOG_WINDOW_DAYS = max(180, CACHE_MAX_AGE_DAYS)
 
+# AA-969 (root ADR 0019 d16): clean-up jobs skip the pilot tenant (shared.tenants.is_pilot, CIS 354). Added to every
+# part of a table that holds tenant rows. The windows (90 / 180 days) are longer than the pilot (at most 8 weeks), so
+# this only matters for a manual_override run (21 days); after the pilot (the marker cleared) the rows age out as usual.
+NOT_PILOT = "NOT EXISTS (SELECT 1 FROM shared.tenants p WHERE p.tenant_id = t.tenant_id AND p.is_pilot)"
+
 SPECS: dict[str, TableSpec] = {s.kind: s for s in (
     TableSpec(
         kind="retention_llm_call_log", table="shared.llm_call_log", archive_name="llm_call_log",
         ts_col="created_at", id_type="uuid",
-        parts=(Part("raw", 180, archive=True),),
+        parts=(Part("raw", 180, archive=True, where=NOT_PILOT),),
         rollup=ROLLUP_LLM_DAILY,
     ),
     TableSpec(
         kind="retention_tenant_api_usage", table="shared.tenant_api_usage",
         archive_name="tenant_api_usage", ts_col="called_at", id_type="uuid",
-        parts=(Part("raw", 90, archive=True),),
+        parts=(Part("raw", 90, archive=True, where=NOT_PILOT),),
         rollup=ROLLUP_TENANT_USAGE_MONTHLY,
     ),
     TableSpec(
