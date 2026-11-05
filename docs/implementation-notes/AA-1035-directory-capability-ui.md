@@ -63,3 +63,13 @@ change, no migration.
   the Subscription tab / plan catalogue; nothing changes there.
 - Live check after the Vercel deploy: run `cs-scope.spec.ts` as the A10d identity and `admin-pages.spec.ts` as the A10b
   admin (commands in each file's header).
+
+## Follow-up (S270 live check): the shell's Review badge
+The cs-scope evidence spec, run live after #1331, still counted one refused call on the Directory:
+`403 /api/admin/review-queue`. It came from the shell, not the page. `useReviewPendingCount` (the Sidebar and BottomNav
+badge) polled the Review Queue count for every staff role, and customer_success / support / finance hold no
+content.read.
+- **Decision:** the hook reads the role (`useAdminIdentity`) and enables its query only when
+  `canSeePage(role, "/admin/review")`, the same rule that hides the Review nav item. A role that cannot open the page
+  never asks. With no role yet (first paint), the query waits.
+- **Should know:** no API change. The badge for content roles is unchanged: same key, same 180 s poll.
