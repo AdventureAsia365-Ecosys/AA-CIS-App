@@ -66,7 +66,10 @@ two "attempts" that never reached a provider before `gpt-6-luna-openai@openai-di
   `skipped_attempt_views`, `trace_view`, `request_view`.
 - Frontend: `lib/routeTrace.ts` (`SKIPPED_STATUS`, `RouteRequest.skipped_attempts`), `RouteTraceDrawer.tsx`,
   `routeTrace.messages.ts` (`skippedAttempt`), `lib/routeTrace.test.mjs`.
-- Tests: `tests/unit/test_aa1042_sink_refused_rungs.py` (new). The re-run suites (`test_aa1002_s3_routes_snapshot`,
+- Tests: `tests/unit/test_aa1042_sink_refused_rungs.py` (new: the six cases of the lane, deadline paths, the pure
+  `sunk_skips` table, the ledger fold, the trace view);
+  `tests/integration/test_aa1042_route_trace_db.py::test_deferred_rungs_live_in_the_answered_row_and_show_as_skipped_attempts`
+  (real Postgres: stats, request list, trace over an answered row with `route_skips`). The re-run suites (`test_aa1002_s3_routes_snapshot`,
   `test_aa1002_s4_breaker`, `test_aa1018_p2_reliability`, `test_aa1026*`, `test_aa1042_*`) needed no assertion change:
   none counted the pre-call refused rows of a route whose later rung answered (the breaker tests that read them end
   with every rung down, where the deferred rungs still write their rows).
@@ -82,8 +85,10 @@ two "attempts" that never reached a provider before `gpt-6-luna-openai@openai-di
 - **Ledger semantics change** for answered requests: a skipped rung is no longer its own 0 USD row. Readers that
   counted those rows see fewer: `route_watch.STATS_SQL.failed_attempts`, `requests_sql.failed_attempts` (and the
   Trace "needed more than one attempt" filter still keeps the request through `served_fallback`), any ad-hoc
-  `status = 'refused'` count per stage (e.g. `cost_by_stage.py` of the AA-741 run). Costs are unchanged (the rows were
-  0 USD). Requests with no answer keep every row.
+  `status = 'refused'` count per stage (e.g. `cost_by_stage.py` of the AA-741 run), the daily rollup's refused count
+  (`services/retention/rollups.py`, `shared.llm_call_daily`) and the row count per stage / model. Costs are unchanged
+  (the rows were 0 USD). The per-connection stats of AI gateway › Providers (`api/services/ai_gateway.py`
+  `LLM_STATS_SQL`) never counted them (connection NULL). Requests with no answer keep every row.
 - **Trace time of a skipped attempt** is the answered row's time (the rung was decided earlier in the same request,
   milliseconds before). The drawer's first / last times come from the logged rows only.
 - **Deadline row position.** Before S270 a deadline row carried the scope's last position (the previous rung's,
