@@ -104,7 +104,7 @@ reports:
   decision: Which partners to upsell, rescue or offboard; is the partner business growing; which plan and price work?
   cadence: monthly section of EX-02 (business day 2) + live tab; quarterly cohort in EX-05
   schedule: monthly
-  channel: New Summary tab on /admin/platform/agencies (merged with the planned S-03 AA insights, AA-966) + CSV; monthly
+  channel: New Summary tab on /admin/tenants/agencies (merged with the planned S-03 AA insights, AA-966) + CSV; monthly
     numbers into EX-02
   automation: auto
   status: missing
@@ -226,7 +226,7 @@ reports:
     week?
   cadence: weekly Monday 01:30 UTC (stuck list) + monthly in EX-02
   schedule: weekly
-  channel: /admin/platform/agencies Onboarding tab + section of EX-03; stuck list in the weekly SES digest to AA admins
+  channel: /admin/tenants/agencies Onboarding tab + section of EX-03; stuck list in the weekly SES digest to AA admins
   automation: auto
   status: missing
   priority: P2
@@ -542,7 +542,7 @@ reports:
   decision: Which tenants get value; where does the T-series hold or regenerate too much; who is near quota or overage?
   cadence: monthly business day 2 + live
   schedule: monthly
-  channel: /admin/tenant-activity Monthly tab; SES digest to AA admins
+  channel: /admin/tenant-qa/trace Monthly tab; SES digest to AA admins
   automation: auto
   status: partial
   priority: P2
@@ -972,7 +972,7 @@ reports:
   sections:
   - 1. Sessions and sign-ups by source (direct, search, social, partner, campaign)
   - 2. Source -> trip -> inquiry -> confirmed, per source
-  - 3. Booking customers by booking.customers.source and trip case channel
+  - 3. Trip cases by channel (B2B agency; B2C cases are history only since the B2C retirement of November 2026)
   - 4. Partner leads (B2B, Content studio, CRM) by source
   - 5. Campaign list with results (when CRM campaigns exist, AA-968)
 - id: MKT-02
@@ -985,7 +985,7 @@ reports:
     off?
   cadence: monthly business day 2
   schedule: monthly
-  channel: /admin/content-quality SEO tab; tenant view later in the portal
+  channel: /admin/tenant-qa/quality SEO tab; tenant view later in the portal
   automation: semi
   status: missing
   priority: P3
@@ -1542,7 +1542,7 @@ reports:
   - '1. The twelve readiness topics from docs/legal/readiness-packet.md: status, proposed answer, owner role'
   - 2. Draft pages still marked 'Draft - pending legal review' (TripPlanner and Partner privacy/terms)
   - 3. Vendor DPAs and AI zero-retention status (docs/legal/register.md vendor table)
-  - 4. Tenant AI clause status (docs/legal/tenant-terms-ai-clause-draft.md)
+  - 4. Tenant AI clause status (docs/legal/tenant-ai-schedule.md)
   - 5. '[to be confirmed]' markers remaining in public pages
   - 6. Changes since last review
 - id: DATA-01

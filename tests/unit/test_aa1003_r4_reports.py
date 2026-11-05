@@ -80,7 +80,7 @@ def test_r4_sql_names_only_reference_tables():
     for name in ("gold_aa_internal.tour_lifecycle_event", "gold_aa_internal.v_tour_liveness", "shared.v_tour_photos",
                  "silver_aa_internal.generated_content", "shared.prompt_eval_runs", "shared.writing_memory_release",
                  "shared.eval_item_result", "shared.rerun_wave", "shared.job", "shared.schema_versions",
-                 "booking.v_ops_inquiry_inbox", "tripplanner.v_ops_inquiry_keys", "shared.report_run",
+                 "tripplanner.v_ops_inquiry_keys", "shared.report_run",
                  "shared.llm_call_log", "shared.decision_log", "shared.cost_explorer_snapshot",
                  "shared.tenant_api_usage"):
         assert f"### `{name}`" in text, name

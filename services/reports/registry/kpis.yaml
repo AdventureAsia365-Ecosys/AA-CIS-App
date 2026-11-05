@@ -120,13 +120,15 @@ kpis:
   used_by:
   - BK-03
 - id: K-AR-AGING
-  version: 1
+  version: 2
   name: Aging buckets
-  definition: sum booking.v_payment_schedule_status.remaining_amount by days_overdue bucket
+  definition: 'Open agency invoice balance (booking.agency_invoice total, status issued, minus approved booking.agency_payment
+    amounts) by days past due_date bucket, per currency (v2: agency billing; the B2C customer invoice tables are retired)'
   unit: status
   threshold: '> 60 days = 0'
   sources:
-  - booking.v_payment_schedule_status
+  - booking.agency_invoice
+  - booking.agency_payment
   defined_in: BK-03
   used_by:
   - BK-03
@@ -141,24 +143,28 @@ kpis:
   used_by:
   - BK-03
 - id: K-AR-OVERDUE
-  version: 1
+  version: 2
   name: AR overdue
-  definition: sum booking.v_invoice_balance.overdue_amount / sum balance, per currency
+  definition: 'sum booking.v_tenant_billing_status.overdue_amount / open agency invoice balance, per currency (v2: agency
+    billing; the B2C customer invoice tables are retired)'
   unit: count
   threshold: Red > 10 %
   sources:
-  - booking.v_invoice_balance
+  - booking.v_tenant_billing_status
+  - booking.agency_invoice
+  - booking.agency_payment
   defined_in: BK-03
   used_by:
   - BK-03
 - id: K-AR-UNVERIFIED
-  version: 1
+  version: 2
   name: Unverified payments
-  definition: sum booking.v_invoice_balance.unverified_amount and max age
+  definition: 'sum booking.agency_payment.amount with status recorded (not yet approved or rejected) and max age since recorded_at
+    (v2: agency billing; the B2C customer invoice tables are retired)'
   unit: count
   threshold: 0 older than 2 working days
   sources:
-  - booking.v_invoice_balance
+  - booking.agency_payment
   defined_in: BK-03
   used_by:
   - BK-03
@@ -292,13 +298,14 @@ kpis:
   used_by:
   - FI-07
 - id: K-BK-CASH
-  version: 1
+  version: 2
   name: Cash collected
-  definition: Sum booking.payments.amount with verified_at not null and voided_at null, by received_on
+  definition: 'Sum booking.agency_payment.amount with status approved, by received_on, per currency (v2: agency billing;
+    the B2C customer invoice tables are retired)'
   unit: usd
   threshold: Matches bank statement at close
   sources:
-  - booking.payments
+  - booking.agency_payment
   defined_in: FI-07
   used_by:
   - FI-07
@@ -389,13 +396,14 @@ kpis:
   used_by:
   - TP-03
 - id: K-BK-INVOICED
-  version: 1
+  version: 2
   name: Invoiced revenue
-  definition: Sum booking.invoices.total_amount with issued_at in the month and cancelled_at null, per currency
+  definition: 'Sum booking.agency_invoice.total with issued_at in the month and status not void, per currency (v2: agency
+    billing; the B2C customer invoice tables are retired)'
   unit: usd
   threshold: vs previous month and same month last year
   sources:
-  - booking.invoices
+  - booking.agency_invoice
   defined_in: FI-07
   used_by:
   - FI-07
@@ -479,13 +487,14 @@ kpis:
   used_by:
   - BK-02
 - id: K-BK-UNVERIFIED
-  version: 1
+  version: 2
   name: Unverified payments
-  definition: sum booking.v_invoice_balance.unverified_count
+  definition: 'count of booking.agency_payment with status recorded (waiting for the checker) (v2: agency billing; the B2C
+    customer invoice tables are retired)'
   unit: count
   threshold: 0 older than 2 working days
   sources:
-  - booking.v_invoice_balance
+  - booking.agency_payment
   defined_in: BK-01
   used_by:
   - BK-01
@@ -1751,13 +1760,13 @@ kpis:
   used_by:
   - MKT-01
 - id: K-MKT-CUSTSRC
-  version: 1
+  version: 2
   name: New customers by source
-  definition: booking.customers created in the period grouped by source
+  definition: 'Retired with the B2C half of AA-Booking (root ADR 0019): agencies are the only customers, so there is no
+    traveller customer source to count. New agencies by signup source replace it once the CRM exposes the source'
   unit: count
   threshold: Trend
-  sources:
-  - booking.customers
+  sources: []
   defined_in: MKT-01
   used_by:
   - MKT-01
@@ -1932,13 +1941,13 @@ kpis:
   used_by:
   - EX-03
 - id: K-PRIV-CONSENT
-  version: 1
+  version: 2
   name: Consent coverage
-  definition: Result of docs/legal/consent-capture-query.md (booking.customers.contact_consent, crm.consent)
+  definition: Result of docs/legal/consent-capture-query.md (crm.consent; the B2C customer consent flag was retired with
+    the B2C customer table)
   unit: ratio
   threshold: 100 % of records with consent where required
   sources:
-  - booking.customers
   - crm.consent
   defined_in: SEC-09
   used_by:

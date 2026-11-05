@@ -332,9 +332,10 @@ class ChecklistItem:
 
 
 TRAVELLER_CHECKLIST: tuple[ChecklistItem, ...] = (
-    ChecklistItem("AA-Booking", "booking.customers, customer_otps, customer_sessions, inbox_events.payload, "
-                  "trip_cases (+ children), notifications, media_files + S3 object; audit_logs before/after "
-                  "redacted, never deleted; one Booking audit row for the erasure",
+    ChecklistItem("AA-Booking", "inbox_events.payload, b2c trip_cases (+ children, kept as history), "
+                  "notifications, retired_b2c_record (archived customer invoices and payments: redact the free text, "
+                  "the rows stay under the accounting exception); audit_logs before/after redacted, never deleted; "
+                  "one Booking audit row for the erasure",
                   "runbook sections 2 (lookup) and 3 (erase): DB Migrate run-script, ids only, AA-Booking lane"),
     ChecklistItem("AA-TripPlanner-Web", "tripplanner.customers, sessions, trip_drafts, trip_events, outbox.payload",
                   "runbook sections 2 and 3: DB Migrate run-script, ids only, TripPlanner lane"),
