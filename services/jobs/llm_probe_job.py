@@ -60,7 +60,10 @@ KIND = "llm_connection_probe"
 SCHEDULER = "scheduler:aa-1018"
 SWITCH_ENV = "LLM_DAILY_PROBE"
 SCHEDULE_HOUR_UTC = 5
-MAX_PROBES = 30
+# AA-1042 (S269): 50, was 30. CIS 376 brings the enabled text + embedding deployments on enabled connections to 33
+# (nine Anthropic API rows); build_plan walks connections in name order, so a cap under the count silently left the
+# last rows (openai-direct, the last-resort writer rung) unprobed with a stale access_state. Headroom for the next rows.
+MAX_PROBES = 50
 ACTOR = f"job:{KIND}"
 # AA-1026 (S267): the availability sweep of disabled candidate deployments (payload "mode": "candidates", manual only).
 MODE_DAILY = "daily"
