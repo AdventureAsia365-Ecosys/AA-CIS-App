@@ -92,6 +92,7 @@ from api.routers.catalog_http import (  # AA-976 — catalog.http.v1 for the par
 )
 from api.routers.tenant_membership import router as tenant_membership_router  # AA-978 — tenant.membership.v1
 from api.routers.tenant_account import router as tenant_account_router  # AA-1028 — tenant.entitlements.v1
+from api.routers.tenant_addons import router as tenant_addons_router  # AA-1036 — tenant.addons.v1
 from api.routers.tenant_session import router as tenant_session_router  # AA-979 P2b — partner-pool studio sign-in
 from api.middleware.tenant_role import tenant_role_middleware  # AA-979 P2b — Content studio roles (csr)
 from api.middleware.view_as import ViewAsGateMiddleware  # AA-1035 R2 slice 2 — read-only view-as tokens
@@ -374,6 +375,7 @@ app.include_router(v1_progress_router)  # AA-637 — GET /v1/progress/{kind}/{jo
 app.include_router(catalog_http_router)  # AA-976 — /catalog/v1 (catalog.http.v1, M2M cis.catalog/read)
 app.include_router(tenant_membership_router)  # AA-978 — /tenant/membership/v1 (M2M cis.tenant/read)
 app.include_router(tenant_account_router)  # AA-1028 — /tenant/v1 (M2M cis.tenant/read)
+app.include_router(tenant_addons_router)  # AA-1036 R3 — /tenant/v1 add-ons (M2M cis.tenant/addons)
 app.include_router(tenant_session_router)  # AA-979 P2b — /auth/tenant-session, /auth/tenant-memberships (partner pool)
 
 app.middleware("http")(rate_limit_middleware)
