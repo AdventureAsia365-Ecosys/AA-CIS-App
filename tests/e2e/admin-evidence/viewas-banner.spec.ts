@@ -29,7 +29,7 @@ test('A10b admin: view as partner on a synthetic tenant shows the read-only bann
   await page.getByTestId('view-as-start').getByRole('button', { name: 'View as partner' }).click({ timeout: 30000 });
   const modal = page.getByTestId('view-as-start-modal');
   await modal.getByLabel(/reason/i).fill('S270 live check of the read-only banner');
-  await modal.getByLabel(/length/i).selectOption({ label: '5 minutes' }).catch(() => {});
+  await modal.getByLabel(/length/i).selectOption({ label: '15 minutes' });
   await modal.getByRole('button', { name: 'Start view' }).click();
   const banner = page.getByTestId('view-as-banner');
   await expect(banner).toBeVisible({ timeout: 30000 });
