@@ -32,6 +32,7 @@ name: Vercel Deploy
 #   - alias-only dispatch from main: job `smoke-preview-host`, the same on https://aa-cis-preview.lumiguides.it.com
 #     (the session there is capped at viewer). A PR labelled preview-signin is not on main, so its signed-in smoke
 #     is a separate dispatch of ui-smoke.yml from main (the mailbox role trusts main only).
+# AA-1008 — after the production smoke, job `visual-production` runs visual.yml on the pages the push changed.
 #
 # The deploy runs from the REPO ROOT: the project's Root Directory setting is `frontend`, so Vercel
 # builds `frontend/` remotely with the project's own env vars (no `vercel pull` / prebuilt here).
@@ -398,6 +399,24 @@ jobs:
       base_url: https://aa-cis.lumiguides.it.com
       sha: ${{ needs.deploy.outputs.sha }}
       staff_session: true
+    secrets: inherit
+
+  # AA-1008 (root ADR 0016 decision 9) — after a production deploy from main: the visual run (visual.yml job
+  # `deployed`) of the pages the push changed (github.event.before...sha), signed in as the Cognito E2E user. Report-
+  # only: nothing waits on it. Permissions cover every nested job of visual.yml (GitHub checks them at startup, S247).
+  visual-production:
+    name: Visual (production, signed in)
+    needs: [deploy, smoke-production]
+    if: always() && needs.deploy.outputs.target == 'production' && needs.deploy.outputs.url != '' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    uses: ./.github/workflows/visual.yml
+    with:
+      base_url: https://aa-cis.lumiguides.it.com
+      sha: ${{ needs.deploy.outputs.sha }}
+      base_sha: ${{ github.event_name == 'push' && github.event.before || '' }}
     secrets: inherit
 
   # AA-816 S2 path — after an alias-only dispatch from main: the same on the fixed Preview host (session capped at

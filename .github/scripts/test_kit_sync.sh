@@ -37,18 +37,20 @@ PY
 }
 
 # Workspace fixture: CIS repo without core/, consumer checkouts.
-mkdir -p "$TMP/ws/apps/AA-CIS-App/frontend/app/_kit" "$TMP/ws/apps/AA-Partner/portal/app/_kit" \
+mkdir -p "$TMP/ws/apps/AA-CIS-App/frontend/app/_kit" "$TMP/ws/apps/AA-Partner/web/app/_kit" \
   "$TMP/ws/apps/AA-Booking/frontend/ui" "$TMP/ws/apps/AA-TripPlanner-Web/frontend/ui"
 git -c init.defaultBranch=main init -q "$TMP/ws/apps/AA-CIS-App"
 echo "export {};" > "$TMP/ws/apps/AA-CIS-App/frontend/app/_kit/index.ts"
 g add -A && g commit -qm init && g update-ref refs/remotes/origin/main HEAD
 
 # 1. before S1a: no core/ -> exit 3 with a clear message, nothing written
-expect 3 "does not exist" -- portal --no-fetch
-expect 3 "does not exist" -- portal --from-local
-[ ! -e "$TMP/ws/apps/AA-Partner/portal/app/_kit/core" ] && [ ! -e "$TMP/ws/apps/AA-Partner/portal/kit.lock.json" ] && ok || miss "wrote files without a core"
+expect 3 "does not exist" -- crm-web --no-fetch
+expect 3 "does not exist" -- crm-web --from-local
+[ ! -e "$TMP/ws/apps/AA-Partner/web/app/_kit/core" ] && [ ! -e "$TMP/ws/apps/AA-Partner/web/kit.lock.json" ] && ok || miss "wrote files without a core"
 expect 2 "unknown consumer" -- nope
-expect 2 - -- portal --from-local --ref HEAD
+# AA-1008: the Content studio app (AA-Partner portal/) was merged into web/ (AA-1036) and is no consumer any more.
+expect 2 "unknown consumer" -- portal
+expect 2 - -- crm-web --from-local --ref HEAD
 
 # 2. core/ committed on origin/main
 C="$TMP/ws/apps/AA-CIS-App/frontend/app/_kit/core"
@@ -62,20 +64,20 @@ g add -A && g commit -qm core && g update-ref refs/remotes/origin/main HEAD
 SHA=$(g rev-parse HEAD)
 
 # a stale file in the consumer's core/ must disappear
-mkdir -p "$TMP/ws/apps/AA-Partner/portal/app/_kit/core" && echo stale > "$TMP/ws/apps/AA-Partner/portal/app/_kit/core/old.tsx"
-expect 0 "10 files" -- portal --no-fetch
-P="$TMP/ws/apps/AA-Partner/portal"
-diff -r "$C" "$P/app/_kit/core" >/dev/null && ok || miss "portal copy differs from CIS core"
-python3 - "$P/kit.lock.json" "$SHA" "$(sha256sum "$C/MANIFEST.json" | cut -d' ' -f1)" <<'PY' && ok || miss "portal lock content"
+mkdir -p "$TMP/ws/apps/AA-Partner/web/app/_kit/core" && echo stale > "$TMP/ws/apps/AA-Partner/web/app/_kit/core/old.tsx"
+expect 0 "10 files" -- crm-web --no-fetch
+P="$TMP/ws/apps/AA-Partner/web"
+diff -r "$C" "$P/app/_kit/core" >/dev/null && ok || miss "crm-web copy differs from CIS core"
+python3 - "$P/kit.lock.json" "$SHA" "$(sha256sum "$C/MANIFEST.json" | cut -d' ' -f1)" <<'PY' && ok || miss "crm-web lock content"
 import json, sys
 lock = json.load(open(sys.argv[1]))
 assert lock["ref"] == sys.argv[2], lock
-assert lock["profile"] == "full" and lock["dest"] == "portal/app/_kit/core", lock
+assert lock["profile"] == "full" and lock["dest"] == "web/app/_kit/core", lock
 assert lock["manifest_sha256"] == sys.argv[3], lock
 assert lock["canonical"] == {"repo": "AdventureAsia365-Ecosys/AA-CIS-App", "path": "frontend/app/_kit/core"}, lock
 PY
 cp "$P/kit.lock.json" "$TMP/lock1"
-expect 0 - -- portal --no-fetch
+expect 0 - -- crm-web --no-fetch
 cmp -s "$P/kit.lock.json" "$TMP/lock1" && ok || miss "lock not deterministic on re-run"
 
 # 3. tokens profile: only the token files
@@ -97,8 +99,8 @@ grep -q "local change" "$TMP/ws/apps/AA-Booking/frontend/ui/core/primitives.tsx"
 # 6. a stale manifest (file changed, MANIFEST.json not regenerated) is refused
 echo "// edited without manifest" >> "$C/DataTable.tsx"
 expect 4 "does not match" -- booking --from-local
-# 7. --ref of an older commit works; the portal copy goes back to that commit
-expect 0 - -- portal --ref "$SHA" --no-fetch
+# 7. --ref of an older commit works; the crm-web copy goes back to that commit
+expect 0 - -- crm-web --ref "$SHA" --no-fetch
 grep -q "$SHA" "$P/kit.lock.json" && ok || miss "--ref lock"
 
 echo "pass=$pass fail=$fail"; [ "$fail" = 0 ]

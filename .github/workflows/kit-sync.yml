@@ -4,7 +4,7 @@ name: Kit Sync
 # behind. The copy is .github/scripts/kit-sync.sh (the same code agents run by hand); the git/PR steps are
 # .github/scripts/kit_sync_bot.py.
 #
-#   AA-Partner          portal/app/_kit/core + web/app/_kit/core (one PR)   full profile
+#   AA-Partner          web/app/_kit/core (the one agency app since AA-1036)  full profile
 #   AA-Booking          frontend/ui/core                                     full profile
 #   AA-TripPlanner-Web  frontend/ui/core                                     tokens profile
 #

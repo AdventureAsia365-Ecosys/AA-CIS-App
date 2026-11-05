@@ -1,0 +1,316 @@
+name: Visual
+
+# AA-1008 (S1d/S2c; root ADR 0016 decision 9, re-scoped by ADR 0019 d23: the frontends leave Vercel, so the per-PR run
+# needs no preview) — the visual run of CIS admin from GitHub's network, never the agent machine's IP. Every changed
+# page (tests/e2e/visual/changed-pages.mjs over the diff; a kit / shell / lib change = every page) at 1440 x 900 and
+# 390 x 844, light and dark, asserting: no page-level horizontal overflow (the document AND the kit frame, which
+# scrolls on its own), 0 console errors, no failed same-origin request, the kit frame present, the theme applied.
+# Screenshots + report.json are the artifact `visual-cis-<target>-<run id>` (14 days); the job summary and one PR
+# comment carry the page x 4 table. Report-only: no required check (H3, the tech lead's branch-protection step, makes
+# it required later).
+#
+# Jobs:
+#   pr        pull_request (frontend / visual files) and dispatch without base_url: `next build` with KIT_GALLERY=1 and
+#             `next start` in the runner, no session and no backend: the public pages that changed + the gated kit
+#             gallery (every core component, incl. the ShellFrame demo). It first runs the SELF-TEST: the gallery
+#             with a planted overflow (document and frame) must make the run fail, and summary.mjs --selftest checks
+#             that each planted capture was caught; a self-test that passes is red.
+#   deployed  workflow_call from vercel-deploy.yml after the production deploy on main, and dispatch from main with
+#             base_url: the changed pages (or `pages`) on the deployed host: public pages without a session, staff pages
+#             signed in as the Cognito E2E user (the smoke setup: email code from the mailbox via the read-only OIDC
+#             role, environment e2e, the e2e-cognito concurrency group). Only PNGs and report.json are uploaded:
+#             never the HTML report or the auth state (a `fill` step would name the typed code).
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - "tests/e2e/visual/**"
+      - "tests/e2e/smoke/smoke-helpers.ts"
+      - "playwright.config.ts"
+      - ".github/workflows/visual.yml"
+  workflow_call:
+    inputs:
+      base_url:
+        description: "The deployed host to capture"
+        required: true
+        type: string
+      sha:
+        description: "The deployed commit"
+        required: false
+        type: string
+        default: ""
+      base_sha:
+        description: "The commit before the push (changed pages = base_sha...sha); empty = every page"
+        required: false
+        type: string
+        default: ""
+    secrets:
+      VERCEL_AUTOMATION_BYPASS_SECRET:
+        required: false
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Deployed host (https://aa-cis.lumiguides.it.com, dispatch from main); empty = the next start run"
+        required: false
+        type: string
+        default: ""
+      pages:
+        description: "Comma list of page slugs (tests/e2e/visual/pages.ts) or all"
+        required: false
+        type: string
+        default: "all"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: visual-${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.base_url || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  pr:
+    name: Visual (next start, public pages + kit gallery)
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.base_url == '')
+    # Pinned like ui-smoke.yml: Playwright's Chromium is not supported on ubuntu 26.04 yet.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      BASE_URL: http://localhost:3001
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Changed pages
+        id: pages
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          PAGES: ${{ inputs.pages }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            SLUGS=$(node --experimental-strip-types --no-warnings tests/e2e/visual/changed-pages.mjs "origin/$BASE_REF" HEAD)
+          else
+            SLUGS=${PAGES:-all}
+          fi
+          echo "slugs=$SLUGS" >> "$GITHUB_OUTPUT"
+          echo "Changed pages: ${SLUGS:-none}"
+
+      - name: Build the frontend with the kit gallery (KIT_GALLERY=1) and start it
+        working-directory: frontend
+        env:
+          KIT_GALLERY: "1"
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+          nohup npx next start -p 3001 > "$RUNNER_TEMP/next.log" 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -sf -o /dev/null http://localhost:3001/kit-gallery && exit 0
+            sleep 2
+          done
+          cat "$RUNNER_TEMP/next.log"
+          echo "::error::next start did not answer /kit-gallery"
+          exit 1
+
+      # `npm install`, not `npm ci`: the repo root's package-lock.json is gitignored (lesson S220).
+      - name: Install Playwright (repo root)
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      # The planted overflow (document and frame) must be caught: the Playwright run must fail and every planted
+      # capture must show its overflow in the report. A green self-test means the assertion is broken.
+      - name: Self-test (a planted overflow must fail the run)
+        env:
+          VISUAL_SELFTEST: "1"
+        run: |
+          if npx playwright test -c playwright.config.ts --project=visual-1440 --project=visual-390 --reporter=line; then
+            echo "::error::the planted-overflow pages passed the visual checks: the overflow assertion is broken"
+            exit 1
+          fi
+          node tests/e2e/visual/summary.mjs --selftest
+          rm -rf tests/e2e/results/visual
+
+      - name: Capture and check
+        env:
+          VISUAL_AUTH: public
+          VISUAL_GALLERY: "1"
+          VISUAL_SLUGS: ${{ steps.pages.outputs.slugs }}
+        run: npx playwright test -c playwright.config.ts --project=visual-1440 --project=visual-390 --reporter=list
+
+      - name: Summary
+        if: always()
+        env:
+          SLUGS: ${{ steps.pages.outputs.slugs }}
+        run: |
+          mkdir -p tests/e2e/results/visual
+          {
+            echo "### Visual — next start (public pages + kit gallery)"
+            echo ""
+            node tests/e2e/visual/summary.mjs
+            echo ""
+            echo "Changed pages: \`${SLUGS:-none}\`. Signed-in pages are captured after the production deploy (job deployed)."
+          } | tee tests/e2e/results/visual/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload screenshots and report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-cis-pr-${{ github.run_id }}
+          path: |
+            tests/e2e/results/visual/shots/*.png
+            tests/e2e/results/visual/report.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      # One comment per PR (marker), edited in place. All values reach `run:` through env.
+      - name: Comment the summary on the PR
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          MARKER="<!-- visual-run -->"
+          BODY=$(printf '%s\n%s\n\n[Run and screenshots](%s)\n' "$MARKER" "$(cat tests/e2e/results/visual/summary.md)" "$RUN_URL")
+          EXISTING=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+                       --jq ".[] | select(.body | contains(\"$MARKER\")) | .id" 2>/dev/null | head -n1 || true)
+          if [ -n "$EXISTING" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$EXISTING" -f body="$BODY" >/dev/null
+          else
+            gh api -X POST "repos/$REPO/issues/$PR/comments" -f body="$BODY" >/dev/null
+          fi
+
+  deployed:
+    name: Visual (deployed host, signed in)
+    # The mailbox role trusts refs/heads/main + environment e2e only; inside a called workflow github.ref is the caller's.
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name != 'workflow_dispatch' || inputs.base_url != '') && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    environment: e2e
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    # Shared with e2e-cognito.yml and ui-smoke.yml: two runs at once would race for the same mailbox and codes.
+    concurrency:
+      group: e2e-cognito
+      cancel-in-progress: false
+    env:
+      BASE_URL: ${{ inputs.base_url }}
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+      # Opt-in switch the smoke setup checks (no underscore by design, like ui-smoke.yml).
+      E2ECOGNITO: "1"
+    steps:
+      - name: Only the Cognito callback hosts
+        env:
+          URL: ${{ inputs.base_url }}
+        run: |
+          case "${URL%/}" in
+            https://aa-cis.lumiguides.it.com|https://aa-cis-preview.lumiguides.it.com) echo "Visual run on $URL" ;;
+            *) echo "::error::base_url must be https://aa-cis.lumiguides.it.com or https://aa-cis-preview.lumiguides.it.com (got $URL)"; exit 1 ;;
+          esac
+
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Changed pages
+        id: pages
+        env:
+          BASE_SHA: ${{ inputs.base_sha }}
+          HEAD_SHA: ${{ inputs.sha || github.sha }}
+          PAGES: ${{ inputs.pages }}
+        run: |
+          if [ -n "$PAGES" ]; then
+            SLUGS=$PAGES
+          elif [ -n "$BASE_SHA" ] && [ "$BASE_SHA" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            SLUGS=$(node --experimental-strip-types --no-warnings tests/e2e/visual/changed-pages.mjs "$BASE_SHA" "$HEAD_SHA")
+          else
+            SLUGS=all
+          fi
+          echo "slugs=$SLUGS" >> "$GITHUB_OUTPUT"
+          echo "Changed pages: ${SLUGS:-none}"
+
+      - name: Configure AWS credentials (OIDC, read-only mailbox role)
+        if: steps.pages.outputs.slugs != ''
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.E2E_MAIL_ROLE_ARN }}
+          aws-region: us-west-1
+          role-session-name: cis-visual-${{ github.run_id }}
+
+      # `npm install`, not `npm ci`: the repo root's package-lock.json is gitignored (lesson S220).
+      - name: Install Playwright (repo root)
+        if: steps.pages.outputs.slugs != ''
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: Capture the public pages
+        if: steps.pages.outputs.slugs != ''
+        env:
+          VISUAL_AUTH: public
+          VISUAL_SLUGS: ${{ steps.pages.outputs.slugs }}
+        run: |
+          npx playwright test -c playwright.config.ts --project=visual-1440 --project=visual-390 --reporter=list --pass-with-no-tests
+
+      # visual-staff-* depend on smoke-setup: one Cognito sign-in, then every staff page from that storage state.
+      - name: Capture the staff pages (signed in)
+        if: always() && steps.pages.outputs.slugs != ''
+        env:
+          VISUAL_AUTH: staff
+          VISUAL_SLUGS: ${{ steps.pages.outputs.slugs }}
+        run: |
+          npx playwright test -c playwright.config.ts --project=visual-staff-1440 --project=visual-staff-390 --reporter=list --pass-with-no-tests
+
+      - name: Summary
+        if: always() && steps.pages.outputs.slugs != ''
+        env:
+          SLUGS: ${{ steps.pages.outputs.slugs }}
+        run: |
+          mkdir -p tests/e2e/results/visual
+          {
+            echo "### Visual — $BASE_URL (signed in as the Cognito E2E user)"
+            echo ""
+            node tests/e2e/visual/summary.mjs
+            echo ""
+            echo "Pages: \`$SLUGS\`. A page the E2E role may not open is skipped (lib/rbac.ts PAGE_RULES)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # PNGs and the JSON report only: never the HTML report, traces or the auth state.
+      - name: Upload screenshots and report
+        if: always() && steps.pages.outputs.slugs != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-cis-production-${{ github.run_id }}
+          path: |
+            tests/e2e/results/visual/shots/*.png
+            tests/e2e/results/visual/report.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Delete auth state
+        if: always()
+        run: rm -rf tests/e2e/.auth

@@ -572,7 +572,7 @@ export type TabItem = {
   label: React.ReactNode;
   /** underline only: a small count after the label ("Proposals 3"). */
   count?: React.ReactNode;
-  /** underline only: shown but not selectable (give the reason as `title`). */
+  /** Shown but not selectable (give the reason as `title`). */
   disabled?: boolean;
   title?: string;
 };
@@ -592,7 +592,7 @@ export function Tabs({
   active: string;
   onChange: (k: string) => void;
   variant?: "track" | "underline";
-  /** underline: the tab list's name for screen readers ("Trip case sections"). */
+  /** The tab list's name for screen readers ("Trip case sections"). */
   ariaLabel?: string;
   /** underline: space between tabs in px (default 24). */
   gap?: number;
@@ -606,19 +606,21 @@ export function Tabs({
 }) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const [attachStrip, stripFade] = useTabStrip(active);
+  // Both variants are an ARIA tab list (AA-1008 S6f: the track variant too, so a test or a screen reader finds a tab
+  // by role "tab", never "button"): one tab stop (the active tab), arrow keys move and select (automatic activation);
+  // ArrowUp / ArrowDown are left to the page (a horizontal list).
+  const current = tabs.findIndex((t) => t.key === active);
+  const tabStop = current >= 0 && !tabs[current].disabled ? current : tabs.findIndex((t) => !t.disabled);
+  const onKey = (e: React.KeyboardEvent<HTMLButtonElement>, from: number) => {
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") return;
+    const i = rovingTarget(tabs, from, e.key);
+    if (i === null) return;
+    e.preventDefault();
+    if (i < 0) return;
+    refs.current[i]?.focus();
+    if (tabs[i].key !== active) onChange(tabs[i].key);
+  };
   if (variant === "underline") {
-    const current = tabs.findIndex((t) => t.key === active);
-    const tabStop = current >= 0 && !tabs[current].disabled ? current : tabs.findIndex((t) => !t.disabled);
-    // Arrow keys move and select (automatic activation); ArrowUp / ArrowDown are left to the page (a horizontal list).
-    const onKey = (e: React.KeyboardEvent<HTMLButtonElement>, from: number) => {
-      if (e.key === "ArrowUp" || e.key === "ArrowDown") return;
-      const i = rovingTarget(tabs, from, e.key);
-      if (i === null) return;
-      e.preventDefault();
-      if (i < 0) return;
-      refs.current[i]?.focus();
-      if (tabs[i].key !== active) onChange(tabs[i].key);
-    };
     return (
       <>
         <ButtonStyles />
@@ -697,6 +699,8 @@ export function Tabs({
   return (
     <div
       ref={attachStrip}
+      role="tablist"
+      aria-label={ariaLabel}
       data-testid={testId}
       style={{
         display: "flex",
@@ -713,13 +717,23 @@ export function Tabs({
         ...stripFade,
       }}
     >
-      {tabs.map((t) => {
+      {tabs.map((t, i) => {
         const on = active === t.key;
         return (
           <button
             key={t.key}
+            ref={(el) => {
+              refs.current[i] = el;
+            }}
+            type="button"
+            role="tab"
+            aria-selected={on}
             data-kit-tab-active={on ? "true" : undefined}
+            disabled={t.disabled}
+            title={t.title}
+            tabIndex={i === tabStop ? 0 : -1}
             onClick={() => onChange(t.key)}
+            onKeyDown={(e) => onKey(e, i)}
             style={{
               padding: "7px 16px",
               borderRadius: 7,
@@ -728,7 +742,7 @@ export function Tabs({
               color: on ? K.ink : K.muted,
               fontSize: 13,
               fontWeight: on ? 600 : 400,
-              cursor: "pointer",
+              cursor: t.disabled ? "not-allowed" : "pointer",
               fontFamily: sans,
               boxShadow: on ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
               transition: "all .15s",

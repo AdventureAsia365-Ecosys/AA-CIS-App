@@ -287,7 +287,7 @@ test("Pressable: a reset button with the kit focus class; block or inline", () =
   assert.match(trigger, /height:36px/);
 });
 
-test("Tabs underline: a tablist with aria-selected, a disabled tab with its reason, counts; track unchanged", () => {
+test("Tabs underline: a tablist with aria-selected, a disabled tab with its reason, counts; track: the same roles", () => {
   const tabs = [
     { key: "overview", label: "Overview" },
     { key: "proposals", label: "Proposals", count: 3 },
@@ -314,10 +314,21 @@ test("Tabs underline: a tablist with aria-selected, a disabled tab with its reas
     ariaLabel: "x", style: { marginBottom: -1 } }));
   assert.match(marked.match(/^<div [^>]*>/)[0], /margin-bottom:-1px/, "a caller's bottom margin is kept");
 
-  const track = html(h(P.Tabs, { tabs: [{ key: "a", label: "A" }, { key: "b", label: "B" }], active: "a",
+  // AA-1008 (S6f): the track variant is an ARIA tab list too (one tab stop, aria-selected, a disabled tab keeps its
+  // reason); its look is unchanged.
+  const track = html(h(P.Tabs, { tabs: [{ key: "a", label: "A" }, { key: "b", label: "B" },
+    { key: "c", label: "C", disabled: true, title: "Later" }], active: "b", onChange: () => {}, ariaLabel: "Views" }));
+  assert.match(track, /^<div role="tablist" aria-label="Views" style="display:flex;gap:4px;padding:4px;background:var\(--aa-line2\)/);
+  const tb = [...track.matchAll(/<button [^>]*>/g)].map((m) => m[0]);
+  assert.equal(tb.length, 3);
+  for (const b of tb) assert.match(b, /type="button" role="tab"/);
+  assert.match(tb[0], /aria-selected="false"[^>]*tabindex="-1"/);
+  assert.match(tb[1], /aria-selected="true"[^>]*tabindex="0"/);
+  assert.match(tb[2], /disabled=""[^>]*title="Later"/);
+  // No active tab (or a disabled one): the first enabled tab is the tab stop.
+  const none = html(h(P.Tabs, { tabs: [{ key: "a", label: "A", disabled: true }, { key: "b", label: "B" }], active: "x",
     onChange: () => {} }));
-  assert.doesNotMatch(track, /role=/, "the track variant keeps its plain-button markup");
-  assert.match(track, /^<div style="display:flex;gap:4px;padding:4px;background:var\(--aa-line2\)/);
+  assert.match([...none.matchAll(/<button [^>]*>/g)][1][0], /tabindex="0"/);
 });
 
 test("focus styles: one accent-deep ring (3:1 on every surface), inset in list rows, round the label in tabs", () => {

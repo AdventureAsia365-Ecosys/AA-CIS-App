@@ -182,9 +182,14 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     (no-op when no copied file but `MANIFEST.json` changes; the agent merges it through the merge queue); the same
     workflow writes a nightly freshness table (report only). A PR touching `core/**` runs **Kit Consumers**
     (`kit-consumers.yml`, non-required): core overlaid on each consumer's `main`, then integrity, `tsc --noEmit` and
-    the app's lint. CIS-local, outside `core/`: `api.ts`,
-    `guideContent.ts` (the guide checks, re-exporting the core shape), the shell (`AdminShell`, `Sidebar`, `Topbar`,
-    `BottomNav`, `CommandPalette`, `SessionKeepAlive`), `adminNav.tsx`, `useAdminIdentity.ts`,
+    the app's lint. **Shell frame (AA-1008 S6e):** `core/ShellFrame.tsx` is the one app shell frame of every kit
+    consumer (CIS admin, Booking admin, the AA-Partner agency app): layout [sidebar | topbar over the page], the phone
+    drawer below 768 or 900 px (off-canvas, backdrop, Esc, out of the tab order while closed: its own hoisted style
+    element keyed on `data-kit-shell`), the ⌘K palette state, bottom bar and footer slots, scroll "main" or
+    "document", and `main="shell"` (it renders the `<main>`) or `"page"` (the page's PageFrame is the `<main>`); the
+    nav, identity, sign-out and brand are the apps' own slot components. CIS-local, outside `core/`: `api.ts`,
+    `guideContent.ts` (the guide checks, re-exporting the core shape), the shell configuration (`AdminShell`, a
+    ShellFrame with `main="page"`; `Sidebar`, `Topbar`, `BottomNav`, `CommandPalette`, `SessionKeepAlive`), `adminNav.tsx`, `useAdminIdentity.ts`,
     `useReviewPendingCount.ts`, `chart.ts` (`CHART_TOOLTIP`, the recharts tooltip style, moved out of `adminUi.tsx`
     in AA-994 S6b), and `theme.ts` / `useTheme.ts` (the core store and hooks bound to `cis_theme`; the
     root layout's restore script is `themeStore.restoreScript`). Pages import the barrel `app/_kit` (which re-exports
@@ -1630,6 +1635,17 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
 - **Portal**: no workflow here deploys, builds or tests the portal. It deploys from AA-Partner (`deploy-portal-dev.yml`,
   ECS `aa-crm-dev-portal` behind CloudFront since the P2b cutover); its Vercel project was deleted at the P2b
   clean-up (AA-979, runbook §4.5).
+- **Visual run (AA-1008 S1d/S2c, root ADR 0016 decision 9, `.github/workflows/visual.yml`, report-only)**: the
+  pages a change touches (`tests/e2e/visual/changed-pages.mjs`; a kit, shell, `lib/` or layout change = every page)
+  at 1440 x 900 and 390 x 844, light and dark (Playwright projects `visual-1440` / `visual-390`, `visual-staff-*`),
+  asserting no horizontal overflow of the document AND of the kit frame (PageFrame / ShellFrame main scroll on their
+  own), 0 console errors, no failed same-origin request, `[data-kit-frame]`, the theme applied; PNGs + `report.json`
+  as an artifact, one PR comment. Per PR (job `pr`): `next build` with `KIT_GALLERY=1` + `next start` in the runner,
+  the changed public pages and the gated `/kit-gallery` route (404 in every build without the flag), after a
+  self-test that must fail on a planted overflow (`/kit-gallery?plant=overflow|frame`). After the production deploy
+  (job `deployed`, called by `vercel-deploy.yml` job `visual-production`; or a dispatch from `main` with `base_url`):
+  the changed pages on the host, staff pages signed in through the smoke setup (Cognito E2E user, environment `e2e`).
+  `tests/e2e/visual/pages.ts` lists every route or excludes it with a reason (guard `frontend/lib/visualPages.test.mjs`).
 - **UI smoke (AA-732, `.github/workflows/ui-smoke.yml`)**: called by `vercel-deploy.yml` after a
   successful deploy (`workflow_call`, inputs `base_url` + `sha` + `staff_session`), or run by hand
   (`workflow_dispatch`); Vercel's `deployment_status` no longer arrives. A Playwright suite (`tests/e2e/smoke/`)
