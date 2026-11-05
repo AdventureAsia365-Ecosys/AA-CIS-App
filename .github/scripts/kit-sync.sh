@@ -11,8 +11,7 @@
 # This file is canonical since AA-994 S3s (it was the root repo's tools/kit/kit-sync.sh, which now runs this one),
 # so the CIS workflows (kit-sync.yml, kit-consumers.yml) and the agents copy with the same code.
 #
-# Consumers (ADR 0016 decision 2):
-#   portal       AA-Partner          portal/app/_kit/core   portal/kit.lock.json     full
+# Consumers (ADR 0016 decision 2; three since the AA-Partner portal/ app was merged into web/, AA-1036 / AA-1008):
 #   crm-web      AA-Partner          web/app/_kit/core      web/kit.lock.json        full
 #   booking      AA-Booking          frontend/ui/core       frontend/kit.lock.json   full
 #   tripplanner  AA-TripPlanner-Web  frontend/ui/core       frontend/kit.lock.json   tokens
@@ -67,8 +66,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 # The consumer table (ADR 0016 decision 2). kit_sync_bot.py reads it through --list, so this is its only copy.
-CONSUMERS="portal AA-Partner portal/app/_kit/core portal/kit.lock.json full
-crm-web AA-Partner web/app/_kit/core web/kit.lock.json full
+CONSUMERS="crm-web AA-Partner web/app/_kit/core web/kit.lock.json full
 booking AA-Booking frontend/ui/core frontend/kit.lock.json full
 tripplanner AA-TripPlanner-Web frontend/ui/core frontend/kit.lock.json tokens"
 if [ "$list" = 1 ]; then
@@ -80,7 +78,7 @@ fi
 [ "$from_local" = 1 ] && [ -n "$ref_arg" ] && die 2 "--from-local and --ref exclude each other"
 
 row=$(printf '%s\n' "$CONSUMERS" | awk -v c="$consumer" '$1 == c')
-[ -n "$row" ] || die 2 "unknown consumer '$consumer' (portal, crm-web, booking, tripplanner)"
+[ -n "$row" ] || die 2 "unknown consumer '$consumer' (crm-web, booking, tripplanner)"
 read -r _ repo dest_rel lock_rel profile <<<"$row"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

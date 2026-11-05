@@ -12,7 +12,7 @@ name: Kit Consumers
 # leave later steps running without node_modules (run 40815951299: `eslint: not found`).
 #
 # Pre-migration consumers: the matrix carries `migrated` (and `migrates_in`) per consumer from PRE_MIGRATION in
-# .github/scripts/kit_sync_bot.py. portal, crm-web and booking (since AA-994 S4b) are migrated; tripplanner still
+# .github/scripts/kit_sync_bot.py. crm-web and booking (since AA-994 S4b) are migrated (portal/ was merged into AA-Partner web/ by AA-1036); tripplanner still
 # defines `--aa-*` tokens in its own frontend/ui/tokens.css (planned: AA-994 S5a). For it the
 # `check-kit-copy.mjs --css` step is report-only: a warning annotation and a summary line "pre-migration: N --aa-*
 # definitions outside core". The copy check, tsc, lint and the unit tests stay strict for every consumer. S5a flips
@@ -156,7 +156,7 @@ jobs:
         working-directory: consumer/${{ matrix.consumer.app_dir }}
         run: |
           # Booking names its node:test suite test:unit (its test:layout / smoke need Playwright and a live host);
-          # portal, crm-web and TripPlanner use test. No script: nothing to run, said in the summary.
+          # crm-web and TripPlanner use test. No script: nothing to run, said in the summary.
           script=$(node -p 'const s = require("./package.json").scripts || {}; s["test:unit"] ? "test:unit" : (s.test ? "test" : "")')
           if [ -z "$script" ]; then
             echo "::notice::$NAME has no test:unit or test script"
