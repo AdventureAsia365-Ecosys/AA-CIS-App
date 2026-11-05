@@ -18,23 +18,26 @@ name: Kit Consumers
 # definitions outside core". The copy check, tsc, lint and the unit tests stay strict for every consumer. S5a flips
 # the flag by deleting TripPlanner's PRE_MIGRATION entry in the same CIS PR, which makes the step strict for it.
 #
-# Non-required until the Booking catch-up (plan S4b); the stable check name is the "Kit consumers" job below. Before
-# it is made required, drop the `paths:` filter (required checks and merge_group ignore it): the plan job already
-# exits green, and every leg is skipped, when no kit path changed.
+# Required check (ADR 0016 d6: required once the Booking catch-up, plan S4b, was done; AA-1008 H3). The stable check
+# name is the aggregator job "Kit consumers" below (the tech lead's branch-protection script and verify-h3.sh pin it:
+# never rename it; the per-leg "Kit consumers (<name>)" and "Plan" are not required). It runs on every pull request
+# and on the merge queue (merge_group), with no `paths:` filter (a required check must report on every PR, and
+# merge_group ignores path filters): the plan job decides, so a PR or queue group that changes no kit path gets a
+# green "Kit consumers" in seconds with every leg skipped. The aggregator fails when the plan job did not succeed or
+# any leg did not succeed (failed, cancelled, or skipped although the plan said "changed").
 # Read only: no secret, no App token; the consumer repos are public.
 on:
   pull_request:
-    paths:
-      - "frontend/app/_kit/core/**"
-      - ".github/scripts/kit-sync.sh"
-      - ".github/scripts/kit_sync_bot.py"
-      - ".github/workflows/kit-consumers.yml"
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   contents: read
 
+# A PR's newer push cancels its older run; a merge_group run (no PR number) has its own run_id group, so two queue
+# groups never cancel each other.
 concurrency:
-  group: kit-consumers-${{ github.event.pull_request.number }}
+  group: kit-consumers-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -50,10 +53,11 @@ jobs:
           fetch-depth: 0
           filter: blob:none
           persist-credentials: false
+      # The PR's base, or on merge_group the queue group's base commit (HEAD is then the queue commit).
       - name: Did the kit core (or the sync code) change?
         id: plan
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha }}
         run: |
           python3 .github/scripts/kit_sync_bot.py plan --base "$BASE_SHA" --head HEAD \
             --also .github/scripts/kit-sync.sh --also .github/scripts/kit_sync_bot.py \
@@ -77,6 +81,7 @@ jobs:
       MIGRATES_IN: ${{ matrix.consumer.migrates_in }}
       NEXT_TELEMETRY_DISABLED: "1"
     steps:
+      # The default ref: the PR's merge commit, or on merge_group the queue commit (github.sha), never main.
       - name: Check out this PR
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -179,6 +184,7 @@ jobs:
         run: |
           if [ "$PLAN" != "success" ]; then echo "::error::plan job: $PLAN"; exit 1; fi
           if [ "$CHANGED" != "true" ]; then
+            if [ "$LEGS" != "skipped" ]; then echo "::error::kit core unchanged but the legs ran ($LEGS)"; exit 1; fi
             echo "Kit core unchanged: nothing to check." >> "$GITHUB_STEP_SUMMARY"; exit 0
           fi
           if [ "$LEGS" != "success" ]; then
