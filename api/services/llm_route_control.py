@@ -177,8 +177,17 @@ def _provider_rows(world: _World, priorities: Optional[dict] = None) -> list[dic
 
 async def read_state(pool) -> dict:
     """GET /admin/ai-gateway/route-control: the live config with what the editor needs (options per stage)."""
+    return state_of(await _world(pool))
+
+
+async def read_world(pool) -> _World:
+    """AA-1042 (Guide tab): the live config, stage rows, catalog, registry and refusal evidence, read once."""
+    return await _world(pool)
+
+
+def state_of(world: _World) -> dict:
+    """The GET /admin/ai-gateway/route-control payload of one ``world`` (the Guide tab reads the same)."""
     from api.routers.admin_llm_ops import _options_for
-    world = await _world(pool)
     stages = []
     for r in world.stages:
         scopes = data_scope.normalize(r.get("allowed_scopes"))
@@ -430,6 +439,15 @@ def _resolve_all(rows: list[dict], priorities: dict, order_mode: str, evidence=N
                 continue
             out[row["stage"]] = llm_route_chains.resolve_stage(_config(row), evidence)
     return out
+
+
+async def serving(world: _World) -> dict:
+    """AA-1042 (Guide tab): stage -> ``resolve_stage`` of every active stage with the LIVE config, the resolver the
+    preview's "first" comes from (the deployment that would serve, refused ones skipped), never the chain's first
+    key. $0, no model call."""
+    live = world.live
+    rows = _rows_with(world.stages, live["routes"])
+    return await asyncio.to_thread(_resolve_all, rows, live["priorities"], live["order_mode"], world.evidence)
 
 
 async def preview_world(world: _World, target: dict, shape_errors: list) -> dict:
