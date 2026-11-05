@@ -626,6 +626,24 @@ def test_playwright_admin_evidence_project_is_opt_in_and_ignored_by_chromium():
     assert "process.env.E2EADMIN !== '1'" in spec
 
 
+def test_every_admin_evidence_spec_is_opt_in():
+    # AA-1042 (S270): each spec of the agent-only project skips unless its own E2E switch is set (E2EADMIN for the
+    # E2E admin, E2ECS for the customer_success identity), and no workflow sets any of those switches.
+    specs = sorted(glob.glob(os.path.join(ROOT, "tests", "e2e", "admin-evidence", "*.spec.ts")))
+    assert any(p.endswith("aa1042-1045-evidence.spec.ts") for p in specs)
+    switches = set()
+    for path in specs:
+        with open(path, encoding="utf-8") as f:
+            m = re.search(r"test\.skip\(process\.env\.(E2E[A-Z]+) !== '1'", f.read())
+        assert m, f"{path} is not opt-in"
+        switches.add(m.group(1))
+    for path in glob.glob(os.path.join(ROOT, ".github", "workflows", "*.y*ml")):
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        for switch in switches:
+            assert not re.search(rf"\b{switch}\b", text), (path, switch)
+
+
 def test_json_detail_values_are_stable():
     # The BFF and the agent's helper match on these strings.
     assert json.dumps({"detail": e2e_staff.E2E_READ_ONLY}) == '{"detail": "e2e_read_only"}'
