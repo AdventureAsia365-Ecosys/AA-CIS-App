@@ -48137,6 +48137,102 @@
         ]
       }
     },
+    "/tenant/v1/tenants/{tenant_id}/add-on-requests": {
+      "post": {
+        "description": "Ask Adventure Asia for an add-on on behalf of the agency's CRM owner (the CRM checked the role).",
+        "operationId": "request_tenant_add_on_tenant_v1_tenants__tenant_id__add_on_requests_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddOnRequestCreated"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddOnRequestCreated"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Request Tenant Add On",
+        "tags": [
+          "tenant-addons"
+        ]
+      }
+    },
+    "/tenant/v1/tenants/{tenant_id}/add-ons": {
+      "get": {
+        "description": "The agency's add-ons (active, requested or available), the pending request and the last decision.",
+        "operationId": "list_tenant_add_ons_tenant_v1_tenants__tenant_id__add_ons_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddOnList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Tenant Add Ons",
+        "tags": [
+          "tenant-addons"
+        ]
+      }
+    },
     "/v1/account/activity": {
       "get": {
         "operationId": "list_activity_v1_account_activity_get",

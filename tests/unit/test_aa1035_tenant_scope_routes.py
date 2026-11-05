@@ -29,6 +29,10 @@ from tests.unit.test_s241_admin_routes_require_auth import (
 TENANT_TOKEN_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("GET", "/tenant/v1/tenants/{tenant_id}/account"),
     ("GET", "/tenant/membership/v1/tenants/{tenant_id}/members"),
+    # AA-1036 R3 (tenant.addons.v1): the CRM's M2M client (scope cis.tenant/addons) reads an agency's add-ons and relays
+    # its CRM owner's request; the CRM checks the owner role (api/routers/tenant_addons.py).
+    ("GET", "/tenant/v1/tenants/{tenant_id}/add-ons"),
+    ("POST", "/tenant/v1/tenants/{tenant_id}/add-on-requests"),
 })
 
 

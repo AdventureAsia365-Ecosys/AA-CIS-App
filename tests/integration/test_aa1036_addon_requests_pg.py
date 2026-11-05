@@ -356,3 +356,97 @@ async def test_an_approval_whose_add_on_went_live_before_its_job_ran_changes_not
         out, _ = await _attach(conn, tid, plan_key="crm.core", seats=2, only_new=True)
         assert out["steps"] == ["crm_subscribed"], change
         assert await _sub(conn, tid) == ("crm.core", "active", 2)
+
+
+# ── tenant.addons.v1: the CRM relays its owner's request (M2M, scope cis.tenant/addons) ──────────────────────────
+
+CRM_MEMBER = "2d3e4f5a-0000-4000-8000-00000000a036"
+
+
+class _TimeoutPool(_Pool):
+    """The route acquires with a timeout, as on asyncpg's Pool."""
+
+    @asynccontextmanager
+    async def acquire(self, timeout=None):
+        yield self._conn
+
+
+def _m2m_app(conn):
+    from fastapi import FastAPI
+
+    from api.core import m2m_auth
+    from api.routers.tenant_addons import router
+
+    app = FastAPI()
+    app.include_router(router)
+    app.add_exception_handler(m2m_auth.M2MProblem, m2m_auth.m2m_problem_handler)
+    app.state.pool = _TimeoutPool(conn)
+    return app
+
+
+@asynccontextmanager
+async def _m2m_client(conn, monkeypatch):
+    import httpx
+
+    from api.core import m2m_auth
+    from tests.unit.aa976_m2m import install_m2m
+
+    monkeypatch.delenv(m2m_auth.ENV_M2M_ISSUER, raising=False)
+    monkeypatch.delenv(m2m_auth.ENV_M2M_CRM_CLIENT_ID, raising=False)
+    issuer, _ = install_m2m()
+    headers = {"Authorization": f"Bearer {issuer.token(scope=m2m_auth.SCOPE_TENANT_ADDONS)}"}
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=_m2m_app(conn)), base_url="http://cis.test",
+                                     headers=headers) as client:
+            yield client
+    finally:
+        m2m_auth.set_m2m_verifier(None)
+
+
+@pytest.mark.asyncio
+async def test_the_crm_relays_its_owners_request_into_the_same_store(conn, monkeypatch):
+    """An agency with no Content studio membership: the CRM asks for the Trip planner for its CRM owner. One row in
+    shared.tenant_addon_request (requested_by crm-member:<id>), the CIS audit row and the staff bell row; asking again
+    answers the open request; the studio's own list shows the same request."""
+    tid = await _tenant(conn)
+    async with _m2m_client(conn, monkeypatch) as client:
+        body = {"product": "tripplanner", "note": "For our river season.", "crm_member_id": CRM_MEMBER}
+        r = await client.post(f"/tenant/v1/tenants/{tid}/add-on-requests", json=body)
+        assert r.status_code == 201, r.text
+        created = r.json()
+        assert created["created"] is True and created["request"]["status"] == "pending"
+        assert "requested_by" not in created["request"]
+        again = await client.post(f"/tenant/v1/tenants/{tid}/add-on-requests", json={**body, "note": None})
+        assert again.status_code == 200 and again.json()["created"] is False
+        assert again.json()["request"]["request_id"] == created["request"]["request_id"]
+        listed = await client.get(f"/tenant/v1/tenants/{tid}/add-ons")
+    assert listed.status_code == 200
+    planner = {a["product"]: a for a in listed.json()["add_ons"]}["tripplanner"]
+    assert planner["state"] == "requested" and planner["request"]["note"] == "For our river season."
+    actor = f"crm-member:{CRM_MEMBER}"
+    rows = await conn.fetch("SELECT requested_by FROM shared.tenant_addon_request WHERE tenant_id = $1::uuid", tid)
+    assert [r["requested_by"] for r in rows] == [actor]
+    audit = await conn.fetch("SELECT actor FROM acp_shared.audit_log WHERE tenant_id = $1 "
+                             "AND action = 'tenant.addon_requested'", tid)
+    assert [a["actor"] for a in audit] == [actor]
+    assert len(await _bell(conn, tid)) == 1
+    studio = await ar.tenant_view(conn, tid)       # what the Content studio's Add-ons page reads
+    assert {a["product"]: a["state"] for a in studio["add_ons"]}["tripplanner"] == "requested"
+
+
+@pytest.mark.asyncio
+async def test_the_relay_keeps_the_studio_rules(conn, monkeypatch):
+    tid = await _tenant(conn)
+    unknown = str(uuid.uuid4())
+    async with _m2m_client(conn, monkeypatch) as client:
+        r = await client.post(f"/tenant/v1/tenants/{unknown}/add-on-requests",
+                              json={"product": "crm", "crm_member_id": CRM_MEMBER})
+        assert r.status_code == 404 and r.json()["reason"] == "tenant_not_found"
+        r = await client.get(f"/tenant/v1/tenants/{unknown}/add-ons")
+        assert r.status_code == 404
+        await conn.execute("UPDATE shared.tenants SET account_status = 'suspended', suspend_reason = 'billing' "
+                           "WHERE tenant_id = $1::uuid", tid)
+        r = await client.post(f"/tenant/v1/tenants/{tid}/add-on-requests",
+                              json={"product": "crm", "crm_member_id": CRM_MEMBER})
+        assert r.status_code == 409 and r.json()["reason"] == "tenant_not_in_service"
+    assert await conn.fetchval("SELECT count(*) FROM shared.tenant_addon_request WHERE tenant_id = $1::uuid", tid) == 0
