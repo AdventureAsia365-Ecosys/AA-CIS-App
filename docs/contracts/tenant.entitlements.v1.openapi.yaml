@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: tenant.entitlements.v1 (AA-CIS-App → AA-Partner CRM, AA-Booking, TripPlanner; tenant account and entitlements)
-  version: "1.2"
+  version: "1.3"
   description: >-
     CIS shared is the master of the tenant account: lifecycle status, data region, product subscriptions and the
     entitlements they give (root ADR 0019 d1, d2). This contract tells the other apps, per tenant, which feature keys
@@ -20,8 +20,8 @@ info:
     only events whose writing transaction is older than every transaction still open are returned (a
     transaction-id snapshot horizon, as tenant.membership.v1), so an event committed out of order is delivered later,
     never skipped (contracts rule 4); a consumer stores event_id and applies each event once. No personal data, no
-    price and no billing field crosses this contract (the bill-to fields stay in CIS; Booking reads them under its
-    own scope, R4). Auth: M2M token of the aa-m2m pool, scope cis.tenant/read (the CRM client).
+    price and no billing field crosses the HTTP API or the feed (the bill-to fields stay in CIS; Booking reads them
+    through its own view part, 1.3). Auth: M2M token of the aa-m2m pool, scope cis.tenant/read (the CRM client).
     1.1 (AA-1028 R1 slice 2, additive; no HTTP shape change): (a) resolution, CIS 356: a platform key (ai.*, policy.*)
     that is not the plan's own (an override, the legacy AI budget) needs a live content subscription, so an offboarded
     tenant keeps no platform key; content.rate_limit_rpm is the CIS public API limiter's per-tenant value
@@ -48,10 +48,21 @@ info:
     from a plan only when that plan is the tenant's content subscription's plan; an add-on plan (crm, tripplanner)
     never gives one (CIS refuses such a plan feature), and a tie between plan rows is broken by plan_key, so the
     served value is deterministic.
+    1.3 (AA-1037 R4 slice 1, additive; no HTTP shape change): a third view part for Booking, catalog.v_tenant_billing_v1
+    (CIS 381, SELECT to role booking only), for the agency invoices Booking issues (root ADR 0019 d9): one row per
+    tenant and subscription (NULL subscription columns for a tenant without one) with tenant_id, name, kind, the
+    bill-to fields (legal_entity_name, tax_id, billing_email, billing_address, billing_country; personal data,
+    snapshotted on an issued invoice only), product, plan_key, plan_name, price_usd_monthly, price_unit,
+    seats_included, price_extra_seat_usd, seats and subscription_status; columns are only appended. Booking's
+    bk_saas_invoice_draft drafts the software fee from the live subscriptions (active, past_due). The way back is
+    Booking's contract view booking.v_tenant_billing_status (bk-042, SELECT to cis_app): CIS's hourly
+    tenant_billing_tick writes paid_through and moves the account (warn -> past_due, past the suspend days ->
+    suspended with suspend_reason billing, paid again -> back in service); CIS stays the only writer of account and
+    subscription state.
   x-aa-contract: tenant.entitlements.v1
   x-aa-producer: AA-CIS-App
   x-aa-consumers: [AA-Partner, AA-Booking, AA-TripPlanner-Web]
-  x-aa-issues: [AA-1028]
+  x-aa-issues: [AA-1028, AA-1037]
 servers:
   - url: /tenant/v1
 security:
