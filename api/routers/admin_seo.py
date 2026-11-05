@@ -1,18 +1,19 @@
 """AA-705 — Admin SEO Intelligence: one page that merges every SEO signal the pipeline has.
 
-Replaces the thin Dashboard "SEO Intelligence" tab (3 KPIs + a short list). Five tabs, all fed by
+Replaces the thin Dashboard "SEO Intelligence" tab (3 KPIs + a short list). Four tabs, all fed by
 `GET /admin/seo-intelligence`:
-  1. Overview  — coverage %, demand by market, PAA count, research spend, data freshness.
+  1. Overview  — coverage %, demand by market, PAA count, data freshness.
   2. Keywords  — every researched keyword with real volume, per market, which tours use it.
   3. Questions — People-Also-Ask questions found per market.
   4. Gaps      — published masters with no keyword that has measured volume / stale / unresearched.
-  5. Spend     — DataForSEO cost + cache-hit rate per endpoint (reuses the External Spend rollup).
+AA-1039 R6 rest (root ADR 0019 d13, IA §6.2): the fifth tab, Spend (DataForSEO cost per endpoint, the dfs_call_log
+rollup of admin_llm_ops), folded into the admin Spend page (GET /admin/dfs-usage, spend.read), so this response no
+longer carries `spend`: content_lead reads this route and holds no spend.read. `days` stays accepted (old callers).
 
 Data sources, merged (the main reason the old tab looked poor):
   - acp_contract.search_demand       — researched keywords + PAA + volume per market (US/UK/AU/DE/FR/NL).
   - silver_aa_internal.seo_context   — S1 per-tour keyword ideas (`:ideas_v3`).
   - gold_aa_internal.published_tours — seo_keywords_used + master coverage (join raw_tours for country).
-  - shared.dfs_call_log              — spend + cache hits (reuses admin_llm_ops SQL).
   - acp_contract.segment_research_log — research freshness (FRESH_FOR = 182 days).
 
 NOTE: search_demand carries only `search_volume` — there is no CPC / competition data anywhere in
@@ -27,13 +28,6 @@ from fastapi import APIRouter, Depends, Header, Query, Request
 from api.core.staff_authz import staff_policy
 
 from api.routers.admin import verify_admin_secret
-from api.routers.admin_llm_ops import (
-    _DFS_LOCATION_NAMES,
-    _DFS_SUMMARY_SQL,
-    _DFS_TREE_SQL,
-    _resolve_window,
-    _window_meta,
-)
 
 logger = structlog.get_logger()
 
@@ -183,12 +177,11 @@ def _paa_items(raw) -> list[str]:
 @router.get("", summary="SEO Intelligence (all tabs)")
 async def get_seo_intelligence(
     request: Request,
-    days: int = Query(30, ge=1, le=365),
+    days: int = Query(30, ge=1, le=365),  # the old Spend tab's window; kept so old callers stay valid
     x_admin_secret: str = Header(None),
 ):
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
-    since, until = _resolve_window(days, None, None)
 
     async with pool.acquire() as conn:
         cov = await conn.fetchrow(_COVERAGE_SQL, _AA_INTERNAL)
@@ -199,8 +192,6 @@ async def get_seo_intelligence(
         keywords = await conn.fetch(_KEYWORDS_SQL, _AA_INTERNAL)
         paa_rows = await conn.fetch(_PAA_SQL)
         gaps = await conn.fetch(_GAPS_SQL, _AA_INTERNAL)
-        dfs_branches = await conn.fetch(_DFS_TREE_SQL, since, until)
-        dfs_summary = await conn.fetchrow(_DFS_SUMMARY_SQL, since, until)
 
     total_tours = cov["total_tours"] or 0
 
@@ -213,18 +204,6 @@ async def get_seo_intelligence(
         {"question": q, "markets": sorted(m)}
         for q, m in sorted(q_map.items(), key=lambda kv: (-len(kv[1]), kv[0]))
     ][:500]
-
-    # DFS spend branches (reuse External Spend rollup) + per-call cache-hit rate.
-    branches = []
-    for r in dfs_branches:
-        d = dict(r)
-        d["last_call_at"] = d["last_call_at"].isoformat() if d["last_call_at"] else None
-        tot = d["call_count"] or 0
-        d["cache_hit_rate"] = (d["cache_hit_count"] / tot) if tot else None
-        branches.append(d)
-    s = dict(dfs_summary) if dfs_summary else {}
-    stot = s.get("total_calls") or 0
-    s["cache_hit_rate"] = (s.get("cache_hits", 0) / stot) if stot else None
 
     return {
         "overview": {
@@ -247,5 +226,4 @@ async def get_seo_intelligence(
         "keywords": [dict(r) for r in keywords],
         "questions": questions,
         "gaps": [dict(r) | {"tour_id": str(dict(r)["tour_id"])} for r in gaps],
-        "spend": {**_window_meta(days, since, until), "summary": s, "branches": branches},
     }

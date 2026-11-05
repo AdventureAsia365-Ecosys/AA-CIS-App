@@ -121,7 +121,7 @@ test("the Cost Operations tree keeps the cost on the right of a wrapping row (N1
 });
 
 test("the Tenants detail tab strip is the kit Tabs (N3)", () => {
-  const src = read(APP_DIR, "tenants/page.tsx");
+  const src = read(APP_DIR, "tenants/_components/TenantDetail.tsx");  // AA-1039 R6 rest: the panel moved there
   assert.match(src, /<Tabs variant="underline"[\s\S]{0,400}?active=\{tab\}/);
   assert.doesNotMatch(src, /TABS\.map\(t => \(\s*<button/);
 });

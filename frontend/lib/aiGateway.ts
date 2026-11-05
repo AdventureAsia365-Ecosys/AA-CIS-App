@@ -969,9 +969,10 @@ export function sameTenantDraft(a: TenantBudgetDraft, b: TenantBudgetDraft): boo
     && a.notes.trim() === b.notes.trim();
 }
 
-/** The Tenant 360 link of a tenant's Cost tab (the Budgets tab's tenant rows). */
+/** The Tenant 360 link of a tenant's Cost tab (the Budgets tab's tenant rows; AA-1039 R6 rest: Tenant 360 is the
+ *  route /admin/tenants/<id>, lib/adminIa.ts tenant360Href). */
 export function tenantCostHref(tenantId: string): string {
-  return `/admin/tenants?tenant=${encodeURIComponent(tenantId)}&tab=cost`;
+  return `/admin/tenants/${encodeURIComponent(tenantId)}?tab=cost`;
 }
 
 /** The warm independent paths of root ADR 0009 (decision 2, accepted 31/10/2026): both direct vendor APIs. A row is a
@@ -1498,8 +1499,9 @@ export function appProfilePath(app: string): string {
 
 // ── AA-1039 R6 slice 1 (S266): routing by data class ───────────────────────────────────────────────────────────────
 // Root ADR 0019 (TL-12): each stage gets a `pii_class` — `content` (AA or tenant content, no personal data: a global
-// route is fine) or `pii` (personal data: US-only routes). The field does not exist yet (no column, no API field); the
-// Routing tab shows an empty state until GET /api/admin/llm-config carries it, then lists the stages per class.
+// route is fine) or `pii` (personal data: our AWS accounts, US-only routes). CIS 373 adds the column
+// (shared.llm_role_config.pii_class, migration-only); GET /api/admin/llm-config sends it (null before 373: the Routing
+// tab shows its empty state), and the gateway calls a pii stage only on US deployments (vendor_route.deployment_plan).
 
 export type PiiClass = "content" | "pii";
 

@@ -197,9 +197,9 @@ def openai_scope_allowed(allowed_scopes: Optional[tuple],
     return allowed_scopes is None or data_scope.allows(allowed_scopes, _openai_data_scope(conn))
 
 
-# AA-1002 (S5): (stage, allowed_scopes, role) of the call being generated, bound by LLMClient._generate / the shadow so
-# the gateway reads a stage's config once per call (the route, the scopes and, AA-642 A5, the role that the connections
-# must serve come from the same row; role None = the row states none).
+# AA-1002 (S5): (stage, allowed_scopes, role[, pii_class]) of the call being generated, bound by LLMClient._generate /
+# the shadow so the gateway reads a stage's config once per call (the route, the scopes and, AA-642 A5, the role that
+# the connections must serve come from the same row; role None = the row states none; AA-1039: the data class).
 _STAGE_SCOPES: ContextVar[Optional[tuple]] = ContextVar("llm_stage_scopes", default=None)
 
 # ── AA-1018 part 2: the route deadline ───────────────────────────────────────────────────────────────────────────
@@ -312,6 +312,37 @@ def stage_scopes(request: LLMRequest) -> Optional[tuple]:
     except Exception as e:  # noqa: BLE001 — role_config never raises; belt and braces on the call path
         logger.warning("llm_stage_scope_read_failed", stage=request.stage, error=str(e)[:200])
         return None
+
+
+def stage_pii_class(request: LLMRequest) -> Optional[str]:
+    """AA-1039 (R6, CIS 373): the data class of ``request.stage`` (content | pii): the one bound for this call, else
+    role_config (20 s cache); None for a call with no stage (no policy). A pii stage is called only on our AWS accounts
+    in the US (``vendor_route.deployment_plan``) and never on a path the deployment registry does not describe. A
+    failed read fails closed as ``data_scope.PII_UNREAD`` (``pii``, marked unread; review S268; role_config does the
+    same for a stage it never read). Never raises."""
+    if not request.stage:
+        return None
+    bound = _STAGE_SCOPES.get()
+    if bound is not None and bound[0] == request.stage and len(bound) > 3:
+        return bound[3]
+    try:
+        return data_scope.normalize_pii_class(getattr(get_stage_config_sync(request.stage), "pii_class", None))
+    except Exception as e:  # noqa: BLE001 — role_config never raises; belt and braces on the call path
+        logger.warning("llm_stage_pii_read_failed", stage=request.stage, error=str(e)[:200],
+                       pii_class=data_scope.PII_UNREAD_REASON)
+        return data_scope.PII_UNREAD
+
+
+def _pii_refusal(model_key: str, pii_class: Optional[str] = data_scope.PII_PERSONAL) -> RuntimeError:
+    """The error of a personal-data stage that reached a path the registry does not describe (a legacy chain, the
+    catalog's Converse / OpenAI fallback, the OpenAI adapter, the legacy last resort): those paths may call a
+    ``global.`` profile or a vendor API, so the model fails and the route moves on (AA-1039, fail closed). A class that
+    could not be read (``data_scope.PII_UNREAD``) says so instead of "personal-data stage"."""
+    if data_scope.pii_class_unread(pii_class):
+        return RuntimeError(f"Model {model_key!r}: {data_scope.PII_UNREAD_REASON}; the deployment registry has no "
+                            "such deployment on this path")
+    return RuntimeError(f"Model {model_key!r} has no deployment a personal-data stage may use (our AWS accounts, US "
+                        "only) in the deployment registry")
 
 
 def _row_role(cfg) -> Optional[str]:
@@ -1150,7 +1181,8 @@ class LLMClient:
         if stage_cfg is None:
             return self._generate_with(request, stage_cfg)
         token = _STAGE_SCOPES.set((request.stage, data_scope.normalize(getattr(stage_cfg, "allowed_scopes", None)),
-                                   _row_role(stage_cfg)))
+                                   _row_role(stage_cfg),
+                                   data_scope.normalize_pii_class(getattr(stage_cfg, "pii_class", None))))
         try:
             return self._generate_with(request, stage_cfg)
         finally:
@@ -1286,18 +1318,24 @@ class LLMClient:
     def _legacy_call(self, request: LLMRequest, tier: str, primary_acct: str) -> LLMResponse:
         """AA-1002 (S3): a legacy key through its alias (LLM_LEGACY_ALIASES on, an alias row and a registry that
         describes every target), else the hard-coded _legacy_chain, unchanged (the rollback path)."""
-        steps = (self._alias_steps(tier, stage_scopes(request), role=stage_role(request))
+        pii = stage_pii_class(request)
+        steps = (self._alias_steps(tier, stage_scopes(request), role=stage_role(request), pii_class=pii)
                  if legacy_aliases_enabled() else None)
         if steps is None:
+            if pii == data_scope.PII_PERSONAL:
+                raise _pii_refusal(tier, pii)   # AA-1039: the hard-coded chain calls global. profiles
             return self._legacy_chain(request, tier, primary_acct)
         return self._run_alias(request, tier, steps)
 
-    def _alias_steps(self, tier: str, allowed_scopes: Optional[tuple] = None,
-                     role: Optional[str] = None) -> Optional[list]:
+    @staticmethod
+    def _alias_steps(tier: str, allowed_scopes: Optional[tuple] = None,
+                     role: Optional[str] = None, pii_class: Optional[str] = None) -> Optional[list]:
         """The (catalog model, deployment) attempts of legacy key ``tier``, in order: each alias target (shared.
         llm_model_alias) on each of its deployments (vendor_route.deployment_plan). None = take _legacy_chain: gpt-4.1,
         acc2-native on (its order is the chain's own), no alias row, or a target the catalog / registry cannot describe
-        (all or nothing: never half an alias). A disabled catalog target is skipped (the catalog is the switch)."""
+        (all or nothing: never half an alias). A disabled catalog target is skipped (the catalog is the switch).
+        Static (no client state): the route preview (``llm_route_chains.resolve_stage``) plans a legacy key of a pii
+        stage with it, like ``_legacy_call``."""
         if tier == "gpt-4.1" or legacy_acc2_native_enabled():
             return None
         targets = alias_targets_sync(tier)
@@ -1312,7 +1350,7 @@ class LLMClient:
             if not model.enabled:
                 logger.info("llm_alias_target_skip", alias=tier, target=key, reason=model.blocked_reason or "disabled")
                 continue
-            plan = deployment_plan(model, allowed_scopes, role=role)
+            plan = deployment_plan(model, allowed_scopes, role=role, pii_class=pii_class)
             if plan is None:
                 logger.warning("llm_alias_fallback_legacy_chain", alias=tier, target=key, reason="no registry rows")
                 return None
@@ -1424,6 +1462,7 @@ class LLMClient:
         all_unusable = True
         failures: list = []  # AA-900: one exception per model actually tried (skipped keys are not attempts)
         role_bound = stage_role(request)
+        pii_bound = stage_pii_class(request)         # AA-1039: kept in a narrowed binding
         for position, (key, narrowed) in enumerate(self._route_attempts(request, chain)):
             if key not in LEGACY_KEYS:
                 m = get_model_sync(key)
@@ -1436,7 +1475,7 @@ class LLMClient:
                 self._deadline_gate(request, key, f"route position {position} ({key})", errors)
             # AA-1026 (S267): with the AWS-first switch on, one pass calls this model only on the deployments of that
             # pass (model-first, the default: narrowed is None and the stage's own scopes apply).
-            scope_token = (_STAGE_SCOPES.set((request.stage, narrowed, role_bound))
+            scope_token = (_STAGE_SCOPES.set((request.stage, narrowed, role_bound, pii_bound))
                            if narrowed is not None else None)
             try:
                 resp = self._call_key_logged(request, key, primary_acct, role=role,
@@ -1520,7 +1559,7 @@ class LLMClient:
         t0 = time.monotonic()
         resp, error = None, None
         token = _STAGE_SCOPES.set((request.stage, data_scope.normalize(getattr(cfg, "allowed_scopes", None)),
-                                   _row_role(cfg)))
+                                   _row_role(cfg), data_scope.normalize_pii_class(getattr(cfg, "pii_class", None))))
         scope_token = _ATTEMPT_SCOPE.set(_scope_for(request, cfg.role or "writer", {"shadow": True}))
         try:
             resp = self._call_key_logged(request, cfg.shadow_model_id, primary_acct,
@@ -1665,6 +1704,12 @@ class LLMClient:
                 message = (f"Legacy key {tier!r} has no usable path: " if len(roles) == len(failures)
                            else f"{message}; ") + "; ".join(roles)
             raise _all_failed(message, failures)
+        pii = stage_pii_class(request)
+        if pii == data_scope.PII_PERSONAL:
+            # AA-1039 (review S268): explicit, not left to the scopes: GPT-4.1 is the OpenAI platform API.
+            logger.error("t3_skipped_pii_stage", tier=tier, stage=request.stage, reason=data_scope.pii_reason(pii))
+            raise _all_failed(f"All LLM providers failed for legacy key {tier!r}; no OpenAI last resort: "
+                              f"{data_scope.pii_reason(pii)}", failures)
         try:
             resp = self._legacy_tier(request, "gpt-4.1", OPENAI_CONNECTION_KEY, "gpt-4.1",
                                      lambda: self._call_openai(request, model="gpt-4.1"))     # AA-1002 (S10) budget
@@ -1846,7 +1891,9 @@ class LLMClient:
         # empty table returns the same request object, so the provider request is byte-identical.
         request = stage_params.apply(request, model)
         if pin:
-            pinned = pinned_deployment(model, pin[1])
+            # AA-1039 (review S268): the pin keeps the stage's data scopes and data class (like deployment_plan).
+            pinned = pinned_deployment(model, pin[1], allowed_scopes=stage_scopes(request),
+                                       pii_class=stage_pii_class(request))
             return self._attempt(request, lambda: self._call_anthropic_messages(request, model, pinned),
                                  model=model.model_key, connection_key=pinned.connection.connection_key,
                                  wire_id=pinned.deployment.wire_id, provider="anthropic")
@@ -1855,9 +1902,13 @@ class LLMClient:
         # AA-1002 (S5): only deployments on connections whose data scope the stage allows.
         scopes = stage_scopes(request)
         role = stage_role(request)              # AA-642 A5: a connection that does not serve the role is left out
-        plan = deployment_plan(model, scopes, role=role) if deployment_routing_enabled() else None
+        pii = stage_pii_class(request)          # AA-1039: a personal-data stage stays on our AWS accounts in the US
+        plan = (deployment_plan(model, scopes, role=role, pii_class=pii)
+                if deployment_routing_enabled() else None)
         if plan is not None:
             return self._call_plan(request, model, plan)
+        if pii == data_scope.PII_PERSONAL:
+            raise _pii_refusal(model.model_key, pii)
         # AA-1002 (S2): an enabled deployment on an enabled Anthropic connection, first by priority, serves the
         # model through the Messages API. None (every other registry state) = today's path below, unchanged.
         # AA-1002 (S10): an Anthropic deployment left out by its connection's hard budget is named in budget_skips.
@@ -2349,6 +2400,11 @@ class LLMClient:
         if not openai_platform_allowed(model_label):
             raise OpenAIPlatformBlocked(
                 f"{model_label}: OpenAI platform API is disabled (S235 Bedrock-only policy)")
+        pii = stage_pii_class(request)
+        if pii == data_scope.PII_PERSONAL:
+            # AA-1039 (review S268): a pii stage never reaches an OpenAI-format connection (a vendor API), whatever
+            # its scopes say: explicit here so it never depends on the scopes alone.
+            raise OpenAIPlatformBlocked(f"{model_label}: stage {request.stage!r}: {data_scope.pii_reason(pii)}")
         scopes = stage_scopes(request)
         if not openai_scope_allowed(scopes, conn):
             raise OpenAIPlatformBlocked(

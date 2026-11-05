@@ -1,7 +1,8 @@
 "use client";
 // app/admin/lab/WritingLabStage.tsx — AA-1039 R6 slice 3 (root ADR 0019 d13, TL-13 `regroup_lab`): Writing Lab › one
 // stage. A stage is a writing-memory writer (lib/writingLab.ts LAB_STAGES); the stage bar is the only navigation
-// between stages. Five tabs over ONE read, GET /api/admin/writing-memory/lab/<writer> (services/writing_memory/lab.py):
+// between stages. Seven tabs: the first five share ONE read, GET /api/admin/writing-memory/lab/<writer>
+// (services/writing_memory/lab.py); Releases and Metrics (S268) each make their own read, only when opened:
 //   Eval gate        the release machinery's state: memory switch, live / newest platform release with its evidence
 //                    runs, releases per status, tenant releases live, rules per status, the newest finished
 //                    evaluation, and one plain sentence for the state.
@@ -10,6 +11,12 @@
 //   Labels           golden labels (verdict, source) and the writing signals (fact check, reason, action, who, owner).
 //   Experiments      evaluation runs, release shadow runs, model shadow of the writer's prompt stages (30 days).
 //   Prompt versions  the prompt register rows of those stages (hash and file, no prompt text).
+//   Releases         every release of the writer, platform and tenant: status, training, evidence verdicts,
+//                    check-again flag and dates (GET /api/admin/writing-memory/releases?writer=); the actions stay
+//                    in Writing memory › Releases (one click away).
+//   Metrics          the stored weekly reports seen from the writer (GET /api/admin/writing-memory/metrics): writes,
+//                    re-flag, light edits, minutes to fix, cost per write, replay hit, clean pairs, soft stops and
+//                    what the weekly job did. Run / keep stay in Writing memory › Metrics.
 // Read-only and $0: no learning logic (the S262 TL-11 freeze stays); the Writing memory tools stay one click away
 // (/admin/lab/writing-memory). No tenant text on these pages (the logged ai_ops read of tenant text is R2's).
 // `?tab=` picks the tab (kept with history.replaceState). Admin only (lib/rbac.ts PAGE_RULES /admin/lab; BFF
@@ -24,10 +31,12 @@ import {
   apiGet, mono, useFormat, useT, type ColumnDef,
 } from "../../_kit";
 import {
-  DEFAULT_STAGE, LAB_API, LAB_STAGES, LAB_TABS, countRows, gateTone, parseLabTab, share, stageBySlug, stageHref,
-  evalTone, verdictTone, type Counts, type EvalRun, type GoldenItem, type LabStageView, type LabTab, type LabWriter,
-  type ModelShadow, type PromptVersion, type Release, type SectionStatus, type ShadowRun,
+  DEFAULT_STAGE, LAB_API, LAB_STAGES, LAB_TABS, WM_METRICS_API, countRows, evidenceSummary, gateTone, parseLabTab, pct,
+  releaseTone, releasesUrl, share, stageBySlug, stageHref, evalTone, verdictTone, writerWeeks, writingMemoryHref,
+  type Counts, type EvalRun, type GoldenItem, type LabRelease, type LabStageView, type LabTab, type LabWriter,
+  type ModelShadow, type PromptVersion, type Release, type SectionStatus, type ShadowRun, type WriterWeek,
 } from "@/lib/writingLab";
+import type { MetricsPage, ReleasesPage } from "@/lib/writingMemory";
 import type { Translator } from "../../_kit/core/i18n";
 import { LAB } from "./messages";
 
@@ -41,6 +50,7 @@ const STAGE_LABEL: Record<LabWriter, { full: keyof typeof LAB.en; short: keyof t
 };
 const TAB_LABEL: Record<LabTab, keyof typeof LAB.en> = {
   gate: "tabGate", samples: "tabSamples", labels: "tabLabels", experiments: "tabExperiments", prompts: "tabPrompts",
+  releases: "tabReleases", metrics: "tabMetrics",
 };
 
 function setParam(name: string, value: string | null): void {
@@ -109,7 +119,9 @@ export default function WritingLabStage({ slug }: { slug: string }) {
           <div style={{ marginBottom: 14 }} data-testid="lab-tabs">
             <Tabs tabs={tabs} active={tab} onChange={setTab} variant="underline" />
           </div>
-          {view.isLoading ? <TableSkeleton rows={5} cols={4} /> : view.error ? (
+          {tab === "releases" ? <ReleasesTab writer={stage.writer} t={t} />
+            : tab === "metrics" ? <MetricsTab writer={stage.writer} t={t} />
+            : view.isLoading ? <TableSkeleton rows={5} cols={4} /> : view.error ? (
             <ErrorState message={(view.error as Error).message || t("loadError")} onRetry={() => view.refetch()} />
           ) : view.data ? (
             <div data-testid="writing-lab-ready" style={grid}>
@@ -400,6 +412,119 @@ function PromptsTab({ p, t }: { p: NonNullable<LabStageView["prompts"]>; t: T })
         <DataTable tableId="lab-prompts" data={p.versions} columns={cols}
           getRowId={(r) => `${r.stage}:${r.version}`} compact tableMinWidth={760} emptyTitle={t("promptsEmpty")} />
       </div>
+    </Section>
+  );
+}
+
+// ── Releases (S268) ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+function ReleasesTab({ writer, t }: { writer: LabWriter; t: T }) {
+  const router = useRouter();
+  const { formatDate } = useFormat();
+  const q = useQuery({
+    queryKey: ["writing-lab", writer, "releases"],
+    queryFn: () => apiGet<ReleasesPage>(releasesUrl(writer)),
+    staleTime: 30_000,
+  });
+  const cols = useMemo<ColumnDef<LabRelease, unknown>[]>(() => [
+    { accessorKey: "release_no", header: t("colRelease"), cell: (c) => code(c.row.original.release_no) },
+    { accessorKey: "scope", header: t("colScope"),
+      cell: (c) => code(c.row.original.scope === "tenant" && c.row.original.tenant_id
+        ? t("tenantScope", c.row.original.tenant_id.slice(0, 8)) : c.row.original.scope) },
+    { accessorKey: "status", header: t("colStatus"),
+      cell: (c) => <Badge tone={releaseTone(c.row.original.status)} dot={false}>{c.row.original.status}</Badge> },
+    { accessorKey: "content_class", header: t("colClass"), cell: (c) => code(c.row.original.content_class) },
+    { accessorKey: "train_kind", header: t("fTrain"), cell: (c) => code(c.row.original.train_kind) },
+    { accessorKey: "rule_ids", header: t("fRules"), enableSorting: false,
+      cell: (c) => c.row.original.rule_ids?.length ?? 0 },
+    { id: "evidence", header: t("colEvidence"), enableSorting: false,
+      cell: (c) => {
+        const ev = evidenceSummary(c.row.original);
+        return ev.length === 0 ? "—" : (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+            {ev.map((e) => (
+              <Badge key={e.slot} tone={e.finished ? verdictTone(e.verdict) : "neutral"} dot={false}>
+                {`${e.slot} ${e.finished ? e.verdict ?? "—" : "…"}`}</Badge>
+            ))}
+          </div>
+        );
+      } },
+    { accessorKey: "reverify", header: t("colReverify"),
+      cell: (c) => (c.row.original.reverify ? <Badge tone="warning" dot={false}>{t("reverifyYes")}</Badge> : "—") },
+    { accessorKey: "activated_at", header: t("colActivated"),
+      cell: (c) => <span style={{ whiteSpace: "nowrap", fontSize: 12 }}>
+        {c.row.original.activated_at ? formatDate(c.row.original.activated_at) : "—"}</span> },
+    { accessorKey: "retired_at", header: t("colRetired"),
+      cell: (c) => <span style={{ whiteSpace: "nowrap", fontSize: 12 }}>
+        {c.row.original.retired_at ? formatDate(c.row.original.retired_at) : "—"}</span> },
+    { accessorKey: "created_at", header: t("fCreated"),
+      cell: (c) => <span style={{ whiteSpace: "nowrap", fontSize: 12 }}>{formatDate(c.row.original.created_at)}</span> },
+  ], [t, formatDate]);
+  return (
+    <Section title={t("relTitle")} description={t("relHelp")} testId="lab-releases-list" padded={false}
+      actions={<Button variant="secondary" size="sm" onClick={() => router.push(writingMemoryHref("releases"))}>
+        {t("manageReleases")}</Button>}>
+      {q.isLoading ? <TableSkeleton rows={4} cols={6} /> : q.error ? (
+        <ErrorState message={t("sectionError")} onRetry={() => q.refetch()} />
+      ) : (
+        <div data-testid="lab-releases-ready">
+          <DataTable tableId="lab-releases-list" data={q.data?.items ?? []} columns={cols}
+            getRowId={(r) => r.release_id} compact tableMinWidth={980} emptyTitle={t("relEmpty")} />
+        </div>
+      )}
+    </Section>
+  );
+}
+
+// ── Metrics (S268) ──────────────────────────────────────────────────────────────────────────────────────────────────
+
+function MetricsTab({ writer, t }: { writer: LabWriter; t: T }) {
+  const router = useRouter();
+  const { formatDate } = useFormat();
+  const q = useQuery({
+    queryKey: ["writing-lab", "metrics"],
+    queryFn: () => apiGet<MetricsPage>(WM_METRICS_API),
+    staleTime: 60_000,
+  });
+  const weeks = useMemo(() => writerWeeks(q.data?.items, writer), [q.data, writer]);
+  const num = (v: number | null | undefined, digits = 1) => (v === null || v === undefined ? "—" : v.toFixed(digits));
+  const cols = useMemo<ColumnDef<WriterWeek, unknown>[]>(() => [
+    { accessorKey: "week_start", header: t("colWeek"),
+      cell: (c) => <span style={{ whiteSpace: "nowrap", fontSize: 12 }}>{formatDate(c.row.original.week_start)}
+        {c.row.original.trigger === "manual" ? <span style={{ color: K.muted }}> · {t("manual")}</span> : null}</span> },
+    { id: "writes", header: t("colWrites"), cell: (c) => c.row.original.kpi?.writes ?? "—" },
+    { id: "reflag", header: t("colReflag"), cell: (c) => pct(c.row.original.kpi?.reflag_rate) },
+    { id: "light", header: t("colLightEdit"), cell: (c) => pct(c.row.original.kpi?.light_edit_share) },
+    { id: "minutes", header: t("colMinutes"), cell: (c) => num(c.row.original.kpi?.minutes_to_fix) },
+    { id: "cost", header: t("colCostWrite"), cell: (c) => usd(c.row.original.kpi?.cost_per_write) },
+    { id: "replay", header: t("colReplay"), cell: (c) => pct(c.row.original.replay_rate) },
+    { id: "pairs", header: t("colCleanPairs"), cell: (c) => c.row.original.clean_pairs ?? "—" },
+    { id: "stops", header: t("colStops"), enableSorting: false,
+      cell: (c) => {
+        const w = c.row.original;
+        if (w.stops.length === 0 && w.actions.length === 0) return "—";
+        return (
+          <div style={{ display: "grid", gap: 2, fontSize: 12 }}>
+            {w.stops.map((s) => <span key={`s${s.release_id}`} style={{ fontFamily: mono, overflowWrap: "anywhere" }}>
+              {t("stopLine", s.release_no, s.stops.map((x) => x.code).join(", "))}</span>)}
+            {w.actions.map((a, i) => <span key={`a${i}`} style={{ color: K.muted }}>
+              {t("actionLine", a.release_no, a.action)}</span>)}
+          </div>
+        );
+      } },
+  ], [t, formatDate]);
+  return (
+    <Section title={t("metTitle")} description={t("metHelp")} testId="lab-metrics" padded={false}
+      actions={<Button variant="secondary" size="sm" onClick={() => router.push(writingMemoryHref("metrics"))}>
+        {t("openMetrics")}</Button>}>
+      {q.isLoading ? <TableSkeleton rows={4} cols={6} /> : q.error ? (
+        <ErrorState message={t("sectionError")} onRetry={() => q.refetch()} />
+      ) : (
+        <div data-testid="lab-metrics-ready">
+          <DataTable tableId="lab-metrics" data={weeks} columns={cols}
+            getRowId={(r) => `${r.week_start}:${r.trigger}`} compact tableMinWidth={900} emptyTitle={t("metEmpty")} />
+        </div>
+      )}
     </Section>
   );
 }

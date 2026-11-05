@@ -25,6 +25,7 @@ from shared.llm_client.connections import ConnectionCredentialError
 from shared.llm_client.models import LLMRequest, LLMResponse
 from shared.llm_client.vendor_route import VendorDeployment
 from shared.llm_client import catalog, vendor_route
+from shared.llm_client import role_config
 from tests.unit.test_aa1002_s3_deployment_routing import MODELS, World, _dep, _org, _route
 
 RUN = "6f1c5f8e-1b9e-4c55-9f5e-1a2b3c4d5e6f"
@@ -238,6 +239,10 @@ def test_a_model_the_catalog_does_not_know_gets_its_row_from_the_net(gw, rows):
 
 def test_the_legacy_chain_logs_each_tier(gw, monkeypatch, rows):
     from shared.llm_client import bedrock_satellite as bs
+    # AA-1039 (review S268): the stage read succeeds with no row (an adhoc_* stage): content. Left to the DB, a
+    # unit run (no DB) fails the read, which now fails closed as pii (no legacy chain, no vendor pin).
+    monkeypatch.setattr("shared.llm_client.client.get_stage_config_sync",
+                        lambda s: role_config.SAFE_DEFAULTS.get(s, role_config._GENERIC_FALLBACK))
     monkeypatch.setattr(bs, "invoke_claude", MagicMock(side_effect=bs.BedrockUnavailable("Error 002: Access to "
                                                                                           "Bedrock models is not "
                                                                                           "allowed")))

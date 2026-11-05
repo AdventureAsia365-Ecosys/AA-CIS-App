@@ -304,7 +304,7 @@ def test_the_report_reads_degrade_modes_and_falls_back_before_migration_326():
     for missing in (False, True):
         conn = Conn(missing)
         asyncio.run(invariant.read(conn, blocked={}))
-        assert conn.sql[0] == invariant.ROUTES_V3_SQL
+        assert conn.sql[0] == invariant.ROUTES_V4_SQL
         assert (invariant.ROUTES_SQL in conn.sql) is missing
 
 

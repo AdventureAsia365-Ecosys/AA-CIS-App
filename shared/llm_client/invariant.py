@@ -39,6 +39,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Iterable, Optional
 
+from . import data_scope
+
 UNFUNDED_CLASSES = ("quota_exhausted", "credential")
 AWS_ONLY = "aws_only"
 
@@ -119,6 +121,10 @@ def check_stage(route: dict, aliases: dict[str, list[str]], deployments: dict[st
                 continue
             if not _allowed(route.get("allowed_scopes"), conn["data_scope"], first=not usable):
                 continue
+            # AA-1039 (CIS 373): a personal-data stage counts only US deployments on our AWS accounts (an AWS kind).
+            if not data_scope.pii_allows(route.get("pii_class"), conn["data_scope"], dep.get("wire_id"),
+                                         conn.get("region"), conn.get("kind")):
+                continue
             usable.append((conn["connection_key"], failure_domain(conn)))
     if not usable:
         # A degrade mode never excuses the first domain (review S263): the stage cannot run at all.
@@ -168,9 +174,11 @@ ROUTES_SQL = ("SELECT stage, role, model_id, fallback_model_ids, allowed_scopes,
               "FROM shared.llm_role_config ORDER BY stage")
 # AA-642 A1: with migration 326's declared degrade mode.
 ROUTES_V3_SQL = ROUTES_SQL.replace("is_active ", "is_active, degrade_mode ")
+# AA-1039 (R6): with migration 373's data class (a pii stage counts only US deployments on our AWS accounts).
+ROUTES_V4_SQL = ROUTES_SQL.replace("is_active ", "is_active, degrade_mode, pii_class ")
 ALIASES_SQL = "SELECT alias_key, position, model_key FROM shared.llm_model_alias"
-DEPLOYMENTS_SQL = "SELECT model_key, connection_key, priority, enabled FROM shared.llm_model_deployment"
-CONNECTIONS_SQL = ("SELECT connection_key, kind, enabled, data_scope, account_id, account_id_env "
+DEPLOYMENTS_SQL = "SELECT model_key, connection_key, priority, enabled, wire_id FROM shared.llm_model_deployment"
+CONNECTIONS_SQL = ("SELECT connection_key, kind, enabled, data_scope, account_id, region, account_id_env "
                    "FROM shared.llm_provider_connection "
                    "WHERE kind IN ('bedrock', 'anthropic', 'openai', 'azure_openai', 'mock')")
 # AA-1018 part 2: with migration 322's failure_domain (the stored domain wins over the derivation).
@@ -183,9 +191,14 @@ async def read(conn, *, blocked: Optional[dict[str, str]] = None, now: Optional[
     import asyncpg
 
     try:
-        try:
-            routes = [dict(r) for r in await conn.fetch(ROUTES_V3_SQL)]
-        except asyncpg.exceptions.UndefinedColumnError:          # before migration 326: no degrade modes
+        routes = None
+        for sql in (ROUTES_V4_SQL, ROUTES_V3_SQL):
+            try:
+                routes = [dict(r) for r in await conn.fetch(sql)]
+                break
+            except asyncpg.exceptions.UndefinedColumnError:      # before 373 (pii_class) / 326 (degrade modes)
+                continue
+        if routes is None:
             routes = [dict(r) for r in await conn.fetch(ROUTES_SQL)]
         aliases = [dict(r) for r in await conn.fetch(ALIASES_SQL)]
         deps = [dict(r) for r in await conn.fetch(DEPLOYMENTS_SQL)]

@@ -87,6 +87,9 @@ const ADMIN_PAGES: PageSpec[] = [
   // answered) and the Writing memory tools (was /admin/writing-memory). Admin only.
   { id: 'lab-stage', label: 'Writing Lab · A1 rewrite', path: '/admin/lab/a1-s1', readySelector: '[data-testid="writing-lab-ready"]', viewerRefused: true },
   { id: 'lab-writing-memory', label: 'Writing memory', path: '/admin/lab/writing-memory', viewerRefused: true },
+  // AA-1039 R6 rest (S268): the Releases and Metrics tabs of a stage (their own reads of the Writing memory API).
+  { id: 'lab-releases', label: 'Writing Lab · Releases', path: '/admin/lab/t2-rewrite?tab=releases', readySelector: '[data-testid="lab-releases-ready"]', viewerRefused: true },
+  { id: 'lab-metrics', label: 'Writing Lab · Metrics', path: '/admin/lab/a1-s1?tab=metrics', readySelector: '[data-testid="lab-metrics-ready"]', viewerRefused: true },
   // AA-913 — Platform › People & access › Alert recipients (admin only; changes need a Cognito sign-in).
   { id: 'platform-alerts', label: 'Alert recipients', path: '/admin/platform/alerts', readySelector: '[data-testid="alert-recipients-ready"]', viewerRefused: true },
   // AA-941 — Tenants › CRM agencies (AA-1039: was /admin/platform/agencies): the partner CRM's L1 console (admin only;
@@ -104,11 +107,18 @@ const ADMIN_PAGES: PageSpec[] = [
   { id: 'tenant-qa-review-log', label: 'Review log', path: '/admin/tenant-qa/review-log', readySelector: '[data-testid="admin-content-ready"]', viewerRefused: true },
   // AA-769 — Content quality (T2/T9 quality signals for every tenant; tenants never see them).
   { id: 'tenant-qa-quality', label: 'Content quality', path: '/admin/tenant-qa/quality', readySelector: '[data-testid="content-quality-ready"]', viewerRefused: true },
+  // AA-1039 R6 rest (tech lead, option A): Place cards, was Content quality's Cards tab (?tab=cards is a 307 here, see
+  // aa1039-admin-ia-redirects.spec.ts); TENANT_QA roles, the viewer refused. `place-cards-ready` wraps the table.
+  { id: 'place-cards', label: 'Place cards', path: '/admin/places/cards', readySelector: '[data-testid="place-cards-ready"]', viewerRefused: true },
   { id: 'tenant-qa-slate', label: 'Slate', path: '/admin/tenant-qa/slate', readySelector: '[data-testid="tenant-qa-slate-ready"]', viewerRefused: true },
   { id: 'review', label: 'Review Queue', path: '/admin/review' },
   { id: 's1-rewrite', label: 'S1 Rewrite', path: '/admin/s1-rewrite', viewerRefused: true },
   { id: 'seo-intelligence', label: 'SEO Intelligence', path: '/admin/seo-intelligence', viewerRefused: true },
-  { id: 'settings', label: 'Settings', path: '/admin/settings', readySelector: '[data-testid="admin-content-ready"]' },
+  { id: 'settings', label: 'Catalogue settings', path: '/admin/settings', readySelector: '[data-testid="admin-content-ready"]' },
+  // AA-1039 R6 rest: the UI kit reference moved from Settings to Platform (admin only, like every Platform page), and
+  // Tenant 360 is a route (the AA internal tenant always exists; `tenant360-ready` once its row and details loaded).
+  { id: 'platform-ui-kit', label: 'UI kit', path: '/admin/platform/ui-kit', readySelector: '[data-testid="admin-content-ready"]', viewerRefused: true },
+  { id: 'tenant-360', label: 'Tenant 360', path: '/admin/tenants/00000000-0000-0000-0000-000000000001', readySelector: '[data-testid="tenant360-ready"]', viewerRefused: true },
   // AA-686 / AA-804 UI part 2 — the stage route editor moved from Settings › LLM Models to AI providers › Routing.
   // The row opens the new tab itself: the page matrix (roleMaySeePage) reads only the asked pathname, and
   // /admin/settings is open to every staff role, so the old `?tab=models` link cannot stand here. That redirect

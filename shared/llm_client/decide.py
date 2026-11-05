@@ -9,9 +9,13 @@ writes text. Design: docs/architecture/at-series-v2-design.md §3.
 - Each answer lands in a **zone**: `accept` / `reject` (confident — only these can change what a
   stage does, and only in `enforce` mode), `grey` (the stage keeps its existing rule), `error`
   (Jev unreachable or misconfigured: fail-open, the stage keeps its existing rule) or `skipped`
-  (mode off, or tenant content that may not leave AA yet).
+  (mode off, tenant content that may not leave AA yet, or a personal-data stage).
 - **Tenant guard (design C2):** tenant content goes to TypeSafe only for tenants in
   `shared.jev_tenant_allowlist` until the DPA/ZDR is confirmed. Platform content always may.
+- **Data class guard (AA-1039, root ADR 0019 d12):** TypeSafe is a vendor outside our AWS accounts, so a stage whose
+  `shared.llm_role_config.pii_class` is `pii` never sends its state there: every question is `skipped`
+  (`PII_STAGE_SKIP_ERROR`) and the stage keeps its own rule. The pii stages are read with the questions (same TTL);
+  until a first read succeeds in the process every stage counts as pii, a later failed refresh keeps the last set.
 - Every verdict is written to `shared.decision_log` (all probabilities kept) and each call to
   `shared.llm_call_log` (provider `typesafe`, role `decide` since AA-1025 D3; `validate` before), under the
   current job if any.
@@ -217,6 +221,10 @@ def _top_level(probabilities: dict) -> Optional[str]:
 
 _questions: dict[str, Question] = {}
 _questions_loaded_at = 0.0
+# AA-1039: the stages whose llm_role_config.pii_class is 'pii', refreshed with _questions (same timestamp). None =
+# never read in this process: every stage counts as pii (fail closed) until a read succeeds; a failed refresh after a
+# good read keeps the last set (a class changes only by a migration).
+_pii_stages: Optional[frozenset[str]] = None
 _allowlist: set[str] = set()
 _allowlist_loaded_at = 0.0
 _provider: dict = {}
@@ -312,8 +320,32 @@ def jev_endpoint() -> tuple[str, float, int]:
             retries + 1 if isinstance(retries, int) and retries >= 0 else _MAX_ATTEMPTS)
 
 
+_PII_STAGES_SQL = "SELECT stage FROM shared.llm_role_config WHERE pii_class = 'pii'"
+PII_STAGE_SKIP_ERROR = "pii stage: no vendor decision"
+
+
+async def _load_pii_stages(conn) -> frozenset[str]:
+    """AA-1039: the stages of class ``pii`` (shared.llm_role_config.pii_class, CIS 373). Before 373 the column is
+    missing and every stage is ``content`` (an empty set). Any other failure raises (``_load_config`` keeps the last
+    good set, or none: every stage is then pii and no state goes to TypeSafe)."""
+    try:
+        rows = await conn.fetch(_PII_STAGES_SQL)
+    except (asyncpg.exceptions.UndefinedColumnError, asyncpg.exceptions.UndefinedTableError):
+        return frozenset()
+    return frozenset(r["stage"] for r in rows)
+
+
+def stage_is_pii(stage: Optional[str]) -> bool:
+    """True when ``stage`` is a personal-data stage (its llm_role_config row says ``pii``): decide() never sends its
+    state to TypeSafe. A stage with no llm_role_config row is ``content``, like the gateway reads it. Before the first
+    successful read of the classes in this process (``_pii_stages`` None: the read failed) every stage is pii."""
+    if _pii_stages is None:
+        return True
+    return bool(stage) and stage in _pii_stages
+
+
 async def _load_config(conn) -> None:
-    global _questions, _questions_loaded_at, _allowlist, _allowlist_loaded_at
+    global _questions, _questions_loaded_at, _allowlist, _allowlist_loaded_at, _pii_stages
     now = time.monotonic()
     if now - _questions_loaded_at > _CONFIG_TTL_S:
         rows = await conn.fetch(
@@ -332,6 +364,16 @@ async def _load_config(conn) -> None:
             )
             for r in rows
         }
+        try:
+            _pii_stages = await _load_pii_stages(conn)
+        except Exception as exc:  # noqa: BLE001 — the class read never fails a decision: it fails closed
+            logger.warning("decide_pii_class_unread", error=f"{type(exc).__name__}: {exc}"[:200],
+                           kept_last_read=_pii_stages is not None,
+                           hint=("last read kept" if _pii_stages is not None else
+                                 "stage class unknown (role_config read failed): every stage skipped, "
+                                 "no TypeSafe call"))
+            if _pii_stages is None:
+                return                            # questions kept, not timestamped: the next call reads again
         _questions_loaded_at = now
     if now - _allowlist_loaded_at > _CONFIG_TTL_S:
         rows = await conn.fetch("SELECT tenant_id::text AS t FROM shared.jev_tenant_allowlist")
@@ -819,6 +861,8 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
             else:
                 err = "tenant not on Jev allow-list"
             decision.verdicts[key] = Verdict(key, q.mode, "skipped", error=err)
+        elif stage_is_pii(stage):                 # AA-1039: personal data never leaves for a vendor (ADR 0019 d12)
+            decision.verdicts[key] = Verdict(key, q.mode, "skipped", error=PII_STAGE_SKIP_ERROR)
         else:
             asked[key] = q
 

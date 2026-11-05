@@ -211,7 +211,7 @@ export const MODELS = defineMessages(
     // RoutingTab — routing by data class (AA-1039)
     dataClassTitle: "Routing by data class",
     dataClassIntro:
-      "The rule: a stage that handles personal data uses only routes kept in the United States; a stage that handles content only may also use a global route.",
+      "The rule: a stage that handles personal data runs only on our own AWS accounts, on routes kept in the United States; a stage that handles content only may also use a global route or a vendor API its data scopes allow. A stage's class is set by a database change, not on this page.",
     dataClassPii: "Personal data",
     dataClassPiiNote: "US routes only",
     dataClassContent: "Content only",
@@ -221,7 +221,7 @@ export const MODELS = defineMessages(
     dataClassNone: "None",
     dataClassEmptyTitle: "No stage has a data class yet",
     dataClassEmptyBody:
-      "The gateway does not record a data class per stage yet, so routes are not checked against this rule. This card lists the stages per class once it does.",
+      "The database does not hold a data class per stage yet (its update is not applied), so every stage is treated as content only. This card lists the stages per class once it does.",
   },
   {
     route: "Tuyến:",
@@ -423,7 +423,7 @@ export const MODELS = defineMessages(
     savedWithWarning: (warning: string) => `Đã lưu. ${warning}`,
     dataClassTitle: "Định tuyến theo loại dữ liệu",
     dataClassIntro:
-      "Quy tắc: stage xử lý dữ liệu cá nhân chỉ dùng route giữ ở Hoa Kỳ; stage chỉ xử lý nội dung được dùng thêm route toàn cầu.",
+      "Quy tắc: stage xử lý dữ liệu cá nhân chỉ chạy trên tài khoản AWS của mình, với route giữ ở Hoa Kỳ; stage chỉ xử lý nội dung được dùng thêm route toàn cầu hoặc API của nhà cung cấp mà phạm vi dữ liệu của nó cho phép. Loại của stage được đặt bằng thay đổi cơ sở dữ liệu, không đặt ở trang này.",
     dataClassPii: "Dữ liệu cá nhân",
     dataClassPiiNote: "chỉ route Hoa Kỳ",
     dataClassContent: "Chỉ nội dung",
@@ -433,6 +433,6 @@ export const MODELS = defineMessages(
     dataClassNone: "Không có",
     dataClassEmptyTitle: "Chưa stage nào có loại dữ liệu",
     dataClassEmptyBody:
-      "Cổng AI chưa ghi loại dữ liệu cho từng stage, nên route chưa được kiểm theo quy tắc này. Khi có, thẻ này liệt kê stage theo từng loại.",
+      "Cơ sở dữ liệu chưa có loại dữ liệu cho từng stage (bản cập nhật chưa được áp), nên mọi stage được coi là chỉ nội dung. Khi có, thẻ này liệt kê stage theo từng loại.",
   },
 );

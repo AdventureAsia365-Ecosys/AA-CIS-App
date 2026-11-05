@@ -15,6 +15,7 @@ import {
 } from "../../_kit";
 import { TenantName } from "../_components/TenantSelect";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
+import { tenant360Href } from "@/lib/adminIa";
 import { traceHref } from "@/lib/aiGateway";
 import { accountName, withAccountNames } from "@/lib/awsAccounts";
 import { canCancel, fmtSeconds, releases, runSeconds, stepProgress, usd, type Job } from "./jobsShared";
@@ -34,8 +35,8 @@ interface LlmCalls {
   truncated: boolean;
 }
 
-// AA-919 S254: a tenant is printed by name (full id on hover) and links to its Tenant 360 row (AA-752 deep link).
-const tenantHref = (id: string) => `/admin/tenants?tenant=${encodeURIComponent(id)}`;
+// AA-919 S254: a tenant is printed by name (full id on hover) and links to its Tenant 360 (a route since AA-1039 R6 rest).
+const tenantHref = (id: string) => tenant360Href(id);
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (

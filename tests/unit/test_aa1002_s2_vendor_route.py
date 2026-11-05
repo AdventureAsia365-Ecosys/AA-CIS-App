@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from shared.llm_client import catalog, connections, deployments, vendor_route
+from shared.llm_client import role_config
 from shared.llm_client.adapters import anthropic_messages
 from shared.llm_client.call_log import _normalize_model_provider, billed_record
 from shared.llm_client.catalog import CatalogModel
@@ -185,8 +186,12 @@ def test_api_only_model_without_a_deployment_fails_clearly(gw):
 
 # ── pinned probe ──────────────────────────────────────────────────────────────────────────────────────────────────
 
-def test_a_pin_reaches_a_deployment_behind_bedrock(gw):
+def test_a_pin_reaches_a_deployment_behind_bedrock(gw, monkeypatch):
     client, fake, state, rt, reset = gw
+    # AA-1039 (review S268): the stage read succeeds with no row (an adhoc_* stage): content. Left to the DB, a
+    # unit run (no DB) fails the read, which now fails closed as pii (no legacy chain, no vendor pin).
+    monkeypatch.setattr("shared.llm_client.client.get_stage_config_sync",
+                        lambda s: role_config.SAFE_DEFAULTS.get(s, role_config._GENERIC_FALLBACK))
     state["deps"] = _deps(priority=100, model="haiku-5-5", wire="claude-haiku-5-5")
     reset()
     resp = client.generate(_req(model_tier="haiku-5-5@anthropic-direct", stage="adhoc_aa1002", max_tokens=64))

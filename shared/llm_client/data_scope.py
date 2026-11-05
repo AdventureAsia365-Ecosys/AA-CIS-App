@@ -126,3 +126,94 @@ def in_twin_slot(chain: list, i: int, twins: dict[str, frozenset]) -> bool:
     """True when ``chain[i]`` is a model reached only outside AWS sitting right behind its AWS twin (``vendor_twins``):
     the same model on its vendor API, part of that model's slot in a model-first route (tech lead S267 Q2)."""
     return 0 < i < len(chain) and chain[i - 1] in (twins or {}).get(chain[i], ())
+
+
+# ── AA-1039 (R6, CIS 373; root ADR 0019 d12 / TL-12) — the data class of a stage ─────────────────────────────────────
+# ``shared.llm_role_config.pii_class``: ``content`` (no personal data: any route the stage's allowed_scopes allow,
+# Bedrock ``global.`` profiles included) or ``pii`` (personal data: our own AWS accounts and the US only). A CHECK of
+# migration 373 holds a pii stage to allowed_scopes = {aws_only}; the gateway adds the geography: a pii stage is called
+# only on a deployment whose wire id is a ``us.`` profile, or an id with no region prefix on a ``us-*`` connection
+# (in-region Bedrock). Built on the scopes above, not beside them: a pii stage is first an aws_only stage.
+
+PII_CONTENT = "content"
+PII_PERSONAL = "pii"
+PII_CLASSES: tuple[str, ...] = (PII_CONTENT, PII_PERSONAL)
+
+
+class UnreadPii(str):
+    """The class of a stage whose role_config read FAILED in a process that never read it (review S268, item 3): it
+    is ``pii`` (equal to PII_PERSONAL, so every rule treats it as a personal-data stage), and its type marks that the
+    class is unknown, not stated, so the logs and errors say so instead of "personal-data stage"."""
+
+    __slots__ = ()
+
+
+# The one value role_config and the client use for a class they could not read.
+PII_UNREAD = UnreadPii(PII_PERSONAL)
+# What a refusal says (logs, RuntimeError texts): a stated pii class, or one that could not be read.
+PII_STAGE_REASON = "a personal-data stage runs only on our AWS accounts in the US"
+PII_UNREAD_REASON = "stage class unknown (role_config read failed): US AWS deployments only"
+# AA-1039 (review S268, item 4): the connection kinds that run inside our AWS accounts. A pii stage needs one of them
+# besides the aws_only data scope: the scope is a row value an admin edit or a seed slip could set on a vendor kind.
+AWS_KINDS: frozenset = frozenset({"bedrock", "bedrock_guardrails", "mock"})
+
+
+def pii_class_unread(pii_class) -> bool:
+    """True when ``pii_class`` is the fail-closed class of a failed read (PII_UNREAD), not one a row states."""
+    return isinstance(pii_class, UnreadPii)
+
+
+def pii_reason(pii_class) -> str:
+    """Why a deployment is refused for a pii stage: PII_UNREAD_REASON when the class could not be read, else
+    PII_STAGE_REASON."""
+    return PII_UNREAD_REASON if pii_class_unread(pii_class) else PII_STAGE_REASON
+# The geography prefixes of Bedrock cross-region inference profiles (``us.anthropic.…``, ``global.cohere.…``).
+_GEOS: frozenset = frozenset({"global", "us", "eu", "apac", "jp", "au", "ca"})
+# The provider prefixes of an in-region Bedrock model id (``amazon.titan-embed-text-v2:0``): the only ids, besides an
+# explicit ``us.`` profile, that count as US on a ``us-*`` connection. Anything else (a full ARN, an unknown prefix, a
+# vendor API id) is ``unknown``: a pii stage fails closed on it (review S268). Add a provider here when one is seeded.
+_BEDROCK_PROVIDERS: frozenset = frozenset({
+    "ai21", "amazon", "anthropic", "cohere", "deepseek", "google", "luma", "meta", "minimax", "mistral", "moonshot",
+    "moonshotai", "nvidia", "openai", "qwen", "stability", "twelvelabs", "writer",
+})
+
+
+def normalize_pii_class(value) -> str:
+    """A stored ``pii_class`` as one of PII_CLASSES. A missing column / no row / a value that is not text (a test
+    double) reads as ``content`` (every row before migration 373 is content); an unknown text fails closed as ``pii``
+    (the CHECK of 373 makes it impossible in the table). PII_UNREAD comes back as itself (the mark survives)."""
+    if value is None or not isinstance(value, str):
+        return PII_CONTENT
+    if value in PII_CLASSES:
+        return value
+    logger.warning("llm_stage_pii_class_unknown", value=str(value)[:40])
+    return PII_PERSONAL
+
+
+def deployment_geo(wire_id: Optional[str], region: Optional[str]) -> str:
+    """Where a deployment runs the request: the Bedrock cross-region prefix of its wire id (``global``, ``us``, ``eu``,
+    ``apac`` …); ``us`` for an in-region Bedrock model id (``<provider>.<model>``, a known provider) on a connection
+    region ``us-*``; else ``unknown``: a vendor API id, a region outside the US, a full ARN (its profile and region are
+    not read here) or an unknown prefix (``zz.anthropic.…``). Review S268: only those two forms count as US."""
+    wire = (wire_id or "").strip().lower()
+    if not wire or wire.startswith("arn:"):
+        return "unknown"
+    head, dot, rest = wire.partition(".")
+    if not dot or not rest:
+        return "unknown"
+    if head in _GEOS:
+        return head
+    if head in _BEDROCK_PROVIDERS and isinstance(region, str) and region.lower().startswith("us-"):
+        return "us"
+    return "unknown"
+
+
+def pii_allows(pii_class: Optional[str], connection_scope: str, wire_id: Optional[str],
+               region: Optional[str], kind: Optional[str]) -> bool:
+    """True when a stage of ``pii_class`` may be called on a deployment (its connection's data scope, wire id, region
+    and kind). A content stage: always (its allowed_scopes decide). A pii stage: only an ``aws_only`` connection of an
+    AWS kind (``AWS_KINDS``; a missing kind is refused) and a US deployment (``deployment_geo`` == ``us``)."""
+    if normalize_pii_class(pii_class) != PII_PERSONAL:
+        return True
+    return (connection_scope == AWS_ONLY and kind in AWS_KINDS
+            and deployment_geo(wire_id, region) == "us")

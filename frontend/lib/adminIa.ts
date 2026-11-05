@@ -13,12 +13,13 @@
 export type NavIcon =
   | "overview" | "appHealth" | "reports" | "dataCoverage"
   | "tenants" | "agencies" | "erasure" | "plans" | "assignments"
-  | "upload" | "rewrite" | "review" | "master" | "atoms" | "places" | "photos" | "facts" | "supply" | "aaContent"
+  | "upload" | "rewrite" | "review" | "master" | "atoms" | "places" | "placeCards" | "photos" | "facts" | "supply"
+  | "aaContent"
   | "seo" | "settings"
   | "quality" | "trace" | "reviewLog" | "slate" | "compliance"
   | "aiGateway" | "spend" | "usage"
   | "lab" | "writingMemory" | "decisions"
-  | "staff" | "audit" | "jobs" | "alerts" | "apiDocs" | "dataModel" | "docs";
+  | "staff" | "audit" | "jobs" | "alerts" | "apiDocs" | "dataModel" | "docs" | "uiKit";
 
 export interface IaItem {
   href: string;
@@ -65,12 +66,17 @@ export const ADMIN_IA: IaGroup[] = [
     { href: "/admin/master-content", label: "Master Content", icon: "master" },
     { href: "/admin/atom-curation", label: "Atoms & routes", icon: "atoms" },
     { href: "/admin/places", label: "Places", icon: "places" },
+    // AA-1039 R6 rest (IA §6.2, Places & photos): the place cards (was the Cards tab of Content quality), TENANT_QA
+    // roles on their own route (lib/rbac.ts), so content_lead and tenant_qa keep the card review.
+    { href: "/admin/places/cards", label: "Place cards", icon: "placeCards" },
     { href: "/admin/photos", label: "Photos", icon: "photos" },
     { href: "/admin/facts", label: "Facts", icon: "facts" },
     { href: "/admin/supply-content", label: "Supply copy", icon: "supply" },
     { href: "/admin/aa-content", label: "AA content", icon: "aaContent" },
     { href: "/admin/seo-intelligence", label: "SEO Intelligence", icon: "seo" },
-    { href: "/admin/settings", label: "Settings", icon: "settings" },
+    // AA-1039 R6 rest: the catalogue's own settings (pipeline gates, the AA house style, SEO config); the aa_internal
+    // tenant row went to its Tenant 360 and the UI kit reference to Platform (IA §6.2).
+    { href: "/admin/settings", label: "Catalogue settings", icon: "settings" },
   ] },
   { label: "Tenant content QA", items: [
     { href: "/admin/tenant-qa/quality", label: "Content quality", icon: "quality" },
@@ -104,8 +110,13 @@ export const ADMIN_IA: IaGroup[] = [
     { href: "/admin/api-docs", label: "API Docs", icon: "apiDocs" },
     { href: "/admin/data-model", label: "Data model", icon: "dataModel" },
     { href: "/admin/docs", label: "Docs", icon: "docs" },
+    // AA-1039 R6 rest: the design-system reference (was the UI Kit tab of Settings).
+    { href: "/admin/platform/ui-kit", label: "UI kit", icon: "uiKit" },
   ] },
 ];
+
+/** The AA internal tenant (shared.tenants, the catalogue's own tenant row). */
+export const AA_INTERNAL_TENANT_ID = "00000000-0000-0000-0000-000000000001";
 
 /** A page that moved: `from` (exact path, optionally only with `query`) answers 307 to `to`; the query string carries
  *  over (Next.js passes it through, merged with a query of `to`, whose own keys win). */
@@ -117,6 +128,10 @@ export interface RouteMove {
 
 // 307 (permanent: false), not 308: browsers cache a 308 for good, and the later R6 slices may move these again.
 export const ADMIN_ROUTE_MOVES: RouteMove[] = [
+  // AA-1039 R6 rest: the Cards tab of Content quality is AA Catalogue › Place cards (tech lead, option A, 05/11/2026).
+  // The old Content quality URL with that tab goes there in one hop too (the first matching move wins).
+  { from: "/admin/content-quality", query: { key: "tab", value: "cards" }, to: "/admin/places/cards" },
+  { from: "/admin/tenant-qa/quality", query: { key: "tab", value: "cards" }, to: "/admin/places/cards" },
   { from: "/admin/content-quality", to: "/admin/tenant-qa/quality" },
   { from: "/admin/tenant-activity", to: "/admin/tenant-qa/trace" },
   { from: "/admin/platform-stats", to: "/admin/tenant-qa/review-log" },
@@ -129,7 +144,35 @@ export const ADMIN_ROUTE_MOVES: RouteMove[] = [
   { from: "/admin/writing-memory", to: "/admin/lab/writing-memory" },
   { from: "/admin/cost-ops", to: "/admin/spend" },
   { from: "/admin/platform/cost", to: "/admin/spend?tab=apps" },
+  // AA-1039 R6 rest (IA §6.2, AA Catalogue): SEO Intelligence's Spend tab folded into Spend › DataForSEO (the same
+  // dfs_call_log rollup, by endpoint and tenant, plus balance, runs and markets); the tab never had a URL of its own,
+  // so `?tab=spend` is the one a link would carry. Settings lost its tenant and UI kit tabs: the aa_internal tenant
+  // row is its Tenant 360 (Settings tab: plan, limits), the UI kit reference is a Platform page.
+  { from: "/admin/seo-intelligence", query: { key: "tab", value: "spend" }, to: "/admin/spend?tab=spend&view=dfs" },
+  { from: "/admin/settings", query: { key: "tab", value: "tenant" },
+    to: `/admin/tenants/${AA_INTERNAL_TENANT_ID}?tab=settings` },
+  { from: "/admin/settings", query: { key: "tab", value: "ui-kit" }, to: "/admin/platform/ui-kit" },
 ];
+
+/** Tenant 360 of one tenant (AA-1039 R6 rest: a route, /admin/tenants/<id>; was the Directory drawer at
+ *  /admin/tenants?tenant=<id>), optionally on one of its tabs (`?tab=cost`). */
+export function tenant360Href(tenantId: string, tab?: string): string {
+  const path = `/admin/tenants/${encodeURIComponent(tenantId)}`;
+  return tab ? `${path}?tab=${encodeURIComponent(tab)}` : path;
+}
+
+/** Where an old Directory deep link (`/admin/tenants?tenant=<id>[&tab=…]`, query string without "?") goes now: its
+ *  Tenant 360 route with the other keys kept; null when the query names no tenant. A client-side replace in the
+ *  Directory page, because a Next.js redirect cannot move a query value into the path through this table. */
+export function legacyTenantLinkTarget(query: string): string | null {
+  const params = new URLSearchParams(query);
+  const tenantId = params.get("tenant");
+  if (!tenantId) return null;
+  params.delete("tenant");
+  const rest = params.toString();
+  const path = tenant360Href(tenantId);
+  return rest ? `${path}?${rest}` : path;
+}
 
 /** The Next.js redirect entries of ADMIN_ROUTE_MOVES (next.config.ts `redirects()`). */
 export function adminIaRedirects(): {

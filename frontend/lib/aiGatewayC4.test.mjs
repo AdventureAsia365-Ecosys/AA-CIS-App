@@ -52,7 +52,7 @@ test("tenant budget draft -> body, and its problems", () => {
 
 test("tenant budget paths, links and tones", () => {
   assert.equal(tenantBudgetPath(TENANT), `/api/admin/ai-gateway/tenant-budgets/${TENANT}`);
-  assert.equal(tenantCostHref(TENANT), `/admin/tenants?tenant=${TENANT}&tab=cost`);
+  assert.equal(tenantCostHref(TENANT), `/admin/tenants/${TENANT}?tab=cost`);
   assert.equal(tenantBudgetTone("approval"), "danger");
   assert.equal(tenantBudgetTone("alert"), "warning");
   assert.equal(tenantBudgetTone("unlimited"), "neutral");

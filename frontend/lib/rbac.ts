@@ -99,6 +99,10 @@ export const PAGE_RULES: PageRule[] = [
   { prefix: "/admin/jobs", roles: ["admin"] },              // AA-650
   { prefix: "/admin/decisions", roles: ["admin"] },         // AA-660
   { prefix: "/admin/photos", roles: ["admin", "content_lead"] },            // AA-708
+  // AA-1039 R6 rest (tech lead, option A, 05/11/2026): Place cards moved from Content quality's Cards tab to AA
+  // Catalogue; it keeps the Cards tab's roles (TENANT_QA) on its own route, so it must come before the admin-only
+  // /admin/places rule (pageRule takes the first match). Nobody gains or loses access (lib/adminIa.test.mjs 12).
+  { prefix: "/admin/places/cards", roles: TENANT_QA },
   { prefix: "/admin/places", roles: ["admin"] },            // AA-847 — coverage + content validity, fixes
   { prefix: "/admin/seo-intelligence", roles: ["admin", "content_lead"] },  // AA-705
   { prefix: "/admin/atom-curation", roles: ["admin", "content_lead"] },     // AA-527

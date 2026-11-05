@@ -132,9 +132,15 @@ def split_pin(key: str) -> Optional[tuple[str, str]]:
     return (model_key, connection_key) if model_key and connection_key else None
 
 
-def pinned_deployment(model: CatalogModel, connection_key: str) -> VendorDeployment:
+def pinned_deployment(model: CatalogModel, connection_key: str, *, allowed_scopes: Optional[tuple] = None,
+                      pii_class: Optional[str] = None) -> VendorDeployment:
     """The enabled deployment of ``model`` on ``connection_key`` (an Anthropic connection, enabled). Raises
-    RuntimeError naming what is missing."""
+    RuntimeError naming what is missing.
+
+    AA-1039 (review S268): a pin names one deployment, but it is still a call of the request's stage, so it keeps the
+    stage's data policy exactly as ``deployment_plan`` does: a connection whose data scope ``allowed_scopes`` does not
+    allow (None = no stage policy) is refused, and a ``pii`` stage is refused anywhere but our AWS accounts in the US
+    (``data_scope.pii_allows``). A probe with no stage passes None for both: unchanged."""
     rows = [d for d in deployments.deployments_for_sync(model.model_key, enabled_only=False)
             if d.connection_key == connection_key]
     if not rows:
@@ -147,6 +153,12 @@ def pinned_deployment(model: CatalogModel, connection_key: str) -> VendorDeploym
     found = _usable(model, VendorDeployment(rows[0], conn))
     if found is None:
         raise RuntimeError(f"connection {connection_key!r} ({conn.kind}) cannot serve {model.model_key!r} in S2")
+    if not data_scope.allows(allowed_scopes, conn.data_scope):
+        raise RuntimeError(f"data scope {conn.data_scope} of connection {connection_key!r} is not allowed for "
+                           "the stage")
+    if not data_scope.pii_allows(pii_class, conn.data_scope, rows[0].wire_id, conn.region, conn.kind):
+        raise RuntimeError(f"the deployment of {model.model_key!r} on {connection_key!r} is refused: "
+                           f"{data_scope.pii_reason(pii_class)}")
     return found
 
 
@@ -252,7 +264,8 @@ def _callable(model: CatalogModel, conn: connections.ProviderConnection) -> Opti
 
 
 def deployment_plan(model: CatalogModel, allowed_scopes: Optional[tuple] = None, *,
-                    role: Optional[str] = None) -> Optional[list[VendorDeployment]]:
+                    role: Optional[str] = None,
+                    pii_class: Optional[str] = None) -> Optional[list[VendorDeployment]]:
     """AA-1002 (S3) — where ``model`` is called, in order. The model's deployment rows (``shared.llm_model_deployment``,
     lowest ``priority`` first, ``connection_key`` breaks ties) that the gateway can call — a Bedrock connection
     (assume_role / task_role) for converse / anthropic_native / embed rows, an Anthropic connection for Anthropic
@@ -265,7 +278,10 @@ def deployment_plan(model: CatalogModel, allowed_scopes: Optional[tuple] = None,
       never counts as the first row of the S3 vendor rule nor as a circuit / budget skip;
     - data scope (slice S5, ``data_scope.py``): with the stage's ``allowed_scopes``, a connection whose ``data_scope``
       is in them (an ``aws_only`` stage never leaves AWS, whatever the priorities; a stage that allows
-      ``vendor_direct`` may fall back to a vendor API behind acc3). With no stage policy (``allowed_scopes`` None: the
+      ``vendor_direct`` may fall back to a vendor API behind acc3). A ``pii`` stage (AA-1039, ``pii_class``, CIS 373)
+      also needs an ``aws_only`` connection and a US deployment (``data_scope.pii_allows``: a ``us.`` profile or an
+      in-region id on a ``us-*`` connection, never ``global.``), whatever its scopes say. With no stage policy
+      (``allowed_scopes`` None: the
       column not migrated, a stage with no row) the S3 rule: a ``vendor_direct`` connection only when it is the FIRST
       enabled callable row (the admin deliberately put a vendor API ahead, S2's rule), never a same-model fallback
       behind an ``aws_only`` one (migration 306 seeds enabled Anthropic API rows behind acc3 for every Anthropic
@@ -311,6 +327,10 @@ def deployment_plan(model: CatalogModel, allowed_scopes: Optional[tuple] = None,
                 role_skips.append((c.connection.connection_key, role))
                 continue
             scope = c.connection.data_scope
+            if not data_scope.pii_allows(pii_class, scope, c.deployment.wire_id, c.connection.region,
+                                         c.connection.kind):
+                _skip(model, c.deployment, data_scope.pii_reason(pii_class))
+                continue
             if allowed_scopes is not None:
                 if not data_scope.allows(allowed_scopes, scope):
                     _skip(model, c.deployment, f"data scope {scope} is not allowed for the stage")

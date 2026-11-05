@@ -2,12 +2,14 @@
 
 conftest applies every migration; these tests also run the file again directly, errors NOT swallowed (lesson S231):
 registration, every seeded stage is content, the two CHECKs (the class values; a pii stage only with allowed_scopes =
-{aws_only}, not NULL, not vendor_direct), idempotence, and that the runtime role cannot change a class. Every test
-removes its own rows.
+{aws_only}, not NULL, not vendor_direct), idempotence, that the runtime role cannot change a class, and that the
+decision path (decide._load_config) reads the pii stages from the real table. Every test removes its own rows.
 """
+import asyncio
 import os
 import sys
 
+import asyncpg
 import psycopg2
 import psycopg2.errors
 import pytest
@@ -15,6 +17,7 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 sys.path.insert(0, os.path.dirname(__file__))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
+from shared.llm_client import decide  # noqa: E402
 
 MIGRATION = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations", "373_llm_stage_pii_class.sql")
 PREFIX = "zz_aa1039_pii_"
@@ -115,3 +118,25 @@ def test_the_runtime_role_cannot_set_a_class(cur):
                 "has_column_privilege('cis_app', 'shared.llm_role_config', 'pii_class', 'INSERT') AS ins")
     up, ins = cur.fetchone()
     assert up is False and ins is False
+
+
+def test_the_decision_path_reads_the_pii_stages(cur):
+    """decide() skips TypeSafe for a pii stage (root ADR 0019 d12): its real query sees the pii row, not content."""
+    _stage(cur, "personal", pii="pii")
+    _stage(cur, "content")
+
+    async def load():
+        conn = await asyncpg.connect(host=DB_HOST, port=DB_PORT, database=DB_NAME, user=DB_USER, password=DB_PASS)
+        try:
+            decide._questions_loaded_at = 0.0
+            await decide._load_config(conn)
+        finally:
+            await conn.close()
+
+    try:
+        asyncio.run(load())
+        assert decide.stage_is_pii(PREFIX + "personal")
+        assert not decide.stage_is_pii(PREFIX + "content") and not decide.stage_is_pii(PREFIX + "missing")
+    finally:
+        decide._questions_loaded_at = 0.0
+        decide._pii_stages = frozenset()
