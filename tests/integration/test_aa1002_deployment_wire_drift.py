@@ -13,8 +13,10 @@ Rules (enabled deployments on enabled-or-not connections; the DB here holds only
 - legacy rows (origin ``legacy_constant``, enabled or not): ``wire_id`` = the code constant the legacy chain invokes
   (``bedrock_satellite._PROFILE_ID_*`` on acc3, ``pricing.BEDROCK_*`` on acc2);
 - OpenAI connection: ``wire_id`` = ``COALESCE(wire_model, model_key)`` (what ``_call_openai`` sent before S3);
-- Anthropic connection, migration 306 seed rows: ``wire_id`` = the acc3 profile without its region prefix and version
-  suffix (306's derivation), so a catalog upgrade of the acc3 profile cannot leave the API row on the old model.
+- Anthropic connection, seed rows: ``wire_id`` = the acc3 profile without its region prefix and version suffix
+  (306's derivation; AA-1042 / CIS 376: a bare ``-v1`` suffix too, as ``global.anthropic.claude-opus-4-6-v1`` is the
+  API's ``claude-opus-4-6``), so a catalog upgrade of the acc3 profile cannot leave the API row on the old model; a
+  row reached only by the Anthropic API (no acc3 profile, CIS 376) calls its catalog ``wire_model``.
 """
 import os
 import sys
@@ -99,14 +101,28 @@ def test_openai_deployments_call_the_catalog_wire_model(cur):
 def test_anthropic_api_seed_rows_follow_the_acc3_profile(cur):
     drift = _rows(cur, """
         SELECT d.model_key || '@' || d.connection_key || ': deployment ' || d.wire_id || ' vs acc3 profile '
-               || COALESCE(m.bedrock_profile_ids ->> 'acc3', '<no acc3 profile>') AS drift
+               || COALESCE(m.bedrock_profile_ids ->> 'acc3', '<no acc3 profile, wire_model '
+                           || COALESCE(m.wire_model, '<none>') || '>') AS drift
           FROM shared.llm_model_deployment d
           JOIN shared.llm_provider_connection c USING (connection_key)
           JOIN shared.llm_model_catalog m USING (model_key)
          WHERE c.kind = 'anthropic' AND d.enabled AND d.origin = 'seed'
-           AND d.wire_id IS DISTINCT FROM
+           AND d.wire_id IS DISTINCT FROM COALESCE(
                regexp_replace(regexp_replace(NULLIF(m.bedrock_profile_ids ->> 'acc3', ''),
                                              '^(global|us|eu|apac|jp|au)\\.anthropic\\.', ''),
-                              '-v[0-9]+:[0-9]+$', '')
+                              '-v[0-9]+(:[0-9]+)?$', ''),
+               m.wire_model)
+         ORDER BY 1""")
+    assert drift == [], f"{_FIX}: {drift}"
+
+
+def test_an_anthropic_api_only_row_names_its_api_model(cur):
+    """AA-1042 (CIS 376): a catalog row reached only by the Anthropic API has no Bedrock profile, so its wire_model is
+    the model id the API row sends (and TripPlanner's view reads)."""
+    drift = _rows(cur, """
+        SELECT m.model_key || ': wire_model ' || COALESCE(m.wire_model, '<none>') AS drift
+          FROM shared.llm_model_catalog m
+         WHERE m.provider = 'anthropic' AND m.api_style = 'anthropic_messages'
+           AND (m.wire_model IS NULL OR m.wire_model !~ '^claude-[a-z0-9-]+$' OR m.bedrock_profile_ids <> '{}'::jsonb)
          ORDER BY 1""")
     assert drift == [], f"{_FIX}: {drift}"
