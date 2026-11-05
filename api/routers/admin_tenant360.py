@@ -633,11 +633,15 @@ async def _refuse_e2e_invitation(request: Request, conn, tenant_id: UUID, email:
     or ``editor`` (a new invitation: the body's role, checked here; a send-again: the stored role of the membership,
     checked by :func:`_refuse_e2e_resend_role` once the row is read). 403 ``e2e_read_only`` otherwise, before any row,
     audit or relay.
-    Every other staff member is unaffected."""
-    if not getattr(request_staff_identity(request), "e2e_read_only", False):
+    Every other staff member is unaffected. AA-1035 A10d: any other Dev-only E2E identity (``e2e_read_only`` without
+    ``e2e_allowlisted_writes``) is refused outright, whatever the tenant, address or role."""
+    identity = request_staff_identity(request)
+    if not getattr(identity, "e2e_read_only", False):
         return
     reason = None
-    if role is not None and role not in e2e_staff.E2E_INVITE_ROLES:
+    if not e2e_staff.has_allowlisted_writes(identity):
+        reason = "not_allowlisted"
+    elif role is not None and role not in e2e_staff.E2E_INVITE_ROLES:
         reason = "role"
     elif not e2e_staff.is_e2e_mailbox_address(email):
         reason = "address"
@@ -653,10 +657,12 @@ def _refuse_e2e_resend_role(request: Request, tenant_id: UUID, member: dict) -> 
     the Dev-only E2E CIS admin may send again only an invitation whose role is ``viewer`` or ``editor``. Without this
     check an A10b session could redirect an ``owner`` invitation a real admin created on a synthetic tenant to an
     E2E mailbox and claim it as owner. 403 ``e2e_read_only`` before any relay. Every other staff member is
-    unaffected."""
-    if not getattr(request_staff_identity(request), "e2e_read_only", False):
+    unaffected. AA-1035 A10d: a Dev-only E2E identity without ``e2e_allowlisted_writes`` is refused outright."""
+    identity = request_staff_identity(request)
+    if not getattr(identity, "e2e_read_only", False):
         return
-    if member.get("content_studio_role") not in e2e_staff.E2E_INVITE_ROLES:
+    if (not e2e_staff.has_allowlisted_writes(identity)
+            or member.get("content_studio_role") not in e2e_staff.E2E_INVITE_ROLES):
         logger.warning("tenant_member_invitation_e2e_refused", tenant_id=str(tenant_id), reason="role")
         raise HTTPException(status_code=403, detail=e2e_staff.E2E_READ_ONLY)
 
@@ -832,7 +838,10 @@ ORDER BY CASE a.kind WHEN 'owner' THEN 0 WHEN 'backup' THEN 1 ELSE 2 END, u.disp
 # AA-1035 slice 2: the roles an assignment means something for (tenant_scope.py book / book_pool; admin may be the named
 # owner of an account). The Assignments page picker reads the same tuple (admin_tenant_assignments.ASSIGNABLE_ROLES).
 ASSIGNABLE_ROLES: tuple[str, ...] = ("admin", "customer_success", "support")
-ASSIGN_STAFF_SQL = "SELECT id, is_active, role::text AS role FROM shared.admin_users WHERE id = $1"
+ASSIGN_STAFF_SQL = "SELECT id, is_active, role::text AS role, email FROM shared.admin_users WHERE id = $1"
+# AA-1035 A10d (root ADR 0006a A10d): a Dev-only E2E staff row (A10b, A10d) joins synthetic tenants only, so the E2E
+# identity's book (and so its reads) never holds a real tenant or the pilot.
+E2E_REAL_TENANT_REFUSED = "A Dev-only E2E staff account can be assigned to synthetic tenants only."
 
 
 class AssignmentBody(BaseModel):
@@ -884,6 +893,11 @@ async def put_tenant_assignment(
         if staff["role"] not in ASSIGNABLE_ROLES:   # AA-1035 slice 2: an assignment would give this role nothing
             raise HTTPException(status_code=409, detail=(
                 "Only Administrator, Customer Success or Support staff can be assigned to a tenant."))
+        if (e2e_staff.is_dev_only_e2e_staff(staff.get("email"))
+                and not await e2e_staff.is_synthetic_tenant(conn, tenant_id)):
+            logger.warning("tenant_assignment_e2e_refused", tenant_id=str(tenant_id),
+                           admin_user_id=str(admin_user_id), reason="tenant_not_synthetic")
+            raise HTTPException(status_code=409, detail=E2E_REAL_TENANT_REFUSED)
         try:
             before = await conn.fetchval(
                 "SELECT kind FROM shared.staff_tenant_assignment WHERE admin_user_id = $1 AND tenant_id = $2",

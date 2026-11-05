@@ -145,9 +145,15 @@ def _require_staff_id(request: Request) -> str:
 
 async def _refuse_e2e(request: Request, conn: Any, tenant_id: Any) -> None:
     """The Dev-only E2E CIS admin (A10b, read-only) may start / end a view-as session on a synthetic tenant only
-    (``is_canary IS TRUE``); 403 ``e2e_read_only`` otherwise, before any row. Every other staff member is unaffected."""
-    if not getattr(request_staff_identity(request), "e2e_read_only", False):
+    (``is_canary IS TRUE``); 403 ``e2e_read_only`` otherwise, before any row. Every other staff member is unaffected.
+    AA-1035 A10d: any other Dev-only E2E identity (``e2e_read_only`` without ``e2e_allowlisted_writes``) is refused
+    outright (the bearer middleware and staff_authz already refuse it; this is the route's own fail-closed check)."""
+    identity = request_staff_identity(request)
+    if not getattr(identity, "e2e_read_only", False):
         return
+    if not e2e_staff.has_allowlisted_writes(identity):
+        logger.warning("view_as_e2e_refused", tenant_id=str(tenant_id), reason="not_allowlisted")
+        raise HTTPException(status_code=403, detail=e2e_staff.E2E_READ_ONLY)
     if not await e2e_staff.is_synthetic_tenant(conn, tenant_id):
         logger.warning("view_as_e2e_refused", tenant_id=str(tenant_id), reason="tenant_not_synthetic")
         raise HTTPException(status_code=403, detail=e2e_staff.E2E_READ_ONLY)

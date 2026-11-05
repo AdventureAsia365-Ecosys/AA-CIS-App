@@ -18,7 +18,8 @@ Operations
 - create: ``@adventure.asia`` only (temporary exceptions: :data:`E2E_TEST_STAFF_EMAIL`, content only, no
   Booking grant and no CRM role — AA-816 E2E, migration 250; and, Dev only, :data:`E2E_CIS_ADMIN_TEST_STAFF_EMAIL`,
   admin only, no Booking grant and no CRM role, refused unless ``ENVIRONMENT`` is exactly ``dev`` — A10b, migration
-  283); username derived from the address's local part (unique); ``password_hash`` NULL (Cognito-only member);
+  283; likewise :data:`E2E_CIS_CS_TEST_STAFF_EMAIL`, customer_success only — A10d, migration 378); username
+  derived from the address's local part (unique); ``password_hash`` NULL (Cognito-only member);
   optional Booking grant and CRM roles (AA-1031). Cognito: ``AdminCreateUser`` with ``MessageAction=SUPPRESS``
   (always: without it Cognito mails a temporary password and the person could set a permanent password through
   managed login, bypassing email-code-only sign-in) and ``email`` + ``email_verified=true``. Then
@@ -142,13 +143,26 @@ E2E_TEST_STAFF_ROLE = "content"
 # (require_dev_only_e2e_environment). Migration 283 and the WORKFORCE trigger hold the same rule.
 E2E_CIS_ADMIN_TEST_STAFF_EMAIL = e2e_staff.E2E_CIS_ADMIN_TEST_STAFF_EMAIL
 E2E_CIS_ADMIN_TEST_STAFF_ROLE = e2e_staff.E2E_CIS_ADMIN_TEST_STAFF_ROLE
+# TEMPORARY (AA-1035 A10d, S270; root ADR 0006a A10d): the Dev-only read-only E2E customer_success account
+# (api/core/e2e_staff.py). CIS role customer_success only, never an owner, no Booking grant, no CRM role, Dev only, and
+# synthetic tenants only in its book (api/routers/admin_tenant360.put_tenant_assignment). Migration 378 and the
+# WORKFORCE trigger hold the same rule.
+E2E_CIS_CS_TEST_STAFF_EMAIL = e2e_staff.E2E_CIS_CS_TEST_STAFF_EMAIL
+E2E_CIS_CS_TEST_STAFF_ROLE = e2e_staff.E2E_CIS_CS_TEST_STAFF_ROLE
 # Every E2E address the directory accepts, with the one CIS role it may hold. Read-only.
 _E2E_TEST_STAFF_ROLES = MappingProxyType({
     E2E_TEST_STAFF_EMAIL: E2E_TEST_STAFF_ROLE,
     E2E_CIS_ADMIN_TEST_STAFF_EMAIL: E2E_CIS_ADMIN_TEST_STAFF_ROLE,
+    E2E_CIS_CS_TEST_STAFF_EMAIL: E2E_CIS_CS_TEST_STAFF_ROLE,
 })
-# The E2E addresses that may exist only on Dev.
-_DEV_ONLY_E2E_EMAILS = frozenset({E2E_CIS_ADMIN_TEST_STAFF_EMAIL})
+# The E2E addresses that may exist only on Dev (every entry of e2e_staff.DEV_ONLY_E2E_STAFF_ROLES).
+_DEV_ONLY_E2E_EMAILS = frozenset({E2E_CIS_ADMIN_TEST_STAFF_EMAIL, E2E_CIS_CS_TEST_STAFF_EMAIL})
+# The name each E2E address goes by in the directory's refusals.
+_E2E_ACCOUNT_NAMES = MappingProxyType({
+    E2E_TEST_STAFF_EMAIL: "E2E test account",
+    E2E_CIS_ADMIN_TEST_STAFF_EMAIL: "E2E CIS admin account",
+    E2E_CIS_CS_TEST_STAFF_EMAIL: "E2E customer success account",
+})
 
 # The break-glass account (ADR 0006 decision 11; S242 plan D1). Never written from the UI.
 BREAKGLASS_USERNAMES = frozenset({"admin"})
@@ -245,15 +259,16 @@ def normalise_email(email: Any) -> str:
 
 
 def is_e2e_test_email(email: Any) -> bool:
-    """True only for the E2E test addresses (:data:`E2E_TEST_STAFF_EMAIL`, :data:`E2E_CIS_ADMIN_TEST_STAFF_EMAIL`),
-    after trimming and lower-casing."""
+    """True only for the E2E test addresses (:data:`E2E_TEST_STAFF_EMAIL`, :data:`E2E_CIS_ADMIN_TEST_STAFF_EMAIL`,
+    :data:`E2E_CIS_CS_TEST_STAFF_EMAIL`), after trimming and lower-casing."""
     return normalise_email(email) in _E2E_TEST_STAFF_ROLES
 
 
 def require_staff_email(email: Any) -> str:
     """The lower-cased ``@adventure.asia`` address, or 400. Mirrors the DB CHECK admin_users_email_chk and the
     WORKFORCE pre sign-up trigger (which refuses other domains too). The one exception is the exact address
-    :data:`E2E_TEST_STAFF_EMAIL` and the Dev-only :data:`E2E_CIS_ADMIN_TEST_STAFF_EMAIL` (temporary, AA-816); their
+    :data:`E2E_TEST_STAFF_EMAIL` and the Dev-only :data:`E2E_CIS_ADMIN_TEST_STAFF_EMAIL` and
+    :data:`E2E_CIS_CS_TEST_STAFF_EMAIL` (temporary, AA-816, AA-1035); their
     role is checked by :func:`require_e2e_test_scope`, the environment by :func:`require_dev_only_e2e_environment`."""
     value = normalise_email(email)
     if value in _E2E_TEST_STAFF_ROLES:
@@ -308,25 +323,29 @@ def require_crm_roles(roles: Any) -> tuple[str, ...]:
 def require_e2e_test_scope(email: Any, role: Optional[str], booking_role: Optional[str],
                            crm_roles: tuple[str, ...] = ()) -> None:
     """An E2E test address may only hold its one CIS role (``content`` for :data:`E2E_TEST_STAFF_EMAIL`, ``admin``
-    for :data:`E2E_CIS_ADMIN_TEST_STAFF_EMAIL`) with no Booking grant and no CRM role (400 ``e2e_test_scope``; root
-    ADR 0006a A10 / A10b, the WORKFORCE trigger holds the same rule). No-op for every other address. ``role`` /
+    for :data:`E2E_CIS_ADMIN_TEST_STAFF_EMAIL`, ``customer_success`` for :data:`E2E_CIS_CS_TEST_STAFF_EMAIL`) with no
+    Booking grant and no CRM role (400 ``e2e_test_scope``; root ADR 0006a A10 / A10b / A10d, the WORKFORCE trigger
+    holds the same rule). No-op for every other address. ``role`` /
     ``booking_role`` / ``crm_roles`` are the values the row would end up with."""
-    allowed = _E2E_TEST_STAFF_ROLES.get(normalise_email(email))
+    address = normalise_email(email)
+    allowed = _E2E_TEST_STAFF_ROLES.get(address)
     if allowed is None:
         return
     if role != allowed or booking_role is not None or crm_roles:
-        name = "E2E CIS admin account" if allowed == E2E_CIS_ADMIN_TEST_STAFF_ROLE else "E2E test account"
+        name = _E2E_ACCOUNT_NAMES[address]
         raise StaffDirectoryError(
             400, f"The {name} may only have the CIS role {allowed}, no Booking role and no CRM role",
             "e2e_test_scope")
 
 
 def require_dev_only_e2e_environment(email: Any) -> None:
-    """A10b: the Dev-only E2E address may be created, re-enabled or synced into its groups only where the API's
+    """A10b / A10d: a Dev-only E2E address may be created, re-enabled or synced into its groups only where the API's
     ``ENVIRONMENT`` is exactly ``dev`` (403 ``e2e_not_allowed_here``; unset refuses). No-op for every other address.
     Disabling it stays allowed everywhere, so the account can always be switched off."""
-    if normalise_email(email) in _DEV_ONLY_E2E_EMAILS and not e2e_staff.dev_only_e2e_environment():
-        raise StaffDirectoryError(403, "The E2E CIS admin account exists only on Dev", e2e_staff.E2E_NOT_ALLOWED_HERE)
+    address = normalise_email(email)
+    if address in _DEV_ONLY_E2E_EMAILS and not e2e_staff.dev_only_e2e_environment():
+        raise StaffDirectoryError(403, f"The {_E2E_ACCOUNT_NAMES[address]} exists only on Dev",
+                                  e2e_staff.E2E_NOT_ALLOWED_HERE)
 
 
 def username_base(email: str) -> str:

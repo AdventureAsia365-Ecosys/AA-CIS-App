@@ -798,8 +798,10 @@ class StaffPrincipal:
     perms: frozenset[str] = field(default_factory=frozenset)
     auth: Optional[str] = None      # "cognito" | None (legacy session, secret-only, machine)
     is_owner: bool = False
-    # AA-816 A10b: the verified identity is the Dev-only E2E CIS admin (reads + api/core/e2e_staff.E2E_ALLOWED_WRITES).
+    # AA-816 A10b / AA-1035 A10d: the verified identity is a Dev-only E2E CIS identity (reads only).
     e2e_read_only: bool = False
+    # AA-1035 A10d: the A10b identity only (api/core/e2e_staff.E2E_ALLOWED_WRITES, docs.owner_read "e2e_dev").
+    e2e_allowlisted_writes: bool = False
 
     @property
     def is_machine(self) -> bool:
@@ -826,6 +828,8 @@ def principal_from_role(role_header: Optional[str], identity: Any = None) -> Sta
         auth="cognito" if cognito else None,
         is_owner=bool(cognito and getattr(identity, "is_owner", False)),
         e2e_read_only=bool(identity is not None and getattr(identity, "e2e_read_only", False)),
+        e2e_allowlisted_writes=bool(identity is not None and getattr(identity, "e2e_read_only", False)
+                                    and getattr(identity, "e2e_allowlisted_writes", False)),
     )
 
 
@@ -861,12 +865,15 @@ def docs_owner_read_via(principal: StaffPrincipal) -> Optional[str]:
     trigger grants it, and the one that holds ops.read), and ``ENVIRONMENT`` exactly "dev", re-read on every call.
     It grants nothing else: ``is_owner`` stays False (so staff.write and every owner-only write stay refused), the
     session stays read-only (bearer middleware + denial_reason), and no other route reads this capability.
+    AA-1035 A10d: keyed on ``e2e_allowlisted_writes`` (the A10b identity only), so the Dev-only customer_success E2E
+    identity never gets it.
     """
     if principal.is_machine or principal.auth != "cognito":
         return None
     if principal.is_owner:
         return "owner"
-    if (principal.e2e_read_only and principal.role == e2e_staff.E2E_CIS_ADMIN_TEST_STAFF_ROLE
+    if (principal.e2e_read_only and principal.e2e_allowlisted_writes
+            and principal.role == e2e_staff.E2E_CIS_ADMIN_TEST_STAFF_ROLE
             and OPS_READ in principal.perms and e2e_staff.dev_only_e2e_environment()):
         return "e2e_dev"
     return None
@@ -881,9 +888,10 @@ def denial_reason(principal: StaffPrincipal, method: str, route: str) -> Optiona
     """None when the principal may call (method, route); otherwise the 403 detail."""
     if principal.role in READ_ONLY_ROLES and method.upper() not in READ_METHODS:
         return READ_ONLY_DENIED.format(role=principal.role)
-    # AA-816 A10b, defence in depth behind the bearer middleware (covers a route reached by any other path).
+    # AA-816 A10b, defence in depth behind the bearer middleware (covers a route reached by any other path). AA-1035
+    # A10d: the allow-list is the A10b identity's alone (e2e_allowlisted_writes); any other e2e_read_only gets none.
     if (principal.e2e_read_only and method.upper() not in READ_METHODS
-            and not e2e_staff.is_allowed_e2e_write_route(method, route)):
+            and not (principal.e2e_allowlisted_writes and e2e_staff.is_allowed_e2e_write_route(method, route))):
         return e2e_staff.E2E_READ_ONLY
     entry = POLICY.get((method, route))
     if entry is None:

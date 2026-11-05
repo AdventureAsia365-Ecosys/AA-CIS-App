@@ -29,15 +29,43 @@ TEMPORARY, removed at the end of project code with A10 / A10a (AA-816):
   TRUE``, :data:`SYNTHETIC_TENANT_SQL`), the invitee is an address of the E2E mailbox domain
   (:data:`E2E_MAIL_DOMAIN`, :func:`is_e2e_mailbox_address`) and the Content studio role is ``viewer`` or ``editor``
   (:data:`E2E_INVITE_ROLES`: the body's role on a new invitation, the membership's stored role on a send-again).
+
+A10d (AA-1035, S270, root ADR 0006a A10d): a second Dev-only CIS E2E identity, :data:`E2E_CIS_CS_TEST_STAFF_EMAIL`,
+role ``customer_success``, so the agent can prove the AA-1035 tenant-book scoping with a real Cognito session. Same
+directory rules as A10b (not an owner, no password, no Booking grant, no CRM role; CIS migration 378), same Dev-only
+environment guard, same read-only cap, but **no write allow-list at all**: every non-GET/HEAD/OPTIONS is refused 403
+``e2e_read_only``, including the A10b allow-listed routes (sentence apply, studio invitations, view-as), and it gets no
+``docs.owner_read``. Its tenant book holds synthetic tenants only (api/routers/admin_tenant360.put_tenant_assignment).
+
+Two identity flags (api/core/staff_identity.StaffIdentity) carry this:
+
+- ``e2e_read_only``: any Dev-only E2E identity (:data:`DEV_ONLY_E2E_STAFF_ROLES`, :func:`is_dev_only_e2e_staff`).
+  Caps the session at reads.
+- ``e2e_allowlisted_writes``: the A10b identity only (:func:`is_e2e_cis_admin`). Every A10b exception (the write
+  allow-list in the middleware and the route policy, the route-level checks of A10b-1 / A10b-2, the sentence modes,
+  ``docs.owner_read``) keys on this flag, never on ``e2e_read_only``.
 """
 from __future__ import annotations
 
 import os
 import re
+from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Any
 
 E2E_CIS_ADMIN_TEST_STAFF_EMAIL = "e2e-cis-admin@e2e-mail.lumiguides.it.com"
 E2E_CIS_ADMIN_TEST_STAFF_ROLE = "admin"
+# A10d (AA-1035, S270): the Dev-only read-only customer_success E2E account (same address as AA-CIS-Infra workforce.py
+# E2E_CIS_CS_TEST_STAFF_EMAIL and AA-Partner e2e_staff.E2E_CIS_CS_EMAIL). A module-level constant on purpose: the live
+# precheck finds the deployed address by scanning this module's upper-case str constants.
+E2E_CIS_CS_TEST_STAFF_EMAIL = "e2e-cis-cs@e2e-mail.lumiguides.it.com"
+E2E_CIS_CS_TEST_STAFF_ROLE = "customer_success"
+
+# Every Dev-only CIS E2E identity and its one directory role (read-only map). A10b admin, A10d customer_success.
+DEV_ONLY_E2E_STAFF_ROLES: Mapping[str, str] = MappingProxyType({
+    E2E_CIS_ADMIN_TEST_STAFF_EMAIL: E2E_CIS_ADMIN_TEST_STAFF_ROLE,
+    E2E_CIS_CS_TEST_STAFF_EMAIL: E2E_CIS_CS_TEST_STAFF_ROLE,
+})
 
 # The two other WORKFORCE E2E identities of root ADR 0006a, named here for the staff directory reconcile's "known E2E
 # exceptions" block (services/staff_reconcile.py, AA-816 follow-up S253). A10: the content E2E account (the staff
@@ -105,8 +133,24 @@ def normalise(email: Any) -> str:
 
 
 def is_e2e_cis_admin(email: Any) -> bool:
-    """True for the A10b address (after trimming and lower-casing)."""
+    """True for the A10b address only (after trimming and lower-casing): the one identity with allow-listed writes."""
     return normalise(email) == E2E_CIS_ADMIN_TEST_STAFF_EMAIL
+
+
+def is_e2e_cis_cs(email: Any) -> bool:
+    """True for the A10d address (after trimming and lower-casing)."""
+    return normalise(email) == E2E_CIS_CS_TEST_STAFF_EMAIL
+
+
+def is_dev_only_e2e_staff(email: Any) -> bool:
+    """True for every Dev-only CIS E2E address (:data:`DEV_ONLY_E2E_STAFF_ROLES`: A10b, A10d)."""
+    return normalise(email) in DEV_ONLY_E2E_STAFF_ROLES
+
+
+def has_allowlisted_writes(identity: Any) -> bool:
+    """True only for a verified identity that is the A10b session (``e2e_read_only`` AND ``e2e_allowlisted_writes``).
+    Every A10b exception asks this, never ``e2e_read_only`` alone (AA-1035 A10d)."""
+    return bool(getattr(identity, "e2e_read_only", False) and getattr(identity, "e2e_allowlisted_writes", False))
 
 
 def dev_only_e2e_environment() -> bool:

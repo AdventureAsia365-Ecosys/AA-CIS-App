@@ -1992,7 +1992,8 @@ no password, no Booking grant (migration 250 CHECK + `staff_directory.E2E_TEST_S
 `require_e2e_test_scope` + the WORKFORCE triggers); and, **Dev only** (A10b, AA-816 S252, root ADR 0006a A10b),
 `e2e-cis-admin@e2e-mail.lumiguides.it.com` as an admin, not an owner, no password, no Booking grant (migration 283
 CHECK + `api/core/e2e_staff.py` / `staff_directory.require_e2e_test_scope` / `require_dev_only_e2e_environment` +
-the WORKFORCE triggers' dev-only map) —, `display_name`, `cognito_iss` + `cognito_sub`, `last_login_at`
+the WORKFORCE triggers' dev-only map); and, **Dev only** (A10d, AA-1035 S270), `e2e-cis-cs@e2e-mail.lumiguides.it.com`
+as `customer_success`, same scope rules (migration 378 CHECK) —, `display_name`, `cognito_iss` + `cognito_sub`, `last_login_at`
 ("last seen"), `is_owner`; `password_hash` nullable, NULL fails closed). A staff member's role in another app
 lives in `shared.staff_app_grant (admin_user_id, app, role)` (`app` = `booking`, roles `admin` / `sales` /
 `contracting` / `content_creator` / `finance` (CIS 363, group `booking-finance`)). AA-Partner (CRM) staff roles are a set per person in
@@ -2103,6 +2104,15 @@ the evidence run can show the view-as banner; the session it opens is read-only 
 codes land in the mailbox prefix `inbound-admin/`, readable only by the MFA admin role, so only the orchestrator signs
 in with it, locally (Playwright project `admin-evidence`, `E2EADMIN=1`, never CI). Removed with A10 / A10a at the end
 of project code.
+
+**Dev-only E2E customer_success (A10d, AA-1035 S270, root ADR 0006a A10d).** The agent's own customer_success identity,
+to prove the tenant-book scoping with a real Cognito session (Playwright `admin-evidence/cs-scope.spec.ts`, `E2ECS=1`,
+never CI). Same directory, environment and read-only rules as A10b, but **no write allow-list**: the identity carries
+`e2e_read_only` and not `e2e_allowlisted_writes`, the flag every A10b exception keys on (bearer middleware,
+`staff_authz.denial_reason`, `docs_owner_read_via`, the view-as / studio-invitation / sentence-apply route checks), so
+every write is 403 `e2e_read_only`. Its book holds synthetic tenants only: `PUT /admin/tenants/{id}/assignments/{staff}`
+answers 409 for any Dev-only E2E row (A10b, A10d) on a tenant that is not synthetic. `/auth/verify-admin` returns
+`customer_success`. Codes in `inbound-admin/` (MFA admin reads only). Removed with A10 / A10a / A10b / A10c.
 
 **Sign-in (ADR 0006 Phase 1, live on Dev).** Staff sign in with an email one-time code on Cognito WORKFORCE
 (pool `us-west-1_bCcFvbSOS`) through managed login on our own domain `https://staff-auth.lumiguides.it.com`

@@ -371,6 +371,7 @@ E2E_REV = "e2e@e2e-mail.lumiguides.it.com"
 E2E_BOOKING = "e2e-booking@e2e-mail.lumiguides.it.com"
 E2E_CIS_ADMIN = "e2e-cis-admin@e2e-mail.lumiguides.it.com"
 E2E_CRM_STAFF = "e2e-crm-staff@e2e-mail.lumiguides.it.com"
+E2E_CIS_CS = "e2e-cis-cs@e2e-mail.lumiguides.it.com"
 
 
 def _e2e_world():
@@ -400,15 +401,32 @@ def test_known_e2e_addresses_match_the_directory_and_the_a10b_module():
     assert e2e_staff.E2E_CONTENT_TEST_STAFF_EMAIL == staff_directory.E2E_TEST_STAFF_EMAIL
     assert sr.KNOWN_E2E_STAFF[E2E_REV].directory_role == staff_directory.E2E_TEST_STAFF_ROLE
     assert sr.KNOWN_E2E_STAFF[E2E_CIS_ADMIN].directory_role == staff_directory.E2E_CIS_ADMIN_TEST_STAFF_ROLE
-    assert set(sr.KNOWN_E2E_STAFF) == {E2E_REV, E2E_BOOKING, E2E_CIS_ADMIN, E2E_CRM_STAFF}
+    assert set(sr.KNOWN_E2E_STAFF) == {E2E_REV, E2E_BOOKING, E2E_CIS_ADMIN, E2E_CRM_STAFF, E2E_CIS_CS}
     assert {e.clause for e in sr.KNOWN_E2E_STAFF.values()} == {"ADR 0006a A10", "ADR 0006a A10a", "ADR 0006a A10b",
-                                                               "ADR 0006a A10c"}
+                                                               "ADR 0006a A10c", "ADR 0006a A10d"}
+    # A10d (AA-1035): exactly cis-customer_success, in the CIS directory as customer_success.
+    assert sr.KNOWN_E2E_STAFF[E2E_CIS_CS].groups == {"cis-customer_success"}
+    assert sr.KNOWN_E2E_STAFF[E2E_CIS_CS].directory_role == staff_directory.E2E_CIS_CS_TEST_STAFF_ROLE
+    assert e2e_staff.E2E_CIS_CS_TEST_STAFF_EMAIL == E2E_CIS_CS
     # A10c (AA-1019): exactly crm-ops + crm-support, never in the CIS directory (AA-CIS-Infra workforce.py).
     assert sr.KNOWN_E2E_STAFF[E2E_CRM_STAFF].groups == {"crm-ops", "crm-support"}
     assert sr.KNOWN_E2E_STAFF[E2E_CRM_STAFF].directory_role is None
     assert e2e_staff.E2E_CRM_STAFF_TEST_STAFF_EMAIL == E2E_CRM_STAFF
     with pytest.raises(TypeError):
         sr.KNOWN_E2E_STAFF["x@e2e-mail.lumiguides.it.com"] = sr.KNOWN_E2E_STAFF[E2E_REV]  # read-only
+
+
+def test_on_dev_the_a10d_cs_account_is_listed_apart_and_not_drift():
+    # AA-1035 A10d: the cs row in cis-customer_success is a known exception, not drift.
+    users, groups, rows, grants = _e2e_world()
+    cs = _user(E2E_CIS_CS, "s-e2e-cs", status="FORCE_CHANGE_PASSWORD")
+    users.append(cs)
+    groups["cis-customer_success"] = list(groups.get("cis-customer_success", [])) + [cs]
+    rows.append(_row("e2e-cis-cs", role="customer_success", email=E2E_CIS_CS, sub="s-e2e-cs"))
+    report = _run_e2e(users, groups, rows, grants)
+    assert report["drift_total"] == 0, report
+    got = {k["email"]: (k["clause"], k["row_username"]) for k in report["known_e2e_exceptions"]}
+    assert got[E2E_CIS_CS] == ("ADR 0006a A10d", "e2e-cis-cs")
 
 
 def test_on_dev_the_e2e_identities_are_listed_apart_and_not_drift():

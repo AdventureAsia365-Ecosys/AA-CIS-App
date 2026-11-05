@@ -155,7 +155,8 @@ def test_required_keys_run_from_the_baseline_to_the_required_schema():
 # would answer 503 schema_behind until it is; the R2 keys 362-364 are required above the gap instead.
 # AA-1042 (S268): 370 (route control) is required above the gap too; 365-369 are not needed by this code.
 # AA-1036 R3 (S268): 374 (add-on requests) too. AA-1035 close-out (S269): 375 (the reviewer alias removed) too.
-DEV_KEYS_WITHOUT_336 = [k for k in range(readiness.LEGACY_CIS_BASELINE + 1, 376) if k != 336]
+# AA-1035 A10d (S270): 378 (the Dev-only E2E customer_success address) too.
+DEV_KEYS_WITHOUT_336 = [k for k in range(readiness.LEGACY_CIS_BASELINE + 1, 379) if k != 336]
 
 
 def test_the_time_gated_336_is_not_required_while_the_r2_keys_are():
@@ -166,8 +167,15 @@ def test_the_time_gated_336_is_not_required_while_the_r2_keys_are():
 
 @pytest.mark.asyncio
 async def test_dev_without_336_is_ready_once_the_r2_keys_are_registered():
-    status, body = await readiness.readiness(_keys_pool(375, DEV_KEYS_WITHOUT_336), now=0.0)
+    status, body = await readiness.readiness(_keys_pool(378, DEV_KEYS_WITHOUT_336), now=0.0)
     assert status == 200 and body["status"] == "ok" and "missing_schema_versions" not in body
+
+
+@pytest.mark.asyncio
+async def test_dev_without_378_is_schema_behind():
+    keys = [k for k in DEV_KEYS_WITHOUT_336 if k != 378]
+    status, body = await readiness.readiness(_keys_pool(377, keys), now=0.0)
+    assert status == 503 and body["missing_schema_versions"] == ["378"]
 
 
 @pytest.mark.asyncio
