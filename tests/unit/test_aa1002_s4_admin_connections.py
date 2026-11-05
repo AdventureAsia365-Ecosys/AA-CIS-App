@@ -52,7 +52,7 @@ def test_patch_and_test_are_admin_only():
     for route in (("PATCH", "/admin/llm-connections/{connection_key}"),
                   ("POST", "/admin/llm-connections/{connection_key}/test")):
         assert staff_authz.POLICY[route] == staff_authz.AI_ADMIN
-    for role in ("reviewer", "content", "viewer"):
+    for role in ("content", "viewer"):
         assert staff_authz.AI_ADMIN not in staff_authz.ROLE_PERMS[role]
 
 

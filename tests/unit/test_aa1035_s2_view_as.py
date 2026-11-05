@@ -54,7 +54,7 @@ OTHER = "44444444-4444-4444-8444-444444444444"
 CLOSED = "55555555-5555-4555-8555-555555555555"
 SESSION = "66666666-6666-4666-8666-666666666666"
 NOW = datetime.now(timezone.utc).replace(microsecond=0)   # the minted token expires NOW + minutes
-ROLES = ("admin", "content_lead", "content", "reviewer", "tenant_qa", "customer_success", "support", "finance",
+ROLES = ("admin", "content_lead", "content", "tenant_qa", "customer_success", "support", "finance",
          "ai_ops", "viewer")
 VIEW_AS_ROLES = {"admin", "customer_success", "support"}
 
@@ -548,7 +548,7 @@ def test_scope_and_reads_come_from_the_start_role():
     ("admin", "customer_success", "role_changed"),     # demoted in the directory during the session
     ("support", "customer_success", "role_changed"),
     ("customer_success", "finance", "role_lost_view_as"),
-    ("customer_success", "reviewer", "role_lost_view_as"),
+    ("customer_success", "reviewer", "role_lost_view_as"),   # the removed alias holds no role (CIS 375)
 ])
 def test_a_role_other_than_the_start_role_ends_the_view(start, db_role, cause):
     db = _as_role(db_role)
@@ -596,8 +596,10 @@ def test_start_refuses_a_member_whose_directory_role_differs_from_the_sign_in_ro
     assert va.END_OTHERS_SQL not in db.sql             # not even the caller's other sessions are touched
 
 
-def test_start_accepts_the_reviewer_alias_as_its_target_only():
-    assert view_as.start_role_mismatch("reviewer", "content") is False
+def test_start_compares_the_directory_role_as_it_is():
+    """AA-1035 close-out: the reviewer alias is gone (CIS 375), so a stray 'reviewer' never reads as content."""
+    assert view_as.start_role_mismatch("content", "content") is False
+    assert view_as.start_role_mismatch("reviewer", "content") is True
     assert view_as.start_role_mismatch("reviewer", "customer_success") is True
     assert view_as.start_role_mismatch("customer_success", "customer_success") is False
     assert view_as.start_role_mismatch(None, "admin") is True

@@ -73,7 +73,6 @@ COLOR_LINE = "#e9e4db"
 # What each role means, in plain words (api/core/staff_authz.py ROLE_PERMS; Booking roles: staff_app_grant).
 CIS_ROLE_TEXT: dict[str, str] = {
     "admin": "Administrator (every page of the content admin, including settings and spend)",
-    "reviewer": "Content team (tour content work and reviews)",
     "content": "Content team (tour content work and reviews)",
     # AA-1035 R2 (root ADR 0019 d3)
     "content_lead": "Content lead (catalogue, waves, review, master content, atoms and photos, tenant content QA)",

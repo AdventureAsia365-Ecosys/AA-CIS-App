@@ -80,8 +80,9 @@ def test_viewer_is_not_assignable_from_the_staff_page():
     from api.services import staff_directory
 
     assert VIEWER not in staff_directory.CIS_ROLES
-    # AA-1035: nor the reviewer alias (merged into content, CIS 363)
-    assert set(staff_directory.CIS_ROLES) == set(ROLE_PERMS) - {VIEWER, "reviewer"}
+    # AA-1035: the reviewer alias is no role at all any more (CIS 375)
+    assert set(staff_directory.CIS_ROLES) == set(ROLE_PERMS) - {VIEWER}
+    assert "reviewer" not in ROLE_PERMS
     with pytest.raises(staff_directory.StaffDirectoryError) as exc:
         staff_directory.require_cis_role(VIEWER)
     assert exc.value.status == 400
@@ -110,7 +111,7 @@ def test_viewer_is_refused_the_notification_puts_although_it_holds_their_capabil
     for key in (("PUT", "/admin/notifications/read-all"), ("PUT", "/admin/notifications/{notif_id}/read")):
         assert POLICY[key] == staff_authz.NOTIFICATIONS_READ   # AA-1035 slice 2 (was content.read)
         assert denial_reason(principal_from_role(VIEWER), *key) == "Role 'viewer' is read-only"
-        assert denial_reason(principal_from_role("reviewer"), *key) is None
+        assert denial_reason(principal_from_role("content"), *key) is None
 
 
 @pytest.mark.parametrize("key", _ADMIN_GET_KEYS)
@@ -122,7 +123,7 @@ def test_viewer_is_refused_every_admin_only_read(key):
 def test_read_only_rule_covers_a_write_without_a_policy_entry(method):
     assert denial_reason(principal_from_role(VIEWER), method, "/admin/aa878-no-such-route") is not None
     # the other roles keep the old rule: no entry, no refusal (the route-policy test keeps every write listed)
-    assert denial_reason(principal_from_role("reviewer"), method, "/admin/aa878-no-such-route") is None
+    assert denial_reason(principal_from_role("content"), method, "/admin/aa878-no-such-route") is None
 
 
 @pytest.mark.parametrize("method", ["GET", "HEAD", "OPTIONS"])
@@ -170,7 +171,7 @@ def test_notification_bell_scope_for_viewer_is_the_content_scope():
     from api.routers.admin import _NOTIF_CONTENT_SCOPE, notification_scope
 
     assert notification_scope(VIEWER) == _NOTIF_CONTENT_SCOPE
-    assert notification_scope("reviewer") == _NOTIF_CONTENT_SCOPE
+    assert notification_scope("content") == _NOTIF_CONTENT_SCOPE
 
 
 def test_viewer_search_has_no_tenants_or_jobs():

@@ -192,11 +192,11 @@ async def verify_tenant_token(token: str):
 # This module owns the reusable pieces only: bcrypt password verify, admin JWT
 # mint, and the request/response models. Admin JWTs share JWT_SECRET/HS256/
 # verify_jwt() with tenant tokens but carry sub = admin_users.id (UUID) and
-# role = 'admin'|'reviewer'|'content'|'viewer' (vs tenant's role = 'tenant').
+# role = a staff role of STAFF_ROLES below (vs tenant's role = 'tenant').
 
 # AA-656: every staff role in shared.admin_role (migration 218 added 'content', 249 the read-only 'viewer',
 # AA-878). Mirrors api/core/staff_authz.py ROLE_PERMS and the frontend matrix in frontend/lib/rbac.ts.
-STAFF_ROLES = ("admin", "reviewer", "content", "viewer",
+STAFF_ROLES = ("admin", "content", "viewer",
                # AA-1035 R2 (CIS 362, root ADR 0019 d3)
                "content_lead", "tenant_qa", "customer_success", "support", "finance", "ai_ops")
 

@@ -75,7 +75,7 @@ async def test_503_before_migration_315(kind):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", list(ROUTES))
-@pytest.mark.parametrize("role", [None, "reviewer", "content", "viewer"])
+@pytest.mark.parametrize("role", [None, "content", "viewer"])
 async def test_admin_only(kind, role):
     get, post, sid = ROUTES[kind]
     conn = _conn(_subject())

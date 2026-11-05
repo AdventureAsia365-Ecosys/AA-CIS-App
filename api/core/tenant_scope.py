@@ -15,7 +15,7 @@ Scope per role (:data:`TENANT_SCOPE`, deny by default: a role not listed reaches
 - ``book_pool`` support: the same, plus the pool: agency and demo tenants with no ``owner`` assignment or in the
                ``tech_touch`` segment (clarifications.md section 3: "Tenants of a small plan or with no account manager
                are in the Pool view every support member sees").
-- ``internal`` content, reviewer (alias) and viewer: only the AA internal tenant, whose catalog Master Content reads
+- ``internal`` content and viewer: only the AA internal tenant, whose catalog Master Content reads
                through ``GET /admin/tenants/{tenant_id}/details``.
 
 Who the staff member is: the Cognito identity the staff bearer middleware verified (``admin_id``). A request with the
@@ -68,7 +68,6 @@ TENANT_SCOPE: dict[str, str] = {
     "customer_success": SCOPE_BOOK,
     "support": SCOPE_BOOK_POOL,
     "content": SCOPE_INTERNAL,
-    "reviewer": SCOPE_INTERNAL,
     "viewer": SCOPE_INTERNAL,
 }
 
@@ -204,6 +203,32 @@ async def tenant_scope_filter(request: Request, conn: Any) -> Optional[frozenset
         raise HTTPException(status_code=503, detail=SCOPE_UNAVAILABLE) from exc
     return frozenset(ids)
 
+
+
+# AA-1035 R2 close-out (root ADR 0019 d4: "the crm.ops.v1 relay forwards the staff member's scope"): the scope of a
+# staff member the partner CRM names by WORKFORCE identity (tenant.membership.v1 1.3 getStaffTenantScope). Only the two
+# desk roles have a book to forward: every other role reaching the CRM console is cis-admin (scope all, the CRM's
+# own rule) or reaches none.
+DESK_ROLES: tuple[str, ...] = ("customer_success", "support")
+SQL_ACTIVE_STAFF_BY_IDENTITY = (
+    "SELECT id::text AS id FROM shared.admin_users WHERE cognito_iss = $1 AND cognito_sub = $2 AND is_active"
+)
+
+
+async def desk_scope_of_identity(conn: Any, iss: str, sub: str, role: str) -> tuple[str, list[str]]:
+    """(scope, tenant ids sorted) of the ACTIVE staff row bound to ``(iss, sub)`` for the desk ``role`` the CRM read
+    from the token's groups (the role decides the scope kind, as require_tenant_scope does with the group role; the
+    directory row only says who the person is). An unknown or inactive identity: ("none", [])."""
+    if role not in DESK_ROLES:
+        raise ValueError(f"not a desk role: {role!r}")
+    staff_id = await conn.fetchval(SQL_ACTIVE_STAFF_BY_IDENTITY, iss, sub)
+    if staff_id is None:
+        return "none", []
+    scope = TENANT_SCOPE[role]
+    ids = {r["tenant_id"] for r in await conn.fetch(SQL_BOOK, staff_id)}
+    if scope == SCOPE_BOOK_POOL:
+        ids |= {r["tenant_id"] for r in await conn.fetch(SQL_POOL)}
+    return scope, sorted(ids)
 
 
 _SQL_COLUMN = re.compile(r"[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)?\Z")

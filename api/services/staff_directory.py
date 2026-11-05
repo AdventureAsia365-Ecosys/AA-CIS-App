@@ -15,7 +15,7 @@ called: :data:`COGNITO_OPERATIONS` is enforced by :class:`CognitoDirectory`, so 
 
 Operations
 ----------
-- create: ``@adventure.asia`` only (temporary exceptions: :data:`E2E_TEST_STAFF_EMAIL`, reviewer only, no
+- create: ``@adventure.asia`` only (temporary exceptions: :data:`E2E_TEST_STAFF_EMAIL`, content only, no
   Booking grant and no CRM role — AA-816 E2E, migration 250; and, Dev only, :data:`E2E_CIS_ADMIN_TEST_STAFF_EMAIL`,
   admin only, no Booking grant and no CRM role, refused unless ``ENVIRONMENT`` is exactly ``dev`` — A10b, migration
   283); username derived from the address's local part (unique); ``password_hash`` NULL (Cognito-only member);
@@ -104,13 +104,15 @@ MAX_USERNAME_LEN = 100            # shared.admin_users.username varchar(100)
 _USERNAME_SUFFIX_TRIES = 50
 
 # shared.admin_role minus 'viewer' (AA-878, migration 249: the read-only E2E role is never assigned from here) and minus
-# the 'reviewer' alias (AA-1035 R2, CIS 363 merged it into content; root ADR 0019 d3). Group cis-<role>.
+# 'reviewer' (AA-1035 R2: CIS 363 merged it into content, CIS 375 removed the alias and forbids the value; root ADR 0019
+# d3). Group cis-<role>.
 CIS_ROLES: tuple[str, ...] = (
     "admin", "content_lead", "content", "tenant_qa", "customer_success", "support", "finance", "ai_ops",
 )
-# Roles a row may still hold but the Staff page no longer assigns: their group is removed when the person moves to an
-# assignable role (the A10 E2E account keeps cis-reviewer until the alias is removed).
-CIS_ALIAS_ROLES: tuple[str, ...] = ("reviewer",)
+# AA-1035: WORKFORCE groups of a retired role. No role reads them; Sync and the create-over-an-existing-user path still
+# remove them (a leftover membership is drift), and a group the pool no longer has counts as removed
+# (CognitoDirectory.remove_from_group). cis-reviewer goes from the pool after the alias removal (AA-CIS-Infra).
+RETIRED_CIS_GROUPS: tuple[str, ...] = ("cis-reviewer",)
 # staff_app_grant_role_chk (CIS 363 added finance: Booking reads it from the group booking-finance, root ADR 0019 d9)
 BOOKING_ROLES: tuple[str, ...] = ("admin", "sales", "contracting", "content_creator", "finance")
 APP_BOOKING = "booking"
@@ -130,10 +132,11 @@ PRESET_CRM_ROLE = "platform_admin"
 
 # TEMPORARY (AA-816, S243 decision "option B"; root ADR 0006a): the ONE non-company address the directory accepts,
 # the SES inbound test mailbox the Cognito email-code E2E test reads its sign-in code from. Exact match only, CIS
-# role reviewer only, no Booking grant (require_e2e_test_scope); the DB CHECK (migration 250) and the WORKFORCE
-# pre token trigger (AA-CIS-Infra) hold the same rule. Removed when the E2E work is finished (AA-816).
+# role content only (reviewer until the alias went, CIS 375), no Booking grant (require_e2e_test_scope); the DB CHECK
+# (migrations 250, 375) and the WORKFORCE pre token trigger (AA-CIS-Infra) hold the same rule. Removed when the E2E
+# work is finished (AA-816).
 E2E_TEST_STAFF_EMAIL = "e2e@e2e-mail.lumiguides.it.com"
-E2E_TEST_STAFF_ROLE = "reviewer"
+E2E_TEST_STAFF_ROLE = "content"
 # TEMPORARY (AA-816 A10b, S252; root ADR 0006a A10b): the Dev-only E2E CIS admin (api/core/e2e_staff.py). CIS role admin
 # only, never an owner, no Booking grant (require_e2e_test_scope), and only where ENVIRONMENT is exactly "dev"
 # (require_dev_only_e2e_environment). Migration 283 and the WORKFORCE trigger hold the same rule.
@@ -200,7 +203,7 @@ def crm_group(role: str) -> str:
     return CRM_ROLE_GROUPS[role]
 
 
-CIS_GROUPS: tuple[str, ...] = tuple(cis_group(r) for r in CIS_ROLES + CIS_ALIAS_ROLES)
+CIS_GROUPS: tuple[str, ...] = tuple(cis_group(r) for r in CIS_ROLES) + RETIRED_CIS_GROUPS
 BOOKING_GROUPS: tuple[str, ...] = tuple(booking_group(r) for r in BOOKING_ROLES)
 CRM_GROUPS: tuple[str, ...] = tuple(crm_group(r) for r in CRM_ROLES)
 
@@ -276,9 +279,8 @@ def require_display_name(name: Any) -> str:
 
 
 def require_cis_role(role: Any) -> str:
-    """A role the directory may write: an assignable one, or (AA-1035, for the alias release only) the deprecated
-    ``reviewer`` alias, which the Staff page no longer offers (the A10 E2E account still holds it)."""
-    if role not in CIS_ROLES + CIS_ALIAS_ROLES:
+    """A role the directory may write: an assignable one (never ``viewer`` nor the removed ``reviewer``)."""
+    if role not in CIS_ROLES:
         raise StaffDirectoryError(400, f"CIS role must be one of {', '.join(CIS_ROLES)}", "cis_role")
     return role
 
@@ -305,7 +307,7 @@ def require_crm_roles(roles: Any) -> tuple[str, ...]:
 
 def require_e2e_test_scope(email: Any, role: Optional[str], booking_role: Optional[str],
                            crm_roles: tuple[str, ...] = ()) -> None:
-    """An E2E test address may only hold its one CIS role (``reviewer`` for :data:`E2E_TEST_STAFF_EMAIL`, ``admin``
+    """An E2E test address may only hold its one CIS role (``content`` for :data:`E2E_TEST_STAFF_EMAIL`, ``admin``
     for :data:`E2E_CIS_ADMIN_TEST_STAFF_EMAIL`) with no Booking grant and no CRM role (400 ``e2e_test_scope``; root
     ADR 0006a A10 / A10b, the WORKFORCE trigger holds the same rule). No-op for every other address. ``role`` /
     ``booking_role`` / ``crm_roles`` are the values the row would end up with."""
@@ -829,7 +831,7 @@ async def change_roles(pool: Any, cognito: CognitoDirectory, *, actor_id: str, s
     steps: list[Step] = []
     if new_role is not None:
         steps.append((f"add_group:{cis_group(new_role)}", lambda: cognito.add_to_group(email, cis_group(new_role))))
-        if old_role != new_role and old_role in CIS_ROLES + CIS_ALIAS_ROLES:   # AA-878: 'viewer' has no group
+        if old_role != new_role and old_role in CIS_ROLES:   # AA-878: 'viewer' has no group
             steps.append((f"remove_group:{cis_group(old_role)}",
                           lambda: cognito.remove_from_group(email, cis_group(old_role))))
     if booking_role is not _UNSET:

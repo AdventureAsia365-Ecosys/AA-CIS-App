@@ -18,8 +18,8 @@
 //
 // AA-816 S2 path — the authenticated describes carry the tag @staff: only the `smoke` project (after smoke-setup)
 // runs them, on the two Cognito callback hosts (the fixed Preview host as the capped viewer, Production as the
-// Cognito E2E user, a reviewer). Per-PR previews run the `smoke-public` project, which skips @staff. Any other
-// non-admin role (reviewer, content) runs the page list against frontend/lib/rbac.ts PAGE_RULES: a page it may not
+// Cognito E2E user, content since CIS 375). Per-PR previews run the `smoke-public` project, which skips @staff. Any other
+// non-admin role (content, the desk roles) runs the page list against frontend/lib/rbac.ts PAGE_RULES: a page it may not
 // open must be refused like the viewer's; it does no write and no admin-only check (Production stays read-only).
 //
 // S251 (AA-835, AA-916) — also: Supply content (Booking) list + a made-up id's not-found card; the Review Queue's
@@ -145,7 +145,7 @@ const ADMIN_PAGES: PageSpec[] = [
 
 // AA-878 — viewer mode: an admin-only page must not render for the viewer. The proxy answers with a redirect
 // to the role's landing page (/admin/review), so the final URL is that page, never the asked one. AA-816: the same
-// for any non-admin role (reviewer on Production).
+// for any non-admin role (content on Production).
 async function assertViewerRefused(browser: import('@playwright/test').Browser, spec: PageSpec): Promise<void> {
   const context = await browser.newContext({ baseURL: baseUrl(), storageState: ADMIN_STATE, viewport: { width: 1440, height: 900 } });
   await installBypassRoute(context);

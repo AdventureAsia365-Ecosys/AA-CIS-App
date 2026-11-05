@@ -160,9 +160,10 @@ def _remove(c, role: str, mid: str):
     return c.post(f"/admin/tenants/{MINE}/members/{mid}/remove", headers=_h(role))
 
 
-def _resend(c, role: str, mid: str, tenant: str = MINE):
-    return c.post(f"/admin/tenants/{tenant}/members/{mid}/invitation/send", headers=_h(role),
-                  json={"email": ADDRESS})
+def _resend(c, role: str, mid: str, tenant: str = MINE, email: "str | None" = ADDRESS):
+    """AA-1035 close-out: support sends again to the kept address only (no ``email``); pass email=None for it."""
+    body = {"email": email} if email is not None else {}
+    return c.post(f"/admin/tenants/{tenant}/members/{mid}/invitation/send", headers=_h(role), json=body)
 
 
 def _owner_refused(res) -> bool:
@@ -204,16 +205,25 @@ def test_support_never_removes(app_client, mid):
 @pytest.mark.parametrize("tenant", [MINE, POOLED])
 def test_support_sends_an_editor_invitation_again_in_its_book_and_the_pool(app_client, tenant):
     c, _, relays = app_client
-    res = _resend(c, "support", EDITOR_INVITE, tenant)
+    res = _resend(c, "support", EDITOR_INVITE, tenant, email=None)
     assert res.status_code == 200, res.text
     assert res.json()["delivery"]["status"] == "sent" and len(relays) == 1
+    # AA-1035 close-out: to the address the CRM kept (crm.ops.v1 1.12), never an address support types
+    assert relays[0].get("keep_address") is True and "email" not in relays[0]
+
+
+def test_support_never_sends_an_invitation_to_a_new_address(app_client):
+    c, _, relays = app_client
+    res = _resend(c, "support", EDITOR_INVITE)
+    assert res.status_code == 403 and res.json()["detail"] == t360.READDRESS_REFUSED
+    assert relays == []
 
 
 @pytest.mark.parametrize("role", ["support", "customer_success"])
 def test_an_owner_invitation_is_never_sent_again_without_tenant_write(app_client, role):
     """The send-again re-seals the invitation to the body's address: it would hand the owner seat to anyone."""
     c, _, relays = app_client
-    assert _owner_refused(_resend(c, role, OWNER_INVITE))
+    assert _owner_refused(_resend(c, role, OWNER_INVITE, email=ADDRESS if role == "customer_success" else None))
     assert relays == []
 
 
@@ -276,11 +286,13 @@ def _principal(role: str) -> staff_authz.StaffPrincipal:
 def test_members_access_matches_the_routes():
     cs = t360.members_access(_principal("customer_success"), synthetic_tenant=False)
     assert cs == {"read_only": False, "actions": dict.fromkeys(t360.MEMBER_WRITES, True),
-                  "invite_roles": ["editor", "viewer"], "owner_writes": False}
+                  "invite_roles": ["editor", "viewer"], "owner_writes": False,
+                  "send_again_to": {"same_address": True, "new_address": True}}
     sup = t360.members_access(_principal("support"), synthetic_tenant=False)
     assert sup == {"read_only": False,
                    "actions": {"invite": False, "send_again": True, "change_role": False, "remove": False},
-                   "invite_roles": ["editor", "viewer"], "owner_writes": False}
+                   "invite_roles": ["editor", "viewer"], "owner_writes": False,
+                   "send_again_to": {"same_address": True, "new_address": False}}
     adm = t360.members_access(_principal("admin"), synthetic_tenant=False)
     assert adm["owner_writes"] is True and adm["invite_roles"] == ["owner", "editor", "viewer"]
 
@@ -364,7 +376,7 @@ def test_the_picker_is_scoped_for_the_book_roles(app_client):
     assert {r["tenant_id"] for r in _names(c, "support").json()["tenants"]} == {MINE, POOLED}
 
 
-@pytest.mark.parametrize("role", ["content", "reviewer", "viewer"])
+@pytest.mark.parametrize("role", ["content", "viewer"])
 def test_the_pure_content_roles_get_no_picker(app_client, role):
     c, _, _ = app_client
     assert _names(c, role).status_code == 403
@@ -451,19 +463,22 @@ def test_schema_gate_requires_the_above_gap_keys_and_not_the_gap():
 def test_schema_gate_holds_the_deploy_until_362_to_364_are_registered():
     required = sg.required_keys("cis", _source(), [])
     below = [str(k) for k in range(readiness.LEGACY_CIS_BASELINE + 1, readiness.REQUIRED_CIS_SCHEMA + 1)]
-    assert sg.evaluate("cis", required, {"registered_keys": below}).missing == ["362", "363", "364", "370", "374"]
-    assert sg.evaluate("cis", required, {"registered_keys": below + ["362", "363", "364"]}).missing == ["370", "374"]
-    assert sg.evaluate("cis", required, {"registered_keys": below + ["362", "363", "364", "370", "374"]}).missing == []
+    above = [str(k) for k in readiness.REQUIRED_CIS_ABOVE_GAP]   # 362, 363, 364, then later raises
+    assert above[:3] == ["362", "363", "364"]
+    assert sg.evaluate("cis", required, {"registered_keys": below}).missing == above
+    assert sg.evaluate("cis", required, {"registered_keys": below + ["362", "363", "364"]}).missing == above[3:]
+    assert sg.evaluate("cis", required, {"registered_keys": below + above}).missing == []
 
 
 def test_preflight_rule_3_sees_an_above_gap_raise():
     """A code PR that raises readiness to a contract file it also adds is refused (MIG-4), above the gap too."""
-    base_src = _source().replace("REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374)", "REQUIRED_CIS_ABOVE_GAP = ()")
+    literal = "REQUIRED_CIS_ABOVE_GAP = (" + ", ".join(map(str, readiness.REQUIRED_CIS_ABOVE_GAP)) + ")"
+    base_src = _source().replace(literal, "REQUIRED_CIS_ABOVE_GAP = ()")
     assert base_src != _source()
     base_req, head_req = sg.readiness_keys("cis", base_src), sg.readiness_keys("cis", _source())
     rep = mp.FileReport("364_x.sql", "364", header="none")
     r = mp.assess("cis", ["362_a.sql", "363_b.sql"], ["362_a.sql", "363_b.sql", "364_x.sql"],
                   {"A": ["364_x.sql"], "M": [], "D": []}, base_req, head_req, {"364_x.sql": rep},
                   {"362_a.sql", "363_b.sql"})
-    assert r.raised == ["362", "363", "364", "370", "374"]
+    assert r.raised == [str(k) for k in readiness.REQUIRED_CIS_ABOVE_GAP]
     assert any("keeps the MIG-4 order" in e for e in r.errors)

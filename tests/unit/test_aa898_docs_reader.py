@@ -111,7 +111,7 @@ def _as_owner(owner: bool = True):
 def test_policy_is_admin_only():
     for path in (MANIFEST, PAGE):
         assert staff_authz.POLICY[("GET", path)] == staff_authz.OPS_READ
-    for role in ("viewer", "reviewer", "content"):
+    for role in ("viewer", "content", "content"):
         assert not staff_authz.has_perm(role, staff_authz.OPS_READ), role
 
 
@@ -120,7 +120,7 @@ def test_missing_secret_and_non_admin_roles_403_without_storage_reads(client, pa
     fake = FakeS3(_objects())
     with _use(fake):
         assert client.get(path, headers={"x-admin-role": "admin"}).status_code == 403
-        for role in ("viewer", "reviewer", "content", "tenant"):
+        for role in ("viewer", "content", "tenant"):
             assert client.get(path, headers={"X-Admin-Secret": SECRET, "x-admin-role": role}).status_code == 403
         assert client.get(path, headers={"X-Admin-Secret": SECRET}).status_code == 403   # machine
     assert fake.calls == []

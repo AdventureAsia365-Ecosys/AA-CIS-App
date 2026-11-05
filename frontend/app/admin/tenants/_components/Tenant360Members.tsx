@@ -17,14 +17,15 @@ import { useCallback, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw, UserPlus } from "lucide-react";
 import {
-  ApiError, Badge, Button, ConfirmModal, DataTable, ErrorState, Field, Input, K, Modal, RowMenu, Select, Spinner,
+  ApiError, Badge, Button, Checkbox, ConfirmModal, DataTable, ErrorState, Field, Input, K, Modal, RowMenu, Select,
+  Spinner,
   ToastProvider, apiGet, apiSend, mono, useFormat, useT, useToast, type ColumnDef,
 } from "../../../_kit";
 import { useMembersAccess } from "../../_components/useMembersAccess";
 import {
   INVITE_LOCALES, anyMemberWrite, deliveryOk, deliveryProblem, invitationsPath, isInviteEmail,
-  isLastActiveOwner, isStudioRole, memberPath, memberRowActions, membersPath, removePath, roleChoices, sendAgainPath,
-  statusTone,
+  isLastActiveOwner, isStudioRole, memberPath, memberRowActions, membersPath, removePath, roleChoices, sendAgainBody,
+  sendAgainPath, statusTone,
   type InvitationResult, type InviteLocale, type MemberWriteResult, type StudioRole, type TenantMember,
   type TenantMembers,
 } from "@/lib/tenantMembers";
@@ -175,6 +176,7 @@ function MembersInner({ tenantId }: { tenantId: string }) {
       )}
       {d?.kind === "send" && (
         <InviteDialog tenantId={tenantId} member={d.member} roles={perm.inviteRoles} onClose={() => setDialog(null)}
+          sameAddress={perm.sendAgainSame} newAddress={perm.sendAgainNew}
           onDone={(res) => { setDialog(null); delivered(res, true); }} />
       )}
       {d?.kind === "role" && (
@@ -197,19 +199,23 @@ function MembersInner({ tenantId }: { tenantId: string }) {
 
 // ── dialogs ──────────────────────────────────────────────────────────────────────────────────────────────────────
 
-/** A new invitation (no `member`), or the send again of an invited member (`member`: role fixed, address typed).
- *  `roles`: the roles this session may invite as (the access read; the Dev E2E admin: editor / viewer only). */
-function InviteDialog({ tenantId, member, roles, onClose, onDone }: {
-  tenantId: string; member?: TenantMember; roles: readonly StudioRole[]; onClose: () => void;
-  onDone: (res: InvitationResult) => void;
+/** A new invitation (no `member`), or the send again of an invited member (`member`: role fixed). AA-1035 close-out:
+ *  a send again goes to the address the CRM kept when `sameAddress` (support: only that); `newAddress` lets the
+ *  session type another one instead. `roles`: the roles this session may invite as (the access read; the Dev E2E
+ *  admin: editor / viewer only). */
+function InviteDialog({ tenantId, member, roles, sameAddress = false, newAddress = true, onClose, onDone }: {
+  tenantId: string; member?: TenantMember; roles: readonly StudioRole[]; sameAddress?: boolean; newAddress?: boolean;
+  onClose: () => void; onDone: (res: InvitationResult) => void;
 }) {
   const t = useT(MEM);
   const [email, setEmail] = useState("");
+  // A send again starts on the kept address when the session may use it; a new invitation always types one.
+  const [toKept, setToKept] = useState(!!member && sameAddress);
   const [role, setRole] = useState<StudioRole>(roles.includes("owner") ? "owner" : roles[0] ?? "viewer");
   const [locale, setLocale] = useState<InviteLocale>("en");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const emailOk = isInviteEmail(email);
+  const emailOk = toKept || isInviteEmail(email);
 
   const submit = async () => {
     if (!emailOk || busy) return;
@@ -218,7 +224,7 @@ function InviteDialog({ tenantId, member, roles, onClose, onDone }: {
     try {
       const res = member
         ? await apiSend<InvitationResult>(sendAgainPath(tenantId, member.membership_id), {
-          method: "POST", body: { email: email.trim(), locale }, admin: true })
+          method: "POST", body: sendAgainBody(toKept, email, locale), admin: true })
         : await apiSend<InvitationResult>(invitationsPath(tenantId), {
           method: "POST", body: { email: email.trim(), content_studio_role: role, locale }, admin: true });
       onDone(res);
@@ -239,11 +245,24 @@ function InviteDialog({ tenantId, member, roles, onClose, onDone }: {
         </Button>
       </>}>
       <form onSubmit={(e) => { e.preventDefault(); void submit(); }} style={{ display: "grid", gap: 14 }}>
-        {member && <div style={{ fontSize: 12.5, color: K.muted, lineHeight: 1.5 }}>{t("sendAgainNote")}</div>}
-        <Field label={t("email")} required error={email && !emailOk ? t("emailBad") : undefined} hint={t("emailHint")}>
-          <Input type="email" autoComplete="off" value={email} maxLength={254} data-testid="tenant360-member-email"
-            onChange={(e) => setEmail(e.target.value)} style={{ width: "100%" }} />
-        </Field>
+        {member && (
+          <div style={{ fontSize: 12.5, color: K.muted, lineHeight: 1.5 }}>
+            {toKept ? t("sendAgainKeptNote") : t("sendAgainNote")}
+          </div>
+        )}
+        {member && sameAddress && newAddress && (
+          <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12.5 }}>
+            <Checkbox id="tenant360-member-new-address" checked={!toKept} onChange={(e) => setToKept(!e.target.checked)}
+              data-testid="tenant360-member-new-address" />
+            {t("sendAgainNewAddress")}
+          </label>
+        )}
+        {!toKept && (
+          <Field label={t("email")} required error={email && !emailOk ? t("emailBad") : undefined} hint={t("emailHint")}>
+            <Input type="email" autoComplete="off" value={email} maxLength={254} data-testid="tenant360-member-email"
+              onChange={(e) => setEmail(e.target.value)} style={{ width: "100%" }} />
+          </Field>
+        )}
         {!member && (
           <Field label={t("role")} hint={t("roleHint")}>
             <Select value={role} onChange={(e) => setRole(e.target.value as StudioRole)} style={{ width: "100%" }}

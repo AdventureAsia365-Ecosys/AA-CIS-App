@@ -41,7 +41,7 @@ def _app():
 
     @app.patch("/admin/denied")
     async def denied():
-        raise HTTPException(status_code=403, detail="Role 'reviewer' lacks the 'x' permission")
+        raise HTTPException(status_code=403, detail="Role 'content' lacks the 'x' permission")
 
     @app.post("/admin/boom")
     async def boom():
@@ -97,10 +97,10 @@ def test_non_staff_path_is_not_logged_even_with_the_secret(rows):
 
 
 def test_denied_call_is_logged_with_its_status(rows):
-    resp = TestClient(_app()).patch("/admin/denied", headers=_h(role="reviewer"))
+    resp = TestClient(_app()).patch("/admin/denied", headers=_h(role="content"))
     assert resp.status_code == 403
     assert rows[0]["status"] == 403 and rows[0]["route"] == "/admin/denied"
-    assert rows[0]["details"]["role"] == "reviewer"
+    assert rows[0]["details"]["role"] == "content"
 
 
 def test_machine_call(rows):

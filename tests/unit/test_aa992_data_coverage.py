@@ -595,7 +595,7 @@ def client(monkeypatch):
     return client
 
 
-@pytest.mark.parametrize("role,status", [("admin", 200), ("reviewer", 403), ("content", 403), ("viewer", 403),
+@pytest.mark.parametrize("role,status", [("admin", 200), ("content", 403), ("content", 403), ("viewer", 403),
                                          (None, 403)])
 def test_route_policy(client, role, status):
     headers = {"X-Admin-Secret": _SECRET, "x-admin-user-id": "aa992"}

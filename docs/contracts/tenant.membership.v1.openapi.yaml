@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: tenant.membership.v1 (AA-CIS-App → AA-Partner CRM, agency membership feed)
-  version: "1.2"
+  version: "1.3"
   description: >-
     CIS is the directory of agencies (tenants) and of who belongs to them. This contract tells the partner CRM only
     "identity (iss, sub) belongs to agency X" plus the person's Content studio role (owner / editor / viewer) and the
@@ -30,10 +30,17 @@ info:
     agency synthetic (shared.tenants.is_canary; a NULL there is false, never null here). The CRM's re-check of the
     Dev-only E2E CIS admin's studio-invitation relay requires it to be true, in the getTenantMembers call it already
     makes, and refuses when the field is missing (a 1.1 server). Every other consumer may ignore it.
+    1.3 (AA-1035 R2 close-out, root ADR 0019 d4 "the crm.ops.v1 relay forwards the staff member's scope", additive):
+    GET /staff-scope?iss=&sub=&desk_role=, the tenants an AA desk staff member may reach in the CRM L1 console
+    (customer_success: its assigned tenants; support: those and the pool). The CRM asks for a WORKFORCE caller of
+    crm.ops.v1 whose groups make it a desk role, and serves that caller only these tenants. CIS answers from its own
+    staff directory and assignments, keyed by the caller's WORKFORCE (iss, sub), never from a value the caller sent:
+    the staff member holds its own access token, so a scope forwarded with the request could be forged. An unknown or
+    inactive identity has scope none and no tenant. Tenant ids only: no name, e-mail or assignment detail.
   x-aa-contract: tenant.membership.v1
   x-aa-producer: AA-CIS-App
   x-aa-consumers: [AA-Partner]
-  x-aa-issues: [AA-928, AA-978, AA-813, AA-979]
+  x-aa-issues: [AA-928, AA-978, AA-813, AA-979, AA-1035]
 servers:
   - url: /tenant/membership/v1
 security:
@@ -102,6 +109,33 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/MembershipEventPage"}
+  /staff-scope:
+    get:
+      operationId: getStaffTenantScope
+      summary: The tenants an AA desk staff member reaches in the CRM L1 console (1.3)
+      parameters:
+        - name: iss
+          in: query
+          required: true
+          schema: {type: string, format: uri, maxLength: 300}
+        - name: sub
+          in: query
+          required: true
+          schema: {type: string, minLength: 1, maxLength: 128}
+        - name: desk_role
+          in: query
+          required: true
+          description: >-
+            The desk role the CRM read from the caller's WORKFORCE groups (cis-customer_success, cis-support). It
+            decides the kind of scope (book, or book and pool); CIS decides which tenants.
+          schema: {$ref: "#/components/schemas/DeskRole"}
+      responses:
+        "200":
+          description: The scope (none for an unknown or inactive identity)
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/StaffTenantScope"}
+        "400": {$ref: "#/components/responses/Problem"}
   /invitations/{invitation_id}/activate:
     parameters:
       - name: invitation_id
@@ -257,6 +291,29 @@ components:
           type: array
           items: {$ref: "#/components/schemas/MembershipEvent"}
         next_cursor: {type: string, maxLength: 200}
+    DeskRole:
+      type: string
+      enum: [customer_success, support]
+      description: An AA desk staff role (root ADR 0019 d3). Not a CRM role and not a Content studio role.
+    StaffTenantScope:
+      type: object
+      additionalProperties: false
+      required: [identity, desk_role, scope, tenant_ids, as_of]
+      properties:
+        identity: {$ref: "#/components/schemas/Identity"}
+        desk_role: {$ref: "#/components/schemas/DeskRole"}
+        scope:
+          type: string
+          enum: [book, book_pool, none]
+          description: >-
+            book: the tenants assigned to the person (owner, backup or support); book_pool: those and the pool (agency
+            or demo tenants without an owner, or in the tech_touch segment); none: no active staff row has this identity.
+        tenant_ids:
+          type: array
+          maxItems: 10000
+          items: {type: string, format: uuid}
+          description: Sorted, unique. Empty for none.
+        as_of: {type: string, format: date-time}
     ActivationRequest:
       type: object
       additionalProperties: false

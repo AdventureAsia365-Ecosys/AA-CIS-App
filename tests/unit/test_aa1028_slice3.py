@@ -389,7 +389,7 @@ def test_policy_entries():
     assert POLICY[("GET", "/admin/tenants/{tenant_id}/subscription")] == desk
 
 
-@pytest.mark.parametrize("role", ["content", "reviewer", None])
+@pytest.mark.parametrize("role", ["content", None])
 def test_writes_refuse_non_admin(client, role):
     c, _ = client
     assert c.post("/admin/plans", json={"plan_key": "crm.zz", "product": "crm", "name": "Z"},

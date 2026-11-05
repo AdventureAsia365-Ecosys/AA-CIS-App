@@ -2,7 +2,8 @@
 // shared.tenant_members). The routes are the existing staff ones in api/routers/admin_tenant360.py (AA-978, AA-979 P2b):
 //   GET   /admin/tenants/{id}/members                                     every membership, removed ones last
 //   POST  /admin/tenants/{id}/members/invitations                         {email, content_studio_role, locale}, 201
-//   POST  /admin/tenants/{id}/members/{membership_id}/invitation/send     {email, locale}: send an invited row again
+//   POST  /admin/tenants/{id}/members/{membership_id}/invitation/send     {email?, locale}: send an invited row again
+//         (AA-1035: no email = to the address the CRM kept; a new address only for roles that may re-address)
 //   PATCH /admin/tenants/{id}/members/{membership_id}                     {content_studio_role}
 //   POST  /admin/tenants/{id}/members/{membership_id}/remove              final
 //   GET   /admin/tenants/{id}/members/access                              which of these writes this session may use
@@ -137,6 +138,9 @@ export interface MembersAccess {
   /** AA-1035: may change the role of / remove an owner row (and pick owner as a new role). Missing = the older API,
    *  which had no such limit. */
   owner_writes?: boolean;
+  /** AA-1035 close-out: how a send again may address the mail (the CRM's kept address / a typed new one). Missing =
+   *  the older API: a typed address only. */
+  send_again_to?: { same_address?: boolean; new_address?: boolean };
 }
 
 /** What the page may offer. `settled` is false while the access read is in flight (nothing is offered then). */
@@ -149,6 +153,10 @@ export interface MemberPermissions {
   inviteRoles: StudioRole[];
   /** AA-1035: change role / remove on an owner row and "owner" in the role dialog (tenant.write only). */
   ownerWrites: boolean;
+  /** AA-1035 close-out: a send again may go to the address the CRM kept (no address typed). */
+  sendAgainSame: boolean;
+  /** AA-1035 close-out: a send again may go to a newly typed address (never support). */
+  sendAgainNew: boolean;
 }
 
 /**
@@ -166,17 +174,26 @@ export function memberPermissions(
     const roles = access.invite_roles === undefined ? [...STUDIO_ROLES] : access.invite_roles.filter(isStudioRole);
     const changeRole = a.change_role === true;
     const remove = a.remove === true;
+    const to = access.send_again_to;
     return {
       settled: true, invite, sendAgain, changeRole, remove,
       inviteRoles: invite || sendAgain ? roles : [],
       ownerWrites: (changeRole || remove) && access.owner_writes !== false,
+      sendAgainSame: sendAgain && to?.same_address === true,
+      sendAgainNew: sendAgain && (to === undefined || to.new_address === true),
     };
   }
   const w = failed && roleCanWrite;
   return {
     settled: failed, invite: w, sendAgain: w, changeRole: w, remove: w, inviteRoles: w ? [...STUDIO_ROLES] : [],
-    ownerWrites: w,
+    ownerWrites: w, sendAgainSame: false, sendAgainNew: w,
   };
+}
+
+/** AA-1035 close-out: the body of a send again. `email` empty (or a same-address send) = the address the CRM kept. */
+export function sendAgainBody(sameAddress: boolean, email: string, locale: string): { email?: string; locale: string } {
+  const typed = email.trim();
+  return sameAddress || !typed ? { locale } : { email: typed, locale };
 }
 
 /** May the page offer any write at all? (the "read only" note shows when the answer is settled and this is false) */

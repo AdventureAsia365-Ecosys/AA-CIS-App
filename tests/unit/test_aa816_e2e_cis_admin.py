@@ -151,7 +151,7 @@ def test_scope_accepts_admin_without_booking():
     sd.require_e2e_test_scope(ADMIN_E2E, "admin", None)
 
 
-@pytest.mark.parametrize("role,booking", [("reviewer", None), ("content", None), ("viewer", None), (None, None),
+@pytest.mark.parametrize("role,booking", [("content", None), ("content", None), ("viewer", None), (None, None),
                                           ("admin", "admin"), ("admin", "sales")])
 def test_scope_refuses_anything_but_admin_without_booking(role, booking):
     with pytest.raises(sd.StaffDirectoryError) as err:
@@ -161,10 +161,10 @@ def test_scope_refuses_anything_but_admin_without_booking(role, booking):
 
 
 def test_the_a10_reviewer_scope_is_unchanged():
-    sd.require_e2e_test_scope(REVIEWER_E2E, "reviewer", None)
+    sd.require_e2e_test_scope(REVIEWER_E2E, "content", None)
     with pytest.raises(sd.StaffDirectoryError) as err:
         sd.require_e2e_test_scope(REVIEWER_E2E, "admin", None)   # e2e@ can not borrow the admin role
-    assert err.value.code == "e2e_test_scope" and "reviewer" in err.value.detail
+    assert err.value.code == "e2e_test_scope" and "content" in err.value.detail
 
 
 @pytest.mark.parametrize("value", NOT_DEV)
@@ -227,7 +227,7 @@ async def test_create_outside_dev_is_refused_before_any_write(db, stubbed, monke
     assert len(db.rows) == 1 and db.audit == []
 
 
-@pytest.mark.parametrize("role,booking", [("reviewer", None), ("content", None), ("admin", "sales")])
+@pytest.mark.parametrize("role,booking", [("content", None), ("content", None), ("admin", "sales")])
 @pytest.mark.asyncio
 async def test_create_with_another_scope_is_refused_on_dev_too(db, stubbed, monkeypatch, role, booking):
     _set_env(monkeypatch, "dev")
@@ -288,9 +288,9 @@ async def test_the_a10_reviewer_create_is_not_env_gated(db, stubbed, monkeypatch
     _set_env(monkeypatch, "test")
     cognito, stub = stubbed
     _expect(stub, "admin_create_user", _create(REVIEWER_E2E), {"User": {"Username": REVIEWER_E2E}})
-    _expect(stub, "admin_add_user_to_group", _group(REVIEWER_E2E, "cis-reviewer"))
+    _expect(stub, "admin_add_user_to_group", _group(REVIEWER_E2E, "cis-content"))
     result = await sd.create_staff(db, cognito, actor_id=db.owner, email=REVIEWER_E2E, display_name="E2E",
-                                   role="reviewer")
+                                   role="content")
     assert result.status == sd.STATUS_OK
 
 
@@ -371,10 +371,10 @@ async def test_other_staff_are_not_flagged(issuer, directory, monkeypatch):
 @pytest.mark.asyncio
 async def test_the_a10_reviewer_is_not_flagged_and_not_env_gated(issuer, directory, monkeypatch):
     _set_env(monkeypatch, "test")
-    directory.add(role="reviewer", email=REVIEWER_E2E, iss=ISS, sub=SUB)
+    directory.add(role="content", email=REVIEWER_E2E, iss=ISS, sub=SUB)
     identity = await staff_identity.authenticate(
-        directory, issuer.token(email=REVIEWER_E2E, **{"cognito:groups": ["cis-reviewer"]}))
-    # AA-1035: the cis-reviewer group signs in as content (the alias), the row stays reviewer (CIS 363)
+        directory, issuer.token(email=REVIEWER_E2E, **{"cognito:groups": ["cis-content"]}))
+    # AA-1035: the A10 account signs in with cis-content as content (CIS 375 moved its row; the alias is gone)
     assert (identity.role, identity.e2e_read_only) == ("content", False)
 
 

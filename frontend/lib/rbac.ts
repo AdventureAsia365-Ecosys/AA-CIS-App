@@ -4,29 +4,28 @@
 // sees what. The role always comes from a VERIFIED JWT (/auth/verify-admin), never from the
 // client-writable `cis_role` cookie — that cookie is only a display hint for the UI.
 //
-// Staff roles live in shared.admin_users.role (enum shared.admin_role: admin, reviewer, content —
-// migration 218 — and the read-only viewer, migration 249, AA-878). The matrix is documented in CONTEXT.md ("Staff roles and permissions"); AA-Booking
-// staff roles map onto the same three (admin → admin, sales → reviewer tier, content_creator →
-// content) so the ecosystem keeps one staff identity model.
+// Staff roles live in shared.admin_users.role (enum shared.admin_role: admin, content — migration 218 — the read-only
+// viewer, migration 249, AA-878, and the R2 roles below). The matrix is documented in CONTEXT.md ("Staff roles and
+// permissions"); AA-Booking reads its own roles from the booking-* groups.
 //
 // Dependency-free: no React, no Node APIs (proxy.ts imports it).
 
-// AA-1035 R2 (CIS 362, root ADR 0019 d3): six more roles. reviewer is an alias of content for one release (CIS 363
-// merged its rows; the group cis-reviewer still signs in as content). The matrix is root
+// AA-1035 R2 (CIS 362, root ADR 0019 d3): six more roles. reviewer merged into content (CIS 363) and the alias is gone
+// (CIS 375; the group cis-reviewer holds no role). The matrix is root
 // docs/audits/2026-11-03-S265-ecosystem-restructure/clarifications.md section 3; the backend is the authority.
 export type StaffRole =
-  | "admin" | "reviewer" | "content" | "viewer"
+  | "admin" | "content" | "viewer"
   | "content_lead" | "tenant_qa" | "customer_success" | "support" | "finance" | "ai_ops";
 
 export const STAFF_ROLES: readonly StaffRole[] = [
-  "admin", "reviewer", "content", "viewer", "content_lead", "tenant_qa", "customer_success", "support", "finance", "ai_ops",
+  "admin", "content", "viewer", "content_lead", "tenant_qa", "customer_success", "support", "finance", "ai_ops",
 ];
 // Every staff role: the BFF proxies let each through and the backend decides per route (api/core/staff_authz.py).
 const EVERY_STAFF: StaffRole[] = [...STAFF_ROLES];
 // AA-1035: the roles with content.read, which read the content pages (before R2 that was every staff role).
-const ALL_STAFF: StaffRole[] = ["admin", "reviewer", "content", "viewer", "content_lead", "tenant_qa", "ai_ops"];
+const ALL_STAFF: StaffRole[] = ["admin", "content", "viewer", "content_lead", "tenant_qa", "ai_ops"];
 // Roles that do content work (upload, S1 rewrite, review actions): content.write.
-const CONTENT_WORKERS: StaffRole[] = ["admin", "reviewer", "content", "content_lead"];
+const CONTENT_WORKERS: StaffRole[] = ["admin", "content", "content_lead"];
 // AA-1035: tenant content QA (quality.write) and the Writing Lab readers.
 const TENANT_QA: StaffRole[] = ["admin", "content_lead", "tenant_qa"];
 // AA-1035 (S267 fix pass): the Writing Lab pages — the readers above plus ai_ops (Writing Lab W: lab.read and the
@@ -55,8 +54,7 @@ export function isReadMethod(method: string): boolean {
   return m === "GET" || m === "HEAD" || m === "OPTIONS";
 }
 
-// The CIS roles the Staff page may assign (api/services/staff_directory.py CIS_ROLES): never the viewer, and since
-// AA-1035 never the reviewer alias.
+// The CIS roles the Staff page may assign (api/services/staff_directory.py CIS_ROLES): never the viewer.
 export const ASSIGNABLE_STAFF_ROLES: readonly StaffRole[] = [
   "admin", "content_lead", "content", "tenant_qa", "customer_success", "support", "finance", "ai_ops",
 ];
@@ -83,7 +81,9 @@ export const PAGE_RULES: PageRule[] = [
   // /admin/tenants/data-erasure (was /admin/data-erasure).
   // AA-1035 R2: the more specific Tenants pages first (pageRule takes the first match); the directory and Tenant 360
   // open for the tenant desk roles, whose rows the backend filters to their scope.
-  { prefix: "/admin/tenants/agencies", roles: ["admin"] },
+  // AA-1035 R2 close-out (root ADR 0019 d4): Agencies (CRM) for the book roles too, read-only (the CRM says can_write
+  // false to them; the backend scopes every read and the CRM serves a desk caller only the tenants CIS reports for it).
+  { prefix: "/admin/tenants/agencies", roles: TENANT_BOOK },
   { prefix: "/admin/tenants/data-erasure", roles: ["admin"] },
   { prefix: "/admin/tenants/plans", roles: ["admin", "finance"] },
   // AA-1035 R2 slice 2: who looks after which tenant (the backend filters to the caller's scope; only admin assigns)
@@ -109,6 +109,9 @@ export const PAGE_RULES: PageRule[] = [
   // AA-1039 (S266) — Tenant content QA: quality (was /admin/content-quality, AA-769), trace (was
   // /admin/tenant-activity, AA-551), review-log (was /admin/platform-stats, AA-560) and slate (was atom-curation
   // section 05). The old URLs are 307s in next.config.ts (lib/adminIa.ts), which run before proxy.ts.
+  // AA-1035 R2 close-out (matrix "Tenant QA: customer_success R (own)"): the Content quality page for the own book
+  // (backend tenant_content.book.read, filtered to the caller's scope; no labels, no writes). Before the group rule.
+  { prefix: "/admin/tenant-qa/quality", roles: [...TENANT_QA, "customer_success"] },
   { prefix: "/admin/tenant-qa", roles: TENANT_QA },
   // AA-1039 R6 slice 3 — Writing Lab: the stage pages (/admin/lab/<stage>) and the Writing memory tools (AA-917,
   // signals and candidate rules hold tenant text; was /admin/writing-memory, a 307 now).
@@ -208,6 +211,10 @@ export const API_WRITE_RULES: { prefix: string; roles: StaffRole[] }[] = [
 // /admin/openapi.json re-checks the forwarded x-admin-role.
 export const API_READ_RULES: { prefix: string; roles: StaffRole[] }[] = [
   { prefix: "openapi.json", roles: ["admin"] },
+  // AA-1035 R2 close-out — backend /admin/platform/crm/* (the CRM L1 console relay): the book roles read their book
+  // (re-checked by the backend: tenant.book.read and require_tenant_scope); writes stay admin (API_WRITE_RULES
+  // "platform/"). Before the "platform" rule (first match wins).
+  { prefix: "platform/crm", roles: TENANT_BOOK },
   // AA-883 — backend /admin/platform/* (staff directory): admin only, re-checked by the backend
   // (staff_policy, capability staff.read). Matches "platform" and "platform/…", not "platform-stats".
   { prefix: "platform", roles: ["admin"] },
@@ -288,7 +295,9 @@ export type Capability =
   // AA-1035 R2 slice 2
   | "tenant.view_as"              // read-only "view as tenant" (admin, customer_success, support), scoped
   | "lab.tenant_text.read"        // ai_ops: tenant text in the Writing Lab only, every read logged by the backend
-  | "notifications.read";         // the staff bell (every role)
+  | "notifications.read"          // the staff bell (every role)
+  // AA-1035 R2 close-out
+  | "tenant_content.book.read";   // Tenant QA lists / details of the own book (customer_success), scoped
 
 export const ROLE_PERMS: Record<StaffRole, readonly Capability[]> = {
   admin: [
@@ -305,14 +314,13 @@ export const ROLE_PERMS: Record<StaffRole, readonly Capability[]> = {
     "lab.read", "wave.run", "notifications.read",
   ],
   content: ["content.read", "content.write", "review.act", "catalog.read", "notifications.read"],
-  reviewer: ["content.read", "content.write", "review.act", "catalog.read", "notifications.read"],
   tenant_qa: [
     "content.read", "catalog.read", "tenant_content.read", "quality.write", "a4.unpublish", "lab.read",
     "notifications.read",
   ],
   customer_success: [
     "tenant.book.read", "tenant.book.account.read", "tenant.book.write", "tenant.member.write", "tenant.member.resend",
-    "tenant.view_as", "notifications.read",
+    "tenant.view_as", "notifications.read", "tenant_content.book.read",
   ],
   support: ["tenant.book.read", "tenant.member.resend", "tenant.view_as", "notifications.read"],
   finance: ["billing.read", "billing.write", "spend.read", "notifications.read"],
@@ -359,7 +367,6 @@ export function staffErrorMessage(
 /** English role names; the UI language's names are RBAC_MESSAGES in lib/rbac.messages.ts (same keys). */
 export const ROLE_LABEL: Record<StaffRole, string> = {
   admin: "Administrator",
-  reviewer: "Content Team (reviewer)",
   content: "Content Team",
   viewer: "Viewer (read-only)",
   content_lead: "Content Lead",

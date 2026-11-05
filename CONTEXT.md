@@ -1640,7 +1640,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   run (job `smoke-staff`, `staff_session=true`, from `main` only: GitHub environment `e2e`, the read-only mailbox
   role, concurrency group `e2e-cognito` shared with the Cognito E2E) signs in as the Cognito E2E user with an email
   code (`tests/e2e/helpers/cognitoSignIn.ts`, shared with `tests/e2e/cognito/`) on the two callback hosts only:
-  Production after every production deploy (job `smoke-production`; the user is a reviewer, so reviewer mode:
+  Production after every production deploy (job `smoke-production`; the user is `content` (reviewer until CIS 375), so content mode:
   pages from `frontend/lib/rbac.ts` `PAGE_RULES`, no writes) and the fixed Preview host after an alias-only
   dispatch (job `smoke-preview-host`; viewer mode, and the setup fails unless the session's role is `viewer`, the
   live evidence of the Preview client cap). For a PR labelled `preview-signin`, dispatch `ui-smoke.yml` from `main`
@@ -1661,7 +1661,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   read-only: List + Get on `s3://aa-cis-dev-e2e-mail-<acc2>/inbound/`, no delete; 1-day expiry). Playwright
   project `cognito` (`tests/e2e/cognito/`, always the production host — the only `cis-admin` callback; the fixed
   Preview host belongs to the separate preview client and is covered by the signed-in UI smoke): staff
-  user "E2E Cognito" (`e2e@e2e-mail.lumiguides.it.com` — the SES test mailbox itself, reviewer, Booking none; a
+  user "E2E Cognito" (`e2e@e2e-mail.lumiguides.it.com` — the SES test mailbox itself, content, Booking none; a
   TEMPORARY exception to the `@adventure.asia` rule, see Staff roles) signs in by email code (`tests/e2e/helpers/mailbox.ts` reads the code from S3), lands under `/admin`,
   then (AA-680 staff-half evidence) opens the Booking staff admin (input `booking_base_url`: production
   `https://booking.lumiguides.it.com` by default, or the fixed Preview host `https://booking-preview.lumiguides.it.com`,
@@ -1966,10 +1966,10 @@ The 30-day `audit_log` check before the removal found only synthetic E2E tenants
 ## Staff roles and permissions (AA-656)
 
 One staff identity model. Every staff user is a row in `shared.admin_users` (role enum
-`shared.admin_role`: `admin`, `reviewer`, `content` — migration 218 — and the read-only `viewer` — migration
+`shared.admin_role`: `admin`, `content` — migration 218; its `reviewer` value is unused and forbidden since CIS 375 — and the read-only `viewer` — migration
 249, AA-878; identity columns from migration 247:
 `email` lower-case `@adventure.asia` only — one TEMPORARY exception until the Cognito E2E work is done (AA-816,
-S243 option B, root ADR 0006a): the exact address `e2e@e2e-mail.lumiguides.it.com` as a reviewer, not an owner,
+S243 option B, root ADR 0006a): the exact address `e2e@e2e-mail.lumiguides.it.com` as `content` (reviewer until CIS 375), not an owner,
 no password, no Booking grant (migration 250 CHECK + `staff_directory.E2E_TEST_STAFF_EMAIL` /
 `require_e2e_test_scope` + the WORKFORCE triggers); and, **Dev only** (A10b, AA-816 S252, root ADR 0006a A10b),
 `e2e-cis-admin@e2e-mail.lumiguides.it.com` as an admin, not an owner, no password, no Booking grant (migration 283
@@ -1987,9 +1987,9 @@ amendments 0006a / 0006b are the design; tenants are separate (`cis_tenant_token
 
 **R2 roles and tenant scope (AA-1035 slice 1, root ADR 0019 d3 / d4; CIS 362-364).** `shared.admin_role` also has
 `content_lead`, `tenant_qa`, `customer_success`, `support`, `finance` and `ai_ops` (WORKFORCE groups `cis-<role>`,
-ranked 10-39; `api/core/staff_identity.py GROUP_ROLES`). `reviewer` merged into `content` (CIS 363; the group
-`cis-reviewer` signs in as `content` for one release, the A10 E2E row stays `reviewer` until then; the Staff page no
-longer offers it). Each role is one explicit capability set in `api/core/staff_authz.py ROLE_PERMS` (the matrix of
+ranked 10-39; `api/core/staff_identity.py GROUP_ROLES`). `reviewer` merged into `content` (CIS 363) and the alias is
+gone (CIS 375, S269: the A10 E2E row is `content`, `admin_users_role_not_alias_chk` forbids `reviewer`, the group
+`cis-reviewer` holds no role and the Staff page "Sync" removes a leftover membership). Each role is one explicit capability set in `api/core/staff_authz.py ROLE_PERMS` (the matrix of
 root `docs/audits/2026-11-03-S265-ecosystem-restructure/clarifications.md` section 3), deny by default: a POLICY entry
 is one capability or `any_of(...)`; a GET with no entry needs `content.read` (so `customer_success`, `support` and
 `finance` reach only their listed routes). `tenant.read` still means "every tenant" (admin); the split adds
@@ -2013,7 +2013,7 @@ content-quality writes check `quality.write` (admin, content_lead, tenant_qa) in
 admin, finance, ai_ops, content_lead and tenant_qa reach every tenant (their capabilities still decide the routes);
 `customer_success` only tenants in `shared.staff_tenant_assignment` for them (kind owner / backup / support, one owner
 per tenant), `support` those plus the pool (agency / demo tenants without an owner or in the `tech_touch` segment);
-content, reviewer and viewer only the aa_internal tenant (Master Content). The staff member is the verified Cognito
+content and viewer only the aa_internal tenant (Master Content). The staff member is the verified Cognito
 identity, or with the main admin secret the `x-admin-user-id` header; a book role without one gets 403. Refusals are
 403 `Tenant outside your scope` whether the tenant exists or not. `GET /admin/tenants` lists only the caller's scope.
 Assignments: `GET|PUT|DELETE /admin/tenants/{tenant_id}/assignments[/{admin_user_id}]` (writes `tenant.assign`,
@@ -2055,8 +2055,15 @@ GETs of `/admin/writing-memory/*` (not the Tenant 360 voice route); `api/core/la
 an audit row `lab.tenant_text_read` before each such read (503 when it cannot). *Bell*: `notifications.read` (every
 role) on the four `/admin/notifications` routes; customer_success / support / finance see only rows targeted at their
 role, and of a tenant row only those of a tenant their scope reaches (`tenant_scope.tenant_scope_sql`: book; support
-also the pool; finance every tenant; the platform rows of the AA internal tenant stay role-targeted). Still open: the `crm.ops.v1` scope relay, Tenant QA reads of the own book for customer_success, removing the
-reviewer alias.
+also the pool; finance every tenant; the platform rows of the AA internal tenant stay role-targeted). **R2 close-out (AA-1035, S269; CIS 375).** *CRM L1 console for the desk roles*: `/admin/platform/crm/*` GETs take
+`tenant.book.read` (usage / entitlements `tenant.book.account.read`, customer_success only), `{tenant_id}` reads pass
+`require_tenant_scope`, the agency list is filtered to the scope; the CRM itself serves a desk caller only the tenants
+CIS reports through `tenant.membership.v1` 1.3 `GET /tenant/membership/v1/staff-scope?iss=&sub=&desk_role=`
+(`tenant_scope.desk_scope_of_identity`, M2M `cis.tenant/read`), never a scope the caller sent. *Tenant QA own book*:
+customer_success holds `tenant_content.book.read`: the Content quality lists, details and stats of its book (a piece or
+version of another tenant is a 404), no labels, place cards, compliance or writes. *Send again to the kept address*:
+`POST .../invitation/send` without `email` relays `keep_address: true` (crm.ops.v1 1.12); support may only do that
+(403 with an address), customer_success and admin may also name a new one (`members/access` `send_again_to`).
 
 **Dev-only E2E CIS admin (A10b, AA-816 S252, root ADR 0006a A10b).** The agent's own admin identity for evidence
 screenshots of the admin-only pages and the AA-916 WM-07 sentence-action sample. `api/core/e2e_staff.py` holds the
@@ -2113,7 +2120,7 @@ AA-Booking) + `api/core/identity_config.py` (CIS surface) + `api/core/staff_iden
   row with no Cognito identity (`email_verified` is trusted from the pre token trigger, which refuses
   unverified or off-domain addresses; WORKFORCE access tokens do not carry the claim, ADR 0006a A7). A row
   already bound to another `sub` is never rebound (401; rebinding is an owner action);
-- role = the highest `cis-*` group (`admin > reviewer > content`); no `cis-*` group → 403 even with `booking-*`
+- role = the highest `cis-*` group (`GROUP_ROLES` order; `admin` first, `content` last); no `cis-*` group → 403 even with `booking-*`
   groups; a different DB role is logged as `staff_role_drift`, not denied; inactive or unknown row → 401;
   verifier/JWKS/directory outage → 503. Lookups are cached 60 s per `(iss, sub)`.
 - `api/middleware/staff_bearer.py` (registered right after the rate limiter) handles every staff path: a

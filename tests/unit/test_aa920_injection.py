@@ -527,7 +527,7 @@ def test_post_activation_route_dry_run_apply_and_roles(client, monkeypatch):
     assert r.status_code == 200 and calls[-1] == (RID, 5, True, f"admin:{ADMIN}")
     n_calls = len(calls)
     assert client.post(path, json={"apply": True}, headers=_h(user=None)).status_code == 403   # apply needs an id
-    for role in ("reviewer", "content"):
+    for role in ("content",):
         assert client.post(path, headers=_h(role=role)).status_code == 403, role
     assert client.post(path, json={"n": 0}, headers=_h()).status_code == 422
     assert client.post(path, json={"bogus": 1}, headers=_h()).status_code == 422

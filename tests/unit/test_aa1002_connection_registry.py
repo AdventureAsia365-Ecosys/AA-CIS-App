@@ -266,7 +266,7 @@ def test_migration_carries_no_account_id():
 
 def test_listing_is_admin_only():
     assert staff_authz.POLICY[("GET", "/admin/llm-connections")] == staff_authz.AI_ADMIN
-    for role in ("reviewer", "content", "viewer"):
+    for role in ("content", "viewer"):
         assert staff_authz.AI_ADMIN not in staff_authz.ROLE_PERMS[role]
 
 

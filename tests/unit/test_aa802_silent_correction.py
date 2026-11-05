@@ -297,7 +297,7 @@ async def test_apply_refuses_to_empty_a_text_section_and_stale_spans():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("role", ["content", "reviewer", None])
+@pytest.mark.parametrize("role", ["content", None])
 async def test_t2_write_endpoints_require_admin_role(role):
     conn = _Conn(_version_row())
     with pytest.raises(HTTPException) as e:

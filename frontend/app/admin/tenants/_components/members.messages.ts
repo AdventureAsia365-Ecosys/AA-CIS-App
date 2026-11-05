@@ -39,6 +39,9 @@ export const MEM = defineMessages(
     sendAgainTitle: "Send the invitation again",
     sendAgainNote: "CIS does not keep the address, so type it again. The person gets a new link; the old one stops "
       + "working.",
+    sendAgainKeptNote: "The invitation goes again to the address it was sent to (kept sealed by the partner app, never "
+      + "shown here). The person gets a new link; the old one stops working.",
+    sendAgainNewAddress: "Send it to a different address",
     email: "E-mail address",
     emailHint: "The invitation goes to this address. It is not stored in CIS.",
     emailBad: "Enter a valid e-mail address.",
@@ -105,6 +108,9 @@ export const MEM = defineMessages(
     sendAgainTitle: "Gửi lại lời mời",
     sendAgainNote: "CIS không giữ địa chỉ, nên hãy nhập lại. Người được mời nhận liên kết mới; liên kết cũ hết hiệu "
       + "lực.",
+    sendAgainKeptNote: "Lời mời được gửi lại tới đúng địa chỉ đã gửi trước đó (ứng dụng đối tác giữ kín, không hiển thị "
+      + "ở đây). Người được mời nhận liên kết mới; liên kết cũ hết hiệu lực.",
+    sendAgainNewAddress: "Gửi tới một địa chỉ khác",
     email: "Địa chỉ e-mail",
     emailHint: "Lời mời gửi tới địa chỉ này. CIS không lưu địa chỉ.",
     emailBad: "Nhập một địa chỉ e-mail hợp lệ.",

@@ -238,7 +238,7 @@ def test_policy_entries():
     assert POLICY[("POST", "/admin/tenants/{tenant_id}/provision/cancel")] == TENANT_WRITE
 
 
-@pytest.mark.parametrize("role", ["content", "reviewer", None])
+@pytest.mark.parametrize("role", ["content", None])
 def test_writes_refuse_non_admin(client, role):
     c, _ = client
     body = {"request_key": KEY, "name": "Larkspur", "slug": "larkspur", "plan_tier": "starter", "posts_per_week": 3}

@@ -377,7 +377,7 @@ class TestAdminOverride:
     @pytest.mark.asyncio
     async def test_override_needs_admin_role(self):
         with pytest.raises(HTTPException) as e:
-            await self._patch(_conn(), {"daily_publish_limit": 2}, role="reviewer")
+            await self._patch(_conn(), {"daily_publish_limit": 2}, role="content")
         assert e.value.status_code == 403
 
     def test_bounds_validated(self):

@@ -38,7 +38,7 @@ from tests.unit.test_s241_admin_routes_require_auth import _served_routes, _walk
 
 REPO = Path(__file__).resolve().parents[2]
 _SECRET = "aa882-test-admin-secret"
-_STAFF_ROLES = ("admin", "reviewer", "content")   # the content-work roles; AA-878's read-only viewer: test_aa878
+_STAFF_ROLES = ("admin", "content")   # the content-work roles; AA-878's read-only viewer: test_aa878
 # AA-1035 R2: the six roles of root ADR 0019 d3 (their matrix: tests/unit/test_aa1035_role_matrix.py)
 _R2_ROLES = ("content_lead", "tenant_qa", "customer_success", "support", "finance", "ai_ops")
 
@@ -58,7 +58,7 @@ def test_role_perms_match_the_s241_matrix():
     assert set(ROLE_PERMS) == set(_STAFF_ROLES) | {"viewer"} | set(_R2_ROLES)
     # AA-878 read-only role (tests/unit/test_aa878_viewer_role.py); AA-1035 slice 2: every role holds the bell
     assert ROLE_PERMS["viewer"] == {"content.read", "notifications.read"}
-    assert ROLE_PERMS["reviewer"] == ROLE_PERMS["content"] == content_work | {"catalog.read", "notifications.read"}
+    assert ROLE_PERMS["content"] == ROLE_PERMS["content"] == content_work | {"catalog.read", "notifications.read"}
     assert ROLE_PERMS["admin"] == content_work | {
         "master.admin", "atoms.write", "photos.write", "a4.unpublish", "quality.write",
         "content.settings.write",
@@ -70,9 +70,9 @@ def test_role_perms_match_the_s241_matrix():
         "tenant.member.resend", "tenant.book.write",   # AA-1035 S267 fix pass
         "tenant.view_as", "notifications.read",        # AA-1035 R2 slice 2 (lab.tenant_text.read: ai_ops only)
     }
-    # admin holds every role capability but the Lab-only logged read of ai_ops (admin reads tenant text in its own
-    # right)
-    assert ROLE_PERMS["admin"] == CAPABILITIES - OWNER_PERMS - {"lab.tenant_text.read"}
+    # admin holds every role capability but the Lab-only logged read of ai_ops and the book-scoped Tenant QA read of
+    # customer_success (admin reads tenant text in its own right: tenant_content.read)
+    assert ROLE_PERMS["admin"] == CAPABILITIES - OWNER_PERMS - {"lab.tenant_text.read", "tenant_content.book.read"}
 
 
 def test_staff_write_is_owner_only():
@@ -95,7 +95,7 @@ def test_policy_and_machine_routes_are_staff_routes():
     assert all(path.startswith("/admin/") for _, path in MACHINE_ROUTES)
 
 
-_CONTENT_WORK = ROLE_PERMS["reviewer"]
+_CONTENT_WORK = ROLE_PERMS["content"]
 _ADMIN_ONLY_KEYS = sorted(k for k in POLICY if not _allowed("content", k))
 _CONTENT_WORK_KEYS = sorted(k for k in POLICY if _allowed("content", k))
 
@@ -158,7 +158,7 @@ def test_staff_decision_per_role_and_route(role, key):
 
 @pytest.mark.parametrize("key", _ADMIN_ONLY_KEYS)
 def test_reviewer_and_content_are_refused_every_admin_route(key):
-    for role in ("reviewer", "content"):
+    for role in ("content",):
         assert denial_reason(principal_from_role(role), *key) is not None
 
 
@@ -226,7 +226,7 @@ def test_staff_write_needs_an_owner_on_a_cognito_session(key):
     assert denial_reason(principal_from_role("admin", _cognito_identity(True)), *key) is None
     assert denial_reason(MACHINE, *key) is not None
     assert denial_reason(principal_from_role("tenant", _cognito_identity(True)), *key) == "Unknown staff role"
-    for role in ("reviewer", "content"):
+    for role in ("content",):
         assert denial_reason(principal_from_role(role, _cognito_identity(True)), *key) == \
             f"Role '{role}' lacks the 'staff.write' permission"
 
@@ -304,7 +304,7 @@ _LIVE_POLICY = sorted(k for k in POLICY if k not in AWAITING_ROUTE)
 
 
 @pytest.mark.parametrize("key", [k for k in _ADMIN_ONLY_KEYS if k not in AWAITING_ROUTE])
-@pytest.mark.parametrize("role", ["reviewer", "content"])
+@pytest.mark.parametrize("role", ["content"])
 def test_app_refuses_reviewer_and_content_on_admin_routes_before_the_endpoint(client, role, key):
     method, path = key
     resp = client.request(method, _concrete(path), json={}, headers=_headers(role))
@@ -363,9 +363,9 @@ def test_app_admin_reaches_patch_llm_config(client, monkeypatch):
                         headers=_headers("admin"))
     assert resp.status_code == 404, resp.text  # past the policy, into the endpoint
     reviewer = client.patch("/admin/llm-config/no-such-stage", json={"model_id": "haiku"},
-                            headers=_headers("reviewer"))
+                            headers=_headers("content"))
     assert reviewer.status_code == 403
-    assert reviewer.json()["detail"] == "Role 'reviewer' lacks the 'ai.admin' permission"
+    assert reviewer.json()["detail"] == "Role 'content' lacks the 'ai.admin' permission"
 
 
 def test_app_admin_reaches_put_budget(client):
@@ -426,7 +426,7 @@ def test_machine_routes_cover_every_role_less_caller_and_nothing_else():
 
 
 @pytest.mark.parametrize("key", _MACHINE_POLICY_ROUTES)
-@pytest.mark.parametrize("role", ["reviewer", "content"])
+@pytest.mark.parametrize("role", ["content"])
 def test_app_tenant_proxy_staff_branch_refuses_reviewer_and_content(client, role, key):
     """POST /api/tenant/admin/jev-canary/check (and the other machine-allowed POLICY POSTs) by a
     reviewer/content session: 403 before the endpoint (no paid Jev probe, no breaker reset)."""
@@ -519,7 +519,7 @@ def test_staff_policy_if_staff_is_a_no_op_without_the_valid_secret(monkeypatch):
     request = Request({"type": "http", "method": "POST", "path": "/admin/brand-identity",
                        "headers": [], "query_string": b""})
     for secret in (None, "", _SECRET + "x"):
-        assert staff_authz.staff_policy_if_staff(request, secret, "reviewer") is None
+        assert staff_authz.staff_policy_if_staff(request, secret, "content") is None
 
 
 def test_valid_secret_is_the_admin_module_or_the_environment(monkeypatch):

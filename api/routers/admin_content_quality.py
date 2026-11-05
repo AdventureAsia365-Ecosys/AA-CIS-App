@@ -44,6 +44,7 @@ from api.core import e2e_staff
 from api.core.staff_authz import QUALITY_WRITE, has_perm, request_staff_identity, staff_policy
 from pydantic import BaseModel, ConfigDict, Field
 
+from api.core.tenant_scope import tenant_scope_filter
 from api.routers.admin import verify_admin_secret
 from services.acp_content_writing import hygiene, sentence_repair, text_integrity
 from services.acp_content_writing.generate import SentenceRepairError, repair_sentences_detailed
@@ -111,6 +112,35 @@ _FAILED_GATES_SQL = """
     COALESCE((SELECT jsonb_agg(DISTINCT g->>'gate') FROM jsonb_array_elements(COALESCE(cp.flags, '[]'::jsonb)) g),
              '[]'::jsonb) AS flag_gates
 """
+
+# ── AA-1035 R2 close-out: Tenant QA of the caller's book ─────────────────────────────────────────
+# customer_success reads the lists, details and stats through tenant_content.book.read (staff_authz POLICY
+# _TENANT_QA_READ), and only for the tenants of its book (api/core/tenant_scope.tenant_scope_filter; None = every
+# tenant: the tenant_content.read roles, whose scope is "all", and the machine). A piece or version of another tenant
+# answers 404, the same as an unknown id, so a scoped caller can not probe ids.
+
+def _scope_clause(allowed: Optional[frozenset[str]], column: str, params: list) -> str:
+    """`` AND <column> = ANY($n::uuid[])`` for a scoped caller (appends the ids to ``params``), else ""."""
+    if allowed is None:
+        return ""
+    params.append(sorted(allowed))
+    return f" AND {column} = ANY(${len(params)}::uuid[])"
+
+
+async def _require_in_scope(request: Request, conn, tenant_sql: str, object_id: str, not_found: str) -> None:
+    """404 ``not_found`` when the caller is scoped and the object's tenant is not in its book (or the id is unknown:
+    the full read answers that one itself)."""
+    allowed = await tenant_scope_filter(request, conn)
+    if allowed is None:
+        return
+    tenant = await conn.fetchval(tenant_sql, object_id)
+    if tenant is None or str(tenant) not in allowed:
+        raise HTTPException(status_code=404, detail=not_found)
+
+
+_PIECE_TENANT_SQL = "SELECT tenant_id FROM acp_shared.content_piece WHERE piece_id = $1::uuid"
+_VERSION_TENANT_SQL = "SELECT tenant_id FROM gold_aa_internal.tenant_tour_versions WHERE id = $1::uuid"
+
 
 _COST_SQL = """
     COALESCE((SELECT sum(l.cost_usd) FROM shared.llm_call_log l WHERE l.job_id = cp.job_id), 0) AS cost_usd
@@ -193,6 +223,7 @@ async def list_pieces(
     direction = "ASC" if sort_dir == "asc" else "DESC"
     pool = request.app.state.pool
     async with pool.acquire() as conn:
+        where += _scope_clause(await tenant_scope_filter(request, conn), "cp.tenant_id", params)   # AA-1035
         labels_enabled = await _labels_enabled(conn)
         label_cols = _LABEL_COLS_SQL if labels_enabled else ""
         if labels_enabled and label:
@@ -439,6 +470,7 @@ async def get_piece(piece_id: str, request: Request, x_admin_secret: str = Heade
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
     async with pool.acquire() as conn:
+        await _require_in_scope(request, conn, _PIECE_TENANT_SQL, piece_id, "Piece not found")   # AA-1035
         return await _load_piece_detail(conn, piece_id)
 
 
@@ -1136,6 +1168,7 @@ async def stats(request: Request, days: int = Query(30, ge=1, le=365), tenant_id
         tenant_clause = "AND cp.tenant_id = $2::uuid"
     pool = request.app.state.pool
     async with pool.acquire() as conn:
+        tenant_clause += _scope_clause(await tenant_scope_filter(request, conn), "cp.tenant_id", params)   # AA-1035
         gates = await conn.fetch(
             f"""
             SELECT g->>'gate' AS gate, COALESCE(cp.channel, 'unknown') AS channel,
@@ -1193,7 +1226,6 @@ async def list_tour_versions(
     if q:
         params.append(f"%{q}%")
         where.append(f"pt.aa_name ILIKE ${len(params)}")
-    w = " AND ".join(where)
     order = _VERSION_SORTS.get(sort, "ttv.created_at")
     direction = "ASC" if sort_dir == "asc" else "DESC"
     base = """
@@ -1203,6 +1235,8 @@ async def list_tour_versions(
     """
     pool = request.app.state.pool
     async with pool.acquire() as conn:
+        w = " AND ".join(where) + _scope_clause(await tenant_scope_filter(request, conn), "ttv.tenant_id",
+                                                params)   # AA-1035
         total = await conn.fetchval(f"SELECT count(*) {base} WHERE {w}", *params)
         rows = await conn.fetch(
             f"""
@@ -1464,6 +1498,7 @@ async def get_tour_version(version_id: str, request: Request, x_admin_secret: st
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
     async with pool.acquire() as conn:
+        await _require_in_scope(request, conn, _VERSION_TENANT_SQL, version_id, "Version not found")   # AA-1035
         return await _load_version_detail(conn, version_id)
 
 

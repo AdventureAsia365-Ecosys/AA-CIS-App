@@ -99,7 +99,7 @@ SAMPLES = [
     ("v1_pipeline", "POST", "/v1/pipeline/review-queue/{review_id}/approve", {}),
 ]
 
-PRINCIPALS = ["admin", "reviewer", "content", None]  # None = machine (secret, no role header)
+PRINCIPALS = ["admin", "content", None]  # None = machine (secret, no role header)
 
 _POLICY_DENIALS = ("Role '", "This route needs a staff role", "Unknown staff role")
 
@@ -175,8 +175,8 @@ def test_sample_route_per_principal(client, sample, role):
 
 def test_reviewer_keeps_the_review_queue_and_loses_the_master_lifecycle(client):
     """The two behaviours a reviewer notices: Review Queue actions work, Master Content trash does not."""
-    assert _outcome(client, "POST", "/admin/review-queue/{review_id}/approve", {}, "reviewer") == "reached"
-    assert _outcome(client, "PATCH", "/admin/master/{tour_id}/trash", None, "reviewer") == "denied"
+    assert _outcome(client, "POST", "/admin/review-queue/{review_id}/approve", {}, "content") == "reached"
+    assert _outcome(client, "PATCH", "/admin/master/{tour_id}/trash", None, "content") == "denied"
 
 
 def test_brand_identity_tenant_jwt_path_is_not_narrowed(client):

@@ -94,7 +94,7 @@ class _FakePool:
         yield self.conn
 
 
-def _staff_row(role="reviewer"):
+def _staff_row(role="content"):
     return {"id": ADMIN_ID, "username": "linh.sales", "role": role}
 
 
@@ -118,8 +118,8 @@ def _jwks_key_for(token, jwks_doc):
 # ── POST /auth/booking-token ─────────────────────────────────────────────────
 
 def test_mints_rs256_token_with_contract_claims(client_with, secret):
-    client, _ = client_with(_staff_row("reviewer"))
-    session = _create_admin_jwt(ADMIN_ID, "linh.sales", "reviewer")
+    client, _ = client_with(_staff_row("content"))
+    session = _create_admin_jwt(ADMIN_ID, "linh.sales", "content")
     res = client.post("/auth/booking-token", headers={"Authorization": f"Bearer {session}"})
     assert res.status_code == 200, res.text
     body = res.json()
@@ -135,7 +135,7 @@ def test_mints_rs256_token_with_contract_claims(client_with, secret):
     assert claims["iss"] == ISS
     assert claims["aud"] == "booking"
     assert claims["sub"] == ADMIN_ID
-    assert claims["cis_role"] == "reviewer"
+    assert claims["cis_role"] == "content"
     assert claims["name"] == "linh.sales"
     assert claims["exp"] - claims["iat"] == 900
     uuid.UUID(claims["jti"])

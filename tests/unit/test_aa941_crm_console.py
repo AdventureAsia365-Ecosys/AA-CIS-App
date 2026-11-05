@@ -186,9 +186,17 @@ def _console_routes() -> list[APIRoute]:
 def test_every_console_route_has_its_policy():
     routes = _console_routes()
     assert len(routes) == 21  # S263: + owner-invite/withdraw, delete
+    # AA-1035 R2 close-out: the desk roles read their book (usage / entitlements: the account read, never support)
+    account = {"/admin/platform/crm/agencies/{tenant_id}/usage",
+               "/admin/platform/crm/agencies/{tenant_id}/entitlements"}
     for r in routes:
         for m in r.methods:
-            want = TENANT_READ if m == "GET" else TENANT_WRITE
+            if m != "GET":
+                want = TENANT_WRITE
+            elif r.path in account:
+                want = (TENANT_READ, "tenant.book.account.read")
+            else:
+                want = (TENANT_READ, "tenant.book.read")
             assert POLICY.get((m, r.path)) == want, (m, r.path)
     policy_paths = {(m, p) for (m, p) in POLICY if p.startswith("/admin/platform/crm/")}
     assert policy_paths == {(m, r.path) for r in routes for m in r.methods}
@@ -290,7 +298,7 @@ def test_viewer_refused_on_writes_content_on_reads(client, crm):
     assert res.status_code == 403
     res = client.get("/admin/platform/crm/agencies", headers=_h("content"))
     assert res.status_code == 403 and "tenant.read" in res.json()["detail"]
-    res = client.put(f"/admin/platform/crm/agencies/{TID}/insights-opt-out", headers=_h("reviewer"),
+    res = client.put(f"/admin/platform/crm/agencies/{TID}/insights-opt-out", headers=_h("content"),
                      json={"opt_out": True, "owner_request_ref": "AA-1"})
     assert res.status_code == 403
     assert crm.calls == []

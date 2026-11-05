@@ -315,6 +315,16 @@ class MembershipIdentityMemberships(_CatalogModel):
     memberships: List[MembershipItem]
 
 
+class StaffTenantScope(_CatalogModel):
+    """GET /tenant/membership/v1/staff-scope?iss=&sub=&desk_role= (contract 1.3, AA-1035): the tenants an AA desk
+    staff member (customer_success: its book; support: its book and the pool) may reach in the CRM L1 console."""
+    identity: MembershipIdentity
+    desk_role: Literal["customer_success", "support"]
+    scope: Literal["book", "book_pool", "none"]
+    tenant_ids: List[str]
+    as_of: str
+
+
 class MembershipEvent(_CatalogModel):
     event_id: str
     cursor: str

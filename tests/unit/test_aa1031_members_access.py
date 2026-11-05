@@ -59,13 +59,13 @@ def test_the_invitation_controls_are_the_e2e_allow_listed_routes():
 def test_admin_may_use_every_control(synthetic):
     out = router_mod.members_access(_principal("admin"), synthetic_tenant=synthetic)
     assert out == {"read_only": False, "actions": dict.fromkeys(ALL_ACTIONS, True), "invite_roles": ALL_ROLES,
-                   "owner_writes": True}
+                   "owner_writes": True, "send_again_to": {"same_address": True, "new_address": True}}
 
 
 def test_e2e_admin_on_a_real_tenant_is_read_only_like_the_api():
     out = router_mod.members_access(_principal("admin", e2e_read_only=True), synthetic_tenant=False)
     assert out == {"read_only": True, "actions": dict.fromkeys(ALL_ACTIONS, False), "invite_roles": [],
-                   "owner_writes": False}
+                   "owner_writes": False, "send_again_to": {"same_address": False, "new_address": False}}
 
 
 def test_e2e_admin_on_a_synthetic_tenant_may_only_invite_viewer_or_editor():
@@ -75,16 +75,18 @@ def test_e2e_admin_on_a_synthetic_tenant_may_only_invite_viewer_or_editor():
     assert out["actions"] == {"invite": True, "send_again": True, "change_role": False, "remove": False}
     assert out["invite_roles"] == ["editor", "viewer"]
     assert set(out["invite_roles"]) == e2e_staff.E2E_INVITE_ROLES
+    # AA-1035 close-out: the E2E session names an E2E mailbox address, never the CRM's kept one
+    assert out["send_again_to"] == {"same_address": False, "new_address": True}
     # change role and remove follow denial_reason: refused for the E2E session even on a synthetic tenant.
     for key in ("change_role", "remove"):
         assert staff_authz.denial_reason(principal, *router_mod.MEMBER_WRITES[key]) == e2e_staff.E2E_READ_ONLY
 
 
-@pytest.mark.parametrize("role", ["viewer", "content", "reviewer", "not-a-role"])
+@pytest.mark.parametrize("role", ["viewer", "content", "not-a-role"])
 def test_other_roles_get_no_control(role):
     out = router_mod.members_access(_principal(role), synthetic_tenant=True)
     assert out == {"read_only": True, "actions": dict.fromkeys(ALL_ACTIONS, False), "invite_roles": [],
-                   "owner_writes": False}
+                   "owner_writes": False, "send_again_to": {"same_address": False, "new_address": False}}
 
 
 def test_the_machine_gets_no_control():
@@ -126,7 +128,8 @@ def test_route_normal_admin_sees_every_control_without_the_synthetic_read(real, 
     res = _access(client, REAL, {"Authorization": f"Bearer {token}"})
     assert res.status_code == 200, res.text
     assert res.json() == {"tenant_id": REAL, "read_only": False, "actions": dict.fromkeys(ALL_ACTIONS, True),
-                          "invite_roles": ALL_ROLES, "owner_writes": True}
+                          "invite_roles": ALL_ROLES, "owner_writes": True,
+                          "send_again_to": {"same_address": True, "new_address": True}}
     assert directory.synthetic_checks == 0
 
 

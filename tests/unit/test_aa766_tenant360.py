@@ -123,7 +123,7 @@ class TestRateLimitOverride:
     @pytest.mark.asyncio
     async def test_rpm_needs_admin_role(self):
         with pytest.raises(HTTPException) as e:
-            await self._patch(_conn(), {"rate_limit_rpm": 120}, role="reviewer")
+            await self._patch(_conn(), {"rate_limit_rpm": 120}, role="content")
         assert e.value.status_code == 403
 
     def test_rpm_bounds_validated(self):

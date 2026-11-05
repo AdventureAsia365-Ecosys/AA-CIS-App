@@ -35,8 +35,8 @@ Principal (GĐ1, until the staff JWT of GĐ4)
 Roles and tenant scope (AA-1035 R2 slice 1, root ADR 0019 d3 / d4)
 ------------------------------------------------------------------
 - Eight roles plus the read-only viewer (clarifications.md section 3 in the root S265 audit): admin, content_lead,
-  content, tenant_qa, customer_success, support, finance, ai_ops. reviewer is an ALIAS of content for one release
-  (cis-reviewer group, CIS 363 merged its rows). Each role is one explicit capability set below: deny by default.
+  content, tenant_qa, customer_success, support, finance, ai_ops. reviewer merged into content (CIS 363) and its
+  alias is gone (CIS 375). Each role is one explicit capability set below: deny by default.
 - A POLICY entry is one capability, or a tuple of capabilities of which the caller needs ANY (``any_of``), e.g. the
   Tenants directory read is tenant.read (every tenant), tenant.book.read (the caller's book) or billing.read.
 - tenant.read keeps its meaning "read every tenant": only admin holds it. customer_success and support hold
@@ -133,14 +133,19 @@ LAB_TENANT_TEXT_READ = "lab.tenant_text.read"
 # tenant desk roles (customer_success, support, finance) hold no content.read, so the bell answered them 403. Each
 # role sees only the rows meant for it (api/routers/admin.py notification_scope).
 NOTIFICATIONS_READ = "notifications.read"
+# AA-1035 R2 close-out (matrix "Tenant QA: customer_success R (own)"): the Tenant QA lists and details (T9 pieces, T2
+# tour versions, gate stats) of the caller's book only. The routes filter by api/core/tenant_scope.tenant_scope_filter
+# (a piece or version of another tenant is a 404); labels, place cards, compliance and every write stay
+# tenant_content.read / quality.write.
+TENANT_CONTENT_BOOK_READ = "tenant_content.book.read"
 
 _CONTENT_WORK = frozenset({CONTENT_READ, CONTENT_WRITE, REVIEW_ACT})
 
 # AA-1035 R2: one explicit set per role (deny by default: a capability a role does not list here is refused). The
 # matrix is root docs/audits/2026-11-03-S265-ecosystem-restructure/clarifications.md section 3; the column a row
 # implements is named after it. Slice 2 (S268) adds view-as (tenant.view_as), the logged Writing Lab read of ai_ops
-# (lab.tenant_text.read) and the bell of every role (notifications.read). Still left out: Tenant QA reads of the own
-# tenants for customer_success (matrix "Tenant QA R (own)").
+# (lab.tenant_text.read) and the bell of every role (notifications.read). The close-out (S269) adds the Tenant QA
+# reads of the own tenants for customer_success (tenant_content.book.read; matrix "Tenant QA R (own)").
 ROLE_PERMS: dict[str, frozenset[str]] = {
     "admin": _CONTENT_WORK | {
         MASTER_ADMIN, ATOMS_WRITE, PHOTOS_WRITE, A4_UNPUBLISH, QUALITY_WRITE, CONTENT_SETTINGS_WRITE,
@@ -157,17 +162,16 @@ ROLE_PERMS: dict[str, frozenset[str]] = {
     },
     # AA Catalogue R + W of the writing (upload, S1 rewrite, review); never master lifecycle, atoms or tenants.
     "content": _CONTENT_WORK | {CATALOG_READ, NOTIFICATIONS_READ},
-    # ALIAS of content for one release (root ADR 0019 d3; group cis-reviewer). Same set as content.
-    "reviewer": _CONTENT_WORK | {CATALOG_READ, NOTIFICATIONS_READ},
     # Tenant QA W, AA Catalogue R, Writing Lab R.
     "tenant_qa": frozenset({CONTENT_READ, CATALOG_READ, TENANT_CONTENT_READ, QUALITY_WRITE, A4_UNPUBLISH, LAB_READ,
                             NOTIFICATIONS_READ}),
     # Tenants directory R / Tenant 360 W of the own book except billing (tenant_scope.py; tenant.book.write), members
     # and invitations but never the owner role (tenant.write); plans and add-ons R, AI & spend R and Tenant QA R of the
-    # own tenants (tenant.book.account.read). Slice 2: read-only view-as of the own book (tenant.view_as).
+    # own tenants (tenant.book.account.read). Slice 2: read-only view-as of the own book (tenant.view_as). Close-out:
+    # the Tenant QA lists and details of the own book (tenant_content.book.read).
     "customer_success": frozenset({
         TENANT_BOOK_READ, TENANT_BOOK_ACCOUNT_READ, TENANT_BOOK_WRITE, TENANT_MEMBER_WRITE, TENANT_MEMBER_RESEND,
-        TENANT_VIEW_AS, NOTIFICATIONS_READ,
+        TENANT_VIEW_AS, NOTIFICATIONS_READ, TENANT_CONTENT_BOOK_READ,
     }),
     # Tenants directory R / Tenant 360 R of the own book and the pool; sends an existing non-owner invitation again
     # (tenant.member.resend), nothing else. Never plans, billing, usage, cost, Tenant QA or AI spend (no
@@ -257,6 +261,8 @@ _LAB_READ = any_of(TENANT_CONTENT_READ, LAB_READ)                          # Wri
 # logged before it runs (api/core/lab_read_log.py LAB_TEXT_LOGGED on the route; tests/unit/test_aa1035_s2_lab_read.py
 # keeps the two in step and keeps this capability off every route outside /admin/writing-memory/).
 _LAB_TEXT_READ = any_of(TENANT_CONTENT_READ, LAB_TENANT_TEXT_READ)
+# AA-1035 close-out: Tenant QA lists / details; customer_success sees its book only (the routes filter by scope).
+_TENANT_QA_READ = any_of(TENANT_CONTENT_READ, TENANT_CONTENT_BOOK_READ)
 
 POLICY: dict[tuple[str, str], Any] = {
     # ── admin_llm_ops — stage model, fallback route, catalog (GĐ1)
@@ -516,18 +522,19 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/a4/publish-log"): TENANT_CONTENT_READ,
     ("GET", "/admin/a4/review-log"): TENANT_CONTENT_READ,
     # ── admin_content_quality — T2/T9 quality (admin-only page; the BFF API_WRITE_RULES agree).
-    # The reads show every tenant's pieces and tour versions: tenant.read.
-    ("GET", "/admin/content-quality/pieces"): TENANT_CONTENT_READ,
+    # The reads show every tenant's pieces and tour versions: tenant_content.read; the lists, details and stats also
+    # tenant_content.book.read (customer_success: the own book only, filtered in the routes).
+    ("GET", "/admin/content-quality/pieces"): _TENANT_QA_READ,
     # AA-1042 (admin_llm_route.quality_router): every tenant's T2 versions / T9 pieces a fallback model wrote
     ("GET", "/admin/content-quality/fallback-writes"): TENANT_CONTENT_READ,
-    ("GET", "/admin/content-quality/pieces/{piece_id}"): TENANT_CONTENT_READ,
+    ("GET", "/admin/content-quality/pieces/{piece_id}"): _TENANT_QA_READ,
     ("GET", "/admin/content-quality/pieces/{piece_id}/label"): TENANT_CONTENT_READ,
     ("GET", "/admin/content-quality/place-cards"): TENANT_CONTENT_READ,
     ("GET", "/admin/content-quality/place-cards/duplicates"): TENANT_CONTENT_READ,
     ("GET", "/admin/content-quality/place-cards/{card_id}"): TENANT_CONTENT_READ,
-    ("GET", "/admin/content-quality/stats"): TENANT_CONTENT_READ,
-    ("GET", "/admin/content-quality/tour-versions"): TENANT_CONTENT_READ,
-    ("GET", "/admin/content-quality/tour-versions/{version_id}"): TENANT_CONTENT_READ,
+    ("GET", "/admin/content-quality/stats"): _TENANT_QA_READ,
+    ("GET", "/admin/content-quality/tour-versions"): _TENANT_QA_READ,
+    ("GET", "/admin/content-quality/tour-versions/{version_id}"): _TENANT_QA_READ,
     ("GET", "/admin/content-quality/tour-versions/{version_id}/label"): TENANT_CONTENT_READ,     # AA-923 WM-32
     ("GET", "/admin/content-quality/a1-content/{content_id}/label"): TENANT_CONTENT_READ,
     ("GET", "/admin/tenant-qa/compliance"): TENANT_CONTENT_READ,                                  # AA-1039 R6
@@ -629,15 +636,19 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/platform/cost"): SPEND_READ,
     # ── admin_crm_console (AA-941, CRM-13a S-01) — the partner CRM's L1 console, relayed with the staff member's own
     # Cognito token; the CRM re-checks its own groups (cis-admin / crm-platform-admin read, crm-platform-admin writes).
-    ("GET", "/admin/platform/crm/console"): TENANT_READ,
-    ("GET", "/admin/platform/crm/agencies"): TENANT_READ,
+    # AA-1035 R2 close-out (root ADR 0019 d4): the desk roles read the CRM L1 console of their book. CIS scopes the
+    # {tenant_id} reads (require_tenant_scope) and filters the agency list (admin_crm_console.py); the CRM serves a
+    # desk caller only the tenants CIS reports for it (tenant.membership.v1 getStaffTenantScope). Usage and
+    # entitlements are the account reads (customer_success, never support); writes stay tenant.write.
+    ("GET", "/admin/platform/crm/console"): _TENANT_ONE_READ,
+    ("GET", "/admin/platform/crm/agencies"): _TENANT_ONE_READ,
     ("POST", "/admin/platform/crm/agencies"): TENANT_WRITE,
-    ("GET", "/admin/platform/crm/agencies/{tenant_id}"): TENANT_READ,
-    ("GET", "/admin/platform/crm/agencies/{tenant_id}/usage"): TENANT_READ,
-    ("GET", "/admin/platform/crm/agencies/{tenant_id}/entitlements"): TENANT_READ,
-    ("GET", "/admin/platform/crm/agencies/{tenant_id}/data-requests"): TENANT_READ,
-    ("GET", "/admin/platform/crm/agencies/{tenant_id}/members"): TENANT_READ,
-    ("GET", "/admin/platform/crm/agencies/{tenant_id}/jobs"): TENANT_READ,
+    ("GET", "/admin/platform/crm/agencies/{tenant_id}"): _TENANT_ONE_READ,
+    ("GET", "/admin/platform/crm/agencies/{tenant_id}/usage"): _TENANT_ACCOUNT_READ,
+    ("GET", "/admin/platform/crm/agencies/{tenant_id}/entitlements"): _TENANT_ACCOUNT_READ,
+    ("GET", "/admin/platform/crm/agencies/{tenant_id}/data-requests"): _TENANT_ONE_READ,
+    ("GET", "/admin/platform/crm/agencies/{tenant_id}/members"): _TENANT_ONE_READ,
+    ("GET", "/admin/platform/crm/agencies/{tenant_id}/jobs"): _TENANT_ONE_READ,
     ("POST", "/admin/platform/crm/agencies/{tenant_id}/lock"): TENANT_WRITE,
     ("POST", "/admin/platform/crm/agencies/{tenant_id}/unlock"): TENANT_WRITE,
     ("POST", "/admin/platform/crm/agencies/{tenant_id}/owner-invite"): TENANT_WRITE,

@@ -22,6 +22,7 @@ import {
   memberActions,
   memberPath,
   memberPermissions,
+  sendAgainBody,
   memberRowActions,
   membersAccessPath,
   removePath,
@@ -101,12 +102,12 @@ test("members access: the API's answer decides, the role is ignored once it answ
   const admin = memberPermissions(ADMIN, false, false);
   assert.deepEqual(admin, {
     settled: true, invite: true, sendAgain: true, changeRole: true, remove: true, inviteRoles: [...STUDIO_ROLES],
-    ownerWrites: true,
+    ownerWrites: true, sendAgainSame: false, sendAgainNew: true,   // an answer without send_again_to: typed only
   });
   const ro = memberPermissions(READ_ONLY, false, true);
   assert.deepEqual(ro, {
     settled: true, invite: false, sendAgain: false, changeRole: false, remove: false, inviteRoles: [],
-    ownerWrites: false,
+    ownerWrites: false, sendAgainSame: false, sendAgainNew: false,
   });
   assert.equal(anyMemberWrite(ro), false);
   assert.equal(anyMemberWrite(admin), true);
@@ -218,3 +219,26 @@ test("members access: the Members tab and the agency drawer read it, not the rol
   assert.ok(hook.includes("membersAccessPath(id)") && hook.includes('can(role, "tenant.write")'));
 });
 
+
+test("send again (AA-1035 close-out): the kept address for support, a typed one only where the API allows it", () => {
+  const support = memberPermissions({
+    read_only: false, actions: { invite: false, send_again: true, change_role: false, remove: false },
+    invite_roles: ["editor", "viewer"], owner_writes: false,
+    send_again_to: { same_address: true, new_address: false },
+  }, false, false);
+  assert.equal(support.sendAgainSame, true);
+  assert.equal(support.sendAgainNew, false);
+  const cs = memberPermissions({
+    read_only: false, actions: { invite: true, send_again: true, change_role: true, remove: true },
+    invite_roles: ["editor", "viewer"], owner_writes: false,
+    send_again_to: { same_address: true, new_address: true },
+  }, false, false);
+  assert.ok(cs.sendAgainSame && cs.sendAgainNew);
+  // no send again at all: neither way
+  const none = memberPermissions({ read_only: true, actions: {}, send_again_to: { same_address: true } }, false, false);
+  assert.ok(!none.sendAgainSame && !none.sendAgainNew);
+  // the body: no address = the kept one; a typed one only when not sending to the kept address
+  assert.deepEqual(sendAgainBody(true, "someone@agency.example", "en"), { locale: "en" });
+  assert.deepEqual(sendAgainBody(false, "  ", "vi"), { locale: "vi" });
+  assert.deepEqual(sendAgainBody(false, " someone@agency.example ", "en"), { email: "someone@agency.example", locale: "en" });
+});

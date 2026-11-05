@@ -161,7 +161,7 @@ async def test_label_routes_503_before_migration_231(call):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("role", [None, "reviewer", "content"])
+@pytest.mark.parametrize("role", [None, "content", "content"])
 async def test_label_routes_are_admin_only(role):
     for call in (cq.get_piece_label(PIECE, _request(AsyncMock()), **_hdr(x_admin_role=role)),
                  cq.set_piece_label(PIECE, cq.PieceLabelBody(label="light"), _request(AsyncMock()),

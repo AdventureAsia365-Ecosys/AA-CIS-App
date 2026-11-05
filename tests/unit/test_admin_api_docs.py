@@ -35,7 +35,7 @@ def test_wrong_secret_403(client):
 
 def test_right_secret_but_not_admin_role_403(client):
     """Reviewer/content staff share the backend secret; the role keeps them out."""
-    for role in (None, "reviewer", "content", "tenant"):
+    for role in (None, "content", "tenant"):
         headers = {"X-Admin-Secret": SECRET}
         if role:
             headers["x-admin-role"] = role
