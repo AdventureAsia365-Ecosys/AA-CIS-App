@@ -69,6 +69,14 @@ Scope addition of S267: the AI gateway Guide tab renders the one prose source of
 
 - **Order:** the root PR (vi twin, generator schema 2, recaptured snapshot, drift guard) merges first. Its Docs sync
   run uploads `ARCH-01-ai-gateway` and the `.vi.md`. Until then the tab shows the "not published yet" note.
+- **The root branch is not pushable until the snapshot is recaptured (review fix pass).** The lane cannot run ECS exec,
+  so the committed snapshot stays the schema-1 capture of 2026-11-04 (labelled 1, as on master). The generator now
+  keeps the label equal to the payload: schema 2 needs both `connections` and `deployments`, schema 1 neither, and a
+  relabelled schema-1 file is refused by `gen_llm_routes.py check`. The new docs-lint step `check_ai_gateway_names.py`
+  stays strict and fails on a schema-1 snapshot, so the orchestrator runs `dump` in the CIS api container, `import`,
+  commits, and re-runs both checks before pushing. A local simulation (current models + the CIS 376 keys + the
+  connection keys the CIS migrations seed) passes the guard with 60 names checked, so no page edit is expected; if the
+  live capture lacks a key the page names (for example CIS 376 not applied yet), correct both language pages.
 - Integration tests: `tests/integration/test_aa1042_guide_db.py` (a saved route change shows in the guide with its
   version; a probe refusal moves `first` and is listed in `skipped`; the register / caps carry no account ID). Unit:
   `tests/unit/test_aa1042_guide.py` (owner tier never read, missing / unavailable notes, reader flag per role, names
