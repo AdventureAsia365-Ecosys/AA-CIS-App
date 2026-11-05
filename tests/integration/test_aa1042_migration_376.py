@@ -59,7 +59,10 @@ def _set_376_aside(c) -> None:
     c.execute("DELETE FROM shared.llm_model_catalog WHERE model_key = ANY (%s)", (list(NEW_ROWS),))
     c.execute("UPDATE shared.llm_model_catalog SET enabled = false, updated_by = 'migration-367-aa1026', "
               "blocked_reason = 'Candidate (CIS 367): not routed.' WHERE model_key = ANY (%s)", (list(CANDIDATES),))
-    c.execute("DELETE FROM shared.llm_route_config_version WHERE created_by = %s", (ACTOR,))
+    # One statement from 376's first version on: a revert row another test committed in this shard may point at it
+    # (reverted_from FK, checked at the end of the statement), S270 CIS #1329 shard 1.
+    c.execute("DELETE FROM shared.llm_route_config_version WHERE version >= "
+              "(SELECT min(version) FROM shared.llm_route_config_version WHERE created_by = %s)", (ACTOR,))
     c.execute("UPDATE shared.llm_route_settings SET current_version = "
               "(SELECT max(version) FROM shared.llm_route_config_version) WHERE singleton")
     c.execute("DELETE FROM shared.schema_versions WHERE version = '376'")

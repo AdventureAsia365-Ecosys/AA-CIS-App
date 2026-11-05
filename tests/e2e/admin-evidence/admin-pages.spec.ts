@@ -45,6 +45,8 @@ const PAGES = [
   // AA-1039 R6 slice 2: Tenant QA › Compliance (lib/rbac.ts prefix /admin/tenant-qa = TENANT_QA, which includes admin;
   // the visual job's E2E reviewer is not in TENANT_QA, so only this run shoots it).
   '/admin/tenant-qa/compliance',
+  // AA-1042 (S270): AI gateway › Guide (the gateway page from the docs catalog plus the live tables).
+  '/admin/ai-gateway?tab=guide',
 ] as const;
 // A page whose loaded content is not a table row: its ready marker (rendered only once its data answered).
 const READY: Partial<Record<(typeof PAGES)[number], string>> = {
@@ -52,6 +54,7 @@ const READY: Partial<Record<(typeof PAGES)[number], string>> = {
   '/admin/lab/t9-social?tab=releases': '[data-testid="lab-releases-ready"]',
   '/admin/lab/t9-social?tab=metrics': '[data-testid="lab-metrics-ready"]',
   '/admin/ai-gateway?tab=routing': '[data-testid="ai-gateway-data-class"]',
+  '/admin/ai-gateway?tab=guide': '[data-testid="ai-gateway-guide-live-ready"]',
   '/admin/spend?tab=apps': '[data-testid="platform-cost-ready"]',
   '/admin/tenants/00000000-0000-0000-0000-000000000001': '[data-testid="tenant360-ready"]',
   '/admin/settings': '[data-testid="admin-content-ready"]',

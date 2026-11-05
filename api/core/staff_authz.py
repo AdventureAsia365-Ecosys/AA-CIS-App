@@ -336,6 +336,8 @@ POLICY: dict[tuple[str, str], Any] = {
     ("DELETE", "/admin/ai-gateway/capacity/{connection_key}/{model_key}"): AI_ADMIN,  # AA-1025 H2: audited
     # AA-1042 (S268): the Route control tab (order mode, chains, provider order, presets, versions); writes audited
     ("GET", "/admin/ai-gateway/route-control"): SPEND_READ,
+    # AA-1042 (S270): the Guide tab, one fixed staff-tier docs page (ARCH-01-ai-gateway) + the live gateway tables
+    ("GET", "/admin/ai-gateway/guide"): SPEND_READ,
     ("POST", "/admin/ai-gateway/route-control/preview"): AI_ADMIN,              # $0, no model call
     ("POST", "/admin/ai-gateway/route-control/save"): AI_ADMIN,
     ("POST", "/admin/ai-gateway/route-control/presets/{preset}"): AI_ADMIN,

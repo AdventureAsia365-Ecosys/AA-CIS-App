@@ -24,6 +24,14 @@
   GET /admin/ai-gateway/experiments        the Models & trials Experiments section: the prompt register
                                            (shared.prompt_version, AA-900) and the newest evaluation runs
                                            (shared.prompt_eval_runs).                                        spend.read
+  GET /admin/ai-gateway/guide              (AA-1042, S270) the Guide tab: the prose source of the gateway (root
+                                           docs/architecture/ai-gateway.md, catalog id ARCH-01-ai-gateway, and its
+                                           Vietnamese copy, staff tier only, from the Docs sync bundle) plus the live
+                                           tables: routes with the deployment that serves each stage first, the model x
+                                           connection matrix, the connection register (secret names only), the
+                                           connection caps and the stage coverage (api/services/ai_gateway_guide.py).
+                                           This exposes that ONE staff-tier docs page to finance and ai_ops, who cannot
+                                           open /admin/docs (ops.read).                                       spend.read
   GET /admin/ai-gateway/access             (AA-1025 C1 follow-up) which of the page's writes the caller may use:
                                            each answer is staff_authz.denial_reason on that write's own route, so
                                            the page hides exactly what the API would refuse (a read-only session,
@@ -86,8 +94,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from api.core.staff_authz import StaffPrincipal, denial_reason, staff_policy
 from api.core.tenant_scope import TENANT_SCOPED
 from api.routers.admin import verify_admin_secret
-from api.services import (ai_gateway, ai_gateway_calls, ai_gateway_experiments, crm_console, platform_apps,
-                          tenant_ai_budget)
+from api.services import (ai_gateway, ai_gateway_calls, ai_gateway_experiments, ai_gateway_guide, crm_console,
+                          platform_apps, tenant_ai_budget)
 from services.acp_shared.audit_log import write_audit_log
 from shared import provider_credit
 from shared.llm_client import app_profile, capacity
@@ -224,6 +232,17 @@ def page_access(principal: StaffPrincipal) -> dict:
 @router.get("/access", summary="Which write controls of the AI providers page the caller may use (UI hint, $0)")
 async def get_access(principal: StaffPrincipal = Depends(staff_policy)) -> dict:
     return page_access(principal)
+
+
+# AA-1042: the docs reader route whose POLICY decides whether the Guide's links may open /admin/docs for this caller.
+DOCS_READER_ROUTE = ("GET", "/admin/docs/page")
+
+
+@router.get("/guide", summary="The AI gateway guide: the prose page from the docs catalog plus the live route, "
+                              "matrix, register, caps and coverage tables (read-only, $0)")
+async def get_guide(request: Request, principal: StaffPrincipal = Depends(staff_policy)) -> dict:
+    reader = denial_reason(principal, *DOCS_READER_ROUTE) is None
+    return await ai_gateway_guide.read_guide(request.app.state.pool, reader=reader)
 
 
 # ── AA-1016 UI (C4): one tenant's monthly AI budget (Tenant 360 › Cost) ────────────────────────────────────────────
