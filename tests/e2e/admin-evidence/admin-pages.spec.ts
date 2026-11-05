@@ -177,6 +177,18 @@ test.describe('AA-816 A10b — admin evidence as the Dev-only E2E CIS admin', ()
       await page.emulateMedia({ colorScheme: 'light' });
     }
 
+    // ── 7a. AA-1035 (directory capability UI): the admin keeps every Directory write control (the desk roles get
+    //        none, cs-scope.spec.ts). Nothing is clicked. ──
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/admin/tenants', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('table tbody tr').first()).toBeVisible({ timeout: 30000 });
+    await expect(page.getByRole('button', { name: /new tenant/i }), 'admin still creates tenants').toBeVisible();
+    await expect(page.getByRole('button', { name: /^(offboard|restore)$/i }).first(), 'admin still offboards')
+      .toBeVisible();
+    await expect(page.locator('table tbody').getByRole('button', { name: /^(active|suspended)$/i }).first(),
+      'a clickable status pill').toBeVisible();
+    await shot(page, 'tenants-directory-admin-desktop-light', true);
+
     // ── 7b. AA-898 docs reader: the EN / VI switch on a translated page, an owner-only page (docs.owner_read: Dev
     //        only, is_owner stays false), and a Mermaid diagram + callouts when such pages are published ──
     const manifestRes = await page.context().request.get(`${CIS_PROD_ORIGIN}/api/admin/docs/manifest`, { timeout: 30000 });
