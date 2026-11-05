@@ -123,7 +123,7 @@ def conn():
 
 
 def _add_staff(cur, **cols):
-    cols = {"id": str(uuid.uuid4()), "username": f"aa854-{uuid.uuid4().hex[:8]}", "role": "reviewer", **cols}
+    cols = {"id": str(uuid.uuid4()), "username": f"aa854-{uuid.uuid4().hex[:8]}", "role": "content", **cols}
     names = ", ".join(cols)
     marks = ", ".join(["%s"] * len(cols))
     cur.execute(f"INSERT INTO shared.admin_users ({names}) VALUES ({marks})", list(cols.values()))

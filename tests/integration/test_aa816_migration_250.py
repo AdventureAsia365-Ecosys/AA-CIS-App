@@ -74,6 +74,8 @@ def applied_250():
     a.execute("DELETE FROM shared.admin_users WHERE email = %s", (E2E,))
     # Start from the 247 rule (whatever ran before), so the file really replaces it.
     a.execute(RESTORE_247)
+    # CIS 375 forbids 'reviewer' rows (the alias removed); this module tests the A10 reviewer rule of its own file.
+    a.execute("ALTER TABLE shared.admin_users DROP CONSTRAINT IF EXISTS admin_users_role_not_alias_chk")
     a.execute("DELETE FROM shared.schema_versions WHERE version = '250'")
     table_owner, reg_owner = _owners(a)
     runner = None

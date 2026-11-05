@@ -80,11 +80,11 @@ async def test_create_change_disable_enable_against_postgres(env):
     cognito = RecordingCognito()
 
     res = await sd.create_staff(pool, cognito, actor_id=owner, email=email.upper(), display_name="C6 Person",
-                                role="reviewer", booking_role="sales")
+                                role="content_lead", booking_role="sales")
     assert res.created and res.status == sd.STATUS_OK
     row = await pool.fetchrow("SELECT username, password_hash, role::text AS role, email, display_name, is_active, "
                               "is_owner FROM shared.admin_users WHERE id = $1::uuid", res.staff_id)
-    assert dict(row) == {"username": f"aa816c6.{tag}", "password_hash": None, "role": "reviewer", "email": email,
+    assert dict(row) == {"username": f"aa816c6.{tag}", "password_hash": None, "role": "content_lead", "email": email,
                          "display_name": "C6 Person", "is_active": True, "is_owner": False}
     grant = await pool.fetchval("SELECT role FROM shared.staff_app_grant WHERE admin_user_id = $1::uuid "
                                 "AND app = 'booking'", res.staff_id)
@@ -94,7 +94,8 @@ async def test_create_change_disable_enable_against_postgres(env):
     assert [a["action"] for a in audit] == ["staff.created"]
     assert audit[0]["actor"] == f"admin:{owner}"
     assert json.loads(audit[0]["details"])["booking_role"] == "sales"
-    assert cognito.calls == [("create_user", email), ("add", email, "cis-reviewer"), ("add", email, "booking-sales")]
+    assert cognito.calls == [("create_user", email), ("add", email, "cis-content_lead"),
+                             ("add", email, "booking-sales")]
 
     # The Booking grant: change (upsert), then remove.
     await sd.change_roles(pool, cognito, actor_id=owner, staff_id=res.staff_id, role="content",
@@ -133,7 +134,7 @@ async def test_refused_writes_leave_nothing_behind(env):
     with pytest.raises(sd.StaffDirectoryError):
         await sd.disable_staff(pool, cognito, actor_id=owner, staff_id=owner)
     with pytest.raises(sd.StaffDirectoryError):
-        await sd.change_roles(pool, cognito, actor_id=owner, staff_id=owner, role="reviewer")
+        await sd.change_roles(pool, cognito, actor_id=owner, staff_id=owner, role="content")
     assert await pool.fetchval("SELECT is_active AND role = 'admin' FROM shared.admin_users WHERE id = $1::uuid",
                                owner) is True
     # a non-owner actor: nothing is inserted

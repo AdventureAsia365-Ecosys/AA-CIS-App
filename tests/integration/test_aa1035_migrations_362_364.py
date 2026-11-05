@@ -22,6 +22,10 @@ FILES = [
     os.path.join(_MIG, "363_staff_roles_reviewer_merge_finance_grant.sql"),
     os.path.join(_MIG, "364_staff_tenant_assignment.sql"),
 ]
+# CIS 375 (the alias removed) forbids 'reviewer' rows; this module tests the state 363 left, so it drops that CHECK
+# first and re-applies 375 at the end (tests/integration/test_aa1035_migration_375.py tests 375 itself).
+MIG_375 = os.path.join(_MIG, "375_admin_users_reviewer_alias_removed.sql")
+DROP_ALIAS_CHK = "ALTER TABLE shared.admin_users DROP CONSTRAINT IF EXISTS admin_users_role_not_alias_chk"
 E2E = "e2e@e2e-mail.lumiguides.it.com"
 NEW_ROLES = ("content_lead", "tenant_qa", "customer_success", "support", "finance", "ai_ops")
 DEV_DEFAULT_ACL = "ALTER DEFAULT PRIVILEGES IN SCHEMA shared GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO cis_app"
@@ -65,6 +69,7 @@ def applied():
     cur.execute("DELETE FROM shared.admin_users WHERE username LIKE 'aa1035-%%' OR email = %s", (E2E,))
     # Rows that 363 must merge (a company reviewer) and keep (the A10 E2E reviewer), written under the 283 rule.
     cur.execute("ALTER TABLE shared.admin_users DROP CONSTRAINT IF EXISTS admin_users_email_chk")
+    cur.execute(DROP_ALIAS_CHK)
     merged = _staff(cur, role="reviewer", email=f"aa1035-{uuid.uuid4().hex[:6]}@adventure.asia")
     e2e = _staff(cur, role="reviewer", email=E2E)
     cur.execute("DELETE FROM shared.schema_versions WHERE version IN ('362', '363', '364')")
@@ -82,6 +87,7 @@ def applied():
     yield {"merged": merged, "e2e": e2e}
     cur.execute("DELETE FROM shared.admin_users WHERE username LIKE 'aa1035-%%'")
     cur.execute("DELETE FROM shared.tenants WHERE slug LIKE 'zephyr-%%'")
+    _apply(MIG_375)   # back to the current rule (the E2E row, if any, becomes content)
     c.close()
 
 
