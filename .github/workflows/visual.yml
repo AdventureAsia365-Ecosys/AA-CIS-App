@@ -6,11 +6,20 @@ name: Visual
 # 390 x 844, light and dark, asserting: no page-level horizontal overflow (the document AND the kit frame, which
 # scrolls on its own), 0 console errors, no failed same-origin request, the kit frame present, the theme applied.
 # Screenshots + report.json are the artifact `visual-cis-<target>-<run id>` (14 days); the job summary and one PR
-# comment carry the page x 4 table. Report-only: no required check (H3, the tech lead's branch-protection step, makes
-# it required later).
+# comment carry the page x 4 table.
+#
+# Required check (AA-1008 H3): the job `pr` reports on EVERY pull request and on the merge queue (merge_group), so it
+# can be a required status check; its name "Visual (next start, public pages + kit gallery)" is the required context
+# (the tech lead's branch-protection script and verify-h3.sh pin it: never rename it). There is no `paths:` filter (a
+# required check must report on every PR, and merge_group ignores path filters): the job's first step after the
+# checkout, Scope, diffs the PR (or the queue group) against its base and matches the old filter's path list; no match
+# = "no frontend change" in the summary, every later step skipped, the job green. The skip is step-level on purpose: a
+# separate scope job with a job-level if/needs reports "skipped", which GitHub counts as passed even when the scope job
+# itself failed.
 #
 # Jobs:
-#   pr        pull_request (frontend / visual files) and dispatch without base_url: `next build` with KIT_GALLERY=1 and
+#   pr        pull_request and merge_group (frontend / visual files, decided by the Scope step) and dispatch without
+#             base_url: `next build` with KIT_GALLERY=1 and
 #             `next start` in the runner, no session and no backend: the public pages that changed + the gated kit
 #             gallery (every core component, incl. the ShellFrame demo). It first runs the SELF-TEST: the gallery
 #             with a planted overflow (document and frame) must make the run fail, and summary.mjs --selftest checks
@@ -22,14 +31,12 @@ name: Visual
 #             never the HTML report or the auth state (a `fill` step would name the typed code).
 
 on:
+  # No `paths:` (AA-1008 H3): the Scope step of job `pr` matches the path list, so the check reports on every PR.
   pull_request:
     branches: [main]
-    paths:
-      - "frontend/**"
-      - "tests/e2e/visual/**"
-      - "tests/e2e/smoke/smoke-helpers.ts"
-      - "playwright.config.ts"
-      - ".github/workflows/visual.yml"
+  # The merge queue (AA-889) tests each group on a gh-readonly-queue/main/* commit and waits for every required check.
+  merge_group:
+    types: [checks_requested]
   workflow_call:
     inputs:
       base_url:
@@ -66,6 +73,8 @@ permissions:
   contents: read
   pull-requests: write
 
+# A PR's newer push cancels its older run; a merge_group run (no PR number, no base_url) has its own run_id group, so
+# two queue groups never cancel each other.
 concurrency:
   group: visual-${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.base_url || github.run_id }}
   cancel-in-progress: true
@@ -73,7 +82,9 @@ concurrency:
 jobs:
   pr:
     name: Visual (next start, public pages + kit gallery)
-    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.base_url == '')
+    if: >-
+      github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.base_url == '') ||
+      github.event_name == 'merge_group'
     # Pinned like ui-smoke.yml: Playwright's Chromium is not supported on ubuntu 26.04 yet.
     runs-on: ubuntu-24.04
     timeout-minutes: 40
@@ -86,22 +97,59 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # AA-1008 H3: the old pull_request `paths:` list, matched here (renames count by both names). A dispatch runs
+      # every step. A diff that cannot be computed runs the full check (never a silent skip).
+      - name: Scope
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          GROUP_BASE: ${{ github.event.merge_group.base_sha }}
+        run: |
+          case "$EVENT" in
+            pull_request) BASE=${BASE_REF:+origin/$BASE_REF} ;;
+            merge_group) BASE=$GROUP_BASE ;;
+            *) echo "run=true" >> "$GITHUB_OUTPUT"; echo "Scope: $EVENT runs every step"; exit 0 ;;
+          esac
+          if [ -z "$BASE" ] || ! FILES=$(git diff --name-only --no-renames "$BASE...HEAD"); then
+            echo "::warning::no base commit, or git diff ${BASE:-(none)}...HEAD failed: running the full visual check"
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          MATCHED=$(printf '%s\n' "$FILES" \
+            | grep -E '^(frontend/|tests/e2e/visual/|tests/e2e/smoke/smoke-helpers\.ts$|playwright\.config\.ts$|\.github/workflows/visual\.yml$)' \
+            || true)
+          if [ -n "$MATCHED" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "Scope: $(printf '%s\n' "$MATCHED" | wc -l) frontend / visual file(s) changed"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "### Visual — no frontend change (nothing to capture)" >> "$GITHUB_STEP_SUMMARY"
+            echo "Scope: no frontend change; every later step is skipped and the check is green"
+          fi
+
       - name: Set up Node 22
+        if: steps.scope.outputs.run == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
 
+      # merge_group has no github.base_ref: the queue group is diffed against its base commit.
       - name: Changed pages
         id: pages
+        if: steps.scope.outputs.run == 'true'
         env:
           EVENT: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
+          MERGE_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           PAGES: ${{ inputs.pages }}
         run: |
           if [ "$EVENT" = "pull_request" ]; then
             SLUGS=$(node --experimental-strip-types --no-warnings tests/e2e/visual/changed-pages.mjs "origin/$BASE_REF" HEAD)
+          elif [ "$EVENT" = "merge_group" ]; then
+            SLUGS=$(node --experimental-strip-types --no-warnings tests/e2e/visual/changed-pages.mjs "$MERGE_BASE_SHA" HEAD)
           else
             SLUGS=${PAGES:-all}
           fi
@@ -109,6 +157,7 @@ jobs:
           echo "Changed pages: ${SLUGS:-none}"
 
       - name: Build the frontend with the kit gallery (KIT_GALLERY=1) and start it
+        if: steps.scope.outputs.run == 'true'
         working-directory: frontend
         env:
           KIT_GALLERY: "1"
@@ -126,6 +175,7 @@ jobs:
 
       # `npm install`, not `npm ci`: the repo root's package-lock.json is gitignored (lesson S220).
       - name: Install Playwright (repo root)
+        if: steps.scope.outputs.run == 'true'
         run: |
           npm install --no-audit --no-fund
           npx playwright install --with-deps chromium
@@ -133,6 +183,7 @@ jobs:
       # The planted overflow (document and frame) must be caught: the Playwright run must fail and every planted
       # capture must show its overflow in the report. A green self-test means the assertion is broken.
       - name: Self-test (a planted overflow must fail the run)
+        if: steps.scope.outputs.run == 'true'
         env:
           VISUAL_SELFTEST: "1"
         run: |
@@ -144,6 +195,7 @@ jobs:
           rm -rf tests/e2e/results/visual
 
       - name: Capture and check
+        if: steps.scope.outputs.run == 'true'
         env:
           VISUAL_AUTH: public
           VISUAL_GALLERY: "1"
@@ -151,7 +203,7 @@ jobs:
         run: npx playwright test -c playwright.config.ts --project=visual-1440 --project=visual-390 --reporter=list
 
       - name: Summary
-        if: always()
+        if: always() && steps.scope.outputs.run == 'true'
         env:
           SLUGS: ${{ steps.pages.outputs.slugs }}
         run: |
@@ -165,7 +217,7 @@ jobs:
           } | tee tests/e2e/results/visual/summary.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload screenshots and report
-        if: always()
+        if: always() && steps.scope.outputs.run == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: visual-cis-pr-${{ github.run_id }}
@@ -175,9 +227,9 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      # One comment per PR (marker), edited in place. All values reach `run:` through env.
+      # One comment per PR (marker), edited in place. All values reach `run:` through env. Never on merge_group.
       - name: Comment the summary on the PR
-        if: always() && github.event_name == 'pull_request'
+        if: always() && steps.scope.outputs.run == 'true' && github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -199,7 +251,8 @@ jobs:
     # The mailbox role trusts refs/heads/main + environment e2e only; inside a called workflow github.ref is the caller's.
     if: >-
       github.ref == 'refs/heads/main' &&
-      (github.event_name != 'workflow_dispatch' || inputs.base_url != '') && github.event_name != 'pull_request'
+      (github.event_name != 'workflow_dispatch' || inputs.base_url != '') && github.event_name != 'pull_request' &&
+      github.event_name != 'merge_group'
     runs-on: ubuntu-24.04
     environment: e2e
     timeout-minutes: 45

@@ -456,7 +456,7 @@ def test_sync_workflow_token_is_main_only_and_narrowed_to_one_consumer():
 
 def test_consumers_workflow_reads_no_secret_and_has_a_stable_result_job():
     wf = _wf(CONSUMERS_WF)
-    assert set(wf["on"]) == {"pull_request"}
+    assert set(wf["on"]) == {"pull_request", "merge_group"}  # AA-1008 H3: a required check
     assert wf["permissions"] == {"contents": "read"}
     text = CONSUMERS_WF.read_text()
     assert "secrets." not in text and "create-github-app-token" not in text
