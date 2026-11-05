@@ -2664,7 +2664,7 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
   included) drops at `trial_ends_at`; CIS 361 also takes a platform key from the content plan only (tie-break on
   `plan_key`).
 - **Billing from Booking** (AA-1037 R4, root ADR 0019 d9): every agency invoice is issued in AA-Booking. Booking reads
-  `catalog.v_tenant_billing_v1` (CIS 381: subscriptions with plan prices and the bill-to fields, SELECT to `booking`
+  `catalog.v_tenant_billing_v1` (CIS 377: subscriptions with plan prices and the bill-to fields, SELECT to `booking`
   only) and publishes `booking.v_tenant_billing_status` (bk-042, SELECT to `cis_app`). The hourly job
   `tenant_billing_tick` (`services/tenant_account/billing.py`, queued by the api's ops sampler, key per UTC hour,
   `TENANT_BILLING_TICK=off` stops it) writes a newer `paid_through` to the live subscriptions, moves `warn` -> account
