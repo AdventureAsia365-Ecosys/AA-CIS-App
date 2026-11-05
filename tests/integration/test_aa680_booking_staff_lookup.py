@@ -69,7 +69,7 @@ async def test_unknown_or_malformed_id_returns_none(db):
 async def test_cognito_only_staff_row_is_returned(db):
     """AA-816 (247): a staff member created through the Cognito directory has no password_hash."""
     from api.main import _load_active_staff
-    uid = await db.add_staff("reviewer", True, password_hash=None)
+    uid = await db.add_staff("content", True, password_hash=None)
     row = await _load_active_staff(db.pool, uid)
     assert row is not None
-    assert row["role"] == "reviewer"
+    assert row["role"] == "content"
