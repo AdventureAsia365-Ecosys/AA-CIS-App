@@ -89,6 +89,40 @@ def test_the_plan_is_capped(monkeypatch):
     assert any(s["why"].startswith("over_limit") for s in plan["skipped"])
 
 
+def test_the_cap_covers_a_registry_the_size_of_cis_376_with_headroom():
+    """AA-1042 (S269): CIS 376 brings the enabled deployments on enabled connections to 33 (acc2 6 with 2 embedding
+    rows, acc3 12, anthropic-direct 13, openai-direct 2). Connections are walked in name order, so at a cap of 30 the
+    last rows (openai-direct: the last-resort writer rung) were skipped as over_limit and their access_state went
+    stale. The cap must cover that registry and leave room for the next rows."""
+    anthropic_on = ProviderConnection(connection_key="anthropic-direct", kind="anthropic", auth_mode="api_key",
+                                      label="x", data_scope="vendor_direct", enabled=True,
+                                      secret_name="aa-llm/dev/anthropic-direct", base_url="https://api.anthropic.com")
+    openai_on = ProviderConnection(connection_key="openai-direct", kind="openai", auth_mode="api_key", label="x",
+                                   data_scope="vendor_direct", enabled=True, secret_name="aa-llm/dev/openai-direct")
+    conns = {"acc2": BUILTIN_CONNECTIONS["acc2"], "acc3": BUILTIN_CONNECTIONS["acc3"],
+             "anthropic-direct": anthropic_on, "openai-direct": openai_on}
+    sizes = {"acc2": (4, 2), "acc3": (12, 0), "anthropic-direct": (13, 0), "openai-direct": (2, 0)}
+    models, deps = {}, []
+    for conn, (text, embed) in sizes.items():
+        for i in range(text + embed):
+            key = f"{conn}-m{i}"
+            models[key] = _model(key, style="embed" if i >= text else "converse")
+            deps.append(_dep(key, conn))
+
+    def testable(conn, mine):
+        return [(d, models[d.model_key]) for d in mine if models[d.model_key].api_style != "embed"]
+
+    def embeddable(conn, mine):
+        return [(d, models[d.model_key]) for d in mine if models[d.model_key].api_style == "embed"]
+
+    assert all(not c.policy_problems() for c in conns.values())
+    plan = probe.build_plan(conns, deps, testable, embeddable)
+    assert len(plan["probes"]) == 33 and plan["skipped"] == []
+    assert [p["connection_key"] for p in plan["probes"]][-2:] == ["openai-direct", "openai-direct"]
+    assert probe.MAX_PROBES >= 33 + 10                                   # room for the next catalog rows
+    assert plan["estimated_usd"] < 0.03                                  # the S262 bound for a daily run
+
+
 def _ctx(payload):
     ctx = MagicMock()
     ctx.payload = payload
