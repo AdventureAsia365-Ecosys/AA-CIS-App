@@ -7,7 +7,8 @@
 // Proves the AA-1035 Done-when "a customer_success E2E user sees only the assigned tenants (403 on another tenant)"
 // with the real path: WORKFORCE email-code sign-in -> pre token trigger (cis-customer_success only) -> /auth/verify-admin
 // role customer_success -> BFF -> API scope. Screenshots: tests/e2e/results/admin-evidence/cs-*.png. Writes nothing:
-// the two write attempts (an assignment, a view-as start, the A10b allow-list) are refused 403 e2e_read_only.
+// both write attempts (an assignment through /api/admin, a view-as start through the /api/view-as BFF route, which is
+// on the A10b allow-list for the E2E admin only) are refused 403 e2e_read_only by the API.
 // Hygiene as admin-pages.spec.ts: retries 0, one sign-in per run, run specs one at a time.
 import { test, expect, type Page } from '@playwright/test';
 import fs from 'fs';
@@ -80,8 +81,10 @@ test.describe('AA-1035 — customer_success E2E staff sees only its book', () =>
     const w = await bff(page, 'PUT', `/api/admin/tenants/${A}/assignments/00000000-0000-4000-8000-00000000a10d`, { kind: 'backup' });
     expect(w.status).toBe(403);
     expect(w.body).toContain('e2e_read_only');
-    // no A10b allow-list for this identity: a view-as start (allow-listed for the A10b admin) is refused as well
-    const v = await bff(page, 'POST', `/api/admin/tenants/${A}/view-as`, { reason: 'A10d live check', minutes: 5 });
+    // no A10b allow-list for this identity: a view-as start (allow-listed for the A10b admin) is refused as well.
+    // Through the real view-as BFF route: /api/admin refuses every start path itself (view_as_bff_only) before the API,
+    // while /api/view-as forwards to CIS POST /admin/tenants/{id}/view-as and passes the upstream status + body back.
+    const v = await bff(page, 'POST', '/api/view-as', { tenant_id: A, reason: 'A10d live check', minutes: 5 });
     expect(v.status).toBe(403);
     expect(v.body).toContain('e2e_read_only');
 
