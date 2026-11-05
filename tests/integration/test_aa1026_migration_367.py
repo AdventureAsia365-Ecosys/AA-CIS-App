@@ -24,7 +24,18 @@ ACC3_EXTRA = {"kimi-k3": "global.moonshotai.kimi-k3",
 STATES = ("unknown", "ok", "access_denied", "quota_exhausted", "throttled", "unconfigured", "error")
 
 
+M376 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
+                    "376_llm_anthropic_api_catalog_fallbacks.sql")
+# AA-1042 (S269): CIS 376 switches the Opus 4.6 / 4.5 candidates on for their Anthropic API deployment. This module
+# checks the post-367 state, so it sets that aside first (the rows as 367 left them) and re-applies 376 at the end.
+SET_376_ASIDE = ("UPDATE shared.llm_model_catalog SET enabled = false, updated_by = 'migration-367-aa1026', "
+                 "blocked_reason = 'Candidate (CIS 367): not routed. Enable after the availability sweep answers and "
+                 "an approved trial.' WHERE model_key IN ('opus-4-6', 'opus-4-5') "
+                 "AND updated_by = 'migration-376-aa1042'")
+
+
 def _run(c):
+    c.execute(SET_376_ASIDE)
     c.execute(open(M367, encoding="utf-8").read())
 
 
@@ -39,6 +50,7 @@ def cur():
     finally:
         c.execute("ROLLBACK")
         _run(c)
+        c.execute(open(M376, encoding="utf-8").read())      # back to the post-376 state the later modules see
         conn.close()
 
 

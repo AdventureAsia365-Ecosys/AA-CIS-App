@@ -66,7 +66,12 @@ LATER = [os.path.join(os.path.dirname(MIGRATION), f) for f in
           # AA-1026 (S267): 367's probe-state columns and acc3 candidate rows live on the deployment table _undo drops
           "367_llm_candidate_models_probe_state.sql",
           # AA-1042 (S268): 370 grants cis_app UPDATE on the deployment priority and switches the gpt-4.1 row off
-          "370_llm_route_control_versions.sql")]
+          "370_llm_route_control_versions.sql",
+          # AA-1042 (S269): 376's Anthropic API rows live on the deployment table _undo drops; its catalog rows
+          # (provider anthropic) leave with _undo, as the pre-304 provider CHECK refuses them
+          "376_llm_anthropic_api_catalog_fallbacks.sql")]
+# AA-1042 (S269): the Opus 4.6 / 4.5 candidates CIS 376 switches on for their Anthropic API row (acc3 rows stay off).
+API_ONLY_376 = {"opus-4-6": "claude-opus-4-6", "opus-4-5": "claude-opus-4-5-20251101"}
 # The LLM connection kinds of 304 (322 adds typesafe, dataforseo, geoapify and bedrock_guardrails rows).
 LLM_KINDS = ("bedrock", "anthropic", "openai", "azure_openai", "mock")
 
@@ -76,6 +81,12 @@ def _run_later(c):
         if path.endswith("324_llm_acc2_candidate_models.sql"):
             with candidates_off_routes(c):      # AA-1026 I6: 331 / 332 routes name 324's models; 324's guard refuses
                 c.execute(open(path, encoding="utf-8").read())
+        elif path.endswith("367_llm_candidate_models_probe_state.sql"):
+            # AA-1042 (S269): 376 switched the Opus 4.6 / 4.5 candidates on; 367's guard counts them disabled, and the
+            # 376 re-run below switches them on again
+            c.execute("UPDATE shared.llm_model_catalog SET enabled = false, updated_by = 'migration-367-aa1026' "
+                      "WHERE model_key IN ('opus-4-6', 'opus-4-5') AND updated_by = 'migration-376-aa1042'")
+            c.execute(open(path, encoding="utf-8").read())
         else:
             c.execute(open(path, encoding="utf-8").read())
 
@@ -115,8 +126,8 @@ def _undo(c):
     # AA-1024 both Llama 4 rows when it records their structured output mode)
     c.execute("DELETE FROM shared.llm_model_catalog "
               "WHERE updated_by IN ('migration-324-aa1017', 'migration-333-aa1026', 'migration-337-aa1024', "
-              "'migration-367-aa1026')")
-    c.execute("DELETE FROM shared.schema_versions WHERE version IN ('324', '367')")
+              "'migration-367-aa1026', 'migration-376-aa1042')")
+    c.execute("DELETE FROM shared.schema_versions WHERE version IN ('324', '367', '376')")
     c.execute("DROP TABLE IF EXISTS shared.llm_provider_connection")
     c.execute("ALTER TABLE shared.llm_model_catalog DROP COLUMN IF EXISTS capabilities")
     for (table, name), check in OLD_CHECKS.items():
@@ -129,7 +140,7 @@ def _profiles(c):
     # 324's catalog rows leave with _undo (they come back with LATER), so they are not part of 304's profiles
     c.execute("SELECT model_key, bedrock_profile_ids FROM shared.llm_model_catalog "
               "WHERE updated_by NOT IN ('migration-324-aa1017', 'migration-333-aa1026', 'migration-337-aa1024', "
-              "'migration-367-aa1026') "
+              "'migration-367-aa1026', 'migration-376-aa1042') "
               "ORDER BY model_key")
     return [(r["model_key"], r["bedrock_profile_ids"]) for r in c.fetchall()]
 
@@ -140,7 +151,8 @@ def _deployments(c):
     # the pre-304 state seeds on again (LATER puts 370 back)
     c.execute("SELECT model_key, connection_key, wire_id, priority, enabled, origin "
               "FROM shared.llm_model_deployment "
-              "WHERE updated_by NOT IN ('migration-306-aa1002', 'migration-324-aa1017', 'migration-367-aa1026') "
+              "WHERE updated_by NOT IN ('migration-306-aa1002', 'migration-324-aa1017', 'migration-367-aa1026', "
+              "'migration-376-aa1042') "
               "AND model_key <> 'gpt-4.1' "
               "ORDER BY model_key, priority, connection_key")
     return [tuple(r.values()) for r in c.fetchall()]
@@ -223,6 +235,10 @@ def test_first_enabled_deployment_is_the_path_the_gateway_takes_today(cur):
             expected = ("acc3", LEGACY_ACC3[m.model_key])    # _legacy_chain -> invoke_claude constants
         elif m.provider == "openai":
             expected = ("openai-direct", m.wire_model or m.model_key)   # _call_openai
+        elif m.api_style == "anthropic_messages":
+            expected = ("anthropic-direct", m.wire_model)           # AA-1042 (CIS 376): reached only by the API
+        elif m.model_key in API_ONLY_376:
+            expected = ("anthropic-direct", API_ONLY_376[m.model_key])   # CIS 376: the acc3 candidate rows stay off
         else:
             account = m.account_for(None)                     # _call_catalog_model / embed
             expected = (account, m.bedrock_profile_ids[account]) if account else None

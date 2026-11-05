@@ -81,11 +81,19 @@ def test_one_api_deployment_per_anthropic_converse_model(cur):
     cur.execute("SELECT model_key, bedrock_profile_ids ->> 'acc3' AS acc3 FROM shared.llm_model_catalog "
                 "WHERE vendor = 'anthropic' AND provider = 'bedrock' AND api_style = 'converse' "
                 "AND coalesce(bedrock_profile_ids ->> 'acc3', '') <> '' "
-                "AND updated_by IS DISTINCT FROM 'migration-367-aa1026'")
+                "AND updated_by IS DISTINCT FROM 'migration-367-aa1026' "
+                "AND updated_by IS DISTINCT FROM 'migration-376-aa1042'")
     expected = {r["model_key"]: _expected_wire(r["acc3"]) for r in cur.fetchall()}
     expected = {k: v for k, v in expected.items() if v}
+    # AA-1042 (S269): CIS 376's Anthropic API rows (every Claude model of the key, wire ids named, not derived; Sonnet
+    # 4.6 / Haiku 4.5 among them, catalogued by 366 after 306 ran on Dev) are not 306's;
+    # tests/integration/test_aa1042_migration_376.py checks them.
+    cur.execute("SELECT model_key FROM shared.llm_model_deployment WHERE connection_key = 'anthropic-direct' "
+                "AND updated_by = 'migration-376-aa1042'")
+    for r in cur.fetchall():
+        expected.pop(r["model_key"], None)
     cur.execute("SELECT model_key, wire_id, priority, enabled, origin FROM shared.llm_model_deployment "
-                "WHERE connection_key = 'anthropic-direct'")
+                "WHERE connection_key = 'anthropic-direct' AND updated_by IS DISTINCT FROM 'migration-376-aa1042'")
     rows = {r["model_key"]: r for r in cur.fetchall()}
     assert {k: r["wire_id"] for k, r in rows.items()} == expected
     assert all(r["priority"] == 100 and r["enabled"] and r["origin"] == "seed" for r in rows.values())

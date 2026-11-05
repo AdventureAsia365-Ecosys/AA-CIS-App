@@ -54,7 +54,10 @@ def test_baseline_version_snapshots_every_route_and_deployment(cur):
     assert snap["order_mode"] == "model_first"
     cur.execute("SELECT count(*) AS n FROM shared.llm_role_config")
     assert len(snap["routes"]) == cur.fetchone()["n"]
-    cur.execute("SELECT count(DISTINCT model_key) AS n FROM shared.llm_model_deployment")
+    # AA-1042 (S269): CIS 376 adds five Anthropic API models after this baseline (rows it creates, not in version 1)
+    cur.execute("SELECT count(DISTINCT model_key) AS n FROM shared.llm_model_deployment WHERE model_key NOT IN "
+                "(SELECT model_key FROM shared.llm_model_catalog WHERE provider = 'anthropic' "
+                "AND updated_by = 'migration-376-aa1042')")
     assert len(snap["priorities"]) == cur.fetchone()["n"]
     any_route = next(iter(snap["routes"].values()))
     assert set(any_route) == {"model_id", "fallback_model_ids"} and isinstance(any_route["fallback_model_ids"], list)

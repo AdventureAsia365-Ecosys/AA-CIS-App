@@ -24,8 +24,9 @@ POST_286 = ("gpt-6-luna", ["gpt-5.6-luna"], "validate", "openai", "acc3", True, 
 # The check route after the replay: 222 set haiku -> sonnet, AA-1026 (migration 327) moved it to the Converse keys and
 # migration 331 (AA-1026 I6) appended the acc2 fallback of each place card stage (another maker for each); migration
 # 366 (AA-1026 S267) set the family chains (Claude 4.x siblings on the check; on the draft, model first: GPT-6 Luna's
-# OpenAI API twin right behind it).
-CHECK_ROUTE = ("haiku-5-5", ["haiku-4-5", "sonnet-4-6", "llama4-scout"], "validate", "claude", "acc3", True, None, 0)
+# OpenAI API twin right behind it); migration 376 (AA-1042 S269) dropped the check's Sonnet 4.6 rung to keep six
+# attempts once Haiku 4.5 gained its Anthropic API deployment.
+CHECK_ROUTE = ("haiku-5-5", ["haiku-4-5", "llama4-scout"], "validate", "claude", "acc3", True, None, 0)
 REPLAY_286 = ("gpt-6-luna", ["gpt-6-luna-openai", "gpt-5.6-luna", "nova-lite"], "validate", "openai", "acc3", True,
               None, 0)
 

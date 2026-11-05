@@ -24,8 +24,9 @@ POST_282 = ("sonnet-5-5", ["sonnet"], "writer", "claude", "acc3", True, None, 0)
 # already first, then haiku-5-5), the A-series writer ends on the OpenAI API model, and haiku-5-5 is dropped again: it
 # would follow sonnet-5-5's Anthropic API deployment (T-3: outside AWS only after every AWS path of the route).
 # AA-1026 (migration 366, S267): the family chain, Sonnet 4.6 and Haiku 4.5 on acc3 before the OpenAI API (the gateway
-# runs it model first: Sonnet 5.5 on acc3, then on the Anthropic API, then Sonnet 4.6 ...).
-POST_366 = ("sonnet-5-5", ["sonnet-4-6", "haiku-4-5", "gpt-6-luna-openai"], "writer", "claude", "acc3", True, None, 0)
+# runs it model first: Sonnet 5.5 on acc3, then on the Anthropic API, then Sonnet 4.6 ...). AA-1042 (migration 376,
+# S269): Sonnet 4.6 gained its Anthropic API deployment, so Haiku 4.5 left the chain to keep six attempts.
+POST_366 = ("sonnet-5-5", ["sonnet-4-6", "gpt-6-luna-openai"], "writer", "claude", "acc3", True, None, 0)
 
 
 @pytest.fixture
@@ -54,7 +55,7 @@ def _restore(c):
     _seed_278(c)
     _run(c)
     c.execute("UPDATE shared.llm_role_config SET fallback_model_ids = %s::text[], "
-              "allowed_scopes = ARRAY['aws_only', 'vendor_direct'], updated_by = 'migration-366-aa1026' "
+              "allowed_scopes = ARRAY['aws_only', 'vendor_direct'], updated_by = 'migration-376-aa1042' "
               "WHERE stage = %s", (POST_366[1], STAGE))
 
 
