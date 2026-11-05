@@ -48,6 +48,7 @@ from api.core.tenant_scope import tenant_scope_filter
 from api.routers.admin import verify_admin_secret
 from services.acp_content_writing import hygiene, sentence_repair, text_integrity
 from services.acp_content_writing.generate import SentenceRepairError, repair_sentences_detailed
+from services.acp_shared.token_budget import T9_REPAIR_MAX_TOKENS
 from services.acp_content_writing.quality_gates import _length_bounds_for_channel
 from services.acp_content_writing.service import grounding_from_writer_input
 from services.acp_shared import atom_replaced, place_cards, route_guard, seed_audit
@@ -477,7 +478,9 @@ async def get_piece(piece_id: str, request: Request, x_admin_secret: str = Heade
 # ── S234: cut / rewrite one flagged sentence (admin only) ─────────────────────────────────────
 
 _EDITABLE_STATUSES = ("approved", "held")  # same boundary as the tenant hand-edit (AA-569)
-_SUGGEST_MAX_TOKENS = 400  # one sentence of JSON back
+# One sentence of JSON back. AA-741 (S270): 400 -> the t9_repair ceiling (4096): haiku-5-5 thinks inside max_tokens
+# and was cut at 2048 on this stage; a ceiling costs nothing on a complete reply.
+_SUGGEST_MAX_TOKENS = T9_REPAIR_MAX_TOKENS
 _SUGGEST_STAGE = "t9_repair"
 
 
@@ -506,8 +509,9 @@ class SentenceSuggestBody(BaseModel):
 @router.post("/pieces/{piece_id}/sentences/suggest")
 async def suggest_sentence(piece_id: str, body: SentenceSuggestBody, request: Request,
                            x_admin_secret: str = Header(None), x_admin_role: Optional[str] = Header(None)):
-    """A proposed rewrite of one sentence: ONE call on the `t9_repair` stage (Haiku, max 400
-    tokens, about $0.001-0.006), logged to llm_call_log with this piece's id. Nothing is saved —
+    """A proposed rewrite of one sentence: ONE call on the `t9_repair` stage (Haiku, the
+    t9_repair ceiling, one budget retry on a cut reply; about $0.001-0.006), logged to llm_call_log
+    with this piece's id. Nothing is saved —
     the admin reviews (or edits) it and sends it to /apply. The suggestion is run through the same
     deterministic checks /apply uses, so the drawer can show what would block it."""
     verify_admin_secret(x_admin_secret)

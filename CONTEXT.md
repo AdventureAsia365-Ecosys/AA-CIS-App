@@ -847,6 +847,10 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     (`quality_signal.gateway_attempt = true`), fire-and-forget, before the route moves on or raises;
   - a gateway-internal retry that succeeds (the AA-714 Converse schema retry) is ONE response whose cost
     and tokens cover both requests (`LLMResponse.provider_requests = 2`);
+  - a caller's budget retry (AA-741 S270, `services/acp_shared/token_budget.py`: T8 angles, T9 write / repair / FAQ
+    filter) is TWO responses and two rows: the reply cut at its token ceiling (`budget_cut: true`, status truncated,
+    written before the retry is sent) and the retry with double the ceiling (`truncation_retry: true`); never a third
+    call. `attempt_no` stays the gateway's (each is its own gateway request);
   - a judge verdict built from several calls (AA-714 near-band repeat, AA-801 median3) writes one row per
     call in one transaction (`record_calls_sync`): the verdict row (run 1's cost, `judge_calls: n`) plus
     `{judge_run, of, verdict_row: false}` rows;

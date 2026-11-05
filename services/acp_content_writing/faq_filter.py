@@ -35,6 +35,8 @@ import structlog
 
 from services.acp_content_writing.hygiene import fold, names_place
 from services.acp_content_writing.quality_gates import PAA_MAX_QUESTIONS, normalize_paa_question, paa_for_scope
+from services.acp_shared.token_budget import (T9_FAQ_FILTER_MAX_TOKENS, ReplyStillCut, cut_signal,
+                                              generate_with_budget_retry)
 from shared.llm_client.call_log import billed_fields, record_call_sync, record_unusable_sync
 from shared.llm_client.client import LLMClient
 from shared.llm_client.json_reply import JsonReplyError, first_json_value
@@ -52,7 +54,9 @@ LLM_MAX_QUESTIONS = 30   # = real_questions.CHAIN_MAX: every raw question of one
 SOURCE_MAX = 3000        # chars of the moment's own seed + Facts sent as the source text
 PLACES_MAX = 20
 OUTSIDE_MAX = 30
-MAX_TOKENS = 3000        # ~45 output tokens per question x 30 + the JSON envelope
+# ~45 output tokens per question x 30 + the JSON envelope; AA-741 (S270): 3000 -> 6000, the S270 ledger had this
+# stage cut at 3000 on haiku-5-5 (services/acp_shared/token_budget.py).
+MAX_TOKENS = T9_FAQ_FILTER_MAX_TOKENS
 TIMEOUT_S = 60.0         # the whole step; on timeout the writer gets the deterministic list
 
 KEEP, DROP = "KEEP", "DROP"
@@ -270,18 +274,35 @@ def llm_filter_questions(questions, scope: FaqScope, *, out_of_scope=(), limit: 
         return FilterOutcome(kept=[])
     request = LLMRequest(system_prompt=SYSTEM_PROMPT, user_prompt=build_user_prompt(scope, cands),
                          max_tokens=MAX_TOKENS, temperature=0.0, stage=stage, model_tier=model_tier)
-    resp = (client or LLMClient()).generate(request)
     ids = {"tenant_id": tenant_id, "content_piece_id": content_piece_id,
            "angle_gate_request_id": angle_gate_request_id}
     signal = {"issue": "AA-779", "n_questions": len(cands), **(quality_signal or {})}
+
+    def _log_cut(cut, max_tokens: int, retry_max_tokens: int) -> None:
+        # AA-741 (S270): the cut reply was billed and is thrown away; its row (no ok-rate key) before the retry.
+        record_call_sync(
+            stage=stage, role=role, model=cut.model_used,
+            tokens_in=getattr(cut, "input_tokens", None), tokens_out=getattr(cut, "output_tokens", None),
+            cost_usd=cut.cost_usd, quality_signal=signal | cut_signal(max_tokens, retry_max_tokens),
+            stop_reason=getattr(cut, "stop_reason", None), account=getattr(cut, "satellite_account", None),
+            fallback_used=getattr(cut, "fallback_used", None), provider=getattr(cut, "provider", None),
+            **ids, **billed_fields(cut),
+        )
+
+    # AA-741 (S270): a reply cut at its ceiling is asked once more with double the ceiling, never a third time.
+    reply = generate_with_budget_retry((client or LLMClient()).generate, request, on_cut=_log_cut)
+    resp = reply.resp
+    signal |= reply.signal()
     try:
+        if reply.still_cut:
+            raise FaqFilterReplyError(str(ReplyStillCut(stage, reply.max_tokens, reply.retry_max_tokens)))
         verdicts = parse_verdicts(resp.content, len(cands))
         rows = [{"q": q, **v} for q, v in zip(cands, verdicts)]
         model_keep = [r["q"] for r in rows if r["label"] == KEEP]
         gazetteer_dropped = [q for q in model_keep if any(names_place(q, g) for g in out_of_scope or ())]
         kept = [q for q in model_keep if q not in gazetteer_dropped][:limit]
         drop_reasons = dict(collections.Counter(v["reason_code"] for v in verdicts if v["label"] == DROP))
-        cost = float(resp.cost_usd or 0.0)
+        cost = reply.cost_usd
     except Exception as e:
         # AA-927: the reply was billed; its billed_unusable row (no ok-rate key) before the caller falls back.
         record_unusable_sync(resp, stage=stage, role=role, error=e, quality_signal_extra=signal, **ids)
