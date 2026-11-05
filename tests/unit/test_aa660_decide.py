@@ -483,7 +483,7 @@ async def test_an_unreadable_data_class_fails_closed_without_calling_jev():
     conn.fetch = AsyncMock(side_effect=fetch)
     with patch.object(d, "_call_jev", new=AsyncMock()) as m_call, \
          patch.object(d, "record_call_with_pool", new=AsyncMock()):
-        dec = await d._decide(d._SingleConn(conn), "t9_pii", "piece:1", "text", ["kw_belongs"], None)
+        dec = await d._decide(d._SingleConn(conn), "a3_research", "tour:1", "text", ["kw_belongs"], None)
     m_call.assert_not_awaited()
     v = dec.verdicts["kw_belongs"]
     assert (v.zone, v.error) == ("skipped", d.PII_STAGE_SKIP_ERROR)
@@ -511,7 +511,7 @@ async def test_a_failed_refresh_keeps_the_last_classes_read():
          patch.object(d, "_price_in_per_mtok", return_value=0.042), \
          patch.object(d, "record_call_with_pool", new=AsyncMock()):
         asked = await d._decide(d._SingleConn(conn), "a3_research", "kw:1", "text", ["kw_belongs"], None)
-        kept = await d._decide(d._SingleConn(conn), "t9_pii", "piece:1", "text", ["kw_belongs"], None)
+        kept = await d._decide(d._SingleConn(conn), "t9_pii", "piece:1", "text", ["kw_belongs"], d.PLATFORM_TENANT_ID)
     m_call.assert_awaited_once()
     assert asked.accepted("kw_belongs")
     assert kept.verdicts["kw_belongs"].error == d.PII_STAGE_SKIP_ERROR

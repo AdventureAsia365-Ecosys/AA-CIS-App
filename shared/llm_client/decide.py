@@ -854,8 +854,6 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
             decision.verdicts[key] = Verdict(key, "off", "error", error="unknown question")
         elif q.mode == "off":
             decision.verdicts[key] = Verdict(key, "off", "skipped")
-        elif stage_is_pii(stage):                 # AA-1039: personal data never leaves for a vendor (ADR 0019 d12)
-            decision.verdicts[key] = Verdict(key, q.mode, "skipped", error=PII_STAGE_SKIP_ERROR)
         elif not tenant_allowed(tenant_id, stage):
             if tenant_id is None or str(tenant_id) in ("", "None"):
                 logger.warning("decide_tenant_stage_without_tenant", stage=stage, subject=subject_key[:120])
@@ -863,6 +861,8 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
             else:
                 err = "tenant not on Jev allow-list"
             decision.verdicts[key] = Verdict(key, q.mode, "skipped", error=err)
+        elif stage_is_pii(stage):                 # AA-1039: personal data never leaves for a vendor (ADR 0019 d12)
+            decision.verdicts[key] = Verdict(key, q.mode, "skipped", error=PII_STAGE_SKIP_ERROR)
         else:
             asked[key] = q
 
