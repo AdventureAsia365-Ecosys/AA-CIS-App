@@ -105,3 +105,7 @@ class LLMResponse(BaseModel):
     # first model). Passed on by call_log.billed_fields(); None outside the gateway.
     route_trace: Optional[str] = None
     route_position: Optional[int] = None
+    # AA-1042 (S270): the route rungs before the answering one that were not called because every deployment of
+    # theirs sat behind a circuit opened by a refusal ([{model, connection, reason 'circuit_open:<class>', position}]).
+    # They write no ledger row of their own; billed_fields() passes this list on to the answered row's quality_signal.
+    route_skips: Optional[list[dict]] = None

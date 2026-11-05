@@ -30,7 +30,7 @@ from . import (breaker, capacity, central_budget, connection_budget, connections
                prompt_registry, stage_params, stream_sink, tenant_budget)
 from . import app_profile
 from .vendor_route import (VendorDeployment, deployment_plan, pinned_deployment, role_refusal, route_reach,
-                           split_pin, vendor_deployment_for)
+                           split_pin, sunk_skips, vendor_deployment_for)
 from .deployments import alias_targets_sync
 
 logger = structlog.get_logger()
@@ -850,6 +850,47 @@ def _note_fallback_write(request: LLMRequest, role: str, key: str, position: int
         logger.warning("llm_fallback_write_note_failed", stage=request.stage, error=str(e)[:200])
 
 
+# ── AA-1042 (S270): route rungs deferred behind an open refusal circuit ─────────────────────────────────────────────
+#
+# A route rung whose every usable deployment sits behind a circuit opened by a refusal (``vendor_route.sunk_skips``:
+# access_denied / quota_exhausted / credential, open or half-open with the probe lease held elsewhere) would make no
+# provider call: before S270 it still wrote a 0 USD refused row per request (connection NULL, latency 0). The route
+# now DEFERS it: no row in place, the route moves on. When a later rung answers, the answered row's quality_signal
+# lists the deferred rungs (``route_skips``: model, connection, reason ``circuit_open:<class>``, original position) and
+# keeps its own route position, so the fallback rules, alerts, quality guard and trace read as before. When nothing
+# answers, the deferred rungs are tried last in their original order, exactly as before (same rows, same final error).
+
+@dataclass
+class _SunkRung:
+    position: int
+    key: str
+    narrowed: Optional[tuple]
+    skips: list
+
+
+# The plan the sink check computed for the rung about to be called: (model key, plan). ``_call_catalog_model`` uses it
+# instead of planning again, so the plan that decided "not sunk" is the plan that is called (and its skip lines are
+# logged once). Bound only around one rung's ``_call_key_logged`` in ``_call_route``.
+_ROUTE_PLAN: ContextVar[Optional[tuple]] = ContextVar("llm_route_plan", default=None)
+_NO_PLAN = object()
+
+
+def _take_route_plan(model_key: str):
+    """The plan the route's sink check computed for ``model_key`` (None is a plan answer too: the registry does not
+    describe it), else ``_NO_PLAN``. Consumed once."""
+    bound = _ROUTE_PLAN.get()
+    if bound is None or bound[0] != model_key:
+        return _NO_PLAN
+    _ROUTE_PLAN.set(None)
+    return bound[1]
+
+
+def route_skip_entries(rungs: list) -> list[dict]:
+    """The ``quality_signal.route_skips`` of the answered row: one entry per deployment of each deferred rung."""
+    return [{"model": r.key, "connection": conn, "reason": f"circuit_open:{cls}", "position": r.position}
+            for r in rungs for conn, cls in r.skips]
+
+
 @dataclass
 class _AttemptScope:
     """The ledger context of one gateway request (generate, a shadow call, the admin probe): its role, the route
@@ -1453,53 +1494,103 @@ class LLMClient:
                 self._logged_failure_net(request, e, model=split_pin(key)[0] if split_pin(key) else key)
             raise
 
+    def _sunk_rung(self, request: LLMRequest, key: str, position: int) -> tuple[Optional[list], object]:
+        """AA-1042 (S270): (the refusing circuit skips of route rung ``key`` when the route defers it, else None; the
+        plan computed, or ``_NO_PLAN`` when none was). Called with the rung's own data scopes bound. Never deferred:
+        a legacy key (the alias / chain path), a pinned key, the breaker or deployment routing switched off, the route
+        test's forced refusal of position 0 (it must write its refused row), a model the catalog does not describe or
+        has switched off (``_call_route`` skips it as before). Never raises (a problem = not deferred)."""
+        if key in LEGACY_KEYS or split_pin(key) or not breaker.enabled() or not deployment_routing_enabled():
+            return None, _NO_PLAN
+        if position == 0 and _primary_refusal_forced(request, _ATTEMPT_SCOPE.get()):
+            return None, _NO_PLAN
+        try:
+            model = get_model_sync(key)
+            if model is None or not model.enabled:
+                return None, _NO_PLAN
+            plan = deployment_plan(model, stage_scopes(request), role=stage_role(request),
+                                   pii_class=stage_pii_class(request))
+            return sunk_skips(plan), plan
+        except Exception as e:  # noqa: BLE001 — the sink is an optimisation of the ledger, never a reason to fail
+            logger.warning("llm_route_sink_check_failed", stage=request.stage, model=key, error=str(e)[:200])
+            return None, _NO_PLAN
+
+    def _log_deferred(self, request: LLMRequest, rung: _SunkRung) -> BaseException:
+        """AA-1042 (S270): the refused row a deferred rung would have written in place (its circuit error, at its own
+        route position), without calling it. Returns the error (the route's failure for that rung)."""
+        exc = breaker.circuit_error(rung.key, rung.skips)
+        scope = _ATTEMPT_SCOPE.get()
+        if scope is not None:
+            scope.position = rung.position
+        log_gateway_failed_attempt(request, exc, model=rung.key, latency_ms=0)
+        return exc
+
     def _call_route(self, request: LLMRequest, chain: list, primary_acct: str,
                     role: str = "writer") -> LLMResponse:
-        errors = []
+        errors = []           # what failed so far, in the order it happened (the deadline error names it)
+        # (route position, text, exception or None): the final error lists them in route order. AA-900: one exception
+        # per model actually tried (a skipped key has None: it is not an attempt).
+        outcomes: list = []
         # S251: the billed usage of attempts whose reply was unusable; an attempt that failed any other way (outage,
         # throttle, blocked) clears `all_unusable`: the final error is RouteUnusableReply only when no model was down.
         unusable_usage: list = []
         all_unusable = True
-        failures: list = []  # AA-900: one exception per model actually tried (skipped keys are not attempts)
+        deferred: list[_SunkRung] = []     # AA-1042 (S270): rungs behind an open refusal circuit, in route order
         role_bound = stage_role(request)
         pii_bound = stage_pii_class(request)         # AA-1039: kept in a narrowed binding
-        for position, (key, narrowed) in enumerate(self._route_attempts(request, chain)):
-            if key not in LEGACY_KEYS:
-                m = get_model_sync(key)
-                if m is None or not m.enabled:
-                    reason = "not in catalog" if m is None else (m.blocked_reason or "disabled")
-                    logger.info("llm_route_skip", stage=request.stage, model=key, reason=reason)
-                    errors.append(f"{key}: skipped ({reason})")
-                    continue
-            if position > 0:
-                self._deadline_gate(request, key, f"route position {position} ({key})", errors)
+
+        def failed(position: int, key: str, e: Exception) -> None:
+            nonlocal all_unusable
+            logger.warning("llm_route_attempt_failed", stage=request.stage, model=key,
+                           position=position, error=str(e)[:300])
+            errors.append(f"{key}: {str(e)[:200]}")
+            outcomes.append((position, errors[-1], e))
+            billed = _billed_usage_of(e) if isinstance(e, UnusableReply) else []
+            if billed:
+                unusable_usage.extend(billed)
+            else:
+                all_unusable = False
+
+        def call(position: int, key: str, narrowed: Optional[tuple], *, sink: bool) -> Optional[LLMResponse]:
             # AA-1026 (S267): with the AWS-first switch on, one pass calls this model only on the deployments of that
             # pass (model-first, the default: narrowed is None and the stage's own scopes apply).
             scope_token = (_STAGE_SCOPES.set((request.stage, narrowed, role_bound, pii_bound))
                            if narrowed is not None else None)
+            plan_token = None
             try:
-                resp = self._call_key_logged(request, key, primary_acct, role=role,
-                                             position=position)
+                if sink:
+                    skips, plan = self._sunk_rung(request, key, position)
+                    if skips:
+                        deferred.append(_SunkRung(position, key, narrowed, skips))
+                        logger.info("llm_route_rung_deferred", stage=request.stage, model=key, position=position,
+                                    circuits=[f"{c}:{cls}" for c, cls in skips])
+                        return None
+                    if plan is not _NO_PLAN:
+                        plan_token = _ROUTE_PLAN.set((key, plan))
+                if position > 0:
+                    self._deadline_gate(request, key, f"route position {position} ({key})", errors)
+                return self._call_key_logged(request, key, primary_acct, role=role, position=position)
             except RouteDeadlineExceeded:
                 raise
             except Exception as e:
-                logger.warning("llm_route_attempt_failed", stage=request.stage, model=key,
-                               position=position, error=str(e)[:300])
-                errors.append(f"{key}: {str(e)[:200]}")
-                failures.append(e)
-                billed = _billed_usage_of(e) if isinstance(e, UnusableReply) else []
-                if billed:
-                    unusable_usage.extend(billed)
-                else:
-                    all_unusable = False
-                continue
+                failed(position, key, e)
+                return None
             finally:
+                if plan_token is not None:
+                    _ROUTE_PLAN.reset(plan_token)
                 if scope_token is not None:
                     _STAGE_SCOPES.reset(scope_token)
+
+        def answered(resp: LLMResponse, key: str, position: int, skipped: list) -> LLMResponse:
             if position > 0:
                 resp.fallback_used = True
                 # AA-1042 (Quality guard): a writer answered by a fallback model marks (or holds) the output it wrote
                 _note_fallback_write(request, role, key, position)
+            if skipped:
+                try:
+                    resp.route_skips = route_skip_entries(skipped)    # AA-1042 (S270): on the answered row
+                except Exception:  # noqa: BLE001 — a test double that is not an LLMResponse
+                    pass
             if resp.provider in OPENAI_FORMAT_PROVIDERS:
                 # S235 — the OpenAI platform API is a last resort for a Bedrock outage: tenant
                 # content left AWS. Fixed event name for a CloudWatch metric filter / alarm
@@ -1507,14 +1598,48 @@ class LLMClient:
                 # provider='openai' + fallback_used=true from the caller's record_call.
                 logger.warning("llm_openai_fallback_used", stage=request.stage, model=key,
                                position=position, errors=errors)
-            logger.info("llm_route_used", stage=request.stage, model=key, position=position)
+            logger.info("llm_route_used", stage=request.stage, model=key, position=position,
+                        deferred=[r.key for r in skipped])
             return resp
-        message = f"All models in the route failed for stage {request.stage!r}: " + "; ".join(errors)
+
+        try:
+            for position, (key, narrowed) in enumerate(self._route_attempts(request, chain)):
+                if key not in LEGACY_KEYS:
+                    m = get_model_sync(key)
+                    if m is None or not m.enabled:
+                        reason = "not in catalog" if m is None else (m.blocked_reason or "disabled")
+                        logger.info("llm_route_skip", stage=request.stage, model=key, reason=reason)
+                        errors.append(f"{key}: skipped ({reason})")
+                        outcomes.append((position, errors[-1], None))
+                        continue
+                resp = call(position, key, narrowed, sink=True)
+                if resp is not None:
+                    return answered(resp, key, position, list(deferred))
+            # AA-1042 (S270): no live rung answered: the deferred rungs now, in route order, as they ran before S270
+            # (each re-planned: a circuit that turned half-open meanwhile gets its probe call). After the route
+            # deadline nothing is called any more: their refused rows are written as they would have been.
+            while deferred:
+                rung = deferred.pop(0)
+                left = deadline_remaining()
+                if left is not None and left <= 0:
+                    failed(rung.position, rung.key, self._log_deferred(request, rung))
+                    continue
+                resp = call(rung.position, rung.key, rung.narrowed, sink=False)
+                if resp is not None:
+                    return answered(resp, rung.key, rung.position, [])
+        except RouteDeadlineExceeded:
+            # The route stops here. The deferred rungs were reached before the deadline: their refused rows, as before.
+            for rung in deferred:
+                self._log_deferred(request, rung)
+            raise
+        outcomes.sort(key=lambda o: o[0])                  # stable: the order of one position's entries is kept
+        message = (f"All models in the route failed for stage {request.stage!r}: "
+                   + "; ".join(text for _, text, _ in outcomes))
         if all_unusable and unusable_usage:
             exc = RouteUnusableReply(message)
             exc.logged_usage = tuple(unusable_usage)
             raise exc
-        raise _all_failed(message, failures)
+        raise _all_failed(message, [e for _, _, e in outcomes if e is not None])
 
     def _route_attempts(self, request: LLMRequest, chain: list) -> list[tuple[str, Optional[tuple]]]:
         return route_attempts(request, chain)
@@ -1903,8 +2028,10 @@ class LLMClient:
         scopes = stage_scopes(request)
         role = stage_role(request)              # AA-642 A5: a connection that does not serve the role is left out
         pii = stage_pii_class(request)          # AA-1039: a personal-data stage stays on our AWS accounts in the US
-        plan = (deployment_plan(model, scopes, role=role, pii_class=pii)
-                if deployment_routing_enabled() else None)
+        plan = _take_route_plan(model.model_key)     # AA-1042 (S270): the route's sink check already planned it
+        if plan is _NO_PLAN:
+            plan = (deployment_plan(model, scopes, role=role, pii_class=pii)
+                    if deployment_routing_enabled() else None)
         if plan is not None:
             return self._call_plan(request, model, plan)
         if pii == data_scope.PII_PERSONAL:

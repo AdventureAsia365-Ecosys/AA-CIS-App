@@ -108,24 +108,50 @@ V2_BILLED_KEYS = ("latency_ms", "attempt_no", "deployment_wire_id", "request_id"
                   "prompt_hash", "prompt_version")
 # AA-1042 (Route trace): the gateway request a reply answered and the route position that answered it. Not columns:
 # record_call* fold them into quality_signal ("route_trace", "route_position"), the keys the gateway's own attempt rows
-# carry too (route_trace, position), so every row of one request shares its route_trace.
-ROUTE_KEYS = ("route_trace", "route_position")
+# carry too (route_trace, position), so every row of one request shares its route_trace. AA-1042 (S270): plus
+# "route_skips", the rungs before the answering one that were deferred behind an open refusal circuit (no row of their
+# own; the Route trace shows them as skipped attempts).
+ROUTE_KEYS = ("route_trace", "route_position", "route_skips")
 _ROUTE_TRACE_MAX = 64
+_ROUTE_SKIPS_MAX = 16
+_ROUTE_SKIP_TEXT_MAX = 120
 
 
-def route_signal(route_trace=None, route_position=None) -> dict:
+def _route_skips(value) -> Optional[list]:
+    """The well-formed entries of a reply's route_skips (model, connection, reason, position), capped; None when
+    there are none."""
+    if not isinstance(value, (list, tuple)):
+        return None
+    out = []
+    for e in value[:_ROUTE_SKIPS_MAX]:
+        if not isinstance(e, dict) or not isinstance(e.get("model"), str) or not e["model"]:
+            continue
+        pos = e.get("position")
+        conn = e.get("connection")
+        reason = e.get("reason")
+        out.append({"model": e["model"][:_ROUTE_SKIP_TEXT_MAX],
+                    "connection": conn[:_ROUTE_SKIP_TEXT_MAX] if isinstance(conn, str) and conn else None,
+                    "reason": reason[:_ROUTE_SKIP_TEXT_MAX] if isinstance(reason, str) and reason else None,
+                    "position": pos if isinstance(pos, int) and not isinstance(pos, bool) and pos >= 0 else None})
+    return out or None
+
+
+def route_signal(route_trace=None, route_position=None, route_skips=None) -> dict:
     """The quality_signal keys of a reply's route facts ({} when there are none). Defensive like billed_fields."""
     out: dict = {}
     if isinstance(route_trace, str) and route_trace and len(route_trace) <= _ROUTE_TRACE_MAX:
         out["route_trace"] = route_trace
     if isinstance(route_position, int) and not isinstance(route_position, bool) and route_position >= 0:
         out["route_position"] = route_position
+    skips = _route_skips(route_skips)
+    if skips:
+        out["route_skips"] = skips
     return out
 
 
-def _with_route(quality_signal, route_trace=None, route_position=None):
+def _with_route(quality_signal, route_trace=None, route_position=None, route_skips=None):
     """``quality_signal`` with the route keys added (a key the signal already has wins). Unchanged without them."""
-    extra = route_signal(route_trace, route_position)
+    extra = route_signal(route_trace, route_position, route_skips)
     if not extra:
         return quality_signal
     base = dict(quality_signal) if isinstance(quality_signal, dict) else {}
@@ -427,9 +453,11 @@ def billed_fields(resp) -> dict:
         else:
             out[key] = value if isinstance(value, str) and value else None
     # AA-1042 (Route trace): which gateway request this reply answered, and the route position that answered it.
-    route = route_signal(getattr(resp, "route_trace", None), getattr(resp, "route_position", None))
+    route = route_signal(getattr(resp, "route_trace", None), getattr(resp, "route_position", None),
+                         getattr(resp, "route_skips", None))
     out["route_trace"] = route.get("route_trace")
     out["route_position"] = route.get("route_position")
+    out["route_skips"] = route.get("route_skips")      # AA-1042 (S270): rungs deferred behind a refusal circuit
     return out
 
 
@@ -449,6 +477,7 @@ async def record_call(
     cache_read_tokens: Optional[int] = None, cache_write_tokens: Optional[int] = None,
     pricing_mode: Optional[str] = None, connection_key: Optional[str] = None,
     route_trace: Optional[str] = None, route_position: Optional[int] = None,
+    route_skips: Optional[list] = None,
     **v2,
 ) -> None:
     """Opens its own short-lived connection — the call sites this is used from (S1 graph nodes,
@@ -481,7 +510,7 @@ async def record_call(
     caller may state itself (status, error_class, tour_id, prompt_version, units, unit_kind, is_shadow,
     is_experiment, app). Anything else is a TypeError, as before. Unset ones are derived (``_v2_values``)."""
     _check_v2(v2)
-    quality_signal = _with_route(quality_signal, route_trace, route_position)   # AA-1042
+    quality_signal = _with_route(quality_signal, route_trace, route_position, route_skips)   # AA-1042
     account = _row_account(account, connection_key)
     clean_model, provider = _normalize_model_provider(model, provider)
     # The connection column: the vendor connection, else the row's account (a Bedrock account key is its connection).
@@ -515,6 +544,7 @@ async def record_call_with_pool(
     cache_read_tokens: Optional[int] = None, cache_write_tokens: Optional[int] = None,
     pricing_mode: Optional[str] = None, connection_key: Optional[str] = None,
     route_trace: Optional[str] = None, route_position: Optional[int] = None,
+    route_skips: Optional[list] = None,
     **v2,
 ) -> None:
     """Same as record_call() but reuses an already-open asyncpg.Pool (T5/T9's async orchestrators
@@ -525,7 +555,7 @@ async def record_call_with_pool(
     (record_call). The call was already billed — 347k Jev calls (30/09–09/10) went unlogged when
     a single shared connection rejected the write with "another operation is in progress"."""
     _check_v2(v2)
-    quality_signal = _with_route(quality_signal, route_trace, route_position)   # AA-1042
+    quality_signal = _with_route(quality_signal, route_trace, route_position, route_skips)   # AA-1042
     account = _row_account(account, connection_key)
     clean_model, provider = _normalize_model_provider(model, provider)
     # The connection column: the vendor connection, else the row's account (a Bedrock account key is its connection).
@@ -635,7 +665,7 @@ def _fold_route(row: dict) -> dict:
         return row
     out = {k: v for k, v in row.items() if k not in ROUTE_KEYS}
     out["quality_signal"] = _with_route(row.get("quality_signal") or {}, row.get("route_trace"),
-                                        row.get("route_position"))
+                                        row.get("route_position"), row.get("route_skips"))
     return out
 
 
@@ -748,7 +778,8 @@ def billed_unusable_rows(*, stage: str, role: str, billed: Optional[list], error
     # AA-804 (ledger v2): status billed_unusable; the attempt facts the gateway put on the billed record pass through.
     return [dict(stage=stage, role=role, model=b.get("model") or "unknown", tokens_in=b.get("tokens_in"),
                  tokens_out=b.get("tokens_out"), cost_usd=b.get("cost_usd"),
-                 quality_signal=_with_route(dict(signal), b.get("route_trace"), b.get("route_position")),
+                 quality_signal=_with_route(dict(signal), b.get("route_trace"), b.get("route_position"),
+                                             b.get("route_skips")),
                  tenant_id=tenant_id, content_piece_id=content_piece_id,
                  angle_gate_request_id=angle_gate_request_id, stop_reason=b.get("stop_reason"),
                  account=_row_account(b.get("account"), b.get("connection_key")),

@@ -60,6 +60,7 @@ export const RT = defineMessages(
     attempt: (n: number) => `Attempt ${n}`,
     position: (n: number) => `route position ${n}`,
     billedUnusable: "billed, reply unusable",
+    skippedAttempt: "Not called: circuit open",
     contentTitle: "Content written by a fallback model",
     contentIntro: "Tour versions and pieces whose writer was answered by a fallback model, newest first. They are "
       + "marked in QA; when the stage holds fallback writes they wait for review. Tenants never see these marks.",
@@ -181,6 +182,7 @@ export const RT = defineMessages(
     attempt: (n: number) => `Lần thử ${n}`,
     position: (n: number) => `vị trí ${n} trong lộ trình`,
     billedUnusable: "đã tính tiền, câu trả lời không dùng được",
+    skippedAttempt: "Không gọi: mạch đang mở",
     contentTitle: "Nội dung do model dự phòng viết",
     contentIntro: "Phiên bản tour và bài viết mà bước viết được model dự phòng trả lời, mới nhất trước. Chúng được "
       + "đánh dấu trong QA; khi stage giữ bài viết dự phòng thì chúng chờ duyệt. Khách hàng không bao giờ thấy dấu "

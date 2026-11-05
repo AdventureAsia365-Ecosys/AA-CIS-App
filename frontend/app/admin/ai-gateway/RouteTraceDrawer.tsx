@@ -1,7 +1,8 @@
 "use client";
 // app/admin/ai-gateway/RouteTraceDrawer.tsx — AA-1042 (S268): one gateway request on AI gateway › Trace: every
 // attempt it needed in order (the refused or failed ones at $0 with their error class and text, the one that
-// answered), with latency and cost, and the stage's route for reference. GET
+// answered), with latency and cost, and the stage's route for reference. AA-1042 (S270): a rung deferred behind an
+// open refusal circuit has no row of its own; the backend lists it as an attempt with status "skipped" ($0, no time). GET
 // /api/admin/ai-gateway/route-trace/requests/{trace id}?at= (backend api/services/llm_route_trace.py read_trace).
 // Opened by a Requests row of the Trace tab or a Calls row's "Route" link (?tab=trace&rt=<id>&rt_at=<time>).
 // Built on the kit only (Drawer, TraceTimeline, Badge, LinkButton).
@@ -13,7 +14,7 @@ import {
 } from "../../_kit";
 import { usd } from "@/lib/aiGateway";
 import {
-  ROUTE_KEY, attemptTone, outcomeTone, rungLabel, tracePath, type RouteTarget, type RouteTrace,
+  ROUTE_KEY, SKIPPED_STATUS, attemptTone, outcomeTone, rungLabel, tracePath, type RouteTarget, type RouteTrace,
 } from "@/lib/routeTrace";
 import { RT, RT_OUTCOME } from "./routeTrace.messages";
 import { useErrorClassText } from "./useErrorClassText";
@@ -42,7 +43,8 @@ export default function RouteTraceDrawer({ target, onClose }: { target: RouteTar
   const events = useMemo<TimelineEvent[]>(() => (data?.attempts ?? []).map((a, i) => ({
     id: String(i),
     at: a.at ?? data?.first_at ?? new Date().toISOString(),
-    label: a.attempt_no != null ? t("attempt", a.attempt_no) : undefined,
+    label: a.attempt_no != null ? t("attempt", a.attempt_no)
+      : a.status === SKIPPED_STATUS ? t("skippedAttempt") : undefined,
     tone: attemptTone(a.status),
     title: (
       <span style={{ display: "inline-flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
