@@ -6,8 +6,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import {
-  DEFAULT_STAGE, ROUTE_TEST_API, TEST_MAX_REQUESTS, attemptTone, outcomeTone, parseRouteTarget, parseRouteWindow,
-  pct, policyBody, policyDraft, policyPath, requestsPath, rungLabel, rungsPath, tracePath,
+  DEFAULT_STAGE, ROUTE_TEST_API, SKIPPED_STATUS, TEST_MAX_REQUESTS, attemptTone, outcomeTone, parseRouteTarget,
+  parseRouteWindow, pct, policyBody, policyDraft, policyPath, requestsPath, rungLabel, rungsPath, tracePath,
 } from "./routeTrace.ts";
 import { ACTION_CAPABILITY, PAGE_ACTIONS, TAB_KEYS, parseTab } from "./aiGateway.ts";
 
@@ -40,6 +40,8 @@ test("tones and labels", () => {
   assert.equal(attemptTone("refused"), "warning");
   assert.equal(attemptTone("billed_unusable"), "danger");
   assert.equal(attemptTone("other"), "neutral");
+  assert.equal(attemptTone(SKIPPED_STATUS), "neutral");      // AA-1042 (S270): a deferred rung, never called
+  assert.equal(SKIPPED_STATUS, "skipped");
   assert.equal(rungLabel("model-two", "api"), "model-two @ api");
   assert.equal(rungLabel(null, "api"), "—");
   assert.equal(pct(33.333), "33.3 %");

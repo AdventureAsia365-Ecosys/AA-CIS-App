@@ -125,6 +125,8 @@ class BrandFitResult:
     # AA-1042 (Route trace): the gateway request of the call and the route position that answered (call_log.ROUTE_KEYS)
     route_trace: Optional[str] = None
     route_position: Optional[int] = None
+    # AA-1042 (S270): the route rungs deferred behind an open refusal circuit before the one that answered
+    route_skips: Optional[list] = None
 
 
 # AA-927 / AA-1002 (S6) / AA-804: the keys of one judge call's billing in `runs` (run_billing), as judge_node logs
@@ -187,6 +189,7 @@ def aggregate_runs(results: list[BrandFitResult], *, mission_absent_cap: Optiona
         pricing_mode=getattr(first, "pricing_mode", None), connection_key=getattr(first, "connection_key", None),
         **{k: getattr(first, k, None) for k in V2_BILLED_KEYS},
         route_trace=getattr(first, "route_trace", None), route_position=getattr(first, "route_position", None),
+        route_skips=getattr(first, "route_skips", None),
         runs=runs + ((_failed_entry(failed, failed_cost_usd),) if failed else ()),
         mission_evidence=evidence,
         evidence_verified=verified,

@@ -44,6 +44,8 @@ export interface RouteRequest {
   latency_ms: number | null;
   route_test: boolean;
   job_id: string | null;
+  /** AA-1042 (S270): route rungs deferred behind an open refusal circuit (not called, no row of their own). */
+  skipped_attempts?: number;
 }
 
 export interface RouteRequestsResp {
@@ -257,6 +259,9 @@ export function outcomeTone(o: RouteOutcome): "success" | "warning" | "danger" {
 }
 
 /** The badge tone of one attempt's ledger status. */
+/** AA-1042 (S270): the status of a route rung deferred behind an open refusal circuit (never called). */
+export const SKIPPED_STATUS = "skipped";
+
 export function attemptTone(status: string): "success" | "warning" | "danger" | "neutral" {
   if (status === "ok") return "success";
   if (status === "refused") return "warning";

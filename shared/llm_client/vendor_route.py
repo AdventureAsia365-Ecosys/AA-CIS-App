@@ -219,6 +219,28 @@ def role_refusal(model_key: str, plan) -> Optional[RouteRoleNotServed]:
     return RouteRoleNotServed(model_key, skips[0][1], skips)
 
 
+# AA-1042 (S270): the circuit classes that mean "the provider refuses" (not an outage, not throttling): a rung whose
+# every usable deployment sits behind a circuit opened by one of them is deferred by the route (``sunk_skips``).
+REFUSING_CIRCUIT_CLASSES = (breaker.ACCESS_DENIED, breaker.QUOTA_EXHAUSTED, breaker.CREDENTIAL)
+
+
+def sunk_skips(plan) -> Optional[list[tuple[str, str]]]:
+    """AA-1042 (S270) — the circuit skips of a plan that is EMPTY only because of circuits opened by a refusal
+    (``REFUSING_CIRCUIT_CLASSES``: open, or half-open with the probe lease held by another call; the connection-level
+    circuit included), else None. ``LLMClient._call_route`` then defers that route rung instead of logging a refused
+    row in place. None (the rung keeps today's behaviour) for: no plan (registry does not describe the model), a plan
+    with a deployment (a closed circuit, or a half-open one whose probe lease is free: its one probe call per breaker
+    period runs in place), a budget skip, a circuit opened by throttling / an outage / an unknown class, or a plan
+    emptied by the role / scope filters alone. Role skips next to refusing circuit skips do not stop the sink: those
+    deployments can never serve the role, the circuits are why the plan is empty. Pure."""
+    if plan is None or len(plan) or getattr(plan, "budget_skips", None):
+        return None
+    skips = list(getattr(plan, "circuit_skips", None) or ())
+    if not skips or any(cls not in REFUSING_CIRCUIT_CLASSES for _, cls in skips):
+        return None
+    return skips
+
+
 def _skip(model: CatalogModel, d: deployments.ModelDeployment, reason: str) -> None:
     logger.info("llm_deployment_skip", model=model.model_key, connection=d.connection_key, reason=reason)
 

@@ -110,6 +110,8 @@ def requests_sql(*, stage: Optional[str], fallback_only: bool) -> str:
                coalesce(bool_or({FALLBACK_RUNG}) FILTER (WHERE {OK}), false) AS served_fallback,
                max({POSITION_EXPR}) AS max_position,
                bool_or(coalesce(quality_signal ->> 'route_test', '') = 'true') AS route_test,
+               coalesce(sum(CASE WHEN jsonb_typeof(quality_signal -> 'route_skips') = 'array'
+                                 THEN jsonb_array_length(quality_signal -> 'route_skips') END), 0) AS skipped_attempts,
                (array_agg(job_id::text) FILTER (WHERE job_id IS NOT NULL))[1] AS job_id
           FROM shared.llm_call_log
          WHERE created_at >= $1 AND quality_signal ? 'route_trace' AND {LEDGER_FILTER} {stage_clause}
@@ -132,7 +134,9 @@ def request_view(r: dict) -> dict:
             "served_model": r.get("served_model"), "served_connection": r.get("served_connection"),
             "served_attempt": served_attempt, "max_position": r.get("max_position"),
             "cost_usd": _f(r.get("cost_usd")), "latency_ms": r.get("latency_ms"),
-            "route_test": bool(r.get("route_test")), "job_id": r.get("job_id")}
+            "route_test": bool(r.get("route_test")), "job_id": r.get("job_id"),
+            # AA-1042 (S270): route rungs deferred behind an open refusal circuit (no row of their own)
+            "skipped_attempts": int(r.get("skipped_attempts") or 0)}
 
 
 async def read_requests(pool, *, stage: Optional[str] = None, window: Optional[str] = None,
@@ -154,7 +158,9 @@ TRACE_SQL = f"""
            job_id::text AS job_id, tour_id::text AS tour_id, tenant_id::text AS tenant_id,
            {POSITION_EXPR} AS position, left(quality_signal ->> 'error', {ERROR_CHARS}) AS error,
            coalesce(quality_signal ->> 'route_test', '') = 'true' AS route_test,
-           coalesce(quality_signal ->> 'billed_unusable', '') = 'true' AS billed_unusable
+           coalesce(quality_signal ->> 'billed_unusable', '') = 'true' AS billed_unusable,
+           CASE WHEN jsonb_typeof(quality_signal -> 'route_skips') = 'array'
+                THEN quality_signal -> 'route_skips' END AS route_skips
       FROM shared.llm_call_log
      WHERE created_at >= $1 AND created_at <= $2 AND quality_signal ->> 'route_trace' = $3
      ORDER BY coalesce({POSITION_EXPR}, 1000), coalesce(attempt_no, 1000), created_at
@@ -172,13 +178,55 @@ def attempt_view(r: dict) -> dict:
             "tokens_out": r.get("tokens_out"), "billed_unusable": bool(r.get("billed_unusable"))}
 
 
+SKIPPED = "skipped"
+
+
+def _route_skips_of(r: dict) -> list:
+    """The route_skips entries of one row (jsonb: a list, or its JSON text from a pool without a jsonb codec)."""
+    value = r.get("route_skips")
+    if isinstance(value, str):
+        import json
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return []
+    return [e for e in value if isinstance(e, dict)] if isinstance(value, list) else []
+
+
+def skipped_attempt_views(r: dict) -> list[dict]:
+    """AA-1042 (S270): the route rungs a row says were deferred behind an open refusal circuit (its
+    ``quality_signal.route_skips``), as attempts with status ``skipped``: no provider call, 0 USD, no latency, at the
+    rung's own route position."""
+    out = []
+    for e in _route_skips_of(r):
+        pos = e.get("position")
+        reason = e.get("reason") if isinstance(e.get("reason"), str) else None
+        cls = reason.split(":", 1)[1] if reason and reason.startswith("circuit_open:") else None
+        out.append({"at": _iso(r.get("created_at")), "attempt_no": None,
+                    "position": pos if isinstance(pos, int) and not isinstance(pos, bool) else None,
+                    "model": e.get("model"), "provider": None, "connection": e.get("connection"), "wire_id": None,
+                    "status": SKIPPED, "error_class": cls, "error": reason, "latency_ms": None,
+                    "cost_usd": 0.0, "tokens_in": None, "tokens_out": None, "billed_unusable": False})
+    return out
+
+
+def _attempt_order(a: dict) -> tuple:
+    pos = a.get("position")
+    return (pos if pos is not None else 1000, a.get("attempt_no") if a.get("attempt_no") is not None else 1000)
+
+
 def trace_view(trace_id: str, rows: list[dict], route: Optional[dict]) -> Optional[dict]:
-    """The Trace drawer of one request (None: no row). Pure."""
+    """The Trace drawer of one request (None: no row). Pure. AA-1042 (S270): the rungs a row lists in route_skips
+    (deferred behind an open refusal circuit, no row of their own) are attempts too, status ``skipped``, in route
+    position order."""
     if not rows:
         return None
-    attempts = [attempt_view(r) for r in rows]
+    attempts = logged = [attempt_view(r) for r in rows]
     answered = [(a, r) for a, r in zip(attempts, rows) if a["status"] == "ok"]
     served, served_row = answered[-1] if answered else (None, None)
+    skipped = [s for r in rows for s in skipped_attempt_views(r)]
+    if skipped:
+        attempts = sorted(attempts + skipped, key=_attempt_order)     # stable: the SQL order within one position
     first = rows[0]
     return {"trace_id": trace_id, "stage": first.get("stage"), "role": first.get("role"),
             "job_id": next((r.get("job_id") for r in rows if r.get("job_id")), None),
@@ -191,7 +239,7 @@ def trace_view(trace_id: str, rows: list[dict], route: Optional[dict]) -> Option
             "cost_usd": round(sum(a["cost_usd"] or 0.0 for a in attempts), 6),
             "latency_ms": sum(a["latency_ms"] or 0 for a in attempts),
             "route": route_watch.chain_of(route) if route else None,
-            "first_at": attempts[0]["at"], "last_at": attempts[-1]["at"]}
+            "first_at": logged[0]["at"], "last_at": logged[-1]["at"]}
 
 
 async def read_trace(pool, trace_id: str, *, at: Optional[datetime] = None,
