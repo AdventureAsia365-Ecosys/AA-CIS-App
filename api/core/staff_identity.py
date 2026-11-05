@@ -45,6 +45,11 @@ Rules
    studio invitation routes, which then require a synthetic tenant), and ``staff_authz`` refuses the same
    writes again by route template. ``/auth/verify-admin`` still returns role ``admin`` (it only reads, plus
    ``last_login_at``), so the BFF opens the admin pages.
+5c. **Dev-only E2E customer_success (AA-1035 A10d, S270, root ADR 0006a A10d).** The same rule for
+   ``e2e-cis-cs@e2e-mail.lumiguides.it.com`` (403 ``e2e_not_allowed_here`` outside dev, else ``e2e_read_only``), but
+   the identity never carries ``e2e_allowlisted_writes``: that second flag is True for the A10b address only, and
+   every A10b exception (the write allow-list, the route-level A10b-1 / A10b-2 checks, the sentence modes,
+   ``docs.owner_read``) keys on it. So every write of an A10d session is refused 403 ``e2e_read_only``.
 6. Rows are cached for :data:`STAFF_STATE_TTL_S` keyed by ``(iss, sub)`` (misses too), like the legacy
    verify-admin cache, so a deactivation takes effect within that TTL (plus the BFF's own verify cache).
 
@@ -155,8 +160,11 @@ class StaffIdentity:
     is_owner: bool = False
     # AA-911 D-1: the token came from the Preview-only client; role is then always PREVIEW_ROLE, is_owner False.
     preview: bool = False
-    # AA-816 A10b: the Dev-only E2E CIS admin; reads only, plus the e2e_staff.E2E_ALLOWED_WRITES allow-list.
+    # AA-816 A10b / AA-1035 A10d: a Dev-only E2E CIS identity (e2e_staff.DEV_ONLY_E2E_STAFF_ROLES); reads only.
     e2e_read_only: bool = False
+    # AA-1035 A10d: the A10b identity only; the one flag that opens the e2e_staff.E2E_ALLOWED_WRITES allow-list and the
+    # other A10b exceptions. Never True without e2e_read_only.
+    e2e_allowlisted_writes: bool = False
 
 
 def legacy_login_enabled() -> bool:
@@ -346,7 +354,12 @@ async def resolve_staff(db: Any, principal: Principal, *, touch_login: bool = Fa
         # The group decides (ADR 0006); the reconcile job (C7) reports the difference.
         logger.warning("staff_role_drift", admin_id=row.admin_id, group_role=role, db_role=row.db_role,
                        sub=principal.sub)
-    e2e_read_only = e2e_staff.is_e2e_cis_admin(row.email) or e2e_staff.is_e2e_cis_admin(principal.email)
+    e2e_read_only = e2e_staff.is_dev_only_e2e_staff(row.email) or e2e_staff.is_dev_only_e2e_staff(principal.email)
+    # A10d: the A10b exceptions belong to the A10b address alone; a cs address on either side never gets them.
+    e2e_allowlisted_writes = (
+        (e2e_staff.is_e2e_cis_admin(row.email) or e2e_staff.is_e2e_cis_admin(principal.email))
+        and not e2e_staff.is_e2e_cis_cs(row.email) and not e2e_staff.is_e2e_cis_cs(principal.email)
+    )
     if e2e_read_only:
         if not e2e_staff.dev_only_e2e_environment():
             logger.warning("staff_identity_refused", reason=e2e_staff.E2E_NOT_ALLOWED_HERE, admin_id=row.admin_id,
@@ -354,7 +367,7 @@ async def resolve_staff(db: Any, principal: Principal, *, touch_login: bool = Fa
             raise StaffAuthError(403, e2e_staff.E2E_NOT_ALLOWED_HERE, e2e_staff.E2E_NOT_ALLOWED_HERE)
         if loaded_now:
             logger.info("staff_identity_e2e_read_only", admin_id=row.admin_id, sub=principal.sub,
-                        client_id=principal.client_id)
+                        client_id=principal.client_id, allowlisted_writes=e2e_allowlisted_writes)
     preview = identity_config.is_preview_client(principal.client_id)
     if preview:
         # AA-911 D-1: a Preview-host session is the viewer, never the group role and never an owner.
@@ -365,7 +378,7 @@ async def resolve_staff(db: Any, principal: Principal, *, touch_login: bool = Fa
         db_role=row.db_role, email=row.email or principal.email, display_name=row.display_name,
         iss=principal.iss, sub=principal.sub, client_id=principal.client_id,
         is_owner=False if preview or e2e_read_only else row.is_owner, preview=preview,
-        e2e_read_only=e2e_read_only,
+        e2e_read_only=e2e_read_only, e2e_allowlisted_writes=e2e_read_only and e2e_allowlisted_writes,
     )
 
 

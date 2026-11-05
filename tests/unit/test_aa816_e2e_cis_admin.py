@@ -477,6 +477,7 @@ class _Identity:
 
     def __init__(self, e2e: bool) -> None:
         self.e2e_read_only = e2e
+        self.e2e_allowlisted_writes = e2e   # the A10b identity (AA-1035 A10d: the only one with the allow-list)
 
 
 def test_principal_carries_the_flag():

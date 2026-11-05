@@ -33,6 +33,9 @@ export const E2E_COGNITO_EMAIL = 'e2e@e2e-mail.lumiguides.it.com';
 // A10b: must equal api/core/e2e_staff.py E2E_CIS_ADMIN_TEST_STAFF_EMAIL; its codes land under MAILBOX_ADMIN_PREFIX.
 export const E2E_CIS_ADMIN_EMAIL = 'e2e-cis-admin@e2e-mail.lumiguides.it.com';
 export const MAILBOX_ADMIN_PREFIX = 'inbound-admin/';
+// A10d (AA-1035): the Dev-only read-only customer_success E2E account; must equal api/core/e2e_staff.py
+// E2E_CIS_CS_TEST_STAFF_EMAIL. Its codes land under MAILBOX_ADMIN_PREFIX too (the receipt rule filters by recipient).
+export const E2E_CIS_CS_EMAIL = 'e2e-cis-cs@e2e-mail.lumiguides.it.com';
 
 /** Each AWS CLI call has its own cap; the whole wait has another (lesson: every wait is bounded). */
 const CLI_TIMEOUT_MS = 20_000;

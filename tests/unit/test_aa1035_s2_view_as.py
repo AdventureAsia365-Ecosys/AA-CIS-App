@@ -910,7 +910,8 @@ def test_only_the_staff_bff_gets_a_token(world, role, value):
 
 def test_the_e2e_admin_starts_a_view_on_a_synthetic_tenant_only(world, monkeypatch):
     client, db, _ = world
-    ident = SimpleNamespace(auth="cognito", admin_id=STAFF, role="admin", is_owner=False, e2e_read_only=True)
+    ident = SimpleNamespace(auth="cognito", admin_id=STAFF, role="admin", is_owner=False, e2e_read_only=True,
+                            e2e_allowlisted_writes=True)
     monkeypatch.setattr(staff_authz, "request_staff_identity", lambda r: ident)
     monkeypatch.setattr(va, "request_staff_identity", lambda r: ident)
     monkeypatch.setattr(ts, "request_staff_identity", lambda r: ident)
@@ -922,7 +923,8 @@ def test_the_e2e_admin_starts_a_view_on_a_synthetic_tenant_only(world, monkeypat
 
 
 def _e2e_admin(monkeypatch):
-    ident = SimpleNamespace(auth="cognito", admin_id=STAFF, role="admin", is_owner=False, e2e_read_only=True)
+    ident = SimpleNamespace(auth="cognito", admin_id=STAFF, role="admin", is_owner=False, e2e_read_only=True,
+                            e2e_allowlisted_writes=True)
     monkeypatch.setattr(staff_authz, "request_staff_identity", lambda r: ident)
     monkeypatch.setattr(va, "request_staff_identity", lambda r: ident)
     monkeypatch.setattr(ts, "request_staff_identity", lambda r: ident)

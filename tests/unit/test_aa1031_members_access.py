@@ -26,7 +26,9 @@ ALL_ROLES = ["owner", "editor", "viewer"]
 
 
 def _principal(role: str, *, e2e_read_only: bool = False) -> staff_authz.StaffPrincipal:
-    identity = SimpleNamespace(auth="cognito", is_owner=False, e2e_read_only=e2e_read_only)
+    # e2e_read_only models the A10b admin (the one identity with allow-listed writes, AA-1035 A10d).
+    identity = SimpleNamespace(auth="cognito", is_owner=False, e2e_read_only=e2e_read_only,
+                               e2e_allowlisted_writes=e2e_read_only)
     return staff_authz.principal_from_role(role, identity)
 
 

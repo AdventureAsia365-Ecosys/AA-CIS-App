@@ -21,6 +21,8 @@ tracking and every route below see the verified identity, never the client's.
   ``…/sentences/apply`` routes, matched in full on the concrete path; the route then accepts only ``cut`` /
   ``manual``; since AA-979, ADR 0006a A10b-1, POST on the two Content studio invitation routes, which then refuse
   any tenant that is not synthetic). ``/auth/verify-admin`` is not a staff path, so sign-in still works.
+  **A10d** (AA-1035, S270): the Dev-only E2E customer_success identity also carries ``e2e_read_only`` but not
+  ``e2e_allowlisted_writes``, so the allow-list never applies to it: every write is refused 403 ``e2e_read_only``.
 - **Any other Bearer** (legacy HS256 staff or tenant JWT without ``iss``, a JWT from another issuer such as a
   future EXTERNAL ``cis-portal`` token or the CIS-minted Booking RS256 token, or not a JWT) and **no Bearer**:
   passed through untouched; the route's own guard decides (``/admin/brand-identity`` and ``/admin/atoms`` take
@@ -127,8 +129,9 @@ class StaffBearerMiddleware:
             await JSONResponse({"detail": exc.detail}, status_code=exc.status, headers=extra)(scope, receive, send)
             return
 
+        # AA-1035 A10d: the allow-list is the A10b identity's alone (e2e_allowlisted_writes), never any e2e_read_only.
         if (identity.e2e_read_only and method not in e2e_staff.READ_METHODS
-                and not e2e_staff.is_allowed_e2e_write_path(method, path)):
+                and not (identity.e2e_allowlisted_writes and e2e_staff.is_allowed_e2e_write_path(method, path))):
             logger.warning("staff_bearer_refused", status=403, reason=e2e_staff.E2E_READ_ONLY, method=method,
                            path=path, admin_id=identity.admin_id)
             await JSONResponse({"detail": e2e_staff.E2E_READ_ONLY}, status_code=403)(scope, receive, send)

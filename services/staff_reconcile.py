@@ -107,7 +107,7 @@ NOTES = (
     "as drift: staff sign in with an email code, which may leave that status as it is.",
     "Report only: nothing in Cognito or shared.admin_users was changed.",
 )
-KNOWN_E2E_NOTE = ("Dev: the E2E staff accounts root ADR 0006a allows (A10, A10a, A10b, A10c) are listed under "
+KNOWN_E2E_NOTE = ("Dev: the E2E staff accounts root ADR 0006a allows (A10, A10a, A10b, A10c, A10d) are listed under "
                   "known_e2e_exceptions and not counted as drift, only with their exact address and staff groups.")
 CRM_NOT_COMPARED_NOTE = ("CRM roles were not compared: the directory table for them (CIS migration 330) is not applied "
                          "yet, so the crm-* groups are neither checked nor reported.")
@@ -124,7 +124,7 @@ class KnownE2E:
 
 
 # Read-only, code constant (never configuration), exact addresses: the same allow-list the WORKFORCE pre token trigger
-# (AA-CIS-Infra identity_triggers/workforce.py) and CIS migrations 250 / 283 hold. TEMPORARY with A10 (AA-816).
+# (AA-CIS-Infra identity_triggers/workforce.py) and CIS migrations 250 / 283 / 378 hold. TEMPORARY with A10 (AA-816).
 KNOWN_E2E_STAFF: "MappingProxyType[str, KnownE2E]" = MappingProxyType({
     e2e_staff.E2E_CONTENT_TEST_STAFF_EMAIL: KnownE2E(
         clause="ADR 0006a A10",
@@ -143,6 +143,12 @@ KNOWN_E2E_STAFF: "MappingProxyType[str, KnownE2E]" = MappingProxyType({
         clause="ADR 0006a A10c",
         reason="Dev-only AA-Partner staff E2E account (synthetic agencies only); never in the CIS staff directory.",
         groups=frozenset({"crm-ops", "crm-support"}), directory_role=None),
+    # AA-1035 A10d (S270): the Dev-only read-only customer_success E2E account, in the CIS directory (CIS 378).
+    e2e_staff.E2E_CIS_CS_TEST_STAFF_EMAIL: KnownE2E(
+        clause="ADR 0006a A10d",
+        reason=("Dev-only CIS customer success E2E account: read-only session, synthetic tenants only, "
+                "no Booking access."),
+        groups=frozenset({"cis-customer_success"}), directory_role=e2e_staff.E2E_CIS_CS_TEST_STAFF_ROLE),
 })
 
 

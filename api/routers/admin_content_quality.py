@@ -591,9 +591,11 @@ def _sentence_audit(body: "SentenceApplyBody", ref: "wm.SignalRef", warnings: li
 def _refuse_e2e_mode(request: Request, mode: str) -> None:
     """AA-816 A10b (S252): the Dev-only E2E CIS admin may apply a sentence edit (the AA-916 WM-07 sample) only as a Cut
     or a manual Edit; ``rewrite`` records a model suggestion it could not have asked for (``…/suggest`` is refused to
-    it by the bearer middleware). 403 ``e2e_read_only`` for any other mode."""
-    if (getattr(request_staff_identity(request), "e2e_read_only", False)
-            and mode not in e2e_staff.E2E_SENTENCE_MODES):
+    it by the bearer middleware). 403 ``e2e_read_only`` for any other mode. AA-1035 A10d: any other Dev-only E2E
+    identity (no ``e2e_allowlisted_writes``) is refused whatever the mode."""
+    identity = request_staff_identity(request)
+    if getattr(identity, "e2e_read_only", False) and (
+            not e2e_staff.has_allowlisted_writes(identity) or mode not in e2e_staff.E2E_SENTENCE_MODES):
         raise HTTPException(status_code=403, detail=e2e_staff.E2E_READ_ONLY)
 
 
