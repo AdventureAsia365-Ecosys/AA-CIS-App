@@ -32,18 +32,18 @@ from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
 from shared.llm_client.call_log import billed_fields, record_call_sync
 from services.writing_memory.insertion import t9_platform_block, t9_tenant_lines  # AA-919 (WM-18 / WM-20)
+from services.acp_shared.token_budget import (T9_REPAIR_MAX_TOKENS, T9_WRITE_BLOG_MAX_TOKENS,
+                                              T9_WRITE_DEFAULT_MAX_TOKENS, ReplyStillCut, cut_signal,
+                                              generate_with_budget_retry)
 
 # AA-768 (S233) — output ceiling per channel. A single 2048 cap cut 20/92 t9_write calls in the
 # S232 runs (stop_reason=max_tokens), all of them blogs: the blog JSON envelope + a 4,700-13,000
 # char body + citation tags needs far more. Short channels keep head-room above their own bands.
-_MAX_TOKENS_BY_CHANNEL = {"blog": 8000}
-_MAX_TOKENS_DEFAULT = 3000
-# One retry with more room when the model still stops on the ceiling (rare after the raise).
-_TRUNCATION_RETRY_FACTOR = 1.5
-_TRUNCATION_RETRY_CAP = 16000
-# Anthropic/Converse report "max_tokens"; OpenAI-compatible routes report "length".
-_TRUNCATED_STOP_REASONS = {"max_tokens", "length"}
-_MAX_TOKENS = 2048  # sentence repair + SEO fit: short JSON replies
+# AA-741 (S270): raised for the 5.x models (blog 8000 -> 12000, short channels 3000 -> 4096; t9_repair 2048 -> 4096):
+# the S270 ledger had t9_write cut at 8000 and t9_repair cut at 2048 on haiku-5-5 (services/acp_shared/token_budget.py).
+_MAX_TOKENS_BY_CHANNEL = {"blog": T9_WRITE_BLOG_MAX_TOKENS}
+_MAX_TOKENS_DEFAULT = T9_WRITE_DEFAULT_MAX_TOKENS
+_MAX_TOKENS = T9_REPAIR_MAX_TOKENS  # sentence repair + SEO fit + FAQ regeneration: short JSON replies
 
 
 def max_tokens_for(channel: str) -> int:
@@ -53,22 +53,18 @@ def max_tokens_for(channel: str) -> int:
 def _generate_full(request: LLMRequest, channel: str, *, attempt: int, tenant_id,
                    angle_gate_request_id):
     """Run the writer call; when it stops on the token ceiling, log that call and run it once
-    more with a larger ceiling. Returns (resp, cost of every call made). A reply that is still
-    cut after the retry is returned as-is — the F0_complete gate then reports it."""
-    client = LLMClient()
-    resp = client.generate(request)
-    _record_t9_write_call(resp, channel, attempt=attempt,
-                           tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id)
-    cost = resp.cost_usd
-    if getattr(resp, "stop_reason", None) in _TRUNCATED_STOP_REASONS:
-        bigger = min(int(request.max_tokens * _TRUNCATION_RETRY_FACTOR), _TRUNCATION_RETRY_CAP)
-        retry = LLMRequest(system_prompt=request.system_prompt, user_prompt=request.user_prompt,
-                           stage=request.stage, max_tokens=bigger)
-        resp = client.generate(retry)
-        _record_t9_write_call(resp, channel, attempt=attempt, tenant_id=tenant_id,
-                               angle_gate_request_id=angle_gate_request_id, truncation_retry=True)
-        cost += resp.cost_usd
-    return resp, cost
+    more with double the ceiling (token_budget, AA-741 S270; was x1.5 up to 16000). Returns (resp, cost of every
+    call made). A reply that is still cut after the retry is returned as-is — the F0_complete gate then reports it;
+    never a third call."""
+    def _log_cut(cut, _max_tokens: int, _retry_max_tokens: int) -> None:
+        _record_t9_write_call(cut, channel, attempt=attempt, tenant_id=tenant_id,
+                              angle_gate_request_id=angle_gate_request_id,
+                              signal_extra=cut_signal(_max_tokens, _retry_max_tokens))
+
+    reply = generate_with_budget_retry(LLMClient().generate, request, on_cut=_log_cut)
+    _record_t9_write_call(reply.resp, channel, attempt=attempt, tenant_id=tenant_id,
+                          angle_gate_request_id=angle_gate_request_id, signal_extra=reply.signal())
+    return reply.resp, reply.cost_usd
 
 
 class SeoEnvelopeError(Exception):
@@ -215,7 +211,7 @@ def write_content(
 
 
 def _record_t9_write_call(resp, channel: str, *, attempt: int, tenant_id, angle_gate_request_id,
-                          truncation_retry: bool = False) -> None:
+                          signal_extra: dict | None = None) -> None:
     """AA-505 — shared by write_content()/rewrite_with_feedback(). Lightweight, real, immediate
     heuristic (output length is non-trivial) — the MEANINGFUL quality signal for this piece
     (whether it actually passed T10) is logged separately by quality_gates.py's own "t10_judge"
@@ -227,7 +223,7 @@ def _record_t9_write_call(resp, channel: str, *, attempt: int, tenant_id, angle_
         cost_usd=resp.cost_usd,
         tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id,
         quality_signal={"channel": channel, "attempt": attempt, "output_len_chars": len(resp.content),
-                        **({"truncation_retry": True} if truncation_retry else {})},
+                        **(signal_extra or {})},
         stop_reason=getattr(resp, "stop_reason", None),
         account=getattr(resp, "satellite_account", None),
         fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
@@ -347,19 +343,28 @@ def repair_sentences_detailed(
                          stage=stage, max_tokens=max_tokens)
     # AA-668 — the reply is a JSON patch, never tenant-facing text: it must not stream into the
     # T9 live view even though it runs on the writer stage. The job shows the spliced text itself.
+    signal = {"channel": channel, "attempt": attempt, "mode": mode, "sentences": len(sentences),
+              "source_chars": len(source)}
+
+    def _log(r, extra: dict) -> None:
+        record_call_sync(
+            stage=stage, role="writer", model=r.model_used,
+            tokens_in=getattr(r, "input_tokens", None), tokens_out=getattr(r, "output_tokens", None),
+            cost_usd=r.cost_usd, tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id,
+            content_piece_id=content_piece_id, quality_signal={**signal, **extra},
+            stop_reason=getattr(r, "stop_reason", None),
+            account=getattr(r, "satellite_account", None),
+            fallback_used=getattr(r, "fallback_used", None), **billed_fields(r),
+        )
+
+    # AA-741 (S270): a reply cut at its ceiling is logged, then asked once more with double the ceiling.
     with stream_sink.suppressed():
-        resp = LLMClient().generate(request)
-    record_call_sync(
-        stage=stage, role="writer", model=resp.model_used,
-        tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
-        cost_usd=resp.cost_usd, tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id,
-        content_piece_id=content_piece_id,
-        quality_signal={"channel": channel, "attempt": attempt, "mode": mode,
-                        "sentences": len(sentences), "source_chars": len(source)},
-        stop_reason=getattr(resp, "stop_reason", None),
-        account=getattr(resp, "satellite_account", None),
-        fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
-    )
+        reply = generate_with_budget_retry(LLMClient().generate, request,
+                                           on_cut=lambda cut, m, rm: _log(cut, cut_signal(m, rm)))
+    resp = reply.resp
+    _log(resp, reply.signal())
+    if reply.still_cut:
+        raise SentenceRepairError(str(ReplyStillCut(stage, reply.max_tokens, reply.retry_max_tokens)))
     text = _strip_fences(resp.content)
     try:
         data = json.loads(text)
@@ -368,7 +373,7 @@ def repair_sentences_detailed(
     reps = data.get("replacements") if isinstance(data, dict) else None
     if not isinstance(reps, list) or len(reps) != len(sentences) or not all(isinstance(r, str) for r in reps):
         raise SentenceRepairError(f"bad sentence-repair reply: {resp.content[:200]!r}")
-    return reps, resp.cost_usd, getattr(resp, "model_used", None)
+    return reps, reply.cost_usd, getattr(resp, "model_used", None)
 
 
 class SentenceRepairError(Exception):
@@ -422,28 +427,37 @@ def fit_seo_fields(
     parts.append(f"POST:\n{strip_citation_tags(body)[:6000]}")
     request = LLMRequest(system_prompt=_SEO_FIT_SYSTEM, user_prompt="\n\n".join(parts),
                          stage=SEO_FIT_STAGE, max_tokens=_MAX_TOKENS)
-    resp = LLMClient().generate(request)
-    record_call_sync(
-        stage=SEO_FIT_STAGE, role="writer", model=resp.model_used,
-        tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
-        cost_usd=resp.cost_usd, tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id,
-        quality_signal={"channel": "blog", "mode": "seo_fit"},
-        stop_reason=getattr(resp, "stop_reason", None),
-        account=getattr(resp, "satellite_account", None),
-        fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
-    )
-    text = _strip_fences(resp.content)
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        data = repair_json(text, return_objects=True)
+
+    def _log(r, extra: dict) -> None:
+        record_call_sync(
+            stage=SEO_FIT_STAGE, role="writer", model=r.model_used,
+            tokens_in=getattr(r, "input_tokens", None), tokens_out=getattr(r, "output_tokens", None),
+            cost_usd=r.cost_usd, tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id,
+            quality_signal={"channel": "blog", "mode": "seo_fit", **extra},
+            stop_reason=getattr(r, "stop_reason", None),
+            account=getattr(r, "satellite_account", None),
+            fallback_used=getattr(r, "fallback_used", None), **billed_fields(r),
+        )
+
+    # AA-741 (S270): one budget retry on a cut reply; a reply cut twice gives nothing back (the writer's value stays).
+    reply = generate_with_budget_retry(LLMClient().generate, request,
+                                       on_cut=lambda cut, m, rm: _log(cut, cut_signal(m, rm)))
+    resp = reply.resp
+    _log(resp, reply.signal())
+    data = {}
+    if not reply.still_cut:
+        text = _strip_fences(resp.content)
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            data = repair_json(text, return_objects=True)
     if not isinstance(data, dict):
         data = {}
     out = {}
     for key in ("seo_title", "meta_description"):
         val = data.get(key)
         out[key] = " ".join(val.split()) if isinstance(val, str) and val.strip() else None
-    return out, resp.cost_usd
+    return out, reply.cost_usd
 
 
 _FAQ_SYSTEM = """You write the FAQ section that ends a finished travel blog post.
@@ -505,18 +519,28 @@ def write_faq(
     parts.append(f"POST (do not repeat what it says):\n{strip_citation_tags(body)[:6000]}")
     request = LLMRequest(system_prompt=_FAQ_SYSTEM, user_prompt="\n\n".join(parts),
                          stage=SEO_FIT_STAGE, max_tokens=_MAX_TOKENS)
-    resp = LLMClient().generate(request)
-    record_call_sync(
-        stage=SEO_FIT_STAGE, role="writer", model=resp.model_used,
-        tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
-        cost_usd=resp.cost_usd, tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id,
-        quality_signal={"channel": "blog", "mode": "faq_regen", "source_chars": len(source),
-                        "unused_facts": len(unused_facts or []), "paa_questions": len(paa_questions or []),
-                        **({"required_questions": len(required_questions)} if required_questions else {})},
-        stop_reason=getattr(resp, "stop_reason", None),
-        account=getattr(resp, "satellite_account", None),
-        fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
-    )
+    signal = {"channel": "blog", "mode": "faq_regen", "source_chars": len(source),
+              "unused_facts": len(unused_facts or []), "paa_questions": len(paa_questions or []),
+              **({"required_questions": len(required_questions)} if required_questions else {})}
+
+    def _log(r, extra: dict) -> None:
+        record_call_sync(
+            stage=SEO_FIT_STAGE, role="writer", model=r.model_used,
+            tokens_in=getattr(r, "input_tokens", None), tokens_out=getattr(r, "output_tokens", None),
+            cost_usd=r.cost_usd, tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id,
+            quality_signal={**signal, **extra},
+            stop_reason=getattr(r, "stop_reason", None),
+            account=getattr(r, "satellite_account", None),
+            fallback_used=getattr(r, "fallback_used", None), **billed_fields(r),
+        )
+
+    # AA-741 (S270): one budget retry on a cut reply; a reply cut twice gives no pairs (a cut answer never lands).
+    reply = generate_with_budget_retry(LLMClient().generate, request,
+                                       on_cut=lambda cut, m, rm: _log(cut, cut_signal(m, rm)))
+    resp = reply.resp
+    _log(resp, reply.signal())
+    if reply.still_cut:
+        return [], reply.cost_usd
     text = _strip_fences(resp.content)
     try:
         data = json.loads(text)
@@ -533,7 +557,7 @@ def write_faq(
             q = re.sub(r"^\**\s*Q:\s*|(?<!\*)\*+$", "", strip_citation_tags(q)).strip()
             a = re.sub(r"^A:\s*", "", strip_citation_tags(a)).strip()
             out.append((" ".join(q.split()), " ".join(a.split())))
-    return out, resp.cost_usd
+    return out, reply.cost_usd
 
 
 __all__ = ["SEO_FIT_STAGE", "write_faq", "SeoEnvelopeError", "fit_seo_fields", "max_tokens_for", "SentenceRepairError",

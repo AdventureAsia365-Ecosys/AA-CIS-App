@@ -194,7 +194,7 @@ class TestGenerateOnce:
         _, client, log = self._run(monkeypatch)
         req = client.generate.call_args.args[0]
         assert req.system_prompt is prompts.SYSTEM_PROMPT and req.stage == "t8_angle_gen"
-        assert req.model_tier is None and req.max_tokens == 2048
+        assert req.model_tier is None and req.max_tokens == 4096   # AA-741 (S270): was 2048
         kw = log.await_args.kwargs
         assert kw["stage"] == "t8_angle_gen"
         assert set(kw["quality_signal"]) == {"angles_generated", "recommended_index", "avg_paa_answers_per_angle",

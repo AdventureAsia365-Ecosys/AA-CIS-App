@@ -27,8 +27,9 @@ def _style(channel: str) -> dict:
 
 class TestWriterCeiling:
     def test_blog_gets_a_larger_ceiling_than_social(self):
-        assert generate.max_tokens_for("blog") == 8000
-        assert generate.max_tokens_for("linkedin") == 3000
+        # AA-741 (S270): raised for the 5.x models (was 8000 / 3000)
+        assert generate.max_tokens_for("blog") == 12000
+        assert generate.max_tokens_for("linkedin") == 4096
 
     def test_ceiling_stop_is_retried_once_with_more_room(self):
         client = MagicMock()
@@ -39,7 +40,7 @@ class TestWriterCeiling:
         assert text == "Full post."
         assert cost == pytest.approx(0.3)
         first, second = (c.args[0] for c in client.generate.call_args_list)
-        assert first.max_tokens == 3000 and second.max_tokens == 4500
+        assert first.max_tokens == 4096 and second.max_tokens == 8192   # AA-741 (S270): x2 (was x1.5)
         assert log.call_count == 2
         assert log.call_args.kwargs["quality_signal"]["truncation_retry"] is True
 
@@ -63,7 +64,7 @@ class TestWriterCeiling:
                                        _resp('{"body": "Done.", "seo_title": "t"}')]
         with patch.object(generate, "LLMClient", return_value=client), patch.object(generate, "record_call_sync"):
             generate.write_content(channel_style=_style("blog"), **_KW)
-        assert client.generate.call_args_list[1].args[0].max_tokens == 12000
+        assert client.generate.call_args_list[1].args[0].max_tokens == 24000   # 12000 x 2, at the cap
 
 
 class TestCompleteGate:
