@@ -227,8 +227,9 @@ def _connections(monkeypatch):
                   served_roles=("writer",), account_id="1" * 12, role_name="zz-role", base_url="https://zz.example",
                   external_id="zz-external")
     return {
-        "zeta-direct": _Conn(connection_key="zeta-direct", kind="anthropic", label="Zeta API", data_scope="vendor_direct",
-                             secret_name="zz-llm/dev/zeta-direct", credential_env=None, **common),
+        "zeta-direct": _Conn(connection_key="zeta-direct", kind="anthropic", label="Zeta API",
+                             data_scope="vendor_direct", secret_name="zz-llm/dev/zeta-direct", credential_env=None,
+                             **common),
         "acc8": _Conn(connection_key="acc8", kind="bedrock", label="acc8", data_scope="aws_only", secret_name=None,
                       credential_env="ZZ_API_KEY", **common),
     }
