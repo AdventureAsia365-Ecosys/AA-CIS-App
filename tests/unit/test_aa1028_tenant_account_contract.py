@@ -33,9 +33,9 @@ from tests.unit.aa976_m2m import OTHER_CLIENT, install_m2m
 
 CONTRACT = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "tenant.entitlements.v1.openapi.yaml"
 DOC = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
-# sha256 of AA-Ecosys docs/contracts/tenant.entitlements.v1.openapi.yaml (info.version 1.2, AA-1028 R1 slice 3).
+# sha256 of AA-Ecosys docs/contracts/tenant.entitlements.v1.openapi.yaml (info.version 1.3, AA-1037 R4 slice 1).
 # Update the root file first, copy it here byte for byte, then set this to `sha256sum` of the root file.
-ROOT_CONTRACT_SHA256 = "6294f30c787f13e0e2399731db4bb24cc6b84d77e67e652ab7ad765f2a4003d6"
+ROOT_CONTRACT_SHA256 = "6337b38ed74e282e868132b80781b8ddb5e39207eb414da7bb7134bbfef39866"
 
 # Fixed UUIDs (AA-993: parametrize IDs must not change between pytest-xdist workers).
 TENANT = "1028a000-0000-4000-8000-000000000001"
