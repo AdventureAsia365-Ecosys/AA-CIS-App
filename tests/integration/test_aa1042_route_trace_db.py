@@ -242,3 +242,32 @@ async def test_the_fallback_content_queries_run(pool):
     assert out == {"window": "7d", "tours": []}
     tenant = await svc.read_fallback_tenant_content(pool, window="7d", now=NOW)
     assert tenant == {"window": "7d", "versions": [], "pieces": []}
+
+
+@pytest.mark.asyncio
+async def test_deferred_rungs_live_in_the_answered_row_and_show_as_skipped_attempts(pool):
+    """AA-1042 (S270): the rungs the gateway deferred behind an open refusal circuit have no row of their own; the
+    answered row lists them in quality_signal.route_skips. The request is still a fallback answer everywhere, the
+    request list counts them, and the trace shows them as skipped attempts in route order."""
+    trace = str(uuid.uuid4())
+    skips = [{"model": "zz-model-one", "connection": "acc3", "reason": "circuit_open:access_denied", "position": 0},
+             {"model": "zz-model-two", "connection": "acc3", "reason": "circuit_open:access_denied", "position": 1}]
+    at = NOW - timedelta(minutes=12)
+    async with pool.acquire() as c:
+        await c.execute(
+            "INSERT INTO shared.llm_call_log (stage, role, model, tokens_in, tokens_out, cost_usd, quality_signal, "
+            "created_at, status, attempt_no, latency_ms, connection_key, provider, app, fallback_used) "
+            "VALUES ($1, 'writer', 'zz-model-three', 10, 5, 0.02, $2::jsonb, $3, 'ok', 1, 300, 'api', 'openai', "
+            "'cis', true)",
+            STAGE, json.dumps({"route_trace": trace, "route_position": 2, "route_skips": skips}), at)
+        stats = await rw.read_stats(c, NOW - rw.WATCH_WINDOW)
+    st = stats[STAGE]
+    assert (st["answered"], st["fallback_answered"], st["failed_attempts"], st["max_position"]) == (1, 1, 0, 2)
+    out = await svc.read_requests(pool, stage=STAGE, window="1h", fallback_only=True, now=NOW)
+    (r,) = out["requests"]
+    assert (r["trace_id"], r["outcome"], r["failed_attempts"], r["skipped_attempts"]) == (trace, "fallback", 0, 2)
+    tr = await svc.read_trace(pool, trace, at=at, now=NOW)
+    assert [(a["model"], a["status"], a["position"]) for a in tr["attempts"]] == \
+        [("zz-model-one", "skipped", 0), ("zz-model-two", "skipped", 1), ("zz-model-three", "ok", 2)]
+    assert tr["outcome"] == "fallback" and tr["served"]["model"] == "zz-model-three"
+    assert tr["cost_usd"] == pytest.approx(0.02) and tr["attempts"][0]["error_class"] == "access_denied"
