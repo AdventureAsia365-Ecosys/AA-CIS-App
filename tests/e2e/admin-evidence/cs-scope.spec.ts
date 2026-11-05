@@ -96,7 +96,7 @@ test.describe('AA-1035 — customer_success E2E staff sees only its book', () =>
     await expect(page.locator('[data-testid="tenant360-ready"]').first()).toBeVisible({ timeout: 30000 });
     await shot(page, 'tenant360-own');
     await page.goto(`/admin/tenants/${B}`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByText(/outside your scope|not allowed|no access/i).first()).toBeVisible({ timeout: 30000 });
+    await expect(page.getByText(/outside your (scope|tenant book)|not allowed|no access/i).first()).toBeVisible({ timeout: 30000 });
     await shot(page, 'tenant360-other-refused');
     for (const p of ['/admin/tenants/assignments', '/admin/tenants/agencies', '/admin/tenant-qa/quality']) {
       await page.goto(p, { waitUntil: 'domcontentloaded' });
