@@ -17,7 +17,7 @@ Two PRs: migration 381 (migration-only, contract) and this code PR, stacked on #
   `output_config.effort`. So the stage's thinking budget is the existing `shared.stage_model_params` pair
   **effort + reasoning_mode** (migration 320 has both columns; no schema change needed).
 - **effort was already sent** on the Anthropic Messages API from a row (AA-1017). The live fix is therefore data:
-  migration 381 seeds effort `medium` for t9_write / t2_generate / t8_angle_gen on sonnet-5-5 and `low` for five Claude
+  migration 381 seeds effort `medium` for t9_write on sonnet-5-5 and `low` for five Claude
   5.5 validate stages (t9_faq_filter, t9_faq_answer_fit, a3_place_card_check, a3_place_days, a3_place_dedupe_check).
   It works with today's code; this PR does not need it and it does not need this PR.
 - **reasoning_mode was never sent anywhere.** This PR sends it on the Anthropic path as the one `thinking` object each
@@ -33,6 +33,12 @@ Two PRs: migration 381 (migration-only, contract) and this code PR, stacked on #
   xhigh / max are not sent (not every GPT model takes them; a 400 would cost the attempt), nor is reasoning_mode.
   `LLMResponse.effort` carries the value sent, so `llm_call_log.effort` is filled for OpenAI rows too.
 - **Converse unchanged**: no `additionalModelRequestFields` (AA-803: no probe has shown the provider's field).
+- **Only t9_write among the writers (review fix pass).** The first draft also set t2_generate and t8_angle_gen to
+  medium. A reviewer pointed out that nothing checks writer quality on a stage_model_params change, and the S271
+  cuts were t9_write only (t8 had 7 cuts at 2048 in 30 days, t2 none recorded). So 381 seeds t9_write plus the five
+  validate rows; the tour and angle writers stay at high until a paid quality read on an audit tenant (t2_judge
+  score and tokens_out next to the high-effort baseline) backs a forward migration. The t9_write paid check reads
+  quality too (piece status, attempts, t10_judge rows, subject_gate flags), with a roll-back rule.
 - **Judges not seeded.** s1/t2/t7/t10 judges and writing_memory_* run GPT on Converse (nothing would be sent) and a
   judge's effort moves the eval gate (Writing Lab kappa): an eval-gated choice, not this lane's. a3_place_locate (geo
   accuracy) and the Haiku 5.5 fix / nudge / repair writers keep their defaults too.
@@ -62,7 +68,11 @@ Two PRs: migration 381 (migration-only, contract) and this code PR, stacked on #
   than `high` (the size is measured by the paid check, not known in advance). If the paid check shows
   tokens_out >= 6000 at medium, the next step is a forward migration to `low` for t9_write only (one row).
 - Effort is a quality lever. The writer eval gate (release fingerprint) does not cover stage_model_params today: a
-  writer effort change does not flag a release for reverify. Worth a follow-up if effort becomes a routine knob.
+  writer effort change does not flag a release for reverify. Follow-up (orchestrator to open): make the writer
+  stages' stage_model_params rows part of the writer release fingerprint, before t2_generate / t8_angle_gen move.
+- Quality stop rule for the t9_write row: if the first paid blog write at medium is held where the high-effort
+  baseline passed, needs more attempts, or opens a subject_gate flag, roll back with a forward migration
+  `DELETE FROM shared.stage_model_params WHERE stage = 't9_write' AND updated_by = 'migration-381-aa741'`.
 - The family table is code (like `_EFFORT_DEFAULTS`): a new Claude family needs a row there, else 'off' / 'adaptive' is
   warned and not sent (safe: never a 400).
 

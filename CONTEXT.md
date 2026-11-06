@@ -378,8 +378,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   Opus 5 / Sonnet 5, never at xhigh / max, nothing on Opus 5.5 / Fable; 'adaptive' explicit; nothing on 4.5); on
   OpenAI / Azure effort low / medium / high is `reasoning_effort` on a reasoning model only
   (`stage_params.openai_reasoning_effort`); Converse sends neither (AA-803). A field a path does not send is logged
-  once (`stage_params_not_applied`). CIS 381 seeds effort medium for t9_write / t2_generate / t8_angle_gen on
-  sonnet-5-5 and low for the Claude 5.5 validate stages. A deployment may state its own `api_style` (NULL = the
+  once (`stage_params_not_applied`). CIS 381 seeds effort medium for t9_write on sonnet-5-5 and low for the Claude
+  5.5 validate stages; t2_generate and t8_angle_gen keep their default (high) until a paid quality read backs a
+  change (the writer release fingerprint does not cover these rows yet). A deployment may state its own `api_style` (NULL = the
   catalog's). `errors.TRUNCATED` is the recorded, non-failure class of a reply cut at its token limit (ledger status
   `truncated`; `llm_provider_health` accepts it). `shared.tenant_ai_budget` (AA-1016, no rows = no budget) and
   `shared.prompt_version` (AA-900, sha256 + path, never prompt text) exist for the enforcement / prompt-gate slices.
@@ -879,7 +880,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     included). A ceiling is head-room, not the expected size: since t9_write v2 (AA-741 S271) every blog prompt carries a word band (900-1,300, never over
     1,600, never padded), a section cap and a one-pass rule (`prompts._BLOG_LENGTH_INSTRUCTIONS`), because the
     adaptive thinking of the 5.x writers is billed as output inside the same ceiling (bounded by the stage x model
-    effort since CIS 381: medium for the Sonnet 5.5 writers);
+    effort since CIS 381: medium for t9_write on Sonnet 5.5);
   - a judge verdict built from several calls (AA-714 near-band repeat, AA-801 median3) writes one row per
     call in one transaction (`record_calls_sync`): the verdict row (run 1's cost, `judge_calls: n`) plus
     `{judge_run, of, verdict_row: false}` rows;
