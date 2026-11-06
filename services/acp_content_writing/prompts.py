@@ -159,6 +159,20 @@ _BLOG_LENGTH_INSTRUCTIONS = (
     "- Return one article only: no alternative versions, no notes, no outline, no list of the facts you used."
 )
 
+# AA-741 (S271 review) — the focus of a Segment-grain Blog walk. Since S271 every Bar-clearing place on a Route is its
+# own Blog Subject and each pick carries the same walk; without a focus, sibling Subjects of one Route were written
+# from the same moments with the same "richest moment" rule, so near-identical articles were likely. The Subject's own
+# moment is marked in the CONTENT SEED (_WALK_FOCUS_MARK, right under its "[Moment id=...]" line) and this rule makes
+# it the piece's subject. Only a route-aware blog prompt whose walk holds the focus moment gets either; every other
+# prompt is byte for byte what it was. Both symbols are in the t9_write prompt manifest (v3).
+_WALK_FOCUS_MARK = "FOCUS: this piece is about this moment."
+_WALK_FOCUS_RULE = (
+    "\n- WALK FOCUS: the moment marked FOCUS in the CONTENT SEED is what this piece is about. It carries the title, "
+    "the opening and the most depth (it is the richest moment for the depth rule above). The other moments are the "
+    "way there and onwards: write them for the journey, with only what their own source lines state, never as the "
+    "title, the hook or the climax."
+)
+
 # AA-514 — blog channel's writer-output contract becomes a JSON envelope (full port of the
 # origin's structured Piece.seo_title/meta_description/slug fields, Nghiệp-confirmed real
 # architecture decision — see docs/claude_audit/AA-514-step0-investigation.md §4). Appended
@@ -312,6 +326,7 @@ def build_user_prompt(
     memory_lines: list[str] | None = None,
     brief_grounding: str | None = None,
     reader_checklist: str | None = None,
+    walk_focus: str | None = None,
 ) -> str:
     """`angle` is the chosen `angle_gate_option` row (name/why_it_works/formula_fit/
     best_final_style). `revision_feedback` (AA-450 Phase 1's confirmed retry shape — specific,
@@ -367,7 +382,11 @@ def build_user_prompt(
     `reader_checklist` (AA-790 round 10): the mode of reader_checklist.checklist_block; None reads the env switch
     `T9_READER_CHECKLIST_MODE` (the live path), the A/B harness passes it. In mode 'r10' a READER CHECKLIST block (the
     traveller's practical questions with the CONTENT SEED's / FACTS' own answers quoted) follows the CONTENT SEED (and
-    the SEARCH QUESTIONS of a blog); 'off' (default) adds nothing, so the prompt is byte for byte what it was."""
+    the SEARCH QUESTIONS of a blog); 'off' (default) adds nothing, so the prompt is byte for byte what it was.
+
+    `walk_focus` (AA-741 S271 review): the `[Moment id=...]` id of a Segment-grain Blog Subject's own moment
+    (walk_focus.usable_focus). On a route-aware blog prompt whose walk holds that id, the moment is marked FOCUS and
+    `_WALK_FOCUS_RULE` follows the route format; None, or an id not on the walk, adds nothing."""
     # AA-771 (S233) — the full brand pack (render_brand_block) replaces the AUDIENCE / MINDSET /
     # BRAND NAME lines; the invented "discerning travellers" fallback audience is gone.
 
@@ -381,8 +400,10 @@ def build_user_prompt(
     is_route_aware = (
         channel_style["channel"] == "blog" and bool(route_segments) and len(route_segments) > 1
     )
+    focus_on_walk = is_route_aware and bool(walk_focus) and any(mid == walk_focus for mid, _ in route_segments)
     seed_text = (
-        "\n\n".join(f"[Moment id={mid}]\n{text}" for mid, text in route_segments)
+        "\n\n".join(f"[Moment id={mid}]\n" + (f"{_WALK_FOCUS_MARK}\n" if focus_on_walk and mid == walk_focus else "")
+                    + text for mid, text in route_segments)
         if is_route_aware else content_seed
     )
     # AA-529 — appended INSIDE seed_text itself (not as a separate `lines` entry) so it rides
@@ -505,6 +526,8 @@ def build_user_prompt(
             _BLOG_FORMAT_INSTRUCTIONS_ROUTE if is_route_aware
             else _BLOG_FORMAT_INSTRUCTIONS.format(atom_id=atom_id or "atom")
         )
+        if focus_on_walk:
+            prompt += _WALK_FOCUS_RULE  # AA-741 (S271 review) — a Segment-grain walk is about its own moment
         # AA-741 (S271) — the blog's length and one-pass budget, write and rewrite alike.
         prompt += _BLOG_LENGTH_INSTRUCTIONS
         # AA-514 — every blog response is the JSON envelope, revision or not.

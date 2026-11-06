@@ -69,8 +69,10 @@ async def _no_seed(conn, atom_id, tenant_id):
     return None
 
 
-async def _label_route_seeds(conn, atoms, tenant_id):
-    """S234 — the route walk's merged seeds, label-only: one block per atom, its label."""
+async def _label_route_seeds(conn, atoms, tenant_id, groups_out=None):
+    """S234 — the route walk's merged seeds, label-only: one block per atom, its label (AA-741: one atom a block)."""
+    if groups_out is not None:
+        groups_out.extend([a] for a, _ in atoms)
     return [(a, t) for a, t in atoms]
 
 

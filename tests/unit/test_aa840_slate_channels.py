@@ -25,8 +25,10 @@ SEGMENT_CHANNELS = [c for c, spec in CHANNEL_BARS.items() if spec["grain"] == "s
 SOCIAL_CHANNELS = ["linkedin", "facebook", "instagram", "tiktok"]
 
 
-def _seg(i: int, said: int = 200, place: str | None = None) -> Candidate:
-    return Candidate(segment_id=f"seg_{i}", route_id=None, score=float(i), demand=None, questions=0,
+def _seg(i: int, said: int = 200, place: str | None = None, demand: int | None = 1500,
+         questions: int = 5) -> Candidate:
+    # AA-741 S271: Blog is a Segment Channel, so the default Segment clears its Bar too (demand / questions).
+    return Candidate(segment_id=f"seg_{i}", route_id=None, score=float(i), demand=demand, questions=questions,
                      said=said, place=place or f"Place {i}", action="visit")
 
 
@@ -102,11 +104,12 @@ class TestChooseSlate:
         assert _ids(chosen["facebook"]) == ["seg_1"]
         assert _ids(chosen["linkedin"]) == ["seg_1", "seg_2", "seg_3"]
 
-    def test_blog_uses_routes_and_is_not_touched_by_the_place_cap(self):
-        chosen = _choose_slate(["blog", "linkedin"], [_seg(1)], [_route(1), _route(2)], hub_of={},
+    def test_blog_takes_segments_under_the_place_cap(self):
+        # AA-741 S271: Blog proposes Segments (Routes are no longer its pool) and shares the place rule.
+        chosen = _choose_slate(["blog", "linkedin"], [_seg(1), _seg(2)], [_route(1), _route(2)], hub_of={},
                                max_channels_per_place=1)
-        assert _ids(chosen["blog"]) == ["route_1", "route_2"]
-        assert _ids(chosen["linkedin"]) == ["seg_1"]
+        assert _ids(chosen["blog"]) == ["seg_1"]
+        assert _ids(chosen["linkedin"]) == ["seg_2"]
 
     def test_deterministic_whatever_the_input_order(self):
         segments = [_seg(i, place=f"Place {i % 4}") for i in range(1, 13)]
@@ -205,6 +208,7 @@ async def _propose(channels_config, segments, routes):
     route_fetch = AsyncMock(return_value=routes)
     debate = AsyncMock(side_effect=lambda _tid, candidates, _conn: candidates)
     with patch.object(slate, "_tenant_market_codes", AsyncMock(return_value=(["US"], []))), \
+         patch.object(slate, "_fetch_thin_walk_segments", AsyncMock(return_value={})), \
          patch.object(slate, "_fetch_segment_candidates", seg_fetch), \
          patch.object(slate, "_fetch_route_candidates", route_fetch), \
          patch.object(slate, "_fetch_segment_hub_map", AsyncMock(return_value={})), \
@@ -250,15 +254,15 @@ class TestProposeSlate:
         assert reason["channel"] == "facebook" and reason["said_ok"] is True
 
     @pytest.mark.asyncio
-    async def test_blog_only_tenant_skips_segment_fetch_and_debate(self):
+    async def test_blog_only_tenant_skips_route_fetch(self):
         # Debate's brand-fit cut is a paid call on a cache miss: a grain no enabled Channel uses
-        # is not fetched nor debated.
+        # is not fetched nor debated. AA-741 S271: Blog is Segment grain, so no Route is fetched.
         conn, result, seg_fetch, route_fetch, debate = await _propose(["blog"], [_seg(1)], [_route(1)])
-        seg_fetch.assert_not_awaited()
-        route_fetch.assert_awaited_once()
-        assert debate.await_count == 2  # segments ([]) and routes, unchanged call shape
-        assert _inserted(conn) == {"blog": ["route_1"]}
-        assert result["segments_seen"] == 0
+        seg_fetch.assert_awaited_once()
+        route_fetch.assert_not_awaited()
+        assert debate.await_count == 2  # segments and routes ([]), unchanged call shape
+        assert _inserted(conn) == {"blog": ["seg_1"]}
+        assert result["routes_seen"] == 0
 
     @pytest.mark.asyncio
     async def test_segment_only_tenant_skips_route_fetch(self):

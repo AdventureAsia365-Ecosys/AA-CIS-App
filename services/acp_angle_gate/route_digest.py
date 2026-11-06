@@ -85,17 +85,37 @@ def _name(m: dict) -> str:
     return m["place"] if m.get("place") and fold(m["place"]) not in fold(m["label"]) else m["label"]
 
 
+def with_focus(moments: list[dict], focus_index: int) -> list[dict]:
+    """AA-741 (S271 review) — the moments of a Segment-grain Blog walk with its Subject's own moment marked
+    (`focus` True on that one, False on the rest). The caller (angle_gate.service.angle_inputs) only passes a focus
+    walk_focus.usable_focus accepted: on the walk and not thin."""
+    return [{**m, "focus": i == focus_index} for i, m in enumerate(moments)]
+
+
+def _focus_of(moments: list[dict]) -> Optional[dict]:
+    return next((m for m in moments if m.get("focus")), None)
+
+
 def render_digest(moments: list[dict]) -> str:
-    """The T8 CONTENT SEED for a Route request."""
+    """The T8 CONTENT SEED for a Route request. AA-741 (S271 review): when one moment is the FOCUS (with_focus), the
+    digest names it as what the piece is about and the other rich moments as CONTEXT (the way there and onwards),
+    instead of ANCHOR CANDIDATES; sibling Subjects of one Route then get different seeds and one anchor each."""
     lines = ["ROUTE (this piece covers these moments of the trip, in day order):"]
     for m in moments:
         day = f"Day {m['day']}" if m.get("day") else "Day ?"
         facts = " | ".join(f[:_FACT_CHARS] for f in m["facts"][:TOP_FACTS])
         n = m["fact_count"]
         lines.append(f"- {day} · {_name(m)} · {n} fact{'s' if n != 1 else ''}" + (f" · {facts}" if facts else ""))
-    anchors = [_name(m) for m in moments if not m["thin"]]
-    thin = [_name(m) for m in moments if m["thin"]]
-    if anchors:
+    focus = _focus_of(moments)
+    anchors = [_name(m) for m in moments if not m["thin"] and not m.get("focus")]
+    thin = [_name(m) for m in moments if m["thin"] and not m.get("focus")]
+    if focus is not None:
+        lines.append("FOCUS (what this piece is about: every angle leads with it and gives it the most room): "
+                     + _name(focus))
+        if anchors:
+            lines.append("CONTEXT (the way there and onwards: named for the journey, never the hook, the title or "
+                         "the climax): " + "; ".join(anchors))
+    elif anchors:
         lines.append("ANCHOR CANDIDATES (3 or more source facts — every angle leads with one of these): "
                      + "; ".join(anchors))
     if thin:
@@ -172,11 +192,23 @@ def angle_anchor(angle: dict, moments: list[dict]) -> Optional[dict]:
 
 
 def thin_anchor(angle: dict, moments: list[dict]) -> Optional[str]:
-    """'<moment> (<n> fact(s))' when the angle leads with a thin moment, else None."""
+    """'<moment> (<n> fact(s))' when the angle leads with a thin moment, else None. AA-741 (S271 review): on a focus
+    walk (with_focus) an angle that leads with any moment other than the FOCUS is flagged the same way
+    ('<moment> (not the focus)'), so ranking puts it last and three such angles get the one retry."""
     m = angle_anchor(angle, moments)
-    if m is None or not m["thin"]:
+    if m is None:
+        return None
+    if _focus_of(moments) is not None and not m.get("focus"):
+        return f"{_name(m)} (not the focus)"
+    if not m["thin"]:
         return None
     return f"{_name(m)} ({m['fact_count']} fact{'s' if m['fact_count'] != 1 else ''})"
 
 
-__all__ = ["angle_anchor", "render_digest", "route_moments", "thin_anchor", "TOP_FACTS"]
+def focus_name(moments: list[dict] | None) -> Optional[str]:
+    """The FOCUS moment's name on a focus walk, else None."""
+    focus = _focus_of(moments or [])
+    return _name(focus) if focus is not None else None
+
+
+__all__ = ["angle_anchor", "focus_name", "render_digest", "route_moments", "thin_anchor", "with_focus", "TOP_FACTS"]

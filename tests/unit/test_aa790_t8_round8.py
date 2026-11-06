@@ -24,7 +24,9 @@ GOAL = get_goal("introduction_awareness")
 # AA-789 tier 0 (S258): the thin-moment sentence says "only be named in passing", not "in one sentence at most" (the
 # angle brief carried the count to the writer, which copied it: 'The monastery ruins get one sentence here').
 # Was df5bd75e54608e21.
-ROUND6_SYSTEM_SHA = "0a26c260a0fc0717"
+# AA-741 (S271 review, t8_angle_gen v2): one sentence after the ROUTE rule says a ROUTE that names a FOCUS is about
+# that moment (a Segment-grain Blog walk). Was 0a26c260a0fc0717.
+ROUND6_SYSTEM_SHA = "b794985c5f5d88b9"
 
 GOOD_BRIEF = ("Reader: you ride the valley road on day two and stop for a swim at the falls. "
               "Brand: pace, the seed says the ride is short and on tarmac. "

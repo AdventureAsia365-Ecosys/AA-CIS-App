@@ -34,12 +34,13 @@ from services.acp_angle_gate.channel_style import get_channel_style
 from services.acp_angle_gate.generate import generate_angles
 from services.acp_angle_gate.goals import get_goal
 from services.acp_angle_gate.ranking import rank_angles, verify_answers
-from services.acp_angle_gate.route_digest import render_digest, route_moments
+from services.acp_angle_gate.route_digest import render_digest, route_moments, with_focus
 from services.acp_shared.channel_spec import apply_spec, channel_spec, sanitize_best_final_style
 from services.acp_planning.tenant_pool import fetch_tenant_trips
 from services.acp_shared.atom_seed import atom_seed_text
 from services.acp_shared.dfs_relevance import SearchDemandSignal, fetch_search_demand_signal, score_dfs_relevance
 from services.acp_shared.real_questions import collect_real_questions
+from services.acp_shared import walk_focus
 from services.acp_shared.route_guard import request_route_segment_ids
 from services.acp_shared.piece_history import fetch_piece_history
 
@@ -284,9 +285,13 @@ async def angle_inputs(tenant_id: UUID, req, goal: dict, pool) -> AngleInputs:
     # anchor candidates / thin moments), not from route_segment_ids[0] alone.
     content_seed, moments = atom["text"], None
     if req["route_segment_ids"]:
-        moments = await _route_moments(tenant_id, req, pool)
+        moments, single_place = await _route_moments(tenant_id, req, pool)
         if moments:
             content_seed = render_digest(moments)
+        elif single_place:
+            # AA-741 (S271 review) — a Segment-grain Blog Subject whose own moment is thin or off the walk is a
+            # single-place piece (T9 applies the same rule): the atom seed, and only its own questions below.
+            req = {**dict(req), "route_segment_ids": []}
     # AA-771 (S234) — LinkedIn's use case / structure / avoid list follow the brand's register.
     channel_style = apply_spec(get_channel_style(req["channel"]), channel_spec(req["channel"], brand_audience)) \
         if req["channel"] and get_channel_style(req["channel"]) else None
@@ -384,9 +389,15 @@ async def _blog_search_demand(req, search_demand: SearchDemandSignal | None, poo
     return signal, tour_paa
 
 
-async def _route_moments(tenant_id: UUID, req, pool) -> list[dict] | None:
+async def _route_moments(tenant_id: UUID, req, pool) -> tuple[list[dict] | None, bool]:
     """S234 — the Route's moments, from the same day-ordered, merged seed blocks T9 writes from.
-    None (single-atom seed, as before) when the walk cannot be read."""
+    None (single-atom seed, as before) when the walk cannot be read.
+
+    AA-741 (S271 review) — a Segment-grain Blog Subject (walk_focus.subject_focus_segment) walks around its own
+    moment: the moments come back with that one marked FOCUS (route_digest.with_focus) when it is on the walk and
+    not thin (walk_focus.usable_focus, the rule T9 applies to the same blocks); otherwise (None, True): a
+    single-place piece. A Route-grain Subject or no Subject: the whole walk, no focus, as before. The bool is True
+    only for that single-place fallback."""
     # local import: content_writing.service imports this module
     from services.acp_content_writing.service import _fetch_route_segments
     segment_ids = req["route_segment_ids"]
@@ -394,11 +405,25 @@ async def _route_moments(tenant_id: UUID, req, pool) -> list[dict] | None:
         segment_ids = json.loads(segment_ids)
     try:
         trip_id = str(req["trip_id"]) if req["trip_id"] else None
-        segments = await _fetch_route_segments(tenant_id, trip_id, segment_ids, pool)
+        focus_segment = None
+        if req.get("subject_id"):
+            async with pool.acquire() as conn:
+                focus_segment = await walk_focus.subject_focus_segment(conn, tenant_id, req["subject_id"])
+        focus_out: list = []
+        segments = await _fetch_route_segments(
+            tenant_id, trip_id, segment_ids, pool,
+            **({"focus_segment_id": focus_segment, "focus_out": focus_out} if focus_segment else {}))
     except Exception as e:  # noqa: BLE001 — the single-atom seed still works
         logger.warning("t8_route_digest_failed", request_id=str(req["request_id"]), error=str(e)[:200])
-        return None
-    return route_moments(segments) if len(segments) > 1 else None
+        return None, False
+    if focus_segment:
+        idx = walk_focus.usable_focus(segments, focus_out[0] if focus_out else None)
+        if idx is None:
+            logger.info("t8_walk_focus_single_place", request_id=str(req["request_id"]), segment_id=focus_segment,
+                        moments=len(segments), on_walk=bool(focus_out and focus_out[0] is not None))
+            return None, True
+        return with_focus(route_moments(segments), idx), False
+    return (route_moments(segments) if len(segments) > 1 else None), False
 
 
 T8_ANGLES_KIND = "t8_angles"

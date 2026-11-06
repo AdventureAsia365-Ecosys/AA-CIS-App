@@ -78,6 +78,7 @@ from services.acp_shared.real_questions import (SOURCE_PLACE, SOURCE_WRITER, a3_
                                                 collect_real_questions, faq_sources,
                                                 is_off_meaning, label_questions, missing_real_questions,
                                                 real_first_pairs, source_counts)
+from services.acp_shared import walk_focus
 from services.acp_shared.route_guard import request_route_segment_ids
 from services.acp_planning.tenant_pool import fetch_tenant_trips, fetch_tenant_trips_on
 from services.acp_produce.brand import fetch_brand_rubric_text
@@ -211,7 +212,8 @@ def _walk_order(item: tuple[int, dict]) -> tuple:
 
 async def _fetch_route_segments(
     tenant_id: UUID, trip_id: Optional[str], segment_ids: list[str], pool,
-    atoms_out: Optional[list] = None,
+    atoms_out: Optional[list] = None, *, focus_segment_id: Optional[str] = None,
+    focus_out: Optional[list] = None,
 ) -> list[tuple[str, str]]:
     """AA-511 Gap A (2026-09-02) — every Segment's live representative atom. Same per-Segment
     resolution `services/acp_shared/slate.py::_resolve_representative_atom()` already uses for its
@@ -239,12 +241,18 @@ async def _fetch_route_segments(
     (A3's transit/meal/unnamed-place decision) is skipped, unless that would leave nothing; and
     moments at the same place merge into one block (atom_seed.route_moment_seeds, C10), so a pair
     is (first atom_id of the block, block). `atoms_out`, when given, receives every kept
-    (atom_id, label) in day order — resolve_facts() re-reads the merged seeds from it."""
+    (atom_id, label) in day order — resolve_facts() re-reads the merged seeds from it.
+
+    AA-741 S271 review — `focus_segment_id` (a Segment-grain Blog Subject's own Segment, walk_focus.
+    subject_focus_segment): `focus_out`, when given, receives the index of the returned block that holds
+    that Segment's atom, or None when the Segment is not on the walk (dropped, excluded, rebuilt away)."""
     if not trip_id:
         raise ContentWritingError(
             "route_segment_ids is set but trip_id is missing — cannot resolve any Segment's atom."
         )
     rows: list[tuple[int, dict]] = []
+    focus_atom_id: Optional[str] = None
+    groups: list[list[str]] = []
     async with pool.acquire() as conn:
         for i, segment_id in enumerate(segment_ids):
             row = await conn.fetchrow(_ROUTE_SEGMENT_TEXT_QUERY, segment_id, trip_id, str(tenant_id))
@@ -254,9 +262,13 @@ async def _fetch_route_segments(
         if rows and not kept:
             logger.warning("t9_route_all_segments_excluded", segment_ids=segment_ids[:20])
             kept = rows
+        if focus_segment_id:
+            focus_atom_id = next((r["atom_id"] for i, r in kept if segment_ids[i] == focus_segment_id), None)
         kept.sort(key=_walk_order)
         atoms = [(r["atom_id"], r["text"]) for _, r in kept]
-        segments = await route_moment_seeds(conn, atoms, str(tenant_id)) if atoms else []
+        # the block membership is read only for a focus (every other caller keeps the 3-argument call)
+        extra = {"groups_out": groups} if focus_atom_id else {}
+        segments = await route_moment_seeds(conn, atoms, str(tenant_id), **extra) if atoms else []
     if not segments:
         raise AtomReplacedError(
             f"None of route_segment_ids={segment_ids!r} resolved to a live atom for trip_id="
@@ -264,7 +276,38 @@ async def _fetch_route_segments(
         ).about(segment_ids=segment_ids)
     if atoms_out is not None:
         atoms_out.extend(atoms)
+    if focus_out is not None:
+        focus_out.append(walk_focus.focus_block_index(groups, focus_atom_id))
     return segments
+
+
+async def _walk_with_focus(tenant_id: UUID, req: dict, segment_ids: list[str], pool,
+                           route_atoms: list) -> tuple[Optional[list[tuple[str, str]]], Optional[str]]:
+    """AA-741 (S271 review) — (route_segments or None, focus moment id or None) for a request that carries a walk.
+
+    A Segment-grain Blog Subject (its own Segment, walk_focus.subject_focus_segment) walks its Route only around its
+    own moment: when that moment is on the walk and not thin, the walk comes back with the moment's id (the writer
+    marks it FOCUS); otherwise (None, None): a single-place piece from the request atom, the rule T8 applied to the
+    angles (angle_gate.service.angle_inputs). A Route-grain Subject or a request without one keeps the whole walk with
+    no focus, as before. `route_atoms` receives the kept atoms only when the walk is used."""
+    focus_segment = None
+    if req.get("subject_id"):
+        async with pool.acquire() as conn:
+            focus_segment = await walk_focus.subject_focus_segment(conn, tenant_id, req["subject_id"])
+    if not focus_segment:
+        return await _fetch_route_segments(tenant_id, req["trip_id"], segment_ids, pool,
+                                           atoms_out=route_atoms), None
+    atoms: list = []
+    focus_out: list = []
+    segments = await _fetch_route_segments(tenant_id, req["trip_id"], segment_ids, pool, atoms_out=atoms,
+                                           focus_segment_id=focus_segment, focus_out=focus_out)
+    idx = walk_focus.usable_focus(segments, focus_out[0] if focus_out else None)
+    if idx is None:
+        logger.info("t9_walk_focus_single_place", request_id=str(req.get("request_id")), segment_id=focus_segment,
+                    moments=len(segments), on_walk=bool(focus_out and focus_out[0] is not None))
+        return None, None
+    route_atoms.extend(atoms)
+    return segments, segments[idx][0]
 
 
 _SCOPE_QUERY = """
@@ -1532,13 +1575,17 @@ async def start_write(
     # channel/angle_gate_option_id) — NOT recomputed at _finalize_piece() time.
     route_hub_name = req.get("subject_hub_name")
     route_segment_count = None
+    focus_moment: Optional[str] = None
     if req.get("route_segment_ids"):
         # AA-914 — only the Route Segments the trip has a live atom in (merged ids followed to the
         # live one); a stale snapshot's foreign / orphaned id is dropped and logged, not counted.
         segment_ids = await request_route_segment_ids(pool, req, tenant_id=tenant_id, consumer="t9_write")
         route_segment_count = len(segment_ids)
-        route_segments = await _fetch_route_segments(tenant_id, req["trip_id"], segment_ids, pool,
-                                                     atoms_out=route_atoms)
+        route_segments, focus_moment = await _walk_with_focus(tenant_id, req, segment_ids, pool, route_atoms)
+        if route_segments is None:
+            route_segment_count = None
+            route_atoms = []
+    if route_segments:
         atom_text = "\n\n".join(text for _, text in route_segments)
     else:
         atom_text = await _fetch_atom_text(tenant_id, req["atom_id"], pool)
@@ -1648,6 +1695,7 @@ async def start_write(
         "destination": destination, "trip_name": trip_name,
         "brand_rubric_text": brand_rubric_text, "channel": req["channel"],
         "atom_id": req["atom_id"], "route_segments": route_segments, "keyword": keyword,
+        **({"walk_focus": focus_moment} if focus_moment else {}),
         "people_also_ask": people_also_ask,  # AA-779 — raw; the job keeps the in-scope ones
         "real_questions": real_questions,  # S245 (AA-779 2A) — [{q, source}], blog only; admin record
         **({"a3_question_filter": a3_stats} if a3_stats is not None else {}),  # AA-982 — admin record
@@ -1859,6 +1907,9 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
     openers_kw = {"sibling_openers": sibling_openers} if sibling_openers else {}
     # AA-919 — the writing-memory view start_write resolved (absent = memory off: the call is unchanged)
     memory_kw = {"memory": context["writing_memory"]} if context.get("writing_memory") else {}
+    # AA-741 (S271 review) — a Segment-grain Blog walk is written about its Subject's own moment (absent otherwise:
+    # the call is unchanged)
+    memory_kw.update({"walk_focus": context["walk_focus"]} if context.get("walk_focus") else {})
     # AA-790 (S251) — a repeated write of one request (non-blog) opens on a different seed fact; the S251 pilot's six
     # Terra LinkedIn posts, started together on one request, all opened on 'Years of practice on a single craft'.
     lead_kw: dict = {}
@@ -2579,6 +2630,8 @@ def writer_input_snapshot(context: dict) -> dict:
         "writer_prompt_version": WRITER_PROMPT_VERSION,  # AA-916 WM-08
         "seed": context.get("atom_text"),
         "route_moments": [{"atom_id": a, "seed": t} for a, t in (context.get("route_segments") or [])],
+        # AA-741 (S271 review) — the moment a Segment-grain Blog walk is about; absent for every other piece.
+        **({"walk_focus": context["walk_focus"]} if context.get("walk_focus") else {}),
         "facts": context.get("facts_text") or "",
         "scope": context.get("scope"),
         "brand_pack": context.get("brand_audience") or {},
