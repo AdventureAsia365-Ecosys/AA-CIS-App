@@ -266,6 +266,7 @@ async def _run(text, seed, cta, gates, repair=None):
     return fin.call_args.kwargs, rep, rqg, rw
 
 
+@pytest.mark.usefixtures("t9_legacy_last_attempt")  # AA-900 W0 — pins the rollback mode
 @pytest.mark.asyncio
 async def test_heading_claim_piece_is_repaired_not_held():
     """781b5de7's path: attempt 1 F9 on a prose sentence + the heading; attempt 2's repair leaves the heading

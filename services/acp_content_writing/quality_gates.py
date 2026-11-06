@@ -48,6 +48,7 @@ from typing import Optional, TypedDict
 import structlog
 
 from services.acp_content_writing import authenticity
+from services.acp_content_writing import f9_policy  # AA-900 W0 (interim F9 policy)
 from services.acp_content_writing.hygiene import (EM_DASH_PATTERN, HygieneContext, brief_phrases, content_words,
                                                   contrast_excess, copies, dangling_opener, expand_to_sentence,
                                                   find_issues, fold,
@@ -2908,6 +2909,11 @@ def run_quality_gates(
         sources += gate_brand_voice(length_check_text, cta or "", brand_rubric_text, source_text=atom_text,
                                     voice=(brand_pack or {}).get("voice"), passed_sentences=f9_passed_sentences,
                                     **seo_kw)
+    # AA-900 W0 (ADR 0020 D1/D3/D4/D15) — the interim F9 policy: F9_cta_fact holds only on a quoted, unsupported trip
+    # activity / service / time / view; every other F9 class warns (f9_policy; T10_F9_POLICY_MODE=legacy rolls back).
+    # A replay's stored verdicts go through it too, so the replay shows the declared diff.
+    f9_lexicon = hygiene_ctx.lexicon if hygiene_ctx is not None else None
+    sources = [f9_policy.apply_policy(g, f9_lexicon) if g.get("gate") == qr.F9_CTA_FACT else g for g in sources]
     # AA-788 — F9_brand_style's `repair` mode: attempt 1 blocks for one sentence repair, never a hold (a no-op in the
     # default warn mode). A replay's stored verdicts get the same promotion.
     sources = [promote_brand_style(g, content_text, attempt_one=stock_blocking) if g.get("gate") == qr.F9_BRAND_STYLE

@@ -30,6 +30,7 @@ from services.acp_content_writing.hygiene import (
 )
 from services.acp_content_writing.quality_gates import (F9_STYLE_PROBLEM, OWNED_BY_FIX_STEP, brand_style_sentences,
                                                          expand_ledger)
+from services.acp_content_writing.f9_policy import F9_CLAIM_RE
 from services.acp_shared.citation_tags import TAG as _TAG
 from services.acp_shared.citation_tags import strip_citation_tags, trailing_tags
 from services.quality import repair_contract
@@ -39,7 +40,7 @@ from services.quality import registry as qr
 # '[R:id' opener is dropped like a whole tag
 _SEP = rf"(?:\s|{_TAG})+"
 _F1_QUOTE_RE = re.compile(r"not present in the content seed: '(.+)'\s*$", re.DOTALL)
-_F9_CLAIM_RE = re.compile(r'"(.+?)" \(claims: (.+?); source: (.+?)\)(?:; |$)', re.DOTALL)
+_F9_CLAIM_RE = F9_CLAIM_RE  # AA-900 W0 — one pattern, owned by f9_policy
 
 _BRAND_QUOTE_RE = re.compile(r"^(.+?): '(.+)'\s*$", re.DOTALL)
 _ELIGIBLE_GATES = {qr.F1_GROUNDING, qr.F9_CTA_FACT, qr.F2_BRAND_FORBIDDEN, qr.F11_BRAND_NAME,

@@ -197,6 +197,7 @@ async def _run_loop(first_text, rewrite_text, gates, repaired="The pools are dee
     return rewrite, repair, fin.await_args.kwargs
 
 
+@pytest.mark.usefixtures("t9_legacy_last_attempt")  # AA-900 W0 — pins the rollback mode
 @pytest.mark.asyncio
 async def test_floor_rewrite_with_a_new_f1_is_kept_and_repaired_not_reverted():
     """Review — attempt 1 is under the floor only; the attempt-2 rewrite is in the band but has one invented
@@ -210,6 +211,7 @@ async def test_floor_rewrite_with_a_new_f1_is_kept_and_repaired_not_reverted():
     assert not any(e.get("gate_targeted") == "gate_regression_guard" for e in kw["repair_log"])
 
 
+@pytest.mark.usefixtures("t9_legacy_last_attempt")  # AA-900 W0 — pins the rollback mode
 @pytest.mark.asyncio
 async def test_reverted_attempt_1_still_gets_its_f1_sentence_repair():
     """Review — attempt 1 is short AND has an F1 quote; the rewrite trades it for an unrepairable failure →
