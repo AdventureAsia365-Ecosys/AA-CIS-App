@@ -23,8 +23,8 @@ from .bedrock_satellite import DEFAULT_SATELLITE_ACCOUNT
 from .catalog import LEGACY_KEYS, CatalogModel, capability, get_model_sync
 from .schema_check import SchemaMismatch, conform
 from shared.aa_llm.ledger import failed_outcome as core_failed_outcome, outcome_of as core_outcome_of
-from .errors import (BUDGET, DEADLINE, DISABLED, MAX_CHAIN_ATTEMPTS, OTHER, ROLE_NOT_SERVED, THROTTLED, TRUNCATED,
-                     LLMAccessDenied, LLMStageDisabled, RouteAttemptCapReached, RouteDeadlineExceeded,
+from .errors import (ACCESS_DENIED, BUDGET, DEADLINE, DISABLED, MAX_CHAIN_ATTEMPTS, OTHER, ROLE_NOT_SERVED, THROTTLED,
+                     TRUNCATED, LLMAccessDenied, LLMStageDisabled, RouteAttemptCapReached, RouteDeadlineExceeded,
                      RouteRoleNotServed, account_level_class, classify)
 from . import (breaker, capacity, central_budget, connection_budget, connections, data_scope, family_rule,
                prompt_registry, stage_params, stream_sink, tenant_budget, token_floor)
@@ -1652,8 +1652,12 @@ class LLMClient:
 
         def failed(position: int, key: str, e: Exception) -> None:
             nonlocal all_unusable
-            logger.warning("llm_route_attempt_failed", stage=request.stage, model=key,
-                           position=position, error=str(e)[:300])
+            # AA-900 (S271 l11): a rung refused only because its model has no grant (every open circuit of it is a
+            # known refusal) is routing as designed: info. Anything else stays a warning.
+            known = classify(e) == ACCESS_DENIED and breaker.known_model_refusal(key)
+            (logger.info if known else logger.warning)(
+                "llm_route_attempt_failed", stage=request.stage, model=key, position=position, error=str(e)[:300],
+                known_refusal=known)
             errors.append(f"{key}: {str(e)[:200]}")
             outcomes.append((position, errors[-1], e))
             billed = _billed_usage_of(e) if isinstance(e, UnusableReply) else []
@@ -2242,8 +2246,13 @@ class LLMClient:
             except Exception as e:
                 failures.append(e)
                 errors.append(f"{target.connection.connection_key}: {str(e)[:200]}")
-                logger.warning("llm_deployment_attempt_failed", stage=request.stage, model=model.model_key,
-                               connection=target.connection.connection_key, position=position, error=str(e)[:300])
+                # AA-900 (S271 l11): a known refusal (a model with no grant on an account that answers) is the
+                # expected answer the route already handles: info, not a warning.
+                known = breaker.known_refusal(target.connection.connection_key, model.model_key)
+                (logger.info if known else logger.warning)(
+                    "llm_deployment_attempt_failed", stage=request.stage, model=model.model_key,
+                    connection=target.connection.connection_key, position=position, error=str(e)[:300],
+                    known_refusal=known)
                 continue
             if position > 0:
                 logger.info("llm_deployment_fallback_used", stage=request.stage, model=model.model_key,

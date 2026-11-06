@@ -73,6 +73,7 @@ import asyncpg
 import structlog
 
 from api.core.error_ref import log_exception_ref, public_error
+from shared.llm_client.expected_refusal import EXPECTED_SQL
 
 logger = structlog.get_logger()
 
@@ -200,15 +201,22 @@ STATS_WINDOWS = (("24h", "$1"), ("7d", "$2"))
 FAILED_STATUSES = ("error", "billed_unusable", "truncated")
 
 
-def _stats_columns(ts: str, attempt: str, error: str, refused: str, latency: Optional[str]) -> str:
+def _stats_columns(ts: str, attempt: str, error: str, refused: str, latency: Optional[str],
+                   expected: Optional[str] = None) -> str:
     """The select list of one stats query: calls / errors / refused / p50 / p95 per window. ``attempt``, ``error`` and
-    ``refused`` are SQL conditions on one row; ``latency`` its latency column (None: the ledger has none)."""
+    ``refused`` are SQL conditions on one row; ``latency`` its latency column (None: the ledger has none). AA-900
+    (S271 l11): ``expected`` (the LLM ledger's expected refusal, ``shared/llm_client/expected_refusal.py``) is counted
+    as ``expected_refused`` and left out of ``refused``; other ledgers have none (0)."""
     cols = []
     for w, since in STATS_WINDOWS:
         inside = f"{ts} >= {since}"
         cols += [f"count(*) FILTER (WHERE {inside} AND {attempt})::int AS calls_{w}",
-                 f"count(*) FILTER (WHERE {inside} AND {error})::int AS errors_{w}",
-                 f"count(*) FILTER (WHERE {inside} AND {refused})::int AS refused_{w}"]
+                 f"count(*) FILTER (WHERE {inside} AND {error})::int AS errors_{w}"]
+        if expected:
+            cols += [f"count(*) FILTER (WHERE {inside} AND {refused} AND NOT {expected})::int AS refused_{w}",
+                     f"count(*) FILTER (WHERE {inside} AND {expected})::int AS expected_refused_{w}"]
+        else:
+            cols += [f"count(*) FILTER (WHERE {inside} AND {refused})::int AS refused_{w}"]
         for name, q in (("p50", "0.5"), ("p95", "0.95")):
             cols.append(f"percentile_cont({q}) WITHIN GROUP (ORDER BY {latency}) "
                         f"FILTER (WHERE {inside} AND {attempt})::float AS {name}_{w}" if latency
@@ -222,7 +230,7 @@ _FAILED_SQL = "(" + ", ".join(f"'{st}'" for st in FAILED_STATUSES) + ")"
 LLM_STATS_SQL = f"""
     SELECT coalesce(connection_key, account) AS connection_key,
            {_stats_columns("created_at", "status <> 'refused'", f"status IN {_FAILED_SQL}", "status = 'refused'",
-                           "latency_ms")}
+                           "latency_ms", expected=EXPECTED_SQL)}
       FROM shared.llm_call_log
      WHERE created_at >= $2 AND created_at < $3 AND status IS NOT NULL
        AND coalesce(connection_key, account) IS NOT NULL
@@ -269,6 +277,8 @@ def window_stats(r: Optional[dict], window: str) -> dict:
         return None if v is None else int(round(float(v)))
 
     out = {"calls": calls, "errors": errors, "refused": int(r.get(f"refused_{window}") or 0),
+           # AA-900 (S271 l11): refused rows of a model with no grant yet on an account that answers (not in refused)
+           "expected_refused": int(r.get(f"expected_refused_{window}") or 0),
            "error_pct": _pct(errors, calls), "latency_p50_ms": ms(r.get(f"p50_{window}")),
            "latency_p95_ms": ms(r.get(f"p95_{window}"))}
     return out
@@ -512,7 +522,10 @@ def llm_rows(connections: list[dict], health: dict[str, dict], by_account: dict[
                 "last_ok_at": h.get("last_ok_at"), "last_error_at": h.get("last_error_at"),
                 "last_error_class": h.get("last_error_class"), "open_models": h.get("open_models", 0),
                 "models": len(h.get("models") or []),
-                "failing_models": sum(1 for m in (h.get("models") or []) if m.get("consecutive_failures"))},
+                "failing_models": sum(1 for m in (h.get("models") or [])
+                                      if m.get("consecutive_failures") and not m.get("expected_refusal")),
+                # AA-900 (S271 l11): models with no access yet on an account that answers (expected, not failing)
+                "known_refused_models": len(h.get("known_refused_models") or [])},
             "spend": _spend(spend.get("today", 0.0), spend.get("month", 0.0), spend.get("calls", 0),
                             spend.get("last")),
             "monthly_budget": monthly,
@@ -891,7 +904,8 @@ _LLM_COLS = """created_at AS at, stage, role, model, provider, account, connecti
            cost_usd::float AS cost_usd, stop_reason, fallback_used, pricing_mode, status, error_class, latency_ms,
            attempt_no, coalesce(app, quality_signal ->> 'app', 'cis') AS app,
            quality_signal ->> 'route_trace' AS route_trace,
-           coalesce(is_shadow, coalesce(quality_signal ->> 'shadow', '') = 'true') AS shadow"""
+           coalesce(is_shadow, coalesce(quality_signal ->> 'shadow', '') = 'true') AS shadow,
+           """ + EXPECTED_SQL + """ AS expected_refusal"""
 _DFS_COLS = """created_at AS at, endpoint, keyword, location_code, keyword_count, cost_usd::float AS cost_usd,
            cache_hit, fetched_live, tour_id::text AS tour_id, job_id::text AS job_id, status, latency_ms, error,
            stage"""
@@ -1011,6 +1025,8 @@ def llm_event(r: dict) -> dict:
             "model": r.get("model"), "provider": r.get("provider"),
             "account": r.get("account") or r.get("connection_key"),
             "outcome": outcome, "status": status, "error_class": r.get("error_class"),
+            # AA-900 (S271 l11): a refusal of a model with no grant yet on an account that answers (not an error)
+            "expected_refusal": bool(r.get("expected_refusal")),
             "cost_usd": _f(r.get("cost_usd")), "latency_ms": r.get("latency_ms"),
             "tokens_in": r.get("tokens_in"), "tokens_out": r.get("tokens_out"), "job_id": r.get("job_id"),
             "app": r.get("app"),

@@ -42,9 +42,16 @@ mirror) or no role (a call without a stage role) = no filter.
 Slice S10 adds the monthly budget per connection (``connection_budget.py``): a connection that reached its hard budget
 is left out like an open circuit (named in ``DeploymentPlan.budget_skips``). A connection without a budget (every seed
 row) is never read for it, so the plan is unchanged.
+
+AA-900 (S271 lane l11): the ``llm_deployment_skip`` info line is rate-limited per process (``_skip``): the first skip of
+a (model, connection, reason) is logged at once, repeats within ``SKIP_LOG_INTERVAL_S`` are counted and the next line
+after the window carries ``suppressed`` = how many were left out. On Dev every request of a stage whose chain names an
+acc3 model with no grant used to log one line per deferred deployment (CloudWatch noise, no new information).
 """
 from __future__ import annotations
 
+import threading
+import time
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -104,17 +111,16 @@ def vendor_deployment_for(model: CatalogModel, allowed_scopes: Optional[tuple] =
     try:
         found = _usable(model, _first_enabled(model.model_key))
         if found is not None and not serves_role(found.connection, role):
-            logger.info("llm_deployment_skip", model=model.model_key, connection=found.connection.connection_key,
-                        reason=f"the connection does not serve the role {role}")
+            _skip_log(model.model_key, found.connection.connection_key,
+                      f"the connection does not serve the role {role}")
             return None
         if found is not None and not data_scope.allows(allowed_scopes, found.connection.data_scope):
-            logger.info("llm_deployment_skip", model=model.model_key, connection=found.connection.connection_key,
-                        reason=f"data scope {found.connection.data_scope} is not allowed for the stage")
+            _skip_log(model.model_key, found.connection.connection_key,
+                      f"data scope {found.connection.data_scope} is not allowed for the stage")
             return None
         over = connection_budget.stops(found.connection) if found is not None else None
         if over is not None:
-            logger.info("llm_deployment_skip", model=model.model_key, connection=found.connection.connection_key,
-                        reason="monthly budget reached")
+            _skip_log(model.model_key, found.connection.connection_key, "monthly budget reached")
             if budget_skips is not None:
                 budget_skips.append((found.connection.connection_key, over))
             return None
@@ -241,8 +247,40 @@ def sunk_skips(plan) -> Optional[list[tuple[str, str]]]:
     return skips
 
 
+SKIP_LOG_INTERVAL_S = 600.0
+_SKIP_LOG_MAX_KEYS = 2048
+_skip_logged: dict[tuple[str, str, str], tuple[float, int]] = {}    # key -> (last logged, suppressed since)
+_skip_lock = threading.Lock()
+
+
+def _skip_log(model_key: str, connection_key: str, reason: str) -> None:
+    """``llm_deployment_skip`` at most once per (model, connection, reason) per ``SKIP_LOG_INTERVAL_S`` and process;
+    the first occurrence is never lost, a later line says how many repeats it stands for (``suppressed``)."""
+    key = (model_key, connection_key, reason)
+    now = time.monotonic()
+    with _skip_lock:
+        last, suppressed = _skip_logged.get(key, (None, 0))
+        if last is not None and now - last < SKIP_LOG_INTERVAL_S:
+            _skip_logged[key] = (last, suppressed + 1)
+            return
+        if len(_skip_logged) >= _SKIP_LOG_MAX_KEYS and key not in _skip_logged:
+            _skip_logged.clear()                    # bounded: reasons carry free text (role, scope names)
+        _skip_logged[key] = (now, 0)
+    if suppressed:
+        logger.info("llm_deployment_skip", model=model_key, connection=connection_key, reason=reason,
+                    suppressed=suppressed, window_s=int(SKIP_LOG_INTERVAL_S))
+    else:
+        logger.info("llm_deployment_skip", model=model_key, connection=connection_key, reason=reason)
+
+
+def reset_skip_log() -> None:
+    """Forget the skip-log memo (tests)."""
+    with _skip_lock:
+        _skip_logged.clear()
+
+
 def _skip(model: CatalogModel, d: deployments.ModelDeployment, reason: str) -> None:
-    logger.info("llm_deployment_skip", model=model.model_key, connection=d.connection_key, reason=reason)
+    _skip_log(model.model_key, d.connection_key, reason)
 
 
 _WIRE_DRIFT_SEEN: set[tuple[str, str, str, str]] = set()

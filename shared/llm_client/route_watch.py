@@ -37,7 +37,9 @@ then ``DEFAULTS`` fill a missing value):
   (a cut is a probe's expected answer). Bell at most daily.
 - ``route_digest`` — the daily digest (job mode ``digest``): per stage over the last 24 h, the answered requests, the
   fallback share, requests with no answer logged and the extra cost; raised only when one stage used a fallback or
-  lost requests (the job result always keeps the digest).
+  lost requests (the job result always keeps the digest). AA-900 (S271 l11): ``failed_attempts`` leaves out the
+  expected refusals (``shared/llm_client/expected_refusal.py``: a model with no grant yet on an account that answers),
+  counted apart as ``expected_refusals``; no alert reads them.
 
 Quality guard: ``hold_fallback_writes(stage)`` (cached ``CACHE_TTL_SECONDS`` per process, never raises; off when
 the table is missing or unreadable) tells ``services/quality/route_guard.py`` whether content written by a fallback
@@ -53,6 +55,7 @@ from typing import Any, Optional
 
 import structlog
 
+from shared.llm_client.expected_refusal import EXPECTED_SQL
 from shared.ops_checks import (EVENT_TYPE_PREFIX, ROUTE_BACK_PREFIX, ROUTE_COST_PREFIX, ROUTE_CUT_PREFIX,
                                ROUTE_DIGEST_CHECK, ROUTE_FALLBACK_PREFIX, ROUTE_LAST_PREFIX, Finding)
 
@@ -127,7 +130,8 @@ UNKNOWN_RUNG = f"(attempt_no IS NULL AND NOT {FALLBACK_RUNG})"
 STATS_SQL = f"""
     WITH rows AS (
         SELECT stage, status, attempt_no, fallback_used, quality_signal, cost_usd, created_at,
-               quality_signal ->> 'route_trace' AS trace, {POSITION_EXPR} AS position
+               quality_signal ->> 'route_trace' AS trace, {POSITION_EXPR} AS position,
+               {EXPECTED_SQL} AS expected
           FROM shared.llm_call_log
          WHERE created_at >= $1 AND {LEDGER_FILTER}
     ), lost AS (
@@ -144,7 +148,8 @@ STATS_SQL = f"""
            count(*) FILTER (WHERE {OK} AND {UNKNOWN_RUNG}) AS unknown_answered,
            coalesce(sum(cost_usd) FILTER (WHERE {OK} AND {FALLBACK_RUNG}), 0)::float AS fallback_cost_usd,
            coalesce(sum(cost_usd) FILTER (WHERE {OK}), 0)::float AS cost_usd,
-           count(*) FILTER (WHERE status IN ('refused', 'error')) AS failed_attempts,
+           count(*) FILTER (WHERE status IN ('refused', 'error') AND NOT expected) AS failed_attempts,
+           count(*) FILTER (WHERE expected) AS expected_refusals,
            max(position) AS max_position,
            max(created_at) FILTER (WHERE {OK} AND {PRIMARY_RUNG}) AS last_primary_at,
            max(created_at) FILTER (WHERE {OK} AND {FALLBACK_RUNG}) AS last_fallback_at,
@@ -466,6 +471,7 @@ def digest(stats: dict[str, dict], baseline: dict[str, dict], routes: dict[str, 
         stages.append({"stage": stage, "answered": answered, "fallback_answered": fb,
                        "fallback_pct": fallback_rate(st), "lost_requests": lost,
                        "failed_attempts": int(st.get("failed_attempts") or 0),
+                       "expected_refusals": int(st.get("expected_refusals") or 0),
                        "cost_usd": round(float(st.get("cost_usd") or 0.0), 6),
                        "extra_usd": extra_cost(st, baseline.get(stage)),
                        "primary": route["model_id"] if route else None})

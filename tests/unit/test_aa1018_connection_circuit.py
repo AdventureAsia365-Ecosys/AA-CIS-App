@@ -231,7 +231,11 @@ def test_a_success_closes_the_connection_at_once(alerts):
         breaker.record_failure("acc3", model, ERROR_002)
     breaker.record_success("acc3", "haiku")                             # e.g. the admin's Test connection
     assert breaker.connection_open("acc3") is None
-    assert breaker.is_open("acc3", "gpt-6-luna")                       # the model's own circuit stays open
+    # AA-900 (S271 l11): refusals the account itself may have caused (no answer on the connection since they began)
+    # turn half-open at once, streak kept: the next real call of each model probes it (it used to stay open).
+    h = breaker._get(("acc3", "gpt-6-luna"))
+    assert breaker.state_of(h, breaker._now()) == breaker.HALF_OPEN and h.open_streak == 1
+    assert not breaker.is_open("acc3", "gpt-6-luna")
 
 
 def test_the_switch_off_answers_closed(monkeypatch):

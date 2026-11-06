@@ -92,6 +92,8 @@ export interface ProviderHealth {
   open_models?: number;
   models?: number;
   failing_models?: number;
+  /** AA-900: models with no access yet on an account that answers (expected refusals, not failing). */
+  known_refused_models?: number;
   // Jev (last 24 h of decision_log)
   window_hours?: number;
   calls?: number;
@@ -107,6 +109,8 @@ export interface WindowStats {
   calls: number;
   errors: number;
   refused: number;
+  /** AA-900: refused rows of a model with no access yet on an account that answers; not in `refused`, not errors. */
+  expected_refused?: number;
   error_pct: number | null;
   latency_p50_ms: number | null;
   latency_p95_ms: number | null;
@@ -196,6 +200,8 @@ export interface TraceEvent {
   /** Ledger v2 status; null on an older row (the outcome still says ok / shadow / fallback / cache / live). */
   status: CallStatus | null;
   error_class: string | null;
+  /** AA-900: a refusal of a model with no access yet (its last probe found none) on an account that answers. */
+  expected_refusal?: boolean;
   job_id: string | null;
   app: string | null;
   detail: Record<string, unknown>;

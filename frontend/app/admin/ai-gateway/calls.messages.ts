@@ -39,7 +39,12 @@ export const CALLS = defineMessages(
     kpiShownInfo: "The rows on screen; Load older adds more.",
     kpiCost: "Their cost",
     kpiFailed: "Refused or failed",
-    kpiFailedInfo: "Rows whose outcome is refused or error (a refused attempt costs $0).",
+    kpiFailedInfo: "Rows whose outcome is refused or error (a refused attempt costs $0). Expected refusals of a model "
+      + "with no access yet are counted apart.",
+    kpiExpected: "Expected refusals",
+    kpiExpectedInfo: "Refused because the model has no access yet on an account that answers. The route already moves "
+      + "on to the next model; these are not errors.",
+    expectedRefusal: "expected (no access yet)",
     latencyTitle: "Latency of the listed calls",
     colWhen: "When",
     colLog: "Log",
@@ -94,7 +99,12 @@ export const CALLS = defineMessages(
     kpiShownInfo: "Các dòng trên màn hình; Tải cũ hơn thêm dòng.",
     kpiCost: "Chi phí của chúng",
     kpiFailed: "Bị từ chối hoặc lỗi",
-    kpiFailedInfo: "Dòng có kết quả bị từ chối hoặc lỗi (lần bị từ chối tốn 0 USD).",
+    kpiFailedInfo: "Dòng có kết quả bị từ chối hoặc lỗi (lần bị từ chối tốn 0 USD). Lần từ chối dự kiến của model "
+      + "chưa được cấp quyền được đếm riêng.",
+    kpiExpected: "Từ chối dự kiến",
+    kpiExpectedInfo: "Bị từ chối vì model chưa được cấp quyền trên một tài khoản vẫn trả lời. Tuyến đã tự chuyển sang "
+      + "model kế tiếp; đây không phải lỗi.",
+    expectedRefusal: "dự kiến (chưa được cấp quyền)",
     latencyTitle: "Độ trễ của các lần gọi đang liệt kê",
     colWhen: "Lúc",
     colLog: "Sổ",

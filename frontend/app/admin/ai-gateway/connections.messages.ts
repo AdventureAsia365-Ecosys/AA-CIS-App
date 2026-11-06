@@ -38,6 +38,7 @@ export const CONNECTIONS = defineMessages(
     healthDisabled: "Off",
     healthUnknown: "No recent calls",
     openModels: (n: number) => `${n} model${n === 1 ? "" : "s"} skipped`,
+    knownRefused: (n: number) => `${n} model${n === 1 ? "" : "s"} with no access yet (expected)`,
     problems: "Policy problems",
     // enable / disable
     enableTitle: (name: string) => `Switch on ${name}?`,
@@ -198,6 +199,7 @@ export const CONNECTIONS = defineMessages(
     healthDisabled: "Tắt",
     healthUnknown: "Chưa có lượt gọi gần đây",
     openModels: (n: number) => `${n} model đang bị bỏ qua`,
+    knownRefused: (n: number) => `${n} model chưa được cấp quyền (dự kiến)`,
     problems: "Vấn đề cấu hình",
     enableTitle: (name: string) => `Bật ${name}?`,
     disableTitle: (name: string) => `Tắt ${name}?`,

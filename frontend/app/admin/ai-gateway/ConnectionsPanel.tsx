@@ -101,6 +101,9 @@ function HealthBadge({ health, t }: { health?: ConnectionHealth; t: T }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-start" }}>
       <Badge tone={healthTone(status)}>{t(HEALTH_KEY[status] ?? "healthUnknown")}</Badge>
       {!!health?.open_models && <span style={small}>{t("openModels", health.open_models)}</span>}
+      {!!health?.known_refused_models?.length && (
+        <span style={small}>{t("knownRefused", health.known_refused_models.length)}</span>
+      )}
     </div>
   );
 }
