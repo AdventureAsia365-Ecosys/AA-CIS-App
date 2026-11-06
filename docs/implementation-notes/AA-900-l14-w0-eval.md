@@ -104,11 +104,10 @@ the golden labels are not changed here (W1 compiles the rubric; t9b-002 is a gol
     So W0 removes the noise stops, but if first drafts genuinely fail pass controls the run still stops early, as the
     skeptic predicted. That is a real signal, not a bug; the T9 first-draft-vs-final confound is W3/W5 (eval runbook
     now says a t9 fail alone does not justify a revert).
-- **Migration number 385** follows the orchestrator hint (383/384 taken by other lanes). The CIS preflight refuses it
-  until main reaches 384 (`383 = main max + 1` today). If it ships earlier, renumber: `git grep -n '385'` in the
+- **Migration number:** written as 385 from the orchestrator hint, shipped as migration 384 (renumbered from 385 at merge time, S271). The recipe for a renumber: `git grep -n '<old>'` in the
   migration file, its test (`test_aa900_migration_385.py`, `migration-385`, `'385'`) and nothing else (the code PR
   does not name the number; the manifest entry has no number).
-- **Merge order:** migration PR (385) -> Infra bot copy -> Migration Apply (class contract) -> code PR. The code PR's
+- **Merge order:** migration PR (384) -> Infra bot copy -> Migration Apply (class contract) -> code PR. The code PR's
   `test_aa900_prompt_registry_gate.py` fails until 385 is on main (the manifest names v2, no migration inserts it).
 - **Golden set (not changed):** t9b-002 ("ZZ S239 test label" stub) removal is a later golden-set version bump (F7);
   t9b-004 / -011 / -017 contested labels go to a panel review. Importing a new version supersedes every writer's set;
