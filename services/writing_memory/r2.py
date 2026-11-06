@@ -1230,7 +1230,12 @@ async def _main(argv=None) -> int:
     conf, a = _parse(argv)
     pool = await asyncpg.create_pool(get_database_url().strip(), ssl="require", min_size=1, max_size=2)
     try:
-        print(json.dumps(await estimate(pool, conf), indent=1, default=str))
+        est = await estimate(pool, conf)
+        print(json.dumps(est, indent=1, default=str))
+        if a.enqueue and est.get("would_refuse"):
+            # S271 W0: the job would be refused at $0 anyway; do not queue it
+            print(json.dumps({"enqueued": None, "refused": est["would_refuse"]}))
+            return 1
         if a.enqueue:
             from services.jobs.writing_memory_job import R2
             from shared.jobs.registry import enqueue

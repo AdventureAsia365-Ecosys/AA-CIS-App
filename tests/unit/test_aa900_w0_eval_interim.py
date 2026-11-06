@@ -398,3 +398,24 @@ def test_a_noisy_class_on_a_passing_candidate_no_longer_stops_the_run():
 
 def test_the_set_id_constant_is_the_fake_current_version():
     assert SET_ID != "" and asyncio.run(FakeStore(golden()).run_info(BASELINE_RUN))["golden_set_id"] == SET_ID
+
+
+def test_the_cli_does_not_queue_a_run_the_dry_run_refuses(monkeypatch, capsys):
+    import asyncpg
+
+    class Pool:
+        async def close(self):
+            return None
+
+    async def create_pool(*a, **k):
+        return Pool()
+
+    async def est(pool, conf):
+        return {"would_refuse": ["controls found 0 < planned 12"]}
+    queued = []
+    monkeypatch.setattr(asyncpg, "create_pool", create_pool)
+    monkeypatch.setattr("shared.secrets.get_database_url", lambda: "postgresql://zz")
+    monkeypatch.setattr(r2, "estimate", est)
+    monkeypatch.setattr("shared.jobs.registry.enqueue", lambda *a, **k: queued.append(a))
+    assert asyncio.run(r2._main(["--writer", "t9_blog", "--enqueue"])) == 1
+    assert queued == [] and '"refused"' in capsys.readouterr().out
