@@ -20,7 +20,10 @@ from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
 from services.writing_memory import config as cfg
 
-MAX_TOKENS = 400
+# S271: 400 -> 4096. The mine stage runs on the non-Anthropic judge route (a GPT-6 reasoning model): its thinking is
+# billed inside max_tokens, so 400 cut the rule before it was written. A ceiling is head-room: a short rule costs the
+# same under it (the gateway floor would lift 400 too; the constant says what the stage needs).
+MAX_TOKENS = 4096
 
 SYSTEM_PROMPT = """You turn repeated corrections of a travel-content writer into ONE short writing rule.
 

@@ -43,7 +43,8 @@ WRITERS = ("t2", "t9_blog", "t9_social")
 MIN_SIGNALS = 4                  # >= 4 human pass signals ...
 MIN_PIECES = 2                   # ... on >= 2 pieces of one tenant and writer
 MAX_EXAMPLES = 10
-MAX_TOKENS = 400
+# S271: 400 -> 4096 (same reason as drafter.MAX_TOKENS: the judge route's reasoning model thinks inside the ceiling)
+MAX_TOKENS = 4096
 STATE_OFF = "needs_llm_path"
 _SPECIFIC_RE = re.compile(r"\d|\[(?:N|PRICE|TIME|URL|NAME)\]")
 
