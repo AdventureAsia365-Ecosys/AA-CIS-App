@@ -327,3 +327,10 @@ def seeded_plans(monkeypatch):
     monkeypatch.setattr(plans, "assignable_tiers", _tiers)
     monkeypatch.setattr(plans, "rate_limits_by_tier", _by_tier)
     return SEEDED_TIER_RPM
+
+
+@pytest.fixture
+def t9_legacy_last_attempt(monkeypatch):
+    """AA-900 W0 — the T9 loop's rollback mode (a paid attempt 3 + the AA-777 / AA-786 truth cuts). The tests that
+    pin that path use it; the default is stop-and-label (attempt 3 at $0, no truth cut, ADR 0020 D6)."""
+    monkeypatch.setenv("T9_LAST_ATTEMPT_MODE", "legacy")

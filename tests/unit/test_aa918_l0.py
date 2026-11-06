@@ -283,7 +283,9 @@ def test_activation_needs_a_passing_r0():
     assert l0.activation_problem({**_ready(), "status": "approved"}) is None
 
 
-def test_run_quality_gates_takes_stored_f9_without_a_judge_call():
+def test_run_quality_gates_takes_stored_f9_without_a_judge_call(monkeypatch):
+    # AA-900 W0 — an unclassified stored reason warns under the interim F9 policy; this test pins the replay plumbing
+    monkeypatch.setenv("T10_F9_POLICY_MODE", "legacy")
     f9 = [qg._result(qr.F9_CTA_FACT, ["stored verdict"]), qg._result(qr.F9_BRAND_STYLE, [], blocking=False)]
     with patch.object(qg, "gate_brand_voice", side_effect=AssertionError("judge called")):
         out = qg.run_quality_gates(content_text=fs.CLEAN, atom_text=fs.SEED, cta=fs.CTA, brand_rubric_text="",

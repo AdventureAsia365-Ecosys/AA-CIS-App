@@ -171,6 +171,7 @@ def _items(text, ledger):
                                                        "start": 0, "end": 1}]
 
 
+@pytest.mark.usefixtures("t9_legacy_last_attempt")  # AA-900 W0 — pins the rollback mode
 @pytest.mark.asyncio
 async def test_three_attempts_keep_attempts_one_and_two():
     with patch.object(service, "write_content", return_value=("attempt 1 text", 0.02, {}, None)), \
@@ -192,6 +193,7 @@ async def test_three_attempts_keep_attempts_one_and_two():
     assert re.fullmatch(r"[0-9a-f]{8}", kw["writer_input"]["writer_prompt_version"])
 
 
+@pytest.mark.usefixtures("t9_legacy_last_attempt")  # AA-900 W0 — pins the rollback mode
 @pytest.mark.asyncio
 async def test_revert_then_repair_lists_each_attempt_once_never_the_final():
     """Attempt 2 regresses and is reverted to attempt 1; attempt 3 repairs attempt 1's text. Discarded: the

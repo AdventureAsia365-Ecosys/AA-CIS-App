@@ -562,7 +562,9 @@ class TestGateRegressionGuard:
         # audit trail: repair_log keeps BOTH attempts' own failures (attempt 2's real, worse
         # outcome is not hidden) plus a final entry recording the revert decision
         targets = [r["gate_targeted"] for r in mock_fin.call_args.kwargs["repair_log"]]
-        assert targets == ["F4_extreme_length", "F4_extreme_length", "gate_regression_guard"]
+        # AA-900 W0 — a held piece ends with its typed label (gate_targeted 'stop_and_label', no registered gate)
+        assert targets == ["F4_extreme_length", "F4_extreme_length", "gate_regression_guard", "stop_and_label"]
+        assert mock_fin.call_args.kwargs["repair_log"][-1]["reason_codes"] == ["length"]
 
     async def test_same_gate_different_violation_does_not_revert(self):
         """Case 319bd3d8: attempt 1 fails F1_grounding on one ungrounded number; attempt 2 fixes

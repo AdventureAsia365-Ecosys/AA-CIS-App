@@ -93,6 +93,7 @@ async def test_attempt_one_f4_only_takes_the_seo_fields_mode_not_a_rewrite():
     assert fin.call_args.kwargs["repair_log"][0]["repair_mode"] == "seo_fields"
 
 
+@pytest.mark.usefixtures("t9_legacy_last_attempt")  # AA-900 W0 — pins the rollback mode
 @pytest.mark.asyncio
 async def test_attempt_two_f4_only_is_not_the_last_try():
     """Before AA-776 plan() was None at attempt 2, so last_try held the piece without the attempt-3 fit."""

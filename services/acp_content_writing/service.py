@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 from typing import Optional
 from uuid import UUID
@@ -83,6 +84,7 @@ from services.acp_shared.route_guard import request_route_segment_ids
 from services.acp_planning.tenant_pool import fetch_tenant_trips, fetch_tenant_trips_on
 from services.acp_produce.brand import fetch_brand_rubric_text
 from services.acp_content_writing.gate_eval import ledger_snapshot  # AA-791
+from services.acp_content_writing import gate_eval  # AA-900 W0 (failing gates per attempt, typed hold reasons)
 from services.quality import degraded  # AA-925
 from services.quality import repair_contract  # AA-790
 from services.quality import route_guard  # AA-1042
@@ -103,6 +105,18 @@ logger = structlog.get_logger()
 # rewrite, which invents new facts); it replaces the AA-485 buffer retry (a second content_piece
 # row per request). A piece whose attempt-2 failures are not sentence-repairable stops at 2.
 MAX_ATTEMPTS = 3
+# AA-900 W0 (root ADR 0020 D6, audit critic F5) — attempt 3 is "stop and label" at $0: a piece still failing after
+# attempt 2 keeps the better of attempts 1 and 2 (the AA-528 guard) and is labelled with a typed reason
+# (`_stop_label`), with no paid writer or repair call and no code truth_cut (a cut needs a passing measurement record
+# for its class; none exists yet). `T9_LAST_ATTEMPT_MODE=legacy` rolls back to the paid attempt 3 + truth cuts.
+LAST_ATTEMPT_MODE_ENV = "T9_LAST_ATTEMPT_MODE"
+STOP_AND_LABEL = "stop_and_label"
+LEGACY_LAST_ATTEMPT = "legacy"
+
+
+def last_attempt_mode() -> str:
+    raw = (os.environ.get(LAST_ATTEMPT_MODE_ENV) or "").strip().lower()
+    return raw if raw in (STOP_AND_LABEL, LEGACY_LAST_ATTEMPT) else STOP_AND_LABEL
 
 # AA-499/AA-484 — the ONE similarity threshold Nghiệp confirmed (Q6=B, 25/07/2026, AA-332
 # origin, cited in AA-484's Linear comment), for BOTH the within-tenant `within_tenant_reuse`
@@ -1135,6 +1149,28 @@ def _degraded_final(gate_ledger: list[dict], flags: list[dict], repair_log: list
     return new_status, new_reason, list(flags) + [flag], list(repair_log) + [entry]
 
 
+def _stop_label(gate_ledger: list[dict], status: str, held_reason: Optional[str], *, stopped: bool,
+                kept_attempt: int, lexicon=None) -> Optional[dict]:
+    """AA-900 W0 (ADR 0020 D6) — the repair_log entry that labels a piece, or None for an approved piece that did not
+    stop early. `stopped`: the piece still failed after attempt 2 with sentence-repairable failures, so the legacy
+    loop would have paid for attempt 3; here attempt 3 is this $0 entry. A held piece always gets one, so its typed
+    reasons (`gate_eval.hold_reason_codes`, every hold-capable failing gate, not only the first one `held_reason`
+    names) and its final failing gates are stored. No `gate_ledger` key (the admin drawer lists that per attempt)
+    and a `gate_targeted` that is no registered gate (the writing-memory backfill counts only real gate failures)."""
+    if status != "held" and not stopped:
+        return None
+    codes = gate_eval.hold_reason_codes(gate_ledger, held_reason) if status == "held" else []
+    return {
+        "attempt": MAX_ATTEMPTS if stopped else kept_attempt, "gate_targeted": STOP_AND_LABEL,
+        "repair_mode": STOP_AND_LABEL if stopped else "label", "cost_usd": 0.0, "kept_attempt": kept_attempt,
+        "status": status, "needs_review": status == "held", "reason_codes": codes,
+        "failing_schema": gate_eval.FAILING_SCHEMA, "failing": gate_eval.failing_gates(gate_ledger, lexicon),
+        "violations": [f"stopped after attempt {kept_attempt} at $0: " + (", ".join(codes) or "no hold left")
+                       if stopped else f"held: {', '.join(codes) or 'unlabelled'}"],
+        "repairable": False,
+    }
+
+
 def _waive_style_only(gate_ledger: list[dict], status: str) -> list[dict]:
     """S234 round 2 (panel §3, piece #7) — an APPROVED piece can still carry a failed style-only gate
     (F15_voice) marked `blocking: true` when the AA-528 guard reverted to attempt 1's ledger. The
@@ -1990,6 +2026,12 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             keep_words=frozenset(hygiene.fold(w) for w in signature_words(brand_audience)),
             angle_text=ai_tells.angle_text(chosen))
 
+        # AA-900 W0 — in stop-and-label mode the last paid attempt is attempt 2; `stopped_for_label` marks a piece
+        # the legacy loop would have sent to a paid attempt 3.
+        stop_label = last_attempt_mode() == STOP_AND_LABEL
+        paid_attempts = MAX_ATTEMPTS - 1 if stop_label else MAX_ATTEMPTS
+        stopped_for_label = False
+
         for attempt in range(1, MAX_ATTEMPTS + 1):
             step_guard.begin_attempt()
             if attempt == 1:
@@ -2335,6 +2377,8 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 "feedback": _repair_feedback(gate_ledger, channel, source=grounding_text, content_text=content_text),
                 # AA-791 — this attempt's whole ledger (trimmed), so every attempt's gates are kept.
                 "gate_ledger": ledger_snapshot(gate_ledger),
+                # AA-900 W0 — every failing gate of this attempt in one stable shape (gate_eval.failing_gates)
+                "failing": gate_eval.failing_gates(gate_ledger, hyg.lexicon),
             })
             logger.info(
                 "t9_attempt_failed_quality_check", request_id=str(request_id), attempt=attempt,
@@ -2368,7 +2412,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 # left, keep it and let the next attempt repair it. (An F15-only attempt 1 still reverts: its
                 # text is the full-length, truth-clean one.)
                 prev_fail = [g for g in expand_ledger(prev_ledger) if g.get("blocking", True) and not g["passed"]]
-                if (new_regressions and attempt < MAX_ATTEMPTS and _floor_only_failure(prev_fail)
+                if (new_regressions and attempt < paid_attempts and _floor_only_failure(prev_fail)
                         and first_failure["repairable"]
                         and sentence_repair.plan(content_text, gate_ledger) is not None):
                     logger.info("t9_gate_regression_kept_after_floor_rewrite", request_id=str(request_id),
@@ -2414,8 +2458,10 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     )
 
             # AA-770 — attempt 3 only when attempt 2's failures are all sentence-repairable.
-            last_try = attempt >= MAX_ATTEMPTS or (
-                attempt == MAX_ATTEMPTS - 1 and sentence_repair.plan(content_text, gate_ledger) is None)
+            # AA-900 W0 — in stop-and-label mode attempt 2 is the last paid one: attempt 3 is the $0 label below.
+            repairable_again = (attempt == MAX_ATTEMPTS - 1
+                                and sentence_repair.plan(content_text, gate_ledger) is not None)
+            last_try = attempt >= paid_attempts or (attempt == MAX_ATTEMPTS - 1 and not repairable_again)
             if first_failure is None or not first_failure["repairable"] or last_try:
                 # AA-613 — under the 3-tier severity model, `first_failure` is now ONLY ever a
                 # BLOCKING (product-truth) gate: grounding/banned/CTA/FACT_CHECK/cannibalization/
@@ -2429,7 +2475,9 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 # failure left is style-only (F15_voice stock phrase) ships with it as a flag.
                 # AA-786 — on the LAST attempt only (review P2), LinkedIn cuts the flagged F9 sentences;
                 # F9 is waived only when every one of them is gone.
-                if last_try:
+                stopped_for_label = (stop_label and first_failure is not None and first_failure["repairable"]
+                                     and repairable_again)
+                if last_try and not stop_label:  # AA-900 W0 — no code truth_cut in stop-and-label mode (D6)
                     content_text, gate_ledger, flags, cut_entry = _cut_truth_items(
                         content_text, gate_ledger, flags, channel=channel, ignore=brand_ignore, cta=cta,
                         moments=hyg.moments, spec=spec)
@@ -2527,6 +2575,13 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 })
 
         gate_ledger = _waive_style_only(gate_ledger, status)  # S234 round 2 — panel §3, piece #7
+        # AA-900 W0 (ADR 0020 D6) — the typed label of a held piece / a $0 stop in place of a paid attempt 3
+        label = _stop_label(gate_ledger, status, held_reason, stopped=stopped_for_label, kept_attempt=content_from,
+                            lexicon=hyg.lexicon)
+        if label:
+            repair_log.append(label)
+            logger.info("t9_stop_and_label", request_id=str(request_id), status=status, stopped=stopped_for_label,
+                        reason_codes=label["reason_codes"])
         _show_live_text(content_text, seo_meta, channel)  # AA-668: the final snapshot is the saved text
         progress_step("save")  # AA-637 live view
         if channel == "blog":
