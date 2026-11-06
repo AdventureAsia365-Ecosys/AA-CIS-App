@@ -52,7 +52,8 @@ CI unit lint. No code PR: the lint is a test over the snapshots.
 - `tests/unit/test_aa900_w0_route_lint.py` (new, 9 tests): W0-1 / W0-2 on the latest snapshot and `SAFE_DEFAULTS`,
   allowlist freshness, not vacuous (the 376 table breaks both rules on exactly 383's stages), chain rules, and the
   route control preview of 383's chains from the 376 table (valid, every stage serving, needs evidence = break-glass).
-- Replay-state tests updated for the new final routes: `test_aa642_migration_326.py` (degrade modes),
+- Replay-state tests updated for the new final routes: `test_aa835_migration_278.py` (supply writer chain),
+  `test_aa642_migration_326.py` (degrade modes),
   `test_aa835_migration_282.py` (supply writer chain), `test_aa803_migration_259.py` (actor list),
   `test_aa917_migration_280.py` (writing_memory_mine chain).
 - `CONTEXT.md`: one bullet "No uncalibrated rung" in the route section.
@@ -78,6 +79,11 @@ CI unit lint. No code PR: the lint is a test over the snapshots.
 - The `llm_route_chains` module docstring still describes the OpenAI API at the end of a writer route (code, left for
   that follow-up PR).
 - Writing-memory release fingerprints read writer / judge routes: run the reverify scan after the apply.
-- Local run: the broad integration set shows 18 errors in `test_aa835_migration_278.py` / `test_aa847_migration_257.py`
-  when run in one process with the other route files; the same errors occur on the base without 383 (test order
-  locally, not this change). Those files pass alone.
+- The 383 route config version records, like 376's, any deployment drift not yet versioned when the file applies (a
+  `provider_order` entry 383 did not cause). The integration test compares those entries with the drift found
+  before the body runs, so it holds whatever earlier test files of a CI shard leave behind (shard 3 runs
+  `test_aa862_migration_240.py` first, which leaves `cohere-embed-v4-acc3` out of step with the last version).
+- Review fix pass: `test_aa835_migration_278.py` asserted the replayed `supply_content_writer` chain with the OpenAI
+  rung; it now expects `["sonnet-4-6"]` (383 in its migration-history comment). The earlier note that its failures
+  were a local test-order artefact was wrong. Checked by running the four CI integration shards
+  (`ci_shards.py --contiguous`, 4 shards) each on a fresh postgres:15.

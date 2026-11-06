@@ -60,6 +60,8 @@
 --   4. One route config version (CIS 370): action external, created_by migration-383-aa900, the snapshot of the
 --      routes and provider order after this file and its diff against the version in force (the 376 recipe), so the
 --      ledger rows written after the apply carry the version that routes them and the admin keeps a one-click revert.
+--      Like 376's, the diff also records any deployment drift not yet versioned when the file applies (a provider
+--      order entry this file did not cause): the version after 383 is exact either way.
 --   5. Register 383.
 --   The acc3 rungs known to refuse (gpt-6-luna, gpt-5.6-luna, the 5.x Claude rows on acc3) stay: the refusal circuit
 --   skips them at 0 USD (AA-1042 / lane l11). Primary, role, shadow, scopes, pii_class and is_active of every row do

@@ -313,6 +313,7 @@ def test_one_external_route_version_records_exactly_what_changed(cur):
     before_version = cur.fetchone()["v"]
     cur.execute("SELECT snapshot FROM shared.llm_route_config_version WHERE version = %s", (before_version,))
     previous_snapshot = cur.fetchone()["snapshot"]
+    pre = _live(cur)    # the live state the body starts from (earlier test files may leave deployment drift)
     cur.execute(_body())
     cur.execute("SELECT current_version AS v FROM shared.llm_route_settings WHERE singleton")
     assert cur.fetchone()["v"] == before_version + 1
@@ -329,4 +330,8 @@ def test_one_external_route_version_records_exactly_what_changed(cur):
     # every decided stage whose chain in the version before still named the removed rung is in the diff
     rung = {**{s: WRITER_RUNG for s in WRITERS}, **{s: JUDGE_RUNG for s in INSTRUMENTS}}
     assert {s for s in _decided() if rung[s] in (route_versions.chain_of(prev.get(s)) or [])} <= moved
-    assert not [c for c in row["diff"] if c["kind"] == "provider_order"]   # no deployment moves
+    # 383 moves no deployment: the version's provider order entries are exactly the unversioned drift found at apply
+    # time (the 376 recipe records it too), none of them new
+    orders = [c for c in row["diff"] if c["kind"] == "provider_order"]
+    assert orders == [c for c in route_versions.diff(previous_snapshot, pre) if c["kind"] == "provider_order"]
+    assert pre["priorities"] == live["priorities"]
