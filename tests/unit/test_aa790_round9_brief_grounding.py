@@ -33,7 +33,10 @@ CHANNELS = ("blog", "linkedin", "facebook", "instagram", "tiktok", "ads", "email
 # (recomputed on 67af0922 and 717c58f1 after BRIEF became synthetic text, AA-919 golden-set guard).
 # AA-789 tier 0 (S258): recomputed after the route blog's "Thin moment" rule lost its "ONE plain sentence" shape
 # (was aec208af965d479a801d517e2267c73047f4e007e14335de4a0ca63b74a7a804).
-ROUND6_FIXTURE_SHA = "9bf0f4fd5286922b01b020920f2491627d3d185a680d9f14734e08f15615a4fc"
+# AA-741 (S271): recomputed after every blog prompt gained the LENGTH AND EFFORT block
+# (prompts._BLOG_LENGTH_INSTRUCTIONS, t9_write v2); without it the 192 prompts are the S258 bytes
+# (was 9bf0f4fd5286922b01b020920f2491627d3d185a680d9f14734e08f15615a4fc).
+ROUND6_FIXTURE_SHA = "189452638947e8695ec85482e5bcd9b300974e1e64150df05aac33e01d1bbb37"
 
 
 def fixture_prompts(**extra) -> list[str]:

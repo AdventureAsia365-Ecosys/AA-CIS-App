@@ -47,8 +47,13 @@ def test_applies_twice_and_registers(cur):
 
 
 def test_every_manifest_entry_is_a_row_with_its_hash_and_path(cur):
+    # 325 registered each stage's FIRST manifest entry (v1); later versions are registered by their own migration
+    # (AA-741 S271: t9_write v2 by 380), so only the first entry per stage is compared here.
+    manifest: dict = {}
     with open(MANIFEST, encoding="utf-8") as f:
-        manifest = {(e["stage"], e["version"]): e for e in json.load(f)["prompts"]}
+        for e in json.load(f)["prompts"]:
+            if not any(stage == e["stage"] for stage, _ in manifest):
+                manifest[(e["stage"], e["version"])] = e
     cur.execute("SELECT stage, version, prompt_sha256, source_path, created_by FROM shared.prompt_version "
                 "WHERE created_by = 'migration-325'")
     rows = {(r["stage"], r["version"]): r for r in cur.fetchall()}

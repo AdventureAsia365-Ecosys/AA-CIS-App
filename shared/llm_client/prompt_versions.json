@@ -322,6 +322,20 @@
         "judge_version"
       ],
       "prompt_sha256": "c8ddffc252af1784b0ced1bdddc470f1254635fde62ea34e4ce7952aec93ce9f"
+    },
+    {
+      "stage": "t9_write",
+      "version": "v2",
+      "source_path": "services/acp_content_writing/prompts.py",
+      "symbols": [
+        "SYSTEM_PROMPT",
+        "build_user_prompt",
+        "_BLOG_WORDS",
+        "_BLOG_WORDS_MAX",
+        "_BLOG_SECTIONS_MAX",
+        "_BLOG_LENGTH_INSTRUCTIONS"
+      ],
+      "prompt_sha256": "dde697990965b95f3fb18cd22d83bc68b62294800e88f39aed90dbea6958792b"
     }
   ]
 }

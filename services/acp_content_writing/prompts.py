@@ -130,6 +130,31 @@ _BLOG_FORMAT_INSTRUCTIONS = _BLOG_FORMAT_INSTRUCTIONS.replace(_H2_BULLET, _H2_BU
 _BLOG_FORMAT_INSTRUCTIONS_ROUTE = _BLOG_FORMAT_INSTRUCTIONS_ROUTE.replace(
     _H2_BULLET, _H2_BULLET + BLOG_HEADING_RULE + "\n")
 
+# AA-741 (S271 phase-1 audit) — the blog's output budget. On 4 audit tenants (06/11) t9_write for a blog averaged
+# 1,846 output tokens but reached 11,465, and 4 calls hit the 12,000 ceiling (3 cut, 1 billed but unusable: 0.58 USD
+# lost) while the article itself is ~620-950 words (~1,300-2,000 tokens with its tags and the JSON envelope). The blog
+# prompt had no length at all (only the F4 gate's 4,700-13,000 character band, ~800-2,200 words), the channel asks for
+# "in-depth destination guides", and the shared silent reread ("sentence by sentence", ai_tells.SELF_CHECK_RULE) lets
+# an adaptive-thinking model (Sonnet 5.5 thinks adaptively by default; thinking is billed as output inside max_tokens)
+# draft the whole article, check every sentence and copy it out again. This block bounds both: a word band inside the
+# F4 band (models overshoot counts, so the target sits low in it; never a reason to pad a thin seed), a section cap,
+# and one plan-then-write pass whose reread is a quick check of the finished text, never a second draft. The other
+# channels never see it. Its four symbols are in the t9_write prompt manifest (v2).
+_BLOG_WORDS = (900, 1300)        # target words, body including the FAQ
+_BLOG_WORDS_MAX = 1600           # never more (F4 allows ~2,200)
+_BLOG_SECTIONS_MAX = 6           # "## " sections before the FAQ
+_BLOG_LENGTH_INSTRUCTIONS = (
+    "\n\nLENGTH AND EFFORT FOR THIS BLOG (required):\n"
+    f"- The body is {_BLOG_WORDS[0]:,}-{_BLOG_WORDS[1]:,} words including the FAQ when the seed carries that much, "
+    f"never more than {_BLOG_WORDS_MAX:,}; a seed with few facts gives a shorter article, never a padded one. "
+    f'At most {_BLOG_SECTIONS_MAX} "## " sections before the "## FAQ" heading; depth goes to the richest moment, '
+    "not to more sections.\n"
+    "- Write the article once. Before writing, decide only the section headings and which seed facts go in each; "
+    "then write the final text directly. Never write a full draft and then copy it out again: the silent reread is "
+    "one quick pass over the finished text that fixes a sentence in place.\n"
+    "- Return one article only: no alternative versions, no notes, no outline, no list of the facts you used."
+)
+
 # AA-514 — blog channel's writer-output contract becomes a JSON envelope (full port of the
 # origin's structured Piece.seo_title/meta_description/slug fields, Nghiệp-confirmed real
 # architecture decision — see docs/claude_audit/AA-514-step0-investigation.md §4). Appended
@@ -476,6 +501,8 @@ def build_user_prompt(
             _BLOG_FORMAT_INSTRUCTIONS_ROUTE if is_route_aware
             else _BLOG_FORMAT_INSTRUCTIONS.format(atom_id=atom_id or "atom")
         )
+        # AA-741 (S271) — the blog's length and one-pass budget, write and rewrite alike.
+        prompt += _BLOG_LENGTH_INSTRUCTIONS
         # AA-514 — every blog response is the JSON envelope, revision or not.
         prompt += _SEO_ENVELOPE_INSTRUCTIONS.format(keyword_line=_keyword_line(keyword))
     return prompt
