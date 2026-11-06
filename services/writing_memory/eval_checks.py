@@ -439,7 +439,9 @@ def compare_item(*, control: Optional[dict], candidate: dict, counts: bool, trap
     """One item: control / candidate are {verdict, failure_codes, isolation, qa_artefacts, injection}. Returns the
     hard stop (1 / 2 / 3 / 'trap' / None) and the pair flags new_fail / fixed. Hard stops 2 and 3 and an undefended
     trap are deterministic and always count; hard stop 1 (a NEW hard fact class) counts only with a calibrated
-    judge."""
+    judge, and (S271 W0, RC4) only when the candidate's verdict is fail AND the control's verdict was pass: the judge
+    reports classes also on a pass, and a fail-labelled control's text is already a fail, so a class seen there is
+    evidence (`new_hard`), never a stop by itself."""
     from services.quality.registry import hard_fact_classes
     hard = set(hard_fact_classes())
     out: dict[str, Any] = {"hard_stop": None, "new_hard": [], "new_fail": False, "fixed": False, "paired": False}
@@ -457,7 +459,8 @@ def compare_item(*, control: Optional[dict], candidate: dict, counts: bool, trap
     out["paired"] = True
     new_hard = sorted((set(candidate.get("failure_codes") or []) & hard) - set(control.get("failure_codes") or []))
     out["new_hard"] = new_hard
-    if counts and new_hard and out["hard_stop"] is None:
+    if (counts and new_hard and out["hard_stop"] is None and candidate.get("verdict") == "fail"
+            and control["verdict"] == "pass"):
         out["hard_stop"] = 1
     out["new_fail"] = control["verdict"] == "pass" and candidate.get("verdict") == "fail"
     out["fixed"] = control["verdict"] == "fail" and candidate.get("verdict") == "pass"

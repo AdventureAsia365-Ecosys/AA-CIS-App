@@ -17,6 +17,9 @@ from shared.llm_client import call_log
 SET_ID = "5e700000-0000-4000-8000-000000000001"
 BASELINE_RUN = "ba5e0000-0000-4000-8000-000000000001"
 R1_RUN = "a1a10000-0000-4000-8000-000000000001"           # the r2 run of an active release 1
+OLD_SET_ID = "5e700000-0000-4000-8000-0000000000f0"       # S271 W0: an older golden set version
+OLD_BASELINE = "ba5e0000-0000-4000-8000-0000000000f0"     # its baseline import (what release 0 still points at)
+OLD_R2_RUN = "a1a10000-0000-4000-8000-0000000000f0"       # an r2 run on the older version
 TENANT_A = "0a919a00-0000-4000-8000-00000000000a"
 TENANT_B = "0a919b00-0000-4000-8000-00000000000b"
 
@@ -47,8 +50,13 @@ def golden(n_tune=10, n_hold=4, n_trap=2, labels_fail=0, bad_holdout=3):
 
 
 class FakeStore:
-    def __init__(self, items, *, release=None, active=None, spend_per_writer_call=0.0):
+    def __init__(self, items, *, release=None, active=None, spend_per_writer_call=0.0, cost_samples=()):
         self._items = items
+        self.cost_samples = list(cost_samples)
+        self.run_infos = {BASELINE_RUN: {"run_kind": "baseline_import", "golden_set_id": SET_ID},
+                          R1_RUN: {"run_kind": "r2", "golden_set_id": SET_ID},
+                          OLD_BASELINE: {"run_kind": "baseline_import", "golden_set_id": OLD_SET_ID},
+                          OLD_R2_RUN: {"run_kind": "r2", "golden_set_id": OLD_SET_ID}}
         self.release = release
         self.active = active or {"platform": {"release_id": "r0", "release_no": 0, "content_class": "empty",
                                               "rule_ids": [], "eval_run_id": BASELINE_RUN, "scope": "platform"},
@@ -76,10 +84,21 @@ class FakeStore:
     async def baseline_run(self, set_id, writer):
         return BASELINE_RUN
 
-    async def control_sources(self, run_id, item_ids):
+    async def run_info(self, run_id):
+        return self.run_infos.get(run_id)
+
+    async def control_sources(self, run_id, items):
+        item_ids = [i["item_id"] for i in items]
         if run_id == R1_RUN:            # release 1's eval run: its candidate (regenerate) outputs, unlabelled
             return {i["item_id"]: {"result_id": f"r1-{i['item_id']}", "mode": "regenerate", "arm": "candidate",
                                    "output": {"name": "Release one text", "summary": "A calm invented rewrite."}}
+                    for i in self._items if i["item_id"] in item_ids and not i["trap"]}
+        if run_id in (OLD_BASELINE, OLD_R2_RUN):   # S271 W0: paired by sample_id, but rows of the OLD version's items
+            return {i["item_id"]: {"result_id": f"old-{i['item_id']}", "item_id": i["item_id"],
+                                   "source_item_id": f"old-item-{i['sample_id']}",
+                                   "mode": "score_only" if run_id == OLD_BASELINE else "regenerate",
+                                   "arm": "control" if run_id == OLD_BASELINE else "candidate",
+                                   "output": None if run_id == OLD_BASELINE else {"summary": "Old version text."}}
                     for i in self._items if i["item_id"] in item_ids and not i["trap"]}
         assert run_id == BASELINE_RUN
         return await self.calibration_sources(run_id, item_ids)
@@ -113,6 +132,9 @@ class FakeStore:
 
     async def month_spend(self):
         return 0.0
+
+    async def item_cost_samples(self, writer):
+        return list(self.cost_samples)
 
 
 class FakeWriter:
@@ -265,7 +287,7 @@ def test_seeded_unsourced_claim_is_hard_stop_1_with_a_calibrated_judge():
 def test_uncalibrated_judge_counts_no_hard_stop_1_and_spends_no_holdout():
     items = golden(n_tune=4, n_hold=2)                         # 6 labelled pairs < MIN_KAPPA_PAIRS
     store = FakeStore(items)
-    out, _, _ = run(store, r2.R2Config(writer="a1", seed_fault="unsourced_claim"))
+    out, _, _ = run(store, r2.R2Config(writer="a1", seed_fault="unsourced_claim", require_calibrated=False))
     assert not out.judge_counts
     assert (out.verdict, out.stop_reason, out.stopped_phase) == ("informative", "completed", "tune")
     assert not _rows(store, phase="holdout", arm="candidate")
@@ -275,16 +297,26 @@ def test_low_kappa_judge_is_informative():
     items = golden()
     wrong = [i["item_id"] for i in items if i["split"] == "tune"][:5]
     store = FakeStore(items)
-    out, _, _ = run(store, r2.R2Config(writer="a1"), judge=make_judge(wrong_on=wrong))
+    out, writer, _ = run(store, r2.R2Config(writer="a1"), judge=make_judge(wrong_on=wrong))
     assert out.judge_kappa is not None and out.judge_kappa < cfg.MIN_KAPPA and not out.judge_counts
     assert out.verdict == "informative"
+    # S271 W0: require_calibrated (the default) stops before any writer call
+    assert writer.calls == [] and (out.stop_reason, out.stopped_phase) == ("completed", "calibrate")
+    assert store.runs[out.run_id]["details"]["calibration_gate"] == "judge_not_calibrated"
+    store2 = FakeStore(items)
+    out2, writer2, _ = run(store2, r2.R2Config(writer="a1", require_calibrated=False),
+                           judge=make_judge(wrong_on=wrong))
+    assert out2.verdict == "informative" and writer2.calls and out2.stopped_phase == "tune"
 
 
 def test_a_one_class_label_set_never_calibrates_the_judge():
     """S255: 14 pass labels and a judge that passes everything: kappa 1.0, but the judge never had to find a failure,
     so it does not count (informative, no hard stop 1)."""
     store = FakeStore(golden(bad_holdout=0))
-    out, _, _ = run(store, r2.R2Config(writer="a1"))
+    with pytest.raises(r2.R2Refused, match="calibration cannot be measured"):     # S271 W0: refused at $0
+        run(store, r2.R2Config(writer="a1"))
+    assert store.runs == {} and store.results == []
+    out, _, _ = run(store, r2.R2Config(writer="a1", require_calibrated=False))
     assert out.judge_kappa == 1.0 and not out.judge_counts and out.verdict == "informative"
     assert store.runs[out.run_id]["details"]["kappa_labels"] == {"pass": 14, "fail": 0}
 
@@ -387,7 +419,9 @@ def test_no_baseline_import_means_no_calibration_and_informative():
     async def no_baseline(set_id, writer):
         return None
     store.baseline_run = no_baseline
-    out, _, _ = run(store, r2.R2Config(writer="a1"))
+    with pytest.raises(r2.R2Refused, match="calibration cannot be measured"):
+        run(store, r2.R2Config(writer="a1"))
+    out, _, _ = run(store, r2.R2Config(writer="a1", require_calibrated=False))
     assert out.judge_kappa is None and not out.judge_counts and out.verdict == "informative"
 
 
@@ -436,7 +470,7 @@ def test_platform_run_writes_tenant_items_with_their_tenants_active_release():
         async def __call__(self, writer, inp, *, view, shared_inputs):
             seen[inp["tenant_id"]] = view
             return await super().__call__(writer, inp, view=view, shared_inputs=shared_inputs)
-    run(store, r2.R2Config(writer="t9_social", release_id="rel-1"), writer=W(store))
+    run(store, r2.R2Config(writer="t9_social", release_id="rel-1", require_calibrated=False), writer=W(store))
     assert seen[TENANT_A]["tenant"]["release_id"] == "ten-a" and seen[TENANT_A]["platform"]["release_id"] == "rel-1"
     assert seen[None]["tenant"] is None and seen[None]["platform"]["release_id"] == "rel-1"
     assert asked.count(TENANT_A) == 1                                  # cached per tenant
@@ -487,11 +521,15 @@ def test_tenant_release_runs_its_tenant_items_only():
     items += [_item(400 + i, "tune", writer="t9_social", tenant=TENANT_B) for i in range(3)]
     rel = _release(writer="t9_social", scope="tenant", tenant_id=TENANT_A, content_class="empty")
     store = FakeStore(items, release=rel)
-    out, _, _ = run(store, r2.R2Config(writer="t9_social", release_id="rel-1"))
+    out, _, _ = run(store, r2.R2Config(writer="t9_social", release_id="rel-1", require_calibrated=False))
     assert {r["tenant_id"] for r in store.results} == {TENANT_A}
 
 
 def test_payload_round_trip():
     conf = r2.R2Config(writer="a1", tiers=["water"], limit=3, cap_usd=2.0, seed_fault="qa_trace")
     assert r2.config_from_payload(r2.payload_of(conf)) == conf
-    assert r2.config_from_payload({"writer": "a1", "junk": 1}).writer == "a1"
+    # S271 W0: an unknown key is refused (an older worker image would drop a guard the CLI asked for)
+    with pytest.raises(r2.R2Refused, match="unknown R2 payload keys"):
+        r2.config_from_payload({"writer": "a1", "junk": 1})
+    pinned = r2.R2Config(writer="t9_blog", calibrate_only=True, judge_model="gpt-zz", judge_connection="zz-direct")
+    assert r2.config_from_payload(r2.payload_of(pinned)) == pinned
