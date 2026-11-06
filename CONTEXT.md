@@ -380,7 +380,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   (`stage_params.openai_reasoning_effort`); Converse sends neither (AA-803). A field a path does not send is logged
   once (`stage_params_not_applied`). CIS 381 seeds effort medium for t9_write on sonnet-5-5 and low for the Claude
   5.5 validate stages; t2_generate and t8_angle_gen keep their default (high) until a paid quality read backs a
-  change (the writer release fingerprint does not cover these rows yet). A deployment may state its own `api_style` (NULL = the
+  change (since AA-900 W0 the writer release fingerprint `config_fp` covers these rows: a change flags reverify). A
+  deployment may state its own `api_style` (NULL = the
   catalog's). `errors.TRUNCATED` is the recorded, non-failure class of a reply cut at its token limit (ledger status
   `truncated`; `llm_provider_health` accepts it). `shared.tenant_ai_budget` (AA-1016, no rows = no budget) and
   `shared.prompt_version` (AA-900, sha256 + path, never prompt text) exist for the enforcement / prompt-gate slices.
@@ -3677,6 +3678,13 @@ to the 280 limits, stored redacted when it held tenant text, and not redrafted u
 Automatic runs are off unless the worker sets `WRITING_MEMORY_AUTO_MINE`; when on: ≥ 10 new pass signals since the
 last run, ≤ 2 a month, never during an open rerun wave. A manual run (admin, after a confirm step) is the 3rd. A
 failed run that spent money counts as a run.
+**R1 freeze** (AA-900 W0, root ADR 0020, `services/writing_memory/r1_gate.py`): until a writer has an R1 record (a
+finished `prompt_eval_runs` row, pipeline `writing_memory`, run_kind `r1`, verdict `pass`), mining and the
+preference-summary drafter refuse at $0 (`mining.decide_run` first check; a run drafts only for writers with a
+record), and a first activation of a release with content or of an L0 lexicon rule is refused with code `r1_missing`
+(the Releases drawer and the candidate drawer show why). Rollback, retire, the memory switch, empty releases (release
+0, the rollback drill), R0 and R2 / shadow runs are not frozen. Break-glass: `WRITING_MEMORY_R1_GATE=off` (api and
+worker); the summary's `mine_trigger.r1` shows the switch and the frozen writers.
 Signals reach `pass` through the fact filter (`writing_signal_fact_filter`, `fact_filter.py`, $0, daily from the
 api ops sampler while signals are pending): an edit that adds a number, time, price or promise word the text and
 the source lack fails (quarantined), an added name is grey (admin confirms), a style edit passes. The backfill
@@ -3700,6 +3708,12 @@ a post-gate substitution; skipped when it is a declared signature word, or in th
 piece's `writer_input.writing_rules` lists what it got. Activation = an R0 on the current text with `l0_ok` (phrase
 drops to 0, no new hard stop, a replacement adds no number / place / time / price / service) + one admin click;
 rollback = one click (`active` → `rejected`, `rollback: …`). No active rule: the pack and prompt are unchanged.
+AA-900 W0 (ADR 0020: a gate holds only with a passing measurement record): the learned phrases are **warn-only** by
+default; the prompt still names them, but the gates block on the tenant's own words only (`l0.gating_forbidden`,
+`quality_gates.gating_forbidden`) and report a learned phrase as an `F2_style_warn` finding (`learned_hits`; a
+platform-truth or stock-superlative word stays on its own layer). `WRITING_MEMORY_L0_ENFORCE=on` restores the blocking
+F2_lexicon finding once W2 has measured it. R0 replays measure a rule as blocking whatever the switch
+(`l0.measuring_as_blocking`).
 _Avoid_: lesson (the frozen AA-132 rows), output rule (the retired N8 table), guideline.
 
 **Pinned Exemplar**:
@@ -3726,7 +3740,18 @@ CIS 287, AA-919 WM-18; ids only, the rule text stays in `writing_rule`). It pass
 text), R1 (re-score old outputs), R2 (golden-set run) and shadow, then becomes `active` only by one human click,
 never automatically. Statuses `draft` → `evaluated` → `approved` → `active` → `retired` (+ `rejected`); a `reverify`
 flag when the golden set, a model route or the gate taxonomy changed since its evidence (it keeps serving; a re-run
-needs approval). Activation needs its evidence twice: the API (`services/writing_memory/releases.py`
+needs approval). Since AA-900 W0 the fingerprint also holds `config_fp` (`services/writing_memory/config_fp.py`): one
+sha per component over every route row, `stage_model_params` row, catalog / deployment row and route order mode of the
+writer's path (stage prefixes s1_ / t2_ t3_ / t8_ t9_ t10_ plus the eval judge), the output-changing env switches
+(names stored, values hashed), the deployed prompt source of each registered path stage, the other active release a
+tenant release renders after, the active L0 lexicon rules and the owner's house style (`tenant_brand_rules` +
+`tenant_seo_config`: the AA master for A1, the tenant for a tenant release). A changed component maps to
+`model_route` or `prompt_version_mismatch` (the CIS 287 vocabulary); the scan's audit row and `GET
+/releases/{id}.config_drift` name the components and path stages. The scan runs after every llm-config route, switch,
+catalog, connection and route-control save of a path stage, at worker start and on demand. Each content write the
+KPIs read records how its writer answered: T9 `writer_input.writer_answer` (answered model, fallback_used, route
+position, connection, effort; admin-only), T2 `generation_meta.writer_answer`, A1 the existing
+`generated_content.model_editorial` / `fallback_used` columns. Activation needs its evidence twice: the API (`services/writing_memory/releases.py`
 `evidence_problem`, 409 with a code) and the DB (CHECK `writing_memory_release_evidence_check` + trigger
 `writing_memory_release_guard`): an `empty` release needs R0 (0 byte diffs over ≥ 20 inputs) + the AA-729 baseline
 eval; `lexicon_only` R0 only; `repair_hint_only` / `rules` an R2 pass + a shadow pass. One active release per writer
