@@ -23,7 +23,7 @@ built (STEP0 point 3a, unchanged by AA-545).
 **Bar thresholds are the origin's real numbers** (`reference/channels.toml`, STEP0 Q3), not
 invented, not a binary "has data" check:
 
-    Blog        needs_demand=1000  needs_questions=3   (grain: Route)
+    Blog        needs_demand=1000  needs_questions=3   (grain: Segment, carries its Route; AA-741 S271)
     LinkedIn/Facebook/Instagram/TikTok   needs_said=150 (grain: Segment)
     Email/Landing Page/Ads               on_demand, no bar (needs_*=0, grain: Segment)
 
@@ -44,6 +44,19 @@ behaviour before AA-840). A place may appear once per Channel and on at most
 candidate first) so the first Channel in `CHANNEL_BARS` no longer takes every place. This replaces
 AA-632's single `seen_places` set shared across Channels, which let LinkedIn (first, same bar as
 Facebook/Instagram/TikTok) starve every later Channel.
+
+**Blog is a Segment that walks its Route (AA-741 S271, option A).** From AA-511 to S271 Blog was the one
+Channel proposed at Route grain: its pool was the current Routes of the tenant's tours (one or two per tour) and
+`idx_subject_unique_route` + the `ON CONFLICT ... WHERE state = 'proposed'` upsert meant a used Route never came
+back, so an agency got one or two Blog Subjects ever (S271 phase-1 audit). The origin never had a Route Subject:
+its Blog Subject is a Segment (a moment) carrying its Route as the `walk` material (aa-social-media
+`stages/slate.py::_walk()`, `channels.toml` `takes_route`). Now: Blog is Segment grain with the same Bar
+(demand >= 1000 and questions >= 3, read from the Segment's best market — `_fetch_segment_candidates()`), the place
+rule applies to it like every Segment Channel, a place the tenant already picked / used / cut on Blog is not proposed
+again (`one_piece_per_place`, `_fetch_held_subjects()`), and `pick_subject()` fills the walk: the current Route on the
+seed atom's tour that contains the Segment (`_segment_walk()`), as `route_segment_ids`, so T8 / T9 keep the journey
+spine; no Route = a single-place piece. Route-grain Blog Subjects already picked / used stay valid (their pick, T8, T9
+and regenerate paths are unchanged); a still-`proposed` one is replaced by the next proposal.
 
 **Route/Blog pick now carries the whole Route (AA-511 Gap A, same follow-up)** —
 `pick_subject()` persists `angle_gate_request.route_segment_ids` (migration 134) as the Route's
@@ -74,14 +87,15 @@ from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from shared import tour_liveness as _tl
 from shared.tour_liveness import ServedState, served_tour_joins_sql, with_served
 from services.acp_shared.subject_seed import (
-    choose_representative, choose_route_anchor, load_alias_cards, load_segment_members,
+    choose_representative, choose_route_anchor, load_alias_cards, load_segment_members, match_grade,
 )
 
 logger = structlog.get_logger()
 
 # One row per Channel: the Bar (STEP0 Q3, literal reference/channels.toml numbers), which grain
-# it reads (Blog is the one Channel scored at Route grain — AA-CIS's own extension, STEP0 Q2),
-# and whether it is on-demand (no weekly rhythm, origin's derive_posting_rhythm() skips these
+# it reads (every Channel is Segment grain since AA-741 S271; Blog was Route grain from AA-511 to
+# S271, AA-CIS's own extension, STEP0 Q2 — see "Blog is a Segment that walks its Route" in the
+# module docstring), and whether it is on-demand (no weekly rhythm, origin's derive_posting_rhythm() skips these
 # entirely — STEP0 Q3's own finding: the origin has no rules-based Subject list for these at all,
 # this build runs the same Bar/choose logic against them anyway, at their default-zero bar).
 #
@@ -92,23 +106,36 @@ logger = structlog.get_logger()
 # Channels entirely, so `choose()` never runs for them there — `None` (no cap) is this build's
 # own honest choice for the 3 on-demand Channels rather than inventing a number the origin never
 # had; see `_choose()` for how `None` is handled.
+#
+# takes_route (AA-741 S271): the origin's own `channels.toml` key — a Blog piece has room for a
+# journey, so its pick carries the walk (`route_segment_ids`); every other Channel takes one moment.
+# one_piece_per_place (AA-741 S271): a place the tenant already picked / used / cut on this Channel
+# is not proposed there again, under any Segment id (one Blog article per place).
 CHANNEL_BARS: dict[str, dict] = {
     "blog":          {"needs_demand": 1000, "needs_questions": 3, "needs_said": 0,
-                       "grain": "route", "on_demand": False, "most_per_hub": 99},
+                       "grain": "segment", "on_demand": False, "most_per_hub": 99,
+                       "takes_route": True, "one_piece_per_place": True},
     "linkedin":      {"needs_demand": 0, "needs_questions": 0, "needs_said": 150,
-                       "grain": "segment", "on_demand": False, "most_per_hub": 99},
+                       "grain": "segment", "on_demand": False, "most_per_hub": 99,
+                       "takes_route": False, "one_piece_per_place": False},
     "facebook":      {"needs_demand": 0, "needs_questions": 0, "needs_said": 150,
-                       "grain": "segment", "on_demand": False, "most_per_hub": 99},
+                       "grain": "segment", "on_demand": False, "most_per_hub": 99,
+                       "takes_route": False, "one_piece_per_place": False},
     "instagram":     {"needs_demand": 0, "needs_questions": 0, "needs_said": 150,
-                       "grain": "segment", "on_demand": False, "most_per_hub": 99},
+                       "grain": "segment", "on_demand": False, "most_per_hub": 99,
+                       "takes_route": False, "one_piece_per_place": False},
     "tiktok":        {"needs_demand": 0, "needs_questions": 0, "needs_said": 150,
-                       "grain": "segment", "on_demand": False, "most_per_hub": 99},
+                       "grain": "segment", "on_demand": False, "most_per_hub": 99,
+                       "takes_route": False, "one_piece_per_place": False},
     "email":         {"needs_demand": 0, "needs_questions": 0, "needs_said": 0,
-                       "grain": "segment", "on_demand": True, "most_per_hub": None},
+                       "grain": "segment", "on_demand": True, "most_per_hub": None,
+                       "takes_route": False, "one_piece_per_place": False},
     "landing_page":  {"needs_demand": 0, "needs_questions": 0, "needs_said": 0,
-                       "grain": "segment", "on_demand": True, "most_per_hub": None},
+                       "grain": "segment", "on_demand": True, "most_per_hub": None,
+                       "takes_route": False, "one_piece_per_place": False},
     "ads":           {"needs_demand": 0, "needs_questions": 0, "needs_said": 0,
-                       "grain": "segment", "on_demand": True, "most_per_hub": None},
+                       "grain": "segment", "on_demand": True, "most_per_hub": None,
+                       "takes_route": False, "one_piece_per_place": False},
 }
 
 WEEKLY_RHYTHM_CHANNELS = tuple(c for c, s in CHANNEL_BARS.items() if not s["on_demand"])
@@ -138,6 +165,25 @@ class Candidate:
     # Gap B — Route's own hub (None for a standalone Route; a Segment candidate's hub is instead
     # resolved separately via _fetch_segment_hub_map(), keyed by segment_id, not carried here).
     hub_id: str | None = None
+
+
+@dataclass(frozen=True)
+class HeldSubjects:
+    """AA-741 S271 — what a tenant already holds on one `one_piece_per_place` Channel (Blog): the live Segment ids and
+    the places of its picked / used / cut Segment Subjects there. A candidate on one of them is not proposed again."""
+
+    segment_ids: frozenset[str] = frozenset()
+    places: frozenset[str] = frozenset()
+
+    def holds(self, candidate: Candidate) -> bool:
+        if candidate.segment_id and candidate.segment_id in self.segment_ids:
+            return True
+        return bool(candidate.place) and _place_key(candidate.place) in self.places
+
+
+def _place_key(place: Optional[str]) -> str:
+    """The place as `HeldSubjects` compares it: case and surrounding spaces ignored."""
+    return " ".join((place or "").split()).casefold()
 
 
 def _clears_bar(channel: str, candidate: Candidate) -> tuple[bool, dict]:
@@ -221,6 +267,40 @@ async def _tenant_market_codes(tenant_id: UUID, conn) -> tuple[list[str], list[s
     return codes, unmatched
 
 
+# AA-741 S271 — one row per ranked, non-excluded Segment of the tenant's tours: `total_rank` / `said` the MIN over
+# every (market, tour) row as before; `demand_volume` / `questions` those of the Segment's best market (lowest
+# total_rank; ties by market code), so the Blog Bar reads one market's real numbers.
+_SEGMENT_CANDIDATES_SQL = """
+    WITH per_market AS (
+        SELECT ar.segment_id, ar.market,
+               MIN(ar.total_rank)    AS total_rank,
+               MAX(ar.demand_volume) AS demand_volume,
+               MAX(ar.questions)     AS questions,
+               MIN(ar.said)          AS said
+        FROM acp_contract.atom_ranking ar
+        WHERE ar.tour_id = ANY($1::uuid[]) AND ar.market = ANY($2::text[])
+          AND ar.excluded_reason IS NULL
+          AND ar.superseded_at IS NULL  -- AA-734: current ranking row only
+        GROUP BY ar.segment_id, ar.market
+    ), best AS (
+        SELECT DISTINCT ON (segment_id) segment_id, demand_volume, questions
+        FROM per_market
+        ORDER BY segment_id, total_rank ASC NULLS LAST, market
+    )
+    SELECT pm.segment_id,
+           MIN(pm.total_rank)   AS total_rank,
+           MAX(b.demand_volume) AS demand_volume,
+           MAX(b.questions)     AS questions,
+           MIN(pm.said)         AS said,
+           MAX(asg.canonical_place)  AS canonical_place,
+           MAX(asg.canonical_action) AS canonical_action
+    FROM per_market pm
+    JOIN best b ON b.segment_id = pm.segment_id
+    JOIN acp_contract.atom_segment asg ON asg.segment_id = pm.segment_id
+    GROUP BY pm.segment_id
+"""
+
+
 async def _fetch_segment_candidates(tenant_id: UUID, pool, markets: list[str]) -> list[Candidate]:
     """One Candidate per ranked, non-excluded Segment, scoped to tours this tenant picked.
 
@@ -230,26 +310,18 @@ async def _fetch_segment_candidates(tenant_id: UUID, pool, markets: list[str]) -
     Score section, confirmed NOT an existing Slate mechanism before this build, see the AA-545
     Linear issue's own grill-round-3 correction) — just relocated to read time, over rows that
     are now real per-market data instead of one already-merged row.
+
+    AA-741 S271 — `demand` / `questions` are the Segment's numbers in its BEST market (the market with the lowest
+    `total_rank`), travelling together, the rule Route candidates already used ("best market wins, its numbers
+    travel together"). Until S271 they were each the MIN across the tenant's markets, harmless while only Blog read
+    them (at Route grain), but a Blog Segment for a US + UK tenant would then need 1,000 searches in its weakest
+    market. `said` stays the MIN across markets and tours (the social Bar reads it, unchanged).
     """
     async with pool.acquire() as conn:
         tour_ids = await _tenant_tour_ids(tenant_id, conn)
         if not tour_ids:
             return []
-        rows = await conn.fetch("""
-            SELECT ar.segment_id,
-                   MIN(ar.total_rank)     AS total_rank,
-                   MIN(ar.demand_volume)  AS demand_volume,
-                   MIN(ar.questions)      AS questions,
-                   MIN(ar.said)           AS said,
-                   MAX(asg.canonical_place)  AS canonical_place,
-                   MAX(asg.canonical_action) AS canonical_action
-            FROM acp_contract.atom_ranking ar
-            JOIN acp_contract.atom_segment asg ON asg.segment_id = ar.segment_id
-            WHERE ar.tour_id = ANY($1::uuid[]) AND ar.market = ANY($2::text[])
-              AND ar.excluded_reason IS NULL
-              AND ar.superseded_at IS NULL  -- AA-734: current ranking row only
-            GROUP BY ar.segment_id
-        """, tour_ids, markets)
+        rows = await conn.fetch(_SEGMENT_CANDIDATES_SQL, tour_ids, markets)
         rows = await _segments_with_seed(tenant_id, conn, rows, {str(t) for t in tour_ids})
     return [
         Candidate(
@@ -431,6 +503,7 @@ def _hub_key(candidate: Candidate, hub_of: dict[str, str]) -> str | None:
 def _choose_slate(
     channels: list[str], segments: list[Candidate], routes: list[Candidate], hub_of: dict[str, str],
     max_channels_per_place: int | None = MAX_CHANNELS_PER_PLACE,
+    held: Optional[dict[str, "HeldSubjects"]] = None,
 ) -> dict[str, list[tuple[Candidate, dict]]]:
     """Port of the origin's `choose()` (aa-social-media `stages/slate.py`, Gap B 2026-09-02),
     run over every enabled Channel of one tenant's Slate at once (AA-840).
@@ -455,6 +528,12 @@ def _choose_slate(
 
     **`most_per_hub`** (`CHANNEL_BARS`, 99 "effectively off" for weekly-rhythm Channels, `None` for
     the on-demand ones) is counted per Channel, as before: it is a per-Channel Bar setting.
+
+    **Held places** (AA-741 S271, `one_piece_per_place` Channels — Blog): `held[channel]` holds the Segment ids and
+    places the tenant already picked / used / cut on that Channel (`_fetch_held_subjects()`); such a candidate is
+    skipped before the place rule, so it neither takes a seat nor counts against `max_channels_per_place`, and the
+    next place gets the seat. Before S271 a used Segment kept winning its seat each proposal and its insert was a
+    no-op, so the Channel was offered nothing new for that place's seat.
 
     Deterministic: same inputs, same output. Returns `{channel: [(candidate, cleared_bar_reason)]}`
     for every Channel in `channels` — exactly what should be `INSERT`ed as `proposed` rows.
@@ -482,12 +561,15 @@ def _choose_slate(
         for channel in channels:
             most_per_hub = CHANNEL_BARS[channel]["most_per_hub"]
             queue, taken = queues[channel], hubs_in_channel[channel]
+            held_here = (held or {}).get(channel)
             # Every skip below is final for this Channel (place/hub counts only ever grow), so the
             # cursor never needs to look back.
             while cursor[channel] < len(queue):
                 candidate, reason = queue[cursor[channel]]
                 cursor[channel] += 1
                 place = candidate.place
+                if held_here is not None and held_here.holds(candidate):
+                    continue
                 if place is not None:
                     if place in places_in_channel[channel]:
                         continue
@@ -564,7 +646,9 @@ async def propose_slate(tenant_id: UUID, pool) -> dict:
         # (picked/used/cut rows stay).
         # _choose_slate() applies the Bar AND `choose()`'s place rule/hub-cap (Gap B, AA-840) --
         # only what survives both gets proposed.
-        chosen = _choose_slate(enabled_channels, segments, routes, hub_of)
+        held = await _fetch_held_subjects(
+            tenant_id, conn, [c for c in enabled_channels if CHANNEL_BARS[c]["one_piece_per_place"]])
+        chosen = _choose_slate(enabled_channels, segments, routes, hub_of, held=held)
         async with conn.transaction():
             held_via_alias = await _segments_held_via_alias(tenant_id, conn)
             live_segment_ids: dict[str, set[str]] = {c: set() for c in CHANNEL_BARS}
@@ -642,6 +726,42 @@ async def _segments_held_via_alias(tenant_id: UUID, conn) -> set[tuple[str, str]
     live = await resolve_segment_aliases(conn, [r["segment_id"] for r in rows])
     return {(r["channel"], live[r["segment_id"]]) for r in rows
             if live.get(r["segment_id"], r["segment_id"]) != r["segment_id"]}
+
+
+# AA-741 S271 — the tenant's picked / used / cut Segment Subjects on the given Channels, with the Segment's place.
+_HELD_SUBJECTS_SQL = """
+    SELECT s.channel, s.segment_id, asg.canonical_place
+    FROM acp_shared.subject s
+    LEFT JOIN acp_contract.atom_segment asg ON asg.segment_id = s.segment_id
+    WHERE s.tenant_id = $1::uuid AND s.state <> 'proposed' AND s.segment_id IS NOT NULL
+      AND s.channel = ANY($2::text[])
+"""
+
+
+async def _fetch_held_subjects(tenant_id: UUID, conn, channels: list[str]) -> dict[str, HeldSubjects]:
+    """AA-741 S271 — {channel: HeldSubjects} for the `one_piece_per_place` Channels among `channels`: the Segment ids
+    (stored id and the live id it merged into, `atom_segment_alias`) and places (the stored Segment's and the live
+    one's) of the tenant's picked / used / cut Subjects there. Route-grain Subjects (Blog before S271) carry no place
+    and hold nothing here. No channel -> {} and no read."""
+    if not channels:
+        return {}
+    rows = await conn.fetch(_HELD_SUBJECTS_SQL, tenant_id, list(channels))
+    if not rows:
+        return {}
+    moved = await live_segment_labels(conn, [r["segment_id"] for r in rows])
+    ids: dict[str, set[str]] = {}
+    places: dict[str, set[str]] = {}
+    for r in rows:
+        ids.setdefault(r["channel"], set()).add(r["segment_id"])
+        if r["canonical_place"]:
+            places.setdefault(r["channel"], set()).add(_place_key(r["canonical_place"]))
+        live = moved.get(r["segment_id"])
+        if live:
+            ids[r["channel"]].add(live[0])
+            if live[1]:
+                places.setdefault(r["channel"], set()).add(_place_key(live[1]))
+    return {channel: HeldSubjects(frozenset(ids.get(channel, ())), frozenset(places.get(channel, ())))
+            for channel in ids}
 
 
 T7_SLATE_KIND = "t7_slate"
@@ -931,7 +1051,7 @@ async def pick_subject_on(conn, tenant_id: UUID, subject_id: UUID) -> dict:
     if segment_id:
         segment_id = (await resolve_segment_aliases(conn, [segment_id])).get(segment_id, segment_id)
     atom_id, trip_id, route_segment_ids = await _resolve_representative_atom(
-        conn, tenant_id, segment_id, row["route_id"],
+        conn, tenant_id, segment_id, row["route_id"], channel=row["channel"],
     )
     if atom_id is None:
         raise SubjectNotEligibleError(
@@ -992,11 +1112,15 @@ async def cut_subject_on(conn, tenant_id: UUID, subject_id: UUID) -> dict:
 
 
 async def _resolve_representative_atom(
-    conn, tenant_id: UUID, segment_id: str | None, route_id: str | None,
+    conn, tenant_id: UUID, segment_id: str | None, route_id: str | None, channel: str | None = None,
 ) -> tuple[str | None, str | None, list[str] | None]:
     """(atom_id, trip_id, route_segment_ids) to hand T8/T9 — the third element is `None` for a
     Segment pick and the Route's full `ordered_segment_ids` for a Route/Blog pick (Gap A). See
     `pick_subject()`'s own docstring for what now actually consumes it.
+
+    AA-741 S271 — a Segment pick on a `takes_route` Channel (Blog) also carries its walk: `_segment_walk()` returns
+    the current Route on the seed atom's tour that contains the Segment, as `route_segment_ids` (None when there is
+    no such Route: a single-place piece, exactly a Segment pick before S271).
 
     AA-567 — `owner_scope IN ('platform', tenant_id)`, NOT `owner_scope = tenant_id` alone. Since
     AA-526, atomize runs exactly once, platform-wide (`owner_scope='platform'`) — a tenant-owned
@@ -1038,6 +1162,8 @@ async def _resolve_representative_atom(
             logger.warning("slate_subject_no_seed", tenant_id=str(tenant_id), segment_id=segment_id,
                            place=place, reason=skip, members=len(members))
             return None, None, None
+        if channel and CHANNEL_BARS.get(channel, {}).get("takes_route"):
+            return await _segment_walk(conn, tenant_id, segment_id, place, member, members, tour_ids, alias_cards)
         return member.atom_id, str(member.tour_id), None
 
     # AA-914 — the current version only (`superseded_at IS NULL`): a Subject still on a superseded
@@ -1065,9 +1191,71 @@ async def _resolve_representative_atom(
     return (member.atom_id, route_tour, list(segment_ids)) if member else (None, None, None)
 
 
+# AA-741 S271 — the current Routes of the given tours that contain the Segment under its live id or any id that merged
+# into it (atom_segment_alias, followed back through chains). `?|` = the jsonb array holds any of these strings. Route
+# and atom_segment_alias are platform tables the tenant pool reads (265 / 241 grants), as current_route() does.
+_SEGMENT_ROUTES_SQL = """
+    WITH RECURSIVE ids(segment_id) AS (
+        SELECT $1::text
+        UNION
+        SELECT a.segment_id_old FROM acp_contract.atom_segment_alias a
+        JOIN ids ON a.segment_id_canonical = ids.segment_id
+    )
+    SELECT r.route_id, r.tour_id::text AS tour_id, r.first_day, r.ordered_segment_ids
+    FROM acp_contract.route r
+    WHERE r.superseded_at IS NULL AND r.tour_id = ANY($2::uuid[])
+      AND r.ordered_segment_ids ?| (SELECT array_agg(segment_id) FROM ids)
+"""
+
+
+async def _segment_walk(conn, tenant_id: UUID, segment_id: str, place: Optional[str], member, members,
+                        tour_ids: set[str], alias_cards) -> tuple[str, str, list[str] | None]:
+    """AA-741 S271 — the walk of a Blog Segment pick (the origin's `_walk()`: "the journey this moment sits in").
+
+    The Route must be on the request's trip: T8 / T9 keep a Route Segment only when the trip has a live member atom in
+    it (route_guard), so a Route on another tour would be dropped whole. So: the current Routes containing the Segment
+    on the seed atom's tour; when that tour has none, a member of the same match grade on a tour that has one (the
+    seed rule's own grade, never a looser member) — the request then writes from that member. Each Route is read
+    through `trip_route_segment_ids` (merged ids followed, foreign ids dropped and logged) and kept only when the
+    Segment is still on it and it walks at least two Segments; the longest wins (then the earliest day, then the id).
+    The origin ranks walks by Route score (mean total_rank); `atom_ranking` is not readable on the tenant pool the pick
+    runs on, and a Segment sits on one Route per tour in nearly every case (a tour's Routes are disjoint day spans), so
+    the length only breaks the rare tie. No Route -> (seed atom, its tour, None): a single-place piece."""
+    single = (member.atom_id, str(member.tour_id), None)
+    rows = await conn.fetch(_SEGMENT_ROUTES_SQL, segment_id, sorted(tour_ids))
+    if not rows:
+        return single
+    route_tours = {str(r["tour_id"]) for r in rows}
+    seed = member
+    if str(member.tour_id) not in route_tours:
+        grade = match_grade(place, member, alias_cards)
+        alt, _skip = choose_representative(place, members, tenant_tour_ids=route_tours & tour_ids,
+                                           alias_cards=alias_cards)
+        if alt is None or match_grade(place, alt, alias_cards) != grade:
+            logger.info("slate_walk_none", tenant_id=str(tenant_id), segment_id=segment_id,
+                        reason="no_route_on_seed_tour")
+            return single
+        seed = alt
+    best = None
+    for r in sorted((r for r in rows if str(r["tour_id"]) == str(seed.tour_id)),
+                    key=lambda r: (r["first_day"], r["route_id"])):
+        kept = await trip_route_segment_ids(conn, r["tour_id"], r["ordered_segment_ids"], tenant_id=tenant_id,
+                                            consumer="slate_pick")
+        if segment_id not in kept or len(kept) < 2:
+            continue
+        if best is None or len(kept) > len(best[1]):
+            best = (r["route_id"], kept)
+    if best is None:
+        logger.info("slate_walk_none", tenant_id=str(tenant_id), segment_id=segment_id, reason="no_usable_route")
+        return single
+    logger.info("slate_walk_resolved", tenant_id=str(tenant_id), segment_id=segment_id, route_id=best[0],
+                segments=len(best[1]), seed_moved=seed is not member)
+    return seed.atom_id, str(seed.tour_id), list(best[1])
+
+
 __all__ = [
     "CHANNEL_BARS", "WEEKLY_RHYTHM_CHANNELS", "ON_DEMAND_CHANNELS", "MAX_CHANNELS_PER_PLACE",
-    "Candidate", "propose_slate", "fetch_slate", "fetch_slate_on", "enabled_channels", "pick_subject",
+    "Candidate", "HeldSubjects", "propose_slate", "fetch_slate", "fetch_slate_on", "enabled_channels", "pick_subject",
     "pick_subject_on", "write_pick_audit", "cut_subject", "cut_subject_on",
     "T7_SLATE_KIND", "latest_slate_job", "last_proposal", "request_slate_proposal",
     "SubjectNotFoundError", "SubjectNotEligibleError",

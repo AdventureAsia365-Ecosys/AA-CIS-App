@@ -11,6 +11,8 @@ in docs/implementation-notes/AA-511.md instead, same precedent every other DB-fa
 this module already follows (`propose_slate()`/`fetch_slate()`/`pick_subject()` have no unit
 tests here either).
 """
+from unittest.mock import patch
+
 from services.acp_shared.slate import CHANNEL_BARS, ON_DEMAND_CHANNELS, WEEKLY_RHYTHM_CHANNELS
 from services.acp_shared.slate import Candidate, _choose, _choose_slate, _clears_bar
 
@@ -39,7 +41,9 @@ class TestChannelBarsShape:
     def test_blog_thresholds_match_reference_channels_toml(self):
         assert CHANNEL_BARS["blog"]["needs_demand"] == 1000
         assert CHANNEL_BARS["blog"]["needs_questions"] == 3
-        assert CHANNEL_BARS["blog"]["grain"] == "route"
+        # AA-741 S271: Blog is Segment grain again (the origin's own grain) and carries its Route as the walk.
+        assert CHANNEL_BARS["blog"]["grain"] == "segment"
+        assert CHANNEL_BARS["blog"]["takes_route"] is True
         assert CHANNEL_BARS["blog"]["on_demand"] is False
 
     def test_attention_led_channels_share_needs_said_150(self):
@@ -179,13 +183,15 @@ class TestChoosePlaceDedupAndHubCap:
         assert [c.segment_id for c, _ in chosen["instagram"]] == ["seg_a"]
 
     def test_place_cap_does_not_affect_route_grain(self):
-        # Route candidates never set `place` — the cross-Channel place cap must not cap
-        # route-grain Channels like blog because Segment-grain Channels used every seat.
+        # Route candidates never set `place` — the cross-Channel place cap must not cap a
+        # route-grain Channel because Segment-grain Channels used every seat. No Channel is route grain
+        # since AA-741 S271; the rule is kept for one, checked here with a patched Channel.
         seg = self._seg("seg_a", "Itsukushima Shrine", score=1)
         route = self._route("r1", score=1, hub_id="hub_a")
-        chosen = _choose_slate(["blog", "linkedin", "facebook", "instagram", "tiktok"], [seg], [route],
-                               hub_of={}, max_channels_per_place=1)
-        assert [c.route_id for c, _ in chosen["blog"]] == ["r1"]
+        with patch.dict(CHANNEL_BARS["email"], {"grain": "route"}):
+            chosen = _choose_slate(["linkedin", "facebook", "instagram", "email"], [seg], [route],
+                                   hub_of={}, max_channels_per_place=1)
+        assert [c.route_id for c, _ in chosen["email"]] == ["r1"]
 
     def test_bar_still_applies_before_dedup(self):
         fails_bar = self._seg("seg_fail", "Nijo Castle", score=1, said=10)  # under needs_said=150

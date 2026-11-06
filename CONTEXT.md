@@ -3084,7 +3084,8 @@ _Avoid_: rank, weight, priority.
 
 **Route**:
 A consecutive-day span (2-5 days) of one tour's ranked, non-excluded Segments — a Blog-only
-concept (the only channel scored at Route grain instead of Segment grain). Rebuilt whole on
+concept: since AA-741 S271 the walk a Blog Segment Subject carries (the origin's `walk`); from AA-511 to S271
+Blog was proposed at Route grain, which left each agency one or two Blog Subjects ever. Rebuilt whole on
 every re-run (old rows are superseded, never deleted). Platform-wide since AA-545: identity is
 `(tour_id, first_day, last_day)`, no `tenant_id`.
 A blog request keeps a frozen copy of the Route's Segment ids (`angle_gate_request.route_segment_ids`).
@@ -3106,7 +3107,8 @@ _Avoid_: journey, family, group (Route Family, a distinct upstream concept, has 
 ### Tenant content (per tenant, from the Slate onward)
 
 **Subject**:
-One proposable (Segment or Route) × Channel pair, with a `state` (proposed/picked/used/cut), a
+One proposable (Segment or Route) × Channel pair (every Channel proposes Segments since AA-741 S271; Route
+Subjects are the Blog ones picked before then and stay valid), with a `state` (proposed/picked/used/cut), a
 `score` (copied from Atom Ranking or Route.score, never recomputed), and `cleared_bar_reason`
 (why it passed/failed that Channel's numeric Bar). One row = one thing a tenant can pick.
 _Avoid_: proposal, candidate, slot (Slot is the older, deprecated N7 term — do not reuse).
@@ -3133,6 +3135,12 @@ Bar-cleared Subjects for a Channel. `services/acp_shared/slate.py::propose_slate
    first; a place appears at most once per Channel and on at most `MAX_CHANNELS_PER_PLACE` (3)
    Channels of one Slate. A Channel the tenant switches off loses its `proposed` rows on the next
    proposal and they are hidden from `GET /v1/slate` at once (picked/used rows stay).
+   **Blog** (AA-741 S271): Segment grain with the Bar demand >= 1,000 and questions >= 3, read from the Segment's
+   best market (lowest total_rank, its numbers together); a place the tenant already picked / used / cut on Blog
+   is never proposed there again (`one_piece_per_place`). The Blog pick fills `angle_gate_request.route_segment_ids`
+   with the walk: the current Route on the seed atom's tour that holds the Segment (merged ids followed, read through
+   `route_guard`, at least two Segments; when the seed's tour has none, a member of the same match grade on a tour
+   that has one). No Route = a single-place blog. T8 / T9 read the walk exactly as a Route pick's.
 
 A Segment Subject is offered and written only from its **seed atom** (AA-857,
 `services/acp_shared/subject_seed.py`): a live member on the tenant's own tours whose place IS the
