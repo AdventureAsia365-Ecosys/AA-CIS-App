@@ -390,9 +390,6 @@ SUB_FLOOR_CEILINGS = {
     "api/services/llm_route_trace.py:TEST_MAX_TOKENS": "admin route test: 'reply ok'; the floor lifts it on a "
                                                        "reasoning model, the literal bounds a non-reasoning one",
     "services/jobs/llm_probe_job.py:CANDIDATE_MAX_TOKENS": "availability sweep through LLMClient.probe",
-    "services/acp_content_writing/faq_answer_fit.py:MAX_TOKENS": "FAQ answer fit, one short answer",
-    "services/acp_content_writing/faq_answer_fit.py:ISOLATED_MAX_TOKENS": "FAQ answer fit, isolated sentence",
-    "services/acp_content_writing/seed_align/adjudicate.py:MAX_TOKENS": "seed alignment verdicts",
     "services/acp_content_writing/seed_align/checks.py:MAX_TOKENS": "seed alignment one-word check",
     "services/acp_contract/segment_research.py:483": "segment research questions (JSON list)",
     "services/acp_shared/place_cards.py:DRAFT_MAX_TOKENS": "place card draft",

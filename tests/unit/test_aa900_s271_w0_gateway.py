@@ -7,8 +7,8 @@
 2. Degraded marks for the measuring roles: a judge / validate / decide answer from a fallback rung (> 0) or from
    nova-lite, and a judge of the same model family as a writer of the same output, are marked on the reply
    (LLMResponse.route_degraded, ledger quality_signal.degraded) and in the quality guard's collectors (count: no hold).
-3. The CI lint: every call-site ceiling of a budgeted stage clears token_floor(model, effort) of every model of the
-   stage's route (routes and efforts read from the migrations, the catalog floors from migration 382).
+3. token_floor(model, effort). The CI lint built on it (every call site of every routed stage, read from the code and
+   the migrations) is tests/unit/test_aa900_s271_effort_floor_lint.py.
 
 No AWS, no vendor, no DB, no paid call. Model keys are the catalog's or invented; no fixture text from real data.
 """
@@ -281,7 +281,7 @@ def test_a1_state_gets_the_instrument_entries_and_no_hold():
     assert "degraded" not in t2 or not t2["degraded"]
 
 
-# ── 3. the CI lint: every call-site ceiling >= token_floor(model, effort) of its routed models ─────────────────────
+# ── 3. token_floor(model, effort) (the CI lint: test_aa900_s271_effort_floor_lint.py) ────────────────────────────
 
 def test_the_effort_floor():
     assert token_floor.effort_floor("sonnet-5-5") == 8192                      # default effort (high)
@@ -290,77 +290,3 @@ def test_the_effort_floor():
     assert token_floor.effort_floor("gpt-6-luna", "low", {"min_output_tokens": 8192}) == 8192   # the row wins
     assert token_floor.effort_floor("sonnet-5-5", "max", model_cap=12000) == 12000
     assert token_floor.effort_floor("sonnet-4-6", "high") is None and token_floor.effort_floor("nova-lite") is None
-
-
-# [stage, primary, [old fallbacks], [new fallbacks]] rows of the route migrations (366, 376, ...); the last one wins
-_ROUTE_ROW = re.compile(r'\[\s*"([a-z0-9_]+)",\s*"([a-z0-9.\-]+)",\s*\[([^\]]*)\],\s*\[([^\]]*)\]\s*\]', re.S)
-# ('stage', 'model', 'effort' rows of a shared.stage_model_params seed (migration 381)
-_EFFORT_ROW = re.compile(r"\(\s*'([a-z0-9_]+)',\s*'([a-z0-9.\-]+)',\s*'(low|medium|high|xhigh|max)'")
-_EFFORTS = {"low", "medium", "high", "xhigh", "max"}
-# min_output_tokens set by a catalog migration (382: gpt-6-luna, gpt-6-luna-openai)
-_MIN_OUT = re.compile(r"jsonb_build_object\('min_output_tokens',\s*(\d+)\).*?model_key\s+IN\s+\(([^)]*)\)", re.S)
-
-
-def _migrations():
-    return sorted((ROOT / "api" / "migrations").glob("*.sql"))
-
-
-def _routes() -> dict:
-    out: dict = {}
-    for p in _migrations():
-        for stage, primary, _old, new in _ROUTE_ROW.findall(p.read_text(encoding="utf-8")):
-            out[stage] = [primary, *re.findall(r'"([^"]+)"', new)]
-    return out
-
-
-def _efforts() -> dict:
-    out: dict = {}
-    for p in _migrations():
-        text = p.read_text(encoding="utf-8")
-        if "stage_model_params" not in text:
-            continue
-        for stage, model, effort in _EFFORT_ROW.findall(text):
-            if stage not in _EFFORTS:
-                out[(stage, model)] = effort
-    return out
-
-
-def _min_output_tokens() -> dict:
-    out: dict = {}
-    for p in _migrations():
-        for n, keys in _MIN_OUT.findall(re.sub(r"--[^\n]*", "", p.read_text(encoding="utf-8"))):
-            for key in re.findall(r"'([^']+)'", keys):
-                out[key] = max(out.get(key, 0), int(n))
-    return out
-
-
-def _ceilings() -> dict:
-    """The lowest call-site ceiling of each stage the lint covers (the constant the call site sends)."""
-    from services.acp_content_writing import quality_gates
-    from services.content_generation import graph, s1_writer_v2
-    from services.writing_memory import config as wm_cfg, eval_judge
-    return {**tb.STAGE_FLOORS,
-            "t2_generate": graph.GENERATE_MAX_TOKENS,
-            "s1_generate": s1_writer_v2.WRITER_MAX_TOKENS,
-            "t10_judge": quality_gates._F9_MAX_TOKENS,
-            wm_cfg.EVAL_STAGE: eval_judge.MAX_TOKENS}
-
-
-def test_the_lint_reads_the_routes_efforts_and_catalog_floors():
-    routes, efforts, mins = _routes(), _efforts(), _min_output_tokens()
-    assert routes["t9_write"][0] == "sonnet-5-5" and routes["t10_judge"][0] == "gpt-5.6-luna"
-    assert efforts[("t9_write", "sonnet-5-5")] == "medium" and efforts[("t9_faq_filter", "haiku-5-5")] == "low"
-    assert mins["gpt-6-luna"] == 8192 and mins["gpt-6-luna-openai"] == 8192
-
-
-def test_every_call_site_ceiling_clears_the_effort_floor_of_its_routed_models():
-    routes, efforts, mins = _routes(), _efforts(), _min_output_tokens()
-    low: list = []
-    for stage, ceiling in _ceilings().items():
-        assert stage in routes, f"no route row found for {stage} in the migrations (update the lint parser)"
-        for model in routes[stage]:
-            caps = {"min_output_tokens": mins[model]} if model in mins else None
-            floor = token_floor.effort_floor(model, efforts.get((stage, model)), caps)
-            if floor is not None and ceiling < floor:
-                low.append(f"{stage}: {ceiling} < {floor} ({model} at {efforts.get((stage, model)) or 'default'})")
-    assert not low, "call-site ceiling under token_floor(model, effort): " + "; ".join(low)

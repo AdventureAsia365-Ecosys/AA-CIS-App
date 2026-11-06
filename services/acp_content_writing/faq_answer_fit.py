@@ -66,8 +66,11 @@ FIT_CONCURRENCY = 3     # isolated: calls in flight at once for one piece (≤ 5
 
 FIT_MAX_PAIRS = 10      # the FAQ cap is 5 (FAQ_MAX_PAIRS); a pair past this one is sent nowhere and never dropped
 ANSWER_MAX = 1200       # chars of one answer sent to the model
-MAX_TOKENS = 1500       # batched: ~30 output tokens per pair x 10 + the JSON envelope
-ISOLATED_MAX_TOKENS = 150   # isolated: one item (~40 tokens) with room to spare
+# S271 W0 (AA-900): the ceilings are head-room for the thinking, not the answer size (~30 output tokens per pair x 10
+# + the JSON envelope batched, ~40 isolated). The stage routes Sonnet 5.5 at effort low (migration 381), whose
+# token_floor is 4096: a lower constant was lifted by the gateway anyway and only lied about what the stage gets.
+MAX_TOKENS = 4096       # batched (was 1500)
+ISOLATED_MAX_TOKENS = 4096  # isolated (was 150)
 TIMEOUT_S = 60.0        # the whole step; on timeout the FAQ is unchanged
 PAIR_DEADLINE_S = 50.0  # isolated: a pair with no reply by then is kept (inside TIMEOUT_S, so the rest still count)
 

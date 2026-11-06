@@ -21,10 +21,24 @@ Source: root `docs/audits/2026-11-06-S271-writing-quality-audit/` (`data/design-
   core copy / MANIFEST / consumer-app change. Floors: low 4096, medium / high / default 8192, xhigh / max 16000; the
   catalog's `min_output_tokens` wins when higher; never above the model cap. Evidence in the module comment.
 - **Static lint, runtime unchanged.** The runtime floor stays `tokens.floored` (effort-agnostic). The lint
-  (`tests/unit/test_aa900_s271_w0_gateway.py`) reads each stage's route from the newest `[stage, primary, [old],
-  [new]]` row of the route migrations (366, 376), effort rows from `stage_model_params` seeds (381) and
-  `min_output_tokens` from catalog migrations (382), and checks the call-site ceilings of t8_angle_gen, t9_write,
-  t9_repair, t9_faq_filter, t2_generate, s1_generate, t10_judge and writing_memory_eval.
+  (`tests/unit/test_aa900_s271_effort_floor_lint.py`) reads each stage's route from the newest `[stage, primary,
+  [old], [new]]` row of the route migrations (366, 376), effort rows from `stage_model_params` seeds (381) and
+  `min_output_tokens` from catalog migrations (382).
+- **Fix pass (review finding): the lint covers every routed stage (34), not a hand-picked 8.** The call sites come
+  from an AST scan of api/ services/ shared/ worker/ (`LLMRequest` / `judge_request` / `call_judge` /
+  `invoke_judge`); it reads stage and ceiling from literals, module or imported constants, parameter defaults, local
+  assignments, both arms of `a if c else b` and `stage_for(state, "s1_x")` (S1 stage + T2 twin); a call without
+  max_tokens counts as `LLMRequest`'s default (4096). What it cannot read is declared (`DECLARED_SITES`: stages served
+  and lowest ceiling), exempt (`EXEMPT_SITES`: probes, route tests, legacy `model_tier="haiku"` calls), or the stage
+  has no call site here (`NO_CALL_SITE`: tp_compose, segment_research(_batch), t10_claims). An unread new site fails,
+  a routed stage with no site fails, and every (stage, site) under the effort floor must be on the shrinking
+  `UNDER_EFFORT_FLOOR` list with a reason (27 entries today; stale entries fail).
+- **Raised, not allowlisted:** `faq_answer_fit.MAX_TOKENS` 1500 -> 4096 and `ISOLATED_MAX_TOKENS` 150 -> 4096
+  (t9_faq_answer_fit: Sonnet 5.5 at effort low); `seed_align/adjudicate.MAX_TOKENS` 4000 -> 8192 (t10_adjudicate:
+  GPT-5.6 Luna has no catalog floor and was sent 4096). Their `SUB_FLOOR_CEILINGS` lines in
+  test_s271_gateway_token_budget.py are gone. The other 27 stay allowlisted: raising them all is a behaviour change
+  across A1 / A3 / places outside this lane's scope; each is a one-line follow-up (raise the constant, delete the
+  line).
 - **Degraded marks** (`services/quality/route_guard.answer_marks`, called by `client._mark_degraded_answer` after the
   route answered, before the reply is traced): `fallback_instrument` (reason `rung` for a judge / validate / decide
   answer at route position > 0; reason `uncalibrated_model` for nova-lite at any position), `same_family_pair`
@@ -64,8 +78,11 @@ Source: root `docs/audits/2026-11-06-S271-writing-quality-audit/` (`data/design-
 - **Marks are `count`**: no new holds in W0 (lane rule). F9 answered by rung 3 (all 72 verdicts since 05/11) will
   flag every T9 piece as degraded (non-blocking flag + repair_log entry, admin-only). That is the intended visibility;
   holding on it is a later W0/W2 decision (map `fallback_instrument` on t10_judge to `f9_judge_unavailable`).
-- **The lint parses migrations**: a route changed in another SQL shape is not seen (the test fails loudly only when a
-  covered stage has no route row at all).
+- **The lint parses migrations**: a route changed in another SQL shape is not seen (a stage with a call site and no
+  route row is skipped, not failed).
+- **The lint reads constants, not call graphs**: a parameter default names one stage; the other stages the callers
+  pass are declared by hand in `DECLARED_SITES`. A routed stage the declarations miss still fails the coverage test.
+  The contract smoke job and the judge client are skipped (they reuse the production constants / are not sites).
 
 ## Should know
 

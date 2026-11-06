@@ -34,9 +34,10 @@ thinking using every token) raised inside the route, which then moved silently t
 t9_write empty cuts answered by Sonnet 4.6 in the 06/11 ledger). Now token_budget only computes ceilings, and every
 retry records why (``RETRY_REASONS``, ``quality_signal.retry_reason`` on the retry's row and the cut row).
 
-**Effort floor** (``effort_floor``, the CI lint of tests/unit/test_aa900_s271_w0_gateway.py): the ceiling a call site
-should give a reasoning model at a thinking effort (``EFFORT_FLOORS``; the catalog's ``min_output_tokens`` wins when
-higher). Static only: the runtime floor above stays ``tokens.floored`` (effort-agnostic), so this changes no request.
+**Effort floor** (``effort_floor``, the CI lint of tests/unit/test_aa900_s271_effort_floor_lint.py): the ceiling a
+call site should give a reasoning model at a thinking effort (``EFFORT_FLOORS``; the catalog's ``min_output_tokens``
+wins when higher). Static only: the runtime floor above stays ``tokens.floored`` (effort-agnostic), so this changes
+no request.
 """
 from __future__ import annotations
 
