@@ -107,15 +107,27 @@ _TRACE: ContextVar[Optional[list]] = ContextVar("llm_family_rule_trace", default
 
 
 @contextmanager
-def trace_models() -> Iterator[list]:
+def trace_models(*, reuse: bool = False) -> Iterator[list]:
     """Bind a fresh trace: yields the list that collects ``(role, model label)`` of every successful gateway reply
-    made inside the block."""
+    made inside the block. ``reuse=True`` (S271 W0: the per-output binding of the S1 / T2 / T9 jobs,
+    ``services/quality/route_guard.collect_output``) yields the trace already bound instead, when there is one, so an
+    eval runner's trace around a production writer keeps every reply it must check."""
+    current = _TRACE.get()
+    if reuse and current is not None:
+        yield current
+        return
     seen: list = []
     token = _TRACE.set(seen)
     try:
         yield seen
     finally:
         _TRACE.reset(token)
+
+
+def current_trace() -> Optional[list]:
+    """The bound trace (None without one). The gateway reads the writers of the output a judge reply scores here
+    (S271 W0, the call-time same-family mark)."""
+    return _TRACE.get()
 
 
 def note_model(role: Optional[str], label: Optional[str]) -> None:
@@ -171,5 +183,6 @@ async def stage_pair_conflicts(writer_stage: Optional[str], judge_stages: Iterab
     return route_conflicts(writer_row, [rows[s] for s in judge_stages if s in rows], models)
 
 
-__all__ = ["SameFamilyJudge", "WRITER_FAMILY", "check_pair", "family_of", "labels", "model_key_of", "note_model",
+__all__ = ["SameFamilyJudge", "WRITER_FAMILY", "check_pair", "current_trace", "family_of", "labels", "model_key_of",
+           "note_model",
            "route_conflicts", "shared_families", "stage_pair_conflicts", "trace_models"]

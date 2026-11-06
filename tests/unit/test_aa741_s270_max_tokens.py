@@ -1,8 +1,12 @@
 """AA-741 (S270) — the tenant writing stages' token ceilings for the 5.x models and the one budget retry.
 
 Ledger evidence (S270, 7 days): t8_angle_gen cut at 2048 on 7/9 calls, t9_write at 8000 on 1/9, t9_repair at 2048 on
-1/1, t9_faq_filter at 3000 on 1/1. Every stage's ceiling must stay at or above the new floor, and a cut reply is asked
-once more with double the ceiling (capped), each billed reply written to the ledger, never a third call.
+1/1, t9_faq_filter at 3000 on 1/1. Every stage's ceiling must stay at or above the new floor.
+
+S271 W0 (AA-900 l13): the one retry of a cut reply is the GATEWAY's (tests/unit/test_s271_gateway_token_budget.py,
+tests/unit/test_aa900_s271_w0_gateway.py). Here the fake client stands for the gateway: a reply it retried carries
+``truncation_retry_max_tokens`` (+ reason and the cut attempt's cost); each call site makes ONE gateway call, writes
+one row (the cut row is the gateway's) and fails a reply that is still cut.
 Fixtures use invented places only; no model is called (fake clients).
 """
 import asyncio
@@ -20,14 +24,18 @@ from services.acp_content_writing import generate as t9
 from services.acp_content_writing.faq_filter import FaqFilterReplyError, FaqScope
 from services.acp_content_writing.generate import SentenceRepairError
 from services.acp_shared import token_budget as tb
-from shared.llm_client.call_log import OK_RATE_KEYS
 from shared.llm_client.models import LLMRequest, LLMResponse
 
 GOAL = get_goal("promotion")
 
 
-def _resp(content: str, stop: str = "end_turn", cost: float = 0.01) -> LLMResponse:
-    return LLMResponse(content=content, model_used="model-x", provider="bedrock", cost_usd=cost, stop_reason=stop)
+def _resp(content: str, stop: str = "end_turn", cost: float = 0.01, *, retried: int | None = None,
+          cut_cost: float = 0.0, reason: str = "cut_reply") -> LLMResponse:
+    """A gateway reply; ``retried`` = the gateway's retry ceiling when this reply is its truncation retry."""
+    r = LLMResponse(content=content, model_used="model-x", provider="bedrock", cost_usd=cost, stop_reason=stop)
+    if retried:
+        r.truncation_retry_max_tokens, r.truncation_retry_reason, r.truncation_cut_cost_usd = retried, reason, cut_cost
+    return r
 
 
 def _client(*replies) -> MagicMock:
@@ -40,26 +48,19 @@ def _sizes(client: MagicMock) -> list[int]:
     return [c.args[0].max_tokens for c in client.generate.call_args_list]
 
 
-class _CutRefusal(Exception):
-    """A provider that refused to return a reply cut at its ceiling (the OpenAI 400 text the gateway classifies)."""
-
-    def __init__(self):
-        super().__init__("Could not parse response content as the length limit was reached")
-
-
 # ---------------------------------------------------------------- the floors
 
 class TestFloors:
-    @pytest.mark.parametrize("stage,floor", [("t8_angle_gen", 4096), ("t9_write", 4096), ("t9_repair", 4096),
+    @pytest.mark.parametrize("stage,floor", [("t8_angle_gen", 8192), ("t9_write", 8192), ("t9_repair", 4096),
                                              ("t9_faq_filter", 6000)])
     def test_stage_floor(self, stage, floor):
         assert tb.STAGE_FLOORS[stage] >= floor
 
     def test_each_call_site_uses_at_least_its_floor(self):
-        assert tb.T8_ANGLE_GEN_MAX_TOKENS >= 4096
+        assert tb.T8_ANGLE_GEN_MAX_TOKENS >= 8192              # S271 W0: the effort floor of Sonnet 5.5
         assert t9.max_tokens_for("blog") >= 12000
         for channel in ("linkedin", "facebook", "instagram", "x", "email"):
-            assert t9.max_tokens_for(channel) >= 4096
+            assert t9.max_tokens_for(channel) >= 8192          # S271 W0
         assert t9._MAX_TOKENS >= 4096                    # sentence repair, SEO fit, FAQ regeneration (t9_repair)
         assert cq._SUGGEST_MAX_TOKENS >= 4096            # admin suggestion (t9_repair)
         assert faq_filter.MAX_TOKENS >= 6000
@@ -87,58 +88,43 @@ class TestHelper:
         assert client.generate.call_count == 1 and not reply.retried and reply.signal() == {}
         assert reply.cost_usd == pytest.approx(0.01)
 
-    def test_cut_then_ok_retries_once_with_double(self):
-        client = _client(_resp("cut", "max_tokens", 0.02), _resp("ok", "end_turn", 0.03))
-        seen = []
-        reply = tb.generate_with_budget_retry(client.generate, self._req(temperature=0.0, model_tier="tier-q"),
-                                              on_cut=lambda r, m, rm: seen.append((r.content, m, rm)))
-        assert _sizes(client) == [2048, 4096]
-        assert seen == [("cut", 2048, 4096)]          # the cut reply's row is written before the retry
-        assert reply.resp.content == "ok" and reply.retried and not reply.still_cut
-        assert reply.cost_usd == pytest.approx(0.05)
-        assert reply.signal() == {"truncation_retry": True, "max_tokens": 4096}
-        retry = client.generate.call_args_list[1].args[0]
-        assert retry.temperature == 0.0 and retry.model_tier == "tier-q" and retry.stage == "t9_repair"
-        assert "max_tokens" in retry.model_fields_set   # a stage_model_params row never overrides the retry
+    def test_the_request_goes_to_the_gateway_unchanged(self):
+        """S271 W0: no opt-out of the gateway retry, no caller-side ceiling change."""
+        client = _client(_resp("ok"))
+        tb.generate_with_budget_retry(client.generate, self._req(temperature=0.0, model_tier="tier-q"))
+        sent = client.generate.call_args.args[0]
+        assert sent.budget_retry is True and sent.max_tokens == 2048 and "budget_retry" not in sent.model_fields_set
 
-    def test_cut_twice_no_third_call(self):
-        client = _client(_resp("cut", "max_tokens"), _resp("cut again", "length"), _resp("never"))
+    def test_a_gateway_retried_reply_carries_the_retry_facts(self):
+        client = _client(_resp("ok", "end_turn", 0.03, retried=4096, cut_cost=0.02, reason="billed_unusable_cut"))
         reply = tb.generate_with_budget_retry(client.generate, self._req())
-        assert client.generate.call_count == 2 and reply.still_cut
+        assert client.generate.call_count == 1 and reply.retried and not reply.still_cut
+        assert reply.retry_max_tokens == 4096 and reply.retry_reason == "billed_unusable_cut"
+        assert reply.cost_usd == pytest.approx(0.05)                 # the reply + the cut attempt it replaced
+        assert reply.signal() == {"truncation_retry": True, "max_tokens": 4096, "retry_reason": "billed_unusable_cut"}
 
-    def test_cut_row_written_even_when_the_retry_raises(self):
-        client = _client(_resp("cut", "max_tokens"), RuntimeError("provider down"))
-        seen = []
-        with pytest.raises(RuntimeError):
-            tb.generate_with_budget_retry(client.generate, self._req(), on_cut=lambda *a: seen.append(a))
-        assert len(seen) == 1
-
-    def test_truncated_refusal_retried_once(self):
-        client = _client(_CutRefusal(), _resp("ok"))
+    def test_still_cut_after_the_gateway_retry(self):
+        client = _client(_resp("cut again", "length", retried=4096))
         reply = tb.generate_with_budget_retry(client.generate, self._req())
-        assert _sizes(client) == [2048, 4096] and reply.retried and reply.cut_first is None
+        assert client.generate.call_count == 1 and reply.still_cut and reply.retried
+        assert "twice" in str(tb.ReplyStillCut("t9_repair", reply.max_tokens, reply.retry_max_tokens))
 
-    def test_truncated_refusal_twice_raises_no_loop(self):
-        client = _client(_CutRefusal(), _CutRefusal(), _resp("never"))
-        with pytest.raises(_CutRefusal):
-            tb.generate_with_budget_retry(client.generate, self._req())
-        assert client.generate.call_count == 2
+    def test_cut_with_no_retry_says_so(self):
+        """At the model's output cap or past the route deadline the gateway sends no retry: the message says so."""
+        reply = tb.generate_with_budget_retry(_client(_resp("cut", "max_tokens")).generate, self._req())
+        assert reply.still_cut and not reply.retried and reply.retry_max_tokens is None
+        assert "no retry" in str(tb.ReplyStillCut("t9_repair", reply.max_tokens, reply.retry_max_tokens))
 
-    def test_other_error_not_retried(self):
+    def test_errors_propagate(self):
         client = _client(RuntimeError("AccessDeniedException"), _resp("never"))
         with pytest.raises(RuntimeError):
             tb.generate_with_budget_retry(client.generate, self._req())
         assert client.generate.call_count == 1
 
     def test_async_twin(self):
-        client = _client(_resp("cut", "max_tokens"), _resp("ok"))
-        on_cut = AsyncMock()
-        reply = asyncio.run(tb.agenerate_with_budget_retry(client.generate, self._req(), on_cut=on_cut))
-        assert _sizes(client) == [2048, 4096] and reply.resp.content == "ok"
-        on_cut.assert_awaited_once()
-
-    def test_cut_signal_has_no_ok_rate_key(self):
-        assert not set(tb.cut_signal(2048, 4096)) & set(OK_RATE_KEYS)
+        client = _client(_resp("ok", retried=4096))
+        reply = asyncio.run(tb.agenerate_with_budget_retry(client.generate, self._req()))
+        assert _sizes(client) == [2048] and reply.resp.content == "ok" and reply.retried
 
     def test_still_cut_message_names_both_ceilings(self):
         assert "4096" in str(tb.ReplyStillCut("t8_angle_gen", 4096, 8192)) and "8192" in str(
@@ -165,30 +151,28 @@ class TestT8:
                 out = e
         return out, rec, unusable
 
-    def test_truncated_then_ok(self):
-        client = _client(_resp(_CUT_ANGLES, "max_tokens", 0.02), _resp(json.dumps(_ANGLES), "end_turn", 0.03))
+    def test_gateway_retried_then_ok(self):
+        client = _client(_resp(json.dumps(_ANGLES), "end_turn", 0.03, retried=16384, cut_cost=0.02))
         (angles, _, _, cost), rec, unusable = self._run(client)
         assert len(angles) == 3 and cost == pytest.approx(0.05)
-        assert _sizes(client) == [4096, 8192]
-        assert rec.await_count == 2 and unusable.await_count == 0
-        cut_row, ok_row = (c.kwargs for c in rec.await_args_list)
-        assert cut_row["stop_reason"] == "max_tokens" and cut_row["quality_signal"]["budget_cut"] is True
-        assert not set(cut_row["quality_signal"]) & set(OK_RATE_KEYS)
-        assert cut_row["angle_gate_request_id"] == "r-1" and cut_row["tenant_id"] == "t-1"
-        assert ok_row["quality_signal"]["truncation_retry"] is True and ok_row["quality_signal"]["max_tokens"] == 8192
+        assert _sizes(client) == [8192]                           # S271 W0: T8 at its effort floor, one call
+        assert rec.await_count == 1 and unusable.await_count == 0  # the cut row is the gateway's
+        ok_row = rec.await_args.kwargs
+        assert ok_row["quality_signal"]["truncation_retry"] is True and ok_row["quality_signal"]["max_tokens"] == 16384
+        assert ok_row["angle_gate_request_id"] == "r-1" and ok_row["tenant_id"] == "t-1"
 
-    def test_truncated_twice_clear_failure(self):
-        client = _client(_resp(_CUT_ANGLES, "max_tokens"), _resp(_CUT_ANGLES, "max_tokens"), _resp("never"))
+    def test_cut_after_the_gateway_retry_is_a_clear_failure(self):
+        client = _client(_resp(_CUT_ANGLES, "max_tokens", retried=16384), _resp("never"))
         err, rec, unusable = self._run(client)
         assert isinstance(err, AngleGenerationError) and "twice" in str(err)
-        assert client.generate.call_count == 2
-        assert rec.await_count == 1 and unusable.await_count == 1   # both billed replies are in the ledger
+        assert client.generate.call_count == 1
+        assert rec.await_count == 0 and unusable.await_count == 1   # the billed reply is in the ledger
 
-    def test_salvaged_cut_reply_is_still_retried(self):
-        # json_repair could salvage a cut reply, but the last field may be cut mid-word: the retry runs anyway
-        client = _client(_resp(json.dumps(_ANGLES)[:-2], "max_tokens"), _resp(json.dumps(_ANGLES)))
-        (angles, *_), _, _ = self._run(client)
-        assert client.generate.call_count == 2 and len(angles) == 3
+    def test_a_salvageable_cut_reply_is_not_used(self):
+        # json_repair could salvage a cut reply, but its last field may be cut mid-word: it fails clearly
+        client = _client(_resp(json.dumps(_ANGLES)[:-2], "max_tokens"))
+        err, _, unusable = self._run(client)
+        assert isinstance(err, AngleGenerationError) and unusable.await_count == 1
 
 
 # ---------------------------------------------------------------- T9 write
@@ -198,22 +182,22 @@ _KW = dict(content_seed="Ferry to Tamsel Isle — visit", goal=GOAL, brand_audie
 
 
 class TestT9Write:
-    def test_cut_row_then_retry_row(self):
+    def test_gateway_retried_reply_one_row(self):
         from services.acp_angle_gate.channel_style import get_channel_style
-        client = _client(_resp("cut", "max_tokens", 0.1), _resp("Full post.", "end_turn", 0.2))
+        client = _client(_resp("Full post.", "end_turn", 0.2, retried=16384, cut_cost=0.1))
         with patch.object(t9, "LLMClient", return_value=client), patch.object(t9, "record_call_sync") as log:
             text, cost, _, _ = t9.write_content(channel_style=get_channel_style("linkedin"), **_KW)
         assert text == "Full post." and cost == pytest.approx(0.3)
-        cut, ok = (c.kwargs["quality_signal"] for c in log.call_args_list)
-        assert cut["budget_cut"] is True and cut["retry_max_tokens"] == 8192
-        assert ok["truncation_retry"] is True
+        assert _sizes(client) == [8192]                            # S271 W0: the short channels at 8192
+        (ok,) = (c.kwargs["quality_signal"] for c in log.call_args_list)
+        assert ok["truncation_retry"] is True and ok["retry_reason"] == "cut_reply"
 
-    def test_cut_twice_returns_the_cut_text_no_third_call(self):
+    def test_cut_after_the_retry_returns_the_cut_text_no_second_call(self):
         from services.acp_angle_gate.channel_style import get_channel_style
-        client = _client(_resp("cut", "max_tokens"), _resp("cut again", "max_tokens"), _resp("never"))
+        client = _client(_resp("cut again", "max_tokens", retried=16384), _resp("never"))
         with patch.object(t9, "LLMClient", return_value=client), patch.object(t9, "record_call_sync") as log:
             text, *_ = t9.write_content(channel_style=get_channel_style("facebook"), **_KW)
-        assert text == "cut again" and client.generate.call_count == 2 and log.call_count == 2
+        assert text == "cut again" and client.generate.call_count == 1 and log.call_count == 1
 
 
 # ---------------------------------------------------------------- T9 repair (sentence repair, SEO fit, FAQ regen)
@@ -222,41 +206,40 @@ _ITEMS = [{"sentence": "The ferry leaves at dawn.", "problem": "time not in sour
 
 
 class TestT9Repair:
-    def test_sentence_repair_truncated_then_ok(self):
-        client = _client(_resp('{"replacements": ["The fer', "max_tokens"),
-                         _resp('{"replacements": ["The ferry crosses to Tamsel Isle."]}'))
+    def test_sentence_repair_gateway_retried_then_ok(self):
+        client = _client(_resp('{"replacements": ["The ferry crosses to Tamsel Isle."]}', retried=16384,
+                               cut_cost=0.01))
         with patch.object(t9, "LLMClient", return_value=client), patch.object(t9, "record_call_sync") as log:
             reps, cost = t9.repair_sentences(sentences=_ITEMS, content_seed="seed", channel="blog",
                                              stage="t9_repair")
         assert reps == ["The ferry crosses to Tamsel Isle."] and cost == pytest.approx(0.02)
-        assert _sizes(client) == [8192, 16384] and log.call_count == 2      # S271: T9_REPAIR_MAX_TOKENS 8192
+        assert _sizes(client) == [8192] and log.call_count == 1      # S271: T9_REPAIR_MAX_TOKENS 8192
 
-    def test_sentence_repair_truncated_twice_raises(self):
-        client = _client(_resp('{"replacements": ["a', "max_tokens"), _resp('{"replacements": ["b', "max_tokens"),
-                         _resp("never"))
+    def test_sentence_repair_still_cut_raises(self):
+        client = _client(_resp('{"replacements": ["b', "max_tokens", retried=16384), _resp("never"))
         with patch.object(t9, "LLMClient", return_value=client), patch.object(t9, "record_call_sync") as log:
             with pytest.raises(SentenceRepairError, match="twice"):
                 t9.repair_sentences(sentences=_ITEMS, content_seed="seed", channel="blog", stage="t9_repair")
-        assert client.generate.call_count == 2 and log.call_count == 2
+        assert client.generate.call_count == 1 and log.call_count == 1
 
-    def test_seo_fit_truncated_twice_gives_nothing(self):
-        client = _client(_resp('{"seo_title": "Ferry days on Tams', "max_tokens"),
-                         _resp('{"seo_title": "Ferry days on Tamsel Is', "max_tokens"))
+    def test_seo_fit_still_cut_gives_nothing(self):
+        client = _client(_resp('{"seo_title": "Ferry days on Tamsel Is', "max_tokens", retried=16384,
+                               cut_cost=0.01))
         with patch.object(t9, "LLMClient", return_value=client), patch.object(t9, "record_call_sync"):
             out, cost = t9.fit_seo_fields(body="Body.", seo_title="t", meta_description="m", keyword="tamsel ferry")
         assert out == {"seo_title": None, "meta_description": None} and cost == pytest.approx(0.02)
 
-    def test_faq_regen_truncated_then_ok(self):
+    def test_faq_regen_gateway_retried_then_ok(self):
         good = json.dumps({"faq": [{"q": "How long is the Tamsel ferry?", "a": "About an hour each way."}]})
-        client = _client(_resp('{"faq": [{"q": "How long', "max_tokens"), _resp(good))
+        client = _client(_resp(good, retried=16384))
         with patch.object(t9, "LLMClient", return_value=client), patch.object(t9, "record_call_sync") as log:
             pairs, _ = t9.write_faq(source="The ferry takes about an hour.", body="Body.")
         assert pairs == [("How long is the Tamsel ferry?", "About an hour each way.")]
-        assert log.call_args_list[0].kwargs["quality_signal"]["budget_cut"] is True
+        assert log.call_args.kwargs["quality_signal"]["truncation_retry"] is True
 
-    def test_faq_regen_truncated_twice_gives_no_pairs(self):
+    def test_faq_regen_still_cut_gives_no_pairs(self):
         cut = '{"faq": [{"q": "How long is the ferry?", "a": "About an h'
-        client = _client(_resp(cut, "max_tokens"), _resp(cut, "max_tokens"))
+        client = _client(_resp(cut, "max_tokens", retried=16384))
         with patch.object(t9, "LLMClient", return_value=client), patch.object(t9, "record_call_sync"):
             pairs, _ = t9.write_faq(source="s", body="Body.")
         assert pairs == []
@@ -272,21 +255,20 @@ _VERDICTS = json.dumps({"items": [{"n": i, "label": "KEEP", "reason_code": "on_s
 
 
 class TestFaqFilter:
-    def test_truncated_then_ok(self):
-        client = _client(_resp('{"items": [{"n": 1, "label": "KE', "max_tokens", 0.01), _resp(_VERDICTS, cost=0.02))
+    def test_gateway_retried_then_ok(self):
+        client = _client(_resp(_VERDICTS, cost=0.02, retried=12000, cut_cost=0.01))
         with patch.object(faq_filter, "record_call_sync") as log, patch.object(faq_filter, "record_unusable_sync"):
             out = faq_filter.llm_filter_questions(_QS, _SCOPE, client=client)
         assert out.kept == _QS and out.cost_usd == pytest.approx(0.03)
-        assert _sizes(client) == [6000, 12000]
-        cut, ok = (c.kwargs["quality_signal"] for c in log.call_args_list)
-        assert cut["budget_cut"] is True and "json_parsed" not in cut
+        assert _sizes(client) == [6000]
+        (ok,) = (c.kwargs["quality_signal"] for c in log.call_args_list)
         assert ok["json_parsed"] is True and ok["truncation_retry"] is True
 
-    def test_truncated_twice_raises_falls_back(self):
+    def test_still_cut_raises_falls_back(self):
         cut = '{"items": [{"n": 1, "label": "KE'
-        client = _client(_resp(cut, "max_tokens"), _resp(cut, "max_tokens"), _resp("never"))
+        client = _client(_resp(cut, "max_tokens", retried=12000), _resp("never"))
         with patch.object(faq_filter, "record_call_sync") as log, \
                 patch.object(faq_filter, "record_unusable_sync") as unusable:
             with pytest.raises(FaqFilterReplyError, match="twice"):
                 faq_filter.llm_filter_questions(_QS, _SCOPE, client=client)
-        assert client.generate.call_count == 2 and log.call_count == 1 and unusable.call_count == 1
+        assert client.generate.call_count == 1 and log.call_count == 0 and unusable.call_count == 1

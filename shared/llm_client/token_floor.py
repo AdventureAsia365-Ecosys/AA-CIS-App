@@ -23,9 +23,20 @@ next model. Never a third call. Ledger (the token_budget.py semantics, AA-927):
   retried, so route_watch never reads the retry as a fallback rung; it still counts on the attempt cap.
 
 Not retried: a stage in ``NO_RETRY_STAGES`` (connection probes, ``a3_atomize`` which re-asks with its own ceiling), a
-request with ``budget_retry=False`` (a call site that does the retry itself and writes its own two rows:
-``services/acp_shared/token_budget.py``; the guard test lists every such site), a shadow call, a request already at
-the model's output cap, or ``LLM_BUDGET_RETRY=off``. ``LLM_TOKEN_FLOOR=off`` switches the floor off.
+request with ``budget_retry=False`` (no production call site since S271 W0; tests read one attempt with it), a shadow
+call, a request already at the model's output cap, or ``LLM_BUDGET_RETRY=off``. ``LLM_TOKEN_FLOOR=off`` switches the
+floor off.
+
+S271 W0 (AA-900 l13): the gateway is the ONLY owner of this retry. Before, ``services/acp_shared/token_budget.py``
+sent T8 / T9 write / repair / FAQ filter with ``budget_retry=False`` and retried itself, but it only saw a cut reply
+that came back with text: an EMPTY reply cut at max_tokens (a billed unusable reply, e.g. Sonnet 5.5's adaptive
+thinking using every token) raised inside the route, which then moved silently to the next model (3 of 3 Sonnet 5.5
+t9_write empty cuts answered by Sonnet 4.6 in the 06/11 ledger). Now token_budget only computes ceilings, and every
+retry records why (``RETRY_REASONS``, ``quality_signal.retry_reason`` on the retry's row and the cut row).
+
+**Effort floor** (``effort_floor``, the CI lint of tests/unit/test_aa900_s271_w0_gateway.py): the ceiling a call site
+should give a reasoning model at a thinking effort (``EFFORT_FLOORS``; the catalog's ``min_output_tokens`` wins when
+higher). Static only: the runtime floor above stays ``tokens.floored`` (effort-agnostic), so this changes no request.
 """
 from __future__ import annotations
 
@@ -42,6 +53,19 @@ logger = structlog.get_logger()
 
 FLOOR_SWITCH_ENV = "LLM_TOKEN_FLOOR"
 RETRY_SWITCH_ENV = "LLM_BUDGET_RETRY"
+
+# S271 W0: why the gateway retried a cut (LLMResponse.truncation_retry_reason, quality_signal.retry_reason).
+RETRY_CUT_REPLY = "cut_reply"                       # the reply came back, stopped on its ceiling
+RETRY_BILLED_UNUSABLE_CUT = "billed_unusable_cut"   # billed, unusable (empty content / cut JSON), cut stop reason
+RETRY_TRUNCATED_REFUSAL = "truncated_refusal"       # the provider refused to return a cut reply (nothing billed)
+RETRY_REASONS = (RETRY_CUT_REPLY, RETRY_BILLED_UNUSABLE_CUT, RETRY_TRUNCATED_REFUSAL)
+
+# S271 W0: the ceiling a call site should give a reasoning model at each thinking effort (the evidence: GPT-6 Luna at
+# its default effort reasons 2-6k tokens, migration 382's 8192 floor; Sonnet 5.5 at effort high cut T8 at 4096 on 9 of
+# 68 calls; t2_generate at high peaks at 7.4k under 8192). None = the model's default effort, which is medium or high
+# on every reasoning model the catalog routes today. Raising a ceiling costs nothing on a complete reply.
+EFFORT_FLOORS = {"low": tokens.REASONING_FLOOR, "medium": 8192, "high": 8192, "xhigh": 16000, "max": 16000}
+DEFAULT_EFFORT_FLOOR = 8192
 
 # Stages the gateway never retries (and never floors): the connection probe answers "ok" in a few tokens by design
 # (its cut is the expected outcome), and a3_atomize re-asks a cut read itself with its own ceiling.
@@ -102,6 +126,20 @@ def apply_floor(request: Any, model: Any) -> Any:
     return out
 
 
+def effort_floor(model_key: Optional[str], effort: Optional[str] = None, capabilities: Optional[dict] = None,
+                 model_cap: Optional[int] = None) -> Optional[int]:
+    """token_floor(model, effort): the lowest ceiling a call site should give ``model_key`` at thinking ``effort``
+    (None = the model's default), or None for a model that does not reason. The catalog row's own
+    ``min_output_tokens`` wins when higher; never above the model's output cap. Pure."""
+    caps = capabilities if isinstance(capabilities, dict) else {}
+    base = tokens.floor_for(model_key, caps)
+    if base is None:
+        return None
+    want = max(base, EFFORT_FLOORS.get(effort, DEFAULT_EFFORT_FLOOR) if effort else DEFAULT_EFFORT_FLOOR)
+    cap = model_cap if isinstance(model_cap, int) and not isinstance(model_cap, bool) and model_cap > 0 else None
+    return min(want, cap) if cap is not None else want
+
+
 def retry_ceiling(first_max_tokens: int, model: Any) -> Optional[int]:
     """The ceiling of the one retry, or None when a retry cannot help (already at the model's output cap)."""
     cap = _model_cap(model)
@@ -143,6 +181,22 @@ def _billed_records(exc: BaseException) -> list:
     return []
 
 
+def cut_failure_reason(exc: BaseException) -> str:
+    """The retry reason of a cut that raised (``is_cut_failure`` is true): billed or refused."""
+    return RETRY_BILLED_UNUSABLE_CUT if _billed_records(exc) else RETRY_TRUNCATED_REFUSAL
+
+
+def cut_failure_cost(exc: BaseException) -> float:
+    """What the cut attempt that raised was billed (0.0 for a refused cut). Never raises."""
+    total = 0.0
+    for b in _billed_records(exc):
+        try:
+            total += float((b or {}).get("cost_usd") or 0.0)
+        except (TypeError, ValueError, AttributeError):
+            continue
+    return total
+
+
 def is_cut_failure(exc: BaseException) -> bool:
     """True when a model attempt raised because its reply was cut: the provider refused to return a cut reply (class
     truncated, nothing billed), or a billed unusable reply (cut JSON, missing tool input) whose stop reason is a cut."""
@@ -154,6 +208,7 @@ def is_cut_failure(exc: BaseException) -> bool:
     return any(isinstance(b, dict) and is_truncated(b.get("stop_reason")) for b in _billed_records(exc))
 
 
-__all__ = ["FLOOR_SWITCH_ENV", "NO_RETRY_STAGES", "RETRY_SWITCH_ENV", "apply_floor", "floor_enabled",
-           "floored_max_tokens", "is_cut_failure", "is_cut_reply", "retry_allowed", "retry_ceiling",
-           "retry_enabled", "retry_request"]
+__all__ = ["DEFAULT_EFFORT_FLOOR", "EFFORT_FLOORS", "FLOOR_SWITCH_ENV", "NO_RETRY_STAGES", "RETRY_BILLED_UNUSABLE_CUT",
+           "RETRY_CUT_REPLY", "RETRY_REASONS", "RETRY_SWITCH_ENV", "RETRY_TRUNCATED_REFUSAL", "apply_floor",
+           "cut_failure_cost", "cut_failure_reason", "effort_floor", "floor_enabled", "floored_max_tokens",
+           "is_cut_failure", "is_cut_reply", "retry_allowed", "retry_ceiling", "retry_enabled", "retry_request"]

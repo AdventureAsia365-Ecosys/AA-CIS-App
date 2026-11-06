@@ -312,16 +312,22 @@ async def _rewrite_tour(
         # the manual run_in_executor(None, run_graph) wrapping the old sync invoke() is no longer
         # needed.
         result = dict(initial_state)
-        async for event in graph.astream(initial_state, stream_mode="updates"):
-            for node_name, node_output in event.items():
-                result = node_output
-                if report_writer and node_name == "generate":
-                    from services.content_generation.s1_checkpoint import writer_state_delta
-                    delta = writer_state_delta(writer_baseline, node_output)
-                    if delta is not None:
-                        await on_writer_state(delta)
-                if on_stage is not None:
-                    await on_stage(node_name)
+        # S271 W0 (AA-900 l13): an A1 tour is one output: its collector of instrument marks and its model trace (the
+        # same-family judge mark), read by the graph's final node (route_guard.with_a1_entries). A T2 version binds
+        # its own around every round (t2_rewrite_job), so a tenant rewrite binds nothing here.
+        from contextlib import nullcontext
+        from services.quality import route_guard
+        with (nullcontext() if is_tenant_rewrite else route_guard.collect_output()):
+            async for event in graph.astream(initial_state, stream_mode="updates"):
+                for node_name, node_output in event.items():
+                    result = node_output
+                    if report_writer and node_name == "generate":
+                        from services.content_generation.s1_checkpoint import writer_state_delta
+                        delta = writer_state_delta(writer_baseline, node_output)
+                        if delta is not None:
+                            await on_writer_state(delta)
+                    if on_stage is not None:
+                        await on_stage(node_name)
 
         return {
             "idx": idx,

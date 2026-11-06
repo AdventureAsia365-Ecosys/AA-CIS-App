@@ -153,22 +153,65 @@ def route_signal(route_trace=None, route_position=None, route_skips=None) -> dic
 # a reply that is the retry carries its ceiling (LLMResponse.truncation_retry_max_tokens), billed_fields() passes it
 # on and record_call* fold it into quality_signal as {"truncation_retry": true, "max_tokens": n}, the keys of the
 # caller-side budget retry (services/acp_shared/token_budget.py), so one query reads both.
-RETRY_KEYS = ("truncation_retry_max_tokens",)
+# S271 W0 (AA-900 l13): plus why it retried (LLMResponse.truncation_retry_reason -> quality_signal.retry_reason).
+RETRY_KEYS = ("truncation_retry_max_tokens", "truncation_retry_reason")
+_RETRY_REASON_MAX = 40
 
 
-def retry_signal(truncation_retry_max_tokens=None) -> dict:
+def retry_signal(truncation_retry_max_tokens=None, truncation_retry_reason=None) -> dict:
     """The quality_signal keys of a reply that is the gateway's truncation retry ({} for any other reply)."""
     n = truncation_retry_max_tokens
     if isinstance(n, int) and not isinstance(n, bool) and n > 0:
-        return {"truncation_retry": True, "max_tokens": n}
+        out = {"truncation_retry": True, "max_tokens": n}
+        r = truncation_retry_reason
+        if isinstance(r, str) and r:
+            out["retry_reason"] = r[:_RETRY_REASON_MAX]
+        return out
     return {}
 
 
+# S271 W0 (AA-900 l13): the gateway's degraded marks of a reply (LLMResponse.route_degraded, services/quality/
+# route_guard.py: a judge / validate / decide answer from a fallback rung or nova-lite, a same-family writer / judge
+# pair). Not a column: record_call* fold it into quality_signal.degraded (a list of {name, reason, ...}).
+DEGRADED_KEYS = ("route_degraded",)
+_DEGRADED_MAX = 8
+_DEGRADED_FIELDS = ("name", "reason", "stage", "model", "position", "families", "writers")
+
+
+def _degraded_entries(value) -> Optional[list]:
+    """The well-formed entries of a reply's route_degraded (known keys only, capped); None when there are none."""
+    if not isinstance(value, (list, tuple)):
+        return None
+    out = []
+    for e in value[:_DEGRADED_MAX]:
+        if not isinstance(e, dict) or not isinstance(e.get("name"), str) or not e["name"]:
+            continue
+        clean = {}
+        for k in _DEGRADED_FIELDS:
+            v = e.get(k)
+            if isinstance(v, str) and v:
+                clean[k] = v[:_ROUTE_SKIP_TEXT_MAX]
+            elif k == "position" and isinstance(v, int) and not isinstance(v, bool) and v >= 0:
+                clean[k] = v
+            elif isinstance(v, (list, tuple)) and v:
+                clean[k] = [str(x)[:_ROUTE_SKIP_TEXT_MAX] for x in list(v)[:_DEGRADED_MAX]]
+        out.append(clean)
+    return out or None
+
+
+def degraded_signal(route_degraded=None) -> dict:
+    """The quality_signal key of a reply's degraded marks ({} when it has none)."""
+    entries = _degraded_entries(route_degraded)
+    return {"degraded": entries} if entries else {}
+
+
 def _with_route(quality_signal, route_trace=None, route_position=None, route_skips=None,
-                truncation_retry_max_tokens=None):
-    """``quality_signal`` with the route keys (and the truncation retry's, S271) added (a key the signal already has
-    wins). Unchanged without them."""
-    extra = {**route_signal(route_trace, route_position, route_skips), **retry_signal(truncation_retry_max_tokens)}
+                truncation_retry_max_tokens=None, truncation_retry_reason=None, route_degraded=None):
+    """``quality_signal`` with the route keys (and the truncation retry's, S271; the degraded marks, S271 W0) added
+    (a key the signal already has wins). Unchanged without them."""
+    extra = {**route_signal(route_trace, route_position, route_skips),
+             **retry_signal(truncation_retry_max_tokens, truncation_retry_reason),
+             **degraded_signal(route_degraded)}
     if not extra:
         return quality_signal
     base = dict(quality_signal) if isinstance(quality_signal, dict) else {}
@@ -478,13 +521,16 @@ def billed_fields(resp) -> dict:
     # S271: the retry's ceiling when this reply is the gateway's one truncation retry (else None)
     n = getattr(resp, "truncation_retry_max_tokens", None)
     out["truncation_retry_max_tokens"] = n if isinstance(n, int) and not isinstance(n, bool) and n > 0 else None
+    reason = getattr(resp, "truncation_retry_reason", None)        # S271 W0: why the gateway retried
+    out["truncation_retry_reason"] = reason if isinstance(reason, str) and reason else None
+    out["route_degraded"] = _degraded_entries(getattr(resp, "route_degraded", None))   # S271 W0: degraded marks
     return out
 
 
 # Every key billed_fields() returns: a structure that carries a reply's billing (brand_fit.RUN_BILLING_KEYS, the T10
 # judge's raw dict) keeps them all.
 BILLED_FIELD_KEYS = ("cache_read_tokens", "cache_write_tokens", "pricing_mode", "connection_key", *V2_BILLED_KEYS,
-                     *ROUTE_KEYS, *RETRY_KEYS)
+                     *ROUTE_KEYS, *RETRY_KEYS, *DEGRADED_KEYS)
 
 
 async def record_call(
@@ -498,6 +544,7 @@ async def record_call(
     pricing_mode: Optional[str] = None, connection_key: Optional[str] = None,
     route_trace: Optional[str] = None, route_position: Optional[int] = None,
     route_skips: Optional[list] = None, truncation_retry_max_tokens: Optional[int] = None,
+    truncation_retry_reason: Optional[str] = None, route_degraded: Optional[list] = None,
     **v2,
 ) -> None:
     """Opens its own short-lived connection — the call sites this is used from (S1 graph nodes,
@@ -531,7 +578,8 @@ async def record_call(
     is_experiment, app). Anything else is a TypeError, as before. Unset ones are derived (``_v2_values``)."""
     _check_v2(v2)
     quality_signal = _with_route(quality_signal, route_trace, route_position, route_skips,   # AA-1042
-                                 truncation_retry_max_tokens)                                 # S271
+                                 truncation_retry_max_tokens, truncation_retry_reason,        # S271
+                                 route_degraded)                                              # S271 W0
     account = _row_account(account, connection_key)
     clean_model, provider = _normalize_model_provider(model, provider)
     # The connection column: the vendor connection, else the row's account (a Bedrock account key is its connection).
@@ -566,6 +614,7 @@ async def record_call_with_pool(
     pricing_mode: Optional[str] = None, connection_key: Optional[str] = None,
     route_trace: Optional[str] = None, route_position: Optional[int] = None,
     route_skips: Optional[list] = None, truncation_retry_max_tokens: Optional[int] = None,
+    truncation_retry_reason: Optional[str] = None, route_degraded: Optional[list] = None,
     **v2,
 ) -> None:
     """Same as record_call() but reuses an already-open asyncpg.Pool (T5/T9's async orchestrators
@@ -577,7 +626,8 @@ async def record_call_with_pool(
     a single shared connection rejected the write with "another operation is in progress"."""
     _check_v2(v2)
     quality_signal = _with_route(quality_signal, route_trace, route_position, route_skips,   # AA-1042
-                                 truncation_retry_max_tokens)                                 # S271
+                                 truncation_retry_max_tokens, truncation_retry_reason,        # S271
+                                 route_degraded)                                              # S271 W0
     account = _row_account(account, connection_key)
     clean_model, provider = _normalize_model_provider(model, provider)
     # The connection column: the vendor connection, else the row's account (a Bedrock account key is its connection).
@@ -678,19 +728,20 @@ V2_FIELDS = tuple(c for c in V2_COLUMNS if c != "connection_key")
 _ROW_FIELDS = ("stage", "role", "model", "tokens_in", "tokens_out", "cost_usd", "quality_signal",
                "tenant_id", "content_piece_id", "angle_gate_request_id", "stop_reason", "account",
                "fallback_used", "provider", "cache_read_tokens", "cache_write_tokens", "pricing_mode",
-               "connection_key", *V2_FIELDS, *ROUTE_KEYS, *RETRY_KEYS)
+               "connection_key", *V2_FIELDS, *ROUTE_KEYS, *RETRY_KEYS, *DEGRADED_KEYS)
 
 
 def _fold_route(row: dict) -> dict:
     """AA-1042: a record_calls row with its route keys (S271: and the truncation retry's) folded into quality_signal
     (removed as fields)."""
-    folded = (*ROUTE_KEYS, *RETRY_KEYS)
+    folded = (*ROUTE_KEYS, *RETRY_KEYS, *DEGRADED_KEYS)
     if not any(k in row for k in folded):
         return row
     out = {k: v for k, v in row.items() if k not in folded}
     out["quality_signal"] = _with_route(row.get("quality_signal") or {}, row.get("route_trace"),
                                         row.get("route_position"), row.get("route_skips"),
-                                        row.get("truncation_retry_max_tokens"))
+                                        row.get("truncation_retry_max_tokens"), row.get("truncation_retry_reason"),
+                                        row.get("route_degraded"))
     return out
 
 
@@ -843,7 +894,7 @@ def cut_reply_row(resp, *, stage: str, role: str, max_tokens: int, retry_max_tok
     """S271: the record_calls row the gateway writes for a reply cut at its token ceiling that it retries once
     (shared/llm_client/token_floor.py): billed, status 'truncated', quality_signal = {**extra minus OK_RATE_KEYS,
     "gateway_attempt": true, "budget_cut": true, "max_tokens", "retry_max_tokens"} (the keys of the caller-side
-    budget retry's cut row, token_budget.cut_signal), so the row never moves a stage's ok-rate."""
+    budget retry's cut row before S271 W0), so the row never moves a stage's ok-rate."""
     signal = {k: v for k, v in (quality_signal_extra or {}).items() if k not in OK_RATE_KEYS}
     signal.update({"gateway_attempt": True, "budget_cut": True, "max_tokens": int(max_tokens),
                    "retry_max_tokens": int(retry_max_tokens)})
