@@ -190,6 +190,7 @@ def test_the_sibling_w0_switches_are_classified_ahead():
     assert "S1_JUDGE_LIVE" in cf.MODE_FLAGS["a1"] and "T2_INTERIM" in cf.MODE_FLAGS["t2"]
     for w in ("t9_blog", "t9_social"):
         assert {"T10_F9_POLICY_MODE", "T9_LAST_ATTEMPT_MODE"} <= set(cf.MODE_FLAGS[w])
+    assert "LLM_CASSETTE" in cf.NOT_OUTPUT_FLAGS                         # record-only: never changes an output
 
 
 def test_the_fingerprint_stays_small():

@@ -125,10 +125,11 @@ MEMORY_FLAGS = ("WRITING_MEMORY_L0_ENFORCE",)
 MODE_FLAG_PREFIXES: dict[str, tuple[str, ...]] = {"t9_blog": ("T10_SA_MODE_", "T10_ADJ_MODE_"),
                                                   "t9_social": ("T10_SA_MODE_", "T10_ADJ_MODE_")}
 # Env constants of writer modules that do NOT change a stored output (budgets, breakers, capacity, the learning loop's
-# own schedule, batch submission): read by the guard test only.
+# own schedule, batch submission, the record-only reply cassette of the S271 W0 cassette lane): read by the guard
+# test only.
 NOT_OUTPUT_FLAGS = ("LLM_CIRCUIT_BREAKER", "LLM_CENTRAL_BUDGETS", "LLM_TENANT_BUDGETS", "LLM_APP_PROFILE",
                     "LLM_CAPACITY", "LLM_CONNECTION_BUDGETS", "BATCH_SUBMIT_SWITCH", "WRITING_MEMORY_AUTO_MINE",
-                    "WRITING_MEMORY_PREF_SUMMARY", "WRITING_MEMORY_R1_GATE")
+                    "WRITING_MEMORY_PREF_SUMMARY", "WRITING_MEMORY_R1_GATE", "LLM_CASSETTE")
 
 # Which reverify reason (CIS 287 CHECK: golden_set, model_route, gate_taxonomy, prompt_version_mismatch) a changed
 # component raises.

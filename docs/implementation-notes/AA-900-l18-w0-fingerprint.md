@@ -112,7 +112,8 @@ and "Change control". No migration, no model call, no output change except the d
 
 - Fix pass: four switches of the sibling W0 lanes are classified here ahead of their PRs (S1_JUDGE_LIVE -> a1,
   T2_INTERIM -> t2, T10_F9_POLICY_MODE and T9_LAST_ATTEMPT_MODE -> t9_blog / t9_social), so the env-switch guard
-  stays green whichever of #1350 / the t2s1 / t9 PRs merges first. A later lane that adds a `*_ENV` constant in a
+  stays green whichever of #1350 / the t2s1 / t9 PRs merges first. The cassette lane's `LLM_CASSETTE`
+  (`shared/llm_client/cassette.py`, record-only) is pre-classified as not output-changing. A later lane that adds a `*_ENV` constant in a
   writer module must classify it in `config_fp.py` (the guard test names it).
 - Fix pass: `reverify_scan` results and audit rows carry `mode_flags_compared` next to `components` / `stages`.
 
