@@ -1,7 +1,8 @@
 # AA-911 — CIS admin on ECS (lane l7-aa911-staff-ecs, S271)
 
-Root ADR 0019 d23: the CIS admin and the Booking admin leave Vercel and run together in ONE Fargate Spot task on Dev
-(AA-CIS-Infra `modules/environment/staff_web.tf`, containers `cis-admin` :3000 and `booking-admin` :3001). Infra side:
+Root ADR 0019 d23 (+ S271 amendment): the CIS admin and the Booking admin leave Vercel and run on Dev as one Fargate
+Spot service each (AA-CIS-Infra `modules/environment/staff_web.tf`): `aa-cis-dev-admin` (container `cis-admin` :3000)
+and `aa-booking-dev-admin` (`booking-admin` :3001). Infra side:
 AA-CIS-Infra `docs/implementation-notes/AA-911-staff-ecs.md`.
 
 ## Decisions
@@ -13,8 +14,10 @@ AA-CIS-Infra `docs/implementation-notes/AA-911-staff-ecs.md`.
 - `/api/healthz` (no auth, no upstream, returns the commit) for the container check, the target group and the deploy
   verify. Under `/api/`, outside `proxy.ts`.
 - `deploy-admin-dev.yml` is separate from `deploy-dev.yml` (API/worker): different image, no job guard (the admin runs
-  no job), its own concurrency group. It swaps only the `cis-admin` container in the shared family and stops after
-  registering while the Booking container is still on the placeholder tag.
+  no job), its own concurrency group. It copies the latest revision of its own family `aa-cis-dev-admin` and swaps the
+  image (S271 fix pass: the first draft shared one family with the Booking admin; per-app families keep the deploy
+  roles apart and remove the "other container still on bootstrap" stop). When the service runs no task (desired 0,
+  before the scale-up) the verify job is skipped and the result says so.
 - Same public host as today (`aa-cis.lumiguides.it.com`), so `lib/cognito.ts` needs no change: outside Vercel the
   production client and the production host are already the allowlist.
 
