@@ -59,8 +59,8 @@ Two PRs: migration 381 (migration-only, contract) and this code PR, stacked on #
 ## Tradeoffs
 - `medium` instead of `low` for the writers: Anthropic's guidance starts chat-like work at low, but these are the
   product's prose writers; medium keeps more planning for the same one-pass article while spending less thinking
-  than `high` (the size is measured by the paid check, not known in advance). If the paid check shows tokens_out >= 6000 at medium, the next step is a forward migration to
-  `low` for t9_write only (one row).
+  than `high` (the size is measured by the paid check, not known in advance). If the paid check shows
+  tokens_out >= 6000 at medium, the next step is a forward migration to `low` for t9_write only (one row).
 - Effort is a quality lever. The writer eval gate (release fingerprint) does not cover stage_model_params today: a
   writer effort change does not flag a release for reverify. Worth a follow-up if effort becomes a routine knob.
 - The family table is code (like `_EFFORT_DEFAULTS`): a new Claude family needs a row there, else 'off' / 'adaptive' is
