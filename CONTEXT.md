@@ -3828,8 +3828,16 @@ candidate release (or today's writers) against the golden set: the judge calibra
 (every run) and the stored controls re-judged by the current judge (stage `writing_memory_eval`, CIS 291; regenerated
 only in a `reverify` run), then probe (<= 3, traps first) -> tune ->
 holdout of the affected tiers, each candidate written through the real writer path (`eval_writers.py`; T9 = the first
-write only) and checked for a new hard fact class (counts only when the judge's kappa vs the labels >= 0.6), a QA
+write only) and checked for a new hard fact class (counts only when the judge's kappa vs the labels >= 0.6, and since
+S271 W0 only on a candidate verdict fail against a control verdict pass), a QA
 trace and another tenant's text (`eval_checks.py`); fail-only early stop; hard cap <= $10 a run from llm_call_log.
+S271 W0 (AA-900): controls are paired on (`sample_id`, `input_sha256`), and release 0 / an empty release whose eval run
+is the baseline of an older golden version uses this version's baseline (`details.control_run_stale`); the run is
+refused at $0 when a planned control is missing or calibration cannot be measured, and by default
+(`require_calibrated`) stops after calibration, before any writer call, when the judge does not count
+(`--calibrate-only` always stops there); `--judge-model` / `--judge-connection` pin the judge (identity in
+`judge_version` and details; a run with two judge identities is invalid, `details.error = judge_model_mixed`); the
+per-item reservation comes from the ledger (median logged candidate cost x 1.3).
 **Shadow** (WM-21, `services/writing_memory/shadow.py`, job `writing_memory_shadow`): the candidate on recent real
 inputs (20; T2 / Facebook 50; a social release for every channel 50 Facebook + 20 others; repair-hint-only <= 10; a
 tenant release + 2 inputs of another tenant; golden tours excluded), QA-trace and

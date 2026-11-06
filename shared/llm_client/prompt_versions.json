@@ -364,6 +364,17 @@
         "_WALK_FOCUS_RULE"
       ],
       "prompt_sha256": "2fc26ac2cf17abd0bee803f330c9bab7b8500fcbc1c8d8fb156450891d067d0b"
+    },
+    {
+      "stage": "writing_memory_eval",
+      "version": "v2",
+      "source_path": "services/writing_memory/eval_judge.py",
+      "symbols": [
+        "system_prompt",
+        "build_user_prompt",
+        "judge_version"
+      ],
+      "prompt_sha256": "1bb1732339d7785be23edb2f1024e2900860a15b289ead0eacb7205ac502eb99"
     }
   ]
 }
