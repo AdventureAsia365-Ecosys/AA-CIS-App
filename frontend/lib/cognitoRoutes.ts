@@ -30,11 +30,12 @@ import {
   tokenExp,
   tokenExpiresSoon,
 } from "./staffSession";
+import { redirectToPath } from "./redirect";
 
-function toLogin(request: NextRequest, error?: string): NextResponse {
-  const url = new URL("/login", request.url);
-  if (error) url.searchParams.set("error", error);
-  return NextResponse.redirect(url, { status: 303 });
+// AA-911: relative Location (lib/redirect.ts): behind the ALB request.url names the server's bind address.
+function toLogin(_request: NextRequest, error?: string): NextResponse {
+  const query = error ? `?${new URLSearchParams({ error }).toString()}` : "";
+  return redirectToPath(`/login${query}`);
 }
 
 function noStore(response: NextResponse): NextResponse {
@@ -173,7 +174,7 @@ export async function handleRefreshNavigation(request: NextRequest): Promise<Nex
   const next = safeNextPath(request.nextUrl.searchParams.get("next"));
   const outcome = await refreshSession(request, REFRESH_SKEW_S);
   if (outcome.ok) {
-    const response = NextResponse.redirect(new URL(next, request.url), { status: 303 });
+    const response = redirectToPath(next);
     outcome.apply(response);
     return noStore(response);
   }
@@ -184,7 +185,7 @@ export async function handleRefreshNavigation(request: NextRequest): Promise<Nex
     // anything. Without a rotation the cookie still holds the expired token, so going back to `next`
     // would only bounce here again: show the backend error instead.
     const response = outcome.rotated
-      ? NextResponse.redirect(new URL(next, request.url), { status: 303 })
+      ? redirectToPath(next)
       : toLogin(request, "backend");
     outcome.apply(response);
     return noStore(response);

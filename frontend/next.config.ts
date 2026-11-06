@@ -25,6 +25,9 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.resolve(__dirname),
   },
+  // AA-911 (root ADR 0019 d23): the ECS image (frontend/Dockerfile) builds the standalone server; Vercel builds stay
+  // as they are until the Vercel project is retired.
+  ...(process.env.NEXT_OUTPUT === "standalone" ? { output: "standalone" as const } : {}),
   poweredByHeader: false,
   async headers() {
     // AA-911: Preview builds (served on aa-cis-preview.lumiguides.it.com when aliased) are never indexed.

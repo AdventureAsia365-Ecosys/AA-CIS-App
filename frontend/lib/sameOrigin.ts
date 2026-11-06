@@ -1,4 +1,4 @@
-// frontend/lib/sameOrigin.ts (byte copy: portal/lib/sameOrigin.ts, guarded by tests/unit/test_aa885_portal_split.py)
+// frontend/lib/sameOrigin.ts
 // AA-816 — one same-origin check for state-changing auth routes (first user: staff sign-out), the same rule as
 // AA-Booking frontend/lib/sameOrigin.ts. SameSite=Lax cookies already stop most cross-site writes; this refuses
 // the rest, e.g. another site POSTing to /api/auth/admin-logout to sign staff out (logout CSRF).
@@ -17,9 +17,23 @@ export interface OriginCheckRequest {
   nextUrl: { origin: string };
 }
 
+/**
+ * AA-911 (staff web on ECS, root ADR 0019 d23) — the public origin this request was sent to. Behind the ALB the Next
+ * standalone server builds `nextUrl` from its own bind address (https://0.0.0.0:3000), not from the request, so a
+ * request that came over HTTPS (the ALB sets `X-Forwarded-Proto`) takes its origin from the `Host` header instead. A
+ * browser sets `Host` to the site it is talking to and `Origin` to the page that sent the request; a cross-site page
+ * controls neither, so comparing the two keeps the check. On Vercel and in `next dev` both ways give the same value.
+ */
+export function requestOrigin(req: OriginCheckRequest): string {
+  const proto = (req.headers.get("x-forwarded-proto") ?? "").split(",")[0].trim().toLowerCase();
+  const host = (req.headers.get("host") ?? "").trim().toLowerCase();
+  if (proto === "https" && host) return `https://${host}`;
+  return req.nextUrl.origin;
+}
+
 export function isSameOrigin(req: OriginCheckRequest, { strict = false }: { strict?: boolean } = {}): boolean {
   const origin = req.headers.get("origin");
-  if (origin) return origin === req.nextUrl.origin;
+  if (origin) return origin.toLowerCase() === requestOrigin(req);
   const site = req.headers.get("sec-fetch-site");
   if (site) return site === "same-origin";
   return !strict;
