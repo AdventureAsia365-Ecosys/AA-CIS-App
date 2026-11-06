@@ -1,11 +1,11 @@
-"""AA-900 (S271, root ADR 0020 d8) — CIS 387 shared.llm_cassette on real Postgres (migrations applied by conftest).
+"""AA-900 (S271, root ADR 0020 d8) — CIS 385 shared.llm_cassette on real Postgres (migrations applied by conftest).
 
 The table and its CHECKs (256 KiB reply cap at a byte count, withheld = no text, sha shapes), the pii:free_text tag
 on reply_text, cis_app's grants (SELECT, INSERT and DELETE for the erasure; never UPDATE), the registration;
 re-applying the file is a no-op, and it narrows the grants cis_owner's default privileges hand out on Dev (CIS 245; CI
 creates the table as the test superuser, so they never apply here unless simulated). The recorder that writes it: test_aa900_cassette_db.py (code PR).
 
-Invented values only; every row of this module has stage adhoc_aa900_mig387 and is deleted at the end.
+Invented values only; every row of this module has stage adhoc_aa900_mig385 and is deleted at the end.
 """
 import os
 import sys
@@ -19,9 +19,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-STAGE = "adhoc_aa900_mig387"
+STAGE = "adhoc_aa900_mig385"
 REPLY_CAP_BYTES = 262144
-MIGRATION = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations", "387_llm_cassette.sql")
+MIGRATION = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations", "385_llm_cassette.sql")
 
 
 @pytest_asyncio.fixture
@@ -35,11 +35,11 @@ async def conn():
     await c.close()
 
 
-# ── 387 ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+# ── 385 ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_387_table_checks_tag_and_grants(conn):
-    assert await conn.fetchval("SELECT version FROM shared.schema_versions WHERE version = '387'") == "387"
+async def test_385_table_checks_tag_and_grants(conn):
+    assert await conn.fetchval("SELECT version FROM shared.schema_versions WHERE version = '385'") == "385"
     tag = await conn.fetchval("SELECT col_description('shared.llm_cassette'::regclass, a.attnum) AS tag "
                               "FROM pg_attribute a WHERE a.attrelid = 'shared.llm_cassette'::regclass "
                               "AND a.attname = 'reply_text'")
@@ -68,7 +68,7 @@ async def test_387_table_checks_tag_and_grants(conn):
 
 
 @pytest.mark.asyncio
-async def test_387_narrows_the_dev_default_privileges(conn):
+async def test_385_narrows_the_dev_default_privileges(conn):
     """On Dev Migration Apply creates the table as cis_owner, whose default privileges in shared (CIS 245) give cis_app
     SELECT, INSERT, UPDATE, DELETE on every new table. Simulate them (and a PUBLIC / tenant pool grant), re-run the
     file inside a rolled-back transaction: cis_app keeps SELECT, INSERT, DELETE only; the others keep nothing."""

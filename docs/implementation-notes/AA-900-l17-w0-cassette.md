@@ -6,7 +6,7 @@ S271 writing-quality audit (`data/design-review.json` arch.roadmap[0] item "Cass
 
 Two PRs, MIG-4 (the migration is contract):
 
-1. Migration-only: CIS 387 `shared.llm_cassette` + its integration test, the X2 RLS allowlist entry and the erasure
+1. Migration-only: CIS 385 `shared.llm_cassette` + its integration test, the X2 RLS allowlist entry and the erasure
    inventory entry (both CI guards fail on the replayed table without them).
 2. Code: `shared/llm_client/cassette.py`, one call in `LLMClient._attempt`, the test switches, unit + integration
    tests, CONTEXT.md.
@@ -48,11 +48,11 @@ Two PRs, MIG-4 (the migration is contract):
   `services/erasure/inventory.py`) and a future TTL job run as the runtime role (plan.py refuses an apply without it).
   The file REVOKEs ALL from PUBLIC, cis_app, aa_app_user and catalog_owner before the GRANT (the 321 / 345 / 370
   pattern): Migration Apply creates the table as cis_owner, whose default privileges in `shared` (CIS 245) would
-  otherwise give cis_app UPDATE too. CI creates it as the test superuser, so `test_387_narrows_the_dev_default_privileges`
+  otherwise give cis_app UPDATE too. CI creates it as the test superuser, so `test_385_narrows_the_dev_default_privileges`
   simulates those grants and re-runs the file (review fix, S271).
 - **Best-effort write** on call_log's `_in_background` (a non-daemon thread with its own loop and a short-lived
   connection, the same path as the gateway's failure rows). Never raises; `cassette.stats()` counts recorded /
-  written / write_failed / missing_table / build_failed. Before 387 is applied: UndefinedTable sets a 5-minute skip.
+  written / write_failed / missing_table / build_failed. Before 385 is applied: UndefinedTable sets a 5-minute skip.
 - **Switch `LLM_CASSETTE=record|off`, default record** (Dev is the only environment; no Terraform change). Unit tests
   default it off (conftest `_llm_cassette_off`, marker `real_cassette`), integration tests too (env default).
 
@@ -73,10 +73,10 @@ Two PRs, MIG-4 (the migration is contract):
 
 ## Should know
 
-- Number 387: CIS main max was 383 on 06/11 (384 is #1351; 385-386 held by parallel lanes). Renumber to main max + 1
-  at merge: `git grep '387_'`, `git grep "'387'"`, `git grep 'CIS 387'`, `git grep '(387'`.
+- Number 385: CIS main max was 383 on 06/11 (384 is #1351; 385-386 held by parallel lanes). Renumber to main max + 1
+  at merge: `git grep '385_'`, `git grep "'385'"`, `git grep 'CIS 385'`, `git grep '(385'`.
 - The Infra copy needs `db/rls_catalogue_rules.py` byte-identical to the CIS file (Migration Copy Guard CODE_COPIES):
-  the copy PR carries it next to `db/migrations/cis/387_llm_cassette.sql`.
+  the copy PR carries it next to `db/migrations/cis/385_llm_cassette.sql`.
 - Root PR: data standards Part B section 7 retention row for `shared.llm_cassette` (30 days proposed, no rollup, no
   archive) and the DM-10.4 note that the cassette is the one store of completion text (ADR 0020 d8); merged before
   the Infra copy.

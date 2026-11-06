@@ -1,4 +1,4 @@
--- Migration 387: AA-900 (S271 writing-quality restructure, wave W0; root ADR 0020 "Gateway amendments" d8) — the
+-- Migration 385: AA-900 (S271 writing-quality restructure, wave W0; root ADR 0020 "Gateway amendments" d8) — the
 -- cassette of raw model replies, written by the AI gateway in record-only mode.
 --
 -- Why. ADR 0020 d8: "A cassette stores the raw reply, request and prompt shas for replay." Today a reply leaves no
@@ -59,7 +59,7 @@
 -- table without ENABLE and FORCE ROW LEVEL SECURITY.
 --
 -- Number. 383 is the highest on CIS main (06/11); 384-386 are held by parallel S271 lanes. Renumber to main max + 1
--- at merge: git grep '387_' and 'llm_cassette' (the test, the notes, the register line below).
+-- at merge: git grep '385_' and 'llm_cassette' (the test, the notes, the register line below).
 --
 -- Rollback (a new forward migration, after the code is reverted or LLM_CASSETTE=off): DROP TABLE shared.llm_cassette
 -- (a destructive file, DRY RUN). Nothing reads it on a live path.
@@ -147,32 +147,32 @@ CREATE INDEX IF NOT EXISTS llm_cassette_eval_idx ON shared.llm_cassette (eval_ru
     WHERE eval_run IS NOT NULL;
 
 COMMENT ON TABLE shared.llm_cassette IS
-    'AA-900 (CIS 387, root ADR 0020 d8): the raw reply of every provider attempt that returned one through the AI '
+    'AA-900 (CIS 385, root ADR 0020 d8): the raw reply of every provider attempt that returned one through the AI '
     'gateway (shared/llm_client/cassette.py, record-only, LLM_CASSETTE=record|off), with the request and prompt '
     'shas for replay. Linked to its llm_call_log row through route_trace + attempt_no (no FK) and to the owning '
     'object when known. CIS only: no tenant route reads it. Retention: 30 days proposed (data standards DM-7.1).';
 COMMENT ON COLUMN shared.llm_cassette.request_sha256 IS
-    'AA-900 (387): sha256 hex of the canonical JSON (sorted keys, no spaces) of the request: messages (system, '
+    'AA-900 (385): sha256 hex of the canonical JSON (sorted keys, no spaces) of the request: messages (system, '
     'few-shots, user) and params (model key, max_tokens, temperature, seed, json_schema, effort). cassette.request_sha.';
 COMMENT ON COLUMN shared.llm_cassette.prompt_sha256 IS
-    'AA-900 (387): sha256 hex of the system prompt (= llm_call_log.prompt_hash). The prompt text is never stored.';
+    'AA-900 (385): sha256 hex of the system prompt (= llm_call_log.prompt_hash). The prompt text is never stored.';
 COMMENT ON COLUMN shared.llm_cassette.answered_model IS
-    'AA-900 (387): the model id the provider says answered (LLMResponse.provider_model), when it reports one.';
+    'AA-900 (385): the model id the provider says answered (LLMResponse.provider_model), when it reports one.';
 COMMENT ON COLUMN shared.llm_cassette.rung IS
-    'AA-900 (387): the route position that answered (0 = the stage''s first model; llm_call_log quality_signal '
+    'AA-900 (385): the route position that answered (0 = the stage''s first model; llm_call_log quality_signal '
     'route_position).';
 COMMENT ON COLUMN shared.llm_cassette.route_trace IS
-    'AA-900 (387): the gateway request (llm_call_log quality_signal.route_trace); with attempt_no it finds the '
+    'AA-900 (385): the gateway request (llm_call_log quality_signal.route_trace); with attempt_no it finds the '
     'ledger row of this reply.';
 COMMENT ON COLUMN shared.llm_cassette.reply_text IS
-    'pii:free_text; AA-900 (387): the raw model reply (may hold tenant content), at most 262144 bytes of UTF-8 '
+    'pii:free_text; AA-900 (385): the raw model reply (may hold tenant content), at most 262144 bytes of UTF-8 '
     '(reply_truncated marks a cut); NULL when withheld (reply_withheld). Never shown to a tenant, never exported.';
 COMMENT ON COLUMN shared.llm_cassette.reply_sha256 IS
-    'AA-900 (387): sha256 hex of the whole reply before the 256 KiB cap.';
+    'AA-900 (385): sha256 hex of the whole reply before the 256 KiB cap.';
 COMMENT ON COLUMN shared.llm_cassette.reply_withheld IS
-    'AA-900 (387): why reply_text is NULL: pii_stage (the stage''s data class is pii, DM-6.4). NULL = stored.';
+    'AA-900 (385): why reply_text is NULL: pii_stage (the stage''s data class is pii, DM-6.4). NULL = stored.';
 COMMENT ON COLUMN shared.llm_cassette.tenant_id IS
-    'AA-900 (387): the tenant whose content the call served (the bound job tenant), attribution and erasure key.';
+    'AA-900 (385): the tenant whose content the call served (the bound job tenant), attribution and erasure key.';
 
 -- Narrow cis_owner's default privileges (CIS 245) before the grant: without the REVOKE cis_app could UPDATE a reply.
 REVOKE ALL ON shared.llm_cassette FROM PUBLIC;
@@ -180,7 +180,7 @@ REVOKE ALL ON shared.llm_cassette FROM cis_app, aa_app_user, catalog_owner;   --
 GRANT SELECT, INSERT, DELETE ON shared.llm_cassette TO cis_app;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('387', now(), 'AA-900: shared.llm_cassette (raw model replies of the AI gateway, record-only, for replay)')
+VALUES ('385', now(), 'AA-900: shared.llm_cassette (raw model replies of the AI gateway, record-only, for replay)')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;
