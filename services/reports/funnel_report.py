@@ -83,7 +83,16 @@ def markdown(report: Report, snap: dict, generated_at: datetime) -> str:
              _p(r["first_pass_yield"]), _n(r["attempts_per_delivered"]), _usd(r["usd_per_delivered"])]
             for r in snap["workflows"]["t9"]["by_week_channel"]]
     lines += (table(["Week", "Channel", "Created", "Delivered", "Held", "Failed", "First-pass yield",
-                     "Attempts / delivered", "USD / delivered"], rows) if rows else ["No piece in the series."]) + [""]
+                     "Attempts / delivered", "Attributed USD / delivered"], rows)
+              if rows else ["No piece in the series."]) + [""]
+    t9_total = (snap.get("totals") or {}).get("t9", {}).get("window", {})
+    unattributed = snap["workflows"]["t9"].get("unattributed_cost_usd") or {}
+    lines += ["Attributed = T9 ledger rows that carry the piece or its angle-gate request. The rest of the T9 stage "
+              "cost (judges, angle generation before a piece exists) is unattributed; the totals above include it "
+              f"(attributed {_usd(t9_total.get('attributed_cost_usd'))}, unattributed "
+              f"{_usd(t9_total.get('unattributed_cost_usd'))}).", ""]
+    rows = [[week, _usd(float(v))] for week, v in sorted(unattributed.items())]
+    lines += (table(["Week", "Unattributed T9 cost"], rows) if rows else []) + ([""] if rows else [])
     for wf in ("s1", "t2"):
         lines += [f"## {WORKFLOW_NAMES[wf]} per week", ""]
         rows = [[r["week"], _n(r["created"]), _n(r["delivered"]), _n(r["held"]), _n(r["failed"]),

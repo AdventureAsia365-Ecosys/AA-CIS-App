@@ -16,9 +16,13 @@ workflow and ISO week (ICT, Monday first), from stored rows only (names: root do
   (``held_reason`` prefix) is kept next to it for comparison with the S271 audit.
 - **S1** (Master rewrite): ``silver_aa_internal.generated_content`` (one row per draft) with its evaluations in
   ``silver_aa_internal.quality_scores`` and its publication in ``gold_aa_internal.published_tours``. ``delivered`` =
-  a published_tours row points at the draft; ``held`` = status ``hitl``; ``failed`` = ``rejected``; attempts =
-  ``retry_count`` + 1; first pass = delivered with ``retry_count`` 0. Gate failures per attempt = the failure and brand
-  audit codes of each evaluation (evaluation order = attempt).
+  ever published: a published_tours row points at the draft, or the draft is ``approved`` / ``published`` (a later
+  rewrite repoints the tour's one published_tours row, the older draft stays approved and stays delivered in its
+  week); ``held`` = status ``hitl``; ``failed`` = ``rejected``; attempts = ``retry_count`` + 1, + 1 when the S1 fix
+  pass ran (``fix_pass_applied``: flag_fix rewrites fields without raising retry_count); first pass = delivered with
+  no retry, no fix pass and no human (``human_edited``, a reviewer, or a ``review_queue`` row: a hitl draft a reviewer
+  approved). Gate failures per attempt = the failure and brand audit codes of each evaluation (evaluation order =
+  attempt).
 - **T2** (tenant tour rewrite): ``gold_aa_internal.tenant_tour_versions`` written by AI (``edit_source`` ai_generated
   or re_rewrite). ``delivered`` = a written version (not pending / failed); ``held`` = ``qa_status`` escalated (the
   version still reaches the tenant, ``qa_auto_passed``); attempts = ``qa_repair_count`` + 1 (T3 rounds); first pass =
@@ -27,7 +31,10 @@ workflow and ISO week (ICT, Monday first), from stored rows only (names: root do
   rows), per stage of each workflow (``STAGE_RE``) and week: answered requests by rung (the ``route_watch`` rung rule:
   primary, rung 1, rung 2+, unknown), fallback share, replies cut at their token ceiling (``route_watch.CUT_ROW``),
   refused and error rows, cost. LLM USD per delivered object = the workflow's stage cost of the week / its delivered
-  objects (T9 per channel through the ledger rows that carry the piece or its angle-gate request).
+  objects, for every workflow (T9 included: the totals use the whole T9 stage cost, attributed + unattributed). T9
+  per channel can only use the ledger rows that carry the piece or its angle-gate request: that per-channel figure is
+  the *attributed* cost (``attributed_usd_per_delivered`` in the totals); the rest (judges, angle generation before a
+  piece exists) is ``unattributed_cost_usd`` per week.
 
 Watchdog (:func:`watch_findings`, over the trailing ``WATCH_DAYS`` days that end with the snapshot day; thresholds
 are module constants, documented in CONTEXT.md "Quality funnel"):
@@ -80,6 +87,8 @@ F9_TEXT_CLASS = F9_GATE + ".text_integrity"
 
 T9_DELIVERED = ("approved", "held")
 S1_HELD, S1_FAILED = "hitl", "rejected"
+S1_DELIVERED = ("approved", "published")      # content_status_enum values of a draft that reached the Master
+S1_DELIVERED_SQL = ", ".join(f"'{v}'" for v in S1_DELIVERED)
 T2_EDIT_SOURCES = ("ai_generated", "re_rewrite")
 
 
@@ -197,27 +206,40 @@ T9_COST_SQL = f"""
       FROM m GROUP BY 1, 2 ORDER BY 1, 2
 """
 
+# delivered = ever published: a published_tours row points at the draft now, or the draft is approved / published
+# (process_export only publishes an approved draft and leaves it approved; the next rewrite repoints the tour's
+# published_tours row to the new draft, so "points at it now" alone would move older weeks back out of delivered).
+# first pass = delivered on attempt 1 with no repair and no human: no retry, no S1 fix pass (flag_fix rewrites
+# the flagged fields without raising retry_count), no human edit or reviewer, no review_queue row (a hitl draft a
+# reviewer approved). attempts = retry_count + 1, + 1 for the fix pass round.
 S1_OBJECTS_SQL = f"""
     WITH g AS (
         SELECT gc.id, gc.status::text AS status, gc.retry_count, gc.fallback_used,
+               coalesce(gc.fix_pass_applied, false) AS fix_pass,
+               (coalesce(gc.human_edited, false) OR gc.reviewed_by IS NOT NULL OR gc.reviewed_by_legacy IS NOT NULL
+                OR EXISTS (SELECT 1 FROM silver_aa_internal.review_queue rq WHERE rq.generated_content_id = gc.id))
+                   AS human,
                CASE WHEN jsonb_typeof(gc.metadata -> 'degraded') = 'array'
                     THEN jsonb_array_length(gc.metadata -> 'degraded') > 0 ELSE false END AS degraded,
-               EXISTS (SELECT 1 FROM gold_aa_internal.published_tours pt WHERE pt.generated_content_id = gc.id)
-                   AS published,
+               (gc.status::text IN ({S1_DELIVERED_SQL}) OR EXISTS (
+                    SELECT 1 FROM gold_aa_internal.published_tours pt WHERE pt.generated_content_id = gc.id))
+                   AS delivered,
                {week_sql('gc.created_at')} AS week
           FROM silver_aa_internal.generated_content gc
          WHERE gc.created_at >= $1 AND gc.created_at < $2
     )
     SELECT week,
            count(*) AS created,
-           count(*) FILTER (WHERE published) AS delivered,
-           count(*) FILTER (WHERE status = '{S1_HELD}' AND NOT published) AS held,
-           count(*) FILTER (WHERE status = '{S1_FAILED}' AND NOT published) AS failed,
-           count(*) FILTER (WHERE NOT published AND status NOT IN ('{S1_HELD}', '{S1_FAILED}')) AS open,
-           count(*) FILTER (WHERE published AND retry_count = 0) AS first_pass,
-           coalesce(sum(retry_count + 1) FILTER (WHERE published), 0) AS attempts_delivered,
-           count(*) FILTER (WHERE published AND fallback_used) AS fallback_writer,
-           count(*) FILTER (WHERE published AND coalesce(degraded, false)) AS degraded
+           count(*) FILTER (WHERE delivered) AS delivered,
+           count(*) FILTER (WHERE status = '{S1_HELD}' AND NOT delivered) AS held,
+           count(*) FILTER (WHERE status = '{S1_FAILED}' AND NOT delivered) AS failed,
+           count(*) FILTER (WHERE NOT delivered AND status NOT IN ('{S1_HELD}', '{S1_FAILED}')) AS open,
+           count(*) FILTER (WHERE delivered AND retry_count = 0 AND NOT fix_pass AND NOT human) AS first_pass,
+           coalesce(sum(retry_count + 1 + fix_pass::int) FILTER (WHERE delivered), 0) AS attempts_delivered,
+           count(*) FILTER (WHERE delivered AND fix_pass) AS fix_pass,
+           count(*) FILTER (WHERE delivered AND human) AS human,
+           count(*) FILTER (WHERE delivered AND fallback_used) AS fallback_writer,
+           count(*) FILTER (WHERE delivered AND coalesce(degraded, false)) AS degraded
       FROM g
      GROUP BY 1
      ORDER BY 1
@@ -443,25 +465,43 @@ async def compute(conn, day: date, *, weeks: int = WEEKS, now: Optional[datetime
         "watch": watch,
         "thresholds": THRESHOLDS,
         "unavailable": un,
-        "totals": totals(t9, s1, t2, last_week=(day - timedelta(days=day.weekday())).isoformat()),
+        "totals": totals(t9, s1, t2, last_week=(day - timedelta(days=day.weekday())).isoformat(),
+                         t9_unattributed=t9_unattributed),
     }
 
 
-def totals(t9: list[dict], s1: list[dict], t2: list[dict], *, last_week: str) -> dict:
-    """Headline per workflow over the whole window and for the snapshot day's week."""
-    def agg(rows: list[dict], held_in_delivered: bool) -> dict:
+def totals(t9: list[dict], s1: list[dict], t2: list[dict], *, last_week: str,
+           t9_unattributed: Optional[dict[str, float]] = None) -> dict:
+    """Headline per workflow over the whole window and for the snapshot day's week.
+
+    LLM USD per delivered is the workflow's whole stage cost for every workflow. T9 rows carry only the cost attributed
+    to a channel, so the T9 totals add the week's ``t9_unattributed`` stage cost: ``cost_usd`` / ``usd_per_delivered``
+    are the whole T9 figure, ``attributed_cost_usd`` / ``attributed_usd_per_delivered`` the per-channel part and
+    ``unattributed_cost_usd`` the rest."""
+    unattributed = t9_unattributed or {}
+
+    def agg(rows: list[dict], held_in_delivered: bool, extra_cost: Optional[float] = None) -> dict:
         keys = ("created", "delivered", "held", "failed", "first_pass", "attempts_delivered")
         s = {k: sum(int(r.get(k) or 0) for r in rows) for k in keys}
         cost = sum(float(r.get("cost_usd") or 0) for r in rows)
-        return {**s, **_rates(delivered=s["delivered"], held=s["held"], failed=s["failed"],
-                              first_pass=s["first_pass"], attempts=s["attempts_delivered"], cost=cost,
-                              held_in_delivered=held_in_delivered)}
+        out = {**s, **_rates(delivered=s["delivered"], held=s["held"], failed=s["failed"],
+                             first_pass=s["first_pass"], attempts=s["attempts_delivered"],
+                             cost=cost + (extra_cost or 0.0), held_in_delivered=held_in_delivered)}
+        if extra_cost is not None:
+            out["attributed_cost_usd"] = round(cost, 6)
+            out["attributed_usd_per_delivered"] = round(cost / s["delivered"], 4) if s["delivered"] else None
+            out["unattributed_cost_usd"] = round(extra_cost, 6)
+        return out
 
     out = {}
     for name, rows in (("t9", t9), ("s1", s1), ("t2", t2)):
         held_in = HELD_IN_DELIVERED[name]
-        out[name] = {"window": agg(rows, held_in),
-                     "this_week": agg([r for r in rows if r["week"] == last_week], held_in)}
+        week_rows = [r for r in rows if r["week"] == last_week]
+        if name == "t9":
+            out[name] = {"window": agg(rows, held_in, sum(float(v) for v in unattributed.values())),
+                         "this_week": agg(week_rows, held_in, float(unattributed.get(last_week, 0.0)))}
+        else:
+            out[name] = {"window": agg(rows, held_in), "this_week": agg(week_rows, held_in)}
     return out
 
 

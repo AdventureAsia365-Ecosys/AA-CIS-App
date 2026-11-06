@@ -11,7 +11,9 @@ What it proves:
   * every query of compute() runs (types, JSON operators, the f-string braces) on the replayed schema;
   * T9 counts every failing gate of every attempt (discarded attempts too) and splits F9 into the judge outage,
     TEXT_INTEGRITY and the claims; the first-gate count stays the held_reason prefix;
-  * delivered / held / first pass / attempts / USD per delivered for T9 (per channel), S1 and T2;
+  * delivered / held / first pass / attempts / USD per delivered for T9 (per channel), S1 and T2; an S1 draft
+    repaired by the fix pass or approved by a reviewer is not first pass, and a draft superseded by a later rewrite
+    stays delivered in its week; the T9 headline cost is the whole T9 stage cost (attributed + unattributed);
   * the watch window raises the cut, fallback and drift findings at the documented thresholds;
   * a CIS-08 run stored with store.finish_ok is what GET /admin/quality/funnel's SQL reads back.
 
@@ -117,22 +119,29 @@ async def _version(conn, n, *, status, edit_source, qa_status, repairs, created,
         qa_status == "escalated", json.dumps(breakdown) if breakdown else None)
 
 
-async def _draft(conn, *, status, retry, created, metadata=None, published=False, evaluations=()):
-    gid, tour = uuid.uuid4(), uuid.uuid4()
+async def _draft(conn, *, status, retry, created, metadata=None, published=False, evaluations=(), tour=None,
+                 version=1, fix_pass=None, review=None):
+    gid, tour = uuid.uuid4(), tour or uuid.uuid4()
     await conn.execute(
-        "INSERT INTO silver_aa_internal.generated_content (id, tour_id, status, retry_count, created_at, metadata) "
-        "VALUES ($1, $2, $3::content_status_enum, $4, $5, $6::jsonb)",
-        gid, tour, status, retry, created, json.dumps(metadata or {}))
+        "INSERT INTO silver_aa_internal.generated_content (id, tour_id, version_num, status, retry_count, created_at, "
+        "metadata, fix_pass_applied) VALUES ($1, $2, $3, $4::content_status_enum, $5, $6, $7::jsonb, $8)",
+        gid, tour, version, status, retry, created, json.dumps(metadata or {}), fix_pass)
     for i, (codes, brand) in enumerate(evaluations):
         await conn.execute(
             "INSERT INTO silver_aa_internal.quality_scores (generated_content_id, tour_id, score_overall, "
             "failure_codes, brand_audit_codes, evaluated_at) VALUES ($1, $2, 70, $3::jsonb, $4::jsonb, $5)",
             gid, tour, json.dumps(codes), json.dumps(brand) if brand is not None else None,
             created + timedelta(minutes=i))
+    if review:
+        await conn.execute(
+            "INSERT INTO silver_aa_internal.review_queue (tour_id, generated_content_id, tenant_id, review_status, "
+            "reviewed_by, reviewed_at) VALUES ($1, $2, $3, $4::review_status_enum, 'reviewer@example.test', $5)",
+            tour, gid, TENANT, review, created + timedelta(hours=1))
     if published:
         await conn.execute(
             "INSERT INTO gold_aa_internal.published_tours (tour_id, generated_content_id, aa_name) "
             "VALUES ($1, $2, 'Invented Lake Walk')", tour, gid)
+    return gid, tour
 
 
 async def _dataset(conn):
@@ -161,6 +170,12 @@ async def _dataset(conn):
     await _draft(conn, status="hitl", retry=2, created=W, metadata={"degraded": [{"name": "fallback_writer"}]},
                  evaluations=[(["seo.meta_length"], None), ({"fact.embellish": 1}, ["voice.generic"])])
     await _draft(conn, status="rejected", retry=1, created=P, evaluations=[(["fact.embellish"], [])])
+    # S1 repaired / human: approved on attempt 1 only after the fix pass; a hitl draft a reviewer approved
+    await _draft(conn, status="approved", retry=0, created=W, published=True, fix_pass=True)
+    await _draft(conn, status="approved", retry=0, created=W, published=True, review="approved")
+    # S1 supersede: last week's draft of a tour was published, this week's rewrite took its published_tours row
+    _, tour = await _draft(conn, status="approved", retry=0, created=P)
+    await _draft(conn, status="approved", retry=0, created=W, published=True, tour=tour, version=2)
     await _call(conn, "s1_generate", "zz-writer", W, n=2, cost=0.25)
     # T2: a clean version, an escalated one written by a fallback model, a failed one, a tenant edit (left out)
     await _t2_table(conn)
@@ -209,10 +224,15 @@ async def test_funnel_sql_counts_and_frozen_baseline(conn):
                                                             "gate": "F9_cta_fact", "held": 1}]
 
     s1 = {r["week"]: r for r in snap["workflows"]["s1"]["by_week"]}
-    assert (s1["2031-03-03"]["created"], s1["2031-03-03"]["delivered"], s1["2031-03-03"]["held"]) == (2, 1, 1)
-    assert s1["2031-03-03"]["first_pass"] == 1 and s1["2031-03-03"]["usd_per_delivered"] == 0.5
-    assert s1["2031-03-03"]["first_pass_yield"] == 0.5 and s1["2031-03-03"]["hold_rate"] == 0.5   # hitl not delivered
-    assert s1["2031-02-24"]["failed"] == 1
+    sw = s1["2031-03-03"]
+    assert (sw["created"], sw["delivered"], sw["held"]) == (5, 4, 1)
+    # first pass = the clean draft and the rewrite; the fix-pass draft and the reviewer-approved draft are not
+    assert sw["first_pass"] == 2 and sw["fix_pass"] == 1 and sw["human"] == 1
+    assert sw["attempts_delivered"] == 5                     # 1 + (1 + fix pass) + 1 + 1
+    assert sw["usd_per_delivered"] == 0.125
+    assert sw["first_pass_yield"] == 0.4 and sw["hold_rate"] == 0.2                      # hitl not delivered
+    # the superseded draft stays delivered (and first pass) in its own week
+    assert (s1["2031-02-24"]["delivered"], s1["2031-02-24"]["first_pass"], s1["2031-02-24"]["failed"]) == (1, 1, 1)
     s1_gates = {(g["week"], g["attempt"], g["gate"]): g["fires"] for g in snap["workflows"]["s1"]["gate_fails"]}
     assert s1_gates == {("2031-03-03", 1, "seo.meta_length"): 1, ("2031-03-03", 2, "fact.embellish"): 1,
                         ("2031-03-03", 2, "brand:voice.generic"): 1, ("2031-02-24", 1, "fact.embellish"): 1}
@@ -229,6 +249,12 @@ async def test_funnel_sql_counts_and_frozen_baseline(conn):
     assert j["fallback_share"] == 0.2 and j["rung_share"]["rung1"] == 0.2 and j["rung_share"]["primary"] == 0.8
     # T9 stages of the week: writer 0.24 + repair 0.07 + judge 0.06 = 0.37, of which 0.12 carries a blog piece
     assert snap["workflows"]["t9"]["unattributed_cost_usd"]["2031-03-03"] == 0.25
+    # the T9 headline uses the whole T9 stage cost, like S1 and T2; the per-channel part is "attributed"
+    week = snap["totals"]["t9"]["this_week"]
+    assert (week["cost_usd"], week["attributed_cost_usd"], week["unattributed_cost_usd"]) == (0.37, 0.12, 0.25)
+    assert week["usd_per_delivered"] == round(0.37 / 3, 4) and week["attributed_usd_per_delivered"] == 0.04
+    win = snap["totals"]["t9"]["window"]           # + the judge rows of the week before the watch window (0.05)
+    assert (win["cost_usd"], win["unattributed_cost_usd"], win["usd_per_delivered"]) == (0.42, 0.3, 0.105)
 
     assert sorted(f.check for f in funnel.watch_findings(snap["watch"])) == [
         "qf_cut.t9_write", "qf_drift.t10_judge", "qf_fb.t10_judge"]

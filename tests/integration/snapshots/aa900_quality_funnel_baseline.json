@@ -153,30 +153,30 @@
   "totals": {
     "s1": {
       "this_week": {
-        "attempts_delivered": 1,
-        "attempts_per_delivered": 1.0,
+        "attempts_delivered": 5,
+        "attempts_per_delivered": 1.25,
         "cost_usd": 0.5,
-        "created": 2,
-        "delivered": 1,
+        "created": 5,
+        "delivered": 4,
         "failed": 0,
-        "first_pass": 1,
-        "first_pass_yield": 0.5,
+        "first_pass": 2,
+        "first_pass_yield": 0.4,
         "held": 1,
-        "hold_rate": 0.5,
-        "usd_per_delivered": 0.5
+        "hold_rate": 0.2,
+        "usd_per_delivered": 0.125
       },
       "window": {
-        "attempts_delivered": 1,
-        "attempts_per_delivered": 1.0,
+        "attempts_delivered": 6,
+        "attempts_per_delivered": 1.2,
         "cost_usd": 0.5,
-        "created": 3,
-        "delivered": 1,
+        "created": 7,
+        "delivered": 5,
         "failed": 1,
-        "first_pass": 1,
-        "first_pass_yield": 0.3333,
+        "first_pass": 3,
+        "first_pass_yield": 0.4286,
         "held": 1,
-        "hold_rate": 0.5,
-        "usd_per_delivered": 0.5
+        "hold_rate": 0.1667,
+        "usd_per_delivered": 0.1
       }
     },
     "t2": {
@@ -211,7 +211,9 @@
       "this_week": {
         "attempts_delivered": 6,
         "attempts_per_delivered": 2.0,
-        "cost_usd": 0.12,
+        "attributed_cost_usd": 0.12,
+        "attributed_usd_per_delivered": 0.04,
+        "cost_usd": 0.37,
         "created": 4,
         "delivered": 3,
         "failed": 1,
@@ -219,12 +221,15 @@
         "first_pass_yield": 0.25,
         "held": 1,
         "hold_rate": 0.3333,
-        "usd_per_delivered": 0.04
+        "unattributed_cost_usd": 0.25,
+        "usd_per_delivered": 0.1233
       },
       "window": {
         "attempts_delivered": 7,
         "attempts_per_delivered": 1.75,
-        "cost_usd": 0.12,
+        "attributed_cost_usd": 0.12,
+        "attributed_usd_per_delivered": 0.03,
+        "cost_usd": 0.42,
         "created": 5,
         "delivered": 4,
         "failed": 1,
@@ -232,7 +237,8 @@
         "first_pass_yield": 0.4,
         "held": 1,
         "hold_rate": 0.25,
-        "usd_per_delivered": 0.03
+        "unattributed_cost_usd": 0.3,
+        "usd_per_delivered": 0.105
       }
     }
   },
@@ -368,37 +374,41 @@
     "s1": {
       "by_week": [
         {
-          "attempts_delivered": 0,
-          "attempts_per_delivered": null,
-          "cost_usd": 0.0,
-          "created": 1,
-          "degraded": 0,
-          "delivered": 0,
-          "failed": 1,
-          "fallback_writer": 0,
-          "first_pass": 0,
-          "first_pass_yield": 0.0,
-          "held": 0,
-          "hold_rate": null,
-          "open": 0,
-          "usd_per_delivered": null,
-          "week": "2031-02-24"
-        },
-        {
           "attempts_delivered": 1,
           "attempts_per_delivered": 1.0,
-          "cost_usd": 0.5,
+          "cost_usd": 0.0,
           "created": 2,
           "degraded": 0,
           "delivered": 1,
-          "failed": 0,
+          "failed": 1,
           "fallback_writer": 0,
           "first_pass": 1,
           "first_pass_yield": 0.5,
-          "held": 1,
-          "hold_rate": 0.5,
+          "fix_pass": 0,
+          "held": 0,
+          "hold_rate": 0.0,
+          "human": 0,
           "open": 0,
-          "usd_per_delivered": 0.5,
+          "usd_per_delivered": 0.0,
+          "week": "2031-02-24"
+        },
+        {
+          "attempts_delivered": 5,
+          "attempts_per_delivered": 1.25,
+          "cost_usd": 0.5,
+          "created": 5,
+          "degraded": 0,
+          "delivered": 4,
+          "failed": 0,
+          "fallback_writer": 0,
+          "first_pass": 2,
+          "first_pass_yield": 0.4,
+          "fix_pass": 1,
+          "held": 1,
+          "hold_rate": 0.2,
+          "human": 1,
+          "open": 0,
+          "usd_per_delivered": 0.125,
           "week": "2031-03-03"
         }
       ],

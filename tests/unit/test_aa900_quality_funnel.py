@@ -110,6 +110,29 @@ def test_totals_split_window_and_this_week():
     assert t["s1"]["window"]["delivered"] == 0
 
 
+def test_t9_totals_use_the_whole_stage_cost_and_keep_the_attributed_part():
+    rows = [funnel._object_row({"week": "2026-10-26", "created": 2, "approved": 2, "held": 0, "failed": 0,
+                                "first_pass": 2, "attempts_delivered": 2}, 0.2),
+            funnel._object_row({"week": "2026-11-02", "created": 2, "approved": 2, "held": 0, "failed": 0,
+                                "first_pass": 2, "attempts_delivered": 2}, 0.2)]
+    t = funnel.totals(rows, [], [], last_week="2026-11-02",
+                      t9_unattributed={"2026-10-26": 0.6, "2026-11-02": 0.4})
+    week, win = t["t9"]["this_week"], t["t9"]["window"]
+    assert (week["cost_usd"], week["attributed_cost_usd"], week["unattributed_cost_usd"]) == (0.6, 0.2, 0.4)
+    assert week["usd_per_delivered"] == 0.3 and week["attributed_usd_per_delivered"] == 0.1
+    assert (win["cost_usd"], win["unattributed_cost_usd"], win["usd_per_delivered"]) == (1.4, 1.0, 0.35)
+    # S1 and T2 already carry the whole stage cost: no attributed split
+    assert "attributed_cost_usd" not in t["s1"]["window"]
+
+
+def test_s1_first_pass_excludes_the_fix_pass_and_human_review_and_counts_ever_published():
+    sql = funnel.S1_OBJECTS_SQL
+    assert "retry_count = 0 AND NOT fix_pass AND NOT human" in sql
+    assert "retry_count + 1 + fix_pass::int" in sql
+    assert "silver_aa_internal.review_queue" in sql and "human_edited" in sql and "reviewed_by" in sql
+    assert "gc.status::text IN ('approved', 'published')" in sql
+
+
 # ── watchdog ──────────────────────────────────────────────────────────────────────────────────────────────────────
 
 REC, END = datetime(2026, 10, 30, 17, tzinfo=UTC), datetime(2026, 11, 5, 17, tzinfo=UTC)
@@ -175,7 +198,7 @@ def _snap(watch_rows=()):
                               "attempts_approved": 1, "attempts_held": 3, "degraded": 0}, 0.4)]
     return {"version": 1, "day": DAY.isoformat(),
             "window": {"first_day": "2026-09-14", "last_day": DAY.isoformat(), "weeks": 8, "week_start": "x"},
-            "workflows": {"t9": {"by_week_channel": t9, "unattributed_cost_usd": {},
+            "workflows": {"t9": {"by_week_channel": t9, "unattributed_cost_usd": {"2026-11-02": 0.2},
                                  "gate_fails": [{"week": "2026-11-02", "channel": "blog", "attempt": 1,
                                                  "gate": funnel.F9_JUDGE_CLASS, "blocking": True, "fires": 2,
                                                  "pieces": 2}],
@@ -183,7 +206,7 @@ def _snap(watch_rows=()):
                           "s1": {"by_week": [], "gate_fails": []}, "t2": {"by_week": [], "gate_fails": None}},
             "stages": [], "thresholds": funnel.THRESHOLDS, "unavailable": {"t2_objects": "UndefinedTableError: x"},
             "watch": funnel.summarize_watch(list(watch_rows), {}, recent=REC, end=END),
-            "totals": funnel.totals(t9, [], [], last_week="2026-11-02")}
+            "totals": funnel.totals(t9, [], [], last_week="2026-11-02", t9_unattributed={"2026-11-02": 0.2})}
 
 
 def test_cis08_is_registered_daily_and_rendered_here():
@@ -199,6 +222,8 @@ def test_build_stores_the_snapshot_with_its_findings():
     assert out.output["report_id"] == "CIS-08" and out.output["day"] == DAY.isoformat()
     assert [f["check"] for f in out.output["watch"]["findings"]] == ["qf_cut.t9_write"]
     assert out.summary.startswith("T9 2 delivered of 3 created") and "1 watchdog alert" in out.summary
+    assert "0.3000 USD per delivered" in out.summary          # (0.4 attributed + 0.2 unattributed) / 2
+    assert "Attributed USD / delivered" in out.markdown and "| 2026-11-02 | 0.2000 USD |" in out.markdown
     assert "## T9 failing gates, every attempt (blocking)" in out.markdown
     assert funnel.F9_JUDGE_CLASS in out.markdown and "Sources not readable here" in out.markdown
     json.dumps(out.output)       # JSON-safe as stored

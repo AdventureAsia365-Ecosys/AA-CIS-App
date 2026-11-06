@@ -1277,8 +1277,11 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     of `services/quality/funnel.py` per workflow and ISO week (ICT) over 8 weeks — T9 per channel
     (`acp_shared.content_piece`), S1 (`silver_aa_internal.generated_content` + `quality_scores` + `published_tours`),
     T2 (`gold_aa_internal.tenant_tour_versions`, AI edits only): created, delivered (T9/T2: approved + held, the
-    agency receives both; S1: published to the Master), held, failed, first-pass yield, attempts and LLM USD per
-    delivered object; every failing T9 gate of every attempt (final ledger + `discarded_attempts`), with
+    agency receives both; S1: ever published — approved / published, or a `published_tours` row points at it, so a
+    draft a later rewrite superseded stays delivered in its week), held, failed, first-pass yield (S1: no retry, no
+    fix pass, no human edit / reviewer / `review_queue` row), attempts (S1: + 1 for the fix pass) and LLM USD per
+    delivered object (the whole stage cost of the workflow; T9 per channel is the attributed part, the totals add
+    `unattributed_cost_usd`); every failing T9 gate of every attempt (final ledger + `discarded_attempts`), with
     `F9_cta_fact` split into `.judge_unavailable` / `.text_integrity` / claims; S1 failure and brand codes per
     evaluation; per stage of `shared.llm_call_log` (production rows, `route_watch.LEDGER_FILTER`): rung share,
     fallback share, cut rate (`route_watch.CUT_ROW`), refused / error rows, cost. The run's `output` IS the snapshot;

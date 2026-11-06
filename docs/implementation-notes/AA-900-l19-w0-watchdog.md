@@ -24,11 +24,21 @@ Root ADR 0020 "Measurement" layer; audit 2026-11-06-S271 writing-quality-audit, 
   llm_route_policy default); served-model drift ≥ 10 % of answers from a model that served < 1 % the 7 days before,
   ≥ 20 rows in both windows.
 - **Definitions.** T9 delivered = approved + held (the agency receives held pieces; the label is admin-only, S270);
-  S1 delivered = a `published_tours` row points at the draft, `hitl` is held and NOT delivered; T2 delivered = a
-  written AI version, held = `qa_status` escalated. First-pass yield = clean on attempt 1 / finished. Attempts: T9 =
-  highest attempt reached (final or discarded), S1 = retry_count + 1, T2 = qa_repair_count + 1 (T3 counts rounds
-  from 0). LLM USD per delivered = workflow stage cost of the week / delivered; T9 per channel through ledger rows
-  that carry the piece id or (no piece id) its angle-gate request; the rest is reported as `unattributed_cost_usd`.
+  S1 delivered = ever published (status approved / published, or a `published_tours` row points at the draft),
+  `hitl` is held and NOT delivered; T2 delivered = a written AI version, held = `qa_status` escalated. First-pass
+  yield = clean on attempt 1 / finished. Attempts: T9 = highest attempt reached (final or discarded), S1 =
+  retry_count + 1 (+ 1 when the fix pass ran), T2 = qa_repair_count + 1 (T3 counts rounds from 0). LLM USD per
+  delivered = the workflow's whole stage cost of the week / delivered, for all three workflows; T9 per channel can
+  only use ledger rows that carry the piece id or (no piece id) its angle-gate request, so the per-channel figure
+  is the attributed part, and the T9 totals add `unattributed_cost_usd` (`attributed_*` fields keep the split).
+- **Review fix pass (S271).** (1) S1 first pass also excludes a draft the fix pass repaired (`fix_pass_applied`:
+  flag_fix rewrites the flagged fields without raising `retry_count`) and any human touch (`human_edited`,
+  `reviewed_by` / `reviewed_by_legacy`, or a `review_queue` row: a hitl draft a reviewer approved keeps retry 0).
+  (2) S1 delivered was "published_tours points at it now"; `published_tours` is one row per tour and the next
+  rewrite repoints it, so older weeks lost delivered drafts on every nightly recompute. process_export only
+  publishes an `approved` draft and never moves it on, so "approved / published or pointed at" is "ever
+  published". (3) The T9 headline used only the attributed cost (0.04 against a real 0.12 in the baseline week);
+  it now uses the whole T9 stage cost, like S1 and T2.
 - **Every failing gate per attempt (F15):** T9 reads the final `gate_ledger` and each `discarded_attempts[].gate_ledger`;
   `F9_cta_fact` is split into `.judge_unavailable` (degraded marker or "judge unavailable" violation), `.text_integrity`
   (TEXT_INTEGRITY violations) and the claims. The first-gate count (`held_reason` prefix) is kept for comparison.
@@ -54,6 +64,10 @@ Root ADR 0020 "Measurement" layer; audit 2026-11-06-S271 writing-quality-audit, 
 - Snapshot size: 8 weeks × channels × gates; a few hundred kB at most on Dev volumes, stored once a day.
 
 ## Should know
+
+- S1 "delivered" counts an `approved` draft whose export then failed with an unexpected error (no Master row) as
+  delivered; a refused export (dead source) moves it to `hitl`, so only a crash mid-export is miscounted (the S248
+  probe already reports an approved draft with no Master).
 
 - CI Postgres has no pgvector: `content_piece.channel` and `tenant_tour_versions` are missing from the replay; the
   integration test adds them inside its rolled-back transaction. On a DB without them, `compute()` lists the part
