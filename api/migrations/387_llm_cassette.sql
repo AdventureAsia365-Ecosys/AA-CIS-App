@@ -30,9 +30,11 @@
 --      No foreign key (the ledger and the owning tables are pruned on their own windows).
 --   2. Indexes for the read helpers (route_trace, request_sha256) and for the prune / erasure paths (created_at,
 --      tenant_id, job_id, content_piece_id, tour_id, eval_run).
---   3. GRANT cis_app SELECT, INSERT, DELETE (the gateway writes as cis_app, the replay helpers read; the tenant
---      erasure job, AA-839 services/erasure/inventory.py action delete, and the future TTL job kind delete as the
---      runtime role). No UPDATE: a row is never changed.
+--   3. Grants: REVOKE ALL from PUBLIC, cis_app, aa_app_user and catalog_owner first (the 321 / 345 / 370 pattern:
+--      Migration Apply creates the table as cis_owner, whose default privileges in shared (CIS 245) give cis_app
+--      SELECT, INSERT, UPDATE, DELETE on every new table), then GRANT cis_app SELECT, INSERT, DELETE (the gateway
+--      writes as cis_app, the replay helpers read; the tenant erasure job, AA-839 services/erasure/inventory.py
+--      action delete, and the future TTL job kind delete as the runtime role). No UPDATE: a row is never changed.
 --   4. Register 387.
 --
 -- PII (DM-6.1, DM-6.4). reply_text may hold tenant content (an agency's tour text) and is tagged pii:free_text;
@@ -172,6 +174,9 @@ COMMENT ON COLUMN shared.llm_cassette.reply_withheld IS
 COMMENT ON COLUMN shared.llm_cassette.tenant_id IS
     'AA-900 (387): the tenant whose content the call served (the bound job tenant), attribution and erasure key.';
 
+-- Narrow cis_owner's default privileges (CIS 245) before the grant: without the REVOKE cis_app could UPDATE a reply.
+REVOKE ALL ON shared.llm_cassette FROM PUBLIC;
+REVOKE ALL ON shared.llm_cassette FROM cis_app, aa_app_user, catalog_owner;   -- cis_owner's default privileges (CIS 245)
 GRANT SELECT, INSERT, DELETE ON shared.llm_cassette TO cis_app;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)

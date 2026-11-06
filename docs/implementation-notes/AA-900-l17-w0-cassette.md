@@ -46,6 +46,10 @@ Two PRs, MIG-4 (the migration is contract):
   entry, so the file is contract (the expand classify refuses a new tenant_id table without RLS). No FK anywhere.
 - **Grants: cis_app SELECT, INSERT, DELETE, no UPDATE.** DELETE because the AA-839 tenant erasure (action `delete` in
   `services/erasure/inventory.py`) and a future TTL job run as the runtime role (plan.py refuses an apply without it).
+  The file REVOKEs ALL from PUBLIC, cis_app, aa_app_user and catalog_owner before the GRANT (the 321 / 345 / 370
+  pattern): Migration Apply creates the table as cis_owner, whose default privileges in `shared` (CIS 245) would
+  otherwise give cis_app UPDATE too. CI creates it as the test superuser, so `test_387_narrows_the_dev_default_privileges`
+  simulates those grants and re-runs the file (review fix, S271).
 - **Best-effort write** on call_log's `_in_background` (a non-daemon thread with its own loop and a short-lived
   connection, the same path as the gateway's failure rows). Never raises; `cassette.stats()` counts recorded /
   written / write_failed / missing_table / build_failed. Before 387 is applied: UndefinedTable sets a 5-minute skip.

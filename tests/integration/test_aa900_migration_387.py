@@ -2,7 +2,8 @@
 
 The table and its CHECKs (256 KiB reply cap at a byte count, withheld = no text, sha shapes), the pii:free_text tag
 on reply_text, cis_app's grants (SELECT, INSERT and DELETE for the erasure; never UPDATE), the registration;
-re-applying the file is a no-op. The recorder that writes it: test_aa900_cassette_db.py (code PR).
+re-applying the file is a no-op, and it narrows the grants cis_owner's default privileges hand out on Dev (CIS 245; CI
+creates the table as the test superuser, so they never apply here unless simulated). The recorder that writes it: test_aa900_cassette_db.py (code PR).
 
 Invented values only; every row of this module has stage adhoc_aa900_mig387 and is deleted at the end.
 """
@@ -64,3 +65,32 @@ async def test_387_table_checks_tag_and_grants(conn):
     await conn.execute(base, STAGE, None, "pii_stage")
     with open(MIGRATION, encoding="utf-8") as f:
         await conn.execute(f.read())          # re-apply: no-op
+
+
+@pytest.mark.asyncio
+async def test_387_narrows_the_dev_default_privileges(conn):
+    """On Dev Migration Apply creates the table as cis_owner, whose default privileges in shared (CIS 245) give cis_app
+    SELECT, INSERT, UPDATE, DELETE on every new table. Simulate them (and a PUBLIC / tenant pool grant), re-run the
+    file inside a rolled-back transaction: cis_app keeps SELECT, INSERT, DELETE only; the others keep nothing."""
+    n = await conn.fetchval("SELECT count(*) AS n FROM pg_roles WHERE rolname IN ('cis_app', 'aa_app_user', "
+                            "'catalog_owner')")
+    if n != 3:
+        pytest.skip("the runtime roles are not in this database")
+    with open(MIGRATION, encoding="utf-8") as f:
+        body = f.read().replace("BEGIN;", "").replace("COMMIT;", "")
+    tr = conn.transaction()
+    await tr.start()
+    try:
+        await conn.execute("GRANT ALL ON shared.llm_cassette TO cis_app, aa_app_user, catalog_owner, PUBLIC")
+        await conn.execute(body)
+        for priv, want in (("SELECT", True), ("INSERT", True), ("DELETE", True), ("UPDATE", False),
+                           ("TRUNCATE", False), ("REFERENCES", False), ("TRIGGER", False)):
+            got = await conn.fetchval("SELECT has_table_privilege('cis_app', 'shared.llm_cassette', $1) AS ok", priv)
+            assert got is want, priv
+        for role in ("aa_app_user", "catalog_owner", "public"):
+            for priv in ("SELECT", "INSERT", "UPDATE", "DELETE"):
+                got = await conn.fetchval("SELECT has_table_privilege($1, 'shared.llm_cassette', $2) AS ok",
+                                          role, priv)
+                assert got is False, (role, priv)
+    finally:
+        await tr.rollback()
