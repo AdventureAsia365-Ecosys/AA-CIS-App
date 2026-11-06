@@ -73,6 +73,53 @@ def test_a_long_refused_model_reopens_for_six_hours():
     assert h2.circuit_open_until - at == timedelta(hours=6) and h2.opened_at == h.opened_at
 
 
+def test_only_a_known_refusal_gets_the_six_hour_cap():
+    old = T0 - timedelta(days=8)
+    luna = _denied("gpt-6-luna", old, open_s=60)
+    assert breaker.failure_rules(luna, [luna, _ok("sonnet-4-6", T0 - timedelta(hours=1))]) is RULES   # known
+    assert breaker.failure_rules(luna, [luna]) is breaker.ACCOUNT_DENIED_RULES       # nothing answered: maybe the account
+    assert breaker.failure_rules(luna, [luna, _ok("sonnet-4-6", old - timedelta(hours=1))]) is \
+        breaker.ACCOUNT_DENIED_RULES                                                  # answered before the streak only
+    assert breaker.failure_rules(None, []) is breaker.ACCOUNT_DENIED_RULES
+    assert breaker.ACCOUNT_DENIED_RULES[ACCESS_DENIED].max_open_s == breaker.ACCOUNT_DENIED_MAX_OPEN_S == 1800
+    assert {k: v for k, v in breaker.ACCOUNT_DENIED_RULES.items() if k != ACCESS_DENIED} == \
+        {k: v for k, v in RULES.items() if k != ACCESS_DENIED}
+
+
+@pytest.mark.real_breaker
+def test_a_known_refusal_reopens_for_six_hours_through_record_failure(clock, no_alerts):
+    luna = _denied("gpt-6-luna", T0 - timedelta(days=8), open_s=8 * 86400 - 60)      # half-open since a minute
+    _load(luna, _ok("sonnet-4-6", T0 - timedelta(hours=1)))
+    assert breaker.admit("acc3", "gpt-6-luna")                                     # the one real-traffic probe
+    breaker.record_failure("acc3", "gpt-6-luna", ERROR_002)
+    h = breaker._get(("acc3", "gpt-6-luna"))
+    assert h.circuit_open_until - T0 == timedelta(hours=6) and h.opened_at == luna.opened_at
+
+
+@pytest.mark.real_breaker
+def test_an_account_wide_refusal_stays_capped_at_thirty_minutes(clock, no_alerts):
+    """Error 002 on every model for days, nothing answered since: each failed probe reopens for 30 min at most, so the
+    connection circuit half-opens within 30 min and real traffic finds a recovered account by itself."""
+    start = T0 - timedelta(days=2)
+    models = ("gpt-6-luna", "sonnet-5-5", "haiku-4-5")
+    _load(*[_denied(m, start, open_s=2 * 86400 - 60) for m in models],               # every row half-open
+          _ok("sonnet-4-6", start - timedelta(hours=1)))                             # last answer before the outage
+    assert breaker.admit("acc3", "gpt-6-luna")                                       # a real call probes, refused
+    breaker.record_failure("acc3", "gpt-6-luna", ERROR_002)
+    assert breaker._get(("acc3", "gpt-6-luna")).circuit_open_until - T0 == timedelta(minutes=30)   # not 6 h
+    assert not breaker.known_refusal("acc3", "gpt-6-luna")
+    assert breaker.connection_open("acc3") == ACCESS_DENIED                          # the account is refusing
+    assert not breaker.admit("acc3", "sonnet-5-5")                                   # every real call turned away
+    assert breaker.connection_snapshot("acc3").circuit_open_until - T0 == timedelta(minutes=30)
+    clock["now"] = T0 + timedelta(minutes=30, seconds=1)
+    assert breaker.connection_open("acc3") is None                                   # half-open within 30 min
+    assert breaker.admit("acc3", "gpt-6-luna")                                       # one real call probes it
+    breaker.record_success("acc3", "gpt-6-luna")                                     # AWS fixed the account
+    assert not breaker.is_open("acc3", "gpt-6-luna")
+    for m in ("sonnet-5-5", "haiku-4-5"):                                            # re-probed at once
+        assert state_of(breaker._get(("acc3", m)), clock["now"]) == HALF_OPEN
+
+
 # ── Part A: recovery paths ──────────────────────────────────────────────────────────────────────────────────────────
 
 @pytest.mark.real_breaker

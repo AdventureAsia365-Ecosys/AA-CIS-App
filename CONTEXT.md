@@ -399,22 +399,29 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
 - **Refusal noise: known no-access models** (AA-900, S271 lane l11, no migration). The ledger rule stays: every real
   provider call has one `shared.llm_call_log` row, refused included. What changes is how often a model with no grant
   is called and how its refusals are counted:
-  - **Open period.** `breaker.RULES[access_denied]` doubles from 5 min up to **6 h** (`ACCESS_DENIED_MAX_OPEN_S`, was
+  - **Open period.** The access_denied period of a **known refusal** (another model of the connection answered after
+    this model's streak began) doubles from 5 min up to **6 h** (`breaker.RULES`, `ACCESS_DENIED_MAX_OPEN_S`, was
     30 min): a fresh refusal still costs minutes (5, 10, 20, 40 min, ...), a model refused for ~10 h is re-probed by
-    real traffic at most every 6 h. quota_exhausted / credential / throttled / other are unchanged, and the non-LLM
+    real traffic at most every 6 h. Any other access_denied (nothing on the connection answered since the streak
+    began: the account itself may be refusing) keeps the 30 min cap (`breaker.ACCOUNT_DENIED_RULES`); the choice is
+    made per failure on the locked row (`breaker.failure_rules`). quota_exhausted / credential / throttled / other are unchanged, and the non-LLM
     provider circuits (`shared/provider_circuit.py`) keep a 30 min access_denied cap (`breaker.PROVIDER_RULES`).
   - **How long until traffic returns to acc3 after AWS grants a model**: at the latest the next of (a) the daily
     `llm_connection_probe` (05:00 UTC, `LLM_DAILY_PROBE=on`), (b) an admin Test connection of that model, (c) the end
-    of its open period (at most 6 h), then one real call probes it. (a) and (b) go through `LLMClient.probe` =
+    of its open period (at most 6 h for a known refusal), then one real call probes it. (a) and (b) go through `LLMClient.probe` =
     `breaker.guarded(admit_call=False)`: an open circuit is not in their way and their success closes it (the
     10 s health snapshot of the other tasks then picks it up). **To force it**: AI gateway › Providers › Connections ›
     the connection › Test connection with that model (`POST /admin/llm-connections/{key}/test`
     `{"model_key": ...}`), or a live run of `POST /admin/job-runner/llm-probe/run` (every enabled deployment).
-  - **Account recovery.** When any model of a connection answers, the OPEN circuits of an account-wide class whose
-    refusal began after the connection's previous answer (refusals the account itself may have caused: Error 002,
-    a lapsed credit) turn half-open at once (`breaker._reprobe_after_account_recovery`, streak kept), so an account
-    that comes back is not held by 6 h periods. A model refused since before another one answered (a **known
-    refusal**, `breaker.known_refusal`) keeps its period.
+  - **Account recovery.** While a whole account refuses (Error 002, an IAM block: every model access_denied and
+    nothing answering), no row is a known refusal, so every reopening is capped at 30 min and the connection circuit
+    (OPEN until the newest open period of its member rows ends; `admit` turns every real call away meanwhile)
+    half-opens within 30 min of its last failed probe: after AWS fixes the account, real traffic finds it within
+    30 min by itself, sooner through the daily probe or a Test connection. When any model of a connection answers,
+    the OPEN circuits of an account-wide class whose refusal began after the connection's previous answer (refusals
+    the account itself may have caused: Error 002, a lapsed credit) turn half-open at once
+    (`breaker._reprobe_after_account_recovery`, streak kept). A model refused since before another one answered (a
+    **known refusal**, `breaker.known_refusal`) keeps its period (up to 6 h).
   - **Logs.** A known refusal's reopening (`llm_circuit_opened`), its failed deployment attempt
     (`llm_deployment_attempt_failed`) and a route rung refused only for that reason (`llm_route_attempt_failed`) log
     at info with `known_refusal=true`, not as warnings. `llm_deployment_skip` is logged once per (model, connection,

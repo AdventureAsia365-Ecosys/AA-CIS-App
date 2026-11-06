@@ -55,9 +55,13 @@ catalog, so no ``"*"`` row can be written (a later migration may persist it). On
 ``record_failure`` calls ``on_connection_open``: one admin bell (``shared.notifications``, ``llm_circuit_open``, at
 most one unread per connection per 24 h) and the ops alert e-mail (``ops_alerts.enqueue_llm_circuit_email``).
 
-AA-900 (S271 lane l11) — fewer refused probes of a model with no grant. ``access_denied`` now doubles up to 6 h
+AA-900 (S271 lane l11) — fewer refused probes of a model with no grant. ``access_denied`` of a known refusal (one
+model refused since before another model of its connection answered: ``known_refusal``) now doubles up to 6 h
 (``ACCESS_DENIED_MAX_OPEN_S``), so a model the account is not granted is re-probed by real traffic at most four times a
-day once its streak is long. Two paths keep a grant from waiting that long: the daily connection probe and the admin's
+day once its streak is long. Any other access_denied (nothing on the connection answered since the streak began: the
+account itself may be refusing, Error 002 / IAM) keeps the 30 min cap (``ACCOUNT_DENIED_RULES``, chosen per failure by
+``failure_rules``), so the connection circuit it trips half-opens within 30 min and real traffic finds a recovered
+account by itself. Two paths keep a grant from waiting that long: the daily connection probe and the admin's
 Test connection bypass the circuit and close it on success; and when any model of a connection answers, the OPEN
 circuits whose refusal began after the connection's previous answer (the ones the account itself may have caused) turn
 half-open at once (``_reprobe_after_account_recovery``). A refusal of one model since before another answered is a
@@ -130,7 +134,8 @@ class Rule:
 
 
 # Short open periods on purpose (blueprint S4 risk: "a breaker opened by mistake → half-open 1 request, short open").
-# AA-900 (S271 lane l11): access_denied doubles up to 6 h, was 30 min. A model the account may not call (acc3 refusing
+# AA-900 (S271 lane l11): access_denied of a known refusal doubles up to 6 h, was 30 min (``failure_rules``; any
+# other access_denied keeps 30 min, ``ACCOUNT_DENIED_RULES`` below). A model the account may not call (acc3 refusing
 # seven models since 29/10 until AWS grants them) is a human event, not a blip: every half-open probe of such a model is
 # a refused real call (a ledger row, a warning) and at 30 min that was 10-20 a day. The first periods stay short (5,
 # 10, 20 min, ...), so a transient refusal (an IAM change during a deploy, an STS hiccup) still costs minutes; only a
@@ -146,9 +151,16 @@ RULES: dict[str, Rule] = {
     THROTTLED: Rule(threshold=3, open_s=30, max_open_s=300),            # rate limit: back off, then probe
     OTHER: Rule(threshold=5, open_s=60, max_open_s=600),                # outage, timeout, 5xx
 }
+# The 30 min access_denied cap (the cap before AA-900) for a refusal that is not known (``failure_rules``): while no
+# model of the connection has answered since the streak began, the account itself may be refusing (Error 002, an IAM
+# block). The connection circuit stays OPEN until the newest open period of its member rows ends and ``admit`` turns
+# every real call away meanwhile, so a 6 h period here would hold a recovered account off real traffic for up to 6 h.
+ACCOUNT_DENIED_MAX_OPEN_S = 1800
+ACCOUNT_DENIED_RULES: dict[str, Rule] = {
+    **RULES, ACCESS_DENIED: Rule(threshold=1, open_s=300, max_open_s=ACCOUNT_DENIED_MAX_OPEN_S)}
 # The non-LLM provider circuits (shared/provider_circuit.py: Jev, DataForSEO, Geoapify) keep the 30 min access_denied
-# cap: a 401 / 403 there is a key or plan problem with no daily probe of its own behind the circuit.
-PROVIDER_RULES: dict[str, Rule] = {**RULES, ACCESS_DENIED: Rule(threshold=1, open_s=300, max_open_s=1800)}
+# cap too: a 401 / 403 there is a key or plan problem with no daily probe of its own behind the circuit.
+PROVIDER_RULES: dict[str, Rule] = ACCOUNT_DENIED_RULES
 PROBE_LEASE_S = 180.0       # how long a half-open probe holds its lease (a probe that hangs longer frees it)
 ERROR_CHARS = 300
 READ_TTL_S = 10.0           # the snapshot of the table every task re-reads
@@ -578,8 +590,11 @@ def record_failure(connection_key: str, model_key: str, exc: BaseException) -> N
             return
         message = f"{type(exc).__name__}: {exc}"
         now_fn = _now
+        rows = _rows_of(connection_key)
+        # AA-900: the 6 h access_denied cap only for a known refusal, judged on the locked row before this failure.
         before, after = _transition((connection_key, model_key),
-                                    lambda cur: after_failure(cur, cls, message, now_fn(), keep_streak_start=True))
+                                    lambda cur: after_failure(cur, cls, message, now_fn(), keep_streak_start=True,
+                                                              rules=failure_rules(cur, rows)))
         opened = after is not None and after.opened_at is not None
         if opened and (before is None or before.opened_at != after.opened_at
                        or before.open_streak != after.open_streak):
@@ -787,6 +802,15 @@ def _known(h: Optional[Health], rows: Iterable[Health]) -> bool:
         return False
     last_ok = _connection_last_ok(rows, h.connection_key, without=h.model_key)
     return last_ok is not None and h.opened_at < last_ok
+
+
+def failure_rules(h: Optional[Health], rows: Iterable[Health]) -> dict[str, Rule]:
+    """The class rules for the next failure of deployment row ``h`` (before that failure): ``RULES`` (access_denied up
+    to 6 h) when ``h`` is a known refusal (``_known``: another model of the connection answered after its streak began,
+    so the account works and only this model has no grant), else ``ACCOUNT_DENIED_RULES`` (30 min cap: the refusal may
+    be the whole account's, and the connection circuit must half-open soon enough for real traffic to find a recovered
+    account). Pure."""
+    return RULES if _known(h, rows) else ACCOUNT_DENIED_RULES
 
 
 def known_refusal(connection_key: str, model_key: str) -> bool:

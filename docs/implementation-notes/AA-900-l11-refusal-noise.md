@@ -14,6 +14,14 @@ Three PRs, in merge order: CIS migration 382 (migration-only, contract), the CIS
   an STS hiccup) cheap. Doubling 300 → 600 → … reaches the cap after about seven failed probes (~10 h of refusals).
   A model refused for weeks already has a long streak, so it moves to 6 h at its next failed probe. Real-traffic
   probes per known-denied model: at most 4 a day (was up to 48).
+- **The 6 h cap is for a known refusal only** (review fix, `breaker.failure_rules`). An account-wide refusal (Error
+  002, an IAM block) is classed access_denied too. With 6 h for every access_denied row, an outage of ~10 h or more
+  would put every row at a 6 h period; the connection circuit stays OPEN until the newest member period ends and
+  `admit` turns every real call away, so no real call could answer and trigger the account-recovery re-probe: a
+  recovered acc3 would stay off real traffic for up to 6 h (paid fallbacks or failed jobs meanwhile). Rule now, judged
+  on the locked row before each failure: another model of the connection answered after this row's streak began
+  (`_known`) → `RULES` (6 h); otherwise → `ACCOUNT_DENIED_RULES` (30 min, the cap before AA-900). So the connection
+  circuit half-opens within 30 min of its last failed probe, as before this change.
 - **The daily probe and Test connection stay the fast path for a grant.** Both go through `LLMClient.probe` →
   `breaker.guarded(admit_call=False)`: they bypass an open circuit, and their success closes it. Verified by tests
   (`test_the_probe_reaches_an_open_circuit_and_its_success_closes_it`); no change was needed there.
@@ -24,7 +32,7 @@ Three PRs, in merge order: CIS migration 382 (migration-only, contract), the CIS
   become half-open (streak and `opened_at` kept). The known refusals (refused since before another model answered —
   the same AA-1026 rule the connection circuit uses) are not touched. A fresh single-model refusal costs at most one
   extra probe (after it fails again it is a known refusal).
-- **Non-LLM provider circuits keep 30 min** (`breaker.PROVIDER_RULES`): Jev / DataForSEO / Geoapify share the LLM
+- **Non-LLM provider circuits keep 30 min** (`breaker.PROVIDER_RULES`, the same rule set as `ACCOUNT_DENIED_RULES`): Jev / DataForSEO / Geoapify share the LLM
   breaker's pure transitions; a 401 / 403 there has no daily probe behind the circuit, so the cap stays.
 - **Expected refusal (display) = probe state, not breaker state.** `shared/llm_client/expected_refusal.py`: refused +
   access_denied + the deployment's `access_state = access_denied` + the connection's `access_state = ok`. The
@@ -45,7 +53,8 @@ Three PRs, in merge order: CIS migration 382 (migration-only, contract), the CIS
 
 ## Changed
 
-- `shared/llm_client/breaker.py`: RULES access_denied cap, `PROVIDER_RULES`, `rules=` on `after_failure` /
+- `shared/llm_client/breaker.py`: RULES access_denied cap, `ACCOUNT_DENIED_RULES` + `failure_rules` (6 h only for a
+  known refusal), `PROVIDER_RULES` (= `ACCOUNT_DENIED_RULES`), `rules=` on `after_failure` /
   `open_seconds`, `known_refusal`, `known_model_refusal`, `recovery_candidates`, the re-probe in `record_success`,
   info-level reopening of a known refusal.
 - `shared/provider_circuit.py`: passes `PROVIDER_RULES`.
