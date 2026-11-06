@@ -53,7 +53,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   API Gateway. Postgres (RDS) holds the schemas; some steps use Bedrock for LLM work.
 - **Frontend**: one Next.js app here, `frontend/` = the **Admin** console (`app/admin/*`), Vercel `aa-cis-frontend`,
   `https://aa-cis.lumiguides.it.com`, workflow `Vercel Deploy` (job "Vercel deploy"; CI, not one of the required
-  checks — see Deploy & CI).
+  checks — see Deploy & CI). AA-911 (root ADR 0019 d23): the same app also runs on ECS as the `cis-admin` container
+  of the staff web task `aa-staff-dev-web` (with the Booking admin; workflow `Deploy Admin Dev`); the host moves from
+  Vercel to the ALB at the cut-over (root runbook `docs/ops/runbooks/staff-web-ecs-cutover.md`).
   - The **Tenant portal** (Content studio, `https://portal.lumiguides.it.com`) is NOT in this repo: it split off the
     admin as its own app in AA-885 (S243), moved to `AdventureAsia365-Ecosys/AA-Partner/portal` with its history
     in AA-979 (CRM-P2a), runs on Fargate behind CloudFront since the P2b cutover (27/10/2026), and the frozen copy
@@ -1642,6 +1644,15 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   production (production only from `main`). Needs the repo secret `VERCEL_TOKEN` (team-scoped);
   without it the job fails red on every target (nothing else deploys the frontend). A PR
   that touches no frontend file gets no preview. The check to look at is "Vercel deploy".
+- **Frontend (ECS, AA-911, root ADR 0019 d23)**: `.github/workflows/deploy-admin-dev.yml` builds
+  `frontend/Dockerfile` (Next standalone, `NEXT_OUTPUT=standalone`; Vercel builds are unchanged) on an arm64 runner,
+  pushes `aa-cis-dev-admin:dev-<sha>` (IMMUTABLE), copies the latest revision of `aa-staff-dev-web` with only the
+  `cis-admin` container's image swapped, rolls the service and checks `https://aa-cis.lumiguides.it.com/api/healthz`
+  answers this commit from ECS (resolved to the ALB on the runner before the cut-over, `vars.STAFF_WEB_ALB_DNS`). The
+  task's other container is the Booking admin (AA-Booking deploys it). A PR touching the Dockerfile runs the image
+  build only ("Admin Docker Build Check"). Behind the ALB the standalone server's `request.url` / `nextUrl` name its
+  bind address (`https://0.0.0.0:3000`), so redirects use a relative Location (`lib/redirect.ts`) and the same-origin
+  check takes the public origin from `Host` when `X-Forwarded-Proto` is https (`lib/sameOrigin.ts requestOrigin`).
 - **Portal**: no workflow here deploys, builds or tests the portal. It deploys from AA-Partner (`deploy-portal-dev.yml`,
   ECS `aa-crm-dev-portal` behind CloudFront since the P2b cutover); its Vercel project was deleted at the P2b
   clean-up (AA-979, runbook §4.5).
