@@ -57,8 +57,11 @@ hold. A merged CIS PR cost about 2.3 PR runs + 1 queue run + 1 main run of CI = 
   pass); full history stays nightly and on dispatch, and runs for a push whose range cannot be used (new branch,
   force-push, unknown before). Push runs get their own concurrency group and are never cancelled (an incremental
   run that is cancelled would leave its range unscanned).
-- **Infra Migration Copy Guard:** 5 jobs -> 3. The scope and the retention rows are steps of `guard` ("Copies match
-  owner main"); lint and classify need `guard`. Required check names unchanged.
+- **Infra Migration Copy Guard:** 5 jobs -> 4. The scope is a step of `guard` ("Copies match owner main"); lint,
+  retention-rows and classify need `guard`. Required check names unchanged. The DM-7.1 retention rows stay their own
+  non-required job (review S271): folding them into `guard` made a root-repo registry gap block the required check
+  and with it the copy bot's merge check (`db/migration_sync.py merge-check` reads only ruleset contexts), a gating
+  change outside a CI-minutes PR. Guarded by `test_retention_rows_stay_out_of_the_required_check`.
 
 ## Changed (vs the lane brief)
 
@@ -75,9 +78,9 @@ hold. A merged CIS PR cost about 2.3 PR runs + 1 queue run + 1 main run of CI = 
 - Frontend PRs lose the per-PR visual screenshots and PR comment; the queue run keeps the screenshots as an artifact
   (`visual-cis-pr-<run id>`), and the deployed visual run after the production deploy is unchanged.
 - Docs-only PRs can break a docs-reading unit test unseen until the queue (rare; caught before main).
-- Lint and classify in the Infra copy guard start ~30 s later (after `guard`).
-- Infra: the retention rows are now part of the required check "Copies match owner main" (stricter: the copy bot's
-  merge check reads only ruleset contexts, so a missing DM-7.1 row now blocks the bot's auto-merge too).
+- Lint, retention-rows and classify in the Infra copy guard start ~30 s later (after `guard`).
+- Infra: keeping retention-rows as its own job costs one short job on migration-path PRs (4 jobs, not 3); the
+  required-check gating stays exactly as before.
 
 ## Estimate after (billed minutes)
 
@@ -86,7 +89,7 @@ hold. A merged CIS PR cost about 2.3 PR runs + 1 queue run + 1 main run of CI = 
 | CIS | 34.6 -> ~19 (backend), ~21 (frontend), ~5 (docs) | ~147 -> ~79 | ~3,500 -> ~1,900 (-46%) |
 | Partner | 19.9 -> ~7-9 | ~91 -> ~40 | ~1,720 -> ~770 (-55%) |
 | Booking | 11.9 -> ~5-7 | ~50 -> ~25 | ~1,070 -> ~540 (-50%) |
-| Infra copy guard + history | 4.8 -> ~3.5; 2.5 -> 1 | | ~275 -> ~165 (-40%) |
+| Infra copy guard + history | 4.8 -> ~4; 2.5 -> 1 | | ~275 -> ~185 (-33%) |
 | Root history scan | 9.1 -> 1 per push | | 516 -> ~60 (-88%; root total 750 -> ~290) |
 
 Across the five repos' CI workflows: ~7,300 -> ~3,650 billed minutes in two days (about -50%). CIS stays at -46%
