@@ -30,10 +30,11 @@ then ``DEFAULTS`` fill a missing value):
 - ``route_cost.<stage>`` — over ``COST_WINDOW`` the fallback-answered requests cost at least ``cost_shift_usd`` more
   than the same number of primary answers would have (the stage's primary average over ``BASELINE_WINDOW``, from at
   least ``BASELINE_MIN`` rows). Bell at most daily.
-- ``route_cut.<stage>`` — S271: more than ``CUT_ALERT_PCT`` % of the stage's billed replies of the last ``COST_WINDOW``
-  were cut at their token ceiling (status truncated, or billed unusable with a cut stop reason; the gateway's own cut
-  rows included), with at least ``min_requests`` billed replies. The probe stages of ``token_floor.NO_RETRY_STAGES``
-  are left out (a cut is their expected answer). Bell at most daily.
+- ``route_cut.<stage>`` — S271: more than ``CUT_ALERT_PCT`` % of the stage's replies of the last ``COST_WINDOW`` were
+  cut at their token ceiling (status truncated, or billed unusable with a cut stop reason; the gateway's own cut rows
+  and the provider's refused cuts included), with at least ``min_requests`` replies. Eval rows count under their real
+  stage (unlike the other checks); shadow rows and the probe stages of ``token_floor.NO_RETRY_STAGES`` are left out
+  (a cut is a probe's expected answer). Bell at most daily.
 - ``route_digest`` — the daily digest (job mode ``digest``): per stage over the last 24 h, the answered requests, the
   fallback share, requests with no answer logged and the extra cost; raised only when one stage used a fallback or
   lost requests (the job result always keeps the digest).
@@ -151,21 +152,28 @@ STATS_SQL = f"""
       FROM rows r LEFT JOIN lost l ON l.stage = r.stage
      GROUP BY r.stage
 """
-# S271: per stage since $1, the billed replies (a row with output tokens or a cost: answered, cut or billed unusable)
-# and those cut at their token ceiling. $2 = the cut stop reasons, $3 = the stages left out (probes).
+# S271: per stage since $1, the replies (a billed row: answered, cut or billed unusable; or a refused cut: the provider
+# refused to return a reply cut at its ceiling, status truncated, nothing billed) and those cut at their token
+# ceiling. $2 = the cut stop reasons, $3 = the stages left out (probes).
+# Review S271: its own filter, not LEDGER_FILTER. Eval rows (is_experiment, an R2 / targeted-shadow run) are kept: they
+# drive the real stage paths with the real ceilings (the R2 judge cuts that motivated S271 were all eval rows), and
+# count under their real stage (quality_signal.real_stage, call_log._relabel). Shadow and Jev rows stay out.
 CUT_ALERT_PCT = 5.0
+CUT_STAGE_EXPR = "coalesce(nullif(quality_signal ->> 'real_stage', ''), stage)"
+CUT_FILTER = "coalesce(is_shadow, false) = false AND coalesce(provider, '') <> 'typesafe'"
+CUT_ROW = "(status = 'truncated' OR (status = 'billed_unusable' AND stop_reason = ANY($2::text[])))"
 CUT_STATS_SQL = f"""
-    SELECT stage,
-           count(*) AS billed,
-           count(*) FILTER (WHERE status = 'truncated'
-                               OR (status = 'billed_unusable' AND stop_reason = ANY($2::text[]))) AS cut,
-           coalesce(sum(cost_usd) FILTER (WHERE status = 'truncated'
-                               OR (status = 'billed_unusable' AND stop_reason = ANY($2::text[]))), 0)::float
-               AS cut_cost_usd
+    SELECT {CUT_STAGE_EXPR} AS stage,
+           count(*) AS replies,
+           count(*) FILTER (WHERE {CUT_ROW}) AS cut,
+           count(*) FILTER (WHERE status = 'truncated' AND coalesce(tokens_out, 0) = 0
+                              AND coalesce(cost_usd, 0) = 0) AS refused_cut,
+           count(*) FILTER (WHERE coalesce(is_experiment, false)) AS eval_rows,
+           coalesce(sum(cost_usd) FILTER (WHERE {CUT_ROW}), 0)::float AS cut_cost_usd
       FROM shared.llm_call_log
-     WHERE created_at >= $1 AND {LEDGER_FILTER} AND NOT (stage = ANY($3::text[]))
-       AND (coalesce(tokens_out, 0) > 0 OR coalesce(cost_usd, 0) > 0)
-     GROUP BY stage
+     WHERE created_at >= $1 AND {CUT_FILTER} AND NOT ({CUT_STAGE_EXPR} = ANY($3::text[]))
+       AND (coalesce(tokens_out, 0) > 0 OR coalesce(cost_usd, 0) > 0 OR status = 'truncated')
+     GROUP BY 1
 """
 # The primary rung's average cost per answered request, per stage since $1.
 BASELINE_SQL = f"""
@@ -334,7 +342,8 @@ async def read_baseline(db, since: datetime) -> dict[str, dict]:
 
 
 async def read_cut_stats(db, since: datetime) -> dict[str, dict]:
-    """S271: per stage since ``since``, the billed replies and those cut at their token ceiling."""
+    """S271: per stage since ``since`` (an eval row under its real stage), the replies and those cut at their token
+    ceiling (``CUT_STATS_SQL``)."""
     from .errors import TRUNCATED_STOP_REASONS
     from .token_floor import NO_RETRY_STAGES
     rows = await db.fetch(CUT_STATS_SQL, since, sorted(TRUNCATED_STOP_REASONS), sorted(NO_RETRY_STAGES))
@@ -342,23 +351,28 @@ async def read_cut_stats(db, since: datetime) -> dict[str, dict]:
 
 
 def cut_findings(cut_stats: dict[str, dict], rows: dict[str, dict]) -> list[Finding]:
-    """S271: ``route_cut.<stage>`` when more than ``CUT_ALERT_PCT`` % of a stage's billed replies over
-    ``COST_WINDOW`` were cut at their token ceiling, with at least the policy's ``min_requests`` billed replies.
-    Pure."""
+    """S271: ``route_cut.<stage>`` when more than ``CUT_ALERT_PCT`` % of a stage's replies over ``COST_WINDOW``
+    (billed ones and refused cuts) were cut at their token ceiling, with at least the policy's ``min_requests``
+    replies. Pure."""
     out: list[Finding] = []
     for stage in sorted(cut_stats):
         st = cut_stats[stage] or {}
-        billed, cut = int(st.get("billed") or 0), int(st.get("cut") or 0)
+        replies, cut = int(st.get("replies") or 0), int(st.get("cut") or 0)
         pol = effective(rows, stage)
-        if billed <= 0 or billed < pol.min_requests:
+        if replies <= 0 or replies < pol.min_requests:
             continue
-        pct = round(100.0 * cut / billed, 1)
+        pct = round(100.0 * cut / replies, 1)
         if pct <= CUT_ALERT_PCT:
             continue
+        refused, evals = int(st.get("refused_cut") or 0), int(st.get("eval_rows") or 0)
+        notes = ([f"{refused} refused by the provider"] if refused else []) + \
+            ([f"{evals} of the replies from eval runs"] if evals else [])
         out.append(Finding(ROUTE_CUT_PREFIX + stage,
-                           f"stage {stage}: {cut} of {billed} billed replies in the last 24 h were cut at their "
-                           f"token ceiling ({pct:g} %, threshold {CUT_ALERT_PCT:g} %)",
-                           {"stage": stage, "billed": billed, "cut": cut, "cut_pct": pct,
+                           f"stage {stage}: {cut} of {replies} replies in the last 24 h were cut at their token "
+                           f"ceiling ({pct:g} %, threshold {CUT_ALERT_PCT:g} %"
+                           + "".join(f"; {n}" for n in notes) + ")",
+                           {"stage": stage, "replies": replies, "cut": cut, "cut_pct": pct,
+                            "refused_cut": refused, "eval_rows": evals,
                             "cut_cost_usd": round(float(st.get("cut_cost_usd") or 0.0), 6),
                             "threshold_pct": CUT_ALERT_PCT,
                             "window_hours": int(COST_WINDOW.total_seconds() // 3600)}))

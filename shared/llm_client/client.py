@@ -1510,19 +1510,26 @@ class LLMClient:
         the ceiling; never a third call). The route moves on to its next model only after the retry failed too."""
         scope = _ATTEMPT_SCOPE.get()
         allowed = token_floor.retry_allowed(request, scope.extra if scope is not None else None)
+        failed_retry: Optional[tuple] = None
         try:
             resp = self._call_key_once(request, key, primary_acct, role=role, position=position, extra=extra)
         except Exception as e:
             if (not allowed or isinstance(e, RouteDeadlineExceeded) or not token_floor.is_cut_failure(e)
                     or _deadline_passed()):
                 raise
-            retry = self._budget_retry_request(request, key)
-            if retry is None:
+            failed_retry = self._budget_retry_request(request, key)
+            if failed_retry is None:
                 raise
             # The cut attempt already has its row (the 0 USD truncated row, or the billed_unusable row above).
             logger.info("llm_budget_retry", stage=request.stage, model=key, position=position, reason="cut_failure",
-                        max_tokens=retry[1], retry_max_tokens=retry[0].max_tokens)
-            return self._run_budget_retry(retry[0], key, primary_acct, role=role, position=position, extra=extra)
+                        max_tokens=failed_retry[1], retry_max_tokens=failed_retry[0].max_tokens)
+        if failed_retry is not None:
+            # Review S271: sent here, after the except block, so no exception is being handled while the retry runs:
+            # its error never gets the cut error as implicit __context__ (that chain made _billed_usage_of /
+            # _ledgered / classify read the cut attempt again: a second billed row, no row for the retry, a 5xx
+            # classified truncated and not counted by the breaker).
+            return self._run_budget_retry(failed_retry[0], key, primary_acct, role=role, position=position,
+                                          extra=extra)
         if not allowed or not token_floor.is_cut_reply(resp) or _deadline_passed():
             return resp                       # past the route deadline: the cut reply, as before (no retry)
         retry = self._budget_retry_request(request, key)
@@ -1561,8 +1568,8 @@ class LLMClient:
         if scope is not None:
             scope.retry_of = scope.attempts or None
         try:
-            # Never chained to the cut attempt's error: its billed usage is already in the ledger (a chain would make
-            # _billed_usage_of find it again).
+            # Never chained to the cut attempt's error (the caller sends the retry outside its except block): the cut
+            # attempt's billed usage is already in the ledger, a chain would make _billed_usage_of find it again.
             resp = self._call_key_once(retry, key, primary_acct, role=role, position=position, extra=extra)
         finally:
             if scope is not None:

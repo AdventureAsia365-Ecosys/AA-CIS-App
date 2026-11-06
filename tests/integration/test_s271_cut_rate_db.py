@@ -1,6 +1,7 @@
 """S271 (AA-741 / AA-900, lane l9-token-budget-core) — on real Postgres: the gateway's cut-reply row and the retry's
 row land with their status and quality_signal keys, and route_watch's cut-rate query counts them per stage (probe
-stages and shadow rows left out, unbilled rows not counted).
+stages and shadow rows left out; a refused cut counted although nothing was billed; an eval row counted under its
+real stage; other unbilled rows not counted).
 
 Invented stage names only (zz271_*); every row this test reads sits in 2099 or is removed by the test.
 """
@@ -27,7 +28,8 @@ STAGE = "zz271_writer"
 CALM = "zz271_judge"
 PROBE = "adhoc_conn_test"
 NOW = datetime(2099, 1, 1, 12, 0, tzinfo=timezone.utc)
-STAGES = [STAGE, CALM]
+EVAL = "zz271_eval"                     # an eval run's label stage (call_log._relabel)
+STAGES = [STAGE, CALM, EVAL]
 
 
 @pytest_asyncio.fixture
@@ -53,12 +55,12 @@ async def _clean(p):
 
 
 async def _row(p, stage, *, status="ok", stop="end_turn", tokens_out=20, cost=0.01, shadow=False,
-               at=NOW - timedelta(hours=1)):
+               at=NOW - timedelta(hours=1), signal=None, experiment=False):
     await p.execute(
         "INSERT INTO shared.llm_call_log (stage, role, model, tokens_in, tokens_out, cost_usd, quality_signal, "
-        "created_at, status, stop_reason, is_shadow, app) "
-        "VALUES ($1, 'writer', 'zz-model', 10, $2, $3, '{}'::jsonb, $4, $5, $6, $7, 'cis')",
-        stage, tokens_out, cost, at, status, stop, shadow)
+        "created_at, status, stop_reason, is_shadow, is_experiment, app) "
+        "VALUES ($1, 'writer', 'zz-model', 10, $2, $3, $8::jsonb, $4, $5, $6, $7, $9, 'cis')",
+        stage, tokens_out, cost, at, status, stop, shadow, json.dumps(signal or {}), experiment)
 
 
 def _resp(**kw):
@@ -91,23 +93,28 @@ async def test_the_cut_row_and_the_retry_row_land(pool):
 
 
 @pytest.mark.asyncio
-async def test_the_cut_rate_query_counts_billed_cut_replies_per_stage(pool):
+async def test_the_cut_rate_query_counts_cut_replies_per_stage(pool):
     for _ in range(8):
         await _row(pool, STAGE)
     await _row(pool, STAGE, status="truncated", stop="max_tokens")
     await _row(pool, STAGE, status="billed_unusable", stop="length")
     await _row(pool, STAGE, status="billed_unusable", stop="end_turn")           # unusable, not a cut
-    await _row(pool, STAGE, status="truncated", stop=None, tokens_out=0, cost=0.0)   # refused cut: nothing billed
+    await _row(pool, STAGE, status="truncated", stop=None, tokens_out=0, cost=0.0)   # refused cut: counted
+    await _row(pool, STAGE, status="error", stop=None, tokens_out=0, cost=0.0)       # unbilled failure: left out
+    await _row(pool, EVAL, status="truncated", stop=None, tokens_out=0, cost=0.0, experiment=True,
+               signal={"real_stage": STAGE, "eval_run": "r-271"})                 # an eval refused cut: real stage
+    await _row(pool, EVAL, experiment=True, signal={"real_stage": STAGE, "eval_run": "r-271"})
     await _row(pool, STAGE, status="truncated", stop="max_tokens", shadow=True)  # shadow: left out
     await _row(pool, STAGE, status="truncated", stop="max_tokens", at=NOW - timedelta(days=2))   # outside 24 h
     await _row(pool, CALM)
     await _row(pool, PROBE, status="truncated", stop="max_tokens")               # a probe: left out
     stats = await rw.read_cut_stats(pool, NOW - rw.COST_WINDOW)
-    assert (stats[STAGE]["billed"], stats[STAGE]["cut"]) == (11, 2)
-    assert stats[STAGE]["cut_cost_usd"] == pytest.approx(0.02)
-    assert (stats[CALM]["billed"], stats[CALM]["cut"]) == (1, 0) and PROBE not in stats
-    (f,) = rw.cut_findings({STAGE: stats[STAGE], CALM: stats[CALM]}, {})
-    assert f.check == "route_cut." + STAGE and f.details["cut_pct"] == pytest.approx(18.2)
+    st = stats[STAGE]
+    assert (st["replies"], st["cut"], st["refused_cut"], st["eval_rows"]) == (14, 4, 2, 2)
+    assert st["cut_cost_usd"] == pytest.approx(0.02)                            # the billed part only
+    assert (stats[CALM]["replies"], stats[CALM]["cut"]) == (1, 0) and PROBE not in stats and EVAL not in stats
+    (f,) = rw.cut_findings({STAGE: st, CALM: stats[CALM]}, {})
+    assert f.check == "route_cut." + STAGE and f.details["cut_pct"] == pytest.approx(28.6)
 
 
 def test_the_module_runs_its_coroutines():

@@ -269,6 +269,64 @@ def test_a_billed_cut_failure_twice_moves_on_to_the_next_model(rows):
     assert len(rows) == 2 and all(r["quality_signal"]["billed_unusable"] for r in rows)   # one per billed attempt
 
 
+def test_a_billed_cut_then_an_unbilled_retry_failure_writes_one_row_each(rows):
+    """Review S271: the retry is sent outside the cut attempt's except block, so its error never carries the cut
+    error as its implicit context. One billed_unusable row for the cut reply, one 0 USD row for the failed retry
+    (before the fix: two billed rows of the same cut attempt and no retry row)."""
+    retry_errors: list = []
+
+    def answer(key, n):
+        if key == "gpt-6-luna" and n == 1:
+            raise _billed_unusable("returned empty content", [{
+                "model": "satellite-gpt-6-luna", "account": "acc3", "tokens_in": 10, "tokens_out": 4096,
+                "cost_usd": 0.01, "stop_reason": "max_tokens", "provider_requests": 1}])
+        if key == "gpt-6-luna":
+            retry_errors.append(RuntimeError("ThrottlingException: slow down"))
+            raise retry_errors[-1]
+        return _resp("from nova")
+    c, fake, sizes = _route_client(answer)
+    with patch("shared.llm_client.client.get_model_sync", return_value=LUNA), patch.object(c, "_call_key", fake):
+        resp = c._call_route(_req(max_tokens=4096, model_tier=None), ["gpt-6-luna", "nova-lite"], "acc3",
+                             role="judge")
+    call_log.wait_for_pending_writes()
+    assert [k for k, _ in sizes] == ["gpt-6-luna", "gpt-6-luna", "nova-lite"] and resp.content == "from nova"
+    (err,) = retry_errors
+    assert err.__context__ is None and err.__cause__ is None
+    billed = [r for r in rows if r["quality_signal"].get("billed_unusable")]
+    failed = [r for r in rows if not r["quality_signal"].get("billed_unusable")]
+    assert len(billed) == 1 and billed[0]["cost_usd"] == 0.01
+    assert "empty content" in billed[0]["quality_signal"]["error"]
+    assert len(failed) == 1 and failed[0]["status"] == "refused" and float(failed[0]["cost_usd"] or 0) == 0
+    assert "ThrottlingException" in failed[0]["quality_signal"]["error"]
+
+
+def test_a_refused_cut_then_a_5xx_on_the_retry_counts_as_a_deployment_failure(rows):
+    """Review S271: an OpenAI 400 cut refusal (class truncated) followed by a 5xx on the retry. The 5xx is classified
+    on its own (not truncated through the context): the breaker counts it and its row is an error, not truncated."""
+    from shared.llm_client import breaker
+    from shared.llm_client.client import attempt_outcome
+    retry_errors: list = []
+
+    def answer(key, n):
+        if key == "gpt-6-luna" and n == 1:
+            raise RuntimeError("Error code: 400 - max_tokens or model output limit was reached")
+        if key == "gpt-6-luna":
+            retry_errors.append(RuntimeError("Error code: 503 - service unavailable"))
+            raise retry_errors[-1]
+        return _resp("from nova")
+    c, fake, sizes = _route_client(answer)
+    with patch("shared.llm_client.client.get_model_sync", return_value=LUNA), patch.object(c, "_call_key", fake):
+        resp = c._call_route(_req(max_tokens=1200, model_tier=None), ["gpt-6-luna", "nova-lite"], "acc3",
+                             role="judge")
+    call_log.wait_for_pending_writes()
+    assert [k for k, _ in sizes] == ["gpt-6-luna", "gpt-6-luna", "nova-lite"] and resp.content == "from nova"
+    (err,) = retry_errors
+    assert err.__context__ is None
+    assert breaker.failure_class(err) != breaker.REQUEST
+    assert attempt_outcome(err) == ("error", "other")
+    assert sorted(r["status"] for r in rows) == ["error", "truncated"]      # background writes: any order
+
+
 def test_any_other_failure_is_not_retried(rows):
     def answer(key, n):
         if key == "gpt-6-luna":
@@ -450,11 +508,19 @@ def test_every_model_key_the_migrations_name_is_classified():
 # ── 5. the cut-rate alert ───────────────────────────────────────────────────────────────────────────────────────────
 
 def test_a_stage_with_more_than_5_pct_cut_replies_alerts():
-    (f,) = route_watch.cut_findings({"t9_repair": {"billed": 20, "cut": 3, "cut_cost_usd": 0.12}}, {})
+    (f,) = route_watch.cut_findings({"t9_repair": {"replies": 20, "cut": 3, "cut_cost_usd": 0.12}}, {})
     assert f.check == "route_cut.t9_repair" and f.details["cut_pct"] == 15.0 and f.details["cut"] == 3
-    assert route_watch.cut_findings({"t9_repair": {"billed": 20, "cut": 1}}, {}) == []       # 5 %: not above
-    assert route_watch.cut_findings({"t9_repair": {"billed": 3, "cut": 3}}, {}) == []        # under min_requests
-    assert route_watch.cut_findings({"t9_repair": {"billed": 3, "cut": 3}}, {"*": {"min_requests": 2}}) != []
+    assert route_watch.cut_findings({"t9_repair": {"replies": 20, "cut": 1}}, {}) == []      # 5 %: not above
+    assert route_watch.cut_findings({"t9_repair": {"replies": 3, "cut": 3}}, {}) == []       # under min_requests
+    assert route_watch.cut_findings({"t9_repair": {"replies": 3, "cut": 3}}, {"*": {"min_requests": 2}}) != []
+
+
+def test_refused_cuts_and_eval_rows_are_named_in_the_alert():
+    """Review S271: the R2 judge case (eval rows, the provider refusing every cut reply) alerts and says so."""
+    (f,) = route_watch.cut_findings({"zz_judge": {"replies": 33, "cut": 33, "refused_cut": 33, "eval_rows": 33,
+                                                  "cut_cost_usd": 0.0}}, {})
+    assert f.details["cut_pct"] == 100.0 and f.details["refused_cut"] == 33 and f.details["eval_rows"] == 33
+    assert "33 refused by the provider" in f.summary and "from eval runs" in f.summary
 
 
 def test_the_cut_check_resolves_and_fits_the_notification_column():
@@ -469,9 +535,11 @@ def test_the_cut_stats_query_leaves_the_probes_out_and_reads_the_cut_reasons():
     class Db:
         async def fetch(self, sql, *args):
             seen.append((sql, args))
-            return [{"stage": "t9_repair", "billed": 10, "cut": 2, "cut_cost_usd": 0.1}]
+            return [{"stage": "t9_repair", "replies": 10, "cut": 2, "cut_cost_usd": 0.1}]
     out = asyncio.run(route_watch.read_cut_stats(Db(), route_watch.datetime.now(route_watch.timezone.utc)))
     sql, args = seen[0]
     assert "shared.llm_call_log" in sql and "billed_unusable" in sql
     assert "max_tokens" in args[1] and "length" in args[1] and "adhoc_conn_test" in args[2]
     assert out["t9_repair"]["cut"] == 2
+    # review S271: eval rows are kept (under their real stage) and a refused cut (nothing billed) is counted
+    assert "is_experiment, false) = false" not in sql and "real_stage" in sql and "OR status = 'truncated')" in sql

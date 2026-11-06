@@ -47,9 +47,19 @@ reasoning models bill their thinking inside it.
   answered). `t2_judge` at 16 is the admin route test (`llm_route_trace.TEST_MAX_TOKENS`): the floor lifts it on a
   reasoning model; the literal stays (it still bounds a non-reasoning model). `t9_faq_filter` is already 6000 (#1330).
   Prompt text unchanged: no `prompt_versions.json` bump (`MAX_TOKENS` is not a hashed prompt symbol).
-- **Alert**: `route_watch` raises `route_cut.<stage>` (bell + one e-mail a UTC day, ops-check plumbing) when at least
-  5 % of a stage's billed replies over 24 h were cut at their ceiling (at least the policy's `min_requests`
-  replies), `NO_RETRY_STAGES` left out. $0 (ledger reads in the existing `llm_route_watch` run).
+- **Alert**: `route_watch` raises `route_cut.<stage>` (bell + one e-mail a UTC day, ops-check plumbing) when more
+  than 5 % of a stage's replies over 24 h were cut at their ceiling (at least the policy's `min_requests` replies),
+  `NO_RETRY_STAGES` left out. $0 (ledger reads in the existing `llm_route_watch` run).
+- **Review fix (S271): the cut stats have their own filter** (`CUT_FILTER`, not `LEDGER_FILTER`). Eval rows
+  (`is_experiment`) are kept and counted under `quality_signal.real_stage` (the R2 judge cuts were all eval rows; with
+  `LEDGER_FILTER` they could never alert). A refused cut (OpenAI 400, status truncated, 0 USD, no tokens) counts in the
+  numerator and the denominator; `cut_cost_usd` stays the billed part. The stats key is `replies` (was `billed`), plus
+  `refused_cut` and `eval_rows`, named in the alert text. Shadow and Jev rows stay out.
+- **Review fix (S271): the retry after a cut that raised is sent after the `except` block** (`_call_key_logged`), so
+  it runs with no exception being handled. Before, the retry's error got the cut error as implicit `__context__`:
+  `_billed_usage_of` / `_ledgered` / `classify` follow that chain, so a billed cut followed by an unbilled retry failure
+  wrote a second billed_unusable row of the cut attempt and no row for the retry, and a 400 cut refusal followed by a
+  5xx classified the 5xx as truncated (breaker class `request`: the outage was not counted on the circuit).
 
 ## Changed
 - `shared/aa_llm/tokens.py` (new), `__init__.py` (1.2.0), `MANIFEST.json` (regenerated).
@@ -62,7 +72,9 @@ reasoning models bill their thinking inside it.
 - `services/content_generation/brand_fit.py`: `BrandFitResult.truncation_retry_max_tokens` (it carries every
   `BILLED_FIELD_KEYS` key).
 - Tests: `tests/unit/test_s271_gateway_token_budget.py` (rules, floor on the wire, retry + ledger rows, opt-outs, the
-  CI guard, the alert).
+  CI guard, the alert; review fix: a billed cut + throttled retry = one billed row + one 0 USD row, a 400 cut + 5xx
+  retry = no context chain, breaker counts it, row status error; refused / eval cuts named in the alert);
+  `tests/integration/test_s271_cut_rate_db.py` (refused cut and eval rows counted, other unbilled rows not).
 
 ## Tradeoffs
 - A retry doubles the cost of a request whose reply was going to be cut anyway; the cut reply was thrown away before
