@@ -1107,7 +1107,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     `ops_alert_email` — AA-828, `data_erasure` — AA-839, the writing-memory kinds `writing_signal_backfill`,
     `writing_signal_fact_filter`, `writing_memory_mine` — AA-917, `writing_memory_r0` — AA-918, `writing_memory_r2`,
     `writing_memory_shadow` — AA-919, `writing_memory_post_activation` — AA-920, `writing_memory_kpi_weekly` — AA-922, `kpi_snapshot_daily`, `report_generate`,
-    `inquiry_handoff_check` (a no-op since the R0 hotfix: TP-03 retired), `report_email` — AA-1003). Every claim merges `progress.attempt_started_at` (AA-751, F18):
+    `inquiry_handoff_check` (a no-op since the R0 hotfix: TP-03 retired), `report_email` — AA-1003, `quality_funnel_watch` — AA-900 W0). Every claim merges `progress.attempt_started_at` (AA-751, F18):
     `started_at` keeps the first attempt's start, so per-attempt age reads the progress key.
   - **Background kinds (AA-712)**: `@job_kind(..., background=True)` kinds never take the worker's
     last `BACKGROUND_RESERVE` (2) free slots (`Worker.claim_caps`), so a place-pipeline backlog cannot
@@ -1272,6 +1272,24 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     health, worker parity, newest migration per owner, active CIS jobs, open waves; the output is the session-close
     state-snapshot.json) (`services/reports/delivery.py`). Linear, GitHub (Dependabot, secret scanning, PRs, CI runs,
     releases), Vercel, Lambda and other owners' job and audit tables are listed as "Source not available". No migration.
+  - **Quality funnel and nightly watchdog (AA-900 W0, root ADR 0020 "Measurement")**: `report_generate` also renders
+    the daily **CIS-08** (`services/reports/funnel_report.py`, chained by `kpi_snapshot_daily` like EX-04): the funnel
+    of `services/quality/funnel.py` per workflow and ISO week (ICT) over 8 weeks — T9 per channel
+    (`acp_shared.content_piece`), S1 (`silver_aa_internal.generated_content` + `quality_scores` + `published_tours`),
+    T2 (`gold_aa_internal.tenant_tour_versions`, AI edits only): created, delivered (T9/T2: approved + held, the
+    agency receives both; S1: published to the Master), held, failed, first-pass yield, attempts and LLM USD per
+    delivered object; every failing T9 gate of every attempt (final ledger + `discarded_attempts`), with
+    `F9_cta_fact` split into `.judge_unavailable` / `.text_integrity` / claims; S1 failure and brand codes per
+    evaluation; per stage of `shared.llm_call_log` (production rows, `route_watch.LEDGER_FILTER`): rung share,
+    fallback share, cut rate (`route_watch.CUT_ROW`), refused / error rows, cost. The run's `output` IS the snapshot;
+    `GET /admin/quality/funnel` (ops.read or lab.read) serves the newest one plus 14 days of headline totals, never
+    recomputed. A succeeded scheduled CIS-08 run queues **`quality_funnel_watch`**
+    (`services/jobs/quality_funnel_watch_job.py`, idempotent per run, deploy-gate exempt) which raises the stored
+    findings through `shared/ops_checks.alert_all`: `qf_cut.<stage>` (cut > 5 % of ≥ 20 billed replies),
+    `qf_fb.<stage>` (fallback ≥ 20 % of ≥ 20 answered), `qf_drift.<stage>` (≥ 10 % of answers from a model under 1 %
+    of the stage's answers the 7 days before, ≥ 20 rows in both windows), over the trailing 7 days; bell daily per
+    check. T2 per-attempt gate codes are not stored on the version (in `shared.job.result.t3` only). No migration
+    (store: `shared.report_run`, report CIS-08 in the registry copy). $0.
   - **Ops metrics sampler (AA-832, AA-751)**: `api/core/ops_metrics_sampler.py`, a background task of
     the **api** (not the worker) started in `api/main.py`'s lifespan after the main pool, cancelled
     before it closes, off when `ENVIRONMENT=test`, never raises. Every 300 s (first tick 30 s after

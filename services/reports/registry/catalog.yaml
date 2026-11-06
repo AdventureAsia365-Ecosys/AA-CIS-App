@@ -673,6 +673,32 @@ reports:
   - Wave total, running total vs approved cap, USD per tour, projection for the full country/catalog
   - Failures and retry cost
   - Next-wave recommendation
+- id: CIS-08
+  family: ai-quality
+  name_en: Content quality funnel and nightly watchdog
+  name_vi: Phễu chất lượng nội dung và watchdog hằng đêm
+  audience: tech lead, reviewer
+  owner_role: tech lead
+  decision: Is first-pass yield, hold rate or cost per delivered object moving after a route, prompt or gate change;
+    does a stage need a route or ceiling fix (cut rate, fallback share, served-model drift)?
+  cadence: daily after the KPI snapshot (00:30 UTC); alerts through the ops-check bell and e-mail
+  schedule: daily
+  channel: GET /admin/quality/funnel (JSON); /admin/reports run page; admin bell + alerts e-mail on a threshold
+  automation: auto
+  status: partial
+  priority: P1
+  template: null
+  generator: cis
+  automated_from: 2026-11-07
+  kpis: []
+  sections:
+  - Per workflow (T9 by channel, S1, T2) per ISO week (ICT) - objects created, delivered vs held, first-pass yield,
+    attempts per delivered object, LLM USD per delivered object
+  - Every failing gate per attempt (T9 ledgers of every attempt, S1 evaluations), F9 judge-unavailable and
+    TEXT_INTEGRITY apart from the claim findings
+  - Per stage per week - rung share, fallback share, cut rate, refused calls, cost
+  - Watchdog over the trailing 7 days - cut rate, fallback share and served-model drift per stage against the
+    documented thresholds, and the alerts raised
 - id: TP-01
   family: app-ops
   name_en: Weekly TripPlanner funnel

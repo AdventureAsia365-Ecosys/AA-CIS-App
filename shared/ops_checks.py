@@ -178,6 +178,29 @@ PREFIX_CHECKS: dict[str, Check] = {
         "or a stage x model row) or set the model's min_output_tokens capability; AI gateway > Trace shows the "
         "attempts.", TRACE_PAGE, bell_every=timedelta(hours=24)),
 }
+# AA-900 (S271 W0, root ADR 0020 "Measurement"): the nightly quality funnel watchdog (job kind quality_funnel_watch,
+# services/quality/funnel.py has the rules and thresholds), one check per stage over the trailing 7 days.
+QF_CUT_PREFIX = "qf_cut."
+QF_FALLBACK_PREFIX = "qf_fb."
+QF_DRIFT_PREFIX = "qf_drift."
+FUNNEL_PAGE = "/admin/reports"
+PREFIX_CHECKS.update({
+    QF_CUT_PREFIX: Check(
+        "Content stage replies cut over the week", "More than 5 % of the stage's billed replies in the last 7 days "
+        "stopped on their output-token ceiling: each cut costs a retry and can leave content short. The quality "
+        "funnel (report CIS-08, GET /admin/quality/funnel) shows the stage per week; raise the ceiling or the "
+        "model's min_output_tokens.", FUNNEL_PAGE, bell_every=timedelta(hours=24)),
+    QF_FALLBACK_PREFIX: Check(
+        "Content stage served by fallback models over the week", "At least 20 % of the stage's answered requests in "
+        "the last 7 days came from a fallback model, so the content was not written or checked by the calibrated "
+        "model. Check AI gateway > Trace and the quality funnel (report CIS-08) before trusting the week's yield.",
+        FUNNEL_PAGE, bell_every=timedelta(hours=24)),
+    QF_DRIFT_PREFIX: Check(
+        "Content stage served-model drift", "At least 10 % of the stage's answered requests in the last 7 days came "
+        "from a model that served almost none of them the week before (a route, catalog or provider change). A "
+        "route change on a gated stage needs an eval run (root ADR 0020, d12): check the route history and the "
+        "quality funnel (report CIS-08).", FUNNEL_PAGE, bell_every=timedelta(hours=24)),
+})
 PREFIX_CHECKS_EXACT: dict[str, Check] = {
     ROUTE_DIGEST_CHECK: Check(
         "LLM route digest", "The daily summary of the stage routes: stages answered by a fallback model or with "

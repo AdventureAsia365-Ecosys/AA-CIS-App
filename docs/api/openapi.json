@@ -33269,6 +33269,85 @@
         ]
       }
     },
+    "/admin/quality/funnel": {
+      "get": {
+        "operationId": "get_funnel_admin_quality_funnel_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "history",
+            "required": false,
+            "schema": {
+              "default": 14,
+              "maximum": 90,
+              "minimum": 1,
+              "title": "History",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Funnel Admin Quality Funnel Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Funnel",
+        "tags": [
+          "admin-quality"
+        ]
+      }
+    },
     "/admin/raw-tours/{tour_id}": {
       "delete": {
         "description": "Soft-delete raw_tours row (source_status='trashed'). AA-986 L2: the same retire as PATCH\n/admin/tours/{id}/trash (services/tour_lifecycle: Master switched off, reviews dismissed, queued tenant jobs\ncancelled, tenants warned). A published tour needs Master Content rights (Q8); before L2 it answered 409.",

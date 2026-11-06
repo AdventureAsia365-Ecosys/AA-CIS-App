@@ -607,6 +607,8 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/reports/{report_id}/runs"): OPS_READ,
     ("POST", "/admin/reports/{report_id}/run"): OPS_WRITE,
     ("POST", "/admin/reports/snapshots"): OPS_WRITE,
+    # AA-900 (S271 W0): the CIS-08 content quality funnel snapshot (numbers only, no tenant text)
+    ("GET", "/admin/quality/funnel"): any_of(OPS_READ, LAB_READ),
     # ── v1_trip_page admin_router — public trip pages of AA content
     ("POST", "/admin/trip-pages/{tour_id}/publish"): MASTER_ADMIN,
     ("POST", "/admin/trip-pages/recheck"): OPS_WRITE,
