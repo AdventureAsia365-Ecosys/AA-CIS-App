@@ -59,6 +59,17 @@ copies of G10 (and the rebase refusal of G6) in AA-Booking, AA-Partner and AA-Tr
 - The nightly run does not block merges; it is only useful if session start reads its last conclusion (follow-up).
 
 ## Should know
+- Resumed run (S271): the first version of `--integration` started its throwaway cluster inside `$(...)`, so the
+  cleanup never saw the cluster path and every run left a postgres process and its data dir behind. Fixed
+  (`start_scratch_pg` sets `PG_PORT` in the calling shell); `test_throwaway_cluster_is_stopped_and_removed` (fake
+  initdb / pg_ctl / psql through `AA_PREPUSH_INITDB`) is red on the old form. Checked for real on PostgreSQL 16 (initdb,
+  cluster gone after the run) and the final conftest on a postgres:15 container (CI's image): the replay matches
+  `EXPECTED_REPLAY_FAILURES` exactly.
+- Other lanes of the wave: a CIS PR that changes `tests/integration/` or `api/migrations/` and was pushed without
+  `scripts/pre-push.sh --integration` is refused by the hook once it is installed; the push can go with
+  `AA_PREPUSH_SKIP_INTEGRATION=1` (a visible warning, named in the PR body). A new migration after 304 that names a
+  table the 304 replay drops must be added to `LATER` or `NOT_LATER` (unit test), and a new replay failure must be
+  added to `EXPECTED_REPLAY_FAILURES` with its error.
 - Install once per clone: `scripts/install-hooks.sh` (core.hooksPath=.githooks; shared by every worktree of the clone).
 - Lanes: `scripts/pre-push.sh --integration` after touching `tests/integration/` or `api/migrations/`; it needs
   `psycopg2`, `fakeredis`, `pytest-asyncio` in the picked Python (`pip install -r requirements.txt -r
