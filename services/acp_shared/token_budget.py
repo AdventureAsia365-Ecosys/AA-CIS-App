@@ -22,6 +22,11 @@ the retry is sent, so it is in the ledger even when the retry raises; its row ca
 derived from the stop reason ('truncated'). The retry's row carries ``truncation_retry: true``. ``attempt_no`` is not
 set by the caller: it is the gateway's attempt position inside ONE request (route_watch reads > 1 as a fallback rung),
 and each of the two requests here is its own gateway request.
+
+S271: the gateway now owns a truncation retry for every stage (``shared/llm_client/token_floor.py``) and the floor of a
+reasoning-capable model. The stages here keep their own retry (their cut row carries the piece / request ids only
+the caller has), so every request this module sends says ``budget_retry=False`` and the gateway does not retry it a
+second time; the retry ceiling is the core's (``shared/aa_llm/tokens.py``).
 """
 from __future__ import annotations
 
@@ -31,6 +36,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 import structlog
 
+from shared.aa_llm import tokens
 from shared.llm_client.errors import TRUNCATED, classify, is_truncated
 from shared.llm_client.models import LLMRequest
 
@@ -41,11 +47,13 @@ logger = structlog.get_logger()
 T8_ANGLE_GEN_MAX_TOKENS = 4096        # was 2048: 7/9 calls cut (3 angles x 4 fields + reason, 5.x verbosity)
 T9_WRITE_BLOG_MAX_TOKENS = 12000      # was 8000: 1/9 cut (JSON envelope + a 4,700-13,000 char body + tags)
 T9_WRITE_DEFAULT_MAX_TOKENS = 4096    # was 3000: the short channels, same 5.x head-room
-T9_REPAIR_MAX_TOKENS = 4096           # was 2048 (pipeline) / 400 (admin suggest): 1/1 cut on haiku-5-5
+# was 2048 (pipeline) / 400 (admin suggest): 1/1 cut on haiku-5-5; S271: 4096 -> 8192, the S271 ledger still had 3
+# cut first replies at 4096 (each retried at 8192): the first ceiling now is the one that answered
+T9_REPAIR_MAX_TOKENS = 8192
 T9_FAQ_FILTER_MAX_TOKENS = 6000       # was 3000: 1/1 cut on haiku-5-5 (30 verdicts + the JSON envelope)
 
-RETRY_FACTOR = 2           # the one retry doubles the ceiling ...
-RETRY_CAP = 24000          # ... up to this (the gateway also caps at the catalog's max_output_tokens per model)
+RETRY_FACTOR = tokens.RETRY_FACTOR    # the one retry doubles the ceiling ...
+RETRY_CAP = tokens.RETRY_CAP          # ... up to this (the gateway also caps at the catalog's max_output_tokens)
 
 # The stages this module budgets (the stage x ceiling the tests check).
 STAGE_FLOORS = {
@@ -58,7 +66,7 @@ STAGE_FLOORS = {
 
 def retry_budget(max_tokens: int) -> int:
     """The ceiling of the one retry: double, capped at RETRY_CAP, never below the first ceiling."""
-    return max(int(max_tokens), min(int(max_tokens) * RETRY_FACTOR, RETRY_CAP))
+    return tokens.retry_budget(max_tokens)
 
 
 def is_cut(resp: Any) -> bool:
@@ -108,10 +116,22 @@ def cut_signal(max_tokens: int, retry_max_tokens: int) -> dict:
     return {"budget_cut": True, "max_tokens": max_tokens, "retry_max_tokens": retry_max_tokens}
 
 
+def _own_retry(request: LLMRequest) -> LLMRequest:
+    """S271: the caller's request with ``budget_retry=False``: this module retries a cut reply, the gateway must not
+    retry it again (that would be a third call). The same object when it already says so."""
+    if getattr(request, "budget_retry", True) is False:
+        return request
+    out = request.model_copy(update={"budget_retry": False})
+    out.__pydantic_fields_set__ = set(request.model_fields_set) | {"budget_retry"}
+    return out
+
+
 def _retry_request(request: LLMRequest) -> LLMRequest:
     # model_copy keeps every other field the caller set (temperature, model_tier, json_schema, role) and marks
     # max_tokens as set by the call site, so a stage_model_params row never overrides the retry's ceiling.
-    return request.model_copy(update={"max_tokens": retry_budget(request.max_tokens)})
+    out = request.model_copy(update={"max_tokens": retry_budget(request.max_tokens), "budget_retry": False})
+    out.__pydantic_fields_set__ = set(request.model_fields_set) | {"max_tokens", "budget_retry"}
+    return out
 
 
 def generate_with_budget_retry(generate: Callable[[LLMRequest], Any], request: LLMRequest, *,
@@ -121,6 +141,7 @@ def generate_with_budget_retry(generate: Callable[[LLMRequest], Any], request: L
     ``retry_budget`` when the first reply is cut (``on_cut(resp, max_tokens, retry_max_tokens)`` writes its row
     first) or the provider refused a cut reply. Any other error propagates; an error of the retry propagates too
     (the cut row is already written)."""
+    request = _own_retry(request)
     first_max = request.max_tokens
     try:
         resp = generate(request)
@@ -148,6 +169,7 @@ async def agenerate_with_budget_retry(generate: Callable[[LLMRequest], Any], req
                                       ) -> BudgetedReply:
     """Async twin of ``generate_with_budget_retry``: each ``generate`` call runs in ``asyncio.to_thread`` (the
     blocking gateway call never runs on the event loop) and ``on_cut`` is awaited."""
+    request = _own_retry(request)
     first_max = request.max_tokens
     try:
         resp = await asyncio.to_thread(generate, request)

@@ -330,7 +330,7 @@ async def test_suggest_tour_sentence_uses_cheap_stage_and_source_tour():
         out = await cq.suggest_tour_sentence(VERSION_ID, body, _request(conn), x_admin_secret=SECRET,
                                              x_admin_role="admin")
     req = m.return_value.generate.call_args.args[0]
-    assert req.stage == "t9_repair" and req.max_tokens == 4096   # AA-741 (S270): the t9_repair ceiling (was 400)
+    assert req.stage == "t9_repair" and req.max_tokens == 8192  # AA-741: t9_repair ceiling (S271: 8192)
     assert "BRAND: Trail Pulse" in req.user_prompt and "Ten days, groups of 2-12." in req.user_prompt
     kw = rec.call_args.kwargs
     assert kw["tenant_id"] == str(TENANT_ID) and kw["quality_signal"]["mode"] == "admin_suggest_tour"

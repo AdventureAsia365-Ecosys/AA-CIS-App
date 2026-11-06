@@ -345,7 +345,7 @@ async def test_suggest_uses_cheap_stage_and_logs_piece():
             as m, patch.object(generate, "record_call_sync") as rec:
         out = await cq.suggest_sentence(PIECE_ID, body, _request(conn), x_admin_secret=SECRET, x_admin_role="admin")
     req = m.return_value.generate.call_args.args[0]
-    assert req.stage == "t9_repair" and req.max_tokens == 4096   # AA-741 (S270): the t9_repair ceiling (was 400)
+    assert req.stage == "t9_repair" and req.max_tokens == 8192  # AA-741: t9_repair ceiling (S271: 8192)
     assert "foreign brand Editor note: keep it short" in req.user_prompt and "BRAND: Trail Pulse" in req.user_prompt
     # S234 stack: the neighbours go along as CONTEXT, same as the T9 sentence repair
     assert "CONTEXT: Opening line here. | The monastery sits above Luang Prabang today. | It is a hidden gem." \

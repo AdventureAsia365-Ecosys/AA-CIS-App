@@ -48,7 +48,10 @@ from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
 from services.writing_memory import config as cfg
 
-MAX_TOKENS = 1200                  # S256: + unsupported_claims (<= MAX_CLAIMS short quotes)
+# S256: + unsupported_claims (<= MAX_CLAIMS short quotes). S271: 1200 -> 4096: on gpt-6-luna-openai every one of 33
+# R2 judge calls (stage adhoc_aa900) was cut at 1200 before the verdict (the reasoning is billed inside max_tokens), so
+# the eval scored the fallback model and judge kappa was 0.137. The gateway's floor + truncation retry back it up.
+MAX_TOKENS = 4096
 SOURCE_CHARS = 24000               # S256: the whole T9 writer input (the panel's source), facts last
 OUTPUT_CHARS = 9000
 MAX_CLAIMS = 8

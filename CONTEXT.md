@@ -852,8 +852,23 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   - a caller's budget retry (AA-741 S270, `services/acp_shared/token_budget.py`: T8 angles, T9 write / repair / FAQ
     filter) is TWO responses and two rows: the reply cut at its token ceiling (`budget_cut: true`, status truncated,
     written before the retry is sent) and the retry with double the ceiling (`truncation_retry: true`); never a third
-    call. `attempt_no` stays the gateway's (each is its own gateway request). A ceiling is head-room, not the
-    expected size: since t9_write v2 (AA-741 S271) every blog prompt carries a word band (900-1,300, never over
+    call. `attempt_no` stays the gateway's (each is its own gateway request). Those requests say
+    `budget_retry=False`; every other stage gets the **gateway's own truncation retry** (S271,
+    `shared/llm_client/token_floor.py`, rules in the core `shared/aa_llm/tokens.py`): per route model in
+    `LLMClient._call_key_logged`, a cut reply / a refused cut reply (OpenAI 400) / a billed cut reply is asked once
+    more on the same model with double the ceiling (cap 24000 and the model's `max_output_tokens`) before the route
+    moves on; the cut reply that came back gets the gateway's row (`call_log.cut_reply_row`: status truncated,
+    `budget_cut`, `gateway_attempt`), the retry's reply carries `LLMResponse.truncation_retry_max_tokens` and the
+    caller's row gets `truncation_retry: true` + `max_tokens` through `billed_fields` (`call_log.RETRY_KEYS`); same
+    route_trace, the retry reports the cut attempt's `attempt_no` (never read as a fallback rung). Not retried:
+    `token_floor.NO_RETRY_STAGES` (`adhoc_conn_test`, `a3_atomize`), shadow calls, a request at the model's cap,
+    past the route deadline, `LLM_BUDGET_RETRY=off`. And the **floor**: a reasoning-capable catalog model (Claude 5.x,
+    GPT-5.x / 6.x, or `capabilities.reasoning`) is sent at least 4096 output tokens (or `capabilities.
+    min_output_tokens`), over a call site's explicit value, after the stage x model row (`_call_catalog_model`;
+    `LLM_TOKEN_FLOOR=off`). Guard: `tests/unit/test_s271_gateway_token_budget.py` (literal sub-floor ceilings are a
+    shrinking allowlist, `budget_retry=False` only in token_budget.py, every migration model key classified). Alert:
+    `route_cut.<stage>` (route_watch, > 5 % of a stage's replies cut over 24 h, refused cuts and eval rows
+    included). A ceiling is head-room, not the expected size: since t9_write v2 (AA-741 S271) every blog prompt carries a word band (900-1,300, never over
     1,600, never padded), a section cap and a one-pass rule (`prompts._BLOG_LENGTH_INSTRUCTIONS`), because the
     adaptive thinking of the 5.x writers is billed as output inside the same ceiling;
   - a judge verdict built from several calls (AA-714 near-band repeat, AA-801 median3) writes one row per

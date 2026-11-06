@@ -229,7 +229,7 @@ class TestT9Repair:
             reps, cost = t9.repair_sentences(sentences=_ITEMS, content_seed="seed", channel="blog",
                                              stage="t9_repair")
         assert reps == ["The ferry crosses to Tamsel Isle."] and cost == pytest.approx(0.02)
-        assert _sizes(client) == [4096, 8192] and log.call_count == 2
+        assert _sizes(client) == [8192, 16384] and log.call_count == 2      # S271: T9_REPAIR_MAX_TOKENS 8192
 
     def test_sentence_repair_truncated_twice_raises(self):
         client = _client(_resp('{"replacements": ["a', "max_tokens"), _resp('{"replacements": ["b', "max_tokens"),

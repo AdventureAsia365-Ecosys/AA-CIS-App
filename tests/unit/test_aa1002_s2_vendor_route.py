@@ -252,7 +252,9 @@ def test_billed_but_unusable_replies_carry_their_usage(gw, reply, match):
     fake.replies.append(stream_reply(text, input_tokens=30, output_tokens=7, **reply))
     with patch("shared.llm_client.client.log_gateway_billed_failure") as logged:
         with pytest.raises(BilledUnusableReply, match=match) as e:
-            client.generate(_req(json_schema=SCHEMA))
+            # S271: budget_retry=False — this test reads one attempt's billed usage; the gateway's truncation retry
+            # of the cut (max_tokens) case is tests/unit/test_s271_gateway_token_budget.py
+            client.generate(_req(json_schema=SCHEMA, budget_retry=False))
     billed = e.value.billed_usage[0]
     assert billed["model"] == "anthropic-api-sonnet-5-5" and billed["tokens_in"] == 30 and billed["tokens_out"] == 7
     assert billed["cost_usd"] > 0

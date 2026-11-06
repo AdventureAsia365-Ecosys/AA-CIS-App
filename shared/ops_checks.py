@@ -151,6 +151,7 @@ ROUTE_FALLBACK_PREFIX = "route_fb."
 ROUTE_LAST_PREFIX = "route_last."
 ROUTE_BACK_PREFIX = "route_back."
 ROUTE_COST_PREFIX = "route_cost."
+ROUTE_CUT_PREFIX = "route_cut."          # S271: replies cut at their token ceiling (shared/llm_client/token_floor.py)
 ROUTE_DIGEST_CHECK = "route_digest"
 TRACE_PAGE = "/admin/ai-gateway?tab=trace"
 PREFIX_CHECKS: dict[str, Check] = {
@@ -170,6 +171,12 @@ PREFIX_CHECKS: dict[str, Check] = {
         "LLM fallback raised a stage's cost", "Requests answered by a fallback model cost more than the primary "
         "would have over the last 24 hours. Check AI gateway > Trace and the provider of the primary.", TRACE_PAGE,
         bell_every=timedelta(hours=24)),
+    ROUTE_CUT_PREFIX: Check(
+        "LLM stage replies cut at their token ceiling", "More than 5 % of the stage's billed replies in the last 24 "
+        "hours stopped on their output-token ceiling (max_tokens / length). The gateway retries a cut reply once with "
+        "double the ceiling, so each cut costs a second call. Raise the stage's ceiling (the call site's constant, "
+        "or a stage x model row) or set the model's min_output_tokens capability; AI gateway > Trace shows the "
+        "attempts.", TRACE_PAGE, bell_every=timedelta(hours=24)),
 }
 PREFIX_CHECKS_EXACT: dict[str, Check] = {
     ROUTE_DIGEST_CHECK: Check(

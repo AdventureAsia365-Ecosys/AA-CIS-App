@@ -40,6 +40,11 @@ class LLMRequest(BaseModel):
     # writer | judge | validate | embed. The stage row's role always wins; None = 'writer' as before. Only the
     # gateway's own attempt rows read it (the caller still passes role= to record_call*).
     role:          Optional[str] = None
+    # S271 (AA-741 / AA-900): False = this call site retries a reply cut at its token ceiling itself and writes both
+    # rows (services/acp_shared/token_budget.py), so the gateway does not (shared/llm_client/token_floor.py). Every
+    # other request gets the gateway's one truncation retry. Guarded: tests/unit/test_s271_gateway_token_budget.py
+    # lists every call site allowed to set it.
+    budget_retry:  bool = True
 
 class LLMResponse(BaseModel):
     content:       str
@@ -109,3 +114,7 @@ class LLMResponse(BaseModel):
     # theirs sat behind a circuit opened by a refusal ([{model, connection, reason 'circuit_open:<class>', position}]).
     # They write no ledger row of their own; billed_fields() passes this list on to the answered row's quality_signal.
     route_skips: Optional[list[dict]] = None
+    # S271 (AA-741 / AA-900): set when this reply is the gateway's one truncation retry (the first reply was cut at
+    # its token ceiling; its own row is already written): the retry's ceiling. billed_fields() passes it on, and the
+    # caller's row gets quality_signal.truncation_retry = true + max_tokens. None = no retry ran.
+    truncation_retry_max_tokens: Optional[int] = None

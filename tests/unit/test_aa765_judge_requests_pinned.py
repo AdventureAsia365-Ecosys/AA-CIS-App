@@ -70,6 +70,10 @@ def _digest(req) -> str:
     # out so the pins keep meaning "the provider request did not change". A judge that sets it changes its pin.
     if dump.get("role") is None:
         dump.pop("role", None)
+    # S271: LLMRequest.budget_retry (the gateway's truncation retry, default on) never reaches the provider either; at
+    # its default it is left out the same way. A judge that opts out (False) changes its pin.
+    if dump.get("budget_retry") is True:
+        dump.pop("budget_retry", None)
     body = {"dump": dump, "set": sorted(req.model_fields_set)}
     return hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
