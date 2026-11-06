@@ -148,6 +148,21 @@ def _llm_breaker_off(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _llm_cassette_off(request, monkeypatch):
+    """AA-900 (cassette): the gateway records every returned reply on a background DB write (LLM_CASSETTE=record,
+    the default). Unit tests have no database: off unless a test opts in with the marker `real_cassette` (and then
+    replaces the write itself); the counters start at zero either way."""
+    from shared.llm_client import cassette
+    cassette.reset_stats()
+    if "real_cassette" not in request.keywords:
+        monkeypatch.setenv(cassette.SWITCH_ENV, cassette.MODE_OFF)
+    else:
+        monkeypatch.delenv(cassette.SWITCH_ENV, raising=False)
+    yield
+    cassette.reset_stats()
+
+
+@pytest.fixture(autouse=True)
 def _provider_circuit_off(request, monkeypatch):
     """AA-1025 B3: the shared provider circuit (Jev, DataForSEO, Geoapify) keeps state across calls, so client tests
     that script provider failures would see it open. Off (PROVIDER_CIRCUIT_BREAKER=off) unless a test opts in with
