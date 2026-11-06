@@ -209,6 +209,8 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     # hours still in the raw window from the detached ledger rows (NULL tenant), which is what this merge leaves.
     TenantTable("shared.ai_usage_hourly", "merge",
                 "hourly usage rollup; summed into the NULL-tenant row of the same key, then deleted"),
+    # AA-900 (387): the gateway's raw model replies (tenant content, pii:free_text): deleted, nothing to keep
+    _d("shared.llm_cassette", "raw model replies of the tenant's calls (AI gateway cassette)"),
     # ── kept
     TenantTable("acp_shared.audit_log", "keep",
                 "append-only hash chain (triggers refuse UPDATE/DELETE); the erasure keeps the audit row"),
