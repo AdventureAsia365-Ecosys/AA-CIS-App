@@ -867,8 +867,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     min_output_tokens`), over a call site's explicit value, after the stage x model row (`_call_catalog_model`;
     `LLM_TOKEN_FLOOR=off`). Guard: `tests/unit/test_s271_gateway_token_budget.py` (literal sub-floor ceilings are a
     shrinking allowlist, `budget_retry=False` only in token_budget.py, every migration model key classified). Alert:
-    `route_cut.<stage>` (route_watch, > 5 % of a stage's billed replies cut over 24 h). A ceiling is head-room, not the
-    expected size: since t9_write v2 (AA-741 S271) every blog prompt carries a word band (900-1,300, never over
+    `route_cut.<stage>` (route_watch, > 5 % of a stage's replies cut over 24 h, refused cuts and eval rows
+    included). A ceiling is head-room, not the expected size: since t9_write v2 (AA-741 S271) every blog prompt carries a word band (900-1,300, never over
     1,600, never padded), a section cap and a one-pass rule (`prompts._BLOG_LENGTH_INSTRUCTIONS`), because the
     adaptive thinking of the 5.x writers is billed as output inside the same ceiling;
   - a judge verdict built from several calls (AA-714 near-band repeat, AA-801 median3) writes one row per
