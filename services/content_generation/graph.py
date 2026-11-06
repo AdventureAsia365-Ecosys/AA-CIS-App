@@ -23,6 +23,7 @@ from .flag_fix_node import flag_fix_node
 from .grounding import grounding_node, regrounding, repair_and_recheck
 from .grounding import degraded_entries as grounding_degraded_entries, source_text as grounding_source_text
 from .judge_node import judge_node
+from . import t2_interim
 from .t2_repair import (
     increment_retry_t2, restore_best_node, revise_block, targeted_repair_enabled, track_best_node,
 )
@@ -431,6 +432,10 @@ class ContentState(TypedDict):
     draft_scores:           list
     previous_draft:         Optional[dict]
     best_draft_restored:    bool
+    # S271 W0 (root ADR 0020, AA-900 l16): which exit the draft left by — "hitl" when the retries ran out below the
+    # line. Before S271 that exit went straight to END and skipped brand_audit, grounding, final_day_guard, the route
+    # guard and the degraded hold; now it goes through them (flag_fix skipped). Recorded in metadata.exit_path.
+    exit_path:              Optional[str]
     # AA-993 G2: the graph-state keys a writer node changed, saved by an s1_rewrite job (s1_checkpoint) and merged
     # back by resume_writer_node (build_graph_resumed) when a released job is re-claimed. Declared so LangGraph keeps it
     # until the entry node reads it.
@@ -1390,7 +1395,9 @@ def revalidate_node(state: ContentState) -> ContentState:
     # Re-run in the same order as the main graph: validate sets quality_score that judge then
     # min()'s against. Calling judge alone would min against the stale pre-fix validate score.
     s = validate_node(state)
-    s = judge_node(s)
+    # S271 W0: the T2 interim profile has no revalidate judge (report-only, one judge call per draft is enough).
+    if not t2_interim.active_for(s):
+        s = judge_node(s)
 
     score = s.get("quality_score", 0.0)
     audit_status = s.get("brand_audit_status", "")
@@ -1417,24 +1424,66 @@ def human_edit_gate_node(state: ContentState) -> ContentState:
     deliberately NOT in this graph — the human edit is final, the system only re-scores and
     gates. Pass = validate+judge score clears MIN_QUALITY AND brand_audit isn't manual_check.
     On fail the reviewer must fix and re-validate again before approve is allowed.
+
+    S271 W0 (root ADR 0020 D8, AA-900 l16): a manual_check held ONLY by the elephant-riding policy
+    (``elephant_policy.is_policy_only_hold``: its code is the only brand code and the detector hits the edited text
+    or the source) does not fail the gate: the policy asks for a human review, and this edit is it. Before, an
+    edited elephant tour could never pass (the detector re-hits the source on every re-validation), so the only way
+    out was an API-only override. Any other manual_check still fails.
     """
+    from services.quality import elephant_policy
     score = state.get("quality_score", 0.0)
     audit_status = state.get("brand_audit_status", "")
     codes = state.get("failure_codes", []) or []
     hard_hits = sorted(set(codes) & hard_block_codes(state))   # AA-645: v2 drafts add V2_HARD_BLOCK_CODES
+    policy_keep = audit_status == "manual_check" and elephant_policy.is_policy_only_hold(
+        audit_status, state.get("brand_audit_codes") or [], state.get("generated"), state.get("tour"))
     passed = (
         score >= MIN_QUALITY
-        and audit_status != "manual_check"
+        and (audit_status != "manual_check" or policy_keep)
         and not hard_hits
     )
     logger.info("human_edit_revalidate_done", passed=passed, score=score,
                 brand_audit_status=audit_status, hard_block_hits=hard_hits,
-                failure_codes=codes)
+                failure_codes=codes, policy_keep=policy_keep)
     return {
         **state,
         "revalidate_ran":    True,
         "revalidate_passed": passed,
     }
+
+
+HITL_EXIT = "hitl"
+
+
+def hitl_exit_node(state: ContentState) -> ContentState:
+    """S271 W0 (AA-900 l16): the ``hitl`` exit (retries used up, still below the line) no longer ends the graph. It
+    marks the draft and goes on to brand_audit → grounding → revalidate, so a version that leaves this way has been
+    through the same checks as one that passed (elephant / meal / clock codes, grounding against the source with its
+    sentence repair, final_day_guard, the route guard and the degraded hold). No LLM call here."""
+    logger.info("hitl_exit_checked", retry_count=state.get("retry_count", 0),
+                score=state.get("quality_score"))
+    return {**state, "exit_path": HITL_EXIT}
+
+
+def after_grounding(state: ContentState) -> str:
+    """S271 W0: a hitl draft skips flag_fix (a source-blind whole-field LLM rewrite of a draft that goes to a human
+    anyway) and goes straight to revalidate, whose last step is the final check chain (_apply_grounding_recheck)."""
+    return "revalidate" if state.get("exit_path") == HITL_EXIT else "flag_fix"
+
+
+def _wire_checks_tail(graph: StateGraph, *, hitl_from: Optional[str] = None) -> None:
+    """The tail every A1 / T2 entry shares (S271 W0: one exit chain): brand_audit → grounding → flag_fix (skipped
+    on a hitl draft) → revalidate → END. The ``hitl`` exit reaches it through hitl_exit (the should_retry branch
+    targets it directly, or ``hitl_from`` — T2's restore_best — leads to it)."""
+    graph.add_node("hitl_exit", hitl_exit_node)
+    if hitl_from:
+        graph.add_edge(hitl_from, "hitl_exit")
+    graph.add_edge("hitl_exit", "brand_audit")
+    graph.add_edge("brand_audit", "grounding")
+    graph.add_conditional_edges("grounding", after_grounding, {"flag_fix": "flag_fix", "revalidate": "revalidate"})
+    graph.add_edge("flag_fix", "revalidate")
+    graph.add_edge("revalidate", END)
 
 
 def build_revalidation_graph() -> StateGraph:
@@ -1480,6 +1529,7 @@ def build_graph(t2_drafts: bool = False) -> StateGraph:
     # AA-206: the judge sits between validate and the retry decision so should_retry routes on
     # the judge-adjusted quality_score (the writer fixes against judge feedback via the retry loop).
     graph.add_edge("validate", "llm_judge")
+    # S271 W0: the hitl exit goes through the checks (hitl_exit → brand_audit → grounding → revalidate), never to END.
     if t2_drafts:
         graph.add_node("track_best", track_best_node)
         graph.add_node("restore_best", restore_best_node)
@@ -1489,17 +1539,14 @@ def build_graph(t2_drafts: bool = False) -> StateGraph:
             "retry": "increment_retry",
             "hitl":  "restore_best",
         })
-        graph.add_edge("restore_best", END)
+        _wire_checks_tail(graph, hitl_from="restore_best")
     else:
         graph.add_conditional_edges("llm_judge", should_retry, {
             "done":  "brand_audit",
             "retry": "increment_retry",
-            "hitl":  END,
+            "hitl":  "hitl_exit",
         })
-    graph.add_edge("brand_audit", "grounding")
-    graph.add_edge("grounding", "flag_fix")
-    graph.add_edge("flag_fix", "revalidate")
-    graph.add_edge("revalidate", END)
+        _wire_checks_tail(graph)
     graph.add_edge("increment_retry", "generate")
 
     return graph.compile()
@@ -1541,12 +1588,9 @@ def build_graph_resumed() -> StateGraph:
     graph.add_conditional_edges("llm_judge", should_retry, {
         "done":  "brand_audit",
         "retry": "increment_retry",
-        "hitl":  END,
+        "hitl":  "hitl_exit",
     })
-    graph.add_edge("brand_audit", "grounding")
-    graph.add_edge("grounding", "flag_fix")
-    graph.add_edge("flag_fix", "revalidate")
-    graph.add_edge("revalidate", END)
+    _wire_checks_tail(graph)   # S271 W0: the hitl exit goes through the checks
     graph.add_edge("increment_retry", "generate")
 
     return graph.compile()
@@ -1577,12 +1621,9 @@ def build_graph_from_generated() -> StateGraph:
     graph.add_conditional_edges("llm_judge", should_retry, {
         "done":  "brand_audit",
         "retry": "increment_retry",
-        "hitl":  END,
+        "hitl":  "hitl_exit",
     })
-    graph.add_edge("brand_audit", "grounding")
-    graph.add_edge("grounding", "flag_fix")
-    graph.add_edge("flag_fix", "revalidate")
-    graph.add_edge("revalidate", END)
+    _wire_checks_tail(graph)   # S271 W0: the hitl exit goes through the checks
     graph.add_edge("increment_retry", "generate")
 
     return graph.compile()

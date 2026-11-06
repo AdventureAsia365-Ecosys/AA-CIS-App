@@ -17,6 +17,18 @@ from services.content_generation.judge_node import judge_node
 from shared.llm_client.models import LLMResponse
 from unittest.mock import patch
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _pre_s271_w0_paths(monkeypatch):
+    """These tests pin a pre-S271 path, now behind a break-glass switch:
+    T2_INTERIM=off (the T2 judge gates, median3, the tie-break, T3 full rewrite rounds);
+    S1_JUDGE_LIVE=on (the S1 judge called on a writer-v2 draft; D9 takes it off the live path).
+    The S271 W0 defaults are tested in tests/unit/test_aa900_s271_w0_t2s1.py."""
+    monkeypatch.setenv("T2_INTERIM", "off")
+    monkeypatch.setenv("S1_JUDGE_LIVE", "on")
+
 
 _BASE_KW = dict(
     brand_rule_id="rule-1",

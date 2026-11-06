@@ -15,6 +15,17 @@ import pytest
 from services.content_generation import graph, judge_node as jn, s1_writer_v2_live as live
 from services.content_generation.brand_fit import BrandFitResult
 
+
+@pytest.fixture(autouse=True)
+def _pre_s271_w0_paths(monkeypatch):
+    """These tests pin a pre-S271 path, now behind a break-glass switch:
+    T2_INTERIM=off (the T2 judge gates, median3, the tie-break, T3 full rewrite rounds);
+    S1_JUDGE_LIVE=on (the S1 judge called on a writer-v2 draft; D9 takes it off the live path).
+    The S271 W0 defaults are tested in tests/unit/test_aa900_s271_w0_t2s1.py."""
+    monkeypatch.setenv("T2_INTERIM", "off")
+    monkeypatch.setenv("S1_JUDGE_LIVE", "on")
+
+
 TOUR = {
     "name": "Hanoi and Halong Bay", "subtitle": "", "summary": "Two days in Hanoi and on Halong Bay.",
     "description": "", "highlights": ["Old Quarter", "Halong Bay"],

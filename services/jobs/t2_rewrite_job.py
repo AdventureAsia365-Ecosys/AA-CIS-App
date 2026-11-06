@@ -36,7 +36,11 @@ _PT_SQL = """
            pt.aa_summary, pt.aa_description, pt.aa_highlights,
            pt.aa_itineraries, pt.seo_title, pt.seo_meta,
            pt.seo_keywords_used,
-           rt.country, rt.duration
+           rt.country, rt.duration,
+           -- S271 W0 (D8): the raw source fields the elephant-riding policy reads (never the writer's input)
+           rt.src_name, rt.src_subtitle, rt.src_summary, rt.src_description,
+           rt.src_highlights::text AS src_highlights, rt.src_itineraries, rt.inclusions,
+           rt.activities::text AS activities, rt.price_raw
     FROM gold_aa_internal.published_tours pt
     LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
     WHERE pt.id = $1::uuid
@@ -46,13 +50,17 @@ _PT_SQL = """
 _T2_STATUS_PASS = threshold("t2.status_pass")  # services/quality/thresholds.yaml (AA-926)
 
 
-def _t2_status(rewrite_score: float) -> str:
+def _t2_status(rewrite_score: float, hard_codes=()) -> str:
     """AA-436: the stored T2 version status is purely score-based (same formula for a real T3 pass and
-    an auto-pass). AA-926: pure seam so the pass line is pinned by the gate-outcome snapshot."""
-    if rewrite_score >= _T2_STATUS_PASS:
+    an auto-pass). AA-926: pure seam so the pass line is pinned by the gate-outcome snapshot.
+
+    S271 W0 (T2 interim, t2_interim.py): the score is validate's alone (the judge is report-only) and a hard code T3
+    left on the kept draft (``hard_codes``, qa structural_issues) is needs_review too. With the switch off the
+    caller passes no codes: the pre-S271 rule."""
+    if rewrite_score >= _T2_STATUS_PASS and not hard_codes:
         return "ai_generated"   # ready for tenant to review
     if rewrite_score > 0:
-        return "needs_review"   # LLM finished but low quality
+        return "needs_review"   # LLM finished but low quality, or a hard code survived T3
     return "needs_review"       # hitl / score=0 — needs human
 
 
@@ -212,10 +220,105 @@ def t2_judge_breakdown(result: dict, rewritten: dict, tour_dict: dict, brand_rul
         return None
 
 
+def policy_hold_hits(pt, tour_dict: dict) -> list[dict]:
+    """S271 W0 (root ADR 0020 D8): the elephant-riding mentions in the Master text the writer would read
+    (``tour_dict``) or in the raw source row (``pt``'s src_* columns). Non-empty = this version is a policy hold."""
+    from services.quality import elephant_policy
+    hits = elephant_policy.scan(tour_dict, elephant_policy.raw_source_from_row(pt))
+    return [{**h, "where": "master" if h["where"] == "generated" else h["where"]} for h in hits]
+
+
+def _as_list(value) -> list:
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str) and value.strip().startswith("["):
+        import json as _json
+        try:
+            parsed = _json.loads(value)
+        except ValueError:
+            return [value]
+        return parsed if isinstance(parsed, list) else [value]
+    return [value] if value else []
+
+
+def policy_hold_content(tour_dict: dict, brand_rules: dict) -> tuple[dict, list[str]]:
+    """S271 W0 (D8) — policy_hold v0: the version of an elephant-riding tour, built by code with 0 LLM calls.
+
+    The prose is the Master text verbatim (name, subtitle, summary, highlights, itinerary). The fields T2 tailors for
+    the agency's page, the SEO title and meta, are composed by code from the Master's with the deterministic fitters
+    (``fit_seo_title`` / ``fit_seo_meta_final`` with the tenant's forbidden words); no brand claim is added. The
+    AA-778 em-dash rule for tenant copy applies (``fix_t2_dashes``: the Master name keeps its dash). Returns
+    (rewritten_content, dash log)."""
+    from services.content_generation.seo_meta_utils import fit_seo_meta_final, fit_seo_title
+    from services.content_generation.t2_dashes import fix_t2_dashes
+    seo_meta = fit_seo_meta_final(
+        str(tour_dict.get("seo_meta") or ""),
+        {"duration": tour_dict.get("duration"), "country": tour_dict.get("country"), "name": tour_dict.get("name")},
+        brand_rules.get("forbidden_words"))
+    rewritten = {
+        "name":        tour_dict.get("name") or "",
+        "subtitle":    tour_dict.get("subtitle") or "",
+        "summary":     tour_dict.get("summary") or "",
+        "highlights":  _as_list(tour_dict.get("highlights")),
+        "itineraries": tour_dict.get("itineraries") or "",
+        "seo_title":   fit_seo_title(str(tour_dict.get("seo_title") or "")),
+        "seo_meta":    seo_meta,
+        "trip_type":   "",
+        "status":      "done",
+    }
+    return fix_t2_dashes(rewritten, tour_dict)
+
+
+async def _save_policy_hold(pool, pt, tour_dict: dict, brand_rules: dict, tenant_id: str, version_id: str,
+                            hits: list[dict]) -> dict:
+    """S271 W0 (D8): write the policy_hold version (needs_review, so the agency still receives it as ready), its
+    admin-only mark (judge_breakdown.policy_hold) and a review row. No writer, judge, T3 or Jev call."""
+    import json as _j
+    from services.quality import elephant_policy
+    rewritten, dash_log = policy_hold_content(tour_dict, brand_rules)
+    mark = {"reason": elephant_policy.POLICY_HOLD, "decision": "ADR 0020 D8", "llm_calls": 0,
+            "hits": hits[:10]}
+    progress_show(rewritten)
+    progress_step("save")
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE gold_aa_internal.tenant_tour_versions
+            SET rewritten_content = $1::jsonb,
+                status = 'needs_review',
+                quality_score = NULL,
+                qa_status = 'escalated',
+                qa_repair_count = 0,
+                qa_checked_at = now(),
+                qa_auto_passed = true,
+                judge_breakdown = $2::jsonb
+            WHERE id = $3::uuid
+        """, _j.dumps(rewritten), _j.dumps({"policy_hold": mark}, default=str), version_id)
+        detail = [{"check_id": f"policy:{elephant_policy.POLICY_HOLD}", "field": h["field"],
+                   "description": f"Elephant riding in the {h['where']} {h['field']}: the Master text is kept "
+                                  "verbatim for a human review (policy, no rewrite)",
+                   "source_span": str(h["mention"])[:500], "suggested_fix": None} for h in hits[:10]]
+        await conn.execute("""
+            INSERT INTO silver_aa_internal.review_queue
+                (tour_id, tenant_id, tenant_tour_version_id, failure_summary, escalate_detail)
+            VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5::jsonb)
+        """, pt["tour_id"], tenant_id, version_id,
+            "POLICY_HOLD elephant_riding: Master text kept verbatim, 0 LLM calls (ADR 0020 D8); review the tour",
+            _j.dumps(detail))
+    logger.info("t2_policy_hold", version_id=str(version_id), tenant_id=tenant_id, reason=elephant_policy.POLICY_HOLD,
+                hits=len(hits))
+    return {"policy_hold": mark, "em_dashes": {"fields": dash_log}}
+
+
 async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant_id: str,
                             version_id: str, published_tour_id: str) -> dict:
     """SEO lookup, rewrite, T3 QA gate, save — unchanged from the pre-AA-652 router closure
-    except that a failure raises (so the job retries) instead of silently marking the version."""
+    except that a failure raises (so the job retries) instead of silently marking the version.
+
+    S271 W0 (D8): an elephant-riding tour is a policy hold instead (``_save_policy_hold``, 0 LLM calls)."""
+    hits = policy_hold_hits(pt, tour_dict)
+    if hits:
+        return await _save_policy_hold(pool, pt, tour_dict, brand_rules, tenant_id, version_id, hits)
+
     from api.routers.v1_pipeline import _rewrite_tour as _do_rewrite
 
     seo_data, diag = await t2_seo(pool, pt, tenant_id)
@@ -293,10 +396,15 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
             # AA-778 (S238): no em-dash in tenant copy. The last text step: after the writer, judge,
             # flag-fix and T3 (which all read the draft as written), right before the save. T2 only:
             # this job is the one writer of AI-generated tenant_tour_versions; A1 never runs here.
+            # S271 W0 (T2 interim): T3 already fixed the dashes on the kept draft BEFORE its checks, so this call
+            # changes nothing then (kept as the AA-778 guarantee for the switch-off path).
+            from services.content_generation import t2_interim
             from services.content_generation.t2_dashes import em_dash_count, fix_t2_dashes
+            interim = t2_interim.enabled()
             dashes_before = em_dash_count(rewritten)
             rewritten, dash_log = fix_t2_dashes(rewritten, tour_dict)
-            diag["em_dashes"] = {"before": dashes_before, "after": em_dash_count(rewritten), "fields": dash_log}
+            diag["em_dashes"] = {"before": dashes_before, "after": em_dash_count(rewritten), "fields": dash_log,
+                                 **({"fixed_in_t3": qa.get("em_dash_fixes", 0)} if interim else {})}
             rewrite_score = float(result.get("quality_score") or 0)
             # AA-436: status is now purely score-based, same formula for a real T3 pass
             # and an auto-pass — T3 no longer forces needs_review on its own (see
@@ -304,19 +412,23 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
             # happened). ADR-2026-038 §0.1 (amend §10.3): escalate-and-stop broke the
             # single-job T2->T3->T5 chain and made the tenant fix wording themselves —
             # both rejected 22/08.
-            new_status = _t2_status(rewrite_score)
-            # Never write 0.0 — fall back to source published_tours quality_score
-            async with pool.acquire() as _conn_qs:
-                source_score = await _conn_qs.fetchval(
-                    "SELECT quality_score FROM gold_aa_internal.published_tours WHERE id = $1::uuid",
-                    published_tour_id
-                )
-            final_score = rewrite_score if rewrite_score else float(source_score or 0)
+            new_status = _t2_status(rewrite_score, (qa.get("structural_issues") or ()) if interim else ())
+            if interim:
+                # S271 W0: no copy of the Master's score onto tenant text that has none of its own (NULL instead).
+                final_score = rewrite_score or None
+            else:
+                # Never write 0.0 — fall back to source published_tours quality_score
+                async with pool.acquire() as _conn_qs:
+                    source_score = await _conn_qs.fetchval(
+                        "SELECT quality_score FROM gold_aa_internal.published_tours WHERE id = $1::uuid",
+                        published_tour_id
+                    )
+                final_score = rewrite_score if rewrite_score else float(source_score or 0)
             # AA-795: the kept draft's judge verdict + the brand-claim fidelity check of the saved text (CIS 300,
             # admin-only, report-only: nothing above changes because of it).
             judge_breakdown = t2_judge_breakdown(
                 result, rewritten, tour_dict, brand_rules, final_score=final_score,
-                score_source="rewrite" if rewrite_score else "source_fallback",
+                score_source="rewrite" if rewrite_score else ("none" if interim else "source_fallback"),
                 chosen_attempt=qa.get("chosen_attempt"))
             # AA-1042 (Quality guard): a fallback model wrote this version (marked; held for review when the stage
             # holds fallback writes). Admin-only like the rest of judge_breakdown: the tenant still receives the text.

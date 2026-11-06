@@ -25,9 +25,9 @@ META_ROBOTIC_OPENERS = [
     re.compile(r'^Find\b',       re.IGNORECASE),
 ]
 OPTIONAL_HIGHLIGHT = re.compile(r'^Optional\b', re.IGNORECASE)
-ELEPHANT_RIDING = re.compile(
-    r'elephant[-\s]?back|elephant\s+ride|elephant\s+trek', re.IGNORECASE
-)
+# S271 W0 (root ADR 0020 D8): the elephant-riding policy detector lives in services/quality/elephant_policy.py (the
+# policy wording, plurals and inflections, negation-aware); kept under the old name for its importers.
+from services.quality.elephant_policy import ELEPHANT_RIDING_RE as ELEPHANT_RIDING  # noqa: E402
 NAME_ALL_CAPS_RE = re.compile(r'^[A-Z\s\d&\-]+$')
 NAME_SUPERLATIVES = ['the best of', 'ultimate', 'must-see', 'and fun', 'expenditures']
 # AA-195 / AA-608: fabricated meal LOGISTICS or clock-times in itineraries = PRODUCT_TRUTH_RISK.
@@ -387,9 +387,11 @@ def pre_audit_checks(generated: dict, tour: dict | None = None, *, tenant_id: st
         if OPTIONAL_HIGHLIGHT.match(str(h)):
             codes.append("HIGHLIGHTS_OPTIONAL_LANGUAGE")
             break
-    combined = " ".join(str(h) for h in highlights).lower()
-    if ELEPHANT_RIDING.search(combined):
-        codes.append("FACT_CHECK_MANUAL_CHECK")
+    # S271 W0 (D8): elephant riding anywhere on the page or in the source (before: the generated highlights only,
+    # and a regex that missed "elephant riding"). The tour is kept as it is and goes to a human (manual_check).
+    from services.quality import elephant_policy
+    if elephant_policy.scan(generated, tour):
+        codes.append(elephant_policy.POLICY_CODE)
 
     itineraries = generated.get("itineraries") or ""
     if isinstance(itineraries, (list, dict)):
@@ -619,6 +621,11 @@ def brand_audit_node(state: dict) -> dict:
     # AA-206: prefer the judge's result over a second LLM call (judge_node sets judge_brand_fit only
     # on a successful score). Keeps deterministic pre-audit codes for flag_fix; no double GPT cost.
     if "judge_brand_fit" in state:
+        return _audit_from_judge(state, generated)
+    # S271 W0 (root ADR 0020 D9): with the S1 judge off the live path a writer-v2 draft gets the same deterministic
+    # audit it got when the judge ran (pre-audit codes, no LLM call), not the standalone s1_brand_audit LLM call.
+    from .judge_node import s1_judge_off_live_path
+    if s1_judge_off_live_path(state):
         return _audit_from_judge(state, generated)
 
     # AA-792: a T2 tenant rewrite is never graded against Adventure Asia's own voice (calm, private,

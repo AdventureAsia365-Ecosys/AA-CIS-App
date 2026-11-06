@@ -309,6 +309,9 @@ def _revision_feedback(base: dict) -> str:
     """T3 findings plus, for a draft below the line, the judge's own feedback — so the revision fixes
     what both checks asked for (before AA-793 a repair round only heard T3)."""
     fb = t3_repair_feedback(base["structural"], base["grounding"])
+    from services.content_generation import t2_interim
+    if t2_interim.enabled():   # S271 W0: the judge is report-only, it does not steer a revision either
+        return fb
     judge_fb = str(base["result"].get("judge_feedback") or "").strip()
     if judge_fb and base["score"] < _T3_PASS_LINE:
         fb = f"{fb}\nBRAND VOICE FEEDBACK: {judge_fb[:1500]}" if fb else f"BRAND VOICE FEEDBACK: {judge_fb[:1500]}"
@@ -391,8 +394,11 @@ def _t3_meta_regenerate(generated: dict, tour_dict: dict, brand_rules: dict, ten
 
 
 def _t3_outcome(passed: bool, chosen: dict, attempts: int, candidates: list[dict], jev_cleared: int,
-                sentence_repairs: int, degraded_list: list | None = None) -> dict:
+                sentence_repairs: int, degraded_list: list | None = None, em_dash_fixes: int = 0,
+                stopped: str | None = None) -> dict:
     return {
+        # S271 W0 (T2 interim): em-dashes fixed inside T3 before the checks; why T3 stopped before its rounds ran out
+        "em_dash_fixes": em_dash_fixes, "stopped": stopped,
         "passed": passed, "result": chosen["result"], "attempts": attempts,
         "structural_issues": [] if passed else chosen["structural"],
         "grounding_issues": [] if passed else chosen["grounding"],
@@ -443,8 +449,14 @@ async def run_t3_qa_gate(
         background_facts_enabled, best_draft_enabled, targeted_repair_enabled,
     )
 
+    from services.content_generation import t2_interim
+    from services.content_generation.t2_dashes import fix_t2_dashes, TEXT_FIELDS as _DASH_FIELDS
+
     best_on, targeted_on = best_draft_enabled(), targeted_repair_enabled()
     background_on = background_facts_enabled()
+    # S271 W0 (t2_interim.py): dashes fixed before every check; no whole-T2-graph rewrite round
+    interim = t2_interim.enabled()
+    em_dash_fixes = 0
     result = initial_result
     attempt = 0
     jev_cleared = 0
@@ -470,6 +482,13 @@ async def run_t3_qa_gate(
                 {"duration": tour_dict.get("duration"), "country": tour_dict.get("country"),
                  "name": tour_dict.get("name")},
                 brand_rules.get("forbidden_words"))
+        if interim:
+            # S271 W0: the AA-778 em-dash fix runs here, on every candidate BEFORE its checks (it used to run after
+            # the last check, on text nothing re-checked). In place, like the fits above.
+            fixed, dash_log = fix_t2_dashes(generated, tour_dict)
+            if dash_log:
+                generated.update({k: fixed[k] for k in _DASH_FIELDS if k in generated})
+                em_dash_fixes += len(dash_log)
         structural = _t3_structural_issues(generated, tour_dict, brand_rules)
         # AA-925: the fit no longer cuts mid-clause, so a meta it cannot land gets a meta-only LLM regenerate
         # (t2_flag_fix) before anything here asks for a whole-tour rewrite.
@@ -512,7 +531,8 @@ async def run_t3_qa_gate(
 
         if not structural and not grounding:
             degraded.emit(t3_degraded, stage="t3", tenant_id=tenant_id)
-            return _t3_outcome(True, current, attempt, candidates, jev_cleared, sentence_repairs, t3_degraded)
+            return _t3_outcome(True, current, attempt, candidates, jev_cleared, sentence_repairs, t3_degraded,
+                               em_dash_fixes=em_dash_fixes)
 
         if attempt >= max_repairs:
             chosen = max(candidates, key=_draft_key) if best_on else current
@@ -520,7 +540,8 @@ async def run_t3_qa_gate(
                 logger.info("t3_best_draft_chosen", chosen_attempt=chosen["attempt"],
                             chosen_score=chosen["score"], last_score=current["score"], tenant_id=tenant_id)
             degraded.emit(t3_degraded, stage="t3", tenant_id=tenant_id)
-            return _t3_outcome(False, chosen, attempt, candidates, jev_cleared, sentence_repairs, t3_degraded)
+            return _t3_outcome(False, chosen, attempt, candidates, jev_cleared, sentence_repairs, t3_degraded,
+                               em_dash_fixes=em_dash_fixes)
 
         attempt += 1
         base = max(candidates, key=_draft_key) if best_on else current
@@ -541,6 +562,15 @@ async def run_t3_qa_gate(
             result, via = repaired, "sentence_repair"
             sentence_repairs += 1
             continue
+        if interim:
+            # S271 W0: no whole-T2-graph rewrite round (up to 3 more drafts + judge each); the best candidate is kept
+            # and escalated (review row), the tenant still receives it.
+            chosen = max(candidates, key=_draft_key) if best_on else current
+            logger.info("t3_full_rewrite_skipped", reason="t2_interim", chosen_attempt=chosen["attempt"],
+                        tenant_id=tenant_id)
+            degraded.emit(t3_degraded, stage="t3", tenant_id=tenant_id)
+            return _t3_outcome(False, chosen, attempt - 1, candidates, jev_cleared, sentence_repairs, t3_degraded,
+                               em_dash_fixes=em_dash_fixes, stopped="full_rewrite_off")
         result = await _rewrite_tour(
             tour_dict, idx=0, total=1, brand_rules=brand_rules, is_tenant_rewrite=True,
             seo=seo_data,

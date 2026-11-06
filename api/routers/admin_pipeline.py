@@ -27,7 +27,7 @@ from api.routers._billing import usage_row_to_dict
 from api.routers.admin import verify_admin_secret
 from api.routers.auth import verify_tenant_jwt
 from api.middleware import tenant_role as _tenant_role  # AA-979 csr check in the dependency
-from api.routers.v1_pipeline import _rewrite_tour
+from api.routers.v1_pipeline import ReviewApproveBody, _rewrite_tour
 from shared.llm_client.errors import is_llm_access_denied
 from services.content_generation import s1_checkpoint as _ckpt  # AA-993 G2
 from shared.aws_client.bronze import bronze_bucket
@@ -376,6 +376,10 @@ def _build_generated_metadata(result, *, brand_rule_id, brand_name, seo_mode,
     # metadata.judge.brand_fit is report-only (it did not gate the version) — the per-wave report reads both.
     if result.get("writer_version"):
         metadata["writer_version"] = result["writer_version"]
+    # S271 W0 (AA-900 l16): "hitl" = the draft left through the hitl exit (retries used up); since S271 that exit runs
+    # the same checks (brand audit, grounding, day guard, degraded hold). Absent = the normal exit, or an older row.
+    if result.get("exit_path"):
+        metadata["exit_path"] = result["exit_path"]
     # AA-919 (WM-18 / WM-20): the writing-memory release the v2 writer wrote this version with (ids and numbers);
     # absent when memory is off for A1 or the v1 writer wrote it (no hook there).
     if result.get("writing_release"):
@@ -1536,6 +1540,11 @@ async def submit_s1_batch_endpoint(req: S1BatchSubmitRequest, request: Request,
     verify_admin_secret(x_admin_secret)
     # AA-642 (D4): 503 with the reason while the Batch kill switch is closed (the default; bedrock_batch.py).
     from shared.llm_client.bedrock_batch import batch_submit_closed_reason
+    # S271 W0 (root ADR 0020): refused while the S1 writer v2 is live (the batch would seed v1 drafts), whatever the
+    # kill switch says.
+    from services.content_generation.s1_batch import writer_v2_refusal
+    if (refused := writer_v2_refusal()) is not None:
+        raise HTTPException(status_code=409, detail=refused)
     if (closed := batch_submit_closed_reason()) is not None:
         raise HTTPException(status_code=503, detail=closed)
     from fastapi.responses import JSONResponse
@@ -2889,11 +2898,13 @@ async def admin_review_queue(
 async def admin_approve_review(
     review_id: str,
     request: Request,
+    body: Optional[ReviewApproveBody] = None,
     x_admin_secret: str = Header(None),
 ):
     verify_admin_secret(x_admin_secret)
     from api.routers.v1_pipeline import approve_review
-    result = await approve_review(review_id=review_id, request=request, tenant=None)
+    # S271 W0: the body (optional) carries an override reason for an unedited version the publish checks refuse.
+    result = await approve_review(review_id=review_id, request=request, tenant=None, body=body)
     # AA-756 — best-effort: after the approve commits, stamp the ground truth for grounding. Every
     # grounded sentence of the approved master version is now human-confirmed as supported, so
     # a1_claim_supported truth=True for each. Never block or fail the approve on this.

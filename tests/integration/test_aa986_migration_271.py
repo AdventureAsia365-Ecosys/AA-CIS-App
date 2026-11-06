@@ -179,9 +179,16 @@ async def test_271_refuses_a_runner_that_does_not_own_the_view(conn):
 # ── publish gates ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 async def _review(conn, tour_id, *, gc_status="hitl", review_status="pending"):
+    # S271 W0: a version that passes the approve gate (approve_gate.blockers) — grounding ran, a clean score row —
+    # so these tests keep testing the source liveness.
     gc = await conn.fetchval(
-        "INSERT INTO silver_aa_internal.generated_content (tour_id, tenant_id, version_num, aa_name, status) "
-        "VALUES ($1, $2, 1, 'aa986', $3::content_status_enum) RETURNING id", tour_id, MASTER, gc_status)
+        "INSERT INTO silver_aa_internal.generated_content (tour_id, tenant_id, version_num, aa_name, status, metadata) "
+        "VALUES ($1, $2, 1, 'aa986', $3::content_status_enum, $4::jsonb) RETURNING id", tour_id, MASTER, gc_status,
+        '{"grounding": {"found": 0, "violations": []}}')
+    await conn.execute(
+        "INSERT INTO silver_aa_internal.quality_scores (generated_content_id, tour_id, tenant_id, score_overall, "
+        "failure_codes, brand_audit_status, brand_audit_codes) VALUES ($1, $2, $3, 9.5, '[]', 'pass', '[]')",
+        gc, tour_id, MASTER)
     rq = await conn.fetchval(
         "INSERT INTO silver_aa_internal.review_queue (tour_id, generated_content_id, tenant_id, review_status, "
         "score_overall) VALUES ($1, $2, $3, $4::review_status_enum, 6.0) RETURNING id",

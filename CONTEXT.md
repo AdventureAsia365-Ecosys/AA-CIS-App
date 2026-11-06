@@ -4006,6 +4006,22 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   Review Queue before they can reach A3. A row can also be **dismissed** (hidden without
   approving; a future real failure is enqueued again — AA-626, `review_status_enum` value
   `dismissed`).
+  - **S271 W0 safety interim** (root ADR 0020, AA-900; notes `docs/implementation-notes/AA-900-l16-w0-t2s1.md`):
+    the **hitl exit** (retries used up below the line) no longer ends the graph: `hitl_exit` → brand_audit →
+    grounding → revalidate (flag_fix skipped), so the day guard, route guard and degraded hold run on it too
+    (`metadata.exit_path = "hitl"`). The **approve** of an unedited version (`v1_pipeline.approve_review`, both the
+    admin alias and `/v1/pipeline`) must pass the auto-publish checks (`services/quality/approve_gate.py`: score
+    floor, hard codes, grounding ran with no unsupported sentence, brand audit not flagged-unfixed / manual_check):
+    else **409 `approve_blocked`** with the reasons, unless the body carries `override_reason` (recorded on
+    `review_queue.reviewer_notes`). A tour held only by the **elephant-riding policy** (D8; detector
+    `services/quality/elephant_policy.py` over every page field and the source, fail-safe negation, a bare
+    "elephant safari" in Sri Lanka is a jeep safari) is approved as `policy_keep`, and a human edit of one passes the
+    re-validation gate (`human_edit_gate_node`); flag_fix never edits such a tour. "Held only by the policy" is
+    `elephant_policy.is_policy_only_hold`: `FACT_CHECK_MANUAL_CHECK` as the only brand code AND a detector hit on
+    the version or its source; the code alone is not enough (the LLM audit also emits it for other fact checks,
+    and those stay blocked). The **S1 judge is off the live path** for a writer-v2 draft
+    (D9, `S1_JUDGE_LIVE` off by default; the brand audit then uses its deterministic pre-audit codes), and
+    `POST /admin/s1-batch/submit` answers 409 while writer v2 is on (the batch seeds a v1 draft).
 - **A3 — Master Content Pool**: `gold_aa_internal.published_tours` — a tour is "in Master
   Content" once it lands here. Atomize (see Atom above) now fires automatically right after a
   tour is published here (AA-526, `services/export/handler.py::process_export()`), as a
@@ -4141,6 +4157,12 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     admin signal only; tenants see it through the tenant projection (see **Tenant projection**).
   - **Live view and billing.** The tenant watches the rewrite live (streamed text, AA-637). Each
     rewrite counts against the plan quota; over-quota rewrites are billed (AA-640).
+  - **S271 W0 interim profile** (`services/content_generation/t2_interim.py`, switch `T2_INTERIM`, default on): the
+    t2_judge is report-only (score = validate's), no Jev tie-break, no median-of-3, no revalidate judge, no T3
+    full-graph rewrite round, status `ai_generated` only with validate's score over the line and no T3 hard code,
+    no copy of the Master's `quality_score` (NULL), em-dash fix inside T3 before every check. An **elephant-riding**
+    tour (Master text or raw source) is `policy_hold` v0 (D8): Master text verbatim + code-fitted SEO title / meta,
+    0 LLM calls, `needs_review` (the agency still receives it), `judge_breakdown.policy_hold`, a review row.
 - **T3 — QA Gate**: an automatic validate→repair loop (max 2 repairs) on T2's output. There is no
   manual tenant approval step: `status='approved'` is T3's own automatic result, not a button.
   - **Blocking and repair (AA-639).** T3 blocks only on `_HARD_BLOCK_CODES` and passes the specific

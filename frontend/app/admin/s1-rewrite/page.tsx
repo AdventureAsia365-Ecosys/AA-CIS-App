@@ -93,6 +93,8 @@ const STAGE_TO_STEP: Record<string, number> = {
   llm_judge:       2,
   increment_retry: 2,
   brand_audit:     3,
+  grounding:       3,
+  hitl_exit:       3, // S271 W0: the hitl exit now runs the checks (brand audit, grounding, final checks)
   flag_fix:        3,
   revalidate:      4,
 };
