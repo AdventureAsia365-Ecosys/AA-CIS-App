@@ -124,6 +124,8 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     _d("shared.staff_view_as_session", "the read-only view-as sessions staff opened on the tenant"),
     # AA-1036 R3 (374): the tenant's add-on requests (its note, the staff decision); FK cascade as the backstop.
     _d("shared.tenant_addon_request", "the tenant's add-on requests and the staff decisions"),
+    # AA-1038 R5 slice 2 (379): the TripPlanner site settings (theme tokens, locale); FK cascade as the backstop.
+    _d("shared.tenant_tripplanner_site", "the tenant's TripPlanner site settings (theme, locale)"),
     # AA-916 (277, ADR 0010 decision 11): tenant text lives only in deletable tables. Platform rows have no tenant.
     _d("shared.writing_signal", "writing-memory signals (before/after text) of the tenant"),
     # AA-917 (280): tenant-scoped learned writing rules (derived from the tenant's text). Platform rules have no tenant.

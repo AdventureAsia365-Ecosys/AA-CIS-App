@@ -49,7 +49,8 @@ MIGRATION_244 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migr
 # skipped or fail there), plus the legacy entries registered "absent on Dev". Missing is fine (nothing to erase);
 # unregistered is not.
 CI_ABSENT = {"gold_aa_internal.tenant_tour_versions", "acp_shared.acp_output_rules", "acp_deliver.tenant_tour_pages"} \
-    | {t.table for t in inv.TENANT_TABLES if "absent on Dev" in t.reason}
+    | {t.table for t in inv.TENANT_TABLES if "absent on Dev" in t.reason} \
+    | {"shared.tenant_tripplanner_site"}    # AA-1038: CIS 379 (catalog recipe) is skipped by the replay
 
 # Live definition of gold_aa_internal.tenant_tour_versions (db-schema-reference.md, 22/10/2026): created by
 # migration 001, which the replay skips, so this module builds it for its own tests and drops it afterwards

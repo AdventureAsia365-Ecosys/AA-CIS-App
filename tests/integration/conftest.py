@@ -462,6 +462,10 @@ def _apply_schema(conn):
         # catalog recipe (needs 245's owners and 357's column grants). test_aa1037_migration_377 applies 357 + 377 the
         # DB Migrate way on the RDS-like state and undoes both at teardown.
         and not f.startswith('377')
+        # AA-1038 R5 slice 2 (S271): 379 creates shared.tenant_tripplanner_site, catalog.v_tenant_tripplanner_v1
+        # (TripPlanner's tenant read) through the catalog recipe (needs 245's owners) and seeds the demo tenant.
+        # test_aa1038_migration_379 applies it the DB Migrate way on the RDS-like state and undoes it at teardown.
+        and not f.startswith('379')
     ])
 
     for mf in migration_files:

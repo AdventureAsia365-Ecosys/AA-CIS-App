@@ -2698,6 +2698,16 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
   account and live subscriptions; read only, `available: false` without the view; the Billing tab's rule:
   billing.read, or tenant.book.account.read on the own book) with "Open in Booking" (`lib/apps.ts
   bookingAgencyInvoicesUrl`).
+- **TripPlanner tenants** (AA-1038 R5 slice 2, root ADR 0019 d10; `docs/implementation-notes/AA-1038.md`): CIS 379
+  adds `shared.tenant_tripplanner_site` (per tenant: `theme` = kit token name -> `#rrggbb`, CHECKed, at most 4 kB;
+  `locale` en | vi; no RLS, cis_app DML, rule a allowlist) and `catalog.v_tenant_tripplanner_v1` (catalog recipe,
+  SELECT to `tripplanner` only; contract tenant.entitlements.v1 1.4): one row per tenant with a TripPlanner subscription
+  (kind internal excluded) with slug, trading name, kind, account status, `in_service`, `served` (in service and
+  `tp.hosted` live), `tp_launcher`, `tp_branding` (BO-8 badge), theme and locale. TripPlanner answers `/{slug}` only for
+  a served row. It also seeds the demo tenant `aa-tripplanner` (`00000000-0000-0000-0000-000000000002`, kind demo,
+  plan_tier internal, a `tripplanner.hosted` subscription), the soft key of every TripPlanner row since tp-025. A bound
+  tenant reads AA master catalogue rows only (`catalog._live_tour` keeps the master tenant). No admin editor for the
+  site row yet (kit brand token slice).
 - **No hard-coded plans**: `PLAN_LIMITS`, the ACPv1 quota ledger write (10/10/50, no reader) and the UI
   `PLAN_OPTIONS` / `PLAN_CHOICES` are gone; RPM per tier, the rewrite quota and the UI tier choices read the plans /
   entitlements (`useContentTiers`: the live public content plans).
