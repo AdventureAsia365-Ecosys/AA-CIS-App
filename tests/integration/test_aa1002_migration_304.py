@@ -70,6 +70,30 @@ LATER = [os.path.join(os.path.dirname(MIGRATION), f) for f in
           # AA-1042 (S269): 376's Anthropic API rows live on the deployment table _undo drops; its catalog rows
           # (provider anthropic) leave with _undo, as the pre-304 provider CHECK refuses them
           "376_llm_anthropic_api_catalog_fallbacks.sql")]
+# AA-1024 l22 (G8): every migration after 304 that names a table _undo drops (or 304's catalog capabilities column)
+# is in LATER above or here, with the reason it need not be re-run; tests/unit/test_aa1024_replay_later_list.py fails
+# on a new one in neither list (lessons S259..S270: a new FK / CHECK / grant / row on these tables broke this module
+# in CI six times). These were on main when the guard came in (S271) and this module passed without re-running them.
+NOT_LATER = {
+    "306_llm_anthropic_deployments.sql": "on main before the G8 guard (S271); this module passes without it",
+    "307_llm_model_alias.sql": "on main before the G8 guard (S271); this module passes without it",
+    "311_llm_stage_allowed_scopes.sql": "on main before the G8 guard (S271); this module passes without it",
+    "319_llm_ledger_v2.sql": "on main before the G8 guard (S271); this module passes without it",
+    "323_llm_contract_views.sql": "on main before the G8 guard (S271); this module passes without it",
+    "327_llm_routes_converse_keys_writer_scopes.sql": "on main before the G8 guard (S271); this module passes without it",
+    "329_embedding_reembed_tools_titan_fallback.sql": "on main before the G8 guard (S271); this module passes without it",
+    "331_llm_judge_validate_acc2_fallback.sql": "on main before the G8 guard (S271); this module passes without it",
+    "332_llm_tenant_judge_validate_acc2_fallback.sql": "on main before the G8 guard (S271); this module passes without it",
+    "333_llm_judge_validate_acc2_before_openai.sql": "on main before the G8 guard (S271); this module passes without it",
+    "335_llm_segment_research_stages.sql": "on main before the G8 guard (S271); this module passes without it",
+    "339_llm_place_dedupe_acc2_maverick.sql": "on main before the G8 guard (S271); this module passes without it",
+    "341_llm_gateway_view_routing_health.sql": "on main before the G8 guard (S271); this module passes without it",
+    "344_llm_tenant_writers_openai_last.sql": "on main before the G8 guard (S271); this module passes without it",
+    "350_llm_gateway_view_stage_params.sql": "on main before the G8 guard (S271); this module passes without it",
+    "366_llm_family_fallback_chains.sql": "on main before the G8 guard (S271); this module passes without it",
+    "382_llm_gpt6_luna_min_output_tokens.sql": "on main before the G8 guard (S271); this module passes without it",
+    "383_llm_w0_remove_uncalibrated_rungs.sql": "on main before the G8 guard (S271); this module passes without it",
+}
 # AA-1042 (S269): the Opus 4.6 / 4.5 candidates CIS 376 switches on for their Anthropic API row (acc3 rows stay off).
 API_ONLY_376 = {"opus-4-6": "claude-opus-4-6", "opus-4-5": "claude-opus-4-5-20251101"}
 # The LLM connection kinds of 304 (322 adds typesafe, dataforseo, geoapify and bedrock_guardrails rows).

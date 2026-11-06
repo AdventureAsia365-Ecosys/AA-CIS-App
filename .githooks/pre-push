@@ -7,6 +7,14 @@
 # code. Tags and branch deletions carry no new code and are not checked.
 set -uo pipefail
 root=$(git rev-parse --show-toplevel) || exit 1
+# AA-1024 l22: a push in the middle of a rebase sends only the commits replayed so far (lesson S257, CIS #1144).
+for state in rebase-merge rebase-apply; do
+  d=$(git rev-parse --path-format=absolute --git-path "$state") || exit 1
+  if [[ -e $d ]]; then
+    echo "pre-push hook: a rebase is in progress ($d): finish it (git rebase --continue or --abort), check git status, then push" >&2
+    exit 1
+  fi
+done
 here=$(git rev-parse -q --verify HEAD) || here=""
 zero=0000000000000000000000000000000000000000
 pushed=0 other=()

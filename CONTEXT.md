@@ -1745,6 +1745,17 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   bucket from `shared/aws_client/bronze.py` (`BRONZE_BUCKET`, else `aa-cis-bronze-<caller account>`) and
   acc2's own ID from STS; the acc3 satellite ID comes from the task env (`BEDROCK_ACCT_PRIMARY`), read once in
   `shared/llm_client/bedrock_satellite.py`.
+- **Test and CI guards from repeated lessons (AA-1024 l22, S271)**: the pre-push hook (`scripts/install-hooks.sh`
+  once per clone) refuses a push mid-rebase, and a push whose changed integration tests have no local pass on that
+  code (`scripts/pre-push.sh --integration` runs them on a throwaway Postgres and writes the stamp;
+  `AA_PREPUSH_SKIP_INTEGRATION=1` skips once). The integration conftest stops the session on a migration that fails
+  outside `tests/integration/_replay_guard.py` `EXPECTED_REPLAY_FAILURES` (or an entry that now applies) and on a
+  non-superuser test user. Unit lints: no `ORDER BY` a uuid `id` / `created_at` alone in `tests/integration`
+  (`test_aa1024_sql_order_stability.py`, frozen allowlist), every migration after 304 naming a table the 304 replay
+  drops is in its `LATER` or `NOT_LATER` (`test_aa1024_replay_later_list.py`). Migration preflight also refuses an
+  added line naming a migration by an old number after a renumber (`.github/scripts/migration_refs.py`, identical in
+  Booking, Partner, TripPlanner). `nightly-integration.yml` runs the integration suite nightly in one job with the
+  modules in a seeded random order (not a PR check).
 - **No acc1 in runtime code (AA-998)**: `tests/unit/test_aa998_no_acc1_runtime.py` fails when `acc1`, its account
   ID, its IAM roles, its account env var or its CLI profile appears in api/ (not migrations), services/,
   shared/, worker/, scripts/ or frontend/ — comments included.

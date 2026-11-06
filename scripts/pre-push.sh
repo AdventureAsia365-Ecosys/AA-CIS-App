@@ -13,6 +13,12 @@
 #   --ci            reserved for H2 (CI calls `scripts/pre-push.sh --full --ci`): never skips by diff, and a missing
 #                   node_modules is a failure instead of a skip. A missing Python tool (flake8 + flake8-bugbear,
 #                   pytest) is a failure in every mode.
+#   --integration   AA-1024 l22 (G6): run the integration test files the diff touches (changed tests/integration/test_*.py,
+#                   the tests that name a changed migration or import a changed integration helper) on a throwaway
+#                   Postgres: the port in CIS_TEST_DB_PORT when set (never 5432), else a cluster made with initdb under
+#                   $TMPDIR and removed after. A pass on a clean tree writes a stamp for this code; the hook (every mode
+#                   but --ci) then blocks a push whose changed integration tests have no stamp. Skip once, visibly:
+#                   AA_PREPUSH_SKIP_INTEGRATION=1 git push (say so in the PR body).
 #   --self-test     runs the decision logic on fixture diffs; invokes no lint/test tool.
 #   --dry-run       prints the changed-file count and the checks it would run, then exits.
 #   --only a,b      run only these check ids (see CHECK_IDS).
@@ -24,7 +30,7 @@
 set -uo pipefail
 
 SELF=$(realpath "${BASH_SOURCE[0]}")
-CHECK_IDS=(resource_ids text_guard quality_lint flake8 unit frontend_kit frontend_tsc frontend_lint)
+CHECK_IDS=(resource_ids text_guard quality_lint flake8 unit integration frontend_kit frontend_tsc frontend_lint)
 
 # --- CI command lines, verbatim from .github/workflows/ci.yml (printed when a check fails) -----------------------
 # shellcheck disable=SC2054  # the commas belong to flake8's option values
@@ -40,6 +46,8 @@ CI_CMD[text_guard]="python3 -m services.golden_set.text_guard scan   (ci.yml Lin
 CI_CMD[quality_lint]="python -m services.quality.lint --report   (ci.yml Lint > Quality registry lint)"
 CI_CMD[unit]="COVERAGE_CORE=sysmon pytest tests/unit/ -v --tb=short --cov=services --cov=shared --cov-report=term-missing --cov-report=xml:coverage.xml && pytest tests/acp/ -v --tb=short && python3 .github/scripts/coverage_ratchet.py coverage.xml --base <base>   (ci.yml Unit Tests; CI installs: uv pip install --system -r requirements.txt -r requirements-dev.txt)"
 UNIT_INSTALL="pip install -r requirements.txt -r requirements-dev.txt"
+CI_CMD[integration]="scripts/pre-push.sh --integration   (runs the changed integration test files on a throwaway Postgres and stamps this code; CI: Integration shard i/4, postgres:15)"
+INTEGRATION_INSTALL="pip install -r requirements.txt -r tests/integration/requirements-integration.txt"
 CI_CMD[frontend_tsc]="cd frontend && npx tsc --noEmit -p .   (ci.yml Frontend Build > Type-check; next build stays CI-only)"
 CI_CMD[frontend_kit]="cd frontend && node app/_kit/core/check-kit-copy.mjs --self && node app/_kit/core/check-kit-copy.mjs --css . && node app/_kit/core/check-kit-copy.mjs --suppressions <base eslint-suppressions.json> eslint-suppressions.json --base-files <git ls-tree -r --name-only <base> -- frontend/> && node app/_kit/core/check-kit-copy.mjs --no-kit-disable app --ignore _kit   (ci.yml Frontend Build > Kit core self-check; Frontend Lint > Suppressions do not grow, No inline disable of a kit rule)"
 CI_CMD[frontend_lint]="cd frontend && npx eslint --prune-suppressions && git diff --exit-code eslint-suppressions.json   (ci.yml Frontend Lint; locally only the changed files, or all of frontend/ when the lint config, the kit rules or the suppressions file changed; fix, or after fixing old violations: npx eslint --prune-suppressions <files>)"
@@ -55,6 +63,9 @@ UNIT_ENV=(COVERAGE_CORE=sysmon ENVIRONMENT=test AWS_REGION=us-west-1 AWS_DEFAULT
 # many last-failed files, drop them (+ --full hint). Keeps a fast run small on a low-RAM machine.
 MAX_TEST_FILES=${AA_PREPUSH_MAX_TEST_FILES:-30}
 TEST_DIRS=(tests/unit tests/acp)
+# --integration: above this many matched integration test files only the changed ones run (each pytest session replays
+# every migration once; the cap keeps a run short on a low-RAM machine).
+MAX_INTEGRATION_FILES=${AA_PREPUSH_MAX_INTEGRATION_FILES:-12}
 
 # --- decision logic (pure: file names in, check ids out; used by --self-test) -------------------------------------
 
@@ -64,8 +75,9 @@ is_doc() { [[ $1 == docs/* || $1 == *.md ]]; }
 # plan_checks MODE CI FILE...: print the check ids to run, one per line, in CHECK_IDS order.
 plan_checks() {
   local mode=$1 ci=$2; shift 2
-  local f code=0 py_lint=0 py=0 fe=0
-  if [[ $ci == 1 ]]; then printf '%s\n' "${CHECK_IDS[@]}"; return; fi
+  local f code=0 py_lint=0 py=0 fe=0 it=0
+  # --ci: everything but the integration stamp (CI runs its own Integration shards).
+  if [[ $ci == 1 ]]; then printf '%s\n' "${CHECK_IDS[@]}" | grep -vx integration; return; fi
   for f in "$@"; do
     is_doc "$f" || code=1
     case $f in
@@ -76,6 +88,7 @@ plan_checks() {
     esac
     case $f in pyproject.toml|requirements.txt|requirements-dev.txt|.trivyignore) py=1 ;; esac
     [[ $f == frontend/* ]] && fe=1
+    case $f in tests/integration/*.py|api/migrations/*.sql) it=1 ;; esac
   done
   echo resource_ids
   echo text_guard
@@ -85,6 +98,7 @@ plan_checks() {
     [[ $py_lint == 1 ]] && echo flake8
     [[ $py == 1 ]] && echo unit
   fi
+  [[ $it == 1 ]] && echo integration
   [[ $fe == 1 ]] && { echo frontend_kit; echo frontend_tsc; echo frontend_lint; }
   return 0
 }
@@ -189,6 +203,52 @@ unit_targets() {
   printf '%s\n' "${direct[@]}" "${hits[@]}" | sed '/^$/d' | sort -u
 }
 
+# integration_targets FILE...: the integration test files a diff touches (--integration runs them, the hook asks for
+# their stamp):
+#   - a changed tests/integration/test_*.py (still present): itself;
+#   - a changed integration helper (tests/integration/_*.py): the test files that import it;
+#   - a changed api/migrations/NNN_name.sql: the test files that name it (NNN_name) and test_*migration_NNN*.py;
+#   - a changed tests/integration/conftest.py prints "WARN <reason>" (every file depends on it; CI's shards cover it).
+# Prints "OVER <n>" first when more than MAX_INTEGRATION_FILES matched; then only the changed test files are listed.
+integration_targets() {
+  local f name stem leaf num direct=() hits=()
+  for f in "$@"; do
+    name=${f##*/}
+    case $f in
+      tests/integration/conftest.py) echo "WARN $f changed: every integration test depends on it (CI's shards run them all)" ;;
+      tests/integration/test_*.py) [[ -f $f ]] && direct+=("$f") ;;
+      tests/integration/_*.py)
+        leaf=${name%.py}
+        mapfile -t -O "${#hits[@]}" hits < <(grep -rlE --include='test_*.py' "(import|from) ${leaf}\b" tests/integration 2>/dev/null) ;;
+      api/migrations/[0-9][0-9][0-9]_*.sql)
+        stem=${name%.sql}; num=${name:0:3}
+        mapfile -t -O "${#hits[@]}" hits < <(grep -rlF --include='test_*.py' -- "$stem" tests/integration 2>/dev/null)
+        mapfile -t -O "${#hits[@]}" hits < <(find tests/integration -maxdepth 1 -name "test_*migration_${num}*.py" 2>/dev/null) ;;
+    esac
+  done
+  mapfile -t hits < <(printf '%s\n' "${hits[@]}" | sed '/^$/d' | sort -u)
+  if (( ${#hits[@]} + ${#direct[@]} > MAX_INTEGRATION_FILES )); then
+    echo "OVER $(( ${#hits[@]} + ${#direct[@]} ))"
+    hits=()
+  fi
+  printf '%s\n' "${direct[@]}" "${hits[@]}" | sed '/^$/d' | sort -u
+}
+
+# integration_key HEAD TARGET...: one hash for "these integration tests on this code": the target list plus the blob
+# ids at HEAD of every changed file that is not a doc. A later docs-only commit keeps the stamp; any code change drops it.
+integration_key() {
+  local head=$1; shift
+  local code=() f
+  for f in "${CHANGED[@]}"; do is_doc "$f" || code+=("$f"); done
+  {
+    printf 'target %s\n' "$@"
+    (( ${#code[@]} )) && git ls-tree -r "$head" -- "${code[@]}"
+  } | sha256sum | cut -c1-40
+}
+
+# stamp_dir: per worktree (git-path), so a lane's stamp is read only by pushes from that worktree.
+stamp_dir() { git rev-parse --path-format=absolute --git-path aa-prepush/integration; }
+
 # changed_files BASE HEAD: the changed paths, NUL-separated and never C-quoted (git quotes non-ASCII names by default,
 # which no `case` pattern or -f test would then match). Read with: mapfile -d '' -t ARRAY < <(changed_files ...)
 changed_files() { git -c core.quotePath=false diff --name-only -z "$1...$2"; }
@@ -225,7 +285,7 @@ self_test() {
     n=$((n + 1))
     if (( $3 == 0 )); then echo "ok   $1"; else echo "FAIL $1: $2"; fails=$((fails + 1)); fi
   }
-  local all="${CHECK_IDS[*]}"
+  local all tmp; all=$(printf '%s\n' "${CHECK_IDS[@]}" | grep -vx integration | tr '\n' ' '); all=${all% }
   expect "empty diff: always-on scans only"        fast 0 "resource_ids text_guard"
   expect "docs only"                               fast 0 "resource_ids text_guard" docs/implementation-notes/AA-1.md README.md
   expect "service module"                          fast 0 "resource_ids text_guard quality_lint flake8 unit" services/quality/lint.py
@@ -234,7 +294,9 @@ self_test() {
   expect "worker only: no flake8 (CI scope)"       fast 0 "resource_ids text_guard quality_lint unit" worker/main.py
   expect "requirements bump: unit"                 fast 0 "resource_ids text_guard quality_lint unit" requirements.txt
   expect "requirements-dev bump: unit"             fast 0 "resource_ids text_guard quality_lint unit" requirements-dev.txt
-  expect "migration sql: unit (tests read them)"   fast 0 "resource_ids text_guard quality_lint unit" api/migrations/300_x.sql
+  expect "migration sql: unit + integration stamp" fast 0 "resource_ids text_guard quality_lint unit integration" api/migrations/300_x.sql
+  expect "integration test: unit + stamp"          fast 0 "resource_ids text_guard quality_lint unit integration" tests/integration/test_x.py
+  expect "full mode, integration test: stamp too"  full 0 "resource_ids text_guard quality_lint flake8 unit integration" tests/integration/test_x.py
   expect "test helper module: unit, no flake8"     fast 0 "resource_ids text_guard quality_lint unit" tests/unit/quality/chain.py
   expect "Q0 case json: unit"                      fast 0 "resource_ids text_guard quality_lint unit" tests/unit/quality/cases/a1_contract.json
   expect ".trivyignore: unit"                      fast 0 "resource_ids text_guard quality_lint unit" .trivyignore
@@ -282,8 +344,36 @@ self_test() {
   r=0; [[ $got == *tests/unit/test_aa879_ci_gates.py* ]] || r=1; verdict "ci.yml: the CI gate tests" "$got" "$r"
   got=$(MAX_TEST_FILES=1000 unit_targets api/migrations/261_place_locate_sonnet.sql | tr '\n' ' ')
   r=0; [[ $got == *tests/unit/test_aa847_backfill_ids_prices.py* ]] || r=1; verdict "migration sql: the tests that read it" "$got" "$r"
+  # AA-1024 l22 (G6): integration targets, from the repo's own integration tests (grep only, nothing is run).
+  got=$(integration_targets tests/integration/test_aa1002_migration_304.py services/x.py docs/a.md | tr '\n' ' ')
+  r=0; [[ $got == "tests/integration/test_aa1002_migration_304.py " ]] || r=1
+  verdict "integration targets: a changed integration test is itself, a service module is unit-only" "$got" "$r"
+  got=$(MAX_INTEGRATION_FILES=1000 integration_targets api/migrations/304_llm_connection_deployment.sql | tr '\n' ' ')
+  r=0; [[ $got == *tests/integration/test_aa1002_migration_304.py* ]] || r=1
+  verdict "integration targets: a migration maps to the tests that replay it" "$got" "$r"
+  got=$(MAX_INTEGRATION_FILES=1000 integration_targets tests/integration/_rls_fixture_helpers.py | tr '\n' ' ')
+  r=0; [[ $got == *tests/integration/test_aa919_migration_284.py* && $got != *test_aa1002_* ]] || r=1
+  verdict "integration targets: a helper maps to its importers only" "$got" "$r"
+  got=$(integration_targets tests/integration/conftest.py | tr '\n' ' ')
+  r=0; [[ $got == WARN* ]] || r=1; verdict "integration conftest: WARN, not a quiet skip" "$got" "$r"
+  got=$(MAX_INTEGRATION_FILES=0 integration_targets tests/integration/test_aa1002_migration_304.py | head -1)
+  r=0; [[ $got == OVER* ]] || r=1; verdict "integration targets over the cap: OVER first" "$got" "$r"
+  # The stamp key: same code = same key, a code change = another key, a docs-only change = the same key.
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/pre-push-key.XXXXXX")
+  got=$(
+    cd "$tmp" && git init -q . && mkdir -p tests/integration docs && echo a >tests/integration/test_k.py &&
+      git add -A && git -c user.name=t -c user.email=t@t commit -q -m a &&
+      CHANGED=(tests/integration/test_k.py docs/n.md) && k1=$(integration_key HEAD tests/integration/test_k.py) &&
+      echo n >docs/n.md && git add -A && git -c user.name=t -c user.email=t@t commit -q -m d &&
+      k2=$(integration_key HEAD tests/integration/test_k.py) &&
+      echo b >tests/integration/test_k.py && git add -A && git -c user.name=t -c user.email=t@t commit -q -m b &&
+      k3=$(integration_key HEAD tests/integration/test_k.py) &&
+      echo "$([[ $k1 == "$k2" ]] && echo same)-$([[ $k2 != "$k3" ]] && echo new)"
+  )
+  rm -rf "$tmp"
+  r=0; [[ $got == same-new ]] || r=1; verdict "integration stamp key: docs keep it, code changes it" "$got" "$r"
   # A throwaway repo (no network, no tool): a non-ASCII name with a space comes back raw, not C-quoted.
-  local tmp; tmp=$(mktemp -d "${TMPDIR:-/tmp}/pre-push-st.XXXXXX")
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/pre-push-st.XXXXXX")
   got=$(
     cd "$tmp" && git init -q . && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m a &&
       mkdir services && : >$'services/\xc3\xa9 a.py' && git add -A &&
@@ -425,6 +515,123 @@ do_unit() {
     env "${UNIT_ENV[@]}" "$PY" -m pytest -q --tb=short "${targets[@]}"
 }
 
+# read_integration_targets: INTEGRATION_TARGETS from the diff; notes (OVER / WARN) are printed.
+read_integration_targets() {
+  local line
+  INTEGRATION_TARGETS=()
+  while IFS= read -r line; do
+    case $line in
+      OVER*) echo "note: ${line#OVER } integration test files match the changed files (cap $MAX_INTEGRATION_FILES); only the changed test files count." ;;
+      WARN*) warn_result integration "${line#WARN }" ;;
+      *) INTEGRATION_TARGETS+=("$line") ;;
+    esac
+  done < <(integration_targets "${CHANGED[@]}")
+}
+
+# do_integration (hook, fast/full): the changed integration tests must have passed locally on this code
+# (scripts/pre-push.sh --integration wrote the stamp). The hook never starts Postgres: a push stays fast.
+do_integration() {
+  read_integration_targets
+  if (( ${#INTEGRATION_TARGETS[@]} == 0 )); then RESULTS+=("SKIP  -     integration (no integration test file matches the diff)"); return; fi
+  local key stamp; key=$(integration_key "$HEAD_REF" "${INTEGRATION_TARGETS[@]}"); stamp="$(stamp_dir)/$key"
+  if [[ -f $stamp ]]; then
+    RESULTS+=("PASS  -     integration (${#INTEGRATION_TARGETS[@]} file(s) passed locally: $(head -n 1 "$stamp"))")
+    return
+  fi
+  if [[ ${AA_PREPUSH_SKIP_INTEGRATION:-0} == 1 ]]; then
+    warn_result integration "AA_PREPUSH_SKIP_INTEGRATION=1: ${#INTEGRATION_TARGETS[@]} changed integration test file(s) not run locally; say so in the PR body"
+    return
+  fi
+  fail_check integration "${#INTEGRATION_TARGETS[@]} integration test file(s) the diff touches have not passed locally on this code: ${INTEGRATION_TARGETS[*]}" \
+    "run: scripts/pre-push.sh --integration   (throwaway Postgres; or skip once: AA_PREPUSH_SKIP_INTEGRATION=1, and say so in the PR body)"
+}
+
+# free_port: a TCP port nothing listens on (never 5432).
+free_port() {
+  "$PY" -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()'
+}
+
+# find_initdb: AA_PREPUSH_INITDB when set (tests), else the newest local initdb (Debian layout first), or nothing.
+find_initdb() {
+  local c
+  [[ -n ${AA_PREPUSH_INITDB:-} ]] && { echo "$AA_PREPUSH_INITDB"; return; }
+  for c in $(ls -d /usr/lib/postgresql/*/bin/initdb 2>/dev/null | sort -V -r); do [[ -x $c ]] && { echo "$c"; return; }; done
+  command -v initdb 2>/dev/null || true
+}
+
+PG_TMP=""
+PG_BIN=""
+stop_scratch_pg() {
+  [[ -n $PG_TMP ]] || return 0
+  "$PG_BIN/pg_ctl" -D "$PG_TMP/data" -m fast -w stop >/dev/null 2>&1
+  rm -rf "$PG_TMP"
+  PG_TMP=""
+}
+
+# start_scratch_pg: a throwaway cluster (superuser cistest, database cis_integration_test, role app_user as CI's setup
+# step) on a free port; sets PG_PORT. Lesson S246: no "local Postgres has no superuser" excuse. Call it directly, never
+# in $(...): PG_TMP / PG_BIN must reach this shell, or stop_scratch_pg cannot stop the cluster (it leaked, S271 l22).
+PG_PORT=""
+start_scratch_pg() {
+  local initdb port; initdb=$(find_initdb)
+  [[ -n $initdb ]] || return 1
+  PG_BIN=${initdb%/initdb}
+  PG_TMP=$(mktemp -d "${TMPDIR:-/tmp}/pre-push-pg.XXXXXX") || return 1
+  port=$(free_port) || return 1
+  "$initdb" -D "$PG_TMP/data" -U postgres -A trust >"$PG_TMP/initdb.log" 2>&1 || { cat "$PG_TMP/initdb.log" >&2; return 1; }
+  "$PG_BIN/pg_ctl" -D "$PG_TMP/data" -l "$PG_TMP/pg.log" -w \
+    -o "-p $port -c listen_addresses=127.0.0.1 -c unix_socket_directories='' -c fsync=off" start >/dev/null || {
+      cat "$PG_TMP/pg.log" >&2; return 1; }
+  "$PG_BIN/psql" -q -h 127.0.0.1 -p "$port" -U postgres -d postgres -v ON_ERROR_STOP=1 \
+    -c "CREATE USER cistest WITH PASSWORD 'cistest' SUPERUSER" \
+    -c "CREATE DATABASE cis_integration_test OWNER cistest" \
+    -c "CREATE ROLE app_user LOGIN PASSWORD 'appuser123'" >/dev/null || return 1
+  PG_PORT=$port
+}
+
+# run_integration (--integration): run INTEGRATION_TARGETS on CIS_TEST_DB_PORT or a throwaway cluster; on a pass with
+# a clean tracked tree, write the stamp the hook reads.
+run_integration() {
+  read_integration_targets
+  if (( ${#INTEGRATION_TARGETS[@]} == 0 )); then echo "pre-push --integration: no integration test file matches the diff vs $BASE; nothing to run."; return 0; fi
+  if ! "$PY" -c 'import psycopg2, fakeredis, pytest_asyncio' >/dev/null 2>&1; then
+    echo "!! [integration] psycopg2 / fakeredis / pytest-asyncio are not installed for $PY"
+    echo "   install: \"$PY\" -m $INTEGRATION_INSTALL"
+    return 1
+  fi
+  local port=${CIS_TEST_DB_PORT:-} rc dirty
+  if [[ $port == 5432 ]]; then
+    echo "!! [integration] CIS_TEST_DB_PORT=5432: the conftest drops and re-creates schemas; use a throwaway cluster (lesson S248)."
+    return 1
+  fi
+  if [[ -z $port ]]; then
+    trap stop_scratch_pg EXIT
+    start_scratch_pg || {
+      echo "!! [integration] no Postgres: set CIS_TEST_DB_PORT to a throwaway cluster, or install PostgreSQL (initdb) locally"
+      return 1
+    }
+    port=$PG_PORT
+    echo "throwaway Postgres on 127.0.0.1:$port ($PG_TMP, removed after the run)"
+  fi
+  echo "==> [integration] pytest on ${#INTEGRATION_TARGETS[@]} file(s): ${INTEGRATION_TARGETS[*]}"
+  env -u AWS_PROFILE "${UNIT_ENV[@]}" CIS_TEST_DB_HOST=127.0.0.1 CIS_TEST_DB_PORT="$port" \
+    DATABASE_URL="postgresql://cistest:${CIS_TEST_DB_PASS:-cistest}@127.0.0.1:$port/cis_integration_test" REDIS_URL=redis://localhost:6379 \
+    AWS_CONFIG_FILE=/dev/null AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_EC2_METADATA_DISABLED=true \
+    "$PY" -m pytest -q --tb=short -p no:cacheprovider "${INTEGRATION_TARGETS[@]}"
+  rc=$?
+  stop_scratch_pg
+  if (( rc != 0 )); then echo "!! [integration] failed (exit $rc): no stamp written"; return "$rc"; fi
+  dirty=$(git status --porcelain --untracked-files=no 2>/dev/null)
+  if [[ -n $dirty ]]; then
+    echo "note: passed, but tracked files are modified: commit them and run --integration again (the stamp names committed code)."
+    return 0
+  fi
+  local key dir; key=$(integration_key "$HEAD_REF" "${INTEGRATION_TARGETS[@]}"); dir=$(stamp_dir)
+  mkdir -p "$dir" && printf '%s %s on %s\n%s\n' "$(date -u +%FT%TZ)" "$(git rev-parse --short "$HEAD_REF")" \
+    "$("$PY" -c 'import sys; print(sys.version.split()[0])')" "${INTEGRATION_TARGETS[*]}" >"$dir/$key"
+  echo "integration: passed; stamp $key written (the pre-push hook accepts this code's changed integration tests)."
+}
+
 # do_frontend_kit: the dependency-free kit checks (no node_modules needed): core self-check, no --aa-* definition
 # outside core/tokens.css, no inline disable of a kit rule in page code, and the ESLint suppressions file does not
 # grow against the diff base (new entries only in files the base did not have) (CI: Frontend Build "Kit core
@@ -460,7 +667,7 @@ do_frontend_lint() {
 
 main() {
   cd "$(git rev-parse --show-toplevel)" || exit 2
-  MODE=fast CI_MODE=0 DRY=0 ONLY="" HEAD_REF=HEAD BASE=${AA_PREPUSH_BASE:-origin/main}
+  MODE=fast CI_MODE=0 DRY=0 ONLY="" HEAD_REF=HEAD BASE=${AA_PREPUSH_BASE:-origin/main} RUN_INTEGRATION=0
   [[ ${AA_PREPUSH:-} == full ]] && MODE=full
   while (( $# )); do
     case $1 in
@@ -468,6 +675,7 @@ main() {
       --fast) MODE=fast ;;
       --ci) CI_MODE=1; MODE=full ;;
       --self-test) self_test; exit $? ;;
+      --integration) RUN_INTEGRATION=1 ;;
       --dry-run) DRY=1 ;;
       --only|--base|--head)
         if (( $# < 2 )); then echo "pre-push: $1 needs a value (usage: $1 <value>; see --help)" >&2; exit 2; fi
@@ -489,6 +697,11 @@ main() {
       echo "Bypass this hook once with: git push --no-verify"
       exit 2
     fi
+  fi
+  if [[ $RUN_INTEGRATION == 1 ]]; then
+    if [[ $CI_MODE == 1 ]]; then echo "pre-push: --integration reads the diff; it does not combine with --ci" >&2; exit 2; fi
+    RESULTS=()
+    run_integration; exit $?
   fi
   local plan=() id
   mapfile -t plan < <(plan_checks "$MODE" "$CI_MODE" "${CHANGED[@]}")
@@ -539,6 +752,7 @@ main() {
         fi
         run_check "$id" "flake8 ${targets[*]} (CI flags)" "${flake[@]}" "${targets[@]}" "${FLAKE8_ARGS[@]}" ;;
       unit) do_unit ;;
+      integration) do_integration ;;
       frontend_kit) do_frontend_kit ;;
       frontend_tsc) node_check frontend "$id" npx tsc --noEmit -p . ;;
       frontend_lint) do_frontend_lint ;;
