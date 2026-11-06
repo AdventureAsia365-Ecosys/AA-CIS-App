@@ -29,6 +29,7 @@ from .errors import (ACCESS_DENIED, BUDGET, DEADLINE, DISABLED, MAX_CHAIN_ATTEMP
 from . import (breaker, capacity, central_budget, connection_budget, connections, data_scope, family_rule,
                prompt_registry, stage_params, stream_sink, tenant_budget, token_floor)
 from . import app_profile
+from . import cassette
 from .vendor_route import (VendorDeployment, deployment_plan, pinned_deployment, role_refusal, route_reach,
                            split_pin, sunk_skips, vendor_deployment_for)
 from .deployments import alias_targets_sync
@@ -1229,6 +1230,8 @@ class LLMClient:
             log_gateway_failed_attempt(request, cap, model=model, connection_key=connection_key, wire_id=wire_id,
                                        provider=provider, latency_ms=0)
             raise cap
+        # AA-900 (cassette): the gateway's truncation retry reports the cut reply's attempt number; mark its reply.
+        truncation_retry = scope is not None and scope.retry_of is not None
         attempt_no = scope.next_attempt() if scope is not None else None
         started = time.monotonic()
         try:
@@ -1260,6 +1263,10 @@ class LLMClient:
                 resp.route_position = scope.position
         except Exception:  # noqa: BLE001 — a test double that is not an LLMResponse
             pass
+        # AA-900 (root ADR 0020 d8): the raw reply, request and prompt shas for replay (record-only, best-effort,
+        # LLM_CASSETTE=record|off). Never raises.
+        cassette.record_attempt(request, resp, model=model, connection_key=connection_key, wire_id=wire_id,
+                                provider=provider, scope=scope, truncation_retry=truncation_retry)
         return resp
 
     def _logged_failure_net(self, request: LLMRequest, exc: BaseException, *, model: str) -> None:

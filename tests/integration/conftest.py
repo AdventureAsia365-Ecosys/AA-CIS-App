@@ -39,6 +39,9 @@ os.environ.setdefault("BEDROCK_ACCT_PRIMARY", "acc3-test-account")
 # AA-900 W0: the R1 freeze (services/writing_memory/r1_gate.py) is off for the release / mining / L0 mechanics these
 # modules test; tests/integration/test_aa900_w0_config_fp_db.py turns it on (monkeypatch.delenv) and tests it.
 os.environ.setdefault("WRITING_MEMORY_R1_GATE", "off")
+# AA-900: the gateway's cassette recorder is off for integration tests (they script replies and count ledger rows);
+# tests/integration/test_aa900_cassette_db.py turns it on around its own calls.
+os.environ.setdefault("LLM_CASSETTE", "off")
 
 _SCHEMA_APPLIED = False
 
