@@ -20,7 +20,8 @@ Pure: standard library only, no I/O (this module is copied byte for byte into th
 from __future__ import annotations
 
 import re
-from typing import Any, Mapping, Optional
+from collections.abc import Mapping
+from typing import Any
 
 # The safe minimum ceiling of a reasoning-capable model: room for the thinking plus a JSON verdict / short reply.
 REASONING_FLOOR = 4096
@@ -39,13 +40,13 @@ _CLAUDE_REASONING = re.compile(r"^(?:claude-)?(?:sonnet|haiku|opus|fable)-(?:[5-
 _GPT_REASONING = re.compile(r"^gpt-(?:[5-9]|[1-9]\d+)(?:[.-]|$)")
 
 
-def _int(value: Any) -> Optional[int]:
+def _int(value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int):
         return None
     return value
 
 
-def reasoning_capable(model_key: Optional[str], capabilities: Optional[Mapping[str, Any]] = None) -> bool:
+def reasoning_capable(model_key: str | None, capabilities: Mapping[str, Any] | None = None) -> bool:
     """True when ``model_key`` reasons inside its output ceiling: the catalog row's ``capabilities.reasoning`` when it
     states a bool, else the code rule. Pure."""
     caps = capabilities if isinstance(capabilities, Mapping) else {}
@@ -56,7 +57,7 @@ def reasoning_capable(model_key: Optional[str], capabilities: Optional[Mapping[s
     return bool(_CLAUDE_REASONING.match(key) or _GPT_REASONING.match(key))
 
 
-def floor_for(model_key: Optional[str], capabilities: Optional[Mapping[str, Any]] = None) -> Optional[int]:
+def floor_for(model_key: str | None, capabilities: Mapping[str, Any] | None = None) -> int | None:
     """The minimum ceiling of ``model_key`` (None = no floor): ``capabilities.min_output_tokens`` when the row states
     a positive int, else ``REASONING_FLOOR`` for a reasoning-capable model. Pure."""
     caps = capabilities if isinstance(capabilities, Mapping) else {}
@@ -66,8 +67,8 @@ def floor_for(model_key: Optional[str], capabilities: Optional[Mapping[str, Any]
     return REASONING_FLOOR if reasoning_capable(model_key, caps) else None
 
 
-def floored(max_tokens: int, model_key: Optional[str], capabilities: Optional[Mapping[str, Any]] = None,
-            model_cap: Optional[int] = None) -> int:
+def floored(max_tokens: int, model_key: str | None, capabilities: Mapping[str, Any] | None = None,
+            model_cap: int | None = None) -> int:
     """``max_tokens`` raised to the model's floor (never lowered), and the floor itself never above the model's own
     output cap (``model_cap``, the catalog's max_output_tokens). Pure."""
     floor = floor_for(model_key, capabilities)
@@ -79,7 +80,7 @@ def floored(max_tokens: int, model_key: Optional[str], capabilities: Optional[Ma
     return max(int(max_tokens), floor)
 
 
-def retry_budget(max_tokens: int, model_cap: Optional[int] = None) -> int:
+def retry_budget(max_tokens: int, model_cap: int | None = None) -> int:
     """The ceiling of the one truncation retry: double, capped at ``RETRY_CAP`` and at the model's own output cap,
     never below the first ceiling. Pure."""
     first = int(max_tokens)
@@ -90,7 +91,7 @@ def retry_budget(max_tokens: int, model_cap: Optional[int] = None) -> int:
     return max(first, out)
 
 
-def retry_helps(max_tokens: int, model_cap: Optional[int] = None) -> bool:
+def retry_helps(max_tokens: int, model_cap: int | None = None) -> bool:
     """True when the retry's ceiling is higher than the first one (a request already at the cap is not retried)."""
     return retry_budget(max_tokens, model_cap) > int(max_tokens)
 
