@@ -15,7 +15,9 @@ the demo tenant's rows, so later modules see the replay state.
     tripplanner.hosted is served with its theme and locale; a suspended one is not; kind internal never shows; the
     BO-8 badge flag follows an override; two synthetic agencies each see only their own settings by slug;
   * the theme CHECK refuses what is not a kit token -> #rrggbb object;
-  * the SELECT AA-TripPlanner-Web runs (backend/browse/tenant_site.py TENANT_SQL) answers as tripplanner.
+  * the SELECT AA-TripPlanner-Web runs (backend/browse/tenant_site.py TENANT_SQL) answers as tripplanner;
+  * a bound agency that owns a live catalogue tour of its own reads only AA master tours through the catalog views
+    (behaviour, as tripplanner, with a control that the GUC does add the agency's row at the table level).
 Invented names only.
 """
 import json
@@ -32,6 +34,7 @@ import test_aa642_migration_323 as t323  # noqa: E402
 import test_aa860_migration_245 as t245  # noqa: E402
 from test_aa860_migration_245 import rds_like_245  # noqa: E402,F401  (module fixture: Dev after 244 + 245)
 from test_aa860_migration_246 import db_migrator_login  # noqa: E402,F401  (module fixture: db_migrator, 246)
+from conftest import BATCH_ID  # noqa: E402
 
 HERE = os.path.dirname(__file__)
 M379 = os.path.join(HERE, "..", "..", "api", "migrations", "379_tenant_tripplanner_catalog_view.sql")
@@ -245,13 +248,56 @@ def test_locale_check(cur):
         cur.execute(f"INSERT INTO {SITE} (tenant_id, locale, updated_by) VALUES (%s, 'fr', 'test:379')", (tid,))
 
 
-def test_tour_views_keep_the_master_tenant(cur):
-    # The contract's rule "a bound tenant reads AA master catalogue rows only": catalog._live_tour (or 225's v_tour
-    # where 253 is not replayed) filters on the master tenant id in its WHERE, whatever app.tenant_id says.
-    for view in ("catalog._live_tour", "catalog.v_tour"):
-        cur.execute("SELECT to_regclass(%s) IS NOT NULL AS ok", (view,))
-        if cur.fetchone()[0]:
-            cur.execute("SELECT pg_get_viewdef(%s::regclass) AS d", (view,))
-            if "00000000-0000-0000-0000-000000000001" in cur.fetchone()[0]:
-                return
-    pytest.skip("no catalog tour view with the master filter in this replay")
+MASTER = "00000000-0000-0000-0000-000000000001"
+
+
+def _catalogue_tour(cur, tenant_id, name):
+    """One live tour (raw_tours + published_tours) owned by `tenant_id`, inserted as the superuser test login."""
+    tour_id = str(uuid.uuid4())
+    cur.execute("INSERT INTO silver_aa_internal.raw_tours (tour_id, tenant_id, batch_id, src_name, country, duration, "
+                "inclusions, exclusions, activities, source_group_id, source_status) VALUES (%s, %s, %s, %s, "
+                "'Vietnam', '3 Days', 'Guide', 'Flights', '[\"kayaking\"]'::jsonb, %s, 'active')",
+                (tour_id, tenant_id, BATCH_ID, name, str(uuid.uuid4())))
+    cur.execute("INSERT INTO gold_aa_internal.published_tours (tour_id, generated_content_id, tenant_id, aa_name, "
+                "aa_summary, aa_highlights, aa_itineraries, master_status) VALUES (%s, %s, %s, %s, 'Summary', "
+                "'[\"Karsts\"]'::jsonb, 'Day 1 — Arrive', 'active')",
+                (tour_id, str(uuid.uuid4()), tenant_id, name))
+    return tour_id
+
+
+def test_a_bound_agency_reads_aa_master_catalogue_rows_only(cur):
+    # The contract's rule "a bound tenant reads AA master catalogue rows only", by behaviour: a synthetic agency that
+    # holds a TripPlanner subscription AND owns a live catalogue tour of its own; TripPlanner (role tripplanner) binds
+    # it (app.tenant_id, AA-1038 slice 1) and reads the catalog views. Only the AA master tour comes back.
+    agency, _slug = _tenant(cur, "Quillmere Voyages synthetic")
+    tag = uuid.uuid4().hex[:8]
+    master_tour = _catalogue_tour(cur, MASTER, f"Master tour {tag}")
+    agency_tour = _catalogue_tour(cur, agency, f"Agency tour {tag}")
+    # The views TripPlanner may read that carry a tour id (v_tour, v_tour_component, v_tour_stop, v_tour_place, ...).
+    cur.execute("SELECT c.relname FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'catalog' AND c.relkind = 'v' "
+                "AND a.attname = 'tour_id' AND NOT a.attisdropped "
+                "AND has_table_privilege('tripplanner', c.oid, 'SELECT') ORDER BY 1")
+    tour_views = [r[0] for r in cur.fetchall()]
+    assert "v_tour" in tour_views, tour_views
+
+    # Control: the GUC really adds the agency's row at the table level (tenant_isolation is TO PUBLIC), so the result
+    # below is the views' doing, not a missing row.
+    cur.execute("SET LOCAL ROLE catalog_owner")
+    cur.execute("SELECT set_config('app.tenant_id', %s, true)", (agency,))
+    cur.execute("SELECT tour_id::text FROM gold_aa_internal.published_tours WHERE tour_id IN (%s, %s)",
+                (master_tour, agency_tour))
+    assert {r[0] for r in cur.fetchall()} == {master_tour, agency_tour}
+    cur.execute("RESET ROLE")
+
+    cur.execute("SET LOCAL ROLE tripplanner")
+    cur.execute("SELECT set_config('app.tenant_id', %s, true)", (agency,))
+    cur.execute("SELECT tour_id::text FROM catalog.v_tour WHERE tour_id IN (%s, %s)", (master_tour, agency_tour))
+    assert {r[0] for r in cur.fetchall()} == {master_tour}
+    for view in tour_views:
+        cur.execute(f"SELECT count(*) FROM catalog.{view} WHERE tour_id = %s", (agency_tour,))
+        assert cur.fetchone()[0] == 0, view
+    # The same with no tenant bound (the bare path): still the master tour only.
+    cur.execute("SELECT set_config('app.tenant_id', '', true)")
+    cur.execute("SELECT tour_id::text FROM catalog.v_tour WHERE tour_id IN (%s, %s)", (master_tour, agency_tour))
+    assert {r[0] for r in cur.fetchall()} == {master_tour}

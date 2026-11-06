@@ -49,7 +49,7 @@
 -- off on purpose (rule a allowlist) and REVOKE ALL, column GRANTs on existing tables, a view in the hot schema catalog,
 -- the catalog.* recipe (role switch, GRANT / REVOKE CREATE) and seed rows in existing tables. MIG-4: migration-only
 -- PR; applied on Dev by Infra Migration Apply when the job tables are idle (ADR 0017a). DM-7.1: the retention row of
--- shared.tenant_tripplanner_site is in the root PR of this change (merged before the Infra copy).
+-- shared.tenant_tripplanner_site comes in a root PR that is on root master before the Infra bot copy PR of 379.
 --
 -- Guards (RAISE rolls the whole file back): before — 356 registered (the resolver), the plans tripplanner.hosted and
 -- content.internal live, schema catalog owned by cis_owner, and no other tenant holds the demo id or the slug
