@@ -834,6 +834,15 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     primary, every other fallback and the shadow. A draft written by that last resort is judged by a GPT judge (same
     maker): its ledger row says `provider = 'openai'`, `fallback_used = true`; an eval run refuses that verdict
     ("Route governance" above).
+  - **No uncalibrated rung (S271 W0, tech lead D7, CIS 383, break-glass):** since 383 no writer route names a model of
+    another family than its primary (the OpenAI API rung `gpt-6-luna-openai` left all 13 writer routes: a writer
+    whose Claude rungs all fail stops and re-queues, `degrade_mode` queue_retry), and no judge route nor the
+    `t10_claims` instrument names Nova Lite (`nova-lite`, kappa 0.137 against the human labels): a judge whose GPT
+    rungs all fail returns no verdict instead of an uncalibrated one. The FAQ checks and the A3 / S1 evidence producers
+    keep Nova Lite (decided per row, migration 383 header). CI lint `tests/unit/test_aa900_w0_route_lint.py` checks
+    both rules on the latest route snapshot and `SAFE_DEFAULTS`. The text above on the writers' OpenAI API last
+    resort describes the 327-376 routes; the admin route PATCH still accepts that last resort
+    (`_writer_last_resort`) until a code change refuses it.
   - **AWS preferred, not AWS only** (tech lead S267, root ADR 0009 decision 5 amendment; it replaced T-3, which kept
     tenant content, TripPlanner, the CRM and the validate stages inside AWS): migration 366 gives EVERY active text
     stage (writer, judge, validate) `allowed_scopes = {aws_only, vendor_direct}`, so each one reaches the Anthropic API
