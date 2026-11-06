@@ -483,7 +483,8 @@ class TestT9Prompt:
         with only what its source line states. Only `route` changes; SYSTEM_PROMPT and `single` do not.
         Updated AA-741 (S271 phase-1 audit, t9_write v2): both blog variants end with the LENGTH AND EFFORT block
         (prompts._BLOG_LENGTH_INSTRUCTIONS: a word band, a section cap, one plan-then-write pass) before the JSON
-        envelope, so `single` and `route` change; SYSTEM_PROMPT does not (other channels never see the block)."""
+        envelope, so `single` and `route` change; SYSTEM_PROMPT does not (other channels never see the block). Its
+        floor is stated as a hard minimum (S271 review: F4 holds a body under 4,700 characters)."""
         pack = {"brand_name": "Trail Pulse", "brand_type": "Young active adventure travel brand",
                 "core_idea": "Active trips for people who like to move.", "customer_segment": "25-40 years old",
                 "voice": ["Energetic", "Fresh", "Direct", "Friendly", "Modern", "Confident", "Lightly playful"],
@@ -505,8 +506,8 @@ class TestT9Prompt:
             return hashlib.sha256(s.encode()).hexdigest()
         assert GOAL["key"] == GOALS[0]["key"]
         assert sha(SYSTEM_PROMPT) == "b5978839f7b24efec987aa89e4ffa77a50af2023d1c8ce14b734e9eb9b0ad17f"
-        assert sha(single) == "a4632058d27d088a94116d5a8dab8fbdc4cf59b9c200cb43bd8efb73eb5e8544"
-        assert sha(route) == "2656f7f35c135486de1139425181d015b022c6e55d4155e6aff83652b43349f0"
+        assert sha(single) == "d6be250786c6f276036fe183be959b8f75fb64b54801b0bbcd2dd80d4c1c5636"
+        assert sha(route) == "7b62bcc7b7dab960089ebeb3642dbdd827f35cc063797c1131a714a6be273bb9"
 
     def test_prompts_carry_no_em_dash_but_the_rule(self):
         """AA-778 — our own prompt text primed the habit (S234: 78 in the writer prompts). The one em-dash

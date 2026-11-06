@@ -70,7 +70,7 @@ def test_block_asks_for_one_pass_and_one_article():
     assert "Never write a full draft and then copy it out again" in BLOCK
     assert "the silent reread is one quick pass" in BLOCK
     assert "Return one article only: no alternative versions, no notes, no outline" in BLOCK
-    assert "never a padded one" in BLOCK                      # a thin seed is never padded up to the band
+    assert "never with invented facts or filler" in BLOCK      # a thin seed reaches the floor from its own facts
     assert "—" not in BLOCK                              # AA-778: no em-dash in our prompt text
 
 
@@ -84,6 +84,25 @@ def test_word_band_sits_inside_the_f4_character_band():
     numbers = re.findall(r"\d[\d,]*", BLOCK)
     assert f"{lo:,}" in numbers and f"{hi:,}" in numbers and f"{prompts._BLOG_WORDS_MAX:,}" in numbers
     assert f"At most {prompts._BLOG_SECTIONS_MAX} " in BLOCK
+
+
+def test_the_stated_floor_is_the_f4_floor_and_nothing_licenses_a_shorter_article():
+    """S271 review: the block said "a seed with few facts gives a shorter article" with no floor while F4 holds a blog
+    body under 4,700 characters, so an F4 rewrite got "content is only N chars" and "shorter is fine" at once. The
+    block now states a hard minimum, and that minimum in characters clears F4's floor."""
+    floors = [int(n.replace(",", "")) for n in re.findall(r"never under (\d[\d,]*)", BLOCK)]
+    assert floors == [prompts._BLOG_WORDS[0]]
+    assert floors[0] * 5.3 >= qg._BLOG_MIN_CHARS
+    lowered = BLOCK.lower()
+    for licence in ("shorter article", "shorter piece", "shorter is", "fewer words", "short article"):
+        assert licence not in lowered
+
+
+def test_an_f4_rewrite_prompt_carries_no_contradiction():
+    p = _prompt(revision_feedback=["F4_extreme_length: content is only 2100 chars — effectively empty"])
+    assert p.count(BLOCK) == 1
+    assert f"never under {prompts._BLOG_WORDS[0]:,}" in p
+    assert "shorter article" not in p.lower()
 
 
 def test_a_full_length_reply_stays_well_under_the_ceiling():

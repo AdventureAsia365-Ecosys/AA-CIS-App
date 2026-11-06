@@ -137,16 +137,20 @@ _BLOG_FORMAT_INSTRUCTIONS_ROUTE = _BLOG_FORMAT_INSTRUCTIONS_ROUTE.replace(
 # "in-depth destination guides", and the shared silent reread ("sentence by sentence", ai_tells.SELF_CHECK_RULE) lets
 # an adaptive-thinking model (Sonnet 5.5 thinks adaptively by default; thinking is billed as output inside max_tokens)
 # draft the whole article, check every sentence and copy it out again. This block bounds both: a word band inside the
-# F4 band (models overshoot counts, so the target sits low in it; never a reason to pad a thin seed), a section cap,
-# and one plan-then-write pass whose reread is a quick check of the finished text, never a second draft. The other
-# channels never see it. Its four symbols are in the t9_write prompt manifest (v2).
-_BLOG_WORDS = (900, 1300)        # target words, body including the FAQ
+# F4 band (models overshoot counts, so the target sits low in it), a section cap, and one plan-then-write pass whose
+# reread is a quick check of the finished text, never a second draft. The band's floor is F4's floor in words (F4
+# holds a blog body under 4,700 characters, tags included): the block never tells the writer a shorter article is
+# fine, which would contradict an F4 rewrite's own feedback; a thin seed reaches the floor with depth from its own
+# seed / Place background / FACTS lines and the FAQ, never with invented facts (S271 review). The other channels never
+# see it. Its four symbols are in the t9_write prompt manifest (v2).
+_BLOG_WORDS = (900, 1300)        # target words, body including the FAQ; the low end is also the floor (F4)
 _BLOG_WORDS_MAX = 1600           # never more (F4 allows ~2,200)
 _BLOG_SECTIONS_MAX = 6           # "## " sections before the FAQ
 _BLOG_LENGTH_INSTRUCTIONS = (
     "\n\nLENGTH AND EFFORT FOR THIS BLOG (required):\n"
-    f"- The body is {_BLOG_WORDS[0]:,}-{_BLOG_WORDS[1]:,} words including the FAQ when the seed carries that much, "
-    f"never more than {_BLOG_WORDS_MAX:,}; a seed with few facts gives a shorter article, never a padded one. "
+    f"- The body is {_BLOG_WORDS[0]:,}-{_BLOG_WORDS[1]:,} words including the FAQ: never under {_BLOG_WORDS[0]:,}, "
+    f"never more than {_BLOG_WORDS_MAX:,}. When the seed is thin, reach the length with depth from the CONTENT SEED, "
+    "its Place background and the FACTS lines, and with the FAQ; never with invented facts or filler. "
     f'At most {_BLOG_SECTIONS_MAX} "## " sections before the "## FAQ" heading; depth goes to the richest moment, '
     "not to more sections.\n"
     "- Write the article once. Before writing, decide only the section headings and which seed facts go in each; "

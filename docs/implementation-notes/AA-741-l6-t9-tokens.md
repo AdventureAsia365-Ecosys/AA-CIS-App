@@ -31,9 +31,12 @@ Live check of the cause (read-only, orchestrator): per t9_write blog row `tokens
 ## Decisions
 - One block for every blog prompt (first write and rewrite, single moment and route walk), after the format
   requirements and before the JSON envelope (`_BLOG_LENGTH_INSTRUCTIONS`):
-  - a word band of 900-1,300 words including the FAQ "when the seed carries that much", never more than 1,600, and
-    never padded: inside the F4 band (4,700-13,000 characters), with the target low in it (lessons: models overshoot
-    counts); the floor is not a reason to pad a thin seed (single-place blogs from the new Segment Slate);
+  - a word band of 900-1,300 words including the FAQ, never under 900 and never more than 1,600: inside the F4 band
+    (4,700-13,000 characters), with the target low in it (lessons: models overshoot counts). The floor is F4's floor
+    in words (900 x 5.3 >= 4,700). A thin seed reaches it with depth from its own CONTENT SEED, Place background and
+    FACTS lines and the FAQ, never with invented facts or filler. (S271 review: the first cut said "a seed with few
+    facts gives a shorter article", which licensed going under a blocking gate and contradicted an F4 rewrite's
+    feedback "content is only N chars"; removed.)
   - at most 6 `## ` sections before the FAQ; depth to the richest moment (the existing rule);
   - write the article once: plan only headings and which seed facts go where, then write the final text; the silent
     reread is one quick pass fixing a sentence in place, never a second draft;
@@ -53,7 +56,7 @@ Live check of the cause (read-only, orchestrator): per t9_write blog row `tokens
   MIG-4 first PR) + `tests/integration/test_aa741_migration_380.py`.
 - `docs/llm/prompt-register.md` (t9_write row symbols), `CONTEXT.md` (ceiling = head-room line).
 - Tests: new `tests/unit/test_aa741_s271_t9_blog_output_budget.py` (output contract: block once in every blog prompt and
-  nowhere else, band inside F4, a full-length reply under a third of the ceiling, envelope keys, manifest covers the
+  nowhere else, band inside F4, the stated floor clears F4 and no "shorter article" licence (also on an F4 rewrite), a full-length reply under a third of the ceiling, envelope keys, manifest covers the
   block, write and rewrite with a fake client). Pins regenerated on purpose with a note: aa771 blog hashes (`single`,
   `route`), round-9/10 fixture sha, aa919 release-0 pins (only the 20 T9 blog user prompts move); round 5 / 6
   byte-identity tests compare without the block; aa642 325 test compares 325's rows with each stage's FIRST manifest
@@ -65,8 +68,9 @@ Live check of the cause (read-only, orchestrator): per t9_write blog row `tokens
   tail persists, A/B effort medium vs high on the golden set.
 - The prompt asks the model to think less; it cannot enforce it. The ceiling and the one budget retry stay as the
   backstop; F0_complete still holds a cut piece.
-- The 900-word floor is soft ("when the seed carries that much"): pieces from thin seeds stay short and may still trip
-  the F4 4,700-character floor (as today).
+- The 900-word floor is now stated as a hard minimum, so a thin seed is pushed toward the floor from its own facts.
+  The writer may still fall short on a very thin seed (F4 then holds it, as today); the Slate side keeps thin Blog
+  Subjects out (AA-741-l6-blog-slate.md, "Thin Subjects"), so such seeds should be rare.
 
 ## Should know
 - Eval: R2 `t9_blog` is informative only today (R2 judge kappa 0.137 on 06/11, not calibrated). Read after deploy:

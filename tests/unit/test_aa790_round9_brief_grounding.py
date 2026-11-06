@@ -36,7 +36,9 @@ CHANNELS = ("blog", "linkedin", "facebook", "instagram", "tiktok", "ads", "email
 # AA-741 (S271): recomputed after every blog prompt gained the LENGTH AND EFFORT block
 # (prompts._BLOG_LENGTH_INSTRUCTIONS, t9_write v2); without it the 192 prompts are the S258 bytes
 # (was 9bf0f4fd5286922b01b020920f2491627d3d185a680d9f14734e08f15615a4fc).
-ROUND6_FIXTURE_SHA = "189452638947e8695ec85482e5bcd9b300974e1e64150df05aac33e01d1bbb37"
+# S271 review: recomputed after the block's floor became a hard minimum
+# (was 189452638947e8695ec85482e5bcd9b300974e1e64150df05aac33e01d1bbb37).
+ROUND6_FIXTURE_SHA = "f9876035d8a581d555df777d18e6407e8fa50f08caf097221ad7e31a16b85431"
 
 
 def fixture_prompts(**extra) -> list[str]:
