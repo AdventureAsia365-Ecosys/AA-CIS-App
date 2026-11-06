@@ -1,17 +1,30 @@
 name: CI
 
+# S271 (CI minutes, AA-889 merge queue): what runs on which event. Main is protected by the merge queue: every commit
+# that lands on main is a queue group commit (gh-readonly-queue/main/*) that passed the FULL run below first, so a run
+# on `push` to main tested the same tree a second time and is gone (Deploy Dev and the other main workflows trigger on
+# push themselves, never on this workflow).
+#   merge_group, workflow_dispatch: every job, no path filter, no skip. The merge queue's guarantee is unchanged.
+#   pull_request: the fast checks only (Lint, Security Audit, Unit Tests, Migration preflight, Frontend Lint with the
+#     type check). The heavy jobs (Integration Tests, Docker Build Check, Frontend Build; Visual in visual.yml) run on
+#     the queue, unless the PR touches their area (job "Quality Paths (report)", step Scope, .github/scripts/ci_scope.py):
+#     migrations or integration tests -> Integration Tests, Dockerfile / requirements -> Docker Build Check. A docs-only
+#     PR (every path under docs/ or *.md) skips the test jobs; a PR that changes .github/ runs everything.
+#   A skipped job reports "skipped", which counts as passed for a required check, so every required check still
+#   reports on a PR and the PR can enter the queue. Trade-off: a heavy failure is now found in the queue (the group
+#   fails, the PR leaves the queue) instead of on the PR. To see the heavy jobs before queueing, dispatch this
+#   workflow on the PR branch (gh workflow run ci.yml --ref <branch>): its checks land on the PR head.
 on:
   pull_request:
     branches: [main]
-  push:
-    branches: [main, "feature/**"]
   # AA-889 (merge queue): the queue tests each group on a temporary gh-readonly-queue/main/* commit and waits for
   # every required check there. All jobs run on it, with no path filter, so no required check is left unreported.
   merge_group:
     types: [checks_requested]
+  workflow_dispatch:
 
-# AA-993 (CIS-4): a new push to a PR cancels that PR's older run. Every other event (push, merge_group) gets its own
-# group keyed on run_id, so main pushes are never serialised or cancelled.
+# AA-993 (CIS-4): a new push to a PR cancels that PR's older run. Every other event (merge_group, dispatch) gets its
+# own group keyed on run_id, so queue groups are never serialised or cancelled.
 concurrency:
   group: ci-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -60,7 +73,7 @@ jobs:
         env:
           GOLDEN_GUARD_KEY: ${{ secrets.GOLDEN_GUARD_KEY }}
           GOLDEN_GUARD_REQUIRE_KEY: >-
-            ${{ github.actor != 'dependabot[bot]' && (github.event_name == 'push'
+            ${{ github.actor != 'dependabot[bot]' && (github.event_name == 'workflow_dispatch'
             || github.event_name == 'merge_group'
             || github.event.pull_request.head.repo.full_name == github.repository) }}
         run: python3 -m services.golden_set.text_guard scan
@@ -76,15 +89,34 @@ jobs:
   # AA-926 (design §4.6): report which quality tiers a change touches and the hash of its diff on the
   # quality paths (services/quality/paths.yaml). Report only — always green, not a required check; AA-919
   # makes it enforce `quality/q2`. Least privilege: no id-token, read-only contents.
+  # S271: the same job (already on every event, full history) carries the CI scope of a pull request: its outputs
+  # gate the test and build jobs below. The step never fails the job (continue-on-error): a broken scope leaves the
+  # outputs empty and every gated job runs (they test `!= 'false'`).
   quality-paths:
     name: Quality Paths (report)
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    outputs:
+      tests: ${{ steps.scope.outputs.tests }}
+      integration: ${{ steps.scope.outputs.integration }}
+      docker: ${{ steps.scope.outputs.docker }}
+      frontend: ${{ steps.scope.outputs.frontend }}
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+
+      - name: Scope (what this pull request needs)
+        id: scope
+        continue-on-error: true
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          python3 .github/scripts/ci_scope.py --event "$EVENT" \
+            --area integration=api/migrations/,tests/integration/ \
+            --area docker=Dockerfile,.dockerignore,requirements.txt,.trivyignore \
+            --area frontend=frontend/ | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -125,8 +157,11 @@ jobs:
   # ratchet and Q0 steps as before. The split is by test file, balanced on .github/test-durations/unit.json
   # (.github/scripts/ci_shards.py; every file lands in exactly one shard, a new file weighs the median). Before
   # (10 main runs, 01/11/2026): one job, ~4.5-5 min, of which ~45 s was every worker importing all 667 files.
+  # S271: skipped only for a docs-only pull request (scope output tests=false); a failed scope job runs them.
   test-unit-shard:
     name: Unit shard ${{ matrix.shard }}/3
+    needs: quality-paths
+    if: ${{ !cancelled() && needs.quality-paths.outputs.tests != 'false' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -203,10 +238,10 @@ jobs:
 
   test-unit:
     name: Unit Tests
-    needs: test-unit-shard
+    needs: [quality-paths, test-unit-shard]
     # Runs when a shard failed too, so the required check turns red instead of "skipped" (a skipped required check
-    # counts as passed).
-    if: ${{ !cancelled() }}
+    # counts as passed). Skipped (= passed) only with the shards, on a docs-only pull request (S271).
+    if: ${{ !cancelled() && needs.quality-paths.outputs.tests != 'false' }}
     runs-on: ubuntu-latest
     env:
       UNIT_SHARDS: 3
@@ -313,8 +348,12 @@ jobs:
   # modules that way (AA-1032 notes). A shard red on main at its FIRST files means a module leans on an earlier one's
   # leftovers: fix that module's setup. The required check keeps its name: "Integration Tests" below passes only when
   # every shard passed. Before (10 main runs, 01/11/2026): one job, ~4-4.5 min.
+  # S271: merge_group and dispatch always; a pull request only when it touches migrations or the integration tests
+  # (scope output integration). A failed scope job runs them.
   test-integration-shard:
     name: Integration shard ${{ matrix.shard }}/4
+    needs: quality-paths
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.quality-paths.outputs.integration != 'false') }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -413,10 +452,10 @@ jobs:
 
   test-integration:
     name: Integration Tests
-    needs: test-integration-shard
+    needs: [quality-paths, test-integration-shard]
     # Runs when a shard failed too, so the required check turns red instead of "skipped" (a skipped required check
-    # counts as passed).
-    if: ${{ !cancelled() }}
+    # counts as passed). Skipped (= passed) only with the shards, on a pull request outside their area (S271).
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.quality-paths.outputs.integration != 'false') }}
     runs-on: ubuntu-latest
     steps:
       - name: Every integration shard passed
@@ -464,7 +503,7 @@ jobs:
   # Same steps in AA-CIS-App, AA-Booking and AA-Partner; only the env block differs.
   migration-preflight:
     name: Migration preflight
-    if: github.event_name != 'push'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
@@ -607,8 +646,11 @@ jobs:
           [ "$OOO" = "true" ] && ARGS+=(--allow-out-of-order)
           python3 .github/scripts/migration_preflight.py "${ARGS[@]}" --ready-url "$READY_URL"
 
+  # S271: merge_group and dispatch always; a pull request only when it changes the image inputs (scope output docker).
   docker-build:
     name: Docker Build Check
+    needs: quality-paths
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.quality-paths.outputs.docker != 'false') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -669,8 +711,12 @@ jobs:
   #   5. no inline `eslint-disable` of a kit rule (or bare `eslint-disable`) in page code: the suppressions file is the
   #      only baseline.
   # Steps 3-5 run even when step 2 fails, so one run shows every reason.
+  # S271: on a pull request this job also runs the kit checks and the type check of "Frontend Build" (which runs on the
+  # queue only), and it is skipped for a pull request that does not touch frontend/ (scope output frontend).
   frontend-lint:
     name: Frontend Lint
+    needs: quality-paths
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.quality-paths.outputs.frontend != 'false') }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -745,13 +791,28 @@ jobs:
         if: ${{ !cancelled() }}
         run: node app/_kit/core/check-kit-copy.mjs --no-kit-disable app --ignore _kit
 
+      # S271: the fast part of "Frontend Build" (same commands), on pull requests only: the queue runs that job whole.
+      - name: Kit core self-check and kit render tests (pull request)
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        run: |
+          node app/_kit/core/check-kit-copy.mjs --self
+          node app/_kit/core/check-kit-copy.mjs --css .
+          node --test --experimental-strip-types --no-warnings lib/kitCore.test.mjs lib/tokensContrast.test.mjs
+          node --test --experimental-strip-types --no-warnings lib/kitButtons.test.mjs lib/kitShellFrame.test.mjs lib/kitModal.test.mjs lib/kitDataTableRows.test.mjs lib/visualPages.test.mjs
+
+      - name: Type-check (tsc --noEmit, pull request)
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        run: npx tsc --noEmit -p .
+
   # AA-879 — type-check and production build of the admin app (frontend/). NEW job, meant to become a
   # required check: tsc catches prop/type errors ESLint misses, and `next build` catches what only a build
   # sees (server/client boundaries, route config, Turbopack). Builds without any secret or env var (the
   # app reads its API URL and Cognito settings at runtime); Sentry source-map upload is skipped without
   # SENTRY_AUTH_TOKEN. ESLint runs in the separate "Frontend Lint" job (a gate since AA-994 S1c).
+  # S271: merge_group and dispatch only; on a pull request "Frontend Lint" runs its kit checks and type check.
   frontend-build:
     name: Frontend Build
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     defaults:
       run:

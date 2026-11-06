@@ -5,11 +5,12 @@ name: Visual
 # page (tests/e2e/visual/changed-pages.mjs over the diff; a kit / shell / lib change = every page) at 1440 x 900 and
 # 390 x 844, light and dark, asserting: no page-level horizontal overflow (the document AND the kit frame, which
 # scrolls on its own), 0 console errors, no failed same-origin request, the kit frame present, the theme applied.
-# Screenshots + report.json are the artifact `visual-cis-<target>-<run id>` (14 days); the job summary and one PR
-# comment carry the page x 4 table.
+# Screenshots + report.json are the artifact `visual-cis-<target>-<run id>` (14 days); the job summary carries the
+# page x 4 table (the PR comment went with the per-PR run, S271).
 #
-# Required check (AA-1008 H3): the job `pr` reports on EVERY pull request and on the merge queue (merge_group), so it
-# can be a required status check; its name "Visual (next start, public pages + kit gallery)" is the required context
+# Required check (AA-1008 H3): the job `pr` reports on EVERY pull request (as "skipped" since S271: the per-PR run
+# moved to the queue) and runs on the merge queue (merge_group), so it can be a required status check; its name
+# "Visual (next start, public pages + kit gallery)" is the required context
 # (the tech lead's branch-protection script and verify-h3.sh pin it: never rename it). There is no `paths:` filter (a
 # required check must report on every PR, and merge_group ignores path filters): the job's first step after the
 # checkout, Scope, diffs the PR (or the queue group) against its base and matches the old filter's path list; no match
@@ -18,12 +19,12 @@ name: Visual
 # itself failed.
 #
 # Jobs:
-#   pr        pull_request and merge_group (frontend / visual files, decided by the Scope step) and dispatch without
-#             base_url: `next build` with KIT_GALLERY=1 and
-#             `next start` in the runner, no session and no backend: the public pages that changed + the gated kit
-#             gallery (every core component, incl. the ShellFrame demo). It first runs the SELF-TEST: the gallery
-#             with a planted overflow (document and frame) must make the run fail, and summary.mjs --selftest checks
-#             that each planted capture was caught; a self-test that passes is red.
+#   pr        merge_group (frontend / visual files, decided by the Scope step) and dispatch without base_url (skipped
+#             on pull_request since S271): `next build` with KIT_GALLERY=1 and `next start` in the runner, no
+#             session and no backend: the public pages that changed + the gated kit gallery (every core component,
+#             incl. the ShellFrame demo). It first runs the SELF-TEST: the gallery with a planted overflow (document
+#             and frame) must make the run fail, and summary.mjs --selftest checks that each planted capture was
+#             caught; a self-test that passes is red.
 #   deployed  workflow_call from vercel-deploy.yml after the production deploy on main, and dispatch from main with
 #             base_url: the changed pages (or `pages`) on the deployed host: public pages without a session, staff pages
 #             signed in as the Cognito E2E user (the smoke setup: email code from the mailbox via the read-only OIDC
@@ -31,7 +32,7 @@ name: Visual
 #             never the HTML report or the auth state (a `fill` step would name the typed code).
 
 on:
-  # No `paths:` (AA-1008 H3): the Scope step of job `pr` matches the path list, so the check reports on every PR.
+  # No `paths:` (AA-1008 H3): the check must report on every PR (as "skipped" since S271, see job `pr`).
   pull_request:
     branches: [main]
   # The merge queue (AA-889) tests each group on a gh-readonly-queue/main/* commit and waits for every required check.
@@ -71,7 +72,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 # A PR's newer push cancels its older run; a merge_group run (no PR number, no base_url) has its own run_id group, so
 # two queue groups never cancel each other.
@@ -82,9 +82,12 @@ concurrency:
 jobs:
   pr:
     name: Visual (next start, public pages + kit gallery)
+    # S271 (CI minutes): skipped on pull_request (a job-level skip with no `needs` reports "skipped", which passes the
+    # required check, so the PR can still enter the queue); the queue group runs it with its Scope step, so the merge
+    # queue still checks every frontend change before main. Trade-off: a visual failure is found in the queue, not on
+    # the PR; to see it earlier, dispatch this workflow on the PR branch (no base_url).
     if: >-
-      github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.base_url == '') ||
-      github.event_name == 'merge_group'
+      (github.event_name == 'workflow_dispatch' && inputs.base_url == '') || github.event_name == 'merge_group'
     # Pinned like ui-smoke.yml: Playwright's Chromium is not supported on ubuntu 26.04 yet.
     runs-on: ubuntu-24.04
     timeout-minutes: 40
@@ -226,25 +229,6 @@ jobs:
             tests/e2e/results/visual/report.json
           if-no-files-found: warn
           retention-days: 14
-
-      # One comment per PR (marker), edited in place. All values reach `run:` through env. Never on merge_group.
-      - name: Comment the summary on the PR
-        if: always() && steps.scope.outputs.run == 'true' && github.event_name == 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          MARKER="<!-- visual-run -->"
-          BODY=$(printf '%s\n%s\n\n[Run and screenshots](%s)\n' "$MARKER" "$(cat tests/e2e/results/visual/summary.md)" "$RUN_URL")
-          EXISTING=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
-                       --jq ".[] | select(.body | contains(\"$MARKER\")) | .id" 2>/dev/null | head -n1 || true)
-          if [ -n "$EXISTING" ]; then
-            gh api -X PATCH "repos/$REPO/issues/comments/$EXISTING" -f body="$BODY" >/dev/null
-          else
-            gh api -X POST "repos/$REPO/issues/$PR/comments" -f body="$BODY" >/dev/null
-          fi
 
   deployed:
     name: Visual (deployed host, signed in)

@@ -3,8 +3,8 @@
 A required check must report on every pull request and on every merge-queue group (merge_group), under a name that
 never changes (the tech lead's branch-protection script and verify-h3.sh pin the names). So:
 
-- ``visual.yml``: no ``paths:`` on pull_request, a merge_group trigger, the job ``pr`` keeps its name and runs on
-  merge_group; its Scope step (run here with bash in a scratch git repo) matches the old path list exactly and, on no
+- ``visual.yml``: no ``paths:`` on pull_request, a merge_group trigger, the job ``pr`` keeps its name, is skipped on
+  pull_request (S271: reported "skipped" = passed) and runs on merge_group; its Scope step (run here with bash in a scratch git repo) matches the old path list exactly and, on no
   match, skips every later step so the job ends green. The skip is step-level: a job-level skip reports "skipped",
   which GitHub counts as passed even when the job it depended on failed.
 - ``kit-consumers.yml``: the same triggers, BASE_SHA from the queue group on merge_group, a concurrency group that
@@ -55,7 +55,9 @@ def test_visual_pr_job_keeps_its_required_name_and_runs_on_merge_group():
     pr = jobs["pr"]
     assert pr["name"] == VISUAL_NAME
     cond = " ".join(pr["if"].split())
-    assert "github.event_name == 'pull_request'" in cond
+    # S271 (CI minutes): skipped on pull_request (reports "skipped" = passed, so the PR can enter the queue); the queue
+    # group runs it, so every frontend change is still checked before main.
+    assert "'pull_request'" not in cond
     assert "github.event_name == 'merge_group'" in cond
     assert "needs" not in pr, "a job-level dependency would turn a failure into a passing 'skipped'"
     deployed = " ".join(jobs["deployed"]["if"].split())
@@ -69,15 +71,17 @@ def test_visual_concurrency_gives_each_queue_group_its_own_group():
     assert group.rstrip().endswith("|| github.run_id }}")
 
 
-def test_every_step_after_scope_is_scoped_and_the_comment_is_pr_only():
+def test_every_step_after_scope_is_scoped():
     steps = _wf(VISUAL_WF)["jobs"]["pr"]["steps"]
     assert "actions/checkout" in steps[0]["uses"] and steps[0]["with"]["fetch-depth"] == 0
     assert steps[1]["name"] == "Scope" and steps[1]["id"] == "scope" and "if" not in steps[1]
     for s in steps[2:]:
         assert SCOPED in s.get("if", ""), f"{s.get('name')} must be guarded by the Scope step"
-    for name in ("Summary", "Upload screenshots and report", "Comment the summary on the PR"):
+    for name in ("Summary", "Upload screenshots and report"):
         assert _step(steps, name)["if"].startswith("always() && "), name
-    assert "github.event_name == 'pull_request'" in _step(steps, "Comment the summary on the PR")["if"]
+    # The PR comment went with the per-PR run (S271): nothing in the job writes to a PR any more.
+    assert not any("comment" in (s.get("name") or "").lower() for s in steps)
+    assert _wf(VISUAL_WF)["permissions"] == {"contents": "read"}
 
 
 def test_changed_pages_diffs_a_queue_group_against_its_base():
