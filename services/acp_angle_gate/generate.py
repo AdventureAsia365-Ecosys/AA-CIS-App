@@ -26,7 +26,7 @@ from services.acp_shared.brand_pack import foreign_brand_mentions
 from services.acp_angle_gate.prompts import (BRIEF_MODE_OFF, BRIEF_MODE_R8, R8_BRIEF_LABELS, R8_BRIEF_MAX_FIGURES,
                                              R8_BRIEF_MAX_WORDS, brief_mode as resolve_brief_mode,
                                              build_user_prompt, system_prompt)
-from services.acp_angle_gate.route_digest import thin_anchor
+from services.acp_angle_gate.route_digest import focus_name, thin_anchor
 from services.acp_shared.channel_spec import sanitize_best_final_style
 from services.acp_shared.dfs_relevance import SearchDemandSignal
 from services.acp_shared.token_budget import (T8_ANGLE_GEN_MAX_TOKENS, ReplyStillCut, agenerate_with_budget_retry,
@@ -247,7 +247,12 @@ def angle_contract_violations(angles: list[dict], brand_pack: BrandAudience,
     too, so it gets the same one retry with the problems as feedback. Mode 'off' checks exactly what it did before."""
     out: list[str] = []
     thin = [thin_anchor(a, moments) for a in angles] if moments else []
-    if thin and all(thin):
+    focus = focus_name(moments)
+    if thin and all(thin) and focus:
+        # AA-741 (S271 review) — a Segment-grain Blog walk is about its FOCUS moment
+        out.append("every angle leads with a moment other than the FOCUS (" + "; ".join(dict.fromkeys(thin))
+                   + f"): lead with the FOCUS, {focus}; the other moments are the way there and onwards")
+    elif thin and all(thin):
         out.append("every angle leads with a thin moment (" + "; ".join(dict.fromkeys(thin)) + ") — lead with one "
                    "of the ANCHOR CANDIDATES; a thin moment is only named in passing")
     brand_name = brand_pack.get("brand_name")

@@ -58,7 +58,9 @@ touches. Empty list if none of the given questions fit this angle, or if no ques
 
 If the CONTENT SEED is a ROUTE with ANCHOR CANDIDATES and THIN MOMENTS, every angle leads with \
 an anchor candidate. A thin moment has almost no source facts: it may only be named in passing \
-and is never the hook, the title (name) or the climax of an angle.
+and is never the hook, the title (name) or the climax of an angle. If the ROUTE names a FOCUS, \
+the piece is about that moment: every angle leads with the FOCUS, and the CONTEXT moments are the \
+way there and onwards, never the hook, the title (name) or the climax of an angle.
 
 Never invent facts, statistics, testimonials, scene detail or claims not present in the content \
 seed given to you. If the content seed lacks a concrete detail a strong angle would want, build \

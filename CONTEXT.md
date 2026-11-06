@@ -3140,7 +3140,12 @@ Bar-cleared Subjects for a Channel. `services/acp_shared/slate.py::propose_slate
    is never proposed there again (`one_piece_per_place`). The Blog pick fills `angle_gate_request.route_segment_ids`
    with the walk: the current Route on the seed atom's tour that holds the Segment (merged ids followed, read through
    `route_guard`, at least two Segments; when the seed's tour has none, a member of the same match grade on a tour
-   that has one). No Route = a single-place blog. T8 / T9 read the walk exactly as a Route pick's.
+   that has one). No Route = a single-place blog. A Blog piece is about its Subject's own moment (the **walk focus**,
+   `services/acp_shared/walk_focus.py`, S271 review): T8's Route digest names it FOCUS and the other moments CONTEXT
+   (an angle leading with another moment is re-ranked, three of them retried), T9 marks it FOCUS in the seed with the
+   WALK FOCUS rule (t9_write v3), so sibling Subjects of one Route get different articles. When that moment is off
+   the walk or thin, T8 and T9 both write a single-place piece; the Slate does not propose a Blog Subject whose own
+   seed is thin. A Route-grain Subject (picked before S271) keeps the whole-walk digest with no focus.
 
 A Segment Subject is offered and written only from its **seed atom** (AA-857,
 `services/acp_shared/subject_seed.py`): a live member on the tenant's own tours whose place IS the

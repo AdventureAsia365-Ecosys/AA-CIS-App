@@ -138,3 +138,38 @@ async def test_segment_routes_follow_aliases_and_skip_superseded_and_other_tours
     await tx.execute("SET LOCAL ROLE aa_app_user")
     as_tenant = await tx.fetch(slate._SEGMENT_ROUTES_SQL, "zz741_r_lake", [a, b])
     assert {r["route_id"] for r in as_tenant} == {"zz741_ra", "zz741_rb"}
+
+
+@pytest.mark.asyncio
+async def test_subject_focus_segment_reads_the_live_segment_of_a_segment_subject_only(tx):
+    """AA-741 S271 review — walk_focus.subject_focus_segment: a Segment Subject's own Segment (an id that merged into
+    another resolves to the live one); a Route Subject and another tenant's Subject give None. It also runs on the
+    tenant pool (aa_app_user, RLS tenant_isolation), where T8 / T9 may read it."""
+    from services.acp_shared import walk_focus
+    tenant, other = str(uuid.uuid4()), str(uuid.uuid4())
+    for t in (tenant, other):
+        await tx.execute("""INSERT INTO shared.tenants (tenant_id, name, slug, plan_tier, rate_limit_rpm, is_active,
+                                posts_per_week) VALUES ($1::uuid, 'zz741f', $2, 'starter', 60, true, 3)""",
+                         t, f"zz741f-{t[:8]}")
+    tour = await _tour(tx, "zz741 focus loop")
+    await _segments(tx, ("zz741_f_old", "Lake Aurel"), ("zz741_f_live", "Lake Aurel"), ("zz741_f_pass", "Corvin Pass"))
+    await tx.execute("INSERT INTO acp_contract.atom_segment_alias (segment_id_old, segment_id_canonical, merged_at) "
+                     "VALUES ('zz741_f_old', 'zz741_f_live', now())")
+    await tx.execute("""INSERT INTO acp_contract.route (route_id, tour_id, hub_name, ordered_segment_ids, first_day,
+                            last_day, version, created_at)
+                        VALUES ('zz741_f_r', $1::uuid, 'Loop', '["zz741_f_live", "zz741_f_pass"]', 1, 3, 1, now())""",
+                     tour)
+    ids = {}
+    for key, t, seg, route in (("seg", tenant, "zz741_f_old", None), ("route", tenant, None, "zz741_f_r"),
+                               ("other", other, "zz741_f_pass", None)):
+        ids[key] = await tx.fetchval("""INSERT INTO acp_shared.subject (tenant_id, segment_id, route_id, channel,
+                                            state, cleared_bar_reason)
+                                        VALUES ($1::uuid, $2, $3, 'blog', 'picked', '{}'::jsonb)
+                                        RETURNING subject_id""", t, seg, route)
+    assert await walk_focus.subject_focus_segment(tx, tenant, ids["seg"]) == "zz741_f_live"
+    assert await walk_focus.subject_focus_segment(tx, tenant, ids["route"]) is None
+    assert await walk_focus.subject_focus_segment(tx, tenant, ids["other"]) is None     # the tenant filter
+    await tx.execute("SELECT set_config('app.tenant_id', $1, true)", tenant)
+    await tx.execute("SET LOCAL ROLE aa_app_user")
+    assert await walk_focus.subject_focus_segment(tx, tenant, ids["seg"]) == "zz741_f_live"
+    assert await walk_focus.subject_focus_segment(tx, other, ids["other"]) is None      # RLS: not this tenant's row

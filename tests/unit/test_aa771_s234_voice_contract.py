@@ -358,7 +358,7 @@ class TestT8Service:
              patch.object(angle_service, "fetch_piece_history", new=AsyncMock(return_value=[])), \
              patch.object(angle_service, "verify_answers",
                           new=AsyncMock(side_effect=lambda a, ev, t: (ev, 0, 0))), \
-             patch.object(angle_service, "_route_moments", new=AsyncMock(return_value=route)), \
+             patch.object(angle_service, "_route_moments", new=AsyncMock(return_value=(route, False))), \
              patch.object(angle_service, "request_route_segment_ids",  # AA-914 guard: keeps every id here
                           new=AsyncMock(side_effect=lambda p, r, **k: list(r["route_segment_ids"]))), \
              patch.object(angle_service, "generate_angles", new=gen), \

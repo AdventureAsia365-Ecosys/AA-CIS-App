@@ -123,9 +123,11 @@ def test_the_envelope_keys_are_the_contract():
 # ---------------------------------------------------------------- the registry
 
 def test_manifest_v2_covers_the_block():
-    entry = newest(load_manifest(), "t9_write")
-    assert entry["version"] == "v2"
+    """v2 brought the block; every later version (v3: the walk focus, AA-741 S271 review) keeps hashing it."""
     block_symbols = {"_BLOG_LENGTH_INSTRUCTIONS", "_BLOG_WORDS", "_BLOG_WORDS_MAX", "_BLOG_SECTIONS_MAX"}
+    v2 = next(e for e in load_manifest()["t9_write"] if e["version"] == "v2")
+    assert block_symbols <= set(v2["symbols"])
+    entry = newest(load_manifest(), "t9_write")
     assert block_symbols <= set(entry["symbols"])
     assert prompt_hash_of(entry["source_path"], entry["symbols"]) == entry["prompt_sha256"]
 

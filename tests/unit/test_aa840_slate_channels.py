@@ -208,6 +208,7 @@ async def _propose(channels_config, segments, routes):
     route_fetch = AsyncMock(return_value=routes)
     debate = AsyncMock(side_effect=lambda _tid, candidates, _conn: candidates)
     with patch.object(slate, "_tenant_market_codes", AsyncMock(return_value=(["US"], []))), \
+         patch.object(slate, "_fetch_thin_walk_segments", AsyncMock(return_value={})), \
          patch.object(slate, "_fetch_segment_candidates", seg_fetch), \
          patch.object(slate, "_fetch_route_candidates", route_fetch), \
          patch.object(slate, "_fetch_segment_hub_map", AsyncMock(return_value={})), \

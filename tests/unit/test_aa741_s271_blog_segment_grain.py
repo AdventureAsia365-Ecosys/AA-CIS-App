@@ -158,8 +158,9 @@ class _Pool:
         yield self.conn
 
 
-async def _propose(conn, segments):
+async def _propose(conn, segments, thin=None):
     with patch.object(slate, "_tenant_market_codes", AsyncMock(return_value=(["US"], []))), \
+         patch.object(slate, "_fetch_thin_walk_segments", AsyncMock(return_value=thin or {})), \
          patch.object(slate, "_fetch_segment_candidates", AsyncMock(return_value=segments)), \
          patch.object(slate, "_fetch_route_candidates", AsyncMock(return_value=[])) as routes, \
          patch.object(slate, "_fetch_segment_hub_map", AsyncMock(return_value={})), \
@@ -332,8 +333,16 @@ def _blog_segment_request():
 
 
 def test_t8_builds_the_route_digest_for_a_blog_segment_pick():
+    """The walk reaches T8 around the Subject's own moment (the S271 review's focus; full cases in
+    test_aa741_s271_walk_focus.py)."""
     from services.acp_angle_gate import service as ag
     req = _blog_segment_request()
+
+    async def fetch(tenant_id, trip_id, segment_ids, pool, atoms_out=None, *, focus_segment_id=None,
+                    focus_out=None):
+        if focus_out is not None:
+            focus_out.append(1 if focus_segment_id == "seg-lake" else None)
+        return segments
     segments = [("atom-p", "Corvin Pass — cross\nLocation: Corvin Pass\nDay 2 of the trip\n"
                            "Source itinerary: Cross the pass on foot. Lunch at the hut. Descend by the old road."),
                 ("atom-a", "Lake Aurel — visit\nLocation: Lake Aurel\nDay 3 of the trip\n"
@@ -341,7 +350,8 @@ def test_t8_builds_the_route_digest_for_a_blog_segment_pick():
     with patch.object(ag, "request_route_segment_ids", new=AsyncMock(return_value=["seg-pass", "seg-lake"])), \
          patch.object(ag, "_fetch_atom_for_tenant", new=AsyncMock(return_value={"text": "single seed"})), \
          patch.object(ag, "fetch_brand_audience", new=AsyncMock(return_value={})), \
-         patch("services.acp_content_writing.service._fetch_route_segments", new=AsyncMock(return_value=segments)), \
+         patch("services.acp_content_writing.service._fetch_route_segments", new=fetch), \
+         patch.object(ag.walk_focus, "subject_focus_segment", new=AsyncMock(return_value="seg-lake")), \
          patch.object(ag, "fetch_tenant_trips", new=AsyncMock(return_value=[])), \
          patch.object(ag, "fetch_search_demand_signal", new=AsyncMock(return_value=None)), \
          patch.object(ag, "_blog_search_demand", new=AsyncMock(return_value=(None, None))), \
@@ -350,6 +360,8 @@ def test_t8_builds_the_route_digest_for_a_blog_segment_pick():
     assert inputs.moments and len(inputs.moments) == 2
     assert inputs.content_seed.startswith("ROUTE (this piece covers these moments")
     assert "Lake Aurel" in inputs.content_seed and "Corvin Pass" in inputs.content_seed
+    assert "every angle leads with it and gives it the most room): Lake Aurel" in inputs.content_seed
+    assert "ANCHOR CANDIDATES" not in inputs.content_seed
 
 
 def test_t9_writes_from_the_walk_of_a_blog_segment_pick():
@@ -360,6 +372,8 @@ def test_t9_writes_from_the_walk_of_a_blog_segment_pick():
     with patch.object(cw.angle_gate_service, "fetch_request", new=AsyncMock(return_value=req)), \
          patch.object(cw, "fetch_brand_audience", new=AsyncMock(return_value={})), \
          patch.object(cw, "request_route_segment_ids", new=AsyncMock(return_value=["seg-pass", "seg-lake"])), \
+         patch.object(cw.walk_focus, "subject_focus_segment", new=AsyncMock(return_value="seg-lake")), \
          patch.object(cw, "_fetch_route_segments", new=fetch), pytest.raises(RuntimeError):
         asyncio.run(cw.start_write("t1", "req-1", MagicMock()))
     assert fetch.await_args.args[1:3] == (TOUR_A, ["seg-pass", "seg-lake"])
+    assert fetch.await_args.kwargs["focus_segment_id"] == "seg-lake"

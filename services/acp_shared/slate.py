@@ -82,6 +82,7 @@ from uuid import UUID
 import structlog
 
 from services.acp_contract.segment_matching import live_segment_labels, resolve_segment_aliases
+from services.acp_shared import walk_focus
 from services.acp_shared.route_guard import current_route, trip_route_segment_ids
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from shared import tour_liveness as _tl
@@ -504,6 +505,7 @@ def _choose_slate(
     channels: list[str], segments: list[Candidate], routes: list[Candidate], hub_of: dict[str, str],
     max_channels_per_place: int | None = MAX_CHANNELS_PER_PLACE,
     held: Optional[dict[str, "HeldSubjects"]] = None,
+    thin: Optional[dict[str, frozenset[str]]] = None,
 ) -> dict[str, list[tuple[Candidate, dict]]]:
     """Port of the origin's `choose()` (aa-social-media `stages/slate.py`, Gap B 2026-09-02),
     run over every enabled Channel of one tenant's Slate at once (AA-840).
@@ -535,6 +537,11 @@ def _choose_slate(
     next place gets the seat. Before S271 a used Segment kept winning its seat each proposal and its insert was a
     no-op, so the Channel was offered nothing new for that place's seat.
 
+    **Thin walk Subjects** (AA-741 S271 review, `takes_route` Channels — Blog): `thin[channel]` holds the Segment ids
+    whose own seed is too thin to carry an article (`_fetch_thin_walk_segments()`); they are skipped the same way, so
+    the next place gets the seat. A Blog piece is about its Subject's own moment (walk_focus), and a thin one could only
+    be padded or written about the other moments of its Route.
+
     Deterministic: same inputs, same output. Returns `{channel: [(candidate, cleared_bar_reason)]}`
     for every Channel in `channels` — exactly what should be `INSERT`ed as `proposed` rows.
     """
@@ -562,6 +569,7 @@ def _choose_slate(
             most_per_hub = CHANNEL_BARS[channel]["most_per_hub"]
             queue, taken = queues[channel], hubs_in_channel[channel]
             held_here = (held or {}).get(channel)
+            thin_here = (thin or {}).get(channel) or frozenset()
             # Every skip below is final for this Channel (place/hub counts only ever grow), so the
             # cursor never needs to look back.
             while cursor[channel] < len(queue):
@@ -569,6 +577,8 @@ def _choose_slate(
                 cursor[channel] += 1
                 place = candidate.place
                 if held_here is not None and held_here.holds(candidate):
+                    continue
+                if candidate.segment_id and candidate.segment_id in thin_here:
                     continue
                 if place is not None:
                     if place in places_in_channel[channel]:
@@ -648,7 +658,8 @@ async def propose_slate(tenant_id: UUID, pool) -> dict:
         # only what survives both gets proposed.
         held = await _fetch_held_subjects(
             tenant_id, conn, [c for c in enabled_channels if CHANNEL_BARS[c]["one_piece_per_place"]])
-        chosen = _choose_slate(enabled_channels, segments, routes, hub_of, held=held)
+        thin = await _fetch_thin_walk_segments(tenant_id, conn, segments, enabled_channels)
+        chosen = _choose_slate(enabled_channels, segments, routes, hub_of, held=held, thin=thin)
         async with conn.transaction():
             held_via_alias = await _segments_held_via_alias(tenant_id, conn)
             live_segment_ids: dict[str, set[str]] = {c: set() for c in CHANNEL_BARS}
@@ -762,6 +773,36 @@ async def _fetch_held_subjects(tenant_id: UUID, conn, channels: list[str]) -> di
                 places.setdefault(r["channel"], set()).add(_place_key(live[1]))
     return {channel: HeldSubjects(frozenset(ids.get(channel, ())), frozenset(places.get(channel, ())))
             for channel in ids}
+
+
+async def _fetch_thin_walk_segments(tenant_id: UUID, conn, segments: list[Candidate],
+                                    channels: list[str]) -> dict[str, frozenset[str]]:
+    """AA-741 S271 review — {channel: Segment ids} for the `takes_route` Channels (Blog) among `channels`: the
+    candidates that clear that Channel's Bar but whose seed atom (the pick's own rule, `choose_representative` on the
+    tenant's tours) gives the writer fewer than `THIN_FACTS` facts (walk_focus.seed_is_thin). T8 / T9 write a Blog
+    piece about its Subject's own moment and fall back to a single-place piece when that moment is thin, so a thin
+    Subject could only become a padded article; it is not proposed. Only Bar-clearing candidates are read (two small
+    reads each, DB only). No such Channel or candidate -> {} and no read."""
+    walk_channels = [c for c in channels if CHANNEL_BARS[c]["takes_route"]]
+    cleared = [c for c in segments
+               if c.segment_id and any(_clears_bar(ch, c)[0] for ch in walk_channels)] if walk_channels else []
+    if not cleared:
+        return {}
+    tour_ids = {str(t) for t in await _tenant_tour_ids(tenant_id, conn)}
+    members = await load_segment_members(conn, [c.segment_id for c in cleared], str(tenant_id))
+    alias_cards = await load_alias_cards(
+        conn, [c.place for c in cleared] + [m.place for ms in members.values() for m in ms],
+    )
+    thin: set[str] = set()
+    for c in cleared:
+        member, _skip = choose_representative(c.place, members.get(c.segment_id, []), tenant_tour_ids=tour_ids,
+                                              alias_cards=alias_cards)
+        if member is not None and await walk_focus.seed_is_thin(conn, member.atom_id, tenant_id):
+            thin.add(c.segment_id)
+    if thin:
+        logger.info("slate_walk_thin_skipped", tenant_id=str(tenant_id), skipped=len(thin),
+                    segment_ids=sorted(thin)[:50])
+    return {channel: frozenset(thin) for channel in walk_channels}
 
 
 T7_SLATE_KIND = "t7_slate"
