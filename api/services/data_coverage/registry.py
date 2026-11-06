@@ -553,8 +553,8 @@ ROWS: tuple[Row, ...] = (
     Row("bk.inquiries_stuck", "booking", "Inquiries parked / failed (last 400 days)", f("bk_funnel", "stuck"),
         "must", "defect", unit="inquiries", denominator=f("bk_funnel", "received"),
         denominator_label="inquiries received (same window)", drill="/admin/overview", sources=("bk_funnel",)),
-    Row("bk.customers", "booking", "Booking customers", f("bk_totals", "customers"), "info", unit="customers",
-        drill="/admin/platform/apps", sources=("bk_totals",)),
+    # bk.customers (metric 'customers' of booking.v_ops_data_totals) is gone: the B2C customer table is retired and
+    # the view loses the metric with it (Booking bk-045, root ADR 0019: agencies are the only customers).
     Row("bk.b2b_partners", "booking", "B2B partners active", f("bk_totals", "b2b_partners_active"), "info",
         unit="partners", drill="/admin/platform/apps", sources=("bk_totals",)),
     Row("bk.b2b_holds", "booking", "B2B holds active", f("bk_totals", "b2b_holds_active"), "info", unit="holds",
