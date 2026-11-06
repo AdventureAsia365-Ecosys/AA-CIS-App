@@ -47,14 +47,14 @@ PARAMS = [_param("t9_faq_filter", "model-e", effort="low")]
 
 
 def _fp(writer="t9_blog", *, routes=None, params=None, env=None, prompts=None, l0_rules=(), memory_items=None,
-        brand=None, settings=None):
+        brand=None, settings=None, service=cf.WRITER_SERVICE, policies=()):
     return cf.build(writer, routes=ROUTES if routes is None else routes, params=PARAMS if params is None else params,
                     catalog=[{"model_key": "model-a", "wire_model": "wire-a", "api_style": "converse",
                               "provider": "bedrock", "enabled": True, "max_output_tokens": None,
                               "supports_temperature": True}],
                     deployments=[], route_settings=settings or {"order_mode": "model_first", "current_version": 7},
                     env=env or {}, prompts=prompts or {"t9_write": "aaa"}, memory_items=memory_items,
-                    l0_rules=l0_rules, brand_rows=brand)
+                    l0_rules=l0_rules, brand_rows=brand, service=service, policies=policies)
 
 
 def _wrap(c):
@@ -127,7 +127,69 @@ def test_a_pre_w0_fingerprint_is_not_a_change_and_legacy_keys_still_count():
     now = {**old, "config_fp": _fp()}
     assert rel.reverify_reasons(old, now) == []
     assert rel.reverify_reasons({**old, "config_fp": _fp()}, {**now, "golden_set": "aa729@2"}) == ["golden_set"]
-    assert rel.config_drift(old, now) == {"components": [], "stages": []}
+    assert rel.config_drift(old, now) == {"components": [], "stages": [], "mode_flags_compared": False}
+
+
+# worker-only switches of the Dev task definitions (infra modules/ecs: the api task has none of them)
+WORKER_ENV = {"T2_JUDGE_GATE": "on", "T2_JUDGE_ANCHORS": "on", "T3_BACKGROUND_FACTS": "on", "T9_FAQ_LLM_FILTER": "on",
+              "S1_WRITER_V2": "on"}
+
+
+@pytest.mark.parametrize("writer", ["a1", "t2", "t9_blog"])
+def test_an_api_draft_is_not_flagged_by_the_worker_env_alone(writer):
+    drafted = _wrap(_fp(writer, env={}, service="api"))                 # admin drafts in the api
+    scanned = _wrap(_fp(writer, env=WORKER_ENV, service="worker"))      # the worker's start scan
+    assert cf.reverify_components(drafted, scanned) == []
+    assert rel.reverify_reasons(drafted, scanned) == []
+    assert rel.config_drift(drafted, scanned)["mode_flags_compared"] is False
+    # an api scan (route-control save) never compares mode_flags, whatever the api env is
+    assert cf.reverify_components(_wrap(_fp(writer, env=WORKER_ENV, service="worker")),
+                                  _wrap(_fp(writer, env={}, service="api"))) == []
+
+
+def test_the_worker_compares_mode_flags_against_the_releases_worker_evidence():
+    drafted = _wrap(_fp("t2", env={}, service="api"))
+    r2_same = _wrap(_fp("t2", env=WORKER_ENV, service="worker"))        # the R2 run of the release, in the worker
+    scanned = _wrap(_fp("t2", env=WORKER_ENV, service="worker"))
+    assert cf.reverify_components(drafted, scanned, [r2_same]) == []
+    changed = _wrap(_fp("t2", env={**WORKER_ENV, "T2_JUDGE_GATE": "off"}, service="worker"))
+    assert cf.reverify_components(drafted, changed, [r2_same]) == ["mode_flags"]
+    assert rel.reverify_reasons(drafted, changed, (r2_same,)) == ["model_route"]
+    assert rel.config_drift(drafted, changed, (r2_same,))["mode_flags_compared"] is True
+    # a release the worker drafted compares against its own fingerprint
+    assert cf.reverify_components(r2_same, changed) == ["mode_flags"]
+    # an evidence run from the api, or one with no service recorded, is no reference
+    api_run = _wrap(_fp("t2", env={}, service="api"))
+    no_service = {"config_fp": {k: v for k, v in r2_same["config_fp"].items() if k != "service"}}
+    assert cf.reverify_components(drafted, changed, [api_run, no_service]) == []
+
+
+def test_a_component_unavailable_on_either_side_flags_nothing():
+    real = _wrap(_fp())
+    for broken in (_fp(params=cf.UNAVAILABLE), _fp(prompts=cf.UNAVAILABLE), _fp(prompts={"t9_write": cf.UNAVAILABLE}),
+                   _fp(l0_rules=cf.UNAVAILABLE), _fp(policies=cf.UNAVAILABLE)):
+        assert cf.reverify_components(real, _wrap(broken)) == [], broken["parts"]
+        assert cf.reverify_components(_wrap(broken), real) == [], broken["parts"]
+    # a failed routes read takes the catalog with it (its model list comes from the routes), and names no stage
+    no_routes = _fp(routes=cf.UNAVAILABLE)
+    assert no_routes["parts"]["routes"] == cf.UNAVAILABLE and no_routes["parts"]["catalog"] == cf.UNAVAILABLE
+    assert cf.reverify_components(real, _wrap(no_routes)) == []
+    assert cf.changed_stages(real, _wrap(no_routes)) == []
+    # a real change elsewhere is still seen next to an unavailable part
+    moved = _fp(routes=cf.UNAVAILABLE, prompts={"t9_write": "bbb"})
+    assert cf.reverify_components(real, _wrap(moved)) == ["prompts"]
+
+
+def test_collect_marks_the_catalog_unavailable_when_routes_fail():
+    import asyncio
+    fp = asyncio.run(cf.collect(_FakeConn(missing={"llm_role_config"}), "t9_blog", env={}))
+    assert fp["parts"]["routes"] == cf.UNAVAILABLE and fp["parts"]["catalog"] == cf.UNAVAILABLE
+
+
+def test_the_sibling_w0_switches_are_classified_ahead():
+    assert "S1_JUDGE_LIVE" in cf.MODE_FLAGS["a1"] and "T2_INTERIM" in cf.MODE_FLAGS["t2"]
+    for w in ("t9_blog", "t9_social"):
+        assert {"T10_F9_POLICY_MODE", "T9_LAST_ATTEMPT_MODE"} <= set(cf.MODE_FLAGS[w])
 
 
 def test_the_fingerprint_stays_small():
@@ -398,3 +460,28 @@ def test_t2_generation_meta_records_the_answer():
     assert meta == {"writer_answer": ans, "writer_prompt_version": "abcd1234"}
     assert insertion.writer_answer({"model_used": ""}) is None
     assert insertion.generation_meta(None) is None                           # unchanged without anything
+
+
+# ── 6. the worker's hourly reverify tick ───────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_the_worker_tick_scans_and_never_fails_the_loop(monkeypatch):
+    from shared.jobs import worker as worker_mod
+    calls = []
+
+    async def scan(pool, *, actor):
+        calls.append(actor)
+        raise RuntimeError("scan down")
+
+    monkeypatch.setattr(rel, "reverify_scan_safe", scan)
+    w = worker_mod.Worker(pool=object())
+    assert w.reverify_every_seconds == worker_mod.REVERIFY_EVERY_S == 3600.0
+    await w._reverify_scan()                                             # the error is logged, not raised
+    assert calls == ["system:worker_tick"]
+
+
+def test_the_worker_names_itself_the_writer_service():
+    src = (ROOT / "shared/jobs/worker.py").read_text(encoding="utf-8")
+    start = src.index("async def _main")
+    assert src.index("config_fp.set_service(config_fp.WRITER_SERVICE)", start) < src.index(
+        'reverify_scan_safe(pool, actor="system:worker_start")', start)

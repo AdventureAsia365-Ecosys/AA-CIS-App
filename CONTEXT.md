@@ -3747,8 +3747,13 @@ writer's path (stage prefixes s1_ / t2_ t3_ / t8_ t9_ t10_ plus the eval judge),
 tenant release renders after, the active L0 lexicon rules and the owner's house style (`tenant_brand_rules` +
 `tenant_seo_config`: the AA master for A1, the tenant for a tenant release). A changed component maps to
 `model_route` or `prompt_version_mismatch` (the CIS 287 vocabulary); the scan's audit row and `GET
-/releases/{id}.config_drift` name the components and path stages. The scan runs after every llm-config route, switch,
-catalog, connection and route-control save of a path stage, at worker start and on demand. Each content write the
+/releases/{id}.config_drift` name the components and path stages. The env switches are the worker's (the writers run
+there; the api task carries other env): each record names its service, and only a worker scan compares them, against
+the release's own fingerprint when the worker drafted it, else against its worker-run R2 / shadow / R0 evidence. A
+component a read could not get ("unavailable") on either side is never a change. The scan runs after every llm-config
+route, switch, catalog, connection and route-control save of a path stage, after a release activation, rollback or
+retirement (same transaction), after an L0 rule activation or rollback and a staff house-style / SEO save, at worker
+start, hourly in the worker (a DB Migrate change without a deploy, a tenant's own brand save) and on demand. Each content write the
 KPIs read records how its writer answered: T9 `writer_input.writer_answer` (answered model, fallback_used, route
 position, connection, effort; admin-only), T2 `generation_meta.writer_answer`, A1 the existing
 `generated_content.model_editorial` / `fallback_used` columns. Activation needs its evidence twice: the API (`services/writing_memory/releases.py`

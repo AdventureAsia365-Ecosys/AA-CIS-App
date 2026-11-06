@@ -25,6 +25,12 @@ component and one sha256 over all of them:
                  the rows themselves are already in `routes` (an unrelated stage must not flag a release).
   mode_flags     the env switches that change the writer path's output (MODE_FLAGS, plus the per-class families in
                  MODE_FLAG_PREFIXES), normalised (strip, lower). Only names and a hash are stored, never a value.
+                 The writers run in the job worker, and the api and worker task definitions carry different env (the
+                 worker alone has T2_JUDGE_GATE, S1_WRITER_V2 ...), so each record names the `service` that computed
+                 it (`set_service`, WRITER_SERVICE = the worker) and mode_flags is compared only between two records
+                 of the worker: on a worker scan, against the release's own fingerprint when the worker drafted it,
+                 else against the worker-run evidence of the release (its R2 / shadow / R0 run fingerprints,
+                 `reverify_components(references=...)`). An api scan or the admin drawer never compares mode_flags.
   prompts        the deployed source sha of every registered prompt of the path's stages
                  (`shared/llm_client/prompt_versions.json` symbols, `prompt_registry.prompt_hash_of`): a prompt edit
                  of a repair or check stage moves it even before its version bump.
@@ -43,7 +49,9 @@ reverify reasons the CIS 287 CHECK allows (no migration): route / params / catal
 `config_fp` (every release drafted before W0) is not a change, as for the legacy keys.
 
 Every read is best effort inside a savepoint (`_rows`): a missing table or a read error gives the component the value
-"unavailable" (stable, so it flags nothing by itself) and never fails a draft or a scan. $0: no model call.
+"unavailable" and never fails a draft or a scan. A component that is "unavailable" on EITHER side is not compared (a
+transient read error must not flag a release: the flags are sticky), and a component whose input depends on a failed
+read is "unavailable" too (catalog when routes failed, routes when the route policy failed). $0: no model call.
 """
 from __future__ import annotations
 
@@ -59,6 +67,19 @@ logger = structlog.get_logger()
 
 FP_VERSION = 2
 UNAVAILABLE = "unavailable"
+# The service whose env the writers run with: the job worker (shared/jobs/worker.py; the api's in-process worker in
+# local dev sets it too). Every other process records its own name and never compares mode_flags.
+WRITER_SERVICE = "worker"
+_SERVICE = {"name": "api"}
+
+
+def set_service(name: str) -> None:
+    """Name the service this process runs as (the worker calls it at start, before its reverify scan)."""
+    _SERVICE["name"] = name
+
+
+def current_service() -> str:
+    return _SERVICE["name"]
 AA_MASTER_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 
 # The stages on each writer's path, by name prefix: every llm_role_config / stage_model_params / prompt row whose
@@ -81,14 +102,19 @@ EVAL_STAGES = ("writing_memory_eval",)
 # added here; tests/unit/test_aa900_w0_config_fp.py fails when a `*_ENV = "..."` constant of a writer module is
 # neither here nor in NOT_OUTPUT_FLAGS.
 MODE_FLAGS: dict[str, tuple[str, ...]] = {
+    # S1_JUDGE_LIVE (judge_node, S271 W0 t2s1 lane), T2_INTERIM (t2_interim, same lane), T10_F9_POLICY_MODE
+    # (f9_policy) and T9_LAST_ATTEMPT_MODE (acp_content_writing.service, S271 W0 t9 lane): classified here ahead of
+    # those PRs, so the env-switch guard below stays green whichever PR merges first.
     "a1": ("S1_WRITER_V2", "S1_STRUCTURED_FACTS", "S1_PER_DAY_TARGETS", "S1_WRITER_TEMPERATURE",
-           "A1_BRAND_FIT_RUBRIC", "A1_V2_BRAND_FIT_GATE"),
+           "A1_BRAND_FIT_RUBRIC", "A1_V2_BRAND_FIT_GATE", "S1_JUDGE_LIVE"),
     "t2": ("T2_JUDGE_GATE", "T2_JUDGE_REPEAT", "T2_JUDGE_ANCHORS", "T2_BRAND_CLAIM_CHECK", "T2_FACTS",
-           "T2_BEST_DRAFT", "T2_TARGETED_REPAIR", "T3_BACKGROUND_FACTS"),
+           "T2_BEST_DRAFT", "T2_TARGETED_REPAIR", "T3_BACKGROUND_FACTS", "T2_INTERIM"),
     "t9_blog": ("T9_BRIEF_GROUNDING_MODE", "T9_READER_CHECKLIST_MODE", "T9_FAQ_LLM_FILTER", "T10_F12_SCOPE_MODE",
-                "T10_F9_BRAND_STYLE_MODE", "T10_F14_FLOOR_MODE", "T10_SA_MODE", "T10_ADJ_MODE"),
+                "T10_F9_BRAND_STYLE_MODE", "T10_F14_FLOOR_MODE", "T10_SA_MODE", "T10_ADJ_MODE",
+                "T10_F9_POLICY_MODE", "T9_LAST_ATTEMPT_MODE"),
     "t9_social": ("T9_BRIEF_GROUNDING_MODE", "T9_READER_CHECKLIST_MODE", "T10_F12_SCOPE_MODE",
-                  "T10_F9_BRAND_STYLE_MODE", "T10_F14_FLOOR_MODE", "T10_SA_MODE", "T10_ADJ_MODE"),
+                  "T10_F9_BRAND_STYLE_MODE", "T10_F14_FLOOR_MODE", "T10_SA_MODE", "T10_ADJ_MODE",
+                  "T10_F9_POLICY_MODE", "T9_LAST_ATTEMPT_MODE"),
 }
 # Gateway switches that change which model answers or how it is asked, on every writer path.
 GATEWAY_FLAGS = ("LLM_STAGE_PARAMS", "LLM_ROUTE_AWS_FIRST", "LLM_DEPLOYMENT_ROUTING", "LLM_LEGACY_ALIASES",
@@ -240,24 +266,21 @@ def route_models(routes: Iterable[Mapping]) -> list[str]:
 def build(writer: str, *, routes: Any, policies: Any = (), params: Any = (), catalog: Any = (),
           deployments: Any = (), route_settings: Optional[Mapping] = None, env: Optional[Mapping[str, str]] = None,
           prompts: Optional[Mapping[str, str]] = None, memory_items: Any = None, l0_rules: Any = (),
-          brand_rows: Any = None) -> dict:
+          brand_rows: Any = None, service: Optional[str] = None) -> dict:
     """The `config_fp` record of `writer` from rows already read (pure; `collect` reads them). A row source given as
     UNAVAILABLE makes its component UNAVAILABLE. Routes / policies / params are filtered to the writer's path here,
     so a caller may pass every row of the table."""
     parts: dict[str, Any] = {}
     stage_shas: dict[str, str] = {}
 
-    if routes == UNAVAILABLE:
+    if UNAVAILABLE in (routes, policies):      # the policy is part of the routes component: both or nothing
         parts["routes"] = UNAVAILABLE
-        path_routes: list[Mapping] = []
     else:
         path_routes = sorted((r for r in routes if on_path(writer, r.get("stage"))), key=lambda r: r["stage"])
-        pol = {} if policies == UNAVAILABLE else {
-            p["stage"]: bool(p.get("hold_fallback_writes")) for p in policies
-            if p.get("stage") == "*" or on_path(writer, p.get("stage"))}
+        pol = {p["stage"]: bool(p.get("hold_fallback_writes")) for p in policies
+               if p.get("stage") == "*" or on_path(writer, p.get("stage"))}
         route_view = [{"stage": r["stage"], **_pick(r, _ROUTE_COLS), "hold": pol.get(r["stage"])} for r in path_routes]
-        parts["routes"] = sha({"rows": route_view, "hold_default": pol.get("*"),
-                               "policy": UNAVAILABLE if policies == UNAVAILABLE else None})
+        parts["routes"] = sha({"rows": route_view, "hold_default": pol.get("*"), "policy": None})
         for rv in route_view:
             stage_shas[rv["stage"]] = sha(rv, 12)
 
@@ -271,7 +294,7 @@ def build(writer: str, *, routes: Any, policies: Any = (), params: Any = (), cat
             mine = [p for p in rows if p["stage"] == stage]
             stage_shas[stage] = sha({"route": stage_shas.get(stage), "params": mine}, 12)
 
-    if catalog == UNAVAILABLE or deployments == UNAVAILABLE:
+    if UNAVAILABLE in (catalog, deployments, routes):    # the catalog rows read are the models the routes name
         parts["catalog"] = UNAVAILABLE
     else:
         cat = sorted((_pick(c, _CATALOG_COLS) for c in catalog), key=lambda c: c["model_key"])
@@ -288,7 +311,8 @@ def build(writer: str, *, routes: Any, policies: Any = (), params: Any = (), cat
 
     flags = mode_flags(writer, env)
     parts["mode_flags"] = sha(flags)
-    parts["prompts"] = UNAVAILABLE if prompts == UNAVAILABLE else sha(dict(sorted((prompts or {}).items())))
+    parts["prompts"] = (UNAVAILABLE if prompts == UNAVAILABLE or UNAVAILABLE in (prompts or {}).values()
+                        else sha(dict(sorted((prompts or {}).items()))))
     parts["memory_items"] = (UNAVAILABLE if memory_items == UNAVAILABLE
                              else None if memory_items is None else sha(memory_items))
     if l0_rules == UNAVAILABLE:
@@ -305,26 +329,63 @@ def build(writer: str, *, routes: Any, policies: Any = (), params: Any = (), cat
 
     return {"v": FP_VERSION, "sha": hashlib.sha256(_canon(parts).encode("utf-8")).hexdigest(), "parts": parts,
             "stage_shas": dict(sorted(stage_shas.items())), "mode_flags_set": sorted(flags),
-            "route_config_version": version}
+            "route_config_version": version, "service": service or current_service()}
 
 
-def reverify_components(stored: Mapping, now: Mapping) -> list[str]:
+def _usable(v: Any) -> bool:
+    return v is not None and v != UNAVAILABLE
+
+
+def mode_flags_reference(stored: Mapping, now: Mapping, references: Iterable[Mapping] = ()) -> Optional[str]:
+    """The stored mode_flags part to compare the current one with, or None (not compared): only when the current record
+    was computed by the writer service, against the first record of that service among the release's own fingerprint
+    and `references` (the release's evidence-run fingerprints, R2 first). A record that names no service is not
+    compared (its env is unknown)."""
+    new = (now or {}).get("config_fp") or {}
+    if new.get("service") != WRITER_SERVICE:
+        return None
+    for rec in ((stored or {}),) + tuple(references or ()):
+        cfp = (rec or {}).get("config_fp") if isinstance(rec, Mapping) else None
+        if isinstance(cfp, Mapping) and cfp.get("service") == WRITER_SERVICE:
+            part = (cfp.get("parts") or {}).get("mode_flags")
+            if _usable(part):
+                return part
+    return None
+
+
+def reverify_components(stored: Mapping, now: Mapping, references: Iterable[Mapping] = ()) -> list[str]:
     """The components of `config_fp` that differ between a stored fingerprint and the current one ([] when the stored
-    one has no config_fp: drafted before W0, not a change). A component the stored record lacks is not a change."""
+    one has no config_fp: drafted before W0, not a change). A component the stored record lacks, or that is
+    UNAVAILABLE on either side, is not a change. mode_flags is compared as `mode_flags_reference` says (worker env
+    against worker env only)."""
     old = (stored or {}).get("config_fp")
     new = (now or {}).get("config_fp")
     if not isinstance(old, Mapping) or not isinstance(new, Mapping):
         return []
     op, np_ = old.get("parts") or {}, new.get("parts") or {}
-    return [c for c in COMPONENTS if c in op and op.get(c) != np_.get(c)]
+    out = []
+    for c in COMPONENTS:
+        if c not in op:
+            continue
+        before = mode_flags_reference(stored, now, references) if c == "mode_flags" else op.get(c)
+        if c == "mode_flags" and before is None:
+            continue
+        if UNAVAILABLE in (before, np_.get(c)):
+            continue
+        if before != np_.get(c):
+            out.append(c)
+    return out
 
 
 def changed_stages(stored: Mapping, now: Mapping) -> list[str]:
     """The path stages whose route row or params changed (for the admin: which stage moved the fingerprint)."""
-    old = ((stored or {}).get("config_fp") or {}).get("stage_shas") or {}
-    new = ((now or {}).get("config_fp") or {}).get("stage_shas") or {}
+    ocfp, ncfp = (stored or {}).get("config_fp") or {}, (now or {}).get("config_fp") or {}
+    old, new = ocfp.get("stage_shas") or {}, ncfp.get("stage_shas") or {}
     if not old:
         return []
+    for c in ("routes", "stage_params"):          # a failed read on either side names no stage
+        if UNAVAILABLE in ((ocfp.get("parts") or {}).get(c), (ncfp.get("parts") or {}).get(c)):
+            return []
     return sorted(s for s in set(old) | set(new) if old.get(s) != new.get(s))
 
 
@@ -385,5 +446,6 @@ async def collect(conn, writer: str, *, scope: str = "platform", tenant_id: Opti
 
 __all__ = ["AA_MASTER_TENANT_ID", "COMPONENTS", "EVAL_STAGES", "FP_VERSION", "GATEWAY_FLAGS", "MEMORY_FLAGS",
            "MODE_FLAGS", "MODE_FLAG_PREFIXES", "NOT_OUTPUT_FLAGS", "REVERIFY_REASON", "STAGE_PREFIXES", "UNAVAILABLE",
-           "build", "changed_stages", "collect", "mode_flags", "on_any_path", "on_path", "path_stages",
-           "prompt_shas", "reasons_of", "reverify_components", "route_models", "sha"]
+           "WRITER_SERVICE", "build", "changed_stages", "collect", "current_service", "mode_flags",
+           "mode_flags_reference", "on_any_path", "on_path", "path_stages", "prompt_shas", "reasons_of",
+           "reverify_components", "route_models", "set_service", "sha"]

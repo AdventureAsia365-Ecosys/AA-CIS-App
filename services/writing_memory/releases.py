@@ -475,11 +475,12 @@ async def current_fingerprint(conn, writer: str, *, prompt_sha256: Optional[str]
     return fp
 
 
-def reverify_reasons(stored: dict, now: dict) -> list[str]:
+def reverify_reasons(stored: dict, now: dict, references: tuple = ()) -> list[str]:
     """Which of golden set / model route / gate taxonomy changed since the release's fingerprint (missing keys in
     the stored fingerprint are not a change). AA-900 W0: a changed `config_fp` component adds its reason
     (config_fp.REVERIFY_REASON: route, params, catalog, route control, mode flags -> model_route; prompts, memory
-    items, L0 lexicon, house style -> prompt_version_mismatch), in REVERIFY_REASONS order."""
+    items, L0 lexicon, house style -> prompt_version_mismatch), in REVERIFY_REASONS order. `references`: the
+    fingerprints of the release's evidence runs (`_evidence_fingerprints`), for the worker-only mode_flags check."""
     from services.writing_memory import config_fp
     out = []
     if "golden_set" in stored and stored.get("golden_set") != now.get("golden_set"):
@@ -488,32 +489,60 @@ def reverify_reasons(stored: dict, now: dict) -> list[str]:
         out.append("model_route")
     if "gate_taxonomy" in stored and stored.get("gate_taxonomy") != now.get("gate_taxonomy"):
         out.append("gate_taxonomy")
-    extra = config_fp.reasons_of(config_fp.reverify_components(stored, now))
+    extra = config_fp.reasons_of(config_fp.reverify_components(stored, now, references))
     return [r for r in REVERIFY_REASONS if r in out or r in extra]
 
 
-def config_drift(stored: dict, now: dict) -> dict:
+def config_drift(stored: dict, now: dict, references: tuple = ()) -> dict:
     """AA-900 W0, for the admin: which config_fp components and which path stages differ now ({} parts when the
-    release was drafted before W0)."""
+    release was drafted before W0). `mode_flags_compared` is false outside the worker (the writer's env is the
+    worker's: a worker scan's audit row names a mode_flags change)."""
     from services.writing_memory import config_fp
-    return {"components": config_fp.reverify_components(stored, now),
-            "stages": config_fp.changed_stages(stored, now)}
+    return {"components": config_fp.reverify_components(stored, now, references),
+            "stages": config_fp.changed_stages(stored, now),
+            "mode_flags_compared": config_fp.mode_flags_reference(stored, now, references) is not None}
+
+
+_EVIDENCE_FP_SQL = ("SELECT id::text AS id, fingerprint FROM shared.prompt_eval_runs WHERE id = ANY($1::uuid[])")
+
+
+async def _evidence_fingerprints(conn, release: dict) -> tuple:
+    """The fingerprints of the release's evidence runs, R2 first, then shadow, then R0 (they ran in the worker, so
+    they carry the writer's env: the mode_flags reference of a release the api drafted). () on a read error."""
+    from services.writing_memory import config_fp
+    ids = [release.get(k) for k in ("eval_run_id", "shadow_run_id", "r0_run_id") if release.get(k)]
+    if not ids:
+        return ()
+    rows = await config_fp._rows(conn, _EVIDENCE_FP_SQL, ids)
+    if rows == config_fp.UNAVAILABLE:
+        return ()
+    by_id = {r["id"]: r["fingerprint"] for r in rows}
+    out = []
+    for i in ids:
+        fp = by_id.get(str(i))
+        fp = fp if isinstance(fp, dict) else (json.loads(fp) if isinstance(fp, str) and fp else None)
+        if isinstance(fp, dict):
+            out.append(fp)
+    return tuple(out)
 
 
 async def reverify_scan(conn, *, actor: str = "system:reverify_scan") -> list[dict]:
     """Flag every active release whose fingerprint no longer matches (it keeps serving; a re-run needs approval,
     WM-18 scope 5). Returns the flagged releases {release_id, writer, reasons}. Callers: the golden-set importer
-    after a supersede, the llm-config route PATCHes, the worker start, POST /releases/reverify-scan."""
+    after a supersede, the llm-config route PATCHes, route control saves, release activate / rollback / retire, L0
+    rule activate / rollback, house-style saves, the worker start and its hourly tick (a DB Migrate change of a route,
+    params or prompt row without a deploy), POST /releases/reverify-scan."""
     flagged = []
     for rel in await active_releases(conn):
         stored = rel["fingerprint"] if isinstance(rel["fingerprint"], dict) else json.loads(rel["fingerprint"] or "{}")
         now = await current_fingerprint(conn, rel["writer"], scope=rel.get("scope") or "platform",
                                         tenant_id=rel.get("tenant_id"))
-        reasons = reverify_reasons(stored, now)
+        refs = await _evidence_fingerprints(conn, rel)
+        reasons = reverify_reasons(stored, now, refs)
         new = sorted(set(reasons) - set(rel["reverify_reasons"] or []))
         if not new:
             continue
-        drift = config_drift(stored, now)
+        drift = config_drift(stored, now, refs)
         await conn.execute(
             "UPDATE shared.writing_memory_release SET reverify = true, reverify_at = coalesce(reverify_at, now()), "
             "reverify_reasons = (SELECT array_agg(DISTINCT x ORDER BY x) "
@@ -537,6 +566,18 @@ async def reverify_scan_safe(pool, *, actor: str) -> list[dict]:
     except Exception as e:  # noqa: BLE001
         logger.warning("wm_release_reverify_scan_failed", error=f"{type(e).__name__}: {str(e)[:200]}")
         return []
+
+
+async def reverify_scan_in_tx(conn, *, actor: str) -> None:
+    """AA-900 W0: reverify_scan inside the caller's transaction, in a savepoint, never raising: a scan error never
+    undoes the caller's action. Used after a release activation, rollback or retirement (they change the config of
+    the OTHER releases that render with it: a tenant release renders after its writer's platform release, config_fp
+    memory_items) and after a house-style save on the staff path (one connection, the scan sees the new rows)."""
+    try:
+        async with conn.transaction():
+            await reverify_scan(conn, actor=actor)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("wm_release_reverify_after_failed", error=f"{type(e).__name__}: {str(e)[:200]}")
 
 
 # ── writes ─────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -753,6 +794,7 @@ async def activate(conn, release_id: str, *, actor: str, enforce_wiring: bool = 
                   "superseded_release_no": current["release_no"] if current else None})
     logger.info("wm_release_activated", release_id=out["release_id"], writer=out["writer"], scope=out["scope"],
                 release_no=out["release_no"], previous=out["previous_release_id"])
+    await reverify_scan_in_tx(conn, actor=actor)
     return out
 
 
@@ -788,6 +830,7 @@ async def rollback(conn, release_id: str, *, actor: str, reason: str) -> dict:
                                                      "to_release_no": out["release_no"]})
     logger.info("wm_release_rolled_back", writer=rel["writer"], scope=rel["scope"], from_no=rel["release_no"],
                 to_no=out["release_no"])
+    await reverify_scan_in_tx(conn, actor=actor)
     return out
 
 
@@ -814,6 +857,7 @@ async def retire_without_previous(conn, release_id: str, *, actor: str, reason: 
     out = dict(row)
     await _audit(conn, rel, actor, "retired_alone", {"reason": "rollback"})
     logger.info("wm_release_retired_alone", writer=rel["writer"], scope=rel["scope"], release_no=rel["release_no"])
+    await reverify_scan_in_tx(conn, actor=actor)
     return out
 
 
@@ -864,5 +908,5 @@ __all__ = ["CONTENT_CLASSES", "DBRefused", "EMERGENCY_REASONS", "MIN_R0_INPUTS",
            "current_fingerprint",
            "evidence_problem", "get_release", "is_human", "items_sha256", "list_releases", "reject",
            "release_link_problem", "retire_without_previous", "reverify_reasons", "reverify_scan",
-           "reverify_scan_safe", "rollback", "serialise",
+           "reverify_scan_in_tx", "reverify_scan_safe", "rollback", "serialise",
            "set_memory_enabled", "transition_problem", "wiring_problem", "writers"]

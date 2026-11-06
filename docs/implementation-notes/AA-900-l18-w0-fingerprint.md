@@ -27,6 +27,25 @@ and "Change control". No migration, no model call, no output change except the d
 - **Mode flags.** Explicit per-writer list read from the code plus the gateway and memory switches and the seed-align
   per-class prefix families. Values are normalised and hashed, only the names are stored. A guard test fails when a
   `*_ENV = "..."` constant in a writer module is not classified (output-changing or `NOT_OUTPUT_FLAGS`).
+- **Mode flags are the worker's (fix pass).** The api and worker task definitions carry different env (the worker
+  alone has T2_JUDGE_GATE, T2_JUDGE_ANCHORS, T3_BACKGROUND_FACTS, T9_FAQ_LLM_FILTER, S1_WRITER_V2), and releases are
+  drafted in the api. Each config_fp names its `service` (`config_fp.set_service`, called by the worker's `_main`
+  and by the api's in-process worker in local dev; default "api"). mode_flags is compared only on a worker scan,
+  against the release's own fingerprint when the worker recorded it, else against the release's worker-run evidence
+  (R2, then shadow, then R0 run fingerprints, read in `releases._evidence_fingerprints`). An api scan and the admin
+  drawer never compare it (`config_drift.mode_flags_compared` says so). Chosen over a DB row of worker switches
+  (would need a contract migration on `shared.job_worker`, MIG-4: two PRs) and over copying the switches onto the api
+  task (Infra drift risk). No migration.
+- **Unavailable is never a change (fix pass).** A component that is "unavailable" on either side is skipped; a
+  component whose input depends on a failed read is unavailable too (catalog when routes failed, routes when the
+  route policy failed, prompts when any stage's source could not be read); `changed_stages` names nothing then.
+- **Scans after the actions themselves (fix pass).** `releases.activate` / `rollback` / `retire_without_previous`
+  run `reverify_scan_in_tx` (savepoint, never raises) at the end of their transaction; the L0 activate / rollback
+  endpoints, the staff brand endpoints (`/brands*`, `/admin/tenants/{id}/brand`) and `PATCH /settings/seo` run
+  `reverify_scan_safe` after their save; the staff branch of `POST /brand-identity` scans on its own connection
+  inside the save transaction (AA-859 keeps MAIN acquired once). The tenant branch stays off MAIN: the worker's new
+  hourly tick (`Worker._reverify_scan`, REVERIFY_EVERY_S = 3600, bounded 60 s) catches it, and also a DB Migrate
+  change of a route / params / prompt row applied without a deploy.
 - **R1 record** = a finished `prompt_eval_runs` row, pipeline `writing_memory`, run_kind `r1`, verdict `pass`, for the
   writer (existing CIS 284 vocabulary, no new table). Read failures fail closed (frozen).
 - **What the R1 freeze covers.** Mining (refused at $0 as the first reason; a run drafts only for writers with a
@@ -72,6 +91,13 @@ and "Change control". No migration, no model call, no output change except the d
 
 ## Tradeoffs
 
+- Mode flags of a release the api drafted are compared against its R2 evidence, not the draft: the R2 run is the
+  one that measured the release, so its env is the one that matters. A release whose evidence carries no
+  worker-recorded fingerprint (release 0 whose R0 ran from a script or the api, a lexicon-only release whose R0 run
+  records none) is not compared on mode_flags; a rules / repair-hint release always has a worker R2 run.
+- The hourly worker scan costs ~12 reads per active release ($0); a tenant brand save is caught within an hour, not
+  at once (AA-859 keeps the tenant path off the admin pool).
+
 - Reason mapping onto four codes loses granularity in the column, kept in the audit row / API instead: avoids a
   contract migration (MIG-4) in W0.
 - The route-control version id is recorded but not hashed: every save of any stage bumps it, which would flag
@@ -83,6 +109,12 @@ and "Change control". No migration, no model call, no output change except the d
 - The per-request `writer_answer` read reuses the AI-mark ledger query (one read, not two).
 
 ## Should know
+
+- Fix pass: four switches of the sibling W0 lanes are classified here ahead of their PRs (S1_JUDGE_LIVE -> a1,
+  T2_INTERIM -> t2, T10_F9_POLICY_MODE and T9_LAST_ATTEMPT_MODE -> t9_blog / t9_social), so the env-switch guard
+  stays green whichever of #1350 / the t2s1 / t9 PRs merges first. A later lane that adds a `*_ENV` constant in a
+  writer module must classify it in `config_fp.py` (the guard test names it).
+- Fix pass: `reverify_scan` results and audit rows carry `mode_flags_compared` next to `components` / `stages`.
 
 - PR #1352 (fix/aa900-w0-eval-interim) edits `r2.py`, `eval_judge.py`, `config.py`, `writing_memory_job.py`: this lane
   touches none of them. `r2.py`'s `fingerprint()` calls `releases.current_fingerprint(conn, writer)` and gets the

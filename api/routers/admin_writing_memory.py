@@ -370,6 +370,13 @@ async def _l0_r1_problem(conn, rule: dict) -> Optional[tuple[str, str]]:
     return await r1_gate.check(conn, rule["writer"], "Activating a learned lexicon rule")
 
 
+async def _reverify_after_rule_change(request: Request, actor: str) -> None:
+    """AA-900 W0: an active L0 lexicon rule is part of the t9 releases' config_fp (l0_lexicon): scan at once after an
+    activation or a rollback (own transaction, never fails the action)."""
+    from services.writing_memory.releases import reverify_scan_safe
+    await reverify_scan_safe(_pool(request), actor=f"admin:{actor}"[:128])
+
+
 @router.get("/candidates/{rule_id}", dependencies=LAB_TEXT_LOGGED)
 async def get_candidate(rule_id: str, request: Request):
     rid = _uuid(rule_id, "rule")
@@ -529,6 +536,7 @@ async def activate_rule(rule_id: str, request: Request, x_admin_user_id: Optiona
     if row is None:
         raise HTTPException(status_code=409, detail={"detail": "The rule changed meanwhile; reload", "code": "stale"})
     logger.info("aa918_l0_activated", rule_id=rid, writer=row["writer"], scope=row["scope"], actor=actor)
+    await _reverify_after_rule_change(request, actor)
     return rules_mod.serialise(row)
 
 
@@ -556,6 +564,7 @@ async def rollback_rule(rule_id: str, body: RollbackBody, request: Request,
     except asyncpg.UndefinedTableError as e:
         raise _unavailable(e)
     logger.info("aa918_l0_rolled_back", rule_id=rid, actor=actor)
+    await _reverify_after_rule_change(request, actor)
     return rules_mod.serialise(row)
 
 

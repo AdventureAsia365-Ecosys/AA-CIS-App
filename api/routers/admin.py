@@ -1305,6 +1305,9 @@ async def update_tenant_brand_identity(
             details={"version": current + 1, "brand_name": brand_name,
                      "fields_set": sorted(k for k, v in body.model_dump().items() if v)},
         )
+    # AA-900 W0: a tenant's house style is part of its writing-memory tenant releases' config_fp (brand_config)
+    from services.writing_memory.releases import reverify_scan_safe
+    await reverify_scan_safe(pool, actor=f"brand_save:{_admin_actor(x_admin_user_id)}"[:128])
     return {"status": "updated", "version": current + 1,
             "markets": {k: market_json[k] for k in ("countries", "unsupported", "unknown")}}
 
