@@ -342,7 +342,9 @@ def test_m_route_fallback_writes_one_gateway_attempt_row(monkeypatch):
     c = _client()
     with patch("shared.llm_client.client.get_model_sync", return_value=LUNA), \
             patch.object(c, "_call_key", side_effect=fake):
-        resp = c._call_route(LLMRequest(system_prompt="s", user_prompt="u", stage="t10_judge"),
+        # S271: budget_retry=False — one attempt per model here; the gateway's truncation retry of this cut empty
+        # reply (and its rows) is tests/unit/test_s271_gateway_token_budget.py
+        resp = c._call_route(LLMRequest(system_prompt="s", user_prompt="u", stage="t10_judge", budget_retry=False),
                              ["gpt-5.6-luna", "gpt-6-luna"], "acc3", role="judge")
     call_log.wait_for_pending_writes()
     assert resp is good and resp.fallback_used is True

@@ -30,6 +30,10 @@ then ``DEFAULTS`` fill a missing value):
 - ``route_cost.<stage>`` — over ``COST_WINDOW`` the fallback-answered requests cost at least ``cost_shift_usd`` more
   than the same number of primary answers would have (the stage's primary average over ``BASELINE_WINDOW``, from at
   least ``BASELINE_MIN`` rows). Bell at most daily.
+- ``route_cut.<stage>`` — S271: more than ``CUT_ALERT_PCT`` % of the stage's billed replies of the last ``COST_WINDOW``
+  were cut at their token ceiling (status truncated, or billed unusable with a cut stop reason; the gateway's own cut
+  rows included), with at least ``min_requests`` billed replies. The probe stages of ``token_floor.NO_RETRY_STAGES``
+  are left out (a cut is their expected answer). Bell at most daily.
 - ``route_digest`` — the daily digest (job mode ``digest``): per stage over the last 24 h, the answered requests, the
   fallback share, requests with no answer logged and the extra cost; raised only when one stage used a fallback or
   lost requests (the job result always keeps the digest).
@@ -48,8 +52,8 @@ from typing import Any, Optional
 
 import structlog
 
-from shared.ops_checks import (EVENT_TYPE_PREFIX, ROUTE_BACK_PREFIX, ROUTE_COST_PREFIX, ROUTE_DIGEST_CHECK,
-                               ROUTE_FALLBACK_PREFIX, ROUTE_LAST_PREFIX, Finding)
+from shared.ops_checks import (EVENT_TYPE_PREFIX, ROUTE_BACK_PREFIX, ROUTE_COST_PREFIX, ROUTE_CUT_PREFIX,
+                               ROUTE_DIGEST_CHECK, ROUTE_FALLBACK_PREFIX, ROUTE_LAST_PREFIX, Finding)
 
 logger = structlog.get_logger()
 
@@ -146,6 +150,22 @@ STATS_SQL = f"""
            coalesce(max(l.lost), 0) AS lost
       FROM rows r LEFT JOIN lost l ON l.stage = r.stage
      GROUP BY r.stage
+"""
+# S271: per stage since $1, the billed replies (a row with output tokens or a cost: answered, cut or billed unusable)
+# and those cut at their token ceiling. $2 = the cut stop reasons, $3 = the stages left out (probes).
+CUT_ALERT_PCT = 5.0
+CUT_STATS_SQL = f"""
+    SELECT stage,
+           count(*) AS billed,
+           count(*) FILTER (WHERE status = 'truncated'
+                               OR (status = 'billed_unusable' AND stop_reason = ANY($2::text[]))) AS cut,
+           coalesce(sum(cost_usd) FILTER (WHERE status = 'truncated'
+                               OR (status = 'billed_unusable' AND stop_reason = ANY($2::text[]))), 0)::float
+               AS cut_cost_usd
+      FROM shared.llm_call_log
+     WHERE created_at >= $1 AND {LEDGER_FILTER} AND NOT (stage = ANY($3::text[]))
+       AND (coalesce(tokens_out, 0) > 0 OR coalesce(cost_usd, 0) > 0)
+     GROUP BY stage
 """
 # The primary rung's average cost per answered request, per stage since $1.
 BASELINE_SQL = f"""
@@ -313,6 +333,38 @@ async def read_baseline(db, since: datetime) -> dict[str, dict]:
     return {r["stage"]: dict(r) for r in await db.fetch(BASELINE_SQL, since)}
 
 
+async def read_cut_stats(db, since: datetime) -> dict[str, dict]:
+    """S271: per stage since ``since``, the billed replies and those cut at their token ceiling."""
+    from .errors import TRUNCATED_STOP_REASONS
+    from .token_floor import NO_RETRY_STAGES
+    rows = await db.fetch(CUT_STATS_SQL, since, sorted(TRUNCATED_STOP_REASONS), sorted(NO_RETRY_STAGES))
+    return {r["stage"]: dict(r) for r in rows}
+
+
+def cut_findings(cut_stats: dict[str, dict], rows: dict[str, dict]) -> list[Finding]:
+    """S271: ``route_cut.<stage>`` when more than ``CUT_ALERT_PCT`` % of a stage's billed replies over
+    ``COST_WINDOW`` were cut at their token ceiling, with at least the policy's ``min_requests`` billed replies.
+    Pure."""
+    out: list[Finding] = []
+    for stage in sorted(cut_stats):
+        st = cut_stats[stage] or {}
+        billed, cut = int(st.get("billed") or 0), int(st.get("cut") or 0)
+        pol = effective(rows, stage)
+        if billed <= 0 or billed < pol.min_requests:
+            continue
+        pct = round(100.0 * cut / billed, 1)
+        if pct <= CUT_ALERT_PCT:
+            continue
+        out.append(Finding(ROUTE_CUT_PREFIX + stage,
+                           f"stage {stage}: {cut} of {billed} billed replies in the last 24 h were cut at their "
+                           f"token ceiling ({pct:g} %, threshold {CUT_ALERT_PCT:g} %)",
+                           {"stage": stage, "billed": billed, "cut": cut, "cut_pct": pct,
+                            "cut_cost_usd": round(float(st.get("cut_cost_usd") or 0.0), 6),
+                            "threshold_pct": CUT_ALERT_PCT,
+                            "window_hours": int(COST_WINDOW.total_seconds() // 3600)}))
+    return out
+
+
 async def read_state(db, now: datetime) -> dict[str, datetime]:
     rows = await db.fetch(STATE_SQL, now - STATE_LOOKBACK, EVENT_TYPE_PREFIX + "route_%")
     return {r["check_name"]: r["last"] for r in rows}
@@ -442,7 +494,8 @@ async def evaluate(pool, *, mode: str = "watch", now: Optional[datetime] = None)
         cost_stats = await read_stats(db, now - COST_WINDOW)
         baseline = await read_baseline(db, now - BASELINE_WINDOW)
         state = await read_state(db, now)
-    findings = watch_findings(stats, cost_stats, baseline, routes, rows, state)
+        cut_stats = await read_cut_stats(db, now - COST_WINDOW)
+    findings = watch_findings(stats, cost_stats, baseline, routes, rows, state) + cut_findings(cut_stats, rows)
     return {"mode": mode, "policy_ready": ready, "findings": findings, "stages": len(stats),
             "degraded": sorted(s for s in routes if degraded_since(state, s) is not None)}
 

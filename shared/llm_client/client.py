@@ -27,7 +27,7 @@ from .errors import (BUDGET, DEADLINE, DISABLED, MAX_CHAIN_ATTEMPTS, OTHER, ROLE
                      LLMAccessDenied, LLMStageDisabled, RouteAttemptCapReached, RouteDeadlineExceeded,
                      RouteRoleNotServed, account_level_class, classify)
 from . import (breaker, capacity, central_budget, connection_budget, connections, data_scope, family_rule,
-               prompt_registry, stage_params, stream_sink, tenant_budget)
+               prompt_registry, stage_params, stream_sink, tenant_budget, token_floor)
 from . import app_profile
 from .vendor_route import (VendorDeployment, deployment_plan, pinned_deployment, role_refusal, route_reach,
                            split_pin, sunk_skips, vendor_deployment_for)
@@ -230,6 +230,12 @@ def request_timeout(cap: Optional[float] = None) -> Optional[float]:
         return None
     timeout = max(left, DEADLINE_MIN_TIMEOUT_S)
     return min(timeout, float(cap)) if cap else timeout
+
+
+def _deadline_passed() -> bool:
+    """S271: True when the bound route deadline has passed (the truncation retry is then not sent)."""
+    left = deadline_remaining()
+    return left is not None and left <= 0
 
 
 def check_deadline(request: LLMRequest, before: str) -> None:
@@ -786,6 +792,23 @@ def log_gateway_billed_failure(request: LLMRequest, *, role: str, billed: list[d
         logger.warning("llm_gateway_billed_failure_log_failed", stage=request.stage, error=str(e)[:200])
 
 
+def log_gateway_cut_reply(request: LLMRequest, resp: LLMResponse, *, role: str, max_tokens: int,
+                          retry_max_tokens: int, extra: Optional[dict] = None) -> None:
+    """S271: the gateway's own llm_call_log row for a billed reply cut at its token ceiling that it retries once
+    (``LLMClient._call_key_logged``): nobody else sees that reply. Written fire-and-forget before the retry is sent
+    (``call_log.cut_reply_row``: status truncated, ``budget_cut: true``, ``gateway_attempt: true``, no ok-rate key).
+    Never raises."""
+    from .call_log import _in_background, cut_reply_row, record_calls
+    try:
+        scope = _ATTEMPT_SCOPE.get()
+        row = cut_reply_row(resp, stage=request.stage or "unstaged", role=role, max_tokens=max_tokens,
+                            retry_max_tokens=retry_max_tokens, quality_signal_extra=extra,
+                            is_shadow=bool(scope.extra.get("shadow")) if scope is not None else None)
+        _in_background(record_calls, {"rows": [row]})
+    except Exception as e:  # noqa: BLE001 — a log write never breaks the call it records
+        logger.warning("llm_gateway_cut_reply_log_failed", stage=request.stage, error=str(e)[:200])
+
+
 # ── AA-804 (ledger v2): one llm_call_log row per attempt ─────────────────────────────────────────────────────────
 #
 # Callers keep writing the row of the reply they get (one per success, `**billed_fields(resp)` now also carries the
@@ -903,9 +926,16 @@ class _AttemptScope:
     prompt_version: Optional[str] = None      # AA-900: the stage's registered prompt version (prompt_registry)
     # AA-1042 (Route trace): the id every ledger row of this request carries (quality_signal.route_trace)
     trace_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    # S271: while the gateway's truncation retry runs, the attempt number of the cut reply it retries. The retry's
+    # first provider attempt reports that number (route_watch must not read the retry as a fallback rung) and still
+    # counts on the attempt cap; consumed by that attempt.
+    retry_of: Optional[int] = None
 
     def next_attempt(self) -> int:
         self.attempts += 1
+        if self.retry_of is not None:
+            number, self.retry_of = self.retry_of, None
+            return number
         return self.attempts
 
 
@@ -1049,7 +1079,11 @@ def estimate_call_usd(request: LLMRequest, model_key: Optional[str]) -> float:
             return 0.0
         chars = len(request.system_prompt or "") + len(request.user_prompt or "")
         chars += sum(len(str(s.get("content", ""))) for s in (request.few_shots or []) if isinstance(s, dict))
-        return float(calc_cost(key, chars // 4 + 1, max(int(request.max_tokens or 0), 0)))
+        max_tokens = int(request.max_tokens or 0)
+        if key not in LEGACY_KEYS:
+            # S271: the ceiling the model is really sent with (a reasoning model's floor raises a low one)
+            max_tokens = token_floor.floored_max_tokens(request, get_model_sync(key))
+        return float(calc_cost(key, chars // 4 + 1, max(max_tokens, 0)))
     except Exception as e:  # noqa: BLE001 — an estimate never breaks a call
         logger.warning("llm_central_budget_estimate_failed", model=str(model_key)[:80], error=str(e)[:200])
         return 0.0
@@ -1471,6 +1505,76 @@ class LLMClient:
 
     def _call_key_logged(self, request: LLMRequest, key: str, primary_acct: str, *,
                          role: str, position: int, extra: Optional[dict] = None) -> LLMResponse:
+        """S271: one route model (``_call_key_once``), plus the gateway's one truncation retry on the same model when
+        its reply was cut at its token ceiling (``token_floor``: the cut reply's row first, then the retry with double
+        the ceiling; never a third call). The route moves on to its next model only after the retry failed too."""
+        scope = _ATTEMPT_SCOPE.get()
+        allowed = token_floor.retry_allowed(request, scope.extra if scope is not None else None)
+        try:
+            resp = self._call_key_once(request, key, primary_acct, role=role, position=position, extra=extra)
+        except Exception as e:
+            if (not allowed or isinstance(e, RouteDeadlineExceeded) or not token_floor.is_cut_failure(e)
+                    or _deadline_passed()):
+                raise
+            retry = self._budget_retry_request(request, key)
+            if retry is None:
+                raise
+            # The cut attempt already has its row (the 0 USD truncated row, or the billed_unusable row above).
+            logger.info("llm_budget_retry", stage=request.stage, model=key, position=position, reason="cut_failure",
+                        max_tokens=retry[1], retry_max_tokens=retry[0].max_tokens)
+            return self._run_budget_retry(retry[0], key, primary_acct, role=role, position=position, extra=extra)
+        if not allowed or not token_floor.is_cut_reply(resp) or _deadline_passed():
+            return resp                       # past the route deadline: the cut reply, as before (no retry)
+        retry = self._budget_retry_request(request, key)
+        if retry is None:
+            return resp                       # already at the model's output cap: the caller gets the cut reply
+        log_gateway_cut_reply(request, resp, role=role, max_tokens=retry[1], retry_max_tokens=retry[0].max_tokens,
+                              extra={"position": position, **(extra or {})})
+        logger.info("llm_budget_retry", stage=request.stage, model=key, position=position, reason="cut",
+                    max_tokens=retry[1], retry_max_tokens=retry[0].max_tokens)
+        return self._run_budget_retry(retry[0], key, primary_acct, role=role, position=position, extra=extra)
+
+    def _budget_retry_request(self, request: LLMRequest, key: str) -> Optional[tuple]:
+        """S271: (the retry's request, the first ceiling) for route model ``key``, or None when a retry cannot help
+        (the first ceiling, after the stage x model parameters and the floor, is already the model's output cap).
+        Never raises."""
+        try:
+            pin = split_pin(key)
+            model_key = pin[0] if pin else key
+            model = None if model_key in LEGACY_KEYS else get_model_sync(model_key)
+            first = request if model is None else stage_params.apply(request, model)
+            first_max = token_floor.floored_max_tokens(first, model) if model is not None else int(first.max_tokens)
+            ceiling = token_floor.retry_ceiling(first_max, model)
+            if ceiling is None:
+                return None
+            return token_floor.retry_request(request, ceiling), first_max
+        except Exception as e:  # noqa: BLE001 — no retry is the old behaviour
+            logger.warning("llm_budget_retry_plan_failed", stage=request.stage, model=key, error=str(e)[:200])
+            return None
+
+    def _run_budget_retry(self, retry: LLMRequest, key: str, primary_acct: str, *, role: str, position: int,
+                          extra: Optional[dict]) -> LLMResponse:
+        """S271: the one retry of a cut reply: the same route model, the same gateway request (route_trace), the
+        cut attempt's number (``_AttemptScope.retry_of``). Its reply carries ``truncation_retry_max_tokens``; a reply
+        cut again goes back as it is (no third call); its error propagates (the route moves on as before)."""
+        scope = _ATTEMPT_SCOPE.get()
+        if scope is not None:
+            scope.retry_of = scope.attempts or None
+        try:
+            # Never chained to the cut attempt's error: its billed usage is already in the ledger (a chain would make
+            # _billed_usage_of find it again).
+            resp = self._call_key_once(retry, key, primary_acct, role=role, position=position, extra=extra)
+        finally:
+            if scope is not None:
+                scope.retry_of = None
+        try:
+            resp.truncation_retry_max_tokens = int(retry.max_tokens)
+        except Exception:  # noqa: BLE001 — a test double that is not an LLMResponse
+            pass
+        return resp
+
+    def _call_key_once(self, request: LLMRequest, key: str, primary_acct: str, *,
+                       role: str, position: int, extra: Optional[dict] = None) -> LLMResponse:
         """AA-927: `_call_key`, and when the attempt raised AFTER the provider billed it
         (BilledUnusableReply), write that attempt's llm_call_log row here before re-raising — the caller
         only ever sees the reply that came back, so no one else can. One row per billed attempt,
@@ -2015,6 +2119,9 @@ class LLMClient:
         # AA-1017: the stage x model parameters (shared.stage_model_params; call site -> row -> protocol default). The
         # empty table returns the same request object, so the provider request is byte-identical.
         request = stage_params.apply(request, model)
+        # S271: a reasoning-capable model never gets a ceiling below its floor (token_floor; the same object when
+        # nothing changes: a model that does not reason, a ceiling already above the floor).
+        request = token_floor.apply_floor(request, model)
         if pin:
             # AA-1039 (review S268): the pin keeps the stage's data scopes and data class (like deployment_plan).
             pinned = pinned_deployment(model, pin[1], allowed_scopes=stage_scopes(request),

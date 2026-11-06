@@ -149,9 +149,26 @@ def route_signal(route_trace=None, route_position=None, route_skips=None) -> dic
     return out
 
 
-def _with_route(quality_signal, route_trace=None, route_position=None, route_skips=None):
-    """``quality_signal`` with the route keys added (a key the signal already has wins). Unchanged without them."""
-    extra = route_signal(route_trace, route_position, route_skips)
+# S271 (AA-741 / AA-900): the gateway's one truncation retry (shared/llm_client/token_floor.py). Not a column either:
+# a reply that is the retry carries its ceiling (LLMResponse.truncation_retry_max_tokens), billed_fields() passes it
+# on and record_call* fold it into quality_signal as {"truncation_retry": true, "max_tokens": n}, the keys of the
+# caller-side budget retry (services/acp_shared/token_budget.py), so one query reads both.
+RETRY_KEYS = ("truncation_retry_max_tokens",)
+
+
+def retry_signal(truncation_retry_max_tokens=None) -> dict:
+    """The quality_signal keys of a reply that is the gateway's truncation retry ({} for any other reply)."""
+    n = truncation_retry_max_tokens
+    if isinstance(n, int) and not isinstance(n, bool) and n > 0:
+        return {"truncation_retry": True, "max_tokens": n}
+    return {}
+
+
+def _with_route(quality_signal, route_trace=None, route_position=None, route_skips=None,
+                truncation_retry_max_tokens=None):
+    """``quality_signal`` with the route keys (and the truncation retry's, S271) added (a key the signal already has
+    wins). Unchanged without them."""
+    extra = {**route_signal(route_trace, route_position, route_skips), **retry_signal(truncation_retry_max_tokens)}
     if not extra:
         return quality_signal
     base = dict(quality_signal) if isinstance(quality_signal, dict) else {}
@@ -458,13 +475,16 @@ def billed_fields(resp) -> dict:
     out["route_trace"] = route.get("route_trace")
     out["route_position"] = route.get("route_position")
     out["route_skips"] = route.get("route_skips")      # AA-1042 (S270): rungs deferred behind a refusal circuit
+    # S271: the retry's ceiling when this reply is the gateway's one truncation retry (else None)
+    n = getattr(resp, "truncation_retry_max_tokens", None)
+    out["truncation_retry_max_tokens"] = n if isinstance(n, int) and not isinstance(n, bool) and n > 0 else None
     return out
 
 
 # Every key billed_fields() returns: a structure that carries a reply's billing (brand_fit.RUN_BILLING_KEYS, the T10
 # judge's raw dict) keeps them all.
 BILLED_FIELD_KEYS = ("cache_read_tokens", "cache_write_tokens", "pricing_mode", "connection_key", *V2_BILLED_KEYS,
-                     *ROUTE_KEYS)
+                     *ROUTE_KEYS, *RETRY_KEYS)
 
 
 async def record_call(
@@ -477,7 +497,7 @@ async def record_call(
     cache_read_tokens: Optional[int] = None, cache_write_tokens: Optional[int] = None,
     pricing_mode: Optional[str] = None, connection_key: Optional[str] = None,
     route_trace: Optional[str] = None, route_position: Optional[int] = None,
-    route_skips: Optional[list] = None,
+    route_skips: Optional[list] = None, truncation_retry_max_tokens: Optional[int] = None,
     **v2,
 ) -> None:
     """Opens its own short-lived connection — the call sites this is used from (S1 graph nodes,
@@ -510,7 +530,8 @@ async def record_call(
     caller may state itself (status, error_class, tour_id, prompt_version, units, unit_kind, is_shadow,
     is_experiment, app). Anything else is a TypeError, as before. Unset ones are derived (``_v2_values``)."""
     _check_v2(v2)
-    quality_signal = _with_route(quality_signal, route_trace, route_position, route_skips)   # AA-1042
+    quality_signal = _with_route(quality_signal, route_trace, route_position, route_skips,   # AA-1042
+                                 truncation_retry_max_tokens)                                 # S271
     account = _row_account(account, connection_key)
     clean_model, provider = _normalize_model_provider(model, provider)
     # The connection column: the vendor connection, else the row's account (a Bedrock account key is its connection).
@@ -544,7 +565,7 @@ async def record_call_with_pool(
     cache_read_tokens: Optional[int] = None, cache_write_tokens: Optional[int] = None,
     pricing_mode: Optional[str] = None, connection_key: Optional[str] = None,
     route_trace: Optional[str] = None, route_position: Optional[int] = None,
-    route_skips: Optional[list] = None,
+    route_skips: Optional[list] = None, truncation_retry_max_tokens: Optional[int] = None,
     **v2,
 ) -> None:
     """Same as record_call() but reuses an already-open asyncpg.Pool (T5/T9's async orchestrators
@@ -555,7 +576,8 @@ async def record_call_with_pool(
     (record_call). The call was already billed — 347k Jev calls (30/09–09/10) went unlogged when
     a single shared connection rejected the write with "another operation is in progress"."""
     _check_v2(v2)
-    quality_signal = _with_route(quality_signal, route_trace, route_position, route_skips)   # AA-1042
+    quality_signal = _with_route(quality_signal, route_trace, route_position, route_skips,   # AA-1042
+                                 truncation_retry_max_tokens)                                 # S271
     account = _row_account(account, connection_key)
     clean_model, provider = _normalize_model_provider(model, provider)
     # The connection column: the vendor connection, else the row's account (a Bedrock account key is its connection).
@@ -656,16 +678,19 @@ V2_FIELDS = tuple(c for c in V2_COLUMNS if c != "connection_key")
 _ROW_FIELDS = ("stage", "role", "model", "tokens_in", "tokens_out", "cost_usd", "quality_signal",
                "tenant_id", "content_piece_id", "angle_gate_request_id", "stop_reason", "account",
                "fallback_used", "provider", "cache_read_tokens", "cache_write_tokens", "pricing_mode",
-               "connection_key", *V2_FIELDS, *ROUTE_KEYS)
+               "connection_key", *V2_FIELDS, *ROUTE_KEYS, *RETRY_KEYS)
 
 
 def _fold_route(row: dict) -> dict:
-    """AA-1042: a record_calls row with its route keys folded into quality_signal (removed as fields)."""
-    if not any(k in row for k in ROUTE_KEYS):
+    """AA-1042: a record_calls row with its route keys (S271: and the truncation retry's) folded into quality_signal
+    (removed as fields)."""
+    folded = (*ROUTE_KEYS, *RETRY_KEYS)
+    if not any(k in row for k in folded):
         return row
-    out = {k: v for k, v in row.items() if k not in ROUTE_KEYS}
+    out = {k: v for k, v in row.items() if k not in folded}
     out["quality_signal"] = _with_route(row.get("quality_signal") or {}, row.get("route_trace"),
-                                        row.get("route_position"), row.get("route_skips"))
+                                        row.get("route_position"), row.get("route_skips"),
+                                        row.get("truncation_retry_max_tokens"))
     return out
 
 
@@ -811,6 +836,25 @@ def gateway_failure_row(*, stage: str, role: str, model: str, status: str, error
                 error_class=error_class if error_class in ERROR_CLASSES else "other",
                 latency_ms=latency_ms, attempt_no=attempt_no, deployment_wire_id=deployment_wire_id,
                 prompt_hash=prompt_hash, is_shadow=is_shadow, **v2)
+
+
+def cut_reply_row(resp, *, stage: str, role: str, max_tokens: int, retry_max_tokens: int,
+                  quality_signal_extra: Optional[dict] = None, is_shadow: Optional[bool] = None) -> dict:
+    """S271: the record_calls row the gateway writes for a reply cut at its token ceiling that it retries once
+    (shared/llm_client/token_floor.py): billed, status 'truncated', quality_signal = {**extra minus OK_RATE_KEYS,
+    "gateway_attempt": true, "budget_cut": true, "max_tokens", "retry_max_tokens"} (the keys of the caller-side
+    budget retry's cut row, token_budget.cut_signal), so the row never moves a stage's ok-rate."""
+    signal = {k: v for k, v in (quality_signal_extra or {}).items() if k not in OK_RATE_KEYS}
+    signal.update({"gateway_attempt": True, "budget_cut": True, "max_tokens": int(max_tokens),
+                   "retry_max_tokens": int(retry_max_tokens)})
+    provider = getattr(resp, "provider", None)
+    return dict(stage=stage, role=role, model=getattr(resp, "model_used", None) or "unknown",
+                tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
+                cost_usd=float(getattr(resp, "cost_usd", 0.0) or 0.0), quality_signal=signal,
+                stop_reason=getattr(resp, "stop_reason", None), account=getattr(resp, "satellite_account", None),
+                fallback_used=getattr(resp, "fallback_used", None),
+                provider=provider if isinstance(provider, str) else None, status=STATUS_TRUNCATED,
+                is_shadow=is_shadow, **billed_fields(resp))
 
 
 async def record_billed_failure(*, stage: str, role: str, billed: Optional[list], error: str,

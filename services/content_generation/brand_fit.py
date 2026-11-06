@@ -127,6 +127,8 @@ class BrandFitResult:
     route_position: Optional[int] = None
     # AA-1042 (S270): the route rungs deferred behind an open refusal circuit before the one that answered
     route_skips: Optional[list] = None
+    # S271: the retry's ceiling when the call was the gateway's one truncation retry (call_log.RETRY_KEYS)
+    truncation_retry_max_tokens: Optional[int] = None
 
 
 # AA-927 / AA-1002 (S6) / AA-804: the keys of one judge call's billing in `runs` (run_billing), as judge_node logs
@@ -190,6 +192,7 @@ def aggregate_runs(results: list[BrandFitResult], *, mission_absent_cap: Optiona
         **{k: getattr(first, k, None) for k in V2_BILLED_KEYS},
         route_trace=getattr(first, "route_trace", None), route_position=getattr(first, "route_position", None),
         route_skips=getattr(first, "route_skips", None),
+        truncation_retry_max_tokens=getattr(first, "truncation_retry_max_tokens", None),
         runs=runs + ((_failed_entry(failed, failed_cost_usd),) if failed else ()),
         mission_evidence=evidence,
         evidence_verified=verified,
