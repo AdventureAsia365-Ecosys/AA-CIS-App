@@ -80,3 +80,8 @@ reasoning models bill their thinking inside it.
   `quality_signal ? 'budget_cut' AND quality_signal ->> 'gateway_attempt' = 'true'` (cut) and
   `quality_signal ->> 'truncation_retry' = 'true'` (the retry, written by the caller).
 - A stage that wants to own its retry sets `budget_retry=False` and must be added to the guard's allowlist with a reason.
+- When the retry raises too, the route's error carries the retry's failure only; the cut attempt's cost is in the
+  ledger (its own row) but not in `unusable_reply_cost()` of that error (a caller's run budget reads one attempt less).
+- Verified locally: the gateway unit subset (~7.5k tests incl. the six updated for the new behaviour), the new unit and
+  integration files, the route trace / ledger v2 / writing-memory integration tests on Postgres, flake8 (CI scope),
+  the resource-ID and golden-text guards, the prompt registry check, gitleaks 8.30.1 on the branch.
