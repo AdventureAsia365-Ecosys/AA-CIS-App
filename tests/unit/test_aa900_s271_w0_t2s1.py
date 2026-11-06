@@ -333,16 +333,16 @@ def test_an_unedited_approve_of_a_policy_keep_tour_publishes():
 
 
 def test_an_override_reason_approves_and_is_recorded():
-    from api.routers.v1_pipeline import ApproveBody
+    from api.routers.v1_pipeline import ReviewApproveBody
     conn = AsyncMock()
     conn.fetchrow = AsyncMock(side_effect=[_gate_row(metadata="{}"),
                                            {"generated_content_id": GCID, "step_fn_task_token": None}])
     conn.execute = AsyncMock(return_value="UPDATE 1")
-    short, _ = _approve(conn, ApproveBody(override_reason="ok"))      # too short: still blocked
+    short, _ = _approve(conn, ReviewApproveBody(override_reason="ok"))      # too short: still blocked
     assert isinstance(short, HTTPException) and short.status_code == 409
     conn.fetchrow = AsyncMock(side_effect=[_gate_row(metadata="{}"),
                                            {"generated_content_id": GCID, "step_fn_task_token": None}])
-    out, export = _approve(conn, ApproveBody(override_reason="Checked against the supplier sheet by hand"))
+    out, export = _approve(conn, ReviewApproveBody(override_reason="Checked against the supplier sheet by hand"))
     assert out["status"] == "approved" and out["override_blockers"] == ["grounding_not_run"]
     note = [c.args for c in conn.execute.await_args_list if "reviewer_notes" in c.args[0]]
     assert note and "Checked against the supplier sheet by hand" in note[0][2] and "grounding_not_run" in note[0][2]

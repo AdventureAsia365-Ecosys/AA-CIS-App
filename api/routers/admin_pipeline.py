@@ -27,7 +27,7 @@ from api.routers._billing import usage_row_to_dict
 from api.routers.admin import verify_admin_secret
 from api.routers.auth import verify_tenant_jwt
 from api.middleware import tenant_role as _tenant_role  # AA-979 csr check in the dependency
-from api.routers.v1_pipeline import ApproveBody, _rewrite_tour
+from api.routers.v1_pipeline import ReviewApproveBody, _rewrite_tour
 from shared.llm_client.errors import is_llm_access_denied
 from services.content_generation import s1_checkpoint as _ckpt  # AA-993 G2
 from shared.aws_client.bronze import bronze_bucket
@@ -2898,7 +2898,7 @@ async def admin_review_queue(
 async def admin_approve_review(
     review_id: str,
     request: Request,
-    body: Optional[ApproveBody] = None,
+    body: Optional[ReviewApproveBody] = None,
     x_admin_secret: str = Header(None),
 ):
     verify_admin_secret(x_admin_secret)

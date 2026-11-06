@@ -124,7 +124,7 @@ async def test_a_policy_keep_tour_is_approved(conn):
 async def test_an_override_reason_is_recorded_on_the_review(conn):
     from api.routers import v1_pipeline
     gc, rq = await _review(conn, failure_codes=["FORBIDDEN_WORD"])
-    body = v1_pipeline.ApproveBody(override_reason="Word checked with the supplier, it is a place name")
+    body = v1_pipeline.ReviewApproveBody(override_reason="Word checked with the supplier, it is a place name")
     with patch("services.export.handler.process_export", new=AsyncMock()):
         out = await v1_pipeline.approve_review(str(rq), _req(conn), None, body)
     assert out["status"] == "approved" and out["override_blockers"] == ["hard_codes"]

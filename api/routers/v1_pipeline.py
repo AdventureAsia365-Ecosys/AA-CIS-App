@@ -532,7 +532,7 @@ async def get_review_queue(
     }
 
 
-class ApproveBody(BaseModel):
+class ReviewApproveBody(BaseModel):
     """S271 W0 (AA-900 l16): optional body of an approve. ``override_reason`` approves an unedited version the
     publish checks refuse (approve_gate.blockers); at least 10 characters, recorded on the review row."""
     override_reason: Optional[str] = None
@@ -563,7 +563,7 @@ async def approve_review(
     review_id: str,
     request: Request,
     tenant=Depends(_require_admin),
-    body: Optional[ApproveBody] = None,
+    body: Optional[ReviewApproveBody] = None,
 ):
     """Approve a tour in review queue.
 
