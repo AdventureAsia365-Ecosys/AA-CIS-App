@@ -406,10 +406,10 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   its outcome counts on the circuit). `GET /admin/llm-availability` adds `connections` (status per connection and the
   circuit of each deployment). UI: AI providers › Providers › Connections (`frontend/app/admin/ai-gateway/ConnectionsPanel.tsx`; secret name
   and base URL read-only there since AA-1017, changed by migration).
-- **Cassette recorder** (AA-900, S271 lane l17, migration 387; root ADR 0020 d8), record-only:
+- **Cassette recorder** (AA-900, S271 lane l17, migration 385; root ADR 0020 d8), record-only:
   `shared/llm_client/cassette.py`. `LLMClient._attempt` hands every provider attempt that returned a reply (every role,
   shadows, the probe, the truncation retry) to `cassette.record_attempt`, which writes one `shared.llm_cassette` row
-  on a background write (best-effort: never raises, `cassette.stats()` counts failures; UndefinedTable before 387 =
+  on a background write (best-effort: never raises, `cassette.stats()` counts failures; UndefinedTable before 385 =
   a 5-minute skip). A row holds the raw reply (256 KiB cap, `reply_truncated`; a `pii` stage keeps the sha only),
   `request_sha256` (canonical JSON of messages + params as SENT, `cassette.request_sha`), the system prompt's sha and
   version (never prompt text), model key, provider-reported model, wire id, connection, provider request id, rung,

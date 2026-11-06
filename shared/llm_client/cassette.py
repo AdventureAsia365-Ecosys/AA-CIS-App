@@ -3,7 +3,7 @@ attempt, with the request and prompt shas, for replay.
 
 Record-only (wave W0). ``LLMClient._attempt`` calls ``record_attempt`` once per provider attempt that RETURNED a
 reply (every role and stage, shadows, the admin probe and the gateway's truncation retry included). The row goes to
-``shared.llm_cassette`` (CIS migration 387) on a background write, best-effort like the ledger's gateway rows: a
+``shared.llm_cassette`` (CIS migration 385) on a background write, best-effort like the ledger's gateway rows: a
 failure is logged and counted (``stats()``), never raised, and the call goes on. Nothing on a live path reads it yet;
 ``get_by_request_sha`` / ``get_by_call_log_id`` are the replay helpers.
 
@@ -45,12 +45,12 @@ SWITCH_ENV = "LLM_CASSETTE"
 MODE_RECORD = "record"
 MODE_OFF = "off"
 _OFF = frozenset({"off", "0", "false", "no"})
-# 256 KiB of UTF-8 (CHECK llm_cassette_reply_cap_check of CIS 387).
+# 256 KiB of UTF-8 (CHECK llm_cassette_reply_cap_check of CIS 385).
 REPLY_CAP_BYTES = 262144
 WITHHELD_PII = "pii_stage"
 # The request-sha layout version: bump it when the canonical request changes, so old and new shas never collide.
 REQUEST_SHA_VERSION = 1
-# Before CIS 387 is applied the table is missing: a write is skipped (and counted) for this long, then tried again.
+# Before CIS 385 is applied the table is missing: a write is skipped (and counted) for this long, then tried again.
 _MISSING_RETRY_SECONDS = 300.0
 _missing_at = 0.0
 
@@ -68,7 +68,7 @@ _INSERT_SQL = (
     "INSERT INTO shared.llm_cassette (" + ", ".join(COLUMNS) + ") VALUES ("
     + ", ".join(f"${i}::uuid" if c in _UUID_COLUMNS else f"${i}" for i, c in enumerate(COLUMNS, 1)) + ")"
 )
-# Text caps of the CHECKs of 387 (a longer value is cut, never refused: the row is evidence, not a contract).
+# Text caps of the CHECKs of 385 (a longer value is cut, never refused: the row is evidence, not a contract).
 _TEXT_CAPS = {"stage": 128, "model_key": 200, "prompt_version": 128, "answered_model": 200, "deployment_wire_id": 300,
               "connection_key": 128, "provider": 64, "provider_request_id": 256, "effort": 32, "stop_reason": 64,
               "eval_run": 128, "eval_item": 256}
@@ -86,7 +86,7 @@ def _count(key: str) -> None:
 
 def stats() -> dict:
     """Counts since the process started (or ``reset_stats``): recorded (handed to a background write), written,
-    write_failed, missing_table (skipped before 387), build_failed (a row could not be built)."""
+    write_failed, missing_table (skipped before 385), build_failed (a row could not be built)."""
     with _COUNTS_LOCK:
         return dict(_COUNTS)
 
@@ -295,7 +295,7 @@ async def write_row(row: dict, conn=None) -> bool:
     except asyncpg.exceptions.UndefinedTableError:
         _missing_at = time.monotonic()
         _count("missing_table")
-        logger.warning("llm_cassette_table_missing", hint="CIS migration 387 not applied: replies are not recorded")
+        logger.warning("llm_cassette_table_missing", hint="CIS migration 385 not applied: replies are not recorded")
         return False
     except Exception as e:  # noqa: BLE001 — a recorder never breaks the call it records
         _count("write_failed")
@@ -354,7 +354,7 @@ async def get_by_request_sha(conn, request_sha256: str, *, model_key: Optional[s
 async def get_by_call_log_id(conn, call_log_id: str) -> Optional[dict]:
     """The reply behind one llm_call_log row (matched on route_trace + attempt_no), with the ledger row's own links
     (``call_log_id``, ``ledger_content_piece_id``, ``ledger_tour_id``, ``ledger_job_id``, ``ledger_status``), else
-    None (a row written outside a gateway request, a failed attempt, or a reply recorded before 387)."""
+    None (a row written outside a gateway request, a failed attempt, or a reply recorded before 385)."""
     cid = _uuid_or_none(call_log_id)
     if cid is None:
         return None

@@ -1,4 +1,4 @@
-"""AA-900 (S271, root ADR 0020 d8) — CIS 387 shared.llm_cassette and the gateway recorder on real Postgres.
+"""AA-900 (S271, root ADR 0020 d8) — CIS 385 shared.llm_cassette and the gateway recorder on real Postgres.
 
 The table itself (CHECKs, pii tag, grants): test_aa900_migration_387.py.
 - The recorder (cassette.record_attempt, its background write on its own connection): the row of a returned reply
@@ -28,7 +28,7 @@ STAGE = "adhoc_aa900_cassette"
 JOB = "3c2b1a09-8f7e-4d6c-9b5a-4c3b2a1f0e9d"
 TENANT = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d"
 PIECE = "2f1e0d9c-8b7a-4c6d-9e5f-0a1b2c3d4e5f"
-MIGRATION = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations", "387_llm_cassette.sql")
+MIGRATION = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations", "385_llm_cassette.sql")
 
 
 @pytest_asyncio.fixture
