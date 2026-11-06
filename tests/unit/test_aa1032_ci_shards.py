@@ -230,8 +230,12 @@ def test_required_check_names_are_aggregates_of_their_shards(aggregate, shard_jo
     jobs = _ci()["jobs"]
     agg, shard = jobs[aggregate], jobs[shard_job]
     assert agg["name"] == {"test-unit": "Unit Tests", "test-integration": "Integration Tests"}[aggregate]
-    assert agg["needs"] == shard_job
-    assert agg["if"] == "${{ !cancelled() }}"
+    # S271: the aggregate also needs the scope job ("Quality Paths (report)") and is skipped exactly when its shards are
+    # (the same condition); it runs when a shard failed (never "skipped" then: a required check counts that as passed).
+    assert agg["needs"] == ["quality-paths", shard_job]
+    assert agg["if"] == shard["if"]
+    assert agg["if"].startswith("${{ !cancelled() && ")
+    assert "needs.quality-paths.outputs." in agg["if"] and "!= 'false'" in agg["if"]
     gate = agg["steps"][0]
     assert gate["env"]["RESULT"] == f"${{{{ needs.{shard_job}.result }}}}"
     assert '[ "$RESULT" != "success" ]' in gate["run"] and "exit 1" in gate["run"]
