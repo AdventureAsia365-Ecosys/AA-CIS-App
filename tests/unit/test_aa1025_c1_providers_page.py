@@ -43,10 +43,10 @@ def test_window_stats_and_with_stats():
     r = {"calls_24h": 8, "errors_24h": 2, "refused_24h": 1, "p50_24h": 812.4, "p95_24h": 2400.6,
          "calls_7d": 0, "errors_7d": 0, "refused_7d": 3, "p50_7d": None, "p95_7d": None}
     row = gw.with_stats({"key": "llm:x"}, r)
-    assert row["stats"]["24h"] == {"calls": 8, "errors": 2, "refused": 1, "error_pct": 25.0, "latency_p50_ms": 812,
-                                   "latency_p95_ms": 2401}
-    assert row["stats"]["7d"] == {"calls": 0, "errors": 0, "refused": 3, "error_pct": None, "latency_p50_ms": None,
-                                  "latency_p95_ms": None}
+    assert row["stats"]["24h"] == {"calls": 8, "errors": 2, "refused": 1, "expected_refused": 0, "error_pct": 25.0,
+                                   "latency_p50_ms": 812, "latency_p95_ms": 2401}
+    assert row["stats"]["7d"] == {"calls": 0, "errors": 0, "refused": 3, "expected_refused": 0, "error_pct": None,
+                                  "latency_p50_ms": None, "latency_p95_ms": None}
     assert (row["error_pct"], row["latency_p50_ms"], row["latency_p95_ms"]) == (25.0, 812, 2401)
     empty = gw.with_stats({"key": "llm:y"}, None)
     assert empty["stats"]["24h"]["calls"] == 0 and empty["error_pct"] is None

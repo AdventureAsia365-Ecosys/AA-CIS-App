@@ -38,6 +38,7 @@ from typing import Any, Optional
 import structlog
 
 from shared.llm_client import route_watch
+from shared.llm_client.expected_refusal import EXPECTED_SQL
 from shared.llm_client.route_watch import FALLBACK_RUNG, LEDGER_FILTER, OK, POSITION_EXPR, PRIMARY_RUNG
 
 logger = structlog.get_logger()
@@ -100,7 +101,8 @@ def requests_sql(*, stage: Optional[str], fallback_only: bool) -> str:
     WITH t AS (
         SELECT quality_signal ->> 'route_trace' AS trace, min(stage) AS stage, min(role) AS role,
                min(created_at) AS first_at, max(created_at) AS last_at, count(*) AS rows,
-               count(*) FILTER (WHERE status IN ('refused', 'error')) AS failed_attempts,
+               count(*) FILTER (WHERE status IN ('refused', 'error') AND NOT {EXPECTED_SQL}) AS failed_attempts,
+               count(*) FILTER (WHERE {EXPECTED_SQL}) AS expected_refusals,
                bool_or({OK}) AS answered, max(attempt_no) AS attempts,
                coalesce(sum(cost_usd), 0)::float AS cost_usd, sum(latency_ms) AS latency_ms,
                (array_agg(model ORDER BY created_at DESC) FILTER (WHERE {OK}))[1] AS served_model,
@@ -131,6 +133,8 @@ def request_view(r: dict) -> dict:
     return {"trace_id": r["trace"], "stage": r.get("stage"), "role": r.get("role"),
             "first_at": _iso(r.get("first_at")), "last_at": _iso(r.get("last_at")), "outcome": outcome,
             "attempts": r.get("attempts") or r.get("rows"), "failed_attempts": r.get("failed_attempts") or 0,
+            # AA-900 (S271 l11): refused attempts of a model with no grant yet (not in failed_attempts)
+            "expected_refusals": int(r.get("expected_refusals") or 0),
             "served_model": r.get("served_model"), "served_connection": r.get("served_connection"),
             "served_attempt": served_attempt, "max_position": r.get("max_position"),
             "cost_usd": _f(r.get("cost_usd")), "latency_ms": r.get("latency_ms"),
@@ -296,7 +300,8 @@ def rungs_view(rung_rows: list[dict], stats: dict[str, dict], routes: dict[str, 
                     "active": bool(route["is_active"]) if route else None,
                     "answered": total, "fallback_answered": int(st.get("fallback_answered") or 0),
                     "fallback_pct": route_watch.fallback_rate(st), "lost_requests": int(st.get("lost") or 0),
-                    "failed_attempts": int(st.get("failed_attempts") or 0), "rungs": rungs})
+                    "failed_attempts": int(st.get("failed_attempts") or 0),
+                    "expected_refusals": int(st.get("expected_refusals") or 0), "rungs": rungs})
     out.sort(key=lambda s: (-(s["fallback_pct"] or 0), -s["lost_requests"], s["stage"]))
     return out
 

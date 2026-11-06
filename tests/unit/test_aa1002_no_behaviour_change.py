@@ -74,7 +74,8 @@ CALL_PATH = ("client.py", "embed.py", "decide.py", "judge.py", "shadow.py", "bed
              "stage_coverage.py",  # AA-1026 S267: report-only stage coverage (reads the tables by SQL, not a call)
              "route_settings.py",  # AA-1042: the route order mode (no row / unreadable = the env var, as before 370)
              "route_versions.py",  # AA-1042: route config versions, written inside the admin route writes (no call)
-             "route_watch.py")  # AA-1042: route alerts (ledger SQL) and the cached hold switch (no row = off)
+             "route_watch.py",  # AA-1042: route alerts (ledger SQL) and the cached hold switch (no row = off)
+             "expected_refusal.py")  # AA-900 S271: the expected-refusal SQL / predicate for display (pure, no I/O)
 
 
 def _imported_modules(path: Path) -> set[str]:
