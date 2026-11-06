@@ -35,7 +35,7 @@
 --      SELECT, INSERT, UPDATE, DELETE on every new table), then GRANT cis_app SELECT, INSERT, DELETE (the gateway
 --      writes as cis_app, the replay helpers read; the tenant erasure job, AA-839 services/erasure/inventory.py
 --      action delete, and the future TTL job kind delete as the runtime role). No UPDATE: a row is never changed.
---   4. Register 387.
+--   4. Register 385.
 --
 -- PII (DM-6.1, DM-6.4). reply_text may hold tenant content (an agency's tour text) and is tagged pii:free_text;
 -- prompts carry no identifying personal data by DM-6.4, so a reply has none by construction, but the column is
