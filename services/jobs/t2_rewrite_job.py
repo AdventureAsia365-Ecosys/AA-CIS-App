@@ -224,7 +224,7 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
     # consumes it; the job result records it (`writing_release`). Release 0 changes no prompt byte.
     # AA-920 (WM-25): the version row records it too (`generation_meta`, CIS 297; hidden from every tenant read).
     from services.writing_memory.insertion import (generation_meta as _wm_meta, resolve as _wm_resolve,
-                                                   stamp as _wm_stamp)
+                                                   stamp as _wm_stamp, writer_answer as _wm_answer)
     writing_memory = await _wm_resolve(pool, "t2", tenant_id)
     if writing_memory:
         diag["writing_release"] = _wm_stamp(writing_memory)
@@ -277,7 +277,9 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
             import json as _j3
             # AA-920 (WM-25): the version's own record of how it was written (CIS 297, admin-only): the release stamp
             # + rule ids, and the prompt hash of the kept draft (T3 may keep a repair round's output).
-            generation_meta = _wm_meta(writing_memory, prompt_version=result.get("prompt_version"))
+            # AA-900 W0: + the kept draft's answered model and fallback_used (generation_meta.writer_answer).
+            generation_meta = _wm_meta(writing_memory, prompt_version=result.get("prompt_version"),
+                                       answer=_wm_answer(result))
             gen = result["generated"]
             rewritten = {
                 "name":        gen.get("name", tour_dict["name"]),

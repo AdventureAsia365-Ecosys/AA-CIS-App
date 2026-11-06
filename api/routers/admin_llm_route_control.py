@@ -103,6 +103,15 @@ async def _guarded(coro):
         raise HTTPException(status_code=404, detail=str(e))
 
 
+async def _wm_reverify(request: Request, admin_user_id: Optional[str]) -> None:
+    """AA-900 W0: a saved route config (save / preset / revert) changes route rows, so the active writing-memory
+    releases are re-checked against their config fingerprint (flag only; never fails the save)."""
+    from services.writing_memory.releases import reverify_scan_safe
+    pool = getattr(getattr(getattr(request, "app", None), "state", None), "pool", None)
+    if pool is not None:
+        await reverify_scan_safe(pool, actor=_actor(admin_user_id)[:128])
+
+
 @router.get("", summary="The live route config: order mode, version, chains, provider order, presets ($0)")
 async def get_route_control(request: Request) -> dict:
     return await _guarded(rc.read_state(_pool(request)))
@@ -119,10 +128,12 @@ async def post_preview(body: PreviewBody, request: Request) -> dict:
 async def post_save(body: SaveBody, request: Request, x_admin_user_id: Optional[str] = Header(None)) -> dict:
     if body.order_mode is None and not body.routes and not body.provider_order:
         raise HTTPException(status_code=422, detail="nothing to change")
-    return await _guarded(rc.apply(
+    out = await _guarded(rc.apply(
         _pool(request), actor=_actor(x_admin_user_id), action="save", expected_version=body.expected_version,
         note=body.note, eval_run_id=body.eval_run_id, break_glass_reason=body.break_glass_reason,
         order_mode=body.order_mode, routes=body.routes, provider_order=body.provider_order))
+    await _wm_reverify(request, x_admin_user_id)
+    return out
 
 
 @router.post("/presets/{preset}", summary="Apply a route preset as a new version (validated, audited)")
@@ -131,9 +142,11 @@ async def post_preset(body: _WriteMeta, request: Request,
                       x_admin_user_id: Optional[str] = Header(None)) -> dict:
     if preset not in rc.PRESETS:
         raise HTTPException(status_code=404, detail=f"unknown preset {preset!r}")
-    return await _guarded(rc.apply(
+    out = await _guarded(rc.apply(
         _pool(request), actor=_actor(x_admin_user_id), action="preset", expected_version=body.expected_version,
         note=body.note, eval_run_id=body.eval_run_id, break_glass_reason=body.break_glass_reason, preset=preset))
+    await _wm_reverify(request, x_admin_user_id)
+    return out
 
 
 @router.get("/versions", summary="The newest route config versions with who, when and the diff ($0)")
@@ -152,7 +165,9 @@ async def get_version(request: Request, version: int = Path(..., ge=1)) -> dict:
 @router.post("/versions/{version}/revert", summary="Restore a route config version as a new version (audited)")
 async def post_revert(body: _WriteMeta, request: Request, version: int = Path(..., ge=1),
                       x_admin_user_id: Optional[str] = Header(None)) -> dict:
-    return await _guarded(rc.apply(
+    out = await _guarded(rc.apply(
         _pool(request), actor=_actor(x_admin_user_id), action="revert", expected_version=body.expected_version,
         note=body.note, eval_run_id=body.eval_run_id, break_glass_reason=body.break_glass_reason,
         revert_to=version))
+    await _wm_reverify(request, x_admin_user_id)
+    return out

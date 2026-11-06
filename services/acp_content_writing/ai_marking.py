@@ -54,6 +54,24 @@ WRITER_MODEL_SQL = """
     LIMIT 1
 """
 
+# AA-900 W0 (root ADR 0020, "stamp answered_model and fallback_used on every write"): the same ledger row, as one jsonb
+# value: the answered model, whether a fallback rung answered, its route position and connection. The piece stores it
+# admin-only in writer_input -> 'writer_answer' (ANSWER_KEY), next to the AI mark; the release KPIs read it there.
+WRITER_ANSWER_SQL = """
+    SELECT jsonb_build_object('answered_model', l.model, 'fallback_used', l.fallback_used,
+                              'route_position', l.quality_signal -> 'route_position',
+                              'connection_key', l.connection_key, 'effort', l.effort)
+    FROM shared.llm_call_log l
+    WHERE l.stage = $3
+      AND l.created_at >= (SELECT cp.created_at FROM acp_shared.content_piece cp WHERE cp.piece_id = $2)
+      AND l.angle_gate_request_id = $1
+      AND (l.status IS NULL OR l.status IN ('ok', 'truncated'))
+      AND l.is_shadow IS NOT TRUE
+    ORDER BY l.created_at DESC
+    LIMIT 1
+"""
+ANSWER_KEY = "writer_answer"
+
 
 def _iso(value: Any) -> Optional[str]:
     if value is None:
@@ -183,6 +201,27 @@ async def writer_model(conn, request_id, piece_id) -> Optional[str]:
         return None
 
 
-__all__ = ["CATALOG_GENERATOR", "CATALOG_TEXT_FIELDS", "GENERATOR", "IPTC_DIGITAL_SOURCE_TYPE", "PROVENANCE_KEY",
-           "WRITER_MODEL_SQL", "docx_properties", "html_attributes", "html_meta_tags", "piece_mark",
-           "response_headers", "stamp", "tour_mark", "version_mark", "writer_model"]
+async def writer_answer(conn, request_id, piece_id) -> Optional[dict]:
+    """Best-effort: {answered_model, fallback_used, route_position, connection_key, effort} of the piece's final
+    writer attempt (the row writer_model reads), or None (no row, or the ledger is unreadable; never raises)."""
+    try:
+        raw = await conn.fetchval(WRITER_ANSWER_SQL, request_id, piece_id, WRITER_STAGE)
+    except Exception:  # noqa: BLE001 — the stamp must never fail a finalize
+        return None
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return None
+    if not isinstance(raw, dict):
+        return None
+    out = {k: raw.get(k) for k in ("answered_model", "fallback_used", "route_position", "connection_key", "effort")}
+    out["fallback_used"] = bool(out["fallback_used"]) or (isinstance(out["route_position"], int)
+                                                         and out["route_position"] > 0)
+    return out
+
+
+__all__ = ["ANSWER_KEY", "CATALOG_GENERATOR", "CATALOG_TEXT_FIELDS", "GENERATOR", "IPTC_DIGITAL_SOURCE_TYPE",
+           "PROVENANCE_KEY", "WRITER_ANSWER_SQL", "WRITER_MODEL_SQL", "docx_properties", "html_attributes",
+           "html_meta_tags", "piece_mark", "response_headers", "stamp", "tour_mark", "version_mark", "writer_answer",
+           "writer_model"]

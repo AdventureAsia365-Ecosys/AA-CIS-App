@@ -433,6 +433,13 @@ async def check(conn, release: dict, *, first_activation: bool = True) -> Option
                          closed_month=await _closed_month(conn, release["writer"]))
     if p or not first_activation:
         return p
+    # AA-900 W0 (ADR 0020, critic F4): a release with content goes live only once its writer has an R1 record (the
+    # judge it was evaluated with is calibrated). An empty release renders nothing and is never frozen.
+    if release.get("content_class") != "empty":
+        from services.writing_memory import r1_gate
+        p = await r1_gate.check(conn, release["writer"], "Activating a release with content")
+        if p:
+            return p
     from services.writing_memory.exemplars import never_in_release
     never = await never_in_release(conn, release["release_id"])
     if never:
@@ -443,10 +450,15 @@ async def check(conn, release: dict, *, first_activation: bool = True) -> Option
 
 # ── fingerprint and reverify ───────────────────────────────────────────────────────────────────────────────────────
 
-async def current_fingerprint(conn, writer: str, *, prompt_sha256: Optional[str] = None) -> dict:
+async def current_fingerprint(conn, writer: str, *, prompt_sha256: Optional[str] = None, scope: str = "platform",
+                              tenant_id: Optional[str] = None) -> dict:
     """What a reverify compares: the active golden set, the writer's stage route and the judge route, the gate
-    taxonomy version (and, when known, the writer's system-prompt sha256: the prompt register)."""
+    taxonomy version (and, when known, the writer's system-prompt sha256: the prompt register). AA-900 W0
+    (`config_fp.py`): plus `config_fp`, the hash of every route row, stage params row, catalog / deployment row, mode
+    switch, prompt source, other active memory items, L0 lexicon rule and house-style row of the writer's path, for
+    one owner (`scope` / `tenant_id`)."""
     from services.quality.registry import TAXONOMY_VERSION
+    from services.writing_memory import config_fp
     fp: dict[str, Any] = {"gate_taxonomy": TAXONOMY_VERSION}
     gs = await conn.fetchrow("SELECT name, version FROM shared.eval_golden_set WHERE name = $1 AND status = 'active'",
                              GOLDEN_SET)
@@ -459,12 +471,16 @@ async def current_fingerprint(conn, writer: str, *, prompt_sha256: Optional[str]
                                           "account_route": r["account_route"]}
     if prompt_sha256:
         fp["prompt_sha256"] = prompt_sha256
+    fp["config_fp"] = await config_fp.collect(conn, writer, scope=scope, tenant_id=tenant_id)
     return fp
 
 
 def reverify_reasons(stored: dict, now: dict) -> list[str]:
     """Which of golden set / model route / gate taxonomy changed since the release's fingerprint (missing keys in
-    the stored fingerprint are not a change)."""
+    the stored fingerprint are not a change). AA-900 W0: a changed `config_fp` component adds its reason
+    (config_fp.REVERIFY_REASON: route, params, catalog, route control, mode flags -> model_route; prompts, memory
+    items, L0 lexicon, house style -> prompt_version_mismatch), in REVERIFY_REASONS order."""
+    from services.writing_memory import config_fp
     out = []
     if "golden_set" in stored and stored.get("golden_set") != now.get("golden_set"):
         out.append("golden_set")
@@ -472,7 +488,16 @@ def reverify_reasons(stored: dict, now: dict) -> list[str]:
         out.append("model_route")
     if "gate_taxonomy" in stored and stored.get("gate_taxonomy") != now.get("gate_taxonomy"):
         out.append("gate_taxonomy")
-    return out
+    extra = config_fp.reasons_of(config_fp.reverify_components(stored, now))
+    return [r for r in REVERIFY_REASONS if r in out or r in extra]
+
+
+def config_drift(stored: dict, now: dict) -> dict:
+    """AA-900 W0, for the admin: which config_fp components and which path stages differ now ({} parts when the
+    release was drafted before W0)."""
+    from services.writing_memory import config_fp
+    return {"components": config_fp.reverify_components(stored, now),
+            "stages": config_fp.changed_stages(stored, now)}
 
 
 async def reverify_scan(conn, *, actor: str = "system:reverify_scan") -> list[dict]:
@@ -482,17 +507,20 @@ async def reverify_scan(conn, *, actor: str = "system:reverify_scan") -> list[di
     flagged = []
     for rel in await active_releases(conn):
         stored = rel["fingerprint"] if isinstance(rel["fingerprint"], dict) else json.loads(rel["fingerprint"] or "{}")
-        reasons = reverify_reasons(stored, await current_fingerprint(conn, rel["writer"]))
+        now = await current_fingerprint(conn, rel["writer"], scope=rel.get("scope") or "platform",
+                                        tenant_id=rel.get("tenant_id"))
+        reasons = reverify_reasons(stored, now)
         new = sorted(set(reasons) - set(rel["reverify_reasons"] or []))
         if not new:
             continue
+        drift = config_drift(stored, now)
         await conn.execute(
             "UPDATE shared.writing_memory_release SET reverify = true, reverify_at = coalesce(reverify_at, now()), "
             "reverify_reasons = (SELECT array_agg(DISTINCT x ORDER BY x) "
             "FROM unnest(reverify_reasons || $2::text[]) x) "
             "WHERE release_id = $1::uuid", rel["release_id"], new)
-        await _audit(conn, rel, actor, "reverify_flagged", {"reasons": new})
-        flagged.append({"release_id": rel["release_id"], "writer": rel["writer"], "reasons": new})
+        await _audit(conn, rel, actor, "reverify_flagged", {"reasons": new, **drift})
+        flagged.append({"release_id": rel["release_id"], "writer": rel["writer"], "reasons": new, **drift})
     if flagged:
         logger.warning("wm_release_reverify_flagged", releases=flagged)
     return flagged
@@ -574,7 +602,7 @@ async def create_draft(conn, *, writer: str, scope: str = "platform", tenant_id:
         "AND coalesce(tenant_id, $3::uuid) = coalesce($4::uuid, $3::uuid)", writer, scope, ZERO_TENANT, tenant_id)
     if nxt == 0 and cls != "empty":
         raise ReleaseError(409, "release0_first", "release 0 of a writer and owner is the empty baseline (WM-20)")
-    fp = await current_fingerprint(conn, writer, prompt_sha256=prompt_sha256)
+    fp = await current_fingerprint(conn, writer, prompt_sha256=prompt_sha256, scope=scope, tenant_id=tenant_id)
     from services.writing_memory import exemplars as ex_mod
     picked: list[dict] = []
     if exemplars and cls == "rules" and writer in ex_mod.EXEMPLAR_WRITERS:
@@ -832,7 +860,8 @@ async def close_month(conn, writer: str, month: date, *, actor: str) -> dict:
 
 __all__ = ["CONTENT_CLASSES", "DBRefused", "EMERGENCY_REASONS", "MIN_R0_INPUTS", "ReleaseError", "STATUSES",
            "TRAIN_KINDS", "WIRED_CLASSES", "WRITERS", "WRITER_STAGES", "activate", "active_releases", "approve",
-           "attach_evidence", "check", "close_month", "content_class_of", "create_draft", "current_fingerprint",
+           "attach_evidence", "check", "close_month", "config_drift", "content_class_of", "create_draft",
+           "current_fingerprint",
            "evidence_problem", "get_release", "is_human", "items_sha256", "list_releases", "reject",
            "release_link_problem", "retire_without_previous", "reverify_reasons", "reverify_scan",
            "reverify_scan_safe", "rollback", "serialise",

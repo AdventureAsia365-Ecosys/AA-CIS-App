@@ -639,6 +639,7 @@ async def patch_llm_stage_switch(
     body: LlmStageSwitch,
     x_admin_secret: str = Header(None),
     x_admin_user_id: Optional[str] = Header(None),
+    request: Request = None,  # AA-900 W0: the reverify scan's pool; None in direct calls
 ):
     verify_admin_secret(x_admin_secret)
     admin_actor = x_admin_user_id or "unknown"
@@ -649,16 +650,20 @@ async def patch_llm_stage_switch(
         raise HTTPException(status_code=404, detail=str(e))
     updated["updated_at"] = updated["updated_at"].isoformat() if updated.get("updated_at") else None
     logger.info("admin_llm_stage_switched", stage=stage, enabled=body.enabled, admin_actor=admin_actor)
+    await _wm_reverify(request, stage, admin_actor)     # AA-900 W0: on/off is part of the route row
     return updated
 
 
-async def _wm_reverify(request: Request, stage: str, admin_actor: str) -> None:
+async def _wm_reverify(request: Request, stage: Optional[str], admin_actor: str) -> None:
     """AA-919 (WM-18 scope 5): a route change of a writer stage or of the writing-memory judge flags the active
     releases whose fingerprint names the old route (`reverify`; they keep serving). Its own transaction, after the
-    route change committed; never fails the route change."""
-    from services.writing_memory.releases import JUDGE_STAGE, WRITER_STAGES, reverify_scan_safe
+    route change committed; never fails the route change. AA-900 W0: any stage on a writer's path
+    (writing_memory.config_fp.on_any_path: the repair, FAQ-check, T10 and eval stages too), and `stage=None` (a
+    catalog row or a connection: no single stage) always scans."""
+    from services.writing_memory.config_fp import on_any_path
+    from services.writing_memory.releases import reverify_scan_safe
     pool = getattr(getattr(getattr(request, "app", None), "state", None), "pool", None)
-    if pool is None or stage not in set(WRITER_STAGES.values()) | {JUDGE_STAGE}:
+    if pool is None or (stage is not None and not on_any_path(stage)):
         return
     await reverify_scan_safe(pool, actor=f"admin:{admin_actor}")
 
@@ -685,6 +690,7 @@ async def patch_llm_catalog(
     body: LlmCatalogPatch,
     x_admin_secret: str = Header(None),
     x_admin_user_id: Optional[str] = Header(None),
+    request: Request = None,  # AA-900 W0: the reverify scan's pool; None in direct calls
 ):
     verify_admin_secret(x_admin_secret)
     admin_actor = x_admin_user_id or "unknown"
@@ -702,6 +708,7 @@ async def patch_llm_catalog(
         raise HTTPException(status_code=404, detail=str(e))
     logger.info("admin_llm_catalog_changed", model_key=model_key, fields=list(fields),
                 admin_actor=admin_actor)
+    await _wm_reverify(request, None, admin_actor)      # AA-900 W0: a catalog row is part of config_fp
     return updated
 
 
@@ -1532,6 +1539,8 @@ async def patch_llm_connection(
         raise HTTPException(status_code=503, detail=str(e))
     logger.info("admin_llm_connection_changed", connection_key=connection_key, fields=sorted(changes),
                 changed=result["changed_fields"], admin_actor=admin_actor)
+    if result.get("changed_fields"):
+        await _wm_reverify(request, None, admin_actor)  # AA-900 W0: deployment rows are part of config_fp
     return result
 
 
