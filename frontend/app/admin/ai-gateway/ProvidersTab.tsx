@@ -208,6 +208,7 @@ function HealthCell({ row }: { row: Row }) {
       {!h.open_models && !!h.failing_models && (
         <span style={{ ...small, color: K.amber }}>{t("failingModels", h.failing_models)}</span>
       )}
+      {!!h.known_refused_models && <span style={small}>{t("knownRefused", h.known_refused_models)}</span>}
     </Lines>
   );
 }
@@ -228,7 +229,7 @@ function CallsCell({ row }: { row: Row }) {
         return (
           <span key={w} style={small} data-testid={`ai-gateway-stats-${row.key}-${w}`}>
             <strong style={{ color: K.ink }}>{daily ? t("dayWindowLabel", w) : t("windowLabel", w)}</strong>{" "}
-            {s.calls === 0 && s.refused === 0
+            {s.calls === 0 && s.refused === 0 && !s.expected_refused
               ? t("noStatsCalls")
               : (
                 <>
@@ -239,6 +240,7 @@ function CallsCell({ row }: { row: Row }) {
                   {s.latency_p50_ms != null && <><br />{t("latencyLine", latencyText(s.latency_p50_ms),
                     latencyText(s.latency_p95_ms))}</>}
                   {s.refused > 0 && <><br />{t("refusedLine", s.refused)}</>}
+                  {!!s.expected_refused && <><br />{t("expectedLine", s.expected_refused)}</>}
                 </>
               )}
           </span>

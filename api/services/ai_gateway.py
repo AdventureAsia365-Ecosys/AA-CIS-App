@@ -522,7 +522,10 @@ def llm_rows(connections: list[dict], health: dict[str, dict], by_account: dict[
                 "last_ok_at": h.get("last_ok_at"), "last_error_at": h.get("last_error_at"),
                 "last_error_class": h.get("last_error_class"), "open_models": h.get("open_models", 0),
                 "models": len(h.get("models") or []),
-                "failing_models": sum(1 for m in (h.get("models") or []) if m.get("consecutive_failures"))},
+                "failing_models": sum(1 for m in (h.get("models") or [])
+                                      if m.get("consecutive_failures") and not m.get("expected_refusal")),
+                # AA-900 (S271 l11): models with no access yet on an account that answers (expected, not failing)
+                "known_refused_models": len(h.get("known_refused_models") or [])},
             "spend": _spend(spend.get("today", 0.0), spend.get("month", 0.0), spend.get("calls", 0),
                             spend.get("last")),
             "monthly_budget": monthly,

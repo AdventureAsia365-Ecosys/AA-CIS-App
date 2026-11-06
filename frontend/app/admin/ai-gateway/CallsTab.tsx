@@ -106,9 +106,10 @@ export default function CallsTab({ onTrace, onRoute }: {
         const known = e.outcome != null && e.outcome in OUTCOME.en;
         return (
           <span style={{ display: "grid", gap: 2, justifyItems: "start" }}>
-            <Badge tone={callTone(e.outcome)} dot={false}>
+            <Badge tone={e.expected_refusal ? "neutral" : callTone(e.outcome)} dot={false}>
               {known ? tout(e.outcome as keyof typeof OUTCOME.en) : (e.outcome ?? "—")}
             </Badge>
+            {e.expected_refusal && <span style={small}>{t("expectedRefusal")}</span>}
             {e.error_class && <span style={small}>{errorText(e.error_class)}</span>}
           </span>
         );
@@ -149,7 +150,9 @@ export default function CallsTab({ onTrace, onRoute }: {
   ], [t, ta, tsrc, tout, errorText, dir, accountText, onTrace, onRoute, filters.job_id, setMany]);
 
   const cost = rows.reduce((s, r) => s + (r.cost_usd ?? 0), 0);
-  const failed = rows.filter((r) => r.status === "refused" || r.status === "error").length;
+  // AA-900: an expected refusal (a model with no access yet) is counted apart, never as a failure
+  const expected = rows.filter((r) => r.expected_refusal).length;
+  const failed = rows.filter((r) => (r.status === "refused" || r.status === "error") && !r.expected_refusal).length;
   const crm = first?.crm;
 
   return (
@@ -205,13 +208,15 @@ export default function CallsTab({ onTrace, onRoute }: {
             <KpiTile size="sm" label={t("kpiCost")} value={list.isLoading ? undefined : usd(cost)} />
             <KpiTile size="sm" label={t("kpiFailed")} info={t("kpiFailedInfo")}
               value={list.isLoading ? undefined : failed} valueTone={failed ? "danger" : undefined} />
+            <KpiTile size="sm" label={t("kpiExpected")} info={t("kpiExpectedInfo")}
+              value={list.isLoading ? undefined : expected} testId="ai-gateway-calls-kpi-expected" />
           </div>
           {rows.length > 0 && (
             <div>
               <div style={{ ...small, marginBottom: 4 }}>{t("latencyTitle")}</div>
               <LatencyStrip testId="ai-gateway-calls-latency"
-                points={[...rows].reverse().map((r) => ({ ms: r.latency_ms, tone: r.status === "refused"
-                  || r.status === "error" ? "danger" : "info" }))} />
+                points={[...rows].reverse().map((r) => ({ ms: r.latency_ms, tone: (r.status === "refused"
+                  || r.status === "error") && !r.expected_refusal ? "danger" : "info" }))} />
             </div>
           )}
           {crm && (

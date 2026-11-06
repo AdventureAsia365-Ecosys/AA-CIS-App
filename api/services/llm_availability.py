@@ -41,7 +41,7 @@ coverage card on the Routing tab; the same report raises the ops check ``llm_sta
 AA-900 (S271 lane l11) — a deployment refused only because it has no grant yet (its circuit's class access_denied,
 its deployment's last probe access_denied, its account answering: ``shared.llm_client.expected_refusal``) is listed
 with ``expected_refusal: true`` and in ``known_refused_models``; it does not make its connection ``open`` or
-``degraded`` and is not in ``open_models``. The connection-level ``circuit`` is unchanged (an account-wide refusal is
+``degraded``, is not in ``open_models`` and is not the connection's ``last_error_*``. The connection-level ``circuit`` is unchanged (an account-wide refusal is
 never expected).
 """
 from __future__ import annotations
@@ -251,7 +251,9 @@ def build_connections(rows: Iterable[dict], *, now: datetime) -> list[dict]:
     out = []
     for entry in by_key.values():
         models = entry["models"]
-        newest_error = max((m for m in models if m["_last_error"]), key=lambda m: m["_last_error"], default=None)
+        # AA-900: the last error shown is the newest one of a model that is not an expected refusal
+        newest_error = max((m for m in models if m["_last_error"] and not m["expected_refusal"]),
+                           key=lambda m: m["_last_error"], default=None)
         entry.update(
             status=connection_status(entry["enabled"], models, now),
             open_models=sum(1 for m in models if m["state"] != CLOSED and not m["expected_refusal"]),
