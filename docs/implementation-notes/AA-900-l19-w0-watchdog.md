@@ -120,3 +120,8 @@ Root ADR 0020 "Measurement" layer; audit 2026-11-06-S271 writing-quality-audit, 
 - Deploy order: root PR (catalog) and CIS PR carry the same catalog bytes; the root lint compares with `--copy`.
 - `automated_from: 2026-11-07`: the register does not call earlier CIS-08 periods overdue.
 - No UI page in this lane (follow-up: a Writing Lab / Reports tab over GET /admin/quality/funnel).
+- Role reach of GET /admin/quality/funnel (`ops.read | lab.read`, pinned in the AA-1035 role matrix snapshot):
+  admin, content_lead, tenant_qa, ai_ops. Numbers only (yield, attempts, USD per delivered object), no tenant text
+  and no tenant directory or billing data, so the content-side "never money" rules hold.
+- `quality_funnel_watch` is on capacity line `None` (`shared/llm_client/capacity.KIND_LINES`): it makes no LLM call,
+  like `llm_route_watch`, so it is never held by the backpressure.

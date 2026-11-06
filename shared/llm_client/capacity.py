@@ -98,7 +98,9 @@ KIND_LINES: dict[str, Optional[str]] = {
     "data_erasure": None, "inquiry_handoff_check": None, "kpi_snapshot_daily": None, "llm_cost_reconcile": None,
     "llm_route_watch": None,     # AA-1042: route alerts and digest from the ledger (database reads only)
     "ops_alert_email": None, "photo_destination_match": None, "photo_medium_backfill": None, "photo_sync": None,
-    "place_geocode": None, "place_relocate": None, "place_shape": None, "recompute": None, "report_email": None,
+    "place_geocode": None, "place_relocate": None, "place_shape": None,
+    "quality_funnel_watch": None,  # AA-900: the nightly quality digest from a stored CIS-08 run (database reads only)
+    "recompute": None, "report_email": None,
     "report_generate": None, "retention_cost_explorer_snapshot": None, "retention_decision_log": None,
     "retention_job": None, "retention_llm_call_log": None, "retention_tenant_api_usage": None,
     "s1_seo_prefetch": None, "staff_directory_reconcile": None, "staff_invite_email": None, "supply_media_purge": None,
