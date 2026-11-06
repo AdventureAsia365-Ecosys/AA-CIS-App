@@ -4984,6 +4984,14 @@ async def get_brand(brand_name: str, request: Request, x_admin_secret: str = Hea
     }
 
 
+async def _wm_reverify_after_brand_save(pool, what: str) -> None:
+    """AA-900 W0: the AA house style (tenant_brand_rules / tenant_seo_config of the AA master tenant) is part of the
+    A1 releases' config_fp (brand_config): scan the writing-memory releases at once after a save (own transaction,
+    never fails the save). Other tenants' saves are caught by the same scan for their tenant releases."""
+    from services.writing_memory.releases import reverify_scan_safe
+    await reverify_scan_safe(pool, actor=f"brand_save:{what}"[:128])
+
+
 @router.post("/brands")
 async def create_brand(
     body: BrandCreateRequest,
@@ -5021,6 +5029,7 @@ async def create_brand(
             json.dumps(body.forbidden_words or []),
             body.target_markets or [], body.rewrite_language,
         )
+    await _wm_reverify_after_brand_save(pool, "create")
     return {"status": "created", "brand_name": body.brand_name, "version": row["version"]}
 
 
@@ -5064,6 +5073,7 @@ async def update_brand(
             body_raw.get("rewrite_language", "en"),
             current_ver + 1,
         )
+    await _wm_reverify_after_brand_save(pool, "update")
     return {"status": "updated", "brand_name": brand_name, "version": row["version"]}
 
 
@@ -5094,6 +5104,7 @@ async def activate_brand_version(brand_name: str, request: Request, x_admin_secr
             " WHERE tenant_id=$1 AND COALESCE(brand_name,'default')=$2 AND version=$3",
             tenant_id, brand_name, int(version),
         )
+    await _wm_reverify_after_brand_save(pool, "activate")
     return {"status": "activated", "brand_name": brand_name, "version": version}
 
 
@@ -5110,6 +5121,7 @@ async def delete_brand(brand_name: str, request: Request, x_admin_secret: str = 
         """, tenant_id, brand_name)
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Brand '{brand_name}' not found")
+    await _wm_reverify_after_brand_save(pool, "delete")
     return {"status": "deleted", "brand_name": brand_name}
 
 
@@ -5364,6 +5376,10 @@ async def update_brand_identity(
         # AA-859 MAIN exception (plan D2): the X-Admin-Secret staff branch (AA master brand).
         async with pool.acquire() as conn, conn.transaction():
             current = await _save_brand_rows(conn, tenant_id, *args, guarded=False)
+            # AA-900 W0: the AA master brand is the A1 releases' config_fp brand_config: scan on this connection.
+            # A tenant save stays off MAIN (AA-859): the worker's hourly reverify tick catches its tenant releases.
+            from services.writing_memory.releases import reverify_scan_in_tx
+            await reverify_scan_in_tx(conn, actor="brand_save:brand_identity")
     out = {"status": "updated", "version": current + 1,
            "markets": {k: market_json[k] for k in ("countries", "unsupported", "unknown")}}
     # AA-819 follow-up (S237): a default CTA that claims reviews or ratings is saved as typed (F19

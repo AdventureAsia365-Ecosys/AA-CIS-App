@@ -160,6 +160,25 @@ async def test_writer_model_is_the_newest_billed_writer_call_since_the_piece(ctx
 @pytest.mark.asyncio
 async def test_writer_model_is_none_without_a_ledger_row(ctx):
     assert await ai_marking.writer_model(ctx.conn, ctx.req, ctx.piece) is None
+    assert await ai_marking.writer_answer(ctx.conn, ctx.req, ctx.piece) is None
+
+
+@pytest.mark.asyncio
+async def test_writer_answer_reads_the_same_row_with_its_fallback_marks(ctx):
+    # AA-900 W0: the answered model and how it answered (fallback rung, connection, effort) from the same ledger row
+    await _ledger(ctx, model="first-attempt", minutes=1)
+    created = await ctx.conn.fetchval("SELECT created_at FROM acp_shared.content_piece WHERE piece_id = $1",
+                                      ctx.piece)
+    await ctx.conn.execute(
+        "INSERT INTO shared.llm_call_log (stage, role, model, quality_signal, angle_gate_request_id, created_at, "
+        "status, is_shadow, fallback_used, connection_key, effort) "
+        "VALUES ('t9_write', 'writer', 'final-attempt', '{\"route_position\": 1}'::jsonb, $1, $2, 'ok', false, "
+        "false, 'conn-b', 'medium')", ctx.req, created + timedelta(minutes=2))
+    await _ledger(ctx, model="shadow-model", minutes=3, shadow=True)
+    answer = await ai_marking.writer_answer(ctx.conn, ctx.req, ctx.piece)
+    assert answer == {"answered_model": "final-attempt", "fallback_used": True, "route_position": 1,
+                      "connection_key": "conn-b", "effort": "medium"}
+    assert answer["answered_model"] == await ai_marking.writer_model(ctx.conn, ctx.req, ctx.piece)
 
 
 @pytest.mark.asyncio

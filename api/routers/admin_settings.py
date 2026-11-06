@@ -206,6 +206,10 @@ async def patch_seo_config(
             FROM shared.tenant_seo_config WHERE tenant_id = $1
         """, AA_INTERNAL_TENANT_ID)
 
+    # AA-900 W0: the AA master tenant's SEO config is part of the A1 releases' config_fp (brand_config)
+    from services.writing_memory.releases import reverify_scan_safe
+    await reverify_scan_safe(pool, actor="settings_seo_save")
+
     def _jsonb(val: Any) -> Any:
         if val is None:
             return None

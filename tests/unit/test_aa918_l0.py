@@ -167,7 +167,8 @@ def test_release_zero_is_a_no_op():
     assert "writing_rules" not in svc.writer_input_snapshot({"brand_audience": pack, "channel": "facebook"})
 
 
-def test_applied_rules_reach_the_prompt_and_the_gate():
+def test_applied_rules_reach_the_prompt_and_the_gate(monkeypatch):
+    monkeypatch.setenv("WRITING_MEMORY_L0_ENFORCE", "on")    # AA-900 W0: L0 blocks only with the switch on
     pack = {**fs.PACK, "forbidden_words": ["dreamy"]}
     applied, _ = l0.select_rules([_rule("truly special"), _rule("must-see", replacement="worth seeing", rid="r2")],
                                  pack=pack, cta=fs.CTA, brand_name=fs.BRAND, trip_name=fs.TRIP)

@@ -100,6 +100,7 @@ The router is included without an include prefix (staff_policy reads the route t
 """
 from __future__ import annotations
 
+import json
 from collections import Counter, defaultdict
 from datetime import date, datetime, timezone
 from typing import Literal, Optional
@@ -360,6 +361,22 @@ _PROVENANCE_SQL = f"SELECT {_SIGNAL_COLS} FROM shared.writing_signal WHERE signa
                   "ORDER BY created_at DESC"
 
 
+async def _l0_r1_problem(conn, rule: dict) -> Optional[tuple[str, str]]:
+    """AA-900 W0 (ADR 0020, critic F4): an L0 activation changes the writer's prompt, so it waits for the writer's R1
+    record like a release (only for a lexicon rule the L0 path takes; other refusals come first)."""
+    from services.writing_memory import r1_gate
+    if rule.get("kind") != "lexicon" or rule.get("writer") not in l0_mod.L0_WRITERS:
+        return None
+    return await r1_gate.check(conn, rule["writer"], "Activating a learned lexicon rule")
+
+
+async def _reverify_after_rule_change(request: Request, actor: str) -> None:
+    """AA-900 W0: an active L0 lexicon rule is part of the t9 releases' config_fp (l0_lexicon): scan at once after an
+    activation or a rollback (own transaction, never fails the action)."""
+    from services.writing_memory.releases import reverify_scan_safe
+    await reverify_scan_safe(_pool(request), actor=f"admin:{actor}"[:128])
+
+
 @router.get("/candidates/{rule_id}", dependencies=LAB_TEXT_LOGGED)
 async def get_candidate(rule_id: str, request: Request):
     rid = _uuid(rule_id, "rule")
@@ -369,12 +386,12 @@ async def get_candidate(rule_id: str, request: Request):
             if rule is None:
                 raise HTTPException(status_code=404, detail="Unknown rule")
             sigs = [dict(r) for r in await conn.fetch(_PROVENANCE_SQL, rule["signal_ids"] or [])]
+            out = rules_mod.serialise(rule)
+            # AA-918 — what stands between this rule and the L0 path now (None = it may be activated), and whether its
+            # stored R0 result is for its current text. AA-900 W0: frozen until the writer has an R1 record.
+            problem = l0_mod.activation_problem(out) or await _l0_r1_problem(conn, out)
     except asyncpg.UndefinedTableError as e:
         raise _unavailable(e)
-    out = rules_mod.serialise(rule)
-    # AA-918 — what stands between this rule and the L0 path now (None = it may be activated), and whether its stored
-    # R0 result is for its current text
-    problem = l0_mod.activation_problem(out)
     r0 = out.get("lint", {}).get("r0") if isinstance(out.get("lint"), dict) else None
     return {**out, "provenance": [_signal_out(s) for s in sigs],
             "l0_activation": None if problem is None else {"code": problem[0], "detail": problem[1]},
@@ -505,7 +522,8 @@ async def activate_rule(rule_id: str, request: Request, x_admin_user_id: Optiona
                     rule = await rules_mod.get_rule(conn, rid, for_update=True)
                     if rule is None:
                         raise HTTPException(status_code=404, detail="Unknown rule")
-                    problem = l0_mod.activation_problem(rules_mod.serialise(rule))
+                    problem = (l0_mod.activation_problem(rules_mod.serialise(rule))
+                               or await _l0_r1_problem(conn, rules_mod.serialise(rule)))   # AA-900 W0
                     if problem:
                         raise HTTPException(status_code=409, detail={"detail": problem[1], "code": problem[0]})
                     row = await rules_mod.activate_l0(conn, rid, approved_by=actor)
@@ -518,6 +536,7 @@ async def activate_rule(rule_id: str, request: Request, x_admin_user_id: Optiona
     if row is None:
         raise HTTPException(status_code=409, detail={"detail": "The rule changed meanwhile; reload", "code": "stale"})
     logger.info("aa918_l0_activated", rule_id=rid, writer=row["writer"], scope=row["scope"], actor=actor)
+    await _reverify_after_rule_change(request, actor)
     return rules_mod.serialise(row)
 
 
@@ -545,6 +564,7 @@ async def rollback_rule(rule_id: str, body: RollbackBody, request: Request,
     except asyncpg.UndefinedTableError as e:
         raise _unavailable(e)
     logger.info("aa918_l0_rolled_back", rule_id=rid, actor=actor)
+    await _reverify_after_rule_change(request, actor)
     return rules_mod.serialise(row)
 
 
@@ -584,6 +604,16 @@ async def run(body: RunBody, request: Request, x_admin_user_id: Optional[str] = 
             raise HTTPException(status_code=409, detail={
                 "detail": "Preference summaries need the LLM path, which is switched off "
                           f"({preference.PREF_ENV} is not set on the worker)", "code": preference.STATE_OFF})
+        from services.writing_memory import r1_gate
+        if r1_gate.gate_on():                  # AA-900 W0: the drafter is mining too; frozen at $0 until R1
+            try:
+                async with pool.acquire() as conn:
+                    r1 = await r1_gate.records(conn)
+            except asyncpg.UndefinedTableError as e:
+                raise _unavailable(e)
+            if not r1:
+                raise HTTPException(status_code=409, detail={
+                    "detail": r1_gate.detail("any writer", "Preference-summary drafting"), "code": r1_gate.CODE})
         payload["mode"] = "preference_summary"
     now = _job_stamp()
     job_id, created = await enqueue(pool, kind, payload, idempotency_key=f"{kind}:admin:{now}",
@@ -638,6 +668,20 @@ async def active_releases(request: Request):
     return {"items": [rel.serialise(r) for r in items], "writers": [rel.serialise(w) for w in switches]}
 
 
+async def _config_drift(conn, rel, row: dict) -> Optional[dict]:
+    """AA-900 W0: which config_fp components / path stages differ from the release's fingerprint now ($0). None when
+    the current fingerprint cannot be read (the drawer still opens)."""
+    try:
+        fp = row["fingerprint"]
+        stored = fp if isinstance(fp, dict) else json.loads(fp or "{}")
+        now = await rel.current_fingerprint(conn, row["writer"], scope=row.get("scope") or "platform",
+                                            tenant_id=row.get("tenant_id"))
+        return rel.config_drift(stored, now)
+    except Exception as e:  # noqa: BLE001
+        logger.info("wm_release_drift_unavailable", error=f"{type(e).__name__}: {str(e)[:160]}")
+        return None
+
+
 @router.get("/releases/{release_id}")
 async def get_release(release_id: str, request: Request):
     from services.writing_memory import releases as rel
@@ -653,9 +697,11 @@ async def get_release(release_id: str, request: Request):
             problem = None
             if row["status"] == "approved":
                 problem = rel.wiring_problem(row) or await rel.check(conn, row, first_activation=True)
+            # AA-900 W0: which config_fp components / path stages differ from the release's fingerprint now ($0)
+            drift = await _config_drift(conn, rel, row)
     except asyncpg.UndefinedTableError as e:
         raise _unavailable(e)
-    return {**rel.serialise(row),
+    return {**rel.serialise(row), "config_drift": drift,
             "runs": {k: ({**rel.serialise({kk: vv for kk, vv in v.items() if kk != "details"}),
                           "summary": rel.run_summary(v.get("details"))} if v else None)
                      for k, v in runs.items()},

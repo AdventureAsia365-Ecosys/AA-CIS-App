@@ -43,7 +43,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Optional, TypedDict
+from typing import Iterable, Optional, TypedDict
 
 import structlog
 
@@ -349,6 +349,26 @@ def _forbidden_hits(content_text: str, atom_text: str,
     return hits
 
 
+def gating_forbidden(brand_pack: Optional[dict]) -> list[str]:
+    """AA-900 W0 — the forbidden words the gates BLOCK on: the pack's list minus the writing memory's learned L0
+    phrases while L0 is warn-only (writing_memory.l0.gating_forbidden; the tenant's own words always block)."""
+    from services.writing_memory.l0 import gating_forbidden as _gating
+    return _gating(brand_pack)
+
+
+def learned_hits(content_text: str, atom_text: str, brand_pack: Optional[dict],
+                 skip: Iterable[str] = ()) -> list[str]:
+    """AA-900 W0 — warn findings for the learned L0 phrases the piece uses while L0 is warn-only (same match and
+    source exemption as F2_brand_forbidden). A phrase another word layer judges (a platform-truth or stock-superlative
+    word, or a word in `skip`: the positioning words F2_style_warn already reports) is left to that layer."""
+    from services.acp_shared.signature_vocabulary import PLATFORM_TRUTH, STOCK_SUPERLATIVES
+    from services.writing_memory.l0 import warn_only_phrases
+    layered = {w.lower() for w in (*PLATFORM_TRUTH, *STOCK_SUPERLATIVES, *skip)}
+    phrases = [p for p in warn_only_phrases(brand_pack) if p.lower() not in layered]
+    return [f"uses '{m}', a phrase the writing memory learned to avoid (warn only until it is measured): "
+            f"'{sent}'" for m, sent, _ in _forbidden_hits(content_text, atom_text, phrases)]
+
+
 # ---------------------------------------------------------------- F2 word layers (AA-800)
 
 F2_PLATFORM_GATE = qr.F2_PLATFORM_TRUTH
@@ -395,7 +415,7 @@ def gate_signature_words(content_text: str, atom_text: str,
     from services.acp_shared.signature_vocabulary import (STOCK_SUPERLATIVES, SUPERLATIVE_CAP,
                                                           undeclared_positioning)
     pack = brand_pack or {}
-    own = {str(w).lower().strip() for w in pack.get("forbidden_words") or []}
+    own = {str(w).lower().strip() for w in gating_forbidden(pack)}      # AA-900 W0: learned L0 phrases warn only
     sup = [(w, sent) for w, sent in _word_hits(content_text, STOCK_SUPERLATIVES, atom_text) if w not in own]
     excess = sup[SUPERLATIVE_CAP:] if len(sup) > SUPERLATIVE_CAP else []
     over = [f"stock superlative '{w}' ({len(sup)} in this piece, at most {SUPERLATIVE_CAP}): say it with a "
@@ -405,6 +425,7 @@ def gate_signature_words(content_text: str, atom_text: str,
     undeclared = [w for w in undeclared_positioning(pack, include_prompt_only=True) if w not in own]
     warn += [f"uses '{w}', a positioning word this brand has not declared as its own: '{sent}'"
              for w, sent in _word_hits(content_text, undeclared, atom_text)]
+    warn += learned_hits(content_text, atom_text, pack, skip=undeclared)  # AA-900 W0: L0 warn-only findings
     return [_result(F2_SUPERLATIVE_GATE, list(dict.fromkeys(over)), repairable=True, blocking=bool(over)),
             _result(F2_STYLE_WARN_GATE, list(dict.fromkeys(warn)), repairable=False, blocking=False)]
 
@@ -2728,7 +2749,7 @@ def lexicon_sources(content_text: str, f2_source: str, brand_pack: Optional[dict
     kept = [(p, sent) for p, sent, _ in banned]
     forbidden: list[str] = []
     for p, sent, v in _forbidden_hits(content_text, f2_source if atom_text is None else atom_text,
-                                      (brand_pack or {}).get("forbidden_words")):
+                                      gating_forbidden(brand_pack)):      # AA-900 W0: learned L0 phrases warn only
         if any(_same_hit((p, sent), k) for k in kept):
             continue
         kept.append((p, sent))
@@ -2864,7 +2885,7 @@ def run_quality_gates(
         # AA-800 — the word layers: platform truth blocks; stock superlatives capped at one; positioning
         # words the brand did not declare are a warning. Same source exemption as F2. AA-924 — a word on the
         # tenant's own forbidden list is the lexicon's only.
-        gate_platform_truth(content_text, f2_source, (brand_pack or {}).get("forbidden_words")),
+        gate_platform_truth(content_text, f2_source, gating_forbidden(brand_pack)),
         *gate_signature_words(content_text, f2_source, brand_pack),
         gate_brand_name(content_text, atom_text, (brand_pack or {}).get("brand_name")),
         # AA-819 (AUP 2026-11) — no reviews / testimonials / customer first person / independence claim.
@@ -2965,7 +2986,8 @@ def run_quality_gates(
 __all__ = [
     "GateResultLite", "QualityCheckOutcome", "TAG_RE",
     "strip_citation_tags", "deep_strip_citation_tags", "gate_cta_present", "gate_grounding",
-    "gate_banned_patterns", "gate_cannibalization", "gate_complete", "gate_brand_forbidden_words",
+    "gate_banned_patterns", "gate_cannibalization", "gate_complete", "gate_brand_forbidden_words", "gating_forbidden",
+    "learned_hits",
     "gate_brand_name", "gate_extreme_length",
     "gate_seo_surface", "restated_faq_answers",
     "gate_brand_voice", "run_quality_gates", "drop_restated_faq", "keyword_covered",

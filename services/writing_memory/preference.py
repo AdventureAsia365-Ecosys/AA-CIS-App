@@ -220,6 +220,16 @@ async def run_preference(pool, ctx, *, max_calls: int = cfg.MINE_MAX_CALLS) -> d
     stored (candidate, or rejected by the lint with `quarantine` when it made a claim)."""
     if not enabled():
         return {"ran": False, "mode": KIND, "state": STATE_OFF, "calls": 0, "cost_usd": 0.0}
+    # AA-900 W0 (ADR 0020, critic F4): the drafter is mining too; frozen at $0 until some writer has an R1 record,
+    # and it drafts only for writers that have one.
+    from services.writing_memory import r1_gate
+    r1 = None
+    if r1_gate.gate_on():
+        async with pool.acquire() as conn:
+            r1 = await r1_gate.records(conn)
+        if not r1:
+            return {"ran": False, "mode": KIND, "state": r1_gate.CODE, "calls": 0, "cost_usd": 0.0,
+                    "refused": r1_gate.detail("any writer", "Preference-summary drafting")}
     from shared.cost_guard import load_run_budget
     from services.writing_memory import rules as rules_mod
     from services.writing_memory.budget import load_month_budget
@@ -236,6 +246,9 @@ async def run_preference(pool, ctx, *, max_calls: int = cfg.MINE_MAX_CALLS) -> d
                     "candidates": 0, "quarantined": 0, "lint_rejected": 0, "none": 0, "unusable": 0, "calls": 0,
                     "cost_usd": 0.0, "stopped": None, "rules": []}
     for g in groups:
+        if r1 is not None and g.writer not in r1:
+            result["skipped_no_r1"] = result.get("skipped_no_r1", 0) + 1
+            continue
         if (g.writer, "tenant", g.tenant_id, g.cluster_key) in open_keys:
             result["skipped_open"] += 1
             continue

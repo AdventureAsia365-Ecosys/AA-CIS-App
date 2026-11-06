@@ -2768,8 +2768,12 @@ async def _finalize_piece(
             # final attempt from the ledger (best-effort, None when unreadable), stamped next to the writer input.
             request_id = await conn.fetchval(
                 "SELECT angle_gate_request_id FROM acp_shared.content_piece WHERE piece_id = $1", piece_id)
-            model = await ai_marking.writer_model(conn, request_id, piece_id) if request_id else None
-            writer_input = {**writer_input, ai_marking.PROVENANCE_KEY: ai_marking.stamp(model)}
+            # AA-900 W0: one ledger read gives the model and how it answered (fallback rung, connection, effort); the
+            # answer is stamped admin-only (writer_input.writer_answer) for the release KPIs.
+            answer = await ai_marking.writer_answer(conn, request_id, piece_id) if request_id else None
+            model = (answer or {}).get("answered_model")
+            writer_input = {**writer_input, ai_marking.PROVENANCE_KEY: ai_marking.stamp(model),
+                            **({ai_marking.ANSWER_KEY: answer} if answer else {})}
         row = await conn.fetchrow(
             """
             UPDATE acp_shared.content_piece

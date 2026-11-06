@@ -185,6 +185,8 @@ async def lifespan(app: FastAPI):
     if in_api_enabled():
         try:
             load_kinds()
+            from services.writing_memory import config_fp   # AA-900 W0: the writers run in this process too
+            config_fp.set_service(config_fp.WRITER_SERVICE)
             job_worker = Worker(pool, resources={"redis": redis})
             job_worker_task = asyncio.create_task(job_worker.run(), name="job-worker")
         except Exception as e:

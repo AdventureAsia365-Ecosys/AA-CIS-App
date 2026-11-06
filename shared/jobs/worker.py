@@ -131,6 +131,9 @@ def failure_outcome(exc: BaseException) -> tuple[str, bool, Optional[str]]:
 
 OPS_FLUSH_EVERY_S = 300.0     # S263: same cadence as the api ops sampler
 OPS_FLUSH_TIMEOUT_S = 20.0
+# AA-900 W0: the hourly writing-memory reverify scan (a handful of active releases, ~12 reads each, $0).
+REVERIFY_EVERY_S = 3600.0
+REVERIFY_TIMEOUT_S = 60.0
 # S263 review: the last flush on shutdown. The events of the last minutes (a lost cost-log write, a cis_app refused
 # connection) would otherwise die with the task. Short: it runs inside RELEASE_MARGIN_SECONDS, after the release.
 OPS_FLUSH_ON_STOP_TIMEOUT_S = 5.0
@@ -158,6 +161,9 @@ class Worker:
         # S263 (AA-1025): how often this worker turns the ops log events it counted (lost cost-log writes, cis_app
         # refused connections; shared/ops_checks.py) into the admin bell + alert e-mail. The api does it on its tick.
         self.ops_flush_every_seconds = OPS_FLUSH_EVERY_S
+        # AA-900 W0: how often this worker re-runs the writing-memory reverify scan (the start scan covers a deploy;
+        # this one catches a DB Migrate change of a route, params, prompt or house-style row without a deploy).
+        self.reverify_every_seconds = REVERIFY_EVERY_S
         # AA-711: a worker on a draining (older) task stops claiming once a newer one is live.
         self.task_revision = ecs_task_revision()
         self.yielding = False
@@ -189,6 +195,7 @@ class Worker:
         last_reap = last_beat = 0.0
         loop = asyncio.get_running_loop()
         last_ops_flush = loop.time()
+        last_reverify = loop.time()      # _main scanned at start
         while not self._stopping.is_set():
             reaped = None
             try:
@@ -211,6 +218,9 @@ class Worker:
             if loop.time() - last_ops_flush >= self.ops_flush_every_seconds:
                 await self._flush_ops_events()
                 last_ops_flush = loop.time()
+            if not self.yielding and loop.time() - last_reverify >= self.reverify_every_seconds:
+                await self._reverify_scan()
+                last_reverify = loop.time()
             if not claimed:
                 try:
                     await asyncio.wait_for(self._stopping.wait(), timeout=self.poll_seconds)
@@ -228,6 +238,16 @@ class Worker:
                 logger.warning("job_worker_ops_checks", worker_id=self.worker_id, ops_checks=results)
         except Exception as e:  # noqa: BLE001 — the events stay counted until a flush succeeds
             logger.warning("job_worker_ops_checks_failed", error=f"{type(e).__name__}: {str(e)[:200]}")
+
+    async def _reverify_scan(self, timeout_s: Optional[float] = None) -> None:
+        """AA-900 W0: the periodic writing-memory reverify scan. Bounded and never fails the loop."""
+        from services.writing_memory.releases import reverify_scan_safe
+
+        try:
+            await asyncio.wait_for(reverify_scan_safe(self.pool, actor="system:worker_tick"),
+                                   timeout=REVERIFY_TIMEOUT_S if timeout_s is None else timeout_s)
+        except Exception as e:  # noqa: BLE001 — the next tick scans again
+            logger.warning("job_worker_reverify_scan_failed", error=f"{type(e).__name__}: {str(e)[:200]}")
 
     async def _liveness(self, fn, *args) -> None:
         """AA-687: shared.job_worker writes are for the Jobs page only — never fail the loop."""
@@ -582,6 +602,10 @@ async def _main() -> None:
                 grace_seconds=grace_seconds)
     # AA-919 (WM-18 scope 5): a deploy can change the gate taxonomy (services/quality/registry.TAXONOMY_VERSION): flag
     # the active writing-memory releases whose fingerprint no longer matches (they keep serving). Never fails the start.
+    # AA-900 W0: the writers run here, so this process's env is the writers' (config_fp mode_flags is compared only
+    # between records of this service: the api task carries other switches).
+    from services.writing_memory import config_fp
+    config_fp.set_service(config_fp.WRITER_SERVICE)
     from services.writing_memory.releases import reverify_scan_safe
     await reverify_scan_safe(pool, actor="system:worker_start")
     await serve(worker)

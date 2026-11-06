@@ -442,7 +442,10 @@ async def test_reverify_scan_flags_a_changed_golden_set_and_keeps_serving(conn):
     assert (await rel.reverify_scan(conn)) == []
     await _golden(conn)                                   # a new golden-set version supersedes the old one
     flagged = await rel.reverify_scan(conn)
-    assert flagged == [{"release_id": first["release_id"], "writer": "t9_social", "reasons": ["golden_set"]}]
+    # AA-900 W0: + which config_fp components / path stages moved (none here: only the golden set changed), and
+    # whether mode_flags was compared (only on the worker)
+    assert flagged == [{"release_id": first["release_id"], "writer": "t9_social", "reasons": ["golden_set"],
+                        "components": [], "stages": [], "mode_flags_compared": False}]
     row = await rel.get_release(conn, first["release_id"])
     assert row["status"] == "active" and row["reverify"] and row["reverify_reasons"] == ["golden_set"]
     assert (await rel.reverify_scan(conn)) == []          # flagged once

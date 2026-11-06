@@ -196,13 +196,28 @@ async def _finalize(pool, status="approved", writer_input=None):
 
 @pytest.mark.asyncio
 async def test_finalize_stamps_the_writer_model():
-    pool, conn = _finalize_pool([uuid.uuid4(), "writer-model-x"])
+    answer = {"answered_model": "writer-model-x", "fallback_used": False, "route_position": 0,
+              "connection_key": "conn-a", "effort": None}
+    pool, conn = _finalize_pool([uuid.uuid4(), json.dumps(answer)])
     await _finalize(pool)
     stored = json.loads(conn.fetchrow.call_args.args[15])
     assert stored["seed"] == "s"
     prov = stored[ai_marking.PROVENANCE_KEY]
     assert prov["ai_generated"] is True and prov["model"] == "writer-model-x" and prov["generated_at"]
-    assert conn.fetchval.call_args_list[1].args[0] == ai_marking.WRITER_MODEL_SQL
+    # AA-900 W0: one ledger read (WRITER_ANSWER_SQL) gives the mark's model and the admin-only answer stamp
+    assert conn.fetchval.call_args_list[1].args[0] == ai_marking.WRITER_ANSWER_SQL
+    assert stored[ai_marking.ANSWER_KEY] == answer
+    assert set(prov) & {"fallback_used", "route_position", "connection_key"} == set()   # never in the tenant mark
+
+
+@pytest.mark.asyncio
+async def test_finalize_marks_a_fallback_answer():
+    answer = {"answered_model": "writer-model-y", "fallback_used": None, "route_position": 1}
+    pool, conn = _finalize_pool([uuid.uuid4(), json.dumps(answer)])
+    await _finalize(pool, status="held")
+    stored = json.loads(conn.fetchrow.call_args.args[15])
+    assert stored[ai_marking.ANSWER_KEY]["fallback_used"] is True        # a rung > 0 answered
+    assert stored[ai_marking.PROVENANCE_KEY]["model"] == "writer-model-y"
 
 
 @pytest.mark.asyncio
