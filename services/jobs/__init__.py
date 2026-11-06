@@ -36,6 +36,7 @@ from . import llm_cost_reconcile_job  # noqa: F401  AA-1002 S10 (LLM cost ledger
 from . import llm_probe_job  # noqa: F401  AA-1018 (daily LLM connection probe; off unless LLM_DAILY_PROBE=on)
 from . import llm_model_lifecycle_job  # noqa: F401  AA-1024 D2 (nightly Bedrock model lifecycle sync, $0)
 from . import llm_route_watch_job  # noqa: F401  AA-1042 (route alerts every 15 min + daily digest, $0)
+from . import quality_funnel_watch_job  # noqa: F401  AA-900 (nightly quality funnel watchdog alerts, $0)
 from . import embedding_reembed_job  # noqa: F401  AA-1026 D5 (re-embed a vector column into another space)
 from . import llm_contract_smoke_job  # noqa: F401  AA-1026 I6 (acc2 fallback contract smoke; dry run $0)
 from . import tenant_provision_job  # noqa: F401  AA-1028 R1 slice 2 (one-action tenant create / add-ons)

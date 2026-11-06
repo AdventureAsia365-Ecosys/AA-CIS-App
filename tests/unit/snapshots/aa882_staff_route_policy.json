@@ -619,6 +619,10 @@
     "capability": null,
     "module": "api.routers.admin_pipeline"
   },
+  "GET /admin/quality/funnel": {
+    "capability": "ops.read|lab.read",
+    "module": "api.routers.admin_quality_funnel"
+  },
   "GET /admin/reports": {
     "capability": "ops.read",
     "module": "api.routers.admin_reports"
