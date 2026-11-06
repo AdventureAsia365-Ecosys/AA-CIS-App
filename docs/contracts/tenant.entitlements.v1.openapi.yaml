@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: tenant.entitlements.v1 (AA-CIS-App → AA-Partner CRM, AA-Booking, TripPlanner; tenant account and entitlements)
-  version: "1.3"
+  version: "1.4"
   description: >-
     CIS shared is the master of the tenant account: lifecycle status, data region, product subscriptions and the
     entitlements they give (root ADR 0019 d1, d2). This contract tells the other apps, per tenant, which feature keys
@@ -59,10 +59,22 @@ info:
     tenant_billing_tick writes paid_through and moves the account (warn -> past_due, past the suspend days ->
     suspended with suspend_reason billing, paid again -> back in service); CIS stays the only writer of account and
     subscription state.
+    1.4 (AA-1038 R5 slice 2, additive; no HTTP shape change): a fourth view part for TripPlanner,
+    catalog.v_tenant_tripplanner_v1 (CIS 379, SELECT to role tripplanner only), for the /{slug} site of a tenant (root
+    ADR 0019 d10): one row per tenant that holds a TripPlanner subscription (any status; kind internal never shows)
+    with tenant_id, slug, name (the trading name, the site's brand label), kind, account_status, in_service, served
+    (in_service and the tp.hosted entitlement live: TripPlanner serves /{slug} only then and answers 404 otherwise,
+    the same 404 as an unknown slug), tp_launcher, tp_branding (the BO-8 badge flag), theme (an object of kit token
+    name -> '#rrggbb' lower-case colour, at most 4 kB, from CIS shared.tenant_tripplanner_site; '{}' = the kit
+    defaults) and locale ('en' | 'vi', default 'en'); columns are only appended. No personal data, no price. A tenant
+    bound on a TripPlanner connection (app.tenant_id) reads AA master catalogue rows only: the catalog tour views keep
+    the AA master tenant in their WHERE, so a bound tenant's own CIS rows never appear there; the tenant's own text is
+    a later view (catalog.v_tenant_tour_v1) with its own rule. CIS 379 also creates the demo tenant aa-tripplanner
+    (00000000-0000-0000-0000-000000000002, kind demo), the tenant of TripPlanner's bare path.
   x-aa-contract: tenant.entitlements.v1
   x-aa-producer: AA-CIS-App
   x-aa-consumers: [AA-Partner, AA-Booking, AA-TripPlanner-Web]
-  x-aa-issues: [AA-1028, AA-1037]
+  x-aa-issues: [AA-1028, AA-1037, AA-1038]
 servers:
   - url: /tenant/v1
 security:
