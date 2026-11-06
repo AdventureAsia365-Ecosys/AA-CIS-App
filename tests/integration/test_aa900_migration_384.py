@@ -1,8 +1,8 @@
-"""AA-900 S271 W0 — migration 385 registers prompt version writing_memory_eval v2 in shared.prompt_version, against
+"""AA-900 S271 W0 — migration 384 registers prompt version writing_memory_eval v2 in shared.prompt_version, against
 real Postgres.
 
-conftest applies every migration, 385 included; a later test may rebuild the table (lessons: never rely on seeded rows
-of a shared table), so each test runs 385's statements itself inside one transaction and rolls back. The guard test
+conftest applies every migration, 384 included; a later test may rebuild the table (lessons: never rely on seeded rows
+of a shared table), so each test runs 384's statements itself inside one transaction and rolls back. The guard test
 proves a version registered earlier with another hash stops the file.
 """
 import os
@@ -19,11 +19,11 @@ sys.path.insert(0, os.path.dirname(__file__))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
-M385 = os.path.join(ROOT, "api", "migrations", "385_prompt_version_writing_memory_eval_v2.sql")
-SQL = open(M385, encoding="utf-8").read()
+M384 = os.path.join(ROOT, "api", "migrations", "384_prompt_version_writing_memory_eval_v2.sql")
+SQL = open(M384, encoding="utf-8").read()
 # the file's own row (the INSERT): the test never restates the hash
 ROWS = {(s, v): (sha, path) for s, v, sha, path in
-        re.findall(r"\('(\w+)', '(v\d+)', '([0-9a-f]{64})', '([^']+)', 'migration-385'\)", SQL)}
+        re.findall(r"\('(\w+)', '(v\d+)', '([0-9a-f]{64})', '([^']+)', 'migration-384'\)", SQL)}
 BODY = SQL.replace("BEGIN;", "", 1).replace("COMMIT;", "")   # run inside the test's transaction
 
 
@@ -31,7 +31,7 @@ BODY = SQL.replace("BEGIN;", "", 1).replace("COMMIT;", "")   # run inside the te
 def cur():
     conn = psycopg2.connect(host=DB_HOST, port=DB_PORT, dbname=DB_NAME, user=DB_USER, password=DB_PASS)
     c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    c.execute("DELETE FROM shared.prompt_version WHERE created_by = 'migration-385'")
+    c.execute("DELETE FROM shared.prompt_version WHERE created_by = 'migration-384'")
     try:
         yield c
     finally:
@@ -48,11 +48,11 @@ def test_registers_the_version_with_its_hash_and_is_idempotent(cur):
     cur.execute(BODY)
     cur.execute(BODY)
     cur.execute("SELECT stage, version, prompt_sha256, source_path FROM shared.prompt_version "
-                "WHERE created_by = 'migration-385'")
+                "WHERE created_by = 'migration-384'")
     got = {(r["stage"], r["version"]): (r["prompt_sha256"], r["source_path"]) for r in cur.fetchall()}
     assert got == ROWS
-    cur.execute("SELECT version AS ok FROM shared.schema_versions WHERE version = '385'")
-    assert cur.fetchone()["ok"] == "385"
+    cur.execute("SELECT version AS ok FROM shared.schema_versions WHERE version = '384'")
+    assert cur.fetchone()["ok"] == "384"
 
 
 def test_v1_is_kept(cur):

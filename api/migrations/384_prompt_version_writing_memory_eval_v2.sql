@@ -1,4 +1,4 @@
--- Migration 385: AA-900 (S271 W0, Writing Lab eval interim) — register prompt version writing_memory_eval v2 in
+-- Migration 384: AA-900 (S271 W0, Writing Lab eval interim) — register prompt version writing_memory_eval v2 in
 -- shared.prompt_version, so the ledger can tell the new R2 judge prompt from the old one.
 --
 -- Why. The S271 judge root cause (root audit docs/audits/2026-11-06-S271-writing-quality-audit, RC2) found the R2
@@ -14,13 +14,13 @@
 --
 -- What.
 --   1. One row (sha256 of the hashed symbols' source text in the source file, never the text; created_by
---      'migration-385'), the output of
---      `python3 scripts/prompt_registry_check.py --sql --unregistered --created-by migration-385` on the code PR's tree:
+--      'migration-384'), the output of
+--      `python3 scripts/prompt_registry_check.py --sql --unregistered --created-by migration-384` on the code PR's tree:
 --        writing_memory_eval  v2  system_prompt, build_user_prompt, judge_version (services/writing_memory/eval_judge.py)
 --      ON CONFLICT (stage, version) DO NOTHING.
 --   2. Guard: the row exists with exactly this hash and path (a version registered earlier with another hash would be
 --      kept silently by the ON CONFLICT and every call of it would carry prompt_version NULL).
---   3. Register 385.
+--   3. Register 384.
 --
 -- Behaviour. Until the code PR deploys, no deployed prompt matches v2 and nothing changes (calls keep 'v1'). After it
 -- deploys, within the registry cache TTL, judge rows carry 'v2'. No route, model, cost or prompt change by this file.
@@ -31,7 +31,7 @@
 -- (3) Infra Migration Apply applies it once every job table is idle (root ADR 0017a); (4) then the W0 eval code PR
 -- merges. No readiness bump. DM-7.1: no new table.
 --
--- Rollback (a NEW forward migration): DELETE FROM shared.prompt_version WHERE created_by = 'migration-385';
+-- Rollback (a NEW forward migration): DELETE FROM shared.prompt_version WHERE created_by = 'migration-384';
 -- (calls of this version then carry prompt_version NULL; rows already written keep their version).
 --
 -- The SQL that is applied to Dev is the copy in AA-CIS-Infra db/migrations/cis/; keep the two byte-identical.
@@ -46,14 +46,14 @@ SET LOCAL lock_timeout = '5s';
 DO $$
 BEGIN
     IF to_regclass('shared.prompt_version') IS NULL THEN
-        RAISE EXCEPTION 'migration 385: shared.prompt_version is missing (apply 321 first)';
+        RAISE EXCEPTION 'migration 384: shared.prompt_version is missing (apply 321 first)';
     END IF;
 END $$;
 
 -- ── 1. the manifest row ──────────────────────────────────────────────────────────────────────────────────────────
 
 INSERT INTO shared.prompt_version (stage, version, prompt_sha256, source_path, created_by) VALUES
-    ('writing_memory_eval', 'v2', '1bb1732339d7785be23edb2f1024e2900860a15b289ead0eacb7205ac502eb99', 'services/writing_memory/eval_judge.py', 'migration-385')
+    ('writing_memory_eval', 'v2', '1bb1732339d7785be23edb2f1024e2900860a15b289ead0eacb7205ac502eb99', 'services/writing_memory/eval_judge.py', 'migration-384')
 ON CONFLICT (stage, version) DO NOTHING;
 
 -- ── 2. guard ─────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -66,7 +66,7 @@ BEGIN
            AND prompt_sha256 = '1bb1732339d7785be23edb2f1024e2900860a15b289ead0eacb7205ac502eb99'
            AND source_path = 'services/writing_memory/eval_judge.py'
     ) THEN
-        RAISE EXCEPTION 'migration 385: writing_memory_eval v2 is registered with another hash or path, or missing (a '
+        RAISE EXCEPTION 'migration 384: writing_memory_eval v2 is registered with another hash or path, or missing (a '
                         'version is never edited: bump the manifest instead)';
     END IF;
 END $$;
@@ -74,7 +74,7 @@ END $$;
 -- ── 3. register ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('385', now(), 'AA-900 S271 W0: register prompt version writing_memory_eval v2 (no prompt text)')
+VALUES ('384', now(), 'AA-900 S271 W0: register prompt version writing_memory_eval v2 (no prompt text)')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;
