@@ -129,6 +129,10 @@ class BrandFitResult:
     route_skips: Optional[list] = None
     # S271: the retry's ceiling when the call was the gateway's one truncation retry (call_log.RETRY_KEYS)
     truncation_retry_max_tokens: Optional[int] = None
+    # S271 W0 (AA-900 l13): why the gateway retried, and its degraded marks of the reply (call_log.RETRY_KEYS,
+    # call_log.DEGRADED_KEYS)
+    truncation_retry_reason: Optional[str] = None
+    route_degraded: Optional[list] = None
 
 
 # AA-927 / AA-1002 (S6) / AA-804: the keys of one judge call's billing in `runs` (run_billing), as judge_node logs
@@ -193,6 +197,9 @@ def aggregate_runs(results: list[BrandFitResult], *, mission_absent_cap: Optiona
         route_trace=getattr(first, "route_trace", None), route_position=getattr(first, "route_position", None),
         route_skips=getattr(first, "route_skips", None),
         truncation_retry_max_tokens=getattr(first, "truncation_retry_max_tokens", None),
+        truncation_retry_reason=getattr(first, "truncation_retry_reason", None),
+        # S271 W0: the degraded marks of every run (one verdict = every call that made it)
+        route_degraded=[e for r in results for e in (getattr(r, "route_degraded", None) or [])] or None,
         runs=runs + ((_failed_entry(failed, failed_cost_usd),) if failed else ()),
         mission_evidence=evidence,
         evidence_verified=verified,

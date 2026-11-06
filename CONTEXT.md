@@ -907,11 +907,13 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     (`quality_signal.gateway_attempt = true`), fire-and-forget, before the route moves on or raises;
   - a gateway-internal retry that succeeds (the AA-714 Converse schema retry) is ONE response whose cost
     and tokens cover both requests (`LLMResponse.provider_requests = 2`);
-  - a caller's budget retry (AA-741 S270, `services/acp_shared/token_budget.py`: T8 angles, T9 write / repair / FAQ
-    filter) is TWO responses and two rows: the reply cut at its token ceiling (`budget_cut: true`, status truncated,
-    written before the retry is sent) and the retry with double the ceiling (`truncation_retry: true`); never a third
-    call. `attempt_no` stays the gateway's (each is its own gateway request). Those requests say
-    `budget_retry=False`; every other stage gets the **gateway's own truncation retry** (S271,
+  - the **truncation retry is the gateway's only** (S271; since S271 W0 / AA-900 also for T8 angles, T9 write /
+    repair / FAQ filter, whose `services/acp_shared/token_budget.py` is now a ceiling calculator: no own retry, no
+    `budget_retry=False`, because it never saw an EMPTY reply cut at max_tokens and the route swapped the model
+    silently). It is TWO responses and two rows: the reply cut at its token ceiling (the gateway's row) and the retry
+    with double the ceiling (the caller's row, `truncation_retry: true`, `retry_reason` = `cut_reply` |
+    `billed_unusable_cut` | `truncated_refusal`); never a third call. No production request says
+    `budget_retry=False` (**gateway's own truncation retry**, S271,
     `shared/llm_client/token_floor.py`, rules in the core `shared/aa_llm/tokens.py`): per route model in
     `LLMClient._call_key_logged`, a cut reply / a refused cut reply (OpenAI 400) / a billed cut reply is asked once
     more on the same model with double the ceiling (cap 24000 and the model's `max_output_tokens`) before the route
@@ -924,7 +926,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     GPT-5.x / 6.x, or `capabilities.reasoning`) is sent at least 4096 output tokens (or `capabilities.
     min_output_tokens`), over a call site's explicit value, after the stage x model row (`_call_catalog_model`;
     `LLM_TOKEN_FLOOR=off`). Guard: `tests/unit/test_s271_gateway_token_budget.py` (literal sub-floor ceilings are a
-    shrinking allowlist, `budget_retry=False` only in token_budget.py, every migration model key classified). Alert:
+    shrinking allowlist, no production `budget_retry=False`, every migration model key classified) and
+    `tests/unit/test_aa900_s271_w0_gateway.py` (every budgeted call-site ceiling >= `token_floor.effort_floor(model,
+    effort)` of every model of the stage's route, read from the migrations). Alert:
     `route_cut.<stage>` (route_watch, > 5 % of a stage's replies cut over 24 h, refused cuts and eval rows
     included). A ceiling is head-room, not the expected size: since t9_write v2 (AA-741 S271) every blog prompt carries a word band (900-1,300, never over
     1,600, never padded), a section cap and a one-pass rule (`prompts._BLOG_LENGTH_INSTRUCTIONS`), because the
@@ -3998,6 +4002,14 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     already fail-closed on numbers and the hold adds review load, not safety, until AA-845 sets a ceiling.
   - Per job: `decide()` notes every zone=error verdict into a contextvar collector bound by the job worker
     (`shared.job.result.degraded`), so A3 / ingestion / S1 prefetch outages are counted without their code.
+  - **Instrument marks** (S271 W0, AA-900; `services/quality/route_guard.answer_marks`, set by the gateway on every
+    reply): `fallback_instrument` (a judge / validate / decide answer from route position > 0, or from nova-lite)
+    and `same_family_pair` (a judge of the same model family as a writer of the same output; the family trace is
+    bound per output by `route_guard.collect_output`: T9 piece, T2 version, S1 tour). On the reply
+    (`LLMResponse.route_degraded`), in the ledger (`quality_signal.degraded`) and in the collectors, severity
+    `count`: T9 flags the piece (non-blocking), S1 stores it in `metadata.degraded`, T2 in
+    `judge_breakdown.route_degraded`; no hold reads them yet. A writer at position > 0 carries `fallback_writer` on
+    its reply too (the AA-1042 note is unchanged).
   - **Repair contract** (`services/quality/repair_contract.py`): a repair may not fail a gate that passed,
     add a figure (or, for the grounding / T3 fact editors, a name) the text and source lack, cut a sentence
     short (incl. the cut signature "…a 20-kilometre." that `meta_complete_sentence` accepts — a modifier left

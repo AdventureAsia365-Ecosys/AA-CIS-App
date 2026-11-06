@@ -165,6 +165,8 @@ def test_a_cut_reply_is_retried_once_with_double_the_ceiling(rows):
     q = cut["quality_signal"]
     assert cut["status"] == "truncated" and cut["stop_reason"] == "max_tokens" and cut["tokens_out"] == 4096
     assert q["budget_cut"] is True and q["gateway_attempt"] is True
+    assert q["retry_reason"] == "cut_reply" and resp.truncation_retry_reason == "cut_reply"      # S271 W0
+    assert resp.truncation_cut_cost_usd == pytest.approx(cut["cost_usd"])
     assert (q["max_tokens"], q["retry_max_tokens"]) == (4096, 8192)
     assert cut["route_trace"] == resp.route_trace and cut["attempt_no"] == 1
     assert not set(q) & set(call_log.OK_RATE_KEYS)
@@ -184,6 +186,8 @@ def test_a_billed_unusable_cut_reply_is_retried(rows):
     """An empty reply cut at its ceiling (the reasoning used every token) is a billed unusable reply: retried."""
     resp, sent = _run(_req(max_tokens=1200), LUNA, [_reply("", "max_tokens", 4096), _reply("whole")])
     assert sent == [4096, 8192] and resp.content == "whole"
+    assert resp.truncation_retry_reason == "billed_unusable_cut" and resp.truncation_cut_cost_usd > 0    # S271 W0
+    assert call_log.billed_fields(resp)["truncation_retry_reason"] == "billed_unusable_cut"
 
 
 def test_the_retry_stays_under_the_model_cap_and_a_request_at_the_cap_is_not_retried(rows):
@@ -195,7 +199,7 @@ def test_the_retry_stays_under_the_model_cap_and_a_request_at_the_cap_is_not_ret
 
 
 @pytest.mark.parametrize("change", [
-    {"budget_retry": False},                         # the call site retries itself (token_budget.py)
+    {"budget_retry": False},                         # a test reading one attempt (no production site, S271 W0)
     {"stage": "adhoc_conn_test"},                    # a probe: a cut is its expected answer
     {"stage": "a3_atomize"},                         # re-asks a cut read itself with its own ceiling
 ])
@@ -250,6 +254,7 @@ def test_a_refused_cut_reply_is_retried_on_the_same_model_before_the_next_one(ro
                              role="judge")
     assert sizes == [("gpt-6-luna", 1200), ("gpt-6-luna", 4096 * 2)]   # the retry doubles the floored ceiling
     assert resp.content == "verdict" and resp.fallback_used is False and resp.truncation_retry_max_tokens == 8192
+    assert resp.truncation_retry_reason == "truncated_refusal" and resp.truncation_cut_cost_usd == 0.0   # S271 W0
 
 
 def test_a_billed_cut_failure_twice_moves_on_to_the_next_model(rows):
@@ -338,15 +343,19 @@ def test_any_other_failure_is_not_retried(rows):
     assert [k for k, _ in sizes] == ["gpt-6-luna", "nova-lite"]
 
 
-def test_the_caller_side_helper_opts_out_so_there_is_no_third_call():
+def test_the_caller_side_helper_makes_one_call_and_reads_the_gateways_retry():
+    """S271 W0 (AA-900 l13): token_budget no longer retries nor opts out; the gateway's retry facts are on the reply."""
     seen: list = []
 
     def generate(request):
         seen.append((request.max_tokens, request.budget_retry))
-        return _resp("cut", "max_tokens") if len(seen) == 1 else _resp("whole")
+        r = _resp("whole")
+        r.truncation_retry_max_tokens, r.truncation_retry_reason, r.truncation_cut_cost_usd = 8192, "cut_reply", 0.002
+        return r
     reply = tb.generate_with_budget_retry(generate, LLMRequest(system_prompt="s", user_prompt="u", max_tokens=4096))
-    assert seen == [(4096, False), (8192, False)] and reply.resp.content == "whole"
-    assert reply.signal() == {"truncation_retry": True, "max_tokens": 8192}
+    assert seen == [(4096, True)] and reply.resp.content == "whole" and reply.retried and not reply.still_cut
+    assert reply.signal() == {"truncation_retry": True, "max_tokens": 8192, "retry_reason": "cut_reply"}
+    assert reply.cost_usd == pytest.approx(0.003)
 
 
 def test_the_central_budget_estimate_uses_the_floored_ceiling():
@@ -363,6 +372,8 @@ def test_the_retry_key_is_a_billed_field_every_row_shape_takes():
     row = call_log._fold_route({"stage": "s", "quality_signal": {"a": 1}, "truncation_retry_max_tokens": 9000})
     assert row == {"stage": "s", "quality_signal": {"a": 1, "truncation_retry": True, "max_tokens": 9000}}
     assert call_log.retry_signal(None) == {} and call_log.retry_signal(True) == {}
+    assert call_log.retry_signal(9000, "billed_unusable_cut") == {"truncation_retry": True, "max_tokens": 9000,
+                                                                  "retry_reason": "billed_unusable_cut"}
     from services.content_generation.brand_fit import BrandFitResult
     assert "truncation_retry_max_tokens" in BrandFitResult.__dataclass_fields__
 
@@ -379,9 +390,6 @@ SUB_FLOOR_CEILINGS = {
     "api/services/llm_route_trace.py:TEST_MAX_TOKENS": "admin route test: 'reply ok'; the floor lifts it on a "
                                                        "reasoning model, the literal bounds a non-reasoning one",
     "services/jobs/llm_probe_job.py:CANDIDATE_MAX_TOKENS": "availability sweep through LLMClient.probe",
-    "services/acp_content_writing/faq_answer_fit.py:MAX_TOKENS": "FAQ answer fit, one short answer",
-    "services/acp_content_writing/faq_answer_fit.py:ISOLATED_MAX_TOKENS": "FAQ answer fit, isolated sentence",
-    "services/acp_content_writing/seed_align/adjudicate.py:MAX_TOKENS": "seed alignment verdicts",
     "services/acp_content_writing/seed_align/checks.py:MAX_TOKENS": "seed alignment one-word check",
     "services/acp_contract/segment_research.py:483": "segment research questions (JSON list)",
     "services/acp_shared/place_cards.py:DRAFT_MAX_TOKENS": "place card draft",
@@ -462,8 +470,10 @@ def test_the_named_stages_are_at_the_floor_now():
     assert tb.T9_REPAIR_MAX_TOKENS >= 8192 and tb.T9_FAQ_FILTER_MAX_TOKENS >= 6000
 
 
-# Every file that may send budget_retry=False (it then retries a cut reply itself and writes both rows).
-OWN_RETRY_FILES = {"services/acp_shared/token_budget.py": "T8 / T9 write / repair / FAQ filter (AA-741 S270)"}
+# Every file that may send budget_retry=False. S271 W0 (AA-900 l13): none. The gateway is the only owner of the
+# truncation retry; token_budget.py (T8 / T9 write / repair / FAQ filter) dropped its own retry and opt-out, because
+# it never saw an empty cut and the route swapped the model silently.
+OWN_RETRY_FILES: dict = {}
 
 
 def test_only_the_listed_call_sites_bypass_the_gateway_retry():

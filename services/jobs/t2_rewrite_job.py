@@ -438,6 +438,12 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
             if fb_mark is not None:
                 judge_breakdown = {**(judge_breakdown or {}), "fallback_writer": fb_mark}
                 diag["fallback_writer"] = fb_mark
+            # S271 W0 (AA-900 l13): its judge / validate calls answered by a fallback or uncalibrated model, or a judge
+            # of the writer's own family. Marked only (admin-only, never the version's held label).
+            inst_mark = route_guard.t2_instrument_mark(fb_notes)
+            if inst_mark is not None:
+                judge_breakdown = {**(judge_breakdown or {}), "route_degraded": inst_mark}
+                diag["route_degraded"] = inst_mark
             if judge_breakdown is not None:
                 diag["judge"] = {"binding": judge_breakdown.get("binding"),
                                  "brand_claims_unsupported": len(

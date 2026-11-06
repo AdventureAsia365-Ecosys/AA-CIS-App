@@ -29,8 +29,7 @@ from services.acp_angle_gate.prompts import (BRIEF_MODE_OFF, BRIEF_MODE_R8, R8_B
 from services.acp_angle_gate.route_digest import focus_name, thin_anchor
 from services.acp_shared.channel_spec import sanitize_best_final_style
 from services.acp_shared.dfs_relevance import SearchDemandSignal
-from services.acp_shared.token_budget import (T8_ANGLE_GEN_MAX_TOKENS, ReplyStillCut, agenerate_with_budget_retry,
-                                              cut_signal)
+from services.acp_shared.token_budget import T8_ANGLE_GEN_MAX_TOKENS, ReplyStillCut, agenerate_with_budget_retry
 from services.acp_shared.piece_history import PriorPiece
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
@@ -142,19 +141,9 @@ async def _generate_once(
     ids = {"tenant_id": str(tenant_id) if tenant_id else None,
            "angle_gate_request_id": str(request_id) if request_id else None}
 
-    async def _log_cut(cut, max_tokens: int, retry_max_tokens: int) -> None:
-        # AA-741 (S270): the cut reply was billed and is thrown away — its own row before the one budget retry.
-        await record_call(
-            stage=stage, role="writer", model=cut.model_used,
-            tokens_in=getattr(cut, "input_tokens", None), tokens_out=getattr(cut, "output_tokens", None),
-            cost_usd=cut.cost_usd, quality_signal={"attempt": attempt, **extra,
-                                                   **cut_signal(max_tokens, retry_max_tokens)},
-            stop_reason=getattr(cut, "stop_reason", None), account=getattr(cut, "satellite_account", None),
-            fallback_used=getattr(cut, "fallback_used", None), **ids, **billed_fields(cut),
-        )
-
-    # AA-741 (S270): a reply cut at its ceiling is asked once more with double the ceiling, never a third time.
-    reply = await agenerate_with_budget_retry(client.generate, request, on_cut=_log_cut)
+    # AA-741 (S270): a reply cut at its ceiling is asked once more with double the ceiling (by the gateway since S271
+    # W0, which writes the cut row), never a third time.
+    reply = await agenerate_with_budget_retry(client.generate, request)
     resp = reply.resp
     extra.update(reply.signal())
     try:

@@ -51,7 +51,9 @@ from services.writing_memory import config as cfg
 # S256: + unsupported_claims (<= MAX_CLAIMS short quotes). S271: 1200 -> 4096: on gpt-6-luna-openai every one of 33
 # R2 judge calls (stage adhoc_aa900) was cut at 1200 before the verdict (the reasoning is billed inside max_tokens), so
 # the eval scored the fallback model and judge kappa was 0.137. The gateway's floor + truncation retry back it up.
-MAX_TOKENS = 4096
+# S271 W0 (AA-900 l13): 4096 -> 8192, the effort floor of the judge route's GPT models (token_floor.effort_floor; the
+# R2 judge's answered calls reached p95 5626 output tokens, so 4096 still cut 8 of 24): the CI lint checks it.
+MAX_TOKENS = 8192
 SOURCE_CHARS = 24000               # S256: the whole T9 writer input (the panel's source), facts last
 OUTPUT_CHARS = 9000
 MAX_CLAIMS = 8

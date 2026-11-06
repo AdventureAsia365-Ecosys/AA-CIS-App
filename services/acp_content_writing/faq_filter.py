@@ -35,7 +35,7 @@ import structlog
 
 from services.acp_content_writing.hygiene import fold, names_place
 from services.acp_content_writing.quality_gates import PAA_MAX_QUESTIONS, normalize_paa_question, paa_for_scope
-from services.acp_shared.token_budget import (T9_FAQ_FILTER_MAX_TOKENS, ReplyStillCut, cut_signal,
+from services.acp_shared.token_budget import (T9_FAQ_FILTER_MAX_TOKENS, ReplyStillCut,
                                               generate_with_budget_retry)
 from shared.llm_client.call_log import billed_fields, record_call_sync, record_unusable_sync
 from shared.llm_client.client import LLMClient
@@ -278,19 +278,9 @@ def llm_filter_questions(questions, scope: FaqScope, *, out_of_scope=(), limit: 
            "angle_gate_request_id": angle_gate_request_id}
     signal = {"issue": "AA-779", "n_questions": len(cands), **(quality_signal or {})}
 
-    def _log_cut(cut, max_tokens: int, retry_max_tokens: int) -> None:
-        # AA-741 (S270): the cut reply was billed and is thrown away; its row (no ok-rate key) before the retry.
-        record_call_sync(
-            stage=stage, role=role, model=cut.model_used,
-            tokens_in=getattr(cut, "input_tokens", None), tokens_out=getattr(cut, "output_tokens", None),
-            cost_usd=cut.cost_usd, quality_signal=signal | cut_signal(max_tokens, retry_max_tokens),
-            stop_reason=getattr(cut, "stop_reason", None), account=getattr(cut, "satellite_account", None),
-            fallback_used=getattr(cut, "fallback_used", None), provider=getattr(cut, "provider", None),
-            **ids, **billed_fields(cut),
-        )
-
-    # AA-741 (S270): a reply cut at its ceiling is asked once more with double the ceiling, never a third time.
-    reply = generate_with_budget_retry((client or LLMClient()).generate, request, on_cut=_log_cut)
+    # AA-741 (S270): a reply cut at its ceiling is asked once more with double the ceiling (by the gateway since S271
+    # W0, which writes the cut row), never a third time.
+    reply = generate_with_budget_retry((client or LLMClient()).generate, request)
     resp = reply.resp
     signal |= reply.signal()
     try:

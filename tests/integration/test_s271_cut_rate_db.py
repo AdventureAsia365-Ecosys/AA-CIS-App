@@ -93,6 +93,33 @@ async def test_the_cut_row_and_the_retry_row_land(pool):
 
 
 @pytest.mark.asyncio
+async def test_the_retry_reason_and_the_degraded_marks_land_in_quality_signal(pool):
+    """S271 W0 (AA-900 l13): the retry's row says why it ran; a degraded judge answer carries its marks; both through
+    billed_fields, on the async row path and the record_calls row path."""
+    marks = [{"name": "fallback_instrument", "reason": "rung", "stage": CALM, "model": "gpt-6-luna-openai",
+              "position": 3, "ignored": "x"}]
+    retry = _resp(content="whole", output_tokens=900, stop_reason="end_turn", truncation_retry_max_tokens=8192,
+                  truncation_retry_reason="billed_unusable_cut", truncation_cut_cost_usd=0.13, route_degraded=marks)
+    await call_log.record_call(stage=CALM, role="judge", model=retry.model_used, tokens_in=10, tokens_out=900,
+                               cost_usd=0.01, quality_signal={"passed": True}, stop_reason=retry.stop_reason,
+                               **call_log.billed_fields(retry))
+    await call_log.record_calls([dict(stage=CALM, role="judge", model="zz-model", tokens_in=1, tokens_out=1,
+                                      cost_usd=0.0, quality_signal={"passed": False},
+                                      **call_log.billed_fields(_resp(route_degraded=marks)))])
+    rows = await pool.fetch("SELECT model, quality_signal FROM shared.llm_call_log WHERE stage = $1", CALM)
+    # id is a uuid: pick each row by its model, never by row order (S271: ORDER BY id made this test flaky in CI).
+    by_model = {r["model"]: (json.loads(r["quality_signal"]) if isinstance(r["quality_signal"], str)
+                             else r["quality_signal"]) for r in rows}
+    stored = call_log._normalize_model_provider(retry.model_used, None)[0]    # the ledger strips "satellite-"
+    q_retry, q_row = by_model[stored], by_model[call_log._normalize_model_provider("zz-model", None)[0]]
+    assert q_retry["truncation_retry"] is True and q_retry["retry_reason"] == "billed_unusable_cut"
+    assert q_retry["passed"] is True and "truncation_cut_cost_usd" not in q_retry
+    want = [{"name": "fallback_instrument", "reason": "rung", "stage": CALM, "model": "gpt-6-luna-openai",
+             "position": 3}]
+    assert q_retry["degraded"] == want and q_row["degraded"] == want
+
+
+@pytest.mark.asyncio
 async def test_the_cut_rate_query_counts_cut_replies_per_stage(pool):
     for _ in range(8):
         await _row(pool, STAGE)

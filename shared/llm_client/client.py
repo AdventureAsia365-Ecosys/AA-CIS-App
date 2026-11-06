@@ -873,6 +873,29 @@ def _note_fallback_write(request: LLMRequest, role: str, key: str, position: int
         logger.warning("llm_fallback_write_note_failed", stage=request.stage, error=str(e)[:200])
 
 
+def _mark_degraded_answer(request: LLMRequest, role: str, resp: LLMResponse) -> None:
+    """S271 W0 (AA-900 l13): put the degraded marks of a reply on it (``LLMResponse.route_degraded``: the caller can
+    read them, ``billed_fields`` carries them into ``quality_signal.degraded``) and note each instrument mark in the
+    quality guard's collectors (services/quality/route_guard: a judge / validate / decide answer from a fallback rung
+    or nova-lite, a judge of the same family as a writer of the bound output). A writer's fallback note stays
+    ``_note_fallback_write``. Never raises."""
+    try:
+        from services.quality import route_guard
+        trace = family_rule.current_trace()
+        writers = family_rule.labels(trace, "writer") if trace else []
+        marks = route_guard.answer_marks(request.stage, role, getattr(resp, "model_used", None),
+                                         getattr(resp, "route_position", None), writers)
+        if not marks:
+            return
+        resp.route_degraded = list(resp.route_degraded or []) + marks
+        for mark in marks:
+            route_guard.note_instrument(mark)
+        logger.info("llm_answer_degraded", stage=request.stage, role=role, model=getattr(resp, "model_used", None),
+                    marks=[f"{m['name']}:{m['reason']}" for m in marks])
+    except Exception as e:  # noqa: BLE001 — a QA mark never breaks the call it marks
+        logger.warning("llm_answer_degraded_mark_failed", stage=request.stage, error=str(e)[:200])
+
+
 # ── AA-1042 (S270): route rungs deferred behind an open refusal circuit ─────────────────────────────────────────────
 #
 # A route rung whose every usable deployment sits behind a circuit opened by a refusal (``vendor_route.sunk_skips``:
@@ -1318,6 +1341,9 @@ class LLMClient:
                 _DEADLINE.reset(deadline_token)
             _ATTEMPT_SCOPE.reset(scope_token)
 
+        # S271 W0 (AA-900 l13): the reply's degraded marks (a fallback / uncalibrated instrument, a same-family judge),
+        # read against the writers traced so far, so before this reply is traced itself.
+        _mark_degraded_answer(request, role, resp)
         # AA-1024 A4: an eval runner's call-time family check (family_rule.trace_models; no-op without a trace).
         family_rule.note_model(role, getattr(resp, "model_used", None))
 
@@ -1511,6 +1537,7 @@ class LLMClient:
         scope = _ATTEMPT_SCOPE.get()
         allowed = token_floor.retry_allowed(request, scope.extra if scope is not None else None)
         failed_retry: Optional[tuple] = None
+        failed_reason, failed_cost = None, 0.0
         try:
             resp = self._call_key_once(request, key, primary_acct, role=role, position=position, extra=extra)
         except Exception as e:
@@ -1520,8 +1547,11 @@ class LLMClient:
             failed_retry = self._budget_retry_request(request, key)
             if failed_retry is None:
                 raise
+            # S271 W0: an EMPTY reply cut at max_tokens (billed unusable, stop reason max_tokens / length) lands here
+            # too: retried on THIS model before the route moves on (never a silent swap to the next rung).
+            failed_reason, failed_cost = token_floor.cut_failure_reason(e), token_floor.cut_failure_cost(e)
             # The cut attempt already has its row (the 0 USD truncated row, or the billed_unusable row above).
-            logger.info("llm_budget_retry", stage=request.stage, model=key, position=position, reason="cut_failure",
+            logger.info("llm_budget_retry", stage=request.stage, model=key, position=position, reason=failed_reason,
                         max_tokens=failed_retry[1], retry_max_tokens=failed_retry[0].max_tokens)
         if failed_retry is not None:
             # Review S271: sent here, after the except block, so no exception is being handled while the retry runs:
@@ -1529,17 +1559,20 @@ class LLMClient:
             # _ledgered / classify read the cut attempt again: a second billed row, no row for the retry, a 5xx
             # classified truncated and not counted by the breaker).
             return self._run_budget_retry(failed_retry[0], key, primary_acct, role=role, position=position,
-                                          extra=extra)
+                                          extra=extra, reason=failed_reason, cut_cost_usd=failed_cost)
         if not allowed or not token_floor.is_cut_reply(resp) or _deadline_passed():
             return resp                       # past the route deadline: the cut reply, as before (no retry)
         retry = self._budget_retry_request(request, key)
         if retry is None:
             return resp                       # already at the model's output cap: the caller gets the cut reply
         log_gateway_cut_reply(request, resp, role=role, max_tokens=retry[1], retry_max_tokens=retry[0].max_tokens,
-                              extra={"position": position, **(extra or {})})
-        logger.info("llm_budget_retry", stage=request.stage, model=key, position=position, reason="cut",
-                    max_tokens=retry[1], retry_max_tokens=retry[0].max_tokens)
-        return self._run_budget_retry(retry[0], key, primary_acct, role=role, position=position, extra=extra)
+                              extra={"position": position, "retry_reason": token_floor.RETRY_CUT_REPLY,
+                                     **(extra or {})})
+        logger.info("llm_budget_retry", stage=request.stage, model=key, position=position,
+                    reason=token_floor.RETRY_CUT_REPLY, max_tokens=retry[1], retry_max_tokens=retry[0].max_tokens)
+        return self._run_budget_retry(retry[0], key, primary_acct, role=role, position=position, extra=extra,
+                                      reason=token_floor.RETRY_CUT_REPLY,
+                                      cut_cost_usd=float(getattr(resp, "cost_usd", 0.0) or 0.0))
 
     def _budget_retry_request(self, request: LLMRequest, key: str) -> Optional[tuple]:
         """S271: (the retry's request, the first ceiling) for route model ``key``, or None when a retry cannot help
@@ -1560,7 +1593,8 @@ class LLMClient:
             return None
 
     def _run_budget_retry(self, retry: LLMRequest, key: str, primary_acct: str, *, role: str, position: int,
-                          extra: Optional[dict]) -> LLMResponse:
+                          extra: Optional[dict], reason: Optional[str] = None,
+                          cut_cost_usd: float = 0.0) -> LLMResponse:
         """S271: the one retry of a cut reply: the same route model, the same gateway request (route_trace), the
         cut attempt's number (``_AttemptScope.retry_of``). Its reply carries ``truncation_retry_max_tokens``; a reply
         cut again goes back as it is (no third call); its error propagates (the route moves on as before)."""
@@ -1576,6 +1610,8 @@ class LLMClient:
                 scope.retry_of = None
         try:
             resp.truncation_retry_max_tokens = int(retry.max_tokens)
+            resp.truncation_retry_reason = reason          # S271 W0: quality_signal.retry_reason on the caller's row
+            resp.truncation_cut_cost_usd = float(cut_cost_usd or 0.0)
         except Exception:  # noqa: BLE001 — a test double that is not an LLMResponse
             pass
         return resp
@@ -1697,6 +1733,11 @@ class LLMClient:
                     _STAGE_SCOPES.reset(scope_token)
 
         def answered(resp: LLMResponse, key: str, position: int, skipped: list) -> LLMResponse:
+            try:
+                if getattr(resp, "route_position", None) is None:
+                    resp.route_position = position    # S271 W0: the degraded marks read it (set by _attempt)
+            except Exception:  # noqa: BLE001 — a test double that is not an LLMResponse
+                pass
             if position > 0:
                 resp.fallback_used = True
                 # AA-1042 (Quality guard): a writer answered by a fallback model marks (or holds) the output it wrote

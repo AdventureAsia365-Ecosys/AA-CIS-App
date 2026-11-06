@@ -81,7 +81,10 @@ REASONS = {
 CHECK_NAME = {NAMING: "naming_note", REPEAT: "repeat", FAQ: "faq_answer", HYPE: "hype"}
 
 MAX_ITEMS = 6           # sentences sent per attempt (one call); the rest wait for the next attempt or are dropped
-MAX_TOKENS = 4000       # Luna reasons inside max_tokens (S246: an empty reply at 1500)
+# Luna reasons inside max_tokens (S246: an empty reply at 1500). S271 W0 (AA-900): 8192, the token_floor of every
+# model the t10_adjudicate route names (GPT-6 Luna's catalog floor, migration 382; GPT-5.6 Luna at its default
+# effort), was 4000: GPT-5.6 Luna has no catalog floor and was sent 4096.
+MAX_TOKENS = 8192
 TIMEOUT_S = 60.0        # the whole call; on timeout nothing changes
 MIN_QUOTE_WORDS = 3
 SEED_LINES = 3          # seed lines per item (plus the Naming lines for a naming item)

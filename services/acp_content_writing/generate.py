@@ -33,7 +33,7 @@ from shared.llm_client.models import LLMRequest
 from shared.llm_client.call_log import billed_fields, record_call_sync
 from services.writing_memory.insertion import t9_platform_block, t9_tenant_lines  # AA-919 (WM-18 / WM-20)
 from services.acp_shared.token_budget import (T9_REPAIR_MAX_TOKENS, T9_WRITE_BLOG_MAX_TOKENS,
-                                              T9_WRITE_DEFAULT_MAX_TOKENS, ReplyStillCut, cut_signal,
+                                              T9_WRITE_DEFAULT_MAX_TOKENS, ReplyStillCut,
                                               generate_with_budget_retry)
 
 # AA-768 (S233) — output ceiling per channel. A single 2048 cap cut 20/92 t9_write calls in the
@@ -52,16 +52,11 @@ def max_tokens_for(channel: str) -> int:
 
 def _generate_full(request: LLMRequest, channel: str, *, attempt: int, tenant_id,
                    angle_gate_request_id):
-    """Run the writer call; when it stops on the token ceiling, log that call and run it once
-    more with double the ceiling (token_budget, AA-741 S270; was x1.5 up to 16000). Returns (resp, cost of every
-    call made). A reply that is still cut after the retry is returned as-is — the F0_complete gate then reports it;
-    never a third call."""
-    def _log_cut(cut, _max_tokens: int, _retry_max_tokens: int) -> None:
-        _record_t9_write_call(cut, channel, attempt=attempt, tenant_id=tenant_id,
-                              angle_gate_request_id=angle_gate_request_id,
-                              signal_extra=cut_signal(_max_tokens, _retry_max_tokens))
-
-    reply = generate_with_budget_retry(LLMClient().generate, request, on_cut=_log_cut)
+    """Run the writer call. A reply cut at its token ceiling (also an empty cut) is retried once on the same model
+    with double the ceiling by the gateway (S271 W0; it writes the cut row). Returns (resp, cost of every call made).
+    A reply that is still cut after the retry is returned as-is — the F0_complete gate then reports it; never a
+    third call."""
+    reply = generate_with_budget_retry(LLMClient().generate, request)
     _record_t9_write_call(reply.resp, channel, attempt=attempt, tenant_id=tenant_id,
                           angle_gate_request_id=angle_gate_request_id, signal_extra=reply.signal())
     return reply.resp, reply.cost_usd
@@ -359,10 +354,9 @@ def repair_sentences_detailed(
             fallback_used=getattr(r, "fallback_used", None), **billed_fields(r),
         )
 
-    # AA-741 (S270): a reply cut at its ceiling is logged, then asked once more with double the ceiling.
+    # AA-741 (S270): a reply cut at its ceiling is asked once more with double the ceiling (by the gateway, S271 W0).
     with stream_sink.suppressed():
-        reply = generate_with_budget_retry(LLMClient().generate, request,
-                                           on_cut=lambda cut, m, rm: _log(cut, cut_signal(m, rm)))
+        reply = generate_with_budget_retry(LLMClient().generate, request)
     resp = reply.resp
     _log(resp, reply.signal())
     if reply.still_cut:
@@ -441,9 +435,9 @@ def fit_seo_fields(
             fallback_used=getattr(r, "fallback_used", None), **billed_fields(r),
         )
 
-    # AA-741 (S270): one budget retry on a cut reply; a reply cut twice gives nothing back (the writer's value stays).
-    reply = generate_with_budget_retry(LLMClient().generate, request,
-                                       on_cut=lambda cut, m, rm: _log(cut, cut_signal(m, rm)))
+    # AA-741 (S270): one budget retry on a cut reply (the gateway's, S271 W0); a reply cut twice gives nothing back
+    # (the writer's value stays).
+    reply = generate_with_budget_retry(LLMClient().generate, request)
     resp = reply.resp
     _log(resp, reply.signal())
     data = {}
@@ -536,9 +530,9 @@ def write_faq(
             fallback_used=getattr(r, "fallback_used", None), **billed_fields(r),
         )
 
-    # AA-741 (S270): one budget retry on a cut reply; a reply cut twice gives no pairs (a cut answer never lands).
-    reply = generate_with_budget_retry(LLMClient().generate, request,
-                                       on_cut=lambda cut, m, rm: _log(cut, cut_signal(m, rm)))
+    # AA-741 (S270): one budget retry on a cut reply (the gateway's, S271 W0); a reply cut twice gives no pairs (a cut
+    # answer never lands).
+    reply = generate_with_budget_retry(LLMClient().generate, request)
     resp = reply.resp
     _log(resp, reply.signal())
     if reply.still_cut:

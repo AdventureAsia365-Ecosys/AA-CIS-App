@@ -40,10 +40,10 @@ class LLMRequest(BaseModel):
     # writer | judge | validate | embed. The stage row's role always wins; None = 'writer' as before. Only the
     # gateway's own attempt rows read it (the caller still passes role= to record_call*).
     role:          Optional[str] = None
-    # S271 (AA-741 / AA-900): False = this call site retries a reply cut at its token ceiling itself and writes both
-    # rows (services/acp_shared/token_budget.py), so the gateway does not (shared/llm_client/token_floor.py). Every
-    # other request gets the gateway's one truncation retry. Guarded: tests/unit/test_s271_gateway_token_budget.py
-    # lists every call site allowed to set it.
+    # S271 (AA-741 / AA-900): False = the gateway does not retry a reply cut at its token ceiling
+    # (shared/llm_client/token_floor.py). S271 W0 (AA-900 l13): the gateway is the ONLY owner of that retry, so no
+    # production call site sets it any more (services/acp_shared/token_budget.py only computes ceilings); tests use it
+    # to read one attempt. Guarded: tests/unit/test_s271_gateway_token_budget.py (the allowlist is empty).
     budget_retry:  bool = True
 
 class LLMResponse(BaseModel):
@@ -119,3 +119,15 @@ class LLMResponse(BaseModel):
     # its token ceiling; its own row is already written): the retry's ceiling. billed_fields() passes it on, and the
     # caller's row gets quality_signal.truncation_retry = true + max_tokens. None = no retry ran.
     truncation_retry_max_tokens: Optional[int] = None
+    # S271 W0 (AA-900 l13): why the gateway retried (token_floor.RETRY_REASONS: 'cut_reply' = a reply came back cut,
+    # 'billed_unusable_cut' = a billed reply that was unusable (empty content, cut JSON) with a cut stop reason,
+    # 'truncated_refusal' = the provider refused to return a cut reply); billed_fields() passes it on as
+    # quality_signal.retry_reason. And what the cut attempt cost (its own row already has it): a caller that sums the
+    # cost of one request (token_budget.BudgetedReply.cost_usd) adds it. Never a ledger key.
+    truncation_retry_reason: Optional[str] = None
+    truncation_cut_cost_usd: Optional[float] = None
+    # S271 W0 (AA-900 l13): the gateway's degraded marks of this reply ([{name, reason, stage, model, position, ...}],
+    # services/quality/route_guard.py): a judge / validate / decide answer from a fallback rung (> 0) or from an
+    # uncalibrated model (nova-lite), or a judge of the same model family as a writer of the same output
+    # (family_rule.trace_models bound per output). billed_fields() passes it on as quality_signal.degraded; None = none.
+    route_degraded: Optional[list[dict]] = None
