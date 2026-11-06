@@ -14,11 +14,20 @@ request stays byte-identical (``tests/unit/test_aa1002_no_behaviour_change.py``)
 nothing.
 
 Which adapter uses what: max_tokens and temperature go through the request to every catalog path (Converse, the
-Anthropic Messages API, OpenAI / Azure). ``effort`` is sent only on the Anthropic Messages API (as the deployment's
-``effort_by_stage``; client._call_anthropic_messages). On Converse and OpenAI the gateway sends no effort or reasoning
-field today (AA-803: Converse runs the model's default); a row that sets ``effort`` / ``reasoning_mode`` for such a
-model is logged once (``stage_params_not_applied``) and not sent, until a probe has shown the provider's field. The
-legacy keys (haiku / sonnet, ``_legacy_chain``) are not catalog paths and read nothing here.
+Anthropic Messages API, OpenAI / Azure). The THINKING BUDGET of a stage (AA-741 S271) is ``effort`` plus
+``reasoning_mode``; the Claude 5.x models take no numeric thinking budget (``budget_tokens`` is a 400 there) and bill
+their thinking as output inside max_tokens, so effort is the lever:
+
+- Anthropic Messages API: ``effort`` as ``output_config.effort`` (the deployment's ``effort_by_stage``;
+  client._call_anthropic_messages), ``reasoning_mode`` as the ``thinking`` object the model family takes
+  (``adapters.anthropic_messages.resolve_thinking``: 'off' = between_tools on Sonnet 5.5, disabled on Haiku 5.5 /
+  Opus 5 / Sonnet 5; Opus 5.5 and Fable cannot turn it off; 'adaptive' explicit).
+- OpenAI / Azure (Chat Completions): ``effort`` low / medium / high as ``reasoning_effort``, on a reasoning-capable
+  catalog model only (``shared/aa_llm/tokens.reasoning_capable``); xhigh / max and ``reasoning_mode`` are not sent.
+- Converse: neither (AA-803: Converse runs the model's default) until a probe has shown the provider's field.
+
+A row field a path does not send is logged once (``stage_params_not_applied``). The legacy keys (haiku / sonnet,
+``_legacy_chain``) are not catalog paths and read nothing here.
 
 Like catalog.py: the whole table is loaded in one query and cached in process (300 s; a failed load 60 s); the sync read
 never raises (a DB failure or a table before migration 320 means no parameters, i.e. today's behaviour). Kill switch:
@@ -184,15 +193,48 @@ def effort_for(stage: Optional[str], model_key: str) -> Optional[str]:
     return p.effort if p is not None else None
 
 
-def warn_not_applied(stage: Optional[str], model_key: str, api_style: str) -> None:
-    """Log once per (stage, model, api style) that a row's effort / reasoning_mode is not sent on this path."""
+# AA-741 S271: the efforts the Chat Completions ``reasoning_effort`` field takes on every GPT-5.x / 6.x reasoning model
+# the catalog has (xhigh / max are not sent: not every model takes them, and a 400 would cost the attempt).
+OPENAI_REASONING_EFFORTS = ("low", "medium", "high")
+
+
+def openai_reasoning_effort(stage: Optional[str], model) -> Optional[str]:
+    """The ``reasoning_effort`` to send on the OpenAI / Azure path for (stage, catalog model): the row's effort when
+    it is low / medium / high and the model reasons (``shared/aa_llm/tokens.reasoning_capable``: GPT-5.x and later, or
+    the catalog row's ``capabilities.reasoning``); None otherwise (nothing sent: the model's default). Never raises."""
+    try:
+        from shared.aa_llm import tokens
+
+        key = getattr(model, "model_key", "") or ""
+        effort = effort_for(stage, key)
+        if effort not in OPENAI_REASONING_EFFORTS:
+            return None
+        caps = getattr(model, "capabilities", None)
+        return effort if tokens.reasoning_capable(key, caps if isinstance(caps, dict) else None) else None
+    except Exception as e:  # noqa: BLE001 — a parameter read never breaks the call
+        logger.warning("stage_params_reasoning_effort_failed", stage=stage, error=str(e)[:200])
+        return None
+
+
+def reasoning_mode_for(stage: Optional[str], model_key: str) -> Optional[str]:
+    """The reasoning_mode the stage x model row sets ('off' | 'adaptive'; None = not set)."""
     p = params_for(stage, model_key)
-    if p is None or (p.effort is None and p.reasoning_mode is None):
+    return p.reasoning_mode if p is not None else None
+
+
+def warn_not_applied(stage: Optional[str], model_key: str, api_style: str, *, applied: tuple = ()) -> None:
+    """Log once per (stage, model, api style) that a row's effort / reasoning_mode is not sent on this path.
+    ``applied``: the fields this path did send ("effort"), left out of the warning."""
+    p = params_for(stage, model_key)
+    if p is None:
+        return
+    left = {k: v for k, v in (("effort", p.effort), ("reasoning_mode", p.reasoning_mode))
+            if v is not None and k not in applied}
+    if not left:
         return
     key = (stage or "", model_key, api_style)
     if key in _NOT_APPLIED_WARNED:
         return
     _NOT_APPLIED_WARNED.add(key)
-    logger.warning("stage_params_not_applied", stage=stage, model=model_key, api_style=api_style,
-                   effort=p.effort, reasoning_mode=p.reasoning_mode,
-                   reason="this path sends no effort / reasoning field yet (Anthropic Messages API only)")
+    logger.warning("stage_params_not_applied", stage=stage, model=model_key, api_style=api_style, **left,
+                   reason="this path does not send that field (see shared/llm_client/stage_params.py)")
