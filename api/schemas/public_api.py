@@ -7,7 +7,7 @@ cannot see a field disappear. Each model here names every field the route return
 - ``response_model=`` where the handler returns a dict (FastAPI validates and serializes it): ``Health``,
   ``TenantSession``, ``Quota``. Nullable where the value can be null today, so no new 500 is possible.
 - ``responses={code: {"model": ...}}`` (documentation only) where the handler returns a ``JSONResponse`` with its own
-  status or headers: ``Readiness`` (200 or 503), ``Jwks`` (Cache-Control header), and the ``Catalog*`` bodies of
+  status or headers: ``Readiness`` (200 or 503) and the ``Catalog*`` bodies of
   catalog.http.v1 (AA-976; ETag / 304).
 
 The rest of the public surface is listed in ``tests/unit/snapshots/aa899_untyped_public_routes.json``; that list may
@@ -38,23 +38,6 @@ class Readiness(BaseModel):
     registered_keys: Optional[List[str]] = None
     keys_baseline: Optional[str] = None
     missing_schema_versions: Optional[List[str]] = None
-
-
-class Jwk(BaseModel):
-    """One RSA public key of the Booking bridge token (RFC 7517)."""
-    model_config = ConfigDict(extra="allow")
-
-    kty: str
-    n: str
-    e: str
-    kid: str
-    use: str
-    alg: str
-
-
-class Jwks(BaseModel):
-    """GET /auth/.well-known/jwks.json — current key first, then previous, then next."""
-    keys: List[Jwk]
 
 
 class TenantSession(BaseModel):

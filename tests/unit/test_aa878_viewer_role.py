@@ -33,7 +33,6 @@ from api.core import staff_authz
 from api.core.staff_authz import (
     AWAITING_ROUTE,
     CONTENT_READ,
-    NO_BOOKING_ROLES,
     POLICY,
     READ_ONLY_ROLES,
     ROLE_PERMS,
@@ -64,9 +63,8 @@ def test_viewer_holds_content_read_only():
     assert ROLE_PERMS[VIEWER] == frozenset({CONTENT_READ, staff_authz.NOTIFICATIONS_READ})   # + the bell (AA-1035 s2)
     assert VIEWER in STAFF_ROLES
     assert READ_ONLY_ROLES == frozenset({VIEWER})
-    # AA-1035 R2: none of the new roles gets a bridge token either (Booking reads booking-* groups only)
-    assert NO_BOOKING_ROLES == frozenset({VIEWER, "content_lead", "tenant_qa", "customer_success", "support",
-                                          "finance", "ai_ops"})
+    # AA-911: no role gets a Booking token from CIS any more (the bridge is retired; Booking reads booking-* groups)
+    assert not hasattr(staff_authz, "NO_BOOKING_ROLES")
 
 
 def test_viewer_is_a_staff_role_for_the_legacy_login():
@@ -242,21 +240,6 @@ def test_admin_login_returns_the_viewer_role(pool_client):
     res = c.post("/auth/admin-login", json={"username": "e2e-claude-code-viewer", "password": pw})
     assert res.status_code == 200, res.text
     assert res.json()["role"] == VIEWER
-
-
-@pytest.mark.parametrize("session_role", [VIEWER, "admin"])
-def test_booking_token_is_403_for_a_viewer_row(pool_client, monkeypatch, session_role):
-    """The DB role decides (a demoted admin session too); refused before any signing key is read."""
-    from api.core import booking_jwt
-    from api.routers.auth import _create_admin_jwt
-
-    monkeypatch.setattr(booking_jwt, "get_signing_keys_async",
-                        AsyncMock(side_effect=AssertionError("no key read for a viewer")))
-    c = pool_client(_viewer_row())
-    session = _create_admin_jwt(ADMIN_ID, "e2e-claude-code-viewer", session_role)
-    res = c.post("/auth/booking-token", headers={"Authorization": f"Bearer {session}"})
-    assert res.status_code == 403, res.text
-    assert res.json()["detail"] == "This staff role has no access to Booking"
 
 
 # ── Staff directory + reconcile ──────────────────────────────────────────────────────────────────

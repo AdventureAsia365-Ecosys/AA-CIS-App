@@ -893,30 +893,6 @@
         "title": "BackfillRequest",
         "type": "object"
       },
-      "BookingTokenResponse": {
-        "description": "AA-680 — POST /auth/booking-token: an RS256 JWT (aud=booking) for AA-Booking.",
-        "properties": {
-          "access_token": {
-            "title": "Access Token",
-            "type": "string"
-          },
-          "expires_in": {
-            "title": "Expires In",
-            "type": "integer"
-          },
-          "token_type": {
-            "title": "Token Type",
-            "type": "string"
-          }
-        },
-        "required": [
-          "access_token",
-          "token_type",
-          "expires_in"
-        ],
-        "title": "BookingTokenResponse",
-        "type": "object"
-      },
       "BrandCreateRequest": {
         "properties": {
           "brand_name": {
@@ -3706,63 +3682,6 @@
           }
         },
         "title": "JevCreditCheck",
-        "type": "object"
-      },
-      "Jwk": {
-        "additionalProperties": true,
-        "description": "One RSA public key of the Booking bridge token (RFC 7517).",
-        "properties": {
-          "alg": {
-            "title": "Alg",
-            "type": "string"
-          },
-          "e": {
-            "title": "E",
-            "type": "string"
-          },
-          "kid": {
-            "title": "Kid",
-            "type": "string"
-          },
-          "kty": {
-            "title": "Kty",
-            "type": "string"
-          },
-          "n": {
-            "title": "N",
-            "type": "string"
-          },
-          "use": {
-            "title": "Use",
-            "type": "string"
-          }
-        },
-        "required": [
-          "kty",
-          "n",
-          "e",
-          "kid",
-          "use",
-          "alg"
-        ],
-        "title": "Jwk",
-        "type": "object"
-      },
-      "Jwks": {
-        "description": "GET /auth/.well-known/jwks.json — current key first, then previous, then next.",
-        "properties": {
-          "keys": {
-            "items": {
-              "$ref": "#/components/schemas/Jwk"
-            },
-            "title": "Keys",
-            "type": "array"
-          }
-        },
-        "required": [
-          "keys"
-        ],
-        "title": "Jwks",
         "type": "object"
       },
       "KeepBody": {
@@ -47535,27 +47454,6 @@
         ]
       }
     },
-    "/auth/.well-known/jwks.json": {
-      "get": {
-        "operationId": "booking_jwks_auth__well_known_jwks_json_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Jwks"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Booking Jwks",
-        "tags": [
-          "auth"
-        ]
-      }
-    },
     "/auth/admin-login": {
       "post": {
         "description": "Per-user admin/reviewer login (AA-232). Verifies username+password against\nshared.admin_users (bcrypt). Constant-shape 401 on any failure — unknown\nuser, wrong password, and inactive account all look identical (no\nenumeration signal). Helpers/models live in api.routers.auth.",
@@ -47593,27 +47491,6 @@
           }
         },
         "summary": "Admin Login",
-        "tags": [
-          "auth"
-        ]
-      }
-    },
-    "/auth/booking-token": {
-      "post": {
-        "operationId": "booking_token_auth_booking_token_post",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BookingTokenResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Booking Token",
         "tags": [
           "auth"
         ]

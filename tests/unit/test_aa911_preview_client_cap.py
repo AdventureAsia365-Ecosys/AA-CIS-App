@@ -199,11 +199,10 @@ def test_verify_admin_returns_viewer_for_a_preview_token(issuer, directory):
     assert (body["admin_id"], body["role"], body["auth"]) == (uid, "viewer", "cognito")
 
 
-# ── AA-816 P6a: the CIS to Booking bridge stays, and a preview session gets nothing from it ──────
+# ── AA-911 (S271): the CIS to Booking bridge is retired, whatever the session ──────────────────────
 
-def test_booking_bridge_refuses_a_preview_cognito_token(issuer, directory):
-    """/auth/booking-token mints only from an HS256 password session; a Cognito token (here the preview client's,
-    with cis-admin and booking-admin groups and an owner row) is 401 before any key or DB access."""
+def test_booking_bridge_is_gone_for_a_preview_cognito_token(issuer, directory):
+    """/auth/booking-token is not a route any more (404), so a preview session gets nothing from it."""
     _owner_admin(directory)
     real_app.dependency_overrides[get_pool] = lambda: directory
     try:
@@ -211,5 +210,5 @@ def test_booking_bridge_refuses_a_preview_cognito_token(issuer, directory):
                                         headers={"Authorization": f"Bearer {_preview_admin_token(issuer)}"})
     finally:
         real_app.dependency_overrides.pop(get_pool, None)
-    assert res.status_code == 401, res.text
+    assert res.status_code == 404, res.text
     assert directory.sql == []
