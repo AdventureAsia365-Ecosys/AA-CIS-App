@@ -106,9 +106,11 @@ async def test_the_retry_reason_and_the_degraded_marks_land_in_quality_signal(po
     await call_log.record_calls([dict(stage=CALM, role="judge", model="zz-model", tokens_in=1, tokens_out=1,
                                       cost_usd=0.0, quality_signal={"passed": False},
                                       **call_log.billed_fields(_resp(route_degraded=marks)))])
-    rows = await pool.fetch("SELECT quality_signal FROM shared.llm_call_log WHERE stage = $1 ORDER BY id", CALM)
-    q_retry, q_row = (json.loads(r["quality_signal"]) if isinstance(r["quality_signal"], str)
-                      else r["quality_signal"] for r in rows)
+    rows = await pool.fetch("SELECT model, quality_signal FROM shared.llm_call_log WHERE stage = $1", CALM)
+    # id is a uuid: pick each row by its model, never by row order (S271: ORDER BY id made this test flaky in CI).
+    by_model = {r["model"]: (json.loads(r["quality_signal"]) if isinstance(r["quality_signal"], str)
+                             else r["quality_signal"]) for r in rows}
+    q_retry, q_row = by_model[retry.model_used], by_model["zz-model"]
     assert q_retry["truncation_retry"] is True and q_retry["retry_reason"] == "billed_unusable_cut"
     assert q_retry["passed"] is True and "truncation_cut_cost_usd" not in q_retry
     want = [{"name": "fallback_instrument", "reason": "rung", "stage": CALM, "model": "gpt-6-luna-openai",
