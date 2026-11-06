@@ -14,8 +14,10 @@ What it proves:
   * delivered / held / first pass / attempts / USD per delivered for T9 (per channel), S1 and T2; an S1 draft
     repaired by the fix pass or approved by a reviewer is not first pass, and a draft superseded by a later rewrite
     stays delivered in its week; the T9 headline cost is the whole T9 stage cost (attributed + unattributed);
-  * the watch window raises the cut, fallback and drift findings at the documented thresholds;
-  * a CIS-08 run stored with store.finish_ok is what GET /admin/quality/funnel's SQL reads back.
+  * the watch window raises the cut, fallback and drift findings at the documented thresholds; AI gateway route-test
+    rows (quality_signal.route_test) count nowhere; a stage's llm_route_policy fallback_alert_pct is honoured;
+  * a CIS-08 run stored with store.finish_ok is what GET /admin/quality/funnel's SQL reads back (scheduled runs only;
+    a manual run is listed apart), and a finding the previous scheduled run already had is stored as a repeat.
 
 The baseline (tests/integration/snapshots/aa900_quality_funnel_baseline.json) is this dataset's snapshot, frozen: a
 change of any funnel definition shows up as a diff of that file (regenerate with AA900_WRITE_BASELINE=1 and review
@@ -38,7 +40,7 @@ from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 
 from services.quality import funnel  # noqa: E402
 from services.reports import funnel_report, store  # noqa: E402
-from services.reports.funnel_report import HISTORY_SQL, LATEST_SQL  # noqa: E402
+from services.reports.funnel_report import HISTORY_SQL, LATEST_MANUAL_SQL, LATEST_SQL  # noqa: E402
 from services.reports.registry import load  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
@@ -89,13 +91,14 @@ async def _piece(conn, *, channel, status, attempt, created, ledger, discarded=(
 
 
 async def _call(conn, stage, model, created, *, n=1, role="writer", cost=0.01, status="ok", stop=None,
-                fallback=False, piece=None, request=None, attempt_no=1):
+                fallback=False, piece=None, request=None, attempt_no=1, signal=None):
     for _ in range(n):
         await conn.execute(
             "INSERT INTO shared.llm_call_log (stage, role, model, tokens_out, cost_usd, quality_signal, created_at, "
             "status, stop_reason, fallback_used, attempt_no, content_piece_id, angle_gate_request_id) "
-            "VALUES ($1, $2, $3, 100, $4, '{}'::jsonb, $5, $6, $7, $8, $9, $10, $11)",
-            stage, role, model, cost, created, status, stop, fallback, attempt_no, piece, request)
+            "VALUES ($1, $2, $3, 100, $4, $12::jsonb, $5, $6, $7, $8, $9, $10, $11)",
+            stage, role, model, cost, created, status, stop, fallback, attempt_no, piece, request,
+            json.dumps(signal or {}))
 
 
 async def _t2_table(conn):
@@ -161,6 +164,10 @@ async def _dataset(conn):
     await _call(conn, "t9_write", "zz-writer", W, piece=p2, cost=0.05)
     await _call(conn, "t9_write", "zz-writer", W, n=2, status="truncated", stop="max_tokens")
     await _call(conn, "t9_repair", "zz-writer", W, request=r3, cost=0.07)
+    # AI gateway route tests (16-token real requests, all cut): no stage, cut, cost or watch number counts them
+    await _call(conn, "t9_write", "zz-writer", W, n=5, status="truncated", stop="max_tokens",
+                signal={"route_test": True, "route_trace": "rt-1"})
+    await _call(conn, "t9_write", "zz-writer", W, piece=p2, cost=1.0, signal={"route_test": True})
     # the F9 judge: 25 primary answers the week before, then 20 primary + 5 from a new fallback model (20 %)
     await _call(conn, "t10_judge", "zz-judge-a", PRIOR, n=25, role="judge", cost=0.002)
     await _call(conn, "t10_judge", "zz-judge-a", W, n=20, role="judge", cost=0.002)
@@ -268,18 +275,49 @@ async def test_funnel_sql_counts_and_frozen_baseline(conn):
 
 
 @pytest.mark.asyncio
+async def test_a_stage_route_policy_sets_the_fallback_threshold(conn):
+    await _dataset(conn)
+    await conn.execute("DELETE FROM shared.llm_route_policy WHERE stage = 't10_judge'")
+    await conn.execute("INSERT INTO shared.llm_route_policy (stage, fallback_alert_pct) VALUES ('t10_judge', 50)")
+    snap = await funnel.compute(conn, DAY, now=NOW)
+    judge = {s["stage"]: s for s in snap["watch"]["stages"]}["t10_judge"]
+    assert judge["policy"]["fallback_alert_pct"] == 50.0 and judge["fallback_pct"] == 20.0
+    assert sorted(f.check for f in funnel.watch_findings(snap["watch"])) == ["qf_cut.t9_write", "qf_drift.t10_judge"]
+
+
+async def _store(conn, out, day, trigger="schedule"):
+    run_id = await store.create_run(conn, "CIS-08", day, day, trigger=trigger, triggered_by="pytest")
+    await store.mark_running(conn, run_id, str(uuid.uuid4()))
+    await store.finish_ok(conn, run_id, summary=out.summary, output=out.output, markdown=out.markdown)
+    return run_id
+
+
+@pytest.mark.asyncio
 async def test_a_stored_cis08_run_is_what_the_endpoint_reads(conn):
     await _dataset(conn)
     report = load().report("CIS-08")
+    # the night before: a scheduled run that already had the cut finding (and a manual run of that day: no baseline)
+    before = DAY - timedelta(days=1)
+    prev = funnel_report.build(report, {**(await funnel.compute(conn, before, now=NOW)),
+                                        "watch": {"stages": [], "findings": []}}, NOW)
+    prev.output["watch"]["findings"] = [{"check": "qf_cut.t9_write", "summary": "s", "details": {}}]
+    prev_id = await _store(conn, prev, before)
+    manual_before = funnel_report.build(report, {**prev.output, "watch": {"stages": []}}, NOW)
+    manual_before.output["watch"]["findings"] = [{"check": "qf_fb.t10_judge", "summary": "s", "details": {}}]
+    await _store(conn, manual_before, before, trigger="manual")
+
     out = await funnel_report.render(conn, load(), report, DAY, DAY, NOW)
-    run_id = await store.create_run(conn, "CIS-08", DAY, DAY, trigger="schedule", triggered_by="pytest")
-    await store.mark_running(conn, run_id, str(uuid.uuid4()))
-    await store.finish_ok(conn, run_id, summary=out.summary, output=out.output, markdown=out.markdown)
+    assert out.output["watch"]["compared_with"] == {"run_id": prev_id, "day": before.isoformat()}
+    run_id = await _store(conn, out, DAY)
+    manual_id = await _store(conn, out, DAY, trigger="manual")       # a later "Generate now" of the same day
 
     latest = await conn.fetchrow(LATEST_SQL, "CIS-08")
-    assert str(latest["id"]) == run_id and latest["period_end"] == DAY
+    assert str(latest["id"]) == run_id and latest["period_end"] == DAY and latest["trigger"] == "schedule"
+    assert str((await conn.fetchrow(LATEST_MANUAL_SQL, "CIS-08"))["id"]) == manual_id
     stored = json.loads(latest["output"])
-    assert sorted(f["check"] for f in stored["watch"]["findings"]) == ["qf_cut.t9_write", "qf_drift.t10_judge",
-                                                                       "qf_fb.t10_judge"]
+    assert {f["check"]: f["repeat"] for f in stored["watch"]["findings"]} == {
+        "qf_cut.t9_write": True, "qf_drift.t10_judge": False, "qf_fb.t10_judge": False}
     hist = await conn.fetch(HISTORY_SQL, "CIS-08", 5)
-    assert hist[0]["findings"] == 3 and json.loads(hist[0]["totals"])["t9"]["window"]["delivered"] == 4
+    assert [str(h["id"]) for h in hist] == [run_id, prev_id]
+    assert (hist[0]["findings"], hist[0]["new_findings"]) == (3, 2)
+    assert json.loads(hist[0]["totals"])["t9"]["window"]["delivered"] == 4

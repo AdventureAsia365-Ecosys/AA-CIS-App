@@ -28,25 +28,31 @@ workflow and ISO week (ICT, Monday first), from stored rows only (names: root do
   version still reaches the tenant, ``qa_auto_passed``); attempts = ``qa_repair_count`` + 1 (T3 rounds); first pass =
   ``qa_status`` passed with no repair round. Per-attempt gate codes are not stored on the version (follow-up).
 - **Stages** (``shared.llm_call_log``, production traffic only: ``route_watch.LEDGER_FILTER``, no shadow / eval / Jev
-  rows), per stage of each workflow (``STAGE_RE``) and week: answered requests by rung (the ``route_watch`` rung rule:
-  primary, rung 1, rung 2+, unknown), fallback share, replies cut at their token ceiling (``route_watch.CUT_ROW``),
-  refused and error rows, cost. LLM USD per delivered object = the workflow's stage cost of the week / its delivered
-  objects, for every workflow (T9 included: the totals use the whole T9 stage cost, attributed + unattributed). T9
-  per channel can only use the ledger rows that carry the piece or its angle-gate request: that per-channel figure is
-  the *attributed* cost (``attributed_usd_per_delivered`` in the totals); the rest (judges, angle generation before a
-  piece exists) is ``unattributed_cost_usd`` per week.
+  rows, and no AI gateway route-test row (``NOT_ROUTE_TEST``)), per stage of each workflow (``STAGE_RE``, the raw
+  ``stage``: eval rows are out, unlike ``route_cut``, which keeps them under their real stage) and week: answered
+  requests by rung (the ``route_watch`` rung rule: primary, rung 1, rung 2+, unknown), fallback share, replies cut at
+  their token ceiling (``route_watch.CUT_ROW``), refused rows (expected refusals apart, ``expected_refusals``: the
+  ``shared/llm_client/expected_refusal.py`` rule), error rows, cost. LLM USD per delivered object = the workflow's
+  stage cost of the week / its delivered objects, for every workflow (T9 included: the totals use the whole T9 stage
+  cost, attributed + unattributed). T9 per channel can only use the ledger rows that carry the piece or its angle-gate
+  request: that per-channel figure is the *attributed* cost (``attributed_usd_per_delivered`` in the totals); the rest
+  (judges, angle generation before a piece exists) is ``unattributed_cost_usd`` per week.
 
-Watchdog (:func:`watch_findings`, over the trailing ``WATCH_DAYS`` days that end with the snapshot day; thresholds
-are module constants, documented in CONTEXT.md "Quality funnel"):
+Watchdog (:func:`watch_findings`, over the trailing ``WATCH_DAYS`` days that end with the snapshot day; thresholds per
+stage from :func:`watch_policy`, documented in CONTEXT.md "Quality funnel"):
 
 - ``qf_cut.<stage>`` — more than ``CUT_ALERT_PCT`` % of the stage's billed replies were cut at their ceiling;
-- ``qf_fb.<stage>`` — at least ``FALLBACK_ALERT_PCT`` % of the answered requests came from a fallback rung;
+- ``qf_fb.<stage>`` — at least the stage's ``shared.llm_route_policy`` ``fallback_alert_pct`` % (route_watch's rule:
+  own row, ``*`` row, default 20) of the answered requests came from a fallback rung;
 - ``qf_drift.<stage>`` — served-model drift: at least ``DRIFT_ALERT_PCT`` % of the answered requests came from a
   model that served under ``DRIFT_NEW_MODEL_PCT`` % of the stage's answers in the ``WATCH_DAYS`` before (a route,
   catalog or provider change that moved the served model).
 
-Each needs at least ``MIN_REQUESTS`` rows in the window (and drift as many in the prior window). The 24-hour route
-alerts of ``llm_route_watch`` stay as they are; these are the weekly-scale quality view of the same ledger.
+Each needs at least ``max(MIN_REQUESTS, policy min_requests)`` rows in the window (and drift as many in the prior
+window). Alerts fire on the TRANSITION only (:func:`mark_repeats`): a finding the previous scheduled CIS-08 run already
+had is stored with ``repeat: true`` and not raised again, and the night's new findings go out as one ``qf_digest``
+alert (:func:`digest_finding`). The 24-hour route alerts of ``llm_route_watch`` stay as they are; these are the
+weekly-scale quality view of the same ledger.
 """
 from __future__ import annotations
 
@@ -55,20 +61,30 @@ from typing import Any, Optional
 
 from services.reports import periods
 from shared.aa_llm.errors import TRUNCATED_STOP_REASONS
+from shared.llm_client import route_watch
+from shared.llm_client.expected_refusal import EXPECTED_SQL
 from shared.llm_client.route_watch import CUT_ROW, FALLBACK_RUNG, LEDGER_FILTER, OK, POSITION_EXPR, PRIMARY_RUNG
-from shared.ops_checks import QF_CUT_PREFIX, QF_DRIFT_PREFIX, QF_FALLBACK_PREFIX, Finding
+from shared.ops_checks import QF_CUT_PREFIX, QF_DIGEST_CHECK, QF_DRIFT_PREFIX, QF_FALLBACK_PREFIX, Finding
 
 SNAPSHOT_VERSION = 1
 WEEKS = 8                    # ISO weeks in the series (the snapshot day's week and the 7 before)
 WATCH_DAYS = 7
-MIN_REQUESTS = 20
-CUT_ALERT_PCT = 5.0          # the route_cut rule of llm_route_watch, over a week instead of 24 h
-FALLBACK_ALERT_PCT = 20.0    # the llm_route_policy default fallback_alert_pct
+MIN_REQUESTS = 20           # weekly floor; a stage's llm_route_policy min_requests above it wins (watch_policy)
+CUT_ALERT_PCT = route_watch.CUT_ALERT_PCT     # the route_cut rule of llm_route_watch, over a week instead of 24 h
+FALLBACK_ALERT_PCT = float(route_watch.DEFAULTS.fallback_alert_pct)   # used only when no policy is stored
 DRIFT_ALERT_PCT = 10.0
 DRIFT_NEW_MODEL_PCT = 1.0
 THRESHOLDS = {"watch_days": WATCH_DAYS, "min_requests": MIN_REQUESTS, "cut_alert_pct": CUT_ALERT_PCT,
               "fallback_alert_pct": FALLBACK_ALERT_PCT, "drift_alert_pct": DRIFT_ALERT_PCT,
-              "drift_new_model_pct": DRIFT_NEW_MODEL_PCT}
+              "drift_new_model_pct": DRIFT_NEW_MODEL_PCT,
+              "policy": "per stage: shared.llm_route_policy fallback_alert_pct; min = max(min_requests, policy)",
+              "alert_on": "transition: a finding present in the previous scheduled run is stored as a repeat"}
+DIGEST_MAX_LINES = 8
+
+# The live route check of AI gateway > Trace (api/services/llm_route_trace.run_route_test): a few tiny real requests
+# capped at 16 output tokens. They are production rows for LEDGER_FILTER, but they are no content, and every one of
+# them stops on its ceiling, so they stay out of every funnel read.
+NOT_ROUTE_TEST = "coalesce(quality_signal ->> 'route_test', '') <> 'true'"
 
 CUT_PREFIX, FALLBACK_PREFIX, DRIFT_PREFIX = QF_CUT_PREFIX, QF_FALLBACK_PREFIX, QF_DRIFT_PREFIX
 
@@ -193,7 +209,7 @@ T9_COST_SQL = f"""
     WITH p AS ({_PIECES}), l AS (
         SELECT id, cost_usd, content_piece_id, angle_gate_request_id FROM shared.llm_call_log
          WHERE created_at >= $1::timestamptz - interval '1 day' AND created_at < $2::timestamptz + interval '1 day'
-           AND {LEDGER_FILTER}
+           AND {LEDGER_FILTER} AND {NOT_ROUTE_TEST}
            AND stage ~ '^(t8|t9|t10)_' AND cost_usd IS NOT NULL
            AND (content_piece_id IS NOT NULL OR angle_gate_request_id IS NOT NULL)
     ), m AS (
@@ -296,13 +312,17 @@ T2_OBJECTS_SQL = f"""
 """
 
 # $1 start, $2 the cut stop reasons (route_watch.CUT_ROW binds $2), $3 end.
+# Production rows only (LEDGER_FILTER: eval rows out, counted under their raw ``stage``), unlike route_cut, which keeps
+# eval rows under their real stage. ``refused`` leaves out the expected refusals (shared/llm_client/expected_refusal.py:
+# a model with no grant yet on an account that answers), counted apart as ``expected_refusals``, as in route_digest.
 _BILLED = "(coalesce(tokens_out, 0) > 0 OR coalesce(cost_usd, 0) > 0 OR status = 'truncated')"
 STAGES_SQL = f"""
     WITH r AS (
         SELECT stage, status, stop_reason, tokens_out, cost_usd, attempt_no, fallback_used, quality_signal,
-               {POSITION_EXPR} AS position, {week_sql('created_at')} AS week
+               {POSITION_EXPR} AS position, {week_sql('created_at')} AS week, {EXPECTED_SQL} AS expected
           FROM shared.llm_call_log
-         WHERE created_at >= $1 AND created_at < $3 AND {LEDGER_FILTER} AND stage ~ '{STAGE_RE}'
+         WHERE created_at >= $1 AND created_at < $3 AND {LEDGER_FILTER} AND {NOT_ROUTE_TEST}
+           AND stage ~ '{STAGE_RE}'
     )
     SELECT stage, week,
            count(*) FILTER (WHERE {OK}) AS answered,
@@ -313,7 +333,8 @@ STAGES_SQL = f"""
            count(*) FILTER (WHERE {OK} AND attempt_no IS NULL AND NOT {FALLBACK_RUNG}) AS unknown_rung,
            count(*) FILTER (WHERE {_BILLED}) AS replies,
            count(*) FILTER (WHERE {_BILLED} AND {CUT_ROW}) AS cut,
-           count(*) FILTER (WHERE status = 'refused') AS refused,
+           count(*) FILTER (WHERE status = 'refused' AND NOT expected) AS refused,
+           count(*) FILTER (WHERE expected) AS expected_refusals,
            count(*) FILTER (WHERE status = 'error') AS errors,
            coalesce(sum(cost_usd), 0)::float AS cost_usd
       FROM r
@@ -329,7 +350,8 @@ WATCH_SQL = f"""
            count(*) FILTER (WHERE {_BILLED}) AS replies,
            count(*) FILTER (WHERE {_BILLED} AND {CUT_ROW}) AS cut
       FROM shared.llm_call_log
-     WHERE created_at >= $1 AND created_at < $4 AND {LEDGER_FILTER} AND stage ~ '{STAGE_RE}'
+     WHERE created_at >= $1 AND created_at < $4 AND {LEDGER_FILTER} AND {NOT_ROUTE_TEST}
+       AND stage ~ '{STAGE_RE}'
      GROUP BY 1, 2, 3
 """
 
@@ -508,18 +530,30 @@ def totals(t9: list[dict], s1: list[dict], t2: list[dict], *, last_week: str,
 # ── watchdog ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
+def watch_policy(rows: dict[str, dict], stage: str) -> dict:
+    """The thresholds of ``stage`` (pure): the route policy's ``fallback_alert_pct`` (``route_watch.effective``: the
+    stage's own ``shared.llm_route_policy`` row, then the ``*`` row, then its defaults, field by field) and the minimum
+    rows ``max(MIN_REQUESTS, min_requests)``: the policy can raise the weekly floor of a noisy stage, never lower it
+    (its default of 5 is sized for route_watch's 60-minute window)."""
+    pol = route_watch.effective(rows or {}, stage)
+    return {"fallback_alert_pct": float(pol.fallback_alert_pct), "min_requests": max(MIN_REQUESTS, pol.min_requests),
+            "policy_min_requests": pol.min_requests}
+
+
 async def watch_stats(conn, day: date, unavailable: dict) -> dict:
     """Per stage over the trailing WATCH_DAYS days ending with ``day`` and the WATCH_DAYS before: answered, fallback,
-    replies, cut, the models that served and the route's primary model."""
+    replies, cut, the models that served, the route's primary model and the stage's thresholds (route policy)."""
     end = periods.day_bounds(day)[1]
     recent = end - timedelta(days=WATCH_DAYS)
     prior = recent - timedelta(days=WATCH_DAYS)
     rows = await _part(conn, unavailable, "watch", WATCH_SQL, prior, sorted(TRUNCATED_STOP_REASONS), recent, end)
     routes = {r["stage"]: r["model_id"] for r in await _part(conn, unavailable, "routes", ROUTES_SQL)}
-    return summarize_watch(rows, routes, recent=recent, end=end)
+    policies = {r["stage"]: r for r in await _part(conn, unavailable, "route_policy", route_watch.POLICY_SQL)}
+    return summarize_watch(rows, routes, recent=recent, end=end, policies=policies)
 
 
-def summarize_watch(rows: list[dict], routes: dict[str, str], *, recent: datetime, end: datetime) -> dict:
+def summarize_watch(rows: list[dict], routes: dict[str, str], *, recent: datetime, end: datetime,
+                    policies: Optional[dict[str, dict]] = None) -> dict:
     """Pure: the WATCH_SQL rows -> per stage numbers (sorted by stage)."""
     by: dict[str, dict] = {}
     for r in rows:
@@ -543,7 +577,8 @@ def summarize_watch(rows: list[dict], routes: dict[str, str], *, recent: datetim
                             < DRIFT_NEW_MODEL_PCT)
         new_answered = sum(rec["models"][m] for m in new_models)
         off_primary = sum(n for m, n in rec["models"].items() if s["primary_model"] and m != s["primary_model"])
-        out.append({**s, "cut_pct": _pct(rec["cut"], rec["replies"]),
+        out.append({**s, "policy": watch_policy(policies or {}, stage),
+                    "cut_pct": _pct(rec["cut"], rec["replies"]),
                     "fallback_pct": _pct(rec["fallback_answered"], rec["answered"]),
                     "drift_pct": _pct(new_answered, rec["answered"]) if pri["answered"] else None,
                     "drift_models": new_models,
@@ -552,27 +587,70 @@ def summarize_watch(rows: list[dict], routes: dict[str, str], *, recent: datetim
 
 
 def watch_findings(watch: dict) -> list[Finding]:
-    """Pure: the alerts the watch numbers cross (module doc)."""
+    """Pure: the alerts the watch numbers cross (module doc). Thresholds per stage: ``stage["policy"]``
+    (:func:`watch_policy`; a stage stored without it uses the module defaults)."""
     found: list[Finding] = []
     period = f"{watch.get('from', '')[:10]} to {watch.get('to', '')[:10]}"
     for s in watch.get("stages") or []:
         stage, rec, pri = s["stage"], s["recent"], s["prior"]
-        if rec["replies"] >= MIN_REQUESTS and (s["cut_pct"] or 0) > CUT_ALERT_PCT:
+        pol = s.get("policy") or watch_policy({}, stage)
+        min_n, fb_pct = int(pol["min_requests"]), float(pol["fallback_alert_pct"])
+        if rec["replies"] >= min_n and (s["cut_pct"] or 0) > CUT_ALERT_PCT:
             found.append(Finding(CUT_PREFIX + stage, f"{stage}: {s['cut_pct']} % of {rec['replies']} billed replies "
                                  f"cut at their token ceiling ({period})",
                                  {"stage": stage, "cut": rec["cut"], "replies": rec["replies"],
-                                  "threshold_pct": CUT_ALERT_PCT}))
-        if rec["answered"] >= MIN_REQUESTS and (s["fallback_pct"] or 0) >= FALLBACK_ALERT_PCT:
+                                  "threshold_pct": CUT_ALERT_PCT, "min_requests": min_n}))
+        if rec["answered"] >= min_n and (s["fallback_pct"] or 0) >= fb_pct:
             found.append(Finding(FALLBACK_PREFIX + stage, f"{stage}: {s['fallback_pct']} % of {rec['answered']} "
                                  f"answered requests came from a fallback model ({period})",
                                  {"stage": stage, "fallback_answered": rec["fallback_answered"],
-                                  "answered": rec["answered"], "threshold_pct": FALLBACK_ALERT_PCT}))
-        if (rec["answered"] >= MIN_REQUESTS and pri["answered"] >= MIN_REQUESTS
+                                  "answered": rec["answered"], "threshold_pct": fb_pct, "min_requests": min_n}))
+        if (rec["answered"] >= min_n and pri["answered"] >= min_n
                 and (s["drift_pct"] or 0) >= DRIFT_ALERT_PCT):
             found.append(Finding(DRIFT_PREFIX + stage, f"{stage}: {s['drift_pct']} % of {rec['answered']} answered "
                                  f"requests came from {', '.join(s['drift_models'])}, new against the week before "
                                  f"({period})",
                                  {"stage": stage, "models": s["drift_models"], "recent": rec["models"],
                                   "prior": pri["models"], "primary_model": s["primary_model"],
-                                  "threshold_pct": DRIFT_ALERT_PCT}))
+                                  "threshold_pct": DRIFT_ALERT_PCT, "min_requests": min_n}))
     return found
+
+
+def _drift_models(f: dict) -> set:
+    return set((f.get("details") or {}).get("models") or [])
+
+
+def mark_repeats(findings: list[dict], previous: Optional[list[dict]]) -> list[dict]:
+    """Pure, the transition rule: each stored finding (``{"check", "summary", "details"}``) gets ``repeat`` True when
+    the previous scheduled CIS-08 run already had it (the same check; for drift, no model that was not drifting
+    then), so a trailing-window condition alerts on the night it starts, not on every night it stays in the window.
+    ``previous`` None (no earlier scheduled run in reach) marks nothing as a repeat."""
+    before: dict[str, dict] = {}
+    for f in previous or []:
+        if isinstance(f, dict) and f.get("check"):
+            before[f["check"]] = f
+    out = []
+    for f in findings:
+        prev = before.get(f["check"])
+        repeat = prev is not None and (not f["check"].startswith(DRIFT_PREFIX)
+                                       or _drift_models(f) <= _drift_models(prev))
+        out.append({**f, "repeat": repeat})
+    return out
+
+
+def digest_finding(findings: list[dict], *, day: str = "") -> Optional[Finding]:
+    """Pure: the night's NEW findings (``repeat`` not set) as one ``qf_digest`` alert, like route_watch's digest, so a
+    provider outage across several stages is one bell and one e-mail. None when nothing is new."""
+    new = [f for f in findings if not f.get("repeat")]
+    if not new:
+        return None
+    repeats = [f["check"] for f in findings if f.get("repeat")]
+    lines = [f.get("summary") or f["check"] for f in new[:DIGEST_MAX_LINES]]
+    more = len(new) - len(lines)
+    summary = (f"{len(new)} new quality funnel alert(s)" + (f" for {day}" if day else "") + ": " + "; ".join(lines)
+               + (f"; and {more} more" if more > 0 else "")
+               + (f" ({len(repeats)} still open from an earlier night, not raised again)" if repeats else ""))
+    return Finding(QF_DIGEST_CHECK, summary,
+                   {"day": day, "new": [f["check"] for f in new], "still_open": repeats,
+                    "findings": [{"check": f["check"], "summary": f.get("summary"), "details": f.get("details") or {}}
+                                 for f in new]})

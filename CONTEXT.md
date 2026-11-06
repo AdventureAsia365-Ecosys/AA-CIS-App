@@ -1283,16 +1283,25 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     delivered object (the whole stage cost of the workflow; T9 per channel is the attributed part, the totals add
     `unattributed_cost_usd`); every failing T9 gate of every attempt (final ledger + `discarded_attempts`), with
     `F9_cta_fact` split into `.judge_unavailable` / `.text_integrity` / claims; S1 failure and brand codes per
-    evaluation; per stage of `shared.llm_call_log` (production rows, `route_watch.LEDGER_FILTER`): rung share,
-    fallback share, cut rate (`route_watch.CUT_ROW`), refused / error rows, cost. The run's `output` IS the snapshot;
-    `GET /admin/quality/funnel` (ops.read or lab.read) serves the newest one plus 14 days of headline totals, never
-    recomputed. A succeeded scheduled CIS-08 run queues **`quality_funnel_watch`**
-    (`services/jobs/quality_funnel_watch_job.py`, idempotent per run, deploy-gate exempt) which raises the stored
-    findings through `shared/ops_checks.alert_all`: `qf_cut.<stage>` (cut > 5 % of ≥ 20 billed replies),
-    `qf_fb.<stage>` (fallback ≥ 20 % of ≥ 20 answered), `qf_drift.<stage>` (≥ 10 % of answers from a model under 1 %
-    of the stage's answers the 7 days before, ≥ 20 rows in both windows), over the trailing 7 days; bell daily per
-    check. T2 per-attempt gate codes are not stored on the version (in `shared.job.result.t3` only). No migration
-    (store: `shared.report_run`, report CIS-08 in the registry copy). $0.
+    evaluation; per stage of `shared.llm_call_log`: rung share, fallback share, cut rate (`route_watch.CUT_ROW`),
+    refused / error rows, cost. The stage numbers count **production rows only** (`route_watch.LEDGER_FILTER`: no
+    shadow, eval or Jev row; no AI gateway route-test row, `quality_signal.route_test`) under their raw `stage`, so
+    the funnel's cut rate is NOT `route_cut`'s (that one keeps eval rows under their real stage); `refused` leaves
+    out the expected refusals (`shared/llm_client/expected_refusal.py`, counted apart as `expected_refusals`, as in
+    `route_digest`). The run's `output` IS the snapshot; `GET /admin/quality/funnel` (ops.read or lab.read) serves
+    the newest **scheduled** one (the run the watchdog read) plus 14 days of scheduled headline totals, never
+    recomputed; the newest manual run is listed apart (`manual_run`, never alerted on). A succeeded scheduled
+    CIS-08 run queues **`quality_funnel_watch`** (`services/jobs/quality_funnel_watch_job.py`, idempotent per run,
+    deploy-gate exempt). Findings over the trailing 7 days: `qf_cut.<stage>` (cut > 5 % of the billed replies),
+    `qf_fb.<stage>` (fallback ≥ the stage's `shared.llm_route_policy` `fallback_alert_pct`, route_watch's own row →
+    `*` row → default 20 rule), `qf_drift.<stage>` (≥ 10 % of answers from a model under 1 % of the stage's answers
+    the 7 days before, the minimum in both windows); minimum rows = max(20, the policy's `min_requests`). Alerts on
+    the **transition** only: a finding the previous scheduled run (≤ 7 days back) already had is stored with
+    `repeat: true` and not raised again (drift: unless a new model drifts), and the night's new findings go out as
+    ONE `qf_digest` alert through `shared/ops_checks.alert_all` (bell at most every 20 h, as `route_digest`; one
+    e-mail per UTC day). A failed e-mail or bell makes the job raise a retryable error (the bell is deduplicated, so
+    the retry is safe). T2 per-attempt gate codes are not stored on the version (in `shared.job.result.t3` only). No
+    migration (store: `shared.report_run`, report CIS-08 in the registry copy). $0.
   - **Ops metrics sampler (AA-832, AA-751)**: `api/core/ops_metrics_sampler.py`, a background task of
     the **api** (not the worker) started in `api/main.py`'s lifespan after the main pool, cancelled
     before it closes, off when `ENVIRONMENT=test`, never raises. Every 300 s (first tick 30 s after

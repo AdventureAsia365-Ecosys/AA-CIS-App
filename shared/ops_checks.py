@@ -179,33 +179,44 @@ PREFIX_CHECKS: dict[str, Check] = {
         "attempts.", TRACE_PAGE, bell_every=timedelta(hours=24)),
 }
 # AA-900 (S271 W0, root ADR 0020 "Measurement"): the nightly quality funnel watchdog (job kind quality_funnel_watch,
-# services/quality/funnel.py has the rules and thresholds), one check per stage over the trailing 7 days.
+# services/quality/funnel.py has the rules and thresholds), one finding per stage over the trailing 7 days, stored in
+# the CIS-08 snapshot. Alerts fire on the transition only, as ONE digest per night (QF_DIGEST_CHECK, the new findings);
+# the per-stage checks stay registered for the stored findings' names and texts. Bell window 20 h, not 24 h: the
+# daily report chain's start drifts, and a run a few hours earlier than the night before must still bell (as
+# ROUTE_DIGEST_CHECK).
 QF_CUT_PREFIX = "qf_cut."
 QF_FALLBACK_PREFIX = "qf_fb."
 QF_DRIFT_PREFIX = "qf_drift."
+QF_DIGEST_CHECK = "qf_digest"
+QF_BELL_EVERY = timedelta(hours=20)
 FUNNEL_PAGE = "/admin/reports"
 PREFIX_CHECKS.update({
     QF_CUT_PREFIX: Check(
         "Content stage replies cut over the week", "More than 5 % of the stage's billed replies in the last 7 days "
         "stopped on their output-token ceiling: each cut costs a retry and can leave content short. The quality "
         "funnel (report CIS-08, GET /admin/quality/funnel) shows the stage per week; raise the ceiling or the "
-        "model's min_output_tokens.", FUNNEL_PAGE, bell_every=timedelta(hours=24)),
+        "model's min_output_tokens.", FUNNEL_PAGE, bell_every=QF_BELL_EVERY),
     QF_FALLBACK_PREFIX: Check(
-        "Content stage served by fallback models over the week", "At least 20 % of the stage's answered requests in "
-        "the last 7 days came from a fallback model, so the content was not written or checked by the calibrated "
-        "model. Check AI gateway > Trace and the quality funnel (report CIS-08) before trusting the week's yield.",
-        FUNNEL_PAGE, bell_every=timedelta(hours=24)),
+        "Content stage served by fallback models over the week", "At least the stage's fallback_alert_pct (route "
+        "policy, default 20 %) of its answered requests in the last 7 days came from a fallback model, so the "
+        "content was not written or checked by the calibrated model. Check AI gateway > Trace and the quality funnel "
+        "(report CIS-08) before trusting the week's yield.", FUNNEL_PAGE, bell_every=QF_BELL_EVERY),
     QF_DRIFT_PREFIX: Check(
         "Content stage served-model drift", "At least 10 % of the stage's answered requests in the last 7 days came "
         "from a model that served almost none of them the week before (a route, catalog or provider change). A "
         "route change on a gated stage needs an eval run (root ADR 0020, d12): check the route history and the "
-        "quality funnel (report CIS-08).", FUNNEL_PAGE, bell_every=timedelta(hours=24)),
+        "quality funnel (report CIS-08).", FUNNEL_PAGE, bell_every=QF_BELL_EVERY),
 })
 PREFIX_CHECKS_EXACT: dict[str, Check] = {
     ROUTE_DIGEST_CHECK: Check(
         "LLM route digest", "The daily summary of the stage routes: stages answered by a fallback model or with "
         "requests that got no answer in the last 24 hours. Details on AI gateway > Trace.", TRACE_PAGE,
         bell_every=timedelta(hours=20)),
+    QF_DIGEST_CHECK: Check(
+        "Content quality funnel alerts", "The nightly quality funnel (report CIS-08) found new problems over the "
+        "last 7 days: content stages cut at their token ceiling, served by fallback models, or answered by a model "
+        "that was not serving them the week before. Only findings that were not there the night before are raised; "
+        "the funnel page lists every open one.", FUNNEL_PAGE, bell_every=QF_BELL_EVERY),
 }
 
 

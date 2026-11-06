@@ -11,6 +11,7 @@
       "cut": 0,
       "cut_rate": 0.0,
       "errors": 0,
+      "expected_refusals": 0,
       "fallback_answered": 0,
       "fallback_share": 0.0,
       "primary_answered": 2,
@@ -35,6 +36,7 @@
       "cut": 0,
       "cut_rate": 0.0,
       "errors": 0,
+      "expected_refusals": 0,
       "fallback_answered": 0,
       "fallback_share": 0.0,
       "primary_answered": 25,
@@ -59,6 +61,7 @@
       "cut": 0,
       "cut_rate": 0.0,
       "errors": 0,
+      "expected_refusals": 0,
       "fallback_answered": 5,
       "fallback_share": 0.2,
       "primary_answered": 20,
@@ -83,6 +86,7 @@
       "cut": 0,
       "cut_rate": 0.0,
       "errors": 0,
+      "expected_refusals": 0,
       "fallback_answered": 0,
       "fallback_share": 0.0,
       "primary_answered": 3,
@@ -107,6 +111,7 @@
       "cut": 0,
       "cut_rate": 0.0,
       "errors": 0,
+      "expected_refusals": 0,
       "fallback_answered": 0,
       "fallback_share": 0.0,
       "primary_answered": 1,
@@ -131,6 +136,7 @@
       "cut": 2,
       "cut_rate": 0.1,
       "errors": 0,
+      "expected_refusals": 0,
       "fallback_answered": 0,
       "fallback_share": 0.0,
       "primary_answered": 18,
@@ -249,6 +255,11 @@
       "drift_models": [],
       "drift_pct": null,
       "fallback_pct": 0.0,
+      "policy": {
+        "fallback_alert_pct": 20.0,
+        "min_requests": 20,
+        "policy_min_requests": 5
+      },
       "prior": {
         "answered": 0,
         "cut": 0,
@@ -275,6 +286,11 @@
       ],
       "drift_pct": 20.0,
       "fallback_pct": 20.0,
+      "policy": {
+        "fallback_alert_pct": 20.0,
+        "min_requests": 20,
+        "policy_min_requests": 5
+      },
       "prior": {
         "answered": 25,
         "cut": 0,
@@ -302,6 +318,11 @@
       "drift_models": [],
       "drift_pct": null,
       "fallback_pct": 0.0,
+      "policy": {
+        "fallback_alert_pct": 20.0,
+        "min_requests": 20,
+        "policy_min_requests": 5
+      },
       "prior": {
         "answered": 0,
         "cut": 0,
@@ -326,6 +347,11 @@
       "drift_models": [],
       "drift_pct": null,
       "fallback_pct": 0.0,
+      "policy": {
+        "fallback_alert_pct": 20.0,
+        "min_requests": 20,
+        "policy_min_requests": 5
+      },
       "prior": {
         "answered": 0,
         "cut": 0,
@@ -350,6 +376,11 @@
       "drift_models": [],
       "drift_pct": null,
       "fallback_pct": 0.0,
+      "policy": {
+        "fallback_alert_pct": 20.0,
+        "min_requests": 20,
+        "policy_min_requests": 5
+      },
       "prior": {
         "answered": 0,
         "cut": 0,

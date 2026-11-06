@@ -183,10 +183,108 @@ def test_every_finding_has_a_registered_ops_check():
     assert {f.check for f in found} == {"qf_cut.t9_write", "qf_fb.t9_write", "qf_drift.t9_write"}
     for f in found:
         chk = ops_checks.check_for(f.check)
-        assert chk.bell_every == timedelta(hours=24)
+        assert chk.bell_every == timedelta(hours=20)
         assert len(ops_checks.EVENT_TYPE_PREFIX + f.check) <= 100
         subject, text = ops_checks.render(f, environment="test")
         assert subject.isascii() and f.summary in text
+
+
+def test_the_daily_checks_bell_every_20_hours_like_the_route_digest():
+    """Review S271: a daily job whose start drifts; a 24 h window drops the bell of a run a little earlier."""
+    for name in ("qf_cut.t9_write", "qf_fb.t9_write", "qf_drift.t9_write", ops_checks.QF_DIGEST_CHECK):
+        assert ops_checks.check_for(name).bell_every == timedelta(hours=20)
+    assert ops_checks.check_for(ops_checks.QF_DIGEST_CHECK).bell_every == \
+        ops_checks.check_for(ops_checks.ROUTE_DIGEST_CHECK).bell_every
+
+
+def _found(rows, policies=None):
+    return sorted(f.check for f in funnel.watch_findings(funnel.summarize_watch(
+        rows, {}, recent=REC, end=END, policies=policies)))
+
+
+def test_the_stage_route_policy_sets_the_fallback_threshold_and_can_raise_the_minimum():
+    rows = [_w("t10_judge", "model-b", "recent", 40, fb=8)]                                       # 20 %
+    assert _found(rows) == ["qf_fb.t10_judge"]
+    # the stage's own row: alert from 50 % only
+    assert _found(rows, {"t10_judge": {"stage": "t10_judge", "fallback_alert_pct": 50}}) == []
+    # the * row applies when the stage has none; a NULL field of the stage row falls through to it
+    assert _found(rows, {"*": {"stage": "*", "fallback_alert_pct": 10},
+                         "t10_judge": {"stage": "t10_judge", "fallback_alert_pct": None}}) == ["qf_fb.t10_judge"]
+    assert _found([_w("t10_judge", "model-b", "recent", 40, fb=5)],
+                  {"*": {"stage": "*", "fallback_alert_pct": 10}}) == ["qf_fb.t10_judge"]           # 12.5 %
+    # min_requests above the weekly floor wins (for cut and drift too); below it never lowers the floor
+    assert _found(rows, {"t10_judge": {"stage": "t10_judge", "min_requests": 100}}) == []
+    assert _found([_w("t9_write", "m", "recent", 40, cut=4)], {"*": {"stage": "*", "min_requests": 100}}) == []
+    assert _found([_w("t10_judge", "model-b", "recent", 10, fb=5)],
+                  {"t10_judge": {"stage": "t10_judge", "min_requests": 5}}) == []
+    s = funnel.summarize_watch(rows, {}, recent=REC, end=END,
+                               policies={"t10_judge": {"stage": "t10_judge", "min_requests": 5}})["stages"][0]
+    assert s["policy"] == {"fallback_alert_pct": 20.0, "min_requests": funnel.MIN_REQUESTS, "policy_min_requests": 5}
+
+
+def test_the_watch_reads_the_route_policy_table():
+    from shared.llm_client import route_watch
+
+    seen = []
+
+    async def fake_part(conn, un, name, sql, *args):
+        seen.append((name, sql))
+        if name == "route_policy":
+            return [{"stage": "t10_judge", "fallback_alert_pct": 50, "min_requests": None}]
+        if name == "watch":
+            return [_w("t10_judge", "model-b", "recent", 40, fb=8)]
+        return []
+    orig, funnel._part = funnel._part, fake_part
+    try:
+        w = asyncio.run(funnel.watch_stats(None, DAY, {}))
+    finally:
+        funnel._part = orig
+    assert ("route_policy", route_watch.POLICY_SQL) in seen
+    assert w["stages"][0]["policy"]["fallback_alert_pct"] == 50.0 and funnel.watch_findings(w) == []
+
+
+def test_route_test_rows_stay_out_of_every_ledger_read():
+    """Review S271: AI gateway > Trace route tests are 16-token real requests: every one 'cut', no content."""
+    assert funnel.NOT_ROUTE_TEST == "coalesce(quality_signal ->> 'route_test', '') <> 'true'"
+    for sql in (funnel.STAGES_SQL, funnel.WATCH_SQL, funnel.T9_COST_SQL):
+        assert funnel.NOT_ROUTE_TEST in sql
+
+
+def test_stage_refused_rows_leave_out_the_expected_refusals():
+    from shared.llm_client.expected_refusal import EXPECTED_SQL
+
+    assert EXPECTED_SQL in funnel.STAGES_SQL
+    assert "status = 'refused' AND NOT expected) AS refused" in funnel.STAGES_SQL
+    assert "FILTER (WHERE expected) AS expected_refusals" in funnel.STAGES_SQL
+
+
+def _f(check, **details):
+    return {"check": check, "summary": check + " summary", "details": details}
+
+
+def test_a_finding_already_present_in_the_previous_run_is_a_repeat():
+    now = [_f("qf_cut.t9_write"), _f("qf_fb.t10_judge"), _f("qf_drift.t2_judge", models=["m-new"])]
+    prev = [_f("qf_cut.t9_write"), _f("qf_drift.t2_judge", models=["m-new", "m-x"])]
+    marked = {f["check"]: f["repeat"] for f in funnel.mark_repeats(now, prev)}
+    assert marked == {"qf_cut.t9_write": True, "qf_fb.t10_judge": False, "qf_drift.t2_judge": True}
+    # a drift to a model that was not drifting the night before is a new transition
+    assert funnel.mark_repeats([_f("qf_drift.t2_judge", models=["m-other"])], prev)[0]["repeat"] is False
+    # no earlier scheduled run in reach: everything is new
+    assert [f["repeat"] for f in funnel.mark_repeats(now, None)] == [False, False, False]
+
+
+def test_one_digest_for_the_night_with_the_new_findings_only():
+    """An outage over several stages is one alert, and what stays in the trailing window is not raised again."""
+    found = funnel.mark_repeats([_f("qf_fb.t9_write"), _f("qf_fb.t10_judge"), _f("qf_fb.s1_generate"),
+                                 _f("qf_cut.t9_write")], [_f("qf_cut.t9_write")])
+    d = funnel.digest_finding(found, day="2026-11-05")
+    assert d.check == ops_checks.QF_DIGEST_CHECK
+    assert d.details["new"] == ["qf_fb.t9_write", "qf_fb.t10_judge", "qf_fb.s1_generate"]
+    assert d.details["still_open"] == ["qf_cut.t9_write"]
+    assert "3 new quality funnel alert(s) for 2026-11-05" in d.summary and "1 still open" in d.summary
+    assert funnel.digest_finding(funnel.mark_repeats([_f("qf_cut.t9_write")], [_f("qf_cut.t9_write")])) is None
+    subject, text = ops_checks.render(d, environment="test")
+    assert subject.isascii() and len(ops_checks.EVENT_TYPE_PREFIX + d.check) <= 100
 
 
 # ── CIS-08 report ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -220,13 +318,24 @@ def test_build_stores_the_snapshot_with_its_findings():
     report = load().report("CIS-08")
     out = funnel_report.build(report, _snap([_w("t9_write", "m", "recent", 40, cut=4)]), NOW)
     assert out.output["report_id"] == "CIS-08" and out.output["day"] == DAY.isoformat()
-    assert [f["check"] for f in out.output["watch"]["findings"]] == ["qf_cut.t9_write"]
-    assert out.summary.startswith("T9 2 delivered of 3 created") and "1 watchdog alert" in out.summary
+    assert [(f["check"], f["repeat"]) for f in out.output["watch"]["findings"]] == [("qf_cut.t9_write", False)]
+    assert out.summary.startswith("T9 2 delivered of 3 created")
+    assert "1 new watchdog alert(s), 0 still open" in out.summary
     assert "0.3000 USD per delivered" in out.summary          # (0.4 attributed + 0.2 unattributed) / 2
     assert "Attributed USD / delivered" in out.markdown and "| 2026-11-02 | 0.2000 USD |" in out.markdown
     assert "## T9 failing gates, every attempt (blocking)" in out.markdown
     assert funnel.F9_JUDGE_CLASS in out.markdown and "Sources not readable here" in out.markdown
     json.dumps(out.output)       # JSON-safe as stored
+
+
+def test_build_flags_what_the_previous_run_already_had():
+    report = load().report("CIS-08")
+    snap = _snap([_w("t9_write", "m", "recent", 40, cut=4, fb=10)])
+    out = funnel_report.build(report, snap, NOW, previous=[{"check": "qf_cut.t9_write", "summary": "s"}])
+    assert {f["check"]: f["repeat"] for f in out.output["watch"]["findings"]} == {"qf_cut.t9_write": True,
+                                                                                 "qf_fb.t9_write": False}
+    assert "1 new watchdog alert(s), 1 still open" in out.summary
+    assert "(still open from an earlier night, not raised again)" in out.markdown
 
 
 def test_render_computes_the_period_end_day(monkeypatch):
@@ -236,8 +345,26 @@ def test_render_computes_the_period_end_day(monkeypatch):
         seen["day"] = day
         return _snap()
     monkeypatch.setattr(funnel, "compute", fake)
-    out = asyncio.run(funnel_report.render(None, load(), load().report("CIS-08"), DAY, DAY, NOW))
+    conn = MagicMock()
+    conn.fetchrow = AsyncMock(return_value=None)
+    out = asyncio.run(funnel_report.render(conn, load(), load().report("CIS-08"), DAY, DAY, NOW))
     assert seen["day"] == DAY and out.output["watch"]["findings"] == []
+    assert out.output["watch"]["compared_with"] is None
+
+
+def test_render_compares_with_the_previous_scheduled_run(monkeypatch):
+    async def fake(conn, day, now=None):
+        return _snap([_w("t9_write", "m", "recent", 40, cut=4)])
+    monkeypatch.setattr(funnel, "compute", fake)
+    conn = MagicMock()
+    conn.fetchrow = AsyncMock(return_value={"id": "p1", "period_end": DAY - timedelta(days=1),
+                                            "findings": json.dumps([{"check": "qf_cut.t9_write"}])})
+    out = asyncio.run(funnel_report.render(conn, load(), load().report("CIS-08"), DAY, DAY, NOW))
+    sql, *args = conn.fetchrow.await_args.args
+    assert sql is funnel_report.PREVIOUS_SQL and args == ["CIS-08", DAY, DAY - timedelta(days=funnel.WATCH_DAYS)]
+    assert "trigger = 'schedule'" in sql and "period_end < $2" in sql
+    assert out.output["watch"]["findings"][0]["repeat"] is True
+    assert out.output["watch"]["compared_with"] == {"run_id": "p1", "day": (DAY - timedelta(days=1)).isoformat()}
 
 
 # ── the watchdog job ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -255,15 +382,40 @@ def _row(output, status="succeeded", report_id="CIS-08"):
     return {"report_id": report_id, "status": status, "period_end": DAY, "output": json.dumps(output)}
 
 
-def test_watch_job_raises_the_stored_findings(monkeypatch):
-    alert = AsyncMock(return_value={"qf_fb.t9_write": {"bell": True, "email": "sent"}})
+def test_watch_job_raises_the_new_stored_findings_as_one_digest(monkeypatch):
+    alert = AsyncMock(return_value={"qf_digest": {"bell": True, "email": "sent"}})
     monkeypatch.setattr(watch_job.ops_checks, "alert_all", alert)
     out_ = {"watch": {"findings": [{"check": "qf_fb.t9_write", "summary": "s", "details": {"a": 1}},
+                                   {"check": "qf_fb.t10_judge", "summary": "s2", "details": {}},
+                                   {"check": "qf_cut.t9_write", "summary": "c", "repeat": True},
                                    {"check": "renamed.check", "summary": "x"}]}}
     out = asyncio.run(watch_job.run(_ctx({"run_id": "r1"}, _row(out_))))
     (pool, findings), _ = alert.await_args
-    assert [f.check for f in findings] == ["qf_fb.t9_write"] and findings[0].details == {"a": 1}
-    assert out["alerts"]["qf_fb.t9_write"]["bell"] is True and out["day"] == DAY.isoformat()
+    assert [f.check for f in findings] == ["qf_digest"]
+    assert findings[0].details["new"] == ["qf_fb.t9_write", "qf_fb.t10_judge"]
+    assert findings[0].details["findings"][0]["details"] == {"a": 1}
+    assert out["raised"] == ["qf_fb.t9_write", "qf_fb.t10_judge"] and out["day"] == DAY.isoformat()
+    assert [f["repeat"] for f in out["findings"]] == [False, False, True]
+    assert out["alerts"]["qf_digest"]["bell"] is True
+
+
+def test_watch_job_raises_nothing_when_every_finding_is_a_repeat(monkeypatch):
+    alert = AsyncMock()
+    monkeypatch.setattr(watch_job.ops_checks, "alert_all", alert)
+    out_ = {"watch": {"findings": [{"check": "qf_cut.t9_write", "summary": "c", "repeat": True}]}}
+    out = asyncio.run(watch_job.run(_ctx({"run_id": "r1"}, _row(out_))))
+    assert alert.await_count == 0 and out["raised"] == [] and out["findings"][0]["repeat"] is True
+
+
+@pytest.mark.parametrize("result", [{"bell": False, "email": "failed"}, {"error": "PostgresError: x"}])
+def test_watch_job_retries_when_the_alert_was_not_delivered(monkeypatch, result):
+    """Review S271: a failed SNS publish lost the night (the bell was removed, the job succeeded). Now the job raises
+    a retryable error; the bell is deduplicated, so the retry is safe."""
+    monkeypatch.setattr(watch_job.ops_checks, "alert_all", AsyncMock(return_value={"qf_digest": result}))
+    out_ = {"watch": {"findings": [{"check": "qf_fb.t9_write", "summary": "s"}]}}
+    with pytest.raises(watch_job.AlertNotDelivered) as e:
+        asyncio.run(watch_job.run(_ctx({"run_id": "r1"}, _row(out_))))
+    assert not isinstance(e.value, watch_job.NonRetryable)
 
 
 def test_watch_job_dry_run_and_no_findings_raise_nothing(monkeypatch):
@@ -347,13 +499,17 @@ def test_enqueue_for_run_is_idempotent_per_run(monkeypatch):
 # ── GET /admin/quality/funnel ─────────────────────────────────────────────────────────────────────────────────────
 
 
-def _app(latest, history):
+def _app(latest, history, manual=None):
     from fastapi import FastAPI
 
     from api.routers import admin_quality_funnel as r
 
     conn = MagicMock()
-    conn.fetchrow = AsyncMock(return_value=latest)
+
+    async def fetchrow(sql, *args):
+        from services.reports import funnel_report as fr
+        return manual if sql is fr.LATEST_MANUAL_SQL else latest
+    conn.fetchrow = AsyncMock(side_effect=fetchrow)
     conn.fetch = AsyncMock(return_value=history)
     pool = MagicMock()
 
@@ -375,12 +531,22 @@ def test_funnel_endpoint_serves_the_stored_snapshot():
     latest = {"id": "11111111-1111-1111-1111-111111111111", "period_start": DAY, "period_end": DAY,
               "trigger": "schedule", "finished_at": NOW, "summary": "T9 ...", "output": json.dumps({"day": "d"})}
     hist = [{"id": latest["id"], "period_end": DAY, "finished_at": NOW, "summary": "T9 ...",
-             "totals": json.dumps({"t9": {}}), "findings": 2}]
-    app, conn = _app(latest, hist)
+             "totals": json.dumps({"t9": {}}), "findings": 2, "new_findings": 1}]
+    manual = {**latest, "id": "22222222-2222-2222-2222-222222222222", "trigger": "manual"}
+    app, conn = _app(latest, hist, manual)
     body = TestClient(app).get("/admin/quality/funnel?history=5").json()
     assert body["report_id"] == "CIS-08" and body["snapshot"] == {"day": "d"}
-    assert body["run"]["day"] == DAY.isoformat() and body["history"][0]["findings"] == 2
+    assert body["run"]["day"] == DAY.isoformat() and body["run"]["trigger"] == "schedule"
+    assert body["history"][0]["findings"] == 2 and body["history"][0]["new_findings"] == 1
+    assert body["manual_run"]["id"] == manual["id"] and "output" not in body["manual_run"]
     assert conn.fetch.await_args.args[1:] == ("CIS-08", 5)
+
+
+def test_the_funnel_page_reads_the_scheduled_runs_the_watchdog_alerted_on():
+    """Review S271: a manual "Generate now" run is never alerted on, so it must not replace the snapshot."""
+    for sql in (funnel_report.LATEST_SQL, funnel_report.HISTORY_SQL, funnel_report.PREVIOUS_SQL):
+        assert "trigger = 'schedule'" in sql
+    assert "trigger <> 'schedule'" in funnel_report.LATEST_MANUAL_SQL
 
 
 def test_funnel_endpoint_without_a_snapshot_yet():
@@ -388,7 +554,7 @@ def test_funnel_endpoint_without_a_snapshot_yet():
 
     app, _ = _app(None, [])
     body = TestClient(app).get("/admin/quality/funnel").json()
-    assert body == {"report_id": "CIS-08", "run": None, "snapshot": None, "history": []}
+    assert body == {"report_id": "CIS-08", "run": None, "snapshot": None, "history": [], "manual_run": None}
     assert TestClient(app).get("/admin/quality/funnel?history=0").status_code == 422
 
 

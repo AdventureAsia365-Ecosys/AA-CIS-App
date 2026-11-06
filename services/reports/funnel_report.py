@@ -3,12 +3,15 @@
 The daily chain (kpi_snapshot_daily -> report_generate) renders CIS-08 for the closed ICT day: the funnel snapshot of
 ``services/quality/funnel.compute`` (8 ISO weeks ending with the day) and the watchdog findings of its trailing 7 days.
 The run row's ``output`` IS the snapshot (GET /admin/quality/funnel serves it as stored); a scheduled run then queues
-``quality_funnel_watch`` (services/jobs/quality_funnel_watch_job.py), which raises the findings stored here through
-the ops-check bell and e-mail. Stored rows only, no LLM, no paid call.
+``quality_funnel_watch`` (services/jobs/quality_funnel_watch_job.py), which raises the NEW findings stored here as one
+digest through the ops-check bell and e-mail. A finding the previous scheduled run (``PREVIOUS_SQL``) already had is
+stored with ``repeat: true`` (``funnel.mark_repeats``): visible, not raised again. Stored rows only, no LLM, no paid
+call.
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+import json
+from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
 from services.quality import funnel
@@ -19,23 +22,45 @@ from services.reports.registry import Registry, Report
 
 REPORT_ID = "CIS-08"
 TITLE = "Content quality funnel"
-# GET /admin/quality/funnel (api/routers/admin_quality_funnel.py): the latest succeeded run, and the headline totals of
-# the newest runs (one per day).
+# GET /admin/quality/funnel (api/routers/admin_quality_funnel.py): the latest succeeded SCHEDULED run (the one the
+# watchdog alerted on) and the headline totals of the newest scheduled runs (one per day); manual runs ("Generate
+# now", never alerted on) are listed apart (LATEST_MANUAL_SQL).
+_FINDINGS = ("CASE WHEN jsonb_typeof(output -> 'watch' -> 'findings') = 'array' THEN output -> 'watch' -> 'findings' "
+             "ELSE '[]'::jsonb END")
 LATEST_SQL = """
     SELECT id, period_start, period_end, trigger, finished_at, summary, output
       FROM shared.report_run
-     WHERE report_id = $1 AND status = 'succeeded' AND output IS NOT NULL
+     WHERE report_id = $1 AND status = 'succeeded' AND output IS NOT NULL AND trigger = 'schedule'
      ORDER BY period_end DESC, finished_at DESC NULLS LAST, id
      LIMIT 1
 """
-HISTORY_SQL = """
-    SELECT DISTINCT ON (period_end) id, period_end, finished_at, summary, output -> 'totals' AS totals,
-           coalesce(jsonb_array_length(CASE WHEN jsonb_typeof(output -> 'watch' -> 'findings') = 'array'
-                                            THEN output -> 'watch' -> 'findings' END), 0) AS findings
+LATEST_MANUAL_SQL = """
+    SELECT id, period_start, period_end, trigger, finished_at, summary
       FROM shared.report_run
-     WHERE report_id = $1 AND status = 'succeeded' AND output IS NOT NULL
+     WHERE report_id = $1 AND status = 'succeeded' AND output IS NOT NULL AND trigger <> 'schedule'
+     ORDER BY finished_at DESC NULLS LAST, period_end DESC, id
+     LIMIT 1
+"""
+HISTORY_SQL = f"""
+    SELECT DISTINCT ON (period_end) id, period_end, finished_at, summary, output -> 'totals' AS totals,
+           jsonb_array_length({_FINDINGS}) AS findings,
+           (SELECT count(*) FROM jsonb_array_elements({_FINDINGS}) f
+             WHERE coalesce(f ->> 'repeat', 'false') <> 'true') AS new_findings
+      FROM shared.report_run
+     WHERE report_id = $1 AND status = 'succeeded' AND output IS NOT NULL AND trigger = 'schedule'
      ORDER BY period_end DESC, finished_at DESC NULLS LAST, id
      LIMIT $2
+"""
+# The transition baseline: the findings of the newest succeeded scheduled run of an earlier day, at most
+# funnel.WATCH_DAYS days back ($1 report, $2 this run's day, $3 the oldest day in reach). A same-day re-render (a
+# retry) compares with the night before, never with itself.
+PREVIOUS_SQL = f"""
+    SELECT id, period_end, {_FINDINGS} AS findings
+      FROM shared.report_run
+     WHERE report_id = $1 AND status = 'succeeded' AND output IS NOT NULL AND trigger = 'schedule'
+       AND period_end < $2 AND period_end >= $3
+     ORDER BY period_end DESC, finished_at DESC NULLS LAST, id
+     LIMIT 1
 """
 
 WORKFLOW_NAMES = {"t9": "T9 social content", "s1": "S1 Master rewrite", "t2": "T2 tenant tour rewrite"}
@@ -55,10 +80,11 @@ def _usd(v: Optional[float]) -> str:
 
 def headline(snap: dict) -> str:
     t9 = (snap.get("totals") or {}).get("t9", {}).get("window", {})
-    n_alerts = len((snap.get("watch") or {}).get("findings") or [])
+    findings = (snap.get("watch") or {}).get("findings") or []
+    n_new = sum(1 for f in findings if not f.get("repeat"))
     return (f"T9 {t9.get('delivered', 0)} delivered of {t9.get('created', 0)} created, first-pass yield "
             f"{_p(t9.get('first_pass_yield'))}, {_usd(t9.get('usd_per_delivered'))} per delivered; "
-            f"{n_alerts} watchdog alert(s)")
+            f"{n_new} new watchdog alert(s), {len(findings) - n_new} still open")
 
 
 def markdown(report: Report, snap: dict, generated_at: datetime) -> str:
@@ -120,23 +146,39 @@ def markdown(report: Report, snap: dict, generated_at: datetime) -> str:
               if rows else ["No ledger row in the window."]) + [""]
     findings = watch.get("findings") or []
     lines += ["## Watchdog alerts", ""]
-    lines += [f"- `{f['check']}`: {f['summary']}" for f in findings] or ["None."]
+    lines += [f"- `{f['check']}`: {f['summary']}" + (" (still open from an earlier night, not raised again)"
+                                                     if f.get("repeat") else " (new)")
+              for f in findings] or ["None."]
     if snap.get("unavailable"):
         lines += ["", "## Sources not readable here", ""]
         lines += [f"- {k}: {v}" for k, v in sorted(snap["unavailable"].items())]
     return "\n".join(lines) + "\n"
 
 
-def build(report: Report, snap: dict, generated_at: datetime) -> Rendered:
-    """Pure: a computed snapshot -> the run's summary, output (the snapshot + its findings) and Markdown."""
+def build(report: Report, snap: dict, generated_at: datetime, previous: Optional[list[dict]] = None) -> Rendered:
+    """Pure: a computed snapshot -> the run's summary, output (the snapshot + its findings, each flagged ``repeat``
+    against ``previous``: the findings of the previous scheduled run, None = none in reach) and Markdown."""
     findings = funnel.watch_findings(snap.get("watch") or {})
+    stored = funnel.mark_repeats([{"check": f.check, "summary": f.summary, "details": f.details} for f in findings],
+                                 previous)
     snap = {**snap, "report_id": report.id, "generated_by": GENERATED_BY,
-            "watch": {**(snap.get("watch") or {}),
-                      "findings": [{"check": f.check, "summary": f.summary, "details": f.details} for f in findings]}}
+            "watch": {**(snap.get("watch") or {}), "findings": stored}}
     snap["headline"] = headline(snap)
     return Rendered(summary=snap["headline"][:1000], output=snap, markdown=markdown(report, snap, generated_at))
 
 
+async def previous_findings(conn, day: date) -> tuple[Optional[list[dict]], Optional[dict]]:
+    """(findings, {run_id, day}) of the previous scheduled CIS-08 run in reach (PREVIOUS_SQL), or (None, None)."""
+    row = await conn.fetchrow(PREVIOUS_SQL, REPORT_ID, day, day - timedelta(days=funnel.WATCH_DAYS))
+    if row is None:
+        return None, None
+    found = row["findings"]
+    found = json.loads(found) if isinstance(found, str) else (found or [])
+    return list(found), {"run_id": str(row["id"]), "day": row["period_end"].isoformat()}
+
+
 async def render(conn, reg: Registry, report: Report, first: date, last: date, now: datetime) -> Rendered:
     snap = await funnel.compute(conn, last, now=now)
-    return build(report, snap, now)
+    previous, ref = await previous_findings(conn, last)
+    snap = {**snap, "watch": {**(snap.get("watch") or {}), "compared_with": ref}}
+    return build(report, snap, now, previous)
