@@ -223,7 +223,7 @@ jobs:
           set -uo pipefail
           echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
           BAD=$(echo "$NEEDS" | jq -r --arg running "$RUNNING" '[to_entries[]
-            | select(.value.result != "success" and not (.key == "verify" and .value.result == "skipped" and $running == "false"))
+            | select(.value.result != "success" and ((.key == "verify" and .value.result == "skipped" and $running == "false") | not))
             | "\(.key)=\(.value.result)"] | join(", ")')
           if [ -n "$BAD" ]; then
             echo "::error::Deploy Admin Dev is not verified: $BAD"
