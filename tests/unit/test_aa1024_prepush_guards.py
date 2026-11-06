@@ -131,6 +131,33 @@ def test_integration_refuses_the_system_port(repo: Path):
     assert p.returncode == 1 and "5432" in p.stdout
 
 
+FAKE_PG_TOOL = """#!/usr/bin/env bash
+# Stands in for initdb / pg_ctl / psql: logs the call; initdb makes the data dir.
+echo "$(basename "$0") $*" >>"$FAKE_LOG"
+if [[ $(basename "$0") == initdb ]]; then mkdir -p "$2"; fi
+exit 0
+"""
+
+
+def test_throwaway_cluster_is_stopped_and_removed(repo: Path):
+    """Without CIS_TEST_DB_PORT the run starts its own cluster and must stop and delete it after the run. The first
+    version started it inside $(...), so the cleanup state never reached the script and every run leaked a
+    postgres process (S271 l22)."""
+    bindir = repo.parent / "pgbin"
+    bindir.mkdir()
+    for tool in ("initdb", "pg_ctl", "psql"):
+        (bindir / tool).write_text(FAKE_PG_TOOL)
+        (bindir / tool).chmod(0o755)
+    p = _run(repo, "--integration", AA_PREPUSH_INITDB=str(bindir / "initdb"))
+    assert p.returncode == 0, p.stdout + p.stderr
+    log = (repo.parent / "fake.log").read_text()
+    assert "pg_ctl -D" in log and " start" in log
+    stop = [line for line in log.splitlines() if line.startswith("pg_ctl") and " stop" in line]
+    assert stop, log
+    assert not list(repo.parent.glob("pre-push-pg.*")), "the throwaway cluster dir was left behind"
+    assert "-p 55999" in log  # the port from free_port reached pg_ctl and pytest's DATABASE_URL
+
+
 def test_ci_mode_never_asks_for_the_stamp():
     p = subprocess.run(["bash", str(SCRIPT), "--self-test"], cwd=REPO, capture_output=True, text=True, timeout=120)
     assert "ok   --ci, docs only: never skips by diff" in p.stdout

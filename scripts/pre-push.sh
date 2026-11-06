@@ -551,9 +551,10 @@ free_port() {
   "$PY" -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()'
 }
 
-# find_initdb: the newest local initdb (Debian layout first), or nothing.
+# find_initdb: AA_PREPUSH_INITDB when set (tests), else the newest local initdb (Debian layout first), or nothing.
 find_initdb() {
   local c
+  [[ -n ${AA_PREPUSH_INITDB:-} ]] && { echo "$AA_PREPUSH_INITDB"; return; }
   for c in $(ls -d /usr/lib/postgresql/*/bin/initdb 2>/dev/null | sort -V -r); do [[ -x $c ]] && { echo "$c"; return; }; done
   command -v initdb 2>/dev/null || true
 }
@@ -568,7 +569,9 @@ stop_scratch_pg() {
 }
 
 # start_scratch_pg: a throwaway cluster (superuser cistest, database cis_integration_test, role app_user as CI's setup
-# step) on a free port; prints the port. Lesson S246: no "local Postgres has no superuser" excuse.
+# step) on a free port; sets PG_PORT. Lesson S246: no "local Postgres has no superuser" excuse. Call it directly, never
+# in $(...): PG_TMP / PG_BIN must reach this shell, or stop_scratch_pg cannot stop the cluster (it leaked, S271 l22).
+PG_PORT=""
 start_scratch_pg() {
   local initdb port; initdb=$(find_initdb)
   [[ -n $initdb ]] || return 1
@@ -583,7 +586,7 @@ start_scratch_pg() {
     -c "CREATE USER cistest WITH PASSWORD 'cistest' SUPERUSER" \
     -c "CREATE DATABASE cis_integration_test OWNER cistest" \
     -c "CREATE ROLE app_user LOGIN PASSWORD 'appuser123'" >/dev/null || return 1
-  echo "$port"
+  PG_PORT=$port
 }
 
 # run_integration (--integration): run INTEGRATION_TARGETS on CIS_TEST_DB_PORT or a throwaway cluster; on a pass with
@@ -603,10 +606,11 @@ run_integration() {
   fi
   if [[ -z $port ]]; then
     trap stop_scratch_pg EXIT
-    port=$(start_scratch_pg) || {
+    start_scratch_pg || {
       echo "!! [integration] no Postgres: set CIS_TEST_DB_PORT to a throwaway cluster, or install PostgreSQL (initdb) locally"
       return 1
     }
+    port=$PG_PORT
     echo "throwaway Postgres on 127.0.0.1:$port ($PG_TMP, removed after the run)"
   fi
   echo "==> [integration] pytest on ${#INTEGRATION_TARGETS[@]} file(s): ${INTEGRATION_TARGETS[*]}"
