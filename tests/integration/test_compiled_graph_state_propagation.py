@@ -248,6 +248,7 @@ T2_BRAND_RULES = {**BRAND_RULES, "system_prompt": "", "brand_name": "WorldLux",
 
 
 async def test_t2_graph_run_writes_as_the_brand_and_gates_on_brand_fit(patch_llm_client, monkeypatch):
+    monkeypatch.setenv("T2_INTERIM", "off")   # S271 W0: pins the T2 judge gate (break-glass path)
     monkeypatch.delenv("T2_JUDGE_GATE", raising=False)
     client = patch_llm_client(
         [_generate_response(GOOD_GENERATED)],
@@ -277,6 +278,29 @@ async def test_t2_graph_run_writes_as_the_brand_and_gates_on_brand_fit(patch_llm
     assert axes["mission_source"] == "tenant_core_idea" and axes["judge_score_raw"] == pytest.approx(9.0)
 
 
+async def test_t2_graph_run_judge_is_report_only_under_the_interim_profile(patch_llm_client, monkeypatch):
+    """S271 W0 (t2_interim.py): a low brand fit no longer caps the score nor drives a retry: one writer call, one
+    judge call, the score is validate's; the verdict is still computed and kept for the report."""
+    for env in ("T2_JUDGE_GATE", "T2_INTERIM", "T2_JUDGE_REPEAT"):
+        monkeypatch.delenv(env, raising=False)
+    client = patch_llm_client(
+        [_generate_response(GOOD_GENERATED)],
+        judge_response=_judge_response(brand_fit=4, cross_brand_distinct=4, mission_present=False,
+                                       feedback="Warmer, more brand voice."),
+    )
+
+    result = await _rewrite_tour(
+        tour=SAMPLE_TOUR, idx=1, total=1, brand_rules=T2_BRAND_RULES, seo={}, model_tier="haiku",
+        is_tenant_rewrite=True, generate_stage="t2_generate",
+    )
+
+    assert result["status"] == "success", result.get("error")
+    assert len([r for r in client.calls if r.stage == "t2_generate"]) == 1
+    assert len([r for r in client.calls if r.stage == "t2_judge"]) == 1
+    assert result["judge_brand_fit"] == pytest.approx(4.0)
+    assert result["quality_score"] >= 7.0 and result["exit_path"] is None
+
+
 # AA-793: a T2 run whose retries all score lower than the first draft. The hitl exit must save the
 # best (first) draft, and each retry must revise that draft — through the compiled graph, so the new
 # ContentState keys (best_draft, draft_scores, previous_draft, best_draft_restored) survive astream().
@@ -285,6 +309,7 @@ def _t2_drafts():
 
 
 async def test_t2_graph_run_saves_the_best_draft_and_revises_it(patch_llm_client, monkeypatch):
+    monkeypatch.setenv("T2_INTERIM", "off")   # S271 W0: pins the T2 judge gate (break-glass path)
     for env in ("T2_JUDGE_GATE", "T2_BEST_DRAFT", "T2_TARGETED_REPAIR"):
         monkeypatch.delenv(env, raising=False)
     drafts = _t2_drafts()
@@ -317,6 +342,7 @@ async def test_t2_graph_run_saves_the_best_draft_and_revises_it(patch_llm_client
 
 
 async def test_t2_graph_run_keeps_the_last_draft_with_both_switches_off(patch_llm_client, monkeypatch):
+    monkeypatch.setenv("T2_INTERIM", "off")   # S271 W0: pins the T2 judge gate (break-glass path)
     monkeypatch.delenv("T2_JUDGE_GATE", raising=False)
     monkeypatch.setenv("T2_BEST_DRAFT", "off")
     monkeypatch.setenv("T2_TARGETED_REPAIR", "off")
