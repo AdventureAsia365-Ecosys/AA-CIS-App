@@ -2203,9 +2203,8 @@ off; sign in again" when off). **Since S2 it is off by default in both the API a
 `frontend/lib/staffSession.ts`, a test keeps the two lists equal) turns it back on; unset, empty or a typo keeps it
 off. The deployed API task definition does not set it, so every HS256 staff session is refused on every host,
 Preview included; staff sign in with Cognito only. Rollback: revert the S2 commit, or set the flag on the api task
-definition (AA-CIS-Infra, hand edit) and on the Vercel target. `/auth/admin-login` and `/auth/booking-token` are not
-gated and never call `/auth/verify-admin`: AA-Booking's legacy staff path (admin-login → booking-token) keeps working
-until the bridge is retired (AA-911 P6b). The fixed Preview host `aa-cis-preview.lumiguides.it.com` (below) never
+definition (AA-CIS-Infra, hand edit) and on the Vercel target. `/auth/admin-login` is not gated and never calls
+`/auth/verify-admin`; the AA-Booking bridge that used it (`/auth/booking-token`) is retired (AA-911, S271). The fixed Preview host `aa-cis-preview.lumiguides.it.com` (below) never
 offers the password form (`/login` hides it, BFF `/api/auth/login` answers 404 there).
 
 **Preview staff sign-in (AA-911 D-1, AA-816 P6a, root ADR 0006a A11).** `aa-cis-preview.lumiguides.it.com` is a
@@ -2222,8 +2221,7 @@ to role `viewer` with `is_owner` false whatever its `cis-*` groups (`api/core/id
 env override `COGNITO_CIS_ADMIN_PREVIEW_CLIENT_ID`; a preview id equal to a production id fails the verifier build,
 so every staff token answers 503), the bearer middleware forwards `viewer`, `staff_authz` refuses every write
 ("Role 'viewer' is read-only") and `/auth/verify-admin` returns `viewer` (log `staff_identity_preview_capped`). The CIS
-to Booking bridge (`/auth/booking-token`, below) stays and mints only from an HS256 password session, so a Cognito
-session (this one included) never gets a Booking token; the bridge retirement is AA-911 P6b. The
+to Booking bridge (`/auth/booking-token`) is retired (AA-911, S271): no session gets a Booking token from CIS. The
 cap holds only while the Vercel Preview `ADMIN_SECRET` is the C9 Preview credential (check V2, root ship plan):
 the main secret with a forged `x-admin-role` would pass on a path without a Bearer. Preview builds send
 `X-Robots-Tag: noindex, nofollow`. Every BFF route that attaches `X-Admin-Secret` calls `requireAdmin()` first
@@ -2498,7 +2496,6 @@ fetched about once a day.
 | Backend docs `openapi.json`, `docs`, `redoc` through the staff branch of `/api/tenant/*` (`lib/rbac.ts` isApiDocsPath) | ✓ | — | — | — | — |
 | Tenant portal `/portal/*` — **portal app** (AA-Partner `portal/`, `portal.lumiguides.it.com`, AA-885 / AA-979; no staff access) | — | — | — | — | ✓ |
 | BFF proxies `/api/admin`, `/api/pipeline`, `/api/tour-full`, `/api/tenant/pipeline/brand-identity`, `/api/tenant/*` (admin app; `/api/tenant/*` is staff-only since AA-885) | ✓ | ✓ | ✓ | GET only | — |
-| AA-Booking token `POST /auth/booking-token` | ✓ | ✓ | ✓ | 403 | — |
 | `/api/tenant/*`, `/api/tenant/me`, `/api/playground/proxy` — **portal app** BFF, tenant JWT only | — | — | — | — | ✓ |
 
 **Read-only `viewer` (AA-878).** The role of every Preview-host Cognito session (AA-911 D-1) and, until AA-816 S2,
@@ -2510,7 +2507,7 @@ row script, retired at AA-816 D1 — a password change for a legacy test row is 
 `READ_ONLY_ROLES`), and the backend `denial_reason` refuses `READ_ONLY_ROLES` on any method but GET/HEAD/OPTIONS
 whatever the route's capability (the notification bell's PUTs need `content.read`, the viewer still cannot clear
 it). Admin-only reads stay refused by POLICY; the role-filtered open reads (search, bell, tenant details) treat
-it like reviewer/content. No Booking access (`/auth/booking-token` → 403, `staff_authz.NO_BOOKING_ROLES`). Not
+it like reviewer/content. No Booking access (Booking reads only `booking-*` groups; the CIS bridge is retired, AA-911). Not
 assignable from the Staff page (`staff_directory.CIS_ROLES`, `lib/rbac.ts` `ASSIGNABLE_STAFF_ROLES`) and no
 Cognito group (a `cis-viewer` group is deferred to AA-816 E1); the reconcile report lists the row under cutover
 readiness (no email / sub), a legacy-only exception. UI smoke runs in **viewer mode** when the smoke session is
@@ -2564,45 +2561,13 @@ of the S241 admin-console design). Staff roles here and in `lib/rbac.ts` are kep
 legacy password login (`/auth/admin-login`, kept for Booking until ADR 0006 Phase 2); Booking keeps a thin
 profile keyed by `admin_users.id` and verifies a CIS-issued JWT with `aud=booking` (root ADR 0004, O1).
 
-### Booking staff token (AA-680)
+### Booking staff token (AA-680) — retired (AA-911, S271)
 
-CIS is the staff identity provider for AA-Booking. Two public endpoints, both on `app` in
-`api/main.py`, key handling in `api/core/booking_jwt.py`:
-
-Status (S245, owner decision): the bridge is **kept on purpose**. Booking production signs staff in through
-Cognito WORKFORCE (Booking roles from `booking-*` groups), but Vercel previews of the Booking admin have no
-registered Cognito callback, so the legacy CIS password → `/auth/booking-token` path is still their only staff
-sign-in. Removing these endpoints, the Booking bridge issuer and the signing key moves to a follow-up that first
-designs a preview sign-in. Do not delete them as dead code.
-
-- `POST /auth/booking-token` — needs a CIS **HS256** staff session (a Cognito session cannot mint one until
-  Booking Phase 2): the `cis_admin_token` JWT as an `Authorization: Bearer` header or the cookie. The staff row is re-read from `shared.admin_users`
-  (must be `is_active`; the role comes from the row, not the session). Returns
-  `{access_token, token_type: "Bearer", expires_in: 900}`. 401 for no/invalid/tenant session or an
-  inactive user; 503 when the signing key is not configured.
-- `GET /auth/.well-known/jwks.json` — the public keys (`kty=RSA`, `use=sig`, `alg=RS256`, `kid`),
-  current key first, then `previous` keys, then pre-published `next` keys.
-  `Cache-Control: public, max-age=600`.
-
-Token: RS256, header `kid`. Claims `iss=https://api-cis.lumiguides.it.com`, `aud=booking`,
-`sub=<admin_users.id>`, `name` and `preferred_username` (= username; the token carries no email),
-`cis_role` (`admin|reviewer|content`), `iat`, `nbf`, `exp` (+15 min), `jti`.
-Booking must verify signature via the JWKS (select by `kid`), pin `alg=RS256`, and require `iss`,
-`aud=booking` and `exp`. Booking MUST re-fetch the JWKS once when a token's `kid` is not in its
-cached copy (rate-limited, e.g. at most once per 60 s), then reject if the `kid` is still unknown.
-Booking maps `cis_role` to its own roles (see the mapping above).
-
-Key material: Secrets Manager `BOOKING_JWT_SECRET_NAME` (default
-`aa-cis/dev/booking-jwt-signing-key`), JSON `{"kid", "private_key_pem", "previous": [{"kid",
-"public_key_pem"}], "next": [{"kid", "public_key_pem"}]}`, cached 10 min in-process and read off
-the event loop (bounded 2 s connect / 3 s read timeouts). A missing or malformed secret gives 503 on
-both endpoints and never blocks startup; a blank or repeated `kid` in `previous`/`next` counts as
-malformed (the last good keys keep serving and an error is logged). Rotation, three steps so no
-verifier ever sees an unknown `kid`: (1) add the new public key under `next`, wait ≥ 20 min (CIS key
-cache 10 + Booking JWKS cache 10); (2) put the new private key and kid in place, move the old public
-key to `previous`, empty `next`; (3) after ≥ 25 min (key cache 10 + token 15) drop the `previous`
-entry.
-This is separate from the HS256 `JWT_SECRET` used for CIS sessions — Booking never receives that.
+CIS no longer mints AA-Booking tokens. `POST /auth/booking-token` and `GET /auth/.well-known/jwks.json` are gone (404)
+and `api/core/booking_jwt.py` is deleted: since the staff frontends run on ECS on their own hosts (root ADR 0019 d23),
+Booking staff sign in with the Cognito WORKFORCE `booking-staff` client only, and Booking accepts only the WORKFORCE
+issuer, its roles (finance included) from the `booking-*` groups. The signing-key secret
+`aa-cis/dev/booking-jwt-signing-key` has no reader and is scheduled for deletion (root secrets register).
 
 ### Tenant control plane (AA-1028 R1, root ADR 0019 d1 / d2)
 

@@ -201,13 +201,6 @@ OPEN_READ = CONTENT_READ
 READ_ONLY_ROLES: frozenset[str] = frozenset({"viewer"})
 READ_METHODS: frozenset[str] = frozenset({"GET", "HEAD", "OPTIONS"})
 
-# AA-878 — CIS roles that get no AA-Booking access: POST /auth/booking-token answers 403 for them. AA-1035 R2: none of
-# the new roles gets a bridge token either (root ADR 0019 d3: Booking reads its roles, finance included, from the
-# booking-* group, never from the CIS -> Booking bridge, which AA-911 retires).
-NO_BOOKING_ROLES: frozenset[str] = frozenset({
-    "viewer", "content_lead", "tenant_qa", "customer_success", "support", "finance", "ai_ops",
-})
-
 # staff.write is not a role capability: it needs the owner flag (shared.admin_users.is_owner, migration 247,
 # S241 Q2) AND a verified Cognito session (AA-816 C6): the caller's identity must come from the staff bearer
 # middleware (api/middleware/staff_bearer.py), never from x-admin-role, which any secret holder can forge.
