@@ -52,8 +52,9 @@ Live check of the cause (read-only, orchestrator): per t9_write blog row `tokens
 ## Changed
 - `services/acp_content_writing/prompts.py`: `_BLOG_WORDS`, `_BLOG_WORDS_MAX`, `_BLOG_SECTIONS_MAX`,
   `_BLOG_LENGTH_INSTRUCTIONS`; `build_user_prompt` appends it for a blog.
-- `shared/llm_client/prompt_versions.json`: t9_write v2. `api/migrations/380_prompt_version_t9_write_v2.sql` (contract,
-  MIG-4 first PR) + `tests/integration/test_aa741_migration_380.py`.
+- `shared/llm_client/prompt_versions.json`: t9_write v2. `api/migrations/380_prompt_versions_aa741_blog.sql` (contract,
+  MIG-4 first PR; it also registers t9_write v3 and t8_angle_gen v2 of the stacked Blog Slate PR, one Migration
+  Apply run for the lane) + `tests/integration/test_aa741_migration_380.py`.
 - `docs/llm/prompt-register.md` (t9_write row symbols), `CONTEXT.md` (ceiling = head-room line).
 - Tests: new `tests/unit/test_aa741_s271_t9_blog_output_budget.py` (output contract: block once in every blog prompt and
   nowhere else, band inside F4, the stated floor clears F4 and no "shorter article" licence (also on an F4 rewrite), a full-length reply under a third of the ceiling, envelope keys, manifest covers the
@@ -76,5 +77,7 @@ Live check of the cause (read-only, orchestrator): per t9_write blog row `tokens
 - Eval: R2 `t9_blog` is informative only today (R2 judge kappa 0.137 on 06/11, not calibrated). Read after deploy:
   t9_write blog rows with `prompt_version = 'v2'`: max / p95 `tokens_out`, count of `stop_reason = 'max_tokens'`,
   `output_len_chars`, F4 / F0 results in `gate_ledger`, and cost per blog vs v1.
-- MIG-4 order: PR "chore: register prompt version t9_write v2" first, its Infra copy applied by Migration Apply (class
-  contract), then this code PR (rebase onto main after the migration PR merges so the migration commit drops out).
+- MIG-4 order: the migration-only PR (migration 380) first, its Infra copy applied by Migration Apply (class
+  contract), then this code PR (rebase onto main after the migration PR merges so the two migration commits drop
+  out: `git rebase --onto origin/main <migration branch tip>`), then the Blog Slate PR stacked on this one. Between
+  this deploy and the Slate deploy, t9_write rows carry 'v2'; after it, 'v3'.
