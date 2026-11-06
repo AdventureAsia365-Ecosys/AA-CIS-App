@@ -30,7 +30,7 @@ RETRY_FACTOR = 2
 RETRY_CAP = 24000
 
 # Catalog capability keys read as data (each falls back to the code rule below when the row does not state it).
-CAP_REASONING = "reasoning"                  # bool: the model reasons inside max_tokens
+CAP_REASONING = "reasoning"  # bool: the model reasons inside max_tokens
 CAP_MIN_OUTPUT_TOKENS = "min_output_tokens"  # int: the model's own floor (wins over REASONING_FLOOR)
 
 # The code rule (every catalog row today states neither capability). Claude 5.x and later (sonnet / haiku / opus /
@@ -67,8 +67,9 @@ def floor_for(model_key: str | None, capabilities: Mapping[str, Any] | None = No
     return REASONING_FLOOR if reasoning_capable(model_key, caps) else None
 
 
-def floored(max_tokens: int, model_key: str | None, capabilities: Mapping[str, Any] | None = None,
-            model_cap: int | None = None) -> int:
+def floored(
+    max_tokens: int, model_key: str | None, capabilities: Mapping[str, Any] | None = None, model_cap: int | None = None
+) -> int:
     """``max_tokens`` raised to the model's floor (never lowered), and the floor itself never above the model's own
     output cap (``model_cap``, the catalog's max_output_tokens). Pure."""
     floor = floor_for(model_key, capabilities)
@@ -96,5 +97,15 @@ def retry_helps(max_tokens: int, model_cap: int | None = None) -> bool:
     return retry_budget(max_tokens, model_cap) > int(max_tokens)
 
 
-__all__ = ["CAP_MIN_OUTPUT_TOKENS", "CAP_REASONING", "REASONING_FLOOR", "RETRY_CAP", "RETRY_FACTOR", "floor_for",
-           "floored", "reasoning_capable", "retry_budget", "retry_helps"]
+__all__ = [
+    "CAP_MIN_OUTPUT_TOKENS",
+    "CAP_REASONING",
+    "REASONING_FLOOR",
+    "RETRY_CAP",
+    "RETRY_FACTOR",
+    "floor_for",
+    "floored",
+    "reasoning_capable",
+    "retry_budget",
+    "retry_helps",
+]
