@@ -3,8 +3,10 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install system deps: C/C++ toolchain for packages that build from source, and git for pip VCS deps
-RUN apt-get update && apt-get install -y \
+# Install system deps: C/C++ toolchain for packages that build from source, and git for pip VCS deps.
+# Also upgrade the Debian packages the base image already has, so a security fix Debian ships before the next base
+# image tag reaches this image too (Trivy fails the build on a fixable HIGH/CRITICAL finding; same as Booking and CRM).
+RUN apt-get update && apt-get upgrade -y --no-install-recommends && apt-get install -y \
     curl \
     gcc \
     g++ \
