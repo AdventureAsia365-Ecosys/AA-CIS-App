@@ -7,7 +7,8 @@ none. Here each connection has ONE circuit whose state lives in ``shared.provide
 circuit one task opens is skipped by every task.
 
 State machine. The LLM breaker's (shared/llm_client/breaker.py: ``after_failure`` / ``after_success`` / ``claimed``
-on a ``Health`` row, the same ``RULES``): a failure class opens the circuit after its threshold of failures in a row
+on a ``Health`` row, ``PROVIDER_RULES``: the LLM ``RULES`` with the access_denied cap kept at 30 min, AA-900): a
+failure class opens the circuit after its threshold of failures in a row
 (access_denied / quota_exhausted at once, throttled after 3, other after 5), for a short period that doubles on each
 failed half-open probe (capped); after the period exactly ONE call across all tasks may try (a lease in the row); its
 success closes the circuit. A caller records one outcome per logical call (after the client's own retries), so "5
@@ -49,7 +50,8 @@ from typing import Awaitable, Callable, Optional
 import asyncpg
 import structlog
 
-from shared.llm_client.breaker import CLOSED, OPEN, RULES, Health, after_failure, after_success, claimed, state_of
+from shared.llm_client.breaker import (CLOSED, OPEN, PROVIDER_RULES, RULES, Health, after_failure, after_success,
+                                       claimed, state_of)
 from shared.llm_client.errors import ACCESS_DENIED, OTHER, QUOTA_EXHAUSTED, THROTTLED, redact_ids
 
 logger = structlog.get_logger()
@@ -314,7 +316,8 @@ async def record_failure(key: str, error_class: Optional[str], message: str) -> 
             return
         cls = error_class if error_class in RULES else OTHER
         text = redact_ids((message or "")[:ERROR_CHARS])
-        before, after = await _transition(key, lambda cur: after_failure(cur, cls, text, _now()))
+        before, after = await _transition(key, lambda cur: after_failure(cur, cls, text, _now(),
+                                                                         rules=PROVIDER_RULES))
         if after is None or after.opened_at is None or (before is not None and before.opened_at == after.opened_at):
             return                  # still closed, or already open (a call that started before it opened)
         logger.warning("provider_circuit_opened", connection=key, error_class=cls,

@@ -41,8 +41,8 @@ coverage card on the Routing tab; the same report raises the ops check ``llm_sta
 AA-900 (S271 lane l11) — a deployment refused only because it has no grant yet (its circuit's class access_denied,
 its deployment's last probe access_denied, its account answering: ``shared.llm_client.expected_refusal``) is listed
 with ``expected_refusal: true`` and in ``known_refused_models``; it does not make its connection ``open`` or
-``degraded``, is not in ``open_models`` and is not the connection's ``last_error_*``. The connection-level ``circuit`` is unchanged (an account-wide refusal is
-never expected).
+``degraded``, is not in ``open_models`` and is not the connection's ``last_error_*``. The connection-level
+``circuit`` is unchanged (an account-wide refusal is never expected).
 """
 from __future__ import annotations
 

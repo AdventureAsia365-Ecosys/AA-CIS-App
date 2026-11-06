@@ -14,8 +14,8 @@ import pytest
 
 from api.services import llm_availability as av
 from shared.llm_client import breaker, expected_refusal as er, route_watch, vendor_route
-from shared.llm_client.breaker import (ACCESS_DENIED, CLOSED, HALF_OPEN, OPEN, QUOTA_EXHAUSTED, RULES, THROTTLED, Health,
-                                       after_failure, open_seconds, recovery_candidates, state_of)
+from shared.llm_client.breaker import (ACCESS_DENIED, CLOSED, HALF_OPEN, OPEN, QUOTA_EXHAUSTED, RULES, THROTTLED,
+                                       Health, after_failure, open_seconds, recovery_candidates, state_of)
 from shared.llm_client.connections import ProviderConnection
 
 T0 = datetime(2026, 11, 6, 8, 0, tzinfo=timezone.utc)
@@ -273,3 +273,15 @@ def test_the_digest_reports_expected_refusals_apart_and_does_not_alert_on_them()
     lost = route_watch.digest({"invented_judge": {**st, "lost": 1}}, {}, {})
     (s,) = lost["attention"]
     assert (s["failed_attempts"], s["expected_refusals"], s["lost_requests"]) == (0, 14, 1)
+
+
+def test_the_non_llm_provider_circuits_keep_the_30_minute_access_denied_cap():
+    from shared import provider_circuit  # noqa: F401 — imports PROVIDER_RULES from the breaker
+    assert breaker.PROVIDER_RULES[ACCESS_DENIED].max_open_s == 1800
+    assert {k: v for k, v in breaker.PROVIDER_RULES.items() if k != ACCESS_DENIED} == \
+        {k: v for k, v in RULES.items() if k != ACCESS_DENIED}
+    h = Health("typesafe", "*")
+    for _ in range(12):                                             # a long run of failed probes
+        at = (h.circuit_open_until or T0) + timedelta(seconds=1)
+        h = after_failure(h, ACCESS_DENIED, "401", at, rules=breaker.PROVIDER_RULES)
+    assert h.circuit_open_until - at == timedelta(seconds=1800)

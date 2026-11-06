@@ -146,6 +146,9 @@ RULES: dict[str, Rule] = {
     THROTTLED: Rule(threshold=3, open_s=30, max_open_s=300),            # rate limit: back off, then probe
     OTHER: Rule(threshold=5, open_s=60, max_open_s=600),                # outage, timeout, 5xx
 }
+# The non-LLM provider circuits (shared/provider_circuit.py: Jev, DataForSEO, Geoapify) keep the 30 min access_denied
+# cap: a 401 / 403 there is a key or plan problem with no daily probe of its own behind the circuit.
+PROVIDER_RULES: dict[str, Rule] = {**RULES, ACCESS_DENIED: Rule(threshold=1, open_s=300, max_open_s=1800)}
 PROBE_LEASE_S = 180.0       # how long a half-open probe holds its lease (a probe that hangs longer frees it)
 ERROR_CHARS = 300
 READ_TTL_S = 10.0           # the snapshot of the table every task re-reads
@@ -179,19 +182,22 @@ def state_of(h: Optional[Health], now: datetime) -> str:
     return OPEN if now < h.circuit_open_until else HALF_OPEN
 
 
-def open_seconds(error_class: str, streak: int) -> float:
-    rule = RULES.get(error_class, RULES[OTHER])
+def open_seconds(error_class: str, streak: int, rules: Optional[dict[str, Rule]] = None) -> float:
+    rules = rules or RULES
+    rule = rules.get(error_class, rules[OTHER])
     return min(rule.open_s * (2 ** max(streak - 1, 0)), rule.max_open_s)
 
 
 def after_failure(h: Health, error_class: str, message: str, now: datetime, *,
-                  keep_streak_start: bool = False) -> Health:
+                  keep_streak_start: bool = False, rules: Optional[dict[str, Rule]] = None) -> Health:
     """A failed call. Open while open: nothing moves (a call that started before the circuit opened). Half-open: the
     probe failed, open again for twice as long. Closed: open once the class's threshold of failures in a row is met.
     ``keep_streak_start`` (the LLM breaker, AA-1026): a failed probe keeps ``opened_at`` = when the streak of
     openings began, so the connection circuit can tell a model refused since before another model answered
-    (``_tripping``); the default moves it to the reopening (the provider circuit's alerts read that move)."""
-    cls = error_class if error_class in RULES else OTHER
+    (``_tripping``); the default moves it to the reopening (the provider circuit's alerts read that move).
+    ``rules``: the class rules (default ``RULES``; the provider circuit passes ``PROVIDER_RULES``)."""
+    rules = rules or RULES
+    cls = error_class if error_class in rules else OTHER
     before = state_of(h, now)
     base = replace(h, last_error_at=now, last_error_class=cls, last_error=(message or "")[:ERROR_CHARS],
                    consecutive_failures=h.consecutive_failures + 1, probe_until=None)
@@ -202,12 +208,12 @@ def after_failure(h: Health, error_class: str, message: str, now: datetime, *,
         streak = h.open_streak + 1
         if keep_streak_start and h.opened_at is not None:
             opened_at = h.opened_at
-    elif base.consecutive_failures >= RULES[cls].threshold:
+    elif base.consecutive_failures >= rules[cls].threshold:
         streak = 1
     else:
         return base
-    return replace(base, circuit_open_until=now + timedelta(seconds=open_seconds(cls, streak)), open_streak=streak,
-                   opened_at=opened_at)
+    return replace(base, circuit_open_until=now + timedelta(seconds=open_seconds(cls, streak, rules)),
+                   open_streak=streak, opened_at=opened_at)
 
 
 def after_success(h: Health, now: datetime) -> Health:

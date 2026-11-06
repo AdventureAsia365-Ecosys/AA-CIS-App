@@ -396,6 +396,38 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   its outcome counts on the circuit). `GET /admin/llm-availability` adds `connections` (status per connection and the
   circuit of each deployment). UI: AI providers › Providers › Connections (`frontend/app/admin/ai-gateway/ConnectionsPanel.tsx`; secret name
   and base URL read-only there since AA-1017, changed by migration).
+- **Refusal noise: known no-access models** (AA-900, S271 lane l11, no migration). The ledger rule stays: every real
+  provider call has one `shared.llm_call_log` row, refused included. What changes is how often a model with no grant
+  is called and how its refusals are counted:
+  - **Open period.** `breaker.RULES[access_denied]` doubles from 5 min up to **6 h** (`ACCESS_DENIED_MAX_OPEN_S`, was
+    30 min): a fresh refusal still costs minutes (5, 10, 20, 40 min, ...), a model refused for ~10 h is re-probed by
+    real traffic at most every 6 h. quota_exhausted / credential / throttled / other are unchanged, and the non-LLM
+    provider circuits (`shared/provider_circuit.py`) keep a 30 min access_denied cap (`breaker.PROVIDER_RULES`).
+  - **How long until traffic returns to acc3 after AWS grants a model**: at the latest the next of (a) the daily
+    `llm_connection_probe` (05:00 UTC, `LLM_DAILY_PROBE=on`), (b) an admin Test connection of that model, (c) the end
+    of its open period (at most 6 h), then one real call probes it. (a) and (b) go through `LLMClient.probe` =
+    `breaker.guarded(admit_call=False)`: an open circuit is not in their way and their success closes it (the
+    10 s health snapshot of the other tasks then picks it up). **To force it**: AI gateway › Providers › Connections ›
+    the connection › Test connection with that model (`POST /admin/llm-connections/{key}/test`
+    `{"model_key": ...}`), or a live run of `POST /admin/job-runner/llm-probe/run` (every enabled deployment).
+  - **Account recovery.** When any model of a connection answers, the OPEN circuits of an account-wide class whose
+    refusal began after the connection's previous answer (refusals the account itself may have caused: Error 002,
+    a lapsed credit) turn half-open at once (`breaker._reprobe_after_account_recovery`, streak kept), so an account
+    that comes back is not held by 6 h periods. A model refused since before another one answered (a **known
+    refusal**, `breaker.known_refusal`) keeps its period.
+  - **Logs.** A known refusal's reopening (`llm_circuit_opened`), its failed deployment attempt
+    (`llm_deployment_attempt_failed`) and a route rung refused only for that reason (`llm_route_attempt_failed`) log
+    at info with `known_refusal=true`, not as warnings. `llm_deployment_skip` is logged once per (model, connection,
+    reason) per 10 min and process (`vendor_route.SKIP_LOG_INTERVAL_S`); the next line carries `suppressed=<n>`.
+  - **Expected refusal (display)**, one rule in `shared/llm_client/expected_refusal.py` (`EXPECTED_SQL` /
+    `is_expected`): a row `status = 'refused'`, `error_class = 'access_denied'`, whose deployment's `access_state` is
+    `access_denied` (its last probe found no access) on a connection whose `access_state` is `ok` (the account answers).
+    Counted apart from errors in the Providers stats (`expected_refused`, left out of `refused`), the Calls tab
+    (`expected_refusal` per row, own KPI), Route trace (`expected_refusals`, left out of `failed_attempts`), the route
+    digest (`shared/llm_client/route_watch.py`) and `GET /admin/llm-availability` (a known model is
+    `expected_refusal: true` and in `known_refused_models`; it does not make the connection `open` / `degraded`).
+    An account-wide refusal is never expected (the connection's access_state is not `ok`), and a model whose last
+    probe answered still counts as an error when it starts refusing, until the next probe records the refusal.
 - **Data scopes per stage** (AA-1002 slice S5, migration 311 contract, app ADR 0012): `shared.llm_role_config.
   allowed_scopes` (`{aws_only}` or `{aws_only, vendor_direct}`, default `{aws_only}`, migration-only: `cis_app` has no
   INSERT / UPDATE on the column) says which connections (`data_scope`) a stage's content may use. Backfilled from the
