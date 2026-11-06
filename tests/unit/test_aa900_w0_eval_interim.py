@@ -419,3 +419,62 @@ def test_the_cli_does_not_queue_a_run_the_dry_run_refuses(monkeypatch, capsys):
     monkeypatch.setattr("shared.jobs.registry.enqueue", lambda *a, **k: queued.append(a))
     assert asyncio.run(r2._main(["--writer", "t9_blog", "--enqueue"])) == 1
     assert queued == [] and '"refused"' in capsys.readouterr().out
+
+
+# ── (F8) the DRY RUN refuses a run its own estimate says ends budget_cap ──────────────────────────────────────────
+
+def _estimate_on(store, monkeypatch, conf):
+    async def family(writer, judge_model=None):
+        return []
+    monkeypatch.setattr(r2, "PgStore", lambda pool, **k: store)
+    monkeypatch.setattr(r2, "check_judge_family", family)
+    return asyncio.run(r2.estimate(object(), conf))
+
+
+def test_the_dry_run_refuses_an_estimate_over_the_cap(monkeypatch):
+    store = FakeStore(golden(), cost_samples=[0.134] * 10)          # ledger: 0.134 x 1.3 + 2 judge calls per item
+    est = _estimate_on(store, monkeypatch, r2.R2Config(writer="a1", cap_usd=2.0))
+    assert sum(est["plan"].values()) >= 15 and est["item_estimate"]["source"] == "ledger"
+    assert est["estimated_usd_max"] > 2.0
+    assert any(x.startswith(f"estimated {est['estimated_usd_max']} > cap 2.0") for x in est["would_refuse"])
+    # sized from the estimate, the same plan is not refused
+    ok = _estimate_on(store, monkeypatch, r2.R2Config(writer="a1", cap_usd=float(int(est["estimated_usd_max"]) + 1)))
+    assert ok["would_refuse"] == []
+    # calibrate-only reserves judge calls only: cents, under any cap
+    cal = _estimate_on(store, monkeypatch, r2.R2Config(writer="a1", cap_usd=0.5, calibrate_only=True))
+    assert cal["estimated_usd_max"] < 0.5 and cal["would_refuse"] == []
+
+
+def test_the_dry_run_refuses_a_run_the_month_cap_would_stop(monkeypatch):
+    store = FakeStore(golden(), cost_samples=[0.134] * 10)
+
+    async def month():
+        return cfg.MONTH_CAP_USD - 1.0
+    store.month_spend = month
+    est = _estimate_on(store, monkeypatch, r2.R2Config(writer="a1", cap_usd=10.0))
+    assert [x for x in est["would_refuse"] if x.startswith("month cap")]
+    assert not [x for x in est["would_refuse"] if x.startswith("estimated")]
+
+
+def test_the_cli_queues_nothing_when_the_estimate_passes_the_cap(monkeypatch, capsys):
+    import asyncpg
+
+    class Pool:
+        async def close(self):
+            return None
+
+    async def create_pool(*a, **k):
+        return Pool()
+    queued = []
+    monkeypatch.setattr(asyncpg, "create_pool", create_pool)
+    monkeypatch.setattr("shared.secrets.get_database_url", lambda: "postgresql://zz")
+    monkeypatch.setattr("shared.jobs.registry.enqueue", lambda *a, **k: queued.append(a))
+    store = FakeStore(golden(), cost_samples=[0.134] * 10)
+
+    async def family(writer, judge_model=None):
+        return []
+    monkeypatch.setattr(r2, "PgStore", lambda pool, **k: store)
+    monkeypatch.setattr(r2, "check_judge_family", family)
+    assert asyncio.run(r2._main(["--writer", "a1", "--cap-usd", "2", "--enqueue"])) == 1
+    out = capsys.readouterr().out
+    assert queued == [] and '"refused"' in out and "> cap 2.0" in out

@@ -46,7 +46,7 @@ the T10 gate and repair loop is not run, so a T9 candidate can only look worse t
 
 | Limit | Value | Where it is enforced |
 |---|---|---|
-| Per run | `--cap-usd`, at most 10 USD (`R2_RUN_CAP_USD`). Use 2 USD for a change eval unless the DRY RUN estimate needs more | The runner stops (`budget_cap`, verdict `invalid`) before an item that would pass the cap, from `shared.llm_call_log` |
+| Per run | `--cap-usd`, at most 10 USD (`R2_RUN_CAP_USD`). Size it from the DRY RUN: `estimated_usd_max` rounded up to the next USD (a full t9_blog plan on the S271 ledger is about 3 USD, so 2 USD is too low). The CLI does not queue a run whose estimate passes its cap or the month cap | The runner stops (`budget_cap`, verdict `invalid`) before an item that would pass the cap, from `shared.llm_call_log` |
 | Per month | 25 USD over every writing-memory stage, `adhoc_aa900` included (`MONTH_CAP_USD`, `MEMORY_STAGES`) | Checked before each item |
 | Per call | Every call goes through `LLMClient` and lands in `shared.llm_call_log` under stage `adhoc_aa900`, `quality_signal.eval_run = <run-id>`, `quality_signal.real_stage = <writer stage>` | `call_log.bind_eval_stage` |
 
@@ -87,15 +87,19 @@ cost of the writer's last 50 candidate items x 1.3).
 4. DRY RUN: print the plan and the estimate. It reads only, 0 USD. Replace `t9_blog` with the writer of the row.
 
    ```bash
-   aws ecs execute-command --cluster aa-cis-dev-cluster --task $TASK_ARN --container worker --interactive --command "python3 -m services.writing_memory.r2 --writer t9_blog --goal non_inferior --stage adhoc_aa900 --cap-usd 2 --requested-by aa900-<pr-number>" --profile aa365-admin --region us-west-1
+   aws ecs execute-command --cluster aa-cis-dev-cluster --task $TASK_ARN --container worker --interactive --command "python3 -m services.writing_memory.r2 --writer t9_blog --goal non_inferior --stage adhoc_aa900 --cap-usd 10 --requested-by aa900-<pr-number>" --profile aa365-admin --region us-west-1
    ```
 
    Expected: JSON with `plan`, `calibrated_possible: true`, `controls.found` equal to `controls.planned`,
    `would_refuse: []`, `judge_family_check: "ok"`, `estimated_usd_max` at or under `cap_usd` (`item_estimate.source`
    says whether the ledger or the config constant sized it), `log_stage: "adhoc_aa900"` and `month_after_cap_ok: true`.
    `control_run_stale` names a release's eval run on an older golden version (release 0 then uses this version's
-   baseline). If `would_refuse` is not empty the enqueued job is refused at 0 USD: fix the cause first. If the
-   estimate passes the cap, raise `--cap-usd` (at most 10) only with the tech lead's yes for that run.
+   baseline). The DRY RUN spends nothing, so it runs at `--cap-usd 10` to show the full estimate. Set `<cap>` for
+   the next steps to `estimated_usd_max` rounded up to the next USD (at most 10), and get the tech lead's yes for
+   that amount. If `would_refuse` is not empty, `--enqueue` exits 1 and queues nothing: fix the cause first. The
+   reasons are missing controls, calibration that cannot be measured, the judge family rule, `estimated X > cap Y`
+   (raise `<cap>` or plan fewer items) and `month cap` (the month's learning spend plus the estimate passes 25 USD).
+   The job itself also refuses at 0 USD on the first three; on the cost ones it relies on the per-item reservation.
 
    Calibrate first (cents): the same command with `--calibrate-only --enqueue` judges only the labelled frozen items
    and stops (verdict `informative`, `details.calibration_gate: calibrate_only`). Read its `judge_kappa`; start the
@@ -108,14 +112,14 @@ cost of the writer's last 50 candidate items x 1.3).
    never runs inside the exec session (a long paid run dies with the session).
 
    ```bash
-   aws ecs execute-command --cluster aa-cis-dev-cluster --task $TASK_ARN --container worker --interactive --command "python3 -m services.writing_memory.r2 --writer t9_blog --goal non_inferior --stage adhoc_aa900 --cap-usd 2 --requested-by aa900-<pr-number> --enqueue" --profile aa365-admin --region us-west-1  # WRITE
+   aws ecs execute-command --cluster aa-cis-dev-cluster --task $TASK_ARN --container worker --interactive --command "python3 -m services.writing_memory.r2 --writer t9_blog --goal non_inferior --stage adhoc_aa900 --cap-usd <cap> --requested-by aa900-<pr-number> --enqueue" --profile aa365-admin --region us-west-1  # WRITE
    ```
 
    Expected: a second JSON line `{"enqueued": "writing_memory_r2", "job_id": "<job-id>", "created": true}`.
    Abort: cancel the job on the admin Jobs page (`/admin/jobs`). The job blocks backend deploys while it runs
    (deploy gate), so do not start it while a merge is waiting.
 
-6. Wait for the job to finish (up to 90 minutes, usually far less with a 2 USD cap) on the admin Jobs page, then read
+6. Wait for the job to finish (up to 90 minutes, usually far less with a few USD cap) on the admin Jobs page, then read
    the result with the read-only report script through the S3-mediated ECS exec pattern (root
    `docs/ops/runbooks/ecs-exec-s3-mediated.md`). Upload `scripts/llm_ops/eval_run_report.py` from this repo, then
    run it with the `run_id` from the job's result (admin Jobs page). `<bronze-bucket>` is the CIS bronze bucket; its

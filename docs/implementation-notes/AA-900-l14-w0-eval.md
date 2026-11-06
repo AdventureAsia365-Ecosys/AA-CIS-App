@@ -49,6 +49,13 @@ the golden labels are not changed here (W1 compiles the rubric; t9b-002 is a gol
 - **Cost (F8).** `item_estimate`: median of the writer's last 50 logged candidate item costs (finished r2 / reverify
   runs, no seeded run) x 1.3, the config constant until 5 exist. Constants: t9_blog 0.08 -> 0.18 (measured median
   $0.134, mean $0.161 at effort high in the two S271 runs), JUDGE_CALL_ESTIMATE_USD 0.01 -> 0.005 (median $0.0025).
+- **DRY RUN cost refusals (review fix).** `estimate()` adds `estimated X > cap Y` when `estimated_usd_max` passes
+  `cap_usd`, and `month cap` when the month's learning spend plus `estimated_usd_max` passes `MONTH_CAP_USD`, to
+  `would_refuse`, so `--enqueue` exits 1 and queues nothing (it used to queue a run its own estimate said would end
+  `budget_cap`, verdict `invalid`, as 08c34cb4 / 858c8bf6 did). It applies in every mode; calibrate-only reserves
+  judge calls only (cents). The month check uses the estimate, not the cap (that is where the run's reservation stops);
+  `month_after_cap_ok` stays as the informative cap-based figure. The runbook runs the DRY RUN at `--cap-usd 10` ($0)
+  and sizes `<cap>` from `estimated_usd_max` rounded up (a full t9_blog plan is about $3 on the S271 ledger).
 - **after() never stops.** It records `details.overspend_usd` / `overspend_phase`; the reservation before the next item
   is the stop. A finished run keeps its verdict.
 - **Hard stop 1 (F4 + skeptic 2):** counts only when the candidate verdict is fail AND the control verdict was pass.
@@ -69,6 +76,10 @@ the golden labels are not changed here (W1 compiles the rubric; t9b-002 is a gol
   labelled output view.
 
 ## Tradeoffs
+
+- The cost refusals live in the DRY RUN / CLI only, not in `run_r2`: `estimated_usd_max` is an upper bound (ledger
+  median x 1.3 per item), and the job keeps the exact per-item reservation as its guard. Refusing in the job too would
+  turn runs that can finish under the cap into $0 refusals and break the budget-cap tests of the runner.
 
 - Pairing a stale non-empty release's outputs across versions would need the 284 trigger changed (a contract
   migration on a guard) for little gain: such a run should be a reverify on the new version anyway. Refusing at $0 is

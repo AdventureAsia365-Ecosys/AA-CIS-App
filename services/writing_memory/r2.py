@@ -1160,7 +1160,15 @@ async def estimate(pool, conf: R2Config) -> dict:
     judge_only = (len(calib) + n_written) * cfg.JUDGE_CALL_ESTIMATE_USD
     gen = n_written * (cfg.JUDGE_CALL_ESTIMATE_USD if conf.seed_fault else est["item_usd"]
                        + cfg.JUDGE_CALL_ESTIMATE_USD)
+    est_max = round(judge_only + gen, 3)
     month = await store.month_spend()
+    # S271 W0 (F8): a run whose own estimate passes its cap (or the month cap) reserves its way to `budget_cap`,
+    # verdict `invalid`, after paying for part of the items: the CLI does not queue it
+    if est_max > conf.cap_usd:
+        refusals.append(f"estimated {est_max} > cap {conf.cap_usd}: size --cap-usd from estimated_usd_max "
+                        f"(at most {cfg.R2_RUN_CAP_USD}) or plan fewer items")
+    if month + est_max > cfg.MONTH_CAP_USD:
+        refusals.append(f"month cap: spent {round(month, 4)} + estimated {est_max} > {cfg.MONTH_CAP_USD}")
     return {"writer": conf.writer, "release": conf.release_id, "items": len(items), "plan": n,
             "calibration_items": len(calib), "calibration_labels": calib_labels,
             "calibrated_possible": (len(calib) >= cfg.MIN_KAPPA_PAIRS
@@ -1170,7 +1178,7 @@ async def estimate(pool, conf: R2Config) -> dict:
             "controls": {**ctl["plan"], "cross_set": ctl["cross_set"], "paired_on": "sample_id+input_sha256"},
             "calibrate_only": conf.calibrate_only, "require_calibrated": conf.require_calibrated,
             "judge_model": conf.judge_model, "judge_connection": conf.judge_connection,
-            "item_estimate": est, "estimated_usd_max": round(judge_only + gen, 3), "cap_usd": conf.cap_usd,
+            "item_estimate": est, "estimated_usd_max": est_max, "cap_usd": conf.cap_usd,
             "log_stage": conf.log_stage, "month_spend_usd": round(month, 4), "month_cap_usd": cfg.MONTH_CAP_USD,
             "month_after_cap_ok": month + conf.cap_usd <= cfg.MONTH_CAP_USD,
             "judge_family_check": family_check, "would_refuse": refusals}
