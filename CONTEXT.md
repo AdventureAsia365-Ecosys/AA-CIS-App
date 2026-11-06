@@ -3442,6 +3442,21 @@ the blog attempt-3 cut also takes F17 'cut it' items once F17 was repaired befor
 says to keep it (played-down hazard 'keep the hazard', family caveat 'add ONE') is never cut, merged or not,
 and an empty repair of a hazard sentence is not spliced; a multi-sentence cut checks every sentence in it
 (hook, CTA, FAQ question) and the sentence after it (orphaned pronoun).
+S271 W0 (AA-900, root ADR 0020 D6) — **stop and label**: attempt 3 no longer pays. A piece still failing after
+attempt 2 keeps the better of attempts 1 and 2 (the AA-528 guard) and is labelled at $0: no second repair, no third
+F9 judge call and no code truth cut (the blog cut, the LinkedIn F9 cut and the attempt-3 fallback cut above run only
+with `T9_LAST_ATTEMPT_MODE=legacy`, the rollback switch; a cut needs a passing measurement record for its class).
+A held piece always ends its `repair_log` with a label entry (`gate_targeted`/`repair_mode` `stop_and_label`, or
+`repair_mode` `label` when no paid attempt was skipped): `reason_codes` (one typed code per hold-capable failing
+gate, `gate_eval.HOLD_REASON_CODES`, plus `detector_degraded`), `kept_attempt`, `cost_usd` 0 and `failing`.
+Every attempt's `repair_log` entry lists **every failing gate** (`failing`, `gate_eval.failing_gates`: gate,
+source, blocking, may_hold, n, F9 `classes`), not only the first one `held_reason` names. **Interim F9 policy**
+(`services/acp_content_writing/f9_policy.py`, declared diff, `T10_F9_POLICY_MODE=legacy` rolls back):
+F9_cta_fact holds only on a quoted body claim with a why_not_in_source that names a concrete trip activity,
+service, time or view (`trip_promise_kinds`, D1/D4/D15); its violations keep those claims only. Every other F9 class
+warns (`blocking: false`, in the flags): place background and other unsupported claims, CTA_NOT_REFLECTED,
+TEXT_INTEGRITY, title / meta claims, a fact flag with no named claim. The F9 classes (`f9_policy.entry_classes`)
+keep `judge_unavailable` and `text_integrity` apart from the fidelity classes in every count.
 Quality registry (qtax-v1, AA-926): every gate, flag and gate log name is a constant in
 `services/quality/registry.py`, with its label, class(es), kind (`gate` / `flag` / `telemetry`), channels and
 `retired` flag in `services/quality/taxonomy.yaml`. The same file maps every Jev question key, admin chip and A1
@@ -3460,7 +3475,8 @@ _Avoid_: check, validator, rule (Gate is the specific automated-check object; "r
 
 **Piece**:
 One row of generated content for one (Subject, Goal, Angle) — carries `attempt_number` (max 3;
-attempt 3 is a sentence-level repair only, on the same row — the AA-485 buffer retry row is gone),
+attempt 3 is a sentence-level repair only, on the same row — the AA-485 buffer retry row is gone; since S271 W0
+attempt 3 is the $0 stop-and-label, so a stored piece has at most 2 unless the legacy mode is on),
 `gate_ledger` (every Gate's result on the persisted attempt), `status`
 (`approved`/`held`/`failed`), and (blog only) a `publish_log` row once T11 ships it.
 Each failed attempt's `repair_log` entry also keeps that attempt's own trimmed ledger
