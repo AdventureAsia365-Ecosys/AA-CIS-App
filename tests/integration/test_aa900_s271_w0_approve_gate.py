@@ -3,7 +3,9 @@
 conftest replays every migration. Each test runs in one transaction that is rolled back.
 
   * an unedited version with a surviving hard code: 409 approve_blocked, the review stays pending, the version hitl;
-  * a tour held only by the elephant-riding policy: approved (policy_keep), exported;
+  * a tour held only by the elephant-riding policy (the code AND a ride in the stored text or the raw source, read by
+    the gate query): approved (policy_keep), exported;
+  * the same code with no ride anywhere (the LLM audit's other fact checks): 409 manual_check;
   * an override reason: approved, the reason and the blocker codes are on review_queue.reviewer_notes;
   * the gate query reads the LATEST quality_scores row of the version;
   * t2_rewrite_job._PT_SQL (with the raw src_* columns the elephant detector reads) prepares on the real schema.
@@ -56,15 +58,18 @@ async def conn():
         await c.close()
 
 
-async def _review(conn, *, failure_codes=(), audit="pass", audit_codes=(), grounding=True, older_clean=False):
+async def _review(conn, *, failure_codes=(), audit="pass", audit_codes=(), grounding=True, older_clean=False,
+                  aa_itineraries=None, src_itineraries=None):
     tour_id = uuid.uuid4()
     await conn.execute(
-        "INSERT INTO silver_aa_internal.raw_tours (tour_id, tenant_id, batch_id, src_name, country, duration) "
-        "VALUES ($1, $2, $3, 'Varnel Hills 4D', 'Vietnam', '4 days')", tour_id, MASTER, BATCH_ID)
+        "INSERT INTO silver_aa_internal.raw_tours (tour_id, tenant_id, batch_id, src_name, country, duration, "
+        "src_itineraries) VALUES ($1, $2, $3, 'Varnel Hills 4D', 'Vietnam', '4 days', $4)",
+        tour_id, MASTER, BATCH_ID, src_itineraries)
     meta = {"writer_version": "v2", **({"grounding": {"found": 0, "violations": []}} if grounding else {})}
     gc = await conn.fetchval(
-        "INSERT INTO silver_aa_internal.generated_content (tour_id, tenant_id, version_num, aa_name, status, metadata) "
-        "VALUES ($1, $2, 1, 'Varnel Hills', 'hitl', $3::jsonb) RETURNING id", tour_id, MASTER, json.dumps(meta))
+        "INSERT INTO silver_aa_internal.generated_content (tour_id, tenant_id, version_num, aa_name, aa_itineraries, "
+        "status, metadata) VALUES ($1, $2, 1, 'Varnel Hills', $4, 'hitl', $3::jsonb) RETURNING id",
+        tour_id, MASTER, json.dumps(meta), aa_itineraries)
     if older_clean:   # an older, clean score row: the gate must read the newest one
         await conn.execute(
             "INSERT INTO silver_aa_internal.quality_scores (generated_content_id, tour_id, tenant_id, score_overall, "
@@ -110,14 +115,31 @@ async def test_a_version_never_grounded_is_409(conn):
 
 
 @pytest.mark.asyncio
-async def test_a_policy_keep_tour_is_approved(conn):
+@pytest.mark.parametrize("where", ["version", "source"])
+async def test_a_policy_keep_tour_is_approved(conn, where):
     from api.routers import v1_pipeline
-    gc, rq = await _review(conn, audit="manual_check", audit_codes=[ELEPHANT])
+    ride = "Day 1 — Varnel\nDay 2 — Morrow\nAn optional elephant ride by the lake."
+    gc, rq = await _review(conn, audit="manual_check", audit_codes=[ELEPHANT],
+                           **({"aa_itineraries": ride} if where == "version" else {"src_itineraries": ride}))
     with patch("services.export.handler.process_export", new=AsyncMock()) as export:
         out = await v1_pipeline.approve_review(str(rq), _req(conn), None)
     assert out["status"] == "approved" and out["policy_keep"] is True and out["exported"] is True
     export.assert_awaited_once_with(str(gc))
     assert await _state(conn, gc, rq) == ("approved", "approved")
+
+
+@pytest.mark.asyncio
+async def test_the_shared_code_without_a_ride_is_409(conn):
+    """FACT_CHECK_MANUAL_CHECK alone (e.g. the LLM audit's rare-wildlife / location check) is not the policy."""
+    from api.routers import v1_pipeline
+    gc, rq = await _review(conn, audit="manual_check", audit_codes=[ELEPHANT],
+                           aa_itineraries="Day 1 — Varnel\nDay 2 — snow leopards by Morrow lake")
+    with patch("services.export.handler.process_export", new=AsyncMock()) as export:
+        with pytest.raises(HTTPException) as exc:
+            await v1_pipeline.approve_review(str(rq), _req(conn), None)
+    assert exc.value.status_code == 409 and "manual check" in exc.value.detail and ELEPHANT in exc.value.detail
+    export.assert_not_called()
+    assert await _state(conn, gc, rq) == ("pending", "hitl")
 
 
 @pytest.mark.asyncio

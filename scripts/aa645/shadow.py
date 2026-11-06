@@ -143,7 +143,7 @@ def _md5(tour_id: str, seed: str) -> str:
 def is_elephant(c: dict) -> bool:
     text = " ".join(str(c.get(k) or "") for k in ("src_name", "src_summary", "src_description", "src_highlights",
                                                     "src_itineraries"))
-    return mentions_riding(text)
+    return mentions_riding(text, c.get("country"))
 
 
 def eligible(cands: list[dict], excluded: set[str]) -> tuple[list[dict], dict]:

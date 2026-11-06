@@ -3997,9 +3997,13 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     admin alias and `/v1/pipeline`) must pass the auto-publish checks (`services/quality/approve_gate.py`: score
     floor, hard codes, grounding ran with no unsupported sentence, brand audit not flagged-unfixed / manual_check):
     else **409 `approve_blocked`** with the reasons, unless the body carries `override_reason` (recorded on
-    `review_queue.reviewer_notes`). A tour held only by the **elephant-riding policy** (`FACT_CHECK_MANUAL_CHECK`,
-    detector `services/quality/elephant_policy.py` over every page field and the source, D8) is approved as
-    `policy_keep`; flag_fix never edits such a tour. The **S1 judge is off the live path** for a writer-v2 draft
+    `review_queue.reviewer_notes`). A tour held only by the **elephant-riding policy** (D8; detector
+    `services/quality/elephant_policy.py` over every page field and the source, fail-safe negation, a bare
+    "elephant safari" in Sri Lanka is a jeep safari) is approved as `policy_keep`, and a human edit of one passes the
+    re-validation gate (`human_edit_gate_node`); flag_fix never edits such a tour. "Held only by the policy" is
+    `elephant_policy.is_policy_only_hold`: `FACT_CHECK_MANUAL_CHECK` as the only brand code AND a detector hit on
+    the version or its source; the code alone is not enough (the LLM audit also emits it for other fact checks,
+    and those stay blocked). The **S1 judge is off the live path** for a writer-v2 draft
     (D9, `S1_JUDGE_LIVE` off by default; the brand audit then uses its deterministic pre-audit codes), and
     `POST /admin/s1-batch/submit` answers 409 while writer v2 is on (the batch seeds a v1 draft).
 - **A3 — Master Content Pool**: `gold_aa_internal.published_tours` — a tour is "in Master

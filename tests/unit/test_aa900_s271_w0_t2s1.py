@@ -49,6 +49,18 @@ def _no_llm(*_a, **_k):
     "You rode a gentle elephant to the lake.",
     "Ride on elephants to the viewpoint.",
     "A ride on the back of an elephant.",
+    # marketing idioms that read as negations but sell the ride (fail safe: a miss breaks the policy)
+    "Don't miss the elephant ride through the jungle",
+    "No trip is complete without an elephant ride",
+    "You will never forget riding an elephant",
+    "Enjoy non-stop fun with elephant rides",
+    "You cannot leave without riding an elephant",
+    "An elephant ride is not to be missed.",
+    # elephant back before a ride noun, one-word elephantback, a bare safari outside a jeep-safari country
+    "An elephant back ride to the ridge.",
+    "Elephantback trek at dawn.",
+    "Morning elephant safari in the Varnel grasslands.",
+    "A morning elephant safari, riding through the tall grass.",
 ])
 def test_the_detector_matches_the_policy_wording(text):
     assert elephant_policy.mentions_riding(text), text
@@ -62,10 +74,42 @@ def test_the_detector_matches_the_policy_wording(text):
     "Walk beside the herd without riding the elephants.",
     "Elephant riding is not offered at this camp.",
     "The Elephant Terrace of the old city.",
+    "We do not offer elephant rides.",
+    "A forest walk without an elephant ride.",
+    "An elephant-riding-free camp.",
+    "Instead of an elephant ride, walk with the herd.",
+    # a jeep safari to watch the herds; the elephants coming back is not a ride
+    "Afternoon elephant safari in Morrow National Park by 4x4 jeep.",
+    "A jeep elephant safari at dusk.",
+    "Watch the mahouts bring the elephants back to the river.",
     "",
 ])
 def test_the_detector_skips_negated_and_ride_free_mentions(text):
     assert not elephant_policy.mentions_riding(text), text
+
+
+def test_a_bare_elephant_safari_in_a_jeep_safari_country_is_not_a_ride():
+    """In Sri Lanka "elephant safari" is a jeep safari to watch the herds (reviewer probe: every such tour was a
+    policy hold); a riding cue in the clause still makes it a ride there."""
+    assert elephant_policy.riding_mentions("Afternoon elephant safari in Varnel park.", "Sri Lanka") == []
+    assert elephant_policy.riding_mentions("Elephant safari in Varnel park, then bike riding.", "Sri Lanka") == []
+    assert elephant_policy.mentions_riding("Elephant safari on the back of a trained elephant.", "Sri Lanka")
+    assert elephant_policy.mentions_riding("Afternoon elephant safari in Varnel park.", "Testland")
+    # scan takes the country from the source row
+    assert elephant_policy.scan({"summary": "An elephant safari at Varnel."}, {"country": "Sri Lanka"}) == []
+    assert elephant_policy.scan({"summary": "An elephant safari at Varnel."}, {"country": "Testland"})
+
+
+def test_policy_only_hold_needs_a_detector_hit_not_just_the_shared_code():
+    """FACT_CHECK_MANUAL_CHECK is also the LLM audit's code for other fact checks (rare wildlife + location)."""
+    code = [elephant_policy.POLICY_CODE]
+    ride = {"summary": "Ride an elephant at Morrow lake."}
+    assert elephant_policy.is_policy_only_hold("manual_check", code, ride, None)
+    assert elephant_policy.is_policy_only_hold("manual_check", code, {"summary": "Lake walk."},
+                                               {"inclusions": "One elephant ride"})
+    assert not elephant_policy.is_policy_only_hold("manual_check", code, {"summary": "Snow leopards at the lake."}, {})
+    assert not elephant_policy.is_policy_only_hold("manual_check", code + ["PRODUCT_TRUTH_RISK"], ride, None)
+    assert not elephant_policy.is_policy_only_hold("flagged", code, ride, None)
 
 
 def test_the_old_regex_missed_the_policy_wording():
@@ -106,6 +150,21 @@ def test_s1_flag_fix_makes_no_edit_on_an_elephant_tour():
     with patch.object(ff, "LLMClient", side_effect=_no_llm):
         out = ff.flag_fix_node(state)
     assert out["fix_pass_applied"] is False and out["generated"] == state["generated"]
+
+
+def test_s1_flag_fix_still_runs_on_a_non_elephant_fact_check():
+    """The policy skip needs a detector hit: an LLM FACT_CHECK_MANUAL_CHECK on a tour with no ride is not skipped."""
+    from services.content_generation import flag_fix_node as ff
+    state = {"generated": {"itineraries": "Day 1 — snow leopards by the lake", "seo_meta": "x" * 300},
+             "brand_audit_status": "manual_check", "brand_audit_codes": [elephant_policy.POLICY_CODE],
+             "failure_codes": ["SEO_META_TOO_LONG"], "tour": {}}
+    client = MagicMock(side_effect=RuntimeError("fixer reached"))
+    with patch.object(ff, "LLMClient", client):
+        try:
+            ff.flag_fix_node(state)
+        except RuntimeError:
+            pass
+    assert client.called                      # the fixer was reached (on the elephant tour above it is not)
 
 
 # ── 1b. T2 policy_hold v0 ───────────────────────────────────────────────────────────────────────────────────────────
@@ -289,9 +348,15 @@ def test_approve_gate_blockers(kw, code):
     assert code in [b["code"] for b in approve_gate.blockers(_gate_row(**kw))]
 
 
+def _keep_row(**kw):
+    """An elephant tour held only by the policy: the code AND a ride in the stored text (or the raw source)."""
+    return _gate_row(brand_audit_status="manual_check", brand_audit_codes=json.dumps([elephant_policy.POLICY_CODE]),
+                     aa_itineraries="Day 1 — Varnel\nDay 2 — Morrow\nAn optional elephant ride by the lake.", **kw)
+
+
 def test_approve_gate_passes_a_clean_version_and_a_policy_keep():
     assert approve_gate.blockers(_gate_row()) == []
-    keep = _gate_row(brand_audit_status="manual_check", brand_audit_codes=json.dumps([elephant_policy.POLICY_CODE]))
+    keep = _keep_row()
     assert approve_gate.blockers(keep) == []
     assert approve_gate.is_policy_keep(approve_gate.stored_result(keep))
     fixed = _gate_row(brand_audit_status="flagged", fix_pass_applied=True)
@@ -322,9 +387,34 @@ def test_an_unedited_approve_with_a_hard_code_is_409():
     export.assert_not_called()
 
 
+def test_a_source_only_ride_is_a_policy_keep_too():
+    keep = _gate_row(brand_audit_status="manual_check", brand_audit_codes=json.dumps([elephant_policy.POLICY_CODE]),
+                     src_itineraries="Day 2: ride an elephant at Morrow lake", country="Testland")
+    assert approve_gate.blockers(keep) == []
+
+
+def test_a_non_elephant_fact_check_is_not_a_policy_keep():
+    """Red before the fix: any manual_check whose only brand code was FACT_CHECK_MANUAL_CHECK (the LLM audit's code
+    for a rare-wildlife / location mismatch too) skipped the manual_check blocker and was approved unedited."""
+    row = _gate_row(brand_audit_status="manual_check", brand_audit_codes=json.dumps([elephant_policy.POLICY_CODE]),
+                    aa_summary="Snow leopards on the shore of Morrow lake.", src_summary="A lake walk.")
+    assert not approve_gate.is_policy_keep(approve_gate.stored_result(row))
+    found = approve_gate.blockers(row)
+    assert [b["code"] for b in found] == ["manual_check"] and elephant_policy.POLICY_CODE in found[0]["detail"]
+
+
+def test_an_unedited_approve_of_a_non_elephant_fact_check_is_409():
+    conn = AsyncMock()
+    row = _gate_row(brand_audit_status="manual_check", brand_audit_codes=json.dumps([elephant_policy.POLICY_CODE]))
+    conn.fetchrow = AsyncMock(side_effect=[row])
+    out, export = _approve(conn)
+    assert isinstance(out, HTTPException) and out.status_code == 409 and "manual check" in out.detail
+    export.assert_not_called()
+
+
 def test_an_unedited_approve_of_a_policy_keep_tour_publishes():
     conn = AsyncMock()
-    keep = _gate_row(brand_audit_status="manual_check", brand_audit_codes=json.dumps([elephant_policy.POLICY_CODE]))
+    keep = _keep_row()
     conn.fetchrow = AsyncMock(side_effect=[keep, {"generated_content_id": GCID, "step_fn_task_token": None}])
     conn.execute = AsyncMock(return_value="UPDATE 1")
     out, export = _approve(conn)
@@ -364,6 +454,55 @@ def test_the_gate_query_reads_pending_reviews_on_a_live_source():
     sql = v1_pipeline._APPROVE_GATE_SQL.format(live=live_source_exists_sql("rq.tour_id"))
     assert "rq.review_status = 'pending'" in sql and live_source_exists_sql("rq.tour_id") in sql
     assert "ORDER BY q.evaluated_at DESC" in sql
+    # the elephant-policy inputs: the stored text and the raw source, keyed like the detector's row mappers
+    for col in ("aa_itineraries", "aa_summary", "seo_meta", "rt.src_itineraries", "rt.inclusions", "rt.country",
+                "LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = gc.tour_id"):
+        assert col in sql, col
+
+
+# ── 3b. the re-validation gate of a human edit (graph.human_edit_gate_node) ─────────────────────────────────────────
+
+def _edit_state(**kw):
+    state = {"quality_score": 9.0, "failure_codes": [], "brand_audit_status": "manual_check",
+             "brand_audit_codes": [elephant_policy.POLICY_CODE], "writer_version": "v2",
+             "generated": {"summary": "Four quiet days in the Varnel hills.",
+                           "itineraries": "Day 2 — Morrow\nAn optional elephant ride by the lake."},
+             "tour": {"country": "Testland", "itineraries": "Day 2: optional elephant riding at Morrow lake"}}
+    state.update(kw)
+    return state
+
+
+def test_an_edited_elephant_tour_can_pass_the_revalidation_gate():
+    """Red before the fix: the detector re-hits the source on every re-validation, so an edited elephant tour was
+    manual_check forever (the elephant deadlock) and only an API-only override could approve it."""
+    from services.content_generation.graph import human_edit_gate_node
+    assert human_edit_gate_node(_edit_state())["revalidate_passed"] is True
+    # the reviewer took the ride out of the page: the source still offers it, still the policy's review
+    edited = _edit_state(generated={"summary": "Four quiet days.", "itineraries": "Day 2 — Morrow lake walk"})
+    assert human_edit_gate_node(edited)["revalidate_passed"] is True
+
+
+@pytest.mark.parametrize("kw", [
+    {"generated": {"summary": "Snow leopards by Morrow lake."}, "tour": {"summary": "A lake walk."}},   # no ride
+    {"brand_audit_codes": [elephant_policy.POLICY_CODE, "PRODUCT_TRUTH_RISK"]},
+    {"quality_score": 5.0},
+    {"failure_codes": ["FORBIDDEN_WORD"]},
+])
+def test_the_revalidation_gate_still_fails_everything_else(kw):
+    from services.content_generation.graph import human_edit_gate_node
+    assert human_edit_gate_node(_edit_state(**kw))["revalidate_passed"] is False
+
+
+def test_the_revalidation_graph_passes_an_edited_elephant_tour_end_to_end():
+    """The re-validation graph (validate → judge → brand_audit → human_edit_gate) on an edited elephant tour: the
+    brand audit marks it manual_check (the source scan), the gate lets the human edit through."""
+    from services.content_generation import brand_audit_node as ba
+    state = _edit_state(brand_audit_status="", brand_audit_codes=[])
+    audited = ba._audit_from_judge({**state, "judge_brand_fit": None}, state["generated"])
+    assert audited["brand_audit_status"] == "manual_check"
+    assert audited["brand_audit_codes"] == [elephant_policy.POLICY_CODE]
+    from services.content_generation.graph import human_edit_gate_node
+    assert human_edit_gate_node({**state, **audited})["revalidate_passed"] is True
 
 
 # ── 4. the T2 interim profile ───────────────────────────────────────────────────────────────────────────────────────

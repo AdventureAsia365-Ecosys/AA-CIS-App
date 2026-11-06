@@ -539,13 +539,20 @@ class ReviewApproveBody(BaseModel):
 
 
 # S271 W0: the stored version an approve checks (approve_gate.blockers) — the review's version, its latest score row,
-# only while the review is pending on a live source (otherwise the claim below answers, as before).
+# only while the review is pending on a live source (otherwise the claim below answers, as before). The page text and
+# the raw source are read for the elephant-riding policy only (approve_gate.is_policy_keep runs the detector on them).
 _APPROVE_GATE_SQL = """
     SELECT gc.id::text AS generated_content_id, COALESCE(gc.human_edited, false) AS human_edited,
            gc.fix_pass_applied, gc.metadata,
-           qs.score_overall::float AS score_overall, qs.failure_codes, qs.brand_audit_status, qs.brand_audit_codes
+           qs.score_overall::float AS score_overall, qs.failure_codes, qs.brand_audit_status, qs.brand_audit_codes,
+           gc.aa_name, gc.aa_subtitle, gc.aa_summary, gc.aa_description, gc.aa_highlights::text AS aa_highlights,
+           gc.aa_itineraries, gc.seo_title, gc.seo_meta,
+           rt.country, rt.src_name, rt.src_subtitle, rt.src_summary, rt.src_description,
+           rt.src_highlights::text AS src_highlights, rt.src_itineraries, rt.inclusions,
+           rt.activities::text AS activities, rt.price_raw
     FROM silver_aa_internal.review_queue rq
     JOIN silver_aa_internal.generated_content gc ON gc.id = rq.generated_content_id
+    LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = gc.tour_id
     LEFT JOIN LATERAL (
         SELECT q.score_overall, q.failure_codes, q.brand_audit_status, q.brand_audit_codes
         FROM silver_aa_internal.quality_scores q
@@ -571,7 +578,8 @@ async def approve_review(
     (services/quality/approve_gate.py: score floor, hard codes, grounding ran and left no unsupported sentence,
     brand audit not flagged-unfixed / manual_check). Otherwise 409 ``approve_blocked`` with the reasons, unless the
     body carries an ``override_reason`` (recorded on the review row). A tour held only by the elephant-riding policy
-    is approved as ``policy_keep``. A human-edited version keeps the AA-234 re-validation gate below.
+    (its code is the only brand code AND the detector hits the version text or the raw source) is approved as
+    ``policy_keep``. A human-edited version keeps the AA-234 re-validation gate below.
 
     AA-212: atomic-claim the pending row so a double-click cannot double-export. The claim
     only succeeds while review_status='pending'; a second call claims nothing → 409, and

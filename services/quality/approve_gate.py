@@ -8,12 +8,17 @@ score below the floor. The admin page hides the Approve button for most of these
 
 ``blockers(row)`` applies the auto-publish checks (``admin_pipeline._is_publishable`` + grounding) to the stored
 version and returns why it cannot be approved unedited ([] = it can). One exemption is policy: a tour held only by
-the elephant-riding rule (root ADR 0020 D8, ``FACT_CHECK_MANUAL_CHECK`` and no other code) is approved as
-``policy_keep`` — the human review the policy asks for is this approve. Any other blocker can be overridden only with
-an explicit reason (recorded on the review row); the usual path is Edit → Re-validate → Approve.
+the elephant-riding rule (root ADR 0020 D8) is approved as ``policy_keep`` — the human review the policy asks for is
+this approve. "Held only by the rule" is ``elephant_policy.is_policy_only_hold``: manual_check with
+``FACT_CHECK_MANUAL_CHECK`` as the only brand code AND the detector hitting the stored version text or its raw
+source. The code alone is not enough: the LLM brand audit also emits it for other fact checks (rare wildlife +
+location mismatch, an uncertain claim), and those stay blocked. Any other blocker can be overridden only with an
+explicit reason (recorded on the review row); the usual path is Edit → Re-validate → Approve (an edited elephant
+tour passes the re-validation gate, graph.human_edit_gate_node).
 
 ``row`` is the stored version as ``v1_pipeline._APPROVE_GATE_SQL`` reads it: score_overall, failure_codes,
-brand_audit_status, brand_audit_codes (quality_scores, latest row), fix_pass_applied, metadata (generated_content).
+brand_audit_status, brand_audit_codes (quality_scores, latest row), fix_pass_applied, metadata and the aa_* / seo_*
+text (generated_content), the raw source src_* / inclusions / activities / price_raw / country (raw_tours).
 
 Pure: no DB, no LLM, no I/O.
 """
@@ -22,6 +27,7 @@ from __future__ import annotations
 import json
 from typing import Any, Optional
 
+from services.quality import elephant_policy
 from services.quality.elephant_policy import POLICY_CODE as ELEPHANT_CODE
 from services.quality.registry import threshold
 
@@ -63,13 +69,18 @@ def stored_result(row: Any) -> dict:
         "fix_pass_applied": bool(_get(row, "fix_pass_applied")),
         "writer_version": metadata.get("writer_version"),
         "metadata": metadata,
+        # the elephant-policy inputs (is_policy_keep): the stored page text and the raw source
+        "content": elephant_policy.version_content_from_row(row),
+        "source": elephant_policy.raw_source_from_row(row),
     }
 
 
 def is_policy_keep(result: dict) -> bool:
-    """Held only by the elephant-riding policy: manual_check with FACT_CHECK_MANUAL_CHECK as its only brand code."""
-    codes = set(result.get("brand_audit_codes") or [])
-    return result.get("brand_audit_status") == "manual_check" and codes == {ELEPHANT_CODE}
+    """Held only by the elephant-riding policy (``elephant_policy.is_policy_only_hold``): manual_check, the policy
+    code its only brand code, and the detector hits the stored text or the raw source. A FACT_CHECK_MANUAL_CHECK the
+    LLM audit raised for another fact check (no elephant riding anywhere) is not a policy keep."""
+    return elephant_policy.is_policy_only_hold(result.get("brand_audit_status"), result.get("brand_audit_codes"),
+                                               result.get("content"), result.get("source"))
 
 
 def blockers(row: Any) -> list[dict]:
@@ -94,11 +105,12 @@ def blockers(row: Any) -> list[dict]:
         out.append({"code": "unsupported_sentences",
                     "detail": f"{len(grounding['violations'])} sentence(s) the source does not support"})
     audit = r["brand_audit_status"]
-    codes = [c for c in r["brand_audit_codes"] if c != ELEPHANT_CODE]
+    keep = is_policy_keep(r)
+    codes = [c for c in r["brand_audit_codes"] if not (keep and c == ELEPHANT_CODE)]
     if audit == "flagged" and not r["fix_pass_applied"]:
         out.append({"code": "brand_flagged_unfixed",
                     "detail": "brand audit flags not repaired" + (": " + ", ".join(codes) if codes else "")})
-    elif audit == "manual_check" and not is_policy_keep(r):
+    elif audit == "manual_check" and not keep:
         detail = "the brand audit asks for a manual check"
         if codes:
             detail += ": " + ", ".join(codes)
