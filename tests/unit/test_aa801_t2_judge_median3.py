@@ -16,6 +16,15 @@ from services.content_generation import judge_node as jn
 from services.content_generation.brand_fit import BrandFitResult, aggregate_runs, runs_signal
 from shared.llm_client.models import LLMResponse
 
+
+@pytest.fixture(autouse=True)
+def _pre_s271_w0_paths(monkeypatch):
+    """These tests pin a pre-S271 path, now behind a break-glass switch:
+    T2_INTERIM=off (the T2 judge gates, median3, the tie-break, T3 full rewrite rounds);
+    The S271 W0 defaults are tested in tests/unit/test_aa900_s271_w0_t2s1.py."""
+    monkeypatch.setenv("T2_INTERIM", "off")
+
+
 BRAND = {"brand_core_idea": "slow, private journeys", "brand_customer_mindset": "unhurried"}
 GEN = {"name": "Kyoto Days", "subtitle": "Quiet temples", "summary": "Calm.", "highlights": ["Nanzen-ji"],
        "itineraries": "Day 1 — Arrive Kyoto.", "seo_title": "Kyoto", "seo_meta": "A calm Kyoto trip."}

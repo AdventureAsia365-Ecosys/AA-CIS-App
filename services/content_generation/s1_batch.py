@@ -218,6 +218,20 @@ async def _refuse_pii_stage() -> None:
                                "run the tours on demand (the stage route)")
 
 
+# S271 W0 (root ADR 0020, AA-900 l16): the batch seeds attempt 1 with TODAY's (v1) writer prompt; the graph then keeps
+# that draft on v1 (s1_writer_v2_live.applies is False on a batch seed), so with writer v2 live a batch run would write
+# the catalogue with the writer v2 replaced, outside its fact sheet and eval. Refused while writer v2 is on.
+WRITER_V2_REFUSAL = (
+    "S1 Bedrock Batch is refused while the S1 writer v2 is live: the batch seeds attempt 1 with the v1 writer prompt "
+    "and the graph keeps that draft on v1 (root ADR 0020 W0). Rewrite through the per-tour path instead.")
+
+
+def writer_v2_refusal() -> Optional[str]:
+    """The refusal reason when the S1 writer v2 is on (the live A1 writer), else None."""
+    from services.content_generation import s1_writer_v2_live
+    return WRITER_V2_REFUSAL if s1_writer_v2_live.enabled() else None
+
+
 async def submit_s1_batch(
     tour_ids: list[str],
     *,
@@ -236,6 +250,8 @@ async def submit_s1_batch(
     personal-data stage, or its class cannot be read: Batch runs the legacy Haiku profile (a ``global.`` profile,
     outside the deployment plan), so the tours run on demand on the stage route, which keeps a pii stage on our AWS
     accounts in the US."""
+    if (refused := writer_v2_refusal()) is not None:   # S271 W0: before any prompt is read
+        raise BatchUnavailable(refused)
     await _refuse_pii_stage()
     tenant_uuid = _TENANT_SLUG_MAP.get(tenant_id, tenant_id)
     job_slug = uuid.uuid4().hex[:12]

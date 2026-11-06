@@ -600,7 +600,7 @@ def score_brand_fit(
     brand_profile: dict, generated: dict, *, mission_absent_cap: float = 6.0, stage: str = "s1_judge",
     mission: Optional[str] = None, repeat: int = 1, anchors: bool = False,
     model_override: Optional[str] = None, rubric: str = "v1", source: Optional[dict] = None,
-    tour_agency: Optional[dict] = None, client=None,
+    tour_agency: Optional[dict] = None, client=None, near_band_repeat: bool = True,
 ) -> BrandFitResult:
     """The brand-fit call itself — extracted verbatim from judge_node.py's try block (same
     system prompt, same temperature/seed, same score-combining rule); the model is the `stage`
@@ -642,6 +642,9 @@ def score_brand_fit(
     mission and the anchors are not part of a v2 prompt: passing `mission` or `anchors` with v2 is a ValueError, and
     so is v2 without a source. "v1" (default — T2, T7 Debate and every other caller) is unchanged byte for byte.
 
+    S271 W0: `near_band_repeat=False` (the T2 interim profile, a report-only verdict) skips the AA-714 near-band
+    median of 3: one call, its score as it came.
+
     AA-1026: `client` — an object with `generate(LLMRequest)` used instead of a new LLMClient (the acc2 contract
     smoke pins its model with it); None (every production caller) changes nothing.
     """
@@ -679,7 +682,7 @@ def score_brand_fit(
     first = _judge(system_prompt, user_prompt, mission_absent_cap=mission_absent_cap, stage=stage, **extra)
 
     lo, hi = _REPEAT_BAND
-    if _seeded_model(first.model_used) or not (lo <= first.brand_fit_score <= hi):
+    if not near_band_repeat or _seeded_model(first.model_used) or not (lo <= first.brand_fit_score <= hi):
         return first
 
     results = [first]

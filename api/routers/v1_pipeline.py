@@ -388,6 +388,8 @@ async def _rewrite_tour(
             # AA-793: per-attempt judged scores + whether the hitl exit restored an earlier draft (T2).
             "draft_scores":        result.get("draft_scores", []),
             "best_draft_restored": result.get("best_draft_restored", False),
+            # S271 W0: "hitl" when the draft left through the hitl exit (now through the checks; metadata.exit_path)
+            "exit_path":           result.get("exit_path"),
             # AA-925: same strip class — validate's shadow findings and the fail-open paths that ran.
             "quality_shadow":      result.get("quality_shadow", []),
             "degraded":            result.get("degraded", []),
@@ -530,13 +532,46 @@ async def get_review_queue(
     }
 
 
+class ApproveBody(BaseModel):
+    """S271 W0 (AA-900 l16): optional body of an approve. ``override_reason`` approves an unedited version the
+    publish checks refuse (approve_gate.blockers); at least 10 characters, recorded on the review row."""
+    override_reason: Optional[str] = None
+
+
+# S271 W0: the stored version an approve checks (approve_gate.blockers) — the review's version, its latest score row,
+# only while the review is pending on a live source (otherwise the claim below answers, as before).
+_APPROVE_GATE_SQL = """
+    SELECT gc.id::text AS generated_content_id, COALESCE(gc.human_edited, false) AS human_edited,
+           gc.fix_pass_applied, gc.metadata,
+           qs.score_overall::float AS score_overall, qs.failure_codes, qs.brand_audit_status, qs.brand_audit_codes
+    FROM silver_aa_internal.review_queue rq
+    JOIN silver_aa_internal.generated_content gc ON gc.id = rq.generated_content_id
+    LEFT JOIN LATERAL (
+        SELECT q.score_overall, q.failure_codes, q.brand_audit_status, q.brand_audit_codes
+        FROM silver_aa_internal.quality_scores q
+        WHERE q.generated_content_id = gc.id
+        ORDER BY q.evaluated_at DESC
+        LIMIT 1
+    ) qs ON true
+    WHERE rq.id = $1::uuid AND rq.tenant_id = $2::uuid AND rq.review_status = 'pending'
+      AND {live}
+"""
+
+
 @router.post("/review-queue/{review_id}/approve")
 async def approve_review(
     review_id: str,
     request: Request,
     tenant=Depends(_require_admin),
+    body: Optional[ApproveBody] = None,
 ):
     """Approve a tour in review queue.
+
+    S271 W0 (root ADR 0020, AA-900 l16): an UNEDITED version must pass the auto-publish checks
+    (services/quality/approve_gate.py: score floor, hard codes, grounding ran and left no unsupported sentence,
+    brand audit not flagged-unfixed / manual_check). Otherwise 409 ``approve_blocked`` with the reasons, unless the
+    body carries an ``override_reason`` (recorded on the review row). A tour held only by the elephant-riding policy
+    is approved as ``policy_keep``. A human-edited version keeps the AA-234 re-validation gate below.
 
     AA-212: atomic-claim the pending row so a double-click cannot double-export. The claim
     only succeeds while review_status='pending'; a second call claims nothing → 409, and
@@ -550,7 +585,21 @@ async def approve_review(
     # review fetch is deferred to ACP.
     tenant_id = "00000000-0000-0000-0000-000000000001"
 
+    from services.quality import approve_gate
+    override = approve_gate.valid_override(body.override_reason if body else None)
+    blockers: list = []
+    policy_keep = False
     async with pool.acquire() as conn:
+        gate_row = await conn.fetchrow(_APPROVE_GATE_SQL.format(live=live_source_exists_sql("rq.tour_id")),
+                                       review_id, tenant_id)
+        if gate_row is not None and not gate_row["human_edited"]:
+            blockers = approve_gate.blockers(gate_row)
+            policy_keep = approve_gate.is_policy_keep(approve_gate.stored_result(gate_row))
+            if blockers and override is None:
+                logger.info("approve_blocked", review_id=review_id, blockers=[b["code"] for b in blockers])
+                raise HTTPException(status_code=409, detail=approve_gate.message(blockers),
+                                    headers={"X-Error-Code": approve_gate.ERROR_CODE})
+
         # Atomic claim: flip pending→approved in one statement. Only the first caller wins.
         # AA-234: the claim ALSO gates on the linked version — a human-edited version may be
         # claimed ONLY after a passing re-validation. The gate lives in the UPDATE WHERE (one
@@ -605,6 +654,17 @@ async def approve_review(
             SET status = 'approved'
             WHERE id = $1::uuid
         """, generated_content_id)
+        if blockers:   # S271 W0: approved over the publish checks with an explicit reason — keep it on the row
+            note = (f"Approved unedited with override: {override} "
+                    f"(blocked by: {', '.join(b['code'] for b in blockers)})")
+            await conn.execute("""
+                UPDATE silver_aa_internal.review_queue
+                SET reviewer_notes = CASE WHEN COALESCE(reviewer_notes, '') = '' THEN $2
+                                          ELSE reviewer_notes || E'\n' || $2 END
+                WHERE id = $1::uuid
+            """, review_id, note)
+            logger.warning("approve_override", review_id=review_id, version_id=generated_content_id,
+                           blockers=[b["code"] for b in blockers])
 
     # Side effects outside the DB transaction. Branch on the claimed token.
     # NULL token (admin/direct enqueue path) → forward export. Use `is not None`, not a falsy
@@ -667,6 +727,9 @@ async def approve_review(
         "review_id": review_id,
         "exported": exported,
         "sf_notified": task_token is not None,
+        # S271 W0: approved as the human review of the elephant-riding policy; or over the checks with a reason
+        "policy_keep": policy_keep,
+        "override_blockers": [b["code"] for b in blockers],
     }
 
 

@@ -6,6 +6,17 @@ from services.acp_produce import tenant_pipeline as tp
 from services.content_generation import judge_node as jn
 from shared.llm_client.decide import Decision, Verdict
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _pre_s271_w0_paths(monkeypatch):
+    """These tests pin a pre-S271 path, now behind a break-glass switch:
+    T2_INTERIM=off (the T2 judge gates, median3, the tie-break, T3 full rewrite rounds);
+    The S271 W0 defaults are tested in tests/unit/test_aa900_s271_w0_t2s1.py."""
+    monkeypatch.setenv("T2_INTERIM", "off")
+
+
 TOUR = {"name": "Paro Valley", "summary": "Hike 5 km to Taktsang at 3,120 m.", "itineraries": "Day 1 — Paro"}
 HITS = [
     {"field": "summary", "sentence": "The hike covers 3.1 miles.", "novel_numbers": ["3.1"]},

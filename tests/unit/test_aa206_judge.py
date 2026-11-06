@@ -15,6 +15,13 @@ from services.content_generation.judge_node import judge_node
 from shared.llm_client.models import LLMResponse
 
 
+@pytest.fixture(autouse=True)
+def _pre_s271_t2_judge_gate(monkeypatch):
+    """These tests pin the T2 judge as a gate: the T2_INTERIM=off (break-glass) path since S271 W0. The interim
+    profile (judge report-only) is tested in tests/unit/test_aa900_s271_w0_t2s1.py."""
+    monkeypatch.setenv("T2_INTERIM", "off")
+
+
 # ── Step 1: _build_brand_diff_block ──────────────────────────────────────────
 
 def test_diff_block_includes_itineraries_and_negative_contrast():

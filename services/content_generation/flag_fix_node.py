@@ -492,6 +492,16 @@ def flag_fix_node(state: dict) -> dict:
             "fix_pass_applied": False,
             "fix_pass_fields":  [],
         }
+    # S271 W0 (root ADR 0020 D8): an elephant-riding tour is kept as it is for a human; a whole-field rewrite here
+    # (source-blind) could take the ride out, which the policy forbids. No LLM edit; the tour stays manual_check.
+    from services.quality.elephant_policy import POLICY_CODE as _ELEPHANT_CODE
+    if _ELEPHANT_CODE in (state.get("brand_audit_codes") or []):
+        logger.info("flag_fix_skipped_policy_keep", reason="elephant_riding")
+        return {
+            **state,
+            "fix_pass_applied": False,
+            "fix_pass_fields":  [],
+        }
 
     resp, logged = None, False  # AA-927: the fix call's row is written even when parsing it fails
     try:
