@@ -1,10 +1,11 @@
-"""AA-741 (S271) — migration 381: an effort per stage x model in shared.stage_model_params for the Sonnet 5.5 writers
-(t9_write, t2_generate, t8_angle_gen: medium) and the Claude 5.5 validate stages (low).
+"""AA-741 (S271) — migration 381: an effort per stage x model in shared.stage_model_params for the blog writer t9_write
+on Sonnet 5.5 (medium) and five Claude 5.5 validate stages (low). t2_generate and t8_angle_gen are left at their
+default (no row) until a paid quality read backs a change.
 
 conftest replays 381 like every file. The module re-applies the file itself (errors are not swallowed; a second run
 is a no-op) and checks:
-  * the eight rows, effort only (max_tokens, min_output_tokens, temperature, reasoning_mode NULL), updated_by
-    migration-381-aa741, registered once;
+  * the six rows (no row for the other writers), effort only (max_tokens, min_output_tokens, temperature,
+    reasoning_mode NULL), updated_by migration-381-aa741, registered once;
   * a row that exists with another value is kept and named in a NOTICE (ON CONFLICT DO NOTHING);
   * a listed stage with no route row (a replay where its stage migration did not apply) gets no row, NOTICE;
   * the guard refuses when t9_write has no route row: nothing changes (the file's transaction rolls back);
@@ -25,8 +26,6 @@ MIGRATION = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migratio
                          "381_stage_thinking_effort_writers.sql")
 EXPECTED = {
     ("t9_write", "sonnet-5-5"): "medium",
-    ("t2_generate", "sonnet-5-5"): "medium",
-    ("t8_angle_gen", "sonnet-5-5"): "medium",
     ("t9_faq_filter", "haiku-5-5"): "low",
     ("t9_faq_answer_fit", "sonnet-5-5"): "low",
     ("a3_place_card_check", "haiku-5-5"): "low",
@@ -64,8 +63,15 @@ def _routed(cur) -> dict:
     return {k: v for k, v in EXPECTED.items() if k[0] in stages}
 
 
-def test_the_writer_stages_are_routed_here(cur):
-    assert {"t9_write", "t2_generate", "t8_angle_gen"} <= {k[0] for k in _routed(cur)}
+def test_the_blog_writer_is_routed_here(cur):
+    assert "t9_write" in {k[0] for k in _routed(cur)}
+
+
+def test_the_other_writers_keep_their_default(cur):
+    # No quality evidence for an effort change on the tour and angle writers yet: no row, so they stay at high.
+    cur.execute("SELECT count(*) AS n FROM shared.stage_model_params "
+                "WHERE updated_by = %s AND stage IN ('t2_generate', 't8_angle_gen')", (ACTOR,))
+    assert cur.fetchone()[0] == 0
 
 
 def test_the_rows_set_effort_only(cur):

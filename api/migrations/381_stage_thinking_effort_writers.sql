@@ -1,5 +1,6 @@
--- Migration 381: AA-741 (S271, after t9_write v2 went live) — a thinking level per stage x model for the Claude 5.5
--- writers and Claude validate stages, as rows of shared.stage_model_params (AA-1017, migration 320; empty until now).
+-- Migration 381: AA-741 (S271, after t9_write v2 went live) — a thinking level per stage x model for the blog writer
+-- t9_write and five Claude 5.5 validate stages, as rows of shared.stage_model_params (AA-1017, migration 320; empty
+-- until now).
 --
 -- Why. A real blog write on 06/11/2026 (~07:26Z, an audit tenant) after CIS #1341 (t9_write v2, word band 900-1,300)
 -- still had t9_write on Claude Sonnet 5.5 (anthropic-direct) cut 2 of 3 calls at max_tokens 12000 (one billed
@@ -16,11 +17,9 @@
 -- effort only; the thinking type stays the model's default (reasoning_mode NULL = adaptive on every 5.x model).
 --
 -- What.
---   1. Eight rows (ON CONFLICT DO NOTHING: a row that exists is kept, NOTICE when it differs):
+--   1. Six rows (ON CONFLICT DO NOTHING: a row that exists is kept, NOTICE when it differs):
 --        stage                  model       effort   (default today)  why
 --        t9_write               sonnet-5-5  medium   (high)           the 06/11 cuts: a one-pass blog of ~1,300 tokens
---        t2_generate            sonnet-5-5  medium   (high)           the same writer model and one-pass shape (tour)
---        t8_angle_gen           sonnet-5-5  medium   (high)           7 cuts at 2048 in 30 days (S271 l9 ledger read)
 --        t9_faq_filter          haiku-5-5   low      (medium)         validate, JSON verdict; 1 cut in 30 days
 --        t9_faq_answer_fit      sonnet-5-5  low      (high)           validate, JSON fit check
 --        a3_place_card_check    haiku-5-5   low      (medium)         validate, JSON check of a place card
@@ -29,7 +28,11 @@
 --      max_tokens, min_output_tokens, temperature and reasoning_mode stay NULL: the call sites keep their ceilings
 --      (t9_write 12000 explicit, the S270 budget retry at 24000 and the gateway floor of CIS #1344 unchanged), the
 --      ceiling is head-room, not the expected size. notes says why; updated_by 'migration-381-aa741'.
---      Not set: the judges (s1_judge, t2_judge, t7_debate_judge, t10_judge, writing_memory_*) run GPT on Converse,
+--      Not set: t2_generate and t8_angle_gen (sonnet-5-5, the tour and angle writers) stay at their default, high.
+--      The S271 cuts were t9_write only, and the writer eval gate does not cover stage_model_params yet (a writer
+--      effort change does not flag a release for reverify): their effort moves in a later forward migration, after a
+--      paid quality read (t2_judge score and tokens_out next to the high-effort baseline) on an audit tenant.
+--      The judges (s1_judge, t2_judge, t7_debate_judge, t10_judge, writing_memory_*) run GPT on Converse,
 --      where the gateway sends no reasoning field until a probe shows the provider's field (AA-803), and a judge's
 --      effort is an eval-gated choice (Writing Lab kappa), not this file's; a3_place_locate (geo accuracy) and the
 --      Haiku 5.5 fix / nudge / repair writers keep their default; the Sonnet 4.6 / Haiku 4.5 / GPT rungs of each
@@ -41,12 +44,15 @@
 --      pre-existing row that differs from this file is kept and named in a NOTICE.
 --   3. Register 381.
 --
--- Behaviour on Dev. Within the stage_params cache TTL (300 s) after the apply, t9_write / t2_generate / t8_angle_gen on
--- Sonnet 5.5 (anthropic-direct, and acc3 when it answers: on Converse the effort is not sent, logged once as
--- stage_params_not_applied) are sent output_config.effort "medium" instead of "high", and the five validate stages
--- "low". Fewer thinking tokens per call: less output billed, fewer cuts, fewer budget retries at 24000. Ledger: the
+-- Behaviour on Dev. Within the stage_params cache TTL (300 s) after the apply, t9_write on Sonnet 5.5 (anthropic-direct,
+-- and acc3 when it answers: on Converse the effort is not sent, logged once as stage_params_not_applied) is sent
+-- output_config.effort "medium" instead of "high", and the five validate stages "low". Fewer thinking tokens per call: less output billed, fewer cuts, fewer budget retries at 24000. Ledger: the
 -- effort column of llm_call_log shows the value sent (as today). No route, model, price, prompt or schema change.
 -- Kill switch: LLM_STAGE_PARAMS=off (ECS env) ignores every row.
+-- Quality. Effort is a quality lever for a writer: the first paid blog write after the apply is read for quality, not
+-- only size (t9_write tokens_out and status, the piece's status / attempt_number / gate_ledger, its t10_judge rows and
+-- any subject_gate flag in acp_shared.content_compliance_flag), next to the last blog writes at effort high on the
+-- audit tenants. A piece held where the baseline passed, more attempts, or a subject_gate flag = roll back (below).
 --
 -- Class: contract (root ADR 0017 d3: INSERT of config rows into an existing table), no migrate directive line.
 -- Migration-only PR (MIG-4): no code needs this file (the gateway reads every column it writes since 320 / AA-1017).
@@ -74,10 +80,6 @@ CREATE TEMP TABLE m381_rows (stage text, model_key text, effort text, notes text
 INSERT INTO m381_rows (stage, model_key, effort, notes) VALUES
     ('t9_write', 'sonnet-5-5', 'medium',
      'AA-741 S271: blog write; adaptive thinking billed inside max_tokens cut 2 of 3 calls at 12000 at effort high'),
-    ('t2_generate', 'sonnet-5-5', 'medium',
-     'AA-741 S271: one-pass tour writer on the same model as t9_write; effort high spent output on thinking'),
-    ('t8_angle_gen', 'sonnet-5-5', 'medium',
-     'AA-741 S271: angle writer; 7 replies cut at 2048 in 30 days at effort high'),
     ('t9_faq_filter', 'haiku-5-5', 'low', 'AA-741 S271: validate stage, JSON verdict; 1 reply cut in 30 days'),
     ('t9_faq_answer_fit', 'sonnet-5-5', 'low', 'AA-741 S271: validate stage, JSON fit check'),
     ('a3_place_card_check', 'haiku-5-5', 'low', 'AA-741 S271: validate stage, JSON place card check'),
@@ -151,8 +153,8 @@ END $$;
 -- ── 3. register ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('381', now(), 'AA-741 S271: effort per stage x model for the Sonnet 5.5 writers (medium) and Claude 5.5 '
-                      'validate stages (low)')
+VALUES ('381', now(), 'AA-741 S271: effort per stage x model for the t9_write blog writer on Sonnet 5.5 (medium) '
+                      'and Claude 5.5 validate stages (low)')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;
