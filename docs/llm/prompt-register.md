@@ -87,7 +87,7 @@ longer matches its source. To change a prompt:
 | `segment_research` | `segment_research` | writer | `services/acp_contract/segment_research.py` · `SYSTEM_PROMPT`, `USER_PROMPT` | git | none |
 | `segment_research_batch` | `segment_research_batch` | writer | `services/acp_contract/segment_research_batch.py` · `PROPOSE_SYSTEM` | git | none |
 | `t8_angle_gen` | `t8_angle_gen` | writer | `services/acp_angle_gate/prompts.py` · `SYSTEM_PROMPT`, `SYSTEM_PROMPT_R8`, `system_prompt`, `build_user_prompt` | git | none |
-| `t9_write` | `t9_write` | writer | `services/acp_content_writing/prompts.py` · `SYSTEM_PROMPT`, `build_user_prompt` | sha8 in `generation_meta.writer_prompt_version` (`service.py` `WRITER_PROMPT_VERSION`) | R2 `t9_blog`, R2 `t9_social` (first draft only); Q0, Q3 |
+| `t9_write` | `t9_write` | writer | `services/acp_content_writing/prompts.py` · `SYSTEM_PROMPT`, `build_user_prompt`, `_BLOG_WORDS`, `_BLOG_WORDS_MAX`, `_BLOG_SECTIONS_MAX`, `_BLOG_LENGTH_INSTRUCTIONS` (v2, AA-741 S271: the blog's length and one-pass block) | sha8 in `generation_meta.writer_prompt_version` (`service.py` `WRITER_PROMPT_VERSION`) | R2 `t9_blog`, R2 `t9_social` (first draft only); Q0, Q3 |
 | `t9_repair` | `t9_repair` | writer | `services/acp_content_writing/generate.py` · `_REPAIR_SYSTEM` | git | Q0, R0, Q3 (T9 repair replay) |
 | `t9_repair.seo_fit` | `t9_repair` | writer | `services/acp_content_writing/generate.py` · `_SEO_FIT_SYSTEM` | git | Q0 |
 | `t9_repair.faq` | `t9_repair` | writer | `services/acp_content_writing/generate.py` · `_FAQ_SYSTEM` | git | Q0 |

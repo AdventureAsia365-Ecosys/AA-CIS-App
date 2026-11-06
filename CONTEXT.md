@@ -850,7 +850,10 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   - a caller's budget retry (AA-741 S270, `services/acp_shared/token_budget.py`: T8 angles, T9 write / repair / FAQ
     filter) is TWO responses and two rows: the reply cut at its token ceiling (`budget_cut: true`, status truncated,
     written before the retry is sent) and the retry with double the ceiling (`truncation_retry: true`); never a third
-    call. `attempt_no` stays the gateway's (each is its own gateway request);
+    call. `attempt_no` stays the gateway's (each is its own gateway request). A ceiling is head-room, not the
+    expected size: since t9_write v2 (AA-741 S271) every blog prompt carries a word band (900-1,300, never over
+    1,600, never padded), a section cap and a one-pass rule (`prompts._BLOG_LENGTH_INSTRUCTIONS`), because the
+    adaptive thinking of the 5.x writers is billed as output inside the same ceiling;
   - a judge verdict built from several calls (AA-714 near-band repeat, AA-801 median3) writes one row per
     call in one transaction (`record_calls_sync`): the verdict row (run 1's cost, `judge_calls: n`) plus
     `{judge_run, of, verdict_row: false}` rows;
