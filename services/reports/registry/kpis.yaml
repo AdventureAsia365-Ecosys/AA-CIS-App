@@ -1943,12 +1943,14 @@ kpis:
 - id: K-PRIV-CONSENT
   version: 2
   name: Consent coverage
-  definition: Result of docs/legal/consent-capture-query.md (crm.consent; the B2C customer consent flag was retired with
-    the B2C customer table)
+  definition: 'Result of docs/legal/consent-capture-query.md: TripPlanner part (tripplanner.customers and its booking.inbox_events
+    hand-off) and CRM part (crm.consent, per tenant); the Booking customer master was retired by bk-045'
   unit: ratio
   threshold: 100 % of records with consent where required
   sources:
+  - booking.inbox_events
   - crm.consent
+  - tripplanner.customers
   defined_in: SEC-09
   used_by:
   - SEC-09
