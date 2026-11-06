@@ -32,9 +32,11 @@ write.
 """
 from __future__ import annotations
 
+import contextvars
 import os
 import re
-from typing import Iterable, Optional
+from contextlib import contextmanager
+from typing import Iterable, Iterator, Optional
 
 import structlog
 
@@ -238,10 +240,26 @@ def apply_to_pack(pack: Optional[dict], applied: list[dict]) -> Optional[dict]:
     return base
 
 
+_FORCE_BLOCKING: contextvars.ContextVar[bool] = contextvars.ContextVar("wm_l0_force_blocking", default=False)
+
+
 def l0_blocking() -> bool:
-    """AA-900 W0: True only when WRITING_MEMORY_L0_ENFORCE is on (1 / true / yes / on). Default off: the learned
-    phrases warn, the tenant's own forbidden words still block."""
+    """AA-900 W0: True only when WRITING_MEMORY_L0_ENFORCE is on (1 / true / yes / on), or inside
+    `measuring_as_blocking()`. Default off: the learned phrases warn, the tenant's own forbidden words still block."""
+    if _FORCE_BLOCKING.get():
+        return True
     return (os.environ.get(L0_ENFORCE_ENV) or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+@contextmanager
+def measuring_as_blocking() -> Iterator[None]:
+    """The R0 replay measures a lexicon rule as the gate it would be once measured (a blocking F2_brand_forbidden
+    finding), whatever the live warn-only mode: its counts must not depend on the switch."""
+    token = _FORCE_BLOCKING.set(True)
+    try:
+        yield
+    finally:
+        _FORCE_BLOCKING.reset(token)
 
 
 def learned_added(pack: Optional[dict]) -> list[str]:
@@ -347,6 +365,7 @@ async def l0_for_write(pool, *, tenant_id, channel: Optional[str], pack: Optiona
 
 
 __all__ = ["L0_ENFORCE_ENV", "L0_WRITERS", "PHRASE_MAX_WORDS", "activation_problem", "apply_to_pack",
-           "gating_forbidden", "l0_blocking", "l0_for_write", "learned_added", "load_active", "phrase_of",
+           "gating_forbidden", "l0_blocking", "l0_for_write", "learned_added", "load_active", "measuring_as_blocking",
+           "phrase_of",
            "phrase_problem", "replacement_check", "replacement_forbidden", "select_rules", "warn_only_phrases",
            "without_learned"]
