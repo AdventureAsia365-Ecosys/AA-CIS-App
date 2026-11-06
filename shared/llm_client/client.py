@@ -2532,6 +2532,12 @@ class LLMClient:
                                 "effort_by_stage": {**(by_stage if isinstance(by_stage, dict) else {}),
                                                     request.stage: effort}}
         extra = {"capabilities": model.capabilities} if getattr(model, "capabilities", None) else {}
+        # AA-741 S271: the stage x model thinking mode ('off' / 'adaptive'), sent as the model family's `thinking`
+        # object (adapters.anthropic_messages.resolve_thinking); not passed at all when the row sets none, so the
+        # request is unchanged.
+        reasoning_mode = stage_params.reasoning_mode_for(request.stage, model.model_key)
+        if reasoning_mode is not None:
+            extra["reasoning_mode"] = reasoning_mode
         # AA-1018 part 2: the route deadline's remaining time (None = unchanged); AA-642 A3: capped at the connection's.
         timeout = request_timeout(conn.timeout_s or anthropic_messages.DEFAULT_TIMEOUT_S)
         if timeout is not None:
@@ -2580,7 +2586,8 @@ class LLMClient:
                     provider_model=result.provider_model, wire_id=dep.wire_id, connection=conn.connection_key,
                     data_scope=conn.data_scope, in_tokens=prompt_tok, uncached_in_tokens=in_tok,
                     cache_read=cache_read, cache_write=cache_write, out_tokens=out_tok, cost_usd=cost,
-                    stop_reason=stop_reason, effort=result.effort, request_id=result.request_id)
+                    stop_reason=stop_reason, effort=result.effort, thinking=_str_attr(result, "thinking"),
+                    request_id=result.request_id)
         return LLMResponse(
             content=content, model_used=label, provider="anthropic",
             input_tokens=prompt_tok, output_tokens=out_tok, cost_usd=cost, fallback_used=False,
@@ -2620,8 +2627,15 @@ class LLMClient:
             kwargs["temperature"] = request.temperature
         if sampling_ok and "seed" in fields_set and request.seed is not None:
             kwargs["seed"] = request.seed
-        if catalog_model is not None:      # AA-1017: no effort / reasoning field on this path yet (said once)
-            stage_params.warn_not_applied(request.stage, catalog_model.model_key, "openai_chat")
+        reasoning_effort = None
+        if catalog_model is not None:
+            # AA-741 S271: the stage x model effort as reasoning_effort (a reasoning model only; low / medium / high);
+            # reasoning_mode and any other effort are not sent on this path (said once).
+            reasoning_effort = stage_params.openai_reasoning_effort(request.stage, catalog_model)
+            if reasoning_effort is not None:
+                kwargs["reasoning_effort"] = reasoning_effort
+            stage_params.warn_not_applied(request.stage, catalog_model.model_key, "openai_chat",
+                                          applied=("effort",) if reasoning_effort else ())
         if request.json_schema:
             kwargs["response_format"] = {
                 "type": "json_schema",
@@ -2717,6 +2731,7 @@ class LLMClient:
             # AA-804 (ledger v2): the SDK's x-request-id and the reasoning part of completion_tokens, when reported
             request_id=_str_attr(resp, "_request_id"),
             reasoning_tokens=_reasoning_tokens(resp.usage),
+            effort=reasoning_effort,
         )
 
     def _calc_cost(self, model: str, in_tok: int, out_tok: int,

@@ -93,7 +93,8 @@ class LLMResponse(BaseModel):
     # llm_call_log by call_log.billed_fields(). latency_ms = wall time of that attempt in the gateway; attempt_no =
     # its 1-based position among the provider attempts of this request (a route fallback or a second deployment
     # makes it > 1); deployment_wire_id = the model id sent on the wire; request_id = the provider's request id;
-    # effort = the effort level sent (Anthropic API); reasoning_tokens = reasoning tokens reported (part of
+    # effort = the effort level sent (Anthropic API output_config.effort; OpenAI reasoning_effort, AA-741 S271);
+    # reasoning_tokens = reasoning tokens reported (part of
     # output_tokens); prompt_hash = sha256 hex of the system prompt (AA-1018 part 2: the system prompt only, so every
     # call of one prompt version shares it; never the prompt itself); prompt_version = the stage's registered prompt
     # version (shared.prompt_version, AA-900) when the deployed prompt file matches a row. None = not known.
