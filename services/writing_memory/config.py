@@ -63,9 +63,17 @@ MIN_KAPPA_PER_LABEL = 3          # ... with >= 3 pass AND >= 3 fail labels among
 NOISE_K = 1                      # quality-system design 4.2: one shared noise_k = 1 until a tier has >= 20 items
 MAX_ERROR_SHARE = 0.2            # more than 20% of the attempted items in error: the run is invalid
 # Pre-call reservation per item (the cap check reserves this before each item; actuals come from llm_call_log).
-# AA-729 actuals: regenerate ~$0.05 a sample (full writer path); judge GPT-5.6 Luna ~ $0.002 a call. Deliberately high.
-R2_ITEM_ESTIMATE_USD = {"a1": 0.15, "t2": 0.15, "t9_blog": 0.08, "t9_social": 0.05}
-JUDGE_CALL_ESTIMATE_USD = 0.01
+# S271 W0 (RC6 / F8): the estimate is read from the ledger first: the median logged cost of the writer's last
+# R2_COST_SAMPLES candidate items (eval_item_result.cost_usd of finished r2 / reverify runs, no seeded run) x
+# R2_ESTIMATE_MARGIN, once R2_MIN_COST_SAMPLES exist (r2.item_estimate). These constants are the fallback for a writer
+# with fewer measured items. t9_blog 0.08 -> 0.18: the two S271 runs measured a median $0.134 an item (mean $0.161) at
+# effort high, so 0.08 reserved about half the real cost and both runs stopped at budget_cap at item 16 of 23. The judge
+# measured a median $0.0025 a call (0.01 -> 0.005).
+R2_ITEM_ESTIMATE_USD = {"a1": 0.15, "t2": 0.15, "t9_blog": 0.18, "t9_social": 0.05}
+JUDGE_CALL_ESTIMATE_USD = 0.005
+R2_ESTIMATE_MARGIN = 1.3
+R2_COST_SAMPLES = 50
+R2_MIN_COST_SAMPLES = 5
 SHADOW_INPUT_ESTIMATE_USD = {"a1": 0.15, "t2": 0.15, "t9_blog": 0.06, "t9_social": 0.03}
 # R2 always runs these tiers when the release touches S1 or T2 (WM-19 scope 7)
 R2_FORCED_TIERS = {"a1": ("fact_dense", "long_9d"), "t2": ("fact_dense", "long_9d")}

@@ -64,8 +64,8 @@ def test_run_with_pool_hands_run_r2_a_store_reading_the_run_label(monkeypatch, s
     monkeypatch.setattr(r2, "run_r2", fake_run_r2)
     models = ["catalog rows"]
 
-    async def fake_family_check(writer):          # AA-1024 A4: checked before the run, rows handed to it
-        seen["family_writer"] = writer
+    async def fake_family_check(writer, judge_model=None):   # AA-1024 A4: checked before the run, rows handed to it
+        seen["family_writer"], seen["family_pin"] = writer, judge_model
         return models
 
     monkeypatch.setattr(r2, "check_judge_family", fake_family_check)

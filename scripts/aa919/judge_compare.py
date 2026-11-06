@@ -186,9 +186,8 @@ async def _load(pool, writer: str, limit: Optional[int]):
 async def main(argv=None) -> int:
     import asyncpg
 
-    from services.writing_memory import eval_writers as ew
     from services.writing_memory.eval_judge import MAX_TOKENS, build_user_prompt, judge_output, judge_source_text
-    from services.writing_memory.eval_judge import judge_version, system_prompt
+    from services.writing_memory.eval_judge import judge_output_text, judge_version, system_prompt
     from shared.llm_client import catalog as catalog_mod
     from shared.llm_client.role_config import get_stage_config
 
@@ -208,7 +207,7 @@ async def main(argv=None) -> int:
         prompts = []
         for it in items:
             src = judge_source_text(a.writer, it["input"], shared)
-            out = ew.output_text(a.writer, it["control_output"])
+            out = judge_output_text(a.writer, it["control_output"])      # S271 W0: R2's labelled view
             prompts.append((it, src, out, len(system_prompt()) + len(build_user_prompt(
                 writer=a.writer, source_text=src, output_text=out))))
         est = estimate(catalog, models, [p[3] for p in prompts], MAX_TOKENS)
