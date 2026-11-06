@@ -129,9 +129,10 @@ async def test_280_stage_and_budget_rows(conn):
                               "shadow_sample_pct, is_active FROM shared.llm_role_config "
                               "WHERE stage = 'writing_memory_mine'")
     # 280's route, as 327 left it (OpenAI API last), 333 (AA-1026) gave it an acc2 pick before that hop and 366 (AA-1026
-    # S267, model first) put GPT-6 Luna's OpenAI API twin right behind GPT-6 Luna
+    # S267, model first) put GPT-6 Luna's OpenAI API twin right behind GPT-6 Luna; 383 (AA-900, S271 W0, tech lead D7)
+    # took the uncalibrated acc2 pick (Nova Lite) off it again
     assert dict(row) == {"role": "judge", "provider": "openai", "model_id": "gpt-5.6-luna", "account_route": "acc3",
-                         "fallback_model_ids": ["gpt-6-luna", "gpt-6-luna-openai", "nova-lite"],
+                         "fallback_model_ids": ["gpt-6-luna", "gpt-6-luna-openai"],
                          "shadow_model_id": None, "shadow_sample_pct": 0, "is_active": True}
     budget = await conn.fetchrow("SELECT per_run_usd, per_day_usd, hard_stop FROM shared.spend_budget "
                                  "WHERE provider = 'bedrock' AND scope = 'job:writing_memory_mine'")

@@ -45,13 +45,17 @@ def test_applies_twice_and_registers(cur):
 
 
 def test_the_declared_degrade_modes_and_no_other(cur):
-    # 326 declares three; 335 (AA-1024 A2) declares queue_retry on the two segment research stages it creates.
+    # 326 declares three; 335 (AA-1024 A2) declares queue_retry on the two segment research stages it creates; 383
+    # (AA-900 S271 W0) on every writer it takes the OpenAI API rung off that had none.
     cur.execute("SELECT stage, degrade_mode, disabled_reason, is_active FROM shared.llm_role_config "
                 "WHERE degrade_mode IS NOT NULL ORDER BY stage")
     rows = {r["stage"]: r for r in cur.fetchall()}
+    by_383 = ("a0_column_map", "s1_flag_fix", "s1_generate", "s1_itinerary_nudge", "supply_content_writer",
+              "t2_flag_fix", "t2_itinerary_nudge", "t8_angle_gen", "t9_repair")
     assert {s: r["degrade_mode"] for s, r in rows.items()} == {
         "t2_generate": "queue_retry", "t9_write": "queue_retry", "tp_compose": "basic_narration",
-        "segment_research": "queue_retry", "segment_research_batch": "queue_retry"}
+        "segment_research": "queue_retry", "segment_research_batch": "queue_retry",
+        **{s: "queue_retry" for s in by_383}}
     assert all(r["is_active"] and r["disabled_reason"] is None for r in rows.values())
 
 
