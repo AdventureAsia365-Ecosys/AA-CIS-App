@@ -11,6 +11,7 @@ so the split is a pure function of (files on disk, durations file, N): no shard 
     python3 .github/scripts/ci_shards.py plan --shards 4 --durations ... tests/integration      # every shard
     python3 .github/scripts/ci_shards.py durations --out new.json junit-1.xml junit-2.xml ...    # refresh weights
     python3 .github/scripts/ci_shards.py durations --prefix tests/integration/ --out new.json ...  # suite's own rootdir
+    python3 .github/scripts/ci_shards.py files --shards 1 --index 1 --shuffle 1234 tests/integration  # nightly order
 
 Rules:
 - Files are those pytest collects by default (``test_*.py`` / ``*_test.py``) under the given roots, minus
@@ -26,6 +27,9 @@ Rules:
   neighbour of the unsharded run except at the start of a shard.
 - The durations file is advisory: a stale one only unbalances the shards, never drops a file. Refresh it from the
   shards' junit reports (``durations``; the aggregate job uploads the merged file as an artifact).
+- ``files --shuffle SEED`` (AA-1024 l22, G8) prints the shard's files in a random order fixed by SEED, for the nightly
+  random-order integration run (.github/workflows/nightly-integration.yml): pytest runs files in the order given, so
+  a module that leans on an earlier module's leftovers fails there, with the seed to replay it.
 - junit paths are relative to pytest's rootdir, which is the nearest ini file above the test files: a suite with its
   own ``pytest.ini`` (CIS ``tests/integration``) writes ``file="test_x.py"``. ``durations --prefix tests/integration/``
   puts such paths back under the cwd-relative names ``discover`` returns (a path that already has it is kept).
@@ -36,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import statistics
 import sys
 import xml.etree.ElementTree as ET
@@ -180,6 +185,8 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("roots", nargs="+")
         if name == "files":
             p.add_argument("--index", type=int, required=True, help="1-based shard index")
+            p.add_argument("--shuffle", type=int, default=None, metavar="SEED",
+                           help="print the shard's files in a random order fixed by SEED (nightly random-order run)")
     d = sub.add_parser("durations")
     d.add_argument("--out", required=True)
     d.add_argument("--prefix", default="",
@@ -213,6 +220,9 @@ def main(argv: list[str] | None = None) -> int:
         bucket = buckets[args.index - 1]
         if not bucket:
             raise SystemExit(f"shard {args.index}/{args.shards} is empty: lower the shard count")
+        if args.shuffle is not None:
+            bucket = list(bucket)
+            random.Random(args.shuffle).shuffle(bucket)
         print("\n".join(bucket))
         return 0
     weight = weights(files, durations, args.workers, args.file_overhead)

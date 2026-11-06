@@ -8,8 +8,9 @@ Setup (one-time):
     su -c "psql -c \"CREATE DATABASE cis_integration_test OWNER cistest;\"" postgres
 
 cistest must be SUPERUSER, as in CI (.github/workflows: postgres:15 service). Without it the role
-creation below and every migration that grants to / asserts on other roles (203, 225 ...) fail;
-_apply_schema swallows migration errors, so the symptom is failing tests, not a setup error.
+creation below and every migration that grants to / asserts on other roles (203, 225 ...) fail.
+The session now stops at once on a non-superuser (and on any migration that fails outside the expected set,
+tests/integration/_replay_guard.py; AA-1024 l22 G16).
 """
 
 import sys, os
@@ -24,6 +25,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from _constants import (  # noqa: F401 — re-exported for test imports
     SAMPLE_TOUR, SAMPLE_SEO, SAMPLE_GENERATED, TENANT_ID, BATCH_ID
 )
+from _replay_guard import SUPERUSER_HINT, exit_message, first_line, replay_problems
 
 # ── Connection params ─────────────────────────────────────────────
 DB_HOST = os.environ.get("CIS_TEST_DB_HOST", "127.0.0.1")
@@ -256,6 +258,14 @@ def _apply_schema(conn):
         return
     conn.autocommit = True
     cur = conn.cursor()
+    # AA-1024 l22 (G16): a non-superuser replays with dozens of silent GRANT / role failures; stop before that.
+    cur.execute("SELECT rolsuper AS ok FROM pg_roles WHERE rolname = current_user")
+    row = cur.fetchone()
+    if not (row and row[0]):
+        pytest.exit(f"integration conftest: {SUPERUSER_HINT}", returncode=3)
+    cur.execute("SELECT count(*) AS n FROM pg_available_extensions WHERE name = 'vector'")
+    vector_available = bool(cur.fetchone()[0])
+    replay_failed: dict[str, str] = {}
 
     # Drop all schemas and recreate fresh
     cur.execute("""
@@ -630,6 +640,7 @@ def _apply_schema(conn):
             print(f"Applied: {mf}")
         except Exception as e:
             print(f"Warning {mf}: {e}")
+            replay_failed[mf] = first_line(e)
             try: mconn.close()
             except: pass
         if mf.startswith("229_"):
@@ -638,6 +649,11 @@ def _apply_schema(conn):
             cur.execute("DELETE FROM shared.schema_versions WHERE description = %s", (X284_STANDIN_MARK,))
         if mf.startswith("287_"):
             cur.execute("DELETE FROM shared.schema_versions WHERE description = %s", (X287_STANDIN_MARK,))
+    # AA-1024 l22 (G16): a migration that fails outside the expected set (or an expected one that now applies) is an
+    # error, not a warning in the captured output.
+    problems = replay_problems(replay_failed, vector_available=vector_available)
+    if problems:
+        pytest.exit(exit_message(problems), returncode=3)
 
     # Drop FK constraints in test env — cross-table seeding is fragile
     cur.execute("""

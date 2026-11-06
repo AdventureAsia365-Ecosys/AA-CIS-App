@@ -16,7 +16,9 @@ Tells the author of a PR that adds a migration whether the file will be auto-app
   5. a lint error of the pinned AA-CIS-Infra runner (``run_migration.py --inspect``: directives, the expand static
      lint, the X1 role lint) or of its ownership lint, and an expand file the classify replay finds changing an
      existing object (exit 14 of ``db/expand_check.py --classify``, the evidence the Infra copy PR's required
-     "Expand classify" check would also refuse).
+     "Expand classify" check would also refuse);
+  6. an added line (any file) naming a migration by an old number after a renumber, or a migration file the PR
+     removes (``migration_refs.py``, AA-1024 l22; a history note carries ``old-mig-ok``).
 
   python3 .github/scripts/migration_preflight.py --app booking --migrations-dir migrations \\
       --readiness-file backend/app/db.py --base "$BASE_SHA" [--infra-tools infra] [--infra-copies DIR] \\
@@ -29,7 +31,7 @@ file is expand when its header says so and the lint passes; the copy PR's classi
 stay the authority, and ``schema-gate`` is the backstop; such a file is reported "expected expand (unverified)".
 With ``--ready-url`` (Dev ``/health/ready``, public) a lower file of the owner that Dev has not registered and that is
 not expand is a warning: the strict-prefix apply (ADR 0017 d5) stops there, so the added file waits for a person.
-Exit 1 on any refusal, 0 otherwise. Standard library only;
+Exit 1 on any refusal, 0 otherwise. Standard library only (+ ``migration_refs.py`` beside it);
 identical file in AA-CIS-App, AA-Booking and AA-Partner; tests: the repo's unit test ``test_migration_preflight.py``.
 """
 
@@ -48,6 +50,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import migration_refs as mr  # noqa: E402  (dangling references after a renumber, AA-1024 l22)
 import schema_gate as sg  # noqa: E402  (same readiness reading as the deploy gate)
 
 FILE_RE = re.compile(r"^([0-9]{3})_[^/]*\.sql$")
@@ -376,6 +379,7 @@ def main(argv: list | None = None) -> int:
                a.allow_out_of_order, dev_keys=dev_keys, headers=headers, floor=floor)
     if dev_note:
         r.notes.append(dev_note)
+    r.errors += [f"dangling migration reference: {e}" for e in mr.check(mig, a.base)]
     if changes.get("A"):
         if tools is None:
             r.notes.append("the pinned AA-CIS-Infra tools were not available: header only, no runner lint")
