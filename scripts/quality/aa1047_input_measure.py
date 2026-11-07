@@ -279,11 +279,18 @@ async def run(measure: str, *, piece_days: int, limit: Optional[int]) -> dict:
             keys = {(str(p["tenant_id"]), p["writer_input"].get("destination")) for p in pieces}
             left = await _facts_left_out(conn, keys)
             out["excluded_t9"] = {**measure_excluded(pieces, left), "days": piece_days}
+        masters = None
         if measure in ("all", "drift"):
-            out["master_drift"] = measure_drift(_limited([dict(r) for r in await conn.fetch(MASTERS_SQL)], limit))
+            masters = _limited([dict(r) for r in await conn.fetch(MASTERS_SQL)], limit)
     finally:
-        await tr.rollback()
-        await conn.close()
+        # The census is long CPU work: close the read-only transaction first, so the server's idle-in-transaction
+        # timeout never drops the connection mid-run (S272: ConnectionDoesNotExistError lost the whole result).
+        try:
+            await tr.rollback()
+        finally:
+            await conn.close()
+    if masters is not None:
+        out["master_drift"] = measure_drift(masters)
     return out
 
 
