@@ -22,7 +22,11 @@
 #                   AA_PREPUSH_SKIP_INTEGRATION=1 git push (say so in the PR body).
 #   --self-test     runs the decision logic on fixture diffs; invokes no lint/test tool.
 #   --dry-run       prints the changed-file count and the checks it would run, then exits.
-#   --only a,b      run only these check ids (see CHECK_IDS).
+#   --only a,b      run only these check ids (see CHECK_IDS, plus gitleaks).
+#   gitleaks        AA-1024 G14: every mode but --ci scans the pushed commits (<base>..<head>) with gitleaks v8.30.1 (the
+#                   secret-scan.yml pin) and the BASE's .gitleaks.toml / .gitleaksignore, as CI reads them. Binary:
+#                   $AA_GITLEAKS, `gitleaks` on PATH, or <workspace>/.tmp-session/gitleaks-8301/gitleaks. A missing or
+#                   other-version binary blocks; skip once, visibly: AA_SKIP_GITLEAKS=1 git push.
 #   --base REF      diff base (default origin/main, or AA_PREPUSH_BASE).
 #   --head REF      commit being pushed (default HEAD; the hook passes the pushed SHA).
 #
@@ -49,6 +53,9 @@ CI_CMD[unit]="COVERAGE_CORE=sysmon pytest tests/unit/ -v --tb=short --cov=servic
 UNIT_INSTALL="pip install -r requirements.txt -r requirements-dev.txt"
 CI_CMD[integration]="scripts/pre-push.sh --integration   (runs the changed integration test files on a throwaway Postgres and stamps this code; CI: Integration shard i/4, postgres:15)"
 INTEGRATION_INSTALL="pip install -r requirements.txt -r tests/integration/requirements-integration.txt"
+CI_CMD[gitleaks]="gitleaks git . --log-opts=\"--no-renames <base>..<head>\" -c .gitleaks.toml -i .gitleaksignore --redact   (secret-scan.yml gitleaks, rules from the PR base; a finding: rewrite the branch, never fix it in a later commit)"
+GITLEAKS_VERSION=8.30.1 # .github/workflows/secret-scan.yml (gitleaks v8.30.1 in every repo)
+GITLEAKS_LOCAL=.tmp-session/gitleaks-8301/gitleaks # where the PR opener and the lanes keep the checked download
 CI_CMD[frontend_tsc]="cd frontend && npx tsc --noEmit -p .   (ci.yml Frontend Build > Type-check; next build stays CI-only)"
 CI_CMD[frontend_kit]="cd frontend && node app/_kit/core/check-kit-copy.mjs --self && node app/_kit/core/check-kit-copy.mjs --css . && node app/_kit/core/check-kit-copy.mjs --suppressions <base eslint-suppressions.json> eslint-suppressions.json --base-files <git ls-tree -r --name-only <base> -- frontend/> && node app/_kit/core/check-kit-copy.mjs --no-kit-disable app --ignore _kit   (ci.yml Frontend Build > Kit core self-check; Frontend Lint > Suppressions do not grow, No inline disable of a kit rule)"
 CI_CMD[frontend_lint]="cd frontend && npx eslint --prune-suppressions && git diff --exit-code eslint-suppressions.json   (ci.yml Frontend Lint; locally only the changed files, or all of frontend/ when the lint config, the kit rules or the suppressions file changed; fix, or after fixing old violations: npx eslint --prune-suppressions <files>)"
@@ -678,6 +685,44 @@ do_frontend_lint() {
   node_check frontend frontend_lint npx eslint --no-warn-ignored -- "${targets[@]}"
 }
 
+# gitleaks_bin: $AA_GITLEAKS, gitleaks on PATH, or the workspace copy in a parent directory of this checkout (the repo
+# sits at <workspace>/apps/AA-CIS-App, a lane worktree under <workspace>/.tmp-session/wt/).
+gitleaks_bin() {
+  local d
+  if [[ -n ${AA_GITLEAKS:-} ]]; then echo "$AA_GITLEAKS"; return 0; fi
+  command -v gitleaks 2>/dev/null && return 0
+  d=$(pwd -P)
+  while [[ -n $d && $d != / ]]; do
+    if [[ -x $d/$GITLEAKS_LOCAL ]]; then echo "$d/$GITLEAKS_LOCAL"; return 0; fi
+    d=$(dirname "$d")
+  done
+  return 0
+}
+
+# do_gitleaks: scan the pushed commits the way secret-scan.yml does (lessons S250-S266, CIS #1066 / #1109 / #1181: a
+# fix-up push to a PR branch was not scanned before it reached GitHub, and each leak cost a squash rewrite).
+do_gitleaks() {
+  if [[ ${AA_SKIP_GITLEAKS:-} == 1 ]]; then
+    warn_result gitleaks "skipped (AA_SKIP_GITLEAKS=1): CI's Secret Scan is the only scan of these commits"; return
+  fi
+  local exe have rules name hint
+  hint="install gitleaks v$GITLEAKS_VERSION (github.com/gitleaks/gitleaks/releases, linux_x64 tar.gz checked against the release checksums) on PATH or at <workspace>/$GITLEAKS_LOCAL, or set AA_GITLEAKS; skip once: AA_SKIP_GITLEAKS=1 git push"
+  exe=$(gitleaks_bin)
+  if [[ -z $exe ]]; then fail_check gitleaks "no gitleaks binary" "$hint"; return; fi
+  have=$("$exe" version 2>/dev/null); have=${have#v}
+  if [[ $have != "$GITLEAKS_VERSION" ]]; then
+    fail_check gitleaks "gitleaks ${have:-unreadable} at $exe; CI uses $GITLEAKS_VERSION" "$hint"; return
+  fi
+  # The rules come from the BASE (as CI reads them), so a branch cannot allowlist its own leak.
+  rules="$LOG_DIR/gitleaks-rules"; mkdir -p "$rules"
+  for name in .gitleaks.toml .gitleaksignore; do
+    git show "$BASE:$name" >"$rules/$name" 2>/dev/null || : >"$rules/$name"
+  done
+  local cfg=(); [[ -s $rules/.gitleaks.toml ]] && cfg=(-c "$rules/.gitleaks.toml")
+  run_check gitleaks "gitleaks $GITLEAKS_VERSION on $BASE..$HEAD_REF (rules from $BASE)" \
+    "$exe" git . --log-opts="--no-renames $BASE..$HEAD_REF" "${cfg[@]}" -i "$rules/.gitleaksignore" --redact --no-banner
+}
+
 main() {
   cd "$(git rev-parse --show-toplevel)" || exit 2
   # S272 incident: git exports GIT_DIR (and friends) to a hook. A test that runs `git init` / `git config` / `git commit`
@@ -723,6 +768,8 @@ main() {
   fi
   local plan=() id
   mapfile -t plan < <(plan_checks "$MODE" "$CI_MODE" "${CHANGED[@]}")
+  # AA-1024 G14: every local push scans its commits (CI runs its own Secret Scan job, so not in --ci).
+  [[ $CI_MODE == 0 ]] && plan+=(gitleaks)
   if [[ -n $ONLY ]]; then
     local kept=(); for id in "${plan[@]}"; do [[ $ONLY == *",$id,"* ]] && kept+=("$id"); done; plan=("${kept[@]}")
   fi
@@ -774,6 +821,7 @@ main() {
       frontend_kit) do_frontend_kit ;;
       frontend_tsc) node_check frontend "$id" npx tsc --noEmit -p . ;;
       frontend_lint) do_frontend_lint ;;
+      gitleaks) do_gitleaks ;;
     esac
   done
 

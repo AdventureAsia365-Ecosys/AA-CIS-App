@@ -4,7 +4,8 @@
 # Since AA-993 G5 (design D1.4) the gate blocks only while a rerun wave is open or a job of a
 # `deploy_blocking` kind is running or queued due within 15 min: the worker drains on SIGTERM and
 # releases any other running job, which the new revision re-claims (G1-G4); other queued jobs wait for
-# whichever image is live. CI has no RDS
+# whichever image is live. Since AA-1024 G3 (c) it also blocks while an ECS exec script runs in the api or worker
+# container (a fresh ecsx heartbeat on the bronze bucket; the API reads it, shared/jobs/exec_heartbeat.py). CI has no RDS
 # access, so this asks the live API's deploy gate and reads only `safe_to_deploy` (the reasons are in
 # `blocked_by`). Fails CLOSED (AA-868): a missing credential, an unreachable gate or an unreadable answer
 # blocks the deploy. OVERRIDE (a reason, workflow_dispatch only, Nghiệp only) lets a deploy through

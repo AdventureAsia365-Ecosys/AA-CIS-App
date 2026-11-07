@@ -690,6 +690,12 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   (ai.admin, audited `llm_capacity_limit_set` / `_cleared`; the model must be deployed on the connection). No row =
   no limit and no hold; tables missing or unreadable = fail open. `LLM_CAPACITY=off` (ECS env) turns it off. Live
   drill at $0: `scripts/aa1025_h2_tpm_drill.py` (ECS exec; a drill model key no route uses). No UI card yet.
+- **Wave stop flags** (AA-1024 G17): the quality read of an S1 rerun wave and its six stop flags live in
+  `services/waves/quality.py` (gate codes `services/quality/s1_gates.py`, figure coverage
+  `services/quality/s1_coverage.py`); `scripts/aa645/wave_report.py` is its CLI (exit 3 a flag true, 5 pending while
+  any queued / running `shared.job` row names a wave tour: `tour_id`, a `tour_ids` list, or a t2_rewrite
+  `published_tour_id` through `published_tours.id`). Code-only, $0, no write. Never run inside an API request: the
+  code checks take 16-75 s per wave (S272), past the API Gateway's 29 s; `POST /admin/waves` does not read them.
 - **Non-LLM provider circuit and the vendor API credit ledger** (AA-1025 B3 / B5, migrations 342 / 343):
   `shared/provider_circuit.py` keeps ONE circuit per decide / data provider connection (`typesafe`, `dataforseo`,
   `geoapify`) in `shared.provider_health` (PK `connection_key`; the breaker's pure transitions and `RULES`, a 10 s
