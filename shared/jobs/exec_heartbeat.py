@@ -14,8 +14,8 @@ The api and worker task role may list the bucket (AA-CIS-Infra modules/ecs, ecs_
 here; `deploy_gate_status` turns it into a `blocked_by` line ("heartbeat unreadable", fail closed) and keeps the rest
 of its answer. `DEPLOY_GATE_ECSX=off` turns the check off (the test conftests do: no AWS).
 
-A hung script blocks every CIS deploy until it ends or its `ECSX_SCRIPT_TIMEOUT` passes (the runner caps it at
-3,600 s); to clear it sooner, stop the script in the container (runbook `deploy-gate-override.md`, row "ECS exec
+A hung script blocks every CIS deploy until it ends or its `ECSX_SCRIPT_TIMEOUT` passes (the root runner caps it at
+10,800 s); to clear it sooner, stop the script in the container (runbook `deploy-gate-override.md`, row "ECS exec
 script running").
 """
 from __future__ import annotations
