@@ -39,6 +39,10 @@ on:
     secrets:
       VERCEL_AUTOMATION_BYPASS_SECRET:
         required: false
+      # the read-only mailbox role of the E2E sign-in (the caller passes `secrets: inherit`; declared so the called
+      # workflow names every secret it reads, actionlint G15)
+      E2E_MAIL_ROLE_ARN:
+        required: false
   workflow_dispatch:
     inputs:
       base_url:

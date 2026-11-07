@@ -11,7 +11,15 @@ Design: root repo `docs/audits/2026-11-07-S271-lessons-to-guards/` (guards G1-G2
   true, 5 = pending (run again after the jobs drain), 0 = none. `stop_conditions` keeps its boolean shape (readers of
   the JSON keep working); `stop_state`, `active_jobs` and `exit_code` are new keys.
 - **G11 PR text guard**: `.github/workflows/pr-title.yml` (new in CIS; the same file as Booking, Partner, root): no issue
-  id in the title, no closing keyword in the body, issue ids only on the `Refs` line. It answers `merge_group` with
+  id in the title, no closing keyword in the body, no issue id the `Refs` line does not name (an id the Refs line
+  names may appear anywhere; an id inside a file path is ignored; bots skip this rule by login, never by `user.type`,
+  since the orchestrator's App is a Bot too).
+- **G15 workflow lint** (review fix pass): `.github/workflows/workflow-lint.yml` + `.github/scripts/workflow_lint.py`
+  (the AA-CIS-Infra script, vendored; one copy in every repo) + its unittest file: pinned actionlint 1.7.12, then WL1
+  no sensitive `vars.*`, WL2 Playwright on `ubuntu-24.04`, WL3 `npm ci` with a git-tracked lockfile. actionlint found
+  two real errors here, fixed: `visual.yml` and `ui-smoke.yml` read `secrets.E2E_MAIL_ROLE_ARN` but their
+  `workflow_call` did not declare it (now declared, optional). `kit-consumers.yml` runs `npm ci` in a matrix of other
+  repos' apps: listed as unchecked, not a finding. It answers `merge_group` with
   success, like the other queue repos.
 - **G6 (3) pinned openapi**: `scripts/export_openapi.py` refuses (exit 2) before importing the app when FastAPI or
   Pydantic differ from the `requirements.txt` pins; `--allow-unpinned` only shows a diff.
