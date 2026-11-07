@@ -86,6 +86,8 @@ from services.acp_produce.brand import fetch_brand_rubric_text
 from services.acp_content_writing.gate_eval import ledger_snapshot  # AA-791
 from services.acp_content_writing import gate_eval  # AA-900 W0 (failing gates per attempt, typed hold reasons)
 from services.quality import degraded  # AA-925
+from services.quality import factsheet  # AA-1047 (Quality W1: the T9 FactSheet)
+from services.quality import factsheet_store  # AA-1047 (CIS 386)
 from services.quality import repair_contract  # AA-790
 from services.quality import route_guard  # AA-1042
 from services.quality import registry as qr
@@ -871,6 +873,41 @@ def _grounding_text(context: dict) -> str:
     )
 
 
+def _grounding_sheet(context: dict) -> factsheet.FactSheet:
+    """AA-1047 (Quality W1) — the T9 FactSheet of a write: the same text as _grounding_text(context), as typed lines
+    with provenance, plus what the facts budget left out (resolve_facts: facts_excluded, fact_scopes)."""
+    trip = context["writer_trip_name"] if "writer_trip_name" in context else context.get("trip_name")
+    return grounding_factsheet(
+        seed=context["atom_text"], facts_text=context.get("facts_text"),
+        brand_audience=context.get("brand_audience"), trip_name=trip, destination=context.get("destination"),
+        fact_scopes=context.get("fact_scopes"), excluded_facts=context.get("facts_excluded") or (),
+        meta={k: context[k] for k in ("channel", "atom_id") if context.get(k)},
+    )
+
+
+def _valid_fs_id(value) -> Optional[str]:
+    try:
+        return str(UUID(str(value))) if value else None
+    except ValueError:
+        return None
+
+
+async def _store_fact_sheet(pool, sheet: factsheet.FactSheet, context: dict) -> None:
+    """AA-1047 — store the piece's FactSheet (acp_shared.fact_sheet, CIS 386) and keep its id on the context, so
+    writer_input_snapshot records it (`fs_id`, `fs_sha`). Best-effort: a failure leaves no id and the write goes on."""
+    context["fs_sha"] = sheet.sha()
+    if not factsheet_store.enabled():
+        return
+    try:
+        async with pool.acquire() as conn:
+            fs_id = await factsheet_store.save(conn, sheet, tenant_id=context.get("tenant_id"), workflow="t9")
+    except Exception as e:  # noqa: BLE001 — the FactSheet record never fails the write
+        logger.warning("t9_factsheet_store_failed", error=str(e)[:200])
+        return
+    if _valid_fs_id(fs_id):
+        context["fs_id"] = _valid_fs_id(fs_id)
+
+
 def grounding_from_writer_input(writer_input: dict) -> str:
     """AA-769 (S234) — the same grounding text, rebuilt from a stored piece's `writer_input`
     (writer_input_snapshot() below), for the admin sentence rewrite and its checks."""
@@ -883,25 +920,20 @@ def grounding_from_writer_input(writer_input: dict) -> str:
 
 def grounding_text_from(*, seed: str, facts_text: Optional[str], brand_audience: Optional[dict],
                         trip_name: Optional[str], destination: Optional[str]) -> str:
-    """The one implementation behind _grounding_text() and grounding_from_writer_input()."""
-    parts = [seed, facts_text or ""]
-    audience = brand_audience or {}
-    if audience.get("brand_name"):
-        parts.append(f"BRAND: {audience['brand_name']}")
-    # AA-771 — the brand describing itself in its own words is a source, not an invented claim
-    # (S232: 4 F9 flags on the brand's own stated approach were over-strict).
-    if audience.get("core_idea"):
-        parts.append(f"BRAND CORE IDEA: {audience['core_idea']}")
-    if audience.get("customer_segment"):
-        # S234 (C11) — kept for F1 (the brand's own '7–16'), labelled so the F9 judge stops taking
-        # the segment as trip truth (S233: FAQ age answers passed on it).
-        parts.append(f"AUDIENCE (who the brand writes for — not a fact about this trip): "
-                     f"{audience['customer_segment']}")
-    if trip_name:
-        parts.append(f"TRIP: {trip_name}")
-    if destination:
-        parts.append(f"DESTINATION: {destination}")
-    return "\n\n".join(p for p in parts if p)
+    """The one implementation behind _grounding_text() and grounding_from_writer_input().
+
+    AA-1047 (Quality W1): the text is the render of the T9 FactSheet (services/quality/factsheet.py, route builder),
+    byte-equal to the pre-W1 join (parity test tests/unit/quality/test_aa1047_factsheet.py)."""
+    return grounding_factsheet(seed=seed, facts_text=facts_text, brand_audience=brand_audience,
+                               trip_name=trip_name, destination=destination).render()
+
+
+def grounding_factsheet(*, seed: str, facts_text: Optional[str], brand_audience: Optional[dict],
+                        trip_name: Optional[str], destination: Optional[str], **extra) -> factsheet.FactSheet:
+    """AA-1047 — the T9 FactSheet behind grounding_text_from (typed, numbered lines with provenance). `extra` passes
+    the builder's optional inputs (fact_scopes, excluded_facts, block_anchored, meta)."""
+    return factsheet.build_route_factsheet(seed=seed, facts_text=facts_text, brand_audience=brand_audience,
+                                           trip_name=trip_name, destination=destination, **extra)
 
 
 def _seo_title_ok(title, keyword: Optional[str]) -> bool:
@@ -1858,8 +1890,13 @@ async def resolve_facts(request_id: UUID, context: dict, pool) -> None:
         await _reread_seed(context, tenant_id, pool)
     except Exception as e:  # noqa: BLE001 — the seed built at start_write still works
         logger.warning("t9_seed_reread_failed", request_id=str(request_id), error=str(e)[:200])
-    facts = await fetch_facts_for_writing(tenant_id, pool, country=context.get("destination"))
+    left_out: list = []
+    facts = await fetch_facts_for_writing(tenant_id, pool, country=context.get("destination"), excluded_out=left_out)
     context["facts_text"] = format_facts_block(facts)
+    # AA-1047 (Quality W1): what the facts budget left out, recorded in the piece's FactSheet (reason facts_budget)
+    context["facts_excluded"] = factsheet.excluded_fact_refs(left_out)
+    # ... and each kept fact's owner, so its FactSheet line carries the right provenance
+    context["fact_scopes"] = {str(f.get("fact_id")): f.get("scope") for f in facts if f.get("scope")}
     context["facts_pending"] = False
     # AA-814 review: the facts block size per write, to trace T9 input cost in shared.llm_call_log back to facts
     # (budgeted by facts.budget_facts).
@@ -1934,7 +1971,10 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
     # Khövsgöl Lake'); the hygiene context keeps the full name (its gazetteer needs those places).
     writer_trip = hygiene.scoped_trip_name(trip_name, context.get("scope"), hyg.lexicon)
     context["writer_trip_name"] = writer_trip
-    grounding_text = _grounding_text(context)  # AA-768 — + audience/trip lines
+    # AA-1047 (Quality W1) — the FactSheet of this write: its render is _grounding_text(context) byte for byte
+    fact_sheet = _grounding_sheet(context)
+    grounding_text = fact_sheet.render()  # AA-768 — + audience/trip lines
+    await _store_fact_sheet(pool, fact_sheet, context)
     # S234 — scope lexicon + text rules for this piece (pure; rebuilt per job, never stored in the
     # JSON job payload).
     # AA-771 (S234) — the channel spec (LinkedIn) caps the hashtags, moves them to the last line and
@@ -2683,6 +2723,9 @@ def writer_input_snapshot(context: dict) -> dict:
     goal = context.get("goal") or {}
     return {
         "writer_prompt_version": WRITER_PROMPT_VERSION,  # AA-916 WM-08
+        # AA-1047 (Quality W1) — the piece's FactSheet (acp_shared.fact_sheet); absent before W1 or when not stored
+        **({"fs_id": context["fs_id"]} if context.get("fs_id") else {}),
+        **({"fs_sha": context["fs_sha"]} if context.get("fs_sha") else {}),
         "seed": context.get("atom_text"),
         "route_moments": [{"atom_id": a, "seed": t} for a, t in (context.get("route_segments") or [])],
         # AA-741 (S271 review) — the moment a Segment-grain Blog walk is about; absent for every other piece.

@@ -16,14 +16,17 @@ from typing import Any, Iterable, Optional
 # the writing-memory keys (`generation_meta`, `rule_ids`, `release` (writing_release, release_id, release_no),
 # `memory`): which release and which learned rules wrote a version is AA's QA state, not the tenant's content
 # (hard stop 3).
+# AA-1047: `fs_id` (CIS 386) names the admin FactSheet a version was written from; matched as a whole key.
 TENANT_FORBIDDEN_KEY_RE = re.compile(
-    r"needs_review|quality|score|qa_|judge|llm_cost|jev_cost|generation_meta|rule_ids|release|memory")
+    r"needs_review|quality|score|qa_|judge|llm_cost|jev_cost|generation_meta|rule_ids|release|memory|\bfs_id\b")
 
 # tenant_tour_versions columns that are gate or generation output, not content (generation_meta: CIS 297, AA-920;
-# judge_breakdown: CIS 300, AA-795 — the T2 judge verdict and the brand-claim check).
+# judge_breakdown: CIS 300, AA-795 — the T2 judge verdict and the brand-claim check; fs_id: CIS 386, AA-1047 — the
+# admin FactSheet the version was written from. The tenant pool's table-level grant covers fs_id, so this projection,
+# not a grant, is what keeps it out of tenant responses).
 TENANT_HIDDEN_VERSION_FIELDS = frozenset({
     "quality_score", "qa_status", "qa_repair_count", "qa_checked_at", "qa_auto_passed", "generation_meta",
-    "judge_breakdown",
+    "judge_breakdown", "fs_id",
 })
 # published_tours columns that are A1 gate output.
 TENANT_HIDDEN_TOUR_FIELDS = frozenset({"quality_score", "quality_score_id"})

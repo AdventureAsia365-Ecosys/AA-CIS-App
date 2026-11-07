@@ -543,6 +543,23 @@ async def _resolve_brand_rule(conn, tenant_uuid, brand_identity_id, brand_name):
     )
 
 
+async def _stamp_fact_sheet(conn, row, tenant_uuid, version_id) -> Optional[str]:
+    """AA-1047 — store the S1 FactSheet of `row` (the raw_tours row) and set generated_content.fs_id; the fs_id or
+    None (switched off, or the best-effort write failed)."""
+    from services.quality import factsheet_store
+    if not factsheet_store.enabled() or row is None:
+        return None
+    try:
+        fs_id = await factsheet_store.save_tour_sheet(conn, row, tenant_id=tenant_uuid, workflow="s1",
+                                                      tour_id=row.get("tour_id"))
+        if fs_id:
+            await factsheet_store.stamp_generated_content(conn, version_id, fs_id)
+        return fs_id
+    except Exception as e:  # noqa: BLE001 — the FactSheet record never fails the rewrite
+        logger.warning("s1_factsheet_store_failed", version_id=str(version_id), error=str(e)[:200])
+        return None
+
+
 async def _version_of_job(conn, tour_id: str, job_id: str) -> Optional[str]:
     """AA-993 G2: the version an s1_rewrite job already wrote for this tour (its metadata.s1_job_id marker), or None.
     The tour_id filter uses the tour index; the containment test can use the metadata GIN index."""
@@ -921,6 +938,9 @@ async def _execute_run_tour(
                 raise
             if version_id:
                 await _ckpt.mark(checkpoint, "content_inserted", version_id=str(version_id))
+                # AA-1047 (Quality W1): the FactSheet of the raw source the writer read (tour builder;
+                # acp_shared.fact_sheet, CIS 386), stamped on the version. Best-effort: a failure changes nothing.
+                await _stamp_fact_sheet(conn, row, tenant_uuid, version_id)
 
         # AA-993 G2: one score row per version — quality_scores has no unique key on generated_content_id (the old
         # ON CONFLICT DO NOTHING never fired), so the insert skips a version that already has its row.

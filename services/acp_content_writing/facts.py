@@ -58,7 +58,8 @@ _FACTS_QUERY = """
 """
 
 
-async def fetch_facts_for_writing(tenant_id: UUID, pool, country: str | None = None) -> list[dict]:
+async def fetch_facts_for_writing(tenant_id: UUID, pool, country: str | None = None,
+                                  excluded_out: list | None = None) -> list[dict]:
     """ALL scope='platform' facts + the given tenant's own scope='tenant' facts — never another
     tenant's (the `scope = 'tenant' AND tenant_id = $1` half of the WHERE is what enforces that; a
     platform fact matches on `scope = 'platform'` alone, regardless of $1). `tenant_id` is passed
@@ -67,11 +68,17 @@ async def fetch_facts_for_writing(tenant_id: UUID, pool, country: str | None = N
     "uuid = text" bug this codebase already hit once, AA-501's own live-verify finding — this
     query never reuses $1 against a text column). Empty list is a normal, common outcome (no facts
     written yet for anyone) — never an error, same soft-fail convention every other optional T9
-    signal (DFS keyword, brand rubric) already follows."""
+    signal (DFS keyword, brand rubric) already follows.
+
+    AA-1047 (Quality W1): `excluded_out`, when given, receives the picked facts the budget left out (the FactSheet
+    records them with reason `facts_budget` instead of dropping them silently). The kept list is unchanged."""
     async with pool.acquire() as conn:
         rows = await conn.fetch(_FACTS_QUERY, tenant_id, country)
     picked = pick_facts([dict(r) for r in rows])
     kept = budget_facts(picked)
+    if excluded_out is not None:
+        kept_ids = {id(f) for f in kept}
+        excluded_out.extend(f for f in picked if id(f) not in kept_ids)
     if len(kept) < len(picked):
         logger.info("t9_facts_budget_dropped", tenant_id=str(tenant_id), country=country, offered=len(picked),
                     kept=len(kept), dropped=len(picked) - len(kept),
