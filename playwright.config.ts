@@ -9,10 +9,9 @@ import { defineConfig, devices } from '@playwright/test';
 //     automatic screenshots or traces (the code page could be captured).
 //   • "smoke" — the AUTHENTICATED UI smoke (tests/e2e/smoke/*.spec.ts tagged @staff). It `dependencies` on
 //     "smoke-setup", so the sign-in runs once before the page tests, which then load that storageState and each
-//     run independently. Runs only on the two Cognito callback hosts (ui-smoke.yml staff job).
-//   • "smoke-public" (AA-816 S2 path) — every smoke spec WITHOUT the @staff tag: no session, no setup. This is
-//     what a per-PR *.vercel.app preview runs (Cognito has no wildcard callbacks, and the legacy password login
-//     is going away). The staff job runs it too.
+//     run independently. Runs only on the Cognito callback host (ui-smoke.yml staff job).
+//   • "smoke-public" (AA-816 S2 path) — every smoke spec WITHOUT the @staff tag: no session, no setup. The staff
+//     job runs it too, on the production host after each deploy (deploy-admin-dev.yml).
 // AA-979: the tenant portal smoke (projects "smoke-portal-setup" / "smoke-portal", AA-885) moved to AA-Partner
 // (e2e/smoke-portal/, e2e/playwright.portal.config.ts) with the portal itself.
 // AA-816 (E1): one more, for the real Cognito email-code sign-in:

@@ -25,15 +25,12 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.resolve(__dirname),
   },
-  // AA-911 (root ADR 0019 d23): the ECS image (frontend/Dockerfile) builds the standalone server; Vercel builds stay
-  // as they are until the Vercel project is retired.
+  // AA-911 (root ADR 0019 d23): the ECS image (frontend/Dockerfile) builds the standalone server; the CI builds
+  // (Frontend Build, Visual's `next start`) keep the default output.
   ...(process.env.NEXT_OUTPUT === "standalone" ? { output: "standalone" as const } : {}),
   poweredByHeader: false,
   async headers() {
-    // AA-911: Preview builds (served on aa-cis-preview.lumiguides.it.com when aliased) are never indexed.
-    const robots =
-      process.env.VERCEL_ENV === "preview" ? [{ key: "X-Robots-Tag", value: "noindex, nofollow" }] : [];
-    return [{ source: "/(.*)", headers: [...SECURITY_HEADERS, ...robots] }];
+    return [{ source: "/(.*)", headers: SECURITY_HEADERS }];
   },
   // AA-663 — admin IA consolidation. The legacy (internal) route group duplicated /admin/* and was
   // deleted; Brand Identity moved into Settings. Old URLs keep working. Redirects run before

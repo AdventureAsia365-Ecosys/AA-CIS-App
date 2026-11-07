@@ -115,6 +115,11 @@ def signal_matches(sig: dict, phrases: list[str]) -> bool:
     return matches_text(sig.get("before_text"), phrases) or matches_text(sig.get("problem"), phrases)
 
 
+# AA-900 W0 (service._stop_label): the repair_log entry that labels a held piece / stops a paid attempt 3 at $0. It
+# carries the hold's reason codes, not a gate failure of an attempt.
+LABEL_REPAIR_MODES = frozenset({"stop_and_label", "label"})
+
+
 def stored_failures(piece: dict) -> list[tuple[str, bool, str]]:
     """(gate, blocking, violation) of every failed entry stored on a piece: the final ledger, each repair_log attempt
     (its violations and its ledger snapshot) and each discarded attempt's ledger, on the legacy view."""
@@ -124,6 +129,8 @@ def stored_failures(piece: dict) -> list[tuple[str, bool, str]]:
     for e in piece.get("repair_log") or []:
         if not isinstance(e, dict):
             continue
+        if e.get("repair_mode") in LABEL_REPAIR_MODES:
+            continue   # AA-1047 (W0 review #1356): a $0 stop-and-label entry records a held piece's label, no failure
         if e.get("gate_targeted") and e.get("violations"):
             ledgers.append([{"gate": e["gate_targeted"], "passed": False, "blocking": True,
                              "violations": e["violations"]}])

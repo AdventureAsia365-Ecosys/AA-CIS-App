@@ -19,6 +19,7 @@ from shared import tour_liveness as _tl
 from shared.tour_liveness import TourNotServedError, live_source_sql
 from services.photos import covers as _covers
 from services.photos.sync import public_base
+from services.quality import final_contract  # AA-1047 W1 (REPORT-mode exit contract)
 from api.routers._tenant_projection import (
     project_billing, project_raw, project_tour, project_version,
     tenant_status_filter, tenant_version_status,
@@ -1394,6 +1395,9 @@ async def _apply_version_action(conn, tenant_id, version_id: str, body: VersionA
                 raise HTTPException(status_code=409, detail=VERSION_CONFLICT_DETAIL) from exc
         else:
             new_id = await conn.fetchval(_VERSION_EDIT_INSERT_SQL, *args)
+        # AA-1047 W1: the tenant's own text through the REPORT-mode final contract (log only; tenant-owned, BYO)
+        final_contract.log_tenant_edit(final_contract.T2, "tenant_edit", content=body.edited_content,
+                                       actual="pending")
         return {
             "status": "edited",
             "new_version_id": str(new_id),
@@ -1402,6 +1406,14 @@ async def _apply_version_action(conn, tenant_id, version_id: str, body: VersionA
 
     new_status = "approved" if body.action == "approve" else "rejected"
     await conn.execute(_VERSION_STATUS_UPDATE_SQL, new_status, version_id, tenant_id)
+    if new_status == "approved":   # AA-1047 W1: the tenant's approve is an exit too (REPORT mode, log only)
+        rc = row["rewritten_content"]
+        if isinstance(rc, str):
+            try:
+                rc = _json.loads(rc)
+            except ValueError:
+                rc = {}
+        final_contract.log_tenant_edit(final_contract.T2, "tenant_approve", content=rc, actual="approved")
     return {"status": new_status, "version_id": version_id}
 # P3 complete Tue May  5 11:42:07 +07 2026
 

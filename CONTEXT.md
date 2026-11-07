@@ -51,11 +51,11 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
 - **Backend**: Python (FastAPI-style routers under `api/routers/`, services under `services/`),
   running on **ECS** (cluster `aa-cis-dev-cluster`, service `aa-cis-dev-api`) fronted by ALB +
   API Gateway. Postgres (RDS) holds the schemas; some steps use Bedrock for LLM work.
-- **Frontend**: one Next.js app here, `frontend/` = the **Admin** console (`app/admin/*`), Vercel `aa-cis-frontend`,
-  `https://aa-cis.lumiguides.it.com`, workflow `Vercel Deploy` (job "Vercel deploy"; CI, not one of the required
-  checks — see Deploy & CI). AA-911 (root ADR 0019 d23 + S271 amendment): the same app also runs on ECS as its own
-  service `aa-cis-dev-admin` (container `cis-admin`; workflow `Deploy Admin Dev`); the host moves from
-  Vercel to the ALB at the cut-over (root runbook `docs/ops/runbooks/staff-web-ecs-cutover.md`).
+- **Frontend**: one Next.js app here, `frontend/` = the **Admin** console (`app/admin/*`),
+  `https://aa-cis.lumiguides.it.com`. AA-911 (root ADR 0019 d23 + S271 amendment): it runs on ECS as its own service
+  `aa-cis-dev-admin` (container `cis-admin`) behind the shared ALB, workflow `Deploy Admin Dev` (see Deploy & CI).
+  The Vercel project `aa-cis-frontend`, its Preview host and `vercel-deploy.yml` were retired in S272 (root runbook
+  `docs/ops/runbooks/staff-web-ecs-cutover.md` section 4).
   - The **Tenant portal** (Content studio, `https://portal.lumiguides.it.com`) is NOT in this repo: it split off the
     admin as its own app in AA-885 (S243), moved to `AdventureAsia365-Ecosys/AA-Partner/portal` with its history
     in AA-979 (CRM-P2a), runs on Fargate behind CloudFront since the P2b cutover (27/10/2026), and the frozen copy
@@ -108,9 +108,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
       form-action 'self'; object-src 'none'`, `Permissions-Policy`), plus `poweredByHeader: false` (AA-876).
     - **Cross-site writes (AA-911):** every admin BFF write route (any method but GET/HEAD/OPTIONS)
       first calls `lib/crossSiteGuard.ts` `refuseCrossSiteWrite()` and answers 403 when `Origin` (or, without it,
-      `Sec-Fetch-Site`) is not this origin. `it.com` is a public suffix, so every `*.lumiguides.it.com` host,
-      including the fixed Preview hosts that serve unmerged PR code, is the same site and its requests carry the
-      Lax session cookies. `tests/unit/test_aa911_bff_cross_site.py` keeps every write route on the guard.
+      `Sec-Fetch-Site`) is not this origin. `it.com` is a public suffix, so every `*.lumiguides.it.com` host (the
+      other staff and partner apps) is the same site and its requests carry the Lax session cookies. `tests/unit/test_aa911_bff_cross_site.py` keeps every write route on the guard.
     - AA-979: the public white-label page `/trip/[tourId]` lives on the AA-Partner CRM web on the client host (Dev
       `go-dev.`). The admin host answers `/trip/:path*` with a **permanent 308** there (`next.config.ts`,
       `lib/apps.ts` `TRIP_PAGE_BASE_URL`; a 307 during the P2b rollback window, made permanent and the CIS page
@@ -1749,7 +1748,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   ≤ 90 days ahead (`.github/scripts/check_trivyignore.py`). **Unit Tests** enforces a coverage ratchet
   (`.github/coverage-ratchet.json`, `.github/scripts/coverage_ratchet.py`): below `floor` fails, lowering
   `floor` fails, below the monthly goal (+5 points a month up to `cap`) only warns. `deploy-dev.yml` does
-  not trigger on `frontend/**` (the image has no frontend file). Security headers on previews are checked
+  not trigger on `frontend/**` (the image has no frontend file). Security headers on the deployed host are checked
   by the UI smoke specs (`aa876-security-headers.spec.ts`, `aa885-portal-host.spec.ts`).
 - **Public repo, no resource IDs (AA-902)**: the required **Lint** job runs
   `.github/scripts/check_resource_ids.py` over every tracked file and fails on an AWS account ID, an ARN
@@ -1786,21 +1785,17 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   non-required job
   **Quality Paths (report)** prints the quality tiers a change touches and a hash of its diff on
   `services/quality/paths.yaml` paths (AA-919 will enforce `quality/q2` with it).
-- **Frontend (Vercel)**: deploys are created by CI, not the Vercel Git integration (S241 — Hobby
-  cap ~100 deployments / 24 h for the whole team, canceled ones included).
-  `frontend/vercel.json` sets `git.deploymentEnabled: false`; `.github/workflows/vercel-deploy.yml`
-  runs `vercel deploy` (CLI pinned) from the repo root only when a PR or a push to `main` touches
-  `frontend/**`: PR → preview of the head commit + one PR comment with the URL, then the UI smoke;
-  `main` → production (+ a 200 check with the bypass header); `workflow_dispatch` → preview or
-  production (production only from `main`). Needs the repo secret `VERCEL_TOKEN` (team-scoped);
-  without it the job fails red on every target (nothing else deploys the frontend). A PR
-  that touches no frontend file gets no preview. The check to look at is "Vercel deploy".
+- **Frontend (Vercel) — retired (AA-911, S272).** `vercel-deploy.yml`, `frontend/vercel.json`, the per-PR previews,
+  the fixed Preview host and its `preview-signin` label are gone. Per-PR UI evidence is the required check
+  `Visual (next start, public pages + kit gallery)` (root ADR 0019 d23 R7); the deployed host is checked after each
+  deploy (below).
 - **Frontend (ECS, AA-911, root ADR 0019 d23)**: `.github/workflows/deploy-admin-dev.yml` builds
-  `frontend/Dockerfile` (Next standalone, `NEXT_OUTPUT=standalone`; Vercel builds are unchanged) on an arm64 runner,
+  `frontend/Dockerfile` (Next standalone, `NEXT_OUTPUT=standalone`) on an arm64 runner,
   pushes `aa-cis-dev-admin:dev-<sha>` (IMMUTABLE), copies the latest revision of family `aa-cis-dev-admin` with only the
   image swapped (env and secrets from that revision), rolls service `aa-cis-dev-admin` and checks
   `https://aa-cis.lumiguides.it.com/api/healthz` answers this commit from ECS (resolved to the ALB on the runner
-  before the cut-over, `vars.STAFF_WEB_ALB_DNS`). The Booking admin is a separate service (AA-Booking). A PR touching the Dockerfile runs the image
+  through `vars.STAFF_WEB_ALB_DNS`), then runs the UI smoke on that host (job `smoke-production`, public + signed in)
+  and the report-only visual run (job `visual-production`). The Booking admin is a separate service (AA-Booking). A PR touching the Dockerfile runs the image
   build only ("Admin Docker Build Check"). Behind the ALB the standalone server's `request.url` / `nextUrl` name its
   bind address (`https://0.0.0.0:3000`), so redirects use a relative Location (`lib/redirect.ts`) and the same-origin
   check takes the public origin from `Host` when `X-Forwarded-Proto` is https (`lib/sameOrigin.ts requestOrigin`).
@@ -1815,28 +1810,25 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   as an artifact, one PR comment. Per PR (job `pr`): `next build` with `KIT_GALLERY=1` + `next start` in the runner,
   the changed public pages and the gated `/kit-gallery` route (404 in every build without the flag), after a
   self-test that must fail on a planted overflow (`/kit-gallery?plant=overflow|frame`). After the production deploy
-  (job `deployed`, called by `vercel-deploy.yml` job `visual-production`; or a dispatch from `main` with `base_url`):
+  (job `deployed`, called by `deploy-admin-dev.yml` job `visual-production`; or a dispatch from `main` with `base_url`):
   the changed pages on the host, staff pages signed in through the smoke setup (Cognito E2E user, environment `e2e`).
   `tests/e2e/visual/pages.ts` lists every route or excludes it with a reason (guard `frontend/lib/visualPages.test.mjs`).
-- **UI smoke (AA-732, `.github/workflows/ui-smoke.yml`)**: called by `vercel-deploy.yml` after a
-  successful deploy (`workflow_call`, inputs `base_url` + `sha` + `staff_session`), or run by hand
-  (`workflow_dispatch`); Vercel's `deployment_status` no longer arrives. A Playwright suite (`tests/e2e/smoke/`)
+- **UI smoke (AA-732, `.github/workflows/ui-smoke.yml`)**: called by `deploy-admin-dev.yml` after a
+  verified deploy from `main` (`workflow_call`, inputs `base_url` + `sha` + `staff_session`), or run by hand
+  (`workflow_dispatch`). A Playwright suite (`tests/e2e/smoke/`)
   opens the key admin pages and fails the check on any HTTP/console error, failing same-origin `/api/` call, or a
   blank page (no table rows and no kit empty state). **Split (AA-816 S2 path):** specs that need a session carry
   the tag `@staff` (project `smoke`, after `smoke-setup`); every other spec is project `smoke-public` (no session).
-  A per-PR preview (`*.vercel.app`, not a Cognito callback) runs only `smoke-public` (job `smoke`). The signed-in
+  Job `smoke` runs only `smoke-public`. The signed-in
   run (job `smoke-staff`, `staff_session=true`, from `main` only: GitHub environment `e2e`, the read-only mailbox
   role, concurrency group `e2e-cognito` shared with the Cognito E2E) signs in as the Cognito E2E user with an email
-  code (`tests/e2e/helpers/cognitoSignIn.ts`, shared with `tests/e2e/cognito/`) on the two callback hosts only:
-  Production after every production deploy (job `smoke-production`; the user is `content` (reviewer until CIS 375), so content mode:
-  pages from `frontend/lib/rbac.ts` `PAGE_RULES`, no writes) and the fixed Preview host after an alias-only
-  dispatch (job `smoke-preview-host`; viewer mode, and the setup fails unless the session's role is `viewer`, the
-  live evidence of the Preview client cap). For a PR labelled `preview-signin`, dispatch `ui-smoke.yml` from `main`
-  with `base_url=https://aa-cis-preview.lumiguides.it.com` and `staff_session=true`. Screenshots (desktop 1440 +
+  code (`tests/e2e/helpers/cognitoSignIn.ts`, shared with `tests/e2e/cognito/`) on the callback host only:
+  Production after every deploy (`deploy-admin-dev.yml` job `smoke-production`; the user is `content` (reviewer until
+  CIS 375), so content mode: pages from `frontend/lib/rbac.ts` `PAGE_RULES`, no writes). Screenshots (desktop 1440 +
   mobile 390, light + dark) upload as an artifact (the public run also uploads the HTML report; the signed-in run
-  never does: a `fill` step would name the code) and link from one PR comment each. Secret:
-  `VERCEL_AUTOMATION_BYPASS_SECRET` (preview SSO bypass), sent only to the BASE_URL origin (origin-scoped route),
-  never to a third-party host. The `E2E_ADMIN_*` password secrets are no longer passed, and since S2 the smoke setup
+  never does: a `fill` step would name the code) and link from one PR comment each. The specs still read an optional
+  `VERCEL_AUTOMATION_BYPASS_SECRET` (`installBypassRoute`), which no workflow passes since the Vercel retirement (a
+  no-op). The `E2E_ADMIN_*` password secrets are no longer passed, and since S2 the smoke setup
   has no password mode (locally, run `--project=smoke-public`; agents have no mailbox access). The admin suite also checks that the old portal URLs answer 308
   to the portal host (`aa885-portal-redirect.spec.ts`). Not a required check.
 - **Portal UI smoke**: moved to AA-Partner with the portal (AA-979: `e2e/smoke-portal/`, `ui-smoke-portal.yml`).
@@ -1847,13 +1839,10 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
 - **Cognito E2E (AA-816 E1, `.github/workflows/e2e-cognito.yml`)**: `workflow_dispatch` on `main` only,
   GitHub environment `e2e`, OIDC role from secret `E2E_MAIL_ROLE_ARN` (Infra `aa-cis-dev-e2e-mail-reader`,
   read-only: List + Get on `s3://aa-cis-dev-e2e-mail-<acc2>/inbound/`, no delete; 1-day expiry). Playwright
-  project `cognito` (`tests/e2e/cognito/`, always the production host — the only `cis-admin` callback; the fixed
-  Preview host belongs to the separate preview client and is covered by the signed-in UI smoke): staff
+  project `cognito` (`tests/e2e/cognito/`, always the production host — the only `cis-admin` callback): staff
   user "E2E Cognito" (`e2e@e2e-mail.lumiguides.it.com` — the SES test mailbox itself, content, Booking none; a
   TEMPORARY exception to the `@adventure.asia` rule, see Staff roles) signs in by email code (`tests/e2e/helpers/mailbox.ts` reads the code from S3), lands under `/admin`,
-  then (AA-680 staff-half evidence) opens the Booking staff admin (input `booking_base_url`: production
-  `https://booking.lumiguides.it.com` by default, or the fixed Preview host `https://booking-preview.lumiguides.it.com`,
-  AA-911; optional `e2e` secret `BOOKING_PREVIEW_BYPASS` sent as headers to that host only) and signs in
+  then (AA-680 staff-half evidence) opens the Booking staff admin `https://booking.lumiguides.it.com` and signs in
   with company email on the shared managed-login session — Booking must refuse it (`/login?reason=no_booking_role`,
   no `bk_*` session cookie, `/` still bounces to `/login`; screenshots `04b`–`04d`) — goes back to CIS, signs out,
   no silent re-login (the next sign-in shows the address form and then sends a new code, which is never typed). The sign-in test skips unless `E2ECOGNITO=1` (set only by the workflow); only screenshots
@@ -2292,10 +2281,9 @@ answers 409 for any Dev-only E2E row (A10b, A10d) on a tenant that is not synthe
 - The BFF (`frontend/lib/cognito.ts`, `lib/cognitoRoutes.ts`, routes `app/api/auth/{signin,callback}/{cognito,
   cognito-breakglass}`, `app/api/auth/refresh`) runs authorization code + PKCE (state + nonce in the 5-minute
   `cis_oauth_tx` cookie) with a confidential client. Redirect URIs come from a fixed allow-list
-  (`aa-cis.lumiguides.it.com`, localhost in development; a Vercel preview build only the fixed Preview host,
-  below); any other host (a per-deployment `*.vercel.app` preview URL) gets `cognito_host` and no sign-in at all (the
+  (`aa-cis.lumiguides.it.com`, localhost in development); any other host gets `cognito_host` and no sign-in at all (the
   password form is off since AA-816 S2). Domain, issuer and client ids are code constants with `COGNITO_*` env overrides; the two production client
-  secrets are set in Vercel (Production only), the Preview-only client secret on the Preview target only.
+  secrets come from the task's secret `aa-cis/dev/admin-web` (AA-CIS-Infra `tools/identity/staff_web_secret.py`).
 - Cookies: `cis_admin_token` holds the Cognito **access** token (15 min; the cookie lives for the refresh window
   so `proxy.ts` can see it expired), `cis_staff_rt` the refresh token (httpOnly, `path=/api/auth`, 12 h,
   1 h for break-glass; the window is not extended by rotation). Refresh happens only in `/api/auth/refresh`
@@ -2312,7 +2300,8 @@ answers 409 for any Dev-only E2E row (A10b, A10d) on a tenant that is not synthe
 AA-Booking) + `api/core/identity_config.py` (CIS surface) + `api/core/staff_identity.py` (resolver):
 - issuer chosen by the **unverified `iss`**; only the WORKFORCE issuer is accepted for staff (any other `iss` →
   401, a JWT without `iss` → the legacy HS256 path); RS256 only, `client_id` ∈ {`cis-admin`, `breakglass`,
-  `cis-admin-preview` (AA-911 D-1, always capped at viewer, below)},
+  `cis-admin-preview` only when set through the env (empty by default since the Vercel retirement; capped at viewer,
+  below)},
   `token_use=access`, no `aud`, leeway ≤ 60 s; one JWKS cache per issuer, prefetched at start-up
   (`identity_jwks_prefetched`), unknown `kid` refetched at most once a minute, last good keys kept;
 - the row is found by `(iss, sub)`; on the first sign-in it is linked **once** by `lower(email)` to an active
@@ -2340,7 +2329,7 @@ AA-Booking) + `api/core/identity_config.py` (CIS surface) + `api/core/staff_iden
   missing, unreadable or equal to the main secret = feature off, never an error). Sent as `X-Admin-Secret` on a
   staff path, it makes the middleware replace `x-admin-role` with `viewer` (no role header → viewer, never the
   machine), so it reads content and is refused on every write and admin-only read; audited as
-  `details.auth = preview`. The Vercel Preview BFF holds this value; the main `ADMIN_SECRET` stays with the
+  `details.auth = preview`. The Vercel Preview BFF held this value until the Vercel retirement (S272; no holder now); the main `ADMIN_SECRET` stays with the
   Production BFF (legacy sessions), the CI deploy gate/smoke and the ops-probe Lambda.
 
 **Legacy password login (off since AA-816 S2, kept as the rollback).** `/auth/admin-login` (HS256 JWT signed with
@@ -2351,30 +2340,18 @@ off; sign in again" when off). **Since S2 it is off by default in both the API a
 `frontend/lib/staffSession.ts`, a test keeps the two lists equal) turns it back on; unset, empty or a typo keeps it
 off. The deployed API task definition does not set it, so every HS256 staff session is refused on every host,
 Preview included; staff sign in with Cognito only. Rollback: revert the S2 commit, or set the flag on the api task
-definition (AA-CIS-Infra, hand edit) and on the Vercel target. `/auth/admin-login` is not gated and never calls
-`/auth/verify-admin`; the AA-Booking bridge that used it (`/auth/booking-token`) is retired (AA-911, S271). The fixed Preview host `aa-cis-preview.lumiguides.it.com` (below) never
-offers the password form (`/login` hides it, BFF `/api/auth/login` answers 404 there).
+definition (AA-CIS-Infra, hand edit) and on the admin task definition. `/auth/admin-login` is not gated and never calls
+`/auth/verify-admin`; the AA-Booking bridge that used it (`/auth/booking-token`) is retired (AA-911, S271).
 
-**Preview staff sign-in (AA-911 D-1, AA-816 P6a, root ADR 0006a A11).** `aa-cis-preview.lumiguides.it.com` is a
-Vercel domain of `aa-cis-frontend` and the only callback / sign-out URL of the Preview-only WORKFORCE client
-`cis-admin-preview` (AA-CIS-Infra; the production `cis-admin` client does not list it; break-glass stays
-production-only). A Vercel production build signs in with `cis-admin` on the production host only, a preview build
-with `cis-admin-preview` on this host only (`VERCEL_ENV`, `frontend/lib/cognito.ts`; its own secret env var
-`COGNITO_CIS_ADMIN_PREVIEW_CLIENT_SECRET`, Preview target only; client id a code constant), so the redirect URI is
-still never built from the Host header and a preview build never reads the production client secret. The Vercel
-Deploy workflow points the host at a preview only on opt-in: the PR label `preview-signin`, or a dispatch from
-`main` with `alias_only_url` (checked over the Vercel API: this project, not production, READY). A Cognito session
-on that host is always the **viewer**: `api/core/staff_identity.resolve_staff` maps every `cis-admin-preview` token
-to role `viewer` with `is_owner` false whatever its `cis-*` groups (`api/core/identity_config.is_preview_client`,
-env override `COGNITO_CIS_ADMIN_PREVIEW_CLIENT_ID`; a preview id equal to a production id fails the verifier build,
-so every staff token answers 503), the bearer middleware forwards `viewer`, `staff_authz` refuses every write
-("Role 'viewer' is read-only") and `/auth/verify-admin` returns `viewer` (log `staff_identity_preview_capped`). The CIS
-to Booking bridge (`/auth/booking-token`) is retired (AA-911, S271): no session gets a Booking token from CIS. The
-cap holds only while the Vercel Preview `ADMIN_SECRET` is the C9 Preview credential (check V2, root ship plan):
-the main secret with a forged `x-admin-role` would pass on a path without a Bearer. Preview builds send
-`X-Robots-Tag: noindex, nofollow`. Every BFF route that attaches `X-Admin-Secret` calls `requireAdmin()` first
-(audited 21/10/2026). UI smoke keeps the per-deployment URL. Runbook: root
-`docs/ops/runbooks/preview-staff-sign-in.md`. For an HS256 session (rollback only, since S2)
+**Preview staff sign-in — retired (AA-911, S272; root ADR 0006a A11 superseded by A13).** The fixed Preview host
+`aa-cis-preview.lumiguides.it.com`, its Vercel project `aa-cis-frontend` and the Preview-only WORKFORCE client
+`cis-admin-preview` are gone; `frontend/lib/cognito.ts` has one client (`cis-admin`, plus break-glass) on the production
+host. The API keeps the viewer cap for a preview client set through `COGNITO_CIS_ADMIN_PREVIEW_CLIENT_ID`
+(`api/core/identity_config.is_preview_client`, `api/core/staff_identity.resolve_staff`: role `viewer`, `is_owner`
+false, log `staff_identity_preview_capped`), but the default is empty, so a token of the deleted client is 401. The C9
+Preview credential (`aa-cis/dev/admin-secret-preview`, `api/core/staff_credential.py`) has no holder since the
+Vercel Preview `ADMIN_SECRET` went with the project; its code and secret are a follow-up removal. Every BFF route that
+attaches `X-Admin-Secret` calls `requireAdmin()` first (audited 21/10/2026). For an HS256 session (rollback only, since S2)
 `/auth/verify-admin` re-reads `shared.admin_users` (cached 60 s), so a deactivation or demotion lands within
 ~6 min (BFF verify cache 5 min + 60 s). Cutover preconditions (ADR 0006): every active row has an email and a
 `cognito_sub` from that person's own sign-in, managed-login break-glass tested; the secret check is
@@ -3100,6 +3077,17 @@ requirement, typical transfer time) that AA-admin writes ONCE for every tenant t
 Distinct from Facts Entry (tenant scope) below — same table (`acp_shared.facts`), `scope` column
 tells them apart, never merged.
 _Avoid_: Fact (bare), reference data.
+
+**FactSheet (AA-1047, root ADR 0020)**:
+The facts one write rests on, built by code (`services/quality/factsheet.py`): typed, numbered lines, each with
+its provenance (`source_raw`, `human_verified`, `tenant_asserted`, `llm_derived`, `external`) and, for a tour,
+a pointer into the supplier source; plus what the builder left out and why. Two builders: the **tour builder**
+(S1 / T2: the raw source tour, rendered as the S1 writer v2 FACT SHEET) and the **route builder** (T9: seed +
+Facts Entries + brand / audience / trip / destination lines, rendered as the gates' SOURCE). `render()` is
+byte-equal to what each workflow read before W1. Stored once per distinct input in `acp_shared.fact_sheet`
+(CIS 386, `services/quality/factsheet_store.py`, best-effort) and named by `generated_content.fs_id`,
+`tenant_tour_versions.fs_id` and `content_piece.writer_input.fs_id`. The brief is never a FactSheet line.
+_Avoid_: fact pack, source bundle, grounding text (the old names of its parts).
 
 **Served state (tour liveness, AA-986, root ADR 0015)**:
 Whether AA serves a tour, per catalog key (`raw_tours.source_key` = `COALESCE(source_group_id, tour_id)`):

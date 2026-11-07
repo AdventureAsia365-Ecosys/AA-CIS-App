@@ -55,6 +55,6 @@ section otherwise. A route or model change made in admin Settings records the sa
 - [ ] CI green (Lint, Security Audit, Unit Tests, Integration Tests, Docker Build Check, Frontend Lint, Frontend Build)
 - [ ] Migration: identical copy in AA-CIS-Infra `db/migrations/cis/`, applied on Dev by DB Migrate before this merges; or N/A
 - [ ] LLM calls go through `LLMClient` and land in `shared.llm_call_log`; or N/A
-- [ ] UI change: Vercel preview checked on desktop and mobile, light and dark, console clean; or N/A
+- [ ] UI change: Visual (next start) report checked on desktop and mobile, light and dark, console clean; or N/A
 - [ ] Backend: merge only with no queued or running `shared.job` and no wave; after deploy, api and worker on the same SHA and the endpoint verified live (status + shape)
 - Evidence (commands, output, screenshots):

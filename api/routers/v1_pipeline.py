@@ -77,57 +77,11 @@ router = APIRouter(prefix="/v1/pipeline", tags=["pipeline"],
                    dependencies=[Depends(_require_admin), Depends(staff_policy_if_staff)])
 
 
-def _normalize_generated(generated: dict, tour: dict) -> dict:
-    """Post-process LLM output: title-case name, strip forbidden words from name."""
-    if not generated:
-        return generated
-    # Title-case name if ALL-CAPS (preserve if already mixed case)
-    name = generated.get("name", "")
-    if name and name == name.upper():
-        generated["name"] = name.title()
-    # Strip markdown bold from itineraries — ensure string type (GPT-4.1 may return dict)
-    itin = generated.get("itineraries")
-    if itin:
-        if isinstance(itin, dict):
-            parts = []
-            for k, v in itin.items():
-                parts.append(f"{k} -- {v}" if isinstance(v, str) else str(v))
-            itin = "\n\n".join(parts)
-        elif isinstance(itin, list):
-            parts = []
-            for item in itin:
-                if isinstance(item, dict):
-                    day   = item.get("day", "")
-                    title = item.get("title", "")
-                    desc  = item.get("description", "")
-                    acts  = item.get("activities", [])
-                    day_str = f"Day {day}"
-                    if title:
-                        day_str += f" — {title}"
-                    if desc:
-                        day_str += f"\n{desc}"
-                    if acts:
-                        act_list = ", ".join(str(a) for a in acts) if isinstance(acts, list) else str(acts)
-                        day_str += f"\n*Activities: {act_list}*"
-                    parts.append(day_str)
-                else:
-                    parts.append(str(item))
-            itin = "\n\n---\n\n".join(parts)
-        generated["itineraries"] = clean_itinerary(str(itin))
-    # Same for highlights — ensure list of strings
-    highlights = generated.get("highlights")
-    if highlights and isinstance(highlights, list):
-        generated["highlights"] = [str(h) if not isinstance(h, str) else h for h in highlights]
-    return generated
-
-
-def clean_itinerary(text: str) -> str:
-    """Strip markdown bold markers (**) from itinerary — LLM sometimes adds them."""
-    if not text:
-        return text
-    text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
-    text = text.replace("**", "")
-    return text.strip()
+# AA-1047 W1: the S1 text normalizer moved into the graph (services/content_generation/normalize.py, run by
+# graph.final_contract_node before the final contract); these names stay for T2 and existing callers.
+from services.content_generation.normalize import (  # noqa: E402
+    clean_itinerary, normalize_generated as _normalize_generated,
+)
 
 
 def initial_state_for(
@@ -403,6 +357,8 @@ async def _rewrite_tour(
             "writer_version":      result.get("writer_version"),
             # AA-919: same strip class — the writing-memory release the kept draft was written with (A1 v2 stamp).
             "writing_release":     result.get("writing_release"),
+            # AA-1047 W1: same strip class — the REPORT-mode final contract of the run's exit (A1; None on T2).
+            "final_contract":      result.get("final_contract"),
             "status": "success" if result.get("generated") and len(result.get("generated", {})) > 0 else "failed",
         }
 
@@ -685,7 +641,11 @@ async def approve_review(
     # check: an empty-string token is a real SF token and must NOT fall into the export branch.
     exported = False
     if task_token is not None:
-        # Legacy Step Functions path — unchanged.
+        # Legacy Step Functions path — unchanged, apart from the AA-1047 W1 REPORT-mode final contract of this approve
+        # (the export branch records it in process_export). Best-effort, never fails the approve.
+        from services.quality.final_contract_store import record_s1_exit
+        async with pool.acquire() as conn:
+            await record_s1_exit(conn, generated_content_id, "approve", actual="approved")
         try:
             sfn = _boto3.client(
                 "stepfunctions",
@@ -706,7 +666,7 @@ async def approve_review(
         # Admin-path forward export (no SF token). Runs once per claim.
         from services.export.handler import process_export
         try:
-            await process_export(str(generated_content_id))
+            await process_export(str(generated_content_id), contract_exit="approve")
             exported = True
         except SourceNotLiveError as e:
             # The source was trashed between the claim and the export (race). Nothing is published and

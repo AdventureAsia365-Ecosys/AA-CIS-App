@@ -17,7 +17,7 @@ on:
       # reads api/migrations/; the schema is applied by AA-CIS-Infra). Code that needs it waits at `schema-gate`.
       - '!api/migrations/**'
       # AA-879: no 'frontend/**' — the image holds no frontend file (see the Dockerfile COPY lines), so a
-      # frontend-only merge must not restart api/worker. The admin app deploys from vercel-deploy.yml.
+      # frontend-only merge must not restart api/worker. The admin app deploys from deploy-admin-dev.yml.
   workflow_dispatch:
     inputs:
       override_running_jobs:
@@ -276,5 +276,5 @@ jobs:
 
   # S240: the "Deploy Frontend to Vercel" job (deploy hook on every Deploy Dev run) was removed — it added a
   # second production deployment per merge and used up the Hobby cap (~100 deployments / 24 h, team-wide;
-  # canceled deployments count too). S241: frontend deploys (preview + production) now come only from
-  # .github/workflows/vercel-deploy.yml; the Vercel Git integration is off (frontend/vercel.json).
+  # canceled deployments count too). S241: frontend deploys came only from vercel-deploy.yml. AA-911 (S272): Vercel
+  # is retired; the admin app deploys to ECS from .github/workflows/deploy-admin-dev.yml.

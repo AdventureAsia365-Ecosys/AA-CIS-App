@@ -40,7 +40,10 @@ _PT_SQL = """
            -- S271 W0 (D8): the raw source fields the elephant-riding policy reads (never the writer's input)
            rt.src_name, rt.src_subtitle, rt.src_summary, rt.src_description,
            rt.src_highlights::text AS src_highlights, rt.src_itineraries, rt.inclusions,
-           rt.activities::text AS activities, rt.price_raw
+           rt.activities::text AS activities, rt.price_raw,
+           -- AA-1047 (Quality W1): the rest of the raw source the T2 FactSheet is built from (tour builder, the same
+           -- fields S1 reads: exclusions and the agency fields group_size / best_time_to_go)
+           rt.exclusions, rt.group_size, rt.best_time_to_go
     FROM gold_aa_internal.published_tours pt
     LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
     WHERE pt.id = $1::uuid
@@ -228,6 +231,32 @@ def policy_hold_hits(pt, tour_dict: dict) -> list[dict]:
     return [{**h, "where": "master" if h["where"] == "generated" else h["where"]} for h in hits]
 
 
+def final_contract_record(rewritten: dict, tour_dict: dict, pt, *, exit: str, actual: str, qa: "dict | None" = None,
+                          fallback_held: bool = False, score: "float | None" = None, gated: "dict | None" = None,
+                          policy_hold: bool = False) -> "dict | None":
+    """AA-1047 W1 (root ADR 0020 "one exit", T10): the REPORT-mode final contract of a T2 version as it is saved —
+    the verdict the target design gives (ai_generated / needs_review / policy_hold) next to the status the current
+    gates gave (``actual``), the sha of the saved text and, when ``gated`` (the draft T3 checked) is given, whether a
+    code step changed it after T3. Recorded admin-only in judge_breakdown.final_contract; never changes the status.
+    Fails open: an error logs and returns None."""
+    from services.quality import elephant_policy
+    from services.quality import final_contract as fc
+    try:
+        inp = fc.T2Input(
+            content=rewritten, master=tour_dict, raw_source=elephant_policy.raw_source_from_row(pt),
+            structural_issues=list((qa or {}).get("structural_issues") or []),
+            grounding_issues=list((qa or {}).get("grounding_issues") or []),
+            fallback_writer_held=fallback_held, policy_hold=policy_hold, score=score,
+            gated_sha=fc.tour_text_sha(gated) if gated is not None else None)
+        record = fc.stamp_stored(fc.check_t2(inp, exit=exit, actual=actual).record(), fc.tour_text_sha(rewritten))
+        fc.log_record(record)
+        return record
+    except Exception as exc:  # noqa: BLE001 — report mode never fails the save
+        logger.warning("final_contract_failed", workflow="t2", exit=exit, error_type=type(exc).__name__,
+                       error=str(exc)[:300])
+        return None
+
+
 def _as_list(value) -> list:
     if isinstance(value, list):
         return value
@@ -278,6 +307,9 @@ async def _save_policy_hold(pool, pt, tour_dict: dict, brand_rules: dict, tenant
     rewritten, dash_log = policy_hold_content(tour_dict, brand_rules)
     mark = {"reason": elephant_policy.POLICY_HOLD, "decision": "ADR 0020 D8", "llm_calls": 0,
             "hits": hits[:10]}
+    # AA-1047 W1: the REPORT-mode final contract of this exit (admin-only, judge_breakdown.final_contract)
+    contract = final_contract_record(rewritten, tour_dict, pt, exit="policy_hold", actual="needs_review",
+                                     policy_hold=True)
     progress_show(rewritten)
     progress_step("save")
     async with pool.acquire() as conn:
@@ -292,7 +324,8 @@ async def _save_policy_hold(pool, pt, tour_dict: dict, brand_rules: dict, tenant
                 qa_auto_passed = true,
                 judge_breakdown = $2::jsonb
             WHERE id = $3::uuid
-        """, _j.dumps(rewritten), _j.dumps({"policy_hold": mark}, default=str), version_id)
+        """, _j.dumps(rewritten), _j.dumps({"policy_hold": mark, "final_contract": contract}, default=str),
+            version_id)
         detail = [{"check_id": f"policy:{elephant_policy.POLICY_HOLD}", "field": h["field"],
                    "description": f"Elephant riding in the {h['where']} {h['field']}: the Master text is kept "
                                   "verbatim for a human review (policy, no rewrite)",
@@ -404,6 +437,7 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
             from services.content_generation.t2_dashes import em_dash_count, fix_t2_dashes
             interim = t2_interim.enabled()
             dashes_before = em_dash_count(rewritten)
+            gated_text = dict(rewritten)   # AA-1047 W1: the kept draft as T3 checked it (before the last code fix)
             rewritten, dash_log = fix_t2_dashes(rewritten, tour_dict)
             diag["em_dashes"] = {"before": dashes_before, "after": em_dash_count(rewritten), "fields": dash_log,
                                  **({"fixed_in_t3": qa.get("em_dash_fixes", 0)} if interim else {})}
@@ -448,6 +482,13 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
                 diag["judge"] = {"binding": judge_breakdown.get("binding"),
                                  "brand_claims_unsupported": len(
                                      (judge_breakdown.get("brand_claims") or {}).get("unsupported") or [])}
+            # AA-1047 W1 (root ADR 0020 "one exit"): the REPORT-mode final contract of this save (admin-only).
+            contract = final_contract_record(
+                rewritten, tour_dict, pt, exit="done", actual=new_status, qa=qa,
+                fallback_held=bool((fb_mark or {}).get("held")), score=rewrite_score, gated=gated_text)
+            if contract is not None:
+                judge_breakdown = {**(judge_breakdown or {}), "final_contract": contract}
+                diag["final_contract"] = {k: contract.get(k) for k in ("verdict", "agrees", "flip", "sha_match")}
             # qa_status keeps its migration-107 meaning unchanged (the real QA verdict,
             # 'escalated' still means the gate did NOT actually clear) — qa_auto_passed
             # (migration 109) is the new, separate tenant-facing badge flag: true means
@@ -528,6 +569,21 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
     return diag
 
 
+async def _store_fact_sheet(pool, pt, tenant_id: str, published_tour_id: str):
+    """AA-1047 — fs_id of the T2 FactSheet (the raw source of the published tour, ``_PT_SQL`` row), or None."""
+    from services.quality import factsheet_store
+    if not factsheet_store.enabled():
+        return None
+    try:
+        async with pool.acquire() as conn:
+            return await factsheet_store.save_tour_sheet(
+                conn, pt, tenant_id=tenant_id, workflow="t2", tour_id=pt.get("tour_id"),
+                meta={"published_tour_id": str(published_tour_id)})
+    except Exception as e:  # noqa: BLE001 — the FactSheet record never fails the rewrite
+        logger.warning("t2_factsheet_store_failed", published_tour_id=str(published_tour_id), error=str(e)[:200])
+        return None
+
+
 async def mark_version_failed(pool, job_row: dict) -> None:
     """on_terminal: the job ended without success, so the version must not stay 'pending'. Except a job that waits
     for staff approval of its tenant's AI budget (AA-1016, review S262): the version stays 'pending' so the approval
@@ -584,6 +640,10 @@ async def run(ctx: JobContext) -> dict:
     from services.content_generation.t2_facts import with_facts
     tour_dict, facts_diag = await with_facts(pool, tour_dict, tenant_id)
 
+    # AA-1047 (Quality W1): the FactSheet of this version's raw source (tour builder; acp_shared.fact_sheet, CIS 386),
+    # stored once per distinct source and stamped on the version after its save. Best-effort: None changes nothing.
+    fs_id = await _store_fact_sheet(pool, pt, tenant_id, published_tour_id)
+
     # AA-637 — live progress (steps + streamed tour fields), read by GET /v1/progress/tour/{id}.
     progress = WritingProgress(
         ctx.resources.get("redis"), tenant_id=str(tenant_id), kind="tour", job_id=str(version_id),
@@ -609,9 +669,13 @@ async def run(ctx: JobContext) -> dict:
                               ON_HOLD_MESSAGE if on_hold else "Writing didn't finish. Please try again.")
 
     async with pool.acquire() as conn:
+        if fs_id:
+            from services.quality import factsheet_store
+            await factsheet_store.stamp_tenant_version(conn, version_id, fs_id)
         final = await conn.fetchrow(
             "SELECT status, quality_score::float AS score, qa_status FROM "
             "gold_aa_internal.tenant_tour_versions WHERE id = $1::uuid", version_id)
     await ctx.progress(phase="done")
     return {"version_id": version_id, "version_status": final["status"], "score": final["score"],
-            "qa_status": final["qa_status"], "brand_loaded": brand_loaded, "facts": facts_diag, **(diag or {})}
+            "qa_status": final["qa_status"], "brand_loaded": brand_loaded, "facts": facts_diag,
+            **({"fs_id": fs_id} if fs_id else {}), **(diag or {})}

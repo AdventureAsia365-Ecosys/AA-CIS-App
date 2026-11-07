@@ -311,7 +311,7 @@ def test_approve_on_a_live_source_exports():
     conn.execute = AsyncMock(return_value="UPDATE 1")
     out, export = _approve(conn)
     assert out["status"] == "approved" and out["exported"] is True
-    export.assert_awaited_once_with(GCID)
+    export.assert_awaited_once_with(GCID, contract_exit="approve")
 
 
 def test_approve_trash_between_claim_and_export_dismisses_and_409s():

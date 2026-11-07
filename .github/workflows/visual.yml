@@ -25,7 +25,7 @@ name: Visual
 #             incl. the ShellFrame demo). It first runs the SELF-TEST: the gallery with a planted overflow (document
 #             and frame) must make the run fail, and summary.mjs --selftest checks that each planted capture was
 #             caught; a self-test that passes is red.
-#   deployed  workflow_call from vercel-deploy.yml after the production deploy on main, and dispatch from main with
+#   deployed  workflow_call from deploy-admin-dev.yml after the verified ECS deploy on main, and dispatch from main with
 #             base_url: the changed pages (or `pages`) on the deployed host: public pages without a session, staff pages
 #             signed in as the Cognito E2E user (the smoke setup: email code from the mailbox via the read-only OIDC
 #             role, environment e2e, the e2e-cognito concurrency group). Only PNGs and report.json are uploaded:
@@ -55,10 +55,8 @@ on:
         type: string
         default: ""
     secrets:
-      VERCEL_AUTOMATION_BYPASS_SECRET:
-        required: false
-      # the read-only mailbox role of the E2E sign-in (vercel-deploy.yml passes `secrets: inherit`; declared so the
-      # called workflow names every secret it reads, actionlint G15)
+      # the read-only mailbox role of the E2E sign-in (deploy-admin-dev.yml passes `secrets: inherit`; declared so the called
+      # workflow names every secret it reads, actionlint G15)
       E2E_MAIL_ROLE_ARN:
         required: false
   workflow_dispatch:
@@ -253,17 +251,16 @@ jobs:
       cancel-in-progress: false
     env:
       BASE_URL: ${{ inputs.base_url }}
-      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
       # Opt-in switch the smoke setup checks (no underscore by design, like ui-smoke.yml).
       E2ECOGNITO: "1"
     steps:
-      - name: Only the Cognito callback hosts
+      - name: Only the Cognito callback host
         env:
           URL: ${{ inputs.base_url }}
         run: |
           case "${URL%/}" in
-            https://aa-cis.lumiguides.it.com|https://aa-cis-preview.lumiguides.it.com) echo "Visual run on $URL" ;;
-            *) echo "::error::base_url must be https://aa-cis.lumiguides.it.com or https://aa-cis-preview.lumiguides.it.com (got $URL)"; exit 1 ;;
+            https://aa-cis.lumiguides.it.com) echo "Visual run on $URL" ;;
+            *) echo "::error::base_url must be https://aa-cis.lumiguides.it.com (got $URL)"; exit 1 ;;
           esac
 
       - uses: actions/checkout@v5

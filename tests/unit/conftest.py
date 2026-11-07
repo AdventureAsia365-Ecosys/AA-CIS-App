@@ -174,6 +174,18 @@ def _llm_cassette_off(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _factsheet_store_off(request, monkeypatch):
+    """AA-1047 (Quality W1): the writers store a FactSheet per write and stamp its fs_id (best-effort DB writes on the
+    pool or connection they already hold). Unit tests have no database: off (FACTSHEET_PERSIST=off) unless a test
+    opts in with the marker `real_factsheet_store` and gives the store a fake connection."""
+    if "real_factsheet_store" not in request.keywords:
+        monkeypatch.setenv("FACTSHEET_PERSIST", "off")
+    else:
+        monkeypatch.delenv("FACTSHEET_PERSIST", raising=False)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _provider_circuit_off(request, monkeypatch):
     """AA-1025 B3: the shared provider circuit (Jev, DataForSEO, Geoapify) keeps state across calls, so client tests
     that script provider failures would see it open. Off (PROVIDER_CIRCUIT_BREAKER=off) unless a test opts in with

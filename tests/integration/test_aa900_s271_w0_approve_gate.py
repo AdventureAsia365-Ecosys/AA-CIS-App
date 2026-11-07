@@ -124,7 +124,7 @@ async def test_a_policy_keep_tour_is_approved(conn, where):
     with patch("services.export.handler.process_export", new=AsyncMock()) as export:
         out = await v1_pipeline.approve_review(str(rq), _req(conn), None)
     assert out["status"] == "approved" and out["policy_keep"] is True and out["exported"] is True
-    export.assert_awaited_once_with(str(gc))
+    export.assert_awaited_once_with(str(gc), contract_exit="approve")
     assert await _state(conn, gc, rq) == ("approved", "approved")
 
 
